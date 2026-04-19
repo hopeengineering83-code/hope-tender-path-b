@@ -1,36 +1,30 @@
 import { NextResponse } from "next/server";
-import { PrismaClient } from "@prisma/client";
+import { prisma } from "@/lib/prisma";
 import { createSession } from "@/lib/auth";
 
-const prisma = new PrismaClient();
-
 export async function POST(req: Request) {
-  const { email, password } = await req.json();
+  try {
+    const { email, password } = await req.json();
 
-  // 🔥 use EMAIL (not name)
-  const user = await prisma.user.findUnique({
-    where: { email },
-  });
-
-  // if no user → create one (first login)
-  if (!user) {
-    const newUser = await prisma.user.create({
-      data: {
-        email,
-        password,
-      },
+    // 🔥 ONLY use email (NOT name)
+    const user = await prisma.user.findUnique({
+      where: { email },
     });
 
-    await createSession(newUser.id);
+    if (!user || user.password !== password) {
+      return NextResponse.json(
+        { error: "Invalid credentials" },
+        { status: 401 }
+      );
+    }
+
+    await createSession(user.id);
+
     return NextResponse.json({ success: true });
+  } catch (error) {
+    return NextResponse.json(
+      { error: "Server error" },
+      { status: 500 }
+    );
   }
-
-  // check password
-  if (user.password !== password) {
-    return NextResponse.json({ error: "Invalid password" }, { status: 401 });
-  }
-
-  await createSession(user.id);
-
-  return NextResponse.json({ success: true });
 }
