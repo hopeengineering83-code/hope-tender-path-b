@@ -1,14 +1,23 @@
-import { put } from "@vercel/blob";
+import { mkdir, writeFile } from "fs/promises";
+import path from "path";
 
-export async function uploadFile(file: File): Promise<{ url: string }> {
-  if (!process.env.BLOB_READ_WRITE_TOKEN) {
-    throw new Error("BLOB_READ_WRITE_TOKEN is not configured.");
-  }
+export async function saveUploadedFile(file: File) {
+  const bytes = await file.arrayBuffer();
+  const buffer = Buffer.from(bytes);
 
-  const blob = await put(`uploads/${Date.now()}-${file.name}`, file, {
-    access: "public",
-    token: process.env.BLOB_READ_WRITE_TOKEN
-  });
+  const uploadDir = path.join(process.cwd(), "uploads");
+  await mkdir(uploadDir, { recursive: true });
 
-  return { url: blob.url };
+  const safeName = `${Date.now()}-${file.name.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
+  const filePath = path.join(uploadDir, safeName);
+
+  await writeFile(filePath, buffer);
+
+  return {
+    originalName: file.name,
+    savedName: safeName,
+    path: filePath,
+    size: file.size,
+    type: file.type,
+  };
 }
