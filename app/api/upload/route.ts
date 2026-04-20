@@ -1,24 +1,38 @@
 import { NextResponse } from "next/server";
-import { requireUser } from "@/lib/auth";
-import { uploadFile } from "@/lib/storage";
+import { getSession } from "../../../lib/auth";
+import { saveUploadedFile } from "../../../lib/storage";
 
-export async function POST(request: Request) {
+export async function POST(req: Request) {
+  const session = await getSession();
+
+  if (!session) {
+    return NextResponse.json(
+      { error: "Unauthorized" },
+      { status: 401 }
+    );
+  }
+
   try {
-    await requireUser();
-
-    const formData = await request.formData();
+    const formData = await req.formData();
     const file = formData.get("file");
 
     if (!(file instanceof File)) {
-      return NextResponse.json({ message: "No file uploaded." }, { status: 400 });
+      return NextResponse.json(
+        { error: "No file uploaded" },
+        { status: 400 }
+      );
     }
 
-    const uploaded = await uploadFile(file);
+    const saved = await saveUploadedFile(file);
 
-    return NextResponse.json({ ok: true, url: uploaded.url });
+    return NextResponse.json({
+      success: true,
+      file: saved,
+    });
   } catch (error) {
+    console.error("Upload error:", error);
     return NextResponse.json(
-      { message: error instanceof Error ? error.message : "Upload failed." },
+      { error: "Upload failed" },
       { status: 500 }
     );
   }
