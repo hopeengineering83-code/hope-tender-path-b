@@ -1,7 +1,15 @@
 import { NextResponse } from "next/server";
-import { clearSession } from "@/lib/auth";
+import { destroySession } from "../../../../lib/auth";
 
 export async function POST() {
-  await clearSession();
-  return NextResponse.json({ ok: true });
+  try {
+    await destroySession();
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    console.error("Logout error:", error);
+    return NextResponse.json(
+      { error: "Server error" },
+      { status: 500 }
+    );
+  }
 }
