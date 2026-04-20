@@ -6,14 +6,20 @@ export async function POST(req: Request) {
   try {
     const { email, password } = await req.json();
 
-    // 🔥 ONLY use email (NOT name)
     const user = await prisma.user.findUnique({
       where: { email },
     });
 
-    if (!user || user.password !== password) {
+    if (!user) {
       return NextResponse.json(
-        { error: "Invalid credentials" },
+        { error: "User not found" },
+        { status: 404 }
+      );
+    }
+
+    if (user.password !== password) {
+      return NextResponse.json(
+        { error: "Invalid password" },
         { status: 401 }
       );
     }
