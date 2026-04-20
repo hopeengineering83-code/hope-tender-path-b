@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import bcrypt from "bcryptjs";
 import { prisma } from "../../../../lib/prisma";
 import { createSession } from "../../../../lib/auth";
 
@@ -17,7 +18,7 @@ export async function POST(req: Request) {
       where: { email },
     });
 
-    if (!user || user.password !== password) {
+    if (!user || !(await bcrypt.compare(password, user.passwordHash))) {
       return NextResponse.json(
         { error: "Invalid credentials" },
         { status: 401 }
