@@ -1,22 +1,19 @@
 import { cookies } from "next/headers";
 
 export async function createSession(userId: string) {
-  const cookieStore = await cookies();
-
-  cookieStore.set("session", userId, {
+  const store = await cookies();
+  store.set("session", userId, {
     httpOnly: true,
-    secure: true,
-    sameSite: "lax",
     path: "/",
   });
 }
 
 export async function getSession() {
-  const cookieStore = await cookies();
-  return cookieStore.get("session")?.value || null;
+  const store = await cookies();
+  return store.get("session")?.value || null;
 }
 
 export async function destroySession() {
-  const cookieStore = await cookies();
-  cookieStore.delete("session");
+  const store = await cookies();
+  store.delete("session");
 }
