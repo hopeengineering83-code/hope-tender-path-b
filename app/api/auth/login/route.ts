@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
-import { prisma } from "../../../../lib/prisma";
+import { prisma, prismaReady } from "../../../../lib/prisma";
 import { createSession } from "../../../../lib/auth";
 
 export async function POST(req: Request) {
@@ -13,6 +13,8 @@ export async function POST(req: Request) {
         { status: 400 }
       );
     }
+
+    await prismaReady;
 
     const user = await prisma.user.findUnique({
       where: { email },

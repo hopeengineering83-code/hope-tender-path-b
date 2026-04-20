@@ -1,5 +1,5 @@
 import { cookies } from "next/headers";
-import { prisma } from "./prisma";
+import { prisma, prismaReady } from "./prisma";
 
 export async function createSession(userId: string) {
   const store = await cookies();
@@ -22,5 +22,6 @@ export async function destroySession() {
 export async function getCurrentUser() {
   const userId = await getSession();
   if (!userId) return null;
+  await prismaReady;
   return prisma.user.findUnique({ where: { id: userId } });
 }
