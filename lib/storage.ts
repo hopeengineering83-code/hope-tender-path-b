@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from "fs/promises";
+import { mkdir, readFile, writeFile } from "fs/promises";
 import path from "path";
 import { randomUUID } from "crypto";
 
@@ -25,6 +25,26 @@ export async function saveUploadedFile(file: File, scope: "company" | "tender" |
     mimeType: file.type || "application/octet-stream",
     storagePath,
   };
+}
+
+export async function saveGeneratedBuffer(baseName: string, extension: string, buffer: Buffer) {
+  const dir = path.join(STORAGE_ROOT, "generated");
+  await ensureDir(dir);
+
+  const safeBase = baseName.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
+  const fileName = `${safeBase || randomUUID()}.${extension.replace(/^\./, "")}`;
+  const storagePath = path.join(dir, fileName);
+  await writeFile(storagePath, buffer);
+
+  return {
+    fileName,
+    storagePath,
+    size: buffer.length,
+  };
+}
+
+export async function readStoredFile(storagePath: string) {
+  return readFile(storagePath);
 }
 
 export async function ensureGeneratedDir() {
