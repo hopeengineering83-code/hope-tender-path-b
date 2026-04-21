@@ -46,6 +46,11 @@ export default async function DocumentsPage() {
                   </div>
                   <p className="mt-1 text-slate-600">{doc.documentType} · {doc.generationStatus} · {doc.validationStatus}</p>
                   {doc.contentSummary && <p className="mt-1 text-xs text-slate-500">{doc.contentSummary}</p>}
+                  {doc.storagePath && (
+                    <Link href={`/api/generated-documents/${doc.id}/download`} className="mt-2 inline-block text-xs text-blue-600 hover:underline">
+                      Download document
+                    </Link>
+                  )}
                 </div>
               ))}
               {tender.generatedDocuments.length === 0 && <p className="text-sm text-slate-400">No document plan yet. Run the tender engine first.</p>}
