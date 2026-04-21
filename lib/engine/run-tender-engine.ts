@@ -1,4 +1,3 @@
-import { TenderStatus, WorkflowStage } from "@prisma/client";
 import { prisma } from "../prisma";
 import { analyzeTender } from "./analysis";
 import { buildCompliance } from "./compliance";
@@ -20,14 +19,6 @@ export async function runTenderEngine(tenderId: string, userId: string) {
     include: {
       experts: true,
       projects: true,
-      documents: {
-        select: {
-          id: true,
-          type: true,
-          originalFileName: true,
-          classification: true,
-        },
-      },
     },
   });
 
@@ -38,7 +29,6 @@ export async function runTenderEngine(tenderId: string, userId: string) {
   await prisma.$transaction(async (tx) => {
     await tx.tenderExpertMatch.deleteMany({ where: { tenderId } });
     await tx.tenderProjectMatch.deleteMany({ where: { tenderId } });
-    await tx.complianceMatrix.deleteMany({ where: { tenderId } });
     await tx.complianceGap.deleteMany({ where: { tenderId } });
     await tx.generatedDocument.deleteMany({ where: { tenderId } });
     await tx.tenderRequirement.deleteMany({ where: { tenderId } });
@@ -68,7 +58,6 @@ export async function runTenderEngine(tenderId: string, userId: string) {
       companyId: company.id,
       experts: company.experts,
       projects: company.projects,
-      documents: company.documents,
     };
 
     const matching = buildMatches(analysis.requirements, knowledge);
@@ -79,7 +68,6 @@ export async function runTenderEngine(tenderId: string, userId: string) {
           expertId: match.expertId,
           score: match.score,
           rationale: match.rationale,
-          evidenceSummary: match.evidenceSummary,
           isSelected: match.isSelected,
         },
       });
@@ -92,26 +80,12 @@ export async function runTenderEngine(tenderId: string, userId: string) {
           projectId: match.projectId,
           score: match.score,
           rationale: match.rationale,
-          evidenceSummary: match.evidenceSummary,
           isSelected: match.isSelected,
         },
       });
     }
 
     const compliance = buildCompliance(createdRequirements, knowledge, matching);
-    for (const matrix of compliance.matrices) {
-      await tx.complianceMatrix.create({
-        data: {
-          tenderId,
-          requirementId: matrix.requirementId,
-          supportStatus: matrix.supportStatus,
-          supportStrength: matrix.supportStrength,
-          evidenceSummary: matrix.evidenceSummary,
-          notes: matrix.notes ?? null,
-        },
-      });
-    }
-
     for (const gap of compliance.gaps) {
       await tx.complianceGap.create({
         data: {
@@ -132,24 +106,25 @@ export async function runTenderEngine(tenderId: string, userId: string) {
           tenderId,
           name: document.name,
           documentType: document.documentType,
-          exactFileName: document.exactFileName,
-          exactOrder: document.exactOrder,
+          exactFileName: document.exactFileName ?? null,
+          exactOrder: document.exactOrder ?? null,
           contentSummary: document.contentSummary,
         },
       });
     }
 
-    const unresolvedMandatoryGaps = compliance.gaps.filter((gap) => gap.severity === "CRITICAL" || gap.severity === "HIGH").length;
+    const unresolvedMandatoryGaps = compliance.gaps.filter(
+      (gap) => gap.severity === "CRITICAL" || gap.severity === "HIGH",
+    ).length;
 
     await tx.tender.update({
       where: { id: tenderId },
       data: {
         analysisSummary: analysis.summary,
-        exactFileNaming: analysis.exactFileNaming,
-        exactFileOrder: analysis.exactFileOrder,
-        lastEngineRunAt: new Date(),
-        status: unresolvedMandatoryGaps > 0 ? TenderStatus.COMPLIANCE_REVIEW : TenderStatus.MATCHED,
-        stage: unresolvedMandatoryGaps > 0 ? WorkflowStage.COMPLIANCE : WorkflowStage.MATCHING,
+        exactFileNaming: JSON.stringify(analysis.exactFileNaming),
+        exactFileOrder: JSON.stringify(analysis.exactFileOrder),
+        status: unresolvedMandatoryGaps > 0 ? "COMPLIANCE_REVIEW" : "MATCHED",
+        stage: unresolvedMandatoryGaps > 0 ? "COMPLIANCE" : "MATCHING",
       },
     });
   });

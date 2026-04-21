@@ -1,28 +1,27 @@
-import { RequirementPriority, RequirementType } from "@prisma/client";
 import type { AnalysisResult, RequirementDraft, TenderWithFiles } from "./types";
 
 const sentenceSplit = /\n+|(?<=[.!?])\s+/g;
 
-function inferPriority(text: string) {
+function inferPriority(text: string): string {
   return /(must|mandatory|required|shall|attach|exact)/i.test(text)
-    ? RequirementPriority.MANDATORY
+    ? "MANDATORY"
     : /(score|weighted|points|evaluation)/i.test(text)
-      ? RequirementPriority.SCORED
-      : RequirementPriority.INFORMATIONAL;
+      ? "SCORED"
+      : "INFORMATIONAL";
 }
 
-function inferType(text: string) {
-  if (/expert|key personnel|team leader|specialist/i.test(text)) return RequirementType.EXPERT;
-  if (/project reference|similar experience|completed project|experience/i.test(text)) return RequirementType.PROJECT_EXPERIENCE;
-  if (/declaration|undertaking|statement/i.test(text)) return RequirementType.DECLARATION;
-  if (/annex/i.test(text)) return RequirementType.ANNEX;
-  if (/schedule/i.test(text)) return RequirementType.SCHEDULE;
-  if (/form|template/i.test(text)) return RequirementType.FORM;
-  if (/financial|turnover|audit/i.test(text)) return RequirementType.FINANCIAL;
-  if (/eligib|registration|certificate|license/i.test(text)) return RequirementType.ELIGIBILITY;
-  if (/page limit|font|format|pdf|docx|naming|order/i.test(text)) return RequirementType.FORMAT;
-  if (/submission|upload|portal|deadline|sealed/i.test(text)) return RequirementType.SUBMISSION_RULE;
-  return RequirementType.TECHNICAL;
+function inferType(text: string): string {
+  if (/expert|key personnel|team leader|specialist/i.test(text)) return "EXPERT";
+  if (/project reference|similar experience|completed project|experience/i.test(text)) return "PROJECT_EXPERIENCE";
+  if (/declaration|undertaking|statement/i.test(text)) return "DECLARATION";
+  if (/annex/i.test(text)) return "ANNEX";
+  if (/schedule/i.test(text)) return "SCHEDULE";
+  if (/form|template/i.test(text)) return "FORM";
+  if (/financial|turnover|audit/i.test(text)) return "FINANCIAL";
+  if (/eligib|registration|certificate|license/i.test(text)) return "ELIGIBILITY";
+  if (/page limit|font|format|pdf|docx|naming|order/i.test(text)) return "FORMAT";
+  if (/submission|upload|portal|deadline|sealed/i.test(text)) return "SUBMISSION_RULE";
+  return "TECHNICAL";
 }
 
 function inferQuantity(text: string) {

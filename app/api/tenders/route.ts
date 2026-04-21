@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { TenderStatus, WorkflowStage } from "@prisma/client";
 import { prisma, prismaReady } from "../../../lib/prisma";
 import { getSession } from "../../../lib/auth";
 import { parseTenderStatus } from "../../../lib/tender-workflow";
@@ -19,7 +18,7 @@ export async function GET(req: Request) {
     where: {
       userId,
       ...(status ? { status } : {}),
-      ...(q ? { OR: [{ title: { contains: q, mode: "insensitive" } }, { reference: { contains: q, mode: "insensitive" } }, { clientName: { contains: q, mode: "insensitive" } }] } : {}),
+      ...(q ? { OR: [{ title: { contains: q } }, { reference: { contains: q } }, { clientName: { contains: q } }] } : {}),
     },
     include: {
       files: { orderBy: { createdAt: "desc" } },
@@ -59,8 +58,8 @@ export async function POST(req: Request) {
         submissionAddress: body.submissionAddress || null,
         intakeSummary,
         notes: body.notes || null,
-        status: TenderStatus.DRAFT,
-        stage: WorkflowStage.TENDER_INTAKE,
+        status: "DRAFT",
+        stage: "TENDER_INTAKE",
         userId,
       },
       include: {

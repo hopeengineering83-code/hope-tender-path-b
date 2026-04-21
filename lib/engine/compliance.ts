@@ -7,7 +7,7 @@ export function buildCompliance(
 ): ComplianceResult {
   const expertCount = knowledge.experts.length;
   const projectCount = knowledge.projects.length;
-  const documentCount = knowledge.documents.length;
+  const documentCount = 0;
 
   const matrices: ComplianceResult["matrices"] = [];
   const gaps: ComplianceResult["gaps"] = [];

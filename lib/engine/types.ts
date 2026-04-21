@@ -1,4 +1,4 @@
-import type { CompanyDocument, CompanyDocumentType, Expert, Project, Tender, TenderFile, TenderRequirement } from "@prisma/client";
+import type { Expert, Project, Tender, TenderFile } from "@prisma/client";
 
 export type TenderWithFiles = Tender & {
   files: TenderFile[];
@@ -7,8 +7,8 @@ export type TenderWithFiles = Tender & {
 export type RequirementDraft = {
   title: string;
   description: string;
-  requirementType: TenderRequirement["requirementType"];
-  priority: TenderRequirement["priority"];
+  requirementType: string;
+  priority: string;
   requiredQuantity?: number | null;
   exactFileName?: string | null;
   exactOrder?: number | null;
@@ -20,7 +20,6 @@ export type CompanyKnowledgeSnapshot = {
   companyId: string;
   experts: Expert[];
   projects: Project[];
-  documents: Pick<CompanyDocument, "id" | "type" | "originalFileName" | "classification">[];
 };
 
 export type AnalysisResult = {
@@ -75,15 +74,15 @@ export type DocumentPlanResult = {
   }>;
 };
 
-export const COMPANY_DOC_TYPE_BY_KEYWORD: Array<{ keyword: RegExp; type: CompanyDocumentType }> = [
-  { keyword: /profile|brochure|company/i, type: "COMPANY_PROFILE" as CompanyDocumentType },
-  { keyword: /registration|license|legal/i, type: "LEGAL_REGISTRATION" as CompanyDocumentType },
-  { keyword: /financial|audit|statement/i, type: "FINANCIAL_STATEMENT" as CompanyDocumentType },
-  { keyword: /cv|resume|expert/i, type: "EXPERT_CV" as CompanyDocumentType },
-  { keyword: /reference|experience/i, type: "PROJECT_REFERENCE" as CompanyDocumentType },
-  { keyword: /contract/i, type: "PROJECT_CONTRACT" as CompanyDocumentType },
-  { keyword: /manual|policy/i, type: "MANUAL" as CompanyDocumentType },
-  { keyword: /portfolio/i, type: "PORTFOLIO" as CompanyDocumentType },
-  { keyword: /cert/i, type: "CERTIFICATION" as CompanyDocumentType },
-  { keyword: /compliance/i, type: "COMPLIANCE_RECORD" as CompanyDocumentType },
+export const COMPANY_DOC_TYPE_BY_KEYWORD: Array<{ keyword: RegExp; type: string }> = [
+  { keyword: /profile|brochure|company/i, type: "COMPANY_PROFILE" },
+  { keyword: /registration|license|legal/i, type: "LEGAL_REGISTRATION" },
+  { keyword: /financial|audit|statement/i, type: "FINANCIAL_STATEMENT" },
+  { keyword: /cv|resume|expert/i, type: "EXPERT_CV" },
+  { keyword: /reference|experience/i, type: "PROJECT_REFERENCE" },
+  { keyword: /contract/i, type: "PROJECT_CONTRACT" },
+  { keyword: /manual|policy/i, type: "MANUAL" },
+  { keyword: /portfolio/i, type: "PORTFOLIO" },
+  { keyword: /cert/i, type: "CERTIFICATION" },
+  { keyword: /compliance/i, type: "COMPLIANCE_RECORD" },
 ];

@@ -46,7 +46,7 @@ export default async function MatchingPage() {
                     <div key={match.id} className="rounded-xl border px-4 py-3 text-sm">
                       <p className="font-medium text-slate-900">{match.expert?.fullName || "Unknown expert"}</p>
                       <p className="text-xs text-slate-500">Score {match.score.toFixed(2)} · {match.isSelected ? "Selected" : "Candidate"}</p>
-                      <p className="mt-1 text-slate-600">{match.evidenceSummary || match.rationale || "No summary."}</p>
+                      <p className="mt-1 text-slate-600">{match.rationale || "No summary."}</p>
                     </div>
                   ))}
                   {tender.expertMatches.length === 0 && <p className="text-sm text-slate-400">No expert matches yet.</p>}
@@ -59,7 +59,7 @@ export default async function MatchingPage() {
                     <div key={match.id} className="rounded-xl border px-4 py-3 text-sm">
                       <p className="font-medium text-slate-900">{match.project?.name || "Unknown project"}</p>
                       <p className="text-xs text-slate-500">Score {match.score.toFixed(2)} · {match.isSelected ? "Selected" : "Candidate"}</p>
-                      <p className="mt-1 text-slate-600">{match.evidenceSummary || match.rationale || "No summary."}</p>
+                      <p className="mt-1 text-slate-600">{match.rationale || "No summary."}</p>
                     </div>
                   ))}
                   {tender.projectMatches.length === 0 && <p className="text-sm text-slate-400">No project matches yet.</p>}

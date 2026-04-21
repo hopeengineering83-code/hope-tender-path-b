@@ -23,22 +23,27 @@ export function buildMatches(
 ): MatchingResult {
   const requirementTokens = tokenize(requirements.map((req) => `${req.description} ${req.title}`).join(" "));
 
+  function parseArr(v: unknown): string[] {
+    if (Array.isArray(v)) return v;
+    try { return JSON.parse(v as string) as string[]; } catch { return []; }
+  }
+
   const expertMatches = knowledge.experts
     .map((expert) => {
       const expertTokens = tokenize([
         expert.fullName,
         expert.title,
         expert.profile,
-        ...(expert.disciplines ?? []),
-        ...(expert.sectors ?? []),
-        ...(expert.certifications ?? []),
+        ...parseArr(expert.disciplines),
+        ...parseArr(expert.sectors),
+        ...parseArr(expert.certifications),
       ].join(" "));
       const score = overlapScore(requirementTokens, expertTokens);
       return {
         expertId: expert.id,
         score,
         rationale: score > 0 ? "Expert discipline overlap detected against tender requirement language." : "No strong overlap detected yet.",
-        evidenceSummary: [expert.title, ...(expert.disciplines ?? [])].filter(Boolean).join(" · "),
+        evidenceSummary: [expert.title, ...parseArr(expert.disciplines)].filter(Boolean).join(" · "),
         isSelected: false,
       };
     })
@@ -53,14 +58,14 @@ export function buildMatches(
         project.country,
         project.sector,
         project.summary,
-        ...(project.serviceAreas ?? []),
+        ...parseArr(project.serviceAreas),
       ].join(" "));
       const score = overlapScore(requirementTokens, projectTokens);
       return {
         projectId: project.id,
         score,
         rationale: score > 0 ? "Project service and sector overlap detected against tender requirement language." : "No strong project overlap detected yet.",
-        evidenceSummary: [project.sector, ...(project.serviceAreas ?? [])].filter(Boolean).join(" · "),
+        evidenceSummary: [project.sector, ...parseArr(project.serviceAreas)].filter(Boolean).join(" · "),
         isSelected: false,
       };
     })
