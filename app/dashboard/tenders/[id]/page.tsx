@@ -11,7 +11,12 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
   const { id } = await params;
   const tender = await prisma.tender.findFirst({
     where: { id, userId },
-    include: { documents: { orderBy: { createdAt: "desc" } } },
+    include: {
+      files: { orderBy: { createdAt: "desc" } },
+      requirements: { orderBy: { createdAt: "asc" } },
+      complianceGaps: { orderBy: { createdAt: "desc" } },
+      generatedDocuments: { orderBy: { createdAt: "desc" } },
+    },
   });
 
   if (!tender) notFound();
