@@ -1,6 +1,7 @@
 import { Packer, Paragraph, TextRun, HeadingLevel, Document } from "docx";
 import { NextResponse } from "next/server";
 import { getSession } from "../../../../../../lib/auth";
+import { logAudit } from "../../../../../../lib/audit";
 import { prisma, prismaReady } from "../../../../../../lib/prisma";
 import { saveGeneratedBuffer } from "../../../../../../lib/storage";
 
@@ -45,31 +46,16 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
         sections: [
           {
             children: [
-              new Paragraph({
-                text: doc.exactFileName || doc.name,
-                heading: HeadingLevel.TITLE,
-              }),
-              new Paragraph({
-                children: [new TextRun({ text: `Tender: ${tender.title}`, bold: true })],
-              }),
+              new Paragraph({ text: doc.exactFileName || doc.name, heading: HeadingLevel.TITLE }),
+              new Paragraph({ children: [new TextRun({ text: `Tender: ${tender.title}`, bold: true })] }),
               new Paragraph({ text: `Document Type: ${doc.documentType}` }),
               new Paragraph({ text: `Reference: ${tender.reference || "N/A"}` }),
               new Paragraph({ text: "" }),
-              new Paragraph({
-                heading: HeadingLevel.HEADING_1,
-                text: "Drafted Content Summary",
-              }),
-              new Paragraph({
-                text: doc.contentSummary || "No content summary available yet.",
-              }),
+              new Paragraph({ heading: HeadingLevel.HEADING_1, text: "Drafted Content Summary" }),
+              new Paragraph({ text: doc.contentSummary || "No content summary available yet." }),
               new Paragraph({ text: "" }),
-              new Paragraph({
-                heading: HeadingLevel.HEADING_1,
-                text: "Internal Generation Note",
-              }),
-              new Paragraph({
-                text: "This generated draft is based on the current tender engine plan and should be reviewed before external submission.",
-              }),
+              new Paragraph({ heading: HeadingLevel.HEADING_1, text: "Internal Generation Note" }),
+              new Paragraph({ text: "This generated draft is based on the current tender engine plan and should be reviewed before external submission." }),
             ],
           },
         ],
@@ -97,6 +83,14 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
         status: "GENERATED",
         stage: "GENERATION",
       },
+    });
+
+    await logAudit({
+      userId,
+      action: "tender_documents_generated",
+      entityType: "Tender",
+      entityId: tender.id,
+      metadata: { generatedCount: generated.length },
     });
 
     return NextResponse.json({ success: true, generatedDocuments: generated });
