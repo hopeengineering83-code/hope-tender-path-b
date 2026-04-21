@@ -20,45 +20,91 @@ model User {
 }
 
 model Company {
-  id          String  @id @default(uuid())
-  name        String
-  description String?
-  website     String?
-  address     String?
-  phone       String?
-  email       String?
-  userId      String  @unique
-  user        User    @relation(fields: [userId], references: [id])
+  id            String  @id @default(uuid())
+  name          String
+  description   String?
+  website       String?
+  address       String?
+  phone         String?
+  email         String?
+  knowledgeMode String  @default("PROFILE_FIRST")
+  serviceLines  String?
+  userId        String  @unique
+  user          User    @relation(fields: [userId], references: [id])
 }
 
 model Tender {
-  id           String     @id @default(uuid())
-  title        String
-  description  String?
-  reference    String?
-  category     String     @default("General")
-  budget       Float?
-  currency     String     @default("USD")
-  deadline     String?
-  status       String     @default("draft")
-  requirements String?
-  proposal     String?
-  notes        String?
-  createdAt    DateTime   @default(now())
-  updatedAt    DateTime   @updatedAt
-  userId       String
-  user         User       @relation(fields: [userId], references: [id])
-  documents    Document[]
+  id               String              @id @default(uuid())
+  title            String
+  description      String?
+  reference        String?
+  clientName       String?
+  category         String              @default("General")
+  budget           Float?
+  currency         String              @default("USD")
+  deadline         String?
+  submissionMethod String?
+  status           String              @default("draft")
+  analysisStatus   String              @default("pending")
+  requirements     String?
+  proposal         String?
+  notes            String?
+  lastEngineRunAt  DateTime?
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+  userId           String
+  user             User                @relation(fields: [userId], references: [id])
+  documents        Document[]
+  generatedDocs    GeneratedDocument[]
+  exportPackages   ExportPackage[]
 }
 
 model Document {
-  id        String   @id @default(uuid())
-  name      String
-  size      Int
-  mimeType  String
-  tenderId  String?
-  tender    Tender?  @relation(fields: [tenderId], references: [id])
-  userId    String
-  user      User     @relation(fields: [userId], references: [id])
-  createdAt DateTime @default(now())
+  id             String   @id @default(uuid())
+  name           String
+  size           Int
+  mimeType       String
+  scope          String   @default("company")
+  classification String?
+  tags           String?
+  storedPath     String?
+  tenderId       String?
+  tender         Tender?  @relation(fields: [tenderId], references: [id])
+  userId         String
+  user           User     @relation(fields: [userId], references: [id])
+  createdAt      DateTime @default(now())
+}
+
+model GeneratedDocument {
+  id               String   @id @default(uuid())
+  name             String
+  documentType     String
+  status           String   @default("planned")
+  format           String   @default("docx")
+  validationStatus String   @default("pending")
+  createdById      String?
+  tenderId         String
+  tender           Tender   @relation(fields: [tenderId], references: [id])
+  createdAt        DateTime @default(now())
+}
+
+model ExportPackage {
+  id          String   @id @default(uuid())
+  name        String
+  status      String   @default("draft")
+  format      String   @default("zip")
+  createdById String?
+  tenderId    String
+  tender      Tender   @relation(fields: [tenderId], references: [id])
+  createdAt   DateTime @default(now())
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  userId     String?
+  action     String
+  entityType String
+  entityId   String?
+  metadata   String?
+  createdAt  DateTime @default(now())
 }
