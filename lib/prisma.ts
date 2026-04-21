@@ -96,7 +96,7 @@ async function bootstrap(client: PrismaClient): Promise<void> {
         userId,
       },
     });
-    const now = new Date().toISOString();
+    const now = new Date();
     await client.tender.createMany({
       data: [
         {
@@ -110,8 +110,8 @@ async function bootstrap(client: PrismaClient): Promise<void> {
           deadline: "2024-12-31",
           status: "active",
           requirements: "Must support 500 concurrent users. Redundant systems required.",
-          createdAt: new Date(now),
-          updatedAt: new Date(now),
+          createdAt: now,
+          updatedAt: now,
           userId,
         },
         {
@@ -125,8 +125,8 @@ async function bootstrap(client: PrismaClient): Promise<void> {
           deadline: "2025-03-15",
           status: "draft",
           requirements: "Work must be completed outside business hours.",
-          createdAt: new Date(now),
-          updatedAt: new Date(now),
+          createdAt: now,
+          updatedAt: now,
           userId,
         },
         {
@@ -141,8 +141,8 @@ async function bootstrap(client: PrismaClient): Promise<void> {
           status: "submitted",
           requirements: "ISO 27001 certified vendor required.",
           proposal: "We propose a 3-phase security assessment covering network, application, and physical security layers.",
-          createdAt: new Date(now),
-          updatedAt: new Date(now),
+          createdAt: now,
+          updatedAt: now,
           userId,
         },
       ],
