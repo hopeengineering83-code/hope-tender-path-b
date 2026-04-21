@@ -1,110 +1,568 @@
 generator client {
-  provider      = "prisma-client-js"
-  binaryTargets = ["native", "rhel-openssl-3.0.x"]
+  provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "sqlite"
-  url      = "file:/tmp/app.db"
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  ADMIN
+  PROPOSAL_MANAGER
+  REVIEWER
+  VIEWER
+}
+
+enum KnowledgeMode {
+  PROFILE_FIRST
+  FULL_LIBRARY
+}
+
+enum DocumentScope {
+  COMPANY
+  TENDER
+  GENERATED
+}
+
+enum CompanyDocumentType {
+  COMPANY_PROFILE
+  LEGAL_REGISTRATION
+  FINANCIAL_STATEMENT
+  EXPERT_CV
+  PROJECT_REFERENCE
+  PROJECT_CONTRACT
+  MANUAL
+  PORTFOLIO
+  CERTIFICATION
+  COMPLIANCE_RECORD
+  OTHER
+}
+
+enum CompanyAssetType {
+  LOGO
+  LETTERHEAD
+  HEADER
+  FOOTER
+  SIGNATURE
+  STAMP
+  BRAND_GUIDE
+}
+
+enum TenderStatus {
+  DRAFT
+  INTAKE
+  ANALYZED
+  MATCHED
+  COMPLIANCE_REVIEW
+  READY_FOR_GENERATION
+  GENERATED
+  IN_REVIEW
+  APPROVED
+  EXPORTED
+  CLOSED
+}
+
+enum RequirementType {
+  ELIGIBILITY
+  TECHNICAL
+  FINANCIAL
+  ADMINISTRATIVE
+  FORMAT
+  EXPERT
+  PROJECT_EXPERIENCE
+  FORM
+  DECLARATION
+  SCHEDULE
+  ANNEX
+  SUBMISSION_RULE
+}
+
+enum RequirementPriority {
+  MANDATORY
+  SCORED
+  INFORMATIONAL
+}
+
+enum GapSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum DocumentGenerationStatus {
+  PLANNED
+  GENERATED
+  VALIDATED
+  APPROVED
+  EXPORTED
+  FAILED
+}
+
+enum ValidationStatus {
+  PENDING
+  PASSED
+  FAILED
+  OVERRIDDEN
+}
+
+enum ReviewDecision {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum ExportFormat {
+  DOCX
+  PDF
+  ZIP
+}
+
+enum WorkflowStage {
+  COMPANY_SETUP
+  TENDER_INTAKE
+  ANALYSIS
+  MATCHING
+  COMPLIANCE
+  GENERATION
+  REVIEW
+  EXPORT
 }
 
 model User {
-  id           String     @id @default(uuid())
-  name         String?
-  email        String     @unique
-  passwordHash String
-  role         String     @default("user")
-  company      Company?
-  tenders      Tender[]
-  documents    Document[]
+  id             String              @id @default(uuid())
+  name           String?
+  email          String              @unique
+  passwordHash   String
+  role           UserRole            @default(PROPOSAL_MANAGER)
+  company        Company?
+  sessions       Session[]
+  tenders        Tender[]
+  auditLogs      AuditLog[]
+  createdReviews ReviewAction[]      @relation("ReviewCreatedBy")
+  comments       InternalComment[]
+  approvals      ApprovalRecord[]
+  generatedDocs  GeneratedDocument[] @relation("GeneratedDocumentCreatedBy")
+  exportPackages ExportPackage[]     @relation("ExportPackageCreatedBy")
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+}
+
+model Session {
+  id         String   @id @default(uuid())
+  token      String   @unique
+  expiresAt  DateTime
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 }
 
 model Company {
-  id            String  @id @default(uuid())
-  name          String
-  description   String?
-  website       String?
-  address       String?
-  phone         String?
-  email         String?
-  knowledgeMode String  @default("PROFILE_FIRST")
-  serviceLines  String?
-  userId        String  @unique
-  user          User    @relation(fields: [userId], references: [id])
+  id                    String                   @id @default(uuid())
+  name                  String
+  legalName             String?
+  description           String?
+  website               String?
+  address               String?
+  phone                 String?
+  email                 String?
+  knowledgeMode         KnowledgeMode           @default(PROFILE_FIRST)
+  serviceLines          String[]                @default([])
+  sectors               String[]                @default([])
+  profileSummary        String?
+  setupCompletedAt      DateTime?
+  userId                String                   @unique
+  user                  User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  documents             CompanyDocument[]
+  assets                CompanyAsset[]
+  experts               Expert[]
+  projects              Project[]
+  legalRecords          LegalRecord[]
+  financialRecords      FinancialRecord[]
+  complianceRecords     CompanyComplianceRecord[]
+  settings              CompanySetting?
+  createdAt             DateTime                 @default(now())
+  updatedAt             DateTime                 @updatedAt
+}
+
+model CompanySetting {
+  id                       String   @id @default(uuid())
+  companyId                String   @unique
+  company                  Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  brandingEnabled          Boolean  @default(true)
+  allowLetterheadByDefault Boolean  @default(true)
+  allowSignatureByDefault  Boolean  @default(false)
+  allowStampByDefault      Boolean  @default(false)
+  exportDocxEnabled        Boolean  @default(true)
+  exportPdfEnabled         Boolean  @default(true)
+  exportZipEnabled         Boolean  @default(true)
+  aiStrictMode             Boolean  @default(true)
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
+}
+
+model CompanyDocument {
+  id                 String              @id @default(uuid())
+  companyId          String
+  company            Company             @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  fileName           String
+  originalFileName   String
+  mimeType           String
+  size               Int
+  storagePath        String
+  type               CompanyDocumentType @default(OTHER)
+  classification     String?
+  sectorTags         String[]            @default([])
+  serviceTags        String[]            @default([])
+  extractedText      String?
+  extractedJson      Json?
+  checksum           String?
+  versionLabel       String?
+  isActive           Boolean             @default(true)
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  sourceLinks        EvidenceLink[]
+}
+
+model CompanyAsset {
+  id                String           @id @default(uuid())
+  companyId         String
+  company           Company          @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  assetType         CompanyAssetType
+  name              String
+  fileName          String
+  mimeType          String
+  size              Int
+  storagePath       String
+  isDefault         Boolean          @default(false)
+  usageRules        Json?
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+}
+
+model Expert {
+  id                String          @id @default(uuid())
+  companyId         String
+  company           Company         @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  fullName          String
+  title             String?
+  email             String?
+  phone             String?
+  yearsExperience   Int?
+  disciplines       String[]        @default([])
+  sectors           String[]        @default([])
+  certifications    String[]        @default([])
+  profile           String?
+  cvDocumentId      String?
+  cvDocument        CompanyDocument? @relation(fields: [cvDocumentId], references: [id], onDelete: SetNull)
+  isActive          Boolean         @default(true)
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+  tenderMatches     TenderExpertMatch[]
+}
+
+model Project {
+  id                String               @id @default(uuid())
+  companyId         String
+  company           Company              @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  name              String
+  clientName        String?
+  country           String?
+  sector            String?
+  serviceAreas      String[]             @default([])
+  summary           String?
+  contractValue     Float?
+  currency          String?
+  startDate         DateTime?
+  endDate           DateTime?
+  evidenceStrength  Float                @default(0)
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+  evidence          ProjectEvidence[]
+  tenderMatches     TenderProjectMatch[]
+}
+
+model ProjectEvidence {
+  id                String           @id @default(uuid())
+  projectId         String
+  project           Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  documentId        String?
+  document          CompanyDocument? @relation(fields: [documentId], references: [id], onDelete: SetNull)
+  evidenceType      String
+  summary           String?
+  excerpt           String?
+  createdAt         DateTime         @default(now())
+}
+
+model LegalRecord {
+  id                String   @id @default(uuid())
+  companyId         String
+  company           Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  recordType        String
+  recordNumber      String?
+  issuingAuthority  String?
+  validFrom         DateTime?
+  validTo           DateTime?
+  notes             String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+}
+
+model FinancialRecord {
+  id                String   @id @default(uuid())
+  companyId         String
+  company           Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  fiscalYear        Int?
+  revenue           Float?
+  netAssets         Float?
+  profit            Float?
+  currency          String?
+  notes             String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+}
+
+model CompanyComplianceRecord {
+  id                String   @id @default(uuid())
+  companyId         String
+  company           Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  category          String
+  title             String
+  status            String
+  validFrom         DateTime?
+  validTo           DateTime?
+  notes             String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 }
 
 model Tender {
-  id               String              @id @default(uuid())
-  title            String
-  description      String?
-  reference        String?
-  clientName       String?
-  category         String              @default("General")
-  budget           Float?
-  currency         String              @default("USD")
-  deadline         String?
-  submissionMethod String?
-  status           String              @default("draft")
-  analysisStatus   String              @default("pending")
-  requirements     String?
-  proposal         String?
-  notes            String?
-  lastEngineRunAt  DateTime?
-  createdAt        DateTime            @default(now())
-  updatedAt        DateTime            @updatedAt
-  userId           String
-  user             User                @relation(fields: [userId], references: [id])
-  documents        Document[]
-  generatedDocs    GeneratedDocument[]
-  exportPackages   ExportPackage[]
+  id                         String                @id @default(uuid())
+  title                      String
+  description                String?
+  reference                  String?
+  clientName                 String?
+  category                   String                @default("General")
+  country                    String?
+  budget                     Float?
+  currency                   String                @default("USD")
+  deadline                   DateTime?
+  submissionMethod           String?
+  submissionAddress          String?
+  status                     TenderStatus          @default(DRAFT)
+  stage                      WorkflowStage         @default(TENDER_INTAKE)
+  intakeSummary              String?
+  analysisSummary            String?
+  evaluationMethodology      String?
+  pageLimit                  Int?
+  brandingRestrictions       String?
+  signatureRestrictions      String?
+  stampRestrictions          String?
+  exactFileOrder             String[]              @default([])
+  exactFileNaming            String[]              @default([])
+  readinessScore             Float                 @default(0)
+  lastEngineRunAt            DateTime?
+  createdAt                  DateTime              @default(now())
+  updatedAt                  DateTime              @updatedAt
+  userId                     String
+  user                       User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  files                      TenderFile[]
+  requirements               TenderRequirement[]
+  expertMatches              TenderExpertMatch[]
+  projectMatches             TenderProjectMatch[]
+  complianceMatrixEntries    ComplianceMatrix[]
+  complianceGaps             ComplianceGap[]
+  generatedDocuments         GeneratedDocument[]
+  exportPackages             ExportPackage[]
+  comments                   InternalComment[]
+  approvals                  ApprovalRecord[]
+  reviewActions              ReviewAction[]
 }
 
-model Document {
-  id             String   @id @default(uuid())
-  name           String
-  size           Int
-  mimeType       String
-  scope          String   @default("company")
-  classification String?
-  tags           String?
-  storedPath     String?
-  tenderId       String?
-  tender         Tender?  @relation(fields: [tenderId], references: [id])
-  userId         String
-  user           User     @relation(fields: [userId], references: [id])
-  createdAt      DateTime @default(now())
+model TenderFile {
+  id                String        @id @default(uuid())
+  tenderId          String
+  tender            Tender        @relation(fields: [tenderId], references: [id], onDelete: Cascade)
+  fileName          String
+  originalFileName  String
+  mimeType          String
+  size              Int
+  storagePath       String
+  classification    String?
+  extractedText     String?
+  parsedMetadata    Json?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+}
+
+model TenderRequirement {
+  id                String               @id @default(uuid())
+  tenderId          String
+  tender            Tender               @relation(fields: [tenderId], references: [id], onDelete: Cascade)
+  code              String?
+  title             String
+  description       String
+  requirementType   RequirementType
+  priority          RequirementPriority
+  sectionReference  String?
+  requiredQuantity  Int?
+  pageLimit         Int?
+  exactFileName     String?
+  exactOrder        Int?
+  exactTemplateName String?
+  restrictions      String?
+  isResolved        Boolean              @default(false)
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+  complianceEntries ComplianceMatrix[]
+}
+
+model TenderExpertMatch {
+  id                String   @id @default(uuid())
+  tenderId          String
+  tender            Tender   @relation(fields: [tenderId], references: [id], onDelete: Cascade)
+  expertId          String
+  expert            Expert   @relation(fields: [expertId], references: [id], onDelete: Cascade)
+  score             Float
+  rationale         String?
+  evidenceSummary   String?
+  isSelected        Boolean  @default(false)
+  isManualOverride  Boolean  @default(false)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+}
+
+model TenderProjectMatch {
+  id                String   @id @default(uuid())
+  tenderId          String
+  tender            Tender   @relation(fields: [tenderId], references: [id], onDelete: Cascade)
+  projectId         String
+  project           Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  score             Float
+  rationale         String?
+  evidenceSummary   String?
+  isSelected        Boolean  @default(false)
+  isManualOverride  Boolean  @default(false)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+}
+
+model ComplianceMatrix {
+  id                 String             @id @default(uuid())
+  tenderId           String
+  tender             Tender             @relation(fields: [tenderId], references: [id], onDelete: Cascade)
+  requirementId      String
+  requirement        TenderRequirement  @relation(fields: [requirementId], references: [id], onDelete: Cascade)
+  supportStatus      String
+  supportStrength    Float              @default(0)
+  evidenceSummary    String?
+  notes              String?
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+  evidenceLinks      EvidenceLink[]
+}
+
+model EvidenceLink {
+  id                 String             @id @default(uuid())
+  matrixId           String?
+  matrix             ComplianceMatrix?  @relation(fields: [matrixId], references: [id], onDelete: Cascade)
+  companyDocumentId  String?
+  companyDocument    CompanyDocument?   @relation(fields: [companyDocumentId], references: [id], onDelete: Cascade)
+  excerpt            String?
+  note               String?
+  createdAt          DateTime           @default(now())
+}
+
+model ComplianceGap {
+  id                 String       @id @default(uuid())
+  tenderId           String
+  tender             Tender       @relation(fields: [tenderId], references: [id], onDelete: Cascade)
+  requirementId      String?
+  severity           GapSeverity
+  title              String
+  description        String
+  mitigationPlan     String?
+  isResolved         Boolean      @default(false)
+  overrideApproved   Boolean      @default(false)
+  createdAt          DateTime     @default(now())
+  updatedAt          DateTime     @updatedAt
 }
 
 model GeneratedDocument {
-  id               String   @id @default(uuid())
-  name             String
-  documentType     String
-  status           String   @default("planned")
-  format           String   @default("docx")
-  validationStatus String   @default("pending")
-  createdById      String?
-  tenderId         String
-  tender           Tender   @relation(fields: [tenderId], references: [id])
-  createdAt        DateTime @default(now())
+  id                 String                   @id @default(uuid())
+  tenderId           String
+  tender             Tender                   @relation(fields: [tenderId], references: [id], onDelete: Cascade)
+  name               String
+  documentType       String
+  format             ExportFormat             @default(DOCX)
+  storagePath        String?
+  requiredByTender   Boolean                  @default(true)
+  exactFileName      String?
+  exactOrder         Int?
+  contentSummary     String?
+  validationStatus   ValidationStatus         @default(PENDING)
+  generationStatus   DocumentGenerationStatus @default(PLANNED)
+  createdById        String?
+  createdBy          User?                    @relation("GeneratedDocumentCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt          DateTime                 @default(now())
+  updatedAt          DateTime                 @updatedAt
 }
 
 model ExportPackage {
-  id          String   @id @default(uuid())
-  name        String
-  status      String   @default("draft")
-  format      String   @default("zip")
-  createdById String?
-  tenderId    String
-  tender      Tender   @relation(fields: [tenderId], references: [id])
-  createdAt   DateTime @default(now())
+  id                 String          @id @default(uuid())
+  tenderId           String
+  tender             Tender          @relation(fields: [tenderId], references: [id], onDelete: Cascade)
+  name               String
+  format             ExportFormat    @default(ZIP)
+  storagePath        String?
+  exportStatus       String          @default("draft")
+  createdById        String?
+  createdBy          User?           @relation("ExportPackageCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+}
+
+model ReviewAction {
+  id                 String         @id @default(uuid())
+  tenderId           String
+  tender             Tender         @relation(fields: [tenderId], references: [id], onDelete: Cascade)
+  reviewerId         String
+  reviewer           User           @relation("ReviewCreatedBy", fields: [reviewerId], references: [id], onDelete: Cascade)
+  decision           ReviewDecision @default(PENDING)
+  notes              String?
+  createdAt          DateTime       @default(now())
+}
+
+model ApprovalRecord {
+  id                 String         @id @default(uuid())
+  tenderId           String
+  tender             Tender         @relation(fields: [tenderId], references: [id], onDelete: Cascade)
+  userId             String
+  user               User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  decision           ReviewDecision
+  notes              String?
+  createdAt          DateTime       @default(now())
+}
+
+model InternalComment {
+  id                 String   @id @default(uuid())
+  tenderId           String
+  tender             Tender   @relation(fields: [tenderId], references: [id], onDelete: Cascade)
+  userId             String
+  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  body               String
+  createdAt          DateTime @default(now())
 }
 
 model AuditLog {
-  id         String   @id @default(uuid())
-  userId     String?
-  action     String
-  entityType String
-  entityId   String?
-  metadata   String?
-  createdAt  DateTime @default(now())
+  id                 String   @id @default(uuid())
+  userId             String?
+  user               User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  action             String
+  entityType         String
+  entityId           String?
+  metadata           Json?
+  createdAt          DateTime @default(now())
 }
