@@ -1,6 +1,7 @@
 import { notFound, redirect } from "next/navigation";
 import { getSession } from "../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../lib/prisma";
+import { isAIEnabled } from "../../../../lib/ai";
 import { TenderDetail } from "./tender-detail";
 
 export default async function TenderPage({ params }: { params: Promise<{ id: string }> }) {
@@ -21,5 +22,5 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
 
   if (!tender) notFound();
 
-  return <TenderDetail tender={tender} />;
+  return <TenderDetail tender={tender} aiEnabled={isAIEnabled()} />;
 }

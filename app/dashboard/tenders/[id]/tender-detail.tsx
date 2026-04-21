@@ -73,15 +73,18 @@ function formatBytes(bytes: number) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-export function TenderDetail({ tender: initial }: { tender: Tender }) {
+export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; aiEnabled?: boolean }) {
   const router = useRouter();
   const [tender, setTender] = useState(initial);
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [engineRunning, setEngineRunning] = useState(false);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [generating, setGenerating] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
+  const [aiProposal, setAiProposal] = useState("");
   const [form, setForm] = useState({
     title: initial.title,
     reference: initial.reference ?? "",
@@ -165,6 +168,36 @@ export function TenderDetail({ tender: initial }: { tender: Tender }) {
     }
   }
 
+  async function handleAIAnalyze() {
+    setAnalyzing(true);
+    setError("");
+    try {
+      const res = await fetch(`/api/tenders/${tender.id}/ai-analyze`, { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) { setError(data.error || "Analysis failed"); return; }
+      if (data.tender) setTender((cur) => ({ ...cur, ...data.tender }));
+      router.refresh();
+    } catch { setError("Analysis failed"); }
+    finally { setAnalyzing(false); }
+  }
+
+  async function handleAIProposal() {
+    setGenerating(true);
+    setError("");
+    try {
+      const res = await fetch(`/api/tenders/${tender.id}/ai-proposal`, { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) { setError(data.error || "Generation failed"); return; }
+      setAiProposal(data.proposal || "");
+      setForm((cur) => ({ ...cur, intakeSummary: data.proposal || cur.intakeSummary }));
+    } catch { setError("Proposal generation failed"); }
+    finally { setGenerating(false); }
+  }
+
+  function downloadDoc(type: string) {
+    window.open(`/api/tenders/${tender.id}/download?type=${type}`, "_blank");
+  }
+
   async function handleDelete() {
     if (!confirm("Delete this tender? This cannot be undone.")) return;
     setDeleting(true);
@@ -197,7 +230,10 @@ export function TenderDetail({ tender: initial }: { tender: Tender }) {
   }
 
   const unresolvedGaps = tender.complianceGaps.filter((gap) => !gap.isResolved).length;
+  const criticalGaps = tender.complianceGaps.filter((gap) => !gap.isResolved && ["CRITICAL", "HIGH"].includes(gap.severity)).length;
   const mandatoryRequirements = tender.requirements.filter((req) => req.priority === "MANDATORY").length;
+  const readinessScore = tender.requirements.length === 0 ? 0
+    : Math.max(0, Math.round(((tender.requirements.length - criticalGaps) / tender.requirements.length) * 100));
 
   return (
     <div className="space-y-6">
@@ -214,40 +250,51 @@ export function TenderDetail({ tender: initial }: { tender: Tender }) {
         </div>
 
         <div className="flex flex-wrap gap-2">
-          <button
-            onClick={handleRunEngine}
-            disabled={engineRunning}
-            className="rounded-lg bg-black px-3 py-2 text-sm text-white hover:bg-slate-800 disabled:opacity-50"
-          >
-            {engineRunning ? "Running Engine..." : "Run Tender Engine"}
-          </button>
-          {NEXT_STATUS[tender.status as keyof typeof NEXT_STATUS] && (
-            <button
-              onClick={handleStatusAdvance}
-              disabled={saving}
-              className="rounded-lg bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700 disabled:opacity-50"
-            >
-              Move to {formatTenderStatus(NEXT_STATUS[tender.status as keyof typeof NEXT_STATUS] as string)}
+          {aiEnabled && (
+            <button onClick={handleAIAnalyze} disabled={analyzing}
+              className="rounded-lg bg-purple-600 px-3 py-2 text-sm text-white hover:bg-purple-700 disabled:opacity-50">
+              {analyzing ? "Analyzing..." : "✦ AI Analyze"}
             </button>
           )}
-          <button onClick={() => setEditing((value) => !value)} className="rounded-lg border px-3 py-2 text-sm hover:bg-slate-50">
+          {aiEnabled && (
+            <button onClick={handleAIProposal} disabled={generating}
+              className="rounded-lg bg-purple-100 px-3 py-2 text-sm text-purple-800 hover:bg-purple-200 disabled:opacity-50">
+              {generating ? "Generating..." : "✦ AI Proposal"}
+            </button>
+          )}
+          <button onClick={handleRunEngine} disabled={engineRunning}
+            className="rounded-lg bg-black px-3 py-2 text-sm text-white hover:bg-slate-800 disabled:opacity-50">
+            {engineRunning ? "Running..." : "Run Engine"}
+          </button>
+          {NEXT_STATUS[tender.status as keyof typeof NEXT_STATUS] && (
+            <button onClick={handleStatusAdvance} disabled={saving}
+              className="rounded-lg bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700 disabled:opacity-50">
+              → {formatTenderStatus(NEXT_STATUS[tender.status as keyof typeof NEXT_STATUS] as string)}
+            </button>
+          )}
+          <button onClick={() => downloadDoc("proposal")}
+            className="rounded-lg border px-3 py-2 text-sm hover:bg-slate-50">
+            ↓ Proposal
+          </button>
+          <button onClick={() => downloadDoc("requirements")}
+            className="rounded-lg border px-3 py-2 text-sm hover:bg-slate-50">
+            ↓ Requirements
+          </button>
+          <button onClick={() => setEditing((v) => !v)} className="rounded-lg border px-3 py-2 text-sm hover:bg-slate-50">
             {editing ? "Cancel" : "Edit"}
           </button>
-          <button
-            onClick={handleDelete}
-            disabled={deleting}
-            className="rounded-lg border border-red-200 px-3 py-2 text-sm text-red-600 hover:bg-red-50 disabled:opacity-50"
-          >
-            {deleting ? "Deleting..." : "Delete"}
+          <button onClick={handleDelete} disabled={deleting}
+            className="rounded-lg border border-red-200 px-3 py-2 text-sm text-red-600 hover:bg-red-50 disabled:opacity-50">
+            {deleting ? "..." : "Delete"}
           </button>
         </div>
       </div>
 
       {error && <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
 
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
         <div className="rounded-2xl border bg-white p-5 shadow-sm">
-          <p className="text-sm text-slate-500">Tender Files</p>
+          <p className="text-sm text-slate-500">Files</p>
           <p className="mt-1 text-3xl font-bold text-slate-900">{tender.files.length}</p>
         </div>
         <div className="rounded-2xl border bg-white p-5 shadow-sm">
@@ -256,12 +303,23 @@ export function TenderDetail({ tender: initial }: { tender: Tender }) {
           <p className="mt-1 text-xs text-slate-500">Mandatory: {mandatoryRequirements}</p>
         </div>
         <div className="rounded-2xl border bg-white p-5 shadow-sm">
-          <p className="text-sm text-slate-500">Compliance Gaps</p>
-          <p className="mt-1 text-3xl font-bold text-amber-600">{unresolvedGaps}</p>
+          <p className="text-sm text-slate-500">Gaps</p>
+          <p className={`mt-1 text-3xl font-bold ${criticalGaps > 0 ? "text-red-600" : "text-green-600"}`}>{unresolvedGaps}</p>
+          {criticalGaps > 0 && <p className="mt-1 text-xs text-red-500">{criticalGaps} critical</p>}
         </div>
         <div className="rounded-2xl border bg-white p-5 shadow-sm">
           <p className="text-sm text-slate-500">Generated Docs</p>
           <p className="mt-1 text-3xl font-bold text-slate-900">{tender.generatedDocuments.length}</p>
+        </div>
+        <div className="rounded-2xl border bg-white p-5 shadow-sm">
+          <p className="text-sm text-slate-500">Readiness</p>
+          <p className={`mt-1 text-3xl font-bold ${readinessScore >= 80 ? "text-green-600" : readinessScore >= 50 ? "text-amber-500" : "text-red-500"}`}>
+            {readinessScore}%
+          </p>
+          <div className="mt-2 h-1.5 w-full rounded-full bg-slate-100 overflow-hidden">
+            <div className={`h-full rounded-full ${readinessScore >= 80 ? "bg-green-500" : readinessScore >= 50 ? "bg-amber-400" : "bg-red-400"}`}
+              style={{ width: `${readinessScore}%` }} />
+          </div>
         </div>
       </div>
 
@@ -372,15 +430,21 @@ export function TenderDetail({ tender: initial }: { tender: Tender }) {
           </div>
 
           <div className="rounded-2xl border bg-white p-6 shadow-sm">
-            <h2 className="text-lg font-semibold text-slate-900">Generated outputs</h2>
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-lg font-semibold text-slate-900">Generated outputs</h2>
+              {tender.generatedDocuments.length > 0 && (
+                <button onClick={() => downloadDoc("compliance")}
+                  className="text-xs text-blue-600 hover:underline">↓ Compliance Report</button>
+              )}
+            </div>
             {tender.generatedDocuments.length === 0 ? (
-              <p className="mt-3 text-sm text-slate-400">No generated documents have been planned yet.</p>
+              <p className="text-sm text-slate-400">Run the engine to generate a document plan.</p>
             ) : (
-              <ul className="mt-4 space-y-3">
-                {tender.generatedDocuments.slice(0, 5).map((doc) => (
+              <ul className="space-y-2">
+                {tender.generatedDocuments.slice(0, 8).map((doc) => (
                   <li key={doc.id} className="rounded-xl border px-4 py-3">
                     <p className="text-sm font-medium text-slate-900">{doc.name}</p>
-                    <p className="mt-1 text-xs text-slate-500">{doc.documentType} · {doc.generationStatus} · {doc.validationStatus}</p>
+                    <p className="mt-0.5 text-xs text-slate-500">{doc.documentType} · {doc.generationStatus}</p>
                   </li>
                 ))}
               </ul>
@@ -388,6 +452,27 @@ export function TenderDetail({ tender: initial }: { tender: Tender }) {
           </div>
         </div>
       </div>
+
+      {aiProposal && (
+        <div className="rounded-2xl border border-purple-200 bg-white p-6 shadow-sm">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-lg font-semibold text-slate-900">✦ AI-Generated Proposal Draft</h2>
+            <div className="flex gap-2">
+              <button onClick={() => { setForm((c) => ({ ...c, intakeSummary: aiProposal })); setAiProposal(""); }}
+                className="rounded-lg bg-black px-3 py-1.5 text-xs text-white hover:bg-slate-800">
+                Save as Intake Summary
+              </button>
+              <button onClick={() => setAiProposal("")}
+                className="rounded-lg border px-3 py-1.5 text-xs hover:bg-slate-50">
+                Dismiss
+              </button>
+            </div>
+          </div>
+          <div className="prose prose-sm max-w-none">
+            <pre className="whitespace-pre-wrap text-sm text-slate-700 font-sans leading-relaxed">{aiProposal}</pre>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
