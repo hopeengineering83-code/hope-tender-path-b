@@ -54,6 +54,11 @@ export default async function ExportPage() {
                     <div key={pkg.id} className="rounded-xl border px-4 py-3 text-sm">
                       <p className="font-medium text-slate-900">{pkg.name}</p>
                       <p className="text-xs text-slate-500">{pkg.format} · {pkg.exportStatus}</p>
+                      {pkg.storagePath && (
+                        <Link href={`/api/export-packages/${pkg.id}/download`} className="mt-2 inline-block text-xs text-blue-600 hover:underline">
+                          Download package
+                        </Link>
+                      )}
                     </div>
                   ))
                 )}
