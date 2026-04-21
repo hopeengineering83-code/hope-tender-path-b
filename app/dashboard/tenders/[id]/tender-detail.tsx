@@ -78,6 +78,7 @@ export function TenderDetail({ tender: initial }: { tender: Tender }) {
   const [tender, setTender] = useState(initial);
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [engineRunning, setEngineRunning] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
@@ -136,6 +137,34 @@ export function TenderDetail({ tender: initial }: { tender: Tender }) {
     await save({ status: next });
   }
 
+  async function handleRunEngine() {
+    setEngineRunning(true);
+    setError("");
+    try {
+      const res = await fetch(`/api/tenders/${tender.id}/engine`, { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error || "Engine run failed");
+        return;
+      }
+      if (data.tender) {
+        setTender((current) => ({
+          ...current,
+          ...data.tender,
+        }));
+        setForm((current) => ({
+          ...current,
+          analysisSummary: data.tender.analysisSummary || current.analysisSummary,
+        }));
+      }
+      router.refresh();
+    } catch {
+      setError("Engine run failed");
+    } finally {
+      setEngineRunning(false);
+    }
+  }
+
   async function handleDelete() {
     if (!confirm("Delete this tender? This cannot be undone.")) return;
     setDeleting(true);
@@ -185,6 +214,13 @@ export function TenderDetail({ tender: initial }: { tender: Tender }) {
         </div>
 
         <div className="flex flex-wrap gap-2">
+          <button
+            onClick={handleRunEngine}
+            disabled={engineRunning}
+            className="rounded-lg bg-black px-3 py-2 text-sm text-white hover:bg-slate-800 disabled:opacity-50"
+          >
+            {engineRunning ? "Running Engine..." : "Run Tender Engine"}
+          </button>
           {NEXT_STATUS[tender.status as keyof typeof NEXT_STATUS] && (
             <button
               onClick={handleStatusAdvance}
