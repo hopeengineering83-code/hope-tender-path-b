@@ -2,11 +2,11 @@ import { NextResponse } from "next/server";
 import { prisma, prismaReady } from "../../../lib/prisma";
 import { getSession } from "../../../lib/auth";
 
-function splitCsv(value: unknown) {
-  return String(value || "")
-    .split(",")
-    .map((item) => item.trim())
-    .filter(Boolean);
+function toJsonArray(value: unknown): string {
+  if (Array.isArray(value)) return JSON.stringify(value.filter(Boolean));
+  return JSON.stringify(
+    String(value || "").split(",").map((v) => v.trim()).filter(Boolean)
+  );
 }
 
 export async function GET() {
@@ -17,14 +17,22 @@ export async function GET() {
   const company = await prisma.company.findUnique({
     where: { userId },
     include: {
-      documents: { orderBy: { createdAt: "desc" }, take: 10 },
       experts: { orderBy: { createdAt: "desc" }, take: 10 },
       projects: { orderBy: { createdAt: "desc" }, take: 10 },
-      assets: { orderBy: { createdAt: "desc" }, take: 10 },
     },
   });
 
-  return NextResponse.json(company);
+  if (!company) return NextResponse.json(null);
+
+  return NextResponse.json({
+    ...company,
+    serviceLines: safeParseArr(company.serviceLines),
+    sectors: safeParseArr(company.sectors),
+  });
+}
+
+function safeParseArr(v: unknown): string[] {
+  try { return JSON.parse(v as string) as string[]; } catch { return []; }
 }
 
 export async function PUT(req: Request) {
@@ -45,9 +53,8 @@ export async function PUT(req: Request) {
         address: body.address || null,
         phone: body.phone || null,
         email: body.email || null,
-        knowledgeMode: body.knowledgeMode || "PROFILE_FIRST",
-        serviceLines: splitCsv(body.serviceLines),
-        sectors: splitCsv(body.sectors),
+        serviceLines: toJsonArray(body.serviceLines),
+        sectors: toJsonArray(body.sectors),
         profileSummary: body.profileSummary || null,
         userId,
       },
@@ -59,20 +66,21 @@ export async function PUT(req: Request) {
         address: body.address || null,
         phone: body.phone || null,
         email: body.email || null,
-        knowledgeMode: body.knowledgeMode || "PROFILE_FIRST",
-        serviceLines: splitCsv(body.serviceLines),
-        sectors: splitCsv(body.sectors),
+        serviceLines: toJsonArray(body.serviceLines),
+        sectors: toJsonArray(body.sectors),
         profileSummary: body.profileSummary || null,
       },
       include: {
-        documents: { orderBy: { createdAt: "desc" }, take: 10 },
         experts: { orderBy: { createdAt: "desc" }, take: 10 },
         projects: { orderBy: { createdAt: "desc" }, take: 10 },
-        assets: { orderBy: { createdAt: "desc" }, take: 10 },
       },
     });
 
-    return NextResponse.json(company);
+    return NextResponse.json({
+      ...company,
+      serviceLines: safeParseArr(company.serviceLines),
+      sectors: safeParseArr(company.sectors),
+    });
   } catch (error) {
     console.error(error);
     return NextResponse.json({ error: "Failed to save company" }, { status: 500 });

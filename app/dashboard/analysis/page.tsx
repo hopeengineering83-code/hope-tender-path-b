@@ -45,7 +45,7 @@ export default async function AnalysisPage() {
                 </td>
                 <td className="px-6 py-4 text-slate-500">{tender.files.length}</td>
                 <td className="px-6 py-4 text-slate-500">{tender.requirements.length}</td>
-                <td className="px-6 py-4 text-slate-500">{formatDate(tender.lastEngineRunAt)}</td>
+                <td className="px-6 py-4 text-slate-500">{formatDate(tender.updatedAt)}</td>
                 <td className="px-6 py-4">
                   <Link href={`/dashboard/tenders/${tender.id}`} className="text-blue-600 hover:underline">
                     Open workspace

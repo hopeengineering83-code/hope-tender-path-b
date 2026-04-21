@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { CompanyDocumentType } from "@prisma/client";
 import { prisma, prismaReady } from "../../../lib/prisma";
 import { getSession } from "../../../lib/auth";
 import { saveUploadedFile } from "../../../lib/storage";
@@ -42,26 +41,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ success: true, scope: "tender", fileRecord });
     }
 
-    const company = await prisma.company.findUnique({ where: { userId } });
-    if (!company) {
-      return NextResponse.json({ error: "Company profile required before upload" }, { status: 400 });
-    }
-
-    const saved = await saveUploadedFile(file, "company");
-    const fileRecord = await prisma.companyDocument.create({
-      data: {
-        companyId: company.id,
-        fileName: saved.fileName,
-        originalFileName: saved.originalFileName,
-        mimeType: saved.mimeType,
-        size: saved.size,
-        storagePath: saved.storagePath,
-        classification,
-        type: CompanyDocumentType.OTHER,
-      },
-    });
-
-    return NextResponse.json({ success: true, scope: "company", fileRecord });
+    return NextResponse.json({ error: "tenderId is required" }, { status: 400 });
   } catch (error) {
     console.error("Upload error:", error);
     return NextResponse.json({ error: "Upload failed" }, { status: 500 });

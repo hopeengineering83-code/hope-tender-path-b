@@ -36,7 +36,7 @@ export default async function TendersPage({
     where: {
       userId,
       ...(statusFilter ? { status: statusFilter } : {}),
-      ...(q ? { title: { contains: q, mode: "insensitive" } } : {}),
+      ...(q ? { title: { contains: q } } : {}),
     },
     include: {
       files: true,

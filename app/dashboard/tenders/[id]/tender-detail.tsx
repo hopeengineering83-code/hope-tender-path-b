@@ -56,8 +56,8 @@ type Tender = {
   intakeSummary: string | null;
   analysisSummary: string | null;
   notes: string | null;
-  exactFileNaming: string[];
-  exactFileOrder: string[];
+  exactFileNaming: string | string[];
+  exactFileOrder: string | string[];
   files: TenderFile[];
   requirements: TenderRequirement[];
   complianceGaps: ComplianceGap[];
