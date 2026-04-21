@@ -2,6 +2,7 @@ import JSZip from "jszip";
 import { ExportFormat } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { getSession } from "../../../../../lib/auth";
+import { logAudit } from "../../../../../lib/audit";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { readStoredFile, saveGeneratedBuffer } from "../../../../../lib/storage";
 
@@ -74,6 +75,14 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
         status: "EXPORTED",
         stage: "EXPORT",
       },
+    });
+
+    await logAudit({
+      userId,
+      action: "tender_export_prepared",
+      entityType: "ExportPackage",
+      entityId: exportPackage.id,
+      metadata: { tenderId: tender.id, documentCount: tender.generatedDocuments.length },
     });
 
     return NextResponse.json({ success: true, exportPackage }, { status: 201 });
