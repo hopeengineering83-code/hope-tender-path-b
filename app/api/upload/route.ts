@@ -3,6 +3,7 @@ import { CompanyDocumentType } from "@prisma/client";
 import { prisma, prismaReady } from "../../../lib/prisma";
 import { getSession } from "../../../lib/auth";
 import { saveUploadedFile } from "../../../lib/storage";
+import { logAudit } from "../../../lib/audit";
 
 export async function POST(req: Request) {
   const userId = await getSession();
@@ -39,6 +40,14 @@ export async function POST(req: Request) {
         },
       });
 
+      await logAudit({
+        userId,
+        action: "tender_file_uploaded",
+        entityType: "TenderFile",
+        entityId: fileRecord.id,
+        metadata: { tenderId, originalFileName: saved.originalFileName },
+      });
+
       return NextResponse.json({ success: true, scope: "tender", fileRecord });
     }
 
@@ -59,6 +68,14 @@ export async function POST(req: Request) {
         classification,
         type: CompanyDocumentType.OTHER,
       },
+    });
+
+    await logAudit({
+      userId,
+      action: "company_document_uploaded",
+      entityType: "CompanyDocument",
+      entityId: fileRecord.id,
+      metadata: { companyId: company.id, originalFileName: saved.originalFileName },
     });
 
     return NextResponse.json({ success: true, scope: "company", fileRecord });
