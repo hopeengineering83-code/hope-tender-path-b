@@ -82,6 +82,7 @@ export function TenderDetail({ tender: initial }: { tender: Tender }) {
   const [engineRunning, setEngineRunning] = useState(false);
   const [docGenerating, setDocGenerating] = useState(false);
   const [exportPreparing, setExportPreparing] = useState(false);
+  const [reviewSubmitting, setReviewSubmitting] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [success, setSuccess] = useState("");
@@ -129,11 +130,7 @@ export function TenderDetail({ tender: initial }: { tender: Tender }) {
   }
 
   async function handleSave() {
-    await save({
-      ...form,
-      budget: form.budget || null,
-      deadline: form.deadline || null,
-    });
+    await save({ ...form, budget: form.budget || null, deadline: form.deadline || null });
     setEditing(false);
   }
 
@@ -210,6 +207,34 @@ export function TenderDetail({ tender: initial }: { tender: Tender }) {
     }
   }
 
+  async function handleReview(decision: "APPROVED" | "REJECTED") {
+    setReviewSubmitting(true);
+    setError("");
+    setSuccess("");
+    try {
+      const res = await fetch(`/api/tenders/${tender.id}/review`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ decision }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error || "Review action failed");
+        return;
+      }
+      setSuccess(decision === "APPROVED" ? "Tender approved." : "Tender sent back for further work.");
+      setTender((current) => ({
+        ...current,
+        status: decision === "APPROVED" ? "APPROVED" : "IN_REVIEW",
+      }));
+      router.refresh();
+    } catch {
+      setError("Review action failed");
+    } finally {
+      setReviewSubmitting(false);
+    }
+  }
+
   async function handleDelete() {
     if (!confirm("Delete this tender? This cannot be undone.")) return;
     setDeleting(true);
@@ -260,26 +285,16 @@ export function TenderDetail({ tender: initial }: { tender: Tender }) {
         </div>
 
         <div className="flex flex-wrap gap-2">
-          <button onClick={handleRunEngine} disabled={engineRunning} className="rounded-lg bg-black px-3 py-2 text-sm text-white hover:bg-slate-800 disabled:opacity-50">
-            {engineRunning ? "Running Engine..." : "Run Tender Engine"}
-          </button>
-          <button onClick={handleGenerateDocuments} disabled={docGenerating || tender.generatedDocuments.length === 0} className="rounded-lg bg-slate-800 px-3 py-2 text-sm text-white hover:bg-slate-900 disabled:opacity-50">
-            {docGenerating ? "Generating Docs..." : "Generate Documents"}
-          </button>
-          <button onClick={handlePrepareExport} disabled={exportPreparing || generatedFilesReady === 0} className="rounded-lg bg-emerald-600 px-3 py-2 text-sm text-white hover:bg-emerald-700 disabled:opacity-50">
-            {exportPreparing ? "Preparing Export..." : "Prepare Export"}
-          </button>
+          <button onClick={handleRunEngine} disabled={engineRunning} className="rounded-lg bg-black px-3 py-2 text-sm text-white hover:bg-slate-800 disabled:opacity-50">{engineRunning ? "Running Engine..." : "Run Tender Engine"}</button>
+          <button onClick={handleGenerateDocuments} disabled={docGenerating || tender.generatedDocuments.length === 0} className="rounded-lg bg-slate-800 px-3 py-2 text-sm text-white hover:bg-slate-900 disabled:opacity-50">{docGenerating ? "Generating Docs..." : "Generate Documents"}</button>
+          <button onClick={handlePrepareExport} disabled={exportPreparing || generatedFilesReady === 0} className="rounded-lg bg-emerald-600 px-3 py-2 text-sm text-white hover:bg-emerald-700 disabled:opacity-50">{exportPreparing ? "Preparing Export..." : "Prepare Export"}</button>
+          <button onClick={() => handleReview("APPROVED")} disabled={reviewSubmitting || generatedFilesReady === 0} className="rounded-lg bg-green-600 px-3 py-2 text-sm text-white hover:bg-green-700 disabled:opacity-50">Approve</button>
+          <button onClick={() => handleReview("REJECTED")} disabled={reviewSubmitting} className="rounded-lg border border-amber-200 px-3 py-2 text-sm text-amber-700 hover:bg-amber-50 disabled:opacity-50">Send Back</button>
           {NEXT_STATUS[tender.status as keyof typeof NEXT_STATUS] && (
-            <button onClick={handleStatusAdvance} disabled={saving} className="rounded-lg bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700 disabled:opacity-50">
-              Move to {formatTenderStatus(NEXT_STATUS[tender.status as keyof typeof NEXT_STATUS] as string)}
-            </button>
+            <button onClick={handleStatusAdvance} disabled={saving} className="rounded-lg bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700 disabled:opacity-50">Move to {formatTenderStatus(NEXT_STATUS[tender.status as keyof typeof NEXT_STATUS] as string)}</button>
           )}
-          <button onClick={() => setEditing((value) => !value)} className="rounded-lg border px-3 py-2 text-sm hover:bg-slate-50">
-            {editing ? "Cancel" : "Edit"}
-          </button>
-          <button onClick={handleDelete} disabled={deleting} className="rounded-lg border border-red-200 px-3 py-2 text-sm text-red-600 hover:bg-red-50 disabled:opacity-50">
-            {deleting ? "Deleting..." : "Delete"}
-          </button>
+          <button onClick={() => setEditing((value) => !value)} className="rounded-lg border px-3 py-2 text-sm hover:bg-slate-50">{editing ? "Cancel" : "Edit"}</button>
+          <button onClick={handleDelete} disabled={deleting} className="rounded-lg border border-red-200 px-3 py-2 text-sm text-red-600 hover:bg-red-50 disabled:opacity-50">{deleting ? "Deleting..." : "Delete"}</button>
         </div>
       </div>
 
@@ -336,32 +351,24 @@ export function TenderDetail({ tender: initial }: { tender: Tender }) {
               <h2 className="text-lg font-semibold text-slate-900">Tender files</h2>
               <label className="cursor-pointer rounded-lg bg-slate-100 px-3 py-2 text-sm hover:bg-slate-200">{uploading ? "Uploading..." : "+ Upload file"}<input type="file" className="hidden" onChange={handleUpload} disabled={uploading} /></label>
             </div>
-            {tender.files.length === 0 ? <p className="text-sm text-slate-400">No tender files uploaded yet.</p> : (
-              <ul className="space-y-3">{tender.files.map((file) => <li key={file.id} className="flex items-center justify-between rounded-xl border px-4 py-3"><div><p className="text-sm font-medium text-slate-900">{file.originalFileName}</p><p className="text-xs text-slate-500">{formatBytes(file.size)} · {file.mimeType}</p></div><p className="text-xs text-slate-400">{formatDate(file.createdAt)}</p></li>)}</ul>
-            )}
+            {tender.files.length === 0 ? <p className="text-sm text-slate-400">No tender files uploaded yet.</p> : <ul className="space-y-3">{tender.files.map((file) => <li key={file.id} className="flex items-center justify-between rounded-xl border px-4 py-3"><div><p className="text-sm font-medium text-slate-900">{file.originalFileName}</p><p className="text-xs text-slate-500">{formatBytes(file.size)} · {file.mimeType}</p></div><p className="text-xs text-slate-400">{formatDate(file.createdAt)}</p></li>)}</ul>}
           </div>
         </div>
 
         <div className="space-y-6">
           <div className="rounded-2xl border bg-white p-6 shadow-sm">
             <h2 className="text-lg font-semibold text-slate-900">Requirement snapshot</h2>
-            {tender.requirements.length === 0 ? <p className="mt-3 text-sm text-slate-400">Tender analysis has not created structured requirements yet.</p> : (
-              <ul className="mt-4 space-y-3">{tender.requirements.slice(0, 5).map((req) => <li key={req.id} className="rounded-xl border px-4 py-3"><p className="text-sm font-medium text-slate-900">{req.title}</p><p className="mt-1 text-xs text-slate-500">{req.priority} · {req.requirementType}</p><p className="mt-2 text-sm text-slate-600">{req.description}</p></li>)}</ul>
-            )}
+            {tender.requirements.length === 0 ? <p className="mt-3 text-sm text-slate-400">Tender analysis has not created structured requirements yet.</p> : <ul className="mt-4 space-y-3">{tender.requirements.slice(0, 5).map((req) => <li key={req.id} className="rounded-xl border px-4 py-3"><p className="text-sm font-medium text-slate-900">{req.title}</p><p className="mt-1 text-xs text-slate-500">{req.priority} · {req.requirementType}</p><p className="mt-2 text-sm text-slate-600">{req.description}</p></li>)}</ul>}
           </div>
 
           <div className="rounded-2xl border bg-white p-6 shadow-sm">
             <h2 className="text-lg font-semibold text-slate-900">Compliance gaps</h2>
-            {tender.complianceGaps.length === 0 ? <p className="mt-3 text-sm text-slate-400">No compliance gaps recorded yet.</p> : (
-              <ul className="mt-4 space-y-3">{tender.complianceGaps.slice(0, 5).map((gap) => <li key={gap.id} className="rounded-xl border px-4 py-3"><div className="flex items-center justify-between gap-2"><p className="text-sm font-medium text-slate-900">{gap.title}</p><span className="text-xs font-medium text-amber-700">{gap.severity}</span></div><p className="mt-2 text-sm text-slate-600">{gap.description}</p></li>)}</ul>
-            )}
+            {tender.complianceGaps.length === 0 ? <p className="mt-3 text-sm text-slate-400">No compliance gaps recorded yet.</p> : <ul className="mt-4 space-y-3">{tender.complianceGaps.slice(0, 5).map((gap) => <li key={gap.id} className="rounded-xl border px-4 py-3"><div className="flex items-center justify-between gap-2"><p className="text-sm font-medium text-slate-900">{gap.title}</p><span className="text-xs font-medium text-amber-700">{gap.severity}</span></div><p className="mt-2 text-sm text-slate-600">{gap.description}</p></li>)}</ul>}
           </div>
 
           <div className="rounded-2xl border bg-white p-6 shadow-sm">
             <h2 className="text-lg font-semibold text-slate-900">Generated outputs</h2>
-            {tender.generatedDocuments.length === 0 ? <p className="mt-3 text-sm text-slate-400">No generated documents have been planned yet.</p> : (
-              <ul className="mt-4 space-y-3">{tender.generatedDocuments.slice(0, 5).map((doc) => <li key={doc.id} className="rounded-xl border px-4 py-3"><p className="text-sm font-medium text-slate-900">{doc.name}</p><p className="mt-1 text-xs text-slate-500">{doc.documentType} · {doc.generationStatus} · {doc.validationStatus}</p><p className="mt-1 text-xs text-slate-500">{doc.storagePath ? "File generated" : "Plan only"}</p></li>)}</ul>
-            )}
+            {tender.generatedDocuments.length === 0 ? <p className="mt-3 text-sm text-slate-400">No generated documents have been planned yet.</p> : <ul className="mt-4 space-y-3">{tender.generatedDocuments.slice(0, 5).map((doc) => <li key={doc.id} className="rounded-xl border px-4 py-3"><p className="text-sm font-medium text-slate-900">{doc.name}</p><p className="mt-1 text-xs text-slate-500">{doc.documentType} · {doc.generationStatus} · {doc.validationStatus}</p><p className="mt-1 text-xs text-slate-500">{doc.storagePath ? "File generated" : "Plan only"}</p>{doc.storagePath && <a href={`/api/generated-documents/${doc.id}/download`} className="mt-2 inline-block text-xs text-blue-600 hover:underline">Download file</a>}</li>)}</ul>}
           </div>
         </div>
       </div>
