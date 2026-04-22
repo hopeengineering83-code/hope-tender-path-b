@@ -3,6 +3,7 @@ import { getSession } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { analyzeWithAI, isAIEnabled } from "../../../../../lib/ai";
 import { analyzeTender } from "../../../../../lib/engine/analysis";
+import { logAction } from "../../../../../lib/audit";
 
 export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const userId = await getSession();
@@ -11,21 +12,46 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   await prismaReady;
   const { id } = await params;
 
-  const tender = await prisma.tender.findFirst({
-    where: { id, userId },
-    include: { files: true },
-  });
+  const [tender, company] = await Promise.all([
+    prisma.tender.findFirst({
+      where: { id, userId },
+      include: { files: true },
+    }),
+    prisma.company.findUnique({
+      where: { userId },
+      include: {
+        documents: {
+          select: { category: true, originalFileName: true, extractedText: true },
+          take: 5, // limit context size
+          orderBy: { createdAt: "desc" },
+        },
+      },
+    }),
+  ]);
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
 
   try {
     let analysisResult;
 
     if (isAIEnabled()) {
+      // Priority: extractedText from uploaded docs, then metadata
+      const fileTexts = tender.files
+        .map((f) => f.extractedText
+          ? `[FILE: ${f.originalFileName}]\n${f.extractedText.slice(0, 2000)}`
+          : `[FILE: ${f.originalFileName} ${f.classification ?? ""}]`)
+        .join("\n\n");
+
+      // Include company document context so AI can assess coverage
+      const companyContext = company?.documents?.length
+        ? `\n\nCOMPANY DOCUMENTS AVAILABLE:\n${company.documents.map((d) => `- ${d.originalFileName} (${d.category})`).join("\n")}`
+        : "";
+
       const tenderContent = [
-        tender.title,
-        tender.description,
-        tender.intakeSummary,
-        ...tender.files.map((f) => `${f.originalFileName} ${f.classification ?? ""}`),
+        `TENDER: ${tender.title}`,
+        tender.description ? `DESCRIPTION: ${tender.description}` : null,
+        tender.intakeSummary ? `INTAKE NOTES: ${tender.intakeSummary}` : null,
+        fileTexts || null,
+        companyContext || null,
       ].filter(Boolean).join("\n\n");
 
       const aiResult = await analyzeWithAI(tenderContent);
@@ -43,6 +69,9 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
               priority: req.priority,
               exactFileName: req.exactFileName ?? null,
               requiredQuantity: req.requiredQuantity ?? null,
+              pageLimit: req.pageLimit ?? null,
+              restrictions: req.restrictions ?? null,
+              sectionReference: req.sectionReference ?? null,
             },
           });
         }
@@ -84,6 +113,15 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       });
       analysisResult = { ai: false, summary: result.summary, requirementCount: result.requirements.length };
     }
+
+    await logAction({
+      userId,
+      action: "AI_ANALYZE",
+      entityType: "Tender",
+      entityId: id,
+      description: `Analyzed tender "${tender.title}" — ${analysisResult.requirementCount} requirements extracted`,
+      metadata: { ai: analysisResult.ai, requirementCount: analysisResult.requirementCount },
+    });
 
     const updated = await prisma.tender.findUnique({
       where: { id },

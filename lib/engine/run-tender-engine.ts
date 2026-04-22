@@ -19,6 +19,7 @@ export async function runTenderEngine(tenderId: string, userId: string) {
     include: {
       experts: true,
       projects: true,
+      documents: { select: { id: true, category: true, originalFileName: true, extractedText: true } },
     },
   });
 
@@ -58,9 +59,10 @@ export async function runTenderEngine(tenderId: string, userId: string) {
       companyId: company.id,
       experts: company.experts,
       projects: company.projects,
+      documents: company.documents,
     };
 
-    const matching = buildMatches(analysis.requirements, knowledge);
+    const matching = buildMatches(analysis.requirements, knowledge, tender.category, tender.title);
     for (const match of matching.expertMatches) {
       await tx.tenderExpertMatch.create({
         data: {

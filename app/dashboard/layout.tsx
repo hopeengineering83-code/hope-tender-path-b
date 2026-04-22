@@ -5,9 +5,10 @@ import { prisma, prismaReady } from "../../lib/prisma";
 import { LogoutButton } from "../../components/logout-button";
 import type { ReactNode } from "react";
 
-const navGroups = [
+const NAV_GROUPS_BASE = [
   {
     title: "Workspace",
+    roles: null,
     links: [
       { href: "/dashboard", label: "Overview", icon: "⬛" },
       { href: "/dashboard/tenders", label: "Tenders", icon: "📋" },
@@ -16,6 +17,7 @@ const navGroups = [
   },
   {
     title: "Company",
+    roles: ["ADMIN", "PROPOSAL_MANAGER"] as string[] | null,
     links: [
       { href: "/dashboard/company", label: "Knowledge Vault", icon: "🏢" },
       { href: "/dashboard/assets", label: "Assets Manager", icon: "🖼️" },
@@ -24,6 +26,7 @@ const navGroups = [
   },
   {
     title: "Engine",
+    roles: null,
     links: [
       { href: "/dashboard/analysis", label: "Tender Analysis", icon: "🔎" },
       { href: "/dashboard/matching", label: "Matching", icon: "🧩" },
@@ -31,6 +34,13 @@ const navGroups = [
       { href: "/dashboard/documents", label: "Generated Docs", icon: "📄" },
       { href: "/dashboard/export", label: "Export Packages", icon: "📦" },
       { href: "/dashboard/activity", label: "Activity Logs", icon: "📝" },
+    ],
+  },
+  {
+    title: "Admin",
+    roles: ["ADMIN"] as string[] | null,
+    links: [
+      { href: "/dashboard/users", label: "User Management", icon: "👥" },
     ],
   },
 ];
@@ -52,7 +62,9 @@ export default async function DashboardLayout({ children }: { children: ReactNod
         </div>
 
         <nav className="space-y-6 px-4 py-5">
-          {navGroups.map((group) => (
+          {NAV_GROUPS_BASE.filter(
+            (g) => !g.roles || g.roles.includes(user.role)
+          ).map((group) => (
             <div key={group.title}>
               <p className="px-3 pb-2 text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">
                 {group.title}

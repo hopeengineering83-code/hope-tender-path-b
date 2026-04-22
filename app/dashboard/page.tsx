@@ -11,13 +11,18 @@ export default async function DashboardPage() {
   if (!userId) redirect("/login");
   await prismaReady;
 
-  const [tenders, company] = await Promise.all([
+  const [tenders, company, recentActivity] = await Promise.all([
     prisma.tender.findMany({
       where: { userId },
       include: { files: true, requirements: true, complianceGaps: true, generatedDocuments: true },
       orderBy: { createdAt: "desc" },
     }),
     prisma.company.findUnique({ where: { userId } }),
+    prisma.auditLog.findMany({
+      where: { userId },
+      orderBy: { createdAt: "desc" },
+      take: 8,
+    }),
   ]);
 
   const now = new Date();
@@ -181,6 +186,28 @@ export default async function DashboardPage() {
               <p className="mt-0.5 text-xs text-slate-500">{item.desc}</p>
             </Link>
           ))}
+
+          {recentActivity.length > 0 && (
+            <div className="rounded-2xl border bg-white p-4 shadow-sm">
+              <div className="flex items-center justify-between mb-3">
+                <p className="font-semibold text-slate-900 text-sm">Recent Activity</p>
+                <Link href="/dashboard/activity" className="text-xs text-blue-600 hover:underline">View all</Link>
+              </div>
+              <ul className="space-y-2">
+                {recentActivity.map((log) => (
+                  <li key={log.id} className="flex items-start gap-2">
+                    <span className="mt-0.5 h-1.5 w-1.5 shrink-0 rounded-full bg-blue-400" />
+                    <div className="min-w-0">
+                      <p className="text-xs text-slate-700 truncate">{log.description}</p>
+                      <p className="text-xs text-slate-400">
+                        {new Date(log.createdAt).toLocaleDateString()} · {log.action}
+                      </p>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
         </div>
       </div>
     </div>

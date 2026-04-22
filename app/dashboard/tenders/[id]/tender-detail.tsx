@@ -38,6 +38,10 @@ type GeneratedDocument = {
   documentType: string;
   generationStatus: string;
   validationStatus: string;
+  reviewStatus: string;
+  reviewNotes: string | null;
+  exactFileName?: string | null;
+  fileContent?: string | null;
 };
 
 type Tender = {
@@ -84,6 +88,8 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
   const [generatingDocs, setGeneratingDocs] = useState(false);
   const [validating, setValidating] = useState(false);
   const [validationReport, setValidationReport] = useState<{ passed: boolean; issues: { code: string; severity: string; message: string }[] } | null>(null);
+  const [reviewingDocId, setReviewingDocId] = useState<string | null>(null);
+  const [reviewNote, setReviewNote] = useState("");
   const [deleting, setDeleting] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
@@ -233,6 +239,18 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
 
   function downloadZip() {
     window.open(`/api/tenders/${tender.id}/download?type=zip`, "_blank");
+  }
+
+  async function submitReview(docId: string, reviewStatus: string) {
+    await fetch(`/api/tenders/${tender.id}/documents/${docId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reviewStatus, reviewNotes: reviewNote }),
+    });
+    setReviewingDocId(null);
+    setReviewNote("");
+    const res = await fetch(`/api/tenders/${tender.id}`);
+    if (res.ok) { const d = await res.json() as { tender: Tender }; setTender(d.tender); }
   }
 
   async function handleDelete() {
@@ -487,12 +505,12 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
               <p className="text-sm text-slate-400">Run the engine then click "Generate Docs" to create submission-ready files.</p>
             ) : (
               <ul className="space-y-2">
-                {(tender.generatedDocuments as (GeneratedDocument & { exactFileName?: string | null; fileContent?: string | null })[]).slice(0, 8).map((doc) => (
-                  <li key={doc.id} className="rounded-xl border px-3 py-2.5">
+                {tender.generatedDocuments.slice(0, 8).map((doc) => (
+                  <li key={doc.id} className="rounded-xl border px-3 py-2.5 space-y-2">
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
                         <p className="text-sm font-medium text-slate-900 truncate">{doc.exactFileName ?? doc.name}</p>
-                        <div className="flex gap-2 mt-0.5">
+                        <div className="flex flex-wrap gap-2 mt-0.5">
                           <span className={`text-xs ${doc.generationStatus === "GENERATED" ? "text-green-600" : "text-slate-400"}`}>
                             {doc.generationStatus}
                           </span>
@@ -501,12 +519,51 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
                               · {doc.validationStatus}
                             </span>
                           )}
+                          {doc.reviewStatus && doc.reviewStatus !== "PENDING" && (
+                            <span className={`text-xs font-medium ${
+                              doc.reviewStatus === "APPROVED" ? "text-green-700" :
+                              doc.reviewStatus === "REJECTED" ? "text-red-600" :
+                              "text-amber-600"
+                            }`}>
+                              · {doc.reviewStatus}
+                            </span>
+                          )}
+                        </div>
+                        {doc.reviewNotes && (
+                          <p className="mt-1 text-xs text-slate-500 italic">&ldquo;{doc.reviewNotes}&rdquo;</p>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        {doc.generationStatus === "GENERATED" && (
+                          <button
+                            onClick={() => { setReviewingDocId(reviewingDocId === doc.id ? null : doc.id); setReviewNote(doc.reviewNotes ?? ""); }}
+                            className="text-xs text-slate-500 hover:text-slate-800 border rounded px-2 py-0.5"
+                          >
+                            Review
+                          </button>
+                        )}
+                        {doc.generationStatus === "GENERATED" && (
+                          <button onClick={() => downloadDocById(doc.id)} className="text-xs text-blue-600 hover:underline">↓</button>
+                        )}
+                      </div>
+                    </div>
+                    {reviewingDocId === doc.id && (
+                      <div className="border-t pt-2 space-y-2">
+                        <textarea
+                          className="w-full rounded border px-2 py-1.5 text-xs resize-none"
+                          rows={2}
+                          placeholder="Review notes (optional)"
+                          value={reviewNote}
+                          onChange={(e) => setReviewNote(e.target.value)}
+                        />
+                        <div className="flex gap-1.5">
+                          <button onClick={() => submitReview(doc.id, "APPROVED")} className="rounded bg-green-600 px-2.5 py-1 text-xs text-white hover:bg-green-700">Approve</button>
+                          <button onClick={() => submitReview(doc.id, "NEEDS_REVISION")} className="rounded bg-amber-500 px-2.5 py-1 text-xs text-white hover:bg-amber-600">Needs Revision</button>
+                          <button onClick={() => submitReview(doc.id, "REJECTED")} className="rounded bg-red-600 px-2.5 py-1 text-xs text-white hover:bg-red-700">Reject</button>
+                          <button onClick={() => setReviewingDocId(null)} className="rounded border px-2.5 py-1 text-xs">Cancel</button>
                         </div>
                       </div>
-                      {doc.generationStatus === "GENERATED" && (
-                        <button onClick={() => downloadDocById(doc.id)} className="shrink-0 text-xs text-blue-600 hover:underline">↓</button>
-                      )}
-                    </div>
+                    )}
                   </li>
                 ))}
               </ul>
