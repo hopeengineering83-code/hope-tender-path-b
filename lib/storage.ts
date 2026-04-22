@@ -8,7 +8,7 @@ async function ensureDir(dir: string) {
   await mkdir(dir, { recursive: true });
 }
 
-export async function saveUploadedFile(file: File, scope: "company" | "tender" | "generated" = "tender") {
+export async function saveUploadedFile(file: File, scope: "company" | "tender" | "generated" | "assets" = "tender") {
   const buffer = Buffer.from(await file.arrayBuffer());
   const ext = path.extname(file.name);
   const dir = path.join(STORAGE_ROOT, scope);

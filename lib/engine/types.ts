@@ -10,6 +10,7 @@ export type RequirementDraft = {
   requirementType: string;
   priority: string;
   requiredQuantity?: number | null;
+  pageLimit?: number | null;
   exactFileName?: string | null;
   exactOrder?: number | null;
   restrictions?: string | null;
