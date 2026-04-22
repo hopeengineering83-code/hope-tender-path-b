@@ -81,6 +81,7 @@ export function TenderDetail({ tender: initial }: { tender: Tender }) {
   const [saving, setSaving] = useState(false);
   const [engineRunning, setEngineRunning] = useState(false);
   const [docGenerating, setDocGenerating] = useState(false);
+  const [validating, setValidating] = useState(false);
   const [exportPreparing, setExportPreparing] = useState(false);
   const [reviewSubmitting, setReviewSubmitting] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -187,6 +188,30 @@ export function TenderDetail({ tender: initial }: { tender: Tender }) {
     }
   }
 
+  async function handleValidate() {
+    setValidating(true);
+    setError("");
+    setSuccess("");
+    try {
+      const res = await fetch(`/api/tenders/${tender.id}/validate`, { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error || "Validation failed");
+        return;
+      }
+      if (data.validation?.validationPassed) {
+        setSuccess("Tender validation passed. The package is closer to submission readiness.");
+      } else {
+        setError((data.validation?.issues || []).join(" ") || "Validation failed.");
+      }
+      router.refresh();
+    } catch {
+      setError("Validation failed");
+    } finally {
+      setValidating(false);
+    }
+  }
+
   async function handlePrepareExport() {
     setExportPreparing(true);
     setError("");
@@ -287,6 +312,7 @@ export function TenderDetail({ tender: initial }: { tender: Tender }) {
         <div className="flex flex-wrap gap-2">
           <button onClick={handleRunEngine} disabled={engineRunning} className="rounded-lg bg-black px-3 py-2 text-sm text-white hover:bg-slate-800 disabled:opacity-50">{engineRunning ? "Running Engine..." : "Run Tender Engine"}</button>
           <button onClick={handleGenerateDocuments} disabled={docGenerating || tender.generatedDocuments.length === 0} className="rounded-lg bg-slate-800 px-3 py-2 text-sm text-white hover:bg-slate-900 disabled:opacity-50">{docGenerating ? "Generating Docs..." : "Generate Documents"}</button>
+          <button onClick={handleValidate} disabled={validating || generatedFilesReady === 0} className="rounded-lg bg-violet-600 px-3 py-2 text-sm text-white hover:bg-violet-700 disabled:opacity-50">{validating ? "Validating..." : "Validate Package"}</button>
           <button onClick={handlePrepareExport} disabled={exportPreparing || generatedFilesReady === 0} className="rounded-lg bg-emerald-600 px-3 py-2 text-sm text-white hover:bg-emerald-700 disabled:opacity-50">{exportPreparing ? "Preparing Export..." : "Prepare Export"}</button>
           <button onClick={() => handleReview("APPROVED")} disabled={reviewSubmitting || generatedFilesReady === 0} className="rounded-lg bg-green-600 px-3 py-2 text-sm text-white hover:bg-green-700 disabled:opacity-50">Approve</button>
           <button onClick={() => handleReview("REJECTED")} disabled={reviewSubmitting} className="rounded-lg border border-amber-200 px-3 py-2 text-sm text-amber-700 hover:bg-amber-50 disabled:opacity-50">Send Back</button>
