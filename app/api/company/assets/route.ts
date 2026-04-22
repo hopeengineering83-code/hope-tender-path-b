@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSession } from "../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../lib/prisma";
-import { saveUploadedFile } from "../../../../lib/storage";
 import { logAction } from "../../../../lib/audit";
 
 const VALID_TYPES = ["LETTERHEAD", "LOGO", "HEADER", "FOOTER", "SIGNATURE", "STAMP"];
@@ -16,6 +15,10 @@ export async function GET(_req: Request) {
 
   const assets = await prisma.companyAsset.findMany({
     where: { companyId: company.id },
+    select: {
+      id: true, assetType: true, originalFileName: true, mimeType: true,
+      size: true, isActive: true, createdAt: true,
+    },
     orderBy: { createdAt: "desc" },
   });
 
@@ -39,23 +42,30 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: `assetType must be one of: ${VALID_TYPES.join(", ")}` }, { status: 400 });
   }
 
+  const buffer = Buffer.from(await file.arrayBuffer());
+  const base64Content = buffer.toString("base64");
+
   // Deactivate any previous asset of the same type
   await prisma.companyAsset.updateMany({
     where: { companyId: company.id, assetType },
     data: { isActive: false },
   });
 
-  const saved = await saveUploadedFile(file, "assets");
   const asset = await prisma.companyAsset.create({
     data: {
       companyId: company.id,
       assetType,
-      fileName: saved.fileName,
-      originalFileName: saved.originalFileName,
-      mimeType: saved.mimeType,
-      size: saved.size,
-      storagePath: saved.storagePath,
+      fileName: file.name,
+      originalFileName: file.name,
+      mimeType: file.type || "application/octet-stream",
+      size: file.size,
+      storagePath: "",
+      fileContent: base64Content,
       isActive: true,
+    },
+    select: {
+      id: true, assetType: true, originalFileName: true, mimeType: true,
+      size: true, isActive: true, createdAt: true,
     },
   });
 
