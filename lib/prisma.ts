@@ -233,11 +233,75 @@ async function bootstrap(client: PrismaClient): Promise<void> {
       "exactFileName" TEXT,
       "exactOrder" INTEGER,
       "contentSummary" TEXT,
+      "fileContent" TEXT,
       "validationStatus" TEXT NOT NULL DEFAULT 'PENDING',
       "generationStatus" TEXT NOT NULL DEFAULT 'PLANNED',
       "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       "updatedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY ("tenderId") REFERENCES "Tender"("id") ON DELETE CASCADE ON UPDATE CASCADE
+    )
+  `);
+
+  await client.$executeRawUnsafe(`
+    CREATE TABLE IF NOT EXISTS "CompanyDocument" (
+      "id" TEXT NOT NULL PRIMARY KEY,
+      "companyId" TEXT NOT NULL,
+      "fileName" TEXT NOT NULL,
+      "originalFileName" TEXT NOT NULL,
+      "mimeType" TEXT NOT NULL,
+      "size" INTEGER NOT NULL,
+      "storagePath" TEXT NOT NULL DEFAULT '',
+      "category" TEXT NOT NULL DEFAULT 'OTHER',
+      "extractedText" TEXT,
+      "metadata" TEXT NOT NULL DEFAULT '{}',
+      "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "updatedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY ("companyId") REFERENCES "Company"("id") ON DELETE CASCADE ON UPDATE CASCADE
+    )
+  `);
+
+  await client.$executeRawUnsafe(`
+    CREATE TABLE IF NOT EXISTS "CompanyAsset" (
+      "id" TEXT NOT NULL PRIMARY KEY,
+      "companyId" TEXT NOT NULL,
+      "assetType" TEXT NOT NULL,
+      "fileName" TEXT NOT NULL,
+      "originalFileName" TEXT NOT NULL,
+      "mimeType" TEXT NOT NULL,
+      "size" INTEGER NOT NULL,
+      "storagePath" TEXT NOT NULL DEFAULT '',
+      "isActive" INTEGER NOT NULL DEFAULT 1,
+      "metadata" TEXT NOT NULL DEFAULT '{}',
+      "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "updatedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY ("companyId") REFERENCES "Company"("id") ON DELETE CASCADE ON UPDATE CASCADE
+    )
+  `);
+
+  await client.$executeRawUnsafe(`
+    CREATE TABLE IF NOT EXISTS "ExportPackage" (
+      "id" TEXT NOT NULL PRIMARY KEY,
+      "tenderId" TEXT NOT NULL,
+      "status" TEXT NOT NULL DEFAULT 'PREPARING',
+      "fileList" TEXT NOT NULL DEFAULT '[]',
+      "downloadCount" INTEGER NOT NULL DEFAULT 0,
+      "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "updatedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY ("tenderId") REFERENCES "Tender"("id") ON DELETE CASCADE ON UPDATE CASCADE
+    )
+  `);
+
+  await client.$executeRawUnsafe(`
+    CREATE TABLE IF NOT EXISTS "AuditLog" (
+      "id" TEXT NOT NULL PRIMARY KEY,
+      "userId" TEXT,
+      "action" TEXT NOT NULL,
+      "entityType" TEXT,
+      "entityId" TEXT,
+      "description" TEXT NOT NULL,
+      "metadata" TEXT NOT NULL DEFAULT '{}',
+      "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE SET NULL ON UPDATE CASCADE
     )
   `);
 

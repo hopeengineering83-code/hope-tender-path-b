@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { prisma, prismaReady } from "../../../../lib/prisma";
 import { createSession } from "../../../../lib/auth";
+import { logAction } from "../../../../lib/audit";
 
 export async function POST(req: Request) {
   try {
@@ -28,6 +29,8 @@ export async function POST(req: Request) {
     }
 
     await createSession(user.id);
+
+    await logAction({ userId: user.id, action: "LOGIN", description: `User ${user.email} logged in` });
 
     return NextResponse.json({ success: true });
   } catch (error) {
