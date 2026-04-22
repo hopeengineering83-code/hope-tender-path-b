@@ -1,0 +1,37 @@
+{
+  "name": "Hope Tender Proposal Generator",
+  "short_name": "Hope Tender",
+  "description": "AI-powered tender proposal generation and compliance engine",
+  "start_url": "/dashboard",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#f8fafc",
+  "theme_color": "#0f172a",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable any"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable any"
+    }
+  ],
+  "categories": ["business", "productivity"],
+  "shortcuts": [
+    {
+      "name": "New Tender",
+      "url": "/dashboard/tenders/new",
+      "description": "Create a new tender proposal"
+    },
+    {
+      "name": "Dashboard",
+      "url": "/dashboard",
+      "description": "Go to dashboard"
+    }
+  ]
+}

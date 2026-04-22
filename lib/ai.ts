@@ -18,6 +18,9 @@ export type AIRequirement = {
   priority: string;
   exactFileName?: string | null;
   requiredQuantity?: number | null;
+  pageLimit?: number | null;
+  restrictions?: string | null;
+  sectionReference?: string | null;
 };
 
 export type AIAnalysisResult = {
@@ -50,7 +53,10 @@ Return a JSON object with this exact structure:
       "requirementType": one of ["TECHNICAL","FINANCIAL","ELIGIBILITY","EXPERT","PROJECT_EXPERIENCE","FORMAT","SUBMISSION_RULE","DECLARATION","ANNEX","SCHEDULE","FORM"],
       "priority": one of ["MANDATORY","SCORED","INFORMATIONAL"],
       "exactFileName": "filename if explicitly named, else null",
-      "requiredQuantity": number if specified, else null
+      "requiredQuantity": number if specified, else null,
+      "pageLimit": page limit number if specified, else null,
+      "restrictions": "any restrictions or format rules for this requirement, else null",
+      "sectionReference": "section number or name in the tender document, else null"
     }
   ],
   "exactFileNaming": ["list of exact filenames required by the tender"],

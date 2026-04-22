@@ -381,6 +381,21 @@ async function bootstrap(client: PrismaClient): Promise<void> {
       });
     }
   }
+
+  // Idempotent column additions (ALTER TABLE is a no-op if column already exists)
+  const alterations = [
+    `ALTER TABLE "GeneratedDocument" ADD COLUMN "reviewStatus" TEXT NOT NULL DEFAULT 'PENDING'`,
+    `ALTER TABLE "GeneratedDocument" ADD COLUMN "reviewNotes" TEXT`,
+    `ALTER TABLE "GeneratedDocument" ADD COLUMN "reviewedBy" TEXT`,
+    `ALTER TABLE "GeneratedDocument" ADD COLUMN "reviewedAt" DATETIME`,
+  ];
+  for (const sql of alterations) {
+    try {
+      await client.$executeRawUnsafe(sql);
+    } catch {
+      // Column already exists — safe to ignore
+    }
+  }
 }
 
 export const prismaReady: Promise<void> = (() => {

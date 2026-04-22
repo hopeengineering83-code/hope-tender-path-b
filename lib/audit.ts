@@ -9,7 +9,9 @@ export type AuditAction =
   | "TENDER_ANALYZED" | "TENDER_MATCHED" | "TENDER_GENERATED" | "TENDER_VALIDATED" | "TENDER_EXPORTED"
   | "ENGINE_RUN" | "AI_ANALYZE" | "AI_PROPOSAL"
   | "EXPORT_PACKAGE_CREATE" | "EXPORT_PACKAGE_DOWNLOAD"
-  | "OVERRIDE" | "GAP_RESOLVED";
+  | "OVERRIDE" | "GAP_RESOLVED"
+  | "CREATE" | "UPDATE" | "DELETE"
+  | "DOCUMENT_REVIEW";
 
 export async function logAction(opts: {
   userId?: string;

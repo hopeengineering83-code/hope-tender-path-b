@@ -17,10 +17,18 @@ export type RequirementDraft = {
   sectionReference?: string | null;
 };
 
+export type CompanyDocumentSnapshot = {
+  id: string;
+  category: string;
+  originalFileName: string;
+  extractedText: string | null;
+};
+
 export type CompanyKnowledgeSnapshot = {
   companyId: string;
   experts: Expert[];
   projects: Project[];
+  documents?: CompanyDocumentSnapshot[];
 };
 
 export type AnalysisResult = {
