@@ -1,3 +1,4 @@
+import { DocumentGenerationStatus, ExportFormat, TenderStatus, ValidationStatus, WorkflowStage } from "@prisma/client";
 import { Packer, Paragraph, TextRun, HeadingLevel, Document } from "docx";
 import { NextResponse } from "next/server";
 import { getSession } from "../../../../../../lib/auth";
@@ -68,9 +69,9 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
         where: { id: doc.id },
         data: {
           storagePath: stored.storagePath,
-          generationStatus: "GENERATED",
-          validationStatus: "PASSED",
-          format: "DOCX",
+          generationStatus: DocumentGenerationStatus.GENERATED,
+          validationStatus: ValidationStatus.PASSED,
+          format: ExportFormat.DOCX,
         },
       });
 
@@ -80,8 +81,8 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     await prisma.tender.update({
       where: { id: tender.id },
       data: {
-        status: "GENERATED",
-        stage: "GENERATION",
+        status: TenderStatus.GENERATED,
+        stage: WorkflowStage.GENERATION,
       },
     });
 
