@@ -19,7 +19,15 @@ export async function GET(req: Request) {
     where: {
       userId,
       ...(status ? { status } : {}),
-      ...(q ? { OR: [{ title: { contains: q, mode: "insensitive" } }, { reference: { contains: q, mode: "insensitive" } }, { clientName: { contains: q, mode: "insensitive" } }] } : {}),
+      ...(q
+        ? {
+            OR: [
+              { title: { contains: q, mode: "insensitive" } },
+              { reference: { contains: q, mode: "insensitive" } },
+              { clientName: { contains: q, mode: "insensitive" } },
+            ],
+          }
+        : {}),
     },
     include: {
       files: { orderBy: { createdAt: "desc" } },
@@ -58,7 +66,6 @@ export async function POST(req: Request) {
         submissionMethod: body.submissionMethod || null,
         submissionAddress: body.submissionAddress || null,
         intakeSummary,
-        notes: body.notes || null,
         status: TenderStatus.DRAFT,
         stage: WorkflowStage.TENDER_INTAKE,
         userId,
