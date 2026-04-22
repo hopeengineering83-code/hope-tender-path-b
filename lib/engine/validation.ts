@@ -73,9 +73,17 @@ export async function validateTenderForSubmission(tenderId: string, userId: stri
     where: { tenderId: tender.id },
     data: {
       validationStatus: validationPassed ? "PASSED" : "FAILED",
-      generationStatus: validationPassed ? "VALIDATED" : undefined,
     },
   });
+
+  if (validationPassed) {
+    await prisma.generatedDocument.updateMany({
+      where: { tenderId: tender.id },
+      data: {
+        generationStatus: "VALIDATED",
+      },
+    });
+  }
 
   await prisma.tender.update({
     where: { id: tender.id },
