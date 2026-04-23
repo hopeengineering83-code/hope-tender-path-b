@@ -78,3 +78,28 @@ export async function requireUser() {
   if (!user) throw new Error("Unauthorized");
   return user;
 }
+
+export const ROLES = ["ADMIN", "PROPOSAL_MANAGER", "REVIEWER", "VIEWER"] as const;
+export type Role = (typeof ROLES)[number];
+
+export async function requireRole(...roles: Role[]) {
+  const user = await requireUser();
+  if (!roles.includes(user.role as Role)) {
+    throw new Error("Forbidden");
+  }
+  return user;
+}
+
+export function unauthorizedResponse() {
+  return new Response(JSON.stringify({ error: "Unauthorized" }), {
+    status: 401,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+export function forbiddenResponse() {
+  return new Response(JSON.stringify({ error: "Forbidden" }), {
+    status: 403,
+    headers: { "Content-Type": "application/json" },
+  });
+}
