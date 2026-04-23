@@ -357,7 +357,10 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
       requirements: true,
       expertMatches: { where: { isSelected: true }, include: { expert: true } },
       projectMatches: { where: { isSelected: true }, include: { project: true } },
-      generatedDocuments: true,
+      // Exclude fileContent — we only need metadata to decide what to generate/update
+      generatedDocuments: {
+        select: { id: true, name: true, documentType: true, exactFileName: true, exactOrder: true, generationStatus: true, contentSummary: true },
+      },
     },
   });
 

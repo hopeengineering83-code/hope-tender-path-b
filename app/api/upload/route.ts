@@ -68,6 +68,11 @@ export async function POST(req: Request) {
             classification,
             extractedText: extractedText || null,
           },
+          // Never return fileContent in API response — base64 doubles file size in transit
+          select: {
+            id: true, tenderId: true, fileName: true, originalFileName: true,
+            mimeType: true, size: true, classification: true, extractedText: true, createdAt: true,
+          },
         });
 
         await logAction({
@@ -106,6 +111,11 @@ export async function POST(req: Request) {
             category,
             extractedText: extractedText || null,
             metadata: JSON.stringify({ fileType: fileTypeLabel, autoDetected: !providedCategory || providedCategory === "AUTO" }),
+          },
+          // Never return fileContent in API response
+          select: {
+            id: true, companyId: true, fileName: true, originalFileName: true,
+            mimeType: true, size: true, category: true, extractedText: true, createdAt: true,
           },
         });
 

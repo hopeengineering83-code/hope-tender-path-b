@@ -316,6 +316,7 @@ async function bootstrap(client: PrismaClient): Promise<void> {
     "00000000-0000-0000-0000-000000000012",
   ];
 
+  // Create admin user if not present
   const count = await client.user.count({ where: { email: "admin@hope.local" } });
   if (count === 0) {
     const { default: bcrypt } = await import("bcryptjs");
@@ -324,10 +325,6 @@ async function bootstrap(client: PrismaClient): Promise<void> {
 
     await client.user.create({
       data: { id: ADMIN_ID, email: "admin@hope.local", name: "Admin", passwordHash, role: "ADMIN" },
-    });
-
-    await client.company.create({
-      data: { id: COMPANY_ID, name: "Hope Engineering", description: "Default company workspace", userId: ADMIN_ID },
     });
 
     const demoTenders = [
@@ -379,6 +376,19 @@ async function bootstrap(client: PrismaClient): Promise<void> {
       await client.tender.create({
         data: { ...t, userId: ADMIN_ID, createdAt: now, updatedAt: now },
       });
+    }
+  }
+
+  // Always ensure the admin company exists — checked independently so a partial
+  // bootstrap (user created, company missing) is healed on next cold start.
+  const companyExists = await client.company.count({ where: { userId: ADMIN_ID } });
+  if (companyExists === 0) {
+    try {
+      await client.company.create({
+        data: { id: COMPANY_ID, name: "Hope Engineering", description: "Default company workspace", userId: ADMIN_ID },
+      });
+    } catch {
+      // Race condition on concurrent cold starts — safe to ignore
     }
   }
 

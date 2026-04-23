@@ -21,10 +21,16 @@ export async function GET(req: Request) {
       ...(q ? { OR: [{ title: { contains: q } }, { reference: { contains: q } }, { clientName: { contains: q } }] } : {}),
     },
     include: {
-      files: { orderBy: { createdAt: "desc" } },
-      requirements: true,
-      complianceGaps: true,
-      generatedDocuments: true,
+      // Exclude fileContent / base64 fields to keep response small
+      files: {
+        orderBy: { createdAt: "desc" },
+        select: { id: true, fileName: true, originalFileName: true, mimeType: true, size: true, classification: true, extractedText: true, createdAt: true },
+      },
+      requirements: { select: { id: true, title: true, requirementType: true, priority: true, createdAt: true } },
+      complianceGaps: { select: { id: true, title: true, severity: true, isResolved: true } },
+      generatedDocuments: {
+        select: { id: true, name: true, documentType: true, generationStatus: true, validationStatus: true, reviewStatus: true, exactFileName: true, exactOrder: true },
+      },
     },
     orderBy: { createdAt: "desc" },
   });
@@ -63,10 +69,10 @@ export async function POST(req: Request) {
         userId,
       },
       include: {
-        files: true,
+        files: { select: { id: true, fileName: true, originalFileName: true, mimeType: true, size: true, classification: true, extractedText: true, createdAt: true } },
         requirements: true,
         complianceGaps: true,
-        generatedDocuments: true,
+        generatedDocuments: { select: { id: true, name: true, documentType: true, generationStatus: true, validationStatus: true, reviewStatus: true, exactFileName: true, exactOrder: true } },
       },
     });
 

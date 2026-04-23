@@ -57,7 +57,7 @@ export async function DELETE(
 
   await logAction({
     userId,
-    action: "TENDER_FILE_UPLOAD",
+    action: "DELETE",
     entityType: "TenderFile",
     entityId: fileId,
     description: `Deleted tender file "${file.originalFileName}" from tender "${tender.title}"`,

@@ -7,7 +7,12 @@ import { buildMatches } from "./matching";
 export async function runTenderEngine(tenderId: string, userId: string) {
   const tender = await prisma.tender.findFirst({
     where: { id: tenderId, userId },
-    include: { files: true },
+    include: {
+      // Only fetch metadata + extractedText — never load fileContent (base64) into memory
+      files: {
+        select: { id: true, originalFileName: true, mimeType: true, classification: true, extractedText: true },
+      },
+    },
   });
 
   if (!tender) {
@@ -134,12 +139,17 @@ export async function runTenderEngine(tenderId: string, userId: string) {
   return prisma.tender.findUnique({
     where: { id: tenderId },
     include: {
-      files: true,
+      files: {
+        select: { id: true, originalFileName: true, mimeType: true, size: true, classification: true, extractedText: true, createdAt: true },
+      },
       requirements: true,
       expertMatches: { orderBy: { score: "desc" }, include: { expert: true } },
       projectMatches: { orderBy: { score: "desc" }, include: { project: true } },
       complianceGaps: { orderBy: { createdAt: "desc" } },
-      generatedDocuments: { orderBy: { exactOrder: "asc" } },
+      generatedDocuments: {
+        orderBy: { exactOrder: "asc" },
+        select: { id: true, name: true, documentType: true, generationStatus: true, validationStatus: true, reviewStatus: true, exactFileName: true, exactOrder: true, contentSummary: true },
+      },
     },
   });
 }

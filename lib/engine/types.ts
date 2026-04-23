@@ -1,7 +1,16 @@
-import type { Expert, Project, Tender, TenderFile } from "@prisma/client";
+import type { Expert, Project, Tender } from "@prisma/client";
+
+// Only the fields the analysis engine actually reads from uploaded files
+export type TenderFileForAnalysis = {
+  id: string;
+  originalFileName: string;
+  mimeType: string;
+  classification: string | null;
+  extractedText: string | null;
+};
 
 export type TenderWithFiles = Tender & {
-  files: TenderFile[];
+  files: TenderFileForAnalysis[];
 };
 
 export type RequirementDraft = {

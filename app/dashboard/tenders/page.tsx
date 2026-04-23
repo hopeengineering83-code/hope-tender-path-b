@@ -38,10 +38,13 @@ export default async function TendersPage({
       ...(statusFilter ? { status: statusFilter } : {}),
       ...(q ? { title: { contains: q } } : {}),
     },
-    include: {
-      files: true,
-      requirements: true,
-      complianceGaps: true,
+    select: {
+      id: true, title: true, reference: true, clientName: true,
+      deadline: true, status: true, category: true, budget: true, currency: true,
+      createdAt: true, updatedAt: true,
+      // Only counts — never fetch fileContent, extractedText, or base64 data
+      _count: { select: { files: true, requirements: true } },
+      complianceGaps: { select: { id: true, isResolved: true, severity: true } },
     },
     orderBy: { createdAt: "desc" },
   });
@@ -101,12 +104,23 @@ export default async function TendersPage({
             <tbody className="divide-y">
               {tenders.map((tender) => {
                 const unresolvedGaps = tender.complianceGaps.filter((gap) => !gap.isResolved).length;
+                const criticalGaps = tender.complianceGaps.filter((gap) => !gap.isResolved && gap.severity === "CRITICAL").length;
                 return (
                   <tr key={tender.id} className="hover:bg-slate-50">
-                    <td className="px-6 py-4 font-medium text-slate-900">{tender.title}</td>
+                    <td className="px-6 py-4">
+                      <p className="font-medium text-slate-900">{tender.title}</p>
+                      {tender.clientName && <p className="text-xs text-slate-400">{tender.clientName}</p>}
+                    </td>
                     <td className="px-6 py-4 text-slate-500">{tender.reference || "—"}</td>
                     <td className="px-6 py-4 text-slate-500">{formatDate(tender.deadline)}</td>
-                    <td className="px-6 py-4 text-slate-500">{tender.files.length} files · {tender.requirements.length} reqs · {unresolvedGaps} gaps</td>
+                    <td className="px-6 py-4 text-slate-500">
+                      {tender._count.files} files · {tender._count.requirements} reqs
+                      {unresolvedGaps > 0 && (
+                        <span className={`ml-1 ${criticalGaps > 0 ? "text-red-500" : "text-amber-500"}`}>
+                          · {unresolvedGaps} gaps
+                        </span>
+                      )}
+                    </td>
                     <td className="px-6 py-4"><StatusBadge status={tender.status} /></td>
                     <td className="px-6 py-4">
                       <Link href={`/dashboard/tenders/${tender.id}`} className="text-blue-600 hover:underline">
