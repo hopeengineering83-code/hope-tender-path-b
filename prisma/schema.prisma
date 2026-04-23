@@ -235,6 +235,7 @@ model ComplianceGap {
   description    String
   mitigationPlan String?
   isResolved     Boolean  @default(false)
+  resolvedNote   String?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 }

@@ -391,6 +391,7 @@ async function bootstrap(client: PrismaClient): Promise<void> {
     `ALTER TABLE "CompanyDocument" ADD COLUMN "fileContent" TEXT`,
     `ALTER TABLE "TenderFile" ADD COLUMN "fileContent" TEXT`,
     `ALTER TABLE "CompanyAsset" ADD COLUMN "fileContent" TEXT`,
+    `ALTER TABLE "ComplianceGap" ADD COLUMN "resolvedNote" TEXT`,
   ];
   for (const sql of alterations) {
     try {
