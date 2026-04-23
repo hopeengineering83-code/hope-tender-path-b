@@ -1,11 +1,12 @@
 import { NextResponse } from "next/server";
 import { prisma, prismaReady } from "../../../lib/prisma";
 import { getSession } from "../../../lib/auth";
-import { extractTextFromBuffer } from "../../../lib/extract-text";
+import { extractTextFromBuffer, detectCategoryFromFile, getFileTypeLabel } from "../../../lib/extract-text";
 import { logAction } from "../../../lib/audit";
 
+// File content stored as base64 in the database — no filesystem dependency.
 // Max 10 MB enforced by Next.js serverActions bodySizeLimit.
-// File content is stored as base64 in the DB — no filesystem dependency.
+const MAX_BYTES = 10 * 1024 * 1024;
 
 export async function POST(req: Request) {
   const userId = await getSession();
@@ -15,82 +16,122 @@ export async function POST(req: Request) {
 
   try {
     const formData = await req.formData();
-    const file = formData.get("file");
+
+    // Support both single and multi-file upload
+    const files = formData.getAll("file").filter((f): f is File => f instanceof File);
+    if (files.length === 0) {
+      return NextResponse.json({ error: "No files provided" }, { status: 400 });
+    }
+
     const tenderId = formData.get("tenderId") as string | null;
     const companyDocFlag = formData.get("companyDoc") as string | null;
     const classification = (formData.get("classification") as string | null) || null;
 
-    if (!(file instanceof File)) {
-      return NextResponse.json({ error: "Invalid file" }, { status: 400 });
+    // Validate: need a destination
+    if (!tenderId && companyDocFlag !== "true") {
+      return NextResponse.json({ error: "tenderId or companyDoc=true required" }, { status: 400 });
     }
 
-    const arrayBuffer = await file.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
-    const base64Content = buffer.toString("base64");
-    const extractedText = await extractTextFromBuffer(buffer, file.type, file.name);
+    const results: unknown[] = [];
 
-    if (tenderId) {
-      const tender = await prisma.tender.findFirst({ where: { id: tenderId, userId } });
-      if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
+    for (const file of files) {
+      if (file.size > MAX_BYTES) {
+        results.push({ error: `${file.name}: exceeds 10 MB limit`, fileName: file.name });
+        continue;
+      }
 
-      const fileRecord = await prisma.tenderFile.create({
-        data: {
-          tenderId,
-          fileName: file.name,
-          originalFileName: file.name,
-          mimeType: file.type || "application/octet-stream",
-          size: file.size,
-          storagePath: "",
-          fileContent: base64Content,
-          classification,
-          extractedText: extractedText || null,
-        },
-      });
+      const buffer = Buffer.from(await file.arrayBuffer());
+      const base64Content = buffer.toString("base64");
+      const mimeType = file.type || "application/octet-stream";
+      const fileTypeLabel = getFileTypeLabel(mimeType, file.name);
 
-      await logAction({
-        userId,
-        action: "TENDER_FILE_UPLOAD",
-        entityType: "TenderFile",
-        entityId: fileRecord.id,
-        description: `Uploaded file "${file.name}" to tender ${tenderId}`,
-        metadata: { tenderId, fileName: file.name, extracted: extractedText.length > 0 },
-      });
+      // Run text extraction (handles all supported types)
+      const extractedText = await extractTextFromBuffer(buffer, mimeType, file.name);
+      const hasText = extractedText.length > 0 && !extractedText.startsWith("[Scanned");
 
-      return NextResponse.json({ success: true, scope: "tender", fileRecord });
+      if (tenderId) {
+        const tender = await prisma.tender.findFirst({ where: { id: tenderId, userId } });
+        if (!tender) {
+          results.push({ error: "Tender not found", fileName: file.name });
+          continue;
+        }
+
+        const fileRecord = await prisma.tenderFile.create({
+          data: {
+            tenderId,
+            fileName: file.name,
+            originalFileName: file.name,
+            mimeType,
+            size: file.size,
+            storagePath: "",
+            fileContent: base64Content,
+            classification,
+            extractedText: extractedText || null,
+          },
+        });
+
+        await logAction({
+          userId,
+          action: "TENDER_FILE_UPLOAD",
+          entityType: "TenderFile",
+          entityId: fileRecord.id,
+          description: `Uploaded ${fileTypeLabel} "${file.name}" to tender — ${hasText ? `${extractedText.length.toLocaleString()} chars extracted` : "no text extracted"}`,
+          metadata: { tenderId, fileName: file.name, fileType: fileTypeLabel, extracted: hasText },
+        });
+
+        results.push({ success: true, scope: "tender", fileRecord });
+
+      } else {
+        const company = await prisma.company.findUnique({ where: { userId } });
+        if (!company) {
+          results.push({ error: "Company not found", fileName: file.name });
+          continue;
+        }
+
+        // Auto-detect category if not explicitly provided
+        const providedCategory = formData.get("category") as string | null;
+        const category = (providedCategory && providedCategory !== "AUTO")
+          ? providedCategory
+          : detectCategoryFromFile(file.name, mimeType);
+
+        const docRecord = await prisma.companyDocument.create({
+          data: {
+            companyId: company.id,
+            fileName: file.name,
+            originalFileName: file.name,
+            mimeType,
+            size: file.size,
+            storagePath: "",
+            fileContent: base64Content,
+            category,
+            extractedText: extractedText || null,
+            metadata: JSON.stringify({ fileType: fileTypeLabel, autoDetected: !providedCategory || providedCategory === "AUTO" }),
+          },
+        });
+
+        await logAction({
+          userId,
+          action: "COMPANY_DOCUMENT_UPLOAD",
+          entityType: "CompanyDocument",
+          entityId: docRecord.id,
+          description: `Uploaded ${fileTypeLabel} "${file.name}" (${category}) — ${hasText ? `${extractedText.length.toLocaleString()} chars extracted` : "no text extracted"}`,
+          metadata: { companyId: company.id, fileName: file.name, category, fileType: fileTypeLabel, extracted: hasText },
+        });
+
+        results.push({ success: true, scope: "company", docRecord });
+      }
     }
 
-    if (companyDocFlag === "true") {
-      const company = await prisma.company.findUnique({ where: { userId } });
-      if (!company) return NextResponse.json({ error: "Company not found" }, { status: 404 });
+    const successCount = results.filter((r) => (r as Record<string, unknown>).success).length;
+    const errorCount = results.length - successCount;
 
-      const category = (formData.get("category") as string | null) || "OTHER";
-      const docRecord = await prisma.companyDocument.create({
-        data: {
-          companyId: company.id,
-          fileName: file.name,
-          originalFileName: file.name,
-          mimeType: file.type || "application/octet-stream",
-          size: file.size,
-          storagePath: "",
-          fileContent: base64Content,
-          category,
-          extractedText: extractedText || null,
-        },
-      });
+    return NextResponse.json({
+      success: successCount > 0,
+      uploaded: successCount,
+      errors: errorCount,
+      results,
+    }, { status: errorCount > 0 && successCount === 0 ? 422 : 200 });
 
-      await logAction({
-        userId,
-        action: "COMPANY_DOCUMENT_UPLOAD",
-        entityType: "CompanyDocument",
-        entityId: docRecord.id,
-        description: `Uploaded company document "${file.name}" (${category})`,
-        metadata: { companyId: company.id, fileName: file.name, category, extracted: extractedText.length > 0 },
-      });
-
-      return NextResponse.json({ success: true, scope: "company", docRecord });
-    }
-
-    return NextResponse.json({ error: "tenderId or companyDoc=true required" }, { status: 400 });
   } catch (error) {
     console.error("[upload] error:", error);
     return NextResponse.json({ error: "Upload failed" }, { status: 500 });
