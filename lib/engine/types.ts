@@ -1,4 +1,13 @@
-import type { Expert, Project, Tender, TenderFile } from "@prisma/client";
+import type {
+  CompanyComplianceRecord,
+  CompanyDocument,
+  Expert,
+  FinancialRecord,
+  LegalRecord,
+  Project,
+  Tender,
+  TenderFile,
+} from "@prisma/client";
 
 export type TenderWithFiles = Tender & {
   files: TenderFile[];
@@ -21,6 +30,10 @@ export type CompanyKnowledgeSnapshot = {
   companyId: string;
   experts: Expert[];
   projects: Project[];
+  documents: CompanyDocument[];
+  legalRecords: LegalRecord[];
+  financialRecords: FinancialRecord[];
+  complianceRecords: CompanyComplianceRecord[];
 };
 
 export type AnalysisResult = {
@@ -54,6 +67,9 @@ export type ComplianceResult = {
     supportStatus: string;
     supportStrength: number;
     evidenceSummary: string;
+    evidenceType: string;
+    evidenceSource: string;
+    evidenceReference?: string;
     notes?: string;
   }>;
   gaps: Array<{
@@ -70,7 +86,7 @@ export type DocumentPlanResult = {
     name: string;
     documentType: string;
     exactFileName?: string | null;
-    exactOrder?: number | null;
+    exactOrder?: string | number | null;
     contentSummary: string;
   }>;
 };
