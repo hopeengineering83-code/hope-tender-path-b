@@ -64,6 +64,7 @@ model CompanyDocument {
   mimeType         String
   size             Int
   storagePath      String   @default("")
+  fileContent      String?
   category         String   @default("OTHER")
   extractedText    String?
   metadata         String   @default("{}")
@@ -81,6 +82,7 @@ model CompanyAsset {
   mimeType         String
   size             Int
   storagePath      String   @default("")
+  fileContent      String?
   isActive         Boolean  @default(true)
   metadata         String   @default("{}")
   createdAt        DateTime @default(now())
@@ -170,6 +172,7 @@ model TenderFile {
   mimeType         String
   size             Int
   storagePath      String   @default("")
+  fileContent      String?
   classification   String?
   extractedText    String?
   createdAt        DateTime @default(now())
@@ -232,6 +235,7 @@ model ComplianceGap {
   description    String
   mitigationPlan String?
   isResolved     Boolean  @default(false)
+  resolvedNote   String?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 }
@@ -250,6 +254,10 @@ model GeneratedDocument {
   fileContent      String?
   validationStatus String   @default("PENDING")
   generationStatus String   @default("PLANNED")
+  reviewStatus     String   @default("PENDING")
+  reviewNotes      String?
+  reviewedBy       String?
+  reviewedAt       DateTime?
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 }
