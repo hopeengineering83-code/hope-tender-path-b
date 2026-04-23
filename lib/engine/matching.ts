@@ -17,16 +17,29 @@ function overlapScore(source: string[], target: string[]) {
   return hits / Math.max(source.length, target.length);
 }
 
+function parseArr(v: unknown): string[] {
+  if (Array.isArray(v)) return v;
+  try {
+    return JSON.parse(v as string) as string[];
+  } catch {
+    return [];
+  }
+}
+
+function getRequiredQuantity(requirements: RequirementDraft[], type: string, fallback: number): number {
+  const qty = requirements
+    .filter((req) => req.requirementType === type)
+    .reduce((sum, req) => sum + (req.requiredQuantity ?? 0), 0);
+  return qty > 0 ? qty : fallback;
+}
+
 export function buildMatches(
   requirements: RequirementDraft[],
   knowledge: CompanyKnowledgeSnapshot,
 ): MatchingResult {
   const requirementTokens = tokenize(requirements.map((req) => `${req.description} ${req.title}`).join(" "));
-
-  function parseArr(v: unknown): string[] {
-    if (Array.isArray(v)) return v;
-    try { return JSON.parse(v as string) as string[]; } catch { return []; }
-  }
+  const requiredExpertCount = getRequiredQuantity(requirements, "EXPERT", 3);
+  const requiredProjectCount = getRequiredQuantity(requirements, "PROJECT_EXPERIENCE", 5);
 
   const expertMatches = knowledge.experts
     .map((expert) => {
@@ -42,13 +55,15 @@ export function buildMatches(
       return {
         expertId: expert.id,
         score,
-        rationale: score > 0 ? "Expert discipline overlap detected against tender requirement language." : "No strong overlap detected yet.",
+        rationale: score > 0
+          ? "Expert discipline overlap detected against tender requirement language."
+          : "No strong overlap detected yet.",
         evidenceSummary: [expert.title, ...parseArr(expert.disciplines)].filter(Boolean).join(" · "),
         isSelected: false,
       };
     })
     .sort((a, b) => b.score - a.score)
-    .map((match, index) => ({ ...match, isSelected: index < 3 && match.score > 0 }));
+    .map((match, index) => ({ ...match, isSelected: index < requiredExpertCount && match.score > 0 }));
 
   const projectMatches = knowledge.projects
     .map((project) => {
@@ -64,13 +79,15 @@ export function buildMatches(
       return {
         projectId: project.id,
         score,
-        rationale: score > 0 ? "Project service and sector overlap detected against tender requirement language." : "No strong project overlap detected yet.",
+        rationale: score > 0
+          ? "Project service and sector overlap detected against tender requirement language."
+          : "No strong project overlap detected yet.",
         evidenceSummary: [project.sector, ...parseArr(project.serviceAreas)].filter(Boolean).join(" · "),
         isSelected: false,
       };
     })
     .sort((a, b) => b.score - a.score)
-    .map((match, index) => ({ ...match, isSelected: index < 5 && match.score > 0 }));
+    .map((match, index) => ({ ...match, isSelected: index < requiredProjectCount && match.score > 0 }));
 
   return {
     expertMatches,
