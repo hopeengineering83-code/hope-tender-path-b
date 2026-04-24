@@ -10,31 +10,28 @@ function toJsonArray(value: unknown): string {
   );
 }
 
+async function loadCompany(userId: string) {
+  return prisma.company.findUnique({
+    where: { userId },
+    include: {
+      experts: { orderBy: { createdAt: "desc" } },
+      projects: { orderBy: { createdAt: "desc" } },
+    },
+  });
+}
+
 export async function GET() {
   const userId = await getSession();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   await prismaReady;
-  let company = await prisma.company.findUnique({
-    where: { userId },
-    include: {
-      experts: { orderBy: { createdAt: "desc" }, take: 10 },
-      projects: { orderBy: { createdAt: "desc" }, take: 10 },
-    },
-  });
+  let company = await loadCompany(userId);
 
   if (!company) return NextResponse.json({});
 
-  if (company.experts.length === 0 || company.projects.length === 0) {
-    await importCompanyKnowledgeFromDocuments(company.id);
-    company = await prisma.company.findUnique({
-      where: { userId },
-      include: {
-        experts: { orderBy: { createdAt: "desc" }, take: 10 },
-        projects: { orderBy: { createdAt: "desc" }, take: 10 },
-      },
-    });
-  }
+  // Idempotent importer: safely retries after parser improvements and only creates missing names.
+  await importCompanyKnowledgeFromDocuments(company.id);
+  company = await loadCompany(userId);
 
   if (!company) return NextResponse.json({});
 
@@ -42,6 +39,8 @@ export async function GET() {
     ...company,
     experts: company.experts.map(normalizeExpert),
     projects: company.projects.map(normalizeProject),
+    expertCount: company.experts.length,
+    projectCount: company.projects.length,
     serviceLines: safeParseArr(company.serviceLines),
     sectors: safeParseArr(company.sectors),
   });
@@ -95,8 +94,8 @@ export async function PUT(req: Request) {
         profileSummary: body.profileSummary || null,
       },
       include: {
-        experts: { orderBy: { createdAt: "desc" }, take: 10 },
-        projects: { orderBy: { createdAt: "desc" }, take: 10 },
+        experts: { orderBy: { createdAt: "desc" } },
+        projects: { orderBy: { createdAt: "desc" } },
       },
     });
 
@@ -104,6 +103,8 @@ export async function PUT(req: Request) {
       ...company,
       experts: company.experts.map(normalizeExpert),
       projects: company.projects.map(normalizeProject),
+      expertCount: company.experts.length,
+      projectCount: company.projects.length,
       serviceLines: safeParseArr(company.serviceLines),
       sectors: safeParseArr(company.sectors),
     });
