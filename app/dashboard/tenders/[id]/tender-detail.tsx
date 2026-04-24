@@ -93,7 +93,47 @@ type GeneratedDocument = {
   reviewStatus: string;
   reviewNotes: string | null;
   exactFileName?: string | null;
-  fileContent?: string | null;
+  contentSummary?: string | null;
+};
+
+type ExpertMatch = {
+  id: string;
+  score: number;
+  rationale: string | null;
+  isSelected: boolean;
+  expert: {
+    id: string;
+    fullName: string;
+    title: string | null;
+    yearsExperience: number | null;
+    disciplines: string;
+    sectors: string;
+  };
+};
+
+type ProjectMatch = {
+  id: string;
+  score: number;
+  rationale: string | null;
+  isSelected: boolean;
+  project: {
+    id: string;
+    name: string;
+    clientName: string | null;
+    country: string | null;
+    sector: string | null;
+    contractValue: number | null;
+    currency: string | null;
+  };
+};
+
+type ComplianceMatrixEntry = {
+  id: string;
+  requirementId: string | null;
+  evidenceType: string;
+  evidenceSource: string;
+  supportLevel: string;
+  notes: string | null;
 };
 
 type Tender = {
@@ -118,6 +158,9 @@ type Tender = {
   requirements: TenderRequirement[];
   complianceGaps: ComplianceGap[];
   generatedDocuments: GeneratedDocument[];
+  expertMatches?: ExpertMatch[];
+  projectMatches?: ProjectMatch[];
+  complianceMatrix?: ComplianceMatrixEntry[];
 };
 
 const CATEGORIES = ["General", "IT", "Construction", "Services", "Consulting", "Supply", "Healthcare", "Education", "Other"];
@@ -454,7 +497,7 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
 
       {error && <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
 
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+      <div className="grid gap-4 md:grid-cols-3 xl:grid-cols-6">
         <div className="rounded-2xl border bg-white p-5 shadow-sm">
           <p className="text-sm text-slate-500">Files</p>
           <p className="mt-1 text-3xl font-bold text-slate-900">{tender.files.length}</p>
@@ -470,8 +513,14 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
           {criticalGaps > 0 && <p className="mt-1 text-xs text-red-500">{criticalGaps} critical</p>}
         </div>
         <div className="rounded-2xl border bg-white p-5 shadow-sm">
-          <p className="text-sm text-slate-500">Generated Docs</p>
-          <p className="mt-1 text-3xl font-bold text-slate-900">{tender.generatedDocuments.length}</p>
+          <p className="text-sm text-slate-500">Experts</p>
+          <p className="mt-1 text-3xl font-bold text-slate-900">{tender.expertMatches?.filter((m) => m.isSelected).length ?? 0}</p>
+          <p className="mt-1 text-xs text-slate-500">of {tender.expertMatches?.length ?? 0} matched</p>
+        </div>
+        <div className="rounded-2xl border bg-white p-5 shadow-sm">
+          <p className="text-sm text-slate-500">Projects</p>
+          <p className="mt-1 text-3xl font-bold text-slate-900">{tender.projectMatches?.filter((m) => m.isSelected).length ?? 0}</p>
+          <p className="mt-1 text-xs text-slate-500">of {tender.projectMatches?.length ?? 0} matched</p>
         </div>
         <div className="rounded-2xl border bg-white p-5 shadow-sm">
           <p className="text-sm text-slate-500">Readiness</p>
@@ -671,6 +720,103 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
               </ul>
             )}
           </div>
+
+          {(tender.expertMatches?.length ?? 0) > 0 && (
+            <div className="rounded-2xl border bg-white p-6 shadow-sm">
+              <h2 className="text-lg font-semibold text-slate-900 mb-4">
+                Expert Matches
+                <span className="ml-2 text-sm font-normal text-slate-400">
+                  ({tender.expertMatches!.filter((m) => m.isSelected).length} selected)
+                </span>
+              </h2>
+              <ul className="space-y-2">
+                {tender.expertMatches!.slice(0, 8).map((match) => (
+                  <li key={match.id} className={`rounded-xl border px-4 py-3 ${match.isSelected ? "border-green-200 bg-green-50" : ""}`}>
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <p className="text-sm font-medium text-slate-900">{match.expert.fullName}</p>
+                          {match.isSelected && <span className="rounded-full bg-green-500 px-2 py-0.5 text-[10px] font-bold text-white">SELECTED</span>}
+                        </div>
+                        <p className="text-xs text-slate-500 mt-0.5">{match.expert.title ?? "Expert"}{match.expert.yearsExperience ? ` · ${match.expert.yearsExperience} yrs` : ""}</p>
+                        <p className="mt-1 text-xs text-slate-500 truncate">{match.rationale}</p>
+                      </div>
+                      <div className="shrink-0 text-right">
+                        <p className="text-sm font-bold text-slate-700">{Math.round(match.score * 100)}%</p>
+                        <div className="mt-1 h-1.5 w-16 rounded-full bg-slate-100 overflow-hidden">
+                          <div className={`h-full rounded-full ${match.score >= 0.6 ? "bg-green-500" : match.score >= 0.3 ? "bg-amber-400" : "bg-slate-300"}`}
+                            style={{ width: `${Math.round(match.score * 100)}%` }} />
+                        </div>
+                      </div>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {(tender.projectMatches?.length ?? 0) > 0 && (
+            <div className="rounded-2xl border bg-white p-6 shadow-sm">
+              <h2 className="text-lg font-semibold text-slate-900 mb-4">
+                Project Matches
+                <span className="ml-2 text-sm font-normal text-slate-400">
+                  ({tender.projectMatches!.filter((m) => m.isSelected).length} selected)
+                </span>
+              </h2>
+              <ul className="space-y-2">
+                {tender.projectMatches!.slice(0, 8).map((match) => (
+                  <li key={match.id} className={`rounded-xl border px-4 py-3 ${match.isSelected ? "border-blue-200 bg-blue-50" : ""}`}>
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <p className="text-sm font-medium text-slate-900">{match.project.name}</p>
+                          {match.isSelected && <span className="rounded-full bg-blue-500 px-2 py-0.5 text-[10px] font-bold text-white">SELECTED</span>}
+                        </div>
+                        <p className="text-xs text-slate-500 mt-0.5">
+                          {[match.project.clientName, match.project.country, match.project.sector].filter(Boolean).join(" · ")}
+                          {match.project.contractValue ? ` · ${match.project.currency ?? "USD"} ${match.project.contractValue.toLocaleString()}` : ""}
+                        </p>
+                        <p className="mt-1 text-xs text-slate-500 truncate">{match.rationale}</p>
+                      </div>
+                      <div className="shrink-0 text-right">
+                        <p className="text-sm font-bold text-slate-700">{Math.round(match.score * 100)}%</p>
+                        <div className="mt-1 h-1.5 w-16 rounded-full bg-slate-100 overflow-hidden">
+                          <div className={`h-full rounded-full ${match.score >= 0.6 ? "bg-blue-500" : match.score >= 0.3 ? "bg-amber-400" : "bg-slate-300"}`}
+                            style={{ width: `${Math.round(match.score * 100)}%` }} />
+                        </div>
+                      </div>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {(tender.complianceMatrix?.length ?? 0) > 0 && (
+            <div className="rounded-2xl border bg-white p-6 shadow-sm">
+              <h2 className="text-lg font-semibold text-slate-900 mb-4">
+                Compliance Matrix
+                <span className="ml-2 text-sm font-normal text-slate-400">
+                  ({tender.complianceMatrix!.filter((m) => m.supportLevel === "SUPPORTED").length}/{tender.complianceMatrix!.length} supported)
+                </span>
+              </h2>
+              <ul className="space-y-1.5">
+                {tender.complianceMatrix!.slice(0, 10).map((entry) => (
+                  <li key={entry.id} className="flex items-start gap-3 rounded-lg border px-3 py-2">
+                    <span className={`mt-0.5 shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                      entry.supportLevel === "SUPPORTED" ? "bg-green-100 text-green-700" :
+                      entry.supportLevel === "PARTIAL" ? "bg-amber-100 text-amber-700" :
+                      "bg-red-100 text-red-700"
+                    }`}>{entry.supportLevel}</span>
+                    <div className="min-w-0">
+                      <p className="text-xs font-medium text-slate-700">{entry.evidenceType} — {entry.evidenceSource}</p>
+                      {entry.notes && <p className="mt-0.5 text-xs text-slate-400 truncate">{entry.notes}</p>}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
 
           <div className="rounded-2xl border bg-white p-6 shadow-sm">
             <div className="flex items-center justify-between mb-3">

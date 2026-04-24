@@ -148,22 +148,22 @@ export async function validateTender(tenderId: string): Promise<ValidationReport
   const expertRequirementQty = tender.requirements
     .filter((r) => r.requiredQuantity && r.requirementType === "EXPERT")
     .reduce((sum, r) => sum + (r.requiredQuantity ?? 0), 0);
-  if (expertRequirementQty > 0 && tender.expertMatches.length !== expertRequirementQty) {
+  if (expertRequirementQty > 0 && tender.expertMatches.length < expertRequirementQty) {
     issues.push({
       code: "EXPERT_QUANTITY_MISMATCH",
       severity: "BLOCK",
-      message: `Tender requires exactly ${expertRequirementQty} expert selection(s), but ${tender.expertMatches.length} expert match(es) are selected.`,
+      message: `Tender requires at least ${expertRequirementQty} expert selection(s), but only ${tender.expertMatches.length} are selected.`,
     });
   }
 
   const projectRequirementQty = tender.requirements
     .filter((r) => r.requiredQuantity && r.requirementType === "PROJECT_EXPERIENCE")
     .reduce((sum, r) => sum + (r.requiredQuantity ?? 0), 0);
-  if (projectRequirementQty > 0 && tender.projectMatches.length !== projectRequirementQty) {
+  if (projectRequirementQty > 0 && tender.projectMatches.length < projectRequirementQty) {
     issues.push({
       code: "PROJECT_QUANTITY_MISMATCH",
       severity: "BLOCK",
-      message: `Tender requires exactly ${projectRequirementQty} project reference(s), but ${tender.projectMatches.length} project match(es) are selected.`,
+      message: `Tender requires at least ${projectRequirementQty} project reference(s), but only ${tender.projectMatches.length} are selected.`,
     });
   }
 

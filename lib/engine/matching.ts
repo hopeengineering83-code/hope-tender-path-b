@@ -86,7 +86,7 @@ export function buildMatches(
     tokenize([p.name, p.clientName, p.country, p.sector, p.summary, ...parseArr(p.serviceAreas)].join(" "))
   );
 
-  const idf = buildIdf([...expertTokenSets, ...projectTokenSets, queryTokens]);
+  const idf = buildIdf([...expertTokenSets, ...projectTokenSets]);
 
   // Expert matching with TF-IDF + sector/experience bonuses
   const expertMatches = knowledge.experts

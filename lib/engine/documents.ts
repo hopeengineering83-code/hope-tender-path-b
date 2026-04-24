@@ -10,7 +10,9 @@ function docTypeForRequirement(requirement: RequirementDraft): string {
   }
   if (requirement.requirementType === "EXPERT") return "EXPERT";
   if (requirement.requirementType === "PROJECT_EXPERIENCE") return "PROJECT_EXPERIENCE";
-  if (/proposal|methodology|technical proposal|submission/i.test(`${requirement.title} ${requirement.description}`)) {
+  if (requirement.requirementType === "COMPANY_PROFILE") return "COMPANY_PROFILE";
+  if (requirement.requirementType === "METHODOLOGY") return "METHODOLOGY";
+  if (/proposal|technical proposal|submission/i.test(`${requirement.title} ${requirement.description}`)) {
     return "TECHNICAL_PROPOSAL";
   }
   return requirement.requirementType || "SUPPORTING_DOCUMENT";
@@ -20,8 +22,8 @@ function shouldCreateDocument(requirement: RequirementDraft): boolean {
   return Boolean(
     requirement.exactFileName ||
       requirement.exactOrder ||
-      ["FORM", "DECLARATION", "ANNEX", "SCHEDULE", "EXPERT", "PROJECT_EXPERIENCE"].includes(requirement.requirementType) ||
-      /proposal|submission|methodology|technical proposal|curriculum vitae|cv|project reference/i.test(
+      ["FORM", "DECLARATION", "ANNEX", "SCHEDULE", "EXPERT", "PROJECT_EXPERIENCE", "COMPANY_PROFILE", "METHODOLOGY"].includes(requirement.requirementType) ||
+      /proposal|submission|methodology|technical proposal|curriculum vitae|cv|project reference|company profile/i.test(
         `${requirement.title} ${requirement.description}`,
       ),
   );
