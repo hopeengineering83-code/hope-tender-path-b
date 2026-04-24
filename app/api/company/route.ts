@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma, prismaReady } from "../../../lib/prisma";
 import { getSession } from "../../../lib/auth";
+import { importCompanyKnowledgeFromDocuments } from "../../../lib/company-knowledge-import";
 
 function toJsonArray(value: unknown): string {
   if (Array.isArray(value)) return JSON.stringify(value.filter(Boolean));
@@ -14,7 +15,7 @@ export async function GET() {
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   await prismaReady;
-  const company = await prisma.company.findUnique({
+  let company = await prisma.company.findUnique({
     where: { userId },
     include: {
       experts: { orderBy: { createdAt: "desc" }, take: 10 },
@@ -24,8 +25,23 @@ export async function GET() {
 
   if (!company) return NextResponse.json({});
 
+  if (company.experts.length === 0 || company.projects.length === 0) {
+    await importCompanyKnowledgeFromDocuments(company.id);
+    company = await prisma.company.findUnique({
+      where: { userId },
+      include: {
+        experts: { orderBy: { createdAt: "desc" }, take: 10 },
+        projects: { orderBy: { createdAt: "desc" }, take: 10 },
+      },
+    });
+  }
+
+  if (!company) return NextResponse.json({});
+
   return NextResponse.json({
     ...company,
+    experts: company.experts.map(normalizeExpert),
+    projects: company.projects.map(normalizeProject),
     serviceLines: safeParseArr(company.serviceLines),
     sectors: safeParseArr(company.sectors),
   });
@@ -33,6 +49,14 @@ export async function GET() {
 
 function safeParseArr(v: unknown): string[] {
   try { return JSON.parse(v as string) as string[]; } catch { return []; }
+}
+
+function normalizeExpert(e: Record<string, unknown>) {
+  return { ...e, disciplines: safeParseArr(e.disciplines), sectors: safeParseArr(e.sectors), certifications: safeParseArr(e.certifications) };
+}
+
+function normalizeProject(p: Record<string, unknown>) {
+  return { ...p, serviceAreas: safeParseArr(p.serviceAreas) };
 }
 
 export async function PUT(req: Request) {
@@ -78,6 +102,8 @@ export async function PUT(req: Request) {
 
     return NextResponse.json({
       ...company,
+      experts: company.experts.map(normalizeExpert),
+      projects: company.projects.map(normalizeProject),
       serviceLines: safeParseArr(company.serviceLines),
       sectors: safeParseArr(company.sectors),
     });
