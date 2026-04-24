@@ -2,6 +2,9 @@
 // is immediately searchable and usable by the analysis engine.
 // Supports: PDF, DOCX/DOC, XLSX/XLS, PPTX/PPT, CSV, TXT, RTF, ODS, ODP + images.
 
+const MAX_EXTRACTED_TEXT_CHARS = 500_000;
+const LEGACY_TEXT_LIMIT = 80_000;
+
 export async function extractTextFromBuffer(
   buffer: Buffer,
   mimeType: string,
@@ -15,7 +18,7 @@ export async function extractTextFromBuffer(
     if (isPptx(mimeType, ext)) return await extractPptx(buffer);
     if (isCsv(mimeType, ext)) return extractCsv(buffer);
     if (isRtf(mimeType, ext)) return extractRtf(buffer);
-    if (isText(mimeType, ext)) return buffer.toString("utf8").slice(0, 50000);
+    if (isText(mimeType, ext)) return buffer.toString("utf8").slice(0, MAX_EXTRACTED_TEXT_CHARS);
     if (isImage(mimeType, ext)) return `[Image: ${fileName}]`;
     return "";
   } catch (err) {
@@ -78,7 +81,7 @@ function isImage(mime: string, ext: string) {
 
 // ─── Extractors ───────────────────────────────────────────────────────────────
 
-function normalizeExtractedText(text: string, limit = 80000): string {
+function normalizeExtractedText(text: string, limit = MAX_EXTRACTED_TEXT_CHARS): string {
   return (text ?? "")
     .replace(/\u0000/g, " ")
     .replace(/[ \t]{2,}/g, " ")
@@ -87,9 +90,8 @@ function normalizeExtractedText(text: string, limit = 80000): string {
     .slice(0, limit);
 }
 
-async function extractPdf(buffer: Buffer): Promise<string> {
+async function extractPdfWithPdfParse(buffer: Buffer): Promise<{ text: string; pages: number }> {
   // pdf-parse v1 exported a function. pdf-parse v2 exports PDFParse.
-  // Support both so extraction works across local and Vercel installs.
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const mod = require("pdf-parse");
   let text = "";
@@ -112,14 +114,80 @@ async function extractPdf(buffer: Buffer): Promise<string> {
     } finally {
       if (typeof parser.destroy === "function") await parser.destroy();
     }
-  } else {
-    throw new Error("Unsupported pdf-parse module API");
   }
 
-  const cleaned = normalizeExtractedText(text);
-  if (!cleaned || cleaned.length < 20) {
-    return `[Scanned PDF — ${pages || "unknown"} page(s). Text layer not found. Upload a text-based PDF or use OCR conversion for analysis.]`;
+  return { text: normalizeExtractedText(text), pages };
+}
+
+async function extractPdfWithPdfJs(buffer: Buffer): Promise<{ text: string; pages: number }> {
+  const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs") as any;
+  const task = pdfjs.getDocument({
+    data: new Uint8Array(buffer),
+    disableWorker: true,
+    useSystemFonts: true,
+    verbosity: 0,
+  });
+
+  const pdf = await task.promise;
+  const pages = pdf.numPages ?? 0;
+  const pageTexts: string[] = [];
+  let totalChars = 0;
+
+  for (let pageNumber = 1; pageNumber <= pages; pageNumber += 1) {
+    const page = await pdf.getPage(pageNumber);
+    const content = await page.getTextContent({ includeMarkedContent: false, disableNormalization: false });
+    const items = (content.items ?? []) as Array<{ str?: string; hasEOL?: boolean }>;
+    const pageText = items
+      .map((item) => item.str ? `${item.str}${item.hasEOL ? "\n" : " "}` : "")
+      .join("")
+      .replace(/[ \t]+\n/g, "\n")
+      .trim();
+
+    if (pageText) {
+      pageTexts.push(`[Page ${pageNumber}]\n${pageText}`);
+      totalChars += pageText.length;
+    }
+
+    if (totalChars >= MAX_EXTRACTED_TEXT_CHARS) break;
+    if (typeof page.cleanup === "function") page.cleanup();
   }
+
+  if (typeof pdf.destroy === "function") await pdf.destroy();
+  return { text: normalizeExtractedText(pageTexts.join("\n\n")), pages };
+}
+
+async function extractPdf(buffer: Buffer): Promise<string> {
+  let parseText = "";
+  let pdfJsText = "";
+  let pages = 0;
+
+  try {
+    const result = await extractPdfWithPdfParse(buffer);
+    parseText = result.text;
+    pages = result.pages;
+  } catch (error) {
+    console.warn("[extract-text] pdf-parse fallback failed:", error);
+  }
+
+  try {
+    const result = await extractPdfWithPdfJs(buffer);
+    pdfJsText = result.text;
+    pages = result.pages || pages;
+  } catch (error) {
+    console.warn("[extract-text] pdfjs fallback failed:", error);
+  }
+
+  const best = pdfJsText.length > parseText.length ? pdfJsText : parseText;
+  const cleaned = normalizeExtractedText(best);
+
+  if (!cleaned || cleaned.length < 20) {
+    return `[Scanned PDF — ${pages || "unknown"} page(s). Text layer not found. This file needs OCR before the app can use it as tender knowledge.]`;
+  }
+
+  if (cleaned.length <= LEGACY_TEXT_LIMIT && pages > 1) {
+    return normalizeExtractedText(`[PDF text layer extracted from ${pages} page(s). Extracted text may be limited if the PDF is scanned or image-based.]\n\n${cleaned}`);
+  }
+
   return cleaned;
 }
 
