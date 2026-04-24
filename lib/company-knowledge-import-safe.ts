@@ -1,8 +1,9 @@
 import { prisma } from "./prisma";
+import { extractCompanyKnowledgeWithAI, isCompanyKnowledgeAIEnabled } from "./company-knowledge-ai";
 
 const DEFAULT_PROJECT_TARGET = 114;
 const DEFAULT_EXPERT_TARGET = 29;
-const IMPORT_VERSION = "knowledge-import-v4";
+const IMPORT_VERSION = "knowledge-import-v5";
 
 type SourceDoc = {
   id: string;
@@ -12,13 +13,32 @@ type SourceDoc = {
   updatedAt?: Date;
 };
 
-type Draft = { name: string; source: string; sourceFile: string };
+type Draft = {
+  name: string;
+  source: string;
+  sourceFile: string;
+  confidence?: number;
+  extractionMethod?: "AI" | "RULE";
+  title?: string | null;
+  yearsExperience?: number | null;
+  disciplines?: string[];
+  sectors?: string[];
+  certifications?: string[];
+  clientName?: string | null;
+  country?: string | null;
+  sector?: string | null;
+  serviceAreas?: string[];
+  contractValue?: number | null;
+  currency?: string | null;
+  summary?: string | null;
+};
 
 type ImportOptions = { force?: boolean };
 
 export type KnowledgeDiagnostics = {
   importVersion: string;
   fingerprint: string;
+  aiEnabled: boolean;
   documents: Array<{
     id: string;
     fileName: string;
@@ -51,6 +71,10 @@ function clean(value: string | null | undefined): string {
 
 function key(value: string): string {
   return clean(value).toLowerCase();
+}
+
+function jsonArray(values: string[] | undefined): string {
+  return JSON.stringify((values ?? []).map(clean).filter(Boolean));
 }
 
 function extracted(text: string | null | undefined): boolean {
@@ -156,7 +180,7 @@ function parseExpertDraftsFromDoc(doc: SourceDoc): Draft[] {
   return [...names].slice(0, target).map((name) => {
     const idx = text.toLowerCase().indexOf(name.toLowerCase());
     const source = idx >= 0 ? text.slice(idx, idx + 3500) : text.slice(0, 3500);
-    return { name, source, sourceFile: doc.originalFileName };
+    return { name, source, sourceFile: doc.originalFileName, extractionMethod: "RULE", confidence: 0.62 };
   });
 }
 
@@ -171,8 +195,7 @@ function normalizeProjectText(text: string): string {
 }
 
 function numberedProjectRows(text: string): string[] {
-  const normalized = normalizeProjectText(text)
-    .replace(/\s+(?=\d{1,3}\s+[A-Z][A-Za-z])+/g, "\n");
+  const normalized = normalizeProjectText(text).replace(/\s+(?=\d{1,3}\s+[A-Z][A-Za-z])+/g, "\n");
   const lines = normalized.split("\n").map(clean).filter(Boolean);
   const rows: string[] = [];
 
@@ -233,7 +256,7 @@ function parseProjectDraftsFromDoc(doc: SourceDoc): Draft[] {
     const k = key(name);
     if (seen.has(k)) continue;
     seen.add(k);
-    drafts.push({ name, source: row.slice(0, 3500), sourceFile: doc.originalFileName });
+    drafts.push({ name, source: row.slice(0, 3500), sourceFile: doc.originalFileName, extractionMethod: "RULE", confidence: 0.60 });
     if (drafts.length >= target) break;
   }
 
@@ -262,16 +285,18 @@ async function getDiagnosticsAndDrafts(companyId: string) {
   const extractedDocs = docs.filter((d) => extracted(d.extractedText)).length;
   if (docs.length === 0) gaps.push({ severity: "CRITICAL", title: "No extracted company documents", detail: "Upload company documents before running tender matching." });
   if (docs.length > 0 && extractedDocs === 0) gaps.push({ severity: "CRITICAL", title: "Documents exist but no usable extracted text", detail: "Re-upload files or convert scanned PDFs with OCR." });
+  if (!isCompanyKnowledgeAIEnabled()) gaps.push({ severity: "HIGH", title: "AI extraction is not configured", detail: "Set ANTHROPIC_API_KEY to enable deep extraction of expert/project fields from complex PDFs. Rule-based extraction will only create review-required draft records." });
   if (expertDocs.length === 0) gaps.push({ severity: "HIGH", title: "No expert source documents detected", detail: "Upload Expert CV files or mark CV documents as Expert CV." });
   if (projectDocs.length === 0) gaps.push({ severity: "HIGH", title: "No project source documents detected", detail: "Upload project references, portfolios, contracts, or experience sheets." });
-  if (expertDocs.length > 0 && expertDrafts.length === 0) gaps.push({ severity: "HIGH", title: "Expert documents extracted but no expert names parsed", detail: "Use CVs with explicit 'Name of Expert' fields or add experts manually." });
-  if (projectDocs.length > 0 && projectDrafts.length === 0) gaps.push({ severity: "HIGH", title: "Project documents extracted but no project rows parsed", detail: "Use numbered project rows, Project Name, Assignment Name, or add projects manually." });
-  if (expectedExperts && expertDrafts.length < expectedExperts) gaps.push({ severity: "MEDIUM", title: "Parsed fewer experts than expected", detail: `Expected about ${expectedExperts}, parsed ${expertDrafts.length}. Review CV formatting or add missing experts manually.` });
-  if (expectedProjects && projectDrafts.length < expectedProjects) gaps.push({ severity: "MEDIUM", title: "Parsed fewer projects than expected", detail: `Expected about ${expectedProjects}, parsed ${projectDrafts.length}. Review source snippets or add missing projects manually.` });
+  if (expertDocs.length > 0 && expertDrafts.length === 0) gaps.push({ severity: "HIGH", title: "Expert documents extracted but no expert names parsed", detail: "Use CVs with explicit 'Name of Expert' fields, enable AI extraction, or add experts manually." });
+  if (projectDocs.length > 0 && projectDrafts.length === 0) gaps.push({ severity: "HIGH", title: "Project documents extracted but no project rows parsed", detail: "Use numbered project rows, Project Name, Assignment Name, enable AI extraction, or add projects manually." });
+  if (expectedExperts && expertDrafts.length < expectedExperts) gaps.push({ severity: "MEDIUM", title: "Parsed fewer experts than expected", detail: `Expected about ${expectedExperts}, parsed ${expertDrafts.length}. Enable AI extraction or add missing experts manually.` });
+  if (expectedProjects && projectDrafts.length < expectedProjects) gaps.push({ severity: "MEDIUM", title: "Parsed fewer projects than expected", detail: `Expected about ${expectedProjects}, parsed ${projectDrafts.length}. Enable AI extraction or add missing projects manually.` });
 
   const diagnostics: KnowledgeDiagnostics = {
     importVersion: IMPORT_VERSION,
     fingerprint,
+    aiEnabled: isCompanyKnowledgeAIEnabled(),
     documents: docs.map((doc) => ({
       id: doc.id,
       fileName: doc.originalFileName,
@@ -298,7 +323,49 @@ async function getDiagnosticsAndDrafts(companyId: string) {
     gaps,
   };
 
-  return { diagnostics, expertDrafts, projectDrafts };
+  return { diagnostics, expertDrafts, projectDrafts, expertDocs, projectDocs };
+}
+
+async function buildRepairDrafts(companyId: string) {
+  const base = await getDiagnosticsAndDrafts(companyId);
+  if (!isCompanyKnowledgeAIEnabled()) return base;
+
+  const expertText = base.expertDocs.map((d) => `SOURCE FILE: ${d.originalFileName}\n${d.extractedText ?? ""}`).join("\n\n---\n\n");
+  const projectText = base.projectDocs.map((d) => `SOURCE FILE: ${d.originalFileName}\n${d.extractedText ?? ""}`).join("\n\n---\n\n");
+  const ai = await extractCompanyKnowledgeWithAI({ expertText, projectText });
+
+  const aiExpertDrafts: Draft[] = ai.experts.map((expert) => ({
+    name: expert.fullName,
+    title: expert.title ?? null,
+    yearsExperience: expert.yearsExperience ?? null,
+    disciplines: expert.disciplines ?? [],
+    sectors: expert.sectors ?? [],
+    certifications: expert.certifications ?? [],
+    source: expert.sourceQuote,
+    sourceFile: "AI verified source quote",
+    confidence: expert.confidence,
+    extractionMethod: "AI",
+  }));
+
+  const aiProjectDrafts: Draft[] = ai.projects.map((project) => ({
+    name: project.name,
+    clientName: project.clientName ?? null,
+    country: project.country ?? null,
+    sector: project.sector ?? null,
+    serviceAreas: project.serviceAreas ?? [],
+    contractValue: project.contractValue ?? null,
+    currency: project.currency ?? null,
+    summary: project.summary ?? null,
+    source: project.sourceQuote,
+    sourceFile: "AI verified source quote",
+    confidence: project.confidence,
+    extractionMethod: "AI",
+  }));
+
+  const expertDrafts = [...new Map([...aiExpertDrafts, ...base.expertDrafts].map((d) => [key(d.name), d])).values()];
+  const projectDrafts = [...new Map([...aiProjectDrafts, ...base.projectDrafts].map((d) => [key(d.name), d])).values()];
+
+  return { ...base, expertDrafts, projectDrafts };
 }
 
 export async function analyzeCompanyKnowledgeGaps(companyId: string): Promise<KnowledgeDiagnostics> {
@@ -306,7 +373,7 @@ export async function analyzeCompanyKnowledgeGaps(companyId: string): Promise<Kn
 }
 
 export async function importCompanyKnowledgeFromDocuments(companyId: string, options: ImportOptions = {}) {
-  const { diagnostics, expertDrafts, projectDrafts } = await getDiagnosticsAndDrafts(companyId);
+  const { diagnostics, expertDrafts, projectDrafts } = await buildRepairDrafts(companyId);
   const fingerprint = diagnostics.fingerprint;
 
   const [existingExperts, existingProjects] = await Promise.all([
@@ -338,15 +405,16 @@ export async function importCompanyKnowledgeFromDocuments(companyId: string, opt
     for (const expert of expertDrafts) {
       const k = key(expert.name);
       if (expertKeys.has(k)) continue;
+      const method = expert.extractionMethod ?? "RULE";
       await prisma.expert.create({ data: {
         companyId,
         fullName: expert.name,
-        title: null,
-        yearsExperience: null,
-        disciplines: "[]",
-        sectors: "[]",
-        certifications: "[]",
-        profile: `${marker}\n[AUTO-IMPORTED FROM CV PDF — REVIEW REQUIRED]\nSource file: ${expert.sourceFile}\nOnly the expert name is structured. Correct title, years, disciplines, sectors and certifications before using in final tender matching.\n\nSource snippet:\n${expert.source}`,
+        title: expert.title ?? null,
+        yearsExperience: expert.yearsExperience ?? null,
+        disciplines: jsonArray(expert.disciplines),
+        sectors: jsonArray(expert.sectors),
+        certifications: jsonArray(expert.certifications),
+        profile: `${marker}\n[AUTO-IMPORTED FROM CV PDF — REVIEW REQUIRED]\nExtraction method: ${method}\nConfidence: ${expert.confidence ?? "n/a"}\nSource file: ${expert.sourceFile}\nReview all structured fields before using this expert in final tender matching.\n\nSource snippet:\n${expert.source}`,
       }});
       expertKeys.add(k);
       expertsCreated += 1;
@@ -357,14 +425,17 @@ export async function importCompanyKnowledgeFromDocuments(companyId: string, opt
     for (const project of projectDrafts) {
       const k = key(project.name);
       if (projectKeys.has(k)) continue;
+      const method = project.extractionMethod ?? "RULE";
       await prisma.project.create({ data: {
         companyId,
         name: project.name,
-        clientName: null,
-        country: null,
-        sector: null,
-        serviceAreas: "[]",
-        summary: `${marker}\n[AUTO-IMPORTED FROM PROJECT DOCUMENT — REVIEW REQUIRED]\nSource file: ${project.sourceFile}\nOnly the project name is structured. Correct client, country, sector, services, value and dates before using in final tender matching.\n\nSource snippet:\n${project.source}`,
+        clientName: project.clientName ?? null,
+        country: project.country ?? null,
+        sector: project.sector ?? null,
+        serviceAreas: jsonArray(project.serviceAreas),
+        contractValue: project.contractValue ?? null,
+        currency: project.currency ?? null,
+        summary: `${marker}\n[AUTO-IMPORTED FROM PROJECT DOCUMENT — REVIEW REQUIRED]\nExtraction method: ${method}\nConfidence: ${project.confidence ?? "n/a"}\nSource file: ${project.sourceFile}\n${project.summary ? `Summary: ${project.summary}\n` : ""}Review all structured fields before using this project in final tender matching.\n\nSource snippet:\n${project.source}`,
       }});
       projectKeys.add(k);
       projectsCreated += 1;
