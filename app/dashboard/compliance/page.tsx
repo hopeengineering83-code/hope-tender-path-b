@@ -13,6 +13,7 @@ export default async function CompliancePage() {
     include: {
       complianceGaps: { orderBy: [{ isResolved: "asc" }, { severity: "asc" }, { createdAt: "desc" }] },
       requirements: { select: { id: true } },
+      complianceMatrix: { orderBy: { createdAt: "asc" } },
     },
     orderBy: { updatedAt: "desc" },
     take: 20,

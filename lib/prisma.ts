@@ -67,6 +67,10 @@ async function bootstrap(client: PrismaClient): Promise<void> {
 
   await client.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "AuditLog" ("id" TEXT NOT NULL PRIMARY KEY,"userId" TEXT,"action" TEXT NOT NULL,"entityType" TEXT,"entityId" TEXT,"description" TEXT NOT NULL,"metadata" TEXT NOT NULL DEFAULT '{}',"createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE SET NULL ON UPDATE CASCADE)`);
 
+  // AppSettings table for persisted workflow defaults
+  await client.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "AppSettings" ("id" TEXT NOT NULL PRIMARY KEY,"companyId" TEXT NOT NULL,"defaultCurrency" TEXT NOT NULL DEFAULT 'USD',"aiStrictMode" INTEGER NOT NULL DEFAULT 1,"allowBrandingDefault" INTEGER NOT NULL DEFAULT 1,"allowSignatureDefault" INTEGER NOT NULL DEFAULT 1,"allowStampDefault" INTEGER NOT NULL DEFAULT 1,"exportFormat" TEXT NOT NULL DEFAULT 'DOCX',"pageNumbering" INTEGER NOT NULL DEFAULT 1,"includeTableOfContents" INTEGER NOT NULL DEFAULT 0,"language" TEXT NOT NULL DEFAULT 'en',"createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,"updatedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,FOREIGN KEY ("companyId") REFERENCES "Company"("id") ON DELETE CASCADE ON UPDATE CASCADE)`);
+  await client.$executeRawUnsafe(`CREATE UNIQUE INDEX IF NOT EXISTS "AppSettings_companyId_key" ON "AppSettings"("companyId")`);
+
   await ensureColumn(client, "CompanyDocument", "fileContent", "TEXT");
   await ensureColumn(client, "CompanyAsset", "fileContent", "TEXT");
   await ensureColumn(client, "TenderFile", "fileContent", "TEXT");
@@ -75,6 +79,9 @@ async function bootstrap(client: PrismaClient): Promise<void> {
   await ensureColumn(client, "GeneratedDocument", "reviewNotes", "TEXT");
   await ensureColumn(client, "GeneratedDocument", "reviewedBy", "TEXT");
   await ensureColumn(client, "GeneratedDocument", "reviewedAt", "DATETIME");
+  await ensureColumn(client, "Company", "country", "TEXT");
+  await ensureColumn(client, "Company", "knowledgeMode", "TEXT NOT NULL DEFAULT 'PROFILE_FIRST'");
+  await ensureColumn(client, "Tender", "country", "TEXT");
 
   const roleCount = await client.role.count();
   if (roleCount === 0) {
