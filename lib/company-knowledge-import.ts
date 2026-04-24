@@ -28,7 +28,7 @@ function inferServices(text: string): string[] {
   if (/urban|master plan|planning/i.test(text)) services.push("Urban Planning");
   if (/mep|electrical|mechanical|plumbing/i.test(text)) services.push("MEP Engineering");
   if (/road|highway|infrastructure/i.test(text)) services.push("Roads and Infrastructure");
-  if (/project management|contract admin/i.test(text)) services.push("Project Management");
+  if (/project management|contract admin|construction supervision/i.test(text)) services.push("Project Management");
   if (/interior/i.test(text)) services.push("Interior Design");
   if (/landscape/i.test(text)) services.push("Landscape Design");
   return uniq(services);
@@ -42,46 +42,97 @@ function inferSectors(text: string): string[] {
   if (/factory|industrial|abattoir|warehouse|processing/i.test(text)) sectors.push("Industrial");
   if (/commercial|office|mixed use|apartment|residential/i.test(text)) sectors.push("Commercial and Residential");
   if (/road|infrastructure/i.test(text)) sectors.push("Infrastructure");
+  if (/education|university|school/i.test(text)) sectors.push("Education");
   return uniq(sectors);
 }
 
 function parseYears(text: string): number | null {
-  const match = text.match(/(\d{1,2})\+?\s*(?:years|yrs)/i);
+  const match = text.match(/(\d{1,2})\+?\s*(?:years|yrs|year)/i);
   return match?.[1] ? Number(match[1]) : null;
 }
 
+function normalizeName(value: string): string {
+  let name = clean(value)
+    .replace(/^(Mr\.?|Ms\.?|Mrs\.?|Dr\.?|Eng\.?|Engineer)\s+/i, "")
+    .replace(/\s+(Country|Nationality|Date of Birth|Education|Membership|Proposed Position|Position).*$/i, "")
+    .replace(/\s{2,}/g, " ");
+  name = name.split(/\s+(?:Key Qualifications|Employment Record|Languages|Certification|Education)\b/i)[0] ?? name;
+  return clean(name).slice(0, 90);
+}
+
+function looksLikePersonName(name: string): boolean {
+  if (name.length < 5 || name.length > 90) return false;
+  if (/hope urban|curriculum|vitae|company|page|expert cvs|staffing/i.test(name)) return false;
+  const words = name.split(/\s+/).filter(Boolean);
+  return words.length >= 2 && words.length <= 6 && words.every((word) => /^[A-Za-z.'-]+$/.test(word));
+}
+
+function expertSections(text: string): string[] {
+  const normalized = text.replace(/\[Page \d+\]/g, " ").replace(/\s+/g, " ");
+  const markers = [...normalized.matchAll(/(?:Name of Expert|Name\s*[:\-]|CURRICULUM\s+VITAE)/gi)].map((m) => m.index ?? 0);
+  if (markers.length === 0) return [normalized];
+  const sections: string[] = [];
+  for (let i = 0; i < markers.length; i += 1) {
+    const start = markers[i];
+    const end = markers[i + 1] ?? Math.min(normalized.length, start + 8000);
+    const section = clean(normalized.slice(start, end));
+    if (section.length > 100) sections.push(section);
+  }
+  return sections;
+}
+
 function parseExperts(text: string) {
-  const sections = text.split(/CURRICULUM\s+VITAE/i).map(clean).filter((s) => s.length > 100);
-  const sourceSections = sections.length ? sections : [text];
-  return sourceSections.map((section) => {
-    const fullName = firstMatch(section, [
-      /Name of Expert\s+([^\n\r]{3,90})/i,
-      /Name\s*[:\-]\s*([^\n\r]{3,90})/i,
+  const drafts = [] as Array<{
+    fullName: string; title: string | null; yearsExperience: number | null; disciplines: string[]; sectors: string[]; certifications: string[]; profile: string;
+  }>;
+  const seen = new Set<string>();
+
+  for (const section of expertSections(text)) {
+    const rawName = firstMatch(section, [
+      /Name of Expert\s*[:\-]?\s*(.+?)(?:\s+(?:Country|Nationality|Date of Birth|Education|Membership|Key Qualifications|Proposed Position|Position)\b)/i,
+      /Name\s*[:\-]\s*(.+?)(?:\s+(?:Country|Nationality|Date of Birth|Education|Membership|Key Qualifications|Proposed Position|Position)\b)/i,
+      /CURRICULUM\s+VITAE\s+(.+?)(?:\s+(?:Proposed Position|Position|Education|Key Qualifications)\b)/i,
     ]);
-    if (!fullName || /^hope\s+urban/i.test(fullName)) return null;
-    const title = firstMatch(section, [/Proposed Position\s+([^\n\r]{3,140})/i, /Position\s+([^\n\r]{3,140})/i]);
-    return {
+    if (!rawName) continue;
+    const fullName = normalizeName(rawName);
+    if (!looksLikePersonName(fullName)) continue;
+    const k = key(fullName);
+    if (seen.has(k)) continue;
+    seen.add(k);
+
+    const title = firstMatch(section, [
+      /Proposed Position\s*[:\-]?\s*(.+?)(?:\s+(?:Name of Firm|Name of Expert|Date of Birth|Education|Membership|Key Qualifications)\b)/i,
+      /Position\s*[:\-]?\s*(.+?)(?:\s+(?:Name of Firm|Name of Expert|Date of Birth|Education|Membership|Key Qualifications)\b)/i,
+    ]);
+
+    drafts.push({
       fullName,
-      title,
+      title: title ? clean(title).slice(0, 140) : null,
       yearsExperience: parseYears(section),
       disciplines: inferServices(section),
       sectors: inferSectors(section),
       certifications: [],
-      profile: section.slice(0, 1800),
-    };
-  }).filter(Boolean).slice(0, 80) as Array<{
-    fullName: string; title: string | null; yearsExperience: number | null; disciplines: string[]; sectors: string[]; certifications: string[]; profile: string;
-  }>;
+      profile: section.slice(0, 2500),
+    });
+  }
+
+  return drafts.slice(0, 120);
 }
 
 function projectChunks(text: string): string[] {
-  const normalized = text.replace(/\[Page \d+\]/g, " ").replace(/\s+/g, " ").replace(/\b(\d{1,3})\s+([A-Z])/g, "\n$1 $2");
-  return normalized.split(/\n(?=\d{1,3}\s+[A-Z])/).map(clean).filter((chunk) => /^\d{1,3}\s+/.test(chunk) && chunk.length > 80).slice(0, 160);
+  const normalized = text
+    .replace(/\[Page \d+\]/g, " ")
+    .replace(/\s+/g, " ")
+    .replace(/\s+(?=\d{1,3}\s+[A-Z][A-Za-z])/, "\n")
+    .replace(/\b(\d{1,3})\s+([A-Z])/g, "\n$1 $2");
+  const chunks = normalized.split(/\n(?=\d{1,3}\s+[A-Z])/).map(clean);
+  return chunks.filter((chunk) => /^\d{1,3}\s+/.test(chunk) && chunk.length > 35).slice(0, 180);
 }
 
 function cleanProjectName(chunk: string): string {
   let name = chunk.replace(/^\d{1,3}\s+/, "");
-  name = name.split(/\s+(?:Constr\.?|Budget|Fee|Ref|Testimony|General Manager|Structural Engineer|Geotech Engineer)\b/i)[0] ?? name;
+  name = name.split(/\s+(?:Constr\.?|Budget|Fee|Ref|Testimony|General Manager|Structural Engineer|Geotech Engineer|Architect|Electrical Engineer|Mechanical Engineer)\b/i)[0] ?? name;
+  name = name.split(/\s+(?:Ethiopia|Ethiopian|Ministry|Federal|City|South|North|East|West)\b/i)[0] ?? name;
   name = name.split(/,\s+[A-Z][a-z]+/)[0] ?? name;
   name = name.replace(/\s*\([^)]*$/, "");
   return clean(name).slice(0, 180);
@@ -99,21 +150,28 @@ function parseMoney(text: string): { value: number | null; currency: string | nu
 }
 
 function parseProjects(text: string) {
-  return projectChunks(text).map((chunk) => {
+  const drafts = [] as Array<{
+    name: string; sector: string | null; serviceAreas: string[]; summary: string; contractValue: number | null; currency: string | null;
+  }>;
+  const seen = new Set<string>();
+
+  for (const chunk of projectChunks(text)) {
     const name = cleanProjectName(chunk);
-    if (name.length < 8) return null;
+    if (name.length < 8 || /^project\s*name$/i.test(name)) continue;
+    const k = key(name);
+    if (seen.has(k)) continue;
+    seen.add(k);
     const money = parseMoney(chunk);
-    return {
+    drafts.push({
       name,
       sector: inferSectors(chunk)[0] ?? null,
       serviceAreas: inferServices(chunk),
-      summary: chunk.slice(0, 2000),
+      summary: chunk.slice(0, 2200),
       contractValue: money.value,
       currency: money.currency,
-    };
-  }).filter(Boolean).slice(0, 150) as Array<{
-    name: string; sector: string | null; serviceAreas: string[]; summary: string; contractValue: number | null; currency: string | null;
-  }>;
+    });
+  }
+  return drafts.slice(0, 150);
 }
 
 export async function importCompanyKnowledgeFromDocuments(companyId: string) {
@@ -134,7 +192,7 @@ export async function importCompanyKnowledgeFromDocuments(companyId: string) {
     const label = `${doc.originalFileName} ${doc.category}`.toLowerCase();
     if (text.length < 1000) continue;
 
-    if (/cv|expert|resume|curriculum/.test(label + " " + text.slice(0, 5000).toLowerCase())) {
+    if (/cv|expert|resume|curriculum/.test(label + " " + text.slice(0, 10000).toLowerCase())) {
       for (const expert of parseExperts(text)) {
         const k = key(expert.fullName);
         if (expertKeys.has(k)) continue;
@@ -153,7 +211,7 @@ export async function importCompanyKnowledgeFromDocuments(companyId: string) {
       }
     }
 
-    if (/project|portfolio|reference|contract/.test(label)) {
+    if (/project|portfolio|reference|contract/.test(label + " " + text.slice(0, 5000).toLowerCase())) {
       for (const project of parseProjects(text)) {
         const k = key(project.name);
         if (projectKeys.has(k)) continue;
