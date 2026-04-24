@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma, prismaReady } from "../../../lib/prisma";
 import { getSession } from "../../../lib/auth";
-import { importCompanyKnowledgeFromDocuments } from "../../../lib/company-knowledge-import-safe";
 
 function toJsonArray(value: unknown): string {
   if (Array.isArray(value)) return JSON.stringify(value.filter(Boolean));
@@ -25,13 +24,7 @@ export async function GET() {
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   await prismaReady;
-  let company = await loadCompany(userId);
-
-  if (!company) return NextResponse.json({});
-
-  // Conservative importer: source-backed draft records only. It does not trust uncertain fields.
-  await importCompanyKnowledgeFromDocuments(company.id);
-  company = await loadCompany(userId);
+  const company = await loadCompany(userId);
 
   if (!company) return NextResponse.json({});
 
