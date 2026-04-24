@@ -1,12 +1,14 @@
 {
   "name": "Hope Tender Proposal Generator",
   "short_name": "Hope Tender",
-  "description": "AI-powered tender proposal generation and compliance engine",
+  "description": "Tender proposal generation, compliance mapping, and export packaging for Hope Urban Planning Architectural and Engineering Consultancy.",
   "start_url": "/dashboard",
+  "scope": "/",
   "display": "standalone",
   "orientation": "portrait-primary",
   "background_color": "#f8fafc",
   "theme_color": "#0f172a",
+  "categories": ["business", "productivity"],
   "icons": [
     {
       "src": "/icon-192.png",
@@ -21,7 +23,6 @@
       "purpose": "maskable any"
     }
   ],
-  "categories": ["business", "productivity"],
   "shortcuts": [
     {
       "name": "New Tender",
@@ -29,9 +30,14 @@
       "description": "Create a new tender proposal"
     },
     {
-      "name": "Dashboard",
-      "url": "/dashboard",
-      "description": "Go to dashboard"
+      "name": "Knowledge Vault",
+      "url": "/dashboard/documents",
+      "description": "Open reusable company knowledge"
+    },
+    {
+      "name": "Export Packages",
+      "url": "/dashboard/export",
+      "description": "Prepare final submission packages"
     }
   ]
 }
