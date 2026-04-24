@@ -1,53 +1,46 @@
 import type { DocumentPlanResult, RequirementDraft } from "./types";
+import { normalizeSubmissionFileName, requiresGeneratedArtifact } from "./scope-policy";
 
 function normalizeFileName(name: string): string {
-  return name.trim().replace(/\s+/g, " ");
+  return normalizeSubmissionFileName(name.trim().replace(/\s+/g, " "));
 }
 
 function docTypeForRequirement(requirement: RequirementDraft): string {
-  if (["FORM", "DECLARATION", "ANNEX", "SCHEDULE"].includes(requirement.requirementType)) {
-    return requirement.requirementType;
-  }
+  if (["FORM", "DECLARATION", "ANNEX", "SCHEDULE"].includes(requirement.requirementType)) return requirement.requirementType;
   if (requirement.requirementType === "EXPERT") return "EXPERT";
   if (requirement.requirementType === "PROJECT_EXPERIENCE") return "PROJECT_EXPERIENCE";
   if (requirement.requirementType === "COMPANY_PROFILE") return "COMPANY_PROFILE";
   if (requirement.requirementType === "METHODOLOGY") return "METHODOLOGY";
-  if (/proposal|technical proposal|submission/i.test(`${requirement.title} ${requirement.description}`)) {
-    return "TECHNICAL_PROPOSAL";
-  }
+  if (/technical proposal|proposal|submission/i.test(`${requirement.title} ${requirement.description}`)) return "TECHNICAL_PROPOSAL";
   return requirement.requirementType || "SUPPORTING_DOCUMENT";
 }
 
-function shouldCreateDocument(requirement: RequirementDraft): boolean {
-  return Boolean(
-    requirement.exactFileName ||
-      requirement.exactOrder ||
-      ["FORM", "DECLARATION", "ANNEX", "SCHEDULE", "EXPERT", "PROJECT_EXPERIENCE", "COMPANY_PROFILE", "METHODOLOGY"].includes(requirement.requirementType) ||
-      /proposal|submission|methodology|technical proposal|curriculum vitae|cv|project reference|company profile/i.test(
-        `${requirement.title} ${requirement.description}`,
-      ),
-  );
+function plannedQuantity(requirement: RequirementDraft): number {
+  if (["EXPERT", "PROJECT_EXPERIENCE"].includes(requirement.requirementType)) {
+    return Math.max(0, requirement.requiredQuantity ?? 0);
+  }
+  return Math.max(1, requirement.requiredQuantity ?? 1);
 }
 
 export function buildDocumentPlan(requirements: Array<{ id: string; requirement: RequirementDraft }>): DocumentPlanResult {
   const planned = requirements
-    .filter(({ requirement }) => shouldCreateDocument(requirement))
-    .map(({ requirement }, index) => {
-      const quantity = Math.max(1, requirement.requiredQuantity ?? 1);
+    .filter(({ requirement }) => requiresGeneratedArtifact(requirement))
+    .map(({ requirement }, requirementIndex) => {
+      const quantity = plannedQuantity(requirement);
       const documents = [] as DocumentPlanResult["documents"];
 
       for (let i = 0; i < quantity; i += 1) {
         const suffix = quantity > 1 ? ` ${i + 1}` : "";
-        const baseFileName = requirement.exactFileName
+        const exactFileName = requirement.exactFileName
           ? normalizeFileName(requirement.exactFileName)
-          : `${normalizeFileName(requirement.title)}${suffix}.docx`;
+          : normalizeFileName(`${requirement.title}${suffix}`);
 
         documents.push({
-          name: baseFileName,
+          name: exactFileName,
           documentType: docTypeForRequirement(requirement),
-          exactFileName: requirement.exactFileName ? normalizeFileName(requirement.exactFileName) : baseFileName,
-          exactOrder: requirement.exactOrder ?? index + 1 + i,
-          contentSummary: `Planned output for ${requirement.title}${suffix}: ${requirement.description}`,
+          exactFileName,
+          exactOrder: requirement.exactOrder ?? requirementIndex + 1 + i,
+          contentSummary: `Planned tender-required output for ${requirement.title}${suffix}: ${requirement.description}`,
         });
       }
 
