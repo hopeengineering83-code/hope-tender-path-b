@@ -5,7 +5,6 @@ export const metadata = {
   title: "Hope Tender Proposal Generator",
   description: "AI-powered tender proposal generation and compliance engine",
   manifest: "/manifest.json",
-  themeColor: "#0f172a",
 };
 
 export const viewport = {
