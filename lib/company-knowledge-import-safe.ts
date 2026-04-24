@@ -16,35 +16,31 @@ function hasProjectSource(name: string, text: string) {
 }
 
 function hasExpertSource(name: string, text: string) {
-  return /expert|cv|staff|resume/i.test(name) && /curriculum\s+vitae|name\s+of\s+expert|proposed\s+position/i.test(text);
+  return /expert|cv|staff|resume/i.test(name) && /name\s+of\s+(?:expert|key\s+staff|personnel)|curriculum\s+vitae/i.test(text);
 }
 
 function normalizePersonName(value: string): string {
   return clean(value)
     .replace(/^(Mr\.?|Ms\.?|Mrs\.?|Dr\.?|Eng\.?|Engineer)\s+/i, "")
-    .replace(/\s+(Country|Nationality|Date of Birth|Education|Membership|Proposed Position|Position).*$/i, "")
+    .replace(/\s+(Country|Nationality|Date of Birth|Education|Membership|Proposed Position|Position|Key Qualifications).*$/i, "")
     .slice(0, 90);
 }
 
 function looksLikePersonName(name: string): boolean {
-  if (/hope urban|curriculum|vitae|company|staffing|summary|page/i.test(name)) return false;
+  if (/hope urban|curriculum|vitae|company|staffing|summary|page|project|client|hospital|city|building|airport|university|factory|hotel|road|bridge/i.test(name)) return false;
   const parts = name.split(/\s+/).filter(Boolean);
   return parts.length >= 2 && parts.length <= 6 && parts.every((p) => /^[A-Za-z.'-]+$/.test(p));
 }
 
 function parseExpertDrafts(text: string) {
   const names = new Set<string>();
-  const patterns = [
-    /Name of Expert\s*[:\-]?\s*(.+?)(?:\s+(?:Country|Nationality|Date of Birth|Education|Membership|Key Qualifications|Proposed Position|Position)\b)/gi,
-    /(?:Mr\.?|Ms\.?|Mrs\.?|Dr\.?|Eng\.?)\s+([A-Z][A-Za-z.'-]+(?:\s+[A-Z][A-Za-z.'-]+){1,4})/g,
-    /([A-Z][A-Za-z.'-]+(?:\s+[A-Z][A-Za-z.'-]+){1,4})\s+(?:Civil Engineer|Structural Engineer|Architect|Planner|Project Manager|Geotechnical Engineer|Mechanical Engineer|Electrical Engineer)/g,
-  ];
-  for (const pattern of patterns) {
-    for (const match of text.matchAll(pattern)) {
-      const name = normalizePersonName(match[1]);
-      if (looksLikePersonName(name)) names.add(name);
-    }
+  const expertPattern = /Name\s+of\s+(?:Expert|Key\s+Staff|Personnel)\s*[:\-]?\s*(.+?)(?:\s+(?:Country|Nationality|Date of Birth|Education|Membership|Key Qualifications|Proposed Position|Position|Employment Record)\b)/gi;
+
+  for (const match of text.matchAll(expertPattern)) {
+    const name = normalizePersonName(match[1]);
+    if (looksLikePersonName(name)) names.add(name);
   }
+
   return [...names].slice(0, EXPERT_TARGET).map((fullName) => {
     const idx = text.toLowerCase().indexOf(fullName.toLowerCase());
     const source = idx >= 0 ? text.slice(idx, idx + 3000) : text.slice(0, 3000);
@@ -89,10 +85,25 @@ export async function importCompanyKnowledgeFromDocuments(companyId: string) {
   const expertDrafts = expertText ? parseExpertDrafts(expertText) : [];
   const projectDrafts = projectText ? parseProjectDrafts(projectText) : [];
 
-  if (expertDrafts.length > 0) await prisma.expert.deleteMany({ where: { companyId } });
-  if (projectDrafts.length > 0) await prisma.project.deleteMany({ where: { companyId } });
+  // Remove only auto-imported drafts. Manual records must not be deleted.
+  if (expertDrafts.length > 0) {
+    await prisma.expert.deleteMany({ where: { companyId, profile: { contains: "AUTO-IMPORTED" } } });
+  }
+  if (projectDrafts.length > 0) {
+    await prisma.project.deleteMany({ where: { companyId, summary: { contains: "AUTO-IMPORTED" } } });
+  }
+
+  const existingExperts = await prisma.expert.findMany({ where: { companyId }, select: { fullName: true } });
+  const existingProjects = await prisma.project.findMany({ where: { companyId }, select: { name: true } });
+  const expertKeys = new Set(existingExperts.map((item) => key(item.fullName)));
+  const projectKeys = new Set(existingProjects.map((item) => key(item.name)));
+
+  let expertsCreated = 0;
+  let projectsCreated = 0;
 
   for (const expert of expertDrafts) {
+    const k = key(expert.fullName);
+    if (expertKeys.has(k)) continue;
     await prisma.expert.create({ data: {
       companyId,
       fullName: expert.fullName,
@@ -101,11 +112,15 @@ export async function importCompanyKnowledgeFromDocuments(companyId: string) {
       disciplines: "[]",
       sectors: "[]",
       certifications: "[]",
-      profile: `[AUTO-IMPORTED FROM CV PDF — REVIEW REQUIRED]\nOnly the name is structured. Correct title, years, disciplines, sectors and certifications before using in final tender matching.\n\nSource snippet:\n${expert.source}`,
+      profile: `[AUTO-IMPORTED FROM CV PDF — REVIEW REQUIRED]\nOnly the expert name is structured. Correct title, years, disciplines, sectors and certifications before using in final tender matching.\n\nSource snippet:\n${expert.source}`,
     }});
+    expertKeys.add(k);
+    expertsCreated += 1;
   }
 
   for (const project of projectDrafts) {
+    const k = key(project.name);
+    if (projectKeys.has(k)) continue;
     await prisma.project.create({ data: {
       companyId,
       name: project.name,
@@ -115,7 +130,9 @@ export async function importCompanyKnowledgeFromDocuments(companyId: string) {
       serviceAreas: "[]",
       summary: `[AUTO-IMPORTED FROM PROJECT PDF — REVIEW REQUIRED]\nOnly the project name is structured. Correct client, country, sector, services, value and dates before using in final tender matching.\n\nSource snippet:\n${project.source}`,
     }});
+    projectKeys.add(k);
+    projectsCreated += 1;
   }
 
-  return { expertsCreated: expertDrafts.length, projectsCreated: projectDrafts.length };
+  return { expertsCreated, projectsCreated };
 }
