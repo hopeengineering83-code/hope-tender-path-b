@@ -54,10 +54,12 @@ export async function getSession(): Promise<string | null> {
   const token = store.get(SESSION_COOKIE)?.value;
   if (!token) return null;
   const data = verifyToken(token);
-  if (!data) {
-    store.delete(SESSION_COOKIE);
-    return null;
-  }
+
+  // Do not call store.delete() here. This function is used by Server Components
+  // and Layouts, where Next.js does not allow cookie mutation. Invalid cookies
+  // are treated as logged-out and are cleared on explicit logout or next login.
+  if (!data) return null;
+
   return data.userId;
 }
 
@@ -69,8 +71,13 @@ export async function destroySession() {
 export async function getCurrentUser() {
   const userId = await getSession();
   if (!userId) return null;
-  await prismaReady;
-  return prisma.user.findUnique({ where: { id: userId } });
+  try {
+    await prismaReady;
+    return await prisma.user.findUnique({ where: { id: userId } });
+  } catch (error) {
+    console.error("[auth] failed to load current user:", error);
+    return null;
+  }
 }
 
 export async function requireUser() {
