@@ -1,4 +1,5 @@
 import type { CompanyKnowledgeSnapshot, ComplianceResult, MatchingResult, RequirementDraft } from "./types";
+import { hasAmbiguousQuantity } from "./scope-policy";
 
 function clamp01(value: number): number {
   return Math.max(0, Math.min(1, value));
@@ -31,35 +32,47 @@ export function buildCompliance(
     let evidenceSource = "No evidence source selected";
     let evidenceReference: string | undefined;
 
+    if (hasAmbiguousQuantity(req)) {
+      gaps.push({
+        requirementId: item.id,
+        severity: req.priority === "MANDATORY" ? "HIGH" : "MEDIUM",
+        title: `${req.title} — quantity requires review`,
+        description: `${req.description} The tender appears to require experts or project references, but no exact quantity could be extracted. The system will not auto-select records until an authorized user confirms the exact quantity.`,
+        mitigationPlan: "Review the tender clause and enter the exact required quantity before final generation.",
+      });
+    }
+
     if (req.requirementType === "EXPERT") {
-      supportStrength = expertCount > 0 ? clamp01(selectedExperts.length / Math.max(req.requiredQuantity || 1, 1)) : 0;
-      supportStatus = supportStrength >= 1 ? "SUPPORTED" : supportStrength > 0 ? "PARTIAL" : "UNSUPPORTED";
-      evidenceSummary = `${selectedExperts.length} expert(s) selected from ${expertCount} expert record(s) in company knowledge.`;
+      const required = Math.max(req.requiredQuantity ?? 0, 0);
+      supportStrength = required > 0 ? clamp01(selectedExperts.length / required) : 0;
+      supportStatus = required === 0 ? "QUANTITY_REVIEW_REQUIRED" : supportStrength >= 1 ? "SUPPORTED" : supportStrength > 0 ? "PARTIAL" : "UNSUPPORTED";
+      evidenceSummary = required > 0
+        ? `${selectedExperts.length} of ${required} required expert(s) selected from ${expertCount} expert record(s).`
+        : `${expertCount} expert record(s) available, but exact required quantity was not extracted.`;
       evidenceType = "EXPERT";
       evidenceSource = selectedExperts.length > 0 ? "Selected expert library" : "Expert library";
       evidenceReference = selectedExperts.map((match) => match.expertId).slice(0, 3).join(", ") || undefined;
     } else if (req.requirementType === "PROJECT_EXPERIENCE") {
-      supportStrength = projectCount > 0 ? clamp01(selectedProjects.length / Math.max(req.requiredQuantity || 1, 1)) : 0;
-      supportStatus = supportStrength >= 1 ? "SUPPORTED" : supportStrength > 0 ? "PARTIAL" : "UNSUPPORTED";
-      evidenceSummary = `${selectedProjects.length} project reference(s) selected from ${projectCount} available project record(s).`;
+      const required = Math.max(req.requiredQuantity ?? 0, 0);
+      supportStrength = required > 0 ? clamp01(selectedProjects.length / required) : 0;
+      supportStatus = required === 0 ? "QUANTITY_REVIEW_REQUIRED" : supportStrength >= 1 ? "SUPPORTED" : supportStrength > 0 ? "PARTIAL" : "UNSUPPORTED";
+      evidenceSummary = required > 0
+        ? `${selectedProjects.length} of ${required} required project reference(s) selected from ${projectCount} available project record(s).`
+        : `${projectCount} project record(s) available, but exact required quantity was not extracted.`;
       evidenceType = "PROJECT";
       evidenceSource = selectedProjects.length > 0 ? "Selected project references" : "Project library";
       evidenceReference = selectedProjects.map((match) => match.projectId).slice(0, 3).join(", ") || undefined;
     } else if (["LEGAL", "ELIGIBILITY", "REGISTRATION"].includes(req.requirementType)) {
       supportStrength = legalCount > 0 ? 1 : 0;
       supportStatus = supportStrength >= 1 ? "SUPPORTED" : "UNSUPPORTED";
-      evidenceSummary = legalCount > 0
-        ? `${legalCount} legal/company registration record(s) available.`
-        : "No legal/company registration records available yet.";
+      evidenceSummary = legalCount > 0 ? `${legalCount} legal/company registration record(s) available.` : "No legal/company registration records available yet.";
       evidenceType = "LEGAL_RECORD";
       evidenceSource = legalCount > 0 ? "Company legal records" : "No legal records found";
       evidenceReference = knowledge.legalRecords[0]?.referenceNumber ?? knowledge.legalRecords[0]?.title;
     } else if (["FINANCIAL", "FINANCIAL_CAPACITY"].includes(req.requirementType)) {
       supportStrength = financialCount > 0 ? 1 : 0;
       supportStatus = supportStrength >= 1 ? "SUPPORTED" : "UNSUPPORTED";
-      evidenceSummary = financialCount > 0
-        ? `${financialCount} financial record(s) available for internal evidence mapping.`
-        : "No financial records available yet.";
+      evidenceSummary = financialCount > 0 ? `${financialCount} financial record(s) available for internal evidence mapping.` : "No financial records available yet.";
       evidenceType = "FINANCIAL_RECORD";
       evidenceSource = financialCount > 0 ? "Company financial records" : "No financial records found";
       evidenceReference = knowledge.financialRecords[0] ? `${knowledge.financialRecords[0].recordType} ${knowledge.financialRecords[0].fiscalYear}` : undefined;
@@ -78,9 +91,7 @@ export function buildCompliance(
     } else {
       supportStrength = documentCount > 0 ? 0.65 : 0;
       supportStatus = supportStrength > 0 ? "EVIDENCE_PENDING_REVIEW" : "UNSUPPORTED";
-      evidenceSummary = documentCount > 0
-        ? `${documentCount} company document(s) available for internal evidence mapping.`
-        : "No company documents available yet.";
+      evidenceSummary = documentCount > 0 ? `${documentCount} company document(s) available for internal evidence mapping.` : "No company documents available yet.";
       evidenceType = "COMPANY_DOCUMENT";
       evidenceSource = documentCount > 0 ? "Company document library" : "No company documents found";
       evidenceReference = knowledge.documents[0]?.originalFileName;
