@@ -1,0 +1,39 @@
+{
+  "appId": "com.hopeengineering.tender-generator",
+  "productName": "Hope Tender Proposal Generator",
+  "copyright": "Copyright © 2025 Hope Urban Planning Architectural and Engineering Consultancy",
+  "main": "electron/main.js",
+  "directories": {
+    "output": "dist-electron"
+  },
+  "files": [
+    "electron/**/*",
+    ".next/**/*",
+    "public/**/*",
+    "prisma/**/*",
+    "package.json",
+    "next.config.mjs"
+  ],
+  "mac": {
+    "category": "public.app-category.business",
+    "icon": "public/icon-512.png",
+    "target": [{ "target": "dmg", "arch": ["x64", "arm64"] }]
+  },
+  "win": {
+    "icon": "public/icon-512.png",
+    "target": [{ "target": "nsis", "arch": ["x64"] }]
+  },
+  "linux": {
+    "icon": "public/icon-512.png",
+    "target": [{ "target": "AppImage", "arch": ["x64"] }],
+    "category": "Office"
+  },
+  "nsis": {
+    "oneClick": false,
+    "perMachine": false,
+    "allowToChangeInstallationDirectory": true,
+    "createDesktopShortcut": true,
+    "createStartMenuShortcut": true
+  },
+  "publish": null
+}

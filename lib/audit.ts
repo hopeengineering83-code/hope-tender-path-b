@@ -11,7 +11,8 @@ export type AuditAction =
   | "EXPORT_PACKAGE_CREATE" | "EXPORT_PACKAGE_DOWNLOAD"
   | "OVERRIDE" | "GAP_RESOLVED"
   | "CREATE" | "UPDATE" | "DELETE"
-  | "DOCUMENT_REVIEW";
+  | "DOCUMENT_REVIEW"
+  | "TENDER_DUPLICATE";
 
 export async function logAction(opts: {
   userId?: string;

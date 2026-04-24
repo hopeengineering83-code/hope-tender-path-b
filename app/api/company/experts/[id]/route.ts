@@ -1,0 +1,102 @@
+import { NextResponse } from "next/server";
+import { prisma, prismaReady } from "../../../../../lib/prisma";
+import { getSession } from "../../../../../lib/auth";
+
+function toJsonArray(value: unknown): string {
+  if (Array.isArray(value)) return JSON.stringify(value.filter(Boolean));
+  return JSON.stringify(
+    String(value || "").split(",").map((v) => v.trim()).filter(Boolean)
+  );
+}
+
+function safeParseArr(v: unknown): string[] {
+  try { return JSON.parse(v as string) as string[]; } catch { return []; }
+}
+
+function normalizeExpert(e: Record<string, unknown>) {
+  return {
+    ...e,
+    disciplines: safeParseArr(e.disciplines),
+    sectors: safeParseArr(e.sectors),
+    certifications: safeParseArr(e.certifications),
+  };
+}
+
+export async function GET(
+  _req: Request,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const userId = await getSession();
+  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  await prismaReady;
+
+  const { id } = await params;
+  const company = await prisma.company.findUnique({ where: { userId } });
+  if (!company) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+  const expert = await prisma.expert.findFirst({ where: { id, companyId: company.id } });
+  if (!expert) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+  return NextResponse.json(normalizeExpert(expert as unknown as Record<string, unknown>));
+}
+
+export async function PUT(
+  req: Request,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const userId = await getSession();
+  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  await prismaReady;
+
+  const { id } = await params;
+  const company = await prisma.company.findUnique({ where: { userId } });
+  if (!company) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+  const existing = await prisma.expert.findFirst({ where: { id, companyId: company.id } });
+  if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+  try {
+    const body = await req.json() as Record<string, unknown>;
+    const updated = await prisma.expert.update({
+      where: { id },
+      data: {
+        fullName: String(body.fullName ?? existing.fullName),
+        title: body.title !== undefined ? (String(body.title) || null) : existing.title,
+        email: body.email !== undefined ? (String(body.email) || null) : existing.email,
+        phone: body.phone !== undefined ? (String(body.phone) || null) : existing.phone,
+        yearsExperience: body.yearsExperience !== undefined
+          ? (body.yearsExperience ? Number(body.yearsExperience) : null)
+          : existing.yearsExperience,
+        disciplines: body.disciplines !== undefined ? toJsonArray(body.disciplines) : existing.disciplines,
+        sectors: body.sectors !== undefined ? toJsonArray(body.sectors) : existing.sectors,
+        certifications: body.certifications !== undefined ? toJsonArray(body.certifications) : existing.certifications,
+        profile: body.profile !== undefined ? (String(body.profile) || null) : existing.profile,
+        isActive: body.isActive !== undefined ? Boolean(body.isActive) : existing.isActive,
+        updatedAt: new Date(),
+      },
+    });
+    return NextResponse.json(normalizeExpert(updated as unknown as Record<string, unknown>));
+  } catch (error) {
+    console.error(error);
+    return NextResponse.json({ error: "Failed to update expert" }, { status: 500 });
+  }
+}
+
+export async function DELETE(
+  _req: Request,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const userId = await getSession();
+  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  await prismaReady;
+
+  const { id } = await params;
+  const company = await prisma.company.findUnique({ where: { userId } });
+  if (!company) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+  const existing = await prisma.expert.findFirst({ where: { id, companyId: company.id } });
+  if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+  await prisma.expert.delete({ where: { id } });
+  return NextResponse.json({ success: true });
+}
