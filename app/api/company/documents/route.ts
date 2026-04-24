@@ -4,23 +4,26 @@ import { prisma, prismaReady } from "../../../../lib/prisma";
 import { logAction } from "../../../../lib/audit";
 import { extractTextFromBuffer, getFileTypeLabel, isMeaningfulExtraction } from "../../../../lib/extract-text";
 
+function shouldRetryExtraction(extractedText: string | null): boolean {
+  return (extractedText?.trim().length ?? 0) < 1000;
+}
+
 async function reextractMissingCompanyDocuments(companyId: string, userId: string) {
   const docs = await prisma.companyDocument.findMany({
-    where: {
-      companyId,
-      OR: [{ extractedText: null }, { extractedText: "" }],
-    },
+    where: { companyId },
     select: {
       id: true,
       originalFileName: true,
       mimeType: true,
       fileContent: true,
+      extractedText: true,
       metadata: true,
     },
-    take: 10,
+    orderBy: { createdAt: "desc" },
+    take: 25,
   });
 
-  for (const doc of docs) {
+  for (const doc of docs.filter((item) => item.fileContent && shouldRetryExtraction(item.extractedText))) {
     if (!doc.fileContent) continue;
     try {
       const buffer = Buffer.from(doc.fileContent, "base64");
