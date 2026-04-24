@@ -169,7 +169,7 @@ function extractRtf(buffer: Buffer): string {
   return cleaned.slice(0, 80000);
 }
 
-// ─── Metadata helpers (exported for use in upload routes) ────────────────────
+// ─── Metadata helpers ───────────────────────────────────────────────────────
 
 export function getFileTypeLabel(mimeType: string, fileName: string): string {
   const ext = fileName.toLowerCase().split(".").pop() ?? "";

@@ -29,6 +29,10 @@ function hasPlaceholder(text: string): boolean {
   return PLACEHOLDER_PATTERNS.some((p) => p.test(text));
 }
 
+function safeParseArr(v: unknown): string[] {
+  try { return JSON.parse(v as string) as string[]; } catch { return []; }
+}
+
 export async function validateTender(tenderId: string): Promise<ValidationReport> {
   const issues: ValidationIssue[] = [];
 
@@ -38,6 +42,8 @@ export async function validateTender(tenderId: string): Promise<ValidationReport
       requirements: true,
       complianceGaps: true,
       generatedDocuments: true,
+      expertMatches: { where: { isSelected: true } },
+      projectMatches: { where: { isSelected: true } },
     },
   });
 
@@ -49,7 +55,10 @@ export async function validateTender(tenderId: string): Promise<ValidationReport
     };
   }
 
-  // 1. Check for unresolved blocking compliance gaps
+  const generatedDocs = tender.generatedDocuments
+    .filter((d) => d.generationStatus === "GENERATED")
+    .sort((a, b) => (a.exactOrder ?? Number.MAX_SAFE_INTEGER) - (b.exactOrder ?? Number.MAX_SAFE_INTEGER));
+
   const blockingGaps = tender.complianceGaps.filter(
     (g) => !g.isResolved && ["CRITICAL", "HIGH"].includes(g.severity),
   );
@@ -61,8 +70,6 @@ export async function validateTender(tenderId: string): Promise<ValidationReport
     });
   }
 
-  // 2. Check that at least one document has been generated
-  const generatedDocs = tender.generatedDocuments.filter((d) => d.generationStatus === "GENERATED");
   if (generatedDocs.length === 0) {
     issues.push({
       code: "NO_GENERATED_DOCUMENTS",
@@ -71,9 +78,8 @@ export async function validateTender(tenderId: string): Promise<ValidationReport
     });
   }
 
-  // 3. Check each generated document for placeholder text
   for (const doc of generatedDocs) {
-    const textToCheck = [doc.contentSummary ?? "", doc.name].join(" ");
+    const textToCheck = [doc.contentSummary ?? "", doc.name, doc.exactFileName ?? ""].join(" ");
     if (hasPlaceholder(textToCheck)) {
       issues.push({
         code: "PLACEHOLDER_IN_DOCUMENT",
@@ -83,26 +89,51 @@ export async function validateTender(tenderId: string): Promise<ValidationReport
     }
   }
 
-  // 4. Check file naming against tender requirements
-  const safeParseArr = (v: unknown): string[] => {
-    try { return JSON.parse(v as string) as string[]; } catch { return []; }
-  };
   const requiredNames = safeParseArr(tender.exactFileNaming);
   if (requiredNames.length > 0) {
-    const generatedNames = generatedDocs.map((d) => d.exactFileName ?? d.name);
-    const missing = requiredNames.filter(
-      (name) => !generatedNames.some((g) => g.toLowerCase().includes(name.toLowerCase())),
-    );
+    const generatedNames = generatedDocs.map((d) => (d.exactFileName ?? d.name).trim().toLowerCase());
+    const normalizedRequired = requiredNames.map((name) => name.trim().toLowerCase());
+    const missing = normalizedRequired.filter((name) => !generatedNames.includes(name));
+    const extras = generatedNames.filter((name) => !normalizedRequired.includes(name));
+
     if (missing.length > 0) {
       issues.push({
         code: "MISSING_REQUIRED_FILES",
-        severity: "WARN",
-        message: `The following required file name(s) have no matching generated document: ${missing.join(", ")}`,
+        severity: "BLOCK",
+        message: `The following tender-required file name(s) are missing from generated documents: ${missing.join(", ")}`,
+      });
+    }
+
+    if (extras.length > 0) {
+      issues.push({
+        code: "EXTRA_GENERATED_FILES",
+        severity: "BLOCK",
+        message: `Generated package includes extra file(s) not present in the tender naming rules: ${extras.join(", ")}`,
+      });
+    }
+
+    if (generatedDocs.length !== normalizedRequired.length) {
+      issues.push({
+        code: "FILE_COUNT_MISMATCH",
+        severity: "BLOCK",
+        message: `Tender requires exactly ${normalizedRequired.length} named file(s), but ${generatedDocs.length} generated file(s) are currently marked as generated.`,
       });
     }
   }
 
-  // 5. Check all mandatory requirements are addressed
+  const requiredOrder = safeParseArr(tender.exactFileOrder).map((name) => name.trim().toLowerCase());
+  if (requiredOrder.length > 0) {
+    const actualOrder = generatedDocs.map((d) => (d.exactFileName ?? d.name).trim().toLowerCase());
+    const outOfOrder = requiredOrder.some((name, index) => actualOrder[index] !== name);
+    if (outOfOrder) {
+      issues.push({
+        code: "FILE_ORDER_MISMATCH",
+        severity: "BLOCK",
+        message: `Generated document order does not match the tender-required order. Expected: ${requiredOrder.join(" -> ")}.`,
+      });
+    }
+  }
+
   const unresolvedMandatory = tender.requirements.filter(
     (r) => r.priority === "MANDATORY" && !r.isResolved,
   );
@@ -114,7 +145,37 @@ export async function validateTender(tenderId: string): Promise<ValidationReport
     });
   }
 
-  // 6. Check deadline is not in the past
+  const expertRequirementQty = tender.requirements
+    .filter((r) => r.requiredQuantity && r.requirementType === "EXPERT")
+    .reduce((sum, r) => sum + (r.requiredQuantity ?? 0), 0);
+  if (expertRequirementQty > 0 && tender.expertMatches.length !== expertRequirementQty) {
+    issues.push({
+      code: "EXPERT_QUANTITY_MISMATCH",
+      severity: "BLOCK",
+      message: `Tender requires exactly ${expertRequirementQty} expert selection(s), but ${tender.expertMatches.length} expert match(es) are selected.`,
+    });
+  }
+
+  const projectRequirementQty = tender.requirements
+    .filter((r) => r.requiredQuantity && r.requirementType === "PROJECT_EXPERIENCE")
+    .reduce((sum, r) => sum + (r.requiredQuantity ?? 0), 0);
+  if (projectRequirementQty > 0 && tender.projectMatches.length !== projectRequirementQty) {
+    issues.push({
+      code: "PROJECT_QUANTITY_MISMATCH",
+      severity: "BLOCK",
+      message: `Tender requires exactly ${projectRequirementQty} project reference(s), but ${tender.projectMatches.length} project match(es) are selected.`,
+    });
+  }
+
+  const docsMissingFileNames = generatedDocs.filter((d) => !(d.exactFileName ?? "").trim());
+  if (docsMissingFileNames.length > 0) {
+    issues.push({
+      code: "MISSING_EXACT_FILE_NAME",
+      severity: "BLOCK",
+      message: `${docsMissingFileNames.length} generated document(s) are missing exact file names required for export packaging.`,
+    });
+  }
+
   if (tender.deadline && new Date(tender.deadline) < new Date()) {
     issues.push({
       code: "DEADLINE_PASSED",
@@ -124,9 +185,8 @@ export async function validateTender(tenderId: string): Promise<ValidationReport
   }
 
   const blockCount = issues.filter((i) => i.severity === "BLOCK").length;
-
-  // Update validation status on all generated documents
   const newStatus = blockCount === 0 ? "PASSED" : "FAILED";
+
   await prisma.generatedDocument.updateMany({
     where: { tenderId, generationStatus: "GENERATED" },
     data: { validationStatus: newStatus },

@@ -25,23 +25,24 @@ export async function runTenderEngine(tenderId: string, userId: string) {
       experts: true,
       projects: true,
       documents: { select: { id: true, category: true, originalFileName: true, extractedText: true } },
+      legalRecords: true,
+      financialRecords: true,
+      complianceRecords: true,
     },
   });
-
-  if (!company) {
-    throw new Error("Company profile required before engine run");
-  }
+  if (!company) throw new Error("Company profile required before engine run");
 
   await prisma.$transaction(async (tx) => {
     await tx.tenderExpertMatch.deleteMany({ where: { tenderId } });
     await tx.tenderProjectMatch.deleteMany({ where: { tenderId } });
     await tx.complianceGap.deleteMany({ where: { tenderId } });
+    await tx.complianceMatrix.deleteMany({ where: { tenderId } });
     await tx.generatedDocument.deleteMany({ where: { tenderId } });
     await tx.tenderRequirement.deleteMany({ where: { tenderId } });
 
     const analysis = analyzeTender(tender);
+    const createdRequirements: Array<{ id: string; requirement: (typeof analysis.requirements)[number] }> = [];
 
-    const createdRequirements = [] as Array<{ id: string; requirement: (typeof analysis.requirements)[number] }>;
     for (const requirement of analysis.requirements) {
       const created = await tx.tenderRequirement.create({
         data: {
@@ -65,45 +66,35 @@ export async function runTenderEngine(tenderId: string, userId: string) {
       experts: company.experts,
       projects: company.projects,
       documents: company.documents,
+      legalRecords: company.legalRecords,
+      financialRecords: company.financialRecords,
+      complianceRecords: company.complianceRecords,
     };
 
     const matching = buildMatches(analysis.requirements, knowledge, tender.category, tender.title);
     for (const match of matching.expertMatches) {
-      await tx.tenderExpertMatch.create({
-        data: {
-          tenderId,
-          expertId: match.expertId,
-          score: match.score,
-          rationale: match.rationale,
-          isSelected: match.isSelected,
-        },
-      });
+      await tx.tenderExpertMatch.create({ data: { tenderId, expertId: match.expertId, score: match.score, rationale: match.rationale, isSelected: match.isSelected } });
     }
-
     for (const match of matching.projectMatches) {
-      await tx.tenderProjectMatch.create({
-        data: {
-          tenderId,
-          projectId: match.projectId,
-          score: match.score,
-          rationale: match.rationale,
-          isSelected: match.isSelected,
-        },
-      });
+      await tx.tenderProjectMatch.create({ data: { tenderId, projectId: match.projectId, score: match.score, rationale: match.rationale, isSelected: match.isSelected } });
     }
 
     const compliance = buildCompliance(createdRequirements, knowledge, matching);
-    for (const gap of compliance.gaps) {
-      await tx.complianceGap.create({
+    for (const matrix of compliance.matrices) {
+      await tx.complianceMatrix.create({
         data: {
           tenderId,
-          requirementId: gap.requirementId ?? null,
-          severity: gap.severity,
-          title: gap.title,
-          description: gap.description,
-          mitigationPlan: gap.mitigationPlan ?? null,
+          requirementId: matrix.requirementId,
+          evidenceType: matrix.evidenceType,
+          evidenceSource: matrix.evidenceSource,
+          evidenceReference: matrix.evidenceReference ?? null,
+          supportLevel: matrix.supportStatus,
+          notes: [matrix.evidenceSummary, matrix.notes].filter(Boolean).join(" | ") || null,
         },
       });
+    }
+    for (const gap of compliance.gaps) {
+      await tx.complianceGap.create({ data: { tenderId, requirementId: gap.requirementId ?? null, severity: gap.severity, title: gap.title, description: gap.description, mitigationPlan: gap.mitigationPlan ?? null } });
     }
 
     const documentPlan = buildDocumentPlan(createdRequirements);
@@ -114,15 +105,14 @@ export async function runTenderEngine(tenderId: string, userId: string) {
           name: document.name,
           documentType: document.documentType,
           exactFileName: document.exactFileName ?? null,
-          exactOrder: document.exactOrder ?? null,
+          exactOrder: typeof document.exactOrder === "number" ? document.exactOrder : null,
           contentSummary: document.contentSummary,
         },
       });
     }
 
-    const unresolvedMandatoryGaps = compliance.gaps.filter(
-      (gap) => gap.severity === "CRITICAL" || gap.severity === "HIGH",
-    ).length;
+    const unresolvedMandatoryGaps = compliance.gaps.filter((gap) => gap.severity === "CRITICAL" || gap.severity === "HIGH").length;
+    const supportedCount = compliance.matrices.filter((m) => m.supportStatus === "SUPPORTED").length;
 
     await tx.tender.update({
       where: { id: tenderId },
@@ -130,6 +120,7 @@ export async function runTenderEngine(tenderId: string, userId: string) {
         analysisSummary: analysis.summary,
         exactFileNaming: JSON.stringify(analysis.exactFileNaming),
         exactFileOrder: JSON.stringify(analysis.exactFileOrder),
+        readinessScore: Math.max(0, Math.min(100, Math.round((supportedCount / Math.max(compliance.matrices.length, 1)) * 100))),
         status: unresolvedMandatoryGaps > 0 ? "COMPLIANCE_REVIEW" : "MATCHED",
         stage: unresolvedMandatoryGaps > 0 ? "COMPLIANCE" : "MATCHING",
       },
@@ -146,6 +137,7 @@ export async function runTenderEngine(tenderId: string, userId: string) {
       expertMatches: { orderBy: { score: "desc" }, include: { expert: true } },
       projectMatches: { orderBy: { score: "desc" }, include: { project: true } },
       complianceGaps: { orderBy: { createdAt: "desc" } },
+      complianceMatrix: { orderBy: { createdAt: "asc" } },
       generatedDocuments: {
         orderBy: { exactOrder: "asc" },
         select: { id: true, name: true, documentType: true, generationStatus: true, validationStatus: true, reviewStatus: true, exactFileName: true, exactOrder: true, contentSummary: true },

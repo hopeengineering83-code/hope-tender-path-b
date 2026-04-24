@@ -141,7 +141,6 @@ export async function POST(req: Request) {
       errors: errorCount,
       results,
     }, { status: errorCount > 0 && successCount === 0 ? 422 : 200 });
-
   } catch (error) {
     console.error("[upload] error:", error);
     return NextResponse.json({ error: "Upload failed" }, { status: 500 });

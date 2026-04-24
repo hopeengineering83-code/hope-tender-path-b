@@ -55,6 +55,13 @@ function sectorBoost(tenderSector: string | null | undefined, items: string[]): 
   return 0;
 }
 
+function getRequiredQuantity(requirements: RequirementDraft[], type: string, fallback: number): number {
+  const qty = requirements
+    .filter((req) => req.requirementType === type)
+    .reduce((sum, req) => sum + (req.requiredQuantity ?? 0), 0);
+  return qty > 0 ? qty : fallback;
+}
+
 export function buildMatches(
   requirements: RequirementDraft[],
   knowledge: CompanyKnowledgeSnapshot,

@@ -22,6 +22,15 @@ model User {
   updatedAt    DateTime    @updatedAt
 }
 
+model Role {
+  id          String   @id @default(uuid())
+  code        String   @unique
+  name        String
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
 model Session {
   id        String   @id @default(uuid())
   token     String   @unique
@@ -33,26 +42,29 @@ model Session {
 }
 
 model Company {
-  id               String            @id @default(uuid())
-  name             String
-  legalName        String?
-  description      String?
-  website          String?
-  address          String?
-  phone            String?
-  email            String?
-  serviceLines     String            @default("[]")
-  sectors          String            @default("[]")
-  profileSummary   String?
-  setupCompletedAt DateTime?
-  userId           String            @unique
-  user             User              @relation(fields: [userId], references: [id], onDelete: Cascade)
-  experts          Expert[]
-  projects         Project[]
-  documents        CompanyDocument[]
-  assets           CompanyAsset[]
-  createdAt        DateTime          @default(now())
-  updatedAt        DateTime          @updatedAt
+  id                String                    @id @default(uuid())
+  name              String
+  legalName         String?
+  description       String?
+  website           String?
+  address           String?
+  phone             String?
+  email             String?
+  serviceLines      String                    @default("[]")
+  sectors           String                    @default("[]")
+  profileSummary    String?
+  setupCompletedAt  DateTime?
+  userId            String                    @unique
+  user              User                      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  experts           Expert[]
+  projects          Project[]
+  documents         CompanyDocument[]
+  assets            CompanyAsset[]
+  legalRecords      LegalRecord[]
+  financialRecords  FinancialRecord[]
+  complianceRecords CompanyComplianceRecord[]
+  createdAt         DateTime                  @default(now())
+  updatedAt         DateTime                  @updatedAt
 }
 
 model CompanyDocument {
@@ -122,9 +134,70 @@ model Project {
   currency      String?
   startDate     DateTime?
   endDate       DateTime?
+  evidences     ProjectEvidence[]
   createdAt     DateTime             @default(now())
   updatedAt     DateTime             @updatedAt
   tenderMatches TenderProjectMatch[]
+}
+
+model ProjectEvidence {
+  id               String   @id @default(uuid())
+  projectId        String
+  project          Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  title            String
+  evidenceType     String
+  description      String?
+  fileName         String?
+  storagePath      String?
+  extractedText    String?
+  metadata         String   @default("{}")
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
+
+model LegalRecord {
+  id               String   @id @default(uuid())
+  companyId        String
+  company          Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  recordType       String
+  title            String
+  authority        String?
+  referenceNumber  String?
+  issueDate        DateTime?
+  expiryDate       DateTime?
+  status           String   @default("ACTIVE")
+  metadata         String   @default("{}")
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
+
+model FinancialRecord {
+  id               String   @id @default(uuid())
+  companyId        String
+  company          Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  fiscalYear       Int
+  recordType       String
+  currency         String?  @default("USD")
+  amount           Float?
+  notes            String?
+  metadata         String   @default("{}")
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
+
+model CompanyComplianceRecord {
+  id               String   @id @default(uuid())
+  companyId        String
+  company          Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  complianceType   String
+  title            String
+  status           String   @default("ACTIVE")
+  evidenceSummary  String?
+  referenceNumber  String?
+  expiryDate       DateTime?
+  metadata         String   @default("{}")
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 }
 
 model Tender {
@@ -159,6 +232,7 @@ model Tender {
   expertMatches         TenderExpertMatch[]
   projectMatches        TenderProjectMatch[]
   complianceGaps        ComplianceGap[]
+  complianceMatrix      ComplianceMatrix[]
   generatedDocuments    GeneratedDocument[]
   exportPackages        ExportPackage[]
 }
@@ -180,23 +254,39 @@ model TenderFile {
 }
 
 model TenderRequirement {
-  id               String   @id @default(uuid())
-  tenderId         String
-  tender           Tender   @relation(fields: [tenderId], references: [id], onDelete: Cascade)
-  code             String?
-  title            String
-  description      String
-  requirementType  String
-  priority         String
-  sectionReference String?
-  requiredQuantity Int?
-  pageLimit        Int?
-  exactFileName    String?
-  exactOrder       Int?
-  restrictions     String?
-  isResolved       Boolean  @default(false)
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  id                    String               @id @default(uuid())
+  tenderId              String
+  tender                Tender               @relation(fields: [tenderId], references: [id], onDelete: Cascade)
+  code                  String?
+  title                 String
+  description           String
+  requirementType       String
+  priority              String
+  sectionReference      String?
+  requiredQuantity      Int?
+  pageLimit             Int?
+  exactFileName         String?
+  exactOrder            Int?
+  restrictions          String?
+  isResolved            Boolean              @default(false)
+  complianceMatrixRows  ComplianceMatrix[]
+  createdAt             DateTime             @default(now())
+  updatedAt             DateTime             @updatedAt
+}
+
+model ComplianceMatrix {
+  id                String             @id @default(uuid())
+  tenderId          String
+  tender            Tender             @relation(fields: [tenderId], references: [id], onDelete: Cascade)
+  requirementId     String?
+  requirement       TenderRequirement? @relation(fields: [requirementId], references: [id], onDelete: SetNull)
+  evidenceType      String
+  evidenceSource    String
+  evidenceReference String?
+  supportLevel      String             @default("PARTIAL")
+  notes             String?
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
 }
 
 model TenderExpertMatch {

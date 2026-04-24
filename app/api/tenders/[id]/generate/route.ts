@@ -14,6 +14,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   }
 
   const userId = actor.id;
+
   await prismaReady;
   const { id } = await params;
 

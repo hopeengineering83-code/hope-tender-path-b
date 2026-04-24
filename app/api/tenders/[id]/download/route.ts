@@ -20,6 +20,10 @@ function mdToDocxParagraphs(text: string): Paragraph[] {
   });
 }
 
+function normalizeName(value: string): string {
+  return value.trim().toLowerCase();
+}
+
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const userId = await getSession();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -32,13 +36,12 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
 
   const tender = await prisma.tender.findFirst({
     where: { id, userId },
-    include: { requirements: true, complianceGaps: true, generatedDocuments: true },
+    include: { requirements: true, complianceGaps: true, generatedDocuments: true, exportPackages: true },
   });
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
 
   const company = await prisma.company.findUnique({ where: { userId } });
 
-  // Download a specific generated document by ID
   if (docId) {
     const doc = tender.generatedDocuments.find((d) => d.id === docId);
     if (!doc || !doc.fileContent) {
@@ -56,7 +59,6 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     });
   }
 
-  // ZIP: bundle all generated documents
   if (type === "zip") {
     const JSZip = (await import("jszip")).default;
     const zip = new JSZip();
@@ -69,6 +71,41 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
       return NextResponse.json({ error: "No generated documents to package. Run generation first." }, { status: 400 });
     }
 
+    const requiredNames = safeParseArr(tender.exactFileNaming).map(normalizeName);
+    const requiredOrder = safeParseArr(tender.exactFileOrder).map(normalizeName);
+    const generatedNames = generatedDocs.map((d) => normalizeName(d.exactFileName ?? `${d.name.replace(/[^a-zA-Z0-9]/g, "-")}.docx`));
+
+    if (requiredNames.length > 0) {
+      const missing = requiredNames.filter((name) => !generatedNames.includes(name));
+      const extras = generatedNames.filter((name) => !requiredNames.includes(name));
+      if (missing.length > 0 || extras.length > 0 || generatedDocs.length !== requiredNames.length) {
+        return NextResponse.json(
+          {
+            error: "Generated package does not match tender-required file naming scope.",
+            missing,
+            extras,
+            requiredCount: requiredNames.length,
+            generatedCount: generatedDocs.length,
+          },
+          { status: 400 },
+        );
+      }
+    }
+
+    if (requiredOrder.length > 0) {
+      const outOfOrder = requiredOrder.some((name, index) => generatedNames[index] !== name);
+      if (outOfOrder) {
+        return NextResponse.json(
+          {
+            error: "Generated package order does not match tender-required file order.",
+            requiredOrder,
+            generatedOrder: generatedNames,
+          },
+          { status: 400 },
+        );
+      }
+    }
+
     for (const doc of generatedDocs) {
       const buffer = Buffer.from(doc.fileContent!, "base64");
       const filename = doc.exactFileName ?? `${doc.name.replace(/[^a-zA-Z0-9]/g, "-")}.docx`;
@@ -77,6 +114,28 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
 
     const zipBuffer = await zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" });
     const zipName = `${tender.title.replace(/[^a-zA-Z0-9]/g, "-")}-submission-package.zip`;
+    const fileList = generatedDocs.map((doc) => doc.exactFileName ?? `${doc.name.replace(/[^a-zA-Z0-9]/g, "-")}.docx`);
+
+    const existingPackage = tender.exportPackages[0];
+    if (existingPackage) {
+      await prisma.exportPackage.update({
+        where: { id: existingPackage.id },
+        data: {
+          status: "READY",
+          fileList: JSON.stringify(fileList),
+          downloadCount: { increment: 1 },
+        },
+      });
+    } else {
+      await prisma.exportPackage.create({
+        data: {
+          tenderId: id,
+          status: "READY",
+          fileList: JSON.stringify(fileList),
+          downloadCount: 1,
+        },
+      });
+    }
 
     await logAction({ userId, action: "EXPORT_PACKAGE_DOWNLOAD", entityType: "Tender", entityId: id, description: `Downloaded ZIP package for "${tender.title}" (${generatedDocs.length} files)` });
 
@@ -88,7 +147,6 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     });
   }
 
-  // Legacy: on-the-fly report DOCX (proposal/compliance/requirements)
   const children: Paragraph[] = [];
 
   if (type === "proposal") {

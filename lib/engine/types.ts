@@ -1,4 +1,4 @@
-import type { Expert, Project, Tender } from "@prisma/client";
+import type { CompanyComplianceRecord, Expert, FinancialRecord, LegalRecord, Project, Tender } from "@prisma/client";
 
 // Only the fields the analysis engine actually reads from uploaded files
 export type TenderFileForAnalysis = {
@@ -37,7 +37,10 @@ export type CompanyKnowledgeSnapshot = {
   companyId: string;
   experts: Expert[];
   projects: Project[];
-  documents?: CompanyDocumentSnapshot[];
+  documents: CompanyDocumentSnapshot[];
+  legalRecords: LegalRecord[];
+  financialRecords: FinancialRecord[];
+  complianceRecords: CompanyComplianceRecord[];
 };
 
 export type AnalysisResult = {
@@ -71,6 +74,9 @@ export type ComplianceResult = {
     supportStatus: string;
     supportStrength: number;
     evidenceSummary: string;
+    evidenceType: string;
+    evidenceSource: string;
+    evidenceReference?: string;
     notes?: string;
   }>;
   gaps: Array<{
@@ -87,7 +93,7 @@ export type DocumentPlanResult = {
     name: string;
     documentType: string;
     exactFileName?: string | null;
-    exactOrder?: number | null;
+    exactOrder?: string | number | null;
     contentSummary: string;
   }>;
 };
