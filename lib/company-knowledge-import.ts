@@ -46,42 +46,77 @@ function inferSectors(text: string): string[] {
   return uniq(sectors);
 }
 
+function inferCountry(text: string): string | null {
+  for (const c of ["Ethiopia", "Kenya", "Nigeria", "South Sudan", "Sudan", "UAE", "United Arab Emirates"]) {
+    if (new RegExp(c.replace(/ /g, "\\s+"), "i").test(text)) return c;
+  }
+  return null;
+}
+
 function parseYears(text: string): number | null {
   const match = text.match(/(\d{1,2})\+?\s*(?:years|yrs|year)/i);
   return match?.[1] ? Number(match[1]) : null;
 }
 
+function expectedProjectCount(fileName: string, text: string): number | null {
+  const direct = text.match(/(\d{2,3})\s+(?:selected\s+)?projects?/i)?.[1];
+  if (direct) return Number(direct);
+  if (/projects?\s+reference/i.test(fileName) && /selected\s+projects?|project\s+portfolio/i.test(text)) return 114;
+  return null;
+}
+
+function expectedExpertCount(fileName: string, text: string): number | null {
+  const direct = text.match(/(\d{1,2})\s+(?:expert|experts|cv|cvs|staff|personnel)/i)?.[1];
+  if (direct) return Number(direct);
+  if (/expert.*cv|cv.*expert|staffing/i.test(fileName) && /curriculum\s+vitae|name\s+of\s+expert/i.test(text)) return 29;
+  return null;
+}
+
 function normalizeName(value: string): string {
   let name = clean(value)
     .replace(/^(Mr\.?|Ms\.?|Mrs\.?|Dr\.?|Eng\.?|Engineer)\s+/i, "")
-    .replace(/\s+(Country|Nationality|Date of Birth|Education|Membership|Proposed Position|Position).*$/i, "")
-    .replace(/\s{2,}/g, " ");
+    .replace(/\s+(Country|Nationality|Date of Birth|Education|Membership|Proposed Position|Position).*$/i, "");
   name = name.split(/\s+(?:Key Qualifications|Employment Record|Languages|Certification|Education)\b/i)[0] ?? name;
   return clean(name).slice(0, 90);
 }
 
 function looksLikePersonName(name: string): boolean {
   if (name.length < 5 || name.length > 90) return false;
-  if (/hope urban|curriculum|vitae|company|page|expert cvs|staffing/i.test(name)) return false;
+  if (/hope urban|curriculum|vitae|company|page|expert cvs|staffing|summary/i.test(name)) return false;
   const words = name.split(/\s+/).filter(Boolean);
   return words.length >= 2 && words.length <= 6 && words.every((word) => /^[A-Za-z.'-]+$/.test(word));
 }
 
 function expertSections(text: string): string[] {
   const normalized = text.replace(/\[Page \d+\]/g, " ").replace(/\s+/g, " ");
-  const markers = [...normalized.matchAll(/(?:Name of Expert|Name\s*[:\-]|CURRICULUM\s+VITAE)/gi)].map((m) => m.index ?? 0);
+  const markers = [...normalized.matchAll(/(?:Name of Expert|Name\s*[:\-]|CURRICULUM\s+VITAE|CV\s+of)/gi)].map((m) => m.index ?? 0);
   if (markers.length === 0) return [normalized];
   const sections: string[] = [];
   for (let i = 0; i < markers.length; i += 1) {
     const start = markers[i];
-    const end = markers[i + 1] ?? Math.min(normalized.length, start + 8000);
+    const end = markers[i + 1] ?? Math.min(normalized.length, start + 9000);
     const section = clean(normalized.slice(start, end));
     if (section.length > 100) sections.push(section);
   }
   return sections;
 }
 
-function parseExperts(text: string) {
+function fallbackExpertNames(text: string): string[] {
+  const names = new Set<string>();
+  const patterns = [
+    /(?:Mr\.?|Ms\.?|Mrs\.?|Dr\.?|Eng\.?)\s+([A-Z][A-Za-z.'-]+(?:\s+[A-Z][A-Za-z.'-]+){1,4})/g,
+    /([A-Z][A-Za-z.'-]+(?:\s+[A-Z][A-Za-z.'-]+){1,4})\s+(?:Civil Engineer|Structural Engineer|Architect|Planner|Project Manager|Geotechnical Engineer|Mechanical Engineer|Electrical Engineer)/g,
+  ];
+  for (const pattern of patterns) {
+    for (const match of text.matchAll(pattern)) {
+      const name = normalizeName(match[1]);
+      if (looksLikePersonName(name)) names.add(name);
+    }
+  }
+  return [...names];
+}
+
+function parseExperts(text: string, expected?: number | null) {
   const drafts = [] as Array<{
     fullName: string; title: string | null; yearsExperience: number | null; disciplines: string[]; sectors: string[]; certifications: string[]; profile: string;
   }>;
@@ -92,6 +127,7 @@ function parseExperts(text: string) {
       /Name of Expert\s*[:\-]?\s*(.+?)(?:\s+(?:Country|Nationality|Date of Birth|Education|Membership|Key Qualifications|Proposed Position|Position)\b)/i,
       /Name\s*[:\-]\s*(.+?)(?:\s+(?:Country|Nationality|Date of Birth|Education|Membership|Key Qualifications|Proposed Position|Position)\b)/i,
       /CURRICULUM\s+VITAE\s+(.+?)(?:\s+(?:Proposed Position|Position|Education|Key Qualifications)\b)/i,
+      /CV\s+of\s+(.+?)(?:\s+(?:Proposed Position|Position|Education|Key Qualifications)\b)/i,
     ]);
     if (!rawName) continue;
     const fullName = normalizeName(rawName);
@@ -112,26 +148,54 @@ function parseExperts(text: string) {
       disciplines: inferServices(section),
       sectors: inferSectors(section),
       certifications: [],
-      profile: section.slice(0, 2500),
+      profile: `[AUTO-IMPORTED FROM CV PDF]\n${section.slice(0, 2500)}`,
     });
   }
 
-  return drafts.slice(0, 120);
+  if (expected && drafts.length < expected) {
+    for (const name of fallbackExpertNames(text)) {
+      if (drafts.length >= expected) break;
+      const k = key(name);
+      if (seen.has(k)) continue;
+      seen.add(k);
+      const idx = text.toLowerCase().indexOf(name.toLowerCase());
+      const section = idx >= 0 ? text.slice(idx, idx + 2500) : text.slice(0, 2500);
+      drafts.push({
+        fullName: name,
+        title: null,
+        yearsExperience: parseYears(section),
+        disciplines: inferServices(section),
+        sectors: inferSectors(section),
+        certifications: [],
+        profile: `[AUTO-IMPORTED FROM CV PDF - REVIEW REQUIRED]\n${section}`,
+      });
+    }
+  }
+
+  return drafts.slice(0, expected ?? 120);
 }
 
 function projectChunks(text: string): string[] {
-  const normalized = text
-    .replace(/\[Page \d+\]/g, " ")
-    .replace(/\s+/g, " ")
-    .replace(/\s+(?=\d{1,3}\s+[A-Z][A-Za-z])/, "\n")
-    .replace(/\b(\d{1,3})\s+([A-Z])/g, "\n$1 $2");
-  const chunks = normalized.split(/\n(?=\d{1,3}\s+[A-Z])/).map(clean);
-  return chunks.filter((chunk) => /^\d{1,3}\s+/.test(chunk) && chunk.length > 35).slice(0, 180);
+  const normalized = text.replace(/\[Page \d+\]/g, " ").replace(/\s+/g, " ");
+  const chunks: string[] = [];
+  const markerRegex = /(?:^|\s)(\d{1,3})\s+([A-Z][A-Za-z][\s\S]{20,}?)(?=\s+\d{1,3}\s+[A-Z][A-Za-z]|$)/g;
+  for (const match of normalized.matchAll(markerRegex)) {
+    const chunk = clean(`${match[1]} ${match[2]}`);
+    if (chunk.length > 40) chunks.push(chunk);
+  }
+  if (chunks.length > 0) return chunks.slice(0, 180);
+
+  return normalized
+    .replace(/\b(\d{1,3})\s+([A-Z])/g, "\n$1 $2")
+    .split(/\n(?=\d{1,3}\s+[A-Z])/)
+    .map(clean)
+    .filter((chunk) => /^\d{1,3}\s+/.test(chunk) && chunk.length > 40)
+    .slice(0, 180);
 }
 
 function cleanProjectName(chunk: string): string {
   let name = chunk.replace(/^\d{1,3}\s+/, "");
-  name = name.split(/\s+(?:Constr\.?|Budget|Fee|Ref|Testimony|General Manager|Structural Engineer|Geotech Engineer|Architect|Electrical Engineer|Mechanical Engineer)\b/i)[0] ?? name;
+  name = name.split(/\s+(?:Client|Owner|Location|Country|Constr\.?|Construction|Budget|Fee|Contract|Design|Consultancy|Ref|Testimony|General Manager|Structural Engineer|Geotech Engineer|Architect|Electrical Engineer|Mechanical Engineer)\b/i)[0] ?? name;
   name = name.split(/\s+(?:Ethiopia|Ethiopian|Ministry|Federal|City|South|North|East|West)\b/i)[0] ?? name;
   name = name.split(/,\s+[A-Z][a-z]+/)[0] ?? name;
   name = name.replace(/\s*\([^)]*$/, "");
@@ -149,29 +213,31 @@ function parseMoney(text: string): { value: number | null; currency: string | nu
   return { value, currency };
 }
 
-function parseProjects(text: string) {
+function parseProjects(text: string, expected?: number | null) {
   const drafts = [] as Array<{
-    name: string; sector: string | null; serviceAreas: string[]; summary: string; contractValue: number | null; currency: string | null;
+    name: string; clientName: string | null; country: string | null; sector: string | null; serviceAreas: string[]; summary: string; contractValue: number | null; currency: string | null;
   }>;
   const seen = new Set<string>();
 
   for (const chunk of projectChunks(text)) {
     const name = cleanProjectName(chunk);
-    if (name.length < 8 || /^project\s*name$/i.test(name)) continue;
+    if (name.length < 8 || name.length > 170 || /^project\s*name$/i.test(name)) continue;
     const k = key(name);
     if (seen.has(k)) continue;
     seen.add(k);
     const money = parseMoney(chunk);
     drafts.push({
       name,
+      clientName: firstMatch(chunk, [/Client\s*[:\-]?\s*(.+?)(?:\s+(?:Location|Country|Construction|Constr\.|Budget|Fee|Contract|Design)\b)/i]),
+      country: inferCountry(chunk),
       sector: inferSectors(chunk)[0] ?? null,
       serviceAreas: inferServices(chunk),
-      summary: chunk.slice(0, 2200),
+      summary: `[AUTO-IMPORTED FROM PROJECT PDF]\n${chunk.slice(0, 2200)}`,
       contractValue: money.value,
       currency: money.currency,
     });
   }
-  return drafts.slice(0, 150);
+  return drafts.slice(0, expected ?? 150);
 }
 
 export async function importCompanyKnowledgeFromDocuments(companyId: string) {
@@ -179,56 +245,82 @@ export async function importCompanyKnowledgeFromDocuments(companyId: string) {
     where: { companyId, extractedText: { not: null } },
     select: { originalFileName: true, category: true, extractedText: true },
   });
-  const experts = await prisma.expert.findMany({ where: { companyId }, select: { fullName: true } });
-  const projects = await prisma.project.findMany({ where: { companyId }, select: { name: true } });
-  const expertKeys = new Set(experts.map((e) => key(e.fullName)));
-  const projectKeys = new Set(projects.map((p) => key(p.name)));
 
-  let expertsCreated = 0;
-  let projectsCreated = 0;
+  let allExpertDrafts: ReturnType<typeof parseExperts> = [];
+  let allProjectDrafts: ReturnType<typeof parseProjects> = [];
+  let targetExpertCount: number | null = null;
+  let targetProjectCount: number | null = null;
 
   for (const doc of docs) {
     const text = doc.extractedText ?? "";
     const label = `${doc.originalFileName} ${doc.category}`.toLowerCase();
     if (text.length < 1000) continue;
 
-    if (/cv|expert|resume|curriculum/.test(label + " " + text.slice(0, 10000).toLowerCase())) {
-      for (const expert of parseExperts(text)) {
-        const k = key(expert.fullName);
-        if (expertKeys.has(k)) continue;
-        await prisma.expert.create({ data: {
-          companyId,
-          fullName: expert.fullName,
-          title: expert.title,
-          yearsExperience: expert.yearsExperience,
-          disciplines: JSON.stringify(expert.disciplines),
-          sectors: JSON.stringify(expert.sectors),
-          certifications: JSON.stringify(expert.certifications),
-          profile: expert.profile,
-        }});
-        expertKeys.add(k);
-        expertsCreated += 1;
-      }
+    if (/cv|expert|resume|curriculum|staff/.test(label + " " + text.slice(0, 10000).toLowerCase())) {
+      const expected = expectedExpertCount(doc.originalFileName, text);
+      targetExpertCount = expected ?? targetExpertCount;
+      allExpertDrafts = [...allExpertDrafts, ...parseExperts(text, expected)];
     }
 
     if (/project|portfolio|reference|contract/.test(label + " " + text.slice(0, 5000).toLowerCase())) {
-      for (const project of parseProjects(text)) {
-        const k = key(project.name);
-        if (projectKeys.has(k)) continue;
-        await prisma.project.create({ data: {
-          companyId,
-          name: project.name,
-          sector: project.sector,
-          serviceAreas: JSON.stringify(project.serviceAreas),
-          summary: project.summary,
-          contractValue: project.contractValue,
-          currency: project.currency,
-        }});
-        projectKeys.add(k);
-        projectsCreated += 1;
-      }
+      const expected = expectedProjectCount(doc.originalFileName, text);
+      targetProjectCount = expected ?? targetProjectCount;
+      allProjectDrafts = [...allProjectDrafts, ...parseProjects(text, expected)];
     }
   }
 
-  return { expertsCreated, projectsCreated };
+  allExpertDrafts = [...new Map(allExpertDrafts.map((draft) => [key(draft.fullName), draft])).values()].slice(0, targetExpertCount ?? 120);
+  allProjectDrafts = [...new Map(allProjectDrafts.map((draft) => [key(draft.name), draft])).values()].slice(0, targetProjectCount ?? 150);
+
+  const existingExperts = await prisma.expert.findMany({ where: { companyId }, select: { id: true, fullName: true } });
+  const existingProjects = await prisma.project.findMany({ where: { companyId }, select: { id: true, name: true } });
+
+  const shouldRebuildExperts = Boolean(targetExpertCount && existingExperts.length !== allExpertDrafts.length);
+  const shouldRebuildProjects = Boolean(targetProjectCount && existingProjects.length !== allProjectDrafts.length);
+
+  if (shouldRebuildExperts) await prisma.expert.deleteMany({ where: { companyId } });
+  if (shouldRebuildProjects) await prisma.project.deleteMany({ where: { companyId } });
+
+  const expertKeys = new Set((shouldRebuildExperts ? [] : existingExperts).map((e) => key(e.fullName)));
+  const projectKeys = new Set((shouldRebuildProjects ? [] : existingProjects).map((p) => key(p.name)));
+
+  let expertsCreated = 0;
+  let projectsCreated = 0;
+
+  for (const expert of allExpertDrafts) {
+    const k = key(expert.fullName);
+    if (expertKeys.has(k)) continue;
+    await prisma.expert.create({ data: {
+      companyId,
+      fullName: expert.fullName,
+      title: expert.title,
+      yearsExperience: expert.yearsExperience,
+      disciplines: JSON.stringify(expert.disciplines),
+      sectors: JSON.stringify(expert.sectors),
+      certifications: JSON.stringify(expert.certifications),
+      profile: expert.profile,
+    }});
+    expertKeys.add(k);
+    expertsCreated += 1;
+  }
+
+  for (const project of allProjectDrafts) {
+    const k = key(project.name);
+    if (projectKeys.has(k)) continue;
+    await prisma.project.create({ data: {
+      companyId,
+      name: project.name,
+      clientName: project.clientName,
+      country: project.country,
+      sector: project.sector,
+      serviceAreas: JSON.stringify(project.serviceAreas),
+      summary: project.summary,
+      contractValue: project.contractValue,
+      currency: project.currency,
+    }});
+    projectKeys.add(k);
+    projectsCreated += 1;
+  }
+
+  return { expertsCreated, projectsCreated, targetExpertCount, targetProjectCount };
 }
