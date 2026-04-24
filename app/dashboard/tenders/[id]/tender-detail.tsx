@@ -178,6 +178,8 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [engineRunning, setEngineRunning] = useState(false);
+  const [reExtracting, setReExtracting] = useState(false);
+  const [reExtractResult, setReExtractResult] = useState<{ updated: number; failed: number } | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [generatingDocs, setGeneratingDocs] = useState(false);
@@ -273,6 +275,35 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
     } finally {
       setEngineRunning(false);
     }
+  }
+
+  async function handleReExtract() {
+    setReExtracting(true);
+    setError("");
+    try {
+      const res = await fetch(`/api/tenders/${tender.id}/reextract`, { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) { setError(data.error || "Re-extraction failed"); return; }
+      setReExtractResult({ updated: data.updated, failed: data.failed });
+      // Update files in state with new extractedText from results
+      if (data.results) {
+        setTender((cur) => {
+          const resultMap = new Map(data.results.map((r: { fileName: string; chars: number | null }) => [r.fileName, r.chars]));
+          return {
+            ...cur,
+            files: cur.files.map((f) => {
+              const chars = resultMap.get(f.originalFileName);
+              if (typeof chars === "number" && chars > 0) {
+                return { ...f, extractedText: `[re-extracted: ${chars} chars]` };
+              }
+              return f;
+            }),
+          };
+        });
+      }
+      router.refresh();
+    } catch { setError("Re-extraction failed"); }
+    finally { setReExtracting(false); }
   }
 
   async function handleAIAnalyze() {
@@ -455,6 +486,11 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
               {generating ? "Generating..." : "✦ AI Proposal"}
             </button>
           )}
+          <button onClick={handleReExtract} disabled={reExtracting}
+            className="rounded-lg bg-indigo-600 px-3 py-2 text-sm text-white hover:bg-indigo-700 disabled:opacity-50"
+            title="Re-extract text from all uploaded files (fixes files uploaded before the extraction fix)">
+            {reExtracting ? "Extracting…" : "⟳ Re-extract"}
+          </button>
           <button onClick={handleRunEngine} disabled={engineRunning}
             className="rounded-lg bg-black px-3 py-2 text-sm text-white hover:bg-slate-800 disabled:opacity-50">
             {engineRunning ? "Running…" : "Run Engine"}
@@ -496,6 +532,15 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
       </div>
 
       {error && <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
+      {reExtractResult && (
+        <div className="flex items-center justify-between rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm text-indigo-800">
+          <span>
+            ⟳ Re-extraction complete — <strong>{reExtractResult.updated}</strong> file(s) updated
+            {reExtractResult.failed > 0 ? `, ${reExtractResult.failed} failed` : ""}. Click <strong>Run Engine</strong> to re-analyse.
+          </span>
+          <button onClick={() => setReExtractResult(null)} className="text-indigo-400 hover:text-indigo-600">✕</button>
+        </div>
+      )}
 
       <div className="grid gap-4 md:grid-cols-3 xl:grid-cols-6">
         <div className="rounded-2xl border bg-white p-5 shadow-sm">

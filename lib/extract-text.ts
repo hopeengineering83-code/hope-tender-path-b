@@ -1,6 +1,9 @@
 // Text extraction from uploaded documents. Runs at upload time so all text
 // is immediately searchable and usable by the analysis engine.
 // Supports: PDF, DOCX/DOC, XLSX/XLS, PPTX/PPT, CSV, TXT, RTF, ODS, ODP + images.
+//
+// pdf-parse v2 changed from a plain function to a PDFParse class — this module
+// uses the v2 class API exclusively.
 
 export async function extractTextFromBuffer(
   buffer: Buffer,
@@ -9,18 +12,19 @@ export async function extractTextFromBuffer(
 ): Promise<string> {
   const ext = fileName.toLowerCase().split(".").pop() ?? "";
   try {
-    if (isPdf(mimeType, ext)) return await extractPdf(buffer);
+    if (isPdf(mimeType, ext)) return await extractPdf(buffer, fileName);
     if (isDocx(mimeType, ext)) return await extractDocx(buffer);
     if (isXlsx(mimeType, ext)) return await extractXlsx(buffer, fileName);
-    if (isPptx(mimeType, ext)) return await extractPptx(buffer);
+    if (isPptx(mimeType, ext)) return await extractPptx(buffer, fileName);
     if (isCsv(mimeType, ext)) return extractCsv(buffer);
     if (isRtf(mimeType, ext)) return extractRtf(buffer);
     if (isText(mimeType, ext)) return buffer.toString("utf8").slice(0, 50000);
-    if (isImage(mimeType, ext)) return `[Image: ${fileName}]`;
-    return "";
+    if (isImage(mimeType, ext)) return `[Image file: ${fileName} — no text content]`;
+    return `[Unsupported file type: ${ext || mimeType}]`;
   } catch (err) {
-    console.error(`[extract-text] ${fileName} (${mimeType}):`, err);
-    return "";
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[extract-text] ${fileName} (${mimeType}): ${msg}`);
+    return `[Extraction error for ${fileName}: ${msg.slice(0, 120)}]`;
   }
 }
 
@@ -77,21 +81,33 @@ function isImage(mime: string, ext: string) {
 
 // ─── Extractors ───────────────────────────────────────────────────────────────
 
-async function extractPdf(buffer: Buffer): Promise<string> {
+async function extractPdf(buffer: Buffer, fileName: string): Promise<string> {
+  // pdf-parse v2: exports { PDFParse } class, NOT a plain function.
+  // new PDFParse({ data: buffer }).getText() → { text: string, pages: unknown[] }
   // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const pdfParse = require("pdf-parse") as (buf: Buffer) => Promise<{ text: string; numpages: number }>;
-  const result = await pdfParse(buffer);
+  const { PDFParse } = require("pdf-parse") as {
+    PDFParse: new (opts: { data: Buffer }) => {
+      getText(): Promise<{ text: string; pages: Array<unknown> }>;
+    };
+  };
+  const parser = new PDFParse({ data: buffer });
+  const result = await parser.getText();
   const text = (result.text ?? "").trim();
+  const numpages = result.pages.length;
   if (!text || text.length < 20) {
-    return `[Scanned PDF — ${result.numpages} page(s). Text layer not found. Upload a text-based PDF or use OCR conversion for analysis.]`;
+    return `[Scanned PDF — ${numpages} page(s) in ${fileName}. No text layer found. Upload a text-based PDF or OCR-converted version for analysis.]`;
   }
-  return text.slice(0, 80000);
+  return text.slice(0, 100000);
 }
 
 async function extractDocx(buffer: Buffer): Promise<string> {
+  // mammoth CJS module: both m.extractRawText and m.default.extractRawText are valid
   const mammoth = await import("mammoth");
-  const result = await mammoth.extractRawText({ buffer });
-  return (result.value ?? "").trim().slice(0, 80000);
+  const extractor = typeof mammoth.extractRawText === "function"
+    ? mammoth.extractRawText
+    : (mammoth.default as typeof mammoth).extractRawText;
+  const result = await extractor({ buffer });
+  return (result.value ?? "").trim().slice(0, 100000);
 }
 
 async function extractXlsx(buffer: Buffer, fileName: string): Promise<string> {
@@ -113,10 +129,10 @@ async function extractXlsx(buffer: Buffer, fileName: string): Promise<string> {
   }
 
   if (parts.length === 0) return `[Empty spreadsheet: ${fileName}]`;
-  return parts.join("\n\n").slice(0, 80000);
+  return parts.join("\n\n").slice(0, 100000);
 }
 
-async function extractPptx(buffer: Buffer): Promise<string> {
+async function extractPptx(buffer: Buffer, fileName: string): Promise<string> {
   // PPTX/ODP are ZIP archives containing XML slide files
   const JSZip = (await import("jszip")).default;
   const zip = await JSZip.loadAsync(buffer);
@@ -132,7 +148,7 @@ async function extractPptx(buffer: Buffer): Promise<string> {
   const isOdp = slideNames.length === 0 && Boolean(zip.files["content.xml"]);
   const files = slideNames.length > 0 ? slideNames : isOdp ? ["content.xml"] : [];
 
-  if (files.length === 0) return "[No slide content found in presentation]";
+  if (files.length === 0) return `[No slide content found in ${fileName}]`;
 
   const slideTexts: string[] = [];
   for (const name of files) {
@@ -146,7 +162,7 @@ async function extractPptx(buffer: Buffer): Promise<string> {
   }
 
   const result = slideTexts.join("\n");
-  return result ? result.slice(0, 80000) : "[Presentation has no extractable text]";
+  return result ? result.slice(0, 100000) : `[Presentation ${fileName} has no extractable text]`;
 }
 
 function extractCsv(buffer: Buffer): string {
@@ -155,7 +171,7 @@ function extractCsv(buffer: Buffer): string {
   const header = rows[0] ?? "";
   const colCount = (header.match(/,/g) ?? []).length + 1;
   const summary = `[CSV: ${rows.length} rows × ${colCount} columns]\n`;
-  return (summary + text).slice(0, 80000);
+  return (summary + text).slice(0, 100000);
 }
 
 function extractRtf(buffer: Buffer): string {
@@ -166,7 +182,7 @@ function extractRtf(buffer: Buffer): string {
     .replace(/[{}\\]/g, " ")
     .replace(/\s{2,}/g, " ")
     .trim();
-  return cleaned.slice(0, 80000);
+  return cleaned.slice(0, 100000);
 }
 
 // ─── Metadata helpers ───────────────────────────────────────────────────────
