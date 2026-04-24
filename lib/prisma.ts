@@ -84,23 +84,28 @@ async function bootstrap(client: PrismaClient): Promise<void> {
         { id: "role-admin", code: "ADMIN", name: "Admin", description: "Full access", createdAt: now, updatedAt: now },
         { id: "role-proposal-manager", code: "PROPOSAL_MANAGER", name: "Proposal Manager", description: "Tender drafting and generation", createdAt: now, updatedAt: now },
         { id: "role-reviewer", code: "REVIEWER", name: "Reviewer", description: "Review and approval", createdAt: now, updatedAt: now },
-        { id: "role-viewer", code: "VIEWER", name: "Viewer", description: "Read only access", createdAt: now, updatedAt: now }
-      ]
+        { id: "role-viewer", code: "VIEWER", name: "Viewer", description: "Read only access", createdAt: now, updatedAt: now },
+      ],
     });
   }
 
+  // Fixed IDs so every Lambda container creates identical data — required because
+  // each Vercel Lambda has its own /tmp/app.db and the session cookie must resolve
+  // to the same user regardless of which container handles the request.
   const ADMIN_ID = "00000000-0000-0000-0000-000000000001";
   const COMPANY_ID = "00000000-0000-0000-0000-000000000002";
   const TENDER_IDS = ["00000000-0000-0000-0000-000000000010","00000000-0000-0000-0000-000000000011","00000000-0000-0000-0000-000000000012"];
 
+  // Create admin user if not present
   const count = await client.user.count({ where: { email: "admin@hope.local" } });
   if (count === 0) {
     const { default: bcrypt } = await import("bcryptjs");
     const passwordHash = await bcrypt.hash("Admin123!", 10);
     const now = new Date();
 
-    await client.user.create({ data: { id: ADMIN_ID, email: "admin@hope.local", name: "Admin", passwordHash, role: "ADMIN" } });
-    await client.company.create({ data: { id: COMPANY_ID, name: "Hope Engineering", description: "Default company workspace", userId: ADMIN_ID } });
+    await client.user.create({
+      data: { id: ADMIN_ID, email: "admin@hope.local", name: "Admin", passwordHash, role: "ADMIN" },
+    });
 
     const demoTenders = [
       { id: TENDER_IDS[0], title: "IT Infrastructure Upgrade", reference: "TND-2024-001", category: "IT", clientName: "Ministry of Technology", description: "Upgrade server infrastructure and networking equipment", budget: 150000, currency: "USD", deadline: new Date("2024-12-31"), status: "INTAKE", stage: "TENDER_INTAKE", intakeSummary: "Must support 500 concurrent users. Redundant systems required." },
@@ -110,6 +115,38 @@ async function bootstrap(client: PrismaClient): Promise<void> {
 
     for (const tender of demoTenders) {
       await client.tender.create({ data: { ...tender, userId: ADMIN_ID, createdAt: now, updatedAt: now } });
+    }
+  }
+
+  // Always ensure the admin company exists — checked independently so a partial
+  // bootstrap (user created, company missing) is healed on next cold start.
+  const companyExists = await client.company.count({ where: { userId: ADMIN_ID } });
+  if (companyExists === 0) {
+    try {
+      await client.company.create({
+        data: { id: COMPANY_ID, name: "Hope Engineering", description: "Default company workspace", userId: ADMIN_ID },
+      });
+    } catch {
+      // Race condition on concurrent cold starts — safe to ignore
+    }
+  }
+
+  // Idempotent column additions (ALTER TABLE is a no-op if column already exists)
+  const alterations = [
+    `ALTER TABLE "GeneratedDocument" ADD COLUMN "reviewStatus" TEXT NOT NULL DEFAULT 'PENDING'`,
+    `ALTER TABLE "GeneratedDocument" ADD COLUMN "reviewNotes" TEXT`,
+    `ALTER TABLE "GeneratedDocument" ADD COLUMN "reviewedBy" TEXT`,
+    `ALTER TABLE "GeneratedDocument" ADD COLUMN "reviewedAt" DATETIME`,
+    `ALTER TABLE "CompanyDocument" ADD COLUMN "fileContent" TEXT`,
+    `ALTER TABLE "TenderFile" ADD COLUMN "fileContent" TEXT`,
+    `ALTER TABLE "CompanyAsset" ADD COLUMN "fileContent" TEXT`,
+    `ALTER TABLE "ComplianceGap" ADD COLUMN "resolvedNote" TEXT`,
+  ];
+  for (const sql of alterations) {
+    try {
+      await client.$executeRawUnsafe(sql);
+    } catch {
+      // Column already exists — safe to ignore
     }
   }
 }

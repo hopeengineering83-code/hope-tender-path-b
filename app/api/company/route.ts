@@ -22,7 +22,7 @@ export async function GET() {
     },
   });
 
-  if (!company) return NextResponse.json(null);
+  if (!company) return NextResponse.json({});
 
   return NextResponse.json({
     ...company,

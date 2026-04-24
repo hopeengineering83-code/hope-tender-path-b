@@ -5,12 +5,30 @@ import { buildDocumentPlan } from "./documents";
 import { buildMatches } from "./matching";
 
 export async function runTenderEngine(tenderId: string, userId: string) {
-  const tender = await prisma.tender.findFirst({ where: { id: tenderId, userId }, include: { files: true } });
-  if (!tender) throw new Error("Tender not found");
+  const tender = await prisma.tender.findFirst({
+    where: { id: tenderId, userId },
+    include: {
+      // Only fetch metadata + extractedText — never load fileContent (base64) into memory
+      files: {
+        select: { id: true, originalFileName: true, mimeType: true, classification: true, extractedText: true },
+      },
+    },
+  });
+
+  if (!tender) {
+    throw new Error("Tender not found");
+  }
 
   const company = await prisma.company.findUnique({
     where: { userId },
-    include: { experts: true, projects: true, documents: true, legalRecords: true, financialRecords: true, complianceRecords: true },
+    include: {
+      experts: true,
+      projects: true,
+      documents: { select: { id: true, category: true, originalFileName: true, extractedText: true } },
+      legalRecords: true,
+      financialRecords: true,
+      complianceRecords: true,
+    },
   });
   if (!company) throw new Error("Company profile required before engine run");
 
@@ -53,7 +71,7 @@ export async function runTenderEngine(tenderId: string, userId: string) {
       complianceRecords: company.complianceRecords,
     };
 
-    const matching = buildMatches(analysis.requirements, knowledge);
+    const matching = buildMatches(analysis.requirements, knowledge, tender.category, tender.title);
     for (const match of matching.expertMatches) {
       await tx.tenderExpertMatch.create({ data: { tenderId, expertId: match.expertId, score: match.score, rationale: match.rationale, isSelected: match.isSelected } });
     }
@@ -112,13 +130,18 @@ export async function runTenderEngine(tenderId: string, userId: string) {
   return prisma.tender.findUnique({
     where: { id: tenderId },
     include: {
-      files: true,
+      files: {
+        select: { id: true, originalFileName: true, mimeType: true, size: true, classification: true, extractedText: true, createdAt: true },
+      },
       requirements: true,
       expertMatches: { orderBy: { score: "desc" }, include: { expert: true } },
       projectMatches: { orderBy: { score: "desc" }, include: { project: true } },
       complianceGaps: { orderBy: { createdAt: "desc" } },
       complianceMatrix: { orderBy: { createdAt: "asc" } },
-      generatedDocuments: { orderBy: { exactOrder: "asc" } },
+      generatedDocuments: {
+        orderBy: { exactOrder: "asc" },
+        select: { id: true, name: true, documentType: true, generationStatus: true, validationStatus: true, reviewStatus: true, exactFileName: true, exactOrder: true, contentSummary: true },
+      },
     },
   });
 }

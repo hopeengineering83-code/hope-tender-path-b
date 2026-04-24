@@ -13,7 +13,10 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   const tender = await prisma.tender.findFirst({
     where: { id, userId },
     include: {
-      files: { orderBy: { createdAt: "desc" } },
+      files: {
+        orderBy: { createdAt: "desc" },
+        select: { id: true, fileName: true, originalFileName: true, mimeType: true, size: true, classification: true, extractedText: true, createdAt: true },
+      },
       requirements: { orderBy: { createdAt: "asc" } },
       complianceGaps: { orderBy: { createdAt: "desc" } },
       generatedDocuments: { orderBy: { createdAt: "desc" } },
@@ -67,7 +70,10 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
         updatedAt: new Date(),
       },
       include: {
-        files: { orderBy: { createdAt: "desc" } },
+        files: {
+          orderBy: { createdAt: "desc" },
+          select: { id: true, fileName: true, originalFileName: true, mimeType: true, size: true, classification: true, extractedText: true, createdAt: true },
+        },
         requirements: { orderBy: { createdAt: "asc" } },
         complianceGaps: { orderBy: { createdAt: "desc" } },
         generatedDocuments: { orderBy: { createdAt: "desc" } },

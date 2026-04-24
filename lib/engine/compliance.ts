@@ -74,7 +74,7 @@ export function buildCompliance(
           : "No compliance or supporting documents available yet.";
       evidenceType = complianceCount > 0 ? "COMPANY_COMPLIANCE_RECORD" : "COMPANY_DOCUMENT";
       evidenceSource = complianceCount > 0 ? "Company compliance records" : documentCount > 0 ? "Company documents" : "No evidence found";
-      evidenceReference = knowledge.complianceRecords[0]?.referenceNumber ?? knowledge.documents[0]?.fileName;
+      evidenceReference = knowledge.complianceRecords[0]?.referenceNumber ?? knowledge.documents[0]?.originalFileName;
     } else {
       supportStrength = documentCount > 0 ? 0.65 : 0;
       supportStatus = supportStrength > 0 ? "EVIDENCE_PENDING_REVIEW" : "UNSUPPORTED";
@@ -83,7 +83,7 @@ export function buildCompliance(
         : "No company documents available yet.";
       evidenceType = "COMPANY_DOCUMENT";
       evidenceSource = documentCount > 0 ? "Company document library" : "No company documents found";
-      evidenceReference = knowledge.documents[0]?.fileName;
+      evidenceReference = knowledge.documents[0]?.originalFileName;
     }
 
     matrices.push({
@@ -98,32 +98,32 @@ export function buildCompliance(
       notes: req.priority === "MANDATORY" && supportStrength < 1 ? "Needs stronger support before export." : undefined,
     });
 
-    if (req.priority === "MANDATORY" && supportStrength < 1) {
+    if (req.priority === "MANDATORY" && supportStrength < 0.5) {
       gaps.push({
         requirementId: item.id,
         severity: supportStrength === 0 ? "CRITICAL" : "HIGH",
-        title: `${req.title} is not fully supported`,
-        description: `${req.description} Current evidence status: ${supportStatus}.`,
-        mitigationPlan: "Add stronger company evidence or update the tender mapping before export.",
+        title: `${req.title} — insufficient evidence`,
+        description: `${req.description} Current evidence status: ${supportStatus}. ${evidenceSummary}`,
+        mitigationPlan: "Upload matching company documents or add expert/project records before export.",
       });
     }
   }
 
-  if (selectedExperts.length === 0 && knowledge.experts.length === 0) {
+  if (knowledge.experts.length === 0) {
     gaps.push({
       severity: "MEDIUM",
-      title: "No expert library available",
-      description: "The matching engine cannot recommend personnel because the company expert library is empty.",
-      mitigationPlan: "Create expert records and upload CV evidence in the company vault.",
+      title: "Expert library is empty",
+      description: "No expert records in company vault. The matching engine has no personnel to recommend.",
+      mitigationPlan: "Add expert profiles and upload CVs in the company vault.",
     });
   }
 
-  if (selectedProjects.length === 0 && knowledge.projects.length === 0) {
+  if (knowledge.projects.length === 0) {
     gaps.push({
       severity: "MEDIUM",
-      title: "No project references available",
-      description: "The matching engine cannot recommend project references because the company project library is empty.",
-      mitigationPlan: "Create project records and upload project evidence in the company vault.",
+      title: "No project references",
+      description: "No project reference records in company vault.",
+      mitigationPlan: "Add past project entries with sector, description, and contract value.",
     });
   }
 

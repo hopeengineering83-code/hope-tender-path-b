@@ -357,7 +357,9 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
       requirements: true,
       expertMatches: { where: { isSelected: true }, include: { expert: true } },
       projectMatches: { where: { isSelected: true }, include: { project: true } },
-      generatedDocuments: true,
+      generatedDocuments: {
+        select: { id: true, name: true, documentType: true, exactFileName: true, exactOrder: true, generationStatus: true, contentSummary: true },
+      },
     },
   });
 
@@ -394,6 +396,9 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   const letterheadParas = buildLetterheadHeader(company);
   const coverParas = buildCoverSection(tender.title, tender.reference, tender.clientName, company.name);
 
+  let expertIdx = 0;
+  let projectIdx = 0;
+
   for (const doc of docsToGenerate) {
     let contentParagraphs: Paragraph[] = [];
     let docTitle = doc.name;
@@ -411,17 +416,19 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
         docTitle = doc.name;
 
       } else if (doc.documentType === "EXPERT" || doc.name.toLowerCase().includes("cv")) {
-        const expert = selectedExperts[0];
+        const expert = selectedExperts[expertIdx] ?? selectedExperts[expertIdx % Math.max(selectedExperts.length, 1)];
         if (expert) {
           contentParagraphs = [...letterheadParas, ...buildCVContent(expert)];
           docTitle = `CV — ${expert.fullName}`;
+          expertIdx++;
         }
 
       } else if (doc.documentType === "PROJECT_EXPERIENCE") {
-        const project = selectedProjects[0];
+        const project = selectedProjects[projectIdx] ?? selectedProjects[projectIdx % Math.max(selectedProjects.length, 1)];
         if (project) {
           contentParagraphs = [...letterheadParas, ...buildProjectReferenceContent(project)];
           docTitle = `Project Reference — ${project.name}`;
+          projectIdx++;
         }
 
       } else if (doc.documentType === "DECLARATION") {

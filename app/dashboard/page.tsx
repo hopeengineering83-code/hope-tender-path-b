@@ -11,13 +11,23 @@ export default async function DashboardPage() {
   if (!userId) redirect("/login");
   await prismaReady;
 
-  const [tenders, company] = await Promise.all([
+  const [tenders, company, recentActivity] = await Promise.all([
     prisma.tender.findMany({
       where: { userId },
-      include: { files: true, requirements: true, complianceGaps: true, generatedDocuments: true },
+      select: {
+        id: true, title: true, clientName: true, status: true, deadline: true,
+        readinessScore: true, createdAt: true,
+        _count: { select: { requirements: true } },
+        complianceGaps: { select: { isResolved: true, severity: true } },
+      },
       orderBy: { createdAt: "desc" },
     }),
     prisma.company.findUnique({ where: { userId } }),
+    prisma.auditLog.findMany({
+      where: { userId },
+      orderBy: { createdAt: "desc" },
+      take: 8,
+    }),
   ]);
 
   const now = new Date();
@@ -39,7 +49,7 @@ export default async function DashboardPage() {
   const stats = {
     total: tenders.length,
     inProgress: tenders.filter((t) => !["DRAFT", "EXPORTED", "CLOSED"].includes(t.status)).length,
-    criticalGaps: tenders.reduce((sum, t) => sum + t.complianceGaps.filter((g) => !g.isResolved && ["CRITICAL", "HIGH"].includes(g.severity)).length, 0),
+    criticalGaps: tenders.reduce((sum, t) => sum + t.complianceGaps.filter((g: { isResolved: boolean; severity: string }) => !g.isResolved && ["CRITICAL", "HIGH"].includes(g.severity)).length, 0),
     dueSoon: dueSoon7.length,
   };
 
@@ -121,10 +131,9 @@ export default async function DashboardPage() {
               </thead>
               <tbody className="divide-y">
                 {tenders.slice(0, 8).map((tender) => {
-                  const total = tender.requirements.length;
-                  const resolved = tender.complianceGaps.filter((g) => g.isResolved).length;
+                  const total = tender._count.requirements;
                   const critical = tender.complianceGaps.filter((g) => !g.isResolved && ["CRITICAL", "HIGH"].includes(g.severity)).length;
-                  const readiness = total === 0 ? 0 : Math.max(0, Math.round(((total - critical) / Math.max(total, 1)) * 100));
+                  const readiness = tender.readinessScore ?? (total === 0 ? 0 : Math.max(0, Math.round(((total - critical) / Math.max(total, 1)) * 100)));
                   const isLate = tender.deadline && new Date(tender.deadline) < now && !["EXPORTED", "CLOSED"].includes(tender.status);
 
                   return (
@@ -181,6 +190,28 @@ export default async function DashboardPage() {
               <p className="mt-0.5 text-xs text-slate-500">{item.desc}</p>
             </Link>
           ))}
+
+          {recentActivity.length > 0 && (
+            <div className="rounded-2xl border bg-white p-4 shadow-sm">
+              <div className="flex items-center justify-between mb-3">
+                <p className="font-semibold text-slate-900 text-sm">Recent Activity</p>
+                <Link href="/dashboard/activity" className="text-xs text-blue-600 hover:underline">View all</Link>
+              </div>
+              <ul className="space-y-2">
+                {recentActivity.map((log) => (
+                  <li key={log.id} className="flex items-start gap-2">
+                    <span className="mt-0.5 h-1.5 w-1.5 shrink-0 rounded-full bg-blue-400" />
+                    <div className="min-w-0">
+                      <p className="text-xs text-slate-700 truncate">{log.description}</p>
+                      <p className="text-xs text-slate-400">
+                        {new Date(log.createdAt).toLocaleDateString()} · {log.action}
+                      </p>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
         </div>
       </div>
     </div>

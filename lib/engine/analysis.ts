@@ -43,6 +43,32 @@ function inferPageLimit(text: string) {
   return match ? Number(match[1]) : null;
 }
 
+function extractMeaningfulTitle(text: string, type: string): string {
+  const typePrefix: Record<string, string> = {
+    EXPERT: "Expert",
+    PROJECT_EXPERIENCE: "Project Experience",
+    DECLARATION: "Declaration",
+    ANNEX: "Annex",
+    SCHEDULE: "Schedule",
+    FORM: "Form",
+    FINANCIAL: "Financial",
+    ELIGIBILITY: "Eligibility",
+    COMPANY_PROFILE: "Company Profile",
+    FORMAT: "Format Rule",
+    SUBMISSION_RULE: "Submission Rule",
+    METHODOLOGY: "Methodology",
+    TECHNICAL: "Technical",
+  };
+  const prefix = typePrefix[type] ?? "Requirement";
+  const clean = text.replace(/[^a-zA-Z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
+  const words = clean.split(" ").filter((w) => w.length > 1);
+  if (words.length >= 3) {
+    const phrase = words.slice(0, 7).join(" ");
+    return phrase.length > 60 ? phrase.slice(0, 57) + "…" : phrase;
+  }
+  return prefix;
+}
+
 function normalizeRequirement(line: string, index: number): RequirementDraft | null {
   const text = line.trim().replace(/^[-*\d.)\s]+/, "");
   if (text.length < 12) return null;
@@ -53,24 +79,8 @@ function normalizeRequirement(line: string, index: number): RequirementDraft | n
   const exactFileName = inferFileName(text);
   const pageLimit = inferPageLimit(text);
 
-  const typePrefix: Record<string, string> = {
-    EXPERT: "Expert Requirement",
-    PROJECT_EXPERIENCE: "Project Experience",
-    DECLARATION: "Declaration",
-    ANNEX: "Annex",
-    SCHEDULE: "Schedule",
-    FORM: "Form",
-    FINANCIAL: "Financial Requirement",
-    ELIGIBILITY: "Eligibility Criterion",
-    COMPANY_PROFILE: "Company Profile",
-    FORMAT: "Format Rule",
-    SUBMISSION_RULE: "Submission Rule",
-    METHODOLOGY: "Methodology",
-    TECHNICAL: "Technical Requirement",
-  };
-
   return {
-    title: `${typePrefix[type] ?? "Requirement"} ${index + 1}`,
+    title: extractMeaningfulTitle(text, type),
     description: text,
     requirementType: type,
     priority,

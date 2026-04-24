@@ -1,16 +1,16 @@
-import type {
-  CompanyComplianceRecord,
-  CompanyDocument,
-  Expert,
-  FinancialRecord,
-  LegalRecord,
-  Project,
-  Tender,
-  TenderFile,
-} from "@prisma/client";
+import type { CompanyComplianceRecord, Expert, FinancialRecord, LegalRecord, Project, Tender } from "@prisma/client";
+
+// Only the fields the analysis engine actually reads from uploaded files
+export type TenderFileForAnalysis = {
+  id: string;
+  originalFileName: string;
+  mimeType: string;
+  classification: string | null;
+  extractedText: string | null;
+};
 
 export type TenderWithFiles = Tender & {
-  files: TenderFile[];
+  files: TenderFileForAnalysis[];
 };
 
 export type RequirementDraft = {
@@ -26,11 +26,18 @@ export type RequirementDraft = {
   sectionReference?: string | null;
 };
 
+export type CompanyDocumentSnapshot = {
+  id: string;
+  category: string;
+  originalFileName: string;
+  extractedText: string | null;
+};
+
 export type CompanyKnowledgeSnapshot = {
   companyId: string;
   experts: Expert[];
   projects: Project[];
-  documents: CompanyDocument[];
+  documents: CompanyDocumentSnapshot[];
   legalRecords: LegalRecord[];
   financialRecords: FinancialRecord[];
   complianceRecords: CompanyComplianceRecord[];

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { StatusBadge } from "../../../../components/status-badge";
 import { NEXT_STATUS, formatDate, formatTenderStatus } from "../../../../lib/tender-workflow";
@@ -12,7 +12,59 @@ type TenderFile = {
   size: number;
   mimeType: string;
   createdAt: string | Date;
+  extractedText?: string | null;
+  classification?: string | null;
 };
+
+type UploadItem = {
+  file: File;
+  status: "queued" | "uploading" | "done" | "error";
+  error?: string;
+  classification: string;
+};
+
+const FILE_CLASSIFICATIONS = [
+  { value: "", label: "No classification" },
+  { value: "BID_DOCUMENT", label: "Bid Document" },
+  { value: "TECHNICAL_SPEC", label: "Technical Spec" },
+  { value: "PRICING", label: "Pricing" },
+  { value: "TERMS", label: "Terms & Conditions" },
+  { value: "REFERENCE", label: "Reference" },
+  { value: "ADDENDUM", label: "Addendum" },
+  { value: "OTHER", label: "Other" },
+];
+
+const EXT_COLORS: Record<string, string> = {
+  pdf: "bg-red-100 text-red-700",
+  docx: "bg-blue-100 text-blue-700",
+  doc: "bg-blue-100 text-blue-700",
+  xlsx: "bg-green-100 text-green-700",
+  xls: "bg-green-100 text-green-700",
+  pptx: "bg-orange-100 text-orange-700",
+  ppt: "bg-orange-100 text-orange-700",
+  csv: "bg-teal-100 text-teal-700",
+  txt: "bg-slate-100 text-slate-600",
+  rtf: "bg-slate-100 text-slate-600",
+  png: "bg-purple-100 text-purple-700",
+  jpg: "bg-purple-100 text-purple-700",
+  jpeg: "bg-purple-100 text-purple-700",
+};
+
+function getExt(name: string) {
+  return name.split(".").pop()?.toLowerCase() ?? "";
+}
+
+function FileTypeBadge({ name }: { name: string }) {
+  const ext = getExt(name);
+  const cls = EXT_COLORS[ext] ?? "bg-slate-100 text-slate-600";
+  return <span className={`inline-block rounded px-1.5 py-0.5 text-[10px] font-bold uppercase ${cls}`}>{ext || "file"}</span>;
+}
+
+function ExtractionBadge({ text }: { text?: string | null }) {
+  if (!text) return <span className="text-xs text-slate-300">no text</span>;
+  if (text.startsWith("[Scanned")) return <span className="text-xs text-amber-600">⚠ scanned</span>;
+  return <span className="text-xs text-green-600">{text.length.toLocaleString()} chars</span>;
+}
 
 type TenderRequirement = {
   id: string;
@@ -38,6 +90,50 @@ type GeneratedDocument = {
   documentType: string;
   generationStatus: string;
   validationStatus: string;
+  reviewStatus: string;
+  reviewNotes: string | null;
+  exactFileName?: string | null;
+  contentSummary?: string | null;
+};
+
+type ExpertMatch = {
+  id: string;
+  score: number;
+  rationale: string | null;
+  isSelected: boolean;
+  expert: {
+    id: string;
+    fullName: string;
+    title: string | null;
+    yearsExperience: number | null;
+    disciplines: string;
+    sectors: string;
+  };
+};
+
+type ProjectMatch = {
+  id: string;
+  score: number;
+  rationale: string | null;
+  isSelected: boolean;
+  project: {
+    id: string;
+    name: string;
+    clientName: string | null;
+    country: string | null;
+    sector: string | null;
+    contractValue: number | null;
+    currency: string | null;
+  };
+};
+
+type ComplianceMatrixEntry = {
+  id: string;
+  requirementId: string | null;
+  evidenceType: string;
+  evidenceSource: string;
+  supportLevel: string;
+  notes: string | null;
 };
 
 type Tender = {
@@ -62,6 +158,9 @@ type Tender = {
   requirements: TenderRequirement[];
   complianceGaps: ComplianceGap[];
   generatedDocuments: GeneratedDocument[];
+  expertMatches?: ExpertMatch[];
+  projectMatches?: ProjectMatch[];
+  complianceMatrix?: ComplianceMatrixEntry[];
 };
 
 const CATEGORIES = ["General", "IT", "Construction", "Services", "Consulting", "Supply", "Healthcare", "Education", "Other"];
@@ -84,8 +183,13 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
   const [generatingDocs, setGeneratingDocs] = useState(false);
   const [validating, setValidating] = useState(false);
   const [validationReport, setValidationReport] = useState<{ passed: boolean; issues: { code: string; severity: string; message: string }[] } | null>(null);
+  const [reviewingDocId, setReviewingDocId] = useState<string | null>(null);
+  const [reviewNote, setReviewNote] = useState("");
   const [deleting, setDeleting] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [fileQueue, setFileQueue] = useState<UploadItem[]>([]);
+  const [dragOver, setDragOver] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [error, setError] = useState("");
   const [aiProposal, setAiProposal] = useState("");
   const [form, setForm] = useState({
@@ -235,6 +339,18 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
     window.open(`/api/tenders/${tender.id}/download?type=zip`, "_blank");
   }
 
+  async function submitReview(docId: string, reviewStatus: string) {
+    await fetch(`/api/tenders/${tender.id}/documents/${docId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reviewStatus, reviewNotes: reviewNote }),
+    });
+    setReviewingDocId(null);
+    setReviewNote("");
+    const res = await fetch(`/api/tenders/${tender.id}`);
+    if (res.ok) { const d = await res.json() as { tender: Tender }; setTender(d.tender); }
+  }
+
   async function handleDelete() {
     if (!confirm("Delete this tender? This cannot be undone.")) return;
     setDeleting(true);
@@ -242,28 +358,68 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
     router.push("/dashboard/tenders");
   }
 
-  async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const processFiles = useCallback(async (newFiles: File[]) => {
+    if (newFiles.length === 0) return;
+    const items: UploadItem[] = newFiles.map((f) => ({ file: f, status: "queued", classification: "" }));
+    setFileQueue((q) => [...items, ...q]);
     setUploading(true);
 
-    const fd = new FormData();
-    fd.append("file", file);
-    fd.append("tenderId", tender.id);
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      setFileQueue((q) => q.map((x) => x.file === item.file ? { ...x, status: "uploading" } : x));
 
-    const res = await fetch("/api/upload", { method: "POST", body: fd });
-    if (res.ok) {
-      const data = await res.json();
-      setTender((current) => ({
-        ...current,
-        files: [data.fileRecord, ...current.files],
-      }));
-    } else {
-      setError("Upload failed");
+      try {
+        const fd = new FormData();
+        fd.append("file", item.file);
+        fd.append("tenderId", tender.id);
+        if (item.classification) fd.append("classification", item.classification);
+
+        const res = await fetch("/api/upload", { method: "POST", body: fd });
+        const data = await res.json();
+
+        if (res.ok && data.results?.[0]?.fileRecord) {
+          const fileRecord = data.results[0].fileRecord;
+          setTender((cur) => ({ ...cur, files: [fileRecord, ...cur.files] }));
+          setFileQueue((q) => q.map((x) => x.file === item.file ? { ...x, status: "done" } : x));
+        } else {
+          const msg = data.results?.[0]?.error ?? data.error ?? "Upload failed";
+          setFileQueue((q) => q.map((x) => x.file === item.file ? { ...x, status: "error", error: msg } : x));
+        }
+      } catch {
+        setFileQueue((q) => q.map((x) => x.file === item.file ? { ...x, status: "error", error: "Network error" } : x));
+      }
     }
 
     setUploading(false);
+    setTimeout(() => setFileQueue((q) => q.filter((x) => x.status !== "done")), 3000);
+  }, [tender.id]);
+
+  function handleFileInputChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files ?? []);
     e.target.value = "";
+    processFiles(files);
+  }
+
+  function handleDrop(e: React.DragEvent) {
+    e.preventDefault();
+    setDragOver(false);
+    const files = Array.from(e.dataTransfer.files);
+    processFiles(files);
+  }
+
+  async function handleDeleteFile(fileId: string) {
+    if (!confirm("Delete this file?")) return;
+    const res = await fetch(`/api/tenders/${tender.id}/files/${fileId}`, { method: "DELETE" });
+    if (res.ok) {
+      setTender((cur) => ({ ...cur, files: cur.files.filter((f) => f.id !== fileId) }));
+    }
+  }
+
+  function handleDownloadFile(fileId: string, fileName: string) {
+    const a = document.createElement("a");
+    a.href = `/api/tenders/${tender.id}/files/${fileId}`;
+    a.download = fileName;
+    a.click();
   }
 
   const unresolvedGaps = tender.complianceGaps.filter((gap) => !gap.isResolved).length;
@@ -341,7 +497,7 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
 
       {error && <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
 
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+      <div className="grid gap-4 md:grid-cols-3 xl:grid-cols-6">
         <div className="rounded-2xl border bg-white p-5 shadow-sm">
           <p className="text-sm text-slate-500">Files</p>
           <p className="mt-1 text-3xl font-bold text-slate-900">{tender.files.length}</p>
@@ -357,8 +513,14 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
           {criticalGaps > 0 && <p className="mt-1 text-xs text-red-500">{criticalGaps} critical</p>}
         </div>
         <div className="rounded-2xl border bg-white p-5 shadow-sm">
-          <p className="text-sm text-slate-500">Generated Docs</p>
-          <p className="mt-1 text-3xl font-bold text-slate-900">{tender.generatedDocuments.length}</p>
+          <p className="text-sm text-slate-500">Experts</p>
+          <p className="mt-1 text-3xl font-bold text-slate-900">{tender.expertMatches?.filter((m) => m.isSelected).length ?? 0}</p>
+          <p className="mt-1 text-xs text-slate-500">of {tender.expertMatches?.length ?? 0} matched</p>
+        </div>
+        <div className="rounded-2xl border bg-white p-5 shadow-sm">
+          <p className="text-sm text-slate-500">Projects</p>
+          <p className="mt-1 text-3xl font-bold text-slate-900">{tender.projectMatches?.filter((m) => m.isSelected).length ?? 0}</p>
+          <p className="mt-1 text-xs text-slate-500">of {tender.projectMatches?.length ?? 0} matched</p>
         </div>
         <div className="rounded-2xl border bg-white p-5 shadow-sm">
           <p className="text-sm text-slate-500">Readiness</p>
@@ -417,23 +579,104 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
 
           <div className="rounded-2xl border bg-white p-6 shadow-sm">
             <div className="mb-4 flex items-center justify-between">
-              <h2 className="text-lg font-semibold text-slate-900">Tender files</h2>
-              <label className="cursor-pointer rounded-lg bg-slate-100 px-3 py-2 text-sm hover:bg-slate-200">
-                {uploading ? "Uploading..." : "+ Upload file"}
-                <input type="file" className="hidden" onChange={handleUpload} disabled={uploading} />
-              </label>
+              <h2 className="text-lg font-semibold text-slate-900">
+                Tender files
+                {tender.files.length > 0 && <span className="ml-2 text-sm font-normal text-slate-400">({tender.files.length})</span>}
+              </h2>
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                disabled={uploading}
+                className="rounded-lg bg-slate-100 px-3 py-2 text-sm hover:bg-slate-200 disabled:opacity-50"
+              >
+                {uploading ? "Uploading…" : "+ Upload files"}
+              </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                className="hidden"
+                onChange={handleFileInputChange}
+              />
             </div>
+
+            <div
+              onDrop={handleDrop}
+              onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+              onDragLeave={() => setDragOver(false)}
+              onClick={() => !uploading && fileInputRef.current?.click()}
+              className={`mb-4 cursor-pointer rounded-xl border-2 border-dashed px-4 py-6 text-center transition-colors ${
+                dragOver ? "border-blue-400 bg-blue-50" : "border-slate-200 bg-slate-50 hover:border-slate-300"
+              }`}
+            >
+              <p className="text-sm text-slate-500">Drop tender documents here, or click to browse</p>
+              <p className="mt-1 text-xs text-slate-400">PDF, DOCX, XLSX, PPTX, CSV, images — up to 10 MB each</p>
+            </div>
+
+            {fileQueue.length > 0 && (
+              <ul className="mb-4 space-y-1.5">
+                {fileQueue.map((item, idx) => (
+                  <li key={idx} className="flex items-center gap-3 rounded-lg border bg-slate-50 px-3 py-2 text-sm">
+                    <FileTypeBadge name={item.file.name} />
+                    <span className="min-w-0 flex-1 truncate text-slate-700">{item.file.name}</span>
+                    {item.status === "queued" && <span className="text-xs text-slate-400">queued</span>}
+                    {item.status === "uploading" && (
+                      <span className="flex items-center gap-1 text-xs text-blue-600">
+                        <svg className="h-3 w-3 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
+                        uploading
+                      </span>
+                    )}
+                    {item.status === "done" && <span className="text-xs text-green-600">✓ done</span>}
+                    {item.status === "error" && <span className="max-w-[140px] truncate text-xs text-red-600">{item.error}</span>}
+                  </li>
+                ))}
+              </ul>
+            )}
+
             {tender.files.length === 0 ? (
               <p className="text-sm text-slate-400">No tender files uploaded yet.</p>
             ) : (
-              <ul className="space-y-3">
+              <ul className="space-y-2">
                 {tender.files.map((file) => (
-                  <li key={file.id} className="flex items-center justify-between rounded-xl border px-4 py-3">
-                    <div>
-                      <p className="text-sm font-medium text-slate-900">{file.originalFileName}</p>
-                      <p className="text-xs text-slate-500">{formatBytes(file.size)} · {file.mimeType}</p>
+                  <li key={file.id} className="group rounded-xl border px-4 py-3 hover:bg-slate-50">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <FileTypeBadge name={file.originalFileName} />
+                          <p className="text-sm font-medium text-slate-900 truncate">{file.originalFileName}</p>
+                          {file.classification && (
+                            <span className="rounded bg-indigo-100 px-1.5 py-0.5 text-[10px] font-medium text-indigo-700">
+                              {file.classification.replace(/_/g, " ")}
+                            </span>
+                          )}
+                        </div>
+                        <div className="mt-1 flex items-center gap-2 text-xs text-slate-500">
+                          <span>{formatBytes(file.size)}</span>
+                          <span>·</span>
+                          <span>{formatDate(file.createdAt)}</span>
+                          <span>·</span>
+                          <ExtractionBadge text={file.extractedText} />
+                        </div>
+                        {file.extractedText?.startsWith("[Scanned") && (
+                          <p className="mt-1 text-xs text-amber-700 bg-amber-50 rounded px-2 py-1">
+                            ⚠ Scanned PDF — no text layer found. Run OCR or upload a text-based version for AI analysis.
+                          </p>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-1.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button
+                          onClick={() => handleDownloadFile(file.id, file.originalFileName)}
+                          className="rounded border px-2 py-1 text-xs text-blue-600 hover:bg-blue-50"
+                        >
+                          ↓
+                        </button>
+                        <button
+                          onClick={() => handleDeleteFile(file.id)}
+                          className="rounded border border-red-200 px-2 py-1 text-xs text-red-600 hover:bg-red-50"
+                        >
+                          ✕
+                        </button>
+                      </div>
                     </div>
-                    <p className="text-xs text-slate-400">{formatDate(file.createdAt)}</p>
                   </li>
                 ))}
               </ul>
@@ -478,6 +721,103 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
             )}
           </div>
 
+          {(tender.expertMatches?.length ?? 0) > 0 && (
+            <div className="rounded-2xl border bg-white p-6 shadow-sm">
+              <h2 className="text-lg font-semibold text-slate-900 mb-4">
+                Expert Matches
+                <span className="ml-2 text-sm font-normal text-slate-400">
+                  ({tender.expertMatches!.filter((m) => m.isSelected).length} selected)
+                </span>
+              </h2>
+              <ul className="space-y-2">
+                {tender.expertMatches!.slice(0, 8).map((match) => (
+                  <li key={match.id} className={`rounded-xl border px-4 py-3 ${match.isSelected ? "border-green-200 bg-green-50" : ""}`}>
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <p className="text-sm font-medium text-slate-900">{match.expert.fullName}</p>
+                          {match.isSelected && <span className="rounded-full bg-green-500 px-2 py-0.5 text-[10px] font-bold text-white">SELECTED</span>}
+                        </div>
+                        <p className="text-xs text-slate-500 mt-0.5">{match.expert.title ?? "Expert"}{match.expert.yearsExperience ? ` · ${match.expert.yearsExperience} yrs` : ""}</p>
+                        <p className="mt-1 text-xs text-slate-500 truncate">{match.rationale}</p>
+                      </div>
+                      <div className="shrink-0 text-right">
+                        <p className="text-sm font-bold text-slate-700">{Math.round(match.score * 100)}%</p>
+                        <div className="mt-1 h-1.5 w-16 rounded-full bg-slate-100 overflow-hidden">
+                          <div className={`h-full rounded-full ${match.score >= 0.6 ? "bg-green-500" : match.score >= 0.3 ? "bg-amber-400" : "bg-slate-300"}`}
+                            style={{ width: `${Math.round(match.score * 100)}%` }} />
+                        </div>
+                      </div>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {(tender.projectMatches?.length ?? 0) > 0 && (
+            <div className="rounded-2xl border bg-white p-6 shadow-sm">
+              <h2 className="text-lg font-semibold text-slate-900 mb-4">
+                Project Matches
+                <span className="ml-2 text-sm font-normal text-slate-400">
+                  ({tender.projectMatches!.filter((m) => m.isSelected).length} selected)
+                </span>
+              </h2>
+              <ul className="space-y-2">
+                {tender.projectMatches!.slice(0, 8).map((match) => (
+                  <li key={match.id} className={`rounded-xl border px-4 py-3 ${match.isSelected ? "border-blue-200 bg-blue-50" : ""}`}>
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <p className="text-sm font-medium text-slate-900">{match.project.name}</p>
+                          {match.isSelected && <span className="rounded-full bg-blue-500 px-2 py-0.5 text-[10px] font-bold text-white">SELECTED</span>}
+                        </div>
+                        <p className="text-xs text-slate-500 mt-0.5">
+                          {[match.project.clientName, match.project.country, match.project.sector].filter(Boolean).join(" · ")}
+                          {match.project.contractValue ? ` · ${match.project.currency ?? "USD"} ${match.project.contractValue.toLocaleString()}` : ""}
+                        </p>
+                        <p className="mt-1 text-xs text-slate-500 truncate">{match.rationale}</p>
+                      </div>
+                      <div className="shrink-0 text-right">
+                        <p className="text-sm font-bold text-slate-700">{Math.round(match.score * 100)}%</p>
+                        <div className="mt-1 h-1.5 w-16 rounded-full bg-slate-100 overflow-hidden">
+                          <div className={`h-full rounded-full ${match.score >= 0.6 ? "bg-blue-500" : match.score >= 0.3 ? "bg-amber-400" : "bg-slate-300"}`}
+                            style={{ width: `${Math.round(match.score * 100)}%` }} />
+                        </div>
+                      </div>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {(tender.complianceMatrix?.length ?? 0) > 0 && (
+            <div className="rounded-2xl border bg-white p-6 shadow-sm">
+              <h2 className="text-lg font-semibold text-slate-900 mb-4">
+                Compliance Matrix
+                <span className="ml-2 text-sm font-normal text-slate-400">
+                  ({tender.complianceMatrix!.filter((m) => m.supportLevel === "SUPPORTED").length}/{tender.complianceMatrix!.length} supported)
+                </span>
+              </h2>
+              <ul className="space-y-1.5">
+                {tender.complianceMatrix!.slice(0, 10).map((entry) => (
+                  <li key={entry.id} className="flex items-start gap-3 rounded-lg border px-3 py-2">
+                    <span className={`mt-0.5 shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                      entry.supportLevel === "SUPPORTED" ? "bg-green-100 text-green-700" :
+                      entry.supportLevel === "PARTIAL" ? "bg-amber-100 text-amber-700" :
+                      "bg-red-100 text-red-700"
+                    }`}>{entry.supportLevel}</span>
+                    <div className="min-w-0">
+                      <p className="text-xs font-medium text-slate-700">{entry.evidenceType} — {entry.evidenceSource}</p>
+                      {entry.notes && <p className="mt-0.5 text-xs text-slate-400 truncate">{entry.notes}</p>}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
           <div className="rounded-2xl border bg-white p-6 shadow-sm">
             <div className="flex items-center justify-between mb-3">
               <h2 className="text-lg font-semibold text-slate-900">Generated outputs</h2>
@@ -487,12 +827,12 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
               <p className="text-sm text-slate-400">Run the engine then click "Generate Docs" to create submission-ready files.</p>
             ) : (
               <ul className="space-y-2">
-                {(tender.generatedDocuments as (GeneratedDocument & { exactFileName?: string | null; fileContent?: string | null })[]).slice(0, 8).map((doc) => (
-                  <li key={doc.id} className="rounded-xl border px-3 py-2.5">
+                {tender.generatedDocuments.slice(0, 8).map((doc) => (
+                  <li key={doc.id} className="rounded-xl border px-3 py-2.5 space-y-2">
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
                         <p className="text-sm font-medium text-slate-900 truncate">{doc.exactFileName ?? doc.name}</p>
-                        <div className="flex gap-2 mt-0.5">
+                        <div className="flex flex-wrap gap-2 mt-0.5">
                           <span className={`text-xs ${doc.generationStatus === "GENERATED" ? "text-green-600" : "text-slate-400"}`}>
                             {doc.generationStatus}
                           </span>
@@ -501,12 +841,51 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
                               · {doc.validationStatus}
                             </span>
                           )}
+                          {doc.reviewStatus && doc.reviewStatus !== "PENDING" && (
+                            <span className={`text-xs font-medium ${
+                              doc.reviewStatus === "APPROVED" ? "text-green-700" :
+                              doc.reviewStatus === "REJECTED" ? "text-red-600" :
+                              "text-amber-600"
+                            }`}>
+                              · {doc.reviewStatus}
+                            </span>
+                          )}
+                        </div>
+                        {doc.reviewNotes && (
+                          <p className="mt-1 text-xs text-slate-500 italic">&ldquo;{doc.reviewNotes}&rdquo;</p>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        {doc.generationStatus === "GENERATED" && (
+                          <button
+                            onClick={() => { setReviewingDocId(reviewingDocId === doc.id ? null : doc.id); setReviewNote(doc.reviewNotes ?? ""); }}
+                            className="text-xs text-slate-500 hover:text-slate-800 border rounded px-2 py-0.5"
+                          >
+                            Review
+                          </button>
+                        )}
+                        {doc.generationStatus === "GENERATED" && (
+                          <button onClick={() => downloadDocById(doc.id)} className="text-xs text-blue-600 hover:underline">↓</button>
+                        )}
+                      </div>
+                    </div>
+                    {reviewingDocId === doc.id && (
+                      <div className="border-t pt-2 space-y-2">
+                        <textarea
+                          className="w-full rounded border px-2 py-1.5 text-xs resize-none"
+                          rows={2}
+                          placeholder="Review notes (optional)"
+                          value={reviewNote}
+                          onChange={(e) => setReviewNote(e.target.value)}
+                        />
+                        <div className="flex gap-1.5">
+                          <button onClick={() => submitReview(doc.id, "APPROVED")} className="rounded bg-green-600 px-2.5 py-1 text-xs text-white hover:bg-green-700">Approve</button>
+                          <button onClick={() => submitReview(doc.id, "NEEDS_REVISION")} className="rounded bg-amber-500 px-2.5 py-1 text-xs text-white hover:bg-amber-600">Needs Revision</button>
+                          <button onClick={() => submitReview(doc.id, "REJECTED")} className="rounded bg-red-600 px-2.5 py-1 text-xs text-white hover:bg-red-700">Reject</button>
+                          <button onClick={() => setReviewingDocId(null)} className="rounded border px-2.5 py-1 text-xs">Cancel</button>
                         </div>
                       </div>
-                      {doc.generationStatus === "GENERATED" && (
-                        <button onClick={() => downloadDocById(doc.id)} className="shrink-0 text-xs text-blue-600 hover:underline">↓</button>
-                      )}
-                    </div>
+                    )}
                   </li>
                 ))}
               </ul>
