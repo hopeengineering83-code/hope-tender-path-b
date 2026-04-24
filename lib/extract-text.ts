@@ -10,7 +10,7 @@ export async function extractTextFromBuffer(
   const ext = fileName.toLowerCase().split(".").pop() ?? "";
   try {
     if (isPdf(mimeType, ext)) return await extractPdf(buffer);
-    if (isDocx(mimeType, ext)) return await extractDocx(buffer);
+    if (isDocx(mimeType, ext)) return await extractDocx(buffer, fileName);
     if (isXlsx(mimeType, ext)) return await extractXlsx(buffer, fileName);
     if (isPptx(mimeType, ext)) return await extractPptx(buffer);
     if (isCsv(mimeType, ext)) return extractCsv(buffer);
@@ -19,8 +19,9 @@ export async function extractTextFromBuffer(
     if (isImage(mimeType, ext)) return `[Image: ${fileName}]`;
     return "";
   } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
     console.error(`[extract-text] ${fileName} (${mimeType}):`, err);
-    return "";
+    return `[Extraction failed for ${fileName}: ${message.slice(0, 240)}]`;
   }
 }
 
@@ -77,21 +78,59 @@ function isImage(mime: string, ext: string) {
 
 // ─── Extractors ───────────────────────────────────────────────────────────────
 
-async function extractPdf(buffer: Buffer): Promise<string> {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const pdfParse = require("pdf-parse") as (buf: Buffer) => Promise<{ text: string; numpages: number }>;
-  const result = await pdfParse(buffer);
-  const text = (result.text ?? "").trim();
-  if (!text || text.length < 20) {
-    return `[Scanned PDF — ${result.numpages} page(s). Text layer not found. Upload a text-based PDF or use OCR conversion for analysis.]`;
-  }
-  return text.slice(0, 80000);
+function normalizeExtractedText(text: string, limit = 80000): string {
+  return (text ?? "")
+    .replace(/\u0000/g, " ")
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim()
+    .slice(0, limit);
 }
 
-async function extractDocx(buffer: Buffer): Promise<string> {
+async function extractPdf(buffer: Buffer): Promise<string> {
+  // pdf-parse v1 exported a function. pdf-parse v2 exports PDFParse.
+  // Support both so extraction works across local and Vercel installs.
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const mod = require("pdf-parse");
+  let text = "";
+  let pages = 0;
+
+  if (typeof mod === "function") {
+    const result = await mod(buffer);
+    text = result?.text ?? "";
+    pages = result?.numpages ?? result?.numPages ?? 0;
+  } else if (typeof mod?.default === "function") {
+    const result = await mod.default(buffer);
+    text = result?.text ?? "";
+    pages = result?.numpages ?? result?.numPages ?? 0;
+  } else if (typeof mod?.PDFParse === "function") {
+    const parser = new mod.PDFParse({ data: buffer });
+    try {
+      const result = await parser.getText();
+      text = result?.text ?? "";
+      pages = result?.total ?? result?.pages?.length ?? 0;
+    } finally {
+      if (typeof parser.destroy === "function") await parser.destroy();
+    }
+  } else {
+    throw new Error("Unsupported pdf-parse module API");
+  }
+
+  const cleaned = normalizeExtractedText(text);
+  if (!cleaned || cleaned.length < 20) {
+    return `[Scanned PDF — ${pages || "unknown"} page(s). Text layer not found. Upload a text-based PDF or use OCR conversion for analysis.]`;
+  }
+  return cleaned;
+}
+
+async function extractDocx(buffer: Buffer, fileName: string): Promise<string> {
+  const ext = fileName.toLowerCase().split(".").pop() ?? "";
+  if (ext === "doc") {
+    return "[Legacy .doc file detected. Please save as .docx for reliable text extraction.]";
+  }
   const mammoth = await import("mammoth");
   const result = await mammoth.extractRawText({ buffer });
-  return (result.value ?? "").trim().slice(0, 80000);
+  return normalizeExtractedText(result.value ?? "");
 }
 
 async function extractXlsx(buffer: Buffer, fileName: string): Promise<string> {
@@ -113,11 +152,10 @@ async function extractXlsx(buffer: Buffer, fileName: string): Promise<string> {
   }
 
   if (parts.length === 0) return `[Empty spreadsheet: ${fileName}]`;
-  return parts.join("\n\n").slice(0, 80000);
+  return normalizeExtractedText(parts.join("\n\n"));
 }
 
 async function extractPptx(buffer: Buffer): Promise<string> {
-  // PPTX/ODP are ZIP archives containing XML slide files
   const JSZip = (await import("jszip")).default;
   const zip = await JSZip.loadAsync(buffer);
 
@@ -131,22 +169,18 @@ async function extractPptx(buffer: Buffer): Promise<string> {
 
   const isOdp = slideNames.length === 0 && Boolean(zip.files["content.xml"]);
   const files = slideNames.length > 0 ? slideNames : isOdp ? ["content.xml"] : [];
-
   if (files.length === 0) return "[No slide content found in presentation]";
 
   const slideTexts: string[] = [];
   for (const name of files) {
     const xml = await zip.files[name].async("string");
     const matches = [...xml.matchAll(/<(?:a:t|text:span|text:p)[^>]*>([^<]+)<\//g)];
-    const text = matches
-      .map((m) => m[1].trim())
-      .filter((t) => t.length > 0)
-      .join(" ");
+    const text = matches.map((m) => m[1].trim()).filter(Boolean).join(" ");
     if (text) slideTexts.push(text);
   }
 
   const result = slideTexts.join("\n");
-  return result ? result.slice(0, 80000) : "[Presentation has no extractable text]";
+  return result ? normalizeExtractedText(result) : "[Presentation has no extractable text]";
 }
 
 function extractCsv(buffer: Buffer): string {
@@ -155,7 +189,7 @@ function extractCsv(buffer: Buffer): string {
   const header = rows[0] ?? "";
   const colCount = (header.match(/,/g) ?? []).length + 1;
   const summary = `[CSV: ${rows.length} rows × ${colCount} columns]\n`;
-  return (summary + text).slice(0, 80000);
+  return normalizeExtractedText(summary + text);
 }
 
 function extractRtf(buffer: Buffer): string {
@@ -166,10 +200,16 @@ function extractRtf(buffer: Buffer): string {
     .replace(/[{}\\]/g, " ")
     .replace(/\s{2,}/g, " ")
     .trim();
-  return cleaned.slice(0, 80000);
+  return normalizeExtractedText(cleaned);
 }
 
 // ─── Metadata helpers ───────────────────────────────────────────────────────
+
+export function isMeaningfulExtraction(text: string | null | undefined): boolean {
+  if (!text) return false;
+  if (/^\[(Scanned PDF|Extraction failed|Legacy \.doc|Image:)/i.test(text)) return false;
+  return text.trim().length >= 20;
+}
 
 export function getFileTypeLabel(mimeType: string, fileName: string): string {
   const ext = fileName.toLowerCase().split(".").pop() ?? "";
@@ -189,7 +229,6 @@ export function detectCategoryFromFile(fileName: string, mimeType: string): stri
   const ext = lower.split(".").pop() ?? "";
 
   if (isImage(mimeType, ext)) return "OTHER";
-
   if (/\bcv\b|curriculum.?vitae|resume/.test(lower)) return "EXPERT_CV";
   if (/company.?profile|firm.?profile|corporate.?profile|about.?us/.test(lower)) return "COMPANY_PROFILE";
   if (/financial|audit|statement|balance.?sheet|income|revenue|turnover|p[&+]l/.test(lower)) return "FINANCIAL_STATEMENT";
@@ -199,7 +238,6 @@ export function detectCategoryFromFile(fileName: string, mimeType: string): stri
   if (/manual|policy|procedure|guideline|handbook|sop/.test(lower)) return "MANUAL";
   if (/compliance|gdpr|privacy|security.?audit/.test(lower)) return "COMPLIANCE_RECORD";
 
-  // By file type
   if (["xlsx", "xls", "ods"].includes(ext)) return "FINANCIAL_STATEMENT";
   if (["pptx", "ppt", "odp"].includes(ext)) return "COMPANY_PROFILE";
   if (ext === "csv") return "FINANCIAL_STATEMENT";
