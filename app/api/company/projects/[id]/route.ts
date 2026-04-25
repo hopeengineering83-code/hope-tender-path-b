@@ -75,6 +75,44 @@ export async function PUT(
   }
 }
 
+/**
+ * PATCH — review a project record.
+ * Body: { action: "approve" | "reject", notes?: string }
+ */
+export async function PATCH(
+  req: Request,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const userId = await getSession();
+  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  await prismaReady;
+
+  const { id } = await params;
+  const company = await prisma.company.findUnique({ where: { userId } });
+  if (!company) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+  const existing = await prisma.project.findFirst({ where: { id, companyId: company.id } });
+  if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+  const body = await req.json() as { action?: string; notes?: string };
+  if (!body.action || !["approve", "reject"].includes(body.action)) {
+    return NextResponse.json({ error: "action must be 'approve' or 'reject'" }, { status: 400 });
+  }
+
+  const isApprove = body.action === "approve";
+  const updated = await prisma.project.update({
+    where: { id },
+    data: {
+      trustLevel: isApprove ? "REVIEWED" : "AI_DRAFT",
+      reviewedBy: userId,
+      reviewedAt: new Date(),
+      reviewNotes: body.notes ?? null,
+      updatedAt: new Date(),
+    },
+  });
+  return NextResponse.json(normalizeProject(updated as unknown as Record<string, unknown>));
+}
+
 export async function DELETE(
   _req: Request,
   { params }: { params: Promise<{ id: string }> },
