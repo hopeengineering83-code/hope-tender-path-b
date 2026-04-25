@@ -11,7 +11,7 @@ const REQUIRED_VARS: Array<{ name: string; description: string }> = [
 ];
 
 const PRODUCTION_REQUIRED: Array<{ name: string; description: string }> = [
-  { name: "ANTHROPIC_API_KEY", description: "Anthropic API key — required for AI extraction and proposal generation" },
+  { name: "GEMINI_API_KEY", description: "Google Gemini API key — required for AI extraction and proposal generation" },
 ];
 
 const INSECURE_DEFAULTS: Record<string, string> = {
@@ -81,7 +81,7 @@ export function checkEnv(): void {
 }
 
 export function isAIConfigured(): boolean {
-  return Boolean(process.env.ANTHROPIC_API_KEY);
+  return Boolean(process.env.GEMINI_API_KEY);
 }
 
 // Alias used in diagnostics and other routes
