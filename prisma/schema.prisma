@@ -4,8 +4,8 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
-  url      = "file:/tmp/app.db"
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
 
 model User {
@@ -71,37 +71,44 @@ model Company {
 }
 
 model AppSettings {
-  id                    String   @id @default(uuid())
-  companyId             String   @unique
-  company               Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  defaultCurrency       String   @default("USD")
-  aiStrictMode          Boolean  @default(true)
-  allowBrandingDefault  Boolean  @default(true)
-  allowSignatureDefault Boolean  @default(true)
-  allowStampDefault     Boolean  @default(true)
-  exportFormat          String   @default("DOCX")
-  pageNumbering         Boolean  @default(true)
-  includeTableOfContents Boolean @default(false)
-  language              String   @default("en")
-  createdAt             DateTime @default(now())
-  updatedAt             DateTime @updatedAt
+  id                     String   @id @default(uuid())
+  companyId              String   @unique
+  company                Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  defaultCurrency        String   @default("USD")
+  aiStrictMode           Boolean  @default(true)
+  allowBrandingDefault   Boolean  @default(true)
+  allowSignatureDefault  Boolean  @default(true)
+  allowStampDefault      Boolean  @default(true)
+  exportFormat           String   @default("DOCX")
+  pageNumbering          Boolean  @default(true)
+  includeTableOfContents Boolean  @default(false)
+  language               String   @default("en")
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
 }
 
 model CompanyDocument {
-  id               String   @id @default(uuid())
+  id               String    @id @default(uuid())
   companyId        String
-  company          Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  company          Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
   fileName         String
   originalFileName String
   mimeType         String
   size             Int
-  storagePath      String   @default("")
+  storagePath      String    @default("")
   fileContent      String?
-  category         String   @default("OTHER")
+  category         String    @default("OTHER")
   extractedText    String?
-  metadata         String   @default("{}")
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  // AI extraction state: PENDING | EXTRACTING | EXTRACTED | FAILED
+  aiExtractionStatus String  @default("PENDING")
+  aiExtractedAt    DateTime?
+  aiExtractionError String?
+  metadata         String    @default("{}")
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  expertsSourced  Expert[]
+  projectsSourced Project[]
 }
 
 model CompanyAsset {
@@ -121,42 +128,62 @@ model CompanyAsset {
   updatedAt        DateTime @updatedAt
 }
 
+// trustLevel values: REGEX_DRAFT | AI_DRAFT | REVIEWED
+// Records start as REGEX_DRAFT (pattern-extracted) or AI_DRAFT (Claude-extracted).
+// Only REVIEWED records are treated as authoritative in proposal generation.
 model Expert {
-  id              String              @id @default(uuid())
-  companyId       String
-  company         Company             @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  fullName        String
-  title           String?
-  email           String?
-  phone           String?
-  yearsExperience Int?
-  disciplines     String              @default("[]")
-  sectors         String              @default("[]")
-  certifications  String              @default("[]")
-  profile         String?
-  isActive        Boolean             @default(true)
-  createdAt       DateTime            @default(now())
-  updatedAt       DateTime            @updatedAt
-  tenderMatches   TenderExpertMatch[]
+  id               String           @id @default(uuid())
+  companyId        String
+  company          Company          @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  fullName         String
+  title            String?
+  email            String?
+  phone            String?
+  yearsExperience  Int?
+  disciplines      String           @default("[]")
+  sectors          String           @default("[]")
+  certifications   String           @default("[]")
+  profile          String?
+  isActive         Boolean          @default(true)
+  // Trust level — must be REVIEWED before use in final generation
+  trustLevel       String           @default("REGEX_DRAFT")
+  reviewedBy       String?
+  reviewedAt       DateTime?
+  reviewNotes      String?
+  // Source document that produced this record
+  sourceDocumentId String?
+  sourceDocument   CompanyDocument? @relation(fields: [sourceDocumentId], references: [id], onDelete: SetNull)
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+  tenderMatches    TenderExpertMatch[]
 }
 
+// trustLevel values: REGEX_DRAFT | AI_DRAFT | REVIEWED
 model Project {
-  id            String               @id @default(uuid())
+  id            String           @id @default(uuid())
   companyId     String
-  company       Company              @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  company       Company          @relation(fields: [companyId], references: [id], onDelete: Cascade)
   name          String
   clientName    String?
   country       String?
   sector        String?
-  serviceAreas  String               @default("[]")
+  serviceAreas  String           @default("[]")
   summary       String?
   contractValue Float?
   currency      String?
   startDate     DateTime?
   endDate       DateTime?
+  // Trust level — must be REVIEWED before use in final generation
+  trustLevel    String           @default("REGEX_DRAFT")
+  reviewedBy    String?
+  reviewedAt    DateTime?
+  reviewNotes   String?
+  // Source document that produced this record
+  sourceDocumentId String?
+  sourceDocument   CompanyDocument? @relation(fields: [sourceDocumentId], references: [id], onDelete: SetNull)
   evidences     ProjectEvidence[]
-  createdAt     DateTime             @default(now())
-  updatedAt     DateTime             @updatedAt
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
   tenderMatches TenderProjectMatch[]
 }
 
@@ -192,17 +219,17 @@ model LegalRecord {
 }
 
 model FinancialRecord {
-  id        String   @id @default(uuid())
-  companyId String
-  company   Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  id         String   @id @default(uuid())
+  companyId  String
+  company    Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
   fiscalYear Int
   recordType String
-  currency  String?  @default("USD")
-  amount    Float?
-  notes     String?
-  metadata  String   @default("{}")
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  currency   String?  @default("USD")
+  amount     Float?
+  notes      String?
+  metadata   String   @default("{}")
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 }
 
 model CompanyComplianceRecord {
@@ -368,6 +395,11 @@ model GeneratedDocument {
   reviewNotes      String?
   reviewedBy       String?
   reviewedAt       DateTime?
+  // Counts of REVIEWED vs DRAFT sources used
+  reviewedExpertCount Int?   @default(0)
+  draftExpertCount    Int?   @default(0)
+  reviewedProjectCount Int?  @default(0)
+  draftProjectCount   Int?   @default(0)
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
 }

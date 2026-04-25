@@ -33,11 +33,11 @@ export function getSystemReadiness(): SystemReadiness {
     {
       key: "ai_extraction",
       title: "AI extraction key",
-      severity: has(process.env.ANTHROPIC_API_KEY) ? "OK" : "CRITICAL",
+      severity: has(process.env.GEMINI_API_KEY) ? "OK" : "CRITICAL",
       requiredForProduction: true,
-      detail: has(process.env.ANTHROPIC_API_KEY)
-        ? "ANTHROPIC_API_KEY is configured for deep tender and company-knowledge extraction."
-        : "ANTHROPIC_API_KEY is missing. Complex PDFs can only be parsed with weak rule-based extraction until this is configured.",
+      detail: has(process.env.GEMINI_API_KEY)
+        ? "GEMINI_API_KEY is configured for deep tender and company-knowledge extraction."
+        : "GEMINI_API_KEY is missing. Complex PDFs can only be parsed with weak rule-based extraction until this is configured.",
     },
     {
       key: "session_secret",

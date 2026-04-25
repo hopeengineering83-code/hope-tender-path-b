@@ -80,6 +80,8 @@ export default function CompanyPage() {
   const [editProject, setEditProject] = useState<Project|null>(null);
   const [projectEditForm, setProjectEditForm] = useState({ name:"",clientName:"",sector:"",country:"",serviceAreas:"",contractValue:"",currency:"USD",summary:"" });
   const [deletingProjectId, setDeletingProjectId] = useState<string|null>(null);
+  const [reimporting, setReimporting] = useState(false);
+  const [reimportResult, setReimportResult] = useState<{expertsCreated:number;projectsCreated:number;docsProcessed:number}|null>(null);
 
   async function loadDocs() {
     const r = await fetch("/api/company/documents");
@@ -130,6 +132,26 @@ export default function CompanyPage() {
   async function deleteDoc(id: string) {
     await fetch(`/api/company/documents/${id}`, { method:"DELETE" });
     setDocs(d => d.filter(x => x.id!==id));
+  }
+
+  async function reextractDoc(id: string) {
+    await fetch(`/api/company/documents/${id}`, { method:"POST" });
+    await loadDocs();
+  }
+
+  async function reimportAll() {
+    setReimporting(true); setReimportResult(null);
+    try {
+      const res = await fetch("/api/company/reimport", { method:"POST" });
+      const data = await res.json() as { expertsCreated?:number; projectsCreated?:number; docsProcessed?:number };
+      setReimportResult({ expertsCreated: data.expertsCreated ?? 0, projectsCreated: data.projectsCreated ?? 0, docsProcessed: data.docsProcessed ?? 0 });
+      await loadDocs();
+      // Refresh experts/projects in company state
+      const c = await fetch("/api/company").then(r=>r.json()) as Company;
+      setCompany(prev => ({ ...prev, experts: c.experts ?? [], projects: c.projects ?? [] }));
+    } finally {
+      setReimporting(false);
+    }
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -310,10 +332,21 @@ export default function CompanyPage() {
       {/* Documents Tab */}
       {tab==="documents" && (
         <div className="rounded-2xl border bg-white p-6 shadow-sm space-y-4">
-          <div className="flex items-center justify-between">
-            <h2 className="font-semibold text-slate-900">Document Library</h2>
-            <span className="text-xs text-slate-400">{docs.length} file{docs.length!==1?"s":""}</span>
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <div>
+              <h2 className="font-semibold text-slate-900">Document Library</h2>
+              <p className="text-xs text-slate-400 mt-0.5">{docs.length} file{docs.length!==1?"s":""} · All types extracted fully</p>
+            </div>
+            <button onClick={()=>void reimportAll()} disabled={reimporting||docs.length===0}
+              className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-50 disabled:opacity-40 font-medium">
+              {reimporting ? "Re-importing…" : "Re-extract & Re-import All"}
+            </button>
           </div>
+          {reimportResult && (
+            <div className="rounded-lg bg-green-50 border border-green-200 px-4 py-2.5 text-xs text-green-800">
+              Re-import complete — {reimportResult.docsProcessed} docs processed · {reimportResult.expertsCreated} expert{reimportResult.expertsCreated!==1?"s":""} added · {reimportResult.projectsCreated} project{reimportResult.projectsCreated!==1?"s":""} added
+            </div>
+          )}
           <div className="flex gap-2 items-center">
             <select value={docCategory} onChange={e=>setDocCategory(e.target.value)} className="flex-1 rounded-lg border px-2 py-1.5 text-xs bg-white">
               {DOC_CATEGORIES.map(c => <option key={c} value={c}>{CATEGORY_LABELS[c]??c}</option>)}
@@ -364,6 +397,7 @@ export default function CompanyPage() {
                     </div>
                   </div>
                   <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100">
+                    <button onClick={()=>void reextractDoc(doc.id)} className="rounded border px-2 py-0.5 text-[10px] text-slate-500 hover:bg-slate-50 border-slate-200" title="Re-extract text">↺</button>
                     <a href={`/api/company/documents/${doc.id}`} download={doc.originalFileName} className="rounded border px-2 py-0.5 text-[10px] text-blue-600 hover:bg-blue-50 border-blue-200">↓</a>
                     <button onClick={()=>deleteDoc(doc.id)} className="rounded border px-2 py-0.5 text-[10px] text-red-500 hover:bg-red-50 border-red-200">✕</button>
                   </div>

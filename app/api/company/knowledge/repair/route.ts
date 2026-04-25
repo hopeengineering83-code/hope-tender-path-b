@@ -31,7 +31,7 @@ export async function POST(req: Request) {
   const body = await req.json().catch(() => ({}));
   const force = body?.force !== false;
 
-  const result = await importCompanyKnowledgeFromDocuments(company.id, { force });
+  const result = await importCompanyKnowledgeFromDocuments(company.id);
 
   await logAction({
     userId,
@@ -43,9 +43,8 @@ export async function POST(req: Request) {
       force,
       expertsCreated: result.expertsCreated,
       projectsCreated: result.projectsCreated,
-      expertsRebuilt: result.expertsRebuilt,
-      projectsRebuilt: result.projectsRebuilt,
-      gaps: result.diagnostics.gaps,
+      aiUsed: result.aiUsed,
+      aiFailures: result.aiFailures,
     },
   });
 

@@ -45,8 +45,22 @@ function sectorBoost(tenderSector: string | null | undefined, items: string[]): 
   return items.some((item) => item.toLowerCase().includes(tender) || tender.includes(item.toLowerCase())) ? 0.15 : 0;
 }
 
-function reviewStatusPenalty(text: string | null | undefined): number {
-  return text?.includes("REVIEW REQUIRED") ? -0.08 : 0.04;
+/**
+ * Trust-level scoring adjustment.
+ * REVIEWED records get a significant boost — they are the authoritative source.
+ * AI_DRAFT gets a small positive adjustment (Claude extraction is better than regex).
+ * REGEX_DRAFT gets a penalty — keyword patterns often produce noisy results.
+ */
+function trustLevelAdjustment(trustLevel: string | null | undefined): number {
+  if (trustLevel === "REVIEWED") return 0.20;
+  if (trustLevel === "AI_DRAFT") return 0.05;
+  return -0.08; // REGEX_DRAFT or unknown
+}
+
+function trustLevelLabel(trustLevel: string | null | undefined): string {
+  if (trustLevel === "REVIEWED") return "✓ Reviewed";
+  if (trustLevel === "AI_DRAFT") return "⚠ AI draft — review before final use";
+  return "⚠ Regex draft — review required";
 }
 
 function cycleQueryTokens(baseTokens: string[], cycle: number): string[] {
@@ -107,23 +121,31 @@ export function buildMatches(
       }
       let score = average(cycleScores);
       score += sectorBoost(tenderSector, parseArr(expert.sectors));
-      score += reviewStatusPenalty(expert.profile);
+      // Trust-level is the primary quality gate — REVIEWED records surface first
+      score += trustLevelAdjustment((expert as Record<string, unknown>).trustLevel as string);
       if ((expert.yearsExperience ?? 0) >= 10) score += 0.10;
       else if ((expert.yearsExperience ?? 0) >= 5) score += 0.05;
       score = Math.max(0, Math.min(1, score));
       const evidence = [expert.title, ...parseArr(expert.disciplines)].filter(Boolean).join(" · ");
       const topMatches = [...new Set(docTokens.filter((t) => baseQueryTokens.includes(t)))].slice(0, 6).join(", ");
+      const trustLabel = trustLevelLabel((expert as Record<string, unknown>).trustLevel as string);
       return {
         expertId: expert.id,
         score,
         rationale: score > 0.02
-          ? `5-cycle match. Matched on: ${topMatches || evidence || "source snippet/name"}.${expert.profile?.includes("REVIEW REQUIRED") ? " Draft record: review details before final use." : ""}${expert.yearsExperience ? ` ${expert.yearsExperience} yrs experience.` : ""}`
-          : "Limited keyword overlap with this tender after 5 matching cycles.",
-        evidenceSummary: evidence || (expert.profile?.includes("REVIEW REQUIRED") ? "Draft imported CV record; source snippet available in review page" : "No evidence summary"),
+          ? `[${trustLabel}] 5-cycle TF-IDF match. Keywords: ${topMatches || evidence || "name match"}.${expert.yearsExperience ? ` ${expert.yearsExperience} yrs experience.` : ""}`
+          : `[${trustLabel}] Limited keyword overlap with this tender.`,
+        evidenceSummary: evidence || "No disciplines/sectors recorded — review the expert profile",
         isSelected: false,
       };
     })
-    .sort((a, b) => b.score - a.score);
+    // Sort: REVIEWED first within score bands, then by score descending
+    .sort((a, b) => {
+      const aReviewed = a.rationale.includes("✓ Reviewed") ? 1 : 0;
+      const bReviewed = b.rationale.includes("✓ Reviewed") ? 1 : 0;
+      if (aReviewed !== bReviewed) return bReviewed - aReviewed;
+      return b.score - a.score;
+    });
 
   const projectMatches = knowledge.projects
     .map((project, idx) => {
@@ -135,7 +157,7 @@ export function buildMatches(
       }
       let score = average(cycleScores);
       score += sectorBoost(tenderSector, [project.sector ?? "", ...parseArr(project.serviceAreas)]);
-      score += reviewStatusPenalty(project.summary);
+      score += trustLevelAdjustment((project as Record<string, unknown>).trustLevel as string);
       if (project.endDate) {
         const ageYears = (Date.now() - new Date(project.endDate).getTime()) / (365.25 * 24 * 3600 * 1000);
         if (ageYears < 3) score += 0.08;
@@ -145,17 +167,23 @@ export function buildMatches(
       score = Math.max(0, Math.min(1, score));
       const evidence = [project.sector, ...parseArr(project.serviceAreas)].filter(Boolean).join(" · ");
       const topMatches = [...new Set(docTokens.filter((t) => baseQueryTokens.includes(t)))].slice(0, 6).join(", ");
+      const trustLabel = trustLevelLabel((project as Record<string, unknown>).trustLevel as string);
       return {
         projectId: project.id,
         score,
         rationale: score > 0.02
-          ? `5-cycle match. Matched on: ${topMatches || evidence || "source snippet/name"}.${project.summary?.includes("REVIEW REQUIRED") ? " Draft record: review details before final use." : ""}${project.contractValue ? ` Contract: ${project.currency ?? "USD"} ${project.contractValue.toLocaleString()}.` : ""}`
-          : "Limited project overlap with this tender after 5 matching cycles.",
-        evidenceSummary: evidence || (project.summary?.includes("REVIEW REQUIRED") ? "Draft imported project record; source snippet available in review page" : "No evidence summary"),
+          ? `[${trustLabel}] 5-cycle TF-IDF match. Keywords: ${topMatches || evidence || "name match"}.${project.contractValue ? ` Contract: ${project.currency ?? "USD"} ${project.contractValue.toLocaleString()}.` : ""}`
+          : `[${trustLabel}] Limited project overlap with this tender.`,
+        evidenceSummary: evidence || "No service areas recorded — review the project record",
         isSelected: false,
       };
     })
-    .sort((a, b) => b.score - a.score);
+    .sort((a, b) => {
+      const aReviewed = a.rationale.includes("✓ Reviewed") ? 1 : 0;
+      const bReviewed = b.rationale.includes("✓ Reviewed") ? 1 : 0;
+      if (aReviewed !== bReviewed) return bReviewed - aReviewed;
+      return b.score - a.score;
+    });
 
   return {
     expertMatches: selectTopExact(expertMatches, exactSelectionLimit(requirements, "EXPERT")),

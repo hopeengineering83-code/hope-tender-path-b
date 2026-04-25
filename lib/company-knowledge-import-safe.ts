@@ -1,452 +1,368 @@
+/**
+ * Company knowledge importer — three-tier trust model:
+ *
+ *   REGEX_DRAFT  — pattern-extracted, lowest trust (fallback when AI unavailable)
+ *   AI_DRAFT     — Claude-extracted, medium trust (structured but unreviewed)
+ *   REVIEWED     — human-verified, full trust (used authoritatively in proposals)
+ *
+ * Records are NEVER promoted to REVIEWED automatically. A human must review
+ * them in the Knowledge Review dashboard before they can be used in generation.
+ */
+
 import { prisma } from "./prisma";
-import { extractCompanyKnowledgeWithAI, isCompanyKnowledgeAIEnabled } from "./company-knowledge-ai";
+import { isAIEnabled, extractExpertsFromText, extractProjectsFromText } from "./ai";
 
-const DEFAULT_PROJECT_TARGET = 114;
-const DEFAULT_EXPERT_TARGET = 29;
-const IMPORT_VERSION = "knowledge-import-v5";
+// ─── helpers ──────────────────────────────────────────────────────────────────
 
-type SourceDoc = {
-  id: string;
-  originalFileName: string;
-  category: string;
-  extractedText?: string | null;
-  updatedAt?: Date;
-};
-
-type Draft = {
-  name: string;
-  source: string;
-  sourceFile: string;
-  confidence?: number;
-  extractionMethod?: "AI" | "RULE";
-  title?: string | null;
-  yearsExperience?: number | null;
-  disciplines?: string[];
-  sectors?: string[];
-  certifications?: string[];
-  clientName?: string | null;
-  country?: string | null;
-  sector?: string | null;
-  serviceAreas?: string[];
-  contractValue?: number | null;
-  currency?: string | null;
-  summary?: string | null;
-};
-
-type ImportOptions = { force?: boolean };
-
-export type KnowledgeDiagnostics = {
-  importVersion: string;
-  fingerprint: string;
-  aiEnabled: boolean;
-  documents: Array<{
-    id: string;
-    fileName: string;
-    category: string;
-    extractedChars: number;
-    status: "EXTRACTED" | "EMPTY" | "WARNING";
-    isExpertSource: boolean;
-    isProjectSource: boolean;
-  }>;
-  totals: {
-    documents: number;
-    extractedDocuments: number;
-    expertSourceDocuments: number;
-    projectSourceDocuments: number;
-    currentExperts: number;
-    currentProjects: number;
-    autoImportedExperts: number;
-    autoImportedProjects: number;
-    parsedExpertDrafts: number;
-    parsedProjectDrafts: number;
-    expectedExperts: number | null;
-    expectedProjects: number | null;
-  };
-  gaps: Array<{ severity: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL"; title: string; detail: string }>;
-};
-
-function clean(value: string | null | undefined): string {
-  return (value ?? "").replace(/\s+/g, " ").trim();
+function clean(v: string | null | undefined): string {
+  return (v ?? "").replace(/\s+/g, " ").trim();
+}
+function key(v: string): string {
+  return clean(v).toLowerCase();
+}
+function uniq(arr: string[]): string[] {
+  return [...new Set(arr.map(clean).filter(Boolean))].slice(0, 10);
+}
+function firstMatch(text: string, patterns: RegExp[]): string | null {
+  for (const p of patterns) {
+    const m = text.match(p);
+    if (m?.[1]) return clean(m[1]);
+  }
+  return null;
 }
 
-function key(value: string): string {
-  return clean(value).toLowerCase();
+// ─── domain inference (regex fallback) ───────────────────────────────────────
+
+function inferServices(text: string): string[] {
+  const s: string[] = [];
+  if (/structural/i.test(text)) s.push("Structural Engineering");
+  if (/geotechnical|soil|foundation/i.test(text)) s.push("Geotechnical Engineering");
+  if (/architect/i.test(text)) s.push("Architecture");
+  if (/urban|master\s*plan|planning/i.test(text)) s.push("Urban Planning");
+  if (/mep|electrical|mechanical|plumbing/i.test(text)) s.push("MEP Engineering");
+  if (/road|highway|infrastructure/i.test(text)) s.push("Roads and Infrastructure");
+  if (/project\s*management|construction\s*supervision/i.test(text)) s.push("Project Management");
+  if (/interior/i.test(text)) s.push("Interior Design");
+  if (/landscape/i.test(text)) s.push("Landscape Design");
+  if (/environmental/i.test(text)) s.push("Environmental Engineering");
+  if (/water|sanitation|drainage/i.test(text)) s.push("Water and Sanitation");
+  if (/transport|traffic/i.test(text)) s.push("Transport Planning");
+  return uniq(s);
 }
 
-function jsonArray(values: string[] | undefined): string {
-  return JSON.stringify((values ?? []).map(clean).filter(Boolean));
+function inferSectors(text: string): string[] {
+  const s: string[] = [];
+  if (/hospital|health/i.test(text)) s.push("Healthcare");
+  if (/hotel|tourism|lodge|museum/i.test(text)) s.push("Hospitality and Tourism");
+  if (/government|ministry|agency|public/i.test(text)) s.push("Government");
+  if (/factory|industrial|abattoir|warehouse/i.test(text)) s.push("Industrial");
+  if (/commercial|office|mixed\s*use|residential/i.test(text)) s.push("Commercial and Residential");
+  if (/road|infrastructure/i.test(text)) s.push("Infrastructure");
+  if (/education|university|school/i.test(text)) s.push("Education");
+  if (/energy|power|solar/i.test(text)) s.push("Energy");
+  return uniq(s);
 }
 
-function extracted(text: string | null | undefined): boolean {
-  if (!text || text.trim().length < 200) return false;
-  if (/^\[(Scanned PDF|Extraction failed|Legacy \.doc|Image:)/i.test(text.trim())) return false;
-  return true;
+function inferCountry(text: string): string | null {
+  const countries = ["Ethiopia","Kenya","Nigeria","South Sudan","Sudan","Rwanda","Uganda","Tanzania","UAE","United Arab Emirates","Saudi Arabia","Qatar","Egypt","Ghana","South Africa"];
+  for (const c of countries) {
+    if (new RegExp(c.replace(/ /g, "\\s+"), "i").test(text)) return c;
+  }
+  return null;
 }
 
-function extractionStatus(text: string | null | undefined): "EXTRACTED" | "EMPTY" | "WARNING" {
-  if (!text?.trim()) return "EMPTY";
-  if (!extracted(text)) return "WARNING";
-  return "EXTRACTED";
+function parseYears(text: string): number | null {
+  const m = text.match(/(\d{1,2})\+?\s*(?:years|yrs|year)/i);
+  return m?.[1] ? Number(m[1]) : null;
 }
 
-function stableHash(value: string): string {
-  let h = 5381;
-  for (let i = 0; i < value.length; i += 1) h = ((h << 5) + h) ^ value.charCodeAt(i);
-  return (h >>> 0).toString(16);
+function parseMoney(text: string): { value: number | null; currency: string | null } {
+  const m = text.match(/(?:Budget|Fee|Contract|Value)[^\d]*(\d[\d,]*(?:\.\d+)?)\s*(B|M|K)?\s*(ETB|USD|EUR|GBP|AED|SAR|€)?/i);
+  if (!m) return { value: null, currency: null };
+  let value = Number(m[1].replace(/,/g, ""));
+  if (m[2]?.toUpperCase() === "B") value *= 1_000_000_000;
+  if (m[2]?.toUpperCase() === "M") value *= 1_000_000;
+  if (m[2]?.toUpperCase() === "K") value *= 1_000;
+  const currency = m[3] === "€" ? "EUR" : m[3]?.toUpperCase() ?? null;
+  return { value, currency };
 }
 
-function fingerprintDocs(docs: SourceDoc[]): string {
-  const payload = docs
-    .map((d) => `${d.id}|${d.originalFileName}|${d.category}|${d.extractedText?.length ?? 0}|${d.extractedText?.slice(0, 80) ?? ""}|${d.extractedText?.slice(-80) ?? ""}`)
-    .sort()
-    .join("\n");
-  return `${IMPORT_VERSION}:${stableHash(payload)}`;
-}
+// ─── regex expert extraction (fallback) ──────────────────────────────────────
 
-function autoMarker(fingerprint: string): string {
-  return `[AUTO-IMPORTED:${IMPORT_VERSION};FINGERPRINT:${fingerprint}]`;
-}
-
-function hasMarker(text: string | null | undefined): boolean {
-  return Boolean(text?.includes("AUTO-IMPORTED"));
-}
-
-function markerMatches(text: string | null | undefined, fingerprint: string): boolean {
-  return Boolean(text?.includes(`FINGERPRINT:${fingerprint}`));
-}
-
-function label(doc: SourceDoc): string {
-  return `${doc.originalFileName} ${doc.category}`.toLowerCase();
-}
-
-function isExpertSource(doc: SourceDoc): boolean {
-  const text = doc.extractedText ?? "";
-  if (!extracted(text)) return false;
-  if (/project_reference|project_contract|portfolio/i.test(doc.category)) return false;
-  return /expert|cv|staff|resume|personnel/i.test(label(doc)) && /name\s+of\s+(?:expert|key\s+staff|personnel)|curriculum\s+vitae|proposed\s+position/i.test(text.slice(0, 80000));
-}
-
-function isProjectSource(doc: SourceDoc): boolean {
-  const text = doc.extractedText ?? "";
-  if (!extracted(text)) return false;
-  if (/expert_cv/i.test(doc.category)) return false;
-  return (
-    /project|portfolio|reference|contract|experience/i.test(label(doc)) ||
-    /project\s+name|client\s+name|selected\s+projects?|project\s+portfolio|assignment\s+name|name\s+of\s+assignment/i.test(text.slice(0, 100000))
-  );
-}
-
-function expectedProjectCount(text: string): number | null {
-  const direct = text.match(/(\d{2,3})\s+(?:selected\s+)?projects?/i)?.[1];
-  if (direct) return Number(direct);
-  return /selected\s+projects?|project\s+portfolio/i.test(text) ? DEFAULT_PROJECT_TARGET : null;
-}
-
-function expectedExpertCount(text: string): number | null {
-  const direct = text.match(/(\d{1,2})\s+(?:experts|expert cvs|cv|cvs|staff|personnel)/i)?.[1];
-  if (direct) return Number(direct);
-  return /curriculum\s+vitae|name\s+of\s+expert/i.test(text) ? DEFAULT_EXPERT_TARGET : null;
-}
-
-function normalizePersonName(value: string): string {
-  return clean(value)
-    .replace(/^(Mr\.?|Ms\.?|Mrs\.?|Dr\.?|Eng\.?|Engineer)\s+/i, "")
-    .replace(/\s+(Country|Nationality|Date of Birth|Education|Membership|Proposed Position|Position|Key Qualifications|Employment Record).*$/i, "")
+function normalizeName(v: string): string {
+  return clean(v)
+    .replace(/^(Mr\.?|Ms\.?|Mrs\.?|Dr\.?|Eng\.?|Prof\.?)\s+/i, "")
+    .replace(/\s+(Country|Nationality|Date of Birth|Education|Proposed Position|Position).*$/i, "")
     .slice(0, 90);
 }
 
 function looksLikePersonName(name: string): boolean {
-  if (/hope urban|curriculum|vitae|company|staffing|summary|page|project|client|hospital|city|building|airport|university|factory|hotel|road|bridge/i.test(name)) return false;
-  const parts = name.split(/\s+/).filter(Boolean);
-  return parts.length >= 2 && parts.length <= 6 && parts.every((p) => /^[A-Za-z.'-]+$/.test(p));
+  if (name.length < 5 || name.length > 90) return false;
+  if (/hope urban|curriculum|vitae|company|page|staffing|project|client|hospital/i.test(name)) return false;
+  const words = name.split(/\s+/).filter(Boolean);
+  return words.length >= 2 && words.length <= 6 && words.every((w) => /^[A-Za-z.'-]+$/.test(w));
 }
 
-function parseExpertDraftsFromDoc(doc: SourceDoc): Draft[] {
-  const text = doc.extractedText ?? "";
+function expertSections(text: string): string[] {
+  const normalized = text.replace(/\[Page \d+\]/g, " ").replace(/\s+/g, " ");
+  const markers = [...normalized.matchAll(/(?:Name\s+of\s+(?:Expert|Key\s+Staff|Personnel)|CURRICULUM\s+VITAE|CV\s+of\b)/gim)].map((m) => m.index ?? 0);
+  if (markers.length === 0) return [normalized];
+  const sections: string[] = [];
+  for (let i = 0; i < markers.length; i++) {
+    const start = markers[i];
+    const end = markers[i + 1] ?? Math.min(normalized.length, start + 12_000);
+    const section = clean(normalized.slice(start, end));
+    if (section.length > 100) sections.push(section);
+  }
+  return sections;
+}
+
+function fallbackExpertNames(text: string): string[] {
   const names = new Set<string>();
   const patterns = [
-    /Name\s+of\s+(?:Expert|Key\s+Staff|Personnel)\s*[:\-]?\s*(.+?)(?:\s+(?:Country|Nationality|Date of Birth|Education|Membership|Key Qualifications|Proposed Position|Position|Employment Record)\b)/gi,
-    /(?:^|\s)(?:Mr\.?|Ms\.?|Mrs\.?|Dr\.?|Eng\.?)\s+([A-Z][A-Za-z.'-]+(?:\s+[A-Z][A-Za-z.'-]+){1,4})(?=\s+(?:Proposed Position|Position|Education|Key Qualifications|Civil Engineer|Architect|Planner|Engineer)\b)/g,
+    /(?:Mr\.?|Ms\.?|Mrs\.?|Dr\.?|Eng\.?)\s+([A-Z][A-Za-z.'-]+(?:\s+[A-Z][A-Za-z.'-]+){1,4})/g,
+    /([A-Z][A-Za-z.'-]+(?:\s+[A-Z][A-Za-z.'-]+){1,4})\s+(?:Civil Engineer|Structural Engineer|Architect|Urban Planner|Project Manager)/g,
   ];
-
-  for (const pattern of patterns) {
-    for (const match of text.matchAll(pattern)) {
-      const name = normalizePersonName(match[1]);
+  for (const p of patterns) {
+    for (const m of text.matchAll(p)) {
+      const name = normalizeName(m[1]);
       if (looksLikePersonName(name)) names.add(name);
     }
   }
-
-  const target = expectedExpertCount(text) ?? DEFAULT_EXPERT_TARGET;
-  return [...names].slice(0, target).map((name) => {
-    const idx = text.toLowerCase().indexOf(name.toLowerCase());
-    const source = idx >= 0 ? text.slice(idx, idx + 3500) : text.slice(0, 3500);
-    return { name, source, sourceFile: doc.originalFileName, extractionMethod: "RULE", confidence: 0.62 };
-  });
+  return [...names];
 }
 
-function normalizeProjectText(text: string): string {
-  return text
-    .replace(/\[Page \d+\]/g, "\n")
-    .replace(/\r/g, "\n")
-    .replace(/\t/g, " ")
-    .replace(/[ ]{2,}/g, " ")
-    .replace(/\n{2,}/g, "\n")
-    .trim();
-}
+type RegexExpert = { fullName: string; title: string | null; yearsExperience: number | null; disciplines: string[]; sectors: string[]; certifications: string[]; profile: string; sourceSnippet: string };
 
-function numberedProjectRows(text: string): string[] {
-  const normalized = normalizeProjectText(text).replace(/\s+(?=\d{1,3}\s+[A-Z][A-Za-z])+/g, "\n");
-  const lines = normalized.split("\n").map(clean).filter(Boolean);
-  const rows: string[] = [];
-
-  for (let i = 0; i < lines.length; i += 1) {
-    const line = lines[i];
-    if (/^\d{1,3}\s+[A-Z][A-Za-z]/.test(line)) {
-      const next = lines.slice(i + 1, i + 4).filter((candidate) => !/^\d{1,3}\s+[A-Z][A-Za-z]/.test(candidate)).join(" ");
-      rows.push(clean(`${line} ${next}`).slice(0, 4500));
-    }
-  }
-
-  if (rows.length > 0) return rows;
-  const flat = text.replace(/\s+/g, " ");
-  return [...flat.matchAll(/(?:^|\s)(\d{1,3})\s+([A-Z][A-Za-z][\s\S]{35,}?)(?=\s+\d{1,3}\s+[A-Z][A-Za-z]|$)/g)]
-    .map((m) => clean(`${m[1]} ${m[2]}`).slice(0, 4500));
-}
-
-function titledProjectRows(text: string): string[] {
-  const rows: string[] = [];
-  const normalized = normalizeProjectText(text);
-  const patterns = [
-    /(?:Project\s+Name|Assignment\s+Name|Name\s+of\s+Assignment)\s*[:\-]?\s*(.+?)(?=\s+(?:Client|Owner|Location|Country|Period|Services|Description|Project\s+Name|Assignment\s+Name|Name\s+of\s+Assignment)\b|$)/gi,
-  ];
-  for (const pattern of patterns) {
-    for (const match of normalized.matchAll(pattern)) {
-      const title = clean(match[1]);
-      if (title.length >= 8) rows.push(title.slice(0, 1500));
-    }
-  }
-  return rows;
-}
-
-function cleanProjectName(row: string): string {
-  let name = row.replace(/^\d{1,3}\s+/, "");
-  name = name.split(/\s+(?:Client|Owner|Location|Country|Constr\.?|Construction|Budget|Fee|Contract|Design|Consultancy|Ref|Testimony|General Manager|Structural Engineer|Geotech Engineer|Architect|Electrical Engineer|Mechanical Engineer|Period|Services|Description|Start Date|End Date)\b/i)[0] ?? name;
-  name = name.split(/,\s+[A-Z][a-z]+/)[0] ?? name;
-  name = name.replace(/\s*\([^)]*$/, "");
-  return clean(name).slice(0, 180);
-}
-
-function looksLikeProjectName(name: string): boolean {
-  if (name.length < 8 || name.length > 170) return false;
-  if (/^(project|name|client|owner|location|country|period|services|description)$/i.test(name)) return false;
-  if (/curriculum\s+vitae|name\s+of\s+expert|nationality|date\s+of\s+birth|proposed\s+position/i.test(name)) return false;
-  return /[A-Za-z]/.test(name);
-}
-
-function parseProjectDraftsFromDoc(doc: SourceDoc): Draft[] {
-  const text = doc.extractedText ?? "";
-  const target = expectedProjectCount(text) ?? DEFAULT_PROJECT_TARGET;
-  const rows = [...numberedProjectRows(text), ...titledProjectRows(text)];
-  const drafts: Draft[] = [];
+function regexExtractExperts(text: string): RegexExpert[] {
+  const drafts: RegexExpert[] = [];
   const seen = new Set<string>();
 
-  for (const row of rows) {
-    const name = cleanProjectName(row);
-    if (!looksLikeProjectName(name)) continue;
+  for (const section of expertSections(text)) {
+    const rawName = firstMatch(section, [
+      /Name\s+of\s+(?:Expert|Key\s+Staff|Personnel)\s*[:\-]?\s*(.+?)(?:\s+(?:Country|Nationality|Date of Birth|Education|Proposed Position|Position)\b)/i,
+      /Name\s*[:\-]\s*(.+?)(?:\s+(?:Country|Nationality|Date of Birth|Education|Proposed Position|Position)\b)/i,
+      /CURRICULUM\s+VITAE\s+(.+?)(?:\s+(?:Position|Education)\b)/i,
+      /CV\s+of\s+(.+?)(?:\s+(?:Position|Education)\b)/i,
+    ]);
+    if (!rawName) continue;
+    const fullName = normalizeName(rawName);
+    if (!looksLikePersonName(fullName)) continue;
+    const k = key(fullName);
+    if (seen.has(k)) continue;
+    seen.add(k);
+    const title = firstMatch(section, [/Proposed\s+Position\s*[:\-]?\s*(.+?)(?:\s+(?:Name of Firm|Date of Birth|Education|Key Qualifications)\b)/i, /Position\s*[:\-]?\s*(.+?)(?:\s+(?:Date of Birth|Education|Key Qualifications)\b)/i]);
+    drafts.push({ fullName, title: title ? clean(title).slice(0, 140) : null, yearsExperience: parseYears(section), disciplines: inferServices(section), sectors: inferSectors(section), certifications: [], profile: `Regex-extracted CV record from ${new Date().toISOString().slice(0, 10)}.`, sourceSnippet: section.slice(0, 500) });
+  }
+
+  for (const name of fallbackExpertNames(text)) {
+    if (drafts.length >= 120) break;
     const k = key(name);
     if (seen.has(k)) continue;
     seen.add(k);
-    drafts.push({ name, source: row.slice(0, 3500), sourceFile: doc.originalFileName, extractionMethod: "RULE", confidence: 0.60 });
-    if (drafts.length >= target) break;
+    const idx = text.toLowerCase().indexOf(name.toLowerCase());
+    const snippet = idx >= 0 ? text.slice(idx, idx + 500) : text.slice(0, 500);
+    drafts.push({ fullName: name, title: null, yearsExperience: parseYears(snippet), disciplines: inferServices(snippet), sectors: inferSectors(snippet), certifications: [], profile: `Fallback regex-extracted from ${new Date().toISOString().slice(0, 10)}.`, sourceSnippet: snippet });
   }
-
   return drafts;
 }
 
-async function getDiagnosticsAndDrafts(companyId: string) {
-  const docs = await prisma.companyDocument.findMany({ where: { companyId, extractedText: { not: null } } }) as SourceDoc[];
-  const fingerprint = fingerprintDocs(docs);
+// ─── regex project extraction (fallback) ─────────────────────────────────────
 
-  const expertDocs = docs.filter(isExpertSource);
-  const projectDocs = docs.filter(isProjectSource);
-  const expertDrafts = [...new Map(expertDocs.flatMap(parseExpertDraftsFromDoc).map((d) => [key(d.name), d])).values()];
-  const projectDrafts = [...new Map(projectDocs.flatMap(parseProjectDraftsFromDoc).map((d) => [key(d.name), d])).values()];
-  const expectedExperts = expertDocs.map((d) => expectedExpertCount(d.extractedText ?? "")).find((n) => n && n > 0) ?? null;
-  const expectedProjects = projectDocs.map((d) => expectedProjectCount(d.extractedText ?? "")).find((n) => n && n > 0) ?? null;
+type RegexProject = { name: string; clientName: string | null; country: string | null; sector: string | null; serviceAreas: string[]; summary: string; contractValue: number | null; currency: string | null; sourceSnippet: string };
 
-  const [experts, projects] = await Promise.all([
-    prisma.expert.findMany({ where: { companyId }, select: { profile: true } }),
-    prisma.project.findMany({ where: { companyId }, select: { summary: true } }),
-  ]);
-  const autoExperts = experts.filter((e) => hasMarker(e.profile));
-  const autoProjects = projects.filter((p) => hasMarker(p.summary));
-
-  const gaps: KnowledgeDiagnostics["gaps"] = [];
-  const extractedDocs = docs.filter((d) => extracted(d.extractedText)).length;
-  if (docs.length === 0) gaps.push({ severity: "CRITICAL", title: "No extracted company documents", detail: "Upload company documents before running tender matching." });
-  if (docs.length > 0 && extractedDocs === 0) gaps.push({ severity: "CRITICAL", title: "Documents exist but no usable extracted text", detail: "Re-upload files or convert scanned PDFs with OCR." });
-  if (!isCompanyKnowledgeAIEnabled()) gaps.push({ severity: "HIGH", title: "AI extraction is not configured", detail: "Set ANTHROPIC_API_KEY to enable deep extraction of expert/project fields from complex PDFs. Rule-based extraction will only create review-required draft records." });
-  if (expertDocs.length === 0) gaps.push({ severity: "HIGH", title: "No expert source documents detected", detail: "Upload Expert CV files or mark CV documents as Expert CV." });
-  if (projectDocs.length === 0) gaps.push({ severity: "HIGH", title: "No project source documents detected", detail: "Upload project references, portfolios, contracts, or experience sheets." });
-  if (expertDocs.length > 0 && expertDrafts.length === 0) gaps.push({ severity: "HIGH", title: "Expert documents extracted but no expert names parsed", detail: "Use CVs with explicit 'Name of Expert' fields, enable AI extraction, or add experts manually." });
-  if (projectDocs.length > 0 && projectDrafts.length === 0) gaps.push({ severity: "HIGH", title: "Project documents extracted but no project rows parsed", detail: "Use numbered project rows, Project Name, Assignment Name, enable AI extraction, or add projects manually." });
-  if (expectedExperts && expertDrafts.length < expectedExperts) gaps.push({ severity: "MEDIUM", title: "Parsed fewer experts than expected", detail: `Expected about ${expectedExperts}, parsed ${expertDrafts.length}. Enable AI extraction or add missing experts manually.` });
-  if (expectedProjects && projectDrafts.length < expectedProjects) gaps.push({ severity: "MEDIUM", title: "Parsed fewer projects than expected", detail: `Expected about ${expectedProjects}, parsed ${projectDrafts.length}. Enable AI extraction or add missing projects manually.` });
-
-  const diagnostics: KnowledgeDiagnostics = {
-    importVersion: IMPORT_VERSION,
-    fingerprint,
-    aiEnabled: isCompanyKnowledgeAIEnabled(),
-    documents: docs.map((doc) => ({
-      id: doc.id,
-      fileName: doc.originalFileName,
-      category: doc.category,
-      extractedChars: doc.extractedText?.length ?? 0,
-      status: extractionStatus(doc.extractedText),
-      isExpertSource: isExpertSource(doc),
-      isProjectSource: isProjectSource(doc),
-    })),
-    totals: {
-      documents: docs.length,
-      extractedDocuments: extractedDocs,
-      expertSourceDocuments: expertDocs.length,
-      projectSourceDocuments: projectDocs.length,
-      currentExperts: experts.length,
-      currentProjects: projects.length,
-      autoImportedExperts: autoExperts.length,
-      autoImportedProjects: autoProjects.length,
-      parsedExpertDrafts: expertDrafts.length,
-      parsedProjectDrafts: projectDrafts.length,
-      expectedExperts,
-      expectedProjects,
-    },
-    gaps,
-  };
-
-  return { diagnostics, expertDrafts, projectDrafts, expertDocs, projectDocs };
+function projectChunks(text: string): string[] {
+  const normalized = text.replace(/\[Page \d+\]/g, " ").replace(/\s+/g, " ");
+  const byNumber = [...normalized.matchAll(/(?:^|\s)(\d{1,3})\s+([A-Z][A-Za-z][\s\S]{20,}?)(?=\s+\d{1,3}\s+[A-Z][A-Za-z]|$)/g)];
+  if (byNumber.length > 0) return byNumber.map((m) => clean(`${m[1]} ${m[2]}`).slice(0, 2500)).filter((c) => c.length > 40).slice(0, 200);
+  const titled: string[] = [];
+  for (const m of normalized.matchAll(/(?:Project\s+Name|Assignment\s+Name)\s*[:\-]?\s*(.+?)(?=\s+(?:Client|Location|Period|Services|Project\s+Name|Assignment\s+Name)\b|$)/gi)) {
+    const title = clean(m[1]);
+    if (title.length >= 8) { const idx = normalized.indexOf(m[0]); titled.push(normalized.slice(idx, idx + 2500)); }
+  }
+  return titled.slice(0, 200);
 }
 
-async function buildRepairDrafts(companyId: string) {
-  const base = await getDiagnosticsAndDrafts(companyId);
-  if (!isCompanyKnowledgeAIEnabled()) return base;
-
-  const expertText = base.expertDocs.map((d) => `SOURCE FILE: ${d.originalFileName}\n${d.extractedText ?? ""}`).join("\n\n---\n\n");
-  const projectText = base.projectDocs.map((d) => `SOURCE FILE: ${d.originalFileName}\n${d.extractedText ?? ""}`).join("\n\n---\n\n");
-  const ai = await extractCompanyKnowledgeWithAI({ expertText, projectText });
-
-  const aiExpertDrafts: Draft[] = ai.experts.map((expert) => ({
-    name: expert.fullName,
-    title: expert.title ?? null,
-    yearsExperience: expert.yearsExperience ?? null,
-    disciplines: expert.disciplines ?? [],
-    sectors: expert.sectors ?? [],
-    certifications: expert.certifications ?? [],
-    source: expert.sourceQuote,
-    sourceFile: "AI verified source quote",
-    confidence: expert.confidence,
-    extractionMethod: "AI",
-  }));
-
-  const aiProjectDrafts: Draft[] = ai.projects.map((project) => ({
-    name: project.name,
-    clientName: project.clientName ?? null,
-    country: project.country ?? null,
-    sector: project.sector ?? null,
-    serviceAreas: project.serviceAreas ?? [],
-    contractValue: project.contractValue ?? null,
-    currency: project.currency ?? null,
-    summary: project.summary ?? null,
-    source: project.sourceQuote,
-    sourceFile: "AI verified source quote",
-    confidence: project.confidence,
-    extractionMethod: "AI",
-  }));
-
-  const expertDrafts = [...new Map([...aiExpertDrafts, ...base.expertDrafts].map((d) => [key(d.name), d])).values()];
-  const projectDrafts = [...new Map([...aiProjectDrafts, ...base.projectDrafts].map((d) => [key(d.name), d])).values()];
-
-  return { ...base, expertDrafts, projectDrafts };
+function regexExtractProjects(text: string): RegexProject[] {
+  const drafts: RegexProject[] = [];
+  const seen = new Set<string>();
+  for (const chunk of projectChunks(text)) {
+    let name = chunk.replace(/^\d{1,3}\s+/, "");
+    name = name.split(/\s+(?:Client|Owner|Location|Country|Construction|Budget|Fee|Contract|Period)\b/i)[0] ?? name;
+    name = clean(name).slice(0, 180);
+    if (name.length < 8 || /^(project|name|client)$/i.test(name)) continue;
+    const k = key(name);
+    if (seen.has(k)) continue;
+    seen.add(k);
+    const money = parseMoney(chunk);
+    drafts.push({ name, clientName: firstMatch(chunk, [/Client\s*[:\-]?\s*(.+?)(?:\s+(?:Location|Country|Budget|Fee|Period)\b)/i]), country: inferCountry(chunk), sector: inferSectors(chunk)[0] ?? null, serviceAreas: inferServices(chunk), summary: `Regex-extracted project from ${new Date().toISOString().slice(0, 10)}.`, contractValue: money.value, currency: money.currency, sourceSnippet: chunk.slice(0, 500) });
+    if (drafts.length >= 200) break;
+  }
+  return drafts;
 }
 
-export async function analyzeCompanyKnowledgeGaps(companyId: string): Promise<KnowledgeDiagnostics> {
-  return (await getDiagnosticsAndDrafts(companyId)).diagnostics;
-}
+// ─── main export ──────────────────────────────────────────────────────────────
 
-export async function importCompanyKnowledgeFromDocuments(companyId: string, options: ImportOptions = {}) {
-  const { diagnostics, expertDrafts, projectDrafts } = await buildRepairDrafts(companyId);
-  const fingerprint = diagnostics.fingerprint;
+export type ImportResult = {
+  docsProcessed: number;
+  expertsCreated: number;
+  projectsCreated: number;
+  aiUsed: boolean;
+  aiFailures: number;
+};
 
-  const [existingExperts, existingProjects] = await Promise.all([
-    prisma.expert.findMany({ where: { companyId }, select: { fullName: true, profile: true } }),
-    prisma.project.findMany({ where: { companyId }, select: { name: true, summary: true } }),
-  ]);
+export async function importCompanyKnowledgeFromDocuments(companyId: string): Promise<ImportResult> {
+  const docs = await prisma.companyDocument.findMany({
+    where: { companyId, extractedText: { not: null } },
+    select: { id: true, originalFileName: true, category: true, extractedText: true, aiExtractionStatus: true },
+  });
 
-  const autoExperts = existingExperts.filter((e) => hasMarker(e.profile));
-  const autoProjects = existingProjects.filter((p) => hasMarker(p.summary));
-  const expertImportFresh = autoExperts.length > 0 && autoExperts.every((e) => markerMatches(e.profile, fingerprint));
-  const projectImportFresh = autoProjects.length > 0 && autoProjects.every((p) => markerMatches(p.summary, fingerprint));
+  const useAI = isAIEnabled();
+  let aiFailures = 0;
 
-  const rebuildExperts = options.force || (expertDrafts.length > 0 && (!expertImportFresh || autoExperts.length !== expertDrafts.length));
-  const rebuildProjects = options.force || (projectDrafts.length > 0 && (!projectImportFresh || autoProjects.length !== projectDrafts.length));
+  // Collect all drafts, tagged with source doc ID and trust level
+  type ExpertDraft = RegexExpert & { sourceDocumentId: string; trustLevel: string };
+  type ProjectDraft = RegexProject & { sourceDocumentId: string; trustLevel: string };
 
-  if (rebuildExperts) await prisma.expert.deleteMany({ where: { companyId, profile: { contains: "AUTO-IMPORTED" } } });
-  if (rebuildProjects) await prisma.project.deleteMany({ where: { companyId, summary: { contains: "AUTO-IMPORTED" } } });
+  const allExpertDrafts: ExpertDraft[] = [];
+  const allProjectDrafts: ProjectDraft[] = [];
 
-  const afterExperts = rebuildExperts ? [] : existingExperts;
-  const afterProjects = rebuildProjects ? [] : existingProjects;
-  const expertKeys = new Set(afterExperts.map((item) => key(item.fullName)));
-  const projectKeys = new Set(afterProjects.map((item) => key(item.name)));
-  const marker = autoMarker(fingerprint);
+  for (const doc of docs) {
+    const text = doc.extractedText ?? "";
+    if (text.trim().length < 100) continue;
+    if (/^\[(Scanned PDF|Extraction failed|Legacy \.doc|Image:)/i.test(text.trim())) continue;
+
+    if (useAI) {
+      // AI path — richer extraction, AI_DRAFT trust level
+      try {
+        const [aiExperts, aiProjects] = await Promise.all([
+          extractExpertsFromText(text, doc.originalFileName),
+          extractProjectsFromText(text, doc.originalFileName),
+        ]);
+
+        for (const e of aiExperts) {
+          allExpertDrafts.push({ ...e, sourceDocumentId: doc.id, trustLevel: "AI_DRAFT" });
+        }
+        for (const p of aiProjects) {
+          allProjectDrafts.push({ ...p, sourceDocumentId: doc.id, trustLevel: "AI_DRAFT" });
+        }
+
+        // Mark doc as successfully AI-extracted
+        await prisma.companyDocument.update({
+          where: { id: doc.id },
+          data: { aiExtractionStatus: "EXTRACTED", aiExtractedAt: new Date(), aiExtractionError: null },
+        });
+      } catch (err) {
+        aiFailures++;
+        const errMsg = err instanceof Error ? err.message : String(err);
+        await prisma.companyDocument.update({
+          where: { id: doc.id },
+          data: { aiExtractionStatus: "FAILED", aiExtractionError: errMsg.slice(0, 500) },
+        });
+
+        // Fall back to regex for this document
+        for (const e of regexExtractExperts(text)) {
+          allExpertDrafts.push({ ...e, sourceDocumentId: doc.id, trustLevel: "REGEX_DRAFT" });
+        }
+        for (const p of regexExtractProjects(text)) {
+          allProjectDrafts.push({ ...p, sourceDocumentId: doc.id, trustLevel: "REGEX_DRAFT" });
+        }
+      }
+    } else {
+      // Regex path — REGEX_DRAFT trust level
+      for (const e of regexExtractExperts(text)) {
+        allExpertDrafts.push({ ...e, sourceDocumentId: doc.id, trustLevel: "REGEX_DRAFT" });
+      }
+      for (const p of regexExtractProjects(text)) {
+        allProjectDrafts.push({ ...p, sourceDocumentId: doc.id, trustLevel: "REGEX_DRAFT" });
+      }
+    }
+  }
+
+  // Global dedup by normalised name
+  const uniqueExperts = [...new Map(allExpertDrafts.map((d) => [key(d.fullName), d])).values()].slice(0, 150);
+  const uniqueProjects = [...new Map(allProjectDrafts.map((d) => [key(d.name), d])).values()].slice(0, 250);
+
+  // Delete only previously auto-imported DRAFT records (never touch REVIEWED)
+  await prisma.expert.deleteMany({ where: { companyId, trustLevel: { in: ["REGEX_DRAFT", "AI_DRAFT"] } } });
+  await prisma.project.deleteMany({ where: { companyId, trustLevel: { in: ["REGEX_DRAFT", "AI_DRAFT"] } } });
+
+  const existingExperts = await prisma.expert.findMany({ where: { companyId }, select: { fullName: true } });
+  const existingProjects = await prisma.project.findMany({ where: { companyId }, select: { name: true } });
+  const expertKeys = new Set(existingExperts.map((e) => key(e.fullName)));
+  const projectKeys = new Set(existingProjects.map((p) => key(p.name)));
 
   let expertsCreated = 0;
   let projectsCreated = 0;
 
-  if (rebuildExperts) {
-    for (const expert of expertDrafts) {
-      const k = key(expert.name);
-      if (expertKeys.has(k)) continue;
-      const method = expert.extractionMethod ?? "RULE";
-      await prisma.expert.create({ data: {
+  for (const expert of uniqueExperts) {
+    const k = key(expert.fullName);
+    if (expertKeys.has(k)) continue;
+    await prisma.expert.create({
+      data: {
         companyId,
-        fullName: expert.name,
-        title: expert.title ?? null,
-        yearsExperience: expert.yearsExperience ?? null,
-        disciplines: jsonArray(expert.disciplines),
-        sectors: jsonArray(expert.sectors),
-        certifications: jsonArray(expert.certifications),
-        profile: `${marker}\n[AUTO-IMPORTED FROM CV PDF — REVIEW REQUIRED]\nExtraction method: ${method}\nConfidence: ${expert.confidence ?? "n/a"}\nSource file: ${expert.sourceFile}\nReview all structured fields before using this expert in final tender matching.\n\nSource snippet:\n${expert.source}`,
-      }});
-      expertKeys.add(k);
-      expertsCreated += 1;
-    }
+        fullName: expert.fullName,
+        title: expert.title,
+        yearsExperience: expert.yearsExperience,
+        disciplines: JSON.stringify(expert.disciplines),
+        sectors: JSON.stringify(expert.sectors),
+        certifications: JSON.stringify(expert.certifications),
+        profile: `[${expert.trustLevel} — REVIEW REQUIRED before use in proposals]\n\n${expert.profile}\n\nSource snippet:\n${expert.sourceSnippet}`,
+        trustLevel: expert.trustLevel,
+        sourceDocumentId: expert.sourceDocumentId,
+      },
+    });
+    expertKeys.add(k);
+    expertsCreated++;
   }
 
-  if (rebuildProjects) {
-    for (const project of projectDrafts) {
-      const k = key(project.name);
-      if (projectKeys.has(k)) continue;
-      const method = project.extractionMethod ?? "RULE";
-      await prisma.project.create({ data: {
+  for (const project of uniqueProjects) {
+    const k = key(project.name);
+    if (projectKeys.has(k)) continue;
+    await prisma.project.create({
+      data: {
         companyId,
         name: project.name,
-        clientName: project.clientName ?? null,
-        country: project.country ?? null,
-        sector: project.sector ?? null,
-        serviceAreas: jsonArray(project.serviceAreas),
-        contractValue: project.contractValue ?? null,
-        currency: project.currency ?? null,
-        summary: `${marker}\n[AUTO-IMPORTED FROM PROJECT DOCUMENT — REVIEW REQUIRED]\nExtraction method: ${method}\nConfidence: ${project.confidence ?? "n/a"}\nSource file: ${project.sourceFile}\n${project.summary ? `Summary: ${project.summary}\n` : ""}Review all structured fields before using this project in final tender matching.\n\nSource snippet:\n${project.source}`,
-      }});
-      projectKeys.add(k);
-      projectsCreated += 1;
-    }
+        clientName: project.clientName,
+        country: project.country,
+        sector: project.sector,
+        serviceAreas: JSON.stringify(project.serviceAreas),
+        summary: `[${project.trustLevel} — REVIEW REQUIRED before use in proposals]\n\n${project.summary}\n\nSource snippet:\n${project.sourceSnippet}`,
+        contractValue: project.contractValue,
+        currency: project.currency,
+        trustLevel: project.trustLevel,
+        sourceDocumentId: project.sourceDocumentId,
+      },
+    });
+    projectKeys.add(k);
+    projectsCreated++;
   }
 
+  return { docsProcessed: docs.length, expertsCreated, projectsCreated, aiUsed: useAI, aiFailures };
+}
+
+export async function analyzeCompanyKnowledgeGaps(companyId: string) {
+  const [docs, experts, projects] = await Promise.all([
+    prisma.companyDocument.findMany({
+      where: { companyId },
+      select: { id: true, originalFileName: true, category: true, extractedText: true, aiExtractionStatus: true },
+    }),
+    prisma.expert.findMany({ where: { companyId }, select: { trustLevel: true } }),
+    prisma.project.findMany({ where: { companyId }, select: { trustLevel: true } }),
+  ]);
+
+  const byTrust = (records: { trustLevel: string | null }[]) => ({
+    REVIEWED: records.filter((r) => r.trustLevel === "REVIEWED").length,
+    AI_DRAFT: records.filter((r) => r.trustLevel === "AI_DRAFT").length,
+    REGEX_DRAFT: records.filter((r) => r.trustLevel === "REGEX_DRAFT" || !r.trustLevel).length,
+  });
+
   return {
-    expertsCreated,
-    projectsCreated,
-    expertsRebuilt: rebuildExperts,
-    projectsRebuilt: rebuildProjects,
-    diagnostics: await analyzeCompanyKnowledgeGaps(companyId),
+    totalDocuments: docs.length,
+    extractedDocuments: docs.filter((d) => (d.extractedText ?? "").length >= 100).length,
+    experts: byTrust(experts),
+    projects: byTrust(projects),
+    aiEnabled: isAIEnabled(),
+    pendingReview: experts.filter((e) => e.trustLevel !== "REVIEWED").length + projects.filter((p) => p.trustLevel !== "REVIEWED").length,
   };
 }

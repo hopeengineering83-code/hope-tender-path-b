@@ -1,4 +1,4 @@
-import Anthropic from "@anthropic-ai/sdk";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
 export type AIExpertDraft = {
   fullName: string;
@@ -30,7 +30,6 @@ export type AIKnowledgeExtraction = {
   warnings: string[];
 };
 
-const MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-4-6";
 const MAX_CHARS_PER_CHUNK = 12000;
 const MAX_CHUNKS_PER_REPAIR = 10;
 
@@ -111,25 +110,27 @@ function normalizeExtraction(value: unknown): AIKnowledgeExtraction {
 function merge<T extends { confidence: number }>(items: T[], keyFn: (item: T) => string): T[] {
   const map = new Map<string, T>();
   for (const item of items) {
-    const key = keyFn(item).toLowerCase();
-    const current = map.get(key);
-    if (!current || item.confidence > current.confidence) map.set(key, item);
+    const k = keyFn(item).toLowerCase();
+    const current = map.get(k);
+    if (!current || item.confidence > current.confidence) map.set(k, item);
   }
   return [...map.values()];
 }
 
 export function isCompanyKnowledgeAIEnabled() {
-  return Boolean(process.env.ANTHROPIC_API_KEY);
+  return Boolean(process.env.GEMINI_API_KEY);
 }
 
 export async function extractCompanyKnowledgeWithAI(params: {
   expertText: string;
   projectText: string;
 }): Promise<AIKnowledgeExtraction> {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) return { experts: [], projects: [], warnings: ["ANTHROPIC_API_KEY is not configured; AI extraction skipped."] };
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) return { experts: [], projects: [], warnings: ["GEMINI_API_KEY is not configured; AI extraction skipped."] };
 
-  const client = new Anthropic({ apiKey });
+  const client = new GoogleGenerativeAI(apiKey);
+  const model = client.getGenerativeModel({ model: "gemini-1.5-pro" });
+
   const chunks = [
     ...chunkText(params.expertText).map((content, index) => ({ kind: "EXPERT_CV", index, content })),
     ...chunkText(params.projectText).map((content, index) => ({ kind: "PROJECT_REFERENCE", index, content })),
@@ -140,13 +141,7 @@ export async function extractCompanyKnowledgeWithAI(params: {
   const warnings: string[] = [];
 
   for (const chunk of chunks) {
-    const message = await client.messages.create({
-      model: MODEL,
-      max_tokens: 4096,
-      temperature: 0,
-      messages: [{
-        role: "user",
-        content: `You are a strict tender company-knowledge extraction engine.
+    const prompt = `You are a strict tender company-knowledge extraction engine.
 
 Extract only facts that are explicitly present in the supplied text. Do not infer, guess, complete, rewrite, or invent anything.
 
@@ -193,18 +188,17 @@ CHUNK TYPE: ${chunk.kind}
 CHUNK INDEX: ${chunk.index}
 
 TEXT:
-${chunk.content}`,
-      }],
-    });
+${chunk.content}`;
 
-    const text = message.content[0]?.type === "text" ? message.content[0].text : "";
     try {
+      const result = await model.generateContent(prompt);
+      const text = result.response.text();
       const normalized = normalizeExtraction(parseJsonObject(text));
       allExperts.push(...normalized.experts);
       allProjects.push(...normalized.projects);
       warnings.push(...normalized.warnings);
     } catch (error) {
-      warnings.push(`AI extraction JSON parse failed for ${chunk.kind} chunk ${chunk.index}: ${error instanceof Error ? error.message : "unknown error"}`);
+      warnings.push(`AI extraction failed for ${chunk.kind} chunk ${chunk.index}: ${error instanceof Error ? error.message : "unknown error"}`);
     }
   }
 
