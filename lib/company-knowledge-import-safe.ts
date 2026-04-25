@@ -340,3 +340,29 @@ export async function importCompanyKnowledgeFromDocuments(companyId: string): Pr
 
   return { docsProcessed: docs.length, expertsCreated, projectsCreated, aiUsed: useAI, aiFailures };
 }
+
+export async function analyzeCompanyKnowledgeGaps(companyId: string) {
+  const [docs, experts, projects] = await Promise.all([
+    prisma.companyDocument.findMany({
+      where: { companyId },
+      select: { id: true, originalFileName: true, category: true, extractedText: true, aiExtractionStatus: true },
+    }),
+    prisma.expert.findMany({ where: { companyId }, select: { trustLevel: true } }),
+    prisma.project.findMany({ where: { companyId }, select: { trustLevel: true } }),
+  ]);
+
+  const byTrust = (records: { trustLevel: string | null }[]) => ({
+    REVIEWED: records.filter((r) => r.trustLevel === "REVIEWED").length,
+    AI_DRAFT: records.filter((r) => r.trustLevel === "AI_DRAFT").length,
+    REGEX_DRAFT: records.filter((r) => r.trustLevel === "REGEX_DRAFT" || !r.trustLevel).length,
+  });
+
+  return {
+    totalDocuments: docs.length,
+    extractedDocuments: docs.filter((d) => (d.extractedText ?? "").length >= 100).length,
+    experts: byTrust(experts),
+    projects: byTrust(projects),
+    aiEnabled: isAIEnabled(),
+    pendingReview: experts.filter((e) => e.trustLevel !== "REVIEWED").length + projects.filter((p) => p.trustLevel !== "REVIEWED").length,
+  };
+}
