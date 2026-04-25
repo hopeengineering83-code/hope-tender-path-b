@@ -11,7 +11,7 @@ function assertProductionEnv() {
   const required = [
     ["DATABASE_URL", "PostgreSQL connection string"],
     ["SESSION_SECRET", "HMAC session signing secret (min 32 chars)"],
-    ["GEMINI_API_KEY", "Anthropic API key for AI extraction and proposal generation"],
+    ["GEMINI_API_KEY", "Google Gemini API key for AI extraction and proposal generation"],
   ];
 
   const missing = required.filter(([name]) => !process.env[name]);
@@ -52,8 +52,10 @@ assertProductionEnv();
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // pdf-parse, mammoth, bcryptjs load native binaries — must stay in Node, not bundled by webpack
+  serverExternalPackages: ["pdf-parse", "mammoth", "bcryptjs", "xlsx"],
   experimental: {
-    serverActions: true,
+    serverActions: { bodySizeLimit: "10mb" },
   },
   // Surface missing env vars in the build output
   env: {
