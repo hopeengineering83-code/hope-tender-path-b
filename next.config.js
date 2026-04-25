@@ -52,6 +52,11 @@ assertProductionEnv();
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // pdf-parse, mammoth, bcryptjs load native binaries — must stay in Node, not bundled by webpack
+  serverExternalPackages: ["pdf-parse", "mammoth", "bcryptjs", "xlsx"],
+  experimental: {
+    serverActions: { bodySizeLimit: "10mb" },
+  },
   // Surface missing env vars in the build output
   env: {
     NEXT_PUBLIC_AI_ENABLED: process.env.GEMINI_API_KEY ? "true" : "false",
