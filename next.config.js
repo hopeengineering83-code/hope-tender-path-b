@@ -11,7 +11,7 @@ function assertProductionEnv() {
   const required = [
     ["DATABASE_URL", "PostgreSQL connection string"],
     ["SESSION_SECRET", "HMAC session signing secret (min 32 chars)"],
-    ["GEMINI_API_KEY", "Anthropic API key for AI extraction and proposal generation"],
+    ["GEMINI_API_KEY", "Google Gemini API key for AI extraction and proposal generation"],
   ];
 
   const missing = required.filter(([name]) => !process.env[name]);
@@ -52,9 +52,6 @@ assertProductionEnv();
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  experimental: {
-    serverActions: true,
-  },
   // Surface missing env vars in the build output
   env: {
     NEXT_PUBLIC_AI_ENABLED: process.env.GEMINI_API_KEY ? "true" : "false",
