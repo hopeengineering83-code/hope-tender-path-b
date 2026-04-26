@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma, prismaReady } from "../../../../lib/prisma";
 import { getSession } from "../../../../lib/auth";
+import { ensureCompanyForUser } from "../../../../lib/company-workspace";
 
 function toJsonArray(value: unknown): string {
   if (Array.isArray(value)) return JSON.stringify(value.filter(Boolean));
@@ -22,12 +23,11 @@ export async function GET() {
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   await prismaReady;
 
-  const company = await prisma.company.findUnique({ where: { userId } });
-  if (!company) return NextResponse.json([], { status: 200 });
+  const company = await ensureCompanyForUser(prisma, userId);
 
   const projects = await prisma.project.findMany({
     where: { companyId: company.id },
-    orderBy: { createdAt: "desc" },
+    orderBy: [{ trustLevel: "asc" }, { createdAt: "desc" }],
   });
 
   return NextResponse.json(projects.map(normalizeProject));
@@ -38,8 +38,7 @@ export async function POST(req: Request) {
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   await prismaReady;
 
-  const company = await prisma.company.findUnique({ where: { userId } });
-  if (!company) return NextResponse.json({ error: "Company profile required" }, { status: 400 });
+  const company = await ensureCompanyForUser(prisma, userId);
 
   try {
     const body = await req.json();
@@ -54,6 +53,10 @@ export async function POST(req: Request) {
         summary: body.summary || null,
         contractValue: body.contractValue ? Number(body.contractValue) : null,
         currency: body.currency || null,
+        trustLevel: "REVIEWED",
+        reviewedBy: userId,
+        reviewedAt: new Date(),
+        reviewNotes: "Manual project record created by authenticated user.",
       },
     });
 
