@@ -1,5 +1,6 @@
 import { prisma } from "../prisma";
 import { analyzeTender } from "./analysis";
+import { analyzeWithAI, isAIEnabled } from "../ai";
 import { buildCompliance } from "./compliance";
 import { buildDocumentPlan } from "./documents";
 import { buildMatches } from "./matching";

@@ -19,7 +19,11 @@ function has(value: string | undefined | null) {
 
 export function getSystemReadiness(): SystemReadiness {
   const databaseUrl = process.env.DATABASE_URL ?? "";
-  const isSqlite = databaseUrl.startsWith("file:") || databaseUrl.includes("/tmp/app.db") || databaseUrl.length === 0;
+  const isSqlite =
+    databaseUrl.startsWith("file:") ||
+    databaseUrl.includes("/tmp/app.db") ||
+    databaseUrl.length === 0;
+
   const checks: ReadinessCheck[] = [
     {
       key: "database",
@@ -27,35 +31,39 @@ export function getSystemReadiness(): SystemReadiness {
       severity: isSqlite ? "CRITICAL" : "OK",
       requiredForProduction: true,
       detail: isSqlite
-        ? "The app is not connected to a persistent PostgreSQL database. A temporary SQLite database cannot be used as the permanent company knowledge base."
-        : "DATABASE_URL is configured. Confirm it points to a managed PostgreSQL database and not a temporary file database.",
+        ? "The app is not connected to a persistent PostgreSQL database. SQLite cannot store company knowledge permanently."
+        : "DATABASE_URL is configured. Verify it points to a managed PostgreSQL provider (Neon, Supabase, Railway, etc.).",
     },
     {
       key: "ai_extraction",
-      title: "AI extraction key",
-      severity: has(process.env.GEMINI_API_KEY) ? "OK" : "CRITICAL",
+      title: "AI extraction key (Anthropic Claude)",
+      severity: has(process.env.ANTHROPIC_API_KEY) ? "OK" : "CRITICAL",
       requiredForProduction: true,
-      detail: has(process.env.GEMINI_API_KEY)
-        ? "GEMINI_API_KEY is configured for deep tender and company-knowledge extraction."
-        : "GEMINI_API_KEY is missing. Complex PDFs can only be parsed with weak rule-based extraction until this is configured.",
+      detail: has(process.env.ANTHROPIC_API_KEY)
+        ? "ANTHROPIC_API_KEY is configured. Claude AI extraction is enabled for CVs, project portfolios, and tender documents."
+        : "ANTHROPIC_API_KEY is missing. Complex PDFs can only be parsed with weak rule-based (regex) extraction. All imported records will be REGEX_DRAFT and cannot be used in final proposals.",
     },
     {
       key: "session_secret",
       title: "Session secret",
-      severity: has(process.env.SESSION_SECRET) || has(process.env.AUTH_SECRET) ? "OK" : "WARNING",
+      severity:
+        has(process.env.SESSION_SECRET) || has(process.env.AUTH_SECRET) ? "OK" : "WARNING",
       requiredForProduction: true,
-      detail: has(process.env.SESSION_SECRET) || has(process.env.AUTH_SECRET)
-        ? "A session/auth secret appears configured."
-        : "No SESSION_SECRET or AUTH_SECRET detected. Configure one stable secret for production sessions.",
+      detail:
+        has(process.env.SESSION_SECRET) || has(process.env.AUTH_SECRET)
+          ? "A session/auth secret appears configured."
+          : "No SESSION_SECRET or AUTH_SECRET detected. Configure one stable secret for production sessions.",
     },
     {
       key: "file_storage",
       title: "Durable file storage",
-      severity: has(process.env.BLOB_READ_WRITE_TOKEN) || has(process.env.S3_BUCKET) ? "OK" : "WARNING",
+      severity:
+        has(process.env.BLOB_READ_WRITE_TOKEN) || has(process.env.S3_BUCKET) ? "OK" : "WARNING",
       requiredForProduction: true,
-      detail: has(process.env.BLOB_READ_WRITE_TOKEN) || has(process.env.S3_BUCKET)
-        ? "A durable file storage configuration appears present."
-        : "No durable file storage token is configured. The current database base64 storage is acceptable only for small Phase-1 testing, not heavy production files.",
+      detail:
+        has(process.env.BLOB_READ_WRITE_TOKEN) || has(process.env.S3_BUCKET)
+          ? "A durable file storage configuration appears present."
+          : "No durable file storage token configured. Current database base64 storage is only suitable for small-scale testing.",
     },
   ];
 

@@ -58,7 +58,41 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   const reviewedExpertCount = selectedExpertMatches.length - draftExperts.length;
   const reviewedProjectCount = selectedProjectMatches.length - draftProjects.length;
 
-  // Soft warning in metadata — does NOT block, but caller sees the counts
+  // ── Gate 3: Trust level hard-block ───────────────────────────────────────
+  // Never use unreviewed records as the SOLE source in a final proposal.
+  // Block if experts are selected AND not a single one is REVIEWED.
+  // Block if projects are selected AND not a single one is REVIEWED.
+  // (Mixed pools — some reviewed, some draft — are allowed with a warning.)
+  const expertRequirementExists = await prisma.tenderRequirement.count({
+    where: { tenderId: id, requirementType: "EXPERT" },
+  });
+  const projectRequirementExists = await prisma.tenderRequirement.count({
+    where: { tenderId: id, requirementType: "PROJECT_EXPERIENCE" },
+  });
+
+  if (selectedExpertMatches.length > 0 && reviewedExpertCount === 0 && expertRequirementExists > 0) {
+    return NextResponse.json(
+      {
+        error: `Generation blocked: ${selectedExpertMatches.length} expert(s) are selected but NONE have been reviewed. Go to the Knowledge Review page and review at least one expert before generating.`,
+        code: "ALL_EXPERTS_UNREVIEWED",
+        draftExperts: draftExperts.map((m) => m.expert.fullName),
+      },
+      { status: 422 },
+    );
+  }
+
+  if (selectedProjectMatches.length > 0 && reviewedProjectCount === 0 && projectRequirementExists > 0) {
+    return NextResponse.json(
+      {
+        error: `Generation blocked: ${selectedProjectMatches.length} project reference(s) are selected but NONE have been reviewed. Go to the Knowledge Review page and review at least one project before generating.`,
+        code: "ALL_PROJECTS_UNREVIEWED",
+        draftProjects: draftProjects.map((m) => m.project.name),
+      },
+      { status: 422 },
+    );
+  }
+
+  // Soft warnings for mixed pools (some reviewed, some draft)
   const warnings: string[] = [];
   if (draftExperts.length > 0) {
     warnings.push(`${draftExperts.length} selected expert(s) are unreviewed drafts: ${draftExperts.map((m) => m.expert.fullName).join(", ")}. Review them in the Knowledge Review page for more accurate proposals.`);

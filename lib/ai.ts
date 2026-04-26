@@ -1,24 +1,36 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
+/**
+ * lib/ai.ts
+ * Anthropic Claude wrapper — tender analysis, knowledge extraction, proposal generation.
+ *
+ * Model strategy:
+ *   Extraction  → claude-3-5-haiku-20241022  (fast, cheap, structured output)
+ *   Generation  → claude-3-5-sonnet-20241022 (best quality for proposal prose)
+ */
 
-const apiKey = process.env.GEMINI_API_KEY;
+import Anthropic from "@anthropic-ai/sdk";
 
-function getClient() {
-  if (!apiKey) throw new Error("GEMINI_API_KEY not configured");
-  return new GoogleGenerativeAI(apiKey);
+const EXTRACT_MODEL = "claude-3-5-haiku-20241022";
+const GENERATE_MODEL = "claude-3-5-sonnet-20241022";
+
+function getClient(): Anthropic {
+  if (!process.env.ANTHROPIC_API_KEY) throw new Error("ANTHROPIC_API_KEY not configured");
+  return new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 }
 
-function getModel(modelName = "gemini-1.5-pro") {
-  return getClient().getGenerativeModel({ model: modelName });
+export function isAIEnabled(): boolean {
+  return Boolean(process.env.ANTHROPIC_API_KEY);
 }
 
-export function isAIEnabled() {
-  return Boolean(apiKey);
-}
-
-async function generate(prompt: string, modelName = "gemini-1.5-pro"): Promise<string> {
-  const model = getModel(modelName);
-  const result = await model.generateContent(prompt);
-  return result.response.text();
+async function generate(prompt: string, model: string = EXTRACT_MODEL): Promise<string> {
+  const client = getClient();
+  const message = await client.messages.create({
+    model,
+    max_tokens: 8192,
+    messages: [{ role: "user", content: prompt }],
+  });
+  const block = message.content[0];
+  if (!block || block.type !== "text") throw new Error("Unexpected response type from Anthropic");
+  return block.text;
 }
 
 // ─── Tender analysis types ────────────────────────────────────────────────────
@@ -99,9 +111,9 @@ JSON structure required:
 TENDER DOCUMENT:
 ${tenderContent.slice(0, 15000)}`;
 
-  const text = await generate(prompt);
+  const text = await generate(prompt, EXTRACT_MODEL);
   const jsonMatch = text.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) throw new Error("Gemini returned invalid JSON for tender analysis");
+  if (!jsonMatch) throw new Error("Claude returned invalid JSON for tender analysis");
   return JSON.parse(jsonMatch[0]) as AIAnalysisResult;
 }
 
@@ -125,17 +137,24 @@ Return ONLY a valid JSON array — no explanation, no markdown. Each element:
   "sourceSnippet": "verbatim extract ≤500 chars proving this person exists"
 }
 
-Rules: only include people clearly named in the document. Do NOT invent any field — use null if uncertain. sourceSnippet must be a direct quote.
+Rules:
+- Only include people clearly named in the document.
+- Do NOT invent any field — use null if uncertain.
+- sourceSnippet must be a direct quote from the document.
+- Do NOT extract project names as expert names.
+- Omit any record where fullName is ambiguous.
 
 DOCUMENT TEXT (${text.length.toLocaleString()} chars):
 ${text.slice(0, 20000)}`;
 
-  const raw = await generate(prompt);
+  const raw = await generate(prompt, EXTRACT_MODEL);
   const jsonMatch = raw.match(/\[[\s\S]*\]/);
   if (!jsonMatch) return [];
   try {
     const parsed = JSON.parse(jsonMatch[0]) as AIExtractedExpert[];
-    return parsed.filter((e) => e.fullName && typeof e.fullName === "string" && e.fullName.trim().length > 2);
+    return parsed.filter(
+      (e) => e.fullName && typeof e.fullName === "string" && e.fullName.trim().length > 2,
+    );
   } catch {
     return [];
   }
@@ -162,12 +181,16 @@ Return ONLY a valid JSON array — no explanation, no markdown. Each element:
   "sourceSnippet": "verbatim extract ≤500 chars proving this project"
 }
 
-Rules: only include projects clearly in the document. Do NOT invent values. sourceSnippet must be a direct quote.
+Rules:
+- Only include projects clearly in the document.
+- Do NOT invent values. sourceSnippet must be a direct quote.
+- Do NOT extract person names as project names.
+- Omit records where the project name is unclear or generic.
 
 DOCUMENT TEXT (${text.length.toLocaleString()} chars):
 ${text.slice(0, 20000)}`;
 
-  const raw = await generate(prompt);
+  const raw = await generate(prompt, EXTRACT_MODEL);
   const jsonMatch = raw.match(/\[[\s\S]*\]/);
   if (!jsonMatch) return [];
   try {
@@ -207,5 +230,5 @@ Write a formal proposal with these sections (use ## headings):
 
 Reference tender requirements directly. Use only the company information provided above.`;
 
-  return generate(prompt, "gemini-1.5-pro");
+  return generate(prompt, GENERATE_MODEL);
 }

@@ -11,7 +11,7 @@ const REQUIRED_VARS: Array<{ name: string; description: string }> = [
 ];
 
 const PRODUCTION_REQUIRED: Array<{ name: string; description: string }> = [
-  { name: "GEMINI_API_KEY", description: "Google Gemini API key — required for AI extraction and proposal generation" },
+  { name: "ANTHROPIC_API_KEY", description: "Anthropic API key (sk-ant-...) — required for AI extraction and proposal generation" },
 ];
 
 const INSECURE_DEFAULTS: Record<string, string> = {
@@ -40,6 +40,14 @@ export function checkEnv(): void {
     }
   }
 
+  // Also warn loudly in any environment if ANTHROPIC_API_KEY is absent
+  if (!isProd && !process.env.ANTHROPIC_API_KEY) {
+    console.warn(
+      "\n⚠  ANTHROPIC_API_KEY is not set. AI extraction will be disabled and all records will be REGEX_DRAFT only.\n" +
+      "   Set ANTHROPIC_API_KEY in .env.local to enable AI-powered knowledge extraction.\n",
+    );
+  }
+
   if (missing.length > 0) {
     const lines = [
       "",
@@ -57,31 +65,35 @@ export function checkEnv(): void {
       "",
     ];
     console.error(lines.join("\n"));
-    throw new Error(`Missing required environment variables: ${missing.map((l) => l.trim().split(":")[0]).join(", ")}`);
+    throw new Error(
+      `Missing required environment variables: ${missing.map((l) => l.trim().split(":")[0]).join(", ")}`,
+    );
   }
 
   if (insecure.length > 0) {
     console.warn("\n⚠  SECURITY WARNING — insecure defaults detected:\n" + insecure.join("\n") + "\n");
   }
 
-  // Validate DATABASE_URL format
+  // Validate DATABASE_URL format — SQLite is never acceptable
   const dbUrl = process.env.DATABASE_URL ?? "";
   if (!dbUrl.startsWith("postgresql://") && !dbUrl.startsWith("postgres://")) {
     throw new Error(
       `DATABASE_URL must be a PostgreSQL connection string starting with postgresql:// or postgres://. ` +
-      `Got: "${dbUrl.slice(0, 30)}...". SQLite is not supported in production.`
+      `Got: "${dbUrl.slice(0, 30)}...". SQLite is not supported.`,
     );
   }
 
   // Warn if SESSION_SECRET is too short
   const secret = process.env.SESSION_SECRET ?? "";
   if (secret.length < 32) {
-    console.warn(`⚠  SESSION_SECRET is only ${secret.length} characters. Use at least 32 random characters.`);
+    console.warn(
+      `⚠  SESSION_SECRET is only ${secret.length} characters. Use at least 32 random characters.`,
+    );
   }
 }
 
 export function isAIConfigured(): boolean {
-  return Boolean(process.env.GEMINI_API_KEY);
+  return Boolean(process.env.ANTHROPIC_API_KEY);
 }
 
 // Alias used in diagnostics and other routes

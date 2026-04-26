@@ -10,7 +10,8 @@
  */
 
 import { prisma } from "./prisma";
-import { isAIEnabled, extractExpertsFromText, extractProjectsFromText } from "./ai";
+import { isAIEnabled } from "./ai";
+import { extractCompanyKnowledgeWithAI } from "./company-knowledge-ai";
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
@@ -227,54 +228,179 @@ export async function importCompanyKnowledgeFromDocuments(companyId: string): Pr
   const allExpertDrafts: ExpertDraft[] = [];
   const allProjectDrafts: ProjectDraft[] = [];
 
-  for (const doc of docs) {
-    const text = doc.extractedText ?? "";
-    if (text.trim().length < 100) continue;
-    if (/^\[(Scanned PDF|Extraction failed|Legacy \.doc|Image:)/i.test(text.trim())) continue;
+  // ── Classify documents by category for strict type separation ────────────
+  // CV/staff docs → expertText only; project/portfolio docs → projectText only.
+  // This prevents the AI from extracting project names as expert names or vice versa.
 
-    if (useAI) {
-      // AI path — richer extraction, AI_DRAFT trust level
-      try {
-        const [aiExperts, aiProjects] = await Promise.all([
-          extractExpertsFromText(text, doc.originalFileName),
-          extractProjectsFromText(text, doc.originalFileName),
-        ]);
+  type DocRecord = typeof docs[number];
 
-        for (const e of aiExperts) {
-          allExpertDrafts.push({ ...e, sourceDocumentId: doc.id, trustLevel: "AI_DRAFT" });
-        }
-        for (const p of aiProjects) {
-          allProjectDrafts.push({ ...p, sourceDocumentId: doc.id, trustLevel: "AI_DRAFT" });
-        }
+  function isExpertDoc(doc: DocRecord): boolean {
+    const label = `${doc.originalFileName} ${doc.category}`.toLowerCase();
+    return /cv|expert|resume|curriculum|staff|personnel/.test(label);
+  }
 
-        // Mark doc as successfully AI-extracted
+  function isProjectDoc(doc: DocRecord): boolean {
+    const label = `${doc.originalFileName} ${doc.category}`.toLowerCase();
+    return /project|portfolio|reference|contract/.test(label);
+  }
+
+  if (useAI) {
+    // ── AI path: batch by category, category-enforced extraction ─────────────
+    // Separate doc lists by type so each is only sent to the correct AI prompt.
+    const expertDocs = docs.filter((d) => {
+      const text = d.extractedText ?? "";
+      return text.trim().length >= 100 && isExpertDoc(d) && !/^\[(Scanned PDF|Extraction failed)/i.test(text.trim());
+    });
+    const projectDocs = docs.filter((d) => {
+      const text = d.extractedText ?? "";
+      return text.trim().length >= 100 && isProjectDoc(d) && !/^\[(Scanned PDF|Extraction failed)/i.test(text.trim());
+    });
+    // Mixed docs (match both or neither) go through regex fallback only
+    const mixedDocs = docs.filter((d) => {
+      const text = d.extractedText ?? "";
+      if (text.trim().length < 100) return false;
+      if (/^\[(Scanned PDF|Extraction failed)/i.test(text.trim())) return false;
+      return !isExpertDoc(d) && !isProjectDoc(d);
+    });
+
+    try {
+      // Build combined text pools per category (truncated per doc to avoid token overrun)
+      const expertTextPool = expertDocs.map((d) => (d.extractedText ?? "").slice(0, 20_000)).join("\n\n--- NEXT DOCUMENT ---\n\n");
+      const projectTextPool = projectDocs.map((d) => (d.extractedText ?? "").slice(0, 20_000)).join("\n\n--- NEXT DOCUMENT ---\n\n");
+
+      const aiResult = await extractCompanyKnowledgeWithAI({
+        expertText: expertTextPool,
+        projectText: projectTextPool,
+      });
+
+      // Map extracted experts back to the source document they most likely came from
+      for (const e of aiResult.experts) {
+        // Best-effort source attribution: find the expert doc whose text contains the sourceQuote
+        const sourceDoc = expertDocs.find((d) =>
+          e.sourceQuote && (d.extractedText ?? "").toLowerCase().includes(e.sourceQuote.slice(0, 60).toLowerCase()),
+        ) ?? expertDocs[0];
+
+        allExpertDrafts.push({
+          fullName: e.fullName,
+          title: e.title ?? null,
+          yearsExperience: e.yearsExperience ?? null,
+          disciplines: e.disciplines ?? [],
+          sectors: e.sectors ?? [],
+          certifications: e.certifications ?? [],
+          profile: `AI-extracted CV record (confidence: ${Math.round((e.confidence ?? 0) * 100)}%). Source evidence: "${e.sourceQuote}"`,
+          sourceSnippet: e.sourceQuote,
+          sourceDocumentId: sourceDoc?.id ?? expertDocs[0]?.id ?? docs[0].id,
+          trustLevel: "AI_DRAFT",
+        });
+      }
+
+      for (const p of aiResult.projects) {
+        const sourceDoc = projectDocs.find((d) =>
+          p.sourceQuote && (d.extractedText ?? "").toLowerCase().includes(p.sourceQuote.slice(0, 60).toLowerCase()),
+        ) ?? projectDocs[0];
+
+        allProjectDrafts.push({
+          name: p.name,
+          clientName: p.clientName ?? null,
+          country: p.country ?? null,
+          sector: p.sector ?? null,
+          serviceAreas: p.serviceAreas ?? [],
+          summary: p.summary ?? `AI-extracted project (confidence: ${Math.round((p.confidence ?? 0) * 100)}%). Source evidence: "${p.sourceQuote}"`,
+          contractValue: p.contractValue ?? null,
+          currency: p.currency ?? null,
+          sourceSnippet: p.sourceQuote,
+          sourceDocumentId: sourceDoc?.id ?? projectDocs[0]?.id ?? docs[0].id,
+          trustLevel: "AI_DRAFT",
+        });
+      }
+
+      // Mark expert and project docs as AI-extracted
+      const allAIDocs = [...expertDocs, ...projectDocs];
+      for (const doc of allAIDocs) {
         await prisma.companyDocument.update({
           where: { id: doc.id },
           data: { aiExtractionStatus: "EXTRACTED", aiExtractedAt: new Date(), aiExtractionError: null },
         });
-      } catch (err) {
-        aiFailures++;
-        const errMsg = err instanceof Error ? err.message : String(err);
+      }
+
+      // Log any AI warnings
+      if (aiResult.warnings.length > 0) {
+        console.warn("[company-knowledge-import] AI extraction warnings:", aiResult.warnings);
+      }
+    } catch (err) {
+      aiFailures++;
+      const errMsg = err instanceof Error ? err.message : String(err);
+      console.error("[company-knowledge-import] AI extraction failed, falling back to regex:", errMsg);
+
+      // Mark all AI-candidate docs as failed
+      for (const doc of [...docs]) {
+        const text = doc.extractedText ?? "";
+        if (text.trim().length < 100) continue;
         await prisma.companyDocument.update({
           where: { id: doc.id },
           data: { aiExtractionStatus: "FAILED", aiExtractionError: errMsg.slice(0, 500) },
         });
 
-        // Fall back to regex for this document
+        // Regex fallback with category separation
+        if (isExpertDoc(doc)) {
+          for (const e of regexExtractExperts(text)) {
+            allExpertDrafts.push({ ...e, sourceDocumentId: doc.id, trustLevel: "REGEX_DRAFT" });
+          }
+        } else if (isProjectDoc(doc)) {
+          for (const p of regexExtractProjects(text)) {
+            allProjectDrafts.push({ ...p, sourceDocumentId: doc.id, trustLevel: "REGEX_DRAFT" });
+          }
+        } else {
+          // Mixed/unknown: attempt both but keep separate
+          for (const e of regexExtractExperts(text)) {
+            allExpertDrafts.push({ ...e, sourceDocumentId: doc.id, trustLevel: "REGEX_DRAFT" });
+          }
+          for (const p of regexExtractProjects(text)) {
+            allProjectDrafts.push({ ...p, sourceDocumentId: doc.id, trustLevel: "REGEX_DRAFT" });
+          }
+        }
+      }
+    }
+
+    // Regex-only fallback for mixed/unclassified docs not sent to AI
+    for (const doc of docs.filter((d) => {
+      const text = d.extractedText ?? "";
+      return text.trim().length >= 100 && !isExpertDoc(d) && !isProjectDoc(d) &&
+        !/^\[(Scanned PDF|Extraction failed)/i.test(text.trim());
+    })) {
+      const text = doc.extractedText ?? "";
+      for (const e of regexExtractExperts(text)) {
+        allExpertDrafts.push({ ...e, sourceDocumentId: doc.id, trustLevel: "REGEX_DRAFT" });
+      }
+      for (const p of regexExtractProjects(text)) {
+        allProjectDrafts.push({ ...p, sourceDocumentId: doc.id, trustLevel: "REGEX_DRAFT" });
+      }
+    }
+  } else {
+    // ── Regex path — REGEX_DRAFT, category-separated ──────────────────────
+    for (const doc of docs) {
+      const text = doc.extractedText ?? "";
+      if (text.trim().length < 100) continue;
+      if (/^\[(Scanned PDF|Extraction failed)/i.test(text.trim())) continue;
+
+      if (isExpertDoc(doc)) {
+        // CV/staff documents: only extract experts
+        for (const e of regexExtractExperts(text)) {
+          allExpertDrafts.push({ ...e, sourceDocumentId: doc.id, trustLevel: "REGEX_DRAFT" });
+        }
+      } else if (isProjectDoc(doc)) {
+        // Project/portfolio documents: only extract projects
+        for (const p of regexExtractProjects(text)) {
+          allProjectDrafts.push({ ...p, sourceDocumentId: doc.id, trustLevel: "REGEX_DRAFT" });
+        }
+      } else {
+        // Unclassified: attempt both (lower confidence, regex only)
         for (const e of regexExtractExperts(text)) {
           allExpertDrafts.push({ ...e, sourceDocumentId: doc.id, trustLevel: "REGEX_DRAFT" });
         }
         for (const p of regexExtractProjects(text)) {
           allProjectDrafts.push({ ...p, sourceDocumentId: doc.id, trustLevel: "REGEX_DRAFT" });
         }
-      }
-    } else {
-      // Regex path — REGEX_DRAFT trust level
-      for (const e of regexExtractExperts(text)) {
-        allExpertDrafts.push({ ...e, sourceDocumentId: doc.id, trustLevel: "REGEX_DRAFT" });
-      }
-      for (const p of regexExtractProjects(text)) {
-        allProjectDrafts.push({ ...p, sourceDocumentId: doc.id, trustLevel: "REGEX_DRAFT" });
       }
     }
   }

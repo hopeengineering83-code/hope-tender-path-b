@@ -33,6 +33,9 @@ export async function POST() {
         where: { id: doc.id },
         data: {
           extractedText: extractedText || null,
+          // Reset AI status so the import step re-runs AI extraction on this doc
+          aiExtractionStatus: meaningful ? "PENDING" : "FAILED",
+          aiExtractionError: meaningful ? null : "No text extracted from document",
           metadata: JSON.stringify({
             ...metadata,
             fileType,
