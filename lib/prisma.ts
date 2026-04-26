@@ -435,6 +435,7 @@ async function bootstrap(client: PrismaClient): Promise<void> {
   await client.$executeRawUnsafe(`CREATE UNIQUE INDEX IF NOT EXISTS "TenderProjectMatch_tenderId_projectId_key" ON "TenderProjectMatch"("tenderId", "projectId")`);
 
   // ── additive column migrations ────────────────────────────────────────────
+  await ensureColumn(client, "User", "name", "TEXT");
   await ensureColumn(client, "Expert", "trustLevel", "TEXT NOT NULL DEFAULT 'REGEX_DRAFT'");
   await ensureColumn(client, "Expert", "reviewedBy", "TEXT");
   await ensureColumn(client, "Expert", "reviewedAt", "TIMESTAMPTZ");
