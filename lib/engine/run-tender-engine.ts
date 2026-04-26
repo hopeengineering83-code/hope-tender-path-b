@@ -41,7 +41,52 @@ export async function runTenderEngine(tenderId: string, userId: string) {
     await tx.generatedDocument.deleteMany({ where: { tenderId } });
     await tx.tenderRequirement.deleteMany({ where: { tenderId } });
 
-    const analysis = analyzeTender(tender);
+    // ── Tender Analysis — AI (Gemini) first, regex fallback ─────────────────
+    // Concatenate all extracted text from tender files and run Gemini analysis
+    // when GEMINI_API_KEY is configured. Falls back to regex if AI fails or
+    // if there is insufficient extracted text (< 500 chars).
+    let analysis: Awaited<ReturnType<typeof analyzeTender>>;
+
+    if (isAIEnabled()) {
+      const tenderText = tender.files
+        .map((f) => f.extractedText ?? "")
+        .filter((t) => t.length > 100 && !/^\[/.test(t.trim()))
+        .join("\n\n--- NEXT DOCUMENT ---\n\n")
+        .slice(0, 80_000);
+
+      if (tenderText.length > 500) {
+        try {
+          const aiResult = await analyzeWithAI(tenderText);
+          // Adapt AI result to RequirementDraft shape (exactOrder from array index)
+          analysis = {
+            summary: aiResult.summary,
+            requirements: aiResult.requirements.map((req, idx) => ({
+              title: req.title,
+              description: req.description,
+              requirementType: req.requirementType,
+              priority: req.priority,
+              requiredQuantity: req.requiredQuantity ?? null,
+              pageLimit: req.pageLimit ?? null,
+              exactFileName: req.exactFileName ?? null,
+              exactOrder: idx + 1,
+              restrictions: req.restrictions ?? null,
+              sectionReference: req.sectionReference ?? null,
+            })),
+            exactFileNaming: aiResult.exactFileNaming ?? [],
+            exactFileOrder: aiResult.exactFileOrder ?? [],
+          };
+          console.log(`[engine] AI analysis: ${analysis.requirements.length} requirements extracted.`);
+        } catch (err) {
+          console.error("[engine] AI analysis failed — falling back to regex:", err);
+          analysis = analyzeTender(tender);
+        }
+      } else {
+        console.warn("[engine] Insufficient extracted text for AI analysis — using regex.");
+        analysis = analyzeTender(tender);
+      }
+    } else {
+      analysis = analyzeTender(tender);
+    }
     const createdRequirements: Array<{ id: string; requirement: (typeof analysis.requirements)[number] }> = [];
 
     for (const requirement of analysis.requirements) {
@@ -71,9 +116,12 @@ export async function runTenderEngine(tenderId: string, userId: string) {
 
     const knowledge = {
       companyId: company.id,
-      // Final compliance/matching support uses reviewed knowledge only.
-      experts: reviewedExperts,
-      projects: reviewedProjects,
+      // REVIEWED records come first so matching surfaces them at the top.
+      // DRAFT records follow as secondary evidence — they appear in match results
+      // but carry a score penalty in matching.ts (-0.08 REGEX_DRAFT, +0.05 AI_DRAFT).
+      // Generation is still blocked if ALL selected records are unreviewed (Gate 3 in generate/route.ts).
+      experts: [...reviewedExperts, ...company.experts.filter((e) => e.trustLevel !== "REVIEWED")],
+      projects: [...reviewedProjects, ...company.projects.filter((p) => p.trustLevel !== "REVIEWED")],
       documents: company.documents,
       legalRecords: company.legalRecords,
       financialRecords: company.financialRecords,

@@ -256,13 +256,6 @@ export async function importCompanyKnowledgeFromDocuments(companyId: string): Pr
       return text.trim().length >= 100 && isProjectDoc(d) && !/^\[(Scanned PDF|Extraction failed)/i.test(text.trim());
     });
     // Mixed docs (match both or neither) go through regex fallback only
-    const mixedDocs = docs.filter((d) => {
-      const text = d.extractedText ?? "";
-      if (text.trim().length < 100) return false;
-      if (/^\[(Scanned PDF|Extraction failed)/i.test(text.trim())) return false;
-      return !isExpertDoc(d) && !isProjectDoc(d);
-    });
-
     try {
       // Build combined text pools per category (truncated per doc to avoid token overrun)
       const expertTextPool = expertDocs.map((d) => (d.extractedText ?? "").slice(0, 20_000)).join("\n\n--- NEXT DOCUMENT ---\n\n");
