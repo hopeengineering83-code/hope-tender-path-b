@@ -3,14 +3,14 @@ import { getSession } from "../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../lib/prisma";
 import { importCompanyKnowledgeFromDocuments } from "../../../../lib/company-knowledge-import-safe";
 import { extractTextFromBuffer, getFileTypeLabel, isMeaningfulExtraction } from "../../../../lib/extract-text";
+import { ensureCompanyForUser } from "../../../../lib/company-workspace";
 
 export async function POST() {
   const userId = await getSession();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   await prismaReady;
-  const company = await prisma.company.findUnique({ where: { userId } });
-  if (!company) return NextResponse.json({ error: "Company not found" }, { status: 404 });
+  const company = await ensureCompanyForUser(prisma, userId);
 
   // Step 1: force re-extract ALL documents (not just those under 1000 chars)
   const docs = await prisma.companyDocument.findMany({
