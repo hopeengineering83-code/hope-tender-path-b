@@ -134,7 +134,7 @@ export async function extractCompanyKnowledgeWithAI(params: {
   }
 
   const client = new GoogleGenerativeAI(apiKey);
-  const model = client.getGenerativeModel({ model: "gemini-1.5-pro" });
+  const model = client.getGenerativeModel({ model: "gemini-2.0-flash" });
 
   const expertChunks = chunkText(params.expertText).map((content, index) => ({ kind: "EXPERT_CV" as const, index, content }));
   const projectChunks = chunkText(params.projectText).map((content, index) => ({ kind: "PROJECT_REFERENCE" as const, index, content }));
@@ -195,8 +195,28 @@ ${chunk.content}`;
       const result = await model.generateContent(prompt);
       const text = result.response.text();
       const normalized = normalizeExtraction(parseJsonFromResponse(text));
-      allExperts.push(...normalized.experts);
-      allProjects.push(...normalized.projects);
+
+      // ── Category enforcement: only keep records matching the chunk type ──
+      // Even though the prompt says "leave the other array empty", Gemini can
+      // still produce cross-category records. Drop them here rather than
+      // silently writing bad data to the database.
+      if (isExpertChunk) {
+        allExperts.push(...normalized.experts);
+        if (normalized.projects.length > 0) {
+          warnings.push(
+            `Discarded ${normalized.projects.length} project record(s) from EXPERT_CV chunk ${chunk.index} (category enforcement).`,
+          );
+        }
+      } else {
+        allProjects.push(...normalized.projects);
+        if (normalized.experts.length > 0) {
+          warnings.push(
+            `Discarded ${normalized.experts.length} expert record(s) from PROJECT_REFERENCE chunk ${chunk.index} (category enforcement).`,
+          );
+        }
+      }
+      // ── End category enforcement ─────────────────────────────────────────
+
       warnings.push(...normalized.warnings);
     } catch (error) {
       warnings.push(`AI extraction failed for ${chunk.kind} chunk ${chunk.index}: ${error instanceof Error ? error.message : "unknown error"}`);

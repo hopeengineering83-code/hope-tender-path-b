@@ -55,10 +55,13 @@ export async function validateTender(tenderId: string): Promise<ValidationReport
     };
   }
 
-  // ── Trust-level enforcement: REVIEWED knowledge is required for export ────
-  // Rule 1: REGEX_DRAFT records are pattern-extracted and unreliable — BLOCK generation.
-  // Rule 2: AI_DRAFT records (Claude-extracted) must be reviewed before final export — WARN.
-  // Rule 3: Generation should preferentially use REVIEWED records — surface the count.
+  // ── Trust-level enforcement: ALL selected records must be REVIEWED ──────────
+  // Rule 1: REGEX_DRAFT records are pattern-extracted and unreliable → BLOCK.
+  // Rule 2: AI_DRAFT records are Gemini-extracted but unreviewed → BLOCK.
+  //   Rationale: generate.ts hard-blocks ALL non-REVIEWED records.
+  //   Reporting AI_DRAFT as a warning-only would lie to the user (validation
+  //   says "ok", generation throws). Both must agree: REVIEWED = required.
+  // Rule 3: Surface reviewed-record count so UI can guide the user.
 
   const selectedExpertIds = tender.expertMatches.map((m) => m.expertId);
   const selectedProjectIds = tender.projectMatches.map((m) => m.projectId);
@@ -68,29 +71,39 @@ export async function validateTender(tenderId: string): Promise<ValidationReport
       where: { id: { in: selectedExpertIds } },
       select: { id: true, fullName: true, trustLevel: true },
     });
+    const unreviewed = experts.filter((e) => e.trustLevel !== "REVIEWED");
     const regexDraft = experts.filter((e) => !e.trustLevel || e.trustLevel === "REGEX_DRAFT");
-    const reviewed = experts.filter((e) => e.trustLevel === "REVIEWED");
+    const aiDraft = experts.filter((e) => e.trustLevel === "AI_DRAFT");
 
     if (regexDraft.length > 0) {
       issues.push({
         code: "REGEX_DRAFT_EXPERT_SELECTED",
         severity: "BLOCK",
         message:
-          `${regexDraft.length} selected expert(s) are REGEX_DRAFT — pattern-extracted records with low reliability that cannot be ` +
-          `used in final proposal documents. Open Company Knowledge → Experts, review each record, ` +
-          `and promote them to AI_DRAFT (re-run AI extraction) or REVIEWED before generating. ` +
+          `${regexDraft.length} selected expert(s) are REGEX_DRAFT — pattern-extracted records with low reliability. ` +
+          `Re-run AI extraction (Company Knowledge → Repair) to promote them to AI_DRAFT, then review and mark REVIEWED. ` +
           `Affected: ${regexDraft.map((e) => e.fullName).join(", ")}.`,
       });
     }
 
-    if (reviewed.length === 0 && experts.length > 0) {
+    if (aiDraft.length > 0) {
       issues.push({
-        code: "NO_REVIEWED_EXPERTS",
-        severity: "WARN",
+        code: "AI_DRAFT_EXPERT_NOT_REVIEWED",
+        severity: "BLOCK",
         message:
-          `None of the ${experts.length} selected expert(s) have been marked REVIEWED. ` +
-          `AI_DRAFT experts (Claude-extracted) are permitted for generation but may contain errors. ` +
-          `Promote at least one expert to REVIEWED status before final client submission.`,
+          `${aiDraft.length} selected expert(s) are AI_DRAFT (Gemini-extracted) but not yet reviewed. ` +
+          `Open Company Knowledge → Review, verify each expert's details against source documents, ` +
+          `and mark them REVIEWED before generating. ` +
+          `Affected: ${aiDraft.map((e) => e.fullName).join(", ")}.`,
+      });
+    }
+
+    if (unreviewed.length === 0 && experts.length > 0) {
+      // All selected experts are REVIEWED — surface positive signal
+      issues.push({
+        code: "EXPERTS_ALL_REVIEWED",
+        severity: "WARN",
+        message: `✓ All ${experts.length} selected expert(s) are REVIEWED.`,
       });
     }
   }
@@ -101,28 +114,28 @@ export async function validateTender(tenderId: string): Promise<ValidationReport
       select: { id: true, name: true, trustLevel: true },
     });
     const regexDraft = projects.filter((p) => !p.trustLevel || p.trustLevel === "REGEX_DRAFT");
-    const reviewed = projects.filter((p) => p.trustLevel === "REVIEWED");
+    const aiDraft = projects.filter((p) => p.trustLevel === "AI_DRAFT");
 
     if (regexDraft.length > 0) {
       issues.push({
         code: "REGEX_DRAFT_PROJECT_SELECTED",
         severity: "BLOCK",
         message:
-          `${regexDraft.length} selected project(s) are REGEX_DRAFT — pattern-extracted records with low reliability that cannot be ` +
-          `used in final proposal documents. Open Company Knowledge → Projects, review each record, ` +
-          `and promote them to AI_DRAFT (re-run AI extraction) or REVIEWED before generating. ` +
+          `${regexDraft.length} selected project(s) are REGEX_DRAFT — pattern-extracted records with low reliability. ` +
+          `Re-run AI extraction (Company Knowledge → Repair) to promote them to AI_DRAFT, then review and mark REVIEWED. ` +
           `Affected: ${regexDraft.map((p) => p.name).join(", ")}.`,
       });
     }
 
-    if (reviewed.length === 0 && projects.length > 0) {
+    if (aiDraft.length > 0) {
       issues.push({
-        code: "NO_REVIEWED_PROJECTS",
-        severity: "WARN",
+        code: "AI_DRAFT_PROJECT_NOT_REVIEWED",
+        severity: "BLOCK",
         message:
-          `None of the ${projects.length} selected project(s) have been marked REVIEWED. ` +
-          `AI_DRAFT projects (Claude-extracted) are permitted for generation but may contain errors. ` +
-          `Promote at least one project to REVIEWED status before final client submission.`,
+          `${aiDraft.length} selected project(s) are AI_DRAFT (Gemini-extracted) but not yet reviewed. ` +
+          `Open Company Knowledge → Review, verify each project's details against source documents, ` +
+          `and mark them REVIEWED before generating. ` +
+          `Affected: ${aiDraft.map((p) => p.name).join(", ")}.`,
       });
     }
   }
