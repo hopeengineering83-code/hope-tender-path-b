@@ -3,6 +3,7 @@ import { prisma, prismaReady } from "../../../lib/prisma";
 import { getSession } from "../../../lib/auth";
 import { extractTextFromBuffer, detectCategoryFromFile, getFileTypeLabel, isMeaningfulExtraction } from "../../../lib/extract-text";
 import { logAction } from "../../../lib/audit";
+import { ensureCompanyForUser } from "../../../lib/company-workspace";
 
 const MAX_BYTES = 10 * 1024 * 1024;
 
@@ -103,11 +104,7 @@ export async function POST(req: Request) {
 
         results.push({ success: true, scope: "tender", fileRecord, extraction });
       } else {
-        const company = await prisma.company.findUnique({ where: { userId } });
-        if (!company) {
-          results.push({ error: "Company not found", fileName: file.name });
-          continue;
-        }
+        const company = await ensureCompanyForUser(prisma, userId);
 
         const providedCategory = formData.get("category") as string | null;
         const category = (providedCategory && providedCategory !== "AUTO")
