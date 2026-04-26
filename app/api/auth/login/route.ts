@@ -3,6 +3,7 @@ import bcrypt from "bcryptjs";
 import { prisma, prismaReady } from "../../../../lib/prisma";
 import { createSession } from "../../../../lib/auth";
 import { logAction } from "../../../../lib/audit";
+import { repairLoginSchema } from "../../../../lib/login-schema-repair";
 
 function safeMessage(error: unknown): string {
   const msg = error instanceof Error ? error.message : String(error);
@@ -33,6 +34,7 @@ export async function POST(req: Request) {
 
     try {
       await prismaReady;
+      await repairLoginSchema(prisma);
     } catch (error) {
       return NextResponse.json(
         { error: "Database is not ready", detail: safeMessage(error) },
@@ -46,6 +48,12 @@ export async function POST(req: Request) {
 
     let passwordOk = false;
     if (user) {
+      if (!user.passwordHash) {
+        return NextResponse.json(
+          { error: "User password is not initialized", detail: "This database user exists, but has no password hash. Reset or recreate this user password." },
+          { status: 500 },
+        );
+      }
       try {
         passwordOk = await bcrypt.compare(password, user.passwordHash);
       } catch (error) {
