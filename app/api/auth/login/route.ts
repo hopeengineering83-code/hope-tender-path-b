@@ -4,41 +4,84 @@ import { prisma, prismaReady } from "../../../../lib/prisma";
 import { createSession } from "../../../../lib/auth";
 import { logAction } from "../../../../lib/audit";
 
+function safeMessage(error: unknown): string {
+  const msg = error instanceof Error ? error.message : String(error);
+  return msg.replace(/postgres(?:ql)?:\/\/[^\s]+/gi, "postgresql://[redacted]").slice(0, 700);
+}
+
 export async function POST(req: Request) {
   try {
-    const { email, password } = await req.json();
-
-    if (!email || !password) {
+    let body: { email?: string; password?: string };
+    try {
+      body = await req.json();
+    } catch {
       return NextResponse.json(
-        { error: "Missing credentials" },
-        { status: 400 }
+        { error: "Invalid login request", detail: "Request body must be valid JSON." },
+        { status: 400 },
       );
     }
 
-    await prismaReady;
+    const email = String(body.email || "").trim().toLowerCase();
+    const password = String(body.password || "");
+
+    if (!email || !password) {
+      return NextResponse.json(
+        { error: "Missing credentials", detail: "Enter both email and password." },
+        { status: 400 },
+      );
+    }
+
+    try {
+      await prismaReady;
+    } catch (error) {
+      return NextResponse.json(
+        { error: "Database is not ready", detail: safeMessage(error) },
+        { status: 503 },
+      );
+    }
 
     const user = await prisma.user.findUnique({
       where: { email },
     });
 
-    if (!user || !(await bcrypt.compare(password, user.passwordHash))) {
+    let passwordOk = false;
+    if (user) {
+      try {
+        passwordOk = await bcrypt.compare(password, user.passwordHash);
+      } catch (error) {
+        console.error("Password verification failed:", safeMessage(error));
+        return NextResponse.json(
+          { error: "Password verification failed", detail: "The stored password hash is invalid for this user. Reset or recreate the user password." },
+          { status: 500 },
+        );
+      }
+    }
+
+    if (!user || !passwordOk) {
       return NextResponse.json(
-        { error: "Invalid credentials" },
-        { status: 401 }
+        { error: "Invalid credentials", detail: "The email or password is incorrect." },
+        { status: 401 },
       );
     }
 
-    await createSession(user.id);
+    try {
+      await createSession(user.id);
+    } catch (error) {
+      return NextResponse.json(
+        { error: "Session could not be created", detail: safeMessage(error) },
+        { status: 500 },
+      );
+    }
 
     await logAction({ userId: user.id, action: "LOGIN", description: `User ${user.email} logged in` });
 
     return NextResponse.json({ success: true });
   } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
+    const msg = safeMessage(error);
     console.error("Login error:", msg);
     return NextResponse.json(
-      { error: "Server error", detail: msg },
-      { status: 500 }
+      { error: "Login failed", detail: msg },
+      { status: 500 },
     );
   }
 }

@@ -6,10 +6,12 @@ export function LoginForm() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setLoading(true);
+    setError("");
 
     try {
       const res = await fetch("/api/auth/login", {
@@ -17,18 +19,20 @@ export function LoginForm() {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ email: email.trim().toLowerCase(), password }),
       });
+
+      const data = await res.json().catch(() => null) as { error?: string; detail?: string } | null;
 
       if (res.ok) {
         window.location.href = "/dashboard";
         return;
       }
 
-      const data = await res.json().catch(() => null);
-      alert(data?.error || "Login failed");
-    } catch {
-      alert("Login failed");
+      const detail = data?.detail ? ` — ${data.detail}` : "";
+      setError(`${data?.error || "Login failed"}${detail}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Login failed. Check your connection and try again.");
     } finally {
       setLoading(false);
     }
@@ -36,6 +40,12 @@ export function LoginForm() {
 
   return (
     <form onSubmit={handleSubmit} className="space-y-5">
+      {error && (
+        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm leading-5 text-red-700">
+          {error}
+        </div>
+      )}
+
       <div>
         <label className="mb-2 block text-sm font-medium">Email</label>
         <input
