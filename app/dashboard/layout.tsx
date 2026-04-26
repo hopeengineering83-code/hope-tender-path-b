@@ -21,7 +21,8 @@ const NAV_GROUPS_BASE = [
     roles: ["ADMIN", "PROPOSAL_MANAGER"] as string[] | null,
     links: [
       { href: "/dashboard/company", label: "Knowledge Vault", icon: "🏢" },
-      { href: "/dashboard/company/review", label: "Knowledge Review", icon: "🔍" },
+      { href: "/dashboard/company/review-board", label: "Review Board", icon: "✅" },
+      { href: "/dashboard/company/review", label: "Knowledge Diagnostics", icon: "🔍" },
       { href: "/dashboard/assets", label: "Brand Assets", icon: "🖼️" },
       { href: "/dashboard/setup", label: "Setup Wizard", icon: "✨" },
       { href: "/dashboard/settings", label: "Settings", icon: "⚙️" },
@@ -64,7 +65,6 @@ export default async function DashboardLayout({ children }: { children: ReactNod
 
   return (
     <div className="min-h-screen bg-slate-50 lg:flex">
-      {/* Mobile header bar */}
       <div className="flex items-center justify-between border-b bg-white px-4 py-3 lg:hidden">
         <div>
           <p className="text-sm font-bold text-slate-900">Hope Tender</p>
@@ -72,7 +72,6 @@ export default async function DashboardLayout({ children }: { children: ReactNod
         <MobileSidebarToggle groups={groups} user={{ email: user.email, role: user.role, name: user.name }} company={company} />
       </div>
 
-      {/* Desktop sidebar */}
       <aside className="hidden lg:flex lg:min-h-screen lg:w-72 lg:flex-col lg:border-r lg:bg-white">
         <div className="border-b px-5 py-5">
           <h1 className="text-base font-bold text-slate-900 leading-tight">Hope Tender</h1>
