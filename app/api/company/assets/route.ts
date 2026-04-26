@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getSession } from "../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../lib/prisma";
 import { logAction } from "../../../../lib/audit";
+import { ensureCompanyForUser } from "../../../../lib/company-workspace";
 
 const VALID_TYPES = ["LETTERHEAD", "LOGO", "HEADER", "FOOTER", "SIGNATURE", "STAMP"];
 
@@ -10,8 +11,7 @@ export async function GET(_req: Request) {
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   await prismaReady;
 
-  const company = await prisma.company.findUnique({ where: { userId } });
-  if (!company) return NextResponse.json({ assets: [] });
+  const company = await ensureCompanyForUser(prisma, userId);
 
   const assets = await prisma.companyAsset.findMany({
     where: { companyId: company.id },
@@ -30,8 +30,7 @@ export async function POST(req: Request) {
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   await prismaReady;
 
-  const company = await prisma.company.findUnique({ where: { userId } });
-  if (!company) return NextResponse.json({ error: "Company not found" }, { status: 404 });
+  const company = await ensureCompanyForUser(prisma, userId);
 
   const formData = await req.formData();
   const file = formData.get("file");
@@ -90,8 +89,7 @@ export async function DELETE(req: Request) {
   const id = searchParams.get("id");
   if (!id) return NextResponse.json({ error: "Missing id" }, { status: 400 });
 
-  const company = await prisma.company.findUnique({ where: { userId } });
-  if (!company) return NextResponse.json({ error: "Company not found" }, { status: 404 });
+  const company = await ensureCompanyForUser(prisma, userId);
 
   const asset = await prisma.companyAsset.findFirst({ where: { id, companyId: company.id } });
   if (!asset) return NextResponse.json({ error: "Asset not found" }, { status: 404 });
