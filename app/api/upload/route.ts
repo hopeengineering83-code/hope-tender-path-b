@@ -6,6 +6,7 @@ import { logAction } from "../../../lib/audit";
 import { ensureCompanyForUser } from "../../../lib/company-workspace";
 import { importCompanyKnowledgeFromDocuments } from "../../../lib/company-knowledge-import-safe";
 import { runTenderEngine } from "../../../lib/engine/run-tender-engine";
+import { runCompanyKnowledgeSafetyImport } from "../../../lib/company-knowledge-safety-import";
 
 const MAX_BYTES = 10 * 1024 * 1024;
 
@@ -155,20 +156,22 @@ export async function POST(req: Request) {
       }
     }
 
-    let knowledgeImport: Awaited<ReturnType<typeof importCompanyKnowledgeFromDocuments>> | null = null;
+    let knowledgeImport: (Awaited<ReturnType<typeof importCompanyKnowledgeFromDocuments>> & { safetyImport?: Awaited<ReturnType<typeof runCompanyKnowledgeSafetyImport>> }) | null = null;
     let knowledgeImportError: string | null = null;
     let tenderEngine: { success: boolean; tenderId: string; status?: string | null; stage?: string | null; readinessScore?: number | null } | null = null;
     let tenderEngineError: string | null = null;
 
     if (uploadedCompanyId && companyDocsUploaded > 0 && companyDocsWithUsableText > 0) {
       try {
-        knowledgeImport = await importCompanyKnowledgeFromDocuments(uploadedCompanyId);
+        const primaryImport = await importCompanyKnowledgeFromDocuments(uploadedCompanyId);
+        const safetyImport = await runCompanyKnowledgeSafetyImport(prisma, uploadedCompanyId);
+        knowledgeImport = { ...primaryImport, safetyImport };
         await logAction({
           userId,
           action: "COMPANY_KNOWLEDGE_REPAIR",
           entityType: "Company",
           entityId: uploadedCompanyId,
-          description: `Auto-imported company knowledge after upload: ${knowledgeImport.expertsCreated} experts and ${knowledgeImport.projectsCreated} projects created`,
+          description: `Auto-imported company knowledge after upload: ${primaryImport.expertsCreated + safetyImport.expertsCreated} experts and ${primaryImport.projectsCreated + safetyImport.projectsCreated} projects created`,
           metadata: knowledgeImport,
         });
       } catch (err) {
