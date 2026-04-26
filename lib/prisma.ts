@@ -422,19 +422,7 @@ async function bootstrap(client: PrismaClient): Promise<void> {
     FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE SET NULL
   )`);
 
-  // ── indexes ───────────────────────────────────────────────────────────────
-  await client.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "CompanyDocument_companyId_idx" ON "CompanyDocument"("companyId")`);
-  await client.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "CompanyAsset_companyId_idx" ON "CompanyAsset"("companyId")`);
-  await client.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "Expert_companyId_idx" ON "Expert"("companyId")`);
-  await client.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "Expert_trustLevel_idx" ON "Expert"("trustLevel")`);
-  await client.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "Project_companyId_idx" ON "Project"("companyId")`);
-  await client.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "Project_trustLevel_idx" ON "Project"("trustLevel")`);
-  await client.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "TenderExpertMatch_tenderId_idx" ON "TenderExpertMatch"("tenderId")`);
-  await client.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "TenderProjectMatch_tenderId_idx" ON "TenderProjectMatch"("tenderId")`);
-  await client.$executeRawUnsafe(`CREATE UNIQUE INDEX IF NOT EXISTS "TenderExpertMatch_tenderId_expertId_key" ON "TenderExpertMatch"("tenderId", "expertId")`);
-  await client.$executeRawUnsafe(`CREATE UNIQUE INDEX IF NOT EXISTS "TenderProjectMatch_tenderId_projectId_key" ON "TenderProjectMatch"("tenderId", "projectId")`);
-
-  // ── additive column migrations ────────────────────────────────────────────
+  // ── additive column migrations (run BEFORE indexes so they always execute) ──
   await ensureColumn(client, "User", "name", "TEXT");
   await ensureColumn(client, "Expert", "trustLevel", "TEXT NOT NULL DEFAULT 'REGEX_DRAFT'");
   await ensureColumn(client, "Expert", "reviewedBy", "TEXT");
@@ -453,6 +441,25 @@ async function bootstrap(client: PrismaClient): Promise<void> {
   await ensureColumn(client, "GeneratedDocument", "draftExpertCount", "INTEGER DEFAULT 0");
   await ensureColumn(client, "GeneratedDocument", "reviewedProjectCount", "INTEGER DEFAULT 0");
   await ensureColumn(client, "GeneratedDocument", "draftProjectCount", "INTEGER DEFAULT 0");
+
+  // ── indexes (each wrapped so one failure never blocks the rest) ──────────
+  const idxStatements = [
+    `CREATE INDEX IF NOT EXISTS "CompanyDocument_companyId_idx" ON "CompanyDocument"("companyId")`,
+    `CREATE INDEX IF NOT EXISTS "CompanyAsset_companyId_idx" ON "CompanyAsset"("companyId")`,
+    `CREATE INDEX IF NOT EXISTS "Expert_companyId_idx" ON "Expert"("companyId")`,
+    `CREATE INDEX IF NOT EXISTS "Expert_trustLevel_idx" ON "Expert"("trustLevel")`,
+    `CREATE INDEX IF NOT EXISTS "Project_companyId_idx" ON "Project"("companyId")`,
+    `CREATE INDEX IF NOT EXISTS "Project_trustLevel_idx" ON "Project"("trustLevel")`,
+    `CREATE INDEX IF NOT EXISTS "TenderExpertMatch_tenderId_idx" ON "TenderExpertMatch"("tenderId")`,
+    `CREATE INDEX IF NOT EXISTS "TenderProjectMatch_tenderId_idx" ON "TenderProjectMatch"("tenderId")`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS "TenderExpertMatch_tenderId_expertId_key" ON "TenderExpertMatch"("tenderId", "expertId")`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS "TenderProjectMatch_tenderId_projectId_key" ON "TenderProjectMatch"("tenderId", "projectId")`,
+  ];
+  for (const sql of idxStatements) {
+    try { await client.$executeRawUnsafe(sql); } catch (e) {
+      console.warn("[bootstrap] index skipped:", e instanceof Error ? e.message : e);
+    }
+  }
 
   // ── seed roles ────────────────────────────────────────────────────────────
   const roleCount = await client.role.count();
