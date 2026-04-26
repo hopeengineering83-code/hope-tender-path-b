@@ -30,27 +30,12 @@ export type AIKnowledgeExtraction = {
   warnings: string[];
 };
 
-const MAX_CHARS_PER_CHUNK = 12000;
-const MAX_CHUNKS_PER_REPAIR = 10;
+const MAX_CHARS_PER_CHUNK = 12_000;
+const MAX_CHUNKS = 10;
+const MIN_CONFIDENCE = 0.55;
 
 function clean(value: string | null | undefined): string {
   return (value ?? "").replace(/\s+/g, " ").trim();
-}
-
-function chunkText(text: string): string[] {
-  const normalized = text.replace(/\r/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
-  const chunks: string[] = [];
-  for (let i = 0; i < normalized.length && chunks.length < MAX_CHUNKS_PER_REPAIR; i += MAX_CHARS_PER_CHUNK) {
-    chunks.push(normalized.slice(i, i + MAX_CHARS_PER_CHUNK));
-  }
-  return chunks;
-}
-
-function parseJsonObject(text: string): unknown {
-  const first = text.indexOf("{");
-  const last = text.lastIndexOf("}");
-  if (first < 0 || last <= first) throw new Error("AI extraction did not return JSON");
-  return JSON.parse(text.slice(first, last + 1));
 }
 
 function normalizeStringArray(value: unknown): string[] {
@@ -70,6 +55,15 @@ function normalizeNumber(value: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+function parseJsonFromResponse(text: string): unknown {
+  const first = text.indexOf("{");
+  const last = text.lastIndexOf("}");
+  if (first >= 0 && last > first) {
+    try { return JSON.parse(text.slice(first, last + 1)); } catch { /* fall through */ }
+  }
+  throw new Error("AI extraction did not return valid JSON");
+}
+
 function normalizeExtraction(value: unknown): AIKnowledgeExtraction {
   const raw = value as Record<string, unknown>;
   const experts = Array.isArray(raw.experts) ? raw.experts : [];
@@ -87,7 +81,7 @@ function normalizeExtraction(value: unknown): AIKnowledgeExtraction {
         sourceQuote: clean(String(obj.sourceQuote ?? "")).slice(0, 1200),
         confidence: normalizeConfidence(obj.confidence),
       };
-    }).filter((expert) => expert.fullName.length >= 5 && expert.sourceQuote.length >= 10 && expert.confidence >= 0.55),
+    }).filter((e) => e.fullName.length >= 5 && e.sourceQuote.length >= 10 && e.confidence >= MIN_CONFIDENCE),
     projects: projects.map((item) => {
       const obj = item as Record<string, unknown>;
       return {
@@ -102,7 +96,7 @@ function normalizeExtraction(value: unknown): AIKnowledgeExtraction {
         sourceQuote: clean(String(obj.sourceQuote ?? "")).slice(0, 1600),
         confidence: normalizeConfidence(obj.confidence),
       };
-    }).filter((project) => project.name.length >= 8 && project.sourceQuote.length >= 10 && project.confidence >= 0.55),
+    }).filter((p) => p.name.length >= 8 && p.sourceQuote.length >= 10 && p.confidence >= MIN_CONFIDENCE),
     warnings: normalizeStringArray(raw.warnings),
   };
 }
@@ -117,7 +111,16 @@ function merge<T extends { confidence: number }>(items: T[], keyFn: (item: T) =>
   return [...map.values()];
 }
 
-export function isCompanyKnowledgeAIEnabled() {
+function chunkText(text: string): string[] {
+  const normalized = text.replace(/\r/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+  const chunks: string[] = [];
+  for (let i = 0; i < normalized.length && chunks.length < MAX_CHUNKS; i += MAX_CHARS_PER_CHUNK) {
+    chunks.push(normalized.slice(i, i + MAX_CHARS_PER_CHUNK));
+  }
+  return chunks;
+}
+
+export function isCompanyKnowledgeAIEnabled(): boolean {
   return Boolean(process.env.GEMINI_API_KEY);
 }
 
@@ -126,66 +129,64 @@ export async function extractCompanyKnowledgeWithAI(params: {
   projectText: string;
 }): Promise<AIKnowledgeExtraction> {
   const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) return { experts: [], projects: [], warnings: ["GEMINI_API_KEY is not configured; AI extraction skipped."] };
+  if (!apiKey) {
+    return { experts: [], projects: [], warnings: ["GEMINI_API_KEY is not configured; AI extraction skipped."] };
+  }
 
   const client = new GoogleGenerativeAI(apiKey);
   const model = client.getGenerativeModel({ model: "gemini-1.5-pro" });
 
-  const chunks = [
-    ...chunkText(params.expertText).map((content, index) => ({ kind: "EXPERT_CV", index, content })),
-    ...chunkText(params.projectText).map((content, index) => ({ kind: "PROJECT_REFERENCE", index, content })),
-  ].slice(0, MAX_CHUNKS_PER_REPAIR);
+  const expertChunks = chunkText(params.expertText).map((content, index) => ({ kind: "EXPERT_CV" as const, index, content }));
+  const projectChunks = chunkText(params.projectText).map((content, index) => ({ kind: "PROJECT_REFERENCE" as const, index, content }));
+  const chunks = [...expertChunks, ...projectChunks].slice(0, MAX_CHUNKS);
 
   const allExperts: AIExpertDraft[] = [];
   const allProjects: AIProjectDraft[] = [];
   const warnings: string[] = [];
 
   for (const chunk of chunks) {
-    const prompt = `You are a strict tender company-knowledge extraction engine.
+    const isExpertChunk = chunk.kind === "EXPERT_CV";
+    const prompt = `You are a strict tender company-knowledge extraction engine for an engineering consultancy.
 
-Extract only facts that are explicitly present in the supplied text. Do not infer, guess, complete, rewrite, or invent anything.
+Extract ONLY facts explicitly present in the text. Never infer, guess, or invent anything.
 
-Return only valid JSON with this exact structure:
+Return ONLY valid JSON with this structure:
 {
-  "experts": [
+  "experts": [${isExpertChunk ? `
     {
-      "fullName": "exact expert/person name",
-      "title": "exact title/position if present, else null",
+      "fullName": "exact name",
+      "title": "exact title or null",
       "yearsExperience": number or null,
       "disciplines": ["explicit disciplines only"],
       "sectors": ["explicit sectors only"],
       "certifications": ["explicit certifications only"],
-      "sourceQuote": "short exact quote proving this record",
-      "confidence": number from 0 to 1
-    }
+      "sourceQuote": "verbatim quote proving this record (≤500 chars)",
+      "confidence": 0.0-1.0
+    }` : ""}
   ],
-  "projects": [
+  "projects": [${!isExpertChunk ? `
     {
-      "name": "exact project/assignment name",
-      "clientName": "exact client if present, else null",
-      "country": "exact country if present, else null",
-      "sector": "explicit sector/type if present, else null",
+      "name": "exact project name",
+      "clientName": "exact client or null",
+      "country": "exact country or null",
+      "sector": "explicit sector or null",
       "serviceAreas": ["explicit services only"],
       "contractValue": number or null,
-      "currency": "currency code if present, else null",
-      "summary": "one factual sentence using only the text, else null",
-      "sourceQuote": "short exact quote proving this record",
-      "confidence": number from 0 to 1
-    }
+      "currency": "currency code or null",
+      "summary": "one factual sentence or null",
+      "sourceQuote": "verbatim quote proving this record (≤500 chars)",
+      "confidence": 0.0-1.0
+    }` : ""}
   ],
-  "warnings": ["anything important that could not be safely extracted"]
+  "warnings": ["anything that could not be safely extracted"]
 }
 
-Hard rules:
-- If the chunk is CV text, extract experts only unless project records are clearly present.
-- If the chunk is project portfolio/reference text, extract projects only unless expert CV records are clearly present.
-- Do not use project names as expert names.
-- Do not use expert names as project names.
-- Exclude records if you cannot quote evidence for the name.
-- Confidence must be below 0.55 for uncertain records.
+Rules:
+- ${isExpertChunk ? "Extract EXPERTS only from this CV chunk. Leave projects array empty." : "Extract PROJECTS only from this portfolio chunk. Leave experts array empty."}
+- Exclude records where confidence < 0.55 or sourceQuote is missing.
+- Do NOT mix expert names and project names.
 
-CHUNK TYPE: ${chunk.kind}
-CHUNK INDEX: ${chunk.index}
+CHUNK TYPE: ${chunk.kind} (index ${chunk.index})
 
 TEXT:
 ${chunk.content}`;
@@ -193,7 +194,7 @@ ${chunk.content}`;
     try {
       const result = await model.generateContent(prompt);
       const text = result.response.text();
-      const normalized = normalizeExtraction(parseJsonObject(text));
+      const normalized = normalizeExtraction(parseJsonFromResponse(text));
       allExperts.push(...normalized.experts);
       allProjects.push(...normalized.projects);
       warnings.push(...normalized.warnings);

@@ -91,7 +91,7 @@ export async function GET() {
   const actionItems: Array<{ severity: string; message: string }> = [];
 
   if (!dbOk) actionItems.push({ severity: "CRITICAL", message: `Database connection failed: ${dbError}` });
-  if (!isAIConfigured()) actionItems.push({ severity: "HIGH", message: "GEMINI_API_KEY not set — AI extraction disabled. All records will be REGEX_DRAFT only." });
+  if (!isAIConfigured()) actionItems.push({ severity: "HIGH", message: "GEMINI_API_KEY not set — AI extraction disabled. All records will be REGEX_DRAFT only and cannot be promoted to trusted status." });
   if (expertsByTrust.REVIEWED === 0 && experts.length > 0) actionItems.push({ severity: "HIGH", message: `${experts.length} expert(s) imported but none reviewed. Proposals will use unverified draft data.` });
   if (projectsByTrust.REVIEWED === 0 && projects.length > 0) actionItems.push({ severity: "HIGH", message: `${projects.length} project(s) imported but none reviewed. Proposals will use unverified draft data.` });
   if (docsNoText > 0) actionItems.push({ severity: "MEDIUM", message: `${docsNoText} document(s) have no extracted text. Run repair to re-extract.` });
