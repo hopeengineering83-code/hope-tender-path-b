@@ -351,12 +351,94 @@ function buildDocxFromParagraphs(
 }
 
 export async function generateTenderDocuments(tenderId: string, userId: string): Promise<void> {
+  // ── Pre-flight: block if mandatory compliance gaps are unresolved ───────────
+  // Requirement: Block final generation if mandatory gaps exist (Req. 8).
+  const blockingGaps = await prisma.complianceGap.findMany({
+    where: { tenderId, isResolved: false, severity: { in: ["CRITICAL", "HIGH"] } },
+    select: { title: true, severity: true },
+  });
+  if (blockingGaps.length > 0) {
+    throw new Error(
+      `Generation blocked: ${blockingGaps.length} unresolved CRITICAL/HIGH compliance gap(s) must be ` +
+      `addressed before documents can be generated. ` +
+      `Resolve these in the Compliance tab first: ${blockingGaps.map((g) => g.title).join("; ")}.`,
+    );
+  }
+
+  // ── Pre-flight: enforce trust levels on selected experts and projects ───────
+  // Requirement: Generated documents use only source-supported facts (Req. 9).
+  // Requirement: Never trust imported records until reviewed (Req. 4).
+  // REGEX_DRAFT = pattern-extracted, unreliable → hard block.
+  // AI_DRAFT = Claude-extracted, unreviewed → allowed with source annotation.
+  // REVIEWED = human-verified → fully trusted, used preferentially.
+  const rawExpertMatches = await prisma.tenderExpertMatch.findMany({
+    where: { tenderId, isSelected: true },
+    include: {
+      expert: {
+        select: {
+          id: true, fullName: true, title: true, email: true, phone: true,
+          yearsExperience: true, disciplines: true, sectors: true,
+          certifications: true, profile: true, trustLevel: true,
+        },
+      },
+    },
+  });
+  const rawProjectMatches = await prisma.tenderProjectMatch.findMany({
+    where: { tenderId, isSelected: true },
+    include: {
+      project: {
+        select: {
+          id: true, name: true, clientName: true, country: true, sector: true,
+          serviceAreas: true, contractValue: true, currency: true, summary: true,
+          startDate: true, endDate: true, trustLevel: true,
+        },
+      },
+    },
+  });
+
+  const regexDraftExperts = rawExpertMatches.filter(
+    (m) => !m.expert.trustLevel || m.expert.trustLevel === "REGEX_DRAFT",
+  );
+  if (regexDraftExperts.length > 0) {
+    throw new Error(
+      `Generation blocked: ${regexDraftExperts.length} selected expert(s) are REGEX_DRAFT — ` +
+      `pattern-extracted records are not reliable enough for final proposal documents. ` +
+      `Open Company Knowledge → Experts and review: ${regexDraftExperts.map((m) => m.expert.fullName).join(", ")}.`,
+    );
+  }
+
+  const regexDraftProjects = rawProjectMatches.filter(
+    (m) => !m.project.trustLevel || m.project.trustLevel === "REGEX_DRAFT",
+  );
+  if (regexDraftProjects.length > 0) {
+    throw new Error(
+      `Generation blocked: ${regexDraftProjects.length} selected project(s) are REGEX_DRAFT — ` +
+      `pattern-extracted records are not reliable enough for final proposal documents. ` +
+      `Open Company Knowledge → Projects and review: ${regexDraftProjects.map((m) => m.project.name).join(", ")}.`,
+    );
+  }
+
+  // Order: REVIEWED first (authoritative), then AI_DRAFT (Claude-extracted, unreviewed)
+  // Requirement: Run tender matching using reviewed knowledge first (Req. 7).
+  const reviewedExperts = rawExpertMatches
+    .filter((m) => m.expert.trustLevel === "REVIEWED")
+    .map((m) => m.expert);
+  const draftExperts = rawExpertMatches
+    .filter((m) => m.expert.trustLevel === "AI_DRAFT")
+    .map((m) => m.expert);
+  const reviewedProjects = rawProjectMatches
+    .filter((m) => m.project.trustLevel === "REVIEWED")
+    .map((m) => m.project);
+  const draftProjects = rawProjectMatches
+    .filter((m) => m.project.trustLevel === "AI_DRAFT")
+    .map((m) => m.project);
+
+  const hasDraftSources = draftExperts.length > 0 || draftProjects.length > 0;
+
   const tender = await prisma.tender.findFirst({
     where: { id: tenderId, userId },
     include: {
       requirements: true,
-      expertMatches: { where: { isSelected: true }, include: { expert: true } },
-      projectMatches: { where: { isSelected: true }, include: { project: true } },
       generatedDocuments: {
         select: { id: true, name: true, documentType: true, exactFileName: true, exactOrder: true, generationStatus: true, contentSummary: true },
       },
@@ -368,8 +450,9 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   const company = await prisma.company.findUnique({ where: { userId } });
   if (!company) throw new Error("Company not found");
 
-  const selectedExperts = tender.expertMatches.map((m) => m.expert);
-  const selectedProjects = tender.projectMatches.map((m) => m.project);
+  // Reviewed first, then AI_DRAFT — already separated above
+  const selectedExperts = [...reviewedExperts, ...draftExperts];
+  const selectedProjects = [...reviewedProjects, ...draftProjects];
 
   // Determine what documents to generate based on requirements
   const plannedDocs = tender.generatedDocuments.filter((d) => d.generationStatus === "PLANNED");
@@ -396,6 +479,29 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   const letterheadParas = buildLetterheadHeader(company);
   const coverParas = buildCoverSection(tender.title, tender.reference, tender.clientName, company.name);
 
+  // Source-trust annotation paragraph — added after cover on each document
+  // Requirement 9: Generated documents must use only source-supported facts.
+  const sourceTrustNote = hasDraftSources
+    ? [
+        new Paragraph({
+          children: [
+            new TextRun({
+              text:
+                `⚠ INTERNAL NOTE (remove before submission): This document was generated using ` +
+                `${reviewedExperts.length} REVIEWED and ${draftExperts.length} AI_DRAFT expert source(s); ` +
+                `${reviewedProjects.length} REVIEWED and ${draftProjects.length} AI_DRAFT project source(s). ` +
+                `AI_DRAFT records are Claude-extracted but have not been human-reviewed. ` +
+                `Verify all expert profiles and project details before submitting to client.`,
+              color: "CC4400",
+              italics: true,
+              size: 18,
+            }),
+          ],
+          spacing: { before: 80, after: 120 },
+        }),
+      ]
+    : [];
+
   let expertIdx = 0;
   let projectIdx = 0;
 
@@ -412,13 +518,13 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
           projects: selectedProjects,
           requirements: tender.requirements,
         });
-        contentParagraphs = [...letterheadParas, ...coverParas, ...proposalContent];
+        contentParagraphs = [...letterheadParas, ...coverParas, ...sourceTrustNote, ...proposalContent];
         docTitle = doc.name;
 
       } else if (doc.documentType === "EXPERT" || doc.name.toLowerCase().includes("cv")) {
         const expert = selectedExperts[expertIdx] ?? selectedExperts[expertIdx % Math.max(selectedExperts.length, 1)];
         if (expert) {
-          contentParagraphs = [...letterheadParas, ...buildCVContent(expert)];
+          contentParagraphs = [...letterheadParas, ...sourceTrustNote, ...buildCVContent(expert)];
           docTitle = `CV — ${expert.fullName}`;
           expertIdx++;
         }
@@ -426,7 +532,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
       } else if (doc.documentType === "PROJECT_EXPERIENCE") {
         const project = selectedProjects[projectIdx] ?? selectedProjects[projectIdx % Math.max(selectedProjects.length, 1)];
         if (project) {
-          contentParagraphs = [...letterheadParas, ...buildProjectReferenceContent(project)];
+          contentParagraphs = [...letterheadParas, ...sourceTrustNote, ...buildProjectReferenceContent(project)];
           docTitle = `Project Reference — ${project.name}`;
           projectIdx++;
         }
@@ -468,7 +574,15 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
             exactFileName,
             generationStatus: "GENERATED",
             validationStatus: "PENDING",
-            contentSummary: `Generated ${new Date().toLocaleDateString()} — ${contentParagraphs.length} sections`,
+            reviewedExpertCount: reviewedExperts.length,
+            draftExpertCount: draftExperts.length,
+            reviewedProjectCount: reviewedProjects.length,
+            draftProjectCount: draftProjects.length,
+            contentSummary:
+              `Generated ${new Date().toLocaleDateString()} — ${contentParagraphs.length} sections` +
+              (hasDraftSources
+                ? ` | ⚠ Contains ${draftExperts.length + draftProjects.length} AI_DRAFT source(s) — review before submitting`
+                : " | ✓ All sources REVIEWED"),
           },
         });
       } else {
@@ -483,7 +597,15 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
             fileContent,
             generationStatus: "GENERATED",
             validationStatus: "PENDING",
-            contentSummary: `Generated ${new Date().toLocaleDateString()} — ${contentParagraphs.length} sections`,
+            reviewedExpertCount: reviewedExperts.length,
+            draftExpertCount: draftExperts.length,
+            reviewedProjectCount: reviewedProjects.length,
+            draftProjectCount: draftProjects.length,
+            contentSummary:
+              `Generated ${new Date().toLocaleDateString()} — ${contentParagraphs.length} sections` +
+              (hasDraftSources
+                ? ` | ⚠ Contains ${draftExperts.length + draftProjects.length} AI_DRAFT source(s) — review before submitting`
+                : " | ✓ All sources REVIEWED"),
           },
         });
       }

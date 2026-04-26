@@ -3,16 +3,25 @@
  * Imported at the top of lib/prisma.ts so it runs on every cold start.
  * Fails LOUDLY — throws at module load time so the process crashes with
  * a clear message rather than silently degrading.
+ *
+ * ARCHITECTURE: ANTHROPIC_API_KEY is required in ALL environments because:
+ *   - Without it, every imported expert/project is classified as REGEX_DRAFT
+ *   - REGEX_DRAFT records are BLOCKED from use in final proposal generation
+ *   - A deployment without the key can never complete the proposal workflow
  */
 
 const REQUIRED_VARS: Array<{ name: string; description: string }> = [
   { name: "DATABASE_URL", description: "PostgreSQL connection string (postgresql://...)" },
   { name: "SESSION_SECRET", description: "At least 32-character random string for HMAC session signing" },
+  {
+    name: "ANTHROPIC_API_KEY",
+    description:
+      "Anthropic API key (sk-ant-...) — required for AI extraction. Without this, all imported records " +
+      "are REGEX_DRAFT and will be BLOCKED from final proposal generation.",
+  },
 ];
 
-const PRODUCTION_REQUIRED: Array<{ name: string; description: string }> = [
-  { name: "ANTHROPIC_API_KEY", description: "Anthropic API key (sk-ant-...) — required for AI extraction and proposal generation" },
-];
+const PRODUCTION_REQUIRED: Array<{ name: string; description: string }> = [];
 
 const INSECURE_DEFAULTS: Record<string, string> = {
   SESSION_SECRET: "hope-tender-path-built-in-secret-v1",
@@ -38,14 +47,6 @@ export function checkEnv(): void {
         missing.push(`  ✗ ${name}: ${description}`);
       }
     }
-  }
-
-  // Also warn loudly in any environment if ANTHROPIC_API_KEY is absent
-  if (!isProd && !process.env.ANTHROPIC_API_KEY) {
-    console.warn(
-      "\n⚠  ANTHROPIC_API_KEY is not set. AI extraction will be disabled and all records will be REGEX_DRAFT only.\n" +
-      "   Set ANTHROPIC_API_KEY in .env.local to enable AI-powered knowledge extraction.\n",
-    );
   }
 
   if (missing.length > 0) {

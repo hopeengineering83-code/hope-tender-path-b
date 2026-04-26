@@ -55,6 +55,79 @@ export async function validateTender(tenderId: string): Promise<ValidationReport
     };
   }
 
+  // ── Trust-level enforcement: REVIEWED knowledge is required for export ────
+  // Rule 1: REGEX_DRAFT records are pattern-extracted and unreliable — BLOCK generation.
+  // Rule 2: AI_DRAFT records (Claude-extracted) must be reviewed before final export — WARN.
+  // Rule 3: Generation should preferentially use REVIEWED records — surface the count.
+
+  const selectedExpertIds = tender.expertMatches.map((m) => m.expertId);
+  const selectedProjectIds = tender.projectMatches.map((m) => m.projectId);
+
+  if (selectedExpertIds.length > 0) {
+    const experts = await prisma.expert.findMany({
+      where: { id: { in: selectedExpertIds } },
+      select: { id: true, fullName: true, trustLevel: true },
+    });
+    const regexDraft = experts.filter((e) => !e.trustLevel || e.trustLevel === "REGEX_DRAFT");
+    const reviewed = experts.filter((e) => e.trustLevel === "REVIEWED");
+
+    if (regexDraft.length > 0) {
+      issues.push({
+        code: "REGEX_DRAFT_EXPERT_SELECTED",
+        severity: "BLOCK",
+        message:
+          `${regexDraft.length} selected expert(s) are REGEX_DRAFT — pattern-extracted records with low reliability that cannot be ` +
+          `used in final proposal documents. Open Company Knowledge → Experts, review each record, ` +
+          `and promote them to AI_DRAFT (re-run AI extraction) or REVIEWED before generating. ` +
+          `Affected: ${regexDraft.map((e) => e.fullName).join(", ")}.`,
+      });
+    }
+
+    if (reviewed.length === 0 && experts.length > 0) {
+      issues.push({
+        code: "NO_REVIEWED_EXPERTS",
+        severity: "WARN",
+        message:
+          `None of the ${experts.length} selected expert(s) have been marked REVIEWED. ` +
+          `AI_DRAFT experts (Claude-extracted) are permitted for generation but may contain errors. ` +
+          `Promote at least one expert to REVIEWED status before final client submission.`,
+      });
+    }
+  }
+
+  if (selectedProjectIds.length > 0) {
+    const projects = await prisma.project.findMany({
+      where: { id: { in: selectedProjectIds } },
+      select: { id: true, name: true, trustLevel: true },
+    });
+    const regexDraft = projects.filter((p) => !p.trustLevel || p.trustLevel === "REGEX_DRAFT");
+    const reviewed = projects.filter((p) => p.trustLevel === "REVIEWED");
+
+    if (regexDraft.length > 0) {
+      issues.push({
+        code: "REGEX_DRAFT_PROJECT_SELECTED",
+        severity: "BLOCK",
+        message:
+          `${regexDraft.length} selected project(s) are REGEX_DRAFT — pattern-extracted records with low reliability that cannot be ` +
+          `used in final proposal documents. Open Company Knowledge → Projects, review each record, ` +
+          `and promote them to AI_DRAFT (re-run AI extraction) or REVIEWED before generating. ` +
+          `Affected: ${regexDraft.map((p) => p.name).join(", ")}.`,
+      });
+    }
+
+    if (reviewed.length === 0 && projects.length > 0) {
+      issues.push({
+        code: "NO_REVIEWED_PROJECTS",
+        severity: "WARN",
+        message:
+          `None of the ${projects.length} selected project(s) have been marked REVIEWED. ` +
+          `AI_DRAFT projects (Claude-extracted) are permitted for generation but may contain errors. ` +
+          `Promote at least one project to REVIEWED status before final client submission.`,
+      });
+    }
+  }
+  // ── End trust-level enforcement ────────────────────────────────────────────
+
   const generatedDocs = tender.generatedDocuments
     .filter((d) => d.generationStatus === "GENERATED")
     .sort((a, b) => (a.exactOrder ?? Number.MAX_SAFE_INTEGER) - (b.exactOrder ?? Number.MAX_SAFE_INTEGER));

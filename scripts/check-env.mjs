@@ -10,6 +10,13 @@
  */
 
 // ── Required in ALL environments ─────────────────────────────────────────────
+//
+// ARCHITECTURE NOTE: ANTHROPIC_API_KEY is always required because without it
+// the AI extraction pipeline is disabled and every imported expert/project is
+// classified as REGEX_DRAFT. REGEX_DRAFT records are *blocked* from use in final
+// proposal generation (by design). This means a deployment without the API key
+// can never complete the full proposal workflow — it is architecturally broken.
+//
 const ALWAYS_REQUIRED = [
   {
     name: "DATABASE_URL",
@@ -36,19 +43,20 @@ const ALWAYS_REQUIRED = [
       return null;
     },
   },
-];
-
-// ── Required in production only ───────────────────────────────────────────────
-const PRODUCTION_REQUIRED = [
   {
     name: "ANTHROPIC_API_KEY",
-    description: "Anthropic API key (sk-ant-...) — required for AI extraction and proposal generation",
+    description:
+      "Anthropic API key (sk-ant-...) — required for AI extraction (CVs → experts, portfolios → projects). " +
+      "Without this key ALL imported records are REGEX_DRAFT, which is blocked from final proposal generation.",
     validate: (v) => {
       if (!v.startsWith("sk-ant-")) return `Expected an Anthropic key starting with sk-ant-. Got: "${v.slice(0, 10)}..."`;
       return null;
     },
   },
 ];
+
+// ── No production-only requirements beyond the above ─────────────────────────
+const PRODUCTION_REQUIRED = [];
 
 // ─── Run checks ───────────────────────────────────────────────────────────────
 

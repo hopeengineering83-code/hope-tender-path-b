@@ -273,12 +273,33 @@ export async function importCompanyKnowledgeFromDocuments(companyId: string): Pr
         projectText: projectTextPool,
       });
 
+      // ── Post-extraction category enforcement ────────────────────────────────
+      // Requirement 6: Experts and projects cannot be mixed.
+      // Even though the AI prompt is category-scoped, Claude occasionally extracts
+      // cross-category records (e.g. a project entry from a CV document).
+      // We drop them here and log a warning rather than silently corrupting the DB.
+      const droppedExperts: string[] = [];
+      const droppedProjects: string[] = [];
+
       // Map extracted experts back to the source document they most likely came from
       for (const e of aiResult.experts) {
         // Best-effort source attribution: find the expert doc whose text contains the sourceQuote
         const sourceDoc = expertDocs.find((d) =>
           e.sourceQuote && (d.extractedText ?? "").toLowerCase().includes(e.sourceQuote.slice(0, 60).toLowerCase()),
         ) ?? expertDocs[0];
+
+        // Category guard: if this expert cannot be attributed to an expert document, drop it
+        if (!sourceDoc) {
+          droppedExperts.push(e.fullName);
+          console.warn(`[company-knowledge-import] CATEGORY GUARD: Dropped expert "${e.fullName}" — no expert document source found (possible cross-category hallucination).`);
+          continue;
+        }
+        // Extra guard: the source doc must be an expert doc (not a project doc)
+        if (isProjectDoc(sourceDoc) && !isExpertDoc(sourceDoc)) {
+          droppedExperts.push(e.fullName);
+          console.warn(`[company-knowledge-import] CATEGORY GUARD: Dropped expert "${e.fullName}" — source document "${sourceDoc.originalFileName}" is classified as a project portfolio, not a CV.`);
+          continue;
+        }
 
         allExpertDrafts.push({
           fullName: e.fullName,
@@ -289,7 +310,7 @@ export async function importCompanyKnowledgeFromDocuments(companyId: string): Pr
           certifications: e.certifications ?? [],
           profile: `AI-extracted CV record (confidence: ${Math.round((e.confidence ?? 0) * 100)}%). Source evidence: "${e.sourceQuote}"`,
           sourceSnippet: e.sourceQuote,
-          sourceDocumentId: sourceDoc?.id ?? expertDocs[0]?.id ?? docs[0].id,
+          sourceDocumentId: sourceDoc.id,
           trustLevel: "AI_DRAFT",
         });
       }
@@ -298,6 +319,19 @@ export async function importCompanyKnowledgeFromDocuments(companyId: string): Pr
         const sourceDoc = projectDocs.find((d) =>
           p.sourceQuote && (d.extractedText ?? "").toLowerCase().includes(p.sourceQuote.slice(0, 60).toLowerCase()),
         ) ?? projectDocs[0];
+
+        // Category guard: if this project cannot be attributed to a project document, drop it
+        if (!sourceDoc) {
+          droppedProjects.push(p.name);
+          console.warn(`[company-knowledge-import] CATEGORY GUARD: Dropped project "${p.name}" — no project document source found (possible cross-category hallucination).`);
+          continue;
+        }
+        // Extra guard: the source doc must be a project doc (not an expert/CV doc)
+        if (isExpertDoc(sourceDoc) && !isProjectDoc(sourceDoc)) {
+          droppedProjects.push(p.name);
+          console.warn(`[company-knowledge-import] CATEGORY GUARD: Dropped project "${p.name}" — source document "${sourceDoc.originalFileName}" is classified as a CV, not a project portfolio.`);
+          continue;
+        }
 
         allProjectDrafts.push({
           name: p.name,
@@ -309,10 +343,19 @@ export async function importCompanyKnowledgeFromDocuments(companyId: string): Pr
           contractValue: p.contractValue ?? null,
           currency: p.currency ?? null,
           sourceSnippet: p.sourceQuote,
-          sourceDocumentId: sourceDoc?.id ?? projectDocs[0]?.id ?? docs[0].id,
+          sourceDocumentId: sourceDoc.id,
           trustLevel: "AI_DRAFT",
         });
       }
+
+      if (droppedExperts.length > 0 || droppedProjects.length > 0) {
+        console.warn(
+          `[company-knowledge-import] Category enforcement dropped ${droppedExperts.length} expert(s) and ` +
+          `${droppedProjects.length} project(s) due to cross-category attribution failures. ` +
+          `Check that CV documents are categorized as EXPERT/CV and portfolio documents as PROJECT_PORTFOLIO.`,
+        );
+      }
+      // ── End category enforcement ─────────────────────────────────────────────
 
       // Mark expert and project docs as AI-extracted
       const allAIDocs = [...expertDocs, ...projectDocs];

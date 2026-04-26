@@ -72,6 +72,32 @@ export async function runTenderEngine(tenderId: string, userId: string) {
       complianceRecords: company.complianceRecords,
     };
 
+    // ── Knowledge readiness diagnostic ────────────────────────────────────────
+    // Requirement 7: Matching uses reviewed knowledge first, draft as evidence second.
+    // Surface the trust-level split so the UI can warn users before matching.
+    const reviewedExpertCount = company.experts.filter((e) => e.trustLevel === "REVIEWED").length;
+    const reviewedProjectCount = company.projects.filter((p) => p.trustLevel === "REVIEWED").length;
+    const aiDraftExpertCount = company.experts.filter((e) => e.trustLevel === "AI_DRAFT").length;
+    const aiDraftProjectCount = company.projects.filter((p) => p.trustLevel === "AI_DRAFT").length;
+    const regexDraftExpertCount = company.experts.filter((e) => !e.trustLevel || e.trustLevel === "REGEX_DRAFT").length;
+    const regexDraftProjectCount = company.projects.filter((p) => !p.trustLevel || p.trustLevel === "REGEX_DRAFT").length;
+
+    const knowledgeReadiness = {
+      reviewedExperts: reviewedExpertCount,
+      reviewedProjects: reviewedProjectCount,
+      aiDraftExperts: aiDraftExpertCount,
+      aiDraftProjects: aiDraftProjectCount,
+      regexDraftExperts: regexDraftExpertCount,
+      regexDraftProjects: regexDraftProjectCount,
+      hasUsableExperts: reviewedExpertCount + aiDraftExpertCount > 0,
+      hasUsableProjects: reviewedProjectCount + aiDraftProjectCount > 0,
+      hasBlockingExperts: regexDraftExpertCount > 0,
+      hasBlockingProjects: regexDraftProjectCount > 0,
+    };
+
+    console.log("[engine] Knowledge readiness:", JSON.stringify(knowledgeReadiness));
+    // ── End knowledge readiness diagnostic ────────────────────────────────────
+
     const matching = buildMatches(analysis.requirements, knowledge, tender.category, tender.title);
     for (const match of matching.expertMatches) {
       await tx.tenderExpertMatch.create({ data: { tenderId, expertId: match.expertId, score: match.score, rationale: match.rationale, isSelected: match.isSelected } });
@@ -124,6 +150,29 @@ export async function runTenderEngine(tenderId: string, userId: string) {
         readinessScore: Math.max(0, Math.min(100, Math.round((supportedCount / Math.max(compliance.matrices.length, 1)) * 100))),
         status: unresolvedMandatoryGaps > 0 ? "COMPLIANCE_REVIEW" : "MATCHED",
         stage: unresolvedMandatoryGaps > 0 ? "COMPLIANCE" : "MATCHING",
+        // Surface knowledge readiness in notes so the UI can warn the user
+        notes: [
+          knowledgeReadiness.hasBlockingExperts
+            ? `⚠ ${knowledgeReadiness.regexDraftExperts} expert(s) are REGEX_DRAFT and will block generation — review them in Company Knowledge.`
+            : null,
+          knowledgeReadiness.hasBlockingProjects
+            ? `⚠ ${knowledgeReadiness.regexDraftProjects} project(s) are REGEX_DRAFT and will block generation — review them in Company Knowledge.`
+            : null,
+          !knowledgeReadiness.hasUsableExperts
+            ? `⚠ No REVIEWED or AI_DRAFT experts found — upload and extract CV documents first.`
+            : null,
+          !knowledgeReadiness.hasUsableProjects
+            ? `⚠ No REVIEWED or AI_DRAFT projects found — upload and extract portfolio documents first.`
+            : null,
+          knowledgeReadiness.reviewedExperts > 0
+            ? `✓ ${knowledgeReadiness.reviewedExperts} REVIEWED expert(s) ready for final generation.`
+            : null,
+          knowledgeReadiness.reviewedProjects > 0
+            ? `✓ ${knowledgeReadiness.reviewedProjects} REVIEWED project(s) ready for final generation.`
+            : null,
+        ]
+          .filter(Boolean)
+          .join("\n") || null,
       },
     });
   });
