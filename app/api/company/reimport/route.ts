@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getSession } from "../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../lib/prisma";
 import { importCompanyKnowledgeFromDocuments } from "../../../../lib/company-knowledge-import-safe";
+import { runCompanyKnowledgeSafetyImport } from "../../../../lib/company-knowledge-safety-import";
 import { extractTextFromBuffer, getFileTypeLabel, isMeaningfulExtraction } from "../../../../lib/extract-text";
 import { ensureCompanyForUser } from "../../../../lib/company-workspace";
 
@@ -12,7 +13,6 @@ export async function POST() {
   await prismaReady;
   const company = await ensureCompanyForUser(prisma, userId);
 
-  // Step 1: force re-extract ALL documents (not just those under 1000 chars)
   const docs = await prisma.companyDocument.findMany({
     where: { companyId: company.id, fileContent: { not: null } },
     select: { id: true, originalFileName: true, mimeType: true, fileContent: true, metadata: true },
@@ -33,7 +33,6 @@ export async function POST() {
         where: { id: doc.id },
         data: {
           extractedText: extractedText || null,
-          // Reset AI status so the import step re-runs AI extraction on this doc
           aiExtractionStatus: meaningful ? "PENDING" : "FAILED",
           aiExtractionError: meaningful ? null : "No text extracted from document",
           metadata: JSON.stringify({
@@ -52,14 +51,16 @@ export async function POST() {
     }
   }
 
-  // Step 2: run knowledge import on all fresh text
-  const result = await importCompanyKnowledgeFromDocuments(company.id);
+  const primary = await importCompanyKnowledgeFromDocuments(company.id);
+  const safety = await runCompanyKnowledgeSafetyImport(prisma, company.id);
 
   return NextResponse.json({
     success: true,
     docsReextracted: reextracted,
-    docsProcessed: result.docsProcessed,
-    expertsCreated: result.expertsCreated,
-    projectsCreated: result.projectsCreated,
+    docsProcessed: primary.docsProcessed,
+    expertsCreated: primary.expertsCreated + safety.expertsCreated,
+    projectsCreated: primary.projectsCreated + safety.projectsCreated,
+    primaryImport: primary,
+    safetyImport: safety,
   });
 }
