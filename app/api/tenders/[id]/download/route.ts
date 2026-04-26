@@ -1,23 +1,11 @@
 import { NextResponse } from "next/server";
 import { getSession } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
-import {
-  Document, Packer, Paragraph, TextRun, HeadingLevel,
-  AlignmentType,
-} from "docx";
+import { Document, Packer, Paragraph, TextRun, HeadingLevel } from "docx";
 import { logAction } from "../../../../../lib/audit";
 
 function safeParseArr(v: unknown): string[] {
   try { return JSON.parse(v as string) as string[]; } catch { return []; }
-}
-
-function mdToDocxParagraphs(text: string): Paragraph[] {
-  return text.split("\n").filter((l) => l.trim()).map((line) => {
-    if (line.startsWith("## ")) return new Paragraph({ text: line.slice(3), heading: HeadingLevel.HEADING_2, spacing: { before: 240, after: 120 } });
-    if (line.startsWith("# ")) return new Paragraph({ text: line.slice(2), heading: HeadingLevel.HEADING_1, spacing: { before: 360, after: 120 } });
-    if (line.startsWith("- ") || line.startsWith("* ")) return new Paragraph({ text: line.slice(2), bullet: { level: 0 }, spacing: { after: 60 } });
-    return new Paragraph({ children: [new TextRun({ text: line })], spacing: { after: 60 } });
-  });
 }
 
 function normalizeName(value: string): string {
@@ -26,6 +14,113 @@ function normalizeName(value: string): string {
 
 function generatedFileName(name: string): string {
   return `${name.replace(/[^a-zA-Z0-9]/g, "-")}.docx`;
+}
+
+function visibleXmlText(xml: string): string {
+  return xml
+    .replace(/<w:tab\/>/g, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+async function validateGeneratedDocx(doc: {
+  id: string;
+  name: string;
+  exactFileName: string | null;
+  generationStatus: string;
+  validationStatus: string;
+  fileContent: string | null;
+  draftExpertCount: number | null;
+  draftProjectCount: number | null;
+  reviewedExpertCount: number | null;
+  reviewedProjectCount: number | null;
+}) {
+  const errors: string[] = [];
+  const filename = doc.exactFileName ?? generatedFileName(doc.name);
+
+  if (doc.generationStatus !== "GENERATED") errors.push("Document is not generated.");
+  if (!doc.fileContent) errors.push("Document file content is missing.");
+  if (!filename.toLowerCase().endsWith(".docx")) errors.push("Generated document is not DOCX.");
+  if ((doc.draftExpertCount ?? 0) > 0 || (doc.draftProjectCount ?? 0) > 0) errors.push("Document references draft/unreviewed sources.");
+
+  let text = "";
+  if (doc.fileContent) {
+    try {
+      const buffer = Buffer.from(doc.fileContent, "base64");
+      if (buffer.length < 500) errors.push("DOCX file is unexpectedly small.");
+      if (buffer[0] !== 0x50 || buffer[1] !== 0x4b) errors.push("DOCX package signature is invalid.");
+
+      const JSZip = (await import("jszip")).default;
+      const zip = await JSZip.loadAsync(buffer);
+      const documentXml = await zip.file("word/document.xml")?.async("string");
+      if (!documentXml) {
+        errors.push("DOCX word/document.xml is missing.");
+      } else {
+        text = visibleXmlText(documentXml);
+        if (text.length < 100) errors.push("Document text is too short for final submission.");
+      }
+    } catch (error) {
+      errors.push(`DOCX validation failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  const forbiddenPatterns = [
+    /AI_DRAFT/i,
+    /REGEX_DRAFT/i,
+    /REVIEW REQUIRED/i,
+    /remove before submission/i,
+    /placeholder/i,
+    /sample text/i,
+    /lorem ipsum/i,
+    /as an AI/i,
+    /AI-generated/i,
+    /ChatGPT/i,
+    /OpenAI/i,
+    /source snippet/i,
+    /deterministic safety import/i,
+  ];
+  for (const pattern of forbiddenPatterns) {
+    if (pattern.test(text) || pattern.test(doc.name) || pattern.test(filename)) {
+      errors.push(`Forbidden final-output trace detected: ${pattern.source}`);
+    }
+  }
+
+  const status = errors.length === 0 ? "VALIDATED" : "FAILED";
+  if (doc.validationStatus !== status) {
+    await prisma.generatedDocument.update({
+      where: { id: doc.id },
+      data: {
+        validationStatus: status,
+        reviewNotes: errors.length > 0 ? errors.join("\n") : "Passed deterministic final export validation.",
+      },
+    });
+  }
+
+  return { ok: errors.length === 0, errors, filename };
+}
+
+async function validateDocsForExport(docs: Array<{
+  id: string;
+  name: string;
+  exactFileName: string | null;
+  generationStatus: string;
+  validationStatus: string;
+  fileContent: string | null;
+  draftExpertCount: number | null;
+  draftProjectCount: number | null;
+  reviewedExpertCount: number | null;
+  reviewedProjectCount: number | null;
+}>) {
+  const failures: Array<{ id: string; name: string; errors: string[] }> = [];
+  for (const doc of docs) {
+    const result = await validateGeneratedDocx(doc);
+    if (!result.ok) failures.push({ id: doc.id, name: doc.name, errors: result.errors });
+  }
+  return failures;
 }
 
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -56,24 +151,23 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     }, { status: 409 });
   }
 
-  const company = await prisma.company.findUnique({ where: { userId } });
-
   if (docId) {
     const doc = tender.generatedDocuments.find((d) => d.id === docId);
     if (!doc || !doc.fileContent || doc.generationStatus !== "GENERATED") {
       return NextResponse.json({ error: "Document not found or not yet generated" }, { status: 404 });
     }
-    if ((doc.draftExpertCount ?? 0) > 0 || (doc.draftProjectCount ?? 0) > 0) {
-      return NextResponse.json({ error: "Document export blocked", detail: "This generated document still references draft/unreviewed company knowledge. Review knowledge and regenerate before export." }, { status: 409 });
-    }
-    const buffer = Buffer.from(doc.fileContent, "base64");
-    const filename = doc.exactFileName ?? generatedFileName(doc.name);
 
-    await logAction({ userId, action: "EXPORT_PACKAGE_DOWNLOAD", entityType: "GeneratedDocument", entityId: docId, description: `Downloaded "${filename}"` });
+    const validation = await validateGeneratedDocx(doc);
+    if (!validation.ok) {
+      return NextResponse.json({ error: "Document export blocked by final validation", reasons: validation.errors }, { status: 409 });
+    }
+
+    const buffer = Buffer.from(doc.fileContent, "base64");
+    await logAction({ userId, action: "EXPORT_PACKAGE_DOWNLOAD", entityType: "GeneratedDocument", entityId: docId, description: `Downloaded validated generated document "${validation.filename}"` });
     return new NextResponse(new Uint8Array(buffer), {
       headers: {
         "Content-Type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        "Content-Disposition": `attachment; filename="${filename}"`,
+        "Content-Disposition": `attachment; filename="${validation.filename}"`,
       },
     });
   }
@@ -89,9 +183,10 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     if (generatedDocs.length === 0) {
       return NextResponse.json({ error: "No generated documents to package. Run generation first." }, { status: 400 });
     }
-    const draftDocs = generatedDocs.filter((d) => (d.draftExpertCount ?? 0) > 0 || (d.draftProjectCount ?? 0) > 0);
-    if (draftDocs.length > 0) {
-      return NextResponse.json({ error: "ZIP export blocked", detail: `${draftDocs.length} generated document(s) still reference draft/unreviewed company knowledge.` }, { status: 409 });
+
+    const validationFailures = await validateDocsForExport(generatedDocs);
+    if (validationFailures.length > 0) {
+      return NextResponse.json({ error: "ZIP export blocked by final validation", failures: validationFailures }, { status: 409 });
     }
 
     const requiredNames = safeParseArr(tender.exactFileNaming).map(normalizeName);
@@ -133,7 +228,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
       await prisma.exportPackage.create({ data: { tenderId: id, status: "READY", fileList: JSON.stringify(fileList), downloadCount: 1 } });
     }
 
-    await logAction({ userId, action: "EXPORT_PACKAGE_DOWNLOAD", entityType: "Tender", entityId: id, description: `Downloaded ZIP package for "${tender.title}" (${generatedDocs.length} files)` });
+    await logAction({ userId, action: "EXPORT_PACKAGE_DOWNLOAD", entityType: "Tender", entityId: id, description: `Downloaded validated ZIP package for "${tender.title}" (${generatedDocs.length} files)` });
 
     return new NextResponse(new Uint8Array(zipBuffer), { headers: { "Content-Type": "application/zip", "Content-Disposition": `attachment; filename="${zipName}"` } });
   }
