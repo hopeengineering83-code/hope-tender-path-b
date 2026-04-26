@@ -4,6 +4,7 @@ import { getSession } from "../../../lib/auth";
 import { extractTextFromBuffer, detectCategoryFromFile, getFileTypeLabel, isMeaningfulExtraction } from "../../../lib/extract-text";
 import { logAction } from "../../../lib/audit";
 import { ensureCompanyForUser } from "../../../lib/company-workspace";
+import { importCompanyKnowledgeFromDocuments } from "../../../lib/company-knowledge-import-safe";
 
 const MAX_BYTES = 10 * 1024 * 1024;
 
@@ -38,6 +39,9 @@ export async function POST(req: Request) {
     }
 
     const results: unknown[] = [];
+    let uploadedCompanyId: string | null = null;
+    let companyDocsUploaded = 0;
+    let companyDocsWithUsableText = 0;
 
     const ALLOWED_MIME = new Set([
       "application/pdf",
@@ -105,6 +109,7 @@ export async function POST(req: Request) {
         results.push({ success: true, scope: "tender", fileRecord, extraction });
       } else {
         const company = await ensureCompanyForUser(prisma, userId);
+        uploadedCompanyId = company.id;
 
         const providedCategory = formData.get("category") as string | null;
         const category = (providedCategory && providedCategory !== "AUTO")
@@ -139,14 +144,51 @@ export async function POST(req: Request) {
           metadata: { companyId: company.id, fileName: file.name, category, ...extraction },
         });
 
+        companyDocsUploaded += 1;
+        if (extraction.extracted) companyDocsWithUsableText += 1;
         results.push({ success: true, scope: "company", docRecord, extraction });
+      }
+    }
+
+    let knowledgeImport: Awaited<ReturnType<typeof importCompanyKnowledgeFromDocuments>> | null = null;
+    let knowledgeImportError: string | null = null;
+
+    if (uploadedCompanyId && companyDocsUploaded > 0 && companyDocsWithUsableText > 0) {
+      try {
+        knowledgeImport = await importCompanyKnowledgeFromDocuments(uploadedCompanyId);
+        await logAction({
+          userId,
+          action: "COMPANY_KNOWLEDGE_REPAIR",
+          entityType: "Company",
+          entityId: uploadedCompanyId,
+          description: `Auto-imported company knowledge after upload: ${knowledgeImport.expertsCreated} experts and ${knowledgeImport.projectsCreated} projects created`,
+          metadata: knowledgeImport,
+        });
+      } catch (err) {
+        knowledgeImportError = err instanceof Error ? err.message : String(err);
+        console.error("[upload] company knowledge auto-import failed:", err);
+        await logAction({
+          userId,
+          action: "COMPANY_KNOWLEDGE_REPAIR",
+          entityType: "Company",
+          entityId: uploadedCompanyId,
+          description: `Company knowledge auto-import failed after upload: ${knowledgeImportError}`,
+          metadata: { error: knowledgeImportError },
+        });
       }
     }
 
     const successCount = results.filter((r) => (r as Record<string, unknown>).success).length;
     const errorCount = results.length - successCount;
 
-    return NextResponse.json({ success: successCount > 0, uploaded: successCount, errors: errorCount, results }, { status: errorCount > 0 && successCount === 0 ? 422 : 200 });
+    return NextResponse.json({
+      success: successCount > 0,
+      uploaded: successCount,
+      errors: errorCount,
+      results,
+      knowledgeImport,
+      knowledgeImportError,
+    }, { status: errorCount > 0 && successCount === 0 ? 422 : 200 });
   } catch (error) {
     console.error("[upload] error:", error);
     return NextResponse.json({ error: "Upload failed" }, { status: 500 });
