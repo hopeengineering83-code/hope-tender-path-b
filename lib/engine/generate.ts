@@ -1,11 +1,9 @@
 import {
   Document, Packer, Paragraph, TextRun, HeadingLevel,
-  AlignmentType, Table, TableRow, TableCell, WidthType,
-  BorderStyle, PageBreak, Header, Footer,
+  AlignmentType, BorderStyle, Header, Footer,
 } from "docx";
 import { prisma } from "../prisma";
 import { humanize } from "./humanize";
-import { isAIEnabled } from "../ai";
 
 function safeParseArr(v: unknown): string[] {
   try { return JSON.parse(v as string) as string[]; } catch { return []; }
@@ -35,10 +33,7 @@ function body(text: string, opts?: { bold?: boolean; italic?: boolean; color?: s
 
 function labelValue(label: string, value: string): Paragraph {
   return new Paragraph({
-    children: [
-      new TextRun({ text: `${label}: `, bold: true }),
-      new TextRun({ text: value }),
-    ],
+    children: [new TextRun({ text: `${label}: `, bold: true }), new TextRun({ text: value })],
     spacing: { after: 60 },
   });
 }
@@ -49,54 +44,20 @@ function bullet(text: string): Paragraph {
 
 function buildLetterheadHeader(company: { name: string; address?: string | null; phone?: string | null; email?: string | null; website?: string | null }): Paragraph[] {
   return [
-    new Paragraph({
-      children: [new TextRun({ text: company.name, bold: true, size: 32, color: "1a1a2e" })],
-      alignment: AlignmentType.LEFT,
-      spacing: { after: 40 },
-    }),
-    new Paragraph({
-      children: [
-        new TextRun({ text: [company.address, company.phone, company.email, company.website].filter(Boolean).join("  |  "), size: 18, color: "555555" }),
-      ],
-      alignment: AlignmentType.LEFT,
-      spacing: { after: 60 },
-    }),
+    new Paragraph({ children: [new TextRun({ text: company.name, bold: true, size: 32, color: "1a1a2e" })], alignment: AlignmentType.LEFT, spacing: { after: 40 } }),
+    new Paragraph({ children: [new TextRun({ text: [company.address, company.phone, company.email, company.website].filter(Boolean).join("  |  "), size: 18, color: "555555" })], alignment: AlignmentType.LEFT, spacing: { after: 60 } }),
     hr(),
   ];
 }
 
 function buildCoverSection(title: string, reference?: string | null, clientName?: string | null, companyName?: string): Paragraph[] {
   return [
-    new Paragraph({
-      children: [new TextRun({ text: title, bold: true, size: 56 })],
-      alignment: AlignmentType.CENTER,
-      spacing: { after: 120 },
-    }),
-    new Paragraph({
-      children: [new TextRun({ text: `Technical Proposal`, size: 32, color: "555555" })],
-      alignment: AlignmentType.CENTER,
-      spacing: { after: 80 },
-    }),
-    ...(reference ? [new Paragraph({
-      children: [new TextRun({ text: `Reference: ${reference}`, size: 24, color: "777777" })],
-      alignment: AlignmentType.CENTER,
-      spacing: { after: 60 },
-    })] : []),
-    ...(clientName ? [new Paragraph({
-      children: [new TextRun({ text: `Submitted to: ${clientName}`, size: 24, color: "777777" })],
-      alignment: AlignmentType.CENTER,
-      spacing: { after: 60 },
-    })] : []),
-    ...(companyName ? [new Paragraph({
-      children: [new TextRun({ text: `Prepared by: ${companyName}`, size: 24, color: "777777" })],
-      alignment: AlignmentType.CENTER,
-      spacing: { after: 60 },
-    })] : []),
-    new Paragraph({
-      children: [new TextRun({ text: `Date: ${new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })}`, size: 22, color: "777777" })],
-      alignment: AlignmentType.CENTER,
-      spacing: { after: 480 },
-    }),
+    new Paragraph({ children: [new TextRun({ text: title, bold: true, size: 56 })], alignment: AlignmentType.CENTER, spacing: { after: 120 } }),
+    new Paragraph({ children: [new TextRun({ text: `Technical Proposal`, size: 32, color: "555555" })], alignment: AlignmentType.CENTER, spacing: { after: 80 } }),
+    ...(reference ? [new Paragraph({ children: [new TextRun({ text: `Reference: ${reference}`, size: 24, color: "777777" })], alignment: AlignmentType.CENTER, spacing: { after: 60 } })] : []),
+    ...(clientName ? [new Paragraph({ children: [new TextRun({ text: `Submitted to: ${clientName}`, size: 24, color: "777777" })], alignment: AlignmentType.CENTER, spacing: { after: 60 } })] : []),
+    ...(companyName ? [new Paragraph({ children: [new TextRun({ text: `Prepared by: ${companyName}`, size: 24, color: "777777" })], alignment: AlignmentType.CENTER, spacing: { after: 60 } })] : []),
+    new Paragraph({ children: [new TextRun({ text: `Date: ${new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })}`, size: 22, color: "777777" })], alignment: AlignmentType.CENTER, spacing: { after: 480 } }),
     hr(),
   ];
 }
@@ -111,32 +72,25 @@ async function buildProposalContent(params: {
   const { tender, company, experts, projects, requirements } = params;
   const paras: Paragraph[] = [];
 
-  // Executive Summary
   paras.push(heading1("1. Executive Summary"));
-  const summaryText = tender.analysisSummary || tender.description || `${company.name} is pleased to submit this technical proposal for ${tender.title}.`;
-  const humanizedSummary = await humanize(summaryText);
-  paras.push(body(humanizedSummary));
+  const summaryText = tender.analysisSummary || tender.description || `${company.name} submits this technical proposal for ${tender.title}.`;
+  paras.push(body(await humanize(summaryText)));
 
-  // Understanding of Assignment
   paras.push(heading1("2. Understanding of the Assignment"));
-  const understandingText = tender.intakeSummary || tender.description || "We have reviewed the terms of reference and have a thorough understanding of the scope and objectives.";
-  const humanizedUnderstanding = await humanize(understandingText);
-  paras.push(body(humanizedUnderstanding));
+  const understandingText = tender.intakeSummary || tender.description || "We have reviewed the terms of reference and understand the scope and objectives.";
+  paras.push(body(await humanize(understandingText)));
 
-  // Proposed Methodology
   paras.push(heading1("3. Proposed Methodology"));
   if (tender.evaluationMethodology) {
-    const humanizedMethodology = await humanize(tender.evaluationMethodology);
-    paras.push(body(humanizedMethodology));
+    paras.push(body(await humanize(tender.evaluationMethodology)));
   } else {
-    paras.push(body("Our approach is structured around the following phases: mobilisation and inception, detailed analysis and fieldwork, reporting and quality review, and final submission."));
-    paras.push(bullet("Phase 1 — Mobilisation and Inception: Team deployment, inception meeting, and workplan confirmation."));
-    paras.push(bullet("Phase 2 — Data Collection and Analysis: Stakeholder engagement, document review, and fieldwork."));
-    paras.push(bullet("Phase 3 — Reporting: Preparation of draft and final deliverables."));
-    paras.push(bullet("Phase 4 — Quality Assurance: Internal peer review and validation before submission."));
+    paras.push(body("Our approach is structured around mobilisation and inception, detailed analysis and fieldwork, reporting and quality review, and final submission."));
+    paras.push(bullet("Mobilisation and inception: team deployment, inception meeting, and workplan confirmation."));
+    paras.push(bullet("Data collection and analysis: stakeholder engagement, document review, and fieldwork."));
+    paras.push(bullet("Reporting: preparation of draft and final deliverables."));
+    paras.push(bullet("Quality assurance: internal peer review and validation before submission."));
   }
 
-  // Mandatory requirements response
   const mandatory = requirements.filter((r) => r.priority === "MANDATORY" && !["FORMAT", "SUBMISSION_RULE"].includes(r.requirementType));
   if (mandatory.length > 0) {
     paras.push(heading1("4. Compliance with Mandatory Requirements"));
@@ -146,7 +100,6 @@ async function buildProposalContent(params: {
     }
   }
 
-  // Proposed Team
   if (experts.length > 0) {
     paras.push(heading1(`${mandatory.length > 0 ? 5 : 4}. Proposed Team`));
     for (const expert of experts) {
@@ -161,7 +114,6 @@ async function buildProposalContent(params: {
     }
   }
 
-  // Relevant Project Experience
   const sectionNum = (mandatory.length > 0 ? 5 : 4) + (experts.length > 0 ? 1 : 0) + 1;
   if (projects.length > 0) {
     paras.push(heading1(`${sectionNum}. Relevant Project Experience`));
@@ -170,18 +122,15 @@ async function buildProposalContent(params: {
       if (project.clientName) paras.push(labelValue("Client", project.clientName));
       if (project.country) paras.push(labelValue("Country", project.country));
       if (project.sector) paras.push(labelValue("Sector", project.sector));
-      if (project.contractValue) {
-        paras.push(labelValue("Contract Value", `${project.currency ?? "USD"} ${project.contractValue.toLocaleString()}`));
-      }
+      if (project.contractValue) paras.push(labelValue("Contract Value", `${project.currency ?? "USD"} ${project.contractValue.toLocaleString()}`));
       const areas = safeParseArr(project.serviceAreas);
       if (areas.length > 0) paras.push(labelValue("Service Areas", areas.join(", ")));
       if (project.summary) paras.push(body(project.summary, { color: "333333" }));
     }
   }
 
-  // Company Profile
   paras.push(heading1(`${sectionNum + 1}. Company Profile`));
-  paras.push(body(company.profileSummary ?? company.description ?? `${company.name} is a multidisciplinary consultancy firm with extensive experience in delivering high-quality professional services.`));
+  paras.push(body(company.profileSummary ?? company.description ?? `${company.name} is a multidisciplinary consultancy firm.`));
   const serviceLines = safeParseArr(company.serviceLines);
   if (serviceLines.length > 0) {
     paras.push(body("Core Service Lines:", { bold: true }));
@@ -191,70 +140,33 @@ async function buildProposalContent(params: {
   return paras;
 }
 
-function buildCVContent(expert: {
-  fullName: string; title?: string | null; email?: string | null; phone?: string | null;
-  yearsExperience?: number | null; disciplines: string; sectors: string; certifications: string; profile?: string | null;
-}): Paragraph[] {
-  const paras: Paragraph[] = [];
-  paras.push(heading1("Curriculum Vitae"));
-  paras.push(heading2(expert.fullName));
+function buildCVContent(expert: { fullName: string; title?: string | null; email?: string | null; phone?: string | null; yearsExperience?: number | null; disciplines: string; sectors: string; certifications: string; profile?: string | null; }): Paragraph[] {
+  const paras: Paragraph[] = [heading1("Curriculum Vitae"), heading2(expert.fullName)];
   if (expert.title) paras.push(labelValue("Position", expert.title));
   if (expert.email) paras.push(labelValue("Email", expert.email));
   if (expert.phone) paras.push(labelValue("Phone", expert.phone));
   if (expert.yearsExperience) paras.push(labelValue("Years of Experience", String(expert.yearsExperience)));
-
   const disciplines = safeParseArr(expert.disciplines);
-  if (disciplines.length > 0) {
-    paras.push(body("Disciplines:", { bold: true }));
-    for (const d of disciplines) paras.push(bullet(d));
-  }
-
+  if (disciplines.length > 0) { paras.push(body("Disciplines:", { bold: true })); for (const d of disciplines) paras.push(bullet(d)); }
   const sectors = safeParseArr(expert.sectors);
-  if (sectors.length > 0) {
-    paras.push(body("Sectors:", { bold: true }));
-    for (const s of sectors) paras.push(bullet(s));
-  }
-
+  if (sectors.length > 0) { paras.push(body("Sectors:", { bold: true })); for (const s of sectors) paras.push(bullet(s)); }
   const certs = safeParseArr(expert.certifications);
-  if (certs.length > 0) {
-    paras.push(body("Certifications:", { bold: true }));
-    for (const c of certs) paras.push(bullet(c));
-  }
-
-  if (expert.profile) {
-    paras.push(body("Professional Profile:", { bold: true }));
-    paras.push(body(expert.profile));
-  }
-
+  if (certs.length > 0) { paras.push(body("Certifications:", { bold: true })); for (const c of certs) paras.push(bullet(c)); }
+  if (expert.profile) { paras.push(body("Professional Profile:", { bold: true })); paras.push(body(expert.profile)); }
   return paras;
 }
 
-function buildProjectReferenceContent(project: {
-  name: string; clientName?: string | null; country?: string | null; sector?: string | null;
-  contractValue?: number | null; currency?: string | null; summary?: string | null;
-  serviceAreas: string; startDate?: Date | null; endDate?: Date | null;
-}): Paragraph[] {
-  const paras: Paragraph[] = [];
-  paras.push(heading1("Project Reference Sheet"));
-  paras.push(heading2(project.name));
+function buildProjectReferenceContent(project: { name: string; clientName?: string | null; country?: string | null; sector?: string | null; contractValue?: number | null; currency?: string | null; summary?: string | null; serviceAreas: string; startDate?: Date | null; endDate?: Date | null; }): Paragraph[] {
+  const paras: Paragraph[] = [heading1("Project Reference Sheet"), heading2(project.name)];
   if (project.clientName) paras.push(labelValue("Client", project.clientName));
   if (project.country) paras.push(labelValue("Country", project.country));
   if (project.sector) paras.push(labelValue("Sector", project.sector));
   if (project.contractValue) paras.push(labelValue("Contract Value", `${project.currency ?? "USD"} ${project.contractValue.toLocaleString()}`));
   if (project.startDate) paras.push(labelValue("Start Date", new Date(project.startDate).toLocaleDateString("en-US")));
   if (project.endDate) paras.push(labelValue("Completion Date", new Date(project.endDate).toLocaleDateString("en-US")));
-
   const areas = safeParseArr(project.serviceAreas);
-  if (areas.length > 0) {
-    paras.push(body("Scope of Services:", { bold: true }));
-    for (const a of areas) paras.push(bullet(a));
-  }
-
-  if (project.summary) {
-    paras.push(body("Project Summary:", { bold: true }));
-    paras.push(body(project.summary));
-  }
-
+  if (areas.length > 0) { paras.push(body("Scope of Services:", { bold: true })); for (const a of areas) paras.push(bullet(a)); }
+  if (project.summary) { paras.push(body("Project Summary:", { bold: true })); paras.push(body(project.summary)); }
   return paras;
 }
 
@@ -277,230 +189,75 @@ function buildDeclarationContent(companyName: string, tenderTitle: string): Para
   ];
 }
 
-function buildCompanyProfileContent(company: {
-  name: string; legalName?: string | null; description?: string | null;
-  profileSummary?: string | null; address?: string | null; phone?: string | null;
-  email?: string | null; website?: string | null; serviceLines: string; sectors: string;
-}): Paragraph[] {
-  const paras: Paragraph[] = [];
-  paras.push(heading1("Company Profile"));
-  paras.push(heading2(company.name));
+function buildCompanyProfileContent(company: { name: string; legalName?: string | null; description?: string | null; profileSummary?: string | null; address?: string | null; phone?: string | null; email?: string | null; website?: string | null; serviceLines: string; sectors: string; }): Paragraph[] {
+  const paras: Paragraph[] = [heading1("Company Profile"), heading2(company.name)];
   if (company.legalName) paras.push(labelValue("Legal Name", company.legalName));
   if (company.address) paras.push(labelValue("Address", company.address));
   if (company.phone) paras.push(labelValue("Phone", company.phone));
   if (company.email) paras.push(labelValue("Email", company.email));
   if (company.website) paras.push(labelValue("Website", company.website));
-
   const desc = company.profileSummary ?? company.description;
-  if (desc) {
-    paras.push(body("About Us:", { bold: true }));
-    paras.push(body(desc));
-  }
-
+  if (desc) { paras.push(body("About Us:", { bold: true })); paras.push(body(desc)); }
   const serviceLines = safeParseArr(company.serviceLines);
-  if (serviceLines.length > 0) {
-    paras.push(body("Core Services:", { bold: true }));
-    for (const s of serviceLines) paras.push(bullet(s));
-  }
-
+  if (serviceLines.length > 0) { paras.push(body("Core Services:", { bold: true })); for (const s of serviceLines) paras.push(bullet(s)); }
   const sectors = safeParseArr(company.sectors);
-  if (sectors.length > 0) {
-    paras.push(body("Sectors of Expertise:", { bold: true }));
-    for (const s of sectors) paras.push(bullet(s));
-  }
-
+  if (sectors.length > 0) { paras.push(body("Sectors of Expertise:", { bold: true })); for (const s of sectors) paras.push(bullet(s)); }
   return paras;
 }
 
-function buildDocxFromParagraphs(
-  paragraphs: Paragraph[],
-  companyName: string,
-  docTitle: string,
-): Document {
+function buildDocxFromParagraphs(paragraphs: Paragraph[], companyName: string, docTitle: string): Document {
   return new Document({
     sections: [{
       properties: {},
       children: paragraphs,
-      headers: {
-        default: new Header({
-          children: [
-            new Paragraph({
-              children: [new TextRun({ text: companyName, size: 18, color: "777777" })],
-              alignment: AlignmentType.RIGHT,
-            }),
-          ],
-        }),
-      },
-      footers: {
-        default: new Footer({
-          children: [
-            new Paragraph({
-              children: [new TextRun({ text: `${docTitle} — Confidential`, size: 16, color: "999999" })],
-              alignment: AlignmentType.CENTER,
-            }),
-          ],
-        }),
-      },
+      headers: { default: new Header({ children: [new Paragraph({ children: [new TextRun({ text: companyName, size: 18, color: "777777" })], alignment: AlignmentType.RIGHT })] }) },
+      footers: { default: new Footer({ children: [new Paragraph({ children: [new TextRun({ text: `${docTitle} — Confidential`, size: 16, color: "999999" })], alignment: AlignmentType.CENTER })] }) },
     }],
-    styles: {
-      default: {
-        document: { run: { font: "Calibri", size: 22 }, paragraph: { spacing: { line: 276 } } },
-      },
-    },
+    styles: { default: { document: { run: { font: "Calibri", size: 22 }, paragraph: { spacing: { line: 276 } } } } },
   });
 }
 
 export async function generateTenderDocuments(tenderId: string, userId: string): Promise<void> {
-  // ── Pre-flight: block if mandatory compliance gaps are unresolved ───────────
-  // Requirement: Block final generation if mandatory gaps exist (Req. 8).
   const blockingGaps = await prisma.complianceGap.findMany({
     where: { tenderId, isResolved: false, severity: { in: ["CRITICAL", "HIGH"] } },
     select: { title: true, severity: true },
   });
   if (blockingGaps.length > 0) {
-    throw new Error(
-      `Generation blocked: ${blockingGaps.length} unresolved CRITICAL/HIGH compliance gap(s) must be ` +
-      `addressed before documents can be generated. ` +
-      `Resolve these in the Compliance tab first: ${blockingGaps.map((g) => g.title).join("; ")}.`,
-    );
+    throw new Error(`Generation blocked: ${blockingGaps.length} unresolved CRITICAL/HIGH compliance gap(s) must be addressed before documents can be generated. Resolve these in the Compliance tab first: ${blockingGaps.map((g) => g.title).join("; ")}.`);
   }
 
-  // ── Pre-flight: enforce trust levels on selected experts and projects ───────
-  // Requirement: Generated documents use only source-supported facts (Req. 9).
-  // Requirement: Never trust imported records until reviewed (Req. 4).
-  // REGEX_DRAFT = pattern-extracted, unreliable → hard block.
-  // AI_DRAFT = Claude-extracted, unreviewed → allowed with source annotation.
-  // REVIEWED = human-verified → fully trusted, used preferentially.
   const rawExpertMatches = await prisma.tenderExpertMatch.findMany({
     where: { tenderId, isSelected: true },
-    include: {
-      expert: {
-        select: {
-          id: true, fullName: true, title: true, email: true, phone: true,
-          yearsExperience: true, disciplines: true, sectors: true,
-          certifications: true, profile: true, trustLevel: true,
-        },
-      },
-    },
+    include: { expert: { select: { id: true, fullName: true, title: true, email: true, phone: true, yearsExperience: true, disciplines: true, sectors: true, certifications: true, profile: true, trustLevel: true } } },
   });
   const rawProjectMatches = await prisma.tenderProjectMatch.findMany({
     where: { tenderId, isSelected: true },
-    include: {
-      project: {
-        select: {
-          id: true, name: true, clientName: true, country: true, sector: true,
-          serviceAreas: true, contractValue: true, currency: true, summary: true,
-          startDate: true, endDate: true, trustLevel: true,
-        },
-      },
-    },
+    include: { project: { select: { id: true, name: true, clientName: true, country: true, sector: true, serviceAreas: true, contractValue: true, currency: true, summary: true, startDate: true, endDate: true, trustLevel: true } } },
   });
 
-  const regexDraftExperts = rawExpertMatches.filter(
-    (m) => !m.expert.trustLevel || m.expert.trustLevel === "REGEX_DRAFT",
-  );
-  if (regexDraftExperts.length > 0) {
-    throw new Error(
-      `Generation blocked: ${regexDraftExperts.length} selected expert(s) are REGEX_DRAFT — ` +
-      `pattern-extracted records are not reliable enough for final proposal documents. ` +
-      `Open Company Knowledge → Experts and review: ${regexDraftExperts.map((m) => m.expert.fullName).join(", ")}.`,
-    );
+  const unreviewedExperts = rawExpertMatches.filter((m) => m.expert.trustLevel !== "REVIEWED");
+  if (unreviewedExperts.length > 0) {
+    throw new Error(`Generation blocked: ${unreviewedExperts.length} selected expert(s) are not REVIEWED. Open Company Knowledge Review and verify: ${unreviewedExperts.map((m) => m.expert.fullName).join(", ")}.`);
+  }
+  const unreviewedProjects = rawProjectMatches.filter((m) => m.project.trustLevel !== "REVIEWED");
+  if (unreviewedProjects.length > 0) {
+    throw new Error(`Generation blocked: ${unreviewedProjects.length} selected project(s) are not REVIEWED. Open Company Knowledge Review and verify: ${unreviewedProjects.map((m) => m.project.name).join(", ")}.`);
   }
 
-  const regexDraftProjects = rawProjectMatches.filter(
-    (m) => !m.project.trustLevel || m.project.trustLevel === "REGEX_DRAFT",
-  );
-  if (regexDraftProjects.length > 0) {
-    throw new Error(
-      `Generation blocked: ${regexDraftProjects.length} selected project(s) are REGEX_DRAFT — ` +
-      `pattern-extracted records are not reliable enough for final proposal documents. ` +
-      `Open Company Knowledge → Projects and review: ${regexDraftProjects.map((m) => m.project.name).join(", ")}.`,
-    );
-  }
+  const selectedExperts = rawExpertMatches.map((m) => m.expert);
+  const selectedProjects = rawProjectMatches.map((m) => m.project);
 
-  // Order: REVIEWED first (authoritative), then AI_DRAFT (Claude-extracted, unreviewed)
-  // Requirement: Run tender matching using reviewed knowledge first (Req. 7).
-  const reviewedExperts = rawExpertMatches
-    .filter((m) => m.expert.trustLevel === "REVIEWED")
-    .map((m) => m.expert);
-  const draftExperts = rawExpertMatches
-    .filter((m) => m.expert.trustLevel === "AI_DRAFT")
-    .map((m) => m.expert);
-  const reviewedProjects = rawProjectMatches
-    .filter((m) => m.project.trustLevel === "REVIEWED")
-    .map((m) => m.project);
-  const draftProjects = rawProjectMatches
-    .filter((m) => m.project.trustLevel === "AI_DRAFT")
-    .map((m) => m.project);
-
-  const hasDraftSources = draftExperts.length > 0 || draftProjects.length > 0;
-
-  const tender = await prisma.tender.findFirst({
-    where: { id: tenderId, userId },
-    include: {
-      requirements: true,
-      generatedDocuments: {
-        select: { id: true, name: true, documentType: true, exactFileName: true, exactOrder: true, generationStatus: true, contentSummary: true },
-      },
-    },
-  });
-
+  const tender = await prisma.tender.findFirst({ where: { id: tenderId, userId }, include: { requirements: true, generatedDocuments: { select: { id: true, name: true, documentType: true, exactFileName: true, exactOrder: true, generationStatus: true, contentSummary: true } } } });
   if (!tender) throw new Error("Tender not found");
 
   const company = await prisma.company.findUnique({ where: { userId } });
   if (!company) throw new Error("Company not found");
 
-  // Reviewed first, then AI_DRAFT — already separated above
-  const selectedExperts = [...reviewedExperts, ...draftExperts];
-  const selectedProjects = [...reviewedProjects, ...draftProjects];
-
-  // Determine what documents to generate based on requirements
   const plannedDocs = tender.generatedDocuments.filter((d) => d.generationStatus === "PLANNED");
-
-  // Always ensure a main proposal document exists
-  const hasProposal = plannedDocs.some((d) =>
-    ["PROPOSAL", "TECHNICAL_PROPOSAL", "METHODOLOGY"].includes(d.documentType),
-  );
-
-  const docsToGenerate = hasProposal
-    ? plannedDocs
-    : [
-        {
-          id: null,
-          name: `${tender.title} — Technical Proposal`,
-          documentType: "TECHNICAL_PROPOSAL",
-          exactFileName: `${tender.title.replace(/[^a-zA-Z0-9]/g, "-")}-Technical-Proposal.docx`,
-          exactOrder: 1,
-          contentSummary: null,
-        },
-        ...plannedDocs,
-      ];
+  const docsToGenerate = plannedDocs.length > 0 ? plannedDocs : [{ id: null, name: `${tender.title} — Technical Proposal`, documentType: "TECHNICAL_PROPOSAL", exactFileName: `${tender.title.replace(/[^a-zA-Z0-9]/g, "-")}-Technical-Proposal.docx`, exactOrder: 1, contentSummary: null }];
 
   const letterheadParas = buildLetterheadHeader(company);
   const coverParas = buildCoverSection(tender.title, tender.reference, tender.clientName, company.name);
-
-  // Source-trust annotation paragraph — added after cover on each document
-  // Requirement 9: Generated documents must use only source-supported facts.
-  const sourceTrustNote = hasDraftSources
-    ? [
-        new Paragraph({
-          children: [
-            new TextRun({
-              text:
-                `⚠ INTERNAL NOTE (remove before submission): This document was generated using ` +
-                `${reviewedExperts.length} REVIEWED and ${draftExperts.length} AI_DRAFT expert source(s); ` +
-                `${reviewedProjects.length} REVIEWED and ${draftProjects.length} AI_DRAFT project source(s). ` +
-                `AI_DRAFT records are Claude-extracted but have not been human-reviewed. ` +
-                `Verify all expert profiles and project details before submitting to client.`,
-              color: "CC4400",
-              italics: true,
-              size: 18,
-            }),
-          ],
-          spacing: { before: 80, after: 120 },
-        }),
-      ]
-    : [];
 
   let expertIdx = 0;
   let projectIdx = 0;
@@ -511,49 +268,23 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
 
     try {
       if (["TECHNICAL_PROPOSAL", "PROPOSAL", "METHODOLOGY"].includes(doc.documentType)) {
-        const proposalContent = await buildProposalContent({
-          tender,
-          company,
-          experts: selectedExperts,
-          projects: selectedProjects,
-          requirements: tender.requirements,
-        });
-        contentParagraphs = [...letterheadParas, ...coverParas, ...sourceTrustNote, ...proposalContent];
+        const proposalContent = await buildProposalContent({ tender, company, experts: selectedExperts, projects: selectedProjects, requirements: tender.requirements });
+        contentParagraphs = [...letterheadParas, ...coverParas, ...proposalContent];
         docTitle = doc.name;
-
       } else if (doc.documentType === "EXPERT" || doc.name.toLowerCase().includes("cv")) {
         const expert = selectedExperts[expertIdx] ?? selectedExperts[expertIdx % Math.max(selectedExperts.length, 1)];
-        if (expert) {
-          contentParagraphs = [...letterheadParas, ...sourceTrustNote, ...buildCVContent(expert)];
-          docTitle = `CV — ${expert.fullName}`;
-          expertIdx++;
-        }
-
+        if (expert) { contentParagraphs = [...letterheadParas, ...buildCVContent(expert)]; docTitle = `CV — ${expert.fullName}`; expertIdx++; }
       } else if (doc.documentType === "PROJECT_EXPERIENCE") {
         const project = selectedProjects[projectIdx] ?? selectedProjects[projectIdx % Math.max(selectedProjects.length, 1)];
-        if (project) {
-          contentParagraphs = [...letterheadParas, ...sourceTrustNote, ...buildProjectReferenceContent(project)];
-          docTitle = `Project Reference — ${project.name}`;
-          projectIdx++;
-        }
-
+        if (project) { contentParagraphs = [...letterheadParas, ...buildProjectReferenceContent(project)]; docTitle = `Project Reference — ${project.name}`; projectIdx++; }
       } else if (doc.documentType === "DECLARATION") {
         contentParagraphs = [...letterheadParas, ...buildDeclarationContent(company.name, tender.title)];
         docTitle = "Declaration";
-
       } else if (doc.documentType === "COMPANY_PROFILE") {
         contentParagraphs = [...letterheadParas, ...buildCompanyProfileContent(company)];
         docTitle = "Company Profile";
-
       } else {
-        // Generic document with letterhead and basic content
-        contentParagraphs = [
-          ...letterheadParas,
-          heading1(doc.name),
-          body(`This document forms part of the proposal package for ${tender.title}.`),
-          body(`Prepared by: ${company.name}`),
-          body(`Date: ${new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })}`),
-        ];
+        contentParagraphs = [...letterheadParas, heading1(doc.name), body(`This document forms part of the proposal package for ${tender.title}.`), body(`Prepared by: ${company.name}`), body(`Date: ${new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })}`)];
       }
 
       if (contentParagraphs.length === 0) continue;
@@ -561,62 +292,17 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
       const document = buildDocxFromParagraphs(contentParagraphs, company.name, docTitle);
       const buffer = await Packer.toBuffer(document);
       const fileContent = buffer.toString("base64");
-
-      const exactFileName =
-        doc.exactFileName ??
-        `${docTitle.replace(/[^a-zA-Z0-9 ]/g, "").trim().replace(/\s+/g, "-")}.docx`;
+      const exactFileName = doc.exactFileName ?? `${docTitle.replace(/[^a-zA-Z0-9 ]/g, "").trim().replace(/\s+/g, "-")}.docx`;
 
       if (doc.id) {
-        await prisma.generatedDocument.update({
-          where: { id: doc.id },
-          data: {
-            fileContent,
-            exactFileName,
-            generationStatus: "GENERATED",
-            validationStatus: "PENDING",
-            reviewedExpertCount: reviewedExperts.length,
-            draftExpertCount: draftExperts.length,
-            reviewedProjectCount: reviewedProjects.length,
-            draftProjectCount: draftProjects.length,
-            contentSummary:
-              `Generated ${new Date().toLocaleDateString()} — ${contentParagraphs.length} sections` +
-              (hasDraftSources
-                ? ` | ⚠ Contains ${draftExperts.length + draftProjects.length} AI_DRAFT source(s) — review before submitting`
-                : " | ✓ All sources REVIEWED"),
-          },
-        });
+        await prisma.generatedDocument.update({ where: { id: doc.id }, data: { fileContent, exactFileName, generationStatus: "GENERATED", validationStatus: "PENDING", reviewedExpertCount: selectedExperts.length, draftExpertCount: 0, reviewedProjectCount: selectedProjects.length, draftProjectCount: 0, contentSummary: `Generated ${new Date().toLocaleDateString()} — ${contentParagraphs.length} sections | ✓ All selected sources REVIEWED` } });
       } else {
-        await prisma.generatedDocument.create({
-          data: {
-            tenderId,
-            name: docTitle,
-            documentType: doc.documentType,
-            format: "DOCX",
-            exactFileName,
-            exactOrder: doc.exactOrder ?? 1,
-            fileContent,
-            generationStatus: "GENERATED",
-            validationStatus: "PENDING",
-            reviewedExpertCount: reviewedExperts.length,
-            draftExpertCount: draftExperts.length,
-            reviewedProjectCount: reviewedProjects.length,
-            draftProjectCount: draftProjects.length,
-            contentSummary:
-              `Generated ${new Date().toLocaleDateString()} — ${contentParagraphs.length} sections` +
-              (hasDraftSources
-                ? ` | ⚠ Contains ${draftExperts.length + draftProjects.length} AI_DRAFT source(s) — review before submitting`
-                : " | ✓ All sources REVIEWED"),
-          },
-        });
+        await prisma.generatedDocument.create({ data: { tenderId, name: docTitle, documentType: doc.documentType, format: "DOCX", exactFileName, exactOrder: doc.exactOrder ?? 1, fileContent, generationStatus: "GENERATED", validationStatus: "PENDING", reviewedExpertCount: selectedExperts.length, draftExpertCount: 0, reviewedProjectCount: selectedProjects.length, draftProjectCount: 0, contentSummary: `Generated ${new Date().toLocaleDateString()} — ${contentParagraphs.length} sections | ✓ All selected sources REVIEWED` } });
       }
     } catch (err) {
       console.error(`[generate] failed for doc "${doc.name}":`, err);
     }
   }
 
-  // Update tender status
-  await prisma.tender.update({
-    where: { id: tenderId },
-    data: { status: "GENERATED", stage: "GENERATION", updatedAt: new Date() },
-  });
+  await prisma.tender.update({ where: { id: tenderId }, data: { status: "GENERATED", stage: "GENERATION", updatedAt: new Date() } });
 }

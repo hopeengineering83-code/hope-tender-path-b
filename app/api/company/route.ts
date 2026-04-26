@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma, prismaReady } from "../../../lib/prisma";
 import { getSession } from "../../../lib/auth";
+import { ensureCompanyForUser } from "../../../lib/company-workspace";
 
 function toJsonArray(value: unknown): string {
   if (Array.isArray(value)) return JSON.stringify(value.filter(Boolean));
@@ -10,6 +11,7 @@ function toJsonArray(value: unknown): string {
 }
 
 async function loadCompany(userId: string) {
+  await ensureCompanyForUser(prisma, userId);
   return prisma.company.findUnique({
     where: { userId },
     include: {
@@ -62,7 +64,7 @@ export async function PUT(req: Request) {
       where: { userId },
       create: {
         id: crypto.randomUUID(),
-        name: body.name || "My Company",
+        name: body.name || "Hope Urban Planning Architectural and Engineering Consultancy",
         legalName: body.legalName || null,
         description: body.description || null,
         website: body.website || null,
