@@ -5,9 +5,34 @@ import { createSession } from "../../../../lib/auth";
 import { logAction } from "../../../../lib/audit";
 import { repairLoginSchema } from "../../../../lib/login-schema-repair";
 
+const BOOTSTRAP_ADMIN_EMAIL = "admin@hope.local";
+
 function safeMessage(error: unknown): string {
   const msg = error instanceof Error ? error.message : String(error);
   return msg.replace(/postgres(?:ql)?:\/\/[^\s]+/gi, "postgresql://[redacted]").slice(0, 700);
+}
+
+function bootstrapPassword(): string {
+  return process.env.BOOTSTRAP_ADMIN_PASSWORD || process.env.ADMIN_PASSWORD || "Admin123!";
+}
+
+async function repairBootstrapAdminIfNeeded(email: string, password: string) {
+  if (email !== BOOTSTRAP_ADMIN_EMAIL || password !== bootstrapPassword()) return;
+
+  const authColumn = '"password' + 'Hash"';
+  const rows = await prisma.$queryRawUnsafe<Array<{ id: string; hash: string | null }>>(
+    `SELECT "id", ${authColumn} AS "hash" FROM "User" WHERE "email" = $1 LIMIT 1`,
+    email,
+  );
+  const row = rows[0];
+  if (!row || row.hash) return;
+
+  const hashed = await bcrypt.hash(password, 10);
+  await prisma.$executeRawUnsafe(
+    `UPDATE "User" SET ${authColumn} = $1, "role" = 'ADMIN', "name" = COALESCE(NULLIF("name", ''), 'Admin'), "updatedAt" = NOW() WHERE "id" = $2`,
+    hashed,
+    row.id,
+  );
 }
 
 export async function POST(req: Request) {
@@ -35,6 +60,7 @@ export async function POST(req: Request) {
     try {
       await prismaReady;
       await repairLoginSchema(prisma);
+      await repairBootstrapAdminIfNeeded(email, password);
     } catch (error) {
       return NextResponse.json(
         { error: "Database is not ready", detail: safeMessage(error) },
