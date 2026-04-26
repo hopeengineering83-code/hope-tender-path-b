@@ -4,7 +4,7 @@
  * Fails LOUDLY — throws at module load time so the process crashes with
  * a clear message rather than silently degrading.
  *
- * ARCHITECTURE: ANTHROPIC_API_KEY is required in ALL environments because:
+ * ARCHITECTURE: GEMINI_API_KEY is required in ALL environments because:
  *   - Without it, every imported expert/project is classified as REGEX_DRAFT
  *   - REGEX_DRAFT records are BLOCKED from use in final proposal generation
  *   - A deployment without the key can never complete the proposal workflow
@@ -14,7 +14,7 @@ const REQUIRED_VARS: Array<{ name: string; description: string }> = [
   { name: "DATABASE_URL", description: "PostgreSQL connection string (postgresql://...)" },
   { name: "SESSION_SECRET", description: "At least 32-character random string for HMAC session signing" },
   {
-    name: "ANTHROPIC_API_KEY",
+    name: "GEMINI_API_KEY",
     description:
       "Anthropic API key (sk-ant-...) — required for AI extraction. Without this, all imported records " +
       "are REGEX_DRAFT and will be BLOCKED from final proposal generation.",
@@ -94,7 +94,7 @@ export function checkEnv(): void {
 }
 
 export function isAIConfigured(): boolean {
-  return Boolean(process.env.ANTHROPIC_API_KEY);
+  return Boolean(process.env.GEMINI_API_KEY);
 }
 
 // Alias used in diagnostics and other routes

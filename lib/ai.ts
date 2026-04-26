@@ -1,36 +1,33 @@
-/**
- * lib/ai.ts
- * Anthropic Claude wrapper — tender analysis, knowledge extraction, proposal generation.
- *
- * Model strategy:
- *   Extraction  → claude-3-5-haiku-20241022  (fast, cheap, structured output)
- *   Generation  → claude-3-5-sonnet-20241022 (best quality for proposal prose)
- */
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
-import Anthropic from "@anthropic-ai/sdk";
+const apiKey = process.env.GEMINI_API_KEY;
 
-const EXTRACT_MODEL = "claude-3-5-haiku-20241022";
-const GENERATE_MODEL = "claude-3-5-sonnet-20241022";
-
-function getClient(): Anthropic {
-  if (!process.env.ANTHROPIC_API_KEY) throw new Error("ANTHROPIC_API_KEY not configured");
-  return new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+function getClient() {
+  if (!apiKey) throw new Error("GEMINI_API_KEY not configured");
+  return new GoogleGenerativeAI(apiKey);
 }
 
-export function isAIEnabled(): boolean {
-  return Boolean(process.env.ANTHROPIC_API_KEY);
+function getModel(modelName = "gemini-1.5-pro") {
+  return getClient().getGenerativeModel({ model: modelName });
 }
 
-async function generate(prompt: string, model: string = EXTRACT_MODEL): Promise<string> {
-  const client = getClient();
-  const message = await client.messages.create({
-    model,
-    max_tokens: 8192,
-    messages: [{ role: "user", content: prompt }],
-  });
-  const block = message.content[0];
-  if (!block || block.type !== "text") throw new Error("Unexpected response type from Anthropic");
-  return block.text;
+export function isAIEnabled() {
+  return Boolean(apiKey);
+}
+
+async function generate(prompt: string, modelName = "gemini-1.5-pro"): Promise<string> {
+  try {
+    const model = getModel(modelName);
+    const result = await model.generateContent(prompt);
+    const text = result.response.text();
+    if (!text || text.trim().length === 0) throw new Error("Empty response from Gemini API");
+    return text;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes("429")) throw new Error("Gemini API rate limit reached — try again in a moment");
+    if (msg.includes("403") || msg.includes("API_KEY")) throw new Error("Gemini API key invalid or missing");
+    throw err;
+  }
 }
 
 // ─── Tender analysis types ────────────────────────────────────────────────────
@@ -111,10 +108,14 @@ JSON structure required:
 TENDER DOCUMENT:
 ${tenderContent.slice(0, 15000)}`;
 
-  const text = await generate(prompt, EXTRACT_MODEL);
+  const text = await generate(prompt);
   const jsonMatch = text.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) throw new Error("Claude returned invalid JSON for tender analysis");
-  return JSON.parse(jsonMatch[0]) as AIAnalysisResult;
+  if (!jsonMatch) throw new Error("Gemini returned no JSON object for tender analysis");
+  try {
+    return JSON.parse(jsonMatch[0]) as AIAnalysisResult;
+  } catch {
+    throw new Error("Gemini returned malformed JSON for tender analysis");
+  }
 }
 
 // ─── CV / Expert extraction ───────────────────────────────────────────────────
@@ -137,25 +138,22 @@ Return ONLY a valid JSON array — no explanation, no markdown. Each element:
   "sourceSnippet": "verbatim extract ≤500 chars proving this person exists"
 }
 
-Rules:
-- Only include people clearly named in the document.
-- Do NOT invent any field — use null if uncertain.
-- sourceSnippet must be a direct quote from the document.
-- Do NOT extract project names as expert names.
-- Omit any record where fullName is ambiguous.
+Rules: only include people clearly named in the document. Do NOT invent any field — use null if uncertain. sourceSnippet must be a direct quote.
 
 DOCUMENT TEXT (${text.length.toLocaleString()} chars):
 ${text.slice(0, 20000)}`;
 
-  const raw = await generate(prompt, EXTRACT_MODEL);
+  const raw = await generate(prompt);
   const jsonMatch = raw.match(/\[[\s\S]*\]/);
   if (!jsonMatch) return [];
   try {
-    const parsed = JSON.parse(jsonMatch[0]) as AIExtractedExpert[];
-    return parsed.filter(
-      (e) => e.fullName && typeof e.fullName === "string" && e.fullName.trim().length > 2,
+    const parsed = JSON.parse(jsonMatch[0]);
+    if (!Array.isArray(parsed)) return [];
+    return (parsed as AIExtractedExpert[]).filter(
+      (e) => e && typeof e === "object" && typeof e.fullName === "string" && e.fullName.trim().length > 2,
     );
   } catch {
+    console.warn("[extractExpertsFromText] JSON parse failed, returning empty");
     return [];
   }
 }
@@ -181,22 +179,22 @@ Return ONLY a valid JSON array — no explanation, no markdown. Each element:
   "sourceSnippet": "verbatim extract ≤500 chars proving this project"
 }
 
-Rules:
-- Only include projects clearly in the document.
-- Do NOT invent values. sourceSnippet must be a direct quote.
-- Do NOT extract person names as project names.
-- Omit records where the project name is unclear or generic.
+Rules: only include projects clearly in the document. Do NOT invent values. sourceSnippet must be a direct quote.
 
 DOCUMENT TEXT (${text.length.toLocaleString()} chars):
 ${text.slice(0, 20000)}`;
 
-  const raw = await generate(prompt, EXTRACT_MODEL);
+  const raw = await generate(prompt);
   const jsonMatch = raw.match(/\[[\s\S]*\]/);
   if (!jsonMatch) return [];
   try {
-    const parsed = JSON.parse(jsonMatch[0]) as AIExtractedProject[];
-    return parsed.filter((p) => p.name && typeof p.name === "string" && p.name.trim().length > 3);
+    const parsed = JSON.parse(jsonMatch[0]);
+    if (!Array.isArray(parsed)) return [];
+    return (parsed as AIExtractedProject[]).filter(
+      (p) => p && typeof p === "object" && typeof p.name === "string" && p.name.trim().length > 3,
+    );
   } catch {
+    console.warn("[extractProjectsFromText] JSON parse failed, returning empty");
     return [];
   }
 }
@@ -230,5 +228,5 @@ Write a formal proposal with these sections (use ## headings):
 
 Reference tender requirements directly. Use only the company information provided above.`;
 
-  return generate(prompt, GENERATE_MODEL);
+  return generate(prompt, "gemini-1.5-pro");
 }

@@ -7,7 +7,7 @@ import { logAction } from "../../../lib/audit";
 export async function GET() {
   let actor;
   try {
-    actor = await requireRole("ADMIN", "PROPOSAL_MANAGER");
+    actor = await requireRole("ADMIN");
   } catch (e) {
     const msg = e instanceof Error ? e.message : "";
     return msg === "Forbidden" ? forbiddenResponse() : unauthorizedResponse();

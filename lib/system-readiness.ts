@@ -37,11 +37,11 @@ export function getSystemReadiness(): SystemReadiness {
     {
       key: "ai_extraction",
       title: "AI extraction key (Anthropic Claude)",
-      severity: has(process.env.ANTHROPIC_API_KEY) ? "OK" : "CRITICAL",
+      severity: has(process.env.GEMINI_API_KEY) ? "OK" : "CRITICAL",
       requiredForProduction: true,
-      detail: has(process.env.ANTHROPIC_API_KEY)
-        ? "ANTHROPIC_API_KEY is configured. Claude AI extraction is enabled for CVs, project portfolios, and tender documents."
-        : "ANTHROPIC_API_KEY is missing. Complex PDFs can only be parsed with weak rule-based (regex) extraction. All imported records will be REGEX_DRAFT and cannot be used in final proposals.",
+      detail: has(process.env.GEMINI_API_KEY)
+        ? "GEMINI_API_KEY is configured. Claude AI extraction is enabled for CVs, project portfolios, and tender documents."
+        : "GEMINI_API_KEY is missing. Complex PDFs can only be parsed with weak rule-based (regex) extraction. All imported records will be REGEX_DRAFT and cannot be used in final proposals.",
     },
     {
       key: "session_secret",

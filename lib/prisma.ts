@@ -422,6 +422,18 @@ async function bootstrap(client: PrismaClient): Promise<void> {
     FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE SET NULL
   )`);
 
+  // ── indexes ───────────────────────────────────────────────────────────────
+  await client.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "CompanyDocument_companyId_idx" ON "CompanyDocument"("companyId")`);
+  await client.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "CompanyAsset_companyId_idx" ON "CompanyAsset"("companyId")`);
+  await client.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "Expert_companyId_idx" ON "Expert"("companyId")`);
+  await client.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "Expert_trustLevel_idx" ON "Expert"("trustLevel")`);
+  await client.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "Project_companyId_idx" ON "Project"("companyId")`);
+  await client.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "Project_trustLevel_idx" ON "Project"("trustLevel")`);
+  await client.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "TenderExpertMatch_tenderId_idx" ON "TenderExpertMatch"("tenderId")`);
+  await client.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "TenderProjectMatch_tenderId_idx" ON "TenderProjectMatch"("tenderId")`);
+  await client.$executeRawUnsafe(`CREATE UNIQUE INDEX IF NOT EXISTS "TenderExpertMatch_tenderId_expertId_key" ON "TenderExpertMatch"("tenderId", "expertId")`);
+  await client.$executeRawUnsafe(`CREATE UNIQUE INDEX IF NOT EXISTS "TenderProjectMatch_tenderId_projectId_key" ON "TenderProjectMatch"("tenderId", "projectId")`);
+
   // ── additive column migrations ────────────────────────────────────────────
   await ensureColumn(client, "Expert", "trustLevel", "TEXT NOT NULL DEFAULT 'REGEX_DRAFT'");
   await ensureColumn(client, "Expert", "reviewedBy", "TEXT");
@@ -476,13 +488,25 @@ async function bootstrap(client: PrismaClient): Promise<void> {
   }
 }
 
-export const prismaReady: Promise<void> = (() => {
+function ensureBootstrapped(): Promise<void> {
   if (!g.prismaReady) {
     g.prismaReady = bootstrap(prisma).catch((err: unknown) => {
       console.error("[bootstrap] failed:", err);
-      g.prismaReady = undefined;
+      g.prismaReady = undefined; // allow retry on next request
       throw err;
     });
   }
   return g.prismaReady;
-})();
+}
+
+// PromiseLike wrapper — re-evaluates g.prismaReady on every await so a
+// failed cold-start bootstrap can be retried on the next request instead
+// of caching the rejected promise for the lifetime of the Lambda container.
+export const prismaReady: PromiseLike<void> = {
+  then<T1, T2>(
+    onfulfilled?: ((value: void) => T1 | PromiseLike<T1>) | null,
+    onrejected?: ((reason: unknown) => T2 | PromiseLike<T2>) | null,
+  ): PromiseLike<T1 | T2> {
+    return ensureBootstrapped().then(onfulfilled, onrejected);
+  },
+};

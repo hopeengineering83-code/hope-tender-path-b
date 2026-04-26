@@ -38,9 +38,25 @@ export async function POST(req: Request) {
 
     const results: unknown[] = [];
 
+    const ALLOWED_MIME = new Set([
+      "application/pdf",
+      "application/msword",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "application/vnd.ms-excel",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "text/plain",
+      "text/csv",
+    ]);
+
     for (const file of files) {
       if (file.size > MAX_BYTES) {
         results.push({ error: `${file.name}: exceeds 10 MB limit`, fileName: file.name });
+        continue;
+      }
+
+      const mime = file.type || "application/octet-stream";
+      if (!ALLOWED_MIME.has(mime)) {
+        results.push({ error: `${file.name}: unsupported file type "${mime}". Allowed: PDF, DOCX, DOC, XLSX, XLS, TXT, CSV`, fileName: file.name });
         continue;
       }
 

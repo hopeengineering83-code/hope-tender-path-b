@@ -47,16 +47,11 @@ function basicCleanup(text: string): string {
 }
 
 async function humanizeWithAI(text: string): Promise<string> {
-  const Anthropic = (await import("@anthropic-ai/sdk")).default;
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? "" });
+  const { GoogleGenerativeAI } = await import("@google/generative-ai");
+  const client = new GoogleGenerativeAI(process.env.GEMINI_API_KEY ?? "");
+  const model = client.getGenerativeModel({ model: "gemini-1.5-flash" });
 
-  const message = await client.messages.create({
-    model: "claude-3-5-haiku-20241022",
-    max_tokens: 2048,
-    messages: [
-      {
-        role: "user",
-        content: `You are a professional proposal editor for a consultancy firm.
+  const result = await model.generateContent(`You are a professional proposal editor for a consultancy firm.
 The following text was drafted for a tender proposal.
 Rewrite it to sound like it was written by a senior consultant — professional, confident, and business-grade.
 
@@ -69,13 +64,9 @@ Rules:
 - Return only the rewritten text, no commentary
 
 TEXT TO REWRITE:
-${text.slice(0, 6000)}`,
-      },
-    ],
-  });
+${text.slice(0, 6000)}`);
 
-  const block = message.content[0];
-  return (block?.type === "text" ? block.text : null) || text;
+  return result.response.text() || text;
 }
 
 export async function humanize(text: string): Promise<string> {

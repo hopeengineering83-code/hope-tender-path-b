@@ -9,14 +9,6 @@
  *   "build": "node scripts/check-env.mjs && prisma generate && next build"
  */
 
-// ── Required in ALL environments ─────────────────────────────────────────────
-//
-// ARCHITECTURE NOTE: ANTHROPIC_API_KEY is always required because without it
-// the AI extraction pipeline is disabled and every imported expert/project is
-// classified as REGEX_DRAFT. REGEX_DRAFT records are *blocked* from use in final
-// proposal generation (by design). This means a deployment without the API key
-// can never complete the full proposal workflow — it is architecturally broken.
-//
 const ALWAYS_REQUIRED = [
   {
     name: "DATABASE_URL",
@@ -44,21 +36,18 @@ const ALWAYS_REQUIRED = [
     },
   },
   {
-    name: "ANTHROPIC_API_KEY",
+    name: "GEMINI_API_KEY",
     description:
-      "Anthropic API key (sk-ant-...) — required for AI extraction (CVs → experts, portfolios → projects). " +
+      "Google Gemini API key — required for AI extraction (CVs → experts, portfolios → projects). " +
       "Without this key ALL imported records are REGEX_DRAFT, which is blocked from final proposal generation.",
     validate: (v) => {
-      if (!v.startsWith("sk-ant-")) return `Expected an Anthropic key starting with sk-ant-. Got: "${v.slice(0, 10)}..."`;
+      if (v.length < 10) return `Too short to be a valid Gemini API key. Got ${v.length} chars.`;
       return null;
     },
   },
 ];
 
-// ── No production-only requirements beyond the above ─────────────────────────
 const PRODUCTION_REQUIRED = [];
-
-// ─── Run checks ───────────────────────────────────────────────────────────────
 
 const isProd = process.env.NODE_ENV === "production" || process.env.VERCEL_ENV === "production" || process.env.VERCEL === "1";
 const errors = [];
@@ -94,8 +83,6 @@ for (const spec of PRODUCTION_REQUIRED) {
     }
   }
 }
-
-// ── Print results ─────────────────────────────────────────────────────────────
 
 if (warnings.length > 0) {
   console.warn("\n⚠  BUILD WARNINGS — environment configuration issues:\n");
