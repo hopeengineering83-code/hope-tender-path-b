@@ -16,9 +16,18 @@ export function isAIEnabled() {
 }
 
 async function generate(prompt: string, modelName = "gemini-1.5-pro"): Promise<string> {
-  const model = getModel(modelName);
-  const result = await model.generateContent(prompt);
-  return result.response.text();
+  try {
+    const model = getModel(modelName);
+    const result = await model.generateContent(prompt);
+    const text = result.response.text();
+    if (!text || text.trim().length === 0) throw new Error("Empty response from Gemini API");
+    return text;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes("429")) throw new Error("Gemini API rate limit reached — try again in a moment");
+    if (msg.includes("403") || msg.includes("API_KEY")) throw new Error("Gemini API key invalid or missing");
+    throw err;
+  }
 }
 
 // ─── Tender analysis types ────────────────────────────────────────────────────
@@ -101,8 +110,12 @@ ${tenderContent.slice(0, 15000)}`;
 
   const text = await generate(prompt);
   const jsonMatch = text.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) throw new Error("Gemini returned invalid JSON for tender analysis");
-  return JSON.parse(jsonMatch[0]) as AIAnalysisResult;
+  if (!jsonMatch) throw new Error("Gemini returned no JSON object for tender analysis");
+  try {
+    return JSON.parse(jsonMatch[0]) as AIAnalysisResult;
+  } catch {
+    throw new Error("Gemini returned malformed JSON for tender analysis");
+  }
 }
 
 // ─── CV / Expert extraction ───────────────────────────────────────────────────
@@ -134,9 +147,13 @@ ${text.slice(0, 20000)}`;
   const jsonMatch = raw.match(/\[[\s\S]*\]/);
   if (!jsonMatch) return [];
   try {
-    const parsed = JSON.parse(jsonMatch[0]) as AIExtractedExpert[];
-    return parsed.filter((e) => e.fullName && typeof e.fullName === "string" && e.fullName.trim().length > 2);
+    const parsed = JSON.parse(jsonMatch[0]);
+    if (!Array.isArray(parsed)) return [];
+    return (parsed as AIExtractedExpert[]).filter(
+      (e) => e && typeof e === "object" && typeof e.fullName === "string" && e.fullName.trim().length > 2,
+    );
   } catch {
+    console.warn("[extractExpertsFromText] JSON parse failed, returning empty");
     return [];
   }
 }
@@ -171,9 +188,13 @@ ${text.slice(0, 20000)}`;
   const jsonMatch = raw.match(/\[[\s\S]*\]/);
   if (!jsonMatch) return [];
   try {
-    const parsed = JSON.parse(jsonMatch[0]) as AIExtractedProject[];
-    return parsed.filter((p) => p.name && typeof p.name === "string" && p.name.trim().length > 3);
+    const parsed = JSON.parse(jsonMatch[0]);
+    if (!Array.isArray(parsed)) return [];
+    return (parsed as AIExtractedProject[]).filter(
+      (p) => p && typeof p === "object" && typeof p.name === "string" && p.name.trim().length > 3,
+    );
   } catch {
+    console.warn("[extractProjectsFromText] JSON parse failed, returning empty");
     return [];
   }
 }

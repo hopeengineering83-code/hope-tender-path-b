@@ -109,6 +109,8 @@ model CompanyDocument {
 
   expertsSourced  Expert[]
   projectsSourced Project[]
+
+  @@index([companyId])
 }
 
 model CompanyAsset {
@@ -126,6 +128,8 @@ model CompanyAsset {
   metadata         String   @default("{}")
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
+
+  @@index([companyId])
 }
 
 // trustLevel values: REGEX_DRAFT | AI_DRAFT | REVIEWED
@@ -156,6 +160,9 @@ model Expert {
   createdAt        DateTime         @default(now())
   updatedAt        DateTime         @updatedAt
   tenderMatches    TenderExpertMatch[]
+
+  @@index([companyId])
+  @@index([trustLevel])
 }
 
 // trustLevel values: REGEX_DRAFT | AI_DRAFT | REVIEWED
@@ -185,6 +192,9 @@ model Project {
   createdAt     DateTime         @default(now())
   updatedAt     DateTime         @updatedAt
   tenderMatches TenderProjectMatch[]
+
+  @@index([companyId])
+  @@index([trustLevel])
 }
 
 model ProjectEvidence {
@@ -347,6 +357,9 @@ model TenderExpertMatch {
   isSelected Boolean  @default(false)
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
+
+  @@unique([tenderId, expertId])
+  @@index([tenderId])
 }
 
 model TenderProjectMatch {
@@ -360,6 +373,9 @@ model TenderProjectMatch {
   isSelected Boolean  @default(false)
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
+
+  @@unique([tenderId, projectId])
+  @@index([tenderId])
 }
 
 model ComplianceGap {

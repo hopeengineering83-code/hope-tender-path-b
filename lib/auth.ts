@@ -5,10 +5,10 @@ import { prisma, prismaReady } from "./prisma";
 const SESSION_COOKIE = "hope_session";
 const SESSION_TTL_DAYS = 14;
 
-// Fallback secret is consistent across all Lambda containers (same deployed code).
-// Set SESSION_SECRET in Vercel env vars for production security.
 function getSecret(): string {
-  return process.env.SESSION_SECRET ?? "hope-tender-path-built-in-secret-v1";
+  const secret = process.env.SESSION_SECRET;
+  if (!secret) throw new Error("SESSION_SECRET environment variable is not set");
+  return secret;
 }
 
 function makeToken(userId: string): string {
@@ -43,7 +43,7 @@ export async function createSession(userId: string) {
   store.set(SESSION_COOKIE, token, {
     httpOnly: true,
     sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
+    secure: process.env.NODE_ENV === "production" || Boolean(process.env.VERCEL_ENV),
     path: "/",
     expires: expiresAt,
   });
@@ -71,13 +71,8 @@ export async function destroySession() {
 export async function getCurrentUser() {
   const userId = await getSession();
   if (!userId) return null;
-  try {
-    await prismaReady;
-    return await prisma.user.findUnique({ where: { id: userId } });
-  } catch (error) {
-    console.error("[auth] failed to load current user:", error);
-    return null;
-  }
+  await prismaReady;
+  return prisma.user.findUnique({ where: { id: userId } });
 }
 
 export async function requireUser() {
