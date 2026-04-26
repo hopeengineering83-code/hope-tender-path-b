@@ -4,6 +4,7 @@ import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { logAction } from "../../../../../lib/audit";
 import { extractTextFromBuffer, getFileTypeLabel, isMeaningfulExtraction } from "../../../../../lib/extract-text";
 import { importCompanyKnowledgeFromDocuments } from "../../../../../lib/company-knowledge-import-safe";
+import { runCompanyKnowledgeSafetyImport } from "../../../../../lib/company-knowledge-safety-import";
 
 export async function GET(
   _req: Request,
@@ -81,11 +82,13 @@ export async function POST(
     },
   });
 
-  let knowledgeImport: Awaited<ReturnType<typeof importCompanyKnowledgeFromDocuments>> | null = null;
+  let knowledgeImport: (Awaited<ReturnType<typeof importCompanyKnowledgeFromDocuments>> & { safetyImport?: Awaited<ReturnType<typeof runCompanyKnowledgeSafetyImport>> }) | null = null;
   let knowledgeImportError: string | null = null;
   if (meaningful) {
     try {
-      knowledgeImport = await importCompanyKnowledgeFromDocuments(company.id);
+      const primary = await importCompanyKnowledgeFromDocuments(company.id);
+      const safetyImport = await runCompanyKnowledgeSafetyImport(prisma, company.id);
+      knowledgeImport = { ...primary, safetyImport };
     } catch (err) {
       knowledgeImportError = err instanceof Error ? err.message : String(err);
       console.error("[document reextract] knowledge import failed:", err);
