@@ -174,7 +174,7 @@ export default async function DashboardPage() {
           {!aiEnabled && (
             <div className="rounded-2xl border border-purple-200 bg-purple-50 p-4">
               <p className="text-sm font-semibold text-purple-800">Unlock AI features</p>
-              <p className="mt-1 text-xs text-purple-600">Add <code className="bg-purple-100 px-1 rounded">GEMINI_API_KEY</code> to Vercel environment variables to enable AI-powered requirement extraction and proposal generation.</p>
+              <p className="mt-1 text-xs text-purple-600">Add <code className="bg-purple-100 px-1 rounded">ANTHROPIC_API_KEY</code> to Vercel environment variables to enable AI-powered requirement extraction and proposal generation.</p>
             </div>
           )}
           {[

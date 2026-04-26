@@ -8,7 +8,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   if (!isAIEnabled()) {
-    return NextResponse.json({ error: "AI not configured. Add GEMINI_API_KEY to Vercel environment variables." }, { status: 400 });
+    return NextResponse.json({ error: "AI not configured. Add ANTHROPIC_API_KEY to Vercel environment variables." }, { status: 400 });
   }
 
   await prismaReady;
