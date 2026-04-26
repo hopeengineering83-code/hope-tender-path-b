@@ -5,6 +5,7 @@ import { extractTextFromBuffer, detectCategoryFromFile, getFileTypeLabel, isMean
 import { logAction } from "../../../lib/audit";
 import { ensureCompanyForUser } from "../../../lib/company-workspace";
 import { importCompanyKnowledgeFromDocuments } from "../../../lib/company-knowledge-import-safe";
+import { runTenderEngine } from "../../../lib/engine/run-tender-engine";
 
 const MAX_BYTES = 10 * 1024 * 1024;
 
@@ -42,6 +43,8 @@ export async function POST(req: Request) {
     let uploadedCompanyId: string | null = null;
     let companyDocsUploaded = 0;
     let companyDocsWithUsableText = 0;
+    let tenderFilesUploaded = 0;
+    let tenderFilesWithUsableText = 0;
 
     const ALLOWED_MIME = new Set([
       "application/pdf",
@@ -106,6 +109,8 @@ export async function POST(req: Request) {
           metadata: { tenderId, fileName: file.name, ...extraction },
         });
 
+        tenderFilesUploaded += 1;
+        if (extraction.extracted) tenderFilesWithUsableText += 1;
         results.push({ success: true, scope: "tender", fileRecord, extraction });
       } else {
         const company = await ensureCompanyForUser(prisma, userId);
@@ -152,6 +157,8 @@ export async function POST(req: Request) {
 
     let knowledgeImport: Awaited<ReturnType<typeof importCompanyKnowledgeFromDocuments>> | null = null;
     let knowledgeImportError: string | null = null;
+    let tenderEngine: { success: boolean; tenderId: string; status?: string | null; stage?: string | null; readinessScore?: number | null } | null = null;
+    let tenderEngineError: string | null = null;
 
     if (uploadedCompanyId && companyDocsUploaded > 0 && companyDocsWithUsableText > 0) {
       try {
@@ -178,6 +185,38 @@ export async function POST(req: Request) {
       }
     }
 
+    if (tenderId && tenderFilesUploaded > 0 && tenderFilesWithUsableText > 0) {
+      try {
+        const tender = await runTenderEngine(tenderId, userId);
+        tenderEngine = {
+          success: true,
+          tenderId,
+          status: tender?.status ?? null,
+          stage: tender?.stage ?? null,
+          readinessScore: tender?.readinessScore ?? null,
+        };
+        await logAction({
+          userId,
+          action: "TENDER_ANALYSIS_RUN",
+          entityType: "Tender",
+          entityId: tenderId,
+          description: `Auto-ran tender analysis/matching/compliance after ${tenderFilesUploaded} tender file upload(s)`,
+          metadata: tenderEngine,
+        });
+      } catch (err) {
+        tenderEngineError = err instanceof Error ? err.message : String(err);
+        console.error("[upload] tender engine auto-run failed:", err);
+        await logAction({
+          userId,
+          action: "TENDER_ANALYSIS_RUN",
+          entityType: "Tender",
+          entityId: tenderId,
+          description: `Tender engine auto-run failed after upload: ${tenderEngineError}`,
+          metadata: { error: tenderEngineError },
+        });
+      }
+    }
+
     const successCount = results.filter((r) => (r as Record<string, unknown>).success).length;
     const errorCount = results.length - successCount;
 
@@ -188,6 +227,8 @@ export async function POST(req: Request) {
       results,
       knowledgeImport,
       knowledgeImportError,
+      tenderEngine,
+      tenderEngineError,
     }, { status: errorCount > 0 && successCount === 0 ? 422 : 200 });
   } catch (error) {
     console.error("[upload] error:", error);
