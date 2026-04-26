@@ -36,11 +36,11 @@ export function getSystemReadiness(): SystemReadiness {
     },
     {
       key: "ai_extraction",
-      title: "AI extraction key (Anthropic Claude)",
+      title: "AI extraction key (Google Gemini)",
       severity: has(process.env.GEMINI_API_KEY) ? "OK" : "CRITICAL",
       requiredForProduction: true,
       detail: has(process.env.GEMINI_API_KEY)
-        ? "GEMINI_API_KEY is configured. Claude AI extraction is enabled for CVs, project portfolios, and tender documents."
+        ? "GEMINI_API_KEY is configured. Gemini AI extraction is enabled for CVs, project portfolios, and tender documents."
         : "GEMINI_API_KEY is missing. Complex PDFs can only be parsed with weak rule-based (regex) extraction. All imported records will be REGEX_DRAFT and cannot be used in final proposals.",
     },
     {

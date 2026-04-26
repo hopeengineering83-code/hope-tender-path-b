@@ -16,7 +16,7 @@ const REQUIRED_VARS: Array<{ name: string; description: string }> = [
   {
     name: "GEMINI_API_KEY",
     description:
-      "Anthropic API key (sk-ant-...) — required for AI extraction. Without this, all imported records " +
+      "Google Gemini API key — required for AI extraction. Without this, all imported records " +
       "are REGEX_DRAFT and will be BLOCKED from final proposal generation.",
   },
 ];
