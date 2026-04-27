@@ -40,7 +40,7 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
   if (!isSelf && !isAdmin) return forbiddenResponse();
 
   const body = await req.json();
-  const { name, role, password } = body as { name?: string; role?: string; password?: string };
+  const { name, role, password, currentPassword } = body as { name?: string; role?: string; password?: string; currentPassword?: string };
 
   await prismaReady;
 
@@ -61,6 +61,14 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
   if (password) {
     if (password.length < 8) {
       return NextResponse.json({ error: "Password must be at least 8 characters" }, { status: 400 });
+    }
+    // Non-admins changing own password must supply currentPassword
+    if (isSelf && !isAdmin) {
+      if (!currentPassword) {
+        return NextResponse.json({ error: "Current password is required" }, { status: 400 });
+      }
+      const ok = await bcrypt.compare(currentPassword, target.passwordHash ?? "");
+      if (!ok) return NextResponse.json({ error: "Current password is incorrect" }, { status: 400 });
     }
     data.passwordHash = await bcrypt.hash(password, 10);
   }

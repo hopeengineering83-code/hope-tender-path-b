@@ -47,14 +47,21 @@ export async function POST(req: Request) {
 
   try {
     const body = await req.json();
+    if (!body.fullName || String(body.fullName).trim().length < 2) {
+      return NextResponse.json({ error: "fullName is required" }, { status: 400 });
+    }
+    const yearsExp = body.yearsExperience != null ? Number(body.yearsExperience) : null;
+    if (yearsExp !== null && (yearsExp < 0 || yearsExp > 70)) {
+      return NextResponse.json({ error: "yearsExperience must be between 0 and 70" }, { status: 400 });
+    }
     const expert = await prisma.expert.create({
       data: {
         companyId: company.id,
-        fullName: body.fullName,
+        fullName: String(body.fullName).trim(),
         title: body.title || null,
         email: body.email || null,
         phone: body.phone || null,
-        yearsExperience: body.yearsExperience ? Number(body.yearsExperience) : null,
+        yearsExperience: yearsExp,
         disciplines: toJsonArray(body.disciplines),
         sectors: toJsonArray(body.sectors),
         certifications: toJsonArray(body.certifications),

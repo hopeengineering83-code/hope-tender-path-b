@@ -18,11 +18,11 @@ async function main() {
       name: "Admin",
       email,
       passwordHash,
-      role: "admin",
-      companies: {
+      role: "ADMIN",
+      company: {
         create: {
-          name: "Hope Tender Proposal Generator",
-          description: "Default company workspace"
+          name: "Hope Urban Planning Architectural and Engineering Consultancy",
+          description: "AI-powered tender proposal generation workspace",
         }
       }
     }

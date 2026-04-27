@@ -395,59 +395,86 @@ export async function importCompanyKnowledgeFromDocuments(companyId: string): Pr
   const uniqueExperts = [...new Map(allExpertDrafts.map((d) => [key(d.fullName), d])).values()].slice(0, 150);
   const uniqueProjects = [...new Map(allProjectDrafts.map((d) => [key(d.name), d])).values()].slice(0, 250);
 
-  await prisma.expert.deleteMany({ where: { companyId, trustLevel: { in: ["REGEX_DRAFT", "AI_DRAFT"] }, sourceDocumentId: { in: docs.filter(isExpertDoc).map((d) => d.id) } } });
-  await prisma.project.deleteMany({ where: { companyId, trustLevel: { in: ["REGEX_DRAFT", "AI_DRAFT"] }, sourceDocumentId: { in: docs.filter(isProjectDoc).map((d) => d.id) } } });
-
-  const existingExperts = await prisma.expert.findMany({ where: { companyId }, select: { fullName: true } });
-  const existingProjects = await prisma.project.findMany({ where: { companyId }, select: { name: true } });
+  // Fetch REVIEWED records for dedup — category-scoped drafts will be replaced atomically
+  const existingExperts = await prisma.expert.findMany({
+    where: { companyId, trustLevel: { notIn: ["REGEX_DRAFT", "AI_DRAFT"] } },
+    select: { fullName: true },
+  });
+  const existingProjects = await prisma.project.findMany({
+    where: { companyId, trustLevel: { notIn: ["REGEX_DRAFT", "AI_DRAFT"] } },
+    select: { name: true },
+  });
   const expertKeys = new Set(existingExperts.map((e) => key(e.fullName)));
   const projectKeys = new Set(existingProjects.map((p) => key(p.name)));
 
-  let expertsCreated = 0;
-  let projectsCreated = 0;
-
+  // Pre-build insert payloads with dedup (outside transaction for speed)
+  const expertsPayload: {
+    companyId: string; fullName: string; title?: string | null; yearsExperience?: number | null;
+    disciplines: string; sectors: string; certifications: string; profile: string;
+    trustLevel: string; sourceDocumentId?: string | null;
+  }[] = [];
   for (const expert of uniqueExperts) {
     const k = key(expert.fullName);
     if (expertKeys.has(k)) continue;
-    await prisma.expert.create({
-      data: {
-        companyId,
-        fullName: expert.fullName,
-        title: expert.title,
-        yearsExperience: expert.yearsExperience,
-        disciplines: JSON.stringify(expert.disciplines),
-        sectors: JSON.stringify(expert.sectors),
-        certifications: JSON.stringify(expert.certifications),
-        profile: `[${expert.trustLevel} — REVIEW REQUIRED before use in proposals]\n\n${expert.profile}\n\nSource snippet:\n${expert.sourceSnippet}`,
-        trustLevel: expert.trustLevel,
-        sourceDocumentId: expert.sourceDocumentId,
-      },
+    expertsPayload.push({
+      companyId,
+      fullName: expert.fullName,
+      title: expert.title,
+      yearsExperience: expert.yearsExperience,
+      disciplines: JSON.stringify(expert.disciplines),
+      sectors: JSON.stringify(expert.sectors),
+      certifications: JSON.stringify(expert.certifications),
+      profile: `[${expert.trustLevel} — REVIEW REQUIRED before use in proposals]\n\n${expert.profile}\n\nSource snippet:\n${expert.sourceSnippet}`,
+      trustLevel: expert.trustLevel,
+      sourceDocumentId: expert.sourceDocumentId,
     });
     expertKeys.add(k);
-    expertsCreated++;
   }
 
+  const projectsPayload: {
+    companyId: string; name: string; clientName?: string | null; country?: string | null;
+    sector?: string | null; serviceAreas: string; summary: string;
+    contractValue?: number | null; currency?: string | null;
+    trustLevel: string; sourceDocumentId?: string | null;
+  }[] = [];
   for (const project of uniqueProjects) {
     const k = key(project.name);
     if (projectKeys.has(k)) continue;
-    await prisma.project.create({
-      data: {
-        companyId,
-        name: project.name,
-        clientName: project.clientName,
-        country: project.country,
-        sector: project.sector,
-        serviceAreas: JSON.stringify(project.serviceAreas),
-        summary: `[${project.trustLevel} — REVIEW REQUIRED before use in proposals]\n\n${project.summary}\n\nSource snippet:\n${project.sourceSnippet}`,
-        contractValue: project.contractValue,
-        currency: project.currency,
-        trustLevel: project.trustLevel,
-        sourceDocumentId: project.sourceDocumentId,
-      },
+    projectsPayload.push({
+      companyId,
+      name: project.name,
+      clientName: project.clientName,
+      country: project.country,
+      sector: project.sector,
+      serviceAreas: JSON.stringify(project.serviceAreas),
+      summary: `[${project.trustLevel} — REVIEW REQUIRED before use in proposals]\n\n${project.summary}\n\nSource snippet:\n${project.sourceSnippet}`,
+      contractValue: project.contractValue,
+      currency: project.currency,
+      trustLevel: project.trustLevel,
+      sourceDocumentId: project.sourceDocumentId,
     });
     projectKeys.add(k);
-    projectsCreated++;
   }
+
+  // Atomic: scoped delete (category-matched docs only) + insert new batch in one transaction.
+  // Never wipes records from support-only docs; never partially loses data if insert fails.
+  const expertDocIds = docs.filter(isExpertDoc).map((d) => d.id);
+  const projectDocIds = docs.filter(isProjectDoc).map((d) => d.id);
+  await prisma.$transaction([
+    prisma.expert.deleteMany({ where: { companyId, trustLevel: { in: ["REGEX_DRAFT", "AI_DRAFT"] }, sourceDocumentId: { in: expertDocIds } } }),
+    prisma.project.deleteMany({ where: { companyId, trustLevel: { in: ["REGEX_DRAFT", "AI_DRAFT"] }, sourceDocumentId: { in: projectDocIds } } }),
+    ...(expertsPayload.length
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ? [prisma.expert.createMany({ data: expertsPayload as any, skipDuplicates: true })]
+      : []),
+    ...(projectsPayload.length
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ? [prisma.project.createMany({ data: projectsPayload as any, skipDuplicates: true })]
+      : []),
+  ]);
+
+  const expertsCreated = expertsPayload.length;
+  const projectsCreated = projectsPayload.length;
 
   return {
     docsProcessed: docs.length,

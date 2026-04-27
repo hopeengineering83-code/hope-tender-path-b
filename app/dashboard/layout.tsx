@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import Link from "next/link";
 import { getSession } from "../../lib/auth";
 import { prisma, prismaReady } from "../../lib/prisma";
 import { LogoutButton } from "../../components/logout-button";
@@ -86,11 +87,11 @@ export default async function DashboardLayout({ children }: { children: ReactNod
         </div>
 
         <div className="border-t px-4 py-4">
-          <div className="rounded-xl bg-slate-50 px-3 py-3">
+          <Link href="/dashboard/account" className="block rounded-xl bg-slate-50 px-3 py-3 hover:bg-slate-100 transition-colors">
             <p className="text-[10px] uppercase tracking-[0.12em] text-slate-400">Signed in as</p>
             <p className="mt-0.5 truncate text-sm font-medium text-slate-900">{user.name ?? user.email}</p>
-            <p className="text-xs text-slate-500">{String(user.role).replaceAll("_", " ")}</p>
-          </div>
+            <p className="text-xs text-slate-500">{String(user.role).replaceAll("_", " ")} · <span className="text-slate-400">account settings</span></p>
+          </Link>
           <div className="mt-3">
             <LogoutButton />
           </div>

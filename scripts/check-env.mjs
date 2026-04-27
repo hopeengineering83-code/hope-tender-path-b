@@ -9,13 +9,14 @@
  *   "build": "node scripts/check-env.mjs && prisma generate && next build"
  */
 
+// Required in production AND preview deployments (app cannot function without these)
 const ALWAYS_REQUIRED = [
   {
     name: "DATABASE_URL",
     description: "PostgreSQL connection string (postgresql:// or postgres://)",
     validate: (v) => {
       if (!v.startsWith("postgresql://") && !v.startsWith("postgres://")) {
-        return `Must start with postgresql:// or postgres://. SQLite is not supported. Got: "${v.slice(0, 30)}..."`;
+        return `Must start with postgresql:// or postgres://. Got: "${v.slice(0, 30)}..."`;
       }
       return null;
     },
@@ -31,17 +32,20 @@ const ALWAYS_REQUIRED = [
         "secret",
       ];
       if (v.length < 32) return `Must be at least 32 characters. Got ${v.length}.`;
-      if (INSECURE_DEFAULTS.includes(v)) return "This is an insecure placeholder value. Generate a real secret with: openssl rand -hex 32";
+      if (INSECURE_DEFAULTS.includes(v)) return "Insecure placeholder. Generate a real secret: openssl rand -hex 32";
       return null;
     },
   },
+];
+
+// Optional — app builds and runs without these, but with reduced capability
+const OPTIONAL = [
   {
     name: "GEMINI_API_KEY",
     description:
-      "Google Gemini API key — required for AI extraction (CVs → experts, portfolios → projects). " +
-      "Without this key ALL imported records are REGEX_DRAFT, which is blocked from final proposal generation.",
+      "Google Gemini API key for AI extraction. Without this, all imported records are REGEX_DRAFT only.",
     validate: (v) => {
-      if (v.length < 10) return `Too short to be a valid Gemini API key. Got ${v.length} chars.`;
+      if (v.length < 10) return `Too short to be a valid Gemini API key (got ${v.length} chars).`;
       return null;
     },
   },
@@ -52,6 +56,18 @@ const PRODUCTION_REQUIRED = [];
 const isProd = process.env.NODE_ENV === "production" || process.env.VERCEL_ENV === "production" || process.env.VERCEL === "1";
 const errors = [];
 const warnings = [];
+
+for (const spec of OPTIONAL) {
+  const value = process.env[spec.name];
+  if (!value) {
+    warnings.push(`  ⚠  ${spec.name}: Not set. ${spec.description}`);
+    continue;
+  }
+  if (spec.validate) {
+    const err = spec.validate(value);
+    if (err) warnings.push(`  ⚠  ${spec.name}: ${err}`);
+  }
+}
 
 for (const spec of ALWAYS_REQUIRED) {
   const value = process.env[spec.name];
