@@ -97,11 +97,36 @@ function normalizeName(v: string): string {
     .slice(0, 90);
 }
 
+// Words that appear in job titles/positions but never in a person's name
+const POSITION_QUALIFIER_WORDS = new Set([
+  "senior", "junior", "principal", "chief", "lead", "head", "associate",
+  "assistant", "deputy", "registered", "certified", "licensed", "funded",
+  "appointed", "proposed", "designated",
+]);
+
+// Organizational, geographic, or institutional words that are not personal name components
+const NON_NAME_WORDS = new Set([
+  "bank", "world", "funded", "architecture", "corporation", "ministry",
+  "authority", "agency", "institute", "institution", "association",
+  "foundation", "group", "company", "limited", "international", "national",
+  "federal", "regional", "municipal", "urban", "rural", "south", "north",
+  "east", "west", "central", "city", "county", "district", "zone",
+  "university", "college", "hospital", "project", "construction",
+  "engineering", "consulting", "consultant", "services", "development",
+]);
+
 function looksLikePersonName(name: string): boolean {
   if (name.length < 5 || name.length > 90) return false;
   if (/hope urban|curriculum|vitae|company|page|staffing|project|client|hospital/i.test(name)) return false;
   const words = name.split(/\s+/).filter(Boolean);
-  return words.length >= 2 && words.length <= 6 && words.every((w) => /^[A-Za-z.'-]+$/.test(w));
+  if (words.length < 2 || words.length > 6) return false;
+  if (!words.every((w) => /^[A-Za-z.'-]+$/.test(w))) return false;
+  // Reject if last word is a job-level qualifier (context fragments append positions)
+  const lastWord = words[words.length - 1].toLowerCase();
+  if (POSITION_QUALIFIER_WORDS.has(lastWord)) return false;
+  // Reject if any word is a known geographic, organizational, or institutional term
+  if (words.some((w) => NON_NAME_WORDS.has(w.toLowerCase()))) return false;
+  return true;
 }
 
 function expertSections(text: string): string[] {
@@ -257,9 +282,15 @@ export async function importCompanyKnowledgeFromDocuments(companyId: string): Pr
     });
     // Mixed docs (match both or neither) go through regex fallback only
     try {
-      // Build combined text pools per category (truncated per doc to avoid token overrun)
+      // Build combined text pools per category (truncated per doc to avoid token overrun).
+      // Project text includes ALL extractable docs because CV documents also contain project
+      // experience sections — restricting to only project-classified files would miss them entirely.
       const expertTextPool = expertDocs.map((d) => (d.extractedText ?? "").slice(0, 20_000)).join("\n\n--- NEXT DOCUMENT ---\n\n");
-      const projectTextPool = projectDocs.map((d) => (d.extractedText ?? "").slice(0, 20_000)).join("\n\n--- NEXT DOCUMENT ---\n\n");
+      const allExtractableDocs = docs.filter((d) => {
+        const text = d.extractedText ?? "";
+        return text.trim().length >= 100 && !/^\[(Scanned PDF|Extraction failed)/i.test(text.trim());
+      });
+      const projectTextPool = allExtractableDocs.map((d) => (d.extractedText ?? "").slice(0, 20_000)).join("\n\n--- NEXT DOCUMENT ---\n\n");
 
       const aiResult = await extractCompanyKnowledgeWithAI({
         expertText: expertTextPool,
@@ -309,20 +340,14 @@ export async function importCompanyKnowledgeFromDocuments(companyId: string): Pr
       }
 
       for (const p of aiResult.projects) {
-        const sourceDoc = projectDocs.find((d) =>
+        // Attribution: search ALL extractable docs since project experience lives in CVs too
+        const sourceDoc = allExtractableDocs.find((d) =>
           p.sourceQuote && (d.extractedText ?? "").toLowerCase().includes(p.sourceQuote.slice(0, 60).toLowerCase()),
-        ) ?? projectDocs[0];
+        ) ?? allExtractableDocs[0];
 
-        // Category guard: if this project cannot be attributed to a project document, drop it
         if (!sourceDoc) {
           droppedProjects.push(p.name);
-          console.warn(`[company-knowledge-import] CATEGORY GUARD: Dropped project "${p.name}" — no project document source found (possible cross-category hallucination).`);
-          continue;
-        }
-        // Extra guard: the source doc must be a project doc (not an expert/CV doc)
-        if (isExpertDoc(sourceDoc) && !isProjectDoc(sourceDoc)) {
-          droppedProjects.push(p.name);
-          console.warn(`[company-knowledge-import] CATEGORY GUARD: Dropped project "${p.name}" — source document "${sourceDoc.originalFileName}" is classified as a CV, not a project portfolio.`);
+          console.warn(`[company-knowledge-import] Dropped project "${p.name}" — no source document found.`);
           continue;
         }
 

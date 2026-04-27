@@ -33,6 +33,7 @@ export type AIKnowledgeExtraction = {
 const MAX_CHARS_PER_CHUNK = 12_000;
 const MAX_CHUNKS = 10;
 const MIN_CONFIDENCE = 0.55;
+const MIN_EXPERT_CONFIDENCE = 0.65; // stricter: person-name hallucinations tend to be low-confidence
 
 function clean(value: string | null | undefined): string {
   return (value ?? "").replace(/\s+/g, " ").trim();
@@ -81,7 +82,16 @@ function normalizeExtraction(value: unknown): AIKnowledgeExtraction {
         sourceQuote: clean(String(obj.sourceQuote ?? "")).slice(0, 1200),
         confidence: normalizeConfidence(obj.confidence),
       };
-    }).filter((e) => e.fullName.length >= 5 && e.sourceQuote.length >= 10 && e.confidence >= MIN_CONFIDENCE),
+    }).filter((e) => {
+      if (e.fullName.length < 5 || e.sourceQuote.length < 10) return false;
+      if (e.confidence < MIN_EXPERT_CONFIDENCE) return false;
+      // Reject AI-returned names that end with a job-level qualifier
+      const lastWord = e.fullName.split(/\s+/).pop()?.toLowerCase() ?? "";
+      if (/^(senior|junior|principal|chief|lead|head|associate|assistant|deputy|registered|certified|licensed|funded)$/.test(lastWord)) return false;
+      // Require at least 2 capitalized word-like tokens (first name + last name minimum)
+      const parts = e.fullName.trim().split(/\s+/).filter((w) => /^[A-Za-z.'-]{2,}$/.test(w));
+      return parts.length >= 2;
+    }),
     projects: projects.map((item) => {
       const obj = item as Record<string, unknown>;
       return {
@@ -154,13 +164,13 @@ Return ONLY valid JSON with this structure:
 {
   "experts": [${isExpertChunk ? `
     {
-      "fullName": "exact name",
-      "title": "exact title or null",
+      "fullName": "exact personal name of a human being",
+      "title": "exact job title or null",
       "yearsExperience": number or null,
       "disciplines": ["explicit disciplines only"],
       "sectors": ["explicit sectors only"],
       "certifications": ["explicit certifications only"],
-      "sourceQuote": "verbatim quote proving this record (≤500 chars)",
+      "sourceQuote": "verbatim quote proving this person (≤500 chars)",
       "confidence": 0.0-1.0
     }` : ""}
   ],
@@ -174,7 +184,7 @@ Return ONLY valid JSON with this structure:
       "contractValue": number or null,
       "currency": "currency code or null",
       "summary": "one factual sentence or null",
-      "sourceQuote": "verbatim quote proving this record (≤500 chars)",
+      "sourceQuote": "verbatim quote proving this project (≤500 chars)",
       "confidence": 0.0-1.0
     }` : ""}
   ],
@@ -182,9 +192,19 @@ Return ONLY valid JSON with this structure:
 }
 
 Rules:
-- ${isExpertChunk ? "Extract EXPERTS only from this CV chunk. Leave projects array empty." : "Extract PROJECTS only from this portfolio chunk. Leave experts array empty."}
+- ${isExpertChunk
+    ? `Extract EXPERTS only. Leave projects array empty.
+- fullName MUST be a real human personal name (first name + family name or more).
+- fullName MUST NOT be a project name, geographic location, company name, region, city, or organization.
+- fullName MUST NOT end with a job-level word (Senior, Junior, Principal, Registered, etc.).
+- Position titles alone (e.g. "Senior Structural Engineer") are NOT expert names — skip them.
+- Entries like "Amhara Senior", "World Bank Funded Senior", "South Sudan Senior" are NOT people — skip them.
+- When uncertain whether an entry is a person or a project/location, set confidence below 0.55.`
+    : `Extract PROJECTS only. Leave experts array empty.
+- A project is a specific assignment, contract, or job the firm performed.
+- Extract project experience from any section including work history, assignments, or CV project lists.
+- name MUST be the project/assignment title, not a person name or generic description.`}
 - Exclude records where confidence < 0.55 or sourceQuote is missing.
-- Do NOT mix expert names and project names.
 
 CHUNK TYPE: ${chunk.kind} (index ${chunk.index})
 
