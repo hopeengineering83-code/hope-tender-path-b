@@ -104,30 +104,15 @@ const POSITION_QUALIFIER_WORDS = new Set([
   "appointed", "proposed", "designated",
 ]);
 
-// Organizational, geographic, and infrastructure words that are not personal name components
+// Organizational, geographic, or institutional words that are not personal name components
 const NON_NAME_WORDS = new Set([
-  // Organizational
   "bank", "world", "funded", "architecture", "corporation", "ministry",
   "authority", "agency", "institute", "institution", "association",
   "foundation", "group", "company", "limited", "international", "national",
-  "federal", "regional", "municipal", "university", "college", "hospital",
-  "consulting", "consultant", "services", "development", "bureau", "office",
-  "department",
-  // Geographic directions / area words
-  "south", "north", "east", "west", "central", "upper", "lower",
-  "city", "county", "district", "zone", "region", "province", "state",
-  "urban", "rural",
-  // Ethiopian regions / zones that appear in CV project lists
-  "amhara", "oromia", "oromiya", "tigray", "afar", "somali", "gambella",
-  "benishangul", "harari", "sidama", "wollo", "shewa", "gojjam", "gondar",
-  "gimba", "jimma", "harar", "adama", "dire", "awash", "omo", "kafa",
-  "wolega", "arsi", "bale", "borena", "guji",
-  // Infrastructure / project-type words
-  "water", "supply", "road", "bridge", "dam", "power", "energy", "solar",
-  "housing", "construction", "building", "project", "scheme", "phase",
-  "industrial", "commercial", "residential", "mixed",
-  // Discipline words
-  "engineering", "design", "planning", "survey", "management",
+  "federal", "regional", "municipal", "urban", "rural", "south", "north",
+  "east", "west", "central", "city", "county", "district", "zone",
+  "university", "college", "hospital", "project", "construction",
+  "engineering", "consulting", "consultant", "services", "development",
 ]);
 
 function looksLikePersonName(name: string): boolean {
@@ -161,10 +146,8 @@ function expertSections(text: string): string[] {
 function fallbackExpertNames(text: string): string[] {
   const names = new Set<string>();
   const patterns = [
-    // Titled names — allow up to 4 words (reliable signal from Mr/Dr/Eng prefix)
-    /(?:Mr\.?|Ms\.?|Mrs\.?|Dr\.?|Eng\.?)\s+([A-Z][A-Za-z.'-]+(?:\s+[A-Z][A-Za-z.'-]+){1,3})/g,
-    // Name before job title — max 3 words to avoid project-description false positives
-    /([A-Z][A-Za-z.'-]+(?:\s+[A-Z][A-Za-z.'-]+){1,2})\s+(?:Civil Engineer|Structural Engineer|Architect|Urban Planner|Project Manager)/g,
+    /(?:Mr\.?|Ms\.?|Mrs\.?|Dr\.?|Eng\.?)\s+([A-Z][A-Za-z.'-]+(?:\s+[A-Z][A-Za-z.'-]+){1,4})/g,
+    /([A-Z][A-Za-z.'-]+(?:\s+[A-Z][A-Za-z.'-]+){1,4})\s+(?:Civil Engineer|Structural Engineer|Architect|Urban Planner|Project Manager)/g,
   ];
   for (const p of patterns) {
     for (const m of text.matchAll(p)) {
@@ -307,7 +290,9 @@ export async function importCompanyKnowledgeFromDocuments(companyId: string): Pr
         const text = d.extractedText ?? "";
         return text.trim().length >= 100 && !/^\[(Scanned PDF|Extraction failed)/i.test(text.trim());
       });
-      const projectTextPool = allExtractableDocs.map((d) => (d.extractedText ?? "").slice(0, 20_000)).join("\n\n--- NEXT DOCUMENT ---\n\n");
+      // Project sections are spread throughout large CV documents — use 100K per doc so
+      // Gemini sees experience sections that lie past the first 20K chars.
+      const projectTextPool = allExtractableDocs.map((d) => (d.extractedText ?? "").slice(0, 100_000)).join("\n\n--- NEXT DOCUMENT ---\n\n");
 
       const aiResult = await extractCompanyKnowledgeWithAI({
         expertText: expertTextPool,
