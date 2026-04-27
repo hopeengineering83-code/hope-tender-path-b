@@ -6,6 +6,45 @@ import { runCompanyKnowledgeSafetyImport } from "../../../../lib/company-knowled
 import { extractTextFromBuffer, getFileTypeLabel, isMeaningfulExtraction } from "../../../../lib/extract-text";
 import { ensureCompanyForUser } from "../../../../lib/company-workspace";
 
+const SUPPORT_ONLY_CATEGORIES = new Set([
+  "COMPANY_PROFILE",
+  "LEGAL_REGISTRATION",
+  "FINANCIAL_STATEMENT",
+  "MANUAL",
+  "COMPLIANCE_RECORD",
+  "CERTIFICATION",
+  "OTHER",
+]);
+
+async function cleanupSupportDocImportedRecords(companyId: string) {
+  const supportDocs = await prisma.companyDocument.findMany({
+    where: { companyId, category: { in: [...SUPPORT_ONLY_CATEGORIES] } },
+    select: { id: true, originalFileName: true, category: true },
+  });
+  const supportDocIds = supportDocs.map((d) => d.id);
+  const supportFileNames = supportDocs.map((d) => d.originalFileName).filter(Boolean);
+
+  const [directExperts, directProjects] = await Promise.all([
+    supportDocIds.length ? prisma.expert.deleteMany({ where: { companyId, sourceDocumentId: { in: supportDocIds } } }) : Promise.resolve({ count: 0 }),
+    supportDocIds.length ? prisma.project.deleteMany({ where: { companyId, sourceDocumentId: { in: supportDocIds } } }) : Promise.resolve({ count: 0 }),
+  ]);
+
+  let textExperts = 0;
+  let textProjects = 0;
+  for (const fileName of supportFileNames) {
+    const expertIds = await prisma.expert.findMany({ where: { companyId, profile: { contains: fileName, mode: "insensitive" } }, select: { id: true } });
+    const projectIds = await prisma.project.findMany({ where: { companyId, summary: { contains: fileName, mode: "insensitive" } }, select: { id: true } });
+    if (expertIds.length) textExperts += (await prisma.expert.deleteMany({ where: { id: { in: expertIds.map((e) => e.id) } } })).count;
+    if (projectIds.length) textProjects += (await prisma.project.deleteMany({ where: { id: { in: projectIds.map((p) => p.id) } } })).count;
+  }
+
+  return {
+    supportDocuments: supportDocs.length,
+    expertsDeleted: directExperts.count + textExperts,
+    projectsDeleted: directProjects.count + textProjects,
+  };
+}
+
 export async function POST() {
   const userId = await getSession();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -51,6 +90,7 @@ export async function POST() {
     }
   }
 
+  const cleanupBefore = await cleanupSupportDocImportedRecords(company.id);
   const primary = await importCompanyKnowledgeFromDocuments(company.id);
 
   // Safety import is a regex fallback — only run it when the AI extraction
@@ -60,6 +100,7 @@ export async function POST() {
     (primary.expertsCreated > 0 || primary.projectsCreated > 0);
   const emptyResult = { docsScanned: 0, expertsCreated: 0, projectsCreated: 0, expertNamesDetected: 0, projectNamesDetected: 0 };
   const safety = aiSucceeded ? emptyResult : await runCompanyKnowledgeSafetyImport(prisma, company.id);
+  const cleanupAfter = await cleanupSupportDocImportedRecords(company.id);
 
   return NextResponse.json({
     success: true,
@@ -67,6 +108,11 @@ export async function POST() {
     docsProcessed: primary.docsProcessed,
     expertsCreated: primary.expertsCreated + safety.expertsCreated,
     projectsCreated: primary.projectsCreated + safety.projectsCreated,
+    supportCleanup: {
+      supportDocuments: Math.max(cleanupBefore.supportDocuments, cleanupAfter.supportDocuments),
+      expertsDeleted: cleanupBefore.expertsDeleted + cleanupAfter.expertsDeleted,
+      projectsDeleted: cleanupBefore.projectsDeleted + cleanupAfter.projectsDeleted,
+    },
     primaryImport: primary,
     safetyImport: safety,
   });
