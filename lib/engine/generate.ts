@@ -323,11 +323,12 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
       .map((a) => [a.assetType, { data: Buffer.from(a.fileContent!, "base64"), mimeType: a.mimeType }]),
   );
 
-  const plannedDocs = tender.generatedDocuments.filter((d) => d.generationStatus === "PLANNED");
-  if (plannedDocs.length === 0) {
-    throw new Error("Generation blocked: no tender-required output documents are planned. Run tender analysis first and confirm the tender requires generated files.");
+  const docsToGenerate = tender.generatedDocuments.filter((d) =>
+    ["PLANNED", "GENERATED", "FAILED"].includes(d.generationStatus),
+  );
+  if (docsToGenerate.length === 0) {
+    throw new Error("Generation blocked: no output documents are defined for this tender. Run tender analysis first to detect required files.");
   }
-  const docsToGenerate = plannedDocs;
 
   const brandingAllowed = !forbidsBranding(tender.requirements);
   const coverAllowed = !forbidsCoverPage(tender.requirements);
