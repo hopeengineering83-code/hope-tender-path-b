@@ -2,6 +2,7 @@ import type { CompanyKnowledgeSnapshot, MatchingResult, RequirementDraft } from 
 import { exactSelectionLimit } from "./scope-policy";
 
 const MATCHING_CYCLES = 10;
+const SELECTION_THRESHOLD = 0.90;
 
 function tokenize(value: string | null | undefined): string[] {
   return (value ?? "")
@@ -26,17 +27,34 @@ function buildIdf(corpus: string[][]): Map<string, number> {
   return idf;
 }
 
-function tfidfScore(queryTokens: string[], docTokens: string[], idf: Map<string, number>): number {
+/**
+ * Cosine TF-IDF similarity — normalises by both vector magnitudes so that
+ * documents sharing many significant terms with the query score close to 1.0,
+ * regardless of document or query length.
+ */
+function cosineTfidf(queryTokens: string[], docTokens: string[], idf: Map<string, number>): number {
   if (queryTokens.length === 0 || docTokens.length === 0) return 0;
+
+  const queryFreq = new Map<string, number>();
+  for (const t of queryTokens) queryFreq.set(t, (queryFreq.get(t) ?? 0) + 1);
+
   const docFreq = new Map<string, number>();
   for (const t of docTokens) docFreq.set(t, (docFreq.get(t) ?? 0) + 1);
-  let score = 0;
-  for (const token of queryTokens) {
-    if (!docFreq.has(token)) continue;
-    const tf = (docFreq.get(token) ?? 0) / docTokens.length;
-    score += tf * (idf.get(token) ?? 1);
+
+  const allTokens = new Set([...queryFreq.keys(), ...docFreq.keys()]);
+
+  let dot = 0, qNorm = 0, dNorm = 0;
+  for (const token of allTokens) {
+    const w = idf.get(token) ?? 1;
+    const q = ((queryFreq.get(token) ?? 0) / queryTokens.length) * w;
+    const d = ((docFreq.get(token) ?? 0) / docTokens.length) * w;
+    dot += q * d;
+    qNorm += q * q;
+    dNorm += d * d;
   }
-  return score / Math.max(queryTokens.length, 1);
+
+  const denom = Math.sqrt(qNorm) * Math.sqrt(dNorm);
+  return denom === 0 ? 0 : dot / denom;
 }
 
 function sectorBoost(tenderSector: string | null | undefined, items: string[]): number {
@@ -71,30 +89,31 @@ function cycleQueryTokens(baseTokens: string[], cycle: number): string[] {
   return [...new Set(baseTokens.filter((token) => !stop.has(token)))];
 }
 
-function average(values: number[]): number {
-  if (values.length === 0) return 0;
-  return values.reduce((sum, value) => sum + value, 0) / values.length;
-}
-
 function selectedLimit(requirements: RequirementDraft[], type: string, available: number): number {
   const exact = exactSelectionLimit(requirements, type);
   if (exact > 0) return Math.min(exact, available);
 
   const relevant = requirements.filter((r) => r.requirementType === type);
-  if (relevant.length > 0) return Math.min(available, type === "EXPERT" ? 5 : 5);
+  if (relevant.length > 0) return Math.min(available, 5);
 
-  // Internal recommendation default: even when the tender text does not clearly
-  // state exact quantities, surface the best candidates for review instead of
-  // leaving matching at zero. Final generation still obeys planned documents and
-  // exact tender quantities when detected.
-  return Math.min(available, type === "EXPERT" ? 5 : 5);
+  return Math.min(available, 5);
 }
 
+/**
+ * Select up to `limit` matches. Prefers items scoring ≥ SELECTION_THRESHOLD (90%).
+ * Falls back to the top-scored items if none reach the threshold so the UI
+ * always surfaces at least some candidates for manual review.
+ */
 function selectTopExact<T extends { score: number; isSelected: boolean }>(matches: T[], limit: number): T[] {
   if (limit <= 0) return matches.map((m) => ({ ...m, isSelected: false }));
+
+  const aboveThreshold = matches.filter((m) => m.score >= SELECTION_THRESHOLD);
+  const useThreshold = aboveThreshold.length > 0;
+
   let selected = 0;
   return matches.map((m) => {
-    if (selected < limit) {
+    const eligible = useThreshold ? m.score >= SELECTION_THRESHOLD : true;
+    if (eligible && selected < limit) {
       selected += 1;
       return { ...m, isSelected: true };
     }
@@ -129,12 +148,13 @@ export function buildMatches(
   const expertMatches = knowledge.experts
     .map((expert, idx) => {
       const docTokens = expertTokenSets[idx] ?? [];
-      const cycleScores: number[] = [];
+      let bestScore = 0;
       for (let cycle = 1; cycle <= MATCHING_CYCLES; cycle += 1) {
         const queryTokens = cycleQueryTokens(baseQueryTokens, cycle);
-        cycleScores.push(tfidfScore(queryTokens, docTokens, idf));
+        const s = cosineTfidf(queryTokens, docTokens, idf);
+        if (s > bestScore) bestScore = s;
       }
-      let score = average(cycleScores);
+      let score = bestScore;
       score += sectorBoost(tenderSector, parseArr(expert.sectors));
       score += trustLevelAdjustment((expert as Record<string, unknown>).trustLevel as string);
       if ((expert.yearsExperience ?? 0) >= 10) score += 0.10;
@@ -146,7 +166,7 @@ export function buildMatches(
       return {
         expertId: expert.id,
         score,
-        rationale: `[${trustLabel}] ${MATCHING_CYCLES}-cycle tender-fit ranking. Keywords: ${topMatches || evidence || "general professional profile"}.${expert.yearsExperience ? ` ${expert.yearsExperience} yrs experience.` : ""}`,
+        rationale: `[${trustLabel}] Best of ${MATCHING_CYCLES}-cycle cosine ranking. Keywords: ${topMatches || evidence || "general professional profile"}.${expert.yearsExperience ? ` ${expert.yearsExperience} yrs experience.` : ""}`,
         evidenceSummary: evidence || "No disciplines/sectors recorded — review the expert profile",
         isSelected: false,
       };
@@ -161,12 +181,13 @@ export function buildMatches(
   const projectMatches = knowledge.projects
     .map((project, idx) => {
       const docTokens = projectTokenSets[idx] ?? [];
-      const cycleScores: number[] = [];
+      let bestScore = 0;
       for (let cycle = 1; cycle <= MATCHING_CYCLES; cycle += 1) {
         const queryTokens = cycleQueryTokens(baseQueryTokens, cycle);
-        cycleScores.push(tfidfScore(queryTokens, docTokens, idf));
+        const s = cosineTfidf(queryTokens, docTokens, idf);
+        if (s > bestScore) bestScore = s;
       }
-      let score = average(cycleScores);
+      let score = bestScore;
       score += sectorBoost(tenderSector, [project.sector ?? "", ...parseArr(project.serviceAreas)]);
       score += trustLevelAdjustment((project as Record<string, unknown>).trustLevel as string);
       if (project.endDate) {
@@ -182,7 +203,7 @@ export function buildMatches(
       return {
         projectId: project.id,
         score,
-        rationale: `[${trustLabel}] ${MATCHING_CYCLES}-cycle tender-fit ranking. Keywords: ${topMatches || evidence || "general project profile"}.${project.contractValue ? ` Contract: ${project.currency ?? "USD"} ${project.contractValue.toLocaleString()}.` : ""}`,
+        rationale: `[${trustLabel}] Best of ${MATCHING_CYCLES}-cycle cosine ranking. Keywords: ${topMatches || evidence || "general project profile"}.${project.contractValue ? ` Contract: ${project.currency ?? "USD"} ${project.contractValue.toLocaleString()}.` : ""}`,
         evidenceSummary: evidence || "No service areas recorded — review the project record",
         isSelected: false,
       };
