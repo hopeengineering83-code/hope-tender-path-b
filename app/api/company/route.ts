@@ -3,6 +3,16 @@ import { prisma, prismaReady } from "../../../lib/prisma";
 import { getSession } from "../../../lib/auth";
 import { ensureCompanyForUser } from "../../../lib/company-workspace";
 
+const SUPPORT_ONLY_CATEGORIES = new Set([
+  "COMPANY_PROFILE",
+  "LEGAL_REGISTRATION",
+  "FINANCIAL_STATEMENT",
+  "MANUAL",
+  "COMPLIANCE_RECORD",
+  "CERTIFICATION",
+  "OTHER",
+]);
+
 function toJsonArray(value: unknown): string {
   if (Array.isArray(value)) return JSON.stringify(value.filter(Boolean));
   return JSON.stringify(
@@ -10,8 +20,30 @@ function toJsonArray(value: unknown): string {
   );
 }
 
+async function cleanupSupportDocImportedRecords(companyId: string) {
+  const supportDocs = await prisma.companyDocument.findMany({
+    where: { companyId, category: { in: [...SUPPORT_ONLY_CATEGORIES] } },
+    select: { id: true, originalFileName: true },
+  });
+  const supportDocIds = supportDocs.map((d) => d.id);
+  const supportFileNames = supportDocs.map((d) => d.originalFileName).filter(Boolean);
+
+  await Promise.all([
+    supportDocIds.length ? prisma.expert.deleteMany({ where: { companyId, sourceDocumentId: { in: supportDocIds } } }) : Promise.resolve({ count: 0 }),
+    supportDocIds.length ? prisma.project.deleteMany({ where: { companyId, sourceDocumentId: { in: supportDocIds } } }) : Promise.resolve({ count: 0 }),
+  ]);
+
+  for (const fileName of supportFileNames) {
+    const expertIds = await prisma.expert.findMany({ where: { companyId, profile: { contains: fileName, mode: "insensitive" } }, select: { id: true } });
+    const projectIds = await prisma.project.findMany({ where: { companyId, summary: { contains: fileName, mode: "insensitive" } }, select: { id: true } });
+    if (expertIds.length) await prisma.expert.deleteMany({ where: { id: { in: expertIds.map((e) => e.id) } } });
+    if (projectIds.length) await prisma.project.deleteMany({ where: { id: { in: projectIds.map((p) => p.id) } } });
+  }
+}
+
 async function loadCompany(userId: string) {
-  await ensureCompanyForUser(prisma, userId);
+  const companyBase = await ensureCompanyForUser(prisma, userId);
+  await cleanupSupportDocImportedRecords(companyBase.id);
   return prisma.company.findUnique({
     where: { userId },
     include: {
@@ -101,14 +133,22 @@ export async function PUT(req: Request) {
       },
     });
 
+    await cleanupSupportDocImportedRecords(company.id);
+    const refreshed = await prisma.company.findUnique({
+      where: { userId },
+      include: { experts: { orderBy: { createdAt: "desc" } }, projects: { orderBy: { createdAt: "desc" } } },
+    });
+
+    if (!refreshed) return NextResponse.json({});
+
     return NextResponse.json({
-      ...company,
-      experts: company.experts.map(normalizeExpert),
-      projects: company.projects.map(normalizeProject),
-      expertCount: company.experts.length,
-      projectCount: company.projects.length,
-      serviceLines: safeParseArr(company.serviceLines),
-      sectors: safeParseArr(company.sectors),
+      ...refreshed,
+      experts: refreshed.experts.map(normalizeExpert),
+      projects: refreshed.projects.map(normalizeProject),
+      expertCount: refreshed.experts.length,
+      projectCount: refreshed.projects.length,
+      serviceLines: safeParseArr(refreshed.serviceLines),
+      sectors: safeParseArr(refreshed.sectors),
     });
   } catch (error) {
     console.error(error);
