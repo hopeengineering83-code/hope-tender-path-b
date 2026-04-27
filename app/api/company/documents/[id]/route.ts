@@ -87,7 +87,10 @@ export async function POST(
   if (meaningful) {
     try {
       const primary = await importCompanyKnowledgeFromDocuments(company.id);
-      const safetyImport = await runCompanyKnowledgeSafetyImport(prisma, company.id);
+      const aiSucceeded = primary.aiUsed && primary.aiFailures === 0 &&
+        (primary.expertsCreated > 0 || primary.projectsCreated > 0);
+      const emptyResult = { docsScanned: 0, expertsCreated: 0, projectsCreated: 0, expertNamesDetected: 0, projectNamesDetected: 0 };
+      const safetyImport = aiSucceeded ? emptyResult : await runCompanyKnowledgeSafetyImport(prisma, company.id);
       knowledgeImport = { ...primary, safetyImport };
     } catch (err) {
       knowledgeImportError = err instanceof Error ? err.message : String(err);

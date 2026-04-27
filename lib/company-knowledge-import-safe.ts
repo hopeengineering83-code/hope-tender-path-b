@@ -472,60 +472,84 @@ export async function importCompanyKnowledgeFromDocuments(companyId: string): Pr
   const uniqueExperts = [...new Map(allExpertDrafts.map((d) => [key(d.fullName), d])).values()].slice(0, 150);
   const uniqueProjects = [...new Map(allProjectDrafts.map((d) => [key(d.name), d])).values()].slice(0, 250);
 
-  // Delete only previously auto-imported DRAFT records (never touch REVIEWED)
-  await prisma.expert.deleteMany({ where: { companyId, trustLevel: { in: ["REGEX_DRAFT", "AI_DRAFT"] } } });
-  await prisma.project.deleteMany({ where: { companyId, trustLevel: { in: ["REGEX_DRAFT", "AI_DRAFT"] } } });
+  // Fetch only REVIEWED records for dedup — drafts will be replaced atomically below
+  const reviewedExperts = await prisma.expert.findMany({
+    where: { companyId, trustLevel: { notIn: ["REGEX_DRAFT", "AI_DRAFT"] } },
+    select: { fullName: true },
+  });
+  const reviewedProjects = await prisma.project.findMany({
+    where: { companyId, trustLevel: { notIn: ["REGEX_DRAFT", "AI_DRAFT"] } },
+    select: { name: true },
+  });
+  const expertKeys = new Set(reviewedExperts.map((e) => key(e.fullName)));
+  const projectKeys = new Set(reviewedProjects.map((p) => key(p.name)));
 
-  const existingExperts = await prisma.expert.findMany({ where: { companyId }, select: { fullName: true } });
-  const existingProjects = await prisma.project.findMany({ where: { companyId }, select: { name: true } });
-  const expertKeys = new Set(existingExperts.map((e) => key(e.fullName)));
-  const projectKeys = new Set(existingProjects.map((p) => key(p.name)));
-
-  let expertsCreated = 0;
-  let projectsCreated = 0;
-
+  // Pre-build insert payloads with dedup (outside transaction for speed)
+  const expertsPayload: {
+    companyId: string; fullName: string; title?: string | null; yearsExperience?: number | null;
+    disciplines: string; sectors: string; certifications: string; profile: string;
+    trustLevel: string; sourceDocumentId?: string | null;
+  }[] = [];
   for (const expert of uniqueExperts) {
     const k = key(expert.fullName);
     if (expertKeys.has(k)) continue;
-    await prisma.expert.create({
-      data: {
-        companyId,
-        fullName: expert.fullName,
-        title: expert.title,
-        yearsExperience: expert.yearsExperience,
-        disciplines: JSON.stringify(expert.disciplines),
-        sectors: JSON.stringify(expert.sectors),
-        certifications: JSON.stringify(expert.certifications),
-        profile: `[${expert.trustLevel} — REVIEW REQUIRED before use in proposals]\n\n${expert.profile}\n\nSource snippet:\n${expert.sourceSnippet}`,
-        trustLevel: expert.trustLevel,
-        sourceDocumentId: expert.sourceDocumentId,
-      },
+    expertsPayload.push({
+      companyId,
+      fullName: expert.fullName,
+      title: expert.title,
+      yearsExperience: expert.yearsExperience,
+      disciplines: JSON.stringify(expert.disciplines),
+      sectors: JSON.stringify(expert.sectors),
+      certifications: JSON.stringify(expert.certifications),
+      profile: `[${expert.trustLevel} — REVIEW REQUIRED before use in proposals]\n\n${expert.profile}\n\nSource snippet:\n${expert.sourceSnippet}`,
+      trustLevel: expert.trustLevel,
+      sourceDocumentId: expert.sourceDocumentId,
     });
     expertKeys.add(k);
-    expertsCreated++;
   }
 
+  const projectsPayload: {
+    companyId: string; name: string; clientName?: string | null; country?: string | null;
+    sector?: string | null; serviceAreas: string; summary: string;
+    contractValue?: number | null; currency?: string | null;
+    trustLevel: string; sourceDocumentId?: string | null;
+  }[] = [];
   for (const project of uniqueProjects) {
     const k = key(project.name);
     if (projectKeys.has(k)) continue;
-    await prisma.project.create({
-      data: {
-        companyId,
-        name: project.name,
-        clientName: project.clientName,
-        country: project.country,
-        sector: project.sector,
-        serviceAreas: JSON.stringify(project.serviceAreas),
-        summary: `[${project.trustLevel} — REVIEW REQUIRED before use in proposals]\n\n${project.summary}\n\nSource snippet:\n${project.sourceSnippet}`,
-        contractValue: project.contractValue,
-        currency: project.currency,
-        trustLevel: project.trustLevel,
-        sourceDocumentId: project.sourceDocumentId,
-      },
+    projectsPayload.push({
+      companyId,
+      name: project.name,
+      clientName: project.clientName,
+      country: project.country,
+      sector: project.sector,
+      serviceAreas: JSON.stringify(project.serviceAreas),
+      summary: `[${project.trustLevel} — REVIEW REQUIRED before use in proposals]\n\n${project.summary}\n\nSource snippet:\n${project.sourceSnippet}`,
+      contractValue: project.contractValue,
+      currency: project.currency,
+      trustLevel: project.trustLevel,
+      sourceDocumentId: project.sourceDocumentId,
     });
     projectKeys.add(k);
-    projectsCreated++;
   }
+
+  // Atomic: delete all existing drafts then insert the new batch in one transaction.
+  // This ensures records are never partially lost if the insert fails midway.
+  await prisma.$transaction([
+    prisma.expert.deleteMany({ where: { companyId, trustLevel: { in: ["REGEX_DRAFT", "AI_DRAFT"] } } }),
+    prisma.project.deleteMany({ where: { companyId, trustLevel: { in: ["REGEX_DRAFT", "AI_DRAFT"] } } }),
+    ...(expertsPayload.length
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ? [prisma.expert.createMany({ data: expertsPayload as any, skipDuplicates: true })]
+      : []),
+    ...(projectsPayload.length
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ? [prisma.project.createMany({ data: projectsPayload as any, skipDuplicates: true })]
+      : []),
+  ]);
+
+  const expertsCreated = expertsPayload.length;
+  const projectsCreated = projectsPayload.length;
 
   return { docsProcessed: docs.length, expertsCreated, projectsCreated, aiUsed: useAI, aiFailures };
 }

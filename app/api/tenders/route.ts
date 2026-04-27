@@ -33,6 +33,7 @@ export async function GET(req: Request) {
       },
     },
     orderBy: { createdAt: "desc" },
+    take: 200,
   });
 
   return NextResponse.json(tenders);
@@ -48,6 +49,12 @@ export async function POST(req: Request) {
 
   try {
     const body = await req.json();
+    if (!body.title || String(body.title).trim().length === 0) {
+      return NextResponse.json({ error: "title is required" }, { status: 400 });
+    }
+    if (body.budget !== undefined && body.budget !== null && parseFloat(body.budget) < 0) {
+      return NextResponse.json({ error: "budget cannot be negative" }, { status: 400 });
+    }
     const intakeSummary = body.intakeSummary || body.requirements || null;
     const tender = await prisma.tender.create({
       data: {
