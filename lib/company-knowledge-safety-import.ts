@@ -81,12 +81,49 @@ function normalizeName(value: string): string {
     .slice(0, 90);
 }
 
+// Job-level qualifiers that appear in positions but never in personal names
+const POSITION_QUALIFIER_WORDS = new Set([
+  "senior", "junior", "principal", "chief", "lead", "head", "associate",
+  "assistant", "deputy", "registered", "certified", "licensed", "funded",
+  "appointed", "proposed", "designated",
+]);
+
+// Geographic, organizational, and infrastructure words that are not name components
+const NON_NAME_WORDS = new Set([
+  // Organizational
+  "bank", "world", "funded", "corporation", "ministry", "authority", "agency",
+  "institute", "institution", "association", "foundation", "group", "company",
+  "limited", "international", "national", "federal", "regional", "municipal",
+  "university", "college", "hospital", "consulting", "consultant", "services",
+  "development", "bureau", "office", "department",
+  // Geographic directions / generic area words
+  "south", "north", "east", "west", "central", "upper", "lower",
+  "city", "county", "district", "zone", "region", "province", "state",
+  // Ethiopian regions / zones most likely to appear in CV project lists
+  "amhara", "oromia", "oromiya", "tigray", "afar", "somali", "gambella",
+  "benishangul", "harari", "sidama", "wollo", "shewa", "gojjam", "gondar",
+  "gimba", "jimma", "harar", "adama", "dire", "awash", "omo", "kafa",
+  "wolega", "arsi", "bale", "borena", "guji",
+  // Infrastructure / project-type words
+  "water", "supply", "road", "bridge", "dam", "power", "energy", "solar",
+  "housing", "construction", "building", "project", "scheme", "phase",
+  "industrial", "commercial", "residential", "mixed", "urban", "rural",
+  // Architecture / engineering discipline words
+  "architecture", "engineering", "design", "planning", "survey", "management",
+]);
+
 function looksLikePersonName(name: string): boolean {
   if (!name || name.length < 5 || name.length > 90) return false;
   if (/hope|urban|planning|company|consultancy|curriculum|vitae|expert|staff|summary|project|client|hospital|document|page|table|ethiopia/i.test(name)) return false;
   const words = name.split(/\s+/).filter(Boolean);
-  if (words.length < 2 || words.length > 6) return false;
-  return words.every((w) => /^[A-Za-z][A-Za-z.'-]*$/.test(w));
+  if (words.length < 2 || words.length > 5) return false;
+  if (!words.every((w) => /^[A-Za-z][A-Za-z.'-]*$/.test(w))) return false;
+  // Reject if the last word is a job-level qualifier (positions get appended to fragments)
+  const lastWord = words[words.length - 1].toLowerCase();
+  if (POSITION_QUALIFIER_WORDS.has(lastWord)) return false;
+  // Reject if any word is a known geographic, organizational, or infrastructure term
+  if (words.some((w) => NON_NAME_WORDS.has(w.toLowerCase()))) return false;
+  return true;
 }
 
 function snippetAround(text: string, needle: string, radius = 900): string {
@@ -98,10 +135,14 @@ function snippetAround(text: string, needle: string, radius = 900): string {
 function extractExpertNames(text: string): string[] {
   const names = new Set<string>();
   const patterns = [
-    /(?:Full\s+Name|Name\s+of\s+(?:Expert|Key\s+Staff|Personnel|Staff)|Expert\s+Name|Name)\s*[:\-]?\s*([A-Z][A-Za-z.'-]+(?:\s+[A-Z][A-Za-z.'-]+){1,5})/gi,
-    /(?:Mr\.?|Ms\.?|Mrs\.?|Dr\.?|Eng\.?|Prof\.?)\s+([A-Z][A-Za-z.'-]+(?:\s+[A-Z][A-Za-z.'-]+){1,5})/g,
-    /([A-Z][A-Za-z.'-]+(?:\s+[A-Z][A-Za-z.'-]+){1,5})\s+(?:Architect|Urban Planner|Civil Engineer|Structural Engineer|Electrical Engineer|Mechanical Engineer|Sanitary Engineer|Project Manager|Team Leader|Quantity Surveyor|Surveyor|Geotechnical Engineer)\b/g,
-    /(?:^|\n|\r|\s\d{1,2}[.)]?\s+)([A-Z][a-z][A-Za-z.'-]+(?:\s+[A-Z][a-z][A-Za-z.'-]+){1,5})(?=\s+(?:Architect|Engineer|Planner|Manager|Surveyor|Specialist|Expert|Team Leader)\b)/g,
+    // Structured name fields — allow up to 5 words (reliable source)
+    /(?:Full\s+Name|Name\s+of\s+(?:Expert|Key\s+Staff|Personnel|Staff)|Expert\s+Name|Name)\s*[:\-]?\s*([A-Z][A-Za-z.'-]+(?:\s+[A-Z][A-Za-z.'-]+){1,4})/gi,
+    // Titled names (Mr/Dr/Eng prefix) — allow up to 5 words
+    /(?:Mr\.?|Ms\.?|Mrs\.?|Dr\.?|Eng\.?|Prof\.?)\s+([A-Z][A-Za-z.'-]+(?:\s+[A-Z][A-Za-z.'-]+){1,4})/g,
+    // Name before job title — max 3 words to reduce project-description false positives
+    /([A-Z][A-Za-z.'-]+(?:\s+[A-Z][A-Za-z.'-]+){1,2})\s+(?:Architect|Urban Planner|Civil Engineer|Structural Engineer|Electrical Engineer|Mechanical Engineer|Sanitary Engineer|Project Manager|Team Leader|Quantity Surveyor|Surveyor|Geotechnical Engineer)\b/g,
+    // Start-of-line capitalized name before job title — max 3 words
+    /(?:^|\n|\r|\s\d{1,2}[.)]?\s+)([A-Z][a-z][A-Za-z.'-]+(?:\s+[A-Z][a-z][A-Za-z.'-]+){1,2})(?=\s+(?:Architect|Engineer|Planner|Manager|Surveyor|Specialist|Expert|Team Leader)\b)/g,
   ];
   for (const pattern of patterns) {
     for (const m of text.matchAll(pattern)) {
