@@ -64,7 +64,7 @@ function cycleQueryTokens(baseTokens: string[], cycle: number): string[] {
   if (cycle === 3) return baseTokens.filter((token) => !stop.has(token));
   if (cycle === 4) return [...baseTokens, ...baseTokens.slice(0, Math.ceil(baseTokens.length / 2))];
   if (cycle === 5) return [...new Set(baseTokens)];
-  if (cycle === 6) return baseTokens.filter((token) => /(engineer|architect|planning|design|supervision|management|urban|road|water|structural|electrical|mechanical|project|expert|experience)/i.test(token));
+  if (cycle === 6) return baseTokens.filter((token) => /(engineer|architect|planning|design|supervision|management|urban|road|water|structural|electrical|mechanical|project|expert|experience|consultancy|hospital|building|master|geotechnical)/i.test(token));
   if (cycle === 7) return baseTokens.filter((token) => token.length >= 5);
   if (cycle === 8) return [...baseTokens.slice(-Math.ceil(baseTokens.length / 2)), ...baseTokens.slice(0, Math.ceil(baseTokens.length / 3))];
   if (cycle === 9) return [...baseTokens, ...baseTokens.filter((token) => !stop.has(token) && token.length >= 5)];
@@ -79,16 +79,22 @@ function average(values: number[]): number {
 function selectedLimit(requirements: RequirementDraft[], type: string, available: number): number {
   const exact = exactSelectionLimit(requirements, type);
   if (exact > 0) return Math.min(exact, available);
+
   const relevant = requirements.filter((r) => r.requirementType === type);
-  if (relevant.length === 0) return 0;
-  return Math.min(available, type === "EXPERT" ? 3 : 5);
+  if (relevant.length > 0) return Math.min(available, type === "EXPERT" ? 5 : 5);
+
+  // Internal recommendation default: even when the tender text does not clearly
+  // state exact quantities, surface the best candidates for review instead of
+  // leaving matching at zero. Final generation still obeys planned documents and
+  // exact tender quantities when detected.
+  return Math.min(available, type === "EXPERT" ? 5 : 5);
 }
 
 function selectTopExact<T extends { score: number; isSelected: boolean }>(matches: T[], limit: number): T[] {
   if (limit <= 0) return matches.map((m) => ({ ...m, isSelected: false }));
   let selected = 0;
   return matches.map((m) => {
-    if (m.score > 0.01 && selected < limit) {
+    if (selected < limit) {
       selected += 1;
       return { ...m, isSelected: true };
     }
@@ -109,6 +115,7 @@ export function buildMatches(
     for (let i = 0; i < w; i += 1) queryParts.push(`${req.title} ${req.description}`);
   }
   if (tenderTitle) queryParts.push(tenderTitle, tenderTitle);
+  if (tenderSector) queryParts.push(tenderSector);
   const baseQueryTokens = tokenize(queryParts.join(" "));
 
   const expertTokenSets = knowledge.experts.map((e) =>
@@ -123,15 +130,9 @@ export function buildMatches(
     .map((expert, idx) => {
       const docTokens = expertTokenSets[idx] ?? [];
       const cycleScores: number[] = [];
-      let stableCycles = 0;
-      let previous = -1;
       for (let cycle = 1; cycle <= MATCHING_CYCLES; cycle += 1) {
         const queryTokens = cycleQueryTokens(baseQueryTokens, cycle);
-        const score = tfidfScore(queryTokens, docTokens, idf);
-        cycleScores.push(score);
-        if (Math.abs(score - previous) < 0.002) stableCycles += 1;
-        previous = score;
-        if (cycle >= 5 && stableCycles >= 3) break;
+        cycleScores.push(tfidfScore(queryTokens, docTokens, idf));
       }
       let score = average(cycleScores);
       score += sectorBoost(tenderSector, parseArr(expert.sectors));
@@ -145,9 +146,7 @@ export function buildMatches(
       return {
         expertId: expert.id,
         score,
-        rationale: score > 0.02
-          ? `[${trustLabel}] ${cycleScores.length}-cycle stabilized TF-IDF match. Keywords: ${topMatches || evidence || "name match"}.${expert.yearsExperience ? ` ${expert.yearsExperience} yrs experience.` : ""}`
-          : `[${trustLabel}] Limited keyword overlap with this tender.`,
+        rationale: `[${trustLabel}] ${MATCHING_CYCLES}-cycle tender-fit ranking. Keywords: ${topMatches || evidence || "general professional profile"}.${expert.yearsExperience ? ` ${expert.yearsExperience} yrs experience.` : ""}`,
         evidenceSummary: evidence || "No disciplines/sectors recorded — review the expert profile",
         isSelected: false,
       };
@@ -163,15 +162,9 @@ export function buildMatches(
     .map((project, idx) => {
       const docTokens = projectTokenSets[idx] ?? [];
       const cycleScores: number[] = [];
-      let stableCycles = 0;
-      let previous = -1;
       for (let cycle = 1; cycle <= MATCHING_CYCLES; cycle += 1) {
         const queryTokens = cycleQueryTokens(baseQueryTokens, cycle);
-        const score = tfidfScore(queryTokens, docTokens, idf);
-        cycleScores.push(score);
-        if (Math.abs(score - previous) < 0.002) stableCycles += 1;
-        previous = score;
-        if (cycle >= 5 && stableCycles >= 3) break;
+        cycleScores.push(tfidfScore(queryTokens, docTokens, idf));
       }
       let score = average(cycleScores);
       score += sectorBoost(tenderSector, [project.sector ?? "", ...parseArr(project.serviceAreas)]);
@@ -189,9 +182,7 @@ export function buildMatches(
       return {
         projectId: project.id,
         score,
-        rationale: score > 0.02
-          ? `[${trustLabel}] ${cycleScores.length}-cycle stabilized TF-IDF match. Keywords: ${topMatches || evidence || "name match"}.${project.contractValue ? ` Contract: ${project.currency ?? "USD"} ${project.contractValue.toLocaleString()}.` : ""}`
-          : `[${trustLabel}] Limited project overlap with this tender.`,
+        rationale: `[${trustLabel}] ${MATCHING_CYCLES}-cycle tender-fit ranking. Keywords: ${topMatches || evidence || "general project profile"}.${project.contractValue ? ` Contract: ${project.currency ?? "USD"} ${project.contractValue.toLocaleString()}.` : ""}`,
         evidenceSummary: evidence || "No service areas recorded — review the project record",
         isSelected: false,
       };
