@@ -441,6 +441,25 @@ async function bootstrap(client: PrismaClient): Promise<void> {
   await ensureColumn(client, "GeneratedDocument", "draftExpertCount", "INTEGER DEFAULT 0");
   await ensureColumn(client, "GeneratedDocument", "reviewedProjectCount", "INTEGER DEFAULT 0");
   await ensureColumn(client, "GeneratedDocument", "draftProjectCount", "INTEGER DEFAULT 0");
+  // Company profile fields
+  await ensureColumn(client, "Company", "legalName", "TEXT");
+  await ensureColumn(client, "Company", "website", "TEXT");
+  await ensureColumn(client, "Company", "address", "TEXT");
+  await ensureColumn(client, "Company", "phone", "TEXT");
+  await ensureColumn(client, "Company", "email", "TEXT");
+  await ensureColumn(client, "Company", "country", "TEXT");
+  await ensureColumn(client, "Company", "profileSummary", "TEXT");
+  await ensureColumn(client, "Company", "setupCompletedAt", "TIMESTAMPTZ");
+  await ensureColumn(client, "Company", "serviceLines", "TEXT NOT NULL DEFAULT '[]'");
+  await ensureColumn(client, "Company", "sectors", "TEXT NOT NULL DEFAULT '[]'");
+  await ensureColumn(client, "Company", "knowledgeMode", "TEXT NOT NULL DEFAULT 'PROFILE_FIRST'");
+  // Expert contact fields
+  await ensureColumn(client, "Expert", "email", "TEXT");
+  await ensureColumn(client, "Expert", "phone", "TEXT");
+  await ensureColumn(client, "Expert", "isActive", "BOOLEAN NOT NULL DEFAULT true");
+  // Project timeline fields
+  await ensureColumn(client, "Project", "startDate", "TIMESTAMPTZ");
+  await ensureColumn(client, "Project", "endDate", "TIMESTAMPTZ");
 
   // ── indexes (each wrapped so one failure never blocks the rest) ──────────
   const idxStatements = [

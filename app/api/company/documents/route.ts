@@ -71,8 +71,6 @@ export async function GET(_req: Request) {
   const company = await prisma.company.findUnique({ where: { userId } });
   if (!company) return NextResponse.json({ documents: [] });
 
-  await reextractMissingCompanyDocuments(company.id, userId);
-
   const documents = await prisma.companyDocument.findMany({
     where: { companyId: company.id },
     orderBy: { createdAt: "desc" },
