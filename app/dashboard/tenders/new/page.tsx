@@ -8,7 +8,34 @@ const CURRENCIES = ["USD","EUR","GBP","ZAR","AUD","CAD","AED","SAR","KWD","EGP",
 export default function NewTenderPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
+  const [uploadError, setUploadError] = useState("");
+  const [files, setFiles] = useState<File[]>([]);
+
+  async function handleUploadFirst() {
+    setUploading(true);
+    setUploadError("");
+    try {
+      if (files.length === 0) {
+        setUploadError("Upload at least one tender document first.");
+        return;
+      }
+      const form = new FormData();
+      for (const file of files) form.append("file", file);
+      const res = await fetch("/api/tenders/upload-first", { method: "POST", body: form });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setUploadError(data.error || "Upload-first tender intake failed");
+        return;
+      }
+      router.push(`/dashboard/tenders/${data.tenderId}`);
+    } catch {
+      setUploadError("Network error. Please try again.");
+    } finally {
+      setUploading(false);
+    }
+  }
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault(); setLoading(true); setError("");
@@ -26,12 +53,50 @@ export default function NewTenderPage() {
   }
 
   return (
-    <div className="max-w-3xl">
-      <div className="mb-6">
+    <div className="max-w-4xl space-y-6">
+      <div>
         <h1 className="text-2xl font-bold text-slate-900">New Tender Intake</h1>
-        <p className="mt-1 text-slate-500 text-sm">Capture intake details. Upload tender files after creation.</p>
+        <p className="mt-1 text-slate-500 text-sm">Upload tender documents first so the app can extract details, requirements, matching, and compliance automatically. Manual fields remain available as a fallback.</p>
       </div>
+
+      <section className="rounded-2xl border border-blue-200 bg-blue-50 p-6 shadow-sm">
+        <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-blue-600">Recommended</p>
+            <h2 className="mt-1 text-xl font-bold text-slate-900">Upload tender documents first</h2>
+            <p className="mt-1 max-w-2xl text-sm text-slate-600">The app will create the tender record, extract title/reference/client/deadline/submission method from the uploaded files, run analysis, and rank best-fit experts and projects with 10 matching cycles.</p>
+          </div>
+        </div>
+        <div className="mt-5 rounded-2xl border border-dashed border-blue-300 bg-white p-5">
+          <input
+            type="file"
+            multiple
+            accept=".pdf,.doc,.docx,.xls,.xlsx,.txt,.csv,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            onChange={(e) => setFiles(Array.from(e.target.files ?? []))}
+            className="block w-full rounded-xl border bg-white px-3 py-3 text-sm"
+          />
+          {files.length > 0 && (
+            <div className="mt-3 space-y-1 text-xs text-slate-600">
+              {files.map((file) => <div key={`${file.name}-${file.size}`} className="rounded-lg bg-slate-50 px-3 py-2">{file.name} · {(file.size / 1024 / 1024).toFixed(2)} MB</div>)}
+            </div>
+          )}
+          <button
+            type="button"
+            onClick={() => void handleUploadFirst()}
+            disabled={uploading}
+            className="mt-4 rounded-xl bg-blue-600 px-5 py-3 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+          >
+            {uploading ? "Extracting and running engine…" : "Create Tender from Uploaded Documents"}
+          </button>
+          {uploadError && <div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{uploadError}</div>}
+        </div>
+      </section>
+
       <form onSubmit={handleSubmit} className="space-y-5 rounded-2xl border bg-white p-6 shadow-sm">
+        <div>
+          <h2 className="text-lg font-semibold text-slate-900">Manual tender intake fallback</h2>
+          <p className="mt-1 text-sm text-slate-500">Use this only when you do not have tender documents yet.</p>
+        </div>
         {error && <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div className="sm:col-span-2">
@@ -93,7 +158,7 @@ export default function NewTenderPage() {
         </div>
         <div className="flex gap-3 pt-2">
           <button type="submit" disabled={loading} className="rounded-lg bg-black px-6 py-2 text-sm text-white hover:bg-slate-800 disabled:opacity-50">
-            {loading?"Creating...":"Create Tender"}
+            {loading?"Creating...":"Create Manual Tender"}
           </button>
           <button type="button" onClick={()=>router.back()} className="rounded-lg border px-6 py-2 text-sm hover:bg-slate-50">Cancel</button>
         </div>
