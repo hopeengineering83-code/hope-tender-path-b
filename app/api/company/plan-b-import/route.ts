@@ -63,9 +63,9 @@ function key(value: string): string {
   return clean(value).toLowerCase();
 }
 
-function limited(value: unknown, max = 20000): string | null {
+function sourceText(value: unknown): string | null {
   const text = raw(value);
-  return text ? text.slice(0, max) : null;
+  return text || null;
 }
 
 function requestedTrust(payload: PlanBPayload): TrustLevel {
@@ -127,11 +127,11 @@ export async function POST(req: Request) {
 
     for (const expert of experts) {
       const fullName = clean(expert.fullName);
-      const sourceText = limited(expert.rawText ?? expert.profile, 20000);
+      const exactRawText = sourceText(expert.rawText ?? expert.profile);
       if (!fullName || fullName.length < 3) { expertsSkipped += 1; warnings.push("Skipped expert without fullName."); continue; }
-      if (requireRawText && (!sourceText || sourceText.length < 50)) { expertsSkipped += 1; warnings.push(`Skipped expert ${fullName}: missing full raw CV text.`); continue; }
+      if (requireRawText && (!exactRawText || exactRawText.length < 50)) { expertsSkipped += 1; warnings.push(`Skipped expert ${fullName}: missing full raw CV text.`); continue; }
       const source = sourceLine(expert);
-      const profile = [sourceText, source].filter(Boolean).join("\n\n");
+      const profile = [exactRawText, source].filter(Boolean).join("\n\n");
       const data = {
         fullName,
         title: clean(expert.title) || null,
@@ -160,11 +160,11 @@ export async function POST(req: Request) {
 
     for (const project of projects) {
       const name = clean(project.name);
-      const sourceText = limited(project.rawText ?? project.summary ?? project.sourceEvidence, 25000);
+      const exactRawText = sourceText(project.rawText ?? project.summary ?? project.sourceEvidence);
       if (!name || name.length < 3) { projectsSkipped += 1; warnings.push("Skipped project without name."); continue; }
-      if (requireRawText && (!sourceText || sourceText.length < 50)) { projectsSkipped += 1; warnings.push(`Skipped project ${name}: missing full raw project text.`); continue; }
+      if (requireRawText && (!exactRawText || exactRawText.length < 50)) { projectsSkipped += 1; warnings.push(`Skipped project ${name}: missing full raw project text.`); continue; }
       const source = sourceLine(project);
-      const summary = [sourceText, project.contractValueSummary ? `Value / fee summary: ${clean(project.contractValueSummary)}` : null, project.duration ? `Duration: ${clean(project.duration)}` : null, source].filter(Boolean).join("\n\n");
+      const summary = [exactRawText, project.contractValueSummary ? `Value / fee summary: ${clean(project.contractValueSummary)}` : null, project.duration ? `Duration: ${clean(project.duration)}` : null, source].filter(Boolean).join("\n\n");
       const serviceAreas = Array.isArray(project.serviceAreas) && project.serviceAreas.length > 0 ? project.serviceAreas : project.sectors;
       const data = {
         name,
