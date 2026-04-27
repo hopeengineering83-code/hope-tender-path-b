@@ -129,6 +129,17 @@ function sourceText(value: unknown): string | null {
   return text || null;
 }
 
+function normalizeDocumentCategory(doc: PlanBSourceDocument): string {
+  const rawCategory = clean(doc.category || doc.type || doc.title || doc.fileName).toLowerCase();
+  if (/company|profile|corporate|background/.test(rawCategory)) return "COMPANY_PROFILE";
+  if (/legal|registration|license|licence|tin|vat|tax|certificate|competence|supplier/.test(rawCategory)) return "LEGAL_REGISTRATION";
+  if (/financial|audit|turnover|asset|profit|statement/.test(rawCategory)) return "FINANCIAL_STATEMENT";
+  if (/manual|quality|qa|qc|ethic|anti\s*-?corruption|compliance|policy|procedure|safety/.test(rawCategory)) return "COMPLIANCE_MANUALS";
+  if (/expert|cv|resume/.test(rawCategory)) return "EXPERT_CV";
+  if (/project|portfolio|reference/.test(rawCategory)) return "PROJECT_REFERENCE";
+  return "PLAN_B_SUMMARY";
+}
+
 function requestedTrust(payload: PlanBPayload): TrustLevel {
   const requested = payload.importPolicy?.trustLevel;
   return requested === "AI_DRAFT" || requested === "REGEX_DRAFT" || requested === "REVIEWED" ? requested : "REVIEWED";
@@ -280,7 +291,7 @@ export async function POST(req: Request) {
       const exactText = sourceText(doc.rawText);
       if (!fileName) { documentsSkipped += 1; continue; }
       if (requireRawText && (!exactText || exactText.length < 50)) { documentsSkipped += 1; continue; }
-      const category = clean(doc.category || doc.type) || "PLAN_B_SUMMARY";
+      const category = normalizeDocumentCategory(doc);
       const existing = await prisma.companyDocument.findFirst({ where: { companyId: company.id, originalFileName: fileName }, select: { id: true } });
       const data = {
         fileName,
@@ -292,7 +303,7 @@ export async function POST(req: Request) {
         aiExtractionStatus: exactText ? "EXTRACTED" : "FAILED",
         aiExtractedAt: exactText ? now : null,
         aiExtractionError: exactText ? null : "No rawText supplied in Plan B JSON",
-        metadata: JSON.stringify({ planB: true, sourceType: doc.type, parsedExperts: doc.parsedExperts, parsedProjects: doc.parsedProjects, sha256: doc.sha256, reviewNotes: notes }),
+        metadata: JSON.stringify({ planB: true, sourceType: doc.type, sourceCategory: doc.category, normalizedCategory: category, parsedExperts: doc.parsedExperts, parsedProjects: doc.parsedProjects, sha256: doc.sha256, reviewNotes: notes }),
       };
       if (existing) {
         await prisma.companyDocument.update({ where: { id: existing.id }, data });
@@ -401,7 +412,7 @@ export async function POST(req: Request) {
     const result = {
       success: true,
       schemaVersion: payload.schemaVersion ?? null,
-      sourceDocuments: sourceDocuments.map((d) => ({ fileName: d.fileName, type: d.type, category: d.category })),
+      sourceDocuments: sourceDocuments.map((d) => ({ fileName: d.fileName, type: d.type, category: normalizeDocumentCategory(d) })),
       trustLevel: importTrust,
       requireRawText,
       companyProfileUpdated,
