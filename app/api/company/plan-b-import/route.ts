@@ -134,10 +134,10 @@ function normalizeDocumentCategory(doc: PlanBSourceDocument): string {
   if (/company|profile|corporate|background/.test(rawCategory)) return "COMPANY_PROFILE";
   if (/legal|registration|license|licence|tin|vat|tax|certificate|competence|supplier/.test(rawCategory)) return "LEGAL_REGISTRATION";
   if (/financial|audit|turnover|asset|profit|statement/.test(rawCategory)) return "FINANCIAL_STATEMENT";
-  if (/manual|quality|qa|qc|ethic|anti\s*-?corruption|compliance|policy|procedure|safety/.test(rawCategory)) return "COMPLIANCE_MANUALS";
+  if (/manual|quality|qa|qc|ethic|anti\s*-?corruption|compliance|policy|procedure|safety/.test(rawCategory)) return "MANUAL";
   if (/expert|cv|resume/.test(rawCategory)) return "EXPERT_CV";
   if (/project|portfolio|reference/.test(rawCategory)) return "PROJECT_REFERENCE";
-  return "PLAN_B_SUMMARY";
+  return "OTHER";
 }
 
 function requestedTrust(payload: PlanBPayload): TrustLevel {
