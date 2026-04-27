@@ -146,9 +146,11 @@ export async function extractCompanyKnowledgeWithAI(params: {
   const client = new GoogleGenerativeAI(apiKey);
   const model = client.getGenerativeModel({ model: "gemini-2.0-flash" });
 
-  const expertChunks = chunkText(params.expertText).map((content, index) => ({ kind: "EXPERT_CV" as const, index, content }));
-  const projectChunks = chunkText(params.projectText).map((content, index) => ({ kind: "PROJECT_REFERENCE" as const, index, content }));
-  const chunks = [...expertChunks, ...projectChunks].slice(0, MAX_CHUNKS);
+  // Process each type independently up to MAX_CHUNKS each — interleaving then slicing
+  // caused project chunks to be entirely dropped when expert text alone filled the quota.
+  const expertChunks = chunkText(params.expertText).slice(0, MAX_CHUNKS).map((content, index) => ({ kind: "EXPERT_CV" as const, index, content }));
+  const projectChunks = chunkText(params.projectText).slice(0, MAX_CHUNKS).map((content, index) => ({ kind: "PROJECT_REFERENCE" as const, index, content }));
+  const chunks = [...expertChunks, ...projectChunks];
 
   const allExperts: AIExpertDraft[] = [];
   const allProjects: AIProjectDraft[] = [];
