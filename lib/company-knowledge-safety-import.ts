@@ -81,12 +81,36 @@ function normalizeName(value: string): string {
     .slice(0, 90);
 }
 
+// Words that appear in job titles but never in a person's name
+const POSITION_QUALIFIER_WORDS = new Set([
+  "senior", "junior", "principal", "chief", "lead", "head", "associate",
+  "assistant", "deputy", "registered", "certified", "licensed", "funded",
+  "appointed", "proposed", "designated",
+]);
+
+// Organizational, geographic, or institutional words that are not name components
+const NON_NAME_WORDS = new Set([
+  "bank", "world", "funded", "architecture", "corporation", "ministry",
+  "authority", "agency", "institute", "institution", "association",
+  "foundation", "group", "company", "limited", "international", "national",
+  "federal", "regional", "municipal", "urban", "rural", "south", "north",
+  "east", "west", "central", "city", "county", "district", "zone",
+  "university", "college", "hospital", "project", "construction",
+  "engineering", "consulting", "consultant", "services", "development",
+]);
+
 function looksLikePersonName(name: string): boolean {
   if (!name || name.length < 5 || name.length > 90) return false;
   if (/hope|urban|planning|company|consultancy|curriculum|vitae|expert|staff|summary|project|client|hospital|document|page|table|ethiopia/i.test(name)) return false;
   const words = name.split(/\s+/).filter(Boolean);
   if (words.length < 2 || words.length > 6) return false;
-  return words.every((w) => /^[A-Za-z][A-Za-z.'-]*$/.test(w));
+  if (!words.every((w) => /^[A-Za-z][A-Za-z.'-]*$/.test(w))) return false;
+  // Reject if last word is a job-level qualifier (context fragments append positions)
+  const lastWord = words[words.length - 1].toLowerCase();
+  if (POSITION_QUALIFIER_WORDS.has(lastWord)) return false;
+  // Reject if any word is a geographic, organizational, or institutional term
+  if (words.some((w) => NON_NAME_WORDS.has(w.toLowerCase()))) return false;
+  return true;
 }
 
 function snippetAround(text: string, needle: string, radius = 900): string {
