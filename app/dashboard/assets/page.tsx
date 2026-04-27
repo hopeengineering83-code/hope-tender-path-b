@@ -90,7 +90,17 @@ export default function AssetsPage() {
                   {active && <span className="shrink-0 rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700">Active</span>}
                 </div>
                 {active ? (
-                  <div className="mt-3 rounded-lg bg-slate-50 p-3 text-xs space-y-1">
+                  <div className="mt-3 rounded-lg bg-slate-50 p-3 text-xs space-y-2">
+                    {active.mimeType.startsWith("image/") && (
+                      <div className="flex justify-center rounded border bg-white p-2">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={`/api/company/assets/${active.id}`}
+                          alt={at.label}
+                          className="max-h-20 max-w-full object-contain"
+                        />
+                      </div>
+                    )}
                     <p className="font-medium text-slate-700 truncate">{active.originalFileName}</p>
                     <p className="text-slate-400">{fmt(active.size)} · {active.mimeType.split("/")[1]?.toUpperCase()}</p>
                     <div className="flex gap-2 pt-1">

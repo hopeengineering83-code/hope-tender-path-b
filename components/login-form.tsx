@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 
 export function LoginForm() {
   const [email, setEmail] = useState("");
@@ -75,6 +76,10 @@ export function LoginForm() {
       >
         {loading ? "Signing In..." : "Sign In"}
       </button>
+
+      <p className="text-center text-sm text-slate-500">
+        <Link href="/forgot-password" className="hover:underline">Forgot password?</Link>
+      </p>
     </form>
   );
 }

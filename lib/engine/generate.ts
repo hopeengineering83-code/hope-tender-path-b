@@ -1,6 +1,6 @@
 import {
   Document, Packer, Paragraph, TextRun, HeadingLevel,
-  AlignmentType, BorderStyle, Header, Footer,
+  AlignmentType, BorderStyle, Header, Footer, ImageRun,
 } from "docx";
 import { prisma } from "../prisma";
 import { humanize } from "./humanize";
@@ -56,13 +56,29 @@ function bullet(text: string): Paragraph {
   return new Paragraph({ text, bullet: { level: 0 }, spacing: { after: 40 } });
 }
 
-function buildLetterheadHeader(company: { name: string; address?: string | null; phone?: string | null; email?: string | null; website?: string | null }): Paragraph[] {
+function buildLetterheadHeader(
+  company: { name: string; address?: string | null; phone?: string | null; email?: string | null; website?: string | null },
+  logoAsset?: { data: Buffer; mimeType: string },
+): Paragraph[] {
   const contactLine = [company.address, company.phone, company.email, company.website].filter(Boolean).join("  |  ");
-  return [
-    new Paragraph({ children: [new TextRun({ text: company.name, bold: true, size: 32, color: "1a1a2e" })], alignment: AlignmentType.LEFT, spacing: { after: 40 } }),
-    ...(contactLine ? [new Paragraph({ children: [new TextRun({ text: contactLine, size: 18, color: "555555" })], alignment: AlignmentType.LEFT, spacing: { after: 60 } })] : []),
-    hr(),
-  ];
+  const paras: Paragraph[] = [];
+  if (logoAsset) {
+    try {
+      paras.push(new Paragraph({
+        children: [new ImageRun({ data: logoAsset.data, transformation: { width: 160, height: 60 }, type: logoAsset.mimeType.includes("png") ? "png" : "jpg" })],
+        alignment: AlignmentType.LEFT,
+        spacing: { after: 40 },
+      }));
+    } catch {
+      // Fall back to text if image embedding fails
+      paras.push(new Paragraph({ children: [new TextRun({ text: company.name, bold: true, size: 32, color: "1a1a2e" })], alignment: AlignmentType.LEFT, spacing: { after: 40 } }));
+    }
+  } else {
+    paras.push(new Paragraph({ children: [new TextRun({ text: company.name, bold: true, size: 32, color: "1a1a2e" })], alignment: AlignmentType.LEFT, spacing: { after: 40 } }));
+  }
+  if (contactLine) paras.push(new Paragraph({ children: [new TextRun({ text: contactLine, size: 18, color: "555555" })], alignment: AlignmentType.LEFT, spacing: { after: 60 } }));
+  paras.push(hr());
+  return paras;
 }
 
 function buildCoverSection(title: string, reference?: string | null, clientName?: string | null, companyName?: string): Paragraph[] {
@@ -189,7 +205,13 @@ function buildProjectReferenceContent(project: { name: string; clientName?: stri
   return paras;
 }
 
-function buildDeclarationContent(companyName: string, tenderTitle: string, includeSignatureAndStamp: boolean): Paragraph[] {
+function buildDeclarationContent(
+  companyName: string,
+  tenderTitle: string,
+  includeSignatureAndStamp: boolean,
+  signatureAsset?: { data: Buffer; mimeType: string },
+  stampAsset?: { data: Buffer; mimeType: string },
+): Paragraph[] {
   const paragraphs = [
     heading1("Declaration"),
     body(`We, the undersigned, being duly authorized representatives of ${companyName}, hereby declare the following:`, { bold: true }),
@@ -205,10 +227,23 @@ function buildDeclarationContent(companyName: string, tenderTitle: string, inclu
       body("Authorized Signatory:", { bold: true }),
       body("Name: _______________________________"),
       body("Title: _______________________________"),
-      body("Signature: ___________________________"),
-      body("Date: ________________________________"),
-      body("Company Seal / Stamp:"),
     );
+    if (signatureAsset) {
+      try {
+        paragraphs.push(new Paragraph({ children: [new ImageRun({ data: signatureAsset.data, transformation: { width: 120, height: 50 }, type: signatureAsset.mimeType.includes("png") ? "png" : "jpg" })], spacing: { before: 40, after: 40 } }));
+      } catch { paragraphs.push(body("Signature: ___________________________")); }
+    } else {
+      paragraphs.push(body("Signature: ___________________________"));
+    }
+    paragraphs.push(body("Date: ________________________________"));
+    if (stampAsset) {
+      try {
+        paragraphs.push(body("Company Seal / Stamp:", { bold: true }));
+        paragraphs.push(new Paragraph({ children: [new ImageRun({ data: stampAsset.data, transformation: { width: 90, height: 90 }, type: stampAsset.mimeType.includes("png") ? "png" : "jpg" })], spacing: { before: 20, after: 40 } }));
+      } catch { paragraphs.push(body("Company Seal / Stamp: ________________")); }
+    } else {
+      paragraphs.push(body("Company Seal / Stamp: ________________"));
+    }
   }
   return paragraphs;
 }
@@ -277,6 +312,17 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   const company = await prisma.company.findUnique({ where: { userId } });
   if (!company) throw new Error("Company not found");
 
+  // Load active branding assets (logo, signature, stamp) for image embedding
+  const activeAssets = await prisma.companyAsset.findMany({
+    where: { companyId: company.id, isActive: true, assetType: { in: ["LOGO", "SIGNATURE", "STAMP"] } },
+    select: { assetType: true, fileContent: true, mimeType: true },
+  });
+  const assetMap = Object.fromEntries(
+    activeAssets
+      .filter((a) => a.fileContent)
+      .map((a) => [a.assetType, { data: Buffer.from(a.fileContent!, "base64"), mimeType: a.mimeType }]),
+  );
+
   const plannedDocs = tender.generatedDocuments.filter((d) => d.generationStatus === "PLANNED");
   if (plannedDocs.length === 0) {
     throw new Error("Generation blocked: no tender-required output documents are planned. Run tender analysis first and confirm the tender requires generated files.");
@@ -287,7 +333,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   const coverAllowed = !forbidsCoverPage(tender.requirements);
   const coverRequired = coverAllowed && requiresCoverPage(tender.requirements);
   const signatureOrStampRequired = requiresSignatureOrStamp(tender.requirements);
-  const letterheadParas = brandingAllowed ? buildLetterheadHeader(company) : [];
+  const letterheadParas = brandingAllowed ? buildLetterheadHeader(company, assetMap["LOGO"]) : [];
   const coverParas = coverRequired ? buildCoverSection(tender.title, tender.reference, tender.clientName, brandingAllowed ? company.name : undefined) : [];
 
   let expertIdx = 0;
@@ -317,7 +363,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
         docTitle = `Project Reference — ${project.name}`;
         projectIdx++;
       } else if (doc.documentType === "DECLARATION") {
-        contentParagraphs = [...letterheadParas, ...buildDeclarationContent(company.name, tender.title, signatureOrStampRequired)];
+        contentParagraphs = [...letterheadParas, ...buildDeclarationContent(company.name, tender.title, signatureOrStampRequired, assetMap["SIGNATURE"], assetMap["STAMP"])];
         docTitle = "Declaration";
       } else if (doc.documentType === "COMPANY_PROFILE") {
         contentParagraphs = [...letterheadParas, ...buildCompanyProfileContent(company)];
