@@ -23,16 +23,43 @@ function allText(requirements: ScopeRequirement[]): string {
   return requirements.map(textFor).join("\n");
 }
 
+function hasExplicitQuantityLanguage(requirement: ScopeRequirement, type: string): boolean {
+  const text = textFor(requirement);
+  if (type === "EXPERT") {
+    return /(?:minimum|at\s+least|not\s+less\s+than|no\.\s*of|required|shall\s+provide|must\s+provide|key\s+experts?|experts?\s+required|personnel\s+required|team\s+composition|composition\s+of\s+team)\s*(?:of|:)?\s*\d{1,2}|\d{1,2}\s+(?:key\s+)?(?:experts?|specialists?|personnel|staff|professionals)\b/i.test(text);
+  }
+  if (type === "PROJECT_EXPERIENCE") {
+    return /(?:minimum|at\s+least|not\s+less\s+than|required|shall\s+provide|must\s+provide|similar\s+(?:projects?|assignments?)|project\s+references?|references?\s+required)\s*(?:of|:)?\s*\d{1,2}|\d{1,2}\s+(?:similar\s+)?(?:projects?|assignments?|references?|contracts?)\b/i.test(text);
+  }
+  return false;
+}
+
+/**
+ * Returns the explicit tender selection count for experts/projects.
+ *
+ * Important: do NOT sum quantities across extracted/strategic requirement rows.
+ * A long tender can mention page numbers, section numbers, points, years, rows,
+ * and individual CV/project criteria many times. Summing those rows creates fake
+ * requirements such as 139 experts or 13 projects. A real tender count is the
+ * single strongest explicit quantity found in wording like "minimum 3 experts"
+ * or "at least 2 similar projects".
+ */
 export function exactSelectionLimit(requirements: ScopeRequirement[], type: string): number {
   const relevant = requirements.filter((requirement) => requirement.requirementType === type);
   if (relevant.length === 0) return 0;
-  const explicitQuantity = relevant.reduce((sum, requirement) => sum + (requirement.requiredQuantity ?? 0), 0);
-  return explicitQuantity > 0 ? explicitQuantity : 0;
+
+  const explicit = relevant
+    .filter((requirement) => (requirement.requiredQuantity ?? 0) > 0)
+    .filter((requirement) => hasExplicitQuantityLanguage(requirement, type))
+    .map((requirement) => requirement.requiredQuantity ?? 0)
+    .filter((quantity) => quantity > 0 && quantity <= 50);
+
+  return explicit.length > 0 ? Math.max(...explicit) : 0;
 }
 
 export function hasAmbiguousQuantity(requirement: ScopeRequirement): boolean {
   if (!["EXPERT", "PROJECT_EXPERIENCE"].includes(requirement.requirementType)) return false;
-  if (requirement.requiredQuantity && requirement.requiredQuantity > 0) return false;
+  if (requirement.requiredQuantity && requirement.requiredQuantity > 0 && hasExplicitQuantityLanguage(requirement, requirement.requirementType)) return false;
   const text = textFor(requirement);
   return /(expert|key personnel|specialist|cv|curriculum vitae|staff|project reference|similar experience|past performance|portfolio)/i.test(text);
 }
