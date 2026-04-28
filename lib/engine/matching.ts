@@ -1,7 +1,7 @@
 import type { CompanyKnowledgeSnapshot, MatchingResult, RequirementDraft } from "./types";
 import { exactSelectionLimit } from "./scope-policy";
 
-const MATCHING_CYCLES = 10;
+const MATCHING_CYCLES = 20;
 const SELECTION_THRESHOLD = 0.90;
 
 function tokenize(value: string | null | undefined): string[] {
@@ -27,11 +27,6 @@ function buildIdf(corpus: string[][]): Map<string, number> {
   return idf;
 }
 
-/**
- * Cosine TF-IDF similarity — normalises by both vector magnitudes so that
- * documents sharing many significant terms with the query score close to 1.0,
- * regardless of document or query length.
- */
 function cosineTfidf(queryTokens: string[], docTokens: string[], idf: Map<string, number>): number {
   if (queryTokens.length === 0 || docTokens.length === 0) return 0;
 
@@ -77,16 +72,36 @@ function trustLevelLabel(trustLevel: string | null | undefined): string {
 
 function cycleQueryTokens(baseTokens: string[], cycle: number): string[] {
   const stop = new Set(["shall", "must", "submit", "required", "proposal", "tender", "document", "provide", "include", "form"]);
-  if (cycle === 1) return baseTokens;
-  if (cycle === 2) return [...baseTokens, ...baseTokens.filter((token) => token.length > 6)];
-  if (cycle === 3) return baseTokens.filter((token) => !stop.has(token));
-  if (cycle === 4) return [...baseTokens, ...baseTokens.slice(0, Math.ceil(baseTokens.length / 2))];
-  if (cycle === 5) return [...new Set(baseTokens)];
-  if (cycle === 6) return baseTokens.filter((token) => /(engineer|architect|planning|design|supervision|management|urban|road|water|structural|electrical|mechanical|project|expert|experience|consultancy|hospital|building|master|geotechnical)/i.test(token));
-  if (cycle === 7) return baseTokens.filter((token) => token.length >= 5);
-  if (cycle === 8) return [...baseTokens.slice(-Math.ceil(baseTokens.length / 2)), ...baseTokens.slice(0, Math.ceil(baseTokens.length / 3))];
-  if (cycle === 9) return [...baseTokens, ...baseTokens.filter((token) => !stop.has(token) && token.length >= 5)];
-  return [...new Set(baseTokens.filter((token) => !stop.has(token)))];
+  const unique = [...new Set(baseTokens)];
+  const long = baseTokens.filter((token) => token.length >= 5);
+  const domain = baseTokens.filter((token) => /(engineer|architect|planning|design|supervision|management|urban|road|water|structural|electrical|mechanical|project|expert|experience|consultancy|hospital|building|master|geotechnical|financial|legal|registration|methodology|construction|infrastructure|environmental|feasibility)/i.test(token));
+  const noStop = baseTokens.filter((token) => !stop.has(token));
+  const firstHalf = baseTokens.slice(0, Math.ceil(baseTokens.length / 2));
+  const secondHalf = baseTokens.slice(Math.floor(baseTokens.length / 2));
+
+  switch (cycle) {
+    case 1: return baseTokens;
+    case 2: return [...baseTokens, ...long];
+    case 3: return noStop;
+    case 4: return [...baseTokens, ...firstHalf];
+    case 5: return unique;
+    case 6: return domain;
+    case 7: return long;
+    case 8: return [...secondHalf, ...baseTokens.slice(0, Math.ceil(baseTokens.length / 3))];
+    case 9: return [...baseTokens, ...noStop.filter((token) => token.length >= 5)];
+    case 10: return [...new Set(noStop)];
+    case 11: return [...domain, ...domain, ...long];
+    case 12: return [...firstHalf, ...domain];
+    case 13: return [...secondHalf, ...domain];
+    case 14: return baseTokens.filter((token) => /(expert|staff|cv|personnel|team|leader|specialist|engineer|architect|planner|experience|years)/i.test(token));
+    case 15: return baseTokens.filter((token) => /(project|reference|similar|assignment|portfolio|client|contract|completed|experience|sector)/i.test(token));
+    case 16: return [...unique, ...domain, ...noStop.slice(0, 20)];
+    case 17: return noStop.filter((token) => token.length >= 6);
+    case 18: return [...baseTokens.slice(0, 15), ...baseTokens.slice(-15), ...domain];
+    case 19: return [...baseTokens, ...domain, ...domain, ...noStop.filter((token) => token.length >= 6)];
+    case 20: return [...new Set([...domain, ...long, ...noStop])];
+    default: return unique;
+  }
 }
 
 function selectedLimit(requirements: RequirementDraft[], type: string, available: number): number {
@@ -100,20 +115,16 @@ function selectedLimit(requirements: RequirementDraft[], type: string, available
 }
 
 /**
- * Select up to `limit` matches. Prefers items scoring ≥ SELECTION_THRESHOLD (90%).
- * Falls back to the top-scored items if none reach the threshold so the UI
- * always surfaces at least some candidates for manual review.
+ * Hard selection rule: only records scoring ≥ 90% may be auto-selected.
+ * If nothing reaches 90%, nothing is selected; all candidates remain visible
+ * for manual review but are not counted as selected matches.
  */
-function selectTopExact<T extends { score: number; isSelected: boolean }>(matches: T[], limit: number): T[] {
+function selectAboveThreshold<T extends { score: number; isSelected: boolean }>(matches: T[], limit: number): T[] {
   if (limit <= 0) return matches.map((m) => ({ ...m, isSelected: false }));
-
-  const aboveThreshold = matches.filter((m) => m.score >= SELECTION_THRESHOLD);
-  const useThreshold = aboveThreshold.length > 0;
 
   let selected = 0;
   return matches.map((m) => {
-    const eligible = useThreshold ? m.score >= SELECTION_THRESHOLD : true;
-    if (eligible && selected < limit) {
+    if (m.score >= SELECTION_THRESHOLD && selected < limit) {
       selected += 1;
       return { ...m, isSelected: true };
     }
@@ -149,10 +160,11 @@ export function buildMatches(
     .map((expert, idx) => {
       const docTokens = expertTokenSets[idx] ?? [];
       let bestScore = 0;
+      let bestCycle = 0;
       for (let cycle = 1; cycle <= MATCHING_CYCLES; cycle += 1) {
         const queryTokens = cycleQueryTokens(baseQueryTokens, cycle);
         const s = cosineTfidf(queryTokens, docTokens, idf);
-        if (s > bestScore) bestScore = s;
+        if (s > bestScore) { bestScore = s; bestCycle = cycle; }
       }
       let score = bestScore;
       score += sectorBoost(tenderSector, parseArr(expert.sectors));
@@ -163,10 +175,11 @@ export function buildMatches(
       const evidence = [expert.title, ...parseArr(expert.disciplines)].filter(Boolean).join(" · ");
       const topMatches = [...new Set(docTokens.filter((t) => baseQueryTokens.includes(t)))].slice(0, 8).join(", ");
       const trustLabel = trustLevelLabel((expert as Record<string, unknown>).trustLevel as string);
+      const thresholdLabel = score >= SELECTION_THRESHOLD ? "Auto-selected ≥90%." : "Below 90%; review only.";
       return {
         expertId: expert.id,
         score,
-        rationale: `[${trustLabel}] Best of ${MATCHING_CYCLES}-cycle cosine ranking. Keywords: ${topMatches || evidence || "general professional profile"}.${expert.yearsExperience ? ` ${expert.yearsExperience} yrs experience.` : ""}`,
+        rationale: `[${trustLabel}] Best of ${MATCHING_CYCLES}-cycle cosine ranking, winning cycle ${bestCycle}. ${thresholdLabel} Keywords: ${topMatches || evidence || "general professional profile"}.${expert.yearsExperience ? ` ${expert.yearsExperience} yrs experience.` : ""}`,
         evidenceSummary: evidence || "No disciplines/sectors recorded — review the expert profile",
         isSelected: false,
       };
@@ -182,10 +195,11 @@ export function buildMatches(
     .map((project, idx) => {
       const docTokens = projectTokenSets[idx] ?? [];
       let bestScore = 0;
+      let bestCycle = 0;
       for (let cycle = 1; cycle <= MATCHING_CYCLES; cycle += 1) {
         const queryTokens = cycleQueryTokens(baseQueryTokens, cycle);
         const s = cosineTfidf(queryTokens, docTokens, idf);
-        if (s > bestScore) bestScore = s;
+        if (s > bestScore) { bestScore = s; bestCycle = cycle; }
       }
       let score = bestScore;
       score += sectorBoost(tenderSector, [project.sector ?? "", ...parseArr(project.serviceAreas)]);
@@ -200,10 +214,11 @@ export function buildMatches(
       const evidence = [project.sector, ...parseArr(project.serviceAreas)].filter(Boolean).join(" · ");
       const topMatches = [...new Set(docTokens.filter((t) => baseQueryTokens.includes(t)))].slice(0, 8).join(", ");
       const trustLabel = trustLevelLabel((project as Record<string, unknown>).trustLevel as string);
+      const thresholdLabel = score >= SELECTION_THRESHOLD ? "Auto-selected ≥90%." : "Below 90%; review only.";
       return {
         projectId: project.id,
         score,
-        rationale: `[${trustLabel}] Best of ${MATCHING_CYCLES}-cycle cosine ranking. Keywords: ${topMatches || evidence || "general project profile"}.${project.contractValue ? ` Contract: ${project.currency ?? "USD"} ${project.contractValue.toLocaleString()}.` : ""}`,
+        rationale: `[${trustLabel}] Best of ${MATCHING_CYCLES}-cycle cosine ranking, winning cycle ${bestCycle}. ${thresholdLabel} Keywords: ${topMatches || evidence || "general project profile"}.${project.contractValue ? ` Contract: ${project.currency ?? "USD"} ${project.contractValue.toLocaleString()}.` : ""}`,
         evidenceSummary: evidence || "No service areas recorded — review the project record",
         isSelected: false,
       };
@@ -216,7 +231,7 @@ export function buildMatches(
     });
 
   return {
-    expertMatches: selectTopExact(expertMatches, selectedLimit(requirements, "EXPERT", expertMatches.length)),
-    projectMatches: selectTopExact(projectMatches, selectedLimit(requirements, "PROJECT_EXPERIENCE", projectMatches.length)),
+    expertMatches: selectAboveThreshold(expertMatches, selectedLimit(requirements, "EXPERT", expertMatches.length)),
+    projectMatches: selectAboveThreshold(projectMatches, selectedLimit(requirements, "PROJECT_EXPERIENCE", projectMatches.length)),
   };
 }
