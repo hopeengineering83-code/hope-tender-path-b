@@ -29,9 +29,10 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     }),
   ]);
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
+  const tenderRecord = tender;
 
   async function runRegexFallback(errorMessage?: string) {
-    const result = analyzeTender(tender);
+    const result = analyzeTender(tenderRecord);
     await prisma.$transaction(async (tx) => {
       await tx.tenderRequirement.deleteMany({ where: { tenderId: id } });
       for (const req of result.requirements) {
@@ -58,7 +59,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
 
     if (isAIEnabled()) {
       try {
-        const fileTexts = tender.files
+        const fileTexts = tenderRecord.files
           .map((f) => f.extractedText
             ? `[FILE: ${f.originalFileName}]\n${f.extractedText.slice(0, 6000)}`
             : `[FILE: ${f.originalFileName} ${f.classification ?? ""}]`)
@@ -69,9 +70,9 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
           : "";
 
         const tenderContent = [
-          `TENDER: ${tender.title}`,
-          tender.description ? `DESCRIPTION: ${tender.description}` : null,
-          tender.intakeSummary ? `INTAKE NOTES: ${tender.intakeSummary}` : null,
+          `TENDER: ${tenderRecord.title}`,
+          tenderRecord.description ? `DESCRIPTION: ${tenderRecord.description}` : null,
+          tenderRecord.intakeSummary ? `INTAKE NOTES: ${tenderRecord.intakeSummary}` : null,
           fileTexts || null,
           companyContext || null,
         ].filter(Boolean).join("\n\n");
@@ -126,7 +127,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       action: "AI_ANALYZE",
       entityType: "Tender",
       entityId: id,
-      description: `Analyzed tender "${tender.title}" — ${analysisResult.requirementCount} requirements extracted${analysisResult.fallback ? " using fallback" : ""}`,
+      description: `Analyzed tender "${tenderRecord.title}" — ${analysisResult.requirementCount} requirements extracted${analysisResult.fallback ? " using fallback" : ""}`,
       metadata: { ai: analysisResult.ai, fallback: analysisResult.fallback, requirementCount: analysisResult.requirementCount },
     });
 
