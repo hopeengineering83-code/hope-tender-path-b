@@ -136,14 +136,25 @@ export async function validateTender(tenderId: string): Promise<ValidationReport
     .filter((d) => d.generationStatus === "GENERATED")
     .sort((a, b) => (a.exactOrder ?? Number.MAX_SAFE_INTEGER) - (b.exactOrder ?? Number.MAX_SAFE_INTEGER));
 
-  const blockingGaps = tender.complianceGaps.filter(
-    (g) => !g.isResolved && ["CRITICAL", "HIGH"].includes(g.severity),
+  const criticalBlockingGaps = tender.complianceGaps.filter(
+    (g) => !g.isResolved && g.severity === "CRITICAL",
   );
-  if (blockingGaps.length > 0) {
+  if (criticalBlockingGaps.length > 0) {
     issues.push({
       code: "UNRESOLVED_COMPLIANCE_GAPS",
       severity: "BLOCK",
-      message: `${blockingGaps.length} unresolved critical/high compliance gap(s) must be addressed before export.`,
+      message: `${criticalBlockingGaps.length} unresolved CRITICAL compliance gap(s) must be resolved before validation can pass.`,
+    });
+  }
+
+  const highGaps = tender.complianceGaps.filter(
+    (g) => !g.isResolved && g.severity === "HIGH",
+  );
+  if (highGaps.length > 0) {
+    issues.push({
+      code: "UNRESOLVED_HIGH_GAPS",
+      severity: "WARN",
+      message: `${highGaps.length} HIGH severity compliance gap(s) are unresolved. Review and resolve if possible before final export.`,
     });
   }
 
