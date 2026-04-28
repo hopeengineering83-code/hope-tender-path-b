@@ -5,6 +5,7 @@ import {
 import { prisma } from "../prisma";
 import { humanize } from "./humanize";
 import { forbidsBranding, forbidsCoverPage, requiresCoverPage, requiresSignatureOrStamp } from "./scope-policy";
+import { applyUploadedDocxLetterheadTemplate } from "./docx-letterhead-template";
 
 function safeParseArr(v: unknown): string[] {
   try { return JSON.parse(v as string) as string[]; } catch { return []; }
@@ -374,7 +375,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   if (!company) throw new Error("Company not found");
 
   const activeAssets = await prisma.companyAsset.findMany({
-    where: { companyId: company.id, isActive: true, assetType: { in: ["LOGO", "SIGNATURE", "STAMP"] } },
+    where: { companyId: company.id, isActive: true, assetType: { in: ["LOGO", "SIGNATURE", "STAMP", "LETTERHEAD"] } },
     select: { assetType: true, fileContent: true, mimeType: true },
   });
   const assetMap = Object.fromEntries(
@@ -440,14 +441,17 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
       if (contentParagraphs.length === 0) throw new Error("No content paragraphs were created.");
 
       const document = buildDocxFromParagraphs(contentParagraphs, company.name, docTitle, brandingAllowed, assetMap["LOGO"]);
-      const buffer = await Packer.toBuffer(document);
+      let buffer = await Packer.toBuffer(document);
+      const letterheadBuffer = brandingAllowed && assetMap["LETTERHEAD"] ? assetMap["LETTERHEAD"].data : undefined;
+      if (letterheadBuffer) buffer = await applyUploadedDocxLetterheadTemplate(buffer, letterheadBuffer);
       const fileContent = buffer.toString("base64");
       const exactFileName = doc.exactFileName ?? `${docTitle.replace(/[^a-zA-Z0-9 ]/g, "").trim().replace(/\s+/g, "-")}.docx`;
+      const letterheadNote = !brandingAllowed ? "disabled by tender rules" : letterheadBuffer ? "uploaded template applied" : "Hope default header/footer";
 
       if (doc.id) {
-        await prisma.generatedDocument.update({ where: { id: doc.id }, data: { fileContent, exactFileName, generationStatus: "GENERATED", validationStatus: "PENDING", reviewedExpertCount: selectedExperts.length, draftExpertCount: 0, reviewedProjectCount: selectedProjects.length, draftProjectCount: 0, contentSummary: `Generated ${new Date().toLocaleDateString()} — ${contentParagraphs.length} sections | ✓ All selected sources REVIEWED | letterhead ${brandingAllowed ? "Hope header/footer applied" : "disabled by tender rules"} | cover ${coverRequired ? "included" : "not included"}` } });
+        await prisma.generatedDocument.update({ where: { id: doc.id }, data: { fileContent, exactFileName, generationStatus: "GENERATED", validationStatus: "PENDING", reviewedExpertCount: selectedExperts.length, draftExpertCount: 0, reviewedProjectCount: selectedProjects.length, draftProjectCount: 0, contentSummary: `Generated ${new Date().toLocaleDateString()} — ${contentParagraphs.length} sections | ✓ All selected sources REVIEWED | letterhead: ${letterheadNote} | cover ${coverRequired ? "included" : "not included"}` } });
       } else {
-        await prisma.generatedDocument.create({ data: { tenderId, name: docTitle, documentType: doc.documentType, format: "DOCX", exactFileName, exactOrder: doc.exactOrder ?? 1, fileContent, generationStatus: "GENERATED", validationStatus: "PENDING", reviewedExpertCount: selectedExperts.length, draftExpertCount: 0, reviewedProjectCount: selectedProjects.length, draftProjectCount: 0, contentSummary: `Generated ${new Date().toLocaleDateString()} — ${contentParagraphs.length} sections | ✓ All selected sources REVIEWED | letterhead ${brandingAllowed ? "Hope header/footer applied" : "disabled by tender rules"} | cover ${coverRequired ? "included" : "not included"}` } });
+        await prisma.generatedDocument.create({ data: { tenderId, name: docTitle, documentType: doc.documentType, format: "DOCX", exactFileName, exactOrder: doc.exactOrder ?? 1, fileContent, generationStatus: "GENERATED", validationStatus: "PENDING", reviewedExpertCount: selectedExperts.length, draftExpertCount: 0, reviewedProjectCount: selectedProjects.length, draftProjectCount: 0, contentSummary: `Generated ${new Date().toLocaleDateString()} — ${contentParagraphs.length} sections | ✓ All selected sources REVIEWED | letterhead: ${letterheadNote} | cover ${coverRequired ? "included" : "not included"}` } });
       }
       generatedCount++;
     } catch (err) {
