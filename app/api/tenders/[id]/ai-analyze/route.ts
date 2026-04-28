@@ -22,7 +22,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       include: {
         documents: {
           select: { category: true, originalFileName: true, extractedText: true },
-          take: 5, // limit context size
+          take: 5,
           orderBy: { createdAt: "desc" },
         },
       },
@@ -30,88 +30,95 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   ]);
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
 
+  async function runRegexFallback(errorMessage?: string) {
+    const result = analyzeTender(tender);
+    await prisma.$transaction(async (tx) => {
+      await tx.tenderRequirement.deleteMany({ where: { tenderId: id } });
+      for (const req of result.requirements) {
+        await tx.tenderRequirement.create({ data: { tenderId: id, ...req } });
+      }
+      await tx.tender.update({
+        where: { id },
+        data: {
+          analysisSummary: errorMessage
+            ? `${result.summary}\n\nAI analysis fallback used because AI failed: ${errorMessage}`
+            : result.summary,
+          exactFileNaming: JSON.stringify(result.exactFileNaming),
+          exactFileOrder: JSON.stringify(result.exactFileOrder),
+          status: "ANALYZED",
+          stage: "ANALYSIS",
+        },
+      });
+    });
+    return { ai: false, fallback: Boolean(errorMessage), summary: result.summary, requirementCount: result.requirements.length };
+  }
+
   try {
     let analysisResult;
 
     if (isAIEnabled()) {
-      // Priority: extractedText from uploaded docs, then metadata
-      const fileTexts = tender.files
-        .map((f) => f.extractedText
-          ? `[FILE: ${f.originalFileName}]\n${f.extractedText.slice(0, 2000)}`
-          : `[FILE: ${f.originalFileName} ${f.classification ?? ""}]`)
-        .join("\n\n");
+      try {
+        const fileTexts = tender.files
+          .map((f) => f.extractedText
+            ? `[FILE: ${f.originalFileName}]\n${f.extractedText.slice(0, 6000)}`
+            : `[FILE: ${f.originalFileName} ${f.classification ?? ""}]`)
+          .join("\n\n");
 
-      // Include company document context so AI can assess coverage
-      const companyContext = company?.documents?.length
-        ? `\n\nCOMPANY DOCUMENTS AVAILABLE:\n${company.documents.map((d) => `- ${d.originalFileName} (${d.category})`).join("\n")}`
-        : "";
+        const companyContext = company?.documents?.length
+          ? `\n\nCOMPANY DOCUMENTS AVAILABLE:\n${company.documents.map((d) => `- ${d.originalFileName} (${d.category})`).join("\n")}`
+          : "";
 
-      const tenderContent = [
-        `TENDER: ${tender.title}`,
-        tender.description ? `DESCRIPTION: ${tender.description}` : null,
-        tender.intakeSummary ? `INTAKE NOTES: ${tender.intakeSummary}` : null,
-        fileTexts || null,
-        companyContext || null,
-      ].filter(Boolean).join("\n\n");
+        const tenderContent = [
+          `TENDER: ${tender.title}`,
+          tender.description ? `DESCRIPTION: ${tender.description}` : null,
+          tender.intakeSummary ? `INTAKE NOTES: ${tender.intakeSummary}` : null,
+          fileTexts || null,
+          companyContext || null,
+        ].filter(Boolean).join("\n\n");
 
-      const aiResult = await analyzeWithAI(tenderContent);
+        const aiResult = await analyzeWithAI(tenderContent);
 
-      await prisma.$transaction(async (tx) => {
-        await tx.tenderRequirement.deleteMany({ where: { tenderId: id } });
+        await prisma.$transaction(async (tx) => {
+          await tx.tenderRequirement.deleteMany({ where: { tenderId: id } });
 
-        for (const req of aiResult.requirements) {
-          await tx.tenderRequirement.create({
+          for (const req of aiResult.requirements) {
+            await tx.tenderRequirement.create({
+              data: {
+                tenderId: id,
+                title: req.title,
+                description: req.description,
+                requirementType: req.requirementType,
+                priority: req.priority,
+                exactFileName: req.exactFileName ?? null,
+                requiredQuantity: req.requiredQuantity ?? null,
+                pageLimit: req.pageLimit ?? null,
+                restrictions: req.restrictions ?? null,
+                sectionReference: req.sectionReference ?? null,
+              },
+            });
+          }
+
+          await tx.tender.update({
+            where: { id },
             data: {
-              tenderId: id,
-              title: req.title,
-              description: req.description,
-              requirementType: req.requirementType,
-              priority: req.priority,
-              exactFileName: req.exactFileName ?? null,
-              requiredQuantity: req.requiredQuantity ?? null,
-              pageLimit: req.pageLimit ?? null,
-              restrictions: req.restrictions ?? null,
-              sectionReference: req.sectionReference ?? null,
+              analysisSummary: aiResult.summary,
+              evaluationMethodology: aiResult.evaluationMethodology || null,
+              exactFileNaming: JSON.stringify(aiResult.exactFileNaming),
+              exactFileOrder: JSON.stringify(aiResult.exactFileOrder),
+              status: "ANALYZED",
+              stage: "ANALYSIS",
             },
           });
-        }
-
-        await tx.tender.update({
-          where: { id },
-          data: {
-            analysisSummary: aiResult.summary,
-            evaluationMethodology: aiResult.evaluationMethodology || null,
-            exactFileNaming: JSON.stringify(aiResult.exactFileNaming),
-            exactFileOrder: JSON.stringify(aiResult.exactFileOrder),
-            status: "ANALYZED",
-            stage: "ANALYSIS",
-          },
         });
-      });
 
-      analysisResult = { ai: true, summary: aiResult.summary, requirementCount: aiResult.requirements.length };
+        analysisResult = { ai: true, fallback: false, summary: aiResult.summary, requirementCount: aiResult.requirements.length };
+      } catch (aiError) {
+        const msg = aiError instanceof Error ? aiError.message : String(aiError);
+        console.error("AI analysis failed; deterministic fallback used:", aiError);
+        analysisResult = await runRegexFallback(msg.slice(0, 240));
+      }
     } else {
-      // Fallback: regex-based analysis
-      const result = analyzeTender(tender);
-      await prisma.$transaction(async (tx) => {
-        await tx.tenderRequirement.deleteMany({ where: { tenderId: id } });
-        for (const req of result.requirements) {
-          await tx.tenderRequirement.create({
-            data: { tenderId: id, ...req },
-          });
-        }
-        await tx.tender.update({
-          where: { id },
-          data: {
-            analysisSummary: result.summary,
-            exactFileNaming: JSON.stringify(result.exactFileNaming),
-            exactFileOrder: JSON.stringify(result.exactFileOrder),
-            status: "ANALYZED",
-            stage: "ANALYSIS",
-          },
-        });
-      });
-      analysisResult = { ai: false, summary: result.summary, requirementCount: result.requirements.length };
+      analysisResult = await runRegexFallback();
     }
 
     await logAction({
@@ -119,8 +126,8 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       action: "AI_ANALYZE",
       entityType: "Tender",
       entityId: id,
-      description: `Analyzed tender "${tender.title}" — ${analysisResult.requirementCount} requirements extracted`,
-      metadata: { ai: analysisResult.ai, requirementCount: analysisResult.requirementCount },
+      description: `Analyzed tender "${tender.title}" — ${analysisResult.requirementCount} requirements extracted${analysisResult.fallback ? " using fallback" : ""}`,
+      metadata: { ai: analysisResult.ai, fallback: analysisResult.fallback, requirementCount: analysisResult.requirementCount },
     });
 
     const updated = await prisma.tender.findUnique({
@@ -130,7 +137,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
 
     return NextResponse.json({ success: true, ...analysisResult, tender: updated });
   } catch (error) {
-    console.error("AI analysis error:", error);
-    return NextResponse.json({ error: "Analysis failed" }, { status: 500 });
+    console.error("Analysis route error:", error);
+    return NextResponse.json({ error: error instanceof Error ? error.message : "Analysis failed" }, { status: 500 });
   }
 }
