@@ -49,14 +49,16 @@ export default async function ExportPage() {
           const criticalGaps = tender.complianceGaps.filter((g) => !g.isResolved && g.severity === "CRITICAL");
           const highGaps = tender.complianceGaps.filter((g) => !g.isResolved && g.severity === "HIGH");
           const unresolvedMediumLow = tender.complianceGaps.filter((g) => !g.isResolved && !["CRITICAL", "HIGH"].includes(g.severity));
-          const blockingGaps = criticalGaps.length + highGaps.length;
+          const blockingGaps = criticalGaps.length;
+          const warningGaps = highGaps.length + unresolvedMediumLow.length;
           const mandatoryReqs = tender.requirements.filter((r) => r.priority === "MANDATORY").length;
 
           const checks = [
             { label: "Tender documents uploaded", done: tender.generatedDocuments.length > 0 },
             { label: `${generated.length} document${generated.length !== 1 ? "s" : ""} generated`, done: generated.length > 0 },
             { label: "All documents validated", done: generated.length > 0 && allPassed, warn: generated.length > 0 && !allPassed },
-            { label: `No critical/high compliance gaps (${blockingGaps} remaining)`, done: blockingGaps === 0, blocking: blockingGaps > 0 },
+            { label: `No critical compliance gaps (${blockingGaps} remaining)`, done: blockingGaps === 0, blocking: blockingGaps > 0 },
+            { label: `${highGaps.length + unresolvedMediumLow.length} warning gap${warningGaps !== 1 ? "s" : ""} (non-blocking)`, done: warningGaps === 0, warn: warningGaps > 0 },
             { label: `${mandatoryReqs} mandatory requirement${mandatoryReqs !== 1 ? "s" : ""} covered`, done: mandatoryReqs > 0 },
           ];
 
@@ -75,8 +77,8 @@ export default async function ExportPage() {
                   </div>
                   <p className="mt-1 text-sm text-slate-500">
                     {generated.length} / {tender.generatedDocuments.length} docs generated
-                    {blockingGaps > 0 && <span className="ml-2 text-red-600">{blockingGaps} blocking gap{blockingGaps !== 1 ? "s" : ""}</span>}
-                    {unresolvedMediumLow.length > 0 && <span className="ml-2 text-amber-600">{unresolvedMediumLow.length} warning{unresolvedMediumLow.length !== 1 ? "s" : ""}</span>}
+                    {blockingGaps > 0 && <span className="ml-2 text-red-600">{blockingGaps} critical gap{blockingGaps !== 1 ? "s" : ""}</span>}
+                    {warningGaps > 0 && <span className="ml-2 text-amber-600">{warningGaps} warning{warningGaps !== 1 ? "s" : ""}</span>}
                   </p>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
@@ -116,13 +118,13 @@ export default async function ExportPage() {
                   ))}
                 </ul>
 
-                {(criticalGaps.length > 0 || highGaps.length > 0) && (
+                {criticalGaps.length > 0 && (
                   <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3">
-                    <p className="text-sm font-medium text-red-800 mb-2">Blocking compliance gaps</p>
+                    <p className="text-sm font-medium text-red-800 mb-2">Critical compliance gaps (must resolve to export)</p>
                     <ul className="space-y-1">
-                      {[...criticalGaps, ...highGaps].map((gap) => (
+                      {criticalGaps.map((gap) => (
                         <li key={gap.id} className="flex items-center gap-2 text-sm text-red-700">
-                          <span className="text-xs font-bold">[{gap.severity}]</span>
+                          <span className="text-xs font-bold">[CRITICAL]</span>
                           {gap.title}
                         </li>
                       ))}
@@ -130,6 +132,17 @@ export default async function ExportPage() {
                     <Link href="/dashboard/compliance" className="mt-2 inline-block text-xs text-red-600 underline hover:no-underline">
                       Resolve in Compliance Dashboard →
                     </Link>
+                  </div>
+                )}
+
+                {highGaps.length > 0 && (
+                  <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+                    <p className="text-sm font-medium text-amber-800 mb-2">High-priority warnings (non-blocking)</p>
+                    <ul className="space-y-1">
+                      {highGaps.map((gap) => (
+                        <li key={gap.id} className="text-sm text-amber-700">{gap.title}</li>
+                      ))}
+                    </ul>
                   </div>
                 )}
 
