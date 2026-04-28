@@ -14,7 +14,13 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   const tender = await prisma.tender.findFirst({ where: { id, userId } });
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
 
-  const report = await validateTender(id);
+  let report;
+  try {
+    report = await validateTender(id);
+  } catch (error) {
+    console.error("[validate] error:", error);
+    return NextResponse.json({ error: error instanceof Error ? error.message : "Validation failed" }, { status: 500 });
+  }
 
   await logAction({
     userId,

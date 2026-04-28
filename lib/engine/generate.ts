@@ -339,11 +339,11 @@ function buildDocxFromParagraphs(paragraphs: Paragraph[], companyName: string, d
 
 export async function generateTenderDocuments(tenderId: string, userId: string): Promise<void> {
   const blockingGaps = await prisma.complianceGap.findMany({
-    where: { tenderId, isResolved: false, severity: { in: ["CRITICAL", "HIGH"] } },
+    where: { tenderId, isResolved: false, severity: "CRITICAL" },
     select: { title: true, severity: true },
   });
   if (blockingGaps.length > 0) {
-    throw new Error(`Generation blocked: ${blockingGaps.length} unresolved CRITICAL/HIGH compliance gap(s) must be addressed before documents can be generated. Resolve these in the Compliance tab first: ${blockingGaps.map((g) => g.title).join("; ")}.`);
+    throw new Error(`Generation blocked: ${blockingGaps.length} unresolved CRITICAL compliance gap(s) must be resolved before generating. Resolve these in the Compliance tab: ${blockingGaps.map((g) => g.title).join("; ")}.`);
   }
 
   const rawExpertMatches = await prisma.tenderExpertMatch.findMany({
@@ -457,9 +457,13 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     }
   }
 
-  if (generatedCount === 0 || failures.length > 0) {
-    throw new Error(`Generation incomplete. Generated ${generatedCount}/${docsToGenerate.length} document(s). ${failures.join(" | ")}`);
+  if (generatedCount === 0) {
+    throw new Error(`Generation failed: no documents could be generated. ${failures.join(" | ")}`);
   }
 
   await prisma.tender.update({ where: { id: tenderId }, data: { status: "GENERATED", stage: "GENERATION", updatedAt: new Date() } });
+
+  if (failures.length > 0) {
+    console.warn(`[generate] partial: ${generatedCount}/${docsToGenerate.length} docs generated. Failed: ${failures.join(" | ")}`);
+  }
 }
