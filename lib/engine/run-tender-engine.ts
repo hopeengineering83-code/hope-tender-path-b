@@ -1,6 +1,6 @@
 import { randomUUID } from "crypto";
 import { prisma } from "../prisma";
-import { analyzeTender } from "./analysis";
+import { analyzeTender, normalizeStrategicRequirements } from "./analysis";
 import { analyzeWithAI, isAIEnabled } from "../ai";
 import { buildCompliance } from "./compliance";
 import { buildDocumentPlan } from "./documents";
@@ -22,9 +22,7 @@ export async function runTenderEngine(tenderId: string, userId: string) {
     },
   });
 
-  if (!tender) {
-    throw new Error("Tender not found");
-  }
+  if (!tender) throw new Error("Tender not found");
 
   const company = await prisma.company.findUnique({
     where: { userId },
@@ -39,10 +37,6 @@ export async function runTenderEngine(tenderId: string, userId: string) {
   });
   if (!company) throw new Error("Company profile required before engine run");
 
-  // Heavy work must stay OUTSIDE Prisma interactive transactions. A large tender
-  // can have 100+ requirements and 20-cycle matching over many experts/projects;
-  // doing that inside `$transaction(async tx => ...)` can exceed Prisma's 5s
-  // interactive transaction timeout and fail before matches are written.
   let analysis: ReturnType<typeof analyzeTender>;
 
   if (isAIEnabled()) {
@@ -55,30 +49,30 @@ export async function runTenderEngine(tenderId: string, userId: string) {
     if (tenderText.length > 500) {
       try {
         const aiResult = await analyzeWithAI(tenderText);
+        const rawRequirements = aiResult.requirements.map((req, idx) => ({
+          title: req.title,
+          description: req.description,
+          requirementType: req.requirementType,
+          priority: req.priority,
+          requiredQuantity: req.requiredQuantity ?? null,
+          pageLimit: req.pageLimit ?? null,
+          exactFileName: req.exactFileName ?? null,
+          exactOrder: idx + 1,
+          restrictions: req.restrictions ?? null,
+          sectionReference: req.sectionReference ?? null,
+        }));
+        const strategicRequirements = normalizeStrategicRequirements(rawRequirements);
         analysis = {
-          summary: aiResult.summary,
-          requirements: aiResult.requirements.map((req, idx) => ({
-            title: req.title,
-            description: req.description,
-            requirementType: req.requirementType,
-            priority: req.priority,
-            requiredQuantity: req.requiredQuantity ?? null,
-            pageLimit: req.pageLimit ?? null,
-            exactFileName: req.exactFileName ?? null,
-            exactOrder: idx + 1,
-            restrictions: req.restrictions ?? null,
-            sectionReference: req.sectionReference ?? null,
-          })),
+          summary: `Senior consultant interpretation: consolidated ${rawRequirements.length} extracted instruction(s) into ${strategicRequirements.length} strategic requirement bundle(s). ${aiResult.summary}`,
+          requirements: strategicRequirements,
           exactFileNaming: aiResult.exactFileNaming ?? [],
           exactFileOrder: aiResult.exactFileOrder ?? [],
         };
-        console.log(`[engine] AI analysis: ${analysis.requirements.length} requirements extracted.`);
       } catch (err) {
         console.error("[engine] AI analysis failed — falling back to regex:", err);
         analysis = analyzeTender(tender);
       }
     } else {
-      console.warn("[engine] Insufficient extracted text for AI analysis — using regex.");
       analysis = analyzeTender(tender);
     }
   } else {
@@ -115,15 +109,8 @@ export async function runTenderEngine(tenderId: string, userId: string) {
     hasBlockingProjects: aiDraftProjectCount + regexDraftProjectCount > 0,
   };
 
-  console.log("[engine] Knowledge readiness:", JSON.stringify(knowledgeReadiness));
-
   const matching = buildMatches(analysis.requirements, knowledge, tender.category, tender.title);
-
-  const createdRequirements = analysis.requirements.map((requirement) => ({
-    id: randomUUID(),
-    requirement,
-  }));
-
+  const createdRequirements = analysis.requirements.map((requirement) => ({ id: randomUUID(), requirement }));
   const requirementRows = createdRequirements.map(({ id, requirement }) => ({
     id,
     tenderId,
@@ -141,14 +128,13 @@ export async function runTenderEngine(tenderId: string, userId: string) {
 
   const compliance = buildCompliance(createdRequirements, knowledge, matching);
   const hasDraftKnowledge = aiDraftExpertCount + regexDraftExpertCount + aiDraftProjectCount + regexDraftProjectCount > 0;
-
   const documentPlan = buildDocumentPlan(createdRequirements);
-  const unresolvedMandatoryGaps = compliance.gaps.filter((gap) => gap.severity === "CRITICAL" || gap.severity === "HIGH").length + (hasDraftKnowledge ? 1 : 0);
-  const supportedCount = compliance.matrices.filter((m) => m.supportStatus === "SUPPORTED").length;
-  const readinessScore = Math.max(0, Math.min(100, Math.round((supportedCount / Math.max(compliance.matrices.length, 1)) * 100)));
+  const hardGaps = compliance.gaps.filter((gap) => gap.severity === "CRITICAL").length;
+  const reviewGaps = compliance.gaps.filter((gap) => gap.severity === "HIGH").length + (hasDraftKnowledge ? 1 : 0);
+  const reviewNeeded = hardGaps > 0 || reviewGaps > 0;
+  const supportedOrReviewableCount = compliance.matrices.filter((m) => ["SUPPORTED", "EVIDENCE_PENDING_REVIEW", "PARTIAL"].includes(m.supportStatus)).length;
+  const readinessScore = Math.max(0, Math.min(100, Math.round((supportedOrReviewableCount / Math.max(compliance.matrices.length, 1)) * 100)));
 
-  // Clear old run output using short independent DB operations. This avoids the
-  // long-running interactive transaction timeout seen in production.
   await prisma.tenderExpertMatch.deleteMany({ where: { tenderId } });
   await prisma.tenderProjectMatch.deleteMany({ where: { tenderId } });
   await prisma.complianceGap.deleteMany({ where: { tenderId } });
@@ -156,31 +142,13 @@ export async function runTenderEngine(tenderId: string, userId: string) {
   await prisma.generatedDocument.deleteMany({ where: { tenderId } });
   await prisma.tenderRequirement.deleteMany({ where: { tenderId } });
 
-  for (const batch of chunks(requirementRows, 100)) {
-    await prisma.tenderRequirement.createMany({ data: batch });
-  }
+  for (const batch of chunks(requirementRows, 100)) await prisma.tenderRequirement.createMany({ data: batch });
 
-  const expertMatchRows = matching.expertMatches.map((match) => ({
-    tenderId,
-    expertId: match.expertId,
-    score: match.score,
-    rationale: match.rationale,
-    isSelected: match.isSelected,
-  }));
-  for (const batch of chunks(expertMatchRows, 100)) {
-    await prisma.tenderExpertMatch.createMany({ data: batch, skipDuplicates: true });
-  }
+  const expertMatchRows = matching.expertMatches.map((match) => ({ tenderId, expertId: match.expertId, score: match.score, rationale: match.rationale, isSelected: match.isSelected }));
+  for (const batch of chunks(expertMatchRows, 100)) await prisma.tenderExpertMatch.createMany({ data: batch, skipDuplicates: true });
 
-  const projectMatchRows = matching.projectMatches.map((match) => ({
-    tenderId,
-    projectId: match.projectId,
-    score: match.score,
-    rationale: match.rationale,
-    isSelected: match.isSelected,
-  }));
-  for (const batch of chunks(projectMatchRows, 100)) {
-    await prisma.tenderProjectMatch.createMany({ data: batch, skipDuplicates: true });
-  }
+  const projectMatchRows = matching.projectMatches.map((match) => ({ tenderId, projectId: match.projectId, score: match.score, rationale: match.rationale, isSelected: match.isSelected }));
+  for (const batch of chunks(projectMatchRows, 100)) await prisma.tenderProjectMatch.createMany({ data: batch, skipDuplicates: true });
 
   const matrixRows = compliance.matrices.map((matrix) => ({
     tenderId,
@@ -191,9 +159,7 @@ export async function runTenderEngine(tenderId: string, userId: string) {
     supportLevel: matrix.supportStatus,
     notes: [matrix.evidenceSummary, matrix.notes].filter(Boolean).join(" | ") || null,
   }));
-  for (const batch of chunks(matrixRows, 100)) {
-    await prisma.complianceMatrix.createMany({ data: batch });
-  }
+  for (const batch of chunks(matrixRows, 100)) await prisma.complianceMatrix.createMany({ data: batch });
 
   const gapRows = compliance.gaps.map((gap) => ({
     tenderId,
@@ -213,9 +179,7 @@ export async function runTenderEngine(tenderId: string, userId: string) {
       mitigationPlan: "Open Company Knowledge Review, verify source evidence, correct fields, and mark valid expert/project records as REVIEWED before final generation.",
     });
   }
-  for (const batch of chunks(gapRows, 100)) {
-    await prisma.complianceGap.createMany({ data: batch });
-  }
+  for (const batch of chunks(gapRows, 100)) await prisma.complianceGap.createMany({ data: batch });
 
   const documentRows = documentPlan.documents.map((document) => ({
     tenderId,
@@ -225,9 +189,7 @@ export async function runTenderEngine(tenderId: string, userId: string) {
     exactOrder: typeof document.exactOrder === "number" ? document.exactOrder : null,
     contentSummary: document.contentSummary,
   }));
-  for (const batch of chunks(documentRows, 100)) {
-    await prisma.generatedDocument.createMany({ data: batch });
-  }
+  for (const batch of chunks(documentRows, 100)) await prisma.generatedDocument.createMany({ data: batch });
 
   await prisma.tender.update({
     where: { id: tenderId },
@@ -236,48 +198,32 @@ export async function runTenderEngine(tenderId: string, userId: string) {
       exactFileNaming: JSON.stringify(analysis.exactFileNaming),
       exactFileOrder: JSON.stringify(analysis.exactFileOrder),
       readinessScore,
-      status: unresolvedMandatoryGaps > 0 ? "COMPLIANCE_REVIEW" : "MATCHED",
-      stage: unresolvedMandatoryGaps > 0 ? "COMPLIANCE" : "MATCHING",
+      status: reviewNeeded ? "COMPLIANCE_REVIEW" : "MATCHED",
+      stage: reviewNeeded ? "COMPLIANCE" : "MATCHING",
       notes: [
-        knowledgeReadiness.hasBlockingExperts
-          ? `⚠ ${knowledgeReadiness.aiDraftExperts + knowledgeReadiness.regexDraftExperts} expert record(s) are draft and excluded from final evidence until REVIEWED.`
-          : null,
-        knowledgeReadiness.hasBlockingProjects
-          ? `⚠ ${knowledgeReadiness.aiDraftProjects + knowledgeReadiness.regexDraftProjects} project record(s) are draft and excluded from final evidence until REVIEWED.`
-          : null,
-        !knowledgeReadiness.hasUsableExperts
-          ? `⚠ No REVIEWED experts found — review extracted CV records before final generation.`
-          : null,
-        !knowledgeReadiness.hasUsableProjects
-          ? `⚠ No REVIEWED projects found — review extracted project records before final generation.`
-          : null,
-        knowledgeReadiness.reviewedExperts > 0
-          ? `✓ ${knowledgeReadiness.reviewedExperts} REVIEWED expert(s) available for final generation.`
-          : null,
-        knowledgeReadiness.reviewedProjects > 0
-          ? `✓ ${knowledgeReadiness.reviewedProjects} REVIEWED project(s) available for final generation.`
-          : null,
-      ]
-        .filter(Boolean)
-        .join("\n") || null,
+        "Senior consultant mode: broad-fit matching uses capability families, sector/service equivalence, and professional judgment instead of exact wording only.",
+        hardGaps > 0 ? `${hardGaps} hard evidence gap(s) remain.` : null,
+        reviewGaps > 0 ? `${reviewGaps} senior review item(s) remain; these are not automatic fatal blockers.` : null,
+        knowledgeReadiness.hasBlockingExperts ? `${knowledgeReadiness.aiDraftExperts + knowledgeReadiness.regexDraftExperts} expert record(s) are draft and excluded from final evidence until REVIEWED.` : null,
+        knowledgeReadiness.hasBlockingProjects ? `${knowledgeReadiness.aiDraftProjects + knowledgeReadiness.regexDraftProjects} project record(s) are draft and excluded from final evidence until REVIEWED.` : null,
+        !knowledgeReadiness.hasUsableExperts ? "No REVIEWED experts found — review extracted CV records before final generation." : null,
+        !knowledgeReadiness.hasUsableProjects ? "No REVIEWED projects found — review extracted project records before final generation." : null,
+        knowledgeReadiness.reviewedExperts > 0 ? `${knowledgeReadiness.reviewedExperts} REVIEWED expert(s) available for final generation.` : null,
+        knowledgeReadiness.reviewedProjects > 0 ? `${knowledgeReadiness.reviewedProjects} REVIEWED project(s) available for final generation.` : null,
+      ].filter(Boolean).join("\n") || null,
     },
   });
 
   return prisma.tender.findUnique({
     where: { id: tenderId },
     include: {
-      files: {
-        select: { id: true, originalFileName: true, mimeType: true, size: true, classification: true, extractedText: true, createdAt: true },
-      },
+      files: { select: { id: true, originalFileName: true, mimeType: true, size: true, classification: true, extractedText: true, createdAt: true } },
       requirements: true,
       expertMatches: { orderBy: { score: "desc" }, include: { expert: true } },
       projectMatches: { orderBy: { score: "desc" }, include: { project: true } },
       complianceGaps: { orderBy: { createdAt: "desc" } },
       complianceMatrix: { orderBy: { createdAt: "asc" } },
-      generatedDocuments: {
-        orderBy: { exactOrder: "asc" },
-        select: { id: true, name: true, documentType: true, generationStatus: true, validationStatus: true, reviewStatus: true, exactFileName: true, exactOrder: true, contentSummary: true },
-      },
+      generatedDocuments: { orderBy: { exactOrder: "asc" }, select: { id: true, name: true, documentType: true, generationStatus: true, validationStatus: true, reviewStatus: true, exactFileName: true, exactOrder: true, contentSummary: true } },
     },
   });
 }
