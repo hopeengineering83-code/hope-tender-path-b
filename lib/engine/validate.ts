@@ -1,4 +1,5 @@
 import { prisma } from "../prisma";
+import { exactSelectionLimit } from "./scope-policy";
 
 export interface ValidationIssue {
   code: string;
@@ -55,14 +56,6 @@ export async function validateTender(tenderId: string): Promise<ValidationReport
     };
   }
 
-  // ── Trust-level enforcement: ALL selected records must be REVIEWED ──────────
-  // Rule 1: REGEX_DRAFT records are pattern-extracted and unreliable → BLOCK.
-  // Rule 2: AI_DRAFT records are Gemini-extracted but unreviewed → BLOCK.
-  //   Rationale: generate.ts hard-blocks ALL non-REVIEWED records.
-  //   Reporting AI_DRAFT as a warning-only would lie to the user (validation
-  //   says "ok", generation throws). Both must agree: REVIEWED = required.
-  // Rule 3: Surface reviewed-record count so UI can guide the user.
-
   const selectedExpertIds = tender.expertMatches.map((m) => m.expertId);
   const selectedProjectIds = tender.projectMatches.map((m) => m.projectId);
 
@@ -99,7 +92,6 @@ export async function validateTender(tenderId: string): Promise<ValidationReport
     }
 
     if (unreviewed.length === 0 && experts.length > 0) {
-      // All selected experts are REVIEWED — surface positive signal
       issues.push({
         code: "EXPERTS_ALL_REVIEWED",
         severity: "WARN",
@@ -139,7 +131,6 @@ export async function validateTender(tenderId: string): Promise<ValidationReport
       });
     }
   }
-  // ── End trust-level enforcement ────────────────────────────────────────────
 
   const generatedDocs = tender.generatedDocuments
     .filter((d) => d.generationStatus === "GENERATED")
@@ -231,25 +222,21 @@ export async function validateTender(tenderId: string): Promise<ValidationReport
     });
   }
 
-  const expertRequirementQty = tender.requirements
-    .filter((r) => r.requiredQuantity && r.requirementType === "EXPERT")
-    .reduce((sum, r) => sum + (r.requiredQuantity ?? 0), 0);
+  const expertRequirementQty = exactSelectionLimit(tender.requirements, "EXPERT");
   if (expertRequirementQty > 0 && tender.expertMatches.length < expertRequirementQty) {
     issues.push({
       code: "EXPERT_QUANTITY_MISMATCH",
       severity: "BLOCK",
-      message: `Tender requires at least ${expertRequirementQty} expert selection(s), but only ${tender.expertMatches.length} are selected.`,
+      message: `Tender explicitly requires at least ${expertRequirementQty} expert selection(s), but only ${tender.expertMatches.length} are selected.`,
     });
   }
 
-  const projectRequirementQty = tender.requirements
-    .filter((r) => r.requiredQuantity && r.requirementType === "PROJECT_EXPERIENCE")
-    .reduce((sum, r) => sum + (r.requiredQuantity ?? 0), 0);
+  const projectRequirementQty = exactSelectionLimit(tender.requirements, "PROJECT_EXPERIENCE");
   if (projectRequirementQty > 0 && tender.projectMatches.length < projectRequirementQty) {
     issues.push({
       code: "PROJECT_QUANTITY_MISMATCH",
       severity: "BLOCK",
-      message: `Tender requires at least ${projectRequirementQty} project reference(s), but only ${tender.projectMatches.length} are selected.`,
+      message: `Tender explicitly requires at least ${projectRequirementQty} project reference(s), but only ${tender.projectMatches.length} are selected.`,
     });
   }
 
