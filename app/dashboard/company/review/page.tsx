@@ -51,6 +51,13 @@ function severityClass(severity: Gap["severity"]) {
   return "border-blue-300 bg-blue-50 text-blue-800";
 }
 
+function sourceRole(doc: Diagnostics["documents"][number]): string {
+  if (doc.isExpertSource && doc.isProjectSource) return "CV + project source";
+  if (doc.isExpertSource) return "CV/expert source";
+  if (doc.isProjectSource) return "Project reference source";
+  return "Support document for tender evidence";
+}
+
 export default function KnowledgeReviewPage() {
   const [company, setCompany] = useState<Company>({ experts: [], projects: [] });
   const [docs, setDocs] = useState<CompanyDoc[]>([]);
@@ -126,7 +133,7 @@ export default function KnowledgeReviewPage() {
           <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Company Knowledge Review</p>
           <h1 className="mt-1 text-2xl font-bold text-slate-900">Hard gap analysis and repair</h1>
           <p className="mt-1 max-w-3xl text-sm text-slate-500">
-            This page separates raw extraction, parsed draft records, and reviewed knowledge. Only REVIEWED records should be trusted for final tender generation.
+            This page separates support documents, CV/project source documents, parsed draft records, and reviewed knowledge. Support documents are still usable for tenders; they just do not create expert or project records.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -141,11 +148,16 @@ export default function KnowledgeReviewPage() {
       {error && <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
       {message && <div className="rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">{message}</div>}
 
+      <div className="rounded-2xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-800">
+        <p className="font-semibold">Document meaning</p>
+        <p className="mt-1">Your company profile, legal registration, financial statement, and manuals are usable tender support evidence. The warnings only mean the app did not find dedicated CV/expert-source documents or project-reference-source documents for rebuilding expert/project records.</p>
+      </div>
+
       <div className="grid gap-4 md:grid-cols-4">
-        <div className="rounded-2xl border bg-white p-5 shadow-sm"><p className="text-xs font-medium uppercase tracking-wide text-slate-400">Documents</p><p className="mt-1 text-3xl font-bold text-blue-600">{docs.length}</p><p className="mt-1 text-xs text-slate-400">{diagnostics?.totals.extractedDocuments ?? 0} usable extracted</p></div>
+        <div className="rounded-2xl border bg-white p-5 shadow-sm"><p className="text-xs font-medium uppercase tracking-wide text-slate-400">Documents</p><p className="mt-1 text-3xl font-bold text-blue-600">{docs.length}</p><p className="mt-1 text-xs text-slate-400">{diagnostics?.totals.extractedDocuments ?? 0} extracted support/source docs</p></div>
         <div className="rounded-2xl border bg-white p-5 shadow-sm"><p className="text-xs font-medium uppercase tracking-wide text-slate-400">Experts</p><p className="mt-1 text-3xl font-bold text-purple-600">{company.expertCount ?? experts.length}</p><p className="mt-1 text-xs text-slate-400">{reviewedExperts} reviewed · {draftExperts.length} draft</p></div>
         <div className="rounded-2xl border bg-white p-5 shadow-sm"><p className="text-xs font-medium uppercase tracking-wide text-slate-400">Projects</p><p className="mt-1 text-3xl font-bold text-green-600">{company.projectCount ?? projects.length}</p><p className="mt-1 text-xs text-slate-400">{reviewedProjects} reviewed · {draftProjects.length} draft</p></div>
-        <div className="rounded-2xl border bg-white p-5 shadow-sm"><p className="text-xs font-medium uppercase tracking-wide text-slate-400">AI extraction</p><p className="mt-2 text-sm text-slate-700">{diagnostics?.totals.aiEnabled ? "Enabled" : "Not enabled"}</p><p className="text-sm text-slate-700">{diagnostics?.totals.expertSourceDocuments ?? 0} expert docs · {diagnostics?.totals.projectSourceDocuments ?? 0} project docs</p></div>
+        <div className="rounded-2xl border bg-white p-5 shadow-sm"><p className="text-xs font-medium uppercase tracking-wide text-slate-400">CV/Project extraction</p><p className="mt-2 text-sm text-slate-700">{diagnostics?.totals.aiEnabled ? "Enabled" : "Not enabled"}</p><p className="text-sm text-slate-700">{diagnostics?.totals.expertSourceDocuments ?? 0} CV docs · {diagnostics?.totals.projectSourceDocuments ?? 0} project docs</p></div>
       </div>
 
       <section className="rounded-2xl border bg-white p-6 shadow-sm">
@@ -170,9 +182,10 @@ export default function KnowledgeReviewPage() {
             <div key={doc.id} className="rounded-xl border p-4">
               <p className="font-medium text-slate-900">{doc.fileName}</p>
               <p className="mt-1 text-xs text-slate-500">{doc.category} · {doc.extractedChars.toLocaleString()} chars · {doc.status}{doc.aiExtractionStatus ? ` · AI: ${doc.aiExtractionStatus}` : ""}</p>
+              <p className="mt-2 text-xs font-medium text-slate-700">{sourceRole(doc)}</p>
               <div className="mt-3 flex flex-wrap gap-2 text-xs">
-                <span className={`rounded-full px-2 py-1 ${doc.isExpertSource ? "bg-purple-100 text-purple-700" : "bg-slate-100 text-slate-500"}`}>{doc.isExpertSource ? "Expert source" : "Not expert source"}</span>
-                <span className={`rounded-full px-2 py-1 ${doc.isProjectSource ? "bg-green-100 text-green-700" : "bg-slate-100 text-slate-500"}`}>{doc.isProjectSource ? "Project source" : "Not project source"}</span>
+                <span className={`rounded-full px-2 py-1 ${doc.isExpertSource ? "bg-purple-100 text-purple-700" : "bg-blue-100 text-blue-700"}`}>{doc.isExpertSource ? "CV/expert source" : "Tender support doc"}</span>
+                <span className={`rounded-full px-2 py-1 ${doc.isProjectSource ? "bg-green-100 text-green-700" : "bg-blue-100 text-blue-700"}`}>{doc.isProjectSource ? "Project reference source" : "Not used to create project records"}</span>
               </div>
             </div>
           ))}
