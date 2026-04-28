@@ -56,29 +56,79 @@ function bullet(text: string): Paragraph {
   return new Paragraph({ text, bullet: { level: 0 }, spacing: { after: 40 } });
 }
 
-function buildLetterheadHeader(
-  company: { name: string; address?: string | null; phone?: string | null; email?: string | null; website?: string | null },
-  logoAsset?: { data: Buffer; mimeType: string },
-): Paragraph[] {
-  const contactLine = [company.address, company.phone, company.email, company.website].filter(Boolean).join("  |  ");
-  const paras: Paragraph[] = [];
+const HOPE_LETTERHEAD_COMPANY = "HOPE URBAN PLANNING ARCHITECTURAL AND ENGINEERING CONSULTANCY";
+const HOPE_LETTERHEAD_SERVICES = "Design | Interior Design | Water Drilling | Geotechnical Investigation | Contract Administration";
+const HOPE_LETTERHEAD_ADDRESS = "Head Office: A.A, Sarbet – NOC Bldg,(Beside Tamegas)  |  Nigeria: Abuja – Wuse 2, Dar Es Salaam St 22, Elion House, 4th Flr  |  South Sudan: Juba – Kololo Rd, Next to US Embassy  |  Branch: A.A, Hayahulet – MAF Bldg  |  Branch: Kombolcha, Fikir Blg";
+const HOPE_LETTERHEAD_CONTACT = "hopearchitectural.com    hopeengineering83@gmail.com    +251 911 169930 / +251 921 269277";
+
+type BrandingAsset = { data: Buffer; mimeType: string };
+
+function imageType(mimeType: string): "png" | "jpg" {
+  return mimeType.includes("png") ? "png" : "jpg";
+}
+
+function buildHopeLogoBlock(logoAsset?: BrandingAsset): Paragraph {
   if (logoAsset) {
     try {
-      paras.push(new Paragraph({
-        children: [new ImageRun({ data: logoAsset.data, transformation: { width: 160, height: 60 }, type: logoAsset.mimeType.includes("png") ? "png" : "jpg" })],
-        alignment: AlignmentType.LEFT,
-        spacing: { after: 40 },
-      }));
+      return new Paragraph({
+        children: [new ImageRun({ data: logoAsset.data, transformation: { width: 78, height: 66 }, type: imageType(logoAsset.mimeType) })],
+        alignment: AlignmentType.CENTER,
+        spacing: { after: 10 },
+      });
     } catch {
-      // Fall back to text if image embedding fails
-      paras.push(new Paragraph({ children: [new TextRun({ text: company.name, bold: true, size: 32, color: "1a1a2e" })], alignment: AlignmentType.LEFT, spacing: { after: 40 } }));
+      // Fall through to text logo if the uploaded image is malformed.
     }
-  } else {
-    paras.push(new Paragraph({ children: [new TextRun({ text: company.name, bold: true, size: 32, color: "1a1a2e" })], alignment: AlignmentType.LEFT, spacing: { after: 40 } }));
   }
-  if (contactLine) paras.push(new Paragraph({ children: [new TextRun({ text: contactLine, size: 18, color: "555555" })], alignment: AlignmentType.LEFT, spacing: { after: 60 } }));
-  paras.push(hr());
-  return paras;
+
+  return new Paragraph({
+    children: [
+      new TextRun({ text: "⬢", bold: true, size: 38, color: "0F172A" }),
+      new TextRun({ text: "  HOPE", bold: true, size: 26, color: "0F172A" }),
+    ],
+    alignment: AlignmentType.CENTER,
+    spacing: { after: 10 },
+  });
+}
+
+function buildHopeLetterheadHeader(logoAsset?: BrandingAsset): Header {
+  return new Header({
+    children: [
+      buildHopeLogoBlock(logoAsset),
+      new Paragraph({
+        children: [new TextRun({ text: HOPE_LETTERHEAD_COMPANY, bold: true, size: 21, color: "0F172A", font: "Times New Roman" })],
+        alignment: AlignmentType.CENTER,
+        spacing: { after: 10 },
+      }),
+      new Paragraph({
+        children: [new TextRun({ text: HOPE_LETTERHEAD_SERVICES, size: 16, color: "606060", font: "Times New Roman", italics: true })],
+        alignment: AlignmentType.CENTER,
+        spacing: { after: 55 },
+        border: { bottom: { color: "000000", space: 3, style: BorderStyle.SINGLE, size: 8 } },
+      }),
+    ],
+  });
+}
+
+function buildHopeLetterheadFooter(docTitle: string): Footer {
+  return new Footer({
+    children: [
+      new Paragraph({
+        children: [new TextRun({ text: HOPE_LETTERHEAD_ADDRESS, bold: true, size: 12, color: "111827", font: "Times New Roman" })],
+        alignment: AlignmentType.CENTER,
+        spacing: { before: 30, after: 8 },
+        border: { top: { color: "000000", space: 4, style: BorderStyle.SINGLE, size: 8 } },
+      }),
+      new Paragraph({
+        children: [new TextRun({ text: HOPE_LETTERHEAD_CONTACT, bold: true, size: 13, color: "111827", font: "Times New Roman" })],
+        alignment: AlignmentType.CENTER,
+        spacing: { after: 8 },
+      }),
+      new Paragraph({
+        children: [new TextRun({ text: `${docTitle} — Confidential`, size: 10, color: "999999" })],
+        alignment: AlignmentType.CENTER,
+      }),
+    ],
+  });
 }
 
 function buildCoverSection(title: string, reference?: string | null, clientName?: string | null, companyName?: string): Paragraph[] {
@@ -209,8 +259,8 @@ function buildDeclarationContent(
   companyName: string,
   tenderTitle: string,
   includeSignatureAndStamp: boolean,
-  signatureAsset?: { data: Buffer; mimeType: string },
-  stampAsset?: { data: Buffer; mimeType: string },
+  signatureAsset?: BrandingAsset,
+  stampAsset?: BrandingAsset,
 ): Paragraph[] {
   const paragraphs = [
     heading1("Declaration"),
@@ -230,7 +280,7 @@ function buildDeclarationContent(
     );
     if (signatureAsset) {
       try {
-        paragraphs.push(new Paragraph({ children: [new ImageRun({ data: signatureAsset.data, transformation: { width: 120, height: 50 }, type: signatureAsset.mimeType.includes("png") ? "png" : "jpg" })], spacing: { before: 40, after: 40 } }));
+        paragraphs.push(new Paragraph({ children: [new ImageRun({ data: signatureAsset.data, transformation: { width: 120, height: 50 }, type: imageType(signatureAsset.mimeType) })], spacing: { before: 40, after: 40 } }));
       } catch { paragraphs.push(body("Signature: ___________________________")); }
     } else {
       paragraphs.push(body("Signature: ___________________________"));
@@ -239,7 +289,7 @@ function buildDeclarationContent(
     if (stampAsset) {
       try {
         paragraphs.push(body("Company Seal / Stamp:", { bold: true }));
-        paragraphs.push(new Paragraph({ children: [new ImageRun({ data: stampAsset.data, transformation: { width: 90, height: 90 }, type: stampAsset.mimeType.includes("png") ? "png" : "jpg" })], spacing: { before: 20, after: 40 } }));
+        paragraphs.push(new Paragraph({ children: [new ImageRun({ data: stampAsset.data, transformation: { width: 90, height: 90 }, type: imageType(stampAsset.mimeType) })], spacing: { before: 20, after: 40 } }));
       } catch { paragraphs.push(body("Company Seal / Stamp: ________________")); }
     } else {
       paragraphs.push(body("Company Seal / Stamp: ________________"));
@@ -264,13 +314,24 @@ function buildCompanyProfileContent(company: { name: string; legalName?: string 
   return paras;
 }
 
-function buildDocxFromParagraphs(paragraphs: Paragraph[], companyName: string, docTitle: string, brandingAllowed: boolean): Document {
+function buildDocxFromParagraphs(paragraphs: Paragraph[], companyName: string, docTitle: string, brandingAllowed: boolean, logoAsset?: BrandingAsset): Document {
   return new Document({
     sections: [{
-      properties: {},
+      properties: {
+        page: {
+          margin: {
+            top: brandingAllowed ? 1700 : 1000,
+            bottom: brandingAllowed ? 1200 : 1000,
+            left: 1000,
+            right: 1000,
+            header: 360,
+            footer: 300,
+          },
+        },
+      },
       children: paragraphs,
-      ...(brandingAllowed ? { headers: { default: new Header({ children: [new Paragraph({ children: [new TextRun({ text: companyName, size: 18, color: "777777" })], alignment: AlignmentType.RIGHT })] }) } } : {}),
-      footers: { default: new Footer({ children: [new Paragraph({ children: [new TextRun({ text: `${docTitle} — Confidential`, size: 16, color: "999999" })], alignment: AlignmentType.CENTER })] }) },
+      ...(brandingAllowed ? { headers: { default: buildHopeLetterheadHeader(logoAsset) } } : {}),
+      footers: { default: brandingAllowed ? buildHopeLetterheadFooter(docTitle) : new Footer({ children: [new Paragraph({ children: [new TextRun({ text: `${docTitle} — Confidential`, size: 16, color: "999999" })], alignment: AlignmentType.CENTER })] }) },
     }],
     styles: { default: { document: { run: { font: "Calibri", size: 22 }, paragraph: { spacing: { line: 276 } } } } },
   });
@@ -312,7 +373,6 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   const company = await prisma.company.findUnique({ where: { userId } });
   if (!company) throw new Error("Company not found");
 
-  // Load active branding assets (logo, signature, stamp) for image embedding
   const activeAssets = await prisma.companyAsset.findMany({
     where: { companyId: company.id, isActive: true, assetType: { in: ["LOGO", "SIGNATURE", "STAMP"] } },
     select: { assetType: true, fileContent: true, mimeType: true },
@@ -321,7 +381,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     activeAssets
       .filter((a) => a.fileContent)
       .map((a) => [a.assetType, { data: Buffer.from(a.fileContent!, "base64"), mimeType: a.mimeType }]),
-  );
+  ) as Record<string, BrandingAsset | undefined>;
 
   const docsToGenerate = tender.generatedDocuments.filter((d) =>
     ["PLANNED", "GENERATED", "FAILED"].includes(d.generationStatus),
@@ -334,7 +394,6 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   const coverAllowed = !forbidsCoverPage(tender.requirements);
   const coverRequired = coverAllowed && requiresCoverPage(tender.requirements);
   const signatureOrStampRequired = requiresSignatureOrStamp(tender.requirements);
-  const letterheadParas = brandingAllowed ? buildLetterheadHeader(company, assetMap["LOGO"]) : [];
   const coverParas = coverRequired ? buildCoverSection(tender.title, tender.reference, tender.clientName, brandingAllowed ? company.name : undefined) : [];
 
   let expertIdx = 0;
@@ -349,29 +408,28 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     try {
       if (["TECHNICAL_PROPOSAL", "PROPOSAL", "METHODOLOGY"].includes(doc.documentType)) {
         const proposalContent = await buildProposalContent({ tender, company, experts: selectedExperts, projects: selectedProjects, requirements: tender.requirements });
-        contentParagraphs = [...letterheadParas, ...coverParas, ...proposalContent];
+        contentParagraphs = [...coverParas, ...proposalContent];
         docTitle = doc.name;
       } else if (doc.documentType === "EXPERT" || doc.name.toLowerCase().includes("cv")) {
         const expert = selectedExperts[expertIdx];
         if (!expert) throw new Error(`No reviewed selected expert available for required expert document ${expertIdx + 1}.`);
-        contentParagraphs = [...letterheadParas, ...buildCVContent(expert)];
+        contentParagraphs = buildCVContent(expert);
         docTitle = `CV — ${expert.fullName}`;
         expertIdx++;
       } else if (doc.documentType === "PROJECT_EXPERIENCE") {
         const project = selectedProjects[projectIdx];
         if (!project) throw new Error(`No reviewed selected project available for required project document ${projectIdx + 1}.`);
-        contentParagraphs = [...letterheadParas, ...buildProjectReferenceContent(project)];
+        contentParagraphs = buildProjectReferenceContent(project);
         docTitle = `Project Reference — ${project.name}`;
         projectIdx++;
       } else if (doc.documentType === "DECLARATION") {
-        contentParagraphs = [...letterheadParas, ...buildDeclarationContent(company.name, tender.title, signatureOrStampRequired, assetMap["SIGNATURE"], assetMap["STAMP"])];
+        contentParagraphs = buildDeclarationContent(company.name, tender.title, signatureOrStampRequired, assetMap["SIGNATURE"], assetMap["STAMP"]);
         docTitle = "Declaration";
       } else if (doc.documentType === "COMPANY_PROFILE") {
-        contentParagraphs = [...letterheadParas, ...buildCompanyProfileContent(company)];
+        contentParagraphs = buildCompanyProfileContent(company);
         docTitle = "Company Profile";
       } else {
         contentParagraphs = [
-          ...letterheadParas,
           heading1(doc.name),
           body(`This document forms part of the proposal package for ${tender.title}.`),
           ...(brandingAllowed ? [body(`Prepared by: ${company.name}`)] : []),
@@ -381,15 +439,15 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
 
       if (contentParagraphs.length === 0) throw new Error("No content paragraphs were created.");
 
-      const document = buildDocxFromParagraphs(contentParagraphs, company.name, docTitle, brandingAllowed);
+      const document = buildDocxFromParagraphs(contentParagraphs, company.name, docTitle, brandingAllowed, assetMap["LOGO"]);
       const buffer = await Packer.toBuffer(document);
       const fileContent = buffer.toString("base64");
       const exactFileName = doc.exactFileName ?? `${docTitle.replace(/[^a-zA-Z0-9 ]/g, "").trim().replace(/\s+/g, "-")}.docx`;
 
       if (doc.id) {
-        await prisma.generatedDocument.update({ where: { id: doc.id }, data: { fileContent, exactFileName, generationStatus: "GENERATED", validationStatus: "PENDING", reviewedExpertCount: selectedExperts.length, draftExpertCount: 0, reviewedProjectCount: selectedProjects.length, draftProjectCount: 0, contentSummary: `Generated ${new Date().toLocaleDateString()} — ${contentParagraphs.length} sections | ✓ All selected sources REVIEWED | branding ${brandingAllowed ? "allowed" : "disabled"} | cover ${coverRequired ? "included" : "not included"}` } });
+        await prisma.generatedDocument.update({ where: { id: doc.id }, data: { fileContent, exactFileName, generationStatus: "GENERATED", validationStatus: "PENDING", reviewedExpertCount: selectedExperts.length, draftExpertCount: 0, reviewedProjectCount: selectedProjects.length, draftProjectCount: 0, contentSummary: `Generated ${new Date().toLocaleDateString()} — ${contentParagraphs.length} sections | ✓ All selected sources REVIEWED | letterhead ${brandingAllowed ? "Hope header/footer applied" : "disabled by tender rules"} | cover ${coverRequired ? "included" : "not included"}` } });
       } else {
-        await prisma.generatedDocument.create({ data: { tenderId, name: docTitle, documentType: doc.documentType, format: "DOCX", exactFileName, exactOrder: doc.exactOrder ?? 1, fileContent, generationStatus: "GENERATED", validationStatus: "PENDING", reviewedExpertCount: selectedExperts.length, draftExpertCount: 0, reviewedProjectCount: selectedProjects.length, draftProjectCount: 0, contentSummary: `Generated ${new Date().toLocaleDateString()} — ${contentParagraphs.length} sections | ✓ All selected sources REVIEWED | branding ${brandingAllowed ? "allowed" : "disabled"} | cover ${coverRequired ? "included" : "not included"}` } });
+        await prisma.generatedDocument.create({ data: { tenderId, name: docTitle, documentType: doc.documentType, format: "DOCX", exactFileName, exactOrder: doc.exactOrder ?? 1, fileContent, generationStatus: "GENERATED", validationStatus: "PENDING", reviewedExpertCount: selectedExperts.length, draftExpertCount: 0, reviewedProjectCount: selectedProjects.length, draftProjectCount: 0, contentSummary: `Generated ${new Date().toLocaleDateString()} — ${contentParagraphs.length} sections | ✓ All selected sources REVIEWED | letterhead ${brandingAllowed ? "Hope header/footer applied" : "disabled by tender rules"} | cover ${coverRequired ? "included" : "not included"}` } });
       }
       generatedCount++;
     } catch (err) {
