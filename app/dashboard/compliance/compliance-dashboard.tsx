@@ -22,7 +22,10 @@ const SEV: Record<string,string> = {
   MEDIUM:"bg-amber-100 text-amber-700 border-amber-200",LOW:"bg-slate-100 text-slate-600 border-slate-200",
 };
 const SUPP: Record<string,string> = {
-  FULL:"bg-green-100 text-green-700",PARTIAL:"bg-amber-100 text-amber-700",NONE:"bg-red-100 text-red-700",
+  SUPPORTED:"bg-green-100 text-green-700",
+  EVIDENCE_PENDING_REVIEW:"bg-blue-100 text-blue-700",
+  PARTIAL:"bg-amber-100 text-amber-700",
+  UNSUPPORTED:"bg-red-100 text-red-700",
 };
 
 type SubTab = "gaps"|"matrix";

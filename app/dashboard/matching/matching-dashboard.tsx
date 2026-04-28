@@ -3,11 +3,17 @@
 import { useState } from "react";
 import Link from "next/link";
 
-type Expert = { id: string; fullName: string; title?: string | null; disciplines: string; sectors: string };
-type Project = { id: string; name: string; clientName?: string | null; sector?: string | null; contractValue?: number | null; currency?: string | null };
+type Expert = { id: string; fullName: string; title?: string | null; disciplines: string; sectors: string; trustLevel?: string | null };
+type Project = { id: string; name: string; clientName?: string | null; sector?: string | null; contractValue?: number | null; currency?: string | null; trustLevel?: string | null };
 type ExpertMatch = { id: string; score: number; rationale?: string | null; isSelected: boolean; expert: Expert };
 type ProjectMatch = { id: string; score: number; rationale?: string | null; isSelected: boolean; project: Project };
 type Tender = { id: string; title: string; expertMatches: ExpertMatch[]; projectMatches: ProjectMatch[] };
+
+function TrustBadge({ level }: { level?: string | null }) {
+  if (level === "REVIEWED") return <span className="rounded bg-green-100 px-1.5 py-0.5 text-[10px] font-semibold text-green-700">✓ REVIEWED</span>;
+  if (level === "AI_DRAFT") return <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">AI DRAFT</span>;
+  return <span className="rounded bg-red-100 px-1.5 py-0.5 text-[10px] font-semibold text-red-600">DRAFT — review needed</span>;
+}
 
 function ScoreBar({ score }: { score: number }) {
   const pct = Math.min(100, Math.round(score * 100));
@@ -74,6 +80,11 @@ export function MatchingDashboard({ tenders: initial }: { tenders: Tender[] }) {
         </p>
       </div>
 
+      <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+        <strong>Note:</strong> Only <strong>REVIEWED</strong> experts and projects can be used for final document generation.
+        {" "}<Link href="/dashboard/company/review" className="font-semibold underline hover:text-amber-900">Review knowledge records →</Link>
+      </div>
+
       <div className="space-y-4">
         {tenders.map((tender) => {
           const selectedExperts = tender.expertMatches.filter((m) => m.isSelected).length;
@@ -126,7 +137,10 @@ export function MatchingDashboard({ tenders: initial }: { tenders: Tender[] }) {
                             <div key={match.id} className={`rounded-xl border px-4 py-3 transition-colors ${match.isSelected ? "border-green-300 bg-green-50" : "hover:bg-slate-50"}`}>
                               <div className="flex items-start justify-between gap-2">
                                 <div className="min-w-0 flex-1">
-                                  <p className="font-medium text-slate-900">{match.expert.fullName}</p>
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <p className="font-medium text-slate-900">{match.expert.fullName}</p>
+                                    <TrustBadge level={match.expert.trustLevel} />
+                                  </div>
                                   {match.expert.title && <p className="text-xs text-slate-500">{match.expert.title}</p>}
                                   <div className="mt-1.5 flex flex-wrap gap-1">
                                     {disciplines.slice(0, 3).map((d) => (
@@ -173,7 +187,10 @@ export function MatchingDashboard({ tenders: initial }: { tenders: Tender[] }) {
                             <div key={match.id} className={`rounded-xl border px-4 py-3 transition-colors ${match.isSelected ? "border-green-300 bg-green-50" : "hover:bg-slate-50"}`}>
                               <div className="flex items-start justify-between gap-2">
                                 <div className="min-w-0 flex-1">
-                                  <p className="font-medium text-slate-900">{match.project.name}</p>
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <p className="font-medium text-slate-900">{match.project.name}</p>
+                                    <TrustBadge level={match.project.trustLevel} />
+                                  </div>
                                   {match.project.clientName && <p className="text-xs text-slate-500">{match.project.clientName}</p>}
                                   {match.project.sector && (
                                     <span className="mt-1 inline-block rounded bg-purple-100 px-1.5 py-0.5 text-[10px] text-purple-700">{match.project.sector}</span>

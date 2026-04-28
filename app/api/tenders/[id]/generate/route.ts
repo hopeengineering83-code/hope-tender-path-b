@@ -31,18 +31,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     );
   }
 
-  // ── Gate 2: unresolved mandatory requirements ─────────────────────────────
-  const unresolvedMandatory = await prisma.tenderRequirement.count({
-    where: { tenderId: id, priority: "MANDATORY", isResolved: false },
-  });
-  if (unresolvedMandatory > 0) {
-    return NextResponse.json(
-      { error: `Generation blocked: ${unresolvedMandatory} mandatory requirement(s) are unresolved. Mark them resolved or add compliance evidence first.`, code: "UNRESOLVED_MANDATORY" },
-      { status: 422 },
-    );
-  }
-
-  // ── Gate 3: selected experts/projects trust level audit ───────────────────
+  // ── Gate 2: selected experts/projects trust level audit ───────────────────
   const selectedExpertMatches = await prisma.tenderExpertMatch.findMany({
     where: { tenderId: id, isSelected: true },
     include: { expert: { select: { fullName: true, trustLevel: true } } },
@@ -135,6 +124,6 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     return NextResponse.json({ success: true, tender: updatedTender, warnings });
   } catch (error) {
     console.error("[generate] error:", error);
-    return NextResponse.json({ error: "Document generation failed" }, { status: 500 });
+    return NextResponse.json({ error: error instanceof Error ? error.message : "Document generation failed" }, { status: 500 });
   }
 }

@@ -139,9 +139,9 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   });
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
 
-  const blockingGaps = tender.complianceGaps.filter((g) => !g.isResolved && ["CRITICAL", "HIGH"].includes(g.severity));
+  const blockingGaps = tender.complianceGaps.filter((g) => !g.isResolved && g.severity === "CRITICAL");
   if ((docId || type === "zip") && blockingGaps.length > 0) {
-    return NextResponse.json({ error: "Final export blocked", reasons: blockingGaps.map((g) => `${g.severity}: ${g.title}`) }, { status: 409 });
+    return NextResponse.json({ error: "Final export blocked by unresolved CRITICAL compliance gaps", reasons: blockingGaps.map((g) => g.title) }, { status: 409 });
   }
 
   if (type === "proposal" && !docId) {
