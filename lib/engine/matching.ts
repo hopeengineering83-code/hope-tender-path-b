@@ -4,6 +4,8 @@ import { exactSelectionLimit } from "./scope-policy";
 const MATCHING_CYCLES = 20;
 const SELECTION_THRESHOLD = 0.90;
 
+type KnowledgeWithOptionalTrust = { trustLevel?: string | null };
+
 function tokenize(value: string | null | undefined): string[] {
   return (value ?? "")
     .toLowerCase()
@@ -12,8 +14,13 @@ function tokenize(value: string | null | undefined): string[] {
 }
 
 function parseArr(v: unknown): string[] {
-  if (Array.isArray(v)) return v as string[];
-  try { return JSON.parse(v as string) as string[]; } catch { return []; }
+  if (Array.isArray(v)) return v.map(String);
+  try {
+    const parsed = JSON.parse(String(v ?? "[]"));
+    return Array.isArray(parsed) ? parsed.map(String) : [];
+  } catch {
+    return [];
+  }
 }
 
 function buildIdf(corpus: string[][]): Map<string, number> {
@@ -38,7 +45,9 @@ function cosineTfidf(queryTokens: string[], docTokens: string[], idf: Map<string
 
   const allTokens = new Set([...queryFreq.keys(), ...docFreq.keys()]);
 
-  let dot = 0, qNorm = 0, dNorm = 0;
+  let dot = 0;
+  let qNorm = 0;
+  let dNorm = 0;
   for (const token of allTokens) {
     const w = idf.get(token) ?? 1;
     const q = ((queryFreq.get(token) ?? 0) / queryTokens.length) * w;
@@ -107,18 +116,11 @@ function cycleQueryTokens(baseTokens: string[], cycle: number): string[] {
 function selectedLimit(requirements: RequirementDraft[], type: string, available: number): number {
   const exact = exactSelectionLimit(requirements, type);
   if (exact > 0) return Math.min(exact, available);
-
   const relevant = requirements.filter((r) => r.requirementType === type);
   if (relevant.length > 0) return Math.min(available, 5);
-
   return Math.min(available, 5);
 }
 
-/**
- * Hard selection rule: only records scoring ≥ 90% may be auto-selected.
- * If nothing reaches 90%, nothing is selected; all candidates remain visible
- * for manual review but are not counted as selected matches.
- */
 function selectAboveThreshold<T extends { score: number; isSelected: boolean }>(matches: T[], limit: number): T[] {
   if (limit <= 0) return matches.map((m) => ({ ...m, isSelected: false }));
 
@@ -130,6 +132,10 @@ function selectAboveThreshold<T extends { score: number; isSelected: boolean }>(
     }
     return { ...m, isSelected: false };
   });
+}
+
+function optionalTrust(item: KnowledgeWithOptionalTrust): string | null | undefined {
+  return item.trustLevel;
 }
 
 export function buildMatches(
@@ -167,14 +173,15 @@ export function buildMatches(
         if (s > bestScore) { bestScore = s; bestCycle = cycle; }
       }
       let score = bestScore;
+      const trustLevel = optionalTrust(expert);
       score += sectorBoost(tenderSector, parseArr(expert.sectors));
-      score += trustLevelAdjustment((expert as Record<string, unknown>).trustLevel as string);
+      score += trustLevelAdjustment(trustLevel);
       if ((expert.yearsExperience ?? 0) >= 10) score += 0.10;
       else if ((expert.yearsExperience ?? 0) >= 5) score += 0.05;
       score = Math.max(0, Math.min(1, score));
       const evidence = [expert.title, ...parseArr(expert.disciplines)].filter(Boolean).join(" · ");
       const topMatches = [...new Set(docTokens.filter((t) => baseQueryTokens.includes(t)))].slice(0, 8).join(", ");
-      const trustLabel = trustLevelLabel((expert as Record<string, unknown>).trustLevel as string);
+      const trustLabel = trustLevelLabel(trustLevel);
       const thresholdLabel = score >= SELECTION_THRESHOLD ? "Auto-selected ≥90%." : "Below 90%; review only.";
       return {
         expertId: expert.id,
@@ -202,8 +209,9 @@ export function buildMatches(
         if (s > bestScore) { bestScore = s; bestCycle = cycle; }
       }
       let score = bestScore;
+      const trustLevel = optionalTrust(project);
       score += sectorBoost(tenderSector, [project.sector ?? "", ...parseArr(project.serviceAreas)]);
-      score += trustLevelAdjustment((project as Record<string, unknown>).trustLevel as string);
+      score += trustLevelAdjustment(trustLevel);
       if (project.endDate) {
         const ageYears = (Date.now() - new Date(project.endDate).getTime()) / (365.25 * 24 * 3600 * 1000);
         if (ageYears < 3) score += 0.08;
@@ -213,7 +221,7 @@ export function buildMatches(
       score = Math.max(0, Math.min(1, score));
       const evidence = [project.sector, ...parseArr(project.serviceAreas)].filter(Boolean).join(" · ");
       const topMatches = [...new Set(docTokens.filter((t) => baseQueryTokens.includes(t)))].slice(0, 8).join(", ");
-      const trustLabel = trustLevelLabel((project as Record<string, unknown>).trustLevel as string);
+      const trustLabel = trustLevelLabel(trustLevel);
       const thresholdLabel = score >= SELECTION_THRESHOLD ? "Auto-selected ≥90%." : "Below 90%; review only.";
       return {
         projectId: project.id,
