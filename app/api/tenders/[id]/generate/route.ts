@@ -5,6 +5,12 @@ import { generateTenderDocuments } from "../../../../../lib/engine/generate-elit
 import { applyActiveUploadedLetterheadToTenderDocuments } from "../../../../../lib/engine/apply-active-letterhead";
 import { logAction } from "../../../../../lib/audit";
 
+function criticalGapIsHardBlock(gap: { title: string; description: string; mitigationPlan: string | null }) {
+  const text = `${gap.title} ${gap.description} ${gap.mitigationPlan ?? ""}`;
+  // Hard blocks are true eligibility/commercial/format impossibilities. Evidence gaps and proposal-response gaps are senior review items.
+  return /(ineligible|debarred|blacklisted|deadline.*passed|late submission|missing required file name|missing exact file|tender not found|company profile required|no documents? have been generated|signature prohibited|branding prohibited)/i.test(text);
+}
+
 export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   let actor;
   try {
@@ -21,9 +27,14 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   const tender = await prisma.tender.findFirst({ where: { id, userId } });
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
 
-  const criticalGaps = await prisma.complianceGap.count({ where: { tenderId: id, severity: "CRITICAL", isResolved: false } });
-  if (criticalGaps > 0) {
-    return NextResponse.json({ error: `Generation blocked: ${criticalGaps} unresolved CRITICAL compliance gap(s). Resolve all critical gaps before generating.`, code: "CRITICAL_GAPS" }, { status: 422 });
+  const criticalGaps = await prisma.complianceGap.findMany({
+    where: { tenderId: id, severity: "CRITICAL", isResolved: false },
+    select: { title: true, description: true, mitigationPlan: true },
+  });
+  const hardBlocks = criticalGaps.filter(criticalGapIsHardBlock);
+  const seniorReviewCriticals = criticalGaps.filter((gap) => !criticalGapIsHardBlock(gap));
+  if (hardBlocks.length > 0) {
+    return NextResponse.json({ error: `Generation blocked: ${hardBlocks.length} hard blocker(s) remain. ${hardBlocks.map((g) => g.title).join("; ")}`, code: "HARD_BLOCKERS" }, { status: 422 });
   }
 
   const selectedExpertMatches = await prisma.tenderExpertMatch.findMany({ where: { tenderId: id, isSelected: true }, include: { expert: { select: { fullName: true, trustLevel: true } } } });
@@ -43,6 +54,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   }
 
   const warnings: string[] = [];
+  if (seniorReviewCriticals.length > 0) warnings.push(`${seniorReviewCriticals.length} critical evidence/review gap(s) were carried into the proposal as senior bid-review items instead of blocking draft generation.`);
   if (draftExperts.length > 0) warnings.push(`${draftExperts.length} selected expert(s) are unreviewed drafts: ${draftExperts.map((m) => m.expert.fullName).join(", ")}. Review them in the Knowledge Review page for more accurate proposals.`);
   if (draftProjects.length > 0) warnings.push(`${draftProjects.length} selected project(s) are unreviewed drafts: ${draftProjects.map((m) => m.project.name).join(", ")}. Review them in the Knowledge Review page for more accurate proposals.`);
 
@@ -55,7 +67,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       await prisma.generatedDocument.updateMany({ where: { tenderId: id }, data: { reviewedExpertCount, draftExpertCount: draftExperts.length, reviewedProjectCount, draftProjectCount: draftProjects.length, updatedAt: new Date() } });
     }
 
-    await logAction({ userId, action: "TENDER_GENERATED", entityType: "Tender", entityId: id, description: `Generated benchmark-quality documents for tender "${tender.title}" — ${reviewedExpertCount} reviewed experts, ${draftExperts.length} draft experts, ${reviewedProjectCount} reviewed projects, ${draftProjects.length} draft projects, ${letterheadAppliedCount} uploaded letterhead overlays`, metadata: { tenderId: id, reviewedExpertCount, draftExpertCount: draftExperts.length, reviewedProjectCount, draftProjectCount: draftProjects.length, letterheadAppliedCount, warnings } });
+    await logAction({ userId, action: "TENDER_GENERATED", entityType: "Tender", entityId: id, description: `Generated benchmark-quality documents for tender "${tender.title}" — ${reviewedExpertCount} reviewed experts, ${draftExperts.length} draft experts, ${reviewedProjectCount} reviewed projects, ${draftProjects.length} draft projects, ${letterheadAppliedCount} uploaded letterhead overlays, ${seniorReviewCriticals.length} senior-review gaps`, metadata: { tenderId: id, reviewedExpertCount, draftExpertCount: draftExperts.length, reviewedProjectCount, draftProjectCount: draftProjects.length, letterheadAppliedCount, seniorReviewGapCount: seniorReviewCriticals.length, warnings } });
     const updatedTender = await prisma.tender.findFirst({ where: { id, userId }, include: { generatedDocuments: { orderBy: { exactOrder: "asc" } } } });
     return NextResponse.json({ success: true, tender: updatedTender, warnings, letterheadAppliedCount });
   } catch (error) {
