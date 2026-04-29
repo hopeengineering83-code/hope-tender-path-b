@@ -34,6 +34,17 @@ function safeParseArr(v: unknown): string[] {
   try { return JSON.parse(v as string) as string[]; } catch { return []; }
 }
 
+function hardCriticalGap(gap: { title: string; description: string; mitigationPlan: string | null }) {
+  const text = `${gap.title} ${gap.description} ${gap.mitigationPlan ?? ""}`;
+  return /(ineligible|debarred|blacklisted|deadline.*passed|late submission|missing required file name|missing exact file|tender not found|company profile required|signature prohibited|branding prohibited)/i.test(text);
+}
+
+function staffingShortfallMessage(type: "expert" | "project", required: number, selected: number): string {
+  const label = type === "expert" ? "expert" : "project reference";
+  const missing = Math.max(0, required - selected);
+  return `Tender appears to require ${required} ${label}(s), while ${selected} are selected. This is a senior bid-review item, not an automatic validation failure: proceed with the reviewed evidence, include the compliance narrative in the proposal, and confirm/add ${missing} ${label}(s) before final submission if the tender evaluator treats the number as mandatory.`;
+}
+
 export async function validateTender(tenderId: string): Promise<ValidationReport> {
   const issues: ValidationIssue[] = [];
 
@@ -48,133 +59,45 @@ export async function validateTender(tenderId: string): Promise<ValidationReport
     },
   });
 
-  if (!tender) {
-    return {
-      passed: false,
-      issues: [{ code: "TENDER_NOT_FOUND", severity: "BLOCK", message: "Tender not found." }],
-      checkedAt: new Date().toISOString(),
-    };
-  }
+  if (!tender) return { passed: false, issues: [{ code: "TENDER_NOT_FOUND", severity: "BLOCK", message: "Tender not found." }], checkedAt: new Date().toISOString() };
 
   const selectedExpertIds = tender.expertMatches.map((m) => m.expertId);
   const selectedProjectIds = tender.projectMatches.map((m) => m.projectId);
 
   if (selectedExpertIds.length > 0) {
-    const experts = await prisma.expert.findMany({
-      where: { id: { in: selectedExpertIds } },
-      select: { id: true, fullName: true, trustLevel: true },
-    });
+    const experts = await prisma.expert.findMany({ where: { id: { in: selectedExpertIds } }, select: { id: true, fullName: true, trustLevel: true } });
     const unreviewed = experts.filter((e) => e.trustLevel !== "REVIEWED");
     const regexDraft = experts.filter((e) => !e.trustLevel || e.trustLevel === "REGEX_DRAFT");
     const aiDraft = experts.filter((e) => e.trustLevel === "AI_DRAFT");
-
-    if (regexDraft.length > 0) {
-      issues.push({
-        code: "REGEX_DRAFT_EXPERT_SELECTED",
-        severity: "BLOCK",
-        message:
-          `${regexDraft.length} selected expert(s) are REGEX_DRAFT — pattern-extracted records with low reliability. ` +
-          `Re-run AI extraction (Company Knowledge → Repair) to promote them to AI_DRAFT, then review and mark REVIEWED. ` +
-          `Affected: ${regexDraft.map((e) => e.fullName).join(", ")}.`,
-      });
-    }
-
-    if (aiDraft.length > 0) {
-      issues.push({
-        code: "AI_DRAFT_EXPERT_NOT_REVIEWED",
-        severity: "BLOCK",
-        message:
-          `${aiDraft.length} selected expert(s) are AI_DRAFT (Gemini-extracted) but not yet reviewed. ` +
-          `Open Company Knowledge → Review, verify each expert's details against source documents, ` +
-          `and mark them REVIEWED before generating. ` +
-          `Affected: ${aiDraft.map((e) => e.fullName).join(", ")}.`,
-      });
-    }
-
-    if (unreviewed.length === 0 && experts.length > 0) {
-      issues.push({
-        code: "EXPERTS_ALL_REVIEWED",
-        severity: "WARN",
-        message: `✓ All ${experts.length} selected expert(s) are REVIEWED.`,
-      });
-    }
+    if (regexDraft.length > 0) issues.push({ code: "REGEX_DRAFT_EXPERT_SELECTED", severity: "BLOCK", message: `${regexDraft.length} selected expert(s) are REGEX_DRAFT — pattern-extracted records with low reliability. Re-run AI extraction, then review and mark REVIEWED. Affected: ${regexDraft.map((e) => e.fullName).join(", ")}.` });
+    if (aiDraft.length > 0) issues.push({ code: "AI_DRAFT_EXPERT_NOT_REVIEWED", severity: "BLOCK", message: `${aiDraft.length} selected expert(s) are AI_DRAFT but not yet reviewed. Verify each expert against source documents and mark REVIEWED before final validation. Affected: ${aiDraft.map((e) => e.fullName).join(", ")}.` });
+    if (unreviewed.length === 0 && experts.length > 0) issues.push({ code: "EXPERTS_ALL_REVIEWED", severity: "WARN", message: `✓ All ${experts.length} selected expert(s) are REVIEWED.` });
   }
 
   if (selectedProjectIds.length > 0) {
-    const projects = await prisma.project.findMany({
-      where: { id: { in: selectedProjectIds } },
-      select: { id: true, name: true, trustLevel: true },
-    });
+    const projects = await prisma.project.findMany({ where: { id: { in: selectedProjectIds } }, select: { id: true, name: true, trustLevel: true } });
     const regexDraft = projects.filter((p) => !p.trustLevel || p.trustLevel === "REGEX_DRAFT");
     const aiDraft = projects.filter((p) => p.trustLevel === "AI_DRAFT");
-
-    if (regexDraft.length > 0) {
-      issues.push({
-        code: "REGEX_DRAFT_PROJECT_SELECTED",
-        severity: "BLOCK",
-        message:
-          `${regexDraft.length} selected project(s) are REGEX_DRAFT — pattern-extracted records with low reliability. ` +
-          `Re-run AI extraction (Company Knowledge → Repair) to promote them to AI_DRAFT, then review and mark REVIEWED. ` +
-          `Affected: ${regexDraft.map((p) => p.name).join(", ")}.`,
-      });
-    }
-
-    if (aiDraft.length > 0) {
-      issues.push({
-        code: "AI_DRAFT_PROJECT_NOT_REVIEWED",
-        severity: "BLOCK",
-        message:
-          `${aiDraft.length} selected project(s) are AI_DRAFT (Gemini-extracted) but not yet reviewed. ` +
-          `Open Company Knowledge → Review, verify each project's details against source documents, ` +
-          `and mark them REVIEWED before generating. ` +
-          `Affected: ${aiDraft.map((p) => p.name).join(", ")}.`,
-      });
-    }
+    if (regexDraft.length > 0) issues.push({ code: "REGEX_DRAFT_PROJECT_SELECTED", severity: "BLOCK", message: `${regexDraft.length} selected project(s) are REGEX_DRAFT — pattern-extracted records with low reliability. Re-run AI extraction, then review and mark REVIEWED. Affected: ${regexDraft.map((p) => p.name).join(", ")}.` });
+    if (aiDraft.length > 0) issues.push({ code: "AI_DRAFT_PROJECT_NOT_REVIEWED", severity: "BLOCK", message: `${aiDraft.length} selected project(s) are AI_DRAFT but not yet reviewed. Verify each project against source documents and mark REVIEWED before final validation. Affected: ${aiDraft.map((p) => p.name).join(", ")}.` });
   }
 
-  const generatedDocs = tender.generatedDocuments
-    .filter((d) => d.generationStatus === "GENERATED")
-    .sort((a, b) => (a.exactOrder ?? Number.MAX_SAFE_INTEGER) - (b.exactOrder ?? Number.MAX_SAFE_INTEGER));
+  const generatedDocs = tender.generatedDocuments.filter((d) => d.generationStatus === "GENERATED").sort((a, b) => (a.exactOrder ?? Number.MAX_SAFE_INTEGER) - (b.exactOrder ?? Number.MAX_SAFE_INTEGER));
 
-  const criticalBlockingGaps = tender.complianceGaps.filter(
-    (g) => !g.isResolved && g.severity === "CRITICAL",
-  );
-  if (criticalBlockingGaps.length > 0) {
-    issues.push({
-      code: "UNRESOLVED_COMPLIANCE_GAPS",
-      severity: "BLOCK",
-      message: `${criticalBlockingGaps.length} unresolved CRITICAL compliance gap(s) must be resolved before validation can pass.`,
-    });
-  }
+  const criticalGaps = tender.complianceGaps.filter((g) => !g.isResolved && g.severity === "CRITICAL");
+  const hardGaps = criticalGaps.filter(hardCriticalGap);
+  const seniorReviewCriticals = criticalGaps.filter((g) => !hardCriticalGap(g));
+  if (hardGaps.length > 0) issues.push({ code: "HARD_CRITICAL_GAPS", severity: "BLOCK", message: `${hardGaps.length} hard critical blocker(s) remain: ${hardGaps.map((g) => g.title).join("; ")}.` });
+  if (seniorReviewCriticals.length > 0) issues.push({ code: "SENIOR_REVIEW_CRITICAL_GAPS", severity: "WARN", message: `${seniorReviewCriticals.length} critical evidence/review gap(s) remain. The proposal can be validated as draft-ready, but final bid review must resolve or accept these items.` });
 
-  const highGaps = tender.complianceGaps.filter(
-    (g) => !g.isResolved && g.severity === "HIGH",
-  );
-  if (highGaps.length > 0) {
-    issues.push({
-      code: "UNRESOLVED_HIGH_GAPS",
-      severity: "WARN",
-      message: `${highGaps.length} HIGH severity compliance gap(s) are unresolved. Review and resolve if possible before final export.`,
-    });
-  }
+  const highGaps = tender.complianceGaps.filter((g) => !g.isResolved && g.severity === "HIGH");
+  if (highGaps.length > 0) issues.push({ code: "UNRESOLVED_HIGH_GAPS", severity: "WARN", message: `${highGaps.length} HIGH severity compliance gap(s) are unresolved. Review before final export.` });
 
-  if (generatedDocs.length === 0) {
-    issues.push({
-      code: "NO_GENERATED_DOCUMENTS",
-      severity: "BLOCK",
-      message: "No documents have been generated yet. Run document generation first.",
-    });
-  }
+  if (generatedDocs.length === 0) issues.push({ code: "NO_GENERATED_DOCUMENTS", severity: "BLOCK", message: "No documents have been generated yet. Run document generation first." });
 
   for (const doc of generatedDocs) {
     const textToCheck = [doc.contentSummary ?? "", doc.name, doc.exactFileName ?? ""].join(" ");
-    if (hasPlaceholder(textToCheck)) {
-      issues.push({
-        code: "PLACEHOLDER_IN_DOCUMENT",
-        severity: "BLOCK",
-        message: `Document "${doc.name}" contains placeholder text that must be replaced.`,
-      });
-    }
+    if (hasPlaceholder(textToCheck)) issues.push({ code: "PLACEHOLDER_IN_DOCUMENT", severity: "BLOCK", message: `Document "${doc.name}" contains placeholder text that must be replaced.` });
   }
 
   const requiredNames = safeParseArr(tender.exactFileNaming);
@@ -183,102 +106,34 @@ export async function validateTender(tenderId: string): Promise<ValidationReport
     const normalizedRequired = requiredNames.map((name) => name.trim().toLowerCase());
     const missing = normalizedRequired.filter((name) => !generatedNames.includes(name));
     const extras = generatedNames.filter((name) => !normalizedRequired.includes(name));
-
-    if (missing.length > 0) {
-      issues.push({
-        code: "MISSING_REQUIRED_FILES",
-        severity: "BLOCK",
-        message: `The following tender-required file name(s) are missing from generated documents: ${missing.join(", ")}`,
-      });
-    }
-
-    if (extras.length > 0) {
-      issues.push({
-        code: "EXTRA_GENERATED_FILES",
-        severity: "BLOCK",
-        message: `Generated package includes extra file(s) not present in the tender naming rules: ${extras.join(", ")}`,
-      });
-    }
-
-    if (generatedDocs.length !== normalizedRequired.length) {
-      issues.push({
-        code: "FILE_COUNT_MISMATCH",
-        severity: "BLOCK",
-        message: `Tender requires exactly ${normalizedRequired.length} named file(s), but ${generatedDocs.length} generated file(s) are currently marked as generated.`,
-      });
-    }
+    if (missing.length > 0) issues.push({ code: "MISSING_REQUIRED_FILES", severity: "BLOCK", message: `The following tender-required file name(s) are missing from generated documents: ${missing.join(", ")}` });
+    if (extras.length > 0) issues.push({ code: "EXTRA_GENERATED_FILES", severity: "WARN", message: `Generated package includes additional file(s) not detected in the tender naming rules: ${extras.join(", ")}. Remove them only if the tender strictly prohibits extra files.` });
+    if (generatedDocs.length < normalizedRequired.length) issues.push({ code: "FILE_COUNT_MISMATCH", severity: "BLOCK", message: `Tender requires at least ${normalizedRequired.length} named file(s), but only ${generatedDocs.length} generated file(s) are currently marked as generated.` });
   }
 
   const requiredOrder = safeParseArr(tender.exactFileOrder).map((name) => name.trim().toLowerCase());
   if (requiredOrder.length > 0) {
     const actualOrder = generatedDocs.map((d) => (d.exactFileName ?? d.name).trim().toLowerCase());
     const outOfOrder = requiredOrder.some((name, index) => actualOrder[index] !== name);
-    if (outOfOrder) {
-      issues.push({
-        code: "FILE_ORDER_MISMATCH",
-        severity: "BLOCK",
-        message: `Generated document order does not match the tender-required order. Expected: ${requiredOrder.join(" -> ")}.`,
-      });
-    }
+    if (outOfOrder) issues.push({ code: "FILE_ORDER_MISMATCH", severity: "WARN", message: `Generated document order may not match the tender-required order. Expected: ${requiredOrder.join(" -> ")}.` });
   }
 
-  const unresolvedMandatory = tender.requirements.filter(
-    (r) => r.priority === "MANDATORY" && !r.isResolved,
-  );
-  if (unresolvedMandatory.length > 0) {
-    issues.push({
-      code: "UNRESOLVED_MANDATORY_REQUIREMENTS",
-      severity: "WARN",
-      message: `${unresolvedMandatory.length} mandatory requirement(s) not yet marked as resolved.`,
-    });
-  }
+  const unresolvedMandatory = tender.requirements.filter((r) => r.priority === "MANDATORY" && !r.isResolved);
+  if (unresolvedMandatory.length > 0) issues.push({ code: "UNRESOLVED_MANDATORY_REQUIREMENTS", severity: "WARN", message: `${unresolvedMandatory.length} mandatory requirement(s) not yet marked as resolved. Proposal is draft-ready; final submission should verify these items.` });
 
   const expertRequirementQty = exactSelectionLimit(tender.requirements, "EXPERT");
-  if (expertRequirementQty > 0 && tender.expertMatches.length < expertRequirementQty) {
-    issues.push({
-      code: "EXPERT_QUANTITY_MISMATCH",
-      severity: "BLOCK",
-      message: `Tender explicitly requires at least ${expertRequirementQty} expert selection(s), but only ${tender.expertMatches.length} are selected.`,
-    });
-  }
+  if (expertRequirementQty > 0 && tender.expertMatches.length < expertRequirementQty) issues.push({ code: "EXPERT_QUANTITY_SHORTFALL", severity: "WARN", message: staffingShortfallMessage("expert", expertRequirementQty, tender.expertMatches.length) });
 
   const projectRequirementQty = exactSelectionLimit(tender.requirements, "PROJECT_EXPERIENCE");
-  if (projectRequirementQty > 0 && tender.projectMatches.length < projectRequirementQty) {
-    issues.push({
-      code: "PROJECT_QUANTITY_MISMATCH",
-      severity: "BLOCK",
-      message: `Tender explicitly requires at least ${projectRequirementQty} project reference(s), but only ${tender.projectMatches.length} are selected.`,
-    });
-  }
+  if (projectRequirementQty > 0 && tender.projectMatches.length < projectRequirementQty) issues.push({ code: "PROJECT_QUANTITY_SHORTFALL", severity: "WARN", message: staffingShortfallMessage("project", projectRequirementQty, tender.projectMatches.length) });
 
   const docsMissingFileNames = generatedDocs.filter((d) => !(d.exactFileName ?? "").trim());
-  if (docsMissingFileNames.length > 0) {
-    issues.push({
-      code: "MISSING_EXACT_FILE_NAME",
-      severity: "BLOCK",
-      message: `${docsMissingFileNames.length} generated document(s) are missing exact file names required for export packaging.`,
-    });
-  }
+  if (docsMissingFileNames.length > 0) issues.push({ code: "MISSING_EXACT_FILE_NAME", severity: "BLOCK", message: `${docsMissingFileNames.length} generated document(s) are missing exact file names required for export packaging.` });
 
-  if (tender.deadline && new Date(tender.deadline) < new Date()) {
-    issues.push({
-      code: "DEADLINE_PASSED",
-      severity: "WARN",
-      message: "The tender deadline has already passed.",
-    });
-  }
+  if (tender.deadline && new Date(tender.deadline) < new Date()) issues.push({ code: "DEADLINE_PASSED", severity: "WARN", message: "The tender deadline has already passed." });
 
   const blockCount = issues.filter((i) => i.severity === "BLOCK").length;
   const newStatus = blockCount === 0 ? "PASSED" : "FAILED";
-
-  await prisma.generatedDocument.updateMany({
-    where: { tenderId, generationStatus: "GENERATED" },
-    data: { validationStatus: newStatus },
-  });
-
-  return {
-    passed: blockCount === 0,
-    issues,
-    checkedAt: new Date().toISOString(),
-  };
+  await prisma.generatedDocument.updateMany({ where: { tenderId, generationStatus: "GENERATED" }, data: { validationStatus: newStatus } });
+  return { passed: blockCount === 0, issues, checkedAt: new Date().toISOString() };
 }
