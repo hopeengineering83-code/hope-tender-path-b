@@ -49,7 +49,7 @@ export default async function DashboardPage() {
   const stats = {
     total: tenders.length,
     inProgress: tenders.filter((t) => !["DRAFT", "EXPORTED", "CLOSED"].includes(t.status)).length,
-    criticalGaps: tenders.reduce((sum, t) => sum + t.complianceGaps.filter((g: { isResolved: boolean; severity: string }) => !g.isResolved && ["CRITICAL", "HIGH"].includes(g.severity)).length, 0),
+    criticalGaps: tenders.reduce((sum, t) => sum + t.complianceGaps.filter((g: { isResolved: boolean; severity: string }) => !g.isResolved && g.severity === "CRITICAL").length, 0),
     dueSoon: dueSoon7.length,
   };
 
@@ -132,7 +132,7 @@ export default async function DashboardPage() {
               <tbody className="divide-y">
                 {tenders.slice(0, 8).map((tender) => {
                   const total = tender._count.requirements;
-                  const critical = tender.complianceGaps.filter((g) => !g.isResolved && ["CRITICAL", "HIGH"].includes(g.severity)).length;
+                  const critical = tender.complianceGaps.filter((g) => !g.isResolved && g.severity === "CRITICAL").length;
                   const readiness = tender.readinessScore ?? (total === 0 ? 0 : Math.max(0, Math.round(((total - critical) / Math.max(total, 1)) * 100)));
                   const isLate = tender.deadline && new Date(tender.deadline) < now && !["EXPORTED", "CLOSED"].includes(tender.status);
 

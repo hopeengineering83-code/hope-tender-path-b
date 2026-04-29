@@ -443,11 +443,12 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
       const buffer = await Packer.toBuffer(document);
       const fileContent = buffer.toString("base64");
       const exactFileName = doc.exactFileName ?? `${docTitle.replace(/[^a-zA-Z0-9 ]/g, "").trim().replace(/\s+/g, "-")}.docx`;
+      const letterheadNote = brandingAllowed ? "pending post-process" : "disabled by tender rules";
 
       if (doc.id) {
-        await prisma.generatedDocument.update({ where: { id: doc.id }, data: { fileContent, exactFileName, generationStatus: "GENERATED", validationStatus: "PENDING", reviewedExpertCount: selectedExperts.length, draftExpertCount: 0, reviewedProjectCount: selectedProjects.length, draftProjectCount: 0, contentSummary: `Generated ${new Date().toLocaleDateString()} — ${contentParagraphs.length} sections | ✓ All selected sources REVIEWED | letterhead ${brandingAllowed ? "Hope header/footer applied" : "disabled by tender rules"} | cover ${coverRequired ? "included" : "not included"}` } });
+        await prisma.generatedDocument.update({ where: { id: doc.id }, data: { fileContent, exactFileName, generationStatus: "GENERATED", validationStatus: "PENDING", reviewedExpertCount: selectedExperts.length, draftExpertCount: 0, reviewedProjectCount: selectedProjects.length, draftProjectCount: 0, contentSummary: `Generated ${new Date().toLocaleDateString()} — ${contentParagraphs.length} sections | ✓ All selected sources REVIEWED | letterhead: ${letterheadNote} | cover ${coverRequired ? "included" : "not included"}` } });
       } else {
-        await prisma.generatedDocument.create({ data: { tenderId, name: docTitle, documentType: doc.documentType, format: "DOCX", exactFileName, exactOrder: doc.exactOrder ?? 1, fileContent, generationStatus: "GENERATED", validationStatus: "PENDING", reviewedExpertCount: selectedExperts.length, draftExpertCount: 0, reviewedProjectCount: selectedProjects.length, draftProjectCount: 0, contentSummary: `Generated ${new Date().toLocaleDateString()} — ${contentParagraphs.length} sections | ✓ All selected sources REVIEWED | letterhead ${brandingAllowed ? "Hope header/footer applied" : "disabled by tender rules"} | cover ${coverRequired ? "included" : "not included"}` } });
+        await prisma.generatedDocument.create({ data: { tenderId, name: docTitle, documentType: doc.documentType, format: "DOCX", exactFileName, exactOrder: doc.exactOrder ?? 1, fileContent, generationStatus: "GENERATED", validationStatus: "PENDING", reviewedExpertCount: selectedExperts.length, draftExpertCount: 0, reviewedProjectCount: selectedProjects.length, draftProjectCount: 0, contentSummary: `Generated ${new Date().toLocaleDateString()} — ${contentParagraphs.length} sections | ✓ All selected sources REVIEWED | letterhead: ${letterheadNote} | cover ${coverRequired ? "included" : "not included"}` } });
       }
       generatedCount++;
     } catch (err) {

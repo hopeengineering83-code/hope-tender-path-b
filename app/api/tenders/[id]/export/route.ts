@@ -25,12 +25,12 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     }
 
     const blockingGaps = tender.complianceGaps.filter(
-      (gap) => !gap.isResolved && ["CRITICAL", "HIGH"].includes(gap.severity),
+      (gap) => !gap.isResolved && gap.severity === "CRITICAL",
     );
 
     if (blockingGaps.length > 0) {
       return NextResponse.json(
-        { error: "Resolve high-severity compliance gaps before export preparation." },
+        { error: `Resolve ${blockingGaps.length} CRITICAL compliance gap(s) before marking as exported.` },
         { status: 400 },
       );
     }
