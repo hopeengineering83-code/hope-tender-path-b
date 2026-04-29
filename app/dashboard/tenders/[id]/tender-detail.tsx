@@ -66,6 +66,12 @@ function ExtractionBadge({ text }: { text?: string | null }) {
   return <span className="text-xs text-green-600">{text.length.toLocaleString()} chars</span>;
 }
 
+function TrustBadge({ level }: { level?: string | null }) {
+  if (level === "REVIEWED") return <span className="rounded bg-green-100 px-1.5 py-0.5 text-[10px] font-semibold text-green-700">✓ REVIEWED</span>;
+  if (level === "AI_DRAFT") return <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">AI DRAFT</span>;
+  return <span className="rounded bg-red-100 px-1.5 py-0.5 text-[10px] font-semibold text-red-600">DRAFT</span>;
+}
+
 type TenderRequirement = {
   id: string;
   title: string;
@@ -108,6 +114,7 @@ type ExpertMatch = {
     yearsExperience: number | null;
     disciplines: string;
     sectors: string;
+    trustLevel?: string | null;
   };
 };
 
@@ -124,6 +131,7 @@ type ProjectMatch = {
     sector: string | null;
     contractValue: number | null;
     currency: string | null;
+    trustLevel?: string | null;
   };
 };
 
@@ -154,6 +162,7 @@ type Tender = {
   notes: string | null;
   exactFileNaming: string | string[];
   exactFileOrder: string | string[];
+  readinessScore?: number | null;
   files: TenderFile[];
   requirements: TenderRequirement[];
   complianceGaps: ComplianceGap[];
@@ -348,7 +357,7 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
     setReviewingDocId(null);
     setReviewNote("");
     const res = await fetch(`/api/tenders/${tender.id}`);
-    if (res.ok) { const d = await res.json() as { tender: Tender }; setTender(d.tender); }
+    if (res.ok) { setTender(await res.json() as Tender); }
   }
 
   async function handleDelete() {
@@ -423,10 +432,12 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
   }
 
   const unresolvedGaps = tender.complianceGaps.filter((gap) => !gap.isResolved).length;
-  const criticalGaps = tender.complianceGaps.filter((gap) => !gap.isResolved && ["CRITICAL", "HIGH"].includes(gap.severity)).length;
+  const criticalGaps = tender.complianceGaps.filter((gap) => !gap.isResolved && gap.severity === "CRITICAL").length;
+  const highGaps = tender.complianceGaps.filter((gap) => !gap.isResolved && gap.severity === "HIGH").length;
   const mandatoryRequirements = tender.requirements.filter((req) => req.priority === "MANDATORY").length;
-  const readinessScore = tender.requirements.length === 0 ? 0
-    : Math.max(0, Math.round(((tender.requirements.length - criticalGaps) / tender.requirements.length) * 100));
+  const readinessScore = tender.readinessScore ??
+    (tender.requirements.length === 0 ? 0
+      : Math.max(0, Math.round(((tender.requirements.length - criticalGaps) / tender.requirements.length) * 100)));
 
   return (
     <div className="space-y-6">
@@ -511,6 +522,7 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
           <p className="text-sm text-slate-500">Gaps</p>
           <p className={`mt-1 text-3xl font-bold ${criticalGaps > 0 ? "text-red-600" : "text-green-600"}`}>{unresolvedGaps}</p>
           {criticalGaps > 0 && <p className="mt-1 text-xs text-red-500">{criticalGaps} critical</p>}
+          {criticalGaps === 0 && highGaps > 0 && <p className="mt-1 text-xs text-amber-500">{highGaps} high</p>}
         </div>
         <div className="rounded-2xl border bg-white p-5 shadow-sm">
           <p className="text-sm text-slate-500">Experts</p>
@@ -734,9 +746,10 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
                   <li key={match.id} className={`rounded-xl border px-4 py-3 ${match.isSelected ? "border-green-200 bg-green-50" : ""}`}>
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
                           <p className="text-sm font-medium text-slate-900">{match.expert.fullName}</p>
                           {match.isSelected && <span className="rounded-full bg-green-500 px-2 py-0.5 text-[10px] font-bold text-white">SELECTED</span>}
+                          <TrustBadge level={match.expert.trustLevel} />
                         </div>
                         <p className="text-xs text-slate-500 mt-0.5">{match.expert.title ?? "Expert"}{match.expert.yearsExperience ? ` · ${match.expert.yearsExperience} yrs` : ""}</p>
                         <p className="mt-1 text-xs text-slate-500 truncate">{match.rationale}</p>
@@ -768,9 +781,10 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
                   <li key={match.id} className={`rounded-xl border px-4 py-3 ${match.isSelected ? "border-blue-200 bg-blue-50" : ""}`}>
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
                           <p className="text-sm font-medium text-slate-900">{match.project.name}</p>
                           {match.isSelected && <span className="rounded-full bg-blue-500 px-2 py-0.5 text-[10px] font-bold text-white">SELECTED</span>}
+                          <TrustBadge level={match.project.trustLevel} />
                         </div>
                         <p className="text-xs text-slate-500 mt-0.5">
                           {[match.project.clientName, match.project.country, match.project.sector].filter(Boolean).join(" · ")}

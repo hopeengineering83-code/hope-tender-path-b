@@ -25,11 +25,11 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
       },
       expertMatches: {
         orderBy: { score: "desc" },
-        include: { expert: { select: { id: true, fullName: true, title: true, yearsExperience: true, disciplines: true, sectors: true } } },
+        include: { expert: { select: { id: true, fullName: true, title: true, yearsExperience: true, disciplines: true, sectors: true, trustLevel: true } } },
       },
       projectMatches: {
         orderBy: { score: "desc" },
-        include: { project: { select: { id: true, name: true, clientName: true, country: true, sector: true, contractValue: true, currency: true } } },
+        include: { project: { select: { id: true, name: true, clientName: true, country: true, sector: true, contractValue: true, currency: true, trustLevel: true } } },
       },
       complianceMatrix: { orderBy: { createdAt: "asc" } },
     },
