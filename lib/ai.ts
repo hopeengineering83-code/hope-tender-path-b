@@ -81,32 +81,44 @@ export type AIExtractedProject = {
 // ─── Tender analysis ─────────────────────────────────────────────────────────
 
 export async function analyzeWithAI(tenderContent: string): Promise<AIAnalysisResult> {
-  const prompt = `You are a tender analysis engine. Analyze this tender document and return ONLY a valid JSON object — no explanation, no markdown fences.
+  const trimmedTender = tenderContent.slice(0, 80_000);
+  const prompt = `You are a 100-person senior tender board compressed into one analysis engine: lead bid manager, procurement lawyer, technical director, evaluator, document-control lead, and proposal writer.
+
+Analyze the tender and return ONLY a valid JSON object — no explanation, no markdown fences.
+
+Critical rules:
+- Read the whole provided tender text. Do not stop at early contents pages.
+- Do NOT convert table-of-contents entries, page numbers, clause numbers, scores, years, percentages, or page references into quantity requirements.
+- Set requiredQuantity ONLY when the tender explicitly says minimum/required/at least/provide/submit a number of experts, CVs, projects, references, forms, copies, or documents.
+- Do not create hundreds of line-by-line requirements. Consolidate repeated clauses into senior strategic requirement bundles.
+- Separate hard submission rules from proposal-response sections. A methodology/technical approach requirement is something the proposal can write; it is not automatically missing evidence.
+- Extract client, subject line, email recipients, no-financial-proposal rules, section structure, evaluation criteria, appendices, file names, and exact formatting instructions when present.
+- Think like ChatGPT/Claude producing a winning proposal: identify what the proposal must SAY, what evidence must be APPENDED, and what the bid team must REVIEW.
 
 JSON structure required:
 {
-  "summary": "2-3 sentence executive summary",
+  "summary": "3-5 sentence senior bid interpretation including client, assignment, main scope, response strategy, and top risks",
   "requirements": [
     {
-      "title": "short title",
-      "description": "full requirement text",
-      "requirementType": "TECHNICAL|FINANCIAL|ELIGIBILITY|EXPERT|PROJECT_EXPERIENCE|FORMAT|SUBMISSION_RULE|DECLARATION|ANNEX|SCHEDULE|FORM",
+      "title": "short strategic title",
+      "description": "consolidated requirement text and why it matters for the proposal",
+      "requirementType": "TECHNICAL|FINANCIAL|ELIGIBILITY|EXPERT|PROJECT_EXPERIENCE|FORMAT|SUBMISSION_RULE|DECLARATION|ANNEX|SCHEDULE|FORM|METHODOLOGY|COMPANY_PROFILE",
       "priority": "MANDATORY|SCORED|INFORMATIONAL",
       "exactFileName": "filename or null",
       "requiredQuantity": number_or_null,
       "pageLimit": number_or_null,
-      "restrictions": "restrictions or null",
-      "sectionReference": "section ref or null"
+      "restrictions": "branding/signature/file/page/format restrictions or null",
+      "sectionReference": "section/clause/annex reference or null"
     }
   ],
   "exactFileNaming": ["exact filenames required"],
   "exactFileOrder": ["files in submission order"],
-  "evaluationMethodology": "scoring methodology",
-  "submissionNotes": "submission instructions"
+  "evaluationMethodology": "evaluation criteria and how a proposal should answer them",
+  "submissionNotes": "deadline, email/portal, subject line, financial proposal restrictions, appendices, and document-control notes"
 }
 
-TENDER DOCUMENT:
-${tenderContent.slice(0, 15000)}`;
+TENDER DOCUMENT (${trimmedTender.length.toLocaleString()} chars):
+${trimmedTender}`;
 
   const text = await generate(prompt);
   const jsonMatch = text.match(/\{[\s\S]*\}/);
@@ -141,7 +153,7 @@ Return ONLY a valid JSON array — no explanation, no markdown. Each element:
 Rules: only include people clearly named in the document. Do NOT invent any field — use null if uncertain. sourceSnippet must be a direct quote.
 
 DOCUMENT TEXT (${text.length.toLocaleString()} chars):
-${text.slice(0, 20000)}`;
+${text.slice(0, 60_000)}`;
 
   const raw = await generate(prompt);
   const jsonMatch = raw.match(/\[[\s\S]*\]/);
@@ -182,7 +194,7 @@ Return ONLY a valid JSON array — no explanation, no markdown. Each element:
 Rules: only include projects clearly in the document. Do NOT invent values. sourceSnippet must be a direct quote.
 
 DOCUMENT TEXT (${text.length.toLocaleString()} chars):
-${text.slice(0, 20000)}`;
+${text.slice(0, 60_000)}`;
 
   const raw = await generate(prompt);
   const jsonMatch = raw.match(/\[[\s\S]*\]/);
