@@ -1,6 +1,7 @@
 import { Document, HeadingLevel, Packer, Paragraph, TextRun } from "docx";
 import { prisma } from "../prisma";
 import { generateTenderDocuments as generateBaseTenderDocuments } from "./generate";
+import { exactSelectionLimit } from "./scope-policy";
 import { buildProposalIntelligence, expertProofLine, projectProofLine, safeParseArr } from "./proposal-intelligence";
 
 function p(text: string, bold = false): Paragraph {
@@ -25,6 +26,22 @@ function findHealthcareProjectCount(projects: Array<{ name: string; sector?: str
   return projects.filter((project) => /hospital|health|medical|clinic|pharmacy|laboratory|radiology/i.test(`${project.name} ${project.sector ?? ""} ${project.summary ?? ""}`)).length;
 }
 
+function proposalStrengthNarrative(params: { expertRequired: number; expertSelected: number; projectRequired: number; projectSelected: number; }): Paragraph[] {
+  const out: Paragraph[] = [h2("Bid Compliance Strategy and Evidence Position")];
+  out.push(p("The proposal is written as a senior bid-team response, not as a mechanical checklist. It uses the strongest available reviewed evidence, maps it to the evaluation criteria, and flags any remaining evidence balances for final bid review without weakening the technical narrative."));
+  if (params.expertRequired > params.expertSelected) {
+    out.push(bullet(`Expert requirement interpretation: the tender appears to request ${params.expertRequired} experts and ${params.expertSelected} reviewed experts are selected. The proposal therefore presents the reviewed core team, assigns each expert to a clear role, and recommends adding/substituting ${params.expertRequired - params.expertSelected} additional named expert(s) before final submission if the requirement is confirmed as mandatory.`));
+  } else if (params.expertSelected > 0) {
+    out.push(bullet(`Expert coverage: ${params.expertSelected} reviewed expert(s) are selected and mapped to the assignment methodology, risks, and deliverables.`));
+  }
+  if (params.projectRequired > params.projectSelected) {
+    out.push(bullet(`Project reference interpretation: the tender appears to request ${params.projectRequired} project references and ${params.projectSelected} reviewed references are selected. The proposal leads with the closest, highest-value references and recommends adding ${params.projectRequired - params.projectSelected} further reference(s) or client testimony letters before final submission if strictly required.`));
+  } else if (params.projectSelected > 0) {
+    out.push(bullet(`Project evidence coverage: ${params.projectSelected} reviewed reference(s) are selected and positioned according to similarity of sector, service scope, technical systems, and delivery risk.`));
+  }
+  return out;
+}
+
 async function buildEliteProposalDocx(tenderId: string, userId: string): Promise<{ buffer: Buffer; summary: string } | null> {
   const tender = await prisma.tender.findFirst({
     where: { id: tenderId, userId },
@@ -42,6 +59,8 @@ async function buildEliteProposalDocx(tenderId: string, userId: string): Promise
 
   const selectedExperts = tender.expertMatches.map((m) => m.expert).filter((expert) => expert.trustLevel === "REVIEWED");
   const selectedProjects = tender.projectMatches.map((m) => m.project).filter((project) => project.trustLevel === "REVIEWED");
+  const expertRequired = exactSelectionLimit(tender.requirements, "EXPERT");
+  const projectRequired = exactSelectionLimit(tender.requirements, "PROJECT_EXPERIENCE");
 
   const intelligence = buildProposalIntelligence({
     tender: {
@@ -63,7 +82,6 @@ async function buildEliteProposalDocx(tenderId: string, userId: string): Promise
     projects: selectedProjects,
   });
 
-  const technicalText = [tender.title, tender.description, tender.intakeSummary, tender.analysisSummary, ...tender.requirements.map((r) => `${r.title} ${r.description}`)].join("\n");
   const healthcareProjects = findHealthcareProjectCount(selectedProjects);
   const projectTotalValue = selectedProjects.reduce((sum, project) => sum + (project.contractValue ?? 0), 0);
   const serviceLines = safeParseArr(company.serviceLines).slice(0, 12);
@@ -91,6 +109,7 @@ async function buildEliteProposalDocx(tenderId: string, userId: string): Promise
     p(selectedProjects.length > 0 ? `The strongest evidence base selected for this tender includes ${selectedProjects.slice(0, 3).map((project) => project.name).join(", ")}. ${projectTotalValue > 0 ? `The selected reference portfolio includes work with a combined recorded value of approximately ${money(projectTotalValue, "ETB")}.` : ""}` : "The proposal should be strengthened by selecting reviewed project references before final submission."),
     p(selectedExperts.length > 0 ? `The proposed team is built from ${selectedExperts.length} reviewed experts, including ${selectedExperts.slice(0, 6).map((expert) => expert.fullName).join(", ")}.` : "The expert team section requires reviewed CV records before final submission."),
     ...intelligence.differentiators.map((item) => bullet(item)),
+    ...proposalStrengthNarrative({ expertRequired, expertSelected: selectedExperts.length, projectRequired, projectSelected: selectedProjects.length }),
   ];
 
   const toc = [
@@ -139,8 +158,10 @@ async function buildEliteProposalDocx(tenderId: string, userId: string): Promise
     ...intelligence.differentiators.map((item) => bullet(item)),
     h2("D.2 Compliance and Submission Rules"),
     ...(intelligence.submissionRules.length ? intelligence.submissionRules.map((rule) => bullet(rule)) : [bullet("Final submission rules should be checked against the original tender before export.")]),
-    h2("D.3 Narrative Gaps to Verify Before Final Export"),
+    h2("D.3 Bid Team Review Items"),
     ...(intelligence.gapsToAddressInNarrative.length ? intelligence.gapsToAddressInNarrative.map((gap) => bullet(gap)) : [bullet("No major narrative gap detected from the selected reviewed evidence.")]),
+    ...(expertRequired > selectedExperts.length ? [bullet(`Confirm whether ${expertRequired - selectedExperts.length} additional expert(s) must be named before submission, or whether the selected reviewed core team is acceptable for this stage.`)] : []),
+    ...(projectRequired > selectedProjects.length ? [bullet(`Confirm whether ${projectRequired - selectedProjects.length} additional project reference(s) must be appended before submission.`)] : []),
     h2("D.4 Declaration"),
     p(`We confirm that this proposal has been prepared for ${tender.title} using reviewed company evidence and the tender requirements extracted from the uploaded tender documents.`),
   ];
@@ -153,7 +174,7 @@ async function buildEliteProposalDocx(tenderId: string, userId: string): Promise
     styles: { default: { document: { run: { font: "Calibri", size: 22 }, paragraph: { spacing: { line: 276 } } } } },
   });
 
-  const summary = `Benchmark-quality technical proposal generated using ${intelligence.requiredSections.length} required section group(s), ${intelligence.themes.length} tender theme(s), ${intelligence.topExperts.length} expert proof line(s), and ${intelligence.topProjects.length} project proof line(s).`;
+  const summary = `Benchmark-quality technical proposal generated using ${intelligence.requiredSections.length} required section group(s), ${intelligence.themes.length} tender theme(s), ${intelligence.topExperts.length} expert proof line(s), ${intelligence.topProjects.length} project proof line(s), and senior bid-compliance narrative.`;
   return { buffer: await Packer.toBuffer(doc), summary };
 }
 
@@ -162,40 +183,11 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   const elite = await buildEliteProposalDocx(tenderId, userId);
   if (!elite) return;
 
-  const target = await prisma.generatedDocument.findFirst({
-    where: { tenderId, documentType: { in: ["TECHNICAL_PROPOSAL", "PROPOSAL", "METHODOLOGY"] } },
-    orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }],
-  });
-
+  const target = await prisma.generatedDocument.findFirst({ where: { tenderId, documentType: { in: ["TECHNICAL_PROPOSAL", "PROPOSAL", "METHODOLOGY"] } }, orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }] });
   const fileContent = elite.buffer.toString("base64");
   if (target) {
-    await prisma.generatedDocument.update({
-      where: { id: target.id },
-      data: {
-        name: "Benchmark Technical Proposal",
-        documentType: "TECHNICAL_PROPOSAL",
-        exactFileName: target.exactFileName || "Technical-Proposal.docx",
-        fileContent,
-        generationStatus: "GENERATED",
-        validationStatus: "PENDING",
-        contentSummary: elite.summary,
-        updatedAt: new Date(),
-      },
-    });
+    await prisma.generatedDocument.update({ where: { id: target.id }, data: { name: "Benchmark Technical Proposal", documentType: "TECHNICAL_PROPOSAL", exactFileName: target.exactFileName || "Technical-Proposal.docx", fileContent, generationStatus: "GENERATED", validationStatus: "PENDING", contentSummary: elite.summary, updatedAt: new Date() } });
   } else {
-    await prisma.generatedDocument.create({
-      data: {
-        tenderId,
-        name: "Benchmark Technical Proposal",
-        documentType: "TECHNICAL_PROPOSAL",
-        format: "DOCX",
-        exactFileName: "Technical-Proposal.docx",
-        exactOrder: 1,
-        fileContent,
-        generationStatus: "GENERATED",
-        validationStatus: "PENDING",
-        contentSummary: elite.summary,
-      },
-    });
+    await prisma.generatedDocument.create({ data: { tenderId, name: "Benchmark Technical Proposal", documentType: "TECHNICAL_PROPOSAL", format: "DOCX", exactFileName: "Technical-Proposal.docx", exactOrder: 1, fileContent, generationStatus: "GENERATED", validationStatus: "PENDING", contentSummary: elite.summary } });
   }
 }
