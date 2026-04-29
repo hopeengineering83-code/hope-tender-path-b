@@ -78,6 +78,21 @@ export type AIExtractedProject = {
   sourceSnippet: string;
 };
 
+export type AIBidWriterInput = {
+  tenderTitle: string;
+  clientName: string;
+  tenderText: string;
+  analysisSummary: string;
+  evaluationMethodology: string;
+  submissionNotes: string;
+  requirements: string;
+  companyProfile: string;
+  experts: string;
+  projects: string;
+  compliance: string;
+  differentiators: string;
+};
+
 // ─── Tender analysis ─────────────────────────────────────────────────────────
 
 export async function analyzeWithAI(tenderContent: string): Promise<AIAnalysisResult> {
@@ -212,6 +227,63 @@ ${text.slice(0, 60_000)}`;
 }
 
 // ─── Proposal generation ──────────────────────────────────────────────────────
+
+export async function generateBenchmarkProposalWithAI(params: AIBidWriterInput): Promise<string> {
+  const prompt = `You are ChatGPT-level senior proposal team for an engineering consultancy: bid director, sector technical lead, evaluator, procurement compliance reviewer, and persuasive technical writer.
+
+Write a complete, winning-quality TECHNICAL PROPOSAL in markdown. Do NOT invent projects, experts, certifications, awards, or values. Use only the provided evidence. If evidence is insufficient, write a professional mitigation/review note inside the proposal instead of pretending the evidence exists.
+
+Benchmark standard:
+- The result must read like a proposal prepared by an experienced human bid team, not a generic template.
+- It must be client-specific, tender-aware, evidence-led, persuasive, and structured around the exact tender response logic.
+- It must include a cover letter, cover page, table of contents, executive summary, company profile, proposed team, relevant experience, technical approach, compliance strategy, additional information, appendices list, and declaration.
+- It must turn requirements into a proposal strategy: what we understand, why our evidence fits, how we will execute, and what the client gains.
+- It must explicitly map selected experts and projects to the tender risks and evaluation criteria.
+- It must include bid-team review items for any remaining evidence gaps instead of blocking the proposal.
+- It must not include financial offer language if submission notes say technical proposal only or no financial proposal.
+- It must avoid AI disclaimers and placeholders.
+- Use markdown headings: #, ##, ### and bullet lists. Do not use tables unless essential.
+
+TENDER TITLE:
+${params.tenderTitle}
+
+CLIENT:
+${params.clientName}
+
+TENDER TEXT / SCOPE EXTRACT:
+${params.tenderText.slice(0, 50_000)}
+
+AI ANALYSIS SUMMARY:
+${params.analysisSummary}
+
+EVALUATION METHODOLOGY / CRITERIA:
+${params.evaluationMethodology}
+
+SUBMISSION NOTES:
+${params.submissionNotes}
+
+CONSOLIDATED REQUIREMENTS:
+${params.requirements.slice(0, 22_000)}
+
+COMPANY PROFILE AND SUPPORT DOCUMENT EVIDENCE:
+${params.companyProfile.slice(0, 16_000)}
+
+SELECTED / BEST EXPERT EVIDENCE:
+${params.experts.slice(0, 16_000)}
+
+SELECTED / BEST PROJECT EVIDENCE:
+${params.projects.slice(0, 16_000)}
+
+COMPLIANCE MATRIX / GAPS / REVIEW ITEMS:
+${params.compliance.slice(0, 14_000)}
+
+DIFFERENTIATORS TO USE:
+${params.differentiators}
+
+Now write the proposal. Make it strong, specific, well-organized, and bid-winning.`;
+
+  return generate(prompt, "gemini-1.5-pro");
+}
 
 export async function generateProposal(params: {
   tenderTitle: string;
