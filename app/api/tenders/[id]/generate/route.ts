@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { generateTenderDocuments } from "../../../../../lib/engine/generate";
+import { applyActiveUploadedLetterheadToTenderDocuments } from "../../../../../lib/engine/apply-active-letterhead";
 import { logAction } from "../../../../../lib/audit";
 
 export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -20,7 +21,6 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   const tender = await prisma.tender.findFirst({ where: { id, userId } });
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
 
-  // ── Gate 1: unresolved CRITICAL compliance gaps ───────────────────────────
   const criticalGaps = await prisma.complianceGap.count({
     where: { tenderId: id, severity: "CRITICAL", isResolved: false },
   });
@@ -31,7 +31,6 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     );
   }
 
-  // ── Gate 2: selected experts/projects trust level audit ───────────────────
   const selectedExpertMatches = await prisma.tenderExpertMatch.findMany({
     where: { tenderId: id, isSelected: true },
     include: { expert: { select: { fullName: true, trustLevel: true } } },
@@ -47,11 +46,6 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   const reviewedExpertCount = selectedExpertMatches.length - draftExperts.length;
   const reviewedProjectCount = selectedProjectMatches.length - draftProjects.length;
 
-  // ── Gate 3: Trust level hard-block ───────────────────────────────────────
-  // Never use unreviewed records as the SOLE source in a final proposal.
-  // Block if experts are selected AND not a single one is REVIEWED.
-  // Block if projects are selected AND not a single one is REVIEWED.
-  // (Mixed pools — some reviewed, some draft — are allowed with a warning.)
   const expertRequirementExists = await prisma.tenderRequirement.count({
     where: { tenderId: id, requirementType: "EXPERT" },
   });
@@ -81,7 +75,6 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     );
   }
 
-  // Soft warnings for mixed pools (some reviewed, some draft)
   const warnings: string[] = [];
   if (draftExperts.length > 0) {
     warnings.push(`${draftExperts.length} selected expert(s) are unreviewed drafts: ${draftExperts.map((m) => m.expert.fullName).join(", ")}. Review them in the Knowledge Review page for more accurate proposals.`);
@@ -92,8 +85,11 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
 
   try {
     await generateTenderDocuments(id, userId);
+    const letterheadAppliedCount = await applyActiveUploadedLetterheadToTenderDocuments(id, userId);
+    if (letterheadAppliedCount > 0) {
+      warnings.push(`Uploaded Word letterhead applied to ${letterheadAppliedCount} generated DOCX file(s).`);
+    }
 
-    // Record trust-level audit counts on generated documents
     if (reviewedExpertCount > 0 || draftExperts.length > 0 || reviewedProjectCount > 0 || draftProjects.length > 0) {
       await prisma.generatedDocument.updateMany({
         where: { tenderId: id },
@@ -112,8 +108,8 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       action: "TENDER_GENERATED",
       entityType: "Tender",
       entityId: id,
-      description: `Generated documents for tender "${tender.title}" — ${reviewedExpertCount} reviewed experts, ${draftExperts.length} draft experts, ${reviewedProjectCount} reviewed projects, ${draftProjects.length} draft projects`,
-      metadata: { tenderId: id, reviewedExpertCount, draftExpertCount: draftExperts.length, reviewedProjectCount, draftProjectCount: draftProjects.length, warnings },
+      description: `Generated documents for tender "${tender.title}" — ${reviewedExpertCount} reviewed experts, ${draftExperts.length} draft experts, ${reviewedProjectCount} reviewed projects, ${draftProjects.length} draft projects, ${letterheadAppliedCount} uploaded letterhead overlays`,
+      metadata: { tenderId: id, reviewedExpertCount, draftExpertCount: draftExperts.length, reviewedProjectCount, draftProjectCount: draftProjects.length, letterheadAppliedCount, warnings },
     });
 
     const updatedTender = await prisma.tender.findFirst({
@@ -121,7 +117,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       include: { generatedDocuments: { orderBy: { exactOrder: "asc" } } },
     });
 
-    return NextResponse.json({ success: true, tender: updatedTender, warnings });
+    return NextResponse.json({ success: true, tender: updatedTender, warnings, letterheadAppliedCount });
   } catch (error) {
     console.error("[generate] error:", error);
     return NextResponse.json({ error: error instanceof Error ? error.message : "Document generation failed" }, { status: 500 });
