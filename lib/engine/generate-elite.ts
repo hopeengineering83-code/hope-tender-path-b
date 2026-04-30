@@ -3,6 +3,7 @@ import { prisma } from "../prisma";
 import { generateBenchmarkProposalWithAI, isAIEnabled } from "../ai";
 import { buildProposalIntelligence, expertProofLine, projectProofLine, safeParseArr } from "./proposal-intelligence";
 import { exactSelectionLimit } from "./scope-policy";
+import { enforceBenchmarkProposalMarkdown } from "./proposal-benchmark-guard";
 
 function para(text: string, bold = false): Paragraph {
   return new Paragraph({ children: [new TextRun({ text, bold })], spacing: { after: 100 } });
@@ -61,10 +62,12 @@ function fallbackProposal(params: {
     para(params.tenderTitle, true),
     para(`Client: ${params.clientName}`),
     para(`Primary sector: ${params.primarySector}`),
+    heading("Table of Contents"),
+    ...["Cover Letter", "Technical Proposal", "Executive Summary", "Company Profile", "Proposed Team", "Relevant Experience", "Technical Approach", "Compliance and Bid Review Strategy", "Appendix Register", "Declaration"].map((item, i) => bullet(`${i + 1}. ${item}`)),
     heading("Executive Summary"),
     para(`${params.companyName} understands this opportunity as a ${params.primarySector.toLowerCase()} assignment requiring a persuasive, evidence-led response rather than a generic company profile. The proposal maps the strongest reviewed company evidence to the client's scope, risks, evaluation criteria, and submission requirements.`),
     ...params.differentiators.map(bullet),
-    heading("Bid Compliance Strategy", 2),
+    heading("Compliance and Bid Review Strategy", 2),
     para("The proposal proceeds with the strongest reviewed evidence and surfaces any remaining evidence balance as a senior bid-review item instead of hiding or inventing missing information."),
     ...(params.expertRequired > expertSelected ? [bullet(`Tender appears to request ${params.expertRequired} expert(s); ${expertSelected} reviewed expert(s) are selected. Add/confirm ${params.expertRequired - expertSelected} expert(s) before final submission if the number is mandatory.`)] : []),
     ...(params.projectRequired > projectSelected ? [bullet(`Tender appears to request ${params.projectRequired} project reference(s); ${projectSelected} reviewed reference(s) are selected. Add/confirm ${params.projectRequired - projectSelected} reference(s) before final submission if mandatory.`)] : []),
@@ -78,8 +81,9 @@ function fallbackProposal(params: {
     ...params.requirements.slice(0, 10).map((r) => bullet(`Response strategy: ${r}`)),
     heading("Compliance Matrix and Review Items"),
     ...params.complianceLines.slice(0, 18).map(bullet),
-    heading("Appendices and Declaration"),
+    heading("Appendix Register"),
     bullet("Appendices should include registration, support documents, CVs, project evidence, photos/drawings, certificates, and declarations required by the tender."),
+    heading("Declaration"),
     para(`We confirm this proposal has been prepared for ${params.tenderTitle} using reviewed evidence and senior bid-review controls.`),
   ];
 }
@@ -140,6 +144,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   const requirementLines = tender.requirements.map((r) => `${r.priority} ${r.requirementType}: ${r.title} — ${r.description}`);
   const expertLines = experts.map(expertProofLine);
   const projectLines = projects.map(projectProofLine);
+  const submissionNotes = [tender.submissionMethod, tender.submissionAddress, ...intelligence.submissionRules].filter(Boolean).join("\n");
   const complianceLines = [
     ...tender.complianceMatrix.map((m) => {
       const req = m.requirement?.title ?? m.requirement?.description ?? "Requirement evidence row";
@@ -161,7 +166,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
         tenderText,
         analysisSummary: clean(tender.analysisSummary) || intelligence.tenderText.slice(0, 2000),
         evaluationMethodology: clean(tender.evaluationMethodology) || intelligence.evaluationCriteria.join("; "),
-        submissionNotes: [tender.submissionMethod, tender.submissionAddress, ...intelligence.submissionRules].filter(Boolean).join("\n"),
+        submissionNotes,
         requirements: requirementLines.join("\n"),
         companyProfile: `${company.name}\n${company.legalName ?? ""}\n${company.profileSummary ?? company.description ?? ""}\nServices: ${safeParseArr(company.serviceLines).join(", ")}\nSectors: ${safeParseArr(company.sectors).join(", ")}`,
         experts: expertLines.join("\n"),
@@ -169,8 +174,17 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
         compliance: complianceLines.join("\n"),
         differentiators: intelligence.differentiators.join("\n"),
       });
-      children = markdownToDocx(markdown);
-      mode = "AI bid-writer";
+      const guardedMarkdown = enforceBenchmarkProposalMarkdown(markdown, {
+        tenderTitle: tender.title,
+        clientName: intelligence.clientName,
+        companyName: company.name,
+        submissionNotes,
+        expertCount: expertLines.length,
+        projectCount: projectLines.length,
+        complianceLines,
+      });
+      children = markdownToDocx(guardedMarkdown);
+      mode = "AI bid-writer + benchmark guard";
     } catch (error) {
       children = fallbackProposal({
         tenderTitle: tender.title,
