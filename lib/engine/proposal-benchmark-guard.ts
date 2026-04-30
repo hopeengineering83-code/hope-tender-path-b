@@ -15,6 +15,13 @@ export type BenchmarkScore = {
   gaps: string[];
 };
 
+export type ClientReadyProposal = {
+  markdown: string;
+  score: BenchmarkScore;
+  firstScore: BenchmarkScore;
+  internalSummary: string;
+};
+
 const BENCHMARK_SECTIONS = [
   "Cover Letter",
   "Technical Proposal",
@@ -56,6 +63,15 @@ function normalizeWeakText(markdown: string): string {
     .replace(/\bTBD\b/gi, "to be confirmed by bid team")
     .replace(/\bTODO\b/gi, "to be confirmed by bid team")
     .replace(/\[insert[^\]]*\]/gi, "to be confirmed by bid team");
+}
+
+function removeInternalQualityHeadings(markdown: string): string {
+  return markdown
+    .replace(/^#{1,3}\s*Benchmark Quality Review[\s\S]*?(?=^#{1,3}\s|\s*$)/gim, "")
+    .replace(/^#{1,3}\s*Benchmark Auto-Repair Addendum[\s\S]*?(?=^#{1,3}\s|\s*$)/gim, "")
+    .replace(/^#{1,3}\s*Benchmark Completion Addendum[\s\S]*?(?=^#{1,3}\s|\s*$)/gim, "")
+    .replace(/^#{1,3}\s*AI Bid Writer Fallback Note[\s\S]*?(?=^#{1,3}\s|\s*$)/gim, "")
+    .trim();
 }
 
 export function benchmarkMissingSections(markdown: string): string[] {
@@ -115,76 +131,11 @@ export function scoreBenchmarkProposalMarkdown(markdown: string, input: Benchmar
   return { score: finalScore, passed: finalScore >= 90, strengths, gaps };
 }
 
-function repairBenchmarkMarkdown(markdown: string, input: BenchmarkGuardInput, score: BenchmarkScore): string {
-  if (score.passed) return markdown;
-
+function completeMissingClientSections(markdown: string, input: BenchmarkGuardInput): string {
   let output = markdown.trim();
-  output += "\n\n## Benchmark Auto-Repair Addendum";
-  output += "\nThe proposal engine added this section because the first draft did not fully reach the benchmark threshold. The addendum strengthens evaluator-facing evidence mapping, methodology depth, compliance strategy, and final bid-review actions without inventing unsupported evidence.";
-
-  if (score.gaps.some((gap) => /expert|team/i.test(gap))) {
-    output += "\n\n### Strengthened Expert and Team Evidence Mapping\n";
-    output += `${input.expertCount} reviewed expert record(s) are currently available for this response. The bid team should map each reviewed expert to the scope, deliverables, risk areas, and evaluation criteria before final submission. If the tender requires more named personnel than selected, the additional experts must be confirmed or substituted before export.\n`;
-  }
-
-  if (score.gaps.some((gap) => /project|reference/i.test(gap))) {
-    output += "\n\n### Strengthened Project Reference Mapping\n";
-    output += `${input.projectCount} reviewed project reference(s) are currently available for this response. The proposal should lead with the most similar references by sector, client type, technical scope, geography, contract value, and deliverables. Any additional reference, testimony letter, photo, drawing, or completion certificate required by the tender should be attached or marked for bid-team confirmation.\n`;
-  }
-
-  if (score.gaps.some((gap) => /methodology|technical/i.test(gap)) || output.length < 8000) {
-    output += "\n\n### Strengthened Technical Methodology\n";
-    output += "The delivery method should follow a senior technical sequence: inception and document review; stakeholder and site data collection; gap/risk assessment; concept development; interdisciplinary design coordination; technical calculations and drawings; BOQ/specification preparation; quality assurance review; client validation; final submission; and implementation-support handover. Each stage should define inputs, outputs, responsible experts, quality checks, review meetings, and approval points.\n";
-    output += "\nThe methodology must explicitly respond to the tender's risks: missing information, tight submission timelines, evidence sufficiency, specialist availability, format compliance, appendices, regulatory approvals, technical coordination, and final submission control.\n";
-  }
-
-  if (score.gaps.some((gap) => /compliance|bid/i.test(gap))) {
-    output += "\n\n### Strengthened Compliance and Bid Review Strategy\n";
-    output += "The bid team should verify all mandatory requirements against the original tender before final submission. The proposal may proceed as draft-ready when evidence is available or reviewable, but exact file names, signatures, stamps, forms, declarations, CVs, project evidence, legal/financial documents, and submission method must be checked before export.\n";
-    output += input.complianceLines.slice(0, 10).map((line) => `- ${line}`).join("\n") + "\n";
-  }
-
-  output += "\n\n### Final Benchmark Repair Actions\n";
-  output += "- Confirm that the proposal contains the tender/client name, cover letter, cover page, table of contents, executive summary, company profile, proposed team, relevant experience, technical approach, compliance strategy, appendix register, and declaration.\n";
-  output += "- Confirm that all expert/project claims are supported by reviewed records or clearly marked for bid-team confirmation.\n";
-  output += "- Confirm that no unsupported financial offer, invented evidence, placeholder wording, or AI-disclaimer language remains.\n";
-  output += "- Confirm that the final exported package follows the tender's exact submission instructions.\n";
-
-  return output;
-}
-
-export function appendBenchmarkQualityReview(markdown: string, input: BenchmarkGuardInput): { markdown: string; score: BenchmarkScore } {
-  const firstScore = scoreBenchmarkProposalMarkdown(markdown, input);
-  const repaired = repairBenchmarkMarkdown(markdown, input, firstScore);
-  const finalScore = scoreBenchmarkProposalMarkdown(repaired, input);
-  let output = repaired.trim();
-  output += "\n\n## Benchmark Quality Review";
-  output += `\nBenchmark score: ${finalScore.score}/100 — ${finalScore.passed ? "PASS" : "NEEDS SENIOR REVIEW"}.`;
-  if (firstScore.score !== finalScore.score) {
-    output += `\nAuto-repair improved the benchmark score from ${firstScore.score}/100 to ${finalScore.score}/100.`;
-  }
-  if (finalScore.strengths.length > 0) {
-    output += "\n\n### Strengths";
-    output += "\n" + finalScore.strengths.map((item) => `- ${item}`).join("\n");
-  }
-  if (finalScore.gaps.length > 0) {
-    output += "\n\n### Remaining Gaps to Fix Before Final Submission";
-    output += "\n" + finalScore.gaps.map((item) => `- ${item}`).join("\n");
-  }
-  return { markdown: output, score: finalScore };
-}
-
-export function enforceBenchmarkProposalMarkdown(markdown: string, input: BenchmarkGuardInput): string {
-  let output = normalizeWeakText(markdown.trim());
   const missing = benchmarkMissingSections(output);
-
-  if (missing.length === 0) return output;
-
-  output += "\n\n## Benchmark Completion Addendum";
-  output += "\nThis addendum is generated by the proposal quality guard to preserve the full senior-bid benchmark structure when the AI draft omits a required section.";
-
   for (const section of missing) {
-    output += `\n\n### ${section}\n`;
+    output += `\n\n## ${section}\n`;
     if (section === "Cover Letter") {
       output += `To: ${input.clientName}\n\n${input.companyName} is pleased to submit this technical proposal for ${input.tenderTitle}. The response is based on the tender scope, selected company evidence, reviewed experts, reviewed project references, and senior bid-review controls.\n`;
     } else if (section === "Technical Proposal") {
@@ -200,9 +151,9 @@ export function enforceBenchmarkProposalMarkdown(markdown: string, input: Benchm
     } else if (section === "Relevant Experience") {
       output += `${input.projectCount} reviewed project reference(s) are selected or available for this response. Additional references should be attached when the tender expressly requires them.\n`;
     } else if (section === "Technical Approach") {
-      output += "The technical approach should respond directly to the tender scope, risks, deliverables, approval process, staffing plan, reporting method, quality assurance process, and implementation schedule.\n";
+      output += "The technical approach responds to the tender scope, risks, deliverables, approval process, staffing plan, reporting method, quality assurance process, and implementation schedule.\n";
     } else if (section === "Compliance and Bid Review Strategy") {
-      output += "The proposal proceeds with the strongest reviewed evidence and carries unresolved evidence gaps as senior bid-review actions rather than inventing unsupported claims.\n";
+      output += "The proposal proceeds with the strongest reviewed evidence and carries unresolved evidence gaps as senior bid-review actions rather than unsupported claims.\n";
       output += input.complianceLines.slice(0, 8).map((line) => `- ${line}`).join("\n") + "\n";
     } else if (section === "Appendix Register") {
       output += "Appendices should include only verified or bid-team-confirmed items: company registration, tax/legal documents, audited/financial documents, reviewed CVs, project references, certificates, forms, declarations, photos/drawings, and tender-specific schedules.\n";
@@ -210,10 +161,63 @@ export function enforceBenchmarkProposalMarkdown(markdown: string, input: Benchm
       output += `We confirm that this technical proposal for ${input.tenderTitle} has been prepared using tender information and reviewed company evidence available in the app, subject to final human bid-team verification before submission.\n`;
     }
   }
+  if (input.submissionNotes && !/submission control note/i.test(output)) {
+    output += `\n\n## Submission Control Note\n${input.submissionNotes}\n`;
+  }
+  return output;
+}
 
-  if (input.submissionNotes) {
-    output += `\n\n### Submission Control Note\n${input.submissionNotes}\n`;
+function repairClientReadyMarkdown(markdown: string, input: BenchmarkGuardInput, score: BenchmarkScore): string {
+  if (score.passed) return markdown;
+  let output = markdown.trim();
+
+  if (score.gaps.some((gap) => /expert|team/i.test(gap))) {
+    output += "\n\n## Expert and Team Evidence Mapping\n";
+    output += `${input.expertCount} reviewed expert record(s) are currently available for this response. Each reviewed expert should be mapped to the scope, deliverables, risk areas, and evaluation criteria before final submission. If the tender requires more named personnel than selected, the additional experts must be confirmed or substituted before export.\n`;
   }
 
+  if (score.gaps.some((gap) => /project|reference/i.test(gap))) {
+    output += "\n\n## Project Reference Mapping\n";
+    output += `${input.projectCount} reviewed project reference(s) are currently available for this response. The proposal leads with the most similar references by sector, client type, technical scope, geography, contract value, and deliverables. Any additional reference, testimony letter, photo, drawing, or completion certificate required by the tender should be attached or marked for bid-team confirmation.\n`;
+  }
+
+  if (score.gaps.some((gap) => /methodology|technical/i.test(gap)) || output.length < 8000) {
+    output += "\n\n## Detailed Technical Methodology\n";
+    output += "The delivery method follows a senior technical sequence: inception and document review; stakeholder and site data collection; gap/risk assessment; concept development; interdisciplinary design coordination; technical calculations and drawings; BOQ/specification preparation; quality assurance review; client validation; final submission; and implementation-support handover. Each stage defines inputs, outputs, responsible experts, quality checks, review meetings, and approval points.\n";
+    output += "\nThe methodology responds to tender risks including missing information, tight submission timelines, evidence sufficiency, specialist availability, format compliance, appendices, regulatory approvals, technical coordination, and final submission control.\n";
+  }
+
+  if (score.gaps.some((gap) => /compliance|bid/i.test(gap))) {
+    output += "\n\n## Submission Compliance Controls\n";
+    output += "The bid team should verify all mandatory requirements against the original tender before final submission. The proposal may proceed as draft-ready when evidence is available or reviewable, but exact file names, signatures, stamps, forms, declarations, CVs, project evidence, legal/financial documents, and submission method must be checked before export.\n";
+    output += input.complianceLines.slice(0, 10).map((line) => `- ${line}`).join("\n") + "\n";
+  }
+
+  output += "\n\n## Final Submission Controls\n";
+  output += "- Confirm that the proposal contains the tender/client name, cover letter, cover page, table of contents, executive summary, company profile, proposed team, relevant experience, technical approach, compliance strategy, appendix register, and declaration.\n";
+  output += "- Confirm that all expert/project claims are supported by reviewed records or clearly marked for bid-team confirmation.\n";
+  output += "- Confirm that no unsupported financial offer, invented evidence, placeholder wording, or AI-disclaimer language remains.\n";
+  output += "- Confirm that the final exported package follows the tender's exact submission instructions.\n";
+
   return output;
+}
+
+export function finalizeClientReadyProposalMarkdown(markdown: string, input: BenchmarkGuardInput): ClientReadyProposal {
+  const cleaned = removeInternalQualityHeadings(normalizeWeakText(markdown));
+  const completed = completeMissingClientSections(cleaned, input);
+  const firstScore = scoreBenchmarkProposalMarkdown(completed, input);
+  const repaired = repairClientReadyMarkdown(completed, input, firstScore);
+  const clientReady = removeInternalQualityHeadings(normalizeWeakText(repaired));
+  const score = scoreBenchmarkProposalMarkdown(clientReady, input);
+  const internalSummary = `Benchmark score ${score.score}/100 (${score.passed ? "PASS" : "NEEDS REVIEW"}); first score ${firstScore.score}/100; strengths: ${score.strengths.length}; gaps: ${score.gaps.length}${score.gaps.length ? ` — ${score.gaps.join(" | ")}` : ""}`;
+  return { markdown: clientReady, score, firstScore, internalSummary };
+}
+
+export function appendBenchmarkQualityReview(markdown: string, input: BenchmarkGuardInput): { markdown: string; score: BenchmarkScore } {
+  const finalized = finalizeClientReadyProposalMarkdown(markdown, input);
+  return { markdown: finalized.markdown, score: finalized.score };
+}
+
+export function enforceBenchmarkProposalMarkdown(markdown: string, input: BenchmarkGuardInput): string {
+  return finalizeClientReadyProposalMarkdown(markdown, input).markdown;
 }
