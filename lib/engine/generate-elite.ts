@@ -4,6 +4,7 @@ import { generateBenchmarkProposalWithAI, isAIEnabled } from "../ai";
 import { buildProposalIntelligence, expertProofLine, projectProofLine, safeParseArr } from "./proposal-intelligence";
 import { exactSelectionLimit } from "./scope-policy";
 import { appendBenchmarkQualityReview, enforceBenchmarkProposalMarkdown } from "./proposal-benchmark-guard";
+import { appendEvaluatorResponseMatrix } from "./proposal-evaluator-matrix";
 
 function para(text: string, bold = false): Paragraph {
   return new Paragraph({ children: [new TextRun({ text, bold })], spacing: { after: 100 } });
@@ -223,6 +224,18 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     complianceLines,
   };
 
+  const evaluatorMatrixInput = {
+    tenderTitle: tender.title,
+    clientName: intelligence.clientName,
+    requirements: requirementLines,
+    expertLines,
+    projectLines,
+    companyEvidenceLines,
+    projectEvidenceLines,
+    complianceLines,
+    differentiators: intelligence.differentiators,
+  };
+
   let children: Paragraph[] = [];
   let mode = "deterministic benchmark";
   let benchmarkScore = 0;
@@ -245,15 +258,41 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
         compliance: [...BENCHMARK_CONTEXT_LINES, ...complianceLines].join("\n"),
         differentiators: [...BENCHMARK_CONTEXT_LINES, ...intelligence.differentiators, ...companyEvidenceLines.slice(0, 8)].join("\n"),
       });
-      const guardedMarkdown = enforceBenchmarkProposalMarkdown(markdown, guardInput);
+      const matrixMarkdown = appendEvaluatorResponseMatrix(markdown, evaluatorMatrixInput);
+      const guardedMarkdown = enforceBenchmarkProposalMarkdown(matrixMarkdown, guardInput);
       const reviewed = appendBenchmarkQualityReview(guardedMarkdown, guardInput);
       benchmarkScore = reviewed.score.score;
       benchmarkPassed = reviewed.score.passed;
       benchmarkGapCount = reviewed.score.gaps.length;
       children = markdownToDocx(reviewed.markdown);
-      mode = "AI bid-writer + full evidence library + first-draft benchmark context + benchmark guard + quality score";
+      mode = "AI bid-writer + evaluator response matrix + full evidence library + first-draft benchmark context + benchmark guard + quality score";
     } catch (error) {
-      children = fallbackProposal({
+      const fallbackMarkdown = appendEvaluatorResponseMatrix("", evaluatorMatrixInput);
+      children = [
+        ...fallbackProposal({
+          tenderTitle: tender.title,
+          clientName: intelligence.clientName,
+          companyName: company.name,
+          primarySector: intelligence.primarySector,
+          requirements: requirementLines,
+          differentiators: intelligence.differentiators,
+          submissionRules: intelligence.submissionRules,
+          expertLines,
+          projectLines,
+          companyEvidenceLines,
+          projectEvidenceLines,
+          complianceLines,
+          expertRequired,
+          projectRequired,
+        }),
+        ...markdownToDocx(fallbackMarkdown),
+      ];
+      children.push(heading("AI Bid Writer Fallback Note"), para(`AI bid writer unavailable: ${error instanceof Error ? error.message : String(error)}. Deterministic benchmark generator used.`));
+    }
+  } else {
+    const fallbackMarkdown = appendEvaluatorResponseMatrix("", evaluatorMatrixInput);
+    children = [
+      ...fallbackProposal({
         tenderTitle: tender.title,
         clientName: intelligence.clientName,
         companyName: company.name,
@@ -268,26 +307,9 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
         complianceLines,
         expertRequired,
         projectRequired,
-      });
-      children.push(heading("AI Bid Writer Fallback Note"), para(`AI bid writer unavailable: ${error instanceof Error ? error.message : String(error)}. Deterministic benchmark generator used.`));
-    }
-  } else {
-    children = fallbackProposal({
-      tenderTitle: tender.title,
-      clientName: intelligence.clientName,
-      companyName: company.name,
-      primarySector: intelligence.primarySector,
-      requirements: requirementLines,
-      differentiators: intelligence.differentiators,
-      submissionRules: intelligence.submissionRules,
-      expertLines,
-      projectLines,
-      companyEvidenceLines,
-      projectEvidenceLines,
-      complianceLines,
-      expertRequired,
-      projectRequired,
-    });
+      }),
+      ...markdownToDocx(fallbackMarkdown),
+    ];
   }
 
   const doc = new Document({
