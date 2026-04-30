@@ -17,6 +17,10 @@ function take(lines: string[], count: number, maxLen = 420): string[] {
     .map((line) => line.length > maxLen ? `${line.slice(0, maxLen - 1)}…` : line);
 }
 
+function unique(lines: string[]): string[] {
+  return Array.from(new Set(lines.map((line) => line.trim()).filter(Boolean)));
+}
+
 function pickEvidence(input: EvaluatorMatrixInput, index: number): string {
   const pool = [
     ...take(input.expertLines, 6, 300),
@@ -25,6 +29,15 @@ function pickEvidence(input: EvaluatorMatrixInput, index: number): string {
     ...take(input.projectEvidenceLines, 4, 360),
   ];
   return pool[index % Math.max(pool.length, 1)] || "Evidence to be confirmed by bid team before final submission.";
+}
+
+function evidenceBucket(input: EvaluatorMatrixInput): string[] {
+  return unique([
+    ...take(input.expertLines, 12, 260).map((line) => `Expert/CV: ${line}`),
+    ...take(input.projectLines, 12, 320).map((line) => `Project reference: ${line}`),
+    ...take(input.companyEvidenceLines, 18, 360).map((line) => `Company evidence: ${line}`),
+    ...take(input.projectEvidenceLines, 12, 360).map((line) => `Project attachment: ${line}`),
+  ]);
 }
 
 export function appendEvaluatorResponseMatrix(markdown: string, input: EvaluatorMatrixInput): string {
@@ -46,6 +59,20 @@ export function appendEvaluatorResponseMatrix(markdown: string, input: Evaluator
     output += `\n- **Mapped evidence:** ${pickEvidence(input, index)}`;
     output += `\n- **Bid-review action:** Verify that the mapped evidence is attached, correctly named, and aligned with the tender's submission rules before final export.`;
   });
+
+  output += "\n\n## Claim-to-Evidence Proof Map";
+  output += "\nThis proof map helps the bid team verify that proposal claims are backed by available records before submission.";
+  const proofLines = evidenceBucket(input);
+  if (proofLines.length > 0) {
+    proofLines.slice(0, 28).forEach((line, index) => {
+      output += `\n- **Proof item ${index + 1}:** ${line}`;
+    });
+  } else {
+    output += "\n- No source proof was available in the proposal context; bid team must attach reviewed CVs, project references, legal/financial records, and company documents before final submission.";
+  }
+
+  output += "\n\n## Unsupported-Claim Control";
+  output += "\nThe final bid team should check each narrative claim against the proof map. Claims about staff, projects, certifications, values, legal status, financial capacity, photos, drawings, or client approvals must be removed, softened, or marked for confirmation when no source record is available.";
 
   output += "\n\n## Win Themes and Differentiators";
   const differentiators = input.differentiators.length > 0 ? input.differentiators : [
