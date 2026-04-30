@@ -88,6 +88,13 @@ function fallbackProposal(params: {
   ];
 }
 
+const BENCHMARK_CONTEXT_LINES = [
+  "MANDATORY BENCHMARK STRUCTURE: Cover Letter; Technical Proposal; Table of Contents; Executive Summary; Company Profile; Proposed Team; Relevant Experience; Technical Approach; Compliance and Bid Review Strategy; Additional Information; Appendix Register; Declaration.",
+  "FIRST-DRAFT QUALITY RULE: Do not rely on the auto-repair guard. The first AI draft must already contain the benchmark structure, evaluator-facing narrative, evidence mapping, methodology depth, compliance strategy, appendix register, and final declaration.",
+  "EVIDENCE RULE: Use only provided experts, projects, company profile, compliance rows, and tender text. If evidence is missing, state it as a bid-team confirmation item, not as a fake claim.",
+  "METHODOLOGY RULE: Technical Approach must include phases, deliverables, QA/QC, coordination, risk management, reporting, schedule controls, and submission controls.",
+];
+
 export async function generateTenderDocuments(tenderId: string, userId: string): Promise<void> {
   const tender = await prisma.tender.findFirst({
     where: { id: tenderId, userId },
@@ -176,16 +183,16 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
       const markdown = await generateBenchmarkProposalWithAI({
         tenderTitle: tender.title,
         clientName: intelligence.clientName,
-        tenderText,
+        tenderText: [BENCHMARK_CONTEXT_LINES.join("\n"), tenderText].join("\n\n"),
         analysisSummary: clean(tender.analysisSummary) || intelligence.tenderText.slice(0, 2000),
         evaluationMethodology: clean(tender.evaluationMethodology) || intelligence.evaluationCriteria.join("; "),
-        submissionNotes,
-        requirements: requirementLines.join("\n"),
+        submissionNotes: [BENCHMARK_CONTEXT_LINES[0], submissionNotes].filter(Boolean).join("\n"),
+        requirements: [...BENCHMARK_CONTEXT_LINES, ...requirementLines].join("\n"),
         companyProfile: `${company.name}\n${company.legalName ?? ""}\n${company.profileSummary ?? company.description ?? ""}\nServices: ${safeParseArr(company.serviceLines).join(", ")}\nSectors: ${safeParseArr(company.sectors).join(", ")}`,
         experts: expertLines.join("\n"),
         projects: projectLines.join("\n"),
-        compliance: complianceLines.join("\n"),
-        differentiators: intelligence.differentiators.join("\n"),
+        compliance: [...BENCHMARK_CONTEXT_LINES, ...complianceLines].join("\n"),
+        differentiators: [...BENCHMARK_CONTEXT_LINES, ...intelligence.differentiators].join("\n"),
       });
       const guardedMarkdown = enforceBenchmarkProposalMarkdown(markdown, guardInput);
       const reviewed = appendBenchmarkQualityReview(guardedMarkdown, guardInput);
@@ -193,7 +200,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
       benchmarkPassed = reviewed.score.passed;
       benchmarkGapCount = reviewed.score.gaps.length;
       children = markdownToDocx(reviewed.markdown);
-      mode = "AI bid-writer + benchmark guard + quality score";
+      mode = "AI bid-writer + first-draft benchmark context + benchmark guard + quality score";
     } catch (error) {
       children = fallbackProposal({
         tenderTitle: tender.title,
