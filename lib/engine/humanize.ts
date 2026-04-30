@@ -49,7 +49,7 @@ function basicCleanup(text: string): string {
 async function humanizeWithAI(text: string): Promise<string> {
   const { GoogleGenerativeAI } = await import("@google/generative-ai");
   const client = new GoogleGenerativeAI(process.env.GEMINI_API_KEY ?? "");
-  const model = client.getGenerativeModel({ model: "gemini-1.5-flash" });
+  const model = client.getGenerativeModel({ model: "gemini-2.0-flash" });
 
   const result = await model.generateContent(`You are a professional proposal editor for a consultancy firm.
 The following text was drafted for a tender proposal.
