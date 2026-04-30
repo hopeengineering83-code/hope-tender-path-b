@@ -3,7 +3,7 @@ import { prisma } from "../prisma";
 import { generateBenchmarkProposalWithAI, isAIEnabled } from "../ai";
 import { buildProposalIntelligence, expertProofLine, projectProofLine, safeParseArr } from "./proposal-intelligence";
 import { exactSelectionLimit } from "./scope-policy";
-import { enforceBenchmarkProposalMarkdown } from "./proposal-benchmark-guard";
+import { appendBenchmarkQualityReview, enforceBenchmarkProposalMarkdown } from "./proposal-benchmark-guard";
 
 function para(text: string, bold = false): Paragraph {
   return new Paragraph({ children: [new TextRun({ text, bold })], spacing: { after: 100 } });
@@ -155,8 +155,21 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     ...(projectRequired > projectLines.length ? [`Senior review: add/confirm ${projectRequired - projectLines.length} project reference(s) if the tender quantity is mandatory.`] : []),
   ];
 
+  const guardInput = {
+    tenderTitle: tender.title,
+    clientName: intelligence.clientName,
+    companyName: company.name,
+    submissionNotes,
+    expertCount: expertLines.length,
+    projectCount: projectLines.length,
+    complianceLines,
+  };
+
   let children: Paragraph[] = [];
   let mode = "deterministic benchmark";
+  let benchmarkScore = 0;
+  let benchmarkPassed = false;
+  let benchmarkGapCount = 0;
 
   if (isAIEnabled()) {
     try {
@@ -174,17 +187,13 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
         compliance: complianceLines.join("\n"),
         differentiators: intelligence.differentiators.join("\n"),
       });
-      const guardedMarkdown = enforceBenchmarkProposalMarkdown(markdown, {
-        tenderTitle: tender.title,
-        clientName: intelligence.clientName,
-        companyName: company.name,
-        submissionNotes,
-        expertCount: expertLines.length,
-        projectCount: projectLines.length,
-        complianceLines,
-      });
-      children = markdownToDocx(guardedMarkdown);
-      mode = "AI bid-writer + benchmark guard";
+      const guardedMarkdown = enforceBenchmarkProposalMarkdown(markdown, guardInput);
+      const reviewed = appendBenchmarkQualityReview(guardedMarkdown, guardInput);
+      benchmarkScore = reviewed.score.score;
+      benchmarkPassed = reviewed.score.passed;
+      benchmarkGapCount = reviewed.score.gaps.length;
+      children = markdownToDocx(reviewed.markdown);
+      mode = "AI bid-writer + benchmark guard + quality score";
     } catch (error) {
       children = fallbackProposal({
         tenderTitle: tender.title,
@@ -225,7 +234,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   });
 
   const fileContent = (await Packer.toBuffer(doc)).toString("base64");
-  const summary = `${mode} technical proposal generated using ${intelligence.requiredSections.length} required section group(s), ${intelligence.themes.length} tender theme(s), ${experts.length} reviewed expert(s), ${projects.length} reviewed project(s), compliance narrative, and benchmark review actions.`;
+  const summary = `${mode} technical proposal generated. Benchmark score: ${benchmarkScore}/100 (${benchmarkPassed ? "PASS" : "NEEDS REVIEW"}); ${benchmarkGapCount} benchmark gap(s). Inputs: ${intelligence.requiredSections.length} section group(s), ${intelligence.themes.length} tender theme(s), ${experts.length} reviewed expert(s), ${projects.length} reviewed project(s).`;
 
   const target = await prisma.generatedDocument.findFirst({
     where: { tenderId, documentType: { in: ["TECHNICAL_PROPOSAL", "PROPOSAL", "METHODOLOGY"] } },

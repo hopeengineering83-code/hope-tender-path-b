@@ -8,6 +8,13 @@ export type BenchmarkGuardInput = {
   complianceLines: string[];
 };
 
+export type BenchmarkScore = {
+  score: number;
+  passed: boolean;
+  strengths: string[];
+  gaps: string[];
+};
+
 const BENCHMARK_SECTIONS = [
   "Cover Letter",
   "Technical Proposal",
@@ -36,8 +43,82 @@ function hasForbiddenWeakness(markdown: string): boolean {
   return /\b(as an ai|language model|placeholder|tbd|todo|insert name|insert date)\b/i.test(markdown);
 }
 
+function mentionsAny(markdown: string, values: string[]): boolean {
+  const lower = markdown.toLowerCase();
+  return values.filter(Boolean).some((value) => lower.includes(value.toLowerCase().slice(0, 80)));
+}
+
 export function benchmarkMissingSections(markdown: string): string[] {
   return BENCHMARK_SECTIONS.filter((section) => !headingExists(markdown, section));
+}
+
+export function scoreBenchmarkProposalMarkdown(markdown: string, input: BenchmarkGuardInput): BenchmarkScore {
+  const gaps: string[] = [];
+  const strengths: string[] = [];
+  let score = 0;
+
+  const missingSections = benchmarkMissingSections(markdown);
+  const sectionScore = Math.round(((BENCHMARK_SECTIONS.length - missingSections.length) / BENCHMARK_SECTIONS.length) * 30);
+  score += sectionScore;
+  if (missingSections.length === 0) strengths.push("Full benchmark proposal structure is present.");
+  else gaps.push(`Missing benchmark sections: ${missingSections.join(", ")}.`);
+
+  if (mentionsAny(markdown, [input.tenderTitle, input.clientName])) {
+    score += 10;
+    strengths.push("Proposal names the tender/client and is not completely generic.");
+  } else gaps.push("Proposal does not clearly name the tender/client.");
+
+  if (input.expertCount > 0 && /expert|team|cv|personnel|specialist|key staff/i.test(markdown)) {
+    score += 10;
+    strengths.push("Expert/team evidence is represented.");
+  } else gaps.push("Expert/team evidence is weak or absent.");
+
+  if (input.projectCount > 0 && /project|reference|experience|portfolio|similar assignment/i.test(markdown)) {
+    score += 10;
+    strengths.push("Project/reference evidence is represented.");
+  } else gaps.push("Project/reference evidence is weak or absent.");
+
+  if (/methodology|approach|work plan|quality assurance|deliverable|mobilization|risk|schedule|coordination/i.test(markdown)) {
+    score += 15;
+    strengths.push("Technical methodology language is present.");
+  } else gaps.push("Technical methodology is too weak.");
+
+  if (/compliance|bid review|submission|appendix|declaration|evidence|mitigation|to be confirmed/i.test(markdown)) {
+    score += 15;
+    strengths.push("Compliance/bid-review strategy is visible.");
+  } else gaps.push("Compliance and bid-review strategy is not visible enough.");
+
+  if (markdown.length >= 8000) {
+    score += 5;
+    strengths.push("Proposal has enough narrative depth for a serious technical response.");
+  } else if (markdown.length >= 4500) {
+    score += 3;
+    gaps.push("Proposal has moderate depth but may still be shorter than benchmark quality.");
+  } else gaps.push("Proposal is too short for benchmark-quality technical submission.");
+
+  if (!hasForbiddenWeakness(markdown)) {
+    score += 5;
+    strengths.push("No obvious AI/placeholder/TBD language detected.");
+  } else gaps.push("Proposal contains placeholder or AI-disclaimer language that must be removed.");
+
+  const finalScore = Math.max(0, Math.min(100, score));
+  return { score: finalScore, passed: finalScore >= 90, strengths, gaps };
+}
+
+export function appendBenchmarkQualityReview(markdown: string, input: BenchmarkGuardInput): { markdown: string; score: BenchmarkScore } {
+  const score = scoreBenchmarkProposalMarkdown(markdown, input);
+  let output = markdown.trim();
+  output += "\n\n## Benchmark Quality Review";
+  output += `\nBenchmark score: ${score.score}/100 — ${score.passed ? "PASS" : "NEEDS SENIOR REVIEW"}.`;
+  if (score.strengths.length > 0) {
+    output += "\n\n### Strengths";
+    output += "\n" + score.strengths.map((item) => `- ${item}`).join("\n");
+  }
+  if (score.gaps.length > 0) {
+    output += "\n\n### Remaining Gaps to Fix Before Final Submission";
+    output += "\n" + score.gaps.map((item) => `- ${item}`).join("\n");
+  }
+  return { markdown: output, score };
 }
 
 export function enforceBenchmarkProposalMarkdown(markdown: string, input: BenchmarkGuardInput): string {
