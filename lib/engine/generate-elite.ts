@@ -15,37 +15,19 @@ const BRAND_GRAY = "595959";
 const LIGHT_BLUE = "D9EAF7";
 
 function para(text: string, bold = false): Paragraph {
-  return new Paragraph({
-    children: [new TextRun({ text, bold, color: bold ? BRAND_BLUE : "222222", size: 22, font: "Calibri" })],
-    spacing: { after: 120, line: 276 },
-  });
+  return new Paragraph({ children: [new TextRun({ text, bold, color: bold ? BRAND_BLUE : "222222", size: 22, font: "Calibri" })], spacing: { after: 120, line: 276 } });
 }
 
 function heading(text: string, level: 1 | 2 = 1): Paragraph {
-  return new Paragraph({
-    text,
-    heading: level === 1 ? HeadingLevel.HEADING_1 : HeadingLevel.HEADING_2,
-    spacing: { before: level === 1 ? 360 : 240, after: 140 },
-    border: level === 1 ? { bottom: { color: LIGHT_BLUE, space: 1, style: BorderStyle.SINGLE, size: 8 } } : undefined,
-  });
+  return new Paragraph({ text, heading: level === 1 ? HeadingLevel.HEADING_1 : HeadingLevel.HEADING_2, spacing: { before: level === 1 ? 360 : 240, after: 140 }, border: level === 1 ? { bottom: { color: LIGHT_BLUE, space: 1, style: BorderStyle.SINGLE, size: 8 } } : undefined });
 }
 
 function bullet(text: string): Paragraph {
-  return new Paragraph({
-    text,
-    bullet: { level: 0 },
-    spacing: { after: 80, line: 260 },
-  });
+  return new Paragraph({ text, bullet: { level: 0 }, spacing: { after: 80, line: 260 } });
 }
 
-function clean(text?: string | null): string {
-  return (text ?? "").replace(/\s+/g, " ").trim();
-}
-
-function shortText(text?: string | null, max = 700): string {
-  const value = clean(text);
-  return value.length > max ? `${value.slice(0, max - 1)}…` : value;
-}
+function clean(text?: string | null): string { return (text ?? "").replace(/\s+/g, " ").trim(); }
+function shortText(text?: string | null, max = 700): string { const value = clean(text); return value.length > max ? `${value.slice(0, max - 1)}…` : value; }
 
 function markdownToDocx(markdown: string): Paragraph[] {
   const out: Paragraph[] = [];
@@ -62,45 +44,12 @@ function markdownToDocx(markdown: string): Paragraph[] {
   return out.length > 0 ? out : [para("No proposal content was generated.")];
 }
 
-function fallbackProposalMarkdown(params: {
-  tenderTitle: string;
-  clientName: string;
-  companyName: string;
-  primarySector: string;
-  requirements: string[];
-  differentiators: string[];
-  submissionRules: string[];
-  expertLines: string[];
-  projectLines: string[];
-  companyEvidenceLines: string[];
-  projectEvidenceLines: string[];
-  complianceLines: string[];
-  expertRequired: number;
-  projectRequired: number;
-}): string {
+function fallbackProposalMarkdown(params: { tenderTitle: string; clientName: string; companyName: string; primarySector: string; requirements: string[]; differentiators: string[]; submissionRules: string[]; expertLines: string[]; projectLines: string[]; companyEvidenceLines: string[]; projectEvidenceLines: string[]; complianceLines: string[]; expertRequired: number; projectRequired: number }): string {
   const expertSelected = params.expertLines.length;
   const projectSelected = params.projectLines.length;
-  const proofOpening = buildFallbackProofOpening({
-    companyName: params.companyName,
-    clientName: params.clientName,
-    tenderTitle: params.tenderTitle,
-    primarySector: params.primarySector,
-    projectLines: params.projectLines,
-    expertLines: params.expertLines,
-    differentiators: params.differentiators,
-  });
-  const isHealthcare = /health|hospital|medical|clinic|pharmacy|radiology|laboratory|patient|OPD|in-patient|emergency/i.test(
-    `${params.tenderTitle}\n${params.primarySector}\n${params.requirements.join("\n")}`,
-  );
-  const abcdInput = {
-    tenderTitle: params.tenderTitle,
-    clientName: params.clientName,
-    companyName: params.companyName,
-    primarySector: params.primarySector,
-    expertCount: expertSelected,
-    projectCount: projectSelected,
-    isHealthcare,
-  };
+  const proofOpening = buildFallbackProofOpening({ companyName: params.companyName, clientName: params.clientName, tenderTitle: params.tenderTitle, primarySector: params.primarySector, projectLines: params.projectLines, expertLines: params.expertLines, differentiators: params.differentiators });
+  const isHealthcare = /health|hospital|medical|clinic|pharmacy|radiology|laboratory|patient|OPD|in-patient|emergency/i.test(`${params.tenderTitle}\n${params.primarySector}\n${params.requirements.join("\n")}`);
+  const abcdInput = { tenderTitle: params.tenderTitle, clientName: params.clientName, companyName: params.companyName, primarySector: params.primarySector, expertCount: expertSelected, projectCount: projectSelected, isHealthcare };
   const lines: string[] = [];
   lines.push("# Cover Letter", `To: ${params.clientName}`, `Subject: Technical Proposal for ${params.tenderTitle}`, ...proofOpening);
   lines.push(...params.submissionRules.map((x) => `- ${x}`));
@@ -148,29 +97,17 @@ function buildCoverBlock(params: { tenderTitle: string; clientName: string; comp
 }
 
 function buildProfessionalDocument(params: { tenderTitle: string; clientName: string; companyName: string; reference?: string | null; children: Paragraph[] }): Document {
-  const header = new Header({
-    children: [new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: params.companyName, bold: true, color: BRAND_BLUE, size: 18 }), new TextRun({ text: " | Technical Proposal", color: BRAND_GRAY, size: 18 })] })],
-  });
-  const footer = new Footer({
-    children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Confidential bid document | Page ", size: 16, color: BRAND_GRAY }), new TextRun({ children: [PageNumber.CURRENT], size: 16, color: BRAND_GRAY })] })],
-  });
+  const header = new Header({ children: [new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: params.companyName, bold: true, color: BRAND_BLUE, size: 18 }), new TextRun({ text: " | Technical Proposal", color: BRAND_GRAY, size: 18 })] })] });
+  const footer = new Footer({ children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Confidential bid document | Page ", size: 16, color: BRAND_GRAY }), new TextRun({ children: [PageNumber.CURRENT], size: 16, color: BRAND_GRAY })] })] });
   return new Document({
     creator: params.companyName,
     title: params.tenderTitle,
     description: "Client-ready technical proposal generated by Hope Tender Engine",
-    sections: [{
-      properties: { page: { margin: { top: 1000, bottom: 850, left: 900, right: 900 } } },
-      headers: { default: header },
-      footers: { default: footer },
-      children: [...buildCoverBlock(params), ...params.children],
-    }],
-    styles: {
-      default: { document: { run: { font: "Calibri", size: 22, color: "222222" }, paragraph: { spacing: { line: 276, after: 100 } } } },
-      paragraphStyles: [
-        { id: "Heading1", name: "Heading 1", basedOn: "Normal", next: "Normal", quickFormat: true, run: { size: 32, bold: true, color: BRAND_BLUE, font: "Calibri" }, paragraph: { spacing: { before: 360, after: 160 }, border: { bottom: { color: LIGHT_BLUE, style: BorderStyle.SINGLE, size: 8, space: 1 } } } },
-        { id: "Heading2", name: "Heading 2", basedOn: "Normal", next: "Normal", quickFormat: true, run: { size: 26, bold: true, color: BRAND_BLUE, font: "Calibri" }, paragraph: { spacing: { before: 260, after: 120 } } },
-      ],
-    },
+    sections: [{ properties: { page: { margin: { top: 1000, bottom: 850, left: 900, right: 900 } } }, headers: { default: header }, footers: { default: footer }, children: [...buildCoverBlock(params), ...params.children] }],
+    styles: { default: { document: { run: { font: "Calibri", size: 22, color: "222222" }, paragraph: { spacing: { line: 276, after: 100 } } } }, paragraphStyles: [
+      { id: "Heading1", name: "Heading 1", basedOn: "Normal", next: "Normal", quickFormat: true, run: { size: 32, bold: true, color: BRAND_BLUE, font: "Calibri" }, paragraph: { spacing: { before: 360, after: 160 }, border: { bottom: { color: LIGHT_BLUE, style: BorderStyle.SINGLE, size: 8, space: 1 } } } },
+      { id: "Heading2", name: "Heading 2", basedOn: "Normal", next: "Normal", quickFormat: true, run: { size: 26, bold: true, color: BRAND_BLUE, font: "Calibri" }, paragraph: { spacing: { before: 260, after: 120 } } },
+    ] },
   });
 }
 
@@ -195,15 +132,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   });
   if (!tender) throw new Error("Tender not found");
 
-  const company = await prisma.company.findUnique({
-    where: { userId },
-    include: {
-      documents: { orderBy: { updatedAt: "desc" }, take: 24 },
-      legalRecords: { orderBy: { updatedAt: "desc" }, take: 12 },
-      financialRecords: { orderBy: { fiscalYear: "desc" }, take: 12 },
-      complianceRecords: { orderBy: { updatedAt: "desc" }, take: 12 },
-    },
-  });
+  const company = await prisma.company.findUnique({ where: { userId }, include: { documents: { orderBy: { updatedAt: "desc" }, take: 24 }, legalRecords: { orderBy: { updatedAt: "desc" }, take: 12 }, financialRecords: { orderBy: { fiscalYear: "desc" }, take: 12 }, complianceRecords: { orderBy: { updatedAt: "desc" }, take: 12 } } });
   if (!company) throw new Error("Company not found");
 
   const experts = tender.expertMatches.map((m) => m.expert).filter((e) => e.trustLevel === "REVIEWED");
@@ -214,17 +143,15 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   const projectRequired = exactSelectionLimit(tender.requirements, "PROJECT_EXPERIENCE");
 
   const intelligence = buildProposalIntelligence({ tender, company, requirements: tender.requirements, experts, projects });
-  const tenderText = [tender.title, tender.reference, tender.clientName, tender.description, tender.intakeSummary, tender.analysisSummary, tender.evaluationMethodology, ...tender.files.map((f) => `${f.originalFileName}\n${f.extractedText ?? ""}`)].filter(Boolean).join("\n\n");
+  const proposalTitle = intelligence.assignmentName;
+  const tenderText = [proposalTitle, tender.reference, intelligence.clientName, tender.description, tender.intakeSummary, tender.analysisSummary, tender.evaluationMethodology, ...tender.files.map((f) => `${f.originalFileName}\n${f.extractedText ?? ""}`)].filter(Boolean).join("\n\n");
   const requirementLines = tender.requirements.map((r) => `${r.priority} ${r.requirementType}: ${r.title} — ${r.description}`);
   const expertLines = experts.map(expertProofLine);
   const projectLines = projects.map(projectProofLine);
   const evidenceContextLines = [...companyEvidenceLines, ...projectEvidenceLines];
   const submissionNotes = [tender.submissionMethod, tender.submissionAddress, ...intelligence.submissionRules].filter(Boolean).join("\n");
   const complianceLines = [
-    ...tender.complianceMatrix.map((m) => {
-      const req = m.requirement?.title ?? m.requirement?.description ?? "Requirement evidence row";
-      return `${m.supportLevel}: ${req} | ${m.evidenceType} from ${m.evidenceSource}${m.evidenceReference ? ` | ref: ${m.evidenceReference}` : ""}${m.notes ? ` — ${m.notes}` : ""}`;
-    }),
+    ...tender.complianceMatrix.map((m) => { const req = m.requirement?.title ?? m.requirement?.description ?? "Requirement evidence row"; return `${m.supportLevel}: ${req} | ${m.evidenceType} from ${m.evidenceSource}${m.evidenceReference ? ` | ref: ${m.evidenceReference}` : ""}${m.notes ? ` — ${m.notes}` : ""}`; }),
     ...companyEvidenceLines.slice(0, 14).map((line) => `Company evidence available: ${line}`),
     ...projectEvidenceLines.slice(0, 10).map((line) => `Project evidence available: ${line}`),
     ...tender.complianceGaps.map((g) => `${g.severity}: ${g.title} — ${g.mitigationPlan || g.description}`),
@@ -232,8 +159,8 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     ...(projectRequired > projectLines.length ? [`Senior review: add/confirm ${projectRequired - projectLines.length} project reference(s) if the tender quantity is mandatory.`] : []),
   ];
 
-  const guardInput = { tenderTitle: tender.title, clientName: intelligence.clientName, companyName: company.name, submissionNotes, expertCount: expertLines.length, projectCount: projectLines.length, complianceLines };
-  const evaluatorMatrixInput = { tenderTitle: tender.title, clientName: intelligence.clientName, requirements: requirementLines, expertLines, projectLines, companyEvidenceLines, projectEvidenceLines, complianceLines, differentiators: intelligence.differentiators };
+  const guardInput = { tenderTitle: proposalTitle, clientName: intelligence.clientName, companyName: company.name, submissionNotes, expertCount: expertLines.length, projectCount: projectLines.length, complianceLines };
+  const evaluatorMatrixInput = { tenderTitle: proposalTitle, clientName: intelligence.clientName, requirements: requirementLines, expertLines, projectLines, companyEvidenceLines, projectEvidenceLines, complianceLines, differentiators: intelligence.differentiators };
 
   let sourceMarkdown: string;
   let mode = "deterministic benchmark";
@@ -242,7 +169,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   if (isAIEnabled()) {
     try {
       sourceMarkdown = await generateBenchmarkProposalWithAI({
-        tenderTitle: tender.title,
+        tenderTitle: proposalTitle,
         clientName: intelligence.clientName,
         tenderText: [BENCHMARK_CONTEXT_LINES.join("\n"), tenderText].join("\n\n"),
         analysisSummary: clean(tender.analysisSummary) || intelligence.tenderText.slice(0, 2000),
@@ -258,41 +185,27 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
       mode = "AI bid-writer + evaluator response matrix + full evidence library + client-ready benchmark finalizer + professional DOCX polish";
     } catch (error) {
       aiError = error instanceof Error ? error.message : String(error);
-      sourceMarkdown = fallbackProposalMarkdown({ tenderTitle: tender.title, clientName: intelligence.clientName, companyName: company.name, primarySector: intelligence.primarySector, requirements: requirementLines, differentiators: intelligence.differentiators, submissionRules: intelligence.submissionRules, expertLines, projectLines, companyEvidenceLines, projectEvidenceLines, complianceLines, expertRequired, projectRequired });
+      sourceMarkdown = fallbackProposalMarkdown({ tenderTitle: proposalTitle, clientName: intelligence.clientName, companyName: company.name, primarySector: intelligence.primarySector, requirements: requirementLines, differentiators: intelligence.differentiators, submissionRules: intelligence.submissionRules, expertLines, projectLines, companyEvidenceLines, projectEvidenceLines, complianceLines, expertRequired, projectRequired });
       mode = "deterministic benchmark fallback + evaluator response matrix + client-ready benchmark finalizer + professional DOCX polish";
     }
   } else {
-    sourceMarkdown = fallbackProposalMarkdown({ tenderTitle: tender.title, clientName: intelligence.clientName, companyName: company.name, primarySector: intelligence.primarySector, requirements: requirementLines, differentiators: intelligence.differentiators, submissionRules: intelligence.submissionRules, expertLines, projectLines, companyEvidenceLines, projectEvidenceLines, complianceLines, expertRequired, projectRequired });
+    sourceMarkdown = fallbackProposalMarkdown({ tenderTitle: proposalTitle, clientName: intelligence.clientName, companyName: company.name, primarySector: intelligence.primarySector, requirements: requirementLines, differentiators: intelligence.differentiators, submissionRules: intelligence.submissionRules, expertLines, projectLines, companyEvidenceLines, projectEvidenceLines, complianceLines, expertRequired, projectRequired });
   }
 
   const matrixMarkdown = appendEvaluatorResponseMatrix(sourceMarkdown, evaluatorMatrixInput);
-  const isHealthcare = /health|hospital|medical|clinic|radiology|laboratory|pharmacy|patient|healthcare|specialty|OPD|in-patient|emergency/i.test(
-    `${tender.title}\n${intelligence.primarySector}\n${submissionNotes}\n${tenderText}`,
-  );
-  const strengtheningMarkdown = buildClientProposalStrengtheningSections({
-    clientName: intelligence.clientName,
-    tenderTitle: tender.title,
-    companyName: company.name,
-    projectLines,
-    expertLines,
-    companyEvidenceLines,
-    projectEvidenceLines,
-    isHealthcare,
-  });
+  const isHealthcare = /health|hospital|medical|clinic|radiology|laboratory|pharmacy|patient|healthcare|specialty|OPD|in-patient|emergency/i.test(`${proposalTitle}\n${intelligence.primarySector}\n${submissionNotes}\n${tenderText}`);
+  const strengtheningMarkdown = buildClientProposalStrengtheningSections({ clientName: intelligence.clientName, tenderTitle: proposalTitle, companyName: company.name, projectLines, expertLines, companyEvidenceLines, projectEvidenceLines, isHealthcare });
   const finalized = finalizeClientReadyProposalMarkdown([matrixMarkdown, strengtheningMarkdown].filter(Boolean).join("\n\n"), guardInput);
   const auditSummary = benchmarkAuditSummary(finalized.markdown);
   const children = markdownToDocx(finalized.markdown);
-  const doc = buildProfessionalDocument({ tenderTitle: tender.title, clientName: intelligence.clientName, companyName: company.name, reference: tender.reference, children });
+  const doc = buildProfessionalDocument({ tenderTitle: proposalTitle, clientName: intelligence.clientName, companyName: company.name, reference: tender.reference, children });
 
   const fileContent = (await Packer.toBuffer(doc)).toString("base64");
   const summary = `${mode} technical proposal generated. ${finalized.internalSummary}. ${auditSummary}. Inputs: ${intelligence.requiredSections.length} section group(s), ${intelligence.themes.length} tender theme(s), ${experts.length} reviewed expert(s), ${projects.length} reviewed project(s), ${companyEvidenceLines.length} company evidence item(s), ${projectEvidenceLines.length} project evidence attachment(s).${aiError ? ` AI fallback reason: ${aiError}` : ""}`;
 
   const target = await prisma.generatedDocument.findFirst({ where: { tenderId, documentType: { in: ["TECHNICAL_PROPOSAL", "PROPOSAL", "METHODOLOGY"] } }, orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }] });
-  if (target) {
-    await prisma.generatedDocument.update({ where: { id: target.id }, data: { name: "Client-Ready Benchmark Technical Proposal", documentType: "TECHNICAL_PROPOSAL", exactFileName: target.exactFileName || "Technical-Proposal.docx", fileContent, generationStatus: "GENERATED", validationStatus: "PENDING", contentSummary: summary, updatedAt: new Date() } });
-  } else {
-    await prisma.generatedDocument.create({ data: { tenderId, name: "Client-Ready Benchmark Technical Proposal", documentType: "TECHNICAL_PROPOSAL", format: "DOCX", exactFileName: "Technical-Proposal.docx", exactOrder: 1, fileContent, generationStatus: "GENERATED", validationStatus: "PENDING", contentSummary: summary } });
-  }
+  if (target) await prisma.generatedDocument.update({ where: { id: target.id }, data: { name: "Client-Ready Benchmark Technical Proposal", documentType: "TECHNICAL_PROPOSAL", exactFileName: target.exactFileName || "Technical-Proposal.docx", fileContent, generationStatus: "GENERATED", validationStatus: "PENDING", contentSummary: summary, updatedAt: new Date() } });
+  else await prisma.generatedDocument.create({ data: { tenderId, name: "Client-Ready Benchmark Technical Proposal", documentType: "TECHNICAL_PROPOSAL", format: "DOCX", exactFileName: "Technical-Proposal.docx", exactOrder: 1, fileContent, generationStatus: "GENERATED", validationStatus: "PENDING", contentSummary: summary } });
 
   await prisma.tender.update({ where: { id: tenderId }, data: { status: "GENERATED", stage: "GENERATION", updatedAt: new Date() } });
 }
