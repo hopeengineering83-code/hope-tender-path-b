@@ -73,28 +73,170 @@ function fallbackProposalMarkdown(params: {
   complianceLines: string[];
   expertRequired: number;
   projectRequired: number;
+  themes?: import("./proposal-intelligence").ProposalTheme[];
+  evaluationCriteria?: string[];
+  appendixList?: string[];
+  noFinancialProposal?: boolean;
+  exactEmails?: string[];
+  exactSubjectLine?: string | null;
+  gapsToAddressInNarrative?: string[];
+  requiredSections?: string[];
 }): string {
   const expertSelected = params.expertLines.length;
   const projectSelected = params.projectLines.length;
+  const themes = params.themes ?? [];
+  const evalCriteria = params.evaluationCriteria ?? [];
+  const appendixList = params.appendixList ?? [];
+  const gaps = params.gapsToAddressInNarrative ?? [];
+  const sections = params.requiredSections ?? [];
+  const exactSubject = params.exactSubjectLine ?? `Technical Proposal for ${params.tenderTitle}`;
+  const emailLine = params.exactEmails?.length ? `To: ${params.exactEmails.join("; ")}` : `To: ${params.clientName}`;
   const lines: string[] = [];
-  lines.push("# Cover Letter", `To: ${params.clientName}`, `Subject: Technical Proposal for ${params.tenderTitle}`, `${params.companyName} is pleased to submit this technical proposal. The response is structured around the tender requirements, selected evidence, evaluation criteria, and senior bid-review actions.`);
-  lines.push(...params.submissionRules.map((x) => `- ${x}`));
-  lines.push("# Technical Proposal", params.tenderTitle, `Client: ${params.clientName}`, `Prepared by: ${params.companyName}`, `Primary sector: ${params.primarySector}`);
-  lines.push("# Table of Contents", ...["Cover Letter", "Technical Proposal", "Executive Summary", "Company Profile", "Proposed Team", "Relevant Experience", "Technical Approach", "Compliance and Bid Review Strategy", "Appendix Register", "Declaration"].map((item, i) => `${i + 1}. ${item}`));
-  lines.push("# Executive Summary", `${params.companyName} understands this opportunity as a ${params.primarySector.toLowerCase()} assignment requiring a persuasive, evidence-led response rather than a generic company profile. The proposal maps the strongest reviewed company evidence to the client's scope, risks, evaluation criteria, and submission requirements.`);
-  lines.push(...params.differentiators.map((x) => `- ${x}`));
-  lines.push("## Company Evidence Base", ...(params.companyEvidenceLines.length ? params.companyEvidenceLines.slice(0, 12).map((x) => `- ${x}`) : ["- Wider company evidence documents should be confirmed before final submission."]));
-  lines.push("# Company Profile", `${params.companyName} is presented through the company evidence and service lines uploaded to the application.`);
-  lines.push("# Proposed Team", ...(params.expertLines.length ? params.expertLines.map((x) => `- ${x}`) : ["- No reviewed expert record selected yet; review and select CVs before final submission."]));
-  lines.push("# Relevant Experience", ...(params.projectLines.length ? params.projectLines.map((x) => `- ${x}`) : ["- No reviewed project reference selected yet; review and select project references before final submission."]));
-  if (params.projectEvidenceLines.length) lines.push("## Project Evidence Attachments", ...params.projectEvidenceLines.slice(0, 12).map((x) => `- ${x}`));
-  lines.push("# Technical Approach", ...params.requirements.slice(0, 10).map((r) => `- Response strategy: ${r}`));
-  lines.push("# Compliance and Bid Review Strategy", "The proposal proceeds with the strongest reviewed evidence and surfaces any remaining evidence balance as a senior bid-review item instead of hiding or inventing missing information.");
-  if (params.expertRequired > expertSelected) lines.push(`- Tender appears to request ${params.expertRequired} expert(s); ${expertSelected} reviewed expert(s) are selected. Add/confirm ${params.expertRequired - expertSelected} expert(s) before final submission if the number is mandatory.`);
-  if (params.projectRequired > projectSelected) lines.push(`- Tender appears to request ${params.projectRequired} project reference(s); ${projectSelected} reviewed reference(s) are selected. Add/confirm ${params.projectRequired - projectSelected} reference(s) before final submission if mandatory.`);
-  lines.push(...params.complianceLines.slice(0, 20).map((x) => `- ${x}`));
-  lines.push("# Appendix Register", "- Appendices should include registration, support documents, CVs, project evidence, photos/drawings, certificates, and declarations required by the tender.");
-  lines.push("# Declaration", `We confirm this proposal has been prepared for ${params.tenderTitle} using reviewed evidence and senior bid-review controls.`);
+
+  // ── Cover Letter ─────────────────────────────────────────────────────────────
+  lines.push("# Cover Letter");
+  lines.push(emailLine);
+  lines.push(`Subject: ${exactSubject}`);
+  if (params.noFinancialProposal) lines.push("Note: This is a TECHNICAL PROPOSAL ONLY. No financial offer or pricing is included, as required by the tender instructions.");
+  lines.push(
+    `${params.companyName} is pleased to submit this technical proposal in response to your invitation for ${params.tenderTitle}. ` +
+    `We have reviewed the tender requirements carefully and structured this response to address each evaluation criterion with direct evidence from our portfolio and team.`,
+  );
+  if (params.projectLines.length > 0) {
+    lines.push(`Our strongest comparable project references are included in Section B, including ${params.projectLines.slice(0, 2).map((l) => l.split("—")[0].trim()).join(" and ")}.`);
+  }
+  if (params.differentiators.length > 0) {
+    lines.push("Key differentiators that make us well-placed to serve this assignment:");
+    lines.push(...params.differentiators.slice(0, 3).map((d) => `- ${d}`));
+  }
+  lines.push(`We trust this proposal demonstrates our capacity, commitment, and technical depth. We look forward to the opportunity to discuss further.\n\nSincerely,\n${params.companyName}`);
+
+  // ── Cover Page ────────────────────────────────────────────────────────────────
+  lines.push("# Technical Proposal");
+  lines.push(`**${params.tenderTitle}**`);
+  lines.push(`Client: ${params.clientName}`);
+  lines.push(`Prepared by: ${params.companyName}`);
+  lines.push(`Sector: ${params.primarySector}`);
+
+  // ── Table of Contents ─────────────────────────────────────────────────────────
+  const tocItems = ["Cover Letter", "Executive Summary"];
+  if (sections.length >= 2) {
+    tocItems.push(...sections);
+  } else {
+    tocItems.push("Section A: Company Profile", "Section B: Relevant Experience", "Section C: Technical Approach", "Section D: Additional Information");
+  }
+  tocItems.push("Compliance and Bid Review Notes", "Appendix Register", "Declaration");
+  lines.push("# Table of Contents");
+  lines.push(...tocItems.map((item, i) => `${i + 1}. ${item}`));
+
+  // ── Executive Summary ─────────────────────────────────────────────────────────
+  lines.push("# Executive Summary");
+  lines.push(
+    `${params.companyName} presents this technical proposal as a ${params.primarySector} assignment requiring an evidence-led, evaluator-facing response. ` +
+    `We have ${projectSelected > 0 ? `${projectSelected} directly relevant project reference(s)` : "comparable project experience"} and ` +
+    `${expertSelected > 0 ? `${expertSelected} reviewed specialist(s)` : "a qualified professional team"} aligned to the scope.`,
+  );
+  if (evalCriteria.length > 0) {
+    lines.push("## Our response maps directly to the evaluation criteria:");
+    lines.push(...evalCriteria.slice(0, 5).map((c) => `- ${c}`));
+  }
+  if (params.differentiators.length > 0) {
+    lines.push("## Why we are best placed for this assignment:");
+    lines.push(...params.differentiators.map((d) => `- ${d}`));
+  }
+
+  // ── Section A: Company Profile ─────────────────────────────────────────────────
+  const sectionALabel = sections.find((s) => /company profile|section a/i.test(s)) ?? "Section A: Company Profile";
+  lines.push(`# ${sectionALabel}`);
+  lines.push(`**${params.companyName}** is a professional consultancy operating in the ${params.primarySector} sector.`);
+  if (params.companyEvidenceLines.length > 0) {
+    lines.push("## Company Evidence Documents");
+    lines.push(...params.companyEvidenceLines.slice(0, 8).map((x) => `- ${x}`));
+  } else {
+    lines.push("Company registration, licence, service line, and sector information should be confirmed and attached to this section before final submission.");
+  }
+  if (params.submissionRules.length > 0) {
+    lines.push("## Submission Instructions Acknowledged");
+    lines.push(...params.submissionRules.map((r) => `- ${r}`));
+  }
+
+  // ── Section B: Relevant Experience ────────────────────────────────────────────
+  const sectionBLabel = sections.find((s) => /relevant experience|section b/i.test(s)) ?? "Section B: Relevant Experience";
+  lines.push(`# ${sectionBLabel}`);
+  if (projectSelected > 0) {
+    lines.push(`${params.companyName} presents ${projectSelected} reviewed project reference(s) directly relevant to this assignment:`);
+    lines.push(...params.projectLines.map((x) => `- ${x}`));
+    if (params.projectEvidenceLines.length > 0) {
+      lines.push("## Project Evidence Attachments");
+      lines.push(...params.projectEvidenceLines.slice(0, 10).map((x) => `- ${x}`));
+    }
+  } else {
+    lines.push("No reviewed project reference has been selected yet. Select and review project references in the application before final submission. Ensure each reference includes: project name, client, contract value, country, scope summary, and a client reference letter or contract.");
+  }
+
+  // ── Section C: Technical Approach ─────────────────────────────────────────────
+  const sectionCLabel = sections.find((s) => /technical approach|methodology|section c/i.test(s)) ?? "Section C: Technical Approach";
+  lines.push(`# ${sectionCLabel}`);
+  lines.push(`${params.companyName} will execute this ${params.primarySector} assignment through the following structured methodology:`);
+
+  if (themes.length > 0) {
+    for (const theme of themes.slice(0, 4)) {
+      lines.push(`## ${theme.label}`);
+      lines.push(...theme.methodologyBullets.map((b) => `- ${b}`));
+    }
+  } else if (params.requirements.length > 0) {
+    lines.push("## Scope Response");
+    lines.push(...params.requirements.slice(0, 12).map((r) => `- ${r}`));
+  }
+
+  lines.push("## Proposed Team and Expert Contributions");
+  if (expertSelected > 0) {
+    lines.push(...params.expertLines.map((x) => `- ${x}`));
+  } else {
+    lines.push("- Expert CVs and role assignments must be finalised and reviewed before submission. The tender requires a multidisciplinary team; confirm each expert's primary role and comparable previous project.");
+  }
+
+  // ── Section D: Additional Information ─────────────────────────────────────────
+  const sectionDLabel = sections.find((s) => /additional information|value.?added|section d/i.test(s)) ?? "Section D: Additional Information";
+  lines.push(`# ${sectionDLabel}`);
+  lines.push(`${params.companyName} offers the following value-added capabilities and institutional advantages relevant to this assignment:`);
+  if (params.differentiators.length > 3) {
+    lines.push(...params.differentiators.slice(3).map((d) => `- ${d}`));
+  }
+  lines.push("Additional certifications, awards, company manuals, and institutional affiliations are provided in the appendices.");
+
+  // ── Compliance and Bid Review Notes ───────────────────────────────────────────
+  lines.push("# Compliance and Bid Review Notes");
+  lines.push("This proposal is submitted in strict compliance with the tender instructions. The following compliance items have been reviewed:");
+  if (params.complianceLines.length > 0) lines.push(...params.complianceLines.slice(0, 16).map((x) => `- ${x}`));
+  if (params.expertRequired > expertSelected) lines.push(`- Tender requests ${params.expertRequired} expert(s); ${expertSelected} reviewed expert(s) are included. Confirm or add ${params.expertRequired - expertSelected} expert(s) before final submission.`);
+  if (params.projectRequired > projectSelected) lines.push(`- Tender requests ${params.projectRequired} project reference(s); ${projectSelected} reviewed reference(s) are included. Confirm or add ${params.projectRequired - projectSelected} reference(s) before final submission.`);
+  if (gaps.length > 0) {
+    lines.push("## Senior Bid-Review Items (gaps to address before submission)");
+    lines.push(...gaps.map((g) => `- ${g}`));
+  }
+
+  // ── Appendix Register ──────────────────────────────────────────────────────────
+  lines.push("# Appendix Register");
+  if (appendixList.length > 0) {
+    lines.push(...appendixList.map((a) => `- ${a}`));
+  } else {
+    lines.push("- Appendix A: Company Profile and Registration Documents (Certificate of Incorporation, TIN, VAT, Business Licence)");
+    lines.push("- Appendix B: Client Reference Letters and Contracts for Selected Projects");
+    lines.push("- Appendix C: Curricula Vitae and Professional Credentials for Proposed Experts");
+    lines.push("- Appendix D: Project Photos, Floor Plans and Drawings");
+    lines.push("- Appendix E: Audited Financial Statements and Company Manuals");
+    lines.push("- Appendix F: Certifications, ISO and Compliance Certificates");
+  }
+
+  // ── Declaration ────────────────────────────────────────────────────────────────
+  lines.push("# Declaration");
+  lines.push(
+    `We, ${params.companyName}, hereby confirm that this technical proposal has been prepared specifically in response to ${params.tenderTitle} for ${params.clientName}. ` +
+    "All information provided is accurate and supported by documentary evidence available on request. " +
+    "This proposal has been prepared using reviewed evidence and senior bid-review controls, and we commit to delivering the assigned scope with the proposed team, methodology, and schedule."
+  );
+
   return lines.join("\n\n");
 }
 
@@ -232,11 +374,11 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
       mode = "AI bid-writer + evaluator response matrix + full evidence library + client-ready benchmark finalizer + professional DOCX polish";
     } catch (error) {
       aiError = error instanceof Error ? error.message : String(error);
-      sourceMarkdown = fallbackProposalMarkdown({ tenderTitle: tender.title, clientName: intelligence.clientName, companyName: company.name, primarySector: intelligence.primarySector, requirements: requirementLines, differentiators: intelligence.differentiators, submissionRules: intelligence.submissionRules, expertLines, projectLines, companyEvidenceLines, projectEvidenceLines, complianceLines, expertRequired, projectRequired });
+      sourceMarkdown = fallbackProposalMarkdown({ tenderTitle: tender.title, clientName: intelligence.clientName, companyName: company.name, primarySector: intelligence.primarySector, requirements: requirementLines, differentiators: intelligence.differentiators, submissionRules: intelligence.submissionRules, expertLines, projectLines, companyEvidenceLines, projectEvidenceLines, complianceLines, expertRequired, projectRequired, themes: intelligence.themes, evaluationCriteria: intelligence.evaluationCriteria, appendixList: intelligence.appendixList, noFinancialProposal: intelligence.noFinancialProposal, exactEmails: intelligence.exactEmails, exactSubjectLine: intelligence.exactSubjectLine, gapsToAddressInNarrative: intelligence.gapsToAddressInNarrative, requiredSections: intelligence.requiredSections });
       mode = "deterministic benchmark fallback + evaluator response matrix + client-ready benchmark finalizer + professional DOCX polish";
     }
   } else {
-    sourceMarkdown = fallbackProposalMarkdown({ tenderTitle: tender.title, clientName: intelligence.clientName, companyName: company.name, primarySector: intelligence.primarySector, requirements: requirementLines, differentiators: intelligence.differentiators, submissionRules: intelligence.submissionRules, expertLines, projectLines, companyEvidenceLines, projectEvidenceLines, complianceLines, expertRequired, projectRequired });
+    sourceMarkdown = fallbackProposalMarkdown({ tenderTitle: tender.title, clientName: intelligence.clientName, companyName: company.name, primarySector: intelligence.primarySector, requirements: requirementLines, differentiators: intelligence.differentiators, submissionRules: intelligence.submissionRules, expertLines, projectLines, companyEvidenceLines, projectEvidenceLines, complianceLines, expertRequired, projectRequired, themes: intelligence.themes, evaluationCriteria: intelligence.evaluationCriteria, appendixList: intelligence.appendixList, noFinancialProposal: intelligence.noFinancialProposal, exactEmails: intelligence.exactEmails, exactSubjectLine: intelligence.exactSubjectLine, gapsToAddressInNarrative: intelligence.gapsToAddressInNarrative, requiredSections: intelligence.requiredSections });
   }
 
   const matrixMarkdown = appendEvaluatorResponseMatrix(sourceMarkdown, evaluatorMatrixInput);
