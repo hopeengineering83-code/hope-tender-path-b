@@ -1,12 +1,9 @@
 import { AlignmentType, BorderStyle, Document, Footer, Header, HeadingLevel, Packer, PageNumber, Paragraph, TextRun } from "docx";
 import { prisma } from "../prisma";
-import { generateBenchmarkProposalWithAI, isAIEnabled } from "../ai";
-import { buildProposalIntelligence, expertProofLine, projectProofLine, safeParseArr } from "./proposal-intelligence";
+import { buildProposalIntelligence, expertProofLine, projectProofLine } from "./proposal-intelligence";
 import { exactSelectionLimit } from "./scope-policy";
 import { finalizeClientReadyProposalMarkdown } from "./proposal-benchmark-guard";
 import { benchmarkAuditSummary } from "./proposal-benchmark-audit";
-import { buildFallbackProofOpening } from "./fallback-proof-opening";
-import { fallbackAbcdSections, fallbackAbcdTableOfContents } from "./fallback-abcd-structure";
 import { buildClientProposalStrengtheningSections } from "./proposal-strengthening-sections";
 import { appendEvaluatorResponseMatrix } from "./proposal-evaluator-matrix";
 import { buildControlledProposalMarkdown } from "./controlled-proposal-assembler";
@@ -27,8 +24,14 @@ function bullet(text: string): Paragraph {
   return new Paragraph({ text, bullet: { level: 0 }, spacing: { after: 80, line: 260 } });
 }
 
-function clean(text?: string | null): string { return (text ?? "").replace(/\s+/g, " ").trim(); }
-function shortText(text?: string | null, max = 700): string { const value = clean(text); return value.length > max ? `${value.slice(0, max - 1)}…` : value; }
+function clean(text?: string | null): string {
+  return (text ?? "").replace(/\s+/g, " ").trim();
+}
+
+function shortText(text?: string | null, max = 700): string {
+  const value = clean(text);
+  return value.length > max ? `${value.slice(0, max - 1)}…` : value;
+}
 
 function markdownToDocx(markdown: string): Paragraph[] {
   const out: Paragraph[] = [];
@@ -45,45 +48,28 @@ function markdownToDocx(markdown: string): Paragraph[] {
   return out.length > 0 ? out : [para("No proposal content was generated.")];
 }
 
-function fallbackProposalMarkdown(params: { tenderTitle: string; clientName: string; companyName: string; primarySector: string; requirements: string[]; differentiators: string[]; submissionRules: string[]; expertLines: string[]; projectLines: string[]; companyEvidenceLines: string[]; projectEvidenceLines: string[]; complianceLines: string[]; expertRequired: number; projectRequired: number }): string {
-  const expertSelected = params.expertLines.length;
-  const projectSelected = params.projectLines.length;
-  const proofOpening = buildFallbackProofOpening({ companyName: params.companyName, clientName: params.clientName, tenderTitle: params.tenderTitle, primarySector: params.primarySector, projectLines: params.projectLines, expertLines: params.expertLines, differentiators: params.differentiators });
-  const isHealthcare = /health|hospital|medical|clinic|pharmacy|radiology|laboratory|patient|OPD|in-patient|emergency/i.test(`${params.tenderTitle}\n${params.primarySector}\n${params.requirements.join("\n")}`);
-  const abcdInput = { tenderTitle: params.tenderTitle, clientName: params.clientName, companyName: params.companyName, primarySector: params.primarySector, expertCount: expertSelected, projectCount: projectSelected, isHealthcare };
-  const lines: string[] = [];
-  lines.push("# Cover Letter", `To: ${params.clientName}`, `Subject: Technical Proposal for ${params.tenderTitle}`, ...proofOpening);
-  lines.push(...params.submissionRules.map((x) => `- ${x}`));
-  lines.push("# Technical Proposal", params.tenderTitle, `Client: ${params.clientName}`, `Prepared by: ${params.companyName}`, `Primary sector: ${params.primarySector}`);
-  lines.push(...fallbackAbcdTableOfContents(abcdInput));
-  lines.push("# Executive Summary", `${params.companyName} understands this opportunity as a ${params.primarySector.toLowerCase()} assignment requiring a persuasive, evidence-led response rather than a generic company profile. The proposal maps the strongest reviewed company evidence to the client's scope, risks, evaluation criteria, and submission requirements.`, ...proofOpening.slice(1, 5));
-  lines.push(...params.differentiators.map((x) => `- ${x}`));
-  lines.push("## Company Evidence Base", ...(params.companyEvidenceLines.length ? params.companyEvidenceLines.slice(0, 12).map((x) => `- ${x}`) : ["- Wider company evidence documents should be confirmed before final submission."]));
-  lines.push(...fallbackAbcdSections(abcdInput));
-  lines.push("# Company Profile", `${params.companyName} is presented through the company evidence and service lines uploaded to the application.`);
-  lines.push("# Proposed Team", ...(params.expertLines.length ? params.expertLines.map((x) => `- ${x}`) : ["- No reviewed expert record selected yet; review and select CVs before final submission."]));
-  lines.push("# Relevant Experience", ...(params.projectLines.length ? params.projectLines.map((x) => `- ${x}`) : ["- No reviewed project reference selected yet; review and select project references before final submission."]));
-  if (params.projectEvidenceLines.length) lines.push("## Project Evidence Attachments", ...params.projectEvidenceLines.slice(0, 12).map((x) => `- ${x}`));
-  lines.push("# Technical Approach", ...params.requirements.slice(0, 10).map((r) => `- Response strategy: ${r}`));
-  lines.push("# Compliance and Bid Review Strategy", "The proposal proceeds with the strongest reviewed evidence and surfaces any remaining evidence balance as a senior bid-review item instead of hiding or inventing missing information.");
-  if (params.expertRequired > expertSelected) lines.push(`- Tender appears to request ${params.expertRequired} expert(s); ${expertSelected} reviewed expert(s) are selected. Add/confirm ${params.expertRequired - expertSelected} expert(s) before final submission if the number is mandatory.`);
-  if (params.projectRequired > projectSelected) lines.push(`- Tender appears to request ${params.projectRequired} project reference(s); ${projectSelected} reviewed reference(s) are selected. Add/confirm ${params.projectRequired - projectSelected} reference(s) before final submission if mandatory.`);
-  lines.push(...params.complianceLines.slice(0, 20).map((x) => `- ${x}`));
-  lines.push("# Appendix Register", "- Appendices should include registration, support documents, CVs, project evidence, photos/drawings, certificates, and declarations required by the tender.");
-  lines.push("# Declaration", `We confirm this proposal has been prepared for ${params.tenderTitle} using reviewed evidence and senior bid-review controls.`);
-  return lines.join("\n\n");
-}
-
 function buildCompanyEvidenceLines(company: any): string[] {
-  const documentLines = (company.documents ?? []).filter((doc: any) => clean(doc.extractedText).length > 20 || clean(doc.originalFileName).length > 0).slice(0, 18).map((doc: any) => `Company document: ${doc.originalFileName} | category: ${doc.category} | evidence: ${shortText(doc.extractedText, 850)}`);
-  const legalLines = (company.legalRecords ?? []).slice(0, 8).map((record: any) => `Legal evidence: ${record.title} | type: ${record.recordType}${record.authority ? ` | authority: ${record.authority}` : ""}${record.referenceNumber ? ` | ref: ${record.referenceNumber}` : ""}${record.status ? ` | status: ${record.status}` : ""}`);
-  const financialLines = (company.financialRecords ?? []).slice(0, 8).map((record: any) => `Financial evidence: ${record.recordType} ${record.fiscalYear}${record.amount ? ` | amount: ${record.currency ?? ""} ${record.amount}` : ""}${record.notes ? ` | notes: ${shortText(record.notes, 240)}` : ""}`);
-  const complianceLines = (company.complianceRecords ?? []).slice(0, 10).map((record: any) => `Compliance evidence: ${record.title} | type: ${record.complianceType}${record.status ? ` | status: ${record.status}` : ""}${record.referenceNumber ? ` | ref: ${record.referenceNumber}` : ""}${record.evidenceSummary ? ` | ${shortText(record.evidenceSummary, 360)}` : ""}`);
+  const documentLines = (company.documents ?? [])
+    .filter((doc: any) => clean(doc.extractedText).length > 20 || clean(doc.originalFileName).length > 0)
+    .slice(0, 18)
+    .map((doc: any) => `Company document: ${doc.originalFileName} | category: ${doc.category} | evidence: ${shortText(doc.extractedText, 850)}`);
+  const legalLines = (company.legalRecords ?? [])
+    .slice(0, 8)
+    .map((record: any) => `Legal evidence: ${record.title} | type: ${record.recordType}${record.authority ? ` | authority: ${record.authority}` : ""}${record.referenceNumber ? ` | ref: ${record.referenceNumber}` : ""}${record.status ? ` | status: ${record.status}` : ""}`);
+  const financialLines = (company.financialRecords ?? [])
+    .slice(0, 8)
+    .map((record: any) => `Financial evidence: ${record.recordType} ${record.fiscalYear}${record.amount ? ` | amount: ${record.currency ?? ""} ${record.amount}` : ""}${record.notes ? ` | notes: ${shortText(record.notes, 240)}` : ""}`);
+  const complianceLines = (company.complianceRecords ?? [])
+    .slice(0, 10)
+    .map((record: any) => `Compliance evidence: ${record.title} | type: ${record.complianceType}${record.status ? ` | status: ${record.status}` : ""}${record.referenceNumber ? ` | ref: ${record.referenceNumber}` : ""}${record.evidenceSummary ? ` | ${shortText(record.evidenceSummary, 360)}` : ""}`);
   return [...documentLines, ...legalLines, ...financialLines, ...complianceLines].filter(Boolean);
 }
 
 function buildProjectEvidenceLines(projects: any[]): string[] {
-  return projects.flatMap((project: any) => (project.evidences ?? []).slice(0, 5).map((evidence: any) => `Project evidence for ${project.name}: ${evidence.title} | type: ${evidence.evidenceType}${evidence.fileName ? ` | file: ${evidence.fileName}` : ""}${evidence.description ? ` | ${shortText(evidence.description, 280)}` : ""}${evidence.extractedText ? ` | text: ${shortText(evidence.extractedText, 520)}` : ""}`)).slice(0, 30);
+  return projects.flatMap((project: any) => (project.evidences ?? [])
+    .slice(0, 5)
+    .map((evidence: any) => `Project evidence for ${project.name}: ${evidence.title} | type: ${evidence.evidenceType}${evidence.fileName ? ` | file: ${evidence.fileName}` : ""}${evidence.description ? ` | ${shortText(evidence.description, 280)}` : ""}${evidence.extractedText ? ` | text: ${shortText(evidence.extractedText, 520)}` : ""}`))
+    .slice(0, 30);
 }
 
 function buildCoverBlock(params: { tenderTitle: string; clientName: string; companyName: string; reference?: string | null }): Paragraph[] {
@@ -111,13 +97,6 @@ function buildProfessionalDocument(params: { tenderTitle: string; clientName: st
     ] },
   });
 }
-
-const BENCHMARK_CONTEXT_LINES = [
-  "MANDATORY BENCHMARK STRUCTURE: Cover Letter; Technical Proposal; Table of Contents; Executive Summary; Company Profile; Proposed Team; Relevant Experience; Technical Approach; Compliance and Bid Review Strategy; Additional Information; Appendix Register; Declaration.",
-  "FIRST-DRAFT QUALITY RULE: The first AI draft must contain the benchmark structure, evaluator-facing narrative, evidence mapping, methodology depth, compliance strategy, appendix register, and final declaration.",
-  "EVIDENCE RULE: Use only provided experts, projects, company documents, legal records, financial records, compliance records, project evidence, compliance rows, and tender text. If evidence is missing, state it as a bid-team confirmation item, not as a fake claim.",
-  "CLIENT-READY RULE: Do not write internal benchmark review, auto-repair, debug, AI fallback, or quality-score sections inside the client proposal document.",
-];
 
 export async function generateTenderDocuments(tenderId: string, userId: string): Promise<void> {
   const tender = await prisma.tender.findFirst({
@@ -149,7 +128,6 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   const requirementLines = tender.requirements.map((r) => `${r.priority} ${r.requirementType}: ${r.title} — ${r.description}`);
   const expertLines = experts.map(expertProofLine);
   const projectLines = projects.map(projectProofLine);
-  const evidenceContextLines = [...companyEvidenceLines, ...projectEvidenceLines];
   const submissionNotes = [tender.submissionMethod, tender.submissionAddress, ...intelligence.submissionRules].filter(Boolean).join("\n");
   const complianceLines = [
     ...tender.complianceMatrix.map((m) => { const req = m.requirement?.title ?? m.requirement?.description ?? "Requirement evidence row"; return `${m.supportLevel}: ${req} | ${m.evidenceType} from ${m.evidenceSource}${m.evidenceReference ? ` | ref: ${m.evidenceReference}` : ""}${m.notes ? ` — ${m.notes}` : ""}`; }),
@@ -163,7 +141,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   const guardInput = { tenderTitle: proposalTitle, clientName: intelligence.clientName, companyName: company.name, submissionNotes, expertCount: expertLines.length, projectCount: projectLines.length, complianceLines };
   const evaluatorMatrixInput = { tenderTitle: proposalTitle, clientName: intelligence.clientName, requirements: requirementLines, expertLines, projectLines, companyEvidenceLines, projectEvidenceLines, complianceLines, differentiators: intelligence.differentiators };
 
-  let sourceMarkdown = buildControlledProposalMarkdown({
+  const sourceMarkdown = buildControlledProposalMarkdown({
     tenderTitle: proposalTitle,
     clientName: intelligence.clientName,
     companyName: company.name,
@@ -177,31 +155,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     submissionRules: intelligence.submissionRules,
     complianceLines,
   });
-  let mode = "controlled proposal assembly + deterministic benchmark finalizer";
-  let aiError: string | null = null;
-
-  if (isAIEnabled()) {
-    try {
-      await generateBenchmarkProposalWithAI({
-        tenderTitle: proposalTitle,
-        clientName: intelligence.clientName,
-        tenderText: [BENCHMARK_CONTEXT_LINES.join("\n"), tenderText].join("\n\n"),
-        analysisSummary: clean(tender.analysisSummary) || intelligence.tenderText.slice(0, 2000),
-        evaluationMethodology: clean(tender.evaluationMethodology) || intelligence.evaluationCriteria.join("; "),
-        submissionNotes: [BENCHMARK_CONTEXT_LINES.join("\n"), submissionNotes].filter(Boolean).join("\n"),
-        requirements: [...BENCHMARK_CONTEXT_LINES, ...requirementLines].join("\n"),
-        companyProfile: `${company.name}\n${company.legalName ?? ""}\n${company.profileSummary ?? company.description ?? ""}\nServices: ${safeParseArr(company.serviceLines).join(", ")}\nSectors: ${safeParseArr(company.sectors).join(", ")}\n\nWider company evidence library:\n${evidenceContextLines.join("\n").slice(0, 18_000)}`,
-        experts: expertLines.join("\n"),
-        projects: [...projectLines, ...projectEvidenceLines].join("\n"),
-        compliance: [...BENCHMARK_CONTEXT_LINES, ...complianceLines].join("\n"),
-        differentiators: [...BENCHMARK_CONTEXT_LINES, ...intelligence.differentiators, ...companyEvidenceLines.slice(0, 8)].join("\n"),
-      });
-      mode = "controlled proposal assembly + AI availability verified + deterministic benchmark finalizer";
-    } catch (error) {
-      aiError = error instanceof Error ? error.message : String(error);
-      mode = "controlled proposal assembly + deterministic benchmark finalizer";
-    }
-  }
+  const mode = "controlled proposal assembly + deterministic benchmark finalizer";
 
   const matrixMarkdown = appendEvaluatorResponseMatrix(sourceMarkdown, evaluatorMatrixInput);
   const isHealthcare = /health|hospital|medical|clinic|radiology|laboratory|pharmacy|patient|healthcare|specialty|OPD|in-patient|emergency/i.test(`${proposalTitle}\n${intelligence.primarySector}\n${submissionNotes}\n${tenderText}`);
@@ -212,7 +166,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   const doc = buildProfessionalDocument({ tenderTitle: proposalTitle, clientName: intelligence.clientName, companyName: company.name, reference: tender.reference, children });
 
   const fileContent = (await Packer.toBuffer(doc)).toString("base64");
-  const summary = `${mode} technical proposal generated. ${finalized.internalSummary}. ${auditSummary}. Inputs: ${intelligence.requiredSections.length} section group(s), ${intelligence.themes.length} tender theme(s), ${experts.length} reviewed expert(s), ${projects.length} reviewed project(s), ${companyEvidenceLines.length} company evidence item(s), ${projectEvidenceLines.length} project evidence attachment(s).${aiError ? ` AI fallback reason: ${aiError}` : ""}`;
+  const summary = `${mode} technical proposal generated. ${finalized.internalSummary}. ${auditSummary}. Inputs: ${intelligence.requiredSections.length} section group(s), ${intelligence.themes.length} tender theme(s), ${experts.length} reviewed expert(s), ${projects.length} reviewed project(s), ${companyEvidenceLines.length} company evidence item(s), ${projectEvidenceLines.length} project evidence attachment(s).`;
 
   const target = await prisma.generatedDocument.findFirst({ where: { tenderId, documentType: { in: ["TECHNICAL_PROPOSAL", "PROPOSAL", "METHODOLOGY"] } }, orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }] });
   if (target) await prisma.generatedDocument.update({ where: { id: target.id }, data: { name: "Client-Ready Benchmark Technical Proposal", documentType: "TECHNICAL_PROPOSAL", exactFileName: target.exactFileName || "Technical-Proposal.docx", fileContent, generationStatus: "GENERATED", validationStatus: "PENDING", contentSummary: summary, updatedAt: new Date() } });
