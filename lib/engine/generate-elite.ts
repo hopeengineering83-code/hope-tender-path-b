@@ -9,6 +9,7 @@ import { buildFallbackProofOpening } from "./fallback-proof-opening";
 import { fallbackAbcdSections, fallbackAbcdTableOfContents } from "./fallback-abcd-structure";
 import { buildClientProposalStrengtheningSections } from "./proposal-strengthening-sections";
 import { appendEvaluatorResponseMatrix } from "./proposal-evaluator-matrix";
+import { buildControlledProposalMarkdown } from "./controlled-proposal-assembler";
 
 const BRAND_BLUE = "1F4E79";
 const BRAND_GRAY = "595959";
@@ -162,13 +163,26 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   const guardInput = { tenderTitle: proposalTitle, clientName: intelligence.clientName, companyName: company.name, submissionNotes, expertCount: expertLines.length, projectCount: projectLines.length, complianceLines };
   const evaluatorMatrixInput = { tenderTitle: proposalTitle, clientName: intelligence.clientName, requirements: requirementLines, expertLines, projectLines, companyEvidenceLines, projectEvidenceLines, complianceLines, differentiators: intelligence.differentiators };
 
-  let sourceMarkdown: string;
-  let mode = "deterministic benchmark";
+  let sourceMarkdown = buildControlledProposalMarkdown({
+    tenderTitle: proposalTitle,
+    clientName: intelligence.clientName,
+    companyName: company.name,
+    primarySector: intelligence.primarySector,
+    requirementLines,
+    expertLines,
+    projectLines,
+    companyEvidenceLines,
+    projectEvidenceLines,
+    differentiators: intelligence.differentiators,
+    submissionRules: intelligence.submissionRules,
+    complianceLines,
+  });
+  let mode = "controlled proposal assembly + deterministic benchmark finalizer";
   let aiError: string | null = null;
 
   if (isAIEnabled()) {
     try {
-      sourceMarkdown = await generateBenchmarkProposalWithAI({
+      await generateBenchmarkProposalWithAI({
         tenderTitle: proposalTitle,
         clientName: intelligence.clientName,
         tenderText: [BENCHMARK_CONTEXT_LINES.join("\n"), tenderText].join("\n\n"),
@@ -182,19 +196,16 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
         compliance: [...BENCHMARK_CONTEXT_LINES, ...complianceLines].join("\n"),
         differentiators: [...BENCHMARK_CONTEXT_LINES, ...intelligence.differentiators, ...companyEvidenceLines.slice(0, 8)].join("\n"),
       });
-      mode = "AI bid-writer + evaluator response matrix + full evidence library + client-ready benchmark finalizer + professional DOCX polish";
+      mode = "controlled proposal assembly + AI availability verified + deterministic benchmark finalizer";
     } catch (error) {
       aiError = error instanceof Error ? error.message : String(error);
-      sourceMarkdown = fallbackProposalMarkdown({ tenderTitle: proposalTitle, clientName: intelligence.clientName, companyName: company.name, primarySector: intelligence.primarySector, requirements: requirementLines, differentiators: intelligence.differentiators, submissionRules: intelligence.submissionRules, expertLines, projectLines, companyEvidenceLines, projectEvidenceLines, complianceLines, expertRequired, projectRequired });
-      mode = "deterministic benchmark fallback + evaluator response matrix + client-ready benchmark finalizer + professional DOCX polish";
+      mode = "controlled proposal assembly + deterministic benchmark finalizer";
     }
-  } else {
-    sourceMarkdown = fallbackProposalMarkdown({ tenderTitle: proposalTitle, clientName: intelligence.clientName, companyName: company.name, primarySector: intelligence.primarySector, requirements: requirementLines, differentiators: intelligence.differentiators, submissionRules: intelligence.submissionRules, expertLines, projectLines, companyEvidenceLines, projectEvidenceLines, complianceLines, expertRequired, projectRequired });
   }
 
   const matrixMarkdown = appendEvaluatorResponseMatrix(sourceMarkdown, evaluatorMatrixInput);
   const isHealthcare = /health|hospital|medical|clinic|radiology|laboratory|pharmacy|patient|healthcare|specialty|OPD|in-patient|emergency/i.test(`${proposalTitle}\n${intelligence.primarySector}\n${submissionNotes}\n${tenderText}`);
-  const strengtheningMarkdown = buildClientProposalStrengtheningSections({ clientName: intelligence.clientName, tenderTitle: proposalTitle, companyName: company.name, projectLines, expertLines, companyEvidenceLines, projectEvidenceLines, isHealthcare });
+  const strengtheningMarkdown = buildClientProposalStrengtheningSections({ clientName: intelligence.clientName, tenderTitle: proposalTitle, companyName: company.name, projectLines, expertLines, companyEvidenceLines, projectEvidenceLines, isHealthcare, existingMarkdown: matrixMarkdown });
   const finalized = finalizeClientReadyProposalMarkdown([matrixMarkdown, strengtheningMarkdown].filter(Boolean).join("\n\n"), guardInput);
   const auditSummary = benchmarkAuditSummary(finalized.markdown);
   const children = markdownToDocx(finalized.markdown);
