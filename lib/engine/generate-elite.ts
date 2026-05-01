@@ -5,6 +5,7 @@ import { buildProposalIntelligence, expertProofLine, projectProofLine, safeParse
 import { exactSelectionLimit } from "./scope-policy";
 import { finalizeClientReadyProposalMarkdown } from "./proposal-benchmark-guard";
 import { benchmarkAuditSummary } from "./proposal-benchmark-audit";
+import { buildFallbackProofOpening } from "./fallback-proof-opening";
 import { appendEvaluatorResponseMatrix } from "./proposal-evaluator-matrix";
 
 const BRAND_BLUE = "1F4E79";
@@ -77,12 +78,21 @@ function fallbackProposalMarkdown(params: {
 }): string {
   const expertSelected = params.expertLines.length;
   const projectSelected = params.projectLines.length;
+  const proofOpening = buildFallbackProofOpening({
+    companyName: params.companyName,
+    clientName: params.clientName,
+    tenderTitle: params.tenderTitle,
+    primarySector: params.primarySector,
+    projectLines: params.projectLines,
+    expertLines: params.expertLines,
+    differentiators: params.differentiators,
+  });
   const lines: string[] = [];
-  lines.push("# Cover Letter", `To: ${params.clientName}`, `Subject: Technical Proposal for ${params.tenderTitle}`, `${params.companyName} is pleased to submit this technical proposal. The response is structured around the tender requirements, selected evidence, evaluation criteria, and senior bid-review actions.`);
+  lines.push("# Cover Letter", `To: ${params.clientName}`, `Subject: Technical Proposal for ${params.tenderTitle}`, ...proofOpening);
   lines.push(...params.submissionRules.map((x) => `- ${x}`));
   lines.push("# Technical Proposal", params.tenderTitle, `Client: ${params.clientName}`, `Prepared by: ${params.companyName}`, `Primary sector: ${params.primarySector}`);
   lines.push("# Table of Contents", ...["Cover Letter", "Technical Proposal", "Executive Summary", "Company Profile", "Proposed Team", "Relevant Experience", "Technical Approach", "Compliance and Bid Review Strategy", "Appendix Register", "Declaration"].map((item, i) => `${i + 1}. ${item}`));
-  lines.push("# Executive Summary", `${params.companyName} understands this opportunity as a ${params.primarySector.toLowerCase()} assignment requiring a persuasive, evidence-led response rather than a generic company profile. The proposal maps the strongest reviewed company evidence to the client's scope, risks, evaluation criteria, and submission requirements.`);
+  lines.push("# Executive Summary", `${params.companyName} understands this opportunity as a ${params.primarySector.toLowerCase()} assignment requiring a persuasive, evidence-led response rather than a generic company profile. The proposal maps the strongest reviewed company evidence to the client's scope, risks, evaluation criteria, and submission requirements.`, ...proofOpening.slice(1, 5));
   lines.push(...params.differentiators.map((x) => `- ${x}`));
   lines.push("## Company Evidence Base", ...(params.companyEvidenceLines.length ? params.companyEvidenceLines.slice(0, 12).map((x) => `- ${x}`) : ["- Wider company evidence documents should be confirmed before final submission."]));
   lines.push("# Company Profile", `${params.companyName} is presented through the company evidence and service lines uploaded to the application.`);
