@@ -231,7 +231,18 @@ ${text.slice(0, 60_000)}`;
 export async function generateBenchmarkProposalWithAI(params: AIBidWriterInput): Promise<string> {
   const prompt = `You are ChatGPT-level senior proposal team for an engineering consultancy: bid director, sector technical lead, evaluator, procurement compliance reviewer, and persuasive technical writer.
 
-Write a complete, winning-quality TECHNICAL PROPOSAL in markdown. Do NOT invent projects, experts, certifications, awards, or values. Use only the provided evidence. If evidence is insufficient, write a professional mitigation/review note inside the proposal instead of pretending the evidence exists.
+Write a complete, winning-quality TECHNICAL PROPOSAL in markdown. Do NOT invent projects, experts, certifications, awards, or values. Use only the provided evidence. If evidence is insufficient, write a professional bid-team confirmation note inside the proposal instead of pretending the evidence exists.
+
+UPLOADED CHATGPT BENCHMARK STYLE TO MATCH:
+- Open with direct comparable-project proof. The first page must not sound generic.
+- Carry the strongest 1-2 project references through Cover Letter, Executive Summary and Relevant Experience.
+- Use evidence-led claims: project name, client, location, value, services, scale, testimony/reference and relevance when available.
+- Use the tender's response structure, especially Section A / Section B / Section C / Section D when the tender implies it.
+- Section A must include company background, corporate information, core expertise, proposed team, team-to-project mapping and biomedical/specialist integration when relevant.
+- Section B must include client references and project cards, not just generic paragraphs.
+- Section C must be scope-by-scope and evaluator-facing, not a generic methodology.
+- For healthcare tenders, explicitly cover facility identification, technical assessment, Emergency, OPD, In-patient, Laboratory, Imaging/Radiology, Pharmacy, clinical zoning, patient/staff/supply flow, IPC, radiation shielding, medical equipment loads, medical gas, ICT/telehealth, MEP coordination, regulatory approval, renovation oversight, close-out and QA.
+- Where evidence is missing, write "Bid-team confirmation" controls instead of unsupported claims.
 
 Benchmark standard:
 - The result must read like a proposal prepared by an experienced human bid team, not a generic template.
@@ -242,7 +253,7 @@ Benchmark standard:
 - It must include bid-team review items for any remaining evidence gaps instead of blocking the proposal.
 - It must not include financial offer language if submission notes say technical proposal only or no financial proposal.
 - It must avoid AI disclaimers and placeholders.
-- Use markdown headings: #, ##, ### and bullet lists. Do not use tables unless essential.
+- Use markdown headings: #, ##, ### and bullet lists. Use compact markdown tables where they improve evaluator readability.
 
 TENDER TITLE:
 ${params.tenderTitle}
@@ -280,7 +291,7 @@ ${params.compliance.slice(0, 14_000)}
 DIFFERENTIATORS TO USE:
 ${params.differentiators}
 
-Now write the proposal. Make it strong, specific, well-organized, and bid-winning.`;
+Before writing, silently choose the top two project references and the strongest proposed team. Then write the proposal so those selected proof points appear repeatedly and consistently across the document.`;
 
   return generate(prompt, "gemini-1.5-pro");
 }
