@@ -86,6 +86,22 @@ const HEALTHCARE_BENCHMARK_MARKERS = [
   "close-out",
 ];
 
+const FIRST_PAGE_PROOF_TERMS = [
+  "project",
+  "reference",
+  "client",
+  "hospital",
+  "medical",
+  "health",
+  "contract",
+  "value",
+  "scope",
+  "services",
+  "evidence",
+  "experience",
+  "similar",
+];
+
 function headingExists(markdown: string, label: string): boolean {
   const simple = label.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
   return markdown
@@ -135,6 +151,16 @@ function markerCoverage(markdown: string, markers: string[]): number {
   return markers.filter((marker) => lower.includes(marker.toLowerCase())).length;
 }
 
+function firstPageHasProof(markdown: string): boolean {
+  const firstPage = markdown.slice(0, 2600).toLowerCase();
+  const hits = FIRST_PAGE_PROOF_TERMS.filter((term) => firstPage.includes(term)).length;
+  return hits >= 4;
+}
+
+function hasEvidenceControlRegister(markdown: string): boolean {
+  return /evidence control register|claim.to.evidence|source traceability|appendix evidence|bid-team confirmation/i.test(markdown);
+}
+
 export function benchmarkMissingSections(markdown: string): string[] {
   return BENCHMARK_SECTIONS.filter((section) => !headingExists(markdown, section));
 }
@@ -150,7 +176,7 @@ export function scoreBenchmarkProposalMarkdown(markdown: string, input: Benchmar
   let score = 0;
 
   const missingSections = benchmarkMissingSections(markdown);
-  const sectionScore = Math.round(((BENCHMARK_SECTIONS.length - missingSections.length) / BENCHMARK_SECTIONS.length) * 25);
+  const sectionScore = Math.round(((BENCHMARK_SECTIONS.length - missingSections.length) / BENCHMARK_SECTIONS.length) * 22);
   score += sectionScore;
   if (missingSections.length === 0) strengths.push("Full baseline benchmark proposal structure is present.");
   else gaps.push(`Missing baseline benchmark sections: ${missingSections.join(", ")}.`);
@@ -164,6 +190,11 @@ export function scoreBenchmarkProposalMarkdown(markdown: string, input: Benchmar
     score += penalty;
     gaps.push(`Missing uploaded ChatGPT benchmark sections: ${missingChatGPTSections.slice(0, 12).join(", ")}${missingChatGPTSections.length > 12 ? "..." : ""}.`);
   }
+
+  if (firstPageHasProof(markdown)) {
+    score += 6;
+    strengths.push("First-page proof discipline is visible: the proposal opens with evidence rather than generic marketing.");
+  } else gaps.push("First page does not carry enough direct project/client/evidence proof.");
 
   if (mentionsAny(markdown, [input.tenderTitle, input.clientName])) {
     score += 8;
@@ -207,6 +238,11 @@ export function scoreBenchmarkProposalMarkdown(markdown: string, input: Benchmar
     score += 10;
     strengths.push("Compliance/bid-review strategy is visible.");
   } else gaps.push("Compliance and bid-review strategy is not visible enough.");
+
+  if (hasEvidenceControlRegister(markdown)) {
+    score += 5;
+    strengths.push("Evidence-control / source-traceability discipline is visible.");
+  } else gaps.push("Evidence-control register or source-traceability discipline is missing.");
 
   if (markdown.length >= 11000) {
     score += 5;
@@ -292,6 +328,27 @@ function completeChatGPTBenchmarkSections(markdown: string, input: BenchmarkGuar
   return output;
 }
 
+function completeProofDisciplineSections(markdown: string, input: BenchmarkGuardInput): string {
+  let output = markdown.trim();
+  if (!headingExists(output, "First-Page Proof Strategy")) {
+    output += "\n\n## First-Page Proof Strategy\n";
+    output += `The opening pages must lead with the strongest reviewed project, client, expert, and compliance evidence for ${input.clientName}. If the generated draft does not contain direct project proof in the Cover Letter or Executive Summary, the bid team must move the strongest comparable reference into the first page before final submission.\n`;
+    output += "- Lead with named comparable projects where reviewed evidence supports the name, client, location, scope, value, services, photos/drawings, testimony, or completion evidence.\n";
+    output += "- Repeat the same lead proof consistently in the Cover Letter, Executive Summary, Relevant Experience, and evaluator-response narrative.\n";
+    output += "- Do not convert unsupported claims into facts; mark them as bid-team confirmation items until source evidence is attached.\n";
+  }
+  if (!headingExists(output, "Evidence Control Register")) {
+    output += "\n\n## Evidence Control Register\n";
+    output += "The final proposal should preserve a clear claim-to-evidence discipline so the bid team can verify every major claim before export.\n";
+    output += "- **Comparable project claims:** verify against reviewed project references, contracts, completion evidence, testimony letters, photos, drawings, or project evidence attachments.\n";
+    output += "- **Expert/team claims:** verify against reviewed CVs, credentials, licences, prior roles, and team-to-project mapping evidence.\n";
+    output += "- **Company capability claims:** verify against company profile, registration/licence, legal records, compliance records, audited/financial records, certificates, and uploaded company documents.\n";
+    output += "- **Methodology claims:** verify against the tender scope, submission instructions, evaluation criteria, regulatory requirements, and bid-team technical review.\n";
+    output += "- **Unsupported claims:** remove, soften, or convert into explicit bid-team confirmation actions before final submission.\n";
+  }
+  return output;
+}
+
 function repairClientReadyMarkdown(markdown: string, input: BenchmarkGuardInput, score: BenchmarkScore): string {
   if (score.passed) return markdown;
   let output = markdown.trim();
@@ -301,7 +358,7 @@ function repairClientReadyMarkdown(markdown: string, input: BenchmarkGuardInput,
     output += `${input.expertCount} reviewed expert record(s) are currently available for this response. Each reviewed expert should be mapped to the scope, deliverables, risk areas, and evaluation criteria before final submission. If the tender requires more named personnel than selected, the additional experts must be confirmed or substituted before export.\n`;
   }
 
-  if (score.gaps.some((gap) => /project|reference/i.test(gap))) {
+  if (score.gaps.some((gap) => /project|reference|first page|proof/i.test(gap))) {
     output += "\n\n## Project Reference Mapping\n";
     output += `${input.projectCount} reviewed project reference(s) are currently available for this response. The proposal leads with the most similar references by sector, client type, technical scope, geography, contract value, and deliverables. Any additional reference, testimony letter, photo, drawing, or completion certificate required by the tender should be attached or marked for bid-team confirmation.\n`;
   }
@@ -315,7 +372,7 @@ function repairClientReadyMarkdown(markdown: string, input: BenchmarkGuardInput,
     output += "\nThe methodology responds to tender risks including missing information, tight submission timelines, evidence sufficiency, specialist availability, format compliance, appendices, regulatory approvals, technical coordination, and final submission control.\n";
   }
 
-  if (score.gaps.some((gap) => /compliance|bid/i.test(gap))) {
+  if (score.gaps.some((gap) => /compliance|bid|evidence-control|traceability/i.test(gap))) {
     output += "\n\n## Submission Compliance Controls\n";
     output += "The bid team should verify all mandatory requirements against the original tender before final submission. The proposal may proceed as draft-ready when evidence is available or reviewable, but exact file names, signatures, stamps, forms, declarations, CVs, project evidence, legal/financial documents, and submission method must be checked before export.\n";
     output += input.complianceLines.slice(0, 10).map((line) => `- ${line}`).join("\n") + "\n";
@@ -332,10 +389,10 @@ function repairClientReadyMarkdown(markdown: string, input: BenchmarkGuardInput,
 
 export function finalizeClientReadyProposalMarkdown(markdown: string, input: BenchmarkGuardInput): ClientReadyProposal {
   const cleaned = removeInternalQualityHeadings(normalizeWeakText(markdown));
-  const completed = completeChatGPTBenchmarkSections(completeMissingClientSections(cleaned, input), input);
+  const completed = completeProofDisciplineSections(completeChatGPTBenchmarkSections(completeMissingClientSections(cleaned, input), input), input);
   const firstScore = scoreBenchmarkProposalMarkdown(completed, input);
   const repaired = repairClientReadyMarkdown(completed, input, firstScore);
-  const clientReady = completeChatGPTBenchmarkSections(removeInternalQualityHeadings(normalizeWeakText(repaired)), input);
+  const clientReady = completeProofDisciplineSections(completeChatGPTBenchmarkSections(removeInternalQualityHeadings(normalizeWeakText(repaired)), input), input);
   const score = scoreBenchmarkProposalMarkdown(clientReady, input);
   const internalSummary = `Benchmark score ${score.score}/100 (${score.passed ? "PASS" : "NEEDS REVIEW"}); first score ${firstScore.score}/100; strengths: ${score.strengths.length}; gaps: ${score.gaps.length}${score.gaps.length ? ` — ${score.gaps.join(" | ")}` : ""}`;
   return { markdown: clientReady, score, firstScore, internalSummary };
