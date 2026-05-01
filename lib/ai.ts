@@ -2,13 +2,18 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import { winningBenchmarkProfileText } from "./engine/winning-proposal-benchmark";
 
 const apiKey = process.env.GEMINI_API_KEY;
+const DEFAULT_GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-pro";
+const FALLBACK_GEMINI_MODELS = (process.env.GEMINI_FALLBACK_MODELS || "gemini-2.5-flash,gemini-2.0-flash")
+  .split(",")
+  .map((model) => model.trim())
+  .filter(Boolean);
 
 function getClient() {
   if (!apiKey) throw new Error("GEMINI_API_KEY not configured");
   return new GoogleGenerativeAI(apiKey);
 }
 
-function getModel(modelName = "gemini-1.5-pro") {
+function getModel(modelName = DEFAULT_GEMINI_MODEL) {
   return getClient().getGenerativeModel({ model: modelName });
 }
 
@@ -16,19 +21,34 @@ export function isAIEnabled() {
   return Boolean(apiKey);
 }
 
-async function generate(prompt: string, modelName = "gemini-1.5-pro"): Promise<string> {
-  try {
-    const model = getModel(modelName);
-    const result = await model.generateContent(prompt);
-    const text = result.response.text();
-    if (!text || text.trim().length === 0) throw new Error("Empty response from Gemini API");
-    return text;
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    if (msg.includes("429")) throw new Error("Gemini API rate limit reached — try again in a moment");
-    if (msg.includes("403") || msg.includes("API_KEY")) throw new Error("Gemini API key invalid or missing");
-    throw err;
+function isModelUnavailableError(message: string): boolean {
+  return /404|not found|not supported for generateContent|models\//i.test(message);
+}
+
+function uniqueModels(primary: string): string[] {
+  return Array.from(new Set([primary, ...FALLBACK_GEMINI_MODELS]));
+}
+
+async function generate(prompt: string, modelName = DEFAULT_GEMINI_MODEL): Promise<string> {
+  const errors: string[] = [];
+
+  for (const candidateModel of uniqueModels(modelName || DEFAULT_GEMINI_MODEL)) {
+    try {
+      const model = getModel(candidateModel);
+      const result = await model.generateContent(prompt);
+      const text = result.response.text();
+      if (!text || text.trim().length === 0) throw new Error(`Empty response from Gemini API using ${candidateModel}`);
+      return text;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      errors.push(`${candidateModel}: ${msg}`);
+      if (msg.includes("429")) throw new Error("Gemini API rate limit reached — try again in a moment");
+      if (msg.includes("403") || msg.includes("API_KEY")) throw new Error("Gemini API key invalid or missing");
+      if (!isModelUnavailableError(msg)) throw err;
+    }
   }
+
+  throw new Error(`Gemini model unavailable. Tried ${uniqueModels(modelName || DEFAULT_GEMINI_MODEL).join(", ")}. Last errors: ${errors.join(" | ")}`);
 }
 
 // ─── Tender analysis types ────────────────────────────────────────────────────
@@ -136,7 +156,7 @@ JSON structure required:
 TENDER DOCUMENT (${trimmedTender.length.toLocaleString()} chars):
 ${trimmedTender}`;
 
-  const text = await generate(prompt);
+  const text = await generate(prompt, process.env.GEMINI_ANALYSIS_MODEL || DEFAULT_GEMINI_MODEL);
   const jsonMatch = text.match(/\{[\s\S]*\}/);
   if (!jsonMatch) throw new Error("Gemini returned no JSON object for tender analysis");
   try {
@@ -171,7 +191,7 @@ Rules: only include people clearly named in the document. Do NOT invent any fiel
 DOCUMENT TEXT (${text.length.toLocaleString()} chars):
 ${text.slice(0, 60_000)}`;
 
-  const raw = await generate(prompt);
+  const raw = await generate(prompt, process.env.GEMINI_EXTRACTION_MODEL || "gemini-2.5-flash");
   const jsonMatch = raw.match(/\[[\s\S]*\]/);
   if (!jsonMatch) return [];
   try {
@@ -212,7 +232,7 @@ Rules: only include projects clearly in the document. Do NOT invent values. sour
 DOCUMENT TEXT (${text.length.toLocaleString()} chars):
 ${text.slice(0, 60_000)}`;
 
-  const raw = await generate(prompt);
+  const raw = await generate(prompt, process.env.GEMINI_EXTRACTION_MODEL || "gemini-2.5-flash");
   const jsonMatch = raw.match(/\[[\s\S]*\]/);
   if (!jsonMatch) return [];
   try {
@@ -297,7 +317,7 @@ ${params.differentiators}
 
 Before writing, silently choose the top two project references and the strongest proposed team. Then write the proposal so those selected proof points appear repeatedly and consistently across the document.`;
 
-  return generate(prompt, "gemini-1.5-pro");
+  return generate(prompt, process.env.GEMINI_PROPOSAL_MODEL || DEFAULT_GEMINI_MODEL);
 }
 
 export async function generateProposal(params: {
@@ -327,5 +347,5 @@ Write a formal proposal with these sections (use ## headings):
 
 Reference tender requirements directly. Use only the company information provided above.`;
 
-  return generate(prompt, "gemini-1.5-pro");
+  return generate(prompt, process.env.GEMINI_PROPOSAL_MODEL || DEFAULT_GEMINI_MODEL);
 }
