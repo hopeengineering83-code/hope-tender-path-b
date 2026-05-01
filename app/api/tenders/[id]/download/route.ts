@@ -81,6 +81,12 @@ async function validateGeneratedDocx(doc: {
     /OpenAI/i,
     /source snippet/i,
     /deterministic safety import/i,
+    /=+\s*PAGE\s+\d+\s*=+/i,
+    /PARSED TEXT FOR PAGE/i,
+    /Senior-level requirement bundle consolidating/i,
+    /Key evidence interpreted:/i,
+    /Company evidence available:/i,
+    /Project evidence available:/i,
   ];
   for (const pattern of forbiddenPatterns) {
     if (pattern.test(text) || pattern.test(doc.name) || pattern.test(filename)) {
