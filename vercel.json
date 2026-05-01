@@ -1,5 +1,8 @@
 {
   "framework": "nextjs",
-  "buildCommand": "node scripts/check-env.mjs && prisma generate && next build",
-  "installCommand": "npm install"
+  "buildCommand": "prisma generate && next build",
+  "installCommand": "npm install",
+  "env": {
+    "NODE_VERSION": "22"
+  }
 }
