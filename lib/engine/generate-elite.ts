@@ -7,6 +7,7 @@ import { finalizeClientReadyProposalMarkdown } from "./proposal-benchmark-guard"
 import { benchmarkAuditSummary } from "./proposal-benchmark-audit";
 import { buildFallbackProofOpening } from "./fallback-proof-opening";
 import { fallbackAbcdSections, fallbackAbcdTableOfContents } from "./fallback-abcd-structure";
+import { buildClientProposalStrengtheningSections } from "./proposal-strengthening-sections";
 import { appendEvaluatorResponseMatrix } from "./proposal-evaluator-matrix";
 
 const BRAND_BLUE = "1F4E79";
@@ -265,7 +266,20 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   }
 
   const matrixMarkdown = appendEvaluatorResponseMatrix(sourceMarkdown, evaluatorMatrixInput);
-  const finalized = finalizeClientReadyProposalMarkdown(matrixMarkdown, guardInput);
+  const isHealthcare = /health|hospital|medical|clinic|radiology|laboratory|pharmacy|patient|healthcare|specialty|OPD|in-patient|emergency/i.test(
+    `${tender.title}\n${intelligence.primarySector}\n${submissionNotes}\n${tenderText}`,
+  );
+  const strengtheningMarkdown = buildClientProposalStrengtheningSections({
+    clientName: intelligence.clientName,
+    tenderTitle: tender.title,
+    companyName: company.name,
+    projectLines,
+    expertLines,
+    companyEvidenceLines,
+    projectEvidenceLines,
+    isHealthcare,
+  });
+  const finalized = finalizeClientReadyProposalMarkdown([matrixMarkdown, strengtheningMarkdown].filter(Boolean).join("\n\n"), guardInput);
   const auditSummary = benchmarkAuditSummary(finalized.markdown);
   const children = markdownToDocx(finalized.markdown);
   const doc = buildProfessionalDocument({ tenderTitle: tender.title, clientName: intelligence.clientName, companyName: company.name, reference: tender.reference, children });
