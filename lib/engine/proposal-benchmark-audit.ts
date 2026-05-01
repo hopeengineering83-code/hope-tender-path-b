@@ -1,4 +1,5 @@
 import { proofDensitySummary } from "./proposal-proof-density";
+import { proofDensityRepairSummary } from "./proof-density-repair-guidance";
 
 export type ProposalBenchmarkAudit = {
   score: number;
@@ -23,6 +24,18 @@ const TRAITS: Array<{ label: string; weight: number; pattern: RegExp }> = [
   { label: "avoids AI and placeholder language", weight: 5, pattern: /^(?![\s\S]*(?:as an ai|language model|placeholder|insert name|insert date|\bTBD\b))[\s\S]*$/i },
 ];
 
+const TRAIT_REPAIR_MAP: Record<string, string> = {
+  "opens with direct comparable project proof": "project names / project proof",
+  "names client and tender": "client proof",
+  "includes Section B relevant experience structure": "project names / project proof",
+  "maps team to project evidence": "expert / CV proof",
+  "contains healthcare workflow depth": "healthcare functional proof",
+  "contains biomedical and MEP integration": "biomedical / MEP proof",
+  "contains scope-by-scope delivery methodology": "scope proof",
+  "contains appendix evidence discipline": "appendix proof",
+  "contains source/evidence control": "bid-review controls",
+};
+
 export function auditProposalAgainstBenchmark(markdown: string): ProposalBenchmarkAudit {
   const matchedTraits: string[] = [];
   const missingTraits: string[] = [];
@@ -46,7 +59,12 @@ export function auditProposalAgainstBenchmark(markdown: string): ProposalBenchma
   };
 }
 
+function missingTraitsToRepairSignals(missingTraits: string[]): string[] {
+  return Array.from(new Set(missingTraits.map((trait) => TRAIT_REPAIR_MAP[trait]).filter(Boolean)));
+}
+
 export function benchmarkAuditSummary(markdown: string): string {
   const audit = auditProposalAgainstBenchmark(markdown);
-  return `Benchmark audit ${audit.score}/100 (${audit.verdict}); matched: ${audit.matchedTraits.length}; missing: ${audit.missingTraits.join(" | ") || "none"}. ${proofDensitySummary(markdown)}`;
+  const repairSignals = missingTraitsToRepairSignals(audit.missingTraits);
+  return `Benchmark audit ${audit.score}/100 (${audit.verdict}); matched: ${audit.matchedTraits.length}; missing: ${audit.missingTraits.join(" | ") || "none"}. ${proofDensitySummary(markdown)}. ${proofDensityRepairSummary(repairSignals)}`;
 }
