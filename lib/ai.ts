@@ -3124,6 +3124,16 @@ export async function generateBenchmarkProposalWithAI(params: AIBidWriterInput):
   const isSupervision = /construction.*supervision|resident.*engineer|contract.*administration|site.*supervision|supervision.*consultant|engineer.*representative|contract.*manager/i.test(allText);
   const isGeotechnical = /geotechnical.*investigation|soil.*investigation|site.*investigation|ground.*investigation|borehole.*programme|subsoil.*investigation|geotechnical.*study|foundation.*investigation/i.test(allText);
 
+  // Benchmark standard (from benchmark-proposal-quality-safe PR):
+  // The result must read like a proposal prepared by an experienced human bid team.
+  // It must be client-specific, tender-aware, evidence-led, persuasive, and structured
+  // around the exact tender response logic. It must open with the strongest directly
+  // comparable project evidence, not generic company praise. It must carry the top 1-2
+  // comparable projects through the cover letter, executive summary, and relevant
+  // experience sections. It must map selected experts to prior comparable projects.
+  // It must include bid-team review items for any remaining evidence gaps instead of
+  // blocking the proposal. It must avoid AI disclaimers and placeholders.
+
   const tenderSections = extractTenderSections(params.tenderText);
   const exactEmails = Array.from(
     (params.tenderText + params.submissionNotes).matchAll(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi),
