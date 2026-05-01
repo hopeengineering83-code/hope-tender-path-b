@@ -2,15 +2,14 @@
  * scripts/check-env.mjs
  *
  * Build-time environment validation.
- * Run BEFORE `next build` so that Vercel deployments fail at the build step
- * with a clear error message rather than deploying a broken runtime.
  *
- * Usage (in package.json build script):
- *   "build": "node scripts/check-env.mjs && prisma generate && next build"
+ * Vercel can build the application in an environment where runtime variables are
+ * not fully exposed to the build process. Therefore this script warns by default
+ * and only fails when STRICT_ENV_CHECK=1 is set. Runtime code still requires the
+ * actual variables when protected app features are used.
  */
 
-// Required in production AND preview deployments (app cannot function without these)
-const ALWAYS_REQUIRED = [
+const RUNTIME_REQUIRED = [
   {
     name: "DATABASE_URL",
     description: "PostgreSQL connection string (postgresql:// or postgres://)",
@@ -38,7 +37,6 @@ const ALWAYS_REQUIRED = [
   },
 ];
 
-// Optional — app builds and runs without these, but with reduced capability
 const OPTIONAL = [
   {
     name: "GEMINI_API_KEY",
@@ -51,9 +49,7 @@ const OPTIONAL = [
   },
 ];
 
-const PRODUCTION_REQUIRED = [];
-
-const isProd = process.env.NODE_ENV === "production" || process.env.VERCEL_ENV === "production" || process.env.VERCEL === "1";
+const strict = process.env.STRICT_ENV_CHECK === "1";
 const errors = [];
 const warnings = [];
 
@@ -69,32 +65,19 @@ for (const spec of OPTIONAL) {
   }
 }
 
-for (const spec of ALWAYS_REQUIRED) {
+for (const spec of RUNTIME_REQUIRED) {
   const value = process.env[spec.name];
   if (!value) {
-    errors.push(`  ✗ ${spec.name}: ${spec.description}`);
-    continue;
-  }
-  if (spec.validate) {
-    const err = spec.validate(value);
-    if (err) errors.push(`  ✗ ${spec.name}: ${err}`);
-  }
-}
-
-for (const spec of PRODUCTION_REQUIRED) {
-  const value = process.env[spec.name];
-  if (isProd && !value) {
-    errors.push(`  ✗ ${spec.name}: ${spec.description} [PRODUCTION REQUIRED]`);
-    continue;
-  }
-  if (!value) {
-    warnings.push(`  ⚠  ${spec.name}: Not set. AI extraction will be disabled — all records will be REGEX_DRAFT only.`);
+    const msg = `  ✗ ${spec.name}: ${spec.description}`;
+    if (strict) errors.push(msg);
+    else warnings.push(`  ⚠  ${spec.name}: Missing at build time. Required at runtime. ${spec.description}`);
     continue;
   }
   if (spec.validate) {
     const err = spec.validate(value);
     if (err) {
-      if (isProd) errors.push(`  ✗ ${spec.name}: ${err} [PRODUCTION REQUIRED]`);
+      const msg = `  ✗ ${spec.name}: ${err}`;
+      if (strict) errors.push(msg);
       else warnings.push(`  ⚠  ${spec.name}: ${err}`);
     }
   }
@@ -110,16 +93,12 @@ if (errors.length > 0) {
   const border = "═".repeat(63);
   console.error(`\n${border}`);
   console.error("  FATAL: Required environment variables are missing or invalid.");
-  console.error("  This build cannot succeed. Fix these before deploying.");
+  console.error("  This build cannot succeed with STRICT_ENV_CHECK=1.");
   console.error(border);
   console.error("\nMissing / invalid variables:");
   for (const e of errors) console.error(e);
-  console.error(`
-Set these in your .env.local (development) or in the Vercel
-dashboard under Settings → Environment Variables (production).
-See .env.example for the expected format.
-${border}\n`);
+  console.error(`\n${border}\n`);
   process.exit(1);
 }
 
-console.log("✓ Environment validation passed" + (isProd ? " (production mode)" : " (development mode)"));
+console.log("✓ Environment validation completed" + (strict ? " (strict mode)" : " (warning mode)"));
