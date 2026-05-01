@@ -28,6 +28,18 @@ function clean(text?: string | null): string {
   return (text ?? "").replace(/\s+/g, " ").trim();
 }
 
+function cleanClientLanguage(text: string): string {
+  return text
+    .replace(/Bid-team confirmation:\s*/gi, "Evidence note: ")
+    .replace(/bid-team confirmation item(s)?/gi, "source-evidence confirmation item$1")
+    .replace(/bid-team-confirmed/gi, "source-confirmed")
+    .replace(/bid-team verification/gi, "final verification")
+    .replace(/bid team/gi, "proposal team")
+    .replace(/Bid team/gi, "Proposal team")
+    .replace(/\n{4,}/g, "\n\n\n")
+    .trim();
+}
+
 function shortText(text?: string | null, max = 700): string {
   const value = clean(text);
   return value.length > max ? `${value.slice(0, max - 1)}…` : value;
@@ -35,7 +47,8 @@ function shortText(text?: string | null, max = 700): string {
 
 function markdownToDocx(markdown: string): Paragraph[] {
   const out: Paragraph[] = [];
-  for (const raw of markdown.replace(/\r/g, "").split("\n")) {
+  const clientMarkdown = cleanClientLanguage(markdown);
+  for (const raw of clientMarkdown.replace(/\r/g, "").split("\n")) {
     const line = raw.trim();
     if (!line) continue;
     if (line.startsWith("### ")) out.push(heading(line.slice(4).replace(/\*\*/g, ""), 2));
@@ -161,8 +174,9 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   const isHealthcare = /health|hospital|medical|clinic|radiology|laboratory|pharmacy|patient|healthcare|specialty|OPD|in-patient|emergency/i.test(`${proposalTitle}\n${intelligence.primarySector}\n${submissionNotes}\n${tenderText}`);
   const strengtheningMarkdown = buildClientProposalStrengtheningSections({ clientName: intelligence.clientName, tenderTitle: proposalTitle, companyName: company.name, projectLines, expertLines, companyEvidenceLines, projectEvidenceLines, isHealthcare, existingMarkdown: matrixMarkdown });
   const finalized = finalizeClientReadyProposalMarkdown([matrixMarkdown, strengtheningMarkdown].filter(Boolean).join("\n\n"), guardInput);
-  const auditSummary = benchmarkAuditSummary(finalized.markdown);
-  const children = markdownToDocx(finalized.markdown);
+  const clientMarkdown = cleanClientLanguage(finalized.markdown);
+  const auditSummary = benchmarkAuditSummary(clientMarkdown);
+  const children = markdownToDocx(clientMarkdown);
   const doc = buildProfessionalDocument({ tenderTitle: proposalTitle, clientName: intelligence.clientName, companyName: company.name, reference: tender.reference, children });
 
   const fileContent = (await Packer.toBuffer(doc)).toString("base64");
