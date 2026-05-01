@@ -6,6 +6,7 @@ import { exactSelectionLimit } from "./scope-policy";
 import { finalizeClientReadyProposalMarkdown } from "./proposal-benchmark-guard";
 import { benchmarkAuditSummary } from "./proposal-benchmark-audit";
 import { buildFallbackProofOpening } from "./fallback-proof-opening";
+import { fallbackAbcdSections, fallbackAbcdTableOfContents } from "./fallback-abcd-structure";
 import { appendEvaluatorResponseMatrix } from "./proposal-evaluator-matrix";
 
 const BRAND_BLUE = "1F4E79";
@@ -87,14 +88,27 @@ function fallbackProposalMarkdown(params: {
     expertLines: params.expertLines,
     differentiators: params.differentiators,
   });
+  const isHealthcare = /health|hospital|medical|clinic|pharmacy|radiology|laboratory|patient|OPD|in-patient|emergency/i.test(
+    `${params.tenderTitle}\n${params.primarySector}\n${params.requirements.join("\n")}`,
+  );
+  const abcdInput = {
+    tenderTitle: params.tenderTitle,
+    clientName: params.clientName,
+    companyName: params.companyName,
+    primarySector: params.primarySector,
+    expertCount: expertSelected,
+    projectCount: projectSelected,
+    isHealthcare,
+  };
   const lines: string[] = [];
   lines.push("# Cover Letter", `To: ${params.clientName}`, `Subject: Technical Proposal for ${params.tenderTitle}`, ...proofOpening);
   lines.push(...params.submissionRules.map((x) => `- ${x}`));
   lines.push("# Technical Proposal", params.tenderTitle, `Client: ${params.clientName}`, `Prepared by: ${params.companyName}`, `Primary sector: ${params.primarySector}`);
-  lines.push("# Table of Contents", ...["Cover Letter", "Technical Proposal", "Executive Summary", "Company Profile", "Proposed Team", "Relevant Experience", "Technical Approach", "Compliance and Bid Review Strategy", "Appendix Register", "Declaration"].map((item, i) => `${i + 1}. ${item}`));
+  lines.push(...fallbackAbcdTableOfContents(abcdInput));
   lines.push("# Executive Summary", `${params.companyName} understands this opportunity as a ${params.primarySector.toLowerCase()} assignment requiring a persuasive, evidence-led response rather than a generic company profile. The proposal maps the strongest reviewed company evidence to the client's scope, risks, evaluation criteria, and submission requirements.`, ...proofOpening.slice(1, 5));
   lines.push(...params.differentiators.map((x) => `- ${x}`));
   lines.push("## Company Evidence Base", ...(params.companyEvidenceLines.length ? params.companyEvidenceLines.slice(0, 12).map((x) => `- ${x}`) : ["- Wider company evidence documents should be confirmed before final submission."]));
+  lines.push(...fallbackAbcdSections(abcdInput));
   lines.push("# Company Profile", `${params.companyName} is presented through the company evidence and service lines uploaded to the application.`);
   lines.push("# Proposed Team", ...(params.expertLines.length ? params.expertLines.map((x) => `- ${x}`) : ["- No reviewed expert record selected yet; review and select CVs before final submission."]));
   lines.push("# Relevant Experience", ...(params.projectLines.length ? params.projectLines.map((x) => `- ${x}`) : ["- No reviewed project reference selected yet; review and select project references before final submission."]));
