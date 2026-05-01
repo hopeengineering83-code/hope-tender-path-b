@@ -1,4 +1,5 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import { winningBenchmarkProfileText } from "./engine/winning-proposal-benchmark";
 
 const apiKey = process.env.GEMINI_API_KEY;
 
@@ -232,6 +233,9 @@ export async function generateBenchmarkProposalWithAI(params: AIBidWriterInput):
   const prompt = `You are ChatGPT-level senior proposal team for an engineering consultancy: bid director, sector technical lead, evaluator, procurement compliance reviewer, and persuasive technical writer.
 
 Write a complete, winning-quality TECHNICAL PROPOSAL in markdown. Do NOT invent projects, experts, certifications, awards, or values. Use only the provided evidence. If evidence is insufficient, write a professional bid-team confirmation note inside the proposal instead of pretending the evidence exists.
+
+REUSABLE PROPOSAL BENCHMARK PROFILE:
+${winningBenchmarkProfileText()}
 
 UPLOADED CHATGPT BENCHMARK STYLE TO MATCH:
 - Open with direct comparable-project proof. The first page must not sound generic.
