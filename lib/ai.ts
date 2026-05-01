@@ -278,6 +278,8 @@ Benchmark standard:
 - It must not include financial offer language if submission notes say technical proposal only or no financial proposal.
 - It must avoid AI disclaimers and placeholders.
 - Use markdown headings: #, ##, ### and bullet lists. Use compact markdown tables where they improve evaluator readability.
+- Do not repeat the same heading twice. Merge duplicate ideas into the first relevant section.
+- Do not create internal debug, score, audit, repair, or benchmark-review sections. Write only client-facing proposal content and bid-team confirmation controls.
 
 TENDER TITLE:
 ${params.tenderTitle}
