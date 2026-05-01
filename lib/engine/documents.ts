@@ -16,8 +16,28 @@ function docTypeForRequirement(requirement: RequirementDraft): string {
 }
 
 function plannedQuantity(requirement: RequirementDraft): number {
-  if (["EXPERT", "PROJECT_EXPERIENCE"].includes(requirement.requirementType)) return Math.max(0, requirement.requiredQuantity ?? 0);
+  if (["EXPERT", "PROJECT_EXPERIENCE"].includes(requirement.requirementType)) return 1;
   return Math.max(1, requirement.requiredQuantity ?? 1);
+}
+
+function packageFileName(requirement: RequirementDraft): string {
+  if (requirement.exactFileName) return normalizeFileName(requirement.exactFileName);
+  if (requirement.requirementType === "EXPERT") return normalizeFileName("Expert CV Package");
+  if (requirement.requirementType === "PROJECT_EXPERIENCE") return normalizeFileName("Relevant Experience and Project References");
+  return normalizeFileName(requirement.title);
+}
+
+function packageSummary(requirement: RequirementDraft): string {
+  const qty = requirement.requiredQuantity && requirement.requiredQuantity > 1
+    ? ` Tender quantity interpreted: ${requirement.requiredQuantity} item(s), consolidated into one response package instead of duplicate files.`
+    : "";
+  return `Planned tender-required output for ${requirement.title}: ${requirement.description}${qty}`;
+}
+
+function documentKey(document: DocumentPlanResult["documents"][number]): string {
+  if (document.documentType === "EXPERT") return "EXPERT::CONSOLIDATED";
+  if (document.documentType === "PROJECT_EXPERIENCE") return "PROJECT_EXPERIENCE::CONSOLIDATED";
+  return `${document.documentType}::${document.exactFileName ?? document.name}`;
 }
 
 export function buildDocumentPlan(requirements: Array<{ id: string; requirement: RequirementDraft }>): DocumentPlanResult {
@@ -29,8 +49,8 @@ export function buildDocumentPlan(requirements: Array<{ id: string; requirement:
 
       for (let i = 0; i < quantity; i += 1) {
         const suffix = quantity > 1 ? ` ${i + 1}` : "";
-        const exactFileName = requirement.exactFileName
-          ? normalizeFileName(requirement.exactFileName)
+        const exactFileName = quantity === 1
+          ? packageFileName(requirement)
           : normalizeFileName(`${requirement.title}${suffix}`);
 
         documents.push({
@@ -38,7 +58,7 @@ export function buildDocumentPlan(requirements: Array<{ id: string; requirement:
           documentType: docTypeForRequirement(requirement),
           exactFileName,
           exactOrder: requirement.exactOrder ?? requirementIndex + 1 + i,
-          contentSummary: `Planned tender-required output for ${requirement.title}${suffix}: ${requirement.description}`,
+          contentSummary: packageSummary(requirement),
         });
       }
 
@@ -47,8 +67,8 @@ export function buildDocumentPlan(requirements: Array<{ id: string; requirement:
     .flat();
 
   const uniqueDocuments = planned.filter((document, index, arr) => {
-    const key = `${document.documentType}::${document.exactFileName ?? document.name}::${document.exactOrder ?? ""}`;
-    return arr.findIndex((item) => `${item.documentType}::${item.exactFileName ?? item.name}::${item.exactOrder ?? ""}` === key) === index;
+    const key = documentKey(document);
+    return arr.findIndex((item) => documentKey(item) === key) === index;
   });
 
   uniqueDocuments.sort((a, b) => {
