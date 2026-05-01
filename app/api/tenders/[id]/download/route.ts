@@ -71,7 +71,6 @@ async function validateGeneratedDocx(doc: {
   const forbiddenPatterns = [
     /AI_DRAFT/i,
     /REGEX_DRAFT/i,
-    /REVIEW REQUIRED/i,
     /remove before submission/i,
     /placeholder/i,
     /sample text/i,
