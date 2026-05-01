@@ -1,3 +1,5 @@
+import { proofDensitySummary } from "./proposal-proof-density";
+
 export type ProposalBenchmarkAudit = {
   score: number;
   verdict: "BENCHMARK_READY" | "NEEDS_REPAIR";
@@ -46,5 +48,5 @@ export function auditProposalAgainstBenchmark(markdown: string): ProposalBenchma
 
 export function benchmarkAuditSummary(markdown: string): string {
   const audit = auditProposalAgainstBenchmark(markdown);
-  return `Benchmark audit ${audit.score}/100 (${audit.verdict}); matched: ${audit.matchedTraits.length}; missing: ${audit.missingTraits.join(" | ") || "none"}`;
+  return `Benchmark audit ${audit.score}/100 (${audit.verdict}); matched: ${audit.matchedTraits.length}; missing: ${audit.missingTraits.join(" | ") || "none"}. ${proofDensitySummary(markdown)}`;
 }
