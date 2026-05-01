@@ -1,4 +1,5 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import { benchmarkDnaBlock } from "./engine/proposal-benchmark-dna";
 
 const apiKey = process.env.GEMINI_API_KEY;
 
@@ -233,12 +234,16 @@ export async function generateBenchmarkProposalWithAI(params: AIBidWriterInput):
 
 Write a complete, winning-quality TECHNICAL PROPOSAL in markdown. Do NOT invent projects, experts, certifications, awards, or values. Use only the provided evidence. If evidence is insufficient, write a professional mitigation/review note inside the proposal instead of pretending the evidence exists.
 
+UPLOADED BENCHMARK PROPOSAL DNA:
+${benchmarkDnaBlock()}
+
 Benchmark standard:
 - The result must read like a proposal prepared by an experienced human bid team, not a generic template.
 - It must be client-specific, tender-aware, evidence-led, persuasive, and structured around the exact tender response logic.
 - It must include a cover letter, cover page, table of contents, executive summary, company profile, proposed team, relevant experience, technical approach, compliance strategy, additional information, appendices list, and declaration.
 - It must turn requirements into a proposal strategy: what we understand, why our evidence fits, how we will execute, and what the client gains.
 - It must explicitly map selected experts and projects to the tender risks and evaluation criteria.
+- For healthcare tenders, it must address facility identification, technical assessment, clinical workflow, IPC, Emergency, OPD, In-patient, Laboratory, Imaging/Radiology, Pharmacy, biomedical/MEP coordination, regulatory approval, renovation oversight, close-out, and QA.
 - It must include bid-team review items for any remaining evidence gaps instead of blocking the proposal.
 - It must not include financial offer language if submission notes say technical proposal only or no financial proposal.
 - It must avoid AI disclaimers and placeholders.
