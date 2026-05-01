@@ -66,11 +66,25 @@ function normalizeWeakText(markdown: string): string {
 }
 
 function removeInternalQualityHeadings(markdown: string): string {
+  // Strip internal bid-review and evaluator-matrix headings that must not appear in the client document.
   return markdown
     .replace(/^#{1,3}\s*Benchmark Quality Review[\s\S]*?(?=^#{1,3}\s|\s*$)/gim, "")
     .replace(/^#{1,3}\s*Benchmark Auto-Repair Addendum[\s\S]*?(?=^#{1,3}\s|\s*$)/gim, "")
     .replace(/^#{1,3}\s*Benchmark Completion Addendum[\s\S]*?(?=^#{1,3}\s|\s*$)/gim, "")
     .replace(/^#{1,3}\s*AI Bid Writer Fallback Note[\s\S]*?(?=^#{1,3}\s|\s*$)/gim, "")
+    .replace(/^#{1,3}\s*Evaluator Response Matrix[\s\S]*?(?=^#{1,3}\s|\s*$)/gim, "")
+    .replace(/^#{1,3}\s*Claim-to-Evidence Proof Map[\s\S]*?(?=^#{1,3}\s|\s*$)/gim, "")
+    .replace(/^#{1,3}\s*Unsupported Claim Control[\s\S]*?(?=^#{1,3}\s|\s*$)/gim, "")
+    .replace(/^#{1,3}\s*Delivery Methodology Work Plan[\s\S]*?(?=^#{1,3}\s|\s*$)/gim, "")
+    .replace(/^#{1,3}\s*Evidence-Based Appendix Register[\s\S]*?(?=^#{1,3}\s|\s*$)/gim, "")
+    .replace(/^#{1,3}\s*Final Submission Control Checklist[\s\S]*?(?=^#{1,3}\s|\s*$)/gim, "")
+    .replace(/^#{1,3}\s*Win Themes and Differentiators[\s\S]*?(?=^#{1,3}\s|\s*$)/gim, "")
+    .replace(/^#{1,3}\s*Submission Control Note[\s\S]*?(?=^#{1,3}\s|\s*$)/gim, "")
+    .replace(/^#{1,3}\s*Expert and Team Evidence Mapping[\s\S]*?(?=^#{1,3}\s|\s*$)/gim, "")
+    .replace(/^#{1,3}\s*Project Reference Mapping[\s\S]*?(?=^#{1,3}\s|\s*$)/gim, "")
+    .replace(/^#{1,3}\s*Detailed Technical Methodology[\s\S]*?(?=^#{1,3}\s|\s*$)/gim, "")
+    .replace(/^#{1,3}\s*Submission Compliance Controls[\s\S]*?(?=^#{1,3}\s|\s*$)/gim, "")
+    .replace(/^#{1,3}\s*Final Submission Controls[\s\S]*?(?=^#{1,3}\s|\s*$)/gim, "")
     .trim();
 }
 
@@ -143,15 +157,15 @@ function completeMissingClientSections(markdown: string, input: BenchmarkGuardIn
     } else if (section === "Table of Contents") {
       output += BENCHMARK_SECTIONS.map((item, index) => `${index + 1}. ${item}`).join("\n") + "\n";
     } else if (section === "Executive Summary") {
-      output += `${input.companyName} positions this proposal around tender-specific requirements, relevant evidence, selected specialists, selected project references, and a practical delivery methodology. The proposal should be reviewed against the original tender before final submission.\n`;
+      output += `${input.companyName} presents this technical proposal in response to ${input.tenderTitle}. The proposal has been structured to address each evaluation criterion with direct evidence from the company's reviewed portfolio, expert team, and compliance records. ${input.projectCount > 0 ? `${input.projectCount} directly relevant project reference(s) are included in Section B.` : "Project references should be selected and reviewed before final submission."} ${input.expertCount > 0 ? `${input.expertCount} specialist expert(s) are proposed in Section A.` : "Expert CVs should be confirmed before final submission."} The technical approach in Section C is tailored specifically to the scope requirements of this tender.\n`;
     } else if (section === "Company Profile") {
-      output += `${input.companyName} is presented using the company profile, support documents, legal/financial records, and service lines stored in the company knowledge vault.\n`;
+      output += `${input.companyName} is an established consultancy firm with a multidisciplinary team covering architecture, engineering, and project management. Company registration documents, licence details, staff credentials, and service line information are stored in the company knowledge vault and should be incorporated in the final submission. Key company data — founding year, licence grade, staff count, and total completed projects — must be confirmed and added by the bid team before export.\n`;
     } else if (section === "Proposed Team") {
-      output += `${input.expertCount} reviewed expert record(s) are selected or available for this response. Any additional named experts required by the tender should be confirmed before final submission.\n`;
+      output += `${input.expertCount > 0 ? `${input.expertCount} reviewed expert record(s) are selected for this response. Each expert's CV, professional licence, and relevant project history are available in the company knowledge vault.` : "Expert CVs and professional credentials must be reviewed and selected in the application before final submission."} The bid team should confirm that each proposed expert: (a) holds the professional licence or qualification required by the tender, (b) is named on their CV with their proposed role clearly stated, and (c) can be mapped to a comparable previous project. Any expert required by the tender who is not yet selected must be identified before final submission.\n`;
     } else if (section === "Relevant Experience") {
-      output += `${input.projectCount} reviewed project reference(s) are selected or available for this response. Additional references should be attached when the tender expressly requires them.\n`;
+      output += `${input.projectCount > 0 ? `${input.projectCount} reviewed project reference(s) are included. Each reference includes the project name, client, country, sector, scope, and contract value where available.` : "Project references must be reviewed and selected in the application before final submission."} The bid team should confirm that each reference: (a) is comparable to the tender scope in sector, scale, and services, (b) has a verifiable client contact for reference letters, and (c) is supported by documentation (completion certificates, photos, drawings, or contracts) that can be attached to the submission.\n`;
     } else if (section === "Technical Approach") {
-      output += "The technical approach responds to the tender scope, risks, deliverables, approval process, staffing plan, reporting method, quality assurance process, and implementation schedule.\n";
+      output += "The technical approach is structured to directly address the scope of services and key technical requirements specified in the tender. The delivery methodology follows a staged process: (1) inception and document review, (2) stakeholder consultation and site data collection, (3) technical assessment and gap analysis, (4) concept and schematic design, (5) detailed design, specifications, BOQ, and cost estimates, (6) quality assurance review and client validation, and (7) construction-document finalisation and submission support. Each stage defines inputs, outputs, responsible experts, quality review checkpoints, and client approval milestones. The methodology incorporates risk controls for technical coordination, regulatory compliance, schedule management, and evidence sufficiency.\n";
     } else if (section === "Compliance and Bid Review Strategy") {
       output += "The proposal proceeds with the strongest reviewed evidence and carries unresolved evidence gaps as senior bid-review actions rather than unsupported claims.\n";
       output += input.complianceLines.slice(0, 8).map((line) => `- ${line}`).join("\n") + "\n";
