@@ -1,3 +1,5 @@
 {
-  "framework": "nextjs"
+  "framework": "nextjs",
+  "buildCommand": "node scripts/check-env.mjs && prisma generate && next build",
+  "installCommand": "npm install"
 }
