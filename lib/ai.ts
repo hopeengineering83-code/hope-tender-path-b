@@ -2,21 +2,6 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 
 const apiKey = process.env.GEMINI_API_KEY;
 
-function benchmarkDnaBlock(): string {
-  return [
-    "Lead with the strongest 1-2 directly comparable projects by name, value, scale, location, and relevance. Do not open with generic company praise.",
-    "The first two pages must make the evaluator feel the firm has already delivered this assignment type before.",
-    "Cover page should include client, bidder, exact submission emails, exact subject line, deadline, and 3-5 headline proof metrics when evidence exists.",
-    "Use the tender response structure: Cover Letter, Technical Proposal, Table of Contents, Executive Summary, SECTION A Company Profile, SECTION B Relevant Experience, SECTION C Technical Approach, SECTION D Additional Information, Appendix Register, Declaration.",
-    "Section A should include company background, corporate information, core expertise, proposed team, team-to-project mapping, and specialist/biomedical integration when required.",
-    "Section B should use client references and project cards with client, location, scale, duration/year, value, testimony/reference when available, services, and relevance to this tender.",
-    "Section C should be scope-by-scope: facility identification, technical assessment, design, MEP coordination, regulatory approvals, renovation oversight, close-out, and QA.",
-    "For healthcare tenders address Emergency, OPD, In-patient, Laboratory, Imaging/Radiology, Pharmacy, clinical zoning, patient/staff/supply flow, IPC, radiation shielding, equipment loads, IT/telehealth, medical gas, and licensing documentation when relevant.",
-    "Use only uploaded tender/company/expert/project evidence. If a strong claim lacks support, write a short bid-team confirmation item rather than inventing it.",
-    "Appendix register should explicitly name company registration/licence, client references/contracts/testimony, CVs/credentials, project photos/drawings, manuals/audits/certifications, and declarations where relevant."
-  ].map((line, index) => `${index + 1}. ${line}`).join("\n");
-}
-
 function getClient() {
   if (!apiKey) throw new Error("GEMINI_API_KEY not configured");
   return new GoogleGenerativeAI(apiKey);
@@ -248,16 +233,12 @@ export async function generateBenchmarkProposalWithAI(params: AIBidWriterInput):
 
 Write a complete, winning-quality TECHNICAL PROPOSAL in markdown. Do NOT invent projects, experts, certifications, awards, or values. Use only the provided evidence. If evidence is insufficient, write a professional mitigation/review note inside the proposal instead of pretending the evidence exists.
 
-UPLOADED BENCHMARK PROPOSAL DNA:
-${benchmarkDnaBlock()}
-
 Benchmark standard:
 - The result must read like a proposal prepared by an experienced human bid team, not a generic template.
 - It must be client-specific, tender-aware, evidence-led, persuasive, and structured around the exact tender response logic.
 - It must include a cover letter, cover page, table of contents, executive summary, company profile, proposed team, relevant experience, technical approach, compliance strategy, additional information, appendices list, and declaration.
 - It must turn requirements into a proposal strategy: what we understand, why our evidence fits, how we will execute, and what the client gains.
 - It must explicitly map selected experts and projects to the tender risks and evaluation criteria.
-- For healthcare tenders, it must address facility identification, technical assessment, clinical workflow, IPC, Emergency, OPD, In-patient, Laboratory, Imaging/Radiology, Pharmacy, biomedical/MEP coordination, regulatory approval, renovation oversight, close-out, and QA.
 - It must include bid-team review items for any remaining evidence gaps instead of blocking the proposal.
 - It must not include financial offer language if submission notes say technical proposal only or no financial proposal.
 - It must avoid AI disclaimers and placeholders.
