@@ -31,64 +31,82 @@ function pushSection(sections: string[], input: ProposalStrengtheningInput, head
   sections.push(...body);
 }
 
-function sectorMethodology(input: ProposalStrengtheningInput): string {
+function sectorMethodology(input: ProposalStrengtheningInput): string[] {
   const text = `${input.tenderTitle}\n${input.projectLines.join("\n")}\n${input.companyEvidenceLines.join("\n")}`;
-  if (input.isHealthcare || /health|hospital|medical|clinic|radiology|laboratory|pharmacy|patient|OPD|emergency|in-patient/i.test(text)) {
-    return "Healthcare / medical facility tenders should explicitly address Emergency, OPD, In-patient, Laboratory, Imaging/Radiology, Pharmacy, clinical zoning, patient/staff/supply and waste flows, IPC, medical equipment loads, radiation shielding, medical gas, ICT/telehealth, MEP coordination, regulatory approval, renovation oversight, close-out and operational readiness.";
+  if (input.isHealthcare || /health|hospital|medical|clinic|radiology|laboratory|pharmacy|patient|OPD|emergency|in-patient|specialty/i.test(text)) {
+    return [
+      "The methodology must be written as a healthcare design response, not a generic consultancy plan. It should follow the tender scope from facility identification through close-out.",
+      "Facility identification and technical assessment: use a scored property-assessment matrix covering structural suitability, department zoning potential, clinical floor loading, patient access, ambulance access, utilities, drainage, power resilience, expansion potential and licensing feasibility.",
+      "Conceptual and detailed design: define Emergency, OPD, In-patient, Laboratory, Imaging/Radiology, Pharmacy and specialty service zones; separate patient, staff, clean supply, dirty utility and waste flows; embed IPC principles before layouts are frozen.",
+      "Engineering coordination: coordinate structural, MEP, medical equipment loads, medical gas where required, electrical load planning, backup power, ICT/telehealth systems, water/sanitary systems, ventilation, fire/life safety and maintainability.",
+      "Healthcare compliance and approvals: show how drawings, specifications and technical notes will support Ethiopian healthcare regulatory review, licensing, accessibility, patient safety, radiation shielding for imaging areas and infection-control compliance.",
+      "Renovation and supervision: include renovation drawings, technical specifications, BOQ/cost support where requested, work sequencing, quality inspection, progress reporting, change control, commissioning and handover readiness.",
+    ];
   }
   if (/water|borehole|pump|sanitary|hydraulic|irrigation|pipeline|well|reservoir/i.test(text)) {
-    return "Water and infrastructure tenders should explicitly address source investigation, demand assessment, hydraulic design, pumping/storage, water-quality considerations, sanitary/drainage interfaces, geotechnical conditions, BOQ/specifications, construction supervision, commissioning, operation and maintenance handover, and resilience of the proposed system.";
+    return [
+      "The methodology should address source investigation, demand assessment, hydraulic design, pumping/storage, water-quality considerations, sanitary/drainage interfaces, geotechnical conditions, BOQ/specifications, construction supervision, commissioning, O&M handover and resilience of the proposed system.",
+    ];
   }
   if (/road|bridge|transport|drainage|pavement|traffic|culvert/i.test(text)) {
-    return "Road, bridge and transport tenders should explicitly address route/site assessment, survey control, geotechnical and drainage review, pavement/structural design basis, traffic and safety management, environmental/social controls, quantities, specifications, supervision methodology, quality testing and handover documentation.";
+    return [
+      "The methodology should address route/site assessment, survey control, geotechnical and drainage review, pavement/structural design basis, traffic and safety management, environmental/social controls, quantities, specifications, supervision methodology, quality testing and handover documentation.",
+    ];
   }
   if (/building|architecture|structural|MEP|residential|commercial|office|warehouse|school|university|facility|supervision/i.test(text)) {
-    return "Building design and supervision tenders should explicitly address site verification, architectural/functional planning, structural concept, MEP coordination, accessibility, life-safety/fire strategy, material specifications, BOQ/cost support where requested, permit/approval support, construction supervision, QA/QC, progress reporting, variation control and close-out.";
+    return [
+      "The methodology should address site verification, architectural/functional planning, structural concept, MEP coordination, accessibility, life-safety/fire strategy, material specifications, BOQ/cost support where requested, permit/approval support, construction supervision, QA/QC, progress reporting, variation control and close-out.",
+    ];
   }
-  if (/urban|master plan|land use|municipal|planning|settlement|spatial/i.test(text)) {
-    return "Urban planning and municipal tenders should explicitly address baseline assessment, stakeholder consultation, spatial analysis, land-use scenarios, infrastructure/service demand, environmental and social constraints, implementation phasing, regulatory alignment, GIS/mapping outputs and decision-ready reporting.";
+  return [
+    "The methodology should address understanding of the assignment, scope-by-scope tasks, inputs, outputs, work plan, team responsibilities, QA/QC gates, communication/reporting, risk management, compliance with submission instructions and evidence-based appendix control.",
+  ];
+}
+
+function benchmarkOpeningProof(input: ProposalStrengtheningInput, leadProjects: string[], leadExperts: string[]): string[] {
+  const rows = [
+    `${input.companyName} should open with a client-ready proof statement: why this firm, why this team, and why the evidence directly reduces ${input.clientName}'s delivery risk.`,
+  ];
+  if (leadProjects.length > 0) {
+    rows.push("The first page should name the strongest comparable assignments and carry those same references through the Executive Summary, Relevant Experience and Technical Approach.");
+    rows.push(...leadProjects.map((project) => `- Comparable assignment proof: ${project}`));
+  } else {
+    rows.push("- Source-evidence action: insert the strongest verified comparable healthcare/facility project references before final submission; do not leave this as a generic portfolio statement.");
   }
-  if (/environment|ESIA|ESMP|safeguard|social|resettlement|climate|waste/i.test(text)) {
-    return "Environmental and social tenders should explicitly address baseline studies, legal and safeguard framework, stakeholder engagement, impact/risk assessment, mitigation hierarchy, ESMP/monitoring plan, grievance and disclosure arrangements, institutional responsibilities and evidence-based reporting.";
+  if (leadExperts.length > 0) {
+    rows.push("The first page should also prove that the proposed team is already capable of controlling the assignment's technical risks.");
+    rows.push(...leadExperts.slice(0, 4).map((expert) => `- Proposed team proof: ${expert}`));
   }
-  if (/ICT|software|system|digital|database|platform|telecom|network|cyber/i.test(text)) {
-    return "ICT and digital-service tenders should explicitly address user requirements, system architecture, data/security controls, integration, implementation roadmap, testing and acceptance, training, support model, documentation, risk controls and service continuity.";
-  }
-  return "General consultancy tenders should explicitly address understanding of the assignment, scope-by-scope tasks, inputs, outputs, work plan, team responsibilities, QA/QC gates, communication/reporting, risk management, compliance with submission instructions and evidence-based appendix control.";
+  return rows;
 }
 
 export function buildClientProposalStrengtheningSections(input: ProposalStrengtheningInput): string {
   const sections: string[] = [];
-  const leadProjects = take(input.projectLines, 3, 560);
-  const leadExperts = take(input.expertLines, 6, 420);
+  const leadProjects = take(input.projectLines, 4, 620);
+  const leadExperts = take(input.expertLines, 8, 460);
   const companyEvidence = take(input.companyEvidenceLines, 8, 420);
   const projectEvidence = take(input.projectEvidenceLines, 8, 420);
 
-  pushSection(sections, input, "Lead Comparable Proof to the Client", leadProjects.length > 0
-    ? [
-      `${input.companyName} should lead the proposal for ${input.clientName} with the following reviewed comparable assignment evidence and carry it consistently through the cover letter, executive summary, relevant experience, and methodology.`,
-      ...leadProjects.map((project) => `- ${project}`),
-    ]
-    : ["- Bid-team confirmation: add the strongest reviewed comparable project reference before final submission."]);
+  pushSection(sections, input, "Benchmark Opening Proof Strategy", benchmarkOpeningProof(input, leadProjects, leadExperts));
 
-  pushSection(sections, input, "Expert Capability Mapped to Assignment Risk", leadExperts.length > 0
+  pushSection(sections, input, "Evaluator-Facing Team-to-Assignment Mapping", leadExperts.length > 0
     ? [
+      "The proposal should present the team as a delivery system, not only as CV attachments. Each named expert should be tied to a role, comparable assignment evidence, and a technical risk controlled for this tender.",
       ...leadExperts.map((expert) => `- ${expert}`),
-      "Each named expert should be tied to a proposed role, previous comparable work, tender-specific responsibility, and the technical risk they control.",
     ]
-    : ["- Bid-team confirmation: select reviewed CVs and map each expert to role, qualification, previous comparable work, and delivery responsibility."]);
+    : ["- Source-evidence action: select reviewed CVs and map each expert to role, qualification, previous comparable work and delivery responsibility."]);
 
-  pushSection(sections, input, "Sector-Specific Methodology Depth", [sectorMethodology(input)]);
+  pushSection(sections, input, "Healthcare / Sector Methodology Depth", sectorMethodology(input).map((line) => `- ${line}`));
 
-  pushSection(sections, input, "Evidence-Based Appendix Register", companyEvidence.length === 0 && projectEvidence.length === 0
-    ? ["- Bid-team confirmation: attach verified company registration, licences, legal/tax records, CVs, project references, photos/drawings, testimony, completion evidence, certificates and tender forms as required."]
+  pushSection(sections, input, "Client-Ready Appendix Register", companyEvidence.length === 0 && projectEvidence.length === 0
+    ? ["- Source-evidence action: attach verified company registration, licences, legal/tax records, CVs, project references, photos/drawings, testimony, completion evidence, certificates and tender forms as required."]
     : [
-      ...companyEvidence.map((line) => `- Company evidence: ${line}`),
-      ...projectEvidence.map((line) => `- Project evidence: ${line}`),
+      ...companyEvidence.map((line) => `- Company evidence to attach: ${line}`),
+      ...projectEvidence.map((line) => `- Project evidence to attach: ${line}`),
     ]);
 
-  pushSection(sections, input, "Unsupported Claim Control", [
-    "Every claim in the final proposal should be supported by reviewed source evidence or converted into a bid-team confirmation action. Do not invent projects, experts, certifications, awards, values, client names, dates, photos, drawings, references or licences.",
+  pushSection(sections, input, "Final Claim and Evidence Control", [
+    "Every major claim in the final proposal should be supported by reviewed source evidence. Unsupported claims should be removed or softened before final submission. Do not invent projects, experts, certifications, awards, values, client names, dates, photos, drawings, references or licences.",
   ]);
 
   return sections.join("\n\n");
