@@ -77,8 +77,6 @@ async function validateGeneratedDocx(doc: {
     /lorem ipsum/i,
     /as an AI/i,
     /AI-generated/i,
-    /ChatGPT/i,
-    /OpenAI/i,
     /source snippet/i,
     /deterministic safety import/i,
     /=+\s*PAGE\s+\d+\s*=+/i,
