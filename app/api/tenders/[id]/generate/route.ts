@@ -8,7 +8,6 @@ import { Document, HeadingLevel, Packer, Paragraph, TextRun } from "docx";
 
 function criticalGapIsHardBlock(gap: { title: string; description: string; mitigationPlan: string | null }) {
   const text = `${gap.title} ${gap.description} ${gap.mitigationPlan ?? ""}`;
-  // Hard blocks are true eligibility/commercial/format impossibilities. Evidence gaps and proposal-response gaps are senior review items.
   return /(ineligible|debarred|blacklisted|deadline.*passed|late submission|missing required file name|missing exact file|tender not found|company profile required|no documents? have been generated|signature prohibited|branding prohibited)/i.test(text);
 }
 
@@ -73,7 +72,7 @@ function supportSections(docName: string, context: { tenderTitle: string; requir
     { title: "Relevant Project References", lines: context.projects.slice(0, 18) },
     { title: "Evidence Attachment Control", lines: ["Attach project evidence such as completion certificates, client testimony, contracts, photos, drawings or references where required."] },
   ];
-  if (/scope|technical requirement|water|solar|feasibility|design|supervision|appendix|annex|submission/.test(name)) return [
+  if (/scope|technical requirement|water|solar|feasibility|design|supervision|appendix|annex|submission|deadline|delivery|formatting|packaging/.test(name)) return [
     { title: "Tender Requirement Response", lines: context.requirements.slice(0, 16) },
     { title: "Package Control", lines: ["Confirm this document against the source tender document section with the same title.", "Attach or replace with tender-issued forms and annexes where applicable."] },
   ];
@@ -81,6 +80,11 @@ function supportSections(docName: string, context: { tenderTitle: string; requir
     { title: "Tender Package Response", lines: context.requirements.slice(0, 12) },
     { title: "Supporting Evidence", lines: [...context.projects, ...context.experts].slice(0, 12) },
   ];
+}
+
+function isMainProposalLike(doc: { name: string; exactFileName: string | null; documentType: string }): boolean {
+  const label = `${doc.name} ${doc.exactFileName ?? ""}`.toLowerCase();
+  return /client-ready benchmark technical proposal|technical-proposal\.docx$/.test(label) || (doc.documentType === "TECHNICAL_PROPOSAL" && /feasibility, design and supervision technical scope/i.test(doc.name));
 }
 
 async function fillPlannedSupportDocuments(tenderId: string): Promise<number> {
@@ -98,12 +102,12 @@ async function fillPlannedSupportDocuments(tenderId: string): Promise<number> {
   const experts = tender.expertMatches.filter((m) => m.expert.trustLevel === "REVIEWED").map((m) => `${m.expert.fullName}${m.expert.title ? ` — ${m.expert.title}` : ""}${m.expert.yearsExperience ? ` | ${m.expert.yearsExperience}+ years` : ""}${m.expert.profile ? ` | ${shortText(m.expert.profile, 260)}` : ""}`);
   const projects = tender.projectMatches.filter((m) => m.project.trustLevel === "REVIEWED").map((m) => `${m.project.name}${m.project.clientName ? ` — ${m.project.clientName}` : ""}${m.project.country ? ` | ${m.project.country}` : ""}${m.project.summary ? ` | ${shortText(m.project.summary, 300)}` : ""}`);
 
-  const supportDocs = await prisma.generatedDocument.findMany({
-    where: { tenderId, documentType: { notIn: ["TECHNICAL_PROPOSAL", "PROPOSAL"] } },
-    select: { id: true, name: true, exactFileName: true, generationStatus: true, fileContent: true },
+  const docs = await prisma.generatedDocument.findMany({
+    where: { tenderId },
+    select: { id: true, name: true, exactFileName: true, documentType: true, generationStatus: true, fileContent: true },
   });
 
-  const incomplete = supportDocs.filter((doc) => doc.generationStatus !== "GENERATED" || !doc.fileContent);
+  const incomplete = docs.filter((doc) => !isMainProposalLike(doc) && (doc.generationStatus !== "GENERATED" || !doc.fileContent));
   for (const doc of incomplete) {
     const title = clean(doc.exactFileName || doc.name);
     const fileContent = await makeSupportDocx(title, supportSections(title, { tenderTitle: tender.title, requirements, experts, projects }));
@@ -137,15 +141,10 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   const tender = await prisma.tender.findFirst({ where: { id, userId } });
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
 
-  const criticalGaps = await prisma.complianceGap.findMany({
-    where: { tenderId: id, severity: "CRITICAL", isResolved: false },
-    select: { title: true, description: true, mitigationPlan: true },
-  });
+  const criticalGaps = await prisma.complianceGap.findMany({ where: { tenderId: id, severity: "CRITICAL", isResolved: false }, select: { title: true, description: true, mitigationPlan: true } });
   const hardBlocks = criticalGaps.filter(criticalGapIsHardBlock);
   const seniorReviewCriticals = criticalGaps.filter((gap) => !criticalGapIsHardBlock(gap));
-  if (hardBlocks.length > 0) {
-    return NextResponse.json({ error: `Generation blocked: ${hardBlocks.length} hard blocker(s) remain. ${hardBlocks.map((g) => g.title).join("; ")}`, code: "HARD_BLOCKERS" }, { status: 422 });
-  }
+  if (hardBlocks.length > 0) return NextResponse.json({ error: `Generation blocked: ${hardBlocks.length} hard blocker(s) remain. ${hardBlocks.map((g) => g.title).join("; ")}`, code: "HARD_BLOCKERS" }, { status: 422 });
 
   const selectedExpertMatches = await prisma.tenderExpertMatch.findMany({ where: { tenderId: id, isSelected: true }, include: { expert: { select: { fullName: true, trustLevel: true } } } });
   const selectedProjectMatches = await prisma.tenderProjectMatch.findMany({ where: { tenderId: id, isSelected: true }, include: { project: { select: { name: true, trustLevel: true } } } });
@@ -156,12 +155,8 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   const expertRequirementExists = await prisma.tenderRequirement.count({ where: { tenderId: id, requirementType: "EXPERT" } });
   const projectRequirementExists = await prisma.tenderRequirement.count({ where: { tenderId: id, requirementType: "PROJECT_EXPERIENCE" } });
 
-  if (selectedExpertMatches.length > 0 && reviewedExpertCount === 0 && expertRequirementExists > 0) {
-    return NextResponse.json({ error: `Generation blocked: ${selectedExpertMatches.length} expert(s) are selected but NONE have been reviewed. Go to the Knowledge Review page and review at least one expert before generating.`, code: "ALL_EXPERTS_UNREVIEWED", draftExperts: draftExperts.map((m) => m.expert.fullName) }, { status: 422 });
-  }
-  if (selectedProjectMatches.length > 0 && reviewedProjectCount === 0 && projectRequirementExists > 0) {
-    return NextResponse.json({ error: `Generation blocked: ${selectedProjectMatches.length} project reference(s) are selected but NONE have been reviewed. Go to the Knowledge Review page and review at least one project before generating.`, code: "ALL_PROJECTS_UNREVIEWED", draftProjects: draftProjects.map((m) => m.project.name) }, { status: 422 });
-  }
+  if (selectedExpertMatches.length > 0 && reviewedExpertCount === 0 && expertRequirementExists > 0) return NextResponse.json({ error: `Generation blocked: ${selectedExpertMatches.length} expert(s) are selected but NONE have been reviewed. Go to the Knowledge Review page and review at least one expert before generating.`, code: "ALL_EXPERTS_UNREVIEWED", draftExperts: draftExperts.map((m) => m.expert.fullName) }, { status: 422 });
+  if (selectedProjectMatches.length > 0 && reviewedProjectCount === 0 && projectRequirementExists > 0) return NextResponse.json({ error: `Generation blocked: ${selectedProjectMatches.length} project reference(s) are selected but NONE have been reviewed. Go to the Knowledge Review page and review at least one project before generating.`, code: "ALL_PROJECTS_UNREVIEWED", draftProjects: draftProjects.map((m) => m.project.name) }, { status: 422 });
 
   const warnings: string[] = [];
   if (seniorReviewCriticals.length > 0) warnings.push(`${seniorReviewCriticals.length} critical evidence/review gap(s) were carried into the proposal as senior bid-review items instead of blocking draft generation.`);
@@ -171,13 +166,11 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   try {
     await generateTenderDocuments(id, userId);
     const supportDocumentCount = await fillPlannedSupportDocuments(id);
-    if (supportDocumentCount > 0) warnings.push(`${supportDocumentCount} planned supporting package document(s) were generated with distinct content for export readiness.`);
+    if (supportDocumentCount > 0) warnings.push(`${supportDocumentCount} remaining package document(s) were generated with distinct content for export readiness.`);
     const letterheadAppliedCount = await applyActiveUploadedLetterheadToTenderDocuments(id, userId);
     if (letterheadAppliedCount > 0) warnings.push(`Uploaded Word letterhead applied to ${letterheadAppliedCount} generated DOCX file(s).`);
 
-    if (reviewedExpertCount > 0 || draftExperts.length > 0 || reviewedProjectCount > 0 || draftProjects.length > 0) {
-      await prisma.generatedDocument.updateMany({ where: { tenderId: id }, data: { reviewedExpertCount, draftExpertCount: draftExperts.length, reviewedProjectCount, draftProjectCount: draftProjects.length, updatedAt: new Date() } });
-    }
+    if (reviewedExpertCount > 0 || draftExperts.length > 0 || reviewedProjectCount > 0 || draftProjects.length > 0) await prisma.generatedDocument.updateMany({ where: { tenderId: id }, data: { reviewedExpertCount, draftExpertCount: draftExperts.length, reviewedProjectCount, draftProjectCount: draftProjects.length, updatedAt: new Date() } });
 
     await logAction({ userId, action: "TENDER_GENERATED", entityType: "Tender", entityId: id, description: `Generated benchmark-quality documents for tender "${tender.title}" — ${reviewedExpertCount} reviewed experts, ${draftExperts.length} draft experts, ${reviewedProjectCount} reviewed projects, ${draftProjects.length} draft projects, ${supportDocumentCount} supporting package documents, ${letterheadAppliedCount} uploaded letterhead overlays, ${seniorReviewCriticals.length} senior-review gaps`, metadata: { tenderId: id, reviewedExpertCount, draftExpertCount: draftExperts.length, reviewedProjectCount, draftProjectCount: draftProjects.length, supportDocumentCount, letterheadAppliedCount, seniorReviewGapCount: seniorReviewCriticals.length, warnings } });
     const updatedTender = await prisma.tender.findFirst({ where: { id, userId }, include: { generatedDocuments: { orderBy: { exactOrder: "asc" } } } });
