@@ -1,5 +1,6 @@
 import { Document, HeadingLevel, Packer, Paragraph, TextRun } from "docx";
 import { prisma } from "../prisma";
+import { buildProposalIntelligence, expertProofLine, projectProofLine } from "./proposal-intelligence";
 
 export type SupportingDocumentGenerationInput = {
   tenderId: string;
@@ -28,6 +29,11 @@ function clean(value?: string | null): string {
     .replace(/ChatGPT|OpenAI|as an AI/gi, "")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function shortText(value?: string | null, max = 700): string {
+  const text = clean(value);
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
 }
 
 function take(lines: string[], count: number, maxLen = 420): string[] {
@@ -131,6 +137,31 @@ function sectionsForDocument(documentType: string, name: string, input: Supporti
   ];
 }
 
+function buildCompanyEvidenceLines(company: any): string[] {
+  const documentLines = (company.documents ?? [])
+    .filter((doc: any) => clean(doc.extractedText).length > 20 || clean(doc.originalFileName).length > 0)
+    .slice(0, 18)
+    .map((doc: any) => `Company document: ${doc.originalFileName} | category: ${doc.category} | evidence: ${shortText(doc.extractedText, 700)}`);
+  const legalLines = (company.legalRecords ?? [])
+    .slice(0, 8)
+    .map((record: any) => `Legal evidence: ${record.title} | type: ${record.recordType}${record.authority ? ` | authority: ${record.authority}` : ""}${record.referenceNumber ? ` | ref: ${record.referenceNumber}` : ""}${record.status ? ` | status: ${record.status}` : ""}`);
+  const financialLines = (company.financialRecords ?? [])
+    .slice(0, 8)
+    .map((record: any) => `Financial evidence: ${record.recordType} ${record.fiscalYear}${record.amount ? ` | amount: ${record.currency ?? ""} ${record.amount}` : ""}${record.notes ? ` | notes: ${shortText(record.notes, 240)}` : ""}`);
+  const complianceRecordLines = (company.complianceRecords ?? [])
+    .slice(0, 10)
+    .map((record: any) => `Compliance evidence: ${record.title} | type: ${record.complianceType}${record.status ? ` | status: ${record.status}` : ""}${record.referenceNumber ? ` | ref: ${record.referenceNumber}` : ""}${record.evidenceSummary ? ` | ${shortText(record.evidenceSummary, 360)}` : ""}`);
+  return [...documentLines, ...legalLines, ...financialLines, ...complianceRecordLines].filter(Boolean);
+}
+
+function buildProjectEvidenceLines(projects: any[]): string[] {
+  return projects
+    .flatMap((project: any) => (project.evidences ?? [])
+      .slice(0, 5)
+      .map((evidence: any) => `Project evidence for ${project.name}: ${evidence.title} | type: ${evidence.evidenceType}${evidence.fileName ? ` | file: ${evidence.fileName}` : ""}${evidence.description ? ` | ${shortText(evidence.description, 280)}` : ""}${evidence.extractedText ? ` | text: ${shortText(evidence.extractedText, 520)}` : ""}`))
+    .slice(0, 30);
+}
+
 export async function generateSupportingTenderDocuments(input: SupportingDocumentGenerationInput): Promise<number> {
   const plannedDocs = await prisma.generatedDocument.findMany({
     where: {
@@ -159,4 +190,61 @@ export async function generateSupportingTenderDocuments(input: SupportingDocumen
     count += 1;
   }
   return count;
+}
+
+export async function generateRemainingSupportingTenderDocuments(tenderId: string, userId: string): Promise<number> {
+  const tender = await prisma.tender.findFirst({
+    where: { id: tenderId, userId },
+    include: {
+      requirements: true,
+      expertMatches: { where: { isSelected: true }, include: { expert: true }, orderBy: { score: "desc" } },
+      projectMatches: { where: { isSelected: true }, include: { project: { include: { evidences: { orderBy: { createdAt: "desc" }, take: 5 } } } }, orderBy: { score: "desc" } },
+      complianceGaps: { where: { isResolved: false }, orderBy: { severity: "asc" } },
+      complianceMatrix: { include: { requirement: { select: { title: true, description: true } } } },
+    },
+  });
+  if (!tender) return 0;
+
+  const company = await prisma.company.findUnique({
+    where: { userId },
+    include: {
+      documents: { orderBy: { updatedAt: "desc" }, take: 24 },
+      legalRecords: { orderBy: { updatedAt: "desc" }, take: 12 },
+      financialRecords: { orderBy: { fiscalYear: "desc" }, take: 12 },
+      complianceRecords: { orderBy: { updatedAt: "desc" }, take: 12 },
+    },
+  });
+  if (!company) return 0;
+
+  const experts = tender.expertMatches.map((match) => match.expert).filter((expert) => expert.trustLevel === "REVIEWED");
+  const projects = tender.projectMatches.map((match) => match.project).filter((project) => project.trustLevel === "REVIEWED");
+  const intelligence = buildProposalIntelligence({ tender, company, requirements: tender.requirements, experts, projects });
+  const companyEvidenceLines = buildCompanyEvidenceLines(company);
+  const projectEvidenceLines = buildProjectEvidenceLines(projects);
+  const requirementLines = tender.requirements.map((requirement) => `${requirement.priority} ${requirement.requirementType}: ${requirement.title} — ${requirement.description}`);
+  const expertLines = experts.map(expertProofLine);
+  const projectLines = projects.map(projectProofLine);
+  const complianceLines = [
+    ...tender.complianceMatrix.map((row) => {
+      const requirement = row.requirement?.title ?? row.requirement?.description ?? "Requirement evidence row";
+      return `${row.supportLevel}: ${requirement} | ${row.evidenceType} from ${row.evidenceSource}${row.evidenceReference ? ` | ref: ${row.evidenceReference}` : ""}${row.notes ? ` — ${row.notes}` : ""}`;
+    }),
+    ...tender.complianceGaps.map((gap) => `${gap.severity}: ${gap.title} — ${gap.mitigationPlan || gap.description}`),
+  ];
+  const submissionRules = [tender.submissionMethod, tender.submissionAddress, ...intelligence.submissionRules].filter(Boolean).map(String);
+
+  return generateSupportingTenderDocuments({
+    tenderId,
+    tenderTitle: intelligence.assignmentName,
+    clientName: intelligence.clientName,
+    companyName: company.name,
+    primarySector: intelligence.primarySector,
+    requirementLines,
+    expertLines,
+    projectLines,
+    companyEvidenceLines,
+    projectEvidenceLines,
+    complianceLines,
+    submissionRules,
+  });
 }
