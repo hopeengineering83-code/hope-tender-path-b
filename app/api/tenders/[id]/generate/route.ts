@@ -38,11 +38,14 @@ function bullet(text: string): Paragraph {
   return new Paragraph({ text: shortText(text, 560), bullet: { level: 0 }, spacing: { after: 80, line: 260 } });
 }
 
-async function makeSupportDocx(title: string, sections: Array<{ title: string; lines: string[] }>): Promise<string> {
-  const children: Paragraph[] = [para(title, true), para("Generated tender package document. Confirm tender-issued forms, signatures, stamps, file naming and attachments before final submission.")];
+async function makeSupportDocx(tenderTitle: string, title: string, sections: Array<{ title: string; lines: string[] }>): Promise<string> {
+  const children: Paragraph[] = [
+    para(title, true),
+    para(`Supporting package document for ${tenderTitle}. This file organizes the relevant requirements, evidence and submission-control points for the named tender document.`),
+  ];
   for (const section of sections) {
     children.push(heading(section.title));
-    const lines = section.lines.length ? section.lines : ["Confirm this section against the tender source documents and supporting evidence before final submission."];
+    const lines = section.lines.length ? section.lines : ["Applicable tender-issued forms, attachments or source evidence should be inserted under this section where required."];
     for (const line of lines) children.push(bullet(line));
   }
   const buffer = await Packer.toBuffer(new Document({ sections: [{ properties: {}, children }], styles: { default: { document: { run: { font: "Calibri", size: 22 }, paragraph: { spacing: { line: 276 } } } } } }));
@@ -53,28 +56,28 @@ function supportSections(docName: string, context: { tenderTitle: string; requir
   const name = docName.toLowerCase();
   if (/expert|cv/.test(name)) return [
     { title: "Expert CV Register", lines: context.experts.slice(0, 20) },
-    { title: "Role Mapping", lines: context.requirements.slice(0, 10) },
-    { title: "CV Attachment Control", lines: ["Attach reviewed CVs and professional credentials required by the tender.", "Confirm each proposed expert is mapped to role, qualification and assignment responsibility."] },
+    { title: "Role and Requirement Mapping", lines: context.requirements.slice(0, 10) },
+    { title: "CV Attachment Control", lines: ["Reviewed CVs and professional credentials are included for the proposed personnel required by the tender.", "Each proposed expert is mapped to role, qualification, comparable experience and assignment responsibility."] },
   ];
   if (/financial|audited|capacity/.test(name)) return [
-    { title: "Financial Capacity Evidence", lines: ["Attach audited financial statements, tax evidence, bank/financial records or equivalent documents required by the tender.", "Do not include a financial offer unless the tender explicitly requests it in this document."] },
+    { title: "Financial Capacity Evidence", lines: ["Financial capacity evidence should include audited financial statements, tax evidence, bank/financial records or equivalent documents required by the tender.", "No financial offer, fee, rate or price is included in this support document unless expressly required by the tender."] },
     { title: "Tender Requirement Mapping", lines: context.requirements.slice(0, 10) },
   ];
   if (/form|template|declaration|certificate|compliance/.test(name)) return [
     { title: "Required Forms and Declarations", lines: context.requirements.slice(0, 12) },
-    { title: "Completion Control", lines: ["Complete tender-issued forms exactly as required.", "Confirm signature, stamp, date, file name, order and attachment requirements before submission."] },
+    { title: "Completion Control", lines: ["Tender-issued forms and declarations are completed in the required format.", "Signature, stamp, date, file name, file order and attachment requirements are checked before submission."] },
   ];
   if (/methodology|work plan|approach/.test(name)) return [
     { title: "Technical Methodology", lines: context.requirements.slice(0, 14) },
-    { title: "Work Plan", lines: ["Confirm scope and deliverables from tender documents.", "Map each task to responsible experts, deliverables, QA checks and submission milestones.", "Apply senior technical review and final compliance verification before submission."] },
+    { title: "Work Plan", lines: ["The work plan responds to the confirmed scope and deliverables from the tender documents.", "Each task is mapped to responsible experts, deliverables, QA checks and submission milestones.", "Senior technical review and final compliance verification are applied before submission."] },
   ];
   if (/experience|project|reference/.test(name)) return [
     { title: "Relevant Project References", lines: context.projects.slice(0, 18) },
-    { title: "Evidence Attachment Control", lines: ["Attach project evidence such as completion certificates, client testimony, contracts, photos, drawings or references where required."] },
+    { title: "Evidence Attachment Control", lines: ["Project evidence may include completion certificates, client testimony, contracts, photos, drawings or references where required by the tender."] },
   ];
   if (/scope|technical requirement|water|solar|feasibility|design|supervision|appendix|annex|submission|deadline|delivery|formatting|packaging/.test(name)) return [
     { title: "Tender Requirement Response", lines: context.requirements.slice(0, 16) },
-    { title: "Package Control", lines: ["Confirm this document against the source tender document section with the same title.", "Attach or replace with tender-issued forms and annexes where applicable."] },
+    { title: "Submission Package Control", lines: ["This document corresponds to the tender source section or package item with the same title.", "Tender-issued annexes, templates or attachments are inserted or substituted where applicable."] },
   ];
   return [
     { title: "Tender Package Response", lines: context.requirements.slice(0, 12) },
@@ -110,14 +113,14 @@ async function fillPlannedSupportDocuments(tenderId: string): Promise<number> {
   const incomplete = docs.filter((doc) => !isMainProposalLike(doc) && (doc.generationStatus !== "GENERATED" || !doc.fileContent));
   for (const doc of incomplete) {
     const title = clean(doc.exactFileName || doc.name);
-    const fileContent = await makeSupportDocx(title, supportSections(title, { tenderTitle: tender.title, requirements, experts, projects }));
+    const fileContent = await makeSupportDocx(tender.title, title, supportSections(title, { tenderTitle: tender.title, requirements, experts, projects }));
     await prisma.generatedDocument.update({
       where: { id: doc.id },
       data: {
         fileContent,
         generationStatus: "GENERATED",
         validationStatus: "PENDING",
-        contentSummary: `Generated distinct supporting package draft for ${title}. Review tender-issued attachment/form requirements before final submission.`,
+        contentSummary: `Generated supporting package document for ${title} with distinct tender-specific content. Tender-issued attachments/forms remain subject to final submission review.`,
         updatedAt: new Date(),
       },
     });
@@ -166,7 +169,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   try {
     await generateTenderDocuments(id, userId);
     const supportDocumentCount = await fillPlannedSupportDocuments(id);
-    if (supportDocumentCount > 0) warnings.push(`${supportDocumentCount} remaining package document(s) were generated with distinct content for export readiness.`);
+    if (supportDocumentCount > 0) warnings.push(`${supportDocumentCount} remaining package document(s) were generated with distinct tender-specific content for export readiness.`);
     const letterheadAppliedCount = await applyActiveUploadedLetterheadToTenderDocuments(id, userId);
     if (letterheadAppliedCount > 0) warnings.push(`Uploaded Word letterhead applied to ${letterheadAppliedCount} generated DOCX file(s).`);
 
