@@ -130,17 +130,19 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
 
   const experts = tender.expertMatches.map((m) => m.expert).filter((e) => e.trustLevel === "REVIEWED");
   const projects = tender.projectMatches.map((m) => m.project).filter((p) => p.trustLevel === "REVIEWED");
-  const companyEvidenceLines = buildCompanyEvidenceLines(company);
-  const projectEvidenceLines = buildProjectEvidenceLines(projects);
   const expertRequired = exactSelectionLimit(tender.requirements, "EXPERT");
   const projectRequired = exactSelectionLimit(tender.requirements, "PROJECT_EXPERIENCE");
 
   const intelligence = buildProposalIntelligence({ tender, company, requirements: tender.requirements, experts, projects });
+  const rankedExperts = intelligence.topExperts.length ? intelligence.topExperts : experts;
+  const rankedProjects = intelligence.topProjects.length ? intelligence.topProjects : projects;
+  const companyEvidenceLines = buildCompanyEvidenceLines(company);
+  const projectEvidenceLines = buildProjectEvidenceLines(rankedProjects as any[]);
   const proposalTitle = intelligence.assignmentName;
   const tenderText = [proposalTitle, tender.reference, intelligence.clientName, tender.description, tender.intakeSummary, tender.analysisSummary, tender.evaluationMethodology, ...tender.files.map((f) => `${f.originalFileName}\n${f.extractedText ?? ""}`)].filter(Boolean).join("\n\n");
   const requirementLines = tender.requirements.map((r) => `${r.priority} ${r.requirementType}: ${r.title} — ${r.description}`);
-  const expertLines = experts.map(expertProofLine);
-  const projectLines = projects.map(projectProofLine);
+  const expertLines = rankedExperts.map(expertProofLine);
+  const projectLines = rankedProjects.map(projectProofLine);
   const submissionNotes = [tender.submissionMethod, tender.submissionAddress, ...intelligence.submissionRules].filter(Boolean).join("\n");
   const complianceLines = [
     ...tender.complianceMatrix.map((m) => { const req = m.requirement?.title ?? m.requirement?.description ?? "Requirement evidence row"; return `${m.supportLevel}: ${req} | ${m.evidenceType} from ${m.evidenceSource}${m.evidenceReference ? ` | ref: ${m.evidenceReference}` : ""}${m.notes ? ` — ${m.notes}` : ""}`; }),
@@ -180,7 +182,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   const doc = buildProfessionalDocument({ tenderTitle: proposalTitle, clientName: intelligence.clientName, companyName: company.name, reference: tender.reference, children });
 
   const fileContent = (await Packer.toBuffer(doc)).toString("base64");
-  const summary = `${mode} technical proposal generated. ${finalized.internalSummary}. ${auditSummary}. Inputs: ${intelligence.requiredSections.length} section group(s), ${intelligence.themes.length} tender theme(s), ${experts.length} reviewed expert(s), ${projects.length} reviewed project(s), ${companyEvidenceLines.length} company evidence item(s), ${projectEvidenceLines.length} project evidence attachment(s).`;
+  const summary = `${mode} technical proposal generated. ${finalized.internalSummary}. ${auditSummary}. Inputs: ${intelligence.requiredSections.length} section group(s), ${intelligence.themes.length} tender theme(s), ${rankedExperts.length} ranked reviewed expert(s), ${rankedProjects.length} ranked reviewed project(s), ${companyEvidenceLines.length} company evidence item(s), ${projectEvidenceLines.length} project evidence attachment(s).`;
 
   const target = await prisma.generatedDocument.findFirst({ where: { tenderId, documentType: { in: ["TECHNICAL_PROPOSAL", "PROPOSAL", "METHODOLOGY"] } }, orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }] });
   if (target) await prisma.generatedDocument.update({ where: { id: target.id }, data: { name: "Client-Ready Benchmark Technical Proposal", documentType: "TECHNICAL_PROPOSAL", exactFileName: target.exactFileName || "Technical-Proposal.docx", fileContent, generationStatus: "GENERATED", validationStatus: "PENDING", contentSummary: summary, updatedAt: new Date() } });
