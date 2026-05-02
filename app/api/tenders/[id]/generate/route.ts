@@ -12,15 +12,15 @@ function criticalGapIsHardBlock(gap: { title: string; description: string; mitig
 }
 
 async function fillPlannedSupportDocuments(tenderId: string): Promise<number> {
-  const source = await prisma.generatedDocument.findFirst({
+  const generatedDocs = await prisma.generatedDocument.findMany({
     where: {
       tenderId,
       generationStatus: "GENERATED",
-      fileContent: { not: null },
       documentType: { in: ["TECHNICAL_PROPOSAL", "PROPOSAL", "METHODOLOGY"] },
     },
     orderBy: [{ exactOrder: "asc" }, { updatedAt: "desc" }],
   });
+  const source = generatedDocs.find((doc) => Boolean(doc.fileContent));
   if (!source?.fileContent) return 0;
 
   const planned = await prisma.generatedDocument.findMany({
@@ -29,7 +29,7 @@ async function fillPlannedSupportDocuments(tenderId: string): Promise<number> {
       generationStatus: { not: "GENERATED" },
       documentType: { notIn: ["TECHNICAL_PROPOSAL", "PROPOSAL"] },
     },
-    select: { id: true, name: true, exactFileName: true, documentType: true },
+    select: { id: true, name: true, exactFileName: true },
   });
 
   for (const doc of planned) {
