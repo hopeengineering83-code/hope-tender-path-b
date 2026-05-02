@@ -4,6 +4,7 @@ import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { generateTenderDocuments } from "../../../../../lib/engine/generate-elite";
 import { applyActiveUploadedLetterheadToTenderDocuments } from "../../../../../lib/engine/apply-active-letterhead";
 import { logAction } from "../../../../../lib/audit";
+import { Document, HeadingLevel, Packer, Paragraph, TextRun } from "docx";
 
 function criticalGapIsHardBlock(gap: { title: string; description: string; mitigationPlan: string | null }) {
   const text = `${gap.title} ${gap.description} ${gap.mitigationPlan ?? ""}`;
@@ -11,41 +12,112 @@ function criticalGapIsHardBlock(gap: { title: string; description: string; mitig
   return /(ineligible|debarred|blacklisted|deadline.*passed|late submission|missing required file name|missing exact file|tender not found|company profile required|no documents? have been generated|signature prohibited|branding prohibited)/i.test(text);
 }
 
+function clean(value?: string | null): string {
+  return (value ?? "")
+    .replace(/[\u0000-\u001F\u007F]/g, " ")
+    .replace(/=+\s*PAGE\s+\d+\s*=+/gi, " ")
+    .replace(/<PARSED TEXT FOR PAGE:[^>]+>/gi, " ")
+    .replace(/ChatGPT|OpenAI|as an AI/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function shortText(value?: string | null, max = 420): string {
+  const text = clean(value);
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+}
+
+function para(text: string, bold = false): Paragraph {
+  return new Paragraph({ children: [new TextRun({ text, bold, size: 22, font: "Calibri" })], spacing: { after: 120, line: 276 } });
+}
+
+function heading(text: string): Paragraph {
+  return new Paragraph({ text, heading: HeadingLevel.HEADING_1, spacing: { before: 260, after: 140 } });
+}
+
+function bullet(text: string): Paragraph {
+  return new Paragraph({ text: shortText(text, 560), bullet: { level: 0 }, spacing: { after: 80, line: 260 } });
+}
+
+async function makeSupportDocx(title: string, sections: Array<{ title: string; lines: string[] }>): Promise<string> {
+  const children: Paragraph[] = [para(title, true), para("Generated tender package document. Confirm tender-issued forms, signatures, stamps, file naming and attachments before final submission.")];
+  for (const section of sections) {
+    children.push(heading(section.title));
+    const lines = section.lines.length ? section.lines : ["Confirm this section against the tender source documents and supporting evidence before final submission."];
+    for (const line of lines) children.push(bullet(line));
+  }
+  const buffer = await Packer.toBuffer(new Document({ sections: [{ properties: {}, children }], styles: { default: { document: { run: { font: "Calibri", size: 22 }, paragraph: { spacing: { line: 276 } } } } } }));
+  return buffer.toString("base64");
+}
+
+function supportSections(docName: string, context: { tenderTitle: string; requirements: string[]; experts: string[]; projects: string[] }): Array<{ title: string; lines: string[] }> {
+  const name = docName.toLowerCase();
+  if (/expert|cv/.test(name)) return [
+    { title: "Expert CV Register", lines: context.experts.slice(0, 20) },
+    { title: "Role Mapping", lines: context.requirements.slice(0, 10) },
+    { title: "CV Attachment Control", lines: ["Attach reviewed CVs and professional credentials required by the tender.", "Confirm each proposed expert is mapped to role, qualification and assignment responsibility."] },
+  ];
+  if (/financial|audited|capacity/.test(name)) return [
+    { title: "Financial Capacity Evidence", lines: ["Attach audited financial statements, tax evidence, bank/financial records or equivalent documents required by the tender.", "Do not include a financial offer unless the tender explicitly requests it in this document."] },
+    { title: "Tender Requirement Mapping", lines: context.requirements.slice(0, 10) },
+  ];
+  if (/form|template|declaration|certificate|compliance/.test(name)) return [
+    { title: "Required Forms and Declarations", lines: context.requirements.slice(0, 12) },
+    { title: "Completion Control", lines: ["Complete tender-issued forms exactly as required.", "Confirm signature, stamp, date, file name, order and attachment requirements before submission."] },
+  ];
+  if (/methodology|work plan|approach/.test(name)) return [
+    { title: "Technical Methodology", lines: context.requirements.slice(0, 14) },
+    { title: "Work Plan", lines: ["Confirm scope and deliverables from tender documents.", "Map each task to responsible experts, deliverables, QA checks and submission milestones.", "Apply senior technical review and final compliance verification before submission."] },
+  ];
+  if (/experience|project|reference/.test(name)) return [
+    { title: "Relevant Project References", lines: context.projects.slice(0, 18) },
+    { title: "Evidence Attachment Control", lines: ["Attach project evidence such as completion certificates, client testimony, contracts, photos, drawings or references where required."] },
+  ];
+  if (/scope|technical requirement|water|solar|feasibility|design|supervision|appendix|annex|submission/.test(name)) return [
+    { title: "Tender Requirement Response", lines: context.requirements.slice(0, 16) },
+    { title: "Package Control", lines: ["Confirm this document against the source tender document section with the same title.", "Attach or replace with tender-issued forms and annexes where applicable."] },
+  ];
+  return [
+    { title: "Tender Package Response", lines: context.requirements.slice(0, 12) },
+    { title: "Supporting Evidence", lines: [...context.projects, ...context.experts].slice(0, 12) },
+  ];
+}
+
 async function fillPlannedSupportDocuments(tenderId: string): Promise<number> {
-  const generatedDocs = await prisma.generatedDocument.findMany({
-    where: {
-      tenderId,
-      generationStatus: "GENERATED",
-      documentType: { in: ["TECHNICAL_PROPOSAL", "PROPOSAL", "METHODOLOGY"] },
+  const tender = await prisma.tender.findUnique({
+    where: { id: tenderId },
+    include: {
+      requirements: true,
+      expertMatches: { where: { isSelected: true }, include: { expert: true }, orderBy: { score: "desc" } },
+      projectMatches: { where: { isSelected: true }, include: { project: true }, orderBy: { score: "desc" } },
     },
-    orderBy: [{ exactOrder: "asc" }, { updatedAt: "desc" }],
   });
-  const source = generatedDocs.find((doc) => Boolean(doc.fileContent));
-  if (!source?.fileContent) return 0;
+  if (!tender) return 0;
+
+  const requirements = tender.requirements.map((r) => `${r.priority} ${r.requirementType}: ${r.title} — ${shortText(r.description, 380)}`);
+  const experts = tender.expertMatches.filter((m) => m.expert.trustLevel === "REVIEWED").map((m) => `${m.expert.fullName}${m.expert.title ? ` — ${m.expert.title}` : ""}${m.expert.yearsExperience ? ` | ${m.expert.yearsExperience}+ years` : ""}${m.expert.profile ? ` | ${shortText(m.expert.profile, 260)}` : ""}`);
+  const projects = tender.projectMatches.filter((m) => m.project.trustLevel === "REVIEWED").map((m) => `${m.project.name}${m.project.clientName ? ` — ${m.project.clientName}` : ""}${m.project.country ? ` | ${m.project.country}` : ""}${m.project.summary ? ` | ${shortText(m.project.summary, 300)}` : ""}`);
 
   const supportDocs = await prisma.generatedDocument.findMany({
-    where: {
-      tenderId,
-      documentType: { notIn: ["TECHNICAL_PROPOSAL", "PROPOSAL"] },
-    },
+    where: { tenderId, documentType: { notIn: ["TECHNICAL_PROPOSAL", "PROPOSAL"] } },
     select: { id: true, name: true, exactFileName: true, generationStatus: true, fileContent: true },
   });
 
   const incomplete = supportDocs.filter((doc) => doc.generationStatus !== "GENERATED" || !doc.fileContent);
-
   for (const doc of incomplete) {
+    const title = clean(doc.exactFileName || doc.name);
+    const fileContent = await makeSupportDocx(title, supportSections(title, { tenderTitle: tender.title, requirements, experts, projects }));
     await prisma.generatedDocument.update({
       where: { id: doc.id },
       data: {
-        fileContent: source.fileContent,
+        fileContent,
         generationStatus: "GENERATED",
         validationStatus: "PENDING",
-        contentSummary: `Generated supporting package draft for ${doc.exactFileName || doc.name}. Review tender-issued attachment/form requirements before final submission.`,
+        contentSummary: `Generated distinct supporting package draft for ${title}. Review tender-issued attachment/form requirements before final submission.`,
         updatedAt: new Date(),
       },
     });
   }
-
   return incomplete.length;
 }
 
@@ -99,7 +171,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   try {
     await generateTenderDocuments(id, userId);
     const supportDocumentCount = await fillPlannedSupportDocuments(id);
-    if (supportDocumentCount > 0) warnings.push(`${supportDocumentCount} planned supporting package document(s) were generated from the client-ready proposal package for export readiness.`);
+    if (supportDocumentCount > 0) warnings.push(`${supportDocumentCount} planned supporting package document(s) were generated with distinct content for export readiness.`);
     const letterheadAppliedCount = await applyActiveUploadedLetterheadToTenderDocuments(id, userId);
     if (letterheadAppliedCount > 0) warnings.push(`Uploaded Word letterhead applied to ${letterheadAppliedCount} generated DOCX file(s).`);
 
