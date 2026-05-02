@@ -1,8 +1,17 @@
+type GeneratedDocLike = {
+  name?: string | null;
+  exactFileName?: string | null;
+  documentType?: string | null;
+  generationStatus: string;
+  validationStatus: string;
+  reviewStatus: string;
+};
+
 type TenderLike = {
   readinessScore?: number | null;
   requirements?: Array<{ priority: string; requirementType: string }>;
   complianceGaps?: Array<{ severity: string; isResolved: boolean }>;
-  generatedDocuments?: Array<{ generationStatus: string; validationStatus: string; reviewStatus: string }>;
+  generatedDocuments?: GeneratedDocLike[];
   expertMatches?: Array<{ isSelected: boolean; score: number; expert?: { trustLevel?: string | null } }>;
   projectMatches?: Array<{ isSelected: boolean; score: number; project?: { trustLevel?: string | null } }>;
   complianceMatrix?: Array<{ supportLevel: string }>;
@@ -19,10 +28,34 @@ function badgeClass(level: "GO" | "REVIEW" | "NO_GO") {
   return "bg-red-100 text-red-700 border-red-200";
 }
 
+function docKey(doc: GeneratedDocLike): string {
+  return (doc.exactFileName || doc.name || doc.documentType || "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function docScore(doc: GeneratedDocLike): number {
+  return (doc.generationStatus === "GENERATED" ? 4 : 0)
+    + (["PASSED", "VALIDATED"].includes(doc.validationStatus) ? 2 : 0)
+    + (doc.reviewStatus === "APPROVED" ? 1 : 0);
+}
+
+function visiblePackageDocs(docs: GeneratedDocLike[]): GeneratedDocLike[] {
+  const byKey = new Map<string, GeneratedDocLike>();
+  for (const doc of docs) {
+    const key = docKey(doc);
+    if (!key) continue;
+    const current = byKey.get(key);
+    if (!current || docScore(doc) >= docScore(current)) byKey.set(key, doc);
+  }
+  return Array.from(byKey.values());
+}
+
 export function ExecutiveSnapshot({ tender }: { tender: TenderLike }) {
   const requirements = tender.requirements ?? [];
   const gaps = tender.complianceGaps ?? [];
-  const generatedDocs = tender.generatedDocuments ?? [];
+  const generatedDocs = visiblePackageDocs(tender.generatedDocuments ?? []);
   const expertMatches = tender.expertMatches ?? [];
   const projectMatches = tender.projectMatches ?? [];
   const matrix = tender.complianceMatrix ?? [];
@@ -37,7 +70,7 @@ export function ExecutiveSnapshot({ tender }: { tender: TenderLike }) {
   const strongExperts = expertMatches.filter((m) => m.score >= 0.9).length;
   const strongProjects = projectMatches.filter((m) => m.score >= 0.9).length;
   const generatedCount = generatedDocs.filter((d) => d.generationStatus === "GENERATED").length;
-  const validatedCount = generatedDocs.filter((d) => d.validationStatus === "PASSED").length;
+  const validatedCount = generatedDocs.filter((d) => ["PASSED", "VALIDATED"].includes(d.validationStatus)).length;
   const approvedCount = generatedDocs.filter((d) => d.reviewStatus === "APPROVED").length;
   const extractedFiles = files.filter((f) => (f.extractedText ?? "").length > 80).length;
   const supportedEvidence = matrix.filter((m) => ["SUPPORTED", "EVIDENCE_PENDING_REVIEW", "PARTIAL"].includes(m.supportLevel)).length;
@@ -55,9 +88,9 @@ export function ExecutiveSnapshot({ tender }: { tender: TenderLike }) {
     unresolvedCritical === 0 && unresolvedHigh > 0 ? `Senior review ${unresolvedHigh} high-priority item(s).` : null,
     selectedExperts.length > reviewedExperts ? `Review ${selectedExperts.length - reviewedExperts} selected expert draft record(s) or deselect them.` : null,
     selectedProjects.length > reviewedProjects ? `Review ${selectedProjects.length - reviewedProjects} selected project draft record(s) or deselect them.` : null,
-    generatedDocs.length > 0 && generatedCount < generatedDocs.length ? `Generate ${generatedDocs.length - generatedCount} remaining planned document(s).` : null,
-    generatedCount > 0 && validatedCount < generatedCount ? `Run validation for ${generatedCount - validatedCount} generated document(s).` : null,
-    generatedCount > 0 && approvedCount < generatedCount ? `Approve or comment on ${generatedCount - approvedCount} generated document(s).` : null,
+    generatedDocs.length > 0 && generatedCount < generatedDocs.length ? `Generate ${generatedDocs.length - generatedCount} remaining visible package document(s).` : null,
+    generatedCount > 0 && validatedCount < generatedCount ? `Run validation for ${generatedCount - validatedCount} generated package document(s).` : null,
+    generatedCount > 0 && approvedCount < generatedCount ? `Approve or comment on ${generatedCount - approvedCount} generated package document(s).` : null,
     extractedFiles < files.length ? `Review extraction for ${files.length - extractedFiles} tender file(s) with weak/no text.` : null,
   ].filter(Boolean) as string[];
 
@@ -68,7 +101,7 @@ export function ExecutiveSnapshot({ tender }: { tender: TenderLike }) {
           <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Executive Tender Command Center</p>
           <h2 className="mt-1 text-xl font-bold text-slate-900">Senior proposal decision snapshot</h2>
           <p className="mt-1 max-w-3xl text-sm text-slate-500">
-            One proposal-management view for readiness, critical gaps, evidence coverage, selected experts/projects, generated documents, validation, review status, and extraction health.
+            One proposal-management view for readiness, critical gaps, evidence coverage, selected experts/projects, generated package documents, validation, review status, and extraction health.
           </p>
         </div>
         <span className={`w-fit rounded-full border px-4 py-2 text-sm font-bold ${badgeClass(decision)}`}>{decision}</span>
