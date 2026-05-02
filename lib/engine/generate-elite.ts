@@ -37,12 +37,13 @@ function para(text: string, bold = false): Paragraph {
   });
 }
 
-function heading(text: string, level: 1 | 2 = 1, pageBreak = false): Paragraph {
+function heading(text: string, level: 1 | 2 | 3 = 1, pageBreak = false): Paragraph {
+  const headingLevel = level === 1 ? HeadingLevel.HEADING_1 : level === 2 ? HeadingLevel.HEADING_2 : HeadingLevel.HEADING_3;
   return new Paragraph({
     text,
-    heading: level === 1 ? HeadingLevel.HEADING_1 : HeadingLevel.HEADING_2,
+    heading: headingLevel,
     pageBreakBefore: level === 1 ? pageBreak : false,
-    spacing: { before: level === 1 ? 360 : 240, after: 140 },
+    spacing: { before: level === 1 ? 360 : level === 2 ? 240 : 180, after: level === 1 ? 140 : 100 },
     border: level === 1 ? { bottom: { color: LIGHT_BLUE, space: 1, style: BorderStyle.SINGLE, size: 8 } } : undefined,
   });
 }
@@ -134,9 +135,10 @@ function markdownToDocx(markdown: string): (Paragraph | Table)[] {
     if (tableBuffer.length > 0) flushTable();
 
     if (!line) continue;
-    if (line.startsWith("### ")) out.push(heading(line.slice(4).replace(/\*\*/g, ""), 2));
-    else if (line.startsWith("## ")) out.push(heading(line.slice(3).replace(/\*\*/g, ""), 1));
+    if (line.startsWith("### ")) out.push(heading(line.slice(4).replace(/\*\*/g, ""), 3));
+    else if (line.startsWith("## ")) out.push(heading(line.slice(3).replace(/\*\*/g, ""), 2));
     else if (line.startsWith("# ")) { h1Count++; out.push(heading(line.slice(2).replace(/\*\*/g, ""), 1, h1Count > 1)); }
+    else if (line.startsWith("> ")) out.push(new Paragraph({ children: parseInlineRuns(line.slice(2), { color: "795B00", size: 20 }), indent: { left: 360, right: 360 }, spacing: { after: 80, line: 260 }, border: { left: { color: "F59E0B", style: BorderStyle.SINGLE, size: 12, space: 4 } } }))
     else if (/^[-*•]\s+/.test(line)) out.push(bullet(line.replace(/^[-*•]\s+/, "")));
     else if (/^\d+[.)]\s+/.test(line)) out.push(bullet(line.replace(/^\d+[.)]\s+/, "")));
     else out.push(para(line));
@@ -373,6 +375,7 @@ function buildProfessionalDocument(params: { tenderTitle: string; clientName: st
       paragraphStyles: [
         { id: "Heading1", name: "Heading 1", basedOn: "Normal", next: "Normal", quickFormat: true, run: { size: 32, bold: true, color: BRAND_BLUE, font: "Calibri" }, paragraph: { spacing: { before: 360, after: 160 }, border: { bottom: { color: LIGHT_BLUE, style: BorderStyle.SINGLE, size: 8, space: 1 } } } },
         { id: "Heading2", name: "Heading 2", basedOn: "Normal", next: "Normal", quickFormat: true, run: { size: 26, bold: true, color: BRAND_BLUE, font: "Calibri" }, paragraph: { spacing: { before: 260, after: 120 } } },
+        { id: "Heading3", name: "Heading 3", basedOn: "Normal", next: "Normal", quickFormat: true, run: { size: 22, bold: true, color: BRAND_GRAY, font: "Calibri" }, paragraph: { spacing: { before: 180, after: 80 } } },
       ],
     },
   });

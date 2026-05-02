@@ -5,6 +5,110 @@ import { useRouter } from "next/navigation";
 import { StatusBadge } from "../../../../components/status-badge";
 import { NEXT_STATUS, formatDate, formatTenderStatus } from "../../../../lib/tender-workflow";
 
+function renderInline(text: string): React.ReactNode[] {
+  const parts = text.split(/(\*\*[^*\n]+\*\*|\*[^*\n]+\*|_[^_\n]+_)/g);
+  return parts.map((part, idx) => {
+    if (part.startsWith("**") && part.endsWith("**")) return <strong key={idx}>{part.slice(2, -2)}</strong>;
+    if ((part.startsWith("*") && part.endsWith("*")) || (part.startsWith("_") && part.endsWith("_"))) return <em key={idx}>{part.slice(1, -1)}</em>;
+    return part;
+  });
+}
+
+function ProposalMarkdown({ markdown }: { markdown: string }) {
+  const lines = markdown.replace(/\r/g, "").split("\n");
+  const elements: React.ReactNode[] = [];
+  let i = 0;
+
+  while (i < lines.length) {
+    const trimmed = lines[i].trim();
+
+    if (!trimmed) { i++; continue; }
+
+    if (trimmed.startsWith("### ")) {
+      elements.push(<h3 key={i} className="text-sm font-semibold text-slate-800 mt-4 mb-1">{renderInline(trimmed.slice(4))}</h3>);
+      i++; continue;
+    }
+    if (trimmed.startsWith("## ")) {
+      elements.push(<h2 key={i} className="text-base font-bold text-blue-900 mt-5 mb-2 pb-1 border-b border-blue-100">{renderInline(trimmed.slice(3))}</h2>);
+      i++; continue;
+    }
+    if (trimmed.startsWith("# ")) {
+      elements.push(<h1 key={i} className="text-lg font-bold text-blue-900 mt-6 mb-2 pb-1 border-b-2 border-blue-200">{renderInline(trimmed.slice(2))}</h1>);
+      i++; continue;
+    }
+
+    if (trimmed.startsWith("> ")) {
+      elements.push(<blockquote key={i} className="border-l-4 border-amber-400 bg-amber-50 px-3 py-2 text-xs text-amber-800 my-2 italic">{renderInline(trimmed.slice(2))}</blockquote>);
+      i++; continue;
+    }
+
+    if (trimmed.startsWith("|") && trimmed.endsWith("|")) {
+      const tableLines: string[] = [];
+      while (i < lines.length && lines[i].trim().startsWith("|") && lines[i].trim().endsWith("|")) {
+        tableLines.push(lines[i].trim()); i++;
+      }
+      const dataRows = tableLines.filter((l) => !/^\|[\s:|-]+\|$/.test(l));
+      if (dataRows.length > 0) {
+        const headers = dataRows[0].split("|").slice(1, -1).map((c) => c.trim());
+        const bodyRows = dataRows.slice(1);
+        elements.push(
+          <div key={`t${i}`} className="overflow-x-auto my-3">
+            <table className="text-xs w-full border-collapse">
+              <thead>
+                <tr className="bg-blue-900 text-white">
+                  {headers.map((h, hi) => <th key={hi} className="px-2 py-1.5 text-left font-semibold">{renderInline(h)}</th>)}
+                </tr>
+              </thead>
+              <tbody>
+                {bodyRows.map((row, ri) => {
+                  const cells = row.split("|").slice(1, -1).map((c) => c.trim());
+                  return (
+                    <tr key={ri} className={ri % 2 === 0 ? "bg-white" : "bg-slate-50"}>
+                      {cells.map((c, ci) => <td key={ci} className="px-2 py-1 border border-slate-200">{renderInline(c)}</td>)}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        );
+      }
+      continue;
+    }
+
+    if (/^[-*•]\s+/.test(trimmed)) {
+      const bullets: string[] = [];
+      while (i < lines.length && /^[-*•]\s+/.test(lines[i].trim())) {
+        bullets.push(lines[i].trim().replace(/^[-*•]\s+/, "")); i++;
+      }
+      elements.push(
+        <ul key={`u${i}`} className="list-disc pl-5 my-1.5 space-y-0.5">
+          {bullets.map((b, bi) => <li key={bi} className="text-sm text-slate-700">{renderInline(b)}</li>)}
+        </ul>
+      );
+      continue;
+    }
+
+    if (/^\d+[.)]\s+/.test(trimmed)) {
+      const items: string[] = [];
+      while (i < lines.length && /^\d+[.)]\s+/.test(lines[i].trim())) {
+        items.push(lines[i].trim().replace(/^\d+[.)]\s+/, "")); i++;
+      }
+      elements.push(
+        <ol key={`o${i}`} className="list-decimal pl-5 my-1.5 space-y-0.5">
+          {items.map((item, ii) => <li key={ii} className="text-sm text-slate-700">{renderInline(item)}</li>)}
+        </ol>
+      );
+      continue;
+    }
+
+    elements.push(<p key={i} className="text-sm text-slate-700 my-1.5 leading-relaxed">{renderInline(trimmed)}</p>);
+    i++;
+  }
+
+  return <div className="space-y-0.5">{elements}</div>;
+}
+
 type TenderFile = {
   id: string;
   fileName: string;
@@ -582,7 +686,7 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
                 <div><dt className="text-sm text-slate-500">Category</dt><dd className="mt-1 font-medium text-slate-900">{tender.category}</dd></div>
                 <div><dt className="text-sm text-slate-500">Submission</dt><dd className="mt-1 font-medium text-slate-900">{tender.submissionMethod || "—"}</dd></div>
                 <div className="md:col-span-2"><dt className="text-sm text-slate-500">Description</dt><dd className="mt-1 whitespace-pre-wrap text-slate-900">{tender.description || "—"}</dd></div>
-                <div className="md:col-span-2"><dt className="text-sm text-slate-500">Intake Summary</dt><dd className="mt-1 whitespace-pre-wrap text-slate-900">{tender.intakeSummary || "—"}</dd></div>
+                <div className="md:col-span-2"><dt className="text-sm text-slate-500">Intake Summary</dt><dd className="mt-1 text-slate-900">{tender.intakeSummary ? <ProposalMarkdown markdown={tender.intakeSummary} /> : "—"}</dd></div>
                 <div className="md:col-span-2"><dt className="text-sm text-slate-500">Analysis Summary</dt><dd className="mt-1 whitespace-pre-wrap text-slate-900">{tender.analysisSummary || "—"}</dd></div>
                 <div className="md:col-span-2"><dt className="text-sm text-slate-500">Notes</dt><dd className="mt-1 whitespace-pre-wrap text-slate-900">{tender.notes || "—"}</dd></div>
               </dl>
@@ -946,8 +1050,8 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
               </button>
             </div>
           </div>
-          <div className="prose prose-sm max-w-none">
-            <pre className="whitespace-pre-wrap text-sm text-slate-700 font-sans leading-relaxed">{aiProposal}</pre>
+          <div className="max-w-none">
+            <ProposalMarkdown markdown={aiProposal} />
           </div>
         </div>
       )}

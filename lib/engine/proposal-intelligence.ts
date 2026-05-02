@@ -464,15 +464,15 @@ export function buildProposalIntelligence(params: {
 export function projectProofLine(project: ProjectLite): string {
   const value = money(project.contractValue, project.currency);
   const parts = [project.clientName, project.country, project.sector, value].filter(Boolean);
-  const summary = clean(project.summary).slice(0, 400);
+  const summary = clean(project.summary).slice(0, 600);
   return `${project.name}${parts.length ? ` — ${parts.join(" | ")}` : ""}${summary ? `. ${summary}` : ""}`;
 }
 
 export function expertProofLine(expert: ExpertLite): string {
-  const disciplines = safeParseArr(expert.disciplines).slice(0, 5).join(", ");
-  const certs = safeParseArr(expert.certifications).slice(0, 4).join(", ");
-  const sectors = safeParseArr(expert.sectors).slice(0, 3).join(", ");
-  const profile = clean(expert.profile).slice(0, 300);
+  const disciplines = safeParseArr(expert.disciplines).slice(0, 6).join(", ");
+  const certs = safeParseArr(expert.certifications).slice(0, 6).join(", ");
+  const sectors = safeParseArr(expert.sectors).slice(0, 4).join(", ");
+  const profile = clean(expert.profile).slice(0, 600);
   return [
     `${expert.fullName}${expert.title ? ` — ${expert.title}` : ""}`,
     expert.yearsExperience ? `${expert.yearsExperience}+ years experience` : null,

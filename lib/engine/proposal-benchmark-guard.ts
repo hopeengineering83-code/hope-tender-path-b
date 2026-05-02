@@ -38,11 +38,20 @@ const BENCHMARK_SECTIONS = [
 
 function headingExists(markdown: string, label: string): boolean {
   const simple = label.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  // Also try key-word matching — "Compliance and Bid Review Strategy" matches any heading that contains "compliance" + "bid"
+  const words = simple.split(" ").filter((w) => w.length > 3);
   return markdown
     .split(/\n+/)
     .some((line) => {
-      const clean = line.replace(/^#+\s*/, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-      return clean.includes(simple);
+      if (!/^#+\s/.test(line)) return false;
+      const text = line.replace(/^#+\s*/, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+      if (text.includes(simple)) return true;
+      // Fuzzy: if the label has 2+ long words, accept if at least half are present
+      if (words.length >= 2) {
+        const hits = words.filter((w) => text.includes(w)).length;
+        return hits >= Math.ceil(words.length / 2);
+      }
+      return false;
     });
 }
 
@@ -60,11 +69,22 @@ function mentionsAny(markdown: string, values: string[]): boolean {
 function normalizeWeakText(markdown: string): string {
   return markdown
     .replace(/\bAs an AI[^.]*\./gi, "")
+    .replace(/\bI(?:'m| am) an AI[^.]*\./gi, "")
     .replace(/\blanguage model[^.]*\./gi, "")
+    .replace(/\bCertainly![^\n]*/gi, "")
+    .replace(/\bSure![^\n]*/gi, "")
+    .replace(/\bOf course![^\n]*/gi, "")
+    .replace(/\bI cannot[^.]*\./gi, "To be confirmed by bid team.")
+    .replace(/\bI'm unable[^.]*\./gi, "To be confirmed by bid team.")
+    .replace(/\bPlease note that[^.]*\./gi, "")
     .replace(/\bplaceholder\b/gi, "to be confirmed by bid team")
     .replace(/\bTBD\b/gi, "to be confirmed by bid team")
     .replace(/\bTODO\b/gi, "to be confirmed by bid team")
-    .replace(/\[insert[^\]]*\]/gi, "to be confirmed by bid team");
+    .replace(/\bN\/A \(pending\)\b/gi, "to be confirmed by bid team")
+    .replace(/\bTo be determined\b/gi, "to be confirmed by bid team")
+    .replace(/\[insert[^\]]*\]/gi, "to be confirmed by bid team")
+    .replace(/\[(?:PLACEHOLDER|NAME|DATE|TBD|ADD|ENTER|SPECIFY|YOUR)[^\]]{0,60}\]/gi, "to be confirmed by bid team")
+    .replace(/\n{3,}/g, "\n\n");
 }
 
 function removeInternalQualityHeadings(markdown: string): string {

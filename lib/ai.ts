@@ -202,11 +202,18 @@ TENDER DOCUMENT (${trimmedTender.length.toLocaleString()} chars):
 ${trimmedTender}`;
 
   const text = await generate(prompt);
-  const jsonMatch = text.match(/\{[\s\S]*\}/);
+  // Strip markdown code fences if the model wrapped its JSON
+  const cleaned = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
+  const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
   if (!jsonMatch) throw new Error("Gemini returned no JSON object for tender analysis");
   try {
     return JSON.parse(jsonMatch[0]) as AIAnalysisResult;
   } catch {
+    // Try a second pass — take largest { ... } block in case of trailing noise
+    const allMatches = [...cleaned.matchAll(/\{[\s\S]*?\}/g)].sort((a, b) => b[0].length - a[0].length);
+    for (const m of allMatches) {
+      try { return JSON.parse(m[0]) as AIAnalysisResult; } catch { /* continue */ }
+    }
     throw new Error("Gemini returned malformed JSON for tender analysis");
   }
 }
@@ -525,16 +532,16 @@ ${params.requirements.slice(0, 20_000)}
 ## COMPANY EVIDENCE — USE THIS, DO NOT INVENT ANYTHING
 
 COMPANY PROFILE:
-${params.companyProfile.slice(0, 14_000)}
+${params.companyProfile.slice(0, 16_000)}
 
 PROPOSED EXPERT EVIDENCE:
-${params.experts.slice(0, 14_000)}
+${params.experts.slice(0, 18_000)}
 
 RELEVANT PROJECT EVIDENCE:
-${params.projects.slice(0, 14_000)}
+${params.projects.slice(0, 18_000)}
 
 COMPLIANCE / GAPS / BID-TEAM ACTIONS:
-${params.compliance.slice(0, 12_000)}
+${params.compliance.slice(0, 14_000)}
 
 KEY DIFFERENTIATORS TO WEAVE INTO THE NARRATIVE:
 ${params.differentiators}
@@ -548,16 +555,17 @@ Now write the complete technical proposal. Start with the Cover Letter. The eval
 
 function extractTenderSections(tenderText: string): string[] {
   const sectionPatterns = [
-    /^(?:SECTION\s+[A-Z]|Section\s+[A-Z])\s*[:\-–]\s*(.+)$/gm,
-    /^([A-Z]\.\s+(?:Company Profile|Relevant Experience|Technical Approach|Additional Information|Proposed Team|Relevant Experience|Financial Information)[^\n]*)$/gm,
-    /^(\d+\.\s+(?:Company Profile|Relevant Experience|Technical Approach|Additional Information|Executive Summary|Introduction|Methodology|Team)[^\n]*)$/gm,
+    /^(?:SECTION\s+[A-Z0-9]+|Section\s+[A-Z0-9]+)\s*[:\-–]\s*(.+)$/gm,
+    /^([A-Z]\.\s+(?:Company Profile|Relevant Experience|Technical Approach|Additional Information|Proposed Team|Financial Information|Methodology|Team Composition|Understanding of Assignment|Project Experience|Evaluation Criteria|Value[- ]Added)[^\n]*)$/gm,
+    /^(\d+\.\s+(?:Company Profile|Relevant Experience|Technical Approach|Additional Information|Executive Summary|Introduction|Methodology|Team|Understanding|Background|Evaluation)[^\n]*)$/gm,
+    /^((?:Executive Summary|Company Profile|Proposed Team|Relevant Experience|Technical Approach|Additional Information|Compliance|Declaration)\b[^\n]{0,60})$/gm,
   ];
   const sections: string[] = [];
   const seen = new Set<string>();
   for (const pattern of sectionPatterns) {
     for (const match of tenderText.matchAll(pattern)) {
       const label = (match[1] ?? match[0]).trim().slice(0, 80);
-      if (label && !seen.has(label.toLowerCase())) {
+      if (label && !seen.has(label.toLowerCase()) && label.length > 4) {
         seen.add(label.toLowerCase());
         sections.push(label);
       }
@@ -566,32 +574,3 @@ function extractTenderSections(tenderText: string): string[] {
   return sections.slice(0, 12);
 }
 
-export async function generateProposal(params: {
-  tenderTitle: string;
-  tenderDescription: string;
-  requirements: string;
-  companyName: string;
-  companyProfile: string;
-  serviceLines: string;
-}): Promise<string> {
-  const prompt = `You are a professional bid writer for an engineering consultancy. Write formal proposal content based ONLY on the provided company information — never invent projects, staff, or certifications.
-
-TENDER: ${params.tenderTitle}
-DESCRIPTION: ${params.tenderDescription}
-KEY REQUIREMENTS: ${params.requirements}
-
-COMPANY: ${params.companyName}
-COMPANY PROFILE: ${params.companyProfile}
-SERVICE LINES: ${params.serviceLines}
-
-Write a formal proposal with these sections (use ## headings):
-## Executive Summary
-## Understanding of Requirements
-## Technical Approach
-## Company Qualifications
-## Why Choose Us
-
-Reference tender requirements directly. Use only the company information provided above.`;
-
-  return generate(prompt, GENERATION_MODEL);
-}
