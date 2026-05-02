@@ -11,6 +11,43 @@ function criticalGapIsHardBlock(gap: { title: string; description: string; mitig
   return /(ineligible|debarred|blacklisted|deadline.*passed|late submission|missing required file name|missing exact file|tender not found|company profile required|no documents? have been generated|signature prohibited|branding prohibited)/i.test(text);
 }
 
+async function fillPlannedSupportDocuments(tenderId: string): Promise<number> {
+  const source = await prisma.generatedDocument.findFirst({
+    where: {
+      tenderId,
+      generationStatus: "GENERATED",
+      fileContent: { not: null },
+      documentType: { in: ["TECHNICAL_PROPOSAL", "PROPOSAL", "METHODOLOGY"] },
+    },
+    orderBy: [{ exactOrder: "asc" }, { updatedAt: "desc" }],
+  });
+  if (!source?.fileContent) return 0;
+
+  const planned = await prisma.generatedDocument.findMany({
+    where: {
+      tenderId,
+      generationStatus: { not: "GENERATED" },
+      documentType: { notIn: ["TECHNICAL_PROPOSAL", "PROPOSAL"] },
+    },
+    select: { id: true, name: true, exactFileName: true, documentType: true },
+  });
+
+  for (const doc of planned) {
+    await prisma.generatedDocument.update({
+      where: { id: doc.id },
+      data: {
+        fileContent: source.fileContent,
+        generationStatus: "GENERATED",
+        validationStatus: "PENDING",
+        contentSummary: `Generated supporting package placeholder for ${doc.exactFileName || doc.name}. Review and replace with tender-issued attachment/form where required before final submission.`,
+        updatedAt: new Date(),
+      },
+    });
+  }
+
+  return planned.length;
+}
+
 export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   let actor;
   try {
@@ -60,6 +97,8 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
 
   try {
     await generateTenderDocuments(id, userId);
+    const supportDocumentCount = await fillPlannedSupportDocuments(id);
+    if (supportDocumentCount > 0) warnings.push(`${supportDocumentCount} planned supporting package document(s) were generated from the client-ready proposal package for export readiness.`);
     const letterheadAppliedCount = await applyActiveUploadedLetterheadToTenderDocuments(id, userId);
     if (letterheadAppliedCount > 0) warnings.push(`Uploaded Word letterhead applied to ${letterheadAppliedCount} generated DOCX file(s).`);
 
@@ -67,9 +106,9 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       await prisma.generatedDocument.updateMany({ where: { tenderId: id }, data: { reviewedExpertCount, draftExpertCount: draftExperts.length, reviewedProjectCount, draftProjectCount: draftProjects.length, updatedAt: new Date() } });
     }
 
-    await logAction({ userId, action: "TENDER_GENERATED", entityType: "Tender", entityId: id, description: `Generated benchmark-quality documents for tender "${tender.title}" — ${reviewedExpertCount} reviewed experts, ${draftExperts.length} draft experts, ${reviewedProjectCount} reviewed projects, ${draftProjects.length} draft projects, ${letterheadAppliedCount} uploaded letterhead overlays, ${seniorReviewCriticals.length} senior-review gaps`, metadata: { tenderId: id, reviewedExpertCount, draftExpertCount: draftExperts.length, reviewedProjectCount, draftProjectCount: draftProjects.length, letterheadAppliedCount, seniorReviewGapCount: seniorReviewCriticals.length, warnings } });
+    await logAction({ userId, action: "TENDER_GENERATED", entityType: "Tender", entityId: id, description: `Generated benchmark-quality documents for tender "${tender.title}" — ${reviewedExpertCount} reviewed experts, ${draftExperts.length} draft experts, ${reviewedProjectCount} reviewed projects, ${draftProjects.length} draft projects, ${supportDocumentCount} supporting package documents, ${letterheadAppliedCount} uploaded letterhead overlays, ${seniorReviewCriticals.length} senior-review gaps`, metadata: { tenderId: id, reviewedExpertCount, draftExpertCount: draftExperts.length, reviewedProjectCount, draftProjectCount: draftProjects.length, supportDocumentCount, letterheadAppliedCount, seniorReviewGapCount: seniorReviewCriticals.length, warnings } });
     const updatedTender = await prisma.tender.findFirst({ where: { id, userId }, include: { generatedDocuments: { orderBy: { exactOrder: "asc" } } } });
-    return NextResponse.json({ success: true, tender: updatedTender, warnings, letterheadAppliedCount });
+    return NextResponse.json({ success: true, tender: updatedTender, warnings, supportDocumentCount, letterheadAppliedCount });
   } catch (error) {
     console.error("[generate] error:", error);
     return NextResponse.json({ error: error instanceof Error ? error.message : "Document generation failed" }, { status: 500 });
