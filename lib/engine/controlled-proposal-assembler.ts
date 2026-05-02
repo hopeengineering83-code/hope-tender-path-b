@@ -20,6 +20,8 @@ function clean(value?: string | null): string {
     .replace(/<PARSED TEXT FOR PAGE:[^>]+>/gi, " ")
     .replace(/\bSenior-level requirement bundle consolidating \d+ extracted tender instruction\(s\)\.?/gi, "")
     .replace(/\bKey evidence interpreted:\s*/gi, "")
+    .replace(/\bBid-team confirmation:\s*/gi, "")
+    .replace(/\bbid-team\b/gi, "proposal team")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -38,59 +40,71 @@ function bullets(lines: string[], fallback: string, limit: number, maxLen = 360)
   return selected.length ? selected.map((line) => `- ${line}`) : [`- ${fallback}`];
 }
 
+function sectorLabel(primarySector: string, title: string): string {
+  const text = `${primarySector} ${title}`;
+  if (/health|hospital|medical|clinic|radiology|laboratory|pharmacy|patient|specialty|OPD|emergency/i.test(text)) return "healthcare / medical facility consultancy";
+  if (/water|borehole|pump|sanitary|hydraulic|irrigation|pipeline|reservoir|solar/i.test(text)) return "water, hydraulic and infrastructure consultancy";
+  if (/road|bridge|transport|pavement|traffic|culvert|drainage/i.test(text)) return "transport infrastructure consultancy";
+  if (/urban|master plan|land use|municipal|spatial|settlement|GIS/i.test(text)) return "urban planning and municipal consultancy";
+  if (/environment|ESIA|ESMP|safeguard|social|resettlement|climate|waste|EHS|ESG/i.test(text)) return "environmental and social safeguards consultancy";
+  if (/ICT|software|system|digital|database|platform|network|cyber|telecom|ERP|MIS/i.test(text)) return "ICT and digital transformation consultancy";
+  if (/building|architecture|structural|MEP|residential|commercial|office|warehouse|school|university|facility|supervision|renovation/i.test(text)) return "building design and supervision consultancy";
+  return primarySector || "technical consultancy";
+}
+
 function methodologyForSector(primarySector: string, title: string): string[] {
   const text = `${primarySector} ${title}`;
   if (/health|hospital|medical|clinic|radiology|laboratory|pharmacy|patient|specialty|OPD|emergency/i.test(text)) {
     return [
-      "Confirm facility objectives, target services, catchment, clinical operating model and approval pathway before committing to layouts.",
-      "Assess shortlisted premises or site conditions for structure, utilities, access, expansion capacity, patient flow and service zoning.",
-      "Develop clinical layouts for Emergency, OPD, In-patient, Laboratory, Imaging/Radiology and Pharmacy with clean/dirty flow and IPC controls.",
-      "Coordinate architectural, structural, MEP, medical gas, electrical loads, ICT/telehealth, equipment clearances and radiation-shielding requirements.",
-      "Prepare staged deliverables, QA reviews, authority submission support, renovation/supervision controls and close-out documentation.",
+      "Confirm facility objectives, target services, catchment, clinical operating model, licensing path and approval responsibilities before committing to layouts.",
+      "Assess shortlisted premises or site conditions using structural, utilities, access, expansion, patient-flow, ambulance-flow, clinical-zoning and operational-readiness criteria.",
+      "Develop functional layouts for relevant clinical departments such as Emergency, OPD, In-patient, Laboratory, Imaging/Radiology, Pharmacy and specialty services with clean/dirty separation and IPC controls.",
+      "Coordinate architectural, structural, MEP, medical gas where required, electrical loads, ICT/telehealth, equipment clearances, fire/life safety and radiation-shielding requirements.",
+      "Prepare staged deliverables, design review gates, authority submission support, renovation/supervision controls, commissioning support and close-out documentation.",
     ];
   }
-  if (/water|borehole|pump|sanitary|hydraulic|irrigation|pipeline|reservoir/i.test(text)) {
+  if (/water|borehole|pump|sanitary|hydraulic|irrigation|pipeline|reservoir|solar/i.test(text)) {
     return [
-      "Confirm demand, service area, source conditions, utility constraints, existing assets and stakeholder requirements.",
-      "Undertake field assessment, survey, hydraulic verification and design-basis confirmation before final sizing.",
-      "Develop technical options for source, conveyance, pumping, storage, distribution, drainage/sanitary interfaces and system resilience.",
-      "Prepare drawings, specifications, BOQ, cost support where requested, construction methodology and testing/commissioning controls.",
-      "Support supervision, quality testing, progress reporting, commissioning, O&M handover and defects follow-up.",
+      "Confirm demand, service area, source conditions, hydraulic basis, power/solar assumptions, utility constraints, existing assets and stakeholder requirements.",
+      "Undertake field assessment, survey, source verification, flow/head verification, water-quality considerations and design-basis confirmation before final sizing.",
+      "Develop technical options for source, conveyance, pumping, storage, distribution, drainage/sanitary interfaces, power resilience and system operation.",
+      "Prepare drawings, specifications, BOQ, equipment selection criteria, testing/commissioning plan and O&M handover requirements.",
+      "Support supervision, quality testing, progress reporting, commissioning, handover and defects follow-up.",
     ];
   }
   if (/road|bridge|transport|pavement|traffic|culvert|drainage/i.test(text)) {
     return [
-      "Confirm route/site context, traffic/service requirements, survey controls, environmental/social constraints and design standards.",
-      "Assess geotechnical, hydrological, drainage, pavement/structural and safety conditions before final technical options.",
-      "Develop alignment, drainage, pavement/structure, traffic management and safety proposals with quantities and specifications.",
-      "Implement QA/QC through design reviews, material/testing requirements, site supervision procedures and variation control.",
-      "Prepare reporting, stakeholder coordination, handover documentation and close-out controls.",
+      "Confirm route/site context, traffic/service requirements, survey controls, environmental/social constraints, safety risks and applicable design standards.",
+      "Assess geotechnical, hydrological, drainage, pavement/structural and traffic conditions before final technical options are selected.",
+      "Develop alignment, drainage, pavement/structure, traffic-management and safety proposals supported by quantities, specifications and construction sequencing.",
+      "Implement QA/QC through design reviews, material/testing requirements, site supervision procedures, inspection records and variation control.",
+      "Prepare reporting, stakeholder coordination, commissioning/handover documentation and close-out controls.",
     ];
   }
-  if (/urban|master plan|land use|municipal|spatial|settlement/i.test(text)) {
+  if (/urban|master plan|land use|municipal|spatial|settlement|GIS/i.test(text)) {
     return [
-      "Establish baseline conditions using document review, spatial analysis, field verification and stakeholder consultation.",
+      "Establish baseline conditions using document review, spatial/GIS analysis, field verification and stakeholder consultation.",
       "Define planning objectives, constraints, development scenarios, infrastructure/service needs and environmental/social considerations.",
       "Prepare land-use, mobility, infrastructure, phasing and implementation proposals supported by maps, schedules and decision criteria.",
       "Validate proposals with stakeholders and align outputs with applicable regulations, standards and client priorities.",
       "Deliver clear implementation, monitoring and institutional responsibility recommendations.",
     ];
   }
-  if (/environment|ESIA|ESMP|safeguard|social|resettlement|climate|waste/i.test(text)) {
+  if (/environment|ESIA|ESMP|safeguard|social|resettlement|climate|waste|EHS|ESG/i.test(text)) {
     return [
-      "Confirm the legal, safeguard and institutional framework applicable to the assignment.",
-      "Undertake baseline environmental/social assessment, stakeholder mapping and impact/risk screening.",
+      "Confirm the legal, safeguard, donor and institutional framework applicable to the assignment.",
+      "Undertake baseline environmental/social assessment, stakeholder mapping, consultation planning and impact/risk screening.",
       "Develop mitigation measures using the mitigation hierarchy, ESMP/monitoring actions, reporting templates and responsibility matrix.",
-      "Support consultation, disclosure, grievance arrangements and client review cycles.",
-      "Prepare final evidence-based reports, annexes and implementation controls.",
+      "Support consultation, disclosure, grievance arrangements, client review cycles and evidence-based approval records.",
+      "Prepare final reports, annexes, monitoring tools and implementation controls.",
     ];
   }
-  if (/ICT|software|system|digital|database|platform|network|cyber|telecom/i.test(text)) {
+  if (/ICT|software|system|digital|database|platform|network|cyber|telecom|ERP|MIS/i.test(text)) {
     return [
-      "Confirm users, workflows, data requirements, integrations, service levels and acceptance criteria.",
-      "Design the solution architecture, data model, security controls, implementation roadmap and support model.",
-      "Configure/build, test and validate the solution using staged acceptance gates and issue tracking.",
-      "Train users, provide documentation, transition support and continuity controls.",
+      "Confirm users, workflows, data requirements, integrations, service levels, security requirements and acceptance criteria.",
+      "Design the solution architecture, data model, implementation roadmap, governance model, security controls and support model.",
+      "Configure/build, test and validate the solution using staged acceptance gates, issue tracking and user feedback loops.",
+      "Train users, provide documentation, transition support, service continuity controls and handover materials.",
       "Report progress, risks, changes and acceptance evidence throughout delivery.",
     ];
   }
@@ -99,18 +113,29 @@ function methodologyForSector(primarySector: string, title: string): string[] {
     "Review source documents and evidence, then translate requirements into a controlled work plan and responsibility matrix.",
     "Deliver scope-by-scope tasks with defined inputs, activities, outputs, QA gates and client review points.",
     "Manage communication, progress reporting, risk, document control, compliance and change control.",
-    "Submit final deliverables with evidence-based appendices and bid-team/client acceptance controls.",
+    "Submit final deliverables with evidence-based appendices and client acceptance controls.",
   ];
+}
+
+function openingProof(company: string, client: string, title: string, sector: string, topProjects: string[], topExperts: string[], differentiators: string[]): string[] {
+  const out = [
+    `${company} submits this proposal as an evidence-led response to ${client}'s ${title}. The proposal is structured around the evaluator's core questions: whether we understand the assignment, whether our comparable evidence is relevant, whether the proposed team can control the technical risks, and whether the submission is compliant and complete.`,
+    `For this ${sector} assignment, our response links methodology, team roles, project evidence, submission controls and appendices into a single delivery argument rather than a checklist of disconnected documents.`,
+  ];
+  if (topProjects.length) out.push("Comparable proof carried into the proposal:", ...topProjects.slice(0, 3).map((line) => `- ${line}`));
+  if (topExperts.length) out.push("Team proof carried into the proposal:", ...topExperts.slice(0, 3).map((line) => `- ${line}`));
+  if (differentiators.length) out.push("Differentiators used to reduce evaluator uncertainty:", ...differentiators.slice(0, 4).map((line) => `- ${line}`));
+  return out;
 }
 
 export function buildControlledProposalMarkdown(input: ControlledProposalInput): string {
   const title = clean(input.tenderTitle) || "Technical Proposal";
   const client = clean(input.clientName) || "Client";
   const company = clean(input.companyName) || "Our Company";
-  const sector = clean(input.primarySector) || "Consultancy Services";
-  const topProjects = compact(input.projectLines, 4, 520);
-  const topExperts = compact(input.expertLines, 8, 420);
-  const requirements = compact(input.requirementLines, 12, 420);
+  const sector = sectorLabel(clean(input.primarySector) || "Consultancy Services", title);
+  const topProjects = compact(input.projectLines, 5, 560);
+  const topExperts = compact(input.expertLines, 8, 450);
+  const requirements = compact(input.requirementLines, 14, 440);
   const differentiators = compact(input.differentiators, 8, 420);
   const companyEvidence = compact(input.companyEvidenceLines, 8, 420);
   const projectEvidence = compact(input.projectEvidenceLines, 8, 420);
@@ -122,7 +147,7 @@ export function buildControlledProposalMarkdown(input: ControlledProposalInput):
     "# Cover Letter",
     `To: ${client}`,
     `Subject: Technical Proposal for ${title}`,
-    `${company} is pleased to submit this technical proposal for ${title}. The response is structured to give the evaluator a clear view of our understanding, relevant evidence, proposed team, methodology, compliance controls and appendix evidence.`,
+    ...openingProof(company, client, title, sector, topProjects, topExperts, differentiators),
     ...bullets(submissionRules, "Submission instructions will be confirmed against the tender before final submission.", 6, 280),
 
     "# Technical Proposal",
@@ -141,39 +166,39 @@ export function buildControlledProposalMarkdown(input: ControlledProposalInput):
     "7. Declaration",
 
     "# Executive Summary",
-    `${company} understands the assignment as a ${sector.toLowerCase()} opportunity requiring a clear technical response, proven delivery capability and disciplined compliance with submission instructions. Our proposal leads with verified company evidence, selected project references and a practical delivery methodology tailored to the tender scope.`,
-    ...bullets(topProjects, "Bid-team confirmation: add the strongest reviewed comparable project reference before final submission.", 3, 520),
-    ...bullets(differentiators, "Bid-team confirmation: confirm differentiators from reviewed company evidence.", 5, 360),
+    `${company} understands the assignment as a ${sector} opportunity requiring more than a compliant document package. The evaluator needs a clear line of proof from tender requirements to relevant experience, proposed personnel, technical methodology, quality controls and appendix evidence.`,
+    ...bullets(topProjects, "Source-evidence action: add the strongest reviewed comparable project reference before final submission.", 4, 560),
+    ...bullets(differentiators, "Source-evidence action: confirm differentiators from reviewed company evidence.", 5, 400),
 
     "# SECTION A: COMPANY PROFILE",
     "## A.1 Company Background",
     `${company} is presented through reviewed company records, project evidence, expert/CV records and compliance documents available in the tender knowledge base. The final proposal should retain only evidence-backed claims and attach the supporting records required by the tender.`,
     "## A.2 Core Areas of Expertise",
-    ...bullets(companyEvidence, "Bid-team confirmation: attach company profile, registration, licences, certificates and policy/manual evidence as required.", 6, 380),
+    ...bullets(companyEvidence, "Source-evidence action: attach company profile, registration, licences, certificates and policy/manual evidence as required.", 6, 380),
     "## A.3 Proposed Team and CV Evidence",
-    ...bullets(topExperts, "Bid-team confirmation: select reviewed CVs and map each expert to role, qualification, comparable experience and assignment responsibility.", 8, 420),
+    ...bullets(topExperts, "Source-evidence action: select reviewed CVs and map each expert to role, qualification, comparable experience and assignment responsibility.", 8, 420),
 
     "# SECTION B: RELEVANT EXPERIENCE",
     "## B.1 Comparable Project Evidence",
-    ...bullets(topProjects, "Bid-team confirmation: select relevant project cards with client, scope, services, value/scale where supported and relevance to this tender.", 6, 520),
+    ...bullets(topProjects, "Source-evidence action: select relevant project cards with client, scope, services, value/scale where supported and relevance to this tender.", 6, 520),
     "## B.2 Project Evidence to Attach",
-    ...bullets(projectEvidence, "Bid-team confirmation: attach photos/drawings, testimony, completion evidence, contracts or certificates where required by the tender.", 8, 420),
+    ...bullets(projectEvidence, "Source-evidence action: attach photos/drawings, testimony, completion evidence, contracts or certificates where required by the tender.", 8, 420),
 
     "# SECTION C: TECHNICAL APPROACH",
     "## C.1 Understanding of the Assignment",
-    ...bullets(requirements, "Bid-team confirmation: run tender analysis and confirm scope, deliverables, evaluation criteria and submission rules.", 8, 360),
+    ...bullets(requirements, "Source-evidence action: confirm scope, deliverables, evaluation criteria and submission rules from the tender source documents.", 10, 380),
     "## C.2 Scope-by-Scope Methodology",
     ...methodology.map((line) => `- ${line}`),
     "## C.3 Quality Assurance and Submission Control",
     "- Apply document control, senior technical review, evidence verification, compliance check, appendix check, file-name/order verification and final submission approval before release.",
-    "- Convert unsupported or weak claims into bid-team confirmation actions instead of inventing proof.",
+    "- Remove or soften unsupported claims before submission; do not invent proof to fill evidence gaps.",
 
     "# SECTION D: ADDITIONAL INFORMATION",
     "## D.1 Value to the Client",
     "- Evidence-led delivery reduces evaluator uncertainty and shows that the proposed team, methodology and appendices are tied to real company capability.",
     "- Sector-specific methodology reduces delivery risk by addressing the technical risks most relevant to the assignment type.",
     "## D.2 Compliance and Bid Review Strategy",
-    ...bullets(compliance, "Bid-team confirmation: complete final compliance check against every mandatory tender requirement.", 8, 360),
+    ...bullets(compliance, "Source-evidence action: complete final compliance check against every mandatory tender requirement.", 8, 360),
 
     "# Appendix Register",
     "- Company profile / registration / licence / tax or legal evidence as required",
