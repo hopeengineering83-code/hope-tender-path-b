@@ -23,16 +23,17 @@ async function fillPlannedSupportDocuments(tenderId: string): Promise<number> {
   const source = generatedDocs.find((doc) => Boolean(doc.fileContent));
   if (!source?.fileContent) return 0;
 
-  const planned = await prisma.generatedDocument.findMany({
+  const supportDocs = await prisma.generatedDocument.findMany({
     where: {
       tenderId,
-      generationStatus: { not: "GENERATED" },
       documentType: { notIn: ["TECHNICAL_PROPOSAL", "PROPOSAL"] },
     },
-    select: { id: true, name: true, exactFileName: true },
+    select: { id: true, name: true, exactFileName: true, generationStatus: true, fileContent: true },
   });
 
-  for (const doc of planned) {
+  const incomplete = supportDocs.filter((doc) => doc.generationStatus !== "GENERATED" || !doc.fileContent);
+
+  for (const doc of incomplete) {
     await prisma.generatedDocument.update({
       where: { id: doc.id },
       data: {
@@ -45,7 +46,7 @@ async function fillPlannedSupportDocuments(tenderId: string): Promise<number> {
     });
   }
 
-  return planned.length;
+  return incomplete.length;
 }
 
 export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
