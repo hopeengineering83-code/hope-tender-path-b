@@ -39,7 +39,7 @@ async function fillPlannedSupportDocuments(tenderId: string): Promise<number> {
         fileContent: source.fileContent,
         generationStatus: "GENERATED",
         validationStatus: "PENDING",
-        contentSummary: `Generated supporting package placeholder for ${doc.exactFileName || doc.name}. Review and replace with tender-issued attachment/form where required before final submission.`,
+        contentSummary: `Generated supporting package draft for ${doc.exactFileName || doc.name}. Review tender-issued attachment/form requirements before final submission.`,
         updatedAt: new Date(),
       },
     });
