@@ -46,7 +46,7 @@ function sectorMethodology(input: ProposalStrengtheningInput): string[] {
 function benchmarkOpeningProof(input: ProposalStrengtheningInput, leadProjects: string[], leadExperts: string[]): string[] {
   const rows = [`${input.companyName} should open with a client-ready proof statement: why this firm, why this team, and why the evidence directly reduces ${input.clientName}'s delivery risk for this specific tender.`];
   if (leadProjects.length > 0) rows.push("The first page should name the strongest comparable assignments and carry those same references through the Executive Summary, Relevant Experience and Technical Approach.", ...leadProjects.map((project) => `- Comparable assignment proof: ${project}`));
-  else rows.push("- Supporting evidence: insert the strongest verified comparable project references for the tender sector before final submission; do not leave this as a generic portfolio statement.");
+  else rows.push("- Source-evidence action: insert the strongest verified comparable project references for the tender sector before final submission; do not leave this as a generic portfolio statement.");
   if (leadExperts.length > 0) rows.push("The first page should also prove that the proposed team is already capable of controlling the assignment's technical, compliance and delivery risks.", ...leadExperts.slice(0, 4).map((expert) => `- Proposed team proof: ${expert}`));
   return rows;
 }
@@ -74,12 +74,12 @@ export function buildClientProposalStrengtheningSections(input: ProposalStrength
 
   pushSection(sections, input, "Evaluator-Facing Team-to-Assignment Mapping", leadExperts.length > 0
     ? ["The proposal should present the team as a delivery system, not only as CV attachments. Each named expert should be tied to a role, comparable assignment evidence, and a technical or delivery risk controlled for this tender.", ...leadExperts.map((expert) => `- ${expert}`)]
-    : ["- Supporting evidence: select reviewed CVs and map each expert to role, qualification, previous comparable work and delivery responsibility."]);
+    : ["- Source-evidence action: select reviewed CVs and map each expert to role, qualification, previous comparable work and delivery responsibility."]);
 
   pushSection(sections, input, "Sector-Specific Methodology Depth", sectorMethodology(input).map((line) => `- ${line}`));
 
   pushSection(sections, input, "Client-Ready Appendix Register", companyEvidence.length === 0 && projectEvidence.length === 0
-    ? ["- Supporting evidence: attach verified company registration, licences, legal/tax records, CVs, project references, photos/drawings, testimony, completion evidence, certificates and tender forms as required."]
+    ? ["- Source-evidence action: attach verified company registration, licences, legal/tax records, CVs, project references, photos/drawings, testimony, completion evidence, certificates and tender forms as required."]
     : [...companyEvidence.map((line) => `- Company evidence to attach: ${line}`), ...projectEvidence.map((line) => `- Project evidence to attach: ${line}`)]);
 
   pushSection(sections, input, "Final Claim and Evidence Control", ["Every major claim in the final proposal should be supported by reviewed source evidence. Unsupported claims should be removed or softened before final submission. Do not invent projects, experts, certifications, awards, values, client names, dates, photos, drawings, references or licences."]);
