@@ -1,10 +1,39 @@
 import { NextResponse } from "next/server";
 import { getSession } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
-import { generateProposal, isAIEnabled } from "../../../../../lib/ai";
+import { generateBenchmarkProposalWithAI, isAIEnabled } from "../../../../../lib/ai";
+import { buildProposalIntelligence, expertProofLine, projectProofLine, safeParseArr } from "../../../../../lib/engine/proposal-intelligence";
 
-function safeParseArr(v: unknown): string[] {
-  try { return JSON.parse(v as string) as string[]; } catch { return []; }
+function _clean(text?: string | null): string {
+  return (text ?? "").replace(/\s+/g, " ").trim();
+}
+
+function _shortText(text?: string | null, max = 700): string {
+  const v = _clean(text);
+  return v.length > max ? `${v.slice(0, max - 1)}…` : v;
+}
+
+function _buildCompanyEvidenceLines(company: Record<string, unknown>): string[] {
+  const docs = (company.documents as { extractedText?: string | null; originalFileName?: string | null; category?: string | null }[] | undefined) ?? [];
+  const legal = (company.legalRecords as { title?: string | null; recordType?: string | null; authority?: string | null; referenceNumber?: string | null; status?: string | null }[] | undefined) ?? [];
+  const financial = (company.financialRecords as { recordType?: string | null; fiscalYear?: string | null; amount?: number | null; currency?: string | null; notes?: string | null }[] | undefined) ?? [];
+  const compliance = (company.complianceRecords as { title?: string | null; complianceType?: string | null; status?: string | null; referenceNumber?: string | null; evidenceSummary?: string | null }[] | undefined) ?? [];
+
+  return [
+    ...docs.filter((d) => _clean(d.extractedText).length > 20 || _clean(d.originalFileName).length > 0).slice(0, 18)
+      .map((d) => `Company document: ${d.originalFileName} | category: ${d.category} | evidence: ${_shortText(d.extractedText, 850)}`),
+    ...legal.slice(0, 8).map((r) => `Legal evidence: ${r.title} | type: ${r.recordType}${r.authority ? ` | authority: ${r.authority}` : ""}${r.referenceNumber ? ` | ref: ${r.referenceNumber}` : ""}${r.status ? ` | status: ${r.status}` : ""}`),
+    ...financial.slice(0, 8).map((r) => `Financial evidence: ${r.recordType} ${r.fiscalYear}${r.amount ? ` | amount: ${r.currency ?? ""} ${r.amount}` : ""}${r.notes ? ` | notes: ${_shortText(r.notes, 240)}` : ""}`),
+    ...compliance.slice(0, 10).map((r) => `Compliance evidence: ${r.title} | type: ${r.complianceType}${r.status ? ` | status: ${r.status}` : ""}${r.referenceNumber ? ` | ref: ${r.referenceNumber}` : ""}${r.evidenceSummary ? ` | ${_shortText(r.evidenceSummary, 360)}` : ""}`),
+  ].filter(Boolean);
+}
+
+function _buildProjectEvidenceLines(projects: { name?: string | null; evidences?: { title?: string | null; evidenceType?: string | null; fileName?: string | null; description?: string | null; extractedText?: string | null }[] }[]): string[] {
+  return projects.flatMap((project) =>
+    (project.evidences ?? []).slice(0, 5).map((e) =>
+      `Project evidence for ${project.name}: ${e.title} | type: ${e.evidenceType}${e.fileName ? ` | file: ${e.fileName}` : ""}${e.description ? ` | ${_shortText(e.description, 280)}` : ""}${e.extractedText ? ` | text: ${_shortText(e.extractedText, 520)}` : ""}`
+    )
+  ).slice(0, 30);
 }
 
 function fallbackProposal(params: {
@@ -59,47 +88,116 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   const [tender, company] = await Promise.all([
     prisma.tender.findFirst({
       where: { id, userId },
-      include: { requirements: true },
+      include: {
+        requirements: true,
+        files: { select: { originalFileName: true, extractedText: true } },
+        expertMatches: {
+          where: { isSelected: true },
+          include: { expert: true },
+          orderBy: { score: "desc" },
+        },
+        projectMatches: {
+          where: { isSelected: true },
+          include: { project: { include: { evidences: { orderBy: { createdAt: "desc" }, take: 5 } } } },
+          orderBy: { score: "desc" },
+        },
+        complianceMatrix: { include: { requirement: { select: { title: true, description: true } } } },
+        complianceGaps: { where: { isResolved: false }, orderBy: { severity: "asc" } },
+      },
     }),
-    prisma.company.findUnique({ where: { userId } }),
+    prisma.company.findUnique({
+      where: { userId },
+      include: {
+        documents: { orderBy: { updatedAt: "desc" }, take: 24 },
+        legalRecords: { orderBy: { updatedAt: "desc" }, take: 12 },
+        financialRecords: { orderBy: { fiscalYear: "desc" }, take: 12 },
+        complianceRecords: { orderBy: { updatedAt: "desc" }, take: 12 },
+      },
+    }),
   ]);
 
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
 
-  const requirementLines = tender.requirements.map((r) => `${r.title}: ${r.description}`);
   const companyName = company?.name ?? "Our Company";
-  const companyProfile = company?.profileSummary ?? company?.description ?? "";
-  const serviceLines = safeParseArr((company as { serviceLines?: unknown })?.serviceLines).join(", ");
+  const companyProfile = company?.profileSummary ?? (company as { description?: string | null } | null)?.description ?? "";
+  const serviceLines = safeParseArr((company as { serviceLines?: string | null } | null)?.serviceLines).join(", ");
+
+  if (!isAIEnabled() || !company) {
+    const requirementLines = tender.requirements.map((r) => `${r.title}: ${r.description}`);
+    const proposal = fallbackProposal({
+      tenderTitle: tender.title,
+      tenderDescription: tender.description ?? tender.intakeSummary ?? "",
+      requirements: requirementLines,
+      companyName,
+      companyProfile,
+      serviceLines,
+    });
+    await prisma.tender.update({ where: { id }, data: { intakeSummary: proposal, notes: tender.notes } });
+    return NextResponse.json({ success: true, proposal, fallback: true });
+  }
+
+  const experts = tender.expertMatches.map((m) => m.expert).filter((e) => e.trustLevel === "REVIEWED");
+  const projects = tender.projectMatches.map((m) => m.project).filter((p) => p.trustLevel === "REVIEWED");
+
+  const companyEvidenceLines = _buildCompanyEvidenceLines(company as unknown as Record<string, unknown>);
+  const projectEvidenceLines = _buildProjectEvidenceLines(projects as Parameters<typeof _buildProjectEvidenceLines>[0]);
+  const expertLines = experts.map(expertProofLine);
+  const projectLines = projects.map(projectProofLine);
+  const requirementLines = tender.requirements.map((r) => `${r.priority} ${r.requirementType}: ${r.title} — ${r.description}`);
+
+  const intelligence = buildProposalIntelligence({
+    tender,
+    company,
+    requirements: tender.requirements,
+    experts,
+    projects,
+  });
+
+  const tenderText = [
+    tender.title, tender.reference, tender.clientName, tender.description,
+    tender.intakeSummary, tender.analysisSummary, tender.evaluationMethodology,
+    ...tender.files.map((f) => `${f.originalFileName}\n${f.extractedText ?? ""}`),
+  ].filter(Boolean).join("\n\n");
+
+  const submissionNotes = [tender.submissionMethod, tender.submissionAddress, ...intelligence.submissionRules].filter(Boolean).join("\n");
+  const evidenceContextLines = [...companyEvidenceLines, ...projectEvidenceLines];
+
+  const complianceLines = [
+    ...tender.complianceMatrix.map((m) => {
+      const req = m.requirement?.title ?? m.requirement?.description ?? "Requirement evidence row";
+      return `${m.supportLevel}: ${req} | ${m.evidenceType} from ${m.evidenceSource}${m.evidenceReference ? ` | ref: ${m.evidenceReference}` : ""}${m.notes ? ` — ${m.notes}` : ""}`;
+    }),
+    ...companyEvidenceLines.slice(0, 14).map((l) => `Company evidence available: ${l}`),
+    ...projectEvidenceLines.slice(0, 10).map((l) => `Project evidence available: ${l}`),
+    ...tender.complianceGaps.map((g) => `${g.severity}: ${g.title} — ${g.mitigationPlan || g.description}`),
+  ];
 
   try {
     let proposal: string;
     let fallback = false;
 
-    if (isAIEnabled()) {
-      try {
-        proposal = await generateProposal({
-          tenderTitle: tender.title,
-          tenderDescription: tender.description ?? tender.intakeSummary ?? "",
-          requirements: requirementLines.map((r) => `- ${r}`).join("\n"),
-          companyName,
-          companyProfile,
-          serviceLines,
-        });
-      } catch (aiError) {
-        const msg = aiError instanceof Error ? aiError.message : String(aiError);
-        console.error("AI proposal failed; deterministic fallback used:", aiError);
-        fallback = true;
-        proposal = fallbackProposal({
-          tenderTitle: tender.title,
-          tenderDescription: tender.description ?? tender.intakeSummary ?? "",
-          requirements: requirementLines,
-          companyName,
-          companyProfile,
-          serviceLines,
-          aiError: msg.slice(0, 240),
-        });
-      }
-    } else {
+    try {
+      proposal = await generateBenchmarkProposalWithAI({
+        tenderTitle: tender.title,
+        clientName: intelligence.clientName,
+        tenderText,
+        analysisSummary: _clean(tender.analysisSummary) || intelligence.tenderText.slice(0, 2000),
+        evaluationMethodology: _clean(tender.evaluationMethodology) || intelligence.evaluationCriteria.join("; "),
+        submissionNotes,
+        requirements: requirementLines.join("\n"),
+        companyProfile:
+          `${company.name}\n${(company as { legalName?: string | null }).legalName ?? ""}\n${company.profileSummary ?? (company as { description?: string | null }).description ?? ""}\n` +
+          `Services: ${safeParseArr((company as { serviceLines?: string | null }).serviceLines).join(", ")}\n` +
+          `Sectors: ${safeParseArr((company as { sectors?: string | null }).sectors).join(", ")}\n\n` +
+          `Wider company evidence library:\n${evidenceContextLines.join("\n").slice(0, 18_000)}`,
+        experts: expertLines.join("\n"),
+        projects: [...projectLines, ...projectEvidenceLines].join("\n"),
+        compliance: complianceLines.join("\n"),
+        differentiators: intelligence.differentiators.join("\n"),
+      });
+    } catch (aiError) {
+      const msg = aiError instanceof Error ? aiError.message : String(aiError);
+      console.error("Benchmark AI proposal failed in /ai-proposal route:", aiError);
       fallback = true;
       proposal = fallbackProposal({
         tenderTitle: tender.title,
@@ -108,17 +206,11 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
         companyName,
         companyProfile,
         serviceLines,
+        aiError: msg.slice(0, 240),
       });
     }
 
-    await prisma.tender.update({
-      where: { id },
-      data: {
-        intakeSummary: proposal,
-        notes: tender.notes,
-      },
-    });
-
+    await prisma.tender.update({ where: { id }, data: { intakeSummary: proposal, notes: tender.notes } });
     return NextResponse.json({ success: true, proposal, fallback });
   } catch (error) {
     console.error("Proposal generation route error:", error);

@@ -1,4 +1,4 @@
-import { AlignmentType, BorderStyle, Document, Footer, Header, HeadingLevel, Packer, PageNumber, Paragraph, TextRun } from "docx";
+import { AlignmentType, BorderStyle, Document, Footer, Header, HeadingLevel, Packer, PageNumber, Paragraph, Table, TableBorders, TableCell, TableRow, TextRun, WidthType } from "docx";
 import { prisma } from "../prisma";
 import { generateBenchmarkProposalWithAI, isAIEnabled } from "../ai";
 import { buildProposalIntelligence, expertProofLine, projectProofLine, safeParseArr } from "./proposal-intelligence";
@@ -10,17 +10,38 @@ const BRAND_BLUE = "1F4E79";
 const BRAND_GRAY = "595959";
 const LIGHT_BLUE = "D9EAF7";
 
+function parseInlineRuns(text: string, opts?: { size?: number; color?: string; font?: string }): TextRun[] {
+  const size = opts?.size ?? 22;
+  const color = opts?.color ?? "222222";
+  const font = opts?.font ?? "Calibri";
+  const runs: TextRun[] = [];
+  const boldParts = text.split(/\*\*(.+?)\*\*/gs);
+  boldParts.forEach((part, i) => {
+    if (!part) return;
+    const isBold = i % 2 === 1;
+    const italicParts = part.split(/(?:\*|_)(.+?)(?:\*|_)/gs);
+    italicParts.forEach((ip, ii) => {
+      if (!ip) return;
+      runs.push(new TextRun({ text: ip, bold: isBold, italics: ii % 2 === 1, size, color, font }));
+    });
+  });
+  return runs.length > 0 ? runs : [new TextRun({ text, size, color, font })];
+}
+
 function para(text: string, bold = false): Paragraph {
   return new Paragraph({
-    children: [new TextRun({ text, bold, color: bold ? BRAND_BLUE : "222222", size: 22, font: "Calibri" })],
+    children: bold
+      ? [new TextRun({ text, bold: true, color: BRAND_BLUE, size: 22, font: "Calibri" })]
+      : parseInlineRuns(text),
     spacing: { after: 120, line: 276 },
   });
 }
 
-function heading(text: string, level: 1 | 2 = 1): Paragraph {
+function heading(text: string, level: 1 | 2 = 1, pageBreak = false): Paragraph {
   return new Paragraph({
     text,
     heading: level === 1 ? HeadingLevel.HEADING_1 : HeadingLevel.HEADING_2,
+    pageBreakBefore: level === 1 ? pageBreak : false,
     spacing: { before: level === 1 ? 360 : 240, after: 140 },
     border: level === 1 ? { bottom: { color: LIGHT_BLUE, space: 1, style: BorderStyle.SINGLE, size: 8 } } : undefined,
   });
@@ -28,9 +49,56 @@ function heading(text: string, level: 1 | 2 = 1): Paragraph {
 
 function bullet(text: string): Paragraph {
   return new Paragraph({
-    text,
+    children: parseInlineRuns(text),
     bullet: { level: 0 },
     spacing: { after: 80, line: 260 },
+  });
+}
+
+function isTableLine(line: string): boolean {
+  return line.startsWith("|") && line.endsWith("|");
+}
+
+function isSeparatorRow(line: string): boolean {
+  return /^\|[\s:|-]+\|$/.test(line);
+}
+
+function parseMdTable(tableLines: string[]): Table {
+  const dataRows = tableLines.filter((l) => !isSeparatorRow(l));
+  const colCount = Math.max(...dataRows.map((r) =>
+    r.split("|").filter((_, i, arr) => i > 0 && i < arr.length - 1).length
+  ), 1);
+  const colWidth = Math.floor(8100 / colCount);
+
+  const rows = dataRows.map((rowLine, rowIndex) => {
+    const cells = rowLine
+      .split("|")
+      .filter((_, i, arr) => i > 0 && i < arr.length - 1)
+      .map((cell) => cell.trim());
+    const isHeader = rowIndex === 0;
+
+    return new TableRow({
+      children: Array.from({ length: colCount }, (_, ci) => {
+        const cellText = cells[ci] ?? "";
+        return new TableCell({
+          width: { size: colWidth, type: WidthType.DXA },
+          children: [new Paragraph({
+            children: isHeader
+              ? [new TextRun({ text: cellText.replace(/\*\*/g, ""), bold: true, size: 20, font: "Calibri", color: "FFFFFF" })]
+              : parseInlineRuns(cellText, { size: 20 }),
+            spacing: { after: 60 },
+          })],
+          shading: isHeader ? { fill: "1F4E79" } : undefined,
+          margins: { top: 60, bottom: 60, left: 100, right: 100 },
+        });
+      }),
+    });
+  });
+
+  return new Table({
+    rows,
+    width: { size: 100, type: WidthType.PERCENTAGE },
+    borders: TableBorders.NONE,
   });
 }
 
@@ -43,18 +111,38 @@ function shortText(text?: string | null, max = 700): string {
   return value.length > max ? `${value.slice(0, max - 1)}…` : value;
 }
 
-function markdownToDocx(markdown: string): Paragraph[] {
-  const out: Paragraph[] = [];
+function markdownToDocx(markdown: string): (Paragraph | Table)[] {
+  const out: (Paragraph | Table)[] = [];
+  let h1Count = 0;
+  let tableBuffer: string[] = [];
+
+  const flushTable = () => {
+    if (tableBuffer.length >= 2) {
+      out.push(parseMdTable(tableBuffer));
+      out.push(new Paragraph({ children: [new TextRun("")], spacing: { after: 120 } }));
+    }
+    tableBuffer = [];
+  };
+
   for (const raw of markdown.replace(/\r/g, "").split("\n")) {
     const line = raw.trim();
+
+    if (isTableLine(line)) {
+      tableBuffer.push(line);
+      continue;
+    }
+    if (tableBuffer.length > 0) flushTable();
+
     if (!line) continue;
     if (line.startsWith("### ")) out.push(heading(line.slice(4).replace(/\*\*/g, ""), 2));
     else if (line.startsWith("## ")) out.push(heading(line.slice(3).replace(/\*\*/g, ""), 1));
-    else if (line.startsWith("# ")) out.push(heading(line.slice(2).replace(/\*\*/g, ""), 1));
-    else if (/^[-*•]\s+/.test(line)) out.push(bullet(line.replace(/^[-*•]\s+/, "").replace(/\*\*/g, "")));
-    else if (/^\d+[.)]\s+/.test(line)) out.push(bullet(line.replace(/^\d+[.)]\s+/, "").replace(/\*\*/g, "")));
-    else out.push(para(line.replace(/\*\*/g, "")));
+    else if (line.startsWith("# ")) { h1Count++; out.push(heading(line.slice(2).replace(/\*\*/g, ""), 1, h1Count > 1)); }
+    else if (/^[-*•]\s+/.test(line)) out.push(bullet(line.replace(/^[-*•]\s+/, "")));
+    else if (/^\d+[.)]\s+/.test(line)) out.push(bullet(line.replace(/^\d+[.)]\s+/, "")));
+    else out.push(para(line));
   }
+  if (tableBuffer.length > 0) flushTable();
+
   return out.length > 0 ? out : [para("No proposal content was generated.")];
 }
 
@@ -263,7 +351,7 @@ function buildCoverBlock(params: { tenderTitle: string; clientName: string; comp
   ];
 }
 
-function buildProfessionalDocument(params: { tenderTitle: string; clientName: string; companyName: string; reference?: string | null; children: Paragraph[] }): Document {
+function buildProfessionalDocument(params: { tenderTitle: string; clientName: string; companyName: string; reference?: string | null; children: (Paragraph | Table)[] }): Document {
   const header = new Header({
     children: [new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: params.companyName, bold: true, color: BRAND_BLUE, size: 18 }), new TextRun({ text: " | Technical Proposal", color: BRAND_GRAY, size: 18 })] })],
   });

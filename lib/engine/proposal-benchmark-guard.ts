@@ -47,7 +47,9 @@ function headingExists(markdown: string, label: string): boolean {
 }
 
 function hasForbiddenWeakness(markdown: string): boolean {
-  return /\b(as an ai|language model|placeholder|tbd|todo|insert name|insert date)\b/i.test(markdown);
+  if (/\b(as an ai|language model|placeholder|tbd|todo|insert name|insert date|n\/a \(pending\)|to be determined)\b/i.test(markdown)) return true;
+  if (/\[(?:INSERT|PLACEHOLDER|NAME|DATE|TBD|ADD|ENTER|SPECIFY|YOUR)[^\]]{0,60}\]/i.test(markdown)) return true;
+  return false;
 }
 
 function mentionsAny(markdown: string, values: string[]): boolean {
