@@ -30,12 +30,22 @@ function clean(text?: string | null): string {
 
 function cleanClientLanguage(text: string): string {
   return text
-    .replace(/Bid-team confirmation:\s*/gi, "Evidence note: ")
+    .replace(/^#{1,3}\s*First-Page Proof Strategy\s*$/gim, "## Opening Evidence Strategy")
+    .replace(/^#{1,3}\s*Evidence Control Register\s*$/gim, "## Evidence and Appendix Verification")
+    .replace(/^#{1,3}\s*Submission Compliance Controls\s*$/gim, "## Submission Compliance Approach")
+    .replace(/^#{1,3}\s*Final Submission Controls\s*$/gim, "## Final Submission Checklist")
+    .replace(/Source-evidence action:\s*/gi, "Supporting evidence: ")
+    .replace(/Bid-team confirmation:\s*/gi, "Supporting evidence: ")
     .replace(/bid-team confirmation item(s)?/gi, "source-evidence confirmation item$1")
     .replace(/bid-team-confirmed/gi, "source-confirmed")
     .replace(/bid-team verification/gi, "final verification")
+    .replace(/bid-team technical review/gi, "technical review")
     .replace(/bid team/gi, "proposal team")
     .replace(/Bid team/gi, "Proposal team")
+    .replace(/The final proposal should preserve a clear claim-to-evidence discipline so the proposal team can verify every major claim before export\./gi, "The proposal preserves a clear claim-to-evidence discipline so each major claim can be checked against the appendix evidence before submission.")
+    .replace(/The proposal should be reviewed against the original tender before final submission\./gi, "The proposal is aligned to the original tender and supporting evidence for final submission review.")
+    .replace(/must be reviewed against the original tender documents and supporting source evidence before final submission/gi, "is prepared against the original tender documents and supporting source evidence for final submission review")
+    .replace(/before export/gi, "before submission")
     .replace(/\n{4,}/g, "\n\n\n")
     .trim();
 }
@@ -186,7 +196,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
 
   const target = await prisma.generatedDocument.findFirst({ where: { tenderId, documentType: { in: ["TECHNICAL_PROPOSAL", "PROPOSAL", "METHODOLOGY"] } }, orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }] });
   if (target) await prisma.generatedDocument.update({ where: { id: target.id }, data: { name: "Client-Ready Benchmark Technical Proposal", documentType: "TECHNICAL_PROPOSAL", exactFileName: target.exactFileName || "Technical-Proposal.docx", fileContent, generationStatus: "GENERATED", validationStatus: "PENDING", contentSummary: summary, updatedAt: new Date() } });
-  else await prisma.generatedDocument.create({ data: { tenderId, name: "Client-Ready Benchmark Technical Proposal", documentType: "TECHNICAL_PROPOSAL", format: "DOCX", exactFileName: "Technical-Proposal.docx", exactOrder: 1, fileContent, generationStatus: "GENERATED", validationStatus: "PENDING", contentSummary: summary } });
+  else await prisma.generatedDocument.create({ data: { tenderId, name: "Client-Ready Benchmark Technical Proposal", documentType: "TECHNICAL_PROPOSAL", format: "DOCX", exactFileName: "Technical-Proposal.docx", exactOrder: 1, fileContent, generationStatus: "PENDING", validationStatus: "PENDING", contentSummary: summary } });
 
   await prisma.tender.update({ where: { id: tenderId }, data: { status: "GENERATED", stage: "GENERATION", updatedAt: new Date() } });
 }
