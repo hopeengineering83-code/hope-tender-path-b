@@ -167,26 +167,26 @@ export function buildControlledProposalMarkdown(input: ControlledProposalInput):
 
     "# Executive Summary",
     `${company} understands the assignment as a ${sector} opportunity requiring more than a compliant document package. The evaluator needs a clear line of proof from tender requirements to relevant experience, proposed personnel, technical methodology, quality controls and appendix evidence.`,
-    ...bullets(topProjects, "Source-evidence action: add the strongest reviewed comparable project reference before final submission.", 4, 560),
-    ...bullets(differentiators, "Source-evidence action: confirm differentiators from reviewed company evidence.", 5, 400),
+    ...bullets(topProjects, "Supporting evidence: strongest comparable project reference to be included once verified.", 4, 560),
+    ...bullets(differentiators, "Supporting evidence: differentiators to be drawn from reviewed company records and project evidence.", 5, 400),
 
     "# SECTION A: COMPANY PROFILE",
     "## A.1 Company Background",
     `${company} is presented through reviewed company records, project evidence, expert/CV records and compliance documents available in the tender knowledge base. The final proposal should retain only evidence-backed claims and attach the supporting records required by the tender.`,
     "## A.2 Core Areas of Expertise",
-    ...bullets(companyEvidence, "Source-evidence action: attach company profile, registration, licences, certificates and policy/manual evidence as required.", 6, 380),
+    ...bullets(companyEvidence, "Supporting evidence: company profile, registration, licences, certificates and policy/manual records as required.", 6, 380),
     "## A.3 Proposed Team and CV Evidence",
-    ...bullets(topExperts, "Source-evidence action: select reviewed CVs and map each expert to role, qualification, comparable experience and assignment responsibility.", 8, 420),
+    ...bullets(topExperts, "Supporting evidence: reviewed CVs mapped to role, qualification, comparable experience and assignment responsibility.", 8, 420),
 
     "# SECTION B: RELEVANT EXPERIENCE",
     "## B.1 Comparable Project Evidence",
-    ...bullets(topProjects, "Source-evidence action: select relevant project cards with client, scope, services, value/scale where supported and relevance to this tender.", 6, 520),
+    ...bullets(topProjects, "Supporting evidence: relevant project cards showing client, scope, services, value/scale where supported and relevance to this tender.", 6, 520),
     "## B.2 Project Evidence to Attach",
-    ...bullets(projectEvidence, "Source-evidence action: attach photos/drawings, testimony, completion evidence, contracts or certificates where required by the tender.", 8, 420),
+    ...bullets(projectEvidence, "Supporting evidence: photos/drawings, testimony, completion evidence, contracts or certificates where required by the tender.", 8, 420),
 
     "# SECTION C: TECHNICAL APPROACH",
     "## C.1 Understanding of the Assignment",
-    ...bullets(requirements, "Source-evidence action: confirm scope, deliverables, evaluation criteria and submission rules from the tender source documents.", 10, 380),
+    ...bullets(requirements, "Supporting evidence: scope, deliverables, evaluation criteria and submission rules confirmed from the tender source documents.", 10, 380),
     "## C.2 Scope-by-Scope Methodology",
     ...methodology.map((line) => `- ${line}`),
     "## C.3 Quality Assurance and Submission Control",
@@ -198,7 +198,7 @@ export function buildControlledProposalMarkdown(input: ControlledProposalInput):
     "- Evidence-led delivery reduces evaluator uncertainty and shows that the proposed team, methodology and appendices are tied to real company capability.",
     "- Sector-specific methodology reduces delivery risk by addressing the technical risks most relevant to the assignment type.",
     "## D.2 Compliance and Bid Review Strategy",
-    ...bullets(compliance, "Source-evidence action: complete final compliance check against every mandatory tender requirement.", 8, 360),
+    ...bullets(compliance, "Supporting evidence: final compliance check against every mandatory tender requirement.", 8, 360),
 
     "# Appendix Register",
     "- Company profile / registration / licence / tax or legal evidence as required",
@@ -208,6 +208,6 @@ export function buildControlledProposalMarkdown(input: ControlledProposalInput):
     "- Tender-specific declarations, schedules, annexes and submission forms",
 
     "# Declaration",
-    `${company} confirms that this technical proposal must be reviewed against the original tender documents and supporting source evidence before final submission to ${client}.`,
+    `${company} confirms that this technical proposal is prepared against the original tender documents and supporting source evidence for submission to ${client}.`,
   ].join("\n\n");
 }
