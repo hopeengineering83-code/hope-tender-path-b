@@ -5,6 +5,23 @@ import { analyzeWithAI, isAIEnabled } from "../../../../../lib/ai";
 import { analyzeTender } from "../../../../../lib/engine/analysis";
 import { logAction } from "../../../../../lib/audit";
 
+const AI_ANALYSIS_TIMEOUT_MS = 25_000;
+const MAX_FILE_CHARS_FOR_AI_ANALYSIS = 3_500;
+
+async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`AI analysis timed out after ${Math.round(ms / 1000)} seconds`)), ms);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const userId = await getSession();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -42,7 +59,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
         where: { id },
         data: {
           analysisSummary: errorMessage
-            ? `${result.summary}\n\nAI analysis fallback used because AI failed: ${errorMessage}`
+            ? `${result.summary}\n\nFast fallback used because cloud analysis was unavailable or slow: ${errorMessage}`
             : result.summary,
           exactFileNaming: JSON.stringify(result.exactFileNaming),
           exactFileOrder: JSON.stringify(result.exactFileOrder),
@@ -61,7 +78,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       try {
         const fileTexts = tenderRecord.files
           .map((f) => f.extractedText
-            ? `[FILE: ${f.originalFileName}]\n${f.extractedText.slice(0, 6000)}`
+            ? `[FILE: ${f.originalFileName}]\n${f.extractedText.slice(0, MAX_FILE_CHARS_FOR_AI_ANALYSIS)}`
             : `[FILE: ${f.originalFileName} ${f.classification ?? ""}]`)
           .join("\n\n");
 
@@ -77,7 +94,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
           companyContext || null,
         ].filter(Boolean).join("\n\n");
 
-        const aiResult = await analyzeWithAI(tenderContent);
+        const aiResult = await withTimeout(analyzeWithAI(tenderContent), AI_ANALYSIS_TIMEOUT_MS);
 
         await prisma.$transaction(async (tx) => {
           await tx.tenderRequirement.deleteMany({ where: { tenderId: id } });
@@ -115,7 +132,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
         analysisResult = { ai: true, fallback: false, summary: aiResult.summary, requirementCount: aiResult.requirements.length };
       } catch (aiError) {
         const msg = aiError instanceof Error ? aiError.message : String(aiError);
-        console.error("AI analysis failed; deterministic fallback used:", aiError);
+        console.error("AI analysis slow or failed; deterministic fallback used:", aiError);
         analysisResult = await runRegexFallback(msg.slice(0, 240));
       }
     } else {
