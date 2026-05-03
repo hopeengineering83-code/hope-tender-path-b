@@ -4,6 +4,7 @@ import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { Document, Packer, Paragraph, TextRun, HeadingLevel } from "docx";
 import { logAction } from "../../../../../lib/audit";
 import { buildSubmissionPlan, findExtraGeneratedDocuments, findMissingGeneratedDocuments, hasExplicitSubmissionScope, plannedSubmissionTargetFiles } from "../../../../../lib/engine/submission-plan";
+import { safeFileBaseName } from "../../../../../lib/engine/proposal-labels";
 
 function safeParseArr(v: unknown): string[] {
   try { return JSON.parse(v as string) as string[]; } catch { return []; }
@@ -242,7 +243,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     }
 
     const zipBuffer = await zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" });
-    const zipName = `${tender.title.replace(/[^a-zA-Z0-9]/g, "-")}-submission-package.zip`;
+    const zipName = `${safeFileBaseName(tender.title)}-submission-package.zip`;
     const fileList = generatedDocs.map((doc) => doc.exactFileName ?? generatedFileName(doc.name));
 
     const existingPackage = tender.exportPackages[0];
@@ -286,7 +287,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
 
   const doc = new Document({ sections: [{ properties: {}, children }], styles: { default: { document: { run: { font: "Calibri", size: 22 }, paragraph: { spacing: { line: 276 } } } } } });
   const buffer = await Packer.toBuffer(doc);
-  const filename = `${tender.title.replace(/[^a-zA-Z0-9]/g, "-")}-${type}-internal.docx`;
+  const filename = `${safeFileBaseName(tender.title)}-${type}-internal.docx`;
 
   await logAction({ userId, action: "EXPORT_PACKAGE_DOWNLOAD", entityType: "Tender", entityId: id, description: `Downloaded internal ${type} report for "${tender.title}"` });
   return new NextResponse(new Uint8Array(buffer), { headers: { "Content-Type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "Content-Disposition": `attachment; filename="${filename}"` } });
