@@ -43,9 +43,10 @@ const OPTIONAL = [
   {
     name: "GEMINI_API_KEY",
     description:
-      "Google Gemini API key for AI extraction. Without this, all imported records are REGEX_DRAFT only.",
+      "Google Gemini API key (AIza..., 39 chars) for AI extraction. Without this, all imported records are REGEX_DRAFT only.",
     validate: (v) => {
-      if (v.length < 10) return `Too short to be a valid Gemini API key (got ${v.length} chars).`;
+      if (!v.startsWith("AIza")) return `Expected a Gemini API key starting with "AIza". Got: "${v.slice(0, 8)}..." — check you have not set an Anthropic or OpenAI key here.`;
+      if (v.length < 35) return `Gemini API key is too short (${v.length} chars). A real key is 39 characters.`;
       return null;
     },
   },
@@ -53,7 +54,11 @@ const OPTIONAL = [
 
 const PRODUCTION_REQUIRED = [];
 
-const isProd = process.env.NODE_ENV === "production" || process.env.VERCEL_ENV === "production" || process.env.VERCEL === "1";
+// VERCEL=1 is set on ALL Vercel builds (preview + production) — do NOT use it alone.
+// Only VERCEL_ENV==="production" means an actual production deployment.
+const isVercel = process.env.VERCEL === "1";
+const isVercelProd = process.env.VERCEL_ENV === "production";
+const isProd = process.env.NODE_ENV === "production" && (!isVercel || isVercelProd);
 const errors = [];
 const warnings = [];
 
@@ -122,4 +127,4 @@ ${border}\n`);
   process.exit(1);
 }
 
-console.log("✓ Environment validation passed" + (isProd ? " (production mode)" : " (development mode)"));
+console.log("✓ Environment validation passed" + (isProd ? " (production mode)" : isVercel ? " (Vercel preview mode)" : " (development mode)"));

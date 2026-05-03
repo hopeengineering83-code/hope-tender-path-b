@@ -465,8 +465,21 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   });
   if (!company) throw new Error("Company not found");
 
-  const experts = tender.expertMatches.map((m) => m.expert).filter((e) => e.trustLevel === "REVIEWED");
-  const projects = tender.projectMatches.map((m) => m.project).filter((p) => p.trustLevel === "REVIEWED");
+  const allSelectedExperts = tender.expertMatches.map((m) => m.expert);
+  const allSelectedProjects = tender.projectMatches.map((m) => m.project);
+  const experts = allSelectedExperts.filter((e) => e.trustLevel === "REVIEWED");
+  const projects = allSelectedProjects.filter((p) => p.trustLevel === "REVIEWED");
+
+  // Warn about draft records silently excluded from generation (they are not blocked here —
+  // the route gate handles blocking. This provides auditability in the return value.)
+  const excludedDraftExperts = allSelectedExperts.filter((e) => e.trustLevel !== "REVIEWED");
+  const excludedDraftProjects = allSelectedProjects.filter((p) => p.trustLevel !== "REVIEWED");
+  if (excludedDraftExperts.length > 0) {
+    console.warn(`[generate-elite] Excluded ${excludedDraftExperts.length} unreviewed expert(s) from generation: ${excludedDraftExperts.map((e) => e.fullName).join(", ")}`);
+  }
+  if (excludedDraftProjects.length > 0) {
+    console.warn(`[generate-elite] Excluded ${excludedDraftProjects.length} unreviewed project(s) from generation: ${excludedDraftProjects.map((p) => p.name).join(", ")}`);
+  }
   const companyEvidenceLines = buildCompanyEvidenceLines(company);
   const projectEvidenceLines = buildProjectEvidenceLines(projects);
   const expertRequired = exactSelectionLimit(tender.requirements, "EXPERT");
