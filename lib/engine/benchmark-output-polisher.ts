@@ -1,0 +1,24 @@
+export function polishBenchmarkOutput(markdown: string): string {
+  return markdown
+    .replace(/Senior-level requirement bundle consolidating \d+ extracted tender instruction\(s\)\.?/gi, "")
+    .replace(/Key evidence interpreted:\s*/gi, "")
+    .replace(/Company evidence available:\s*/gi, "")
+    .replace(/Project evidence available:\s*/gi, "")
+    .replace(/Source-evidence action:\s*/gi, "Supporting evidence: ")
+    .replace(/Bid-team confirmation:\s*/gi, "Supporting evidence: ")
+    .replace(/Evidence note:\s*/gi, "Supporting evidence: ")
+    .replace(/\bproposal team confirmation item(s)?\b/gi, "source-evidence confirmation item$1")
+    .replace(/\bbid-team confirmation item(s)?\b/gi, "source-evidence confirmation item$1")
+    .replace(/\bbid-team-confirmed\b/gi, "source-confirmed")
+    .replace(/\bbid-team verification\b/gi, "final verification")
+    .replace(/\bbid team\b/gi, "proposal team")
+    .replace(/\bBid team\b/g, "Proposal team")
+    .replace(/The final proposal should preserve a clear claim-to-evidence discipline so the proposal team can verify every major claim before export\./gi, "The proposal preserves a clear claim-to-evidence discipline so each major claim can be checked against the appendix evidence before submission.")
+    .replace(/The proposal should be reviewed against the original tender before final submission\./gi, "The proposal is aligned to the original tender and supporting evidence for final submission review.")
+    .replace(/must be reviewed against the original tender documents and supporting source evidence before final submission/gi, "is prepared against the original tender documents and supporting source evidence for final submission review")
+    .replace(/This file organizes the relevant requirements, evidence and submission-control points for the named tender document\./gi, "This document presents the relevant tender requirement response, supporting evidence and submission controls in a client-ready package format.")
+    .replace(/\s+\|\s+#/g, " — ")
+    .replace(/\n{4,}/g, "\n\n\n")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
+}
