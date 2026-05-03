@@ -3,7 +3,7 @@ import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../.
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { generateTenderDocuments } from "../../../../../lib/engine/generate-elite";
 import { applyActiveUploadedLetterheadToTenderDocuments } from "../../../../../lib/engine/apply-active-letterhead";
-import { buildSubmissionPlan, findExtraGeneratedDocuments, findMissingGeneratedDocuments } from "../../../../../lib/engine/submission-plan";
+import { buildSubmissionPlan, findExtraGeneratedDocuments, findMissingGeneratedDocuments, generatedDocumentSubmissionKey, hasExplicitSubmissionScope, plannedSubmissionTargetFiles, plannedSubmissionTargetKeys } from "../../../../../lib/engine/submission-plan";
 import { logAction } from "../../../../../lib/audit";
 import { Document, HeadingLevel, Packer, Paragraph, TextRun } from "docx";
 
@@ -25,35 +25,6 @@ function clean(value?: string | null): string {
 function shortText(value?: string | null, max = 420): string {
   const text = clean(value);
   return text.length > max ? `${text.slice(0, max - 1)}…` : text;
-}
-
-function safeParseStringArray(value?: string | null): string[] {
-  if (!value) return [];
-  try {
-    const parsed = JSON.parse(value);
-    if (!Array.isArray(parsed)) return [];
-    return parsed.map((item) => String(item).trim()).filter(Boolean);
-  } catch {
-    return [];
-  }
-}
-
-function submissionPlanKey(value?: string | null): string {
-  return (value ?? "")
-    .toLowerCase()
-    .replace(/\.[a-z0-9]+$/i, "")
-    .replace(/[^a-z0-9]+/g, " ")
-    .trim();
-}
-
-function generatedDocPlanKey(doc: { id?: string; name?: string | null; exactFileName?: string | null; documentType?: string | null }): string {
-  return submissionPlanKey(doc.exactFileName || doc.name || doc.documentType || doc.id || "");
-}
-
-function hasExplicitSubmissionScope(tender: { exactFileNaming?: string | null; exactFileOrder?: string | null; requirements?: Array<{ exactFileName?: string | null }> }): boolean {
-  return safeParseStringArray(tender.exactFileNaming).length > 0
-    || safeParseStringArray(tender.exactFileOrder).length > 0
-    || (tender.requirements ?? []).some((requirement) => Boolean(requirement.exactFileName));
 }
 
 function para(text: string, bold = false): Paragraph {
@@ -144,7 +115,7 @@ async function fillPlannedSupportDocuments(tenderId: string, plannedFileKeys?: S
     if (isMainProposalLike(doc)) return false;
     if (doc.generationStatus === "GENERATED" && doc.fileContent) return false;
     if (!plannedFileKeys) return true;
-    return plannedFileKeys.has(generatedDocPlanKey(doc));
+    return plannedFileKeys.has(generatedDocumentSubmissionKey(doc));
   });
 
   for (const doc of incomplete) {
@@ -189,8 +160,8 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     requirements: tender.requirements,
   });
   const explicitSubmissionScope = hasExplicitSubmissionScope(tender);
-  const plannedTargetFiles = explicitSubmissionScope ? submissionPlan.files.filter((file) => file.required) : [];
-  const plannedFileKeys = explicitSubmissionScope ? new Set(plannedTargetFiles.map((file) => submissionPlanKey(file.exactFileName))) : undefined;
+  const plannedTargetFiles = explicitSubmissionScope ? plannedSubmissionTargetFiles(submissionPlan) : [];
+  const plannedFileKeys = explicitSubmissionScope ? plannedSubmissionTargetKeys(submissionPlan) : undefined;
 
   const criticalGaps = await prisma.complianceGap.findMany({ where: { tenderId: id, severity: "CRITICAL", isResolved: false }, select: { title: true, description: true, mitigationPlan: true } });
   const hardBlocks = criticalGaps.filter(criticalGapIsHardBlock);
