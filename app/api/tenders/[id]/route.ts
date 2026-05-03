@@ -65,6 +65,7 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
         submissionAddress: body.submissionAddress ?? existing.submissionAddress,
         intakeSummary: body.intakeSummary ?? existing.intakeSummary,
         analysisSummary: body.analysisSummary ?? existing.analysisSummary,
+        evaluationMethodology: body.evaluationMethodology ?? existing.evaluationMethodology,
         notes: body.notes ?? existing.notes,
         status: status ?? existing.status,
         updatedAt: new Date(),

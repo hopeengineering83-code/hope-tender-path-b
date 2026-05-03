@@ -130,6 +130,18 @@ export function scoreBenchmarkProposalMarkdown(markdown: string, input: Benchmar
     strengths.push("Proposal names the tender/client and is not completely generic.");
   } else gaps.push("Proposal does not clearly name the tender/client.");
 
+  // Validate Executive Summary lead quality — must reference a specific project/value
+  const execSummaryMatch = markdown.match(/##?\s*Executive Summary[\s\S]{0,600}/i)?.[0] ?? "";
+  const hasConcreteExecLead = execSummaryMatch.length > 0 &&
+    (/ETB\s*\d|USD\s*\d|EUR\s*\d|\d+M\b|\d+B\b|billion|million/i.test(execSummaryMatch) ||
+     /(?:designed|delivered|supervised|completed|assessed|managed)\s+(?:the\s+)?[\w\s]{3,50}(?:hospital|clinic|project|centre|center|facility|school|bridge|road|water|tower)/i.test(execSummaryMatch));
+  if (hasConcreteExecLead) {
+    score += 5;
+    strengths.push("Executive Summary opens with specific evidence — project name or contract value.");
+  } else if (execSummaryMatch.length > 0) {
+    gaps.push("Executive Summary lacks a specific project name or contract value in the opening — must lead with 'We have already delivered this assignment.'");
+  }
+
   if (input.expertCount > 0 && /expert|team|cv|personnel|specialist|key staff/i.test(markdown)) {
     score += 10;
     strengths.push("Expert/team evidence is represented.");

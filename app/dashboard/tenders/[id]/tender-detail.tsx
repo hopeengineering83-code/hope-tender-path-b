@@ -263,6 +263,7 @@ type Tender = {
   status: string;
   intakeSummary: string | null;
   analysisSummary: string | null;
+  evaluationMethodology: string | null;
   notes: string | null;
   exactFileNaming: string | string[];
   exactFileOrder: string | string[];
@@ -318,6 +319,7 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
     description: initial.description ?? "",
     intakeSummary: initial.intakeSummary ?? "",
     analysisSummary: initial.analysisSummary ?? "",
+    evaluationMethodology: initial.evaluationMethodology ?? "",
     notes: initial.notes ?? "",
   });
 
@@ -378,6 +380,7 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
         setForm((current) => ({
           ...current,
           analysisSummary: data.tender.analysisSummary || current.analysisSummary,
+          evaluationMethodology: data.tender.evaluationMethodology || current.evaluationMethodology,
         }));
       }
       router.refresh();
@@ -425,6 +428,26 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
       router.refresh();
     } catch { setError("Document generation failed"); }
     finally { setGeneratingDocs(false); }
+  }
+
+  async function handleGenerateFullPackage() {
+    setGenerating(true);
+    setError("");
+    try {
+      // Step 1: Run engine (analysis + matching)
+      const engineRes = await fetch(`/api/tenders/${tender.id}/engine`, { method: "POST" });
+      const engineData = await engineRes.json();
+      if (!engineRes.ok) { setError(engineData.error || "Engine run failed"); return; }
+      if (engineData.tender) setTender((cur) => ({ ...cur, ...engineData.tender }));
+
+      // Step 2: Generate proposal documents
+      const genRes = await fetch(`/api/tenders/${tender.id}/generate`, { method: "POST" });
+      const genData = await genRes.json();
+      if (!genRes.ok) { setError(genData.error || "Generation failed"); return; }
+      if (genData.tender) setTender((cur) => ({ ...cur, ...genData.tender }));
+      router.refresh();
+    } catch { setError("Full package generation failed"); }
+    finally { setGenerating(false); }
   }
 
   async function handleValidate() {
@@ -674,6 +697,7 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
                 <textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} className="w-full rounded-lg border px-3 py-2 text-sm" rows={3} placeholder="Tender description" />
                 <textarea value={form.intakeSummary} onChange={(e) => setForm({ ...form, intakeSummary: e.target.value })} className="w-full rounded-lg border px-3 py-2 text-sm" rows={5} placeholder="Intake summary and known scope" />
                 <textarea value={form.analysisSummary} onChange={(e) => setForm({ ...form, analysisSummary: e.target.value })} className="w-full rounded-lg border px-3 py-2 text-sm" rows={4} placeholder="Internal analysis summary" />
+                <textarea value={form.evaluationMethodology} onChange={(e) => setForm({ ...form, evaluationMethodology: e.target.value })} className="w-full rounded-lg border px-3 py-2 text-sm" rows={4} placeholder="Evaluation methodology — how to score maximum points on each evaluation criterion (AI-extracted or manually added)" />
                 <textarea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} className="w-full rounded-lg border px-3 py-2 text-sm" rows={3} placeholder="Internal notes" />
                 <button onClick={handleSave} disabled={saving} className="rounded-lg bg-black px-5 py-2 text-sm text-white hover:bg-slate-800 disabled:opacity-50">
                   {saving ? "Saving..." : "Save Changes"}
@@ -688,6 +712,7 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
                 <div className="md:col-span-2"><dt className="text-sm text-slate-500">Description</dt><dd className="mt-1 whitespace-pre-wrap text-slate-900">{tender.description || "—"}</dd></div>
                 <div className="md:col-span-2"><dt className="text-sm text-slate-500">Intake Summary</dt><dd className="mt-1 text-slate-900">{tender.intakeSummary ? <ProposalMarkdown markdown={tender.intakeSummary} /> : "—"}</dd></div>
                 <div className="md:col-span-2"><dt className="text-sm text-slate-500">Analysis Summary</dt><dd className="mt-1 whitespace-pre-wrap text-slate-900">{tender.analysisSummary || "—"}</dd></div>
+                <div className="md:col-span-2"><dt className="text-sm text-slate-500">Evaluation Methodology</dt><dd className="mt-1 whitespace-pre-wrap text-slate-900">{tender.evaluationMethodology || "—"}</dd></div>
                 <div className="md:col-span-2"><dt className="text-sm text-slate-500">Notes</dt><dd className="mt-1 whitespace-pre-wrap text-slate-900">{tender.notes || "—"}</dd></div>
               </dl>
             )}
@@ -1039,7 +1064,17 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
         <div className="rounded-2xl border border-purple-200 bg-white p-6 shadow-sm">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-lg font-semibold text-slate-900">✦ AI-Generated Proposal Draft</h2>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
+              <button
+                onClick={async () => {
+                  setForm((c) => ({ ...c, intakeSummary: aiProposal }));
+                  setAiProposal("");
+                  await handleGenerateFullPackage();
+                }}
+                disabled={generating}
+                className="rounded-lg bg-blue-900 px-3 py-1.5 text-xs text-white hover:bg-blue-800 disabled:opacity-50">
+                {generating ? "Generating…" : "⚡ Save & Generate Full DOCX"}
+              </button>
               <button onClick={() => { setForm((c) => ({ ...c, intakeSummary: aiProposal })); setAiProposal(""); }}
                 className="rounded-lg bg-black px-3 py-1.5 text-xs text-white hover:bg-slate-800">
                 Save as Intake Summary

@@ -327,6 +327,37 @@ function fallbackProposalMarkdown(params: {
     "This proposal has been prepared using reviewed evidence and senior bid-review controls, and we commit to delivering the assigned scope with the proposed team, methodology, and schedule."
   );
 
+  // ── Submission Control Sheet ──────────────────────────────────────────────────
+  lines.push("# Submission Control Sheet");
+  lines.push("> Use this checklist immediately before sending. Do not submit until every item below is confirmed.");
+  lines.push("## Submission Recipients");
+  if (params.exactEmails && params.exactEmails.length > 0) {
+    lines.push(...params.exactEmails.map((e) => `- **${e}**`));
+  } else {
+    lines.push(`- **${params.clientName}** — verify the exact submission email from the tender document before sending.`);
+  }
+  lines.push("## Email Subject Line");
+  lines.push(`> **${exactSubject}**`);
+  lines.push("Copy and paste this subject line exactly. Do not abbreviate or reword.");
+  lines.push("## Document Format Requirements");
+  if (params.noFinancialProposal) {
+    lines.push("- **Technical Proposal ONLY** — Do NOT include any pricing, rates, or financial figures in this submission.");
+  }
+  if (params.submissionRules.length > 0) {
+    lines.push(...params.submissionRules.slice(0, 12).map((r) => `- ${r}`));
+  } else {
+    lines.push("- Submit all documents as PDF unless the tender explicitly permits Word format.");
+    lines.push("- Ensure the email attachment total does not exceed the size limit stated in the tender.");
+    lines.push("- Confirm the deadline time zone before submission (e.g., EAT, GMT, WAT).");
+  }
+  lines.push("## Pre-Submission Checklist");
+  lines.push("- [ ] Cover Letter signed and on company letterhead");
+  lines.push("- [ ] All required sections included and complete");
+  lines.push("- [ ] Expert CVs attached and signed");
+  lines.push("- [ ] Project references include client contact details");
+  lines.push("- [ ] All legal documents (registration, TIN, VAT) attached");
+  lines.push("- [ ] Submission sent before the stated deadline");
+
   return lines.join("\n\n");
 }
 
@@ -386,6 +417,12 @@ const BENCHMARK_CONTEXT_LINES = [
   "FIRST-DRAFT QUALITY RULE: The first AI draft must contain the benchmark structure, evaluator-facing narrative, evidence mapping, methodology depth, compliance strategy, appendix register, and final declaration.",
   "EVIDENCE RULE: Use only provided experts, projects, company documents, legal records, financial records, compliance records, project evidence, compliance rows, and tender text. If evidence is missing, state it as a bid-team confirmation item, not as a fake claim.",
   "CLIENT-READY RULE: Do not write internal benchmark review, auto-repair, debug, AI fallback, or quality-score sections inside the client proposal document.",
+  "FORBIDDEN PHRASES: Never write 'extensive experience' without a project name; 'committed to excellence/quality'; 'leading firm in the region'; 'team of qualified professionals'; 'we look forward to the opportunity'; 'as an AI'; 'certainly'; or any [square bracket] placeholder.",
+  "EVIDENCE DENSITY RULE: Every strong claim must cite a specific project name, ETB/contract value, expert name + licence, or client reference. No paragraph may be purely generic without one verifiable fact.",
+  "NARRATIVE THROUGHLINE RULE: The same two strongest project names MUST appear in the Cover Letter opening, Executive Summary first paragraph, AND Section B. This is not optional.",
+  "EXECUTIVE SUMMARY LEAD RULE: Executive Summary must open with: 'We have already delivered this assignment. [Company] designed/supervised/assessed [Project Name] (ETB X, Client Y) — a [parallel description].' This is the single most important sentence in the proposal.",
+  "TEAM-TO-PROJECT RULE: Each proposed expert must be linked in a table showing: Expert Name | Proposed Role | Previous Comparable Project | Role on That Project | Key Technical Contribution.",
+  "SECTION LENGTH RULE: Cover Letter ≥ 4 paragraphs; Executive Summary ≥ 3 paragraphs; each Section A/B/C ≥ 5 paragraphs with sub-sections. Do not truncate or summarise — write the full content.",
 ];
 
 export async function generateTenderDocuments(tenderId: string, userId: string): Promise<void> {
