@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma, prismaReady } from "../../../lib/prisma";
 import { getSession } from "../../../lib/auth";
 import { parseTenderStatus } from "../../../lib/tender-workflow";
+import { cleanClientName, cleanTenderTitle } from "../../../lib/engine/proposal-labels";
 
 export async function GET(req: Request) {
   const userId = await getSession();
@@ -56,13 +57,15 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "budget cannot be negative" }, { status: 400 });
     }
     const intakeSummary = body.intakeSummary || body.requirements || null;
+    const cleanClient = cleanClientName(body.clientName, body.description || intakeSummary || body.title);
+    const cleanTitle = cleanTenderTitle(body.title, { clientName: cleanClient, description: body.description || intakeSummary });
     const tender = await prisma.tender.create({
       data: {
         id: crypto.randomUUID(),
-        title: body.title,
+        title: cleanTitle,
         description: body.description || null,
         reference: body.reference || null,
-        clientName: body.clientName || null,
+        clientName: cleanClient === "Client" ? null : cleanClient,
         category: body.category || "General",
         budget: body.budget ? parseFloat(body.budget) : null,
         currency: body.currency || "USD",
