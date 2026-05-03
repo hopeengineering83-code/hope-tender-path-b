@@ -3,6 +3,7 @@ import { getSession } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { Document, Packer, Paragraph, TextRun, HeadingLevel } from "docx";
 import { logAction } from "../../../../../lib/audit";
+import { buildSubmissionPlan, findExtraGeneratedDocuments, findMissingGeneratedDocuments } from "../../../../../lib/engine/submission-plan";
 
 function safeParseArr(v: unknown): string[] {
   try { return JSON.parse(v as string) as string[]; } catch { return []; }
@@ -193,6 +194,29 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     const requiredNames = safeParseArr(tender.exactFileNaming).map(normalizeName);
     const requiredOrder = safeParseArr(tender.exactFileOrder).map(normalizeName);
     const generatedNames = generatedDocs.map((d) => normalizeName(d.exactFileName ?? generatedFileName(d.name)));
+    const hasExplicitSubmissionScope = requiredNames.length > 0 || requiredOrder.length > 0 || tender.requirements.some((requirement) => Boolean(requirement.exactFileName));
+
+    if (hasExplicitSubmissionScope) {
+      const submissionPlan = buildSubmissionPlan({
+        id: tender.id,
+        title: tender.title,
+        exactFileNaming: tender.exactFileNaming,
+        exactFileOrder: tender.exactFileOrder,
+        pageLimit: tender.pageLimit,
+        requirements: tender.requirements,
+      });
+      const missingPlanFiles = findMissingGeneratedDocuments(submissionPlan, generatedDocs);
+      const extraGeneratedDocs = findExtraGeneratedDocuments(submissionPlan, generatedDocs);
+      if (missingPlanFiles.length > 0 || extraGeneratedDocs.length > 0) {
+        return NextResponse.json({
+          error: "ZIP export blocked by submission plan mismatch",
+          missing: missingPlanFiles.map((file) => file.exactFileName),
+          extras: extraGeneratedDocs.map((doc) => doc.exactFileName ?? generatedFileName(doc.name)),
+          requiredCount: submissionPlan.files.filter((file) => file.required).length,
+          generatedCount: generatedDocs.length,
+        }, { status: 409 });
+      }
+    }
 
     if (requiredNames.length > 0) {
       const missing = requiredNames.filter((name) => !generatedNames.includes(name));
