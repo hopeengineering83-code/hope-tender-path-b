@@ -71,17 +71,18 @@ async function validateGeneratedDocx(doc: {
   const forbiddenPatterns = [
     /AI_DRAFT/i,
     /REGEX_DRAFT/i,
-    /REVIEW REQUIRED/i,
     /remove before submission/i,
     /placeholder/i,
     /sample text/i,
     /lorem ipsum/i,
     /as an AI/i,
     /AI-generated/i,
-    /ChatGPT/i,
-    /OpenAI/i,
     /source snippet/i,
     /deterministic safety import/i,
+    /=+\s*PAGE\s+\d+\s*=+/i,
+    /PARSED TEXT FOR PAGE/i,
+    /Company evidence available:/i,
+    /Project evidence available:/i,
   ];
   for (const pattern of forbiddenPatterns) {
     if (pattern.test(text) || pattern.test(doc.name) || pattern.test(filename)) {

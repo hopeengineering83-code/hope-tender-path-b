@@ -2,21 +2,21 @@
 const { GoogleGenerativeAI } = require("@google/generative-ai") as typeof import("@google/generative-ai");
 
 const apiKey = process.env.GEMINI_API_KEY;
+const DEFAULT_GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-pro";
+const FALLBACK_GEMINI_MODELS = (process.env.GEMINI_FALLBACK_MODELS || "gemini-2.5-flash,gemini-2.0-flash")
+  .split(",")
+  .map((m) => m.trim())
+  .filter(Boolean);
 
-// Model priority for proposal generation (highest quality first).
-// gemini-2.5-pro produces Claude-comparable reasoning depth for complex proposals.
-// gemini-2.0-flash is the fast fallback for analysis/extraction and when 2.5-pro is unavailable.
-const PRIMARY_MODEL = "gemini-2.0-flash";
-const FALLBACK_MODEL = "gemini-1.5-pro";
+// Model chain for proposal generation — tried in order until one succeeds.
 const PROPOSAL_MODELS = ["gemini-2.5-pro", "gemini-2.0-flash", "gemini-1.5-pro"];
-const GENERATION_MODEL = PRIMARY_MODEL;
 
 function getClient() {
   if (!apiKey) throw new Error("GEMINI_API_KEY not configured");
   return new GoogleGenerativeAI(apiKey);
 }
 
-function getModel(modelName: string) {
+function getModel(modelName = DEFAULT_GEMINI_MODEL) {
   return getClient().getGenerativeModel({ model: modelName });
 }
 
@@ -24,34 +24,35 @@ export function isAIEnabled() {
   return Boolean(apiKey);
 }
 
-async function generate(prompt: string, modelName = PRIMARY_MODEL): Promise<string> {
-  const tryModel = async (name: string): Promise<string> => {
-    const model = getModel(name);
-    const result = await model.generateContent(prompt);
-    const text = result.response.text();
-    if (!text || text.trim().length === 0) throw new Error("Empty response from Gemini API");
-    return text;
-  };
+function isModelUnavailableError(message: string): boolean {
+  return /404|not found|not supported for generateContent|models\//i.test(message);
+}
 
-  try {
-    return await tryModel(modelName);
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    if (msg.includes("429")) throw new Error("Gemini API rate limit reached — try again in a moment");
-    if (msg.includes("403") || msg.includes("API_KEY_INVALID") || msg.includes("API key not valid"))
-      throw new Error("Gemini API key invalid or missing — check GEMINI_API_KEY in environment variables");
-    // Model unavailable — try the legacy fallback once
-    if (msg.includes("404") || msg.includes("not found") || msg.includes("deprecated") || msg.includes("not supported")) {
-      try {
-        return await tryModel(modelName === PRIMARY_MODEL ? FALLBACK_MODEL : PRIMARY_MODEL);
-      } catch (fallbackErr) {
-        const fallbackMsg = fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr);
-        if (fallbackMsg.includes("429")) throw new Error("Gemini API rate limit reached — try again in a moment");
-        throw fallbackErr;
-      }
+function uniqueModels(primary: string): string[] {
+  return Array.from(new Set([primary, ...FALLBACK_GEMINI_MODELS]));
+}
+
+async function generate(prompt: string, modelName = DEFAULT_GEMINI_MODEL): Promise<string> {
+  const errors: string[] = [];
+
+  for (const candidate of uniqueModels(modelName || DEFAULT_GEMINI_MODEL)) {
+    try {
+      const model = getModel(candidate);
+      const result = await model.generateContent(prompt);
+      const text = result.response.text();
+      if (!text || text.trim().length === 0) throw new Error(`Empty response from Gemini API using ${candidate}`);
+      return text;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      errors.push(`${candidate}: ${msg}`);
+      if (msg.includes("429")) throw new Error("Gemini API rate limit reached — try again in a moment");
+      if (msg.includes("403") || msg.includes("API_KEY_INVALID") || msg.includes("API key not valid"))
+        throw new Error("Gemini API key invalid or missing — check GEMINI_API_KEY in environment variables");
+      if (!isModelUnavailableError(msg)) throw err;
     }
-    throw err;
   }
+
+  throw new Error(`Gemini model unavailable. Tried: ${uniqueModels(modelName || DEFAULT_GEMINI_MODEL).join(", ")}. Errors: ${errors.join(" | ")}`);
 }
 
 // Try PROPOSAL_MODELS in order until one succeeds — gives the best available model for proposal writing.
@@ -201,7 +202,7 @@ JSON structure required:
 TENDER DOCUMENT (${trimmedTender.length.toLocaleString()} chars):
 ${trimmedTender}`;
 
-  const text = await generate(prompt);
+  const text = await generate(prompt, process.env.GEMINI_ANALYSIS_MODEL || DEFAULT_GEMINI_MODEL);
   // Strip markdown code fences if the model wrapped its JSON
   const cleaned = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
   const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
@@ -243,7 +244,7 @@ Rules: only include people clearly named in the document. Do NOT invent any fiel
 DOCUMENT TEXT (${text.length.toLocaleString()} chars):
 ${text.slice(0, 60_000)}`;
 
-  const raw = await generate(prompt);
+  const raw = await generate(prompt, process.env.GEMINI_EXTRACTION_MODEL || "gemini-2.5-flash");
   const jsonMatch = raw.match(/\[[\s\S]*\]/);
   if (!jsonMatch) return [];
   try {
@@ -284,7 +285,7 @@ Rules: only include projects clearly in the document. Do NOT invent values. sour
 DOCUMENT TEXT (${text.length.toLocaleString()} chars):
 ${text.slice(0, 60_000)}`;
 
-  const raw = await generate(prompt);
+  const raw = await generate(prompt, process.env.GEMINI_EXTRACTION_MODEL || "gemini-2.5-flash");
   const jsonMatch = raw.match(/\[[\s\S]*\]/);
   if (!jsonMatch) return [];
   try {

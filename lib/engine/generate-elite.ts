@@ -5,6 +5,9 @@ import { buildProposalIntelligence, expertProofLine, projectProofLine, safeParse
 import { exactSelectionLimit } from "./scope-policy";
 import { finalizeClientReadyProposalMarkdown } from "./proposal-benchmark-guard";
 import { appendEvaluatorResponseMatrix } from "./proposal-evaluator-matrix";
+import { buildClientProposalStrengtheningSections } from "./proposal-strengthening-sections";
+import { benchmarkAuditSummary } from "./proposal-benchmark-audit";
+import { polishBenchmarkOutput } from "./benchmark-output-polisher";
 
 const BRAND_BLUE = "1F4E79";
 const BRAND_GRAY = "595959";
@@ -110,6 +113,18 @@ function clean(text?: string | null): string {
 function shortText(text?: string | null, max = 700): string {
   const value = clean(text);
   return value.length > max ? `${value.slice(0, max - 1)}…` : value;
+}
+
+function cleanClientLanguage(text: string): string {
+  return polishBenchmarkOutput(text
+    .replace(/Bid-team confirmation:\s*/gi, "Evidence note: ")
+    .replace(/bid-team confirmation item(s)?/gi, "source-evidence confirmation item$1")
+    .replace(/bid-team-confirmed/gi, "source-confirmed")
+    .replace(/bid-team verification/gi, "final verification")
+    .replace(/bid team/gi, "proposal team")
+    .replace(/Bid team/gi, "Proposal team")
+    .replace(/\n{4,}/g, "\n\n\n")
+    .trim());
 }
 
 function markdownToDocx(markdown: string): (Paragraph | Table)[] {
@@ -510,12 +525,17 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   }
 
   const matrixMarkdown = appendEvaluatorResponseMatrix(sourceMarkdown, evaluatorMatrixInput);
-  const finalized = finalizeClientReadyProposalMarkdown(matrixMarkdown, guardInput);
-  const children = markdownToDocx(finalized.markdown);
+  const isHealthcare = /health|hospital|medical|clinic|radiology|laboratory|pharmacy|patient|specialty|OPD|in-patient|emergency/i.test(`${intelligence.primarySector}\n${intelligence.tenderText}`);
+  const strengtheningMarkdown = buildClientProposalStrengtheningSections({ clientName: intelligence.clientName, tenderTitle: tender.title, companyName: company.name, projectLines, expertLines, companyEvidenceLines, projectEvidenceLines, isHealthcare, existingMarkdown: matrixMarkdown });
+  const combinedMarkdown = [matrixMarkdown, strengtheningMarkdown].filter(Boolean).join("\n\n");
+  const finalized = finalizeClientReadyProposalMarkdown(combinedMarkdown, guardInput);
+  const clientMarkdown = cleanClientLanguage(finalized.markdown);
+  const auditSummary = benchmarkAuditSummary(clientMarkdown);
+  const children = markdownToDocx(clientMarkdown);
   const doc = buildProfessionalDocument({ tenderTitle: tender.title, clientName: intelligence.clientName, companyName: company.name, reference: tender.reference, children });
 
   const fileContent = (await Packer.toBuffer(doc)).toString("base64");
-  const summary = `${mode} technical proposal generated. ${finalized.internalSummary}. Inputs: ${intelligence.requiredSections.length} section group(s), ${intelligence.themes.length} tender theme(s), ${experts.length} reviewed expert(s), ${projects.length} reviewed project(s), ${companyEvidenceLines.length} company evidence item(s), ${projectEvidenceLines.length} project evidence attachment(s).${aiError ? ` AI fallback reason: ${aiError}` : ""}`;
+  const summary = `${mode} technical proposal generated. ${finalized.internalSummary}. ${auditSummary}. Inputs: ${intelligence.requiredSections.length} section group(s), ${intelligence.themes.length} tender theme(s), ${experts.length} reviewed expert(s), ${projects.length} reviewed project(s), ${companyEvidenceLines.length} company evidence item(s), ${projectEvidenceLines.length} project evidence attachment(s).${aiError ? ` AI fallback reason: ${aiError}` : ""}`;
 
   const target = await prisma.generatedDocument.findFirst({ where: { tenderId, documentType: { in: ["TECHNICAL_PROPOSAL", "PROPOSAL", "METHODOLOGY"] } }, orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }] });
   if (target) {
