@@ -4,6 +4,7 @@ import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { generateTenderDocuments } from "../../../../../lib/engine/generate-elite";
 import { applyActiveUploadedLetterheadToTenderDocuments } from "../../../../../lib/engine/apply-active-letterhead";
 import { buildSubmissionPlan, findExtraGeneratedDocuments, findMissingGeneratedDocuments, generatedDocumentSubmissionKey, hasExplicitSubmissionScope, plannedSubmissionTargetFiles, plannedSubmissionTargetKeys } from "../../../../../lib/engine/submission-plan";
+import { polishBenchmarkOutput } from "../../../../../lib/engine/benchmark-output-polisher";
 import { logAction } from "../../../../../lib/audit";
 import { Document, HeadingLevel, Packer, Paragraph, TextRun } from "docx";
 
@@ -13,7 +14,7 @@ function criticalGapIsHardBlock(gap: { title: string; description: string; mitig
 }
 
 function clean(value?: string | null): string {
-  return (value ?? "")
+  return polishBenchmarkOutput(value ?? "")
     .replace(/[\u0000-\u001F\u007F]/g, " ")
     .replace(/=+\s*PAGE\s+\d+\s*=+/gi, " ")
     .replace(/<PARSED TEXT FOR PAGE:[^>]+>/gi, " ")
@@ -28,11 +29,11 @@ function shortText(value?: string | null, max = 420): string {
 }
 
 function para(text: string, bold = false): Paragraph {
-  return new Paragraph({ children: [new TextRun({ text, bold, size: 22, font: "Calibri" })], spacing: { after: 120, line: 276 } });
+  return new Paragraph({ children: [new TextRun({ text: clean(text), bold, size: 22, font: "Calibri" })], spacing: { after: 120, line: 276 } });
 }
 
 function heading(text: string): Paragraph {
-  return new Paragraph({ text, heading: HeadingLevel.HEADING_1, spacing: { before: 260, after: 140 } });
+  return new Paragraph({ text: clean(text), heading: HeadingLevel.HEADING_1, spacing: { before: 260, after: 140 } });
 }
 
 function bullet(text: string): Paragraph {
@@ -42,7 +43,7 @@ function bullet(text: string): Paragraph {
 async function makeSupportDocx(tenderTitle: string, title: string, sections: Array<{ title: string; lines: string[] }>): Promise<string> {
   const children: Paragraph[] = [
     para(title, true),
-    para(`Supporting package document for ${tenderTitle}. This file organizes the relevant requirements, evidence and submission-control points for the named tender document.`),
+    para(`Supporting package document for ${shortText(tenderTitle, 220)}. This document presents the relevant tender requirement response, supporting evidence and submission controls in a client-ready package format.`),
   ];
   for (const section of sections) {
     children.push(heading(section.title));
