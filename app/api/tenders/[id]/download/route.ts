@@ -211,7 +211,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
         return NextResponse.json({
           error: "ZIP export blocked by submission plan mismatch",
           missing: missingPlanFiles.map((file) => file.exactFileName),
-          extras: extraGeneratedDocs.map((doc) => doc.exactFileName ?? generatedFileName(doc.name)),
+          extras: extraGeneratedDocs.map((doc) => doc.exactFileName ?? generatedFileName(doc.name ?? doc.documentType ?? doc.id ?? "document")),
           requiredCount: submissionPlan.files.filter((file) => file.required).length,
           generatedCount: generatedDocs.length,
         }, { status: 409 });
