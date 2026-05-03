@@ -307,13 +307,19 @@ export async function generateBenchmarkProposalWithAI(params: AIBidWriterInput):
     params.submissionNotes + params.tenderText,
   );
 
-  const isHealthcare = /health|hospital|medical|clinic|pharma|radiology|laboratory|MEP|biomedical/i.test(
-    params.tenderText + params.analysisSummary,
-  );
+  const allText = params.tenderText + params.analysisSummary;
 
-  const isFacilityAssessment = /facility identification|shortlisted propert|site assessment|renovation|premises/i.test(
-    params.tenderText,
-  );
+  // Universal sector detection — multiple sectors can be active simultaneously
+  const isHealthcare = /health|hospital|medical|clinic|pharma|radiology|laboratory|biomedical/i.test(allText);
+  const isFacilityAssessment = /facility identification|shortlisted propert|site assessment|suitable.*propert|premises|renovation.*exist/i.test(params.tenderText);
+  const isWater = /water supply|borehole.*water|pump.*station|hydraulic.*design|irrigation.*scheme|WASH|sanitation.*project|water.*scheme|water.*network|reservoir.*design|water.*treatment|wastewater/i.test(allText);
+  const isRoadBridge = /road.*design|road.*rehab|bridge.*design|highway.*design|pavement.*design|transport.*infrastructure|culvert|road.*supervision|road.*project|road.*construction/i.test(allText);
+  const isBuilding = !isHealthcare && /architectural.*design|building.*design|structural.*design|construction.*supervision|commercial.*building|school.*building|office.*design|factory.*design|warehouse.*design/i.test(allText);
+  const isUrban = /urban.*plan|master.*plan|land.*use.*plan|municipal.*develop|spatial.*plan|eco.?park|city.*development|public.*space.*design|settlement.*plan/i.test(allText);
+  const isEnvironmental = /ESIA|ESMP|environmental.*impact.*assess|social.*safeguard|environmental.*management.*plan|EHS|climate.*risk.*assess|biodiversity.*assess|resettlement.*action|environmental.*screen/i.test(allText);
+  const isICT = /ICT.*system|information.*system.*develop|software.*develop|digital.*platform|database.*system|MIS.*develop|ERP.*implement|network.*design|cyber.*security.*consult|data.*management.*system/i.test(allText);
+  const isEducation = !isHealthcare && /school.*design|university.*design|campus.*develop|education.*facilit|training.*cent.*design|vocational.*training.*facilit/i.test(allText);
+  const isDonor = /World Bank|UNDP|USAID|GIZ|EU.*fund|AfDB|ADB|JICA|donor.*fund|development.*partner.*fund|bilateral.*donor/i.test(allText);
 
   const tenderSections = extractTenderSections(params.tenderText);
   const exactEmails = Array.from(
@@ -328,26 +334,139 @@ export async function generateBenchmarkProposalWithAI(params: AIBidWriterInput):
     (params.tenderText + params.submissionNotes).match(/subject[^\n.]{0,30}[""]([^""]{5,120})[""]/i);
   const exactSubject = subjectMatch?.[1] ?? `Technical Proposal for ${params.tenderTitle}`;
 
+  // Sector-specific proposal guidance blocks — injected verbatim into the prompt only when detected
   const healthcareGuidance = isHealthcare
     ? `
 HEALTHCARE-SPECIFIC PROPOSAL GUIDANCE (mandatory for this tender):
-- The cover letter MUST cite the company's specific hospital project experience by name and ETB/contract value from the evidence.
+- Cover letter MUST cite the company's specific hospital project experience by name and ETB/contract value from the evidence.
 - Executive Summary must lead with: "We have already delivered this assignment" framing if hospital evidence exists.
-- Team section must show each expert's ROLE on a PREVIOUS HOSPITAL PROJECT — not just their qualifications.
+- Team section must show each expert's ROLE on a PREVIOUS HOSPITAL PROJECT — not just qualifications.
 - Include a Team-to-Project Experience Mapping section showing expert → previous hospital project → role performed.
 - Technical Approach must address: clinical zone segregation (Emergency/OPD/In-patient/Laboratory/Imaging/Pharmacy), patient-staff-supply flow, IPC compliance, radiation shielding for imaging, medical gas coordination, accessible design.
 - MEP section must cover: medical-grade electrical load planning, UPS/generator backup for life-critical loads, ICT/nurse call/BMS/fire alarm, medical gas, clinical waste stream segregation.
 - Regulatory: Ethiopian Health Authority licensing, EBCS compliance, World Bank ESF documentation (if applicable).
 - Biomedical engineering integration must be addressed even if naming a specialist-to-be-engaged.
-- QA: describe a staged design review (conceptual → schematic → detailed → construction documents).`
+- QA: staged design review (conceptual → schematic → detailed → construction documents).`
     : "";
 
   const facilityGuidance = isFacilityAssessment
     ? `
 FACILITY IDENTIFICATION SCOPE GUIDANCE:
-- Section on "Facility Identification and Technical Assessment" must describe the assessment matrix: structural adequacy, spatial feasibility, utility availability, regulatory compliance, accessibility, patient flow potential, safety, expansion possibilities.
-- Must offer written technical recommendation methodology for shortlisted properties.`
+- "Facility Identification and Technical Assessment" section must describe the assessment matrix: structural adequacy, spatial feasibility, utility availability, regulatory compliance, accessibility, patient flow potential, safety, expansion possibilities.
+- Must offer written technical recommendation methodology for shortlisted properties with a clear recommended/not-recommended conclusion per site.`
     : "";
+
+  const waterGuidance = isWater
+    ? `
+WATER/SANITATION/HYDRAULICS GUIDANCE (mandatory for this tender):
+- Cover letter and Executive Summary MUST cite the company's strongest specific water supply or sanitation project by name, client, and capacity/contract value from the evidence.
+- Technical Approach must address: source investigation (borehole siting, geophysical survey, or surface intake), demand projection methodology, hydraulic modelling (WaterCAD/EPANET or equivalent), pipe network sizing, pump station design (head, flow, power/solar), storage reservoir sizing, water quality/treatment design.
+- BOQ and specifications must be directly linked to hydraulic design outputs — not generic quantities.
+- Include: borehole drilling supervision protocol, pump testing/yield assessment, chlorination/disinfection design, sanitary protection zone.
+- Construction supervision: field engineer duties, pipe pressure testing, concrete testing, commissioning checklist, as-built documentation.
+- Deliverables: O&M manual, community water management training, performance handover certificate.
+- WASH component (if applicable): sanitation facility design standard (pupil/patient ratio compliance), hygiene promotion approach.`
+    : "";
+
+  const roadBridgeGuidance = isRoadBridge
+    ? `
+ROAD/BRIDGE/TRANSPORT INFRASTRUCTURE GUIDANCE (mandatory for this tender):
+- Cover letter and Executive Summary MUST cite the company's strongest road/bridge project by name, client, length/value, and country from the evidence.
+- Technical Approach must address: route survey and alignment, topographic survey control, geotechnical investigation (CBR, proctor, borehole/test pit), traffic count and design traffic (AADT, ESAL), road design standard (ERA design manual, AASHTO, or applicable), pavement design layers and thicknesses, drainage design (culverts, side drains, retention ponds), bridge/structure design (if applicable), road safety audit, environmental and social controls.
+- Construction supervision: engineer's representative duties, materials testing programme (CBR, compaction, aggregate quality), progress reporting format, variation/claim management, interim payment certification, defects liability monitoring.
+- BOQ: earthworks quantities, surfacing, drainage structures, bridges — all linked to design drawings.
+- Handover: as-built drawings, maintenance manual, performance monitoring framework, road authority acceptance.`
+    : "";
+
+  const buildingGuidance = isBuilding
+    ? `
+BUILDING/ARCHITECTURE/SUPERVISION GUIDANCE (mandatory for this tender):
+- Cover letter and Executive Summary MUST cite the company's strongest comparable building project by name, client, and ETB/contract value from the evidence.
+- Technical Approach must address: functional brief and space schedule, site analysis, architectural concept, structural system selection, MEP coordination (electrical, mechanical, plumbing), accessibility (Universal Design), life safety (fire egress, smoke control, emergency lighting), building permit documentation.
+- Design stages: concept → schematic → design development → detailed design/working drawings → construction documents.
+- Construction supervision: site inspection regime, material/shop drawing approval workflow, progress certification, variation control, quality testing (concrete cube, rebar, welding), defects register.
+- BOQ/cost: elemental cost plan at design development; detailed BOQ at working drawings stage.
+- Handover: as-built documentation, O&M manuals, warranties, regulatory sign-off, completion certificate.`
+    : "";
+
+  const urbanGuidance = isUrban
+    ? `
+URBAN/MASTER PLANNING GUIDANCE (mandatory for this tender):
+- Cover letter and Executive Summary MUST cite the company's strongest comparable urban planning or master plan project by name, scale (hectares/population), and client from the evidence.
+- Technical Approach must address: baseline studies (GIS-based land use mapping, demographic analysis, infrastructure inventory), land-use zoning scenario development, infrastructure demand assessment (transport, water, utilities, green space), environmental and social screening, phasing and priority project identification, stakeholder consultation framework.
+- Master Plan deliverables: vision, objectives, strategic land-use map, infrastructure plan, phasing, implementation roadmap, regulatory alignment checklist, investment framework summary.
+- Community/authority engagement: workshop design, survey methodology, consultation record, public disclosure, conflict/grievance management.
+- GIS: spatial data collection methodology, layer management, map production standards, dataset handover format.
+- Implementation: capacity building plan for municipal counterpart, M&E framework, indicator set.`
+    : "";
+
+  const environmentalGuidance = isEnvironmental
+    ? `
+ENVIRONMENTAL/SOCIAL IMPACT ASSESSMENT GUIDANCE (mandatory for this tender):
+- Cover letter and Executive Summary MUST cite the company's strongest comparable ESIA/ESMP report by name, donor/client, and country from the evidence.
+- Technical Approach must address: baseline data collection methodology (physical environment, biological survey, socioeconomic survey), legal and regulatory framework review (national law + donor safeguards), impact identification using structured matrices (Leopold or equivalent), mitigation hierarchy (avoid → minimise → restore → offset → compensate).
+- ESMP: management measures per impact, monitoring indicators, responsibilities, reporting schedule, budget estimate, grievance mechanism design.
+- Stakeholder engagement plan: consultation event design, disclosure requirements, feedback incorporation, vulnerable group inclusion.
+- Donor alignment: World Bank ESF standards (ESS1–10) or equivalent; project screening/categorisation; ESMP format; PAP census and livelihood restoration plan (if applicable).
+- Reporting: ESIA/ESMP report structure, regulatory submission package, monitoring-ready annexes, public disclosure draft.`
+    : "";
+
+  const ictGuidance = isICT
+    ? `
+ICT/DIGITAL SYSTEMS GUIDANCE (mandatory for this tender):
+- Cover letter and Executive Summary MUST cite the company's strongest comparable system deployment by name, client, user count, and delivery period from the evidence.
+- Technical Approach must address: requirements analysis and business process review, functional and technical specification, system architecture (application, database, network/hosting layers), data security controls (access management, encryption, audit trail, backup/disaster recovery), integrations with existing systems (APIs, data migration plan).
+- Implementation methodology: phased delivery approach (agile sprints or structured phases), acceptance testing plan (unit, integration, UAT), training programme (train-the-trainer, user manuals), change management and adoption strategy.
+- Go-live: deployment checklist, parallel-run strategy, cutover plan, data validation and reconciliation protocol.
+- Post-deployment: SLA definition, help desk/support model, patch/update management plan, full documentation set, source code and data handover.`
+    : "";
+
+  const donorGuidance = isDonor
+    ? `
+DONOR-FUNDED PROJECT COMPLIANCE GUIDANCE:
+- Explicitly name the donor/funder and confirm compliance with their procurement and quality standards in the Executive Summary and Technical Approach.
+- Reference the applicable conditions of contract (FIDIC, UNCITRAL, or donor-specific) and state key contract administration obligations.
+- Donor reporting: M&E framework (output/outcome/impact indicators with baselines), progress report format and frequency, financial accountability requirements.
+- Environmental and social screening: applicable safeguard standards (World Bank ESF/IFC PS, UNDP SES, or other), screening category, identified E&S risks and mitigation approach.
+- Quality Management Plan: ISO 9001:2015-aligned, document control system, design review gate protocol, independent peer review.`
+    : "";
+
+  const educationGuidance = isEducation
+    ? `
+EDUCATION FACILITY DESIGN GUIDANCE (mandatory for this tender):
+- Cover letter and Executive Summary MUST cite the company's strongest comparable school/university project by name, client, and ETB/contract value from the evidence.
+- Technical Approach must address: functional brief and space schedule (classrooms, laboratories, library, administration, sanitation, sports), accessible and inclusive design (ramps, accessible toilets, wayfinding for all users), climate-responsive design (natural ventilation, shading, daylighting, thermal comfort), structural adequacy for assembly occupancy.
+- MEP: power supply, backup generator/solar, water supply and sanitation (pupil-to-toilet ratio compliance with national standards), ICT cabling and display systems, fire detection and emergency systems.
+- Site design: boundary security, vehicular/pedestrian separation, outdoor learning and recreation areas.
+- Regulatory: building permit, education authority functional approval, fire certificate.
+- Supervision: standard materials testing programme, progress reporting, defects register, handover documentation.`
+    : "";
+
+  // Combine all active sector guidance blocks for injection into Section C
+  const allSectorGuidance = [
+    healthcareGuidance, facilityGuidance, waterGuidance, roadBridgeGuidance,
+    buildingGuidance, urbanGuidance, environmentalGuidance, ictGuidance,
+    donorGuidance, educationGuidance,
+  ].filter(Boolean).join("\n\n");
+
+  // Dynamic cover page headline facts calibrated to detected sector
+  const coverPageExample = isHealthcare
+    ? `"2 Hospitals Designed | ETB 675M+ Healthcare Portfolio | 12-Expert Multidisciplinary Team | EIASC Grade A Licensed"`
+    : isWater
+    ? `"5 Water Supply Schemes Delivered | Hydraulic Modelling In-house | FIDIC-Compliant Supervision | 12+ Boreholes Supervised"`
+    : isRoadBridge
+    ? `"8 Road Projects Supervised | 150km+ Roads Designed | Bridge Engineering Capability | ERA/MoT-Compliant Methodology"`
+    : isUrban
+    ? `"12 Master Plans Delivered | GIS Spatial Analysis In-house | Multi-Stakeholder Consultation | Municipal Planning Specialists"`
+    : isEnvironmental
+    ? `"15 ESIA/ESMP Reports Accepted | World Bank ESF Compliant | Licensed Environmental Practitioners | Stakeholder Engagement Specialists"`
+    : isICT
+    ? `"6 Enterprise Systems Deployed | 150+ Users Trained | Secure Cloud Architecture | Full Source Code Handover"`
+    : isEducation
+    ? `"3 School Campuses Designed | Accessible & Climate-Responsive Design | Full MEP Integration | Building Permit Support"`
+    : isDonor
+    ? `"10+ Donor-Funded Projects Delivered | World Bank / UNDP Track Record | ISO-Aligned Quality System | FIDIC-Compliant Contract Administration"`
+    : `"10+ Major Projects Delivered | Multidisciplinary Expert Team | Evidence-Backed Technical Approach | ISO-Aligned Quality System"`;
 
   const sectionStructureGuidance =
     tenderSections.length > 0
@@ -456,7 +575,7 @@ Write ALL of these in order:
 - Submitted to / Submitted by blocks
 - Exact email recipients and subject line
 - Submission date
-- 3-5 headline facts (e.g., "2 Hospitals Designed | ETB 675M+ Healthcare Portfolio | 12-Expert Multidisciplinary Team | EIASC Grade A Licensed")
+- 3-5 headline facts drawn from the evidence library — number of comparable projects delivered, total portfolio value, team size/disciplines, key licence/certification held. Use sector-appropriate language: (e.g., ${coverPageExample})
 
 ### TABLE OF CONTENTS
 - All sections with sub-sections and approximate structure
@@ -487,8 +606,7 @@ B.5 Client References — confirmed client names and, if available, contact deta
 ### SECTION C: TECHNICAL APPROACH
 C.1 Understanding of the Assignment — what the client needs, what the key technical challenges are, and what the winning proposal must demonstrate
 C.2 Technical Methodology — numbered sub-sections matching the tender's scope items
-${healthcareGuidance}
-${facilityGuidance}
+${allSectorGuidance}
 C.3 Work Plan and Deliverables — stages, deliverables, responsible experts, timelines
 C.4 Quality Assurance — staged design review gates, independent technical review, document control, submission quality control
 
