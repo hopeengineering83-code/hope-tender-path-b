@@ -1,15 +1,40 @@
+import { buildSubmissionPlan, findExtraGeneratedDocuments, findMissingGeneratedDocuments, submissionPlanFileCount } from "@/lib/engine/submission-plan";
+
 type GeneratedDocLike = {
+  id?: string;
   name?: string | null;
   exactFileName?: string | null;
   documentType?: string | null;
+  exactOrder?: number | null;
+  format?: string | null;
   generationStatus: string;
   validationStatus: string;
   reviewStatus: string;
+  fileContent?: string | null;
+};
+
+type TenderRequirementLike = {
+  id: string;
+  title: string;
+  description?: string | null;
+  priority: string;
+  requirementType: string;
+  exactFileName?: string | null;
+  exactOrder?: number | null;
+  requiredQuantity?: number | null;
+  pageLimit?: number | null;
+  restrictions?: string | null;
+  sectionReference?: string | null;
 };
 
 type TenderLike = {
+  id: string;
+  title?: string | null;
   readinessScore?: number | null;
-  requirements?: Array<{ priority: string; requirementType: string }>;
+  exactFileNaming?: string | null;
+  exactFileOrder?: string | null;
+  pageLimit?: number | null;
+  requirements?: TenderRequirementLike[];
   complianceGaps?: Array<{ severity: string; isResolved: boolean }>;
   generatedDocuments?: GeneratedDocLike[];
   expertMatches?: Array<{ isSelected: boolean; score: number; expert?: { trustLevel?: string | null } }>;
@@ -28,6 +53,10 @@ function badgeClass(level: "GO" | "REVIEW" | "NO_GO") {
   return "bg-red-100 text-red-700 border-red-200";
 }
 
+function statusValue(value?: string | null): string {
+  return (value ?? "").trim().toUpperCase();
+}
+
 function docKey(doc: GeneratedDocLike): string {
   return (doc.exactFileName || doc.name || doc.documentType || "")
     .toLowerCase()
@@ -36,9 +65,9 @@ function docKey(doc: GeneratedDocLike): string {
 }
 
 function docScore(doc: GeneratedDocLike): number {
-  return (doc.generationStatus === "GENERATED" ? 4 : 0)
-    + (["PASSED", "VALIDATED"].includes(doc.validationStatus) ? 2 : 0)
-    + (doc.reviewStatus === "APPROVED" ? 1 : 0);
+  return (statusValue(doc.generationStatus) === "GENERATED" ? 4 : 0)
+    + (["PASSED", "VALIDATED", "APPROVED"].includes(statusValue(doc.validationStatus)) ? 2 : 0)
+    + (["APPROVED", "ACCEPTED", "SIGNED_OFF", "SIGNED OFF"].includes(statusValue(doc.reviewStatus)) ? 1 : 0);
 }
 
 function visiblePackageDocs(docs: GeneratedDocLike[]): GeneratedDocLike[] {
@@ -56,6 +85,19 @@ export function ExecutiveSnapshot({ tender }: { tender: TenderLike }) {
   const requirements = tender.requirements ?? [];
   const gaps = tender.complianceGaps ?? [];
   const generatedDocs = visiblePackageDocs(tender.generatedDocuments ?? []);
+  const submissionPlan = buildSubmissionPlan({
+    id: tender.id,
+    title: tender.title,
+    exactFileNaming: tender.exactFileNaming,
+    exactFileOrder: tender.exactFileOrder,
+    pageLimit: tender.pageLimit,
+    requirements,
+  });
+  const missingPlannedDocs = findMissingGeneratedDocuments(submissionPlan, generatedDocs);
+  const extraGeneratedDocs = findExtraGeneratedDocuments(submissionPlan, generatedDocs);
+  const plannedDocCount = submissionPlanFileCount(submissionPlan);
+  const dashboardDocTotal = plannedDocCount > 0 ? plannedDocCount : generatedDocs.length;
+  const dashboardGeneratedCount = plannedDocCount > 0 ? Math.max(0, plannedDocCount - missingPlannedDocs.length) : generatedDocs.filter((d) => statusValue(d.generationStatus) === "GENERATED").length;
   const expertMatches = tender.expertMatches ?? [];
   const projectMatches = tender.projectMatches ?? [];
   const matrix = tender.complianceMatrix ?? [];
@@ -69,29 +111,33 @@ export function ExecutiveSnapshot({ tender }: { tender: TenderLike }) {
   const reviewedProjects = selectedProjects.filter((m) => m.project?.trustLevel === "REVIEWED").length;
   const strongExperts = expertMatches.filter((m) => m.score >= 0.9).length;
   const strongProjects = projectMatches.filter((m) => m.score >= 0.9).length;
-  const generatedCount = generatedDocs.filter((d) => d.generationStatus === "GENERATED").length;
-  const validatedCount = generatedDocs.filter((d) => ["PASSED", "VALIDATED"].includes(d.validationStatus)).length;
-  const approvedCount = generatedDocs.filter((d) => d.reviewStatus === "APPROVED").length;
+  const generatedCount = generatedDocs.filter((d) => statusValue(d.generationStatus) === "GENERATED").length;
+  const validatedCount = generatedDocs.filter((d) => ["PASSED", "VALIDATED", "APPROVED"].includes(statusValue(d.validationStatus))).length;
+  const approvedCount = generatedDocs.filter((d) => ["APPROVED", "ACCEPTED", "SIGNED_OFF", "SIGNED OFF"].includes(statusValue(d.reviewStatus))).length;
   const extractedFiles = files.filter((f) => (f.extractedText ?? "").length > 80).length;
   const supportedEvidence = matrix.filter((m) => ["SUPPORTED", "EVIDENCE_PENDING_REVIEW", "PARTIAL"].includes(m.supportLevel)).length;
   const evidenceScore = pct(supportedEvidence, matrix.length);
   const readiness = tender.readinessScore ?? evidenceScore;
 
+  const hasPlanMismatch = missingPlannedDocs.length > 0 || extraGeneratedDocs.length > 0;
   const decision: "GO" | "REVIEW" | "NO_GO" = unresolvedCritical > 0
     ? "NO_GO"
-    : readiness >= 85 && unresolvedHigh === 0 && generatedCount > 0
+    : readiness >= 85 && unresolvedHigh === 0 && dashboardGeneratedCount > 0 && !hasPlanMismatch
       ? "GO"
       : "REVIEW";
 
   const nextActions = [
     unresolvedCritical > 0 ? `Resolve ${unresolvedCritical} critical blocker(s) before final export.` : null,
     unresolvedCritical === 0 && unresolvedHigh > 0 ? `Senior review ${unresolvedHigh} high-priority item(s).` : null,
+    missingPlannedDocs.length > 0 ? `Generate or reconcile ${missingPlannedDocs.length} tender-required planned document(s).` : null,
+    extraGeneratedDocs.length > 0 ? `Remove or justify ${extraGeneratedDocs.length} generated document(s) not found in the submission plan.` : null,
     selectedExperts.length > reviewedExperts ? `Review ${selectedExperts.length - reviewedExperts} selected expert draft record(s) or deselect them.` : null,
     selectedProjects.length > reviewedProjects ? `Review ${selectedProjects.length - reviewedProjects} selected project draft record(s) or deselect them.` : null,
     generatedDocs.length > 0 && generatedCount < generatedDocs.length ? `Generate ${generatedDocs.length - generatedCount} remaining visible package document(s).` : null,
     generatedCount > 0 && validatedCount < generatedCount ? `Run validation for ${generatedCount - validatedCount} generated package document(s).` : null,
     generatedCount > 0 && approvedCount < generatedCount ? `Approve or comment on ${generatedCount - approvedCount} generated package document(s).` : null,
     extractedFiles < files.length ? `Review extraction for ${files.length - extractedFiles} tender file(s) with weak/no text.` : null,
+    submissionPlan.warnings.length > 0 ? submissionPlan.warnings[0] : null,
   ].filter(Boolean) as string[];
 
   return (
@@ -101,7 +147,7 @@ export function ExecutiveSnapshot({ tender }: { tender: TenderLike }) {
           <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Executive Tender Command Center</p>
           <h2 className="mt-1 text-xl font-bold text-slate-900">Senior proposal decision snapshot</h2>
           <p className="mt-1 max-w-3xl text-sm text-slate-500">
-            One proposal-management view for readiness, critical gaps, evidence coverage, selected experts/projects, generated package documents, validation, review status, and extraction health.
+            One proposal-management view for readiness, critical gaps, evidence coverage, selected experts/projects, submission-plan documents, validation, review status, and extraction health.
           </p>
         </div>
         <span className={`w-fit rounded-full border px-4 py-2 text-sm font-bold ${badgeClass(decision)}`}>{decision}</span>
@@ -113,8 +159,15 @@ export function ExecutiveSnapshot({ tender }: { tender: TenderLike }) {
         <div className="rounded-xl bg-slate-50 p-4"><p className="text-xs text-slate-400">Critical / High</p><p className="mt-1 text-2xl font-bold text-slate-900">{unresolvedCritical}/{unresolvedHigh}</p></div>
         <div className="rounded-xl bg-slate-50 p-4"><p className="text-xs text-slate-400">Experts ≥90%</p><p className="mt-1 text-2xl font-bold text-slate-900">{strongExperts}</p><p className="text-xs text-slate-500">{reviewedExperts}/{selectedExperts.length} reviewed selected</p></div>
         <div className="rounded-xl bg-slate-50 p-4"><p className="text-xs text-slate-400">Projects ≥90%</p><p className="mt-1 text-2xl font-bold text-slate-900">{strongProjects}</p><p className="text-xs text-slate-500">{reviewedProjects}/{selectedProjects.length} reviewed selected</p></div>
-        <div className="rounded-xl bg-slate-50 p-4"><p className="text-xs text-slate-400">Docs</p><p className="mt-1 text-2xl font-bold text-slate-900">{generatedCount}/{generatedDocs.length}</p><p className="text-xs text-slate-500">{validatedCount} valid · {approvedCount} approved</p></div>
+        <div className="rounded-xl bg-slate-50 p-4"><p className="text-xs text-slate-400">Docs</p><p className="mt-1 text-2xl font-bold text-slate-900">{dashboardGeneratedCount}/{dashboardDocTotal}</p><p className="text-xs text-slate-500">{validatedCount} valid · {approvedCount} approved</p></div>
       </div>
+
+      {plannedDocCount > 0 ? (
+        <div className="mt-4 rounded-xl border border-slate-100 bg-slate-50 p-4 text-sm text-slate-600">
+          <p className="font-semibold text-slate-900">Submission plan reconciliation</p>
+          <p className="mt-1">Planned tender-required files: <strong>{plannedDocCount}</strong> · Missing: <strong>{missingPlannedDocs.length}</strong> · Extra generated: <strong>{extraGeneratedDocs.length}</strong></p>
+        </div>
+      ) : null}
 
       <div className="mt-5 grid gap-4 lg:grid-cols-[1.2fr,1fr]">
         <div className="rounded-xl border border-slate-100 p-4">
