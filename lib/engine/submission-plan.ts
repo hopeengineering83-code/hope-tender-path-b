@@ -219,7 +219,7 @@ function buildFilesFromExactNames(tender: TenderLike, startOrder: number): Submi
   const orderedNames = exactOrder.length > 0 ? exactOrder : exactNames;
   const sourceNames = orderedNames.length > 0 ? orderedNames : exactNames;
 
-  return sourceNames.map((name, index) => {
+  return sourceNames.map((name, index): SubmissionPlanFile => {
     const format = inferFormat(name);
     return {
       canonicalId: `exact-${slug(name)}`,
@@ -237,7 +237,7 @@ function buildFilesFromExactNames(tender: TenderLike, startOrder: number): Submi
       stampAllowed: true,
       grouping: null,
       notes: "Compiled from tender exact file naming/order instructions.",
-    } satisfies SubmissionPlanFile;
+    };
   });
 }
 
