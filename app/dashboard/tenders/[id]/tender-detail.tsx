@@ -410,6 +410,10 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
     try {
       const res = await fetch(`/api/tenders/${tender.id}/ai-proposal`, { method: "POST" });
       const data = await res.json();
+      if (res.status === 429) {
+        setError(data.error || "Gemini rate limit — please wait 30–60 seconds and try again.");
+        return;
+      }
       if (!res.ok) { setError(data.error || "Generation failed"); return; }
       setAiProposal(data.proposal || "");
       setForm((cur) => ({ ...cur, intakeSummary: data.proposal || cur.intakeSummary }));
@@ -970,7 +974,7 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
               <p className="text-sm text-slate-400">Run the engine then click "Generate Docs" to create submission-ready files.</p>
             ) : (
               <ul className="space-y-2">
-                {tender.generatedDocuments.slice(0, 8).map((doc) => (
+                {tender.generatedDocuments.map((doc) => (
                   <li key={doc.id} className="rounded-xl border px-3 py-2.5 space-y-2">
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
