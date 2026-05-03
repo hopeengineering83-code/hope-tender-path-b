@@ -7,6 +7,7 @@ import { benchmarkAuditSummary } from "./proposal-benchmark-audit";
 import { buildClientProposalStrengtheningSections } from "./proposal-strengthening-sections";
 import { appendEvaluatorResponseMatrix } from "./proposal-evaluator-matrix";
 import { buildControlledProposalMarkdown } from "./controlled-proposal-assembler";
+import { polishBenchmarkOutput } from "./benchmark-output-polisher";
 
 const BRAND_BLUE = "1F4E79";
 const BRAND_GRAY = "595959";
@@ -29,7 +30,7 @@ function clean(text?: string | null): string {
 }
 
 function cleanClientLanguage(text: string): string {
-  return text
+  return polishBenchmarkOutput(text
     .replace(/Bid-team confirmation:\s*/gi, "Evidence note: ")
     .replace(/bid-team confirmation item(s)?/gi, "source-evidence confirmation item$1")
     .replace(/bid-team-confirmed/gi, "source-confirmed")
@@ -37,7 +38,7 @@ function cleanClientLanguage(text: string): string {
     .replace(/bid team/gi, "proposal team")
     .replace(/Bid team/gi, "Proposal team")
     .replace(/\n{4,}/g, "\n\n\n")
-    .trim();
+    .trim());
 }
 
 function shortText(text?: string | null, max = 700): string {
