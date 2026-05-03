@@ -42,6 +42,15 @@ function pickEvidence(input: EvaluatorMatrixInput, index: number): string {
   return pool[index % Math.max(pool.length, 1)] || "Bid-team confirmation: attach verified supporting evidence before final submission.";
 }
 
+function proofItems(input: EvaluatorMatrixInput): string[] {
+  return [
+    ...take(input.expertLines, 10, 260).map((line) => `Expert/CV evidence: ${line}`),
+    ...take(input.projectLines, 10, 320).map((line) => `Project reference evidence: ${line}`),
+    ...take(input.companyEvidenceLines, 12, 360).map((line) => `Company record evidence: ${line}`),
+    ...take(input.projectEvidenceLines, 8, 360).map((line) => `Project attachment evidence: ${line}`),
+  ];
+}
+
 export function appendEvaluatorResponseMatrix(markdown: string, input: EvaluatorMatrixInput): string {
   let output = markdown.trim();
   output += "\n\n## Evaluator Response Matrix";
@@ -62,6 +71,18 @@ export function appendEvaluatorResponseMatrix(markdown: string, input: Evaluator
     output += `\n- **Mapped evidence:** ${pickEvidence(input, index)}`;
     output += "\n- **Bid-review action:** Confirm attachment, file name, signature/stamp status and compliance before final submission.";
   });
+
+  output += "\n\n## Claim-to-Evidence Proof Map";
+  output += "\nThe bid team should use this proof map to verify that proposal claims are backed by reviewed records before final submission.";
+  const proof = proofItems(input);
+  if (proof.length > 0) {
+    for (const line of proof.slice(0, 28)) output += `\n- ${line}`;
+  } else {
+    output += "\n- Source proof must be confirmed before final submission.";
+  }
+
+  output += "\n\n## Unsupported Claim Control";
+  output += "\nClaims about staff, projects, certifications, contract values, legal status, financial capacity, photos, drawings, or client approvals should be removed, softened, or marked for bid-team confirmation when no source record is available.";
 
   output += "\n\n## Win Themes and Differentiators";
   const differentiators = take(input.differentiators, 5, 280);

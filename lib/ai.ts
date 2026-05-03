@@ -1,12 +1,15 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
-import { winningBenchmarkProfileText } from "./engine/winning-proposal-benchmark";
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { GoogleGenerativeAI } = require("@google/generative-ai") as typeof import("@google/generative-ai");
 
 const apiKey = process.env.GEMINI_API_KEY;
 const DEFAULT_GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-pro";
 const FALLBACK_GEMINI_MODELS = (process.env.GEMINI_FALLBACK_MODELS || "gemini-2.5-flash,gemini-2.0-flash")
   .split(",")
-  .map((model) => model.trim())
+  .map((m) => m.trim())
   .filter(Boolean);
+
+// Model chain for proposal generation — tried in order until one succeeds.
+const PROPOSAL_MODELS = ["gemini-2.5-pro", "gemini-2.0-flash", "gemini-1.5-pro"];
 
 function getClient() {
   if (!apiKey) throw new Error("GEMINI_API_KEY not configured");
@@ -32,23 +35,54 @@ function uniqueModels(primary: string): string[] {
 async function generate(prompt: string, modelName = DEFAULT_GEMINI_MODEL): Promise<string> {
   const errors: string[] = [];
 
-  for (const candidateModel of uniqueModels(modelName || DEFAULT_GEMINI_MODEL)) {
+  for (const candidate of uniqueModels(modelName || DEFAULT_GEMINI_MODEL)) {
     try {
-      const model = getModel(candidateModel);
+      const model = getModel(candidate);
       const result = await model.generateContent(prompt);
       const text = result.response.text();
-      if (!text || text.trim().length === 0) throw new Error(`Empty response from Gemini API using ${candidateModel}`);
+      if (!text || text.trim().length === 0) throw new Error(`Empty response from Gemini API using ${candidate}`);
       return text;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`${candidateModel}: ${msg}`);
+      errors.push(`${candidate}: ${msg}`);
       if (msg.includes("429")) throw new Error("Gemini API rate limit reached — try again in a moment");
-      if (msg.includes("403") || msg.includes("API_KEY")) throw new Error("Gemini API key invalid or missing");
+      if (msg.includes("403") || msg.includes("API_KEY_INVALID") || msg.includes("API key not valid"))
+        throw new Error("Gemini API key invalid or missing — check GEMINI_API_KEY in environment variables");
       if (!isModelUnavailableError(msg)) throw err;
     }
   }
 
-  throw new Error(`Gemini model unavailable. Tried ${uniqueModels(modelName || DEFAULT_GEMINI_MODEL).join(", ")}. Last errors: ${errors.join(" | ")}`);
+  throw new Error(`Gemini model unavailable. Tried: ${uniqueModels(modelName || DEFAULT_GEMINI_MODEL).join(", ")}. Errors: ${errors.join(" | ")}`);
+}
+
+// Try PROPOSAL_MODELS in order until one succeeds — gives the best available model for proposal writing.
+async function generateWithBestModel(prompt: string): Promise<string> {
+  const tryModel = async (name: string): Promise<string> => {
+    const model = getModel(name);
+    const result = await model.generateContent(prompt);
+    const text = result.response.text();
+    if (!text || text.trim().length === 0) throw new Error("Empty response from Gemini API");
+    return text;
+  };
+
+  let lastError: unknown;
+  for (const modelName of PROPOSAL_MODELS) {
+    try {
+      return await tryModel(modelName);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes("429")) throw new Error("Gemini API rate limit reached — try again in a moment");
+      if (msg.includes("403") || msg.includes("API_KEY_INVALID") || msg.includes("API key not valid"))
+        throw new Error("Gemini API key invalid or missing — check GEMINI_API_KEY in environment variables");
+      // Model unavailable — try the next one in the chain
+      if (msg.includes("404") || msg.includes("not found") || msg.includes("deprecated") || msg.includes("not supported") || msg.includes("invalid")) {
+        lastError = err;
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw lastError ?? new Error("No Gemini model available for proposal generation");
 }
 
 // ─── Tender analysis types ────────────────────────────────────────────────────
@@ -118,50 +152,69 @@ export type AIBidWriterInput = {
 
 export async function analyzeWithAI(tenderContent: string): Promise<AIAnalysisResult> {
   const trimmedTender = tenderContent.slice(0, 80_000);
-  const prompt = `You are a 100-person senior tender board compressed into one analysis engine: lead bid manager, procurement lawyer, technical director, evaluator, document-control lead, and proposal writer.
+  const prompt = `You are a 100-person senior tender board compressed into one analysis engine: lead bid manager, procurement lawyer, technical director, evaluator, document-control lead, and proposal writer. You have evaluated thousands of tenders for World Bank, UNDP, government, and private-sector clients.
 
-Analyze the tender and return ONLY a valid JSON object — no explanation, no markdown fences.
+Analyze the tender and return ONLY a valid JSON object — no explanation, no markdown fences, no code blocks.
 
-Critical rules:
-- Read the whole provided tender text. Do not stop at early contents pages.
+## ANALYSIS PROCESS (think step by step before writing JSON):
+Step 1 — Identify: client name, tender title, tender reference, deadline, submission method, email recipients, exact subject line required, country/location.
+Step 2 — Detect: is financial proposal excluded? Is this technical-only? Are there shortlisting stages?
+Step 3 — Extract SECTIONS: what sections must the proposal contain (Company Profile, Relevant Experience, Technical Approach, Additional Information, etc.)?
+Step 4 — Extract EVALUATION CRITERIA: what will evaluators score and how?
+Step 5 — Extract QUALIFICATION REQUIREMENTS: required licences, team composition, healthcare experience, donor compliance standards.
+Step 6 — Extract EXPERT REQUIREMENTS: how many experts, what disciplines, what minimum experience?
+Step 7 — Extract PROJECT REQUIREMENTS: how many references, what sector/type, what minimum value/scale?
+Step 8 — Extract FORMAT/SUBMISSION RULES: file format, naming, page limits, appendix structure.
+Step 9 — Build strategic requirement bundles: consolidate related requirements into strategic groups.
+Step 10 — Write evaluationMethodology: how the proposal should be structured to score maximum points against each criterion.
+
+## CRITICAL RULES:
 - Do NOT convert table-of-contents entries, page numbers, clause numbers, scores, years, percentages, or page references into quantity requirements.
-- Set requiredQuantity ONLY when the tender explicitly says minimum/required/at least/provide/submit a number of experts, CVs, projects, references, forms, copies, or documents.
-- Do not create hundreds of line-by-line requirements. Consolidate repeated clauses into senior strategic requirement bundles.
-- Separate hard submission rules from proposal-response sections. A methodology/technical approach requirement is something the proposal can write; it is not automatically missing evidence.
-- Extract client, subject line, email recipients, no-financial-proposal rules, section structure, evaluation criteria, appendices, file names, and exact formatting instructions when present.
-- Think like ChatGPT/Claude producing a winning proposal: identify what the proposal must SAY, what evidence must be APPENDED, and what the bid team must REVIEW.
+- Set requiredQuantity ONLY when the tender explicitly says minimum/required/at least/provide/submit a specific NUMBER of experts, CVs, projects, or references.
+- Do not create hundreds of line-by-line requirements — consolidate into 10-20 strategic bundles maximum.
+- A methodology/technical approach requirement is something the proposal WRITES — it is not a missing document.
+- Extract email recipients, exact subject line, no-financial-proposal rules, appendix letters, and evaluation scoring weights when present.
+- evaluationMethodology must be actionable: "Score criterion X by doing Y using evidence Z" — not just a list of criteria.
+- submissionNotes must include: deadline, email recipients, exact subject line, file format, financial proposal restriction, appendix requirements.
 
 JSON structure required:
 {
-  "summary": "3-5 sentence senior bid interpretation including client, assignment, main scope, response strategy, and top risks",
+  "summary": "4-6 sentence senior bid interpretation: client name, tender title, assignment scope, key technical challenges, main evaluation driver, top strategic risk for the responding firm",
   "requirements": [
     {
-      "title": "short strategic title",
-      "description": "consolidated requirement text and why it matters for the proposal",
+      "title": "short strategic title (max 80 chars)",
+      "description": "consolidated requirement text explaining what must be in the proposal and why it matters for scoring",
       "requirementType": "TECHNICAL|FINANCIAL|ELIGIBILITY|EXPERT|PROJECT_EXPERIENCE|FORMAT|SUBMISSION_RULE|DECLARATION|ANNEX|SCHEDULE|FORM|METHODOLOGY|COMPANY_PROFILE",
       "priority": "MANDATORY|SCORED|INFORMATIONAL",
-      "exactFileName": "filename or null",
+      "exactFileName": "exact filename if specified or null",
       "requiredQuantity": number_or_null,
       "pageLimit": number_or_null,
       "restrictions": "branding/signature/file/page/format restrictions or null",
       "sectionReference": "section/clause/annex reference or null"
     }
   ],
-  "exactFileNaming": ["exact filenames required"],
-  "exactFileOrder": ["files in submission order"],
-  "evaluationMethodology": "evaluation criteria and how a proposal should answer them",
-  "submissionNotes": "deadline, email/portal, subject line, financial proposal restrictions, appendices, and document-control notes"
+  "exactFileNaming": ["exact filenames required by the tender"],
+  "exactFileOrder": ["files in the required submission order"],
+  "evaluationMethodology": "Detailed scoring guidance: for each evaluation criterion, explain what evidence to present, what to emphasise, and what the evaluator is looking for. Include criterion weights if specified.",
+  "submissionNotes": "Complete submission instructions: deadline with time and timezone, email recipients (all), exact subject line (verbatim), file format requirements, financial proposal restriction (yes/no), appendix lettering, and any other document-control notes."
 }
 
 TENDER DOCUMENT (${trimmedTender.length.toLocaleString()} chars):
 ${trimmedTender}`;
 
   const text = await generate(prompt, process.env.GEMINI_ANALYSIS_MODEL || DEFAULT_GEMINI_MODEL);
-  const jsonMatch = text.match(/\{[\s\S]*\}/);
+  // Strip markdown code fences if the model wrapped its JSON
+  const cleaned = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
+  const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
   if (!jsonMatch) throw new Error("Gemini returned no JSON object for tender analysis");
   try {
     return JSON.parse(jsonMatch[0]) as AIAnalysisResult;
   } catch {
+    // Try a second pass — take largest { ... } block in case of trailing noise
+    const allMatches = [...cleaned.matchAll(/\{[\s\S]*?\}/g)].sort((a, b) => b[0].length - a[0].length);
+    for (const m of allMatches) {
+      try { return JSON.parse(m[0]) as AIAnalysisResult; } catch { /* continue */ }
+    }
     throw new Error("Gemini returned malformed JSON for tender analysis");
   }
 }
@@ -250,104 +303,275 @@ ${text.slice(0, 60_000)}`;
 // ─── Proposal generation ──────────────────────────────────────────────────────
 
 export async function generateBenchmarkProposalWithAI(params: AIBidWriterInput): Promise<string> {
-  const prompt = `You are ChatGPT-level senior proposal team for an engineering consultancy: bid director, sector technical lead, evaluator, procurement compliance reviewer, and persuasive technical writer.
+  const noFinancial = /technical proposal only|no financial|financial.*not required|financial proposal.*not/i.test(
+    params.submissionNotes + params.tenderText,
+  );
 
-Write a complete, winning-quality TECHNICAL PROPOSAL in markdown. Do NOT invent projects, experts, certifications, awards, or values. Use only the provided evidence. If evidence is insufficient, write a professional bid-team confirmation note inside the proposal instead of pretending the evidence exists.
+  const isHealthcare = /health|hospital|medical|clinic|pharma|radiology|laboratory|MEP|biomedical/i.test(
+    params.tenderText + params.analysisSummary,
+  );
 
-REUSABLE PROPOSAL BENCHMARK PROFILE:
-${winningBenchmarkProfileText()}
+  const isFacilityAssessment = /facility identification|shortlisted propert|site assessment|renovation|premises/i.test(
+    params.tenderText,
+  );
 
-UPLOADED CHATGPT BENCHMARK STYLE TO MATCH:
-- Open with direct comparable-project proof. The first page must not sound generic.
-- Carry the strongest 1-2 project references through Cover Letter, Executive Summary and Relevant Experience.
-- Use evidence-led claims: project name, client, location, value, services, scale, testimony/reference and relevance when available.
-- Use the tender's response structure, especially Section A / Section B / Section C / Section D when the tender implies it.
-- Section A must include company background, corporate information, core expertise, proposed team, team-to-project mapping and biomedical/specialist integration when relevant.
-- Section B must include client references and project cards, not just generic paragraphs.
-- Section C must be scope-by-scope and evaluator-facing, not a generic methodology.
-- For healthcare tenders, explicitly cover facility identification, technical assessment, Emergency, OPD, In-patient, Laboratory, Imaging/Radiology, Pharmacy, clinical zoning, patient/staff/supply flow, IPC, radiation shielding, medical equipment loads, medical gas, ICT/telehealth, MEP coordination, regulatory approval, renovation oversight, close-out and QA.
-- Where evidence is missing, write "Bid-team confirmation" controls instead of unsupported claims.
+  const tenderSections = extractTenderSections(params.tenderText);
+  const exactEmails = Array.from(
+    (params.tenderText + params.submissionNotes).matchAll(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi),
+  )
+    .map((m) => m[0])
+    .filter((v, i, a) => a.indexOf(v) === i)
+    .join(", ");
 
-Benchmark standard:
-- The result must read like a proposal prepared by an experienced human bid team, not a generic template.
-- It must be client-specific, tender-aware, evidence-led, persuasive, and structured around the exact tender response logic.
-- It must include a cover letter, cover page, table of contents, executive summary, company profile, proposed team, relevant experience, technical approach, compliance strategy, additional information, appendices list, and declaration.
-- It must turn requirements into a proposal strategy: what we understand, why our evidence fits, how we will execute, and what the client gains.
-- It must explicitly map selected experts and projects to the tender risks and evaluation criteria.
-- It must include bid-team review items for any remaining evidence gaps instead of blocking the proposal.
-- It must not include financial offer language if submission notes say technical proposal only or no financial proposal.
-- It must avoid AI disclaimers and placeholders.
-- Use markdown headings: #, ##, ### and bullet lists. Use compact markdown tables where they improve evaluator readability.
-- Do not repeat the same heading twice. Merge duplicate ideas into the first relevant section.
-- Do not create internal debug, score, audit, repair, or benchmark-review sections. Write only client-facing proposal content and bid-team confirmation controls.
+  const subjectMatch =
+    (params.tenderText + params.submissionNotes).match(/Subject(?:\s+Line)?\s*:\s*[""]([^""]+)[""]/i) ??
+    (params.tenderText + params.submissionNotes).match(/subject[^\n.]{0,30}[""]([^""]{5,120})[""]/i);
+  const exactSubject = subjectMatch?.[1] ?? `Technical Proposal for ${params.tenderTitle}`;
 
-TENDER TITLE:
-${params.tenderTitle}
+  const healthcareGuidance = isHealthcare
+    ? `
+HEALTHCARE-SPECIFIC PROPOSAL GUIDANCE (mandatory for this tender):
+- The cover letter MUST cite the company's specific hospital project experience by name and ETB/contract value from the evidence.
+- Executive Summary must lead with: "We have already delivered this assignment" framing if hospital evidence exists.
+- Team section must show each expert's ROLE on a PREVIOUS HOSPITAL PROJECT — not just their qualifications.
+- Include a Team-to-Project Experience Mapping section showing expert → previous hospital project → role performed.
+- Technical Approach must address: clinical zone segregation (Emergency/OPD/In-patient/Laboratory/Imaging/Pharmacy), patient-staff-supply flow, IPC compliance, radiation shielding for imaging, medical gas coordination, accessible design.
+- MEP section must cover: medical-grade electrical load planning, UPS/generator backup for life-critical loads, ICT/nurse call/BMS/fire alarm, medical gas, clinical waste stream segregation.
+- Regulatory: Ethiopian Health Authority licensing, EBCS compliance, World Bank ESF documentation (if applicable).
+- Biomedical engineering integration must be addressed even if naming a specialist-to-be-engaged.
+- QA: describe a staged design review (conceptual → schematic → detailed → construction documents).`
+    : "";
 
-CLIENT:
-${params.clientName}
+  const facilityGuidance = isFacilityAssessment
+    ? `
+FACILITY IDENTIFICATION SCOPE GUIDANCE:
+- Section on "Facility Identification and Technical Assessment" must describe the assessment matrix: structural adequacy, spatial feasibility, utility availability, regulatory compliance, accessibility, patient flow potential, safety, expansion possibilities.
+- Must offer written technical recommendation methodology for shortlisted properties.`
+    : "";
 
-TENDER TEXT / SCOPE EXTRACT:
-${params.tenderText.slice(0, 50_000)}
+  const sectionStructureGuidance =
+    tenderSections.length > 0
+      ? `
+EXACT TENDER SECTION STRUCTURE — follow this precisely:
+${tenderSections.map((s, i) => `${i + 1}. ${s}`).join("\n")}
+
+Each section heading in your proposal must match or directly correspond to one of these tender sections.`
+      : "";
+
+  const prompt = `You are a 12-person senior bid team compressed into one expert proposal writer: bid director, sector technical lead, procurement compliance reviewer, evaluator, and persuasive senior writer. You have won competitive tenders for World Bank, UNDP, private-sector, and government clients. You think like the evaluator first and the writer second.
+
+## YOUR TASK
+Write a complete, winning-quality TECHNICAL PROPOSAL in markdown for the tender below. This is the final client submission document.
+
+---
+
+## STEP 1 — PRE-WRITING ANALYSIS (do this before writing a single word of the proposal)
+
+Before writing, identify from the COMPANY EVIDENCE sections below:
+
+**Strongest comparable projects (pick top 2):**
+Scan the project evidence. Identify the two projects most directly comparable to this tender by sector, scope, and scale. Note their names, contract values, clients, countries, and exactly why each is relevant to THIS tender.
+
+**Strongest proposed experts (pick top 2):**
+Scan the expert evidence. Identify the two most relevant experts by discipline and comparable previous role. Note their names, titles, licences, and the specific previous project where they did comparable work.
+
+**Top evaluation driver:**
+What single criterion, if answered convincingly, wins this tender? (e.g., healthcare facility experience, team composition, technical methodology depth, donor compliance)
+
+**Key differentiator:**
+What one fact makes this firm clearly better than a generic competitor for this specific assignment?
+
+Keep these four anchors in mind. They must appear — by name, value, and role — in: Cover Letter, Executive Summary, and Relevant Experience. This creates the "we have done this exact project before" narrative that wins competitive tenders.
+
+---
+
+## STEP 2 — WRITING QUALITY STANDARD
+
+### EXAMPLES: Strong vs. Weak Proposal Writing
+
+**WEAK (never write like this):**
+> "Our company has extensive experience in healthcare facility design. We have successfully completed many hospital projects across the region. Our qualified team of professionals is ready to deliver quality results."
+
+**STRONG (write like this):**
+> "Hope Engineering's 2023 design of the St. Paul's Hospital Millennium Medical College specialist wing (ETB 312M, Addis Ababa) demonstrates our capacity for exactly this assignment — a multi-floor clinical facility with dedicated radiology, pharmacy, ICU, and full MEP integration, completed within a 14-month design programme. Dr. Almaz Tadesse (Lead Architect, EIASC Grade A), who led that project, is proposed as Principal Architect for this engagement. We are not learning on the client's time; we are repeating a proven delivery."
+
+**WEAK:**
+> "We are committed to delivering high-quality services that meet international standards and client expectations."
+
+**STRONG:**
+> "Our Quality Management Plan follows ISO 9001:2015 with four design-review gates — concept, schematic, detailed design, and pre-issue — each requiring sign-off from the Principal Architect and Technical Director before the next stage begins. On the Pharo Ethiopia Specialty Medical Center assignment, this staged process will catch clinical workflow conflicts and regulatory gaps before they reach the construction contractor."
+
+**Rule:** Every paragraph must contain at least one specific, verifiable fact from the evidence — a project name, contract value, expert name + licence, or client reference. If no evidence exists, write a single "Bid-Team Action:" note and move on. Do not pad with vague language.
+
+---
+
+## STEP 3 — NON-NEGOTIABLE QUALITY RULES
+
+1. **Evidence-first**: Every strong claim must cite a specific project name, ETB/contract value, expert name + licence, or client reference from the EVIDENCE sections. Never invent facts.
+2. **Tender-specific structure**: Follow the exact sections required by the tender. Do not use a generic template.
+3. **Client-value framing**: Every section must answer: "Why should we choose this firm over any other?" — answer with evidence, not intent.
+4. **Expert-to-project mapping**: Each proposed expert must be linked to a specific previous comparable project and the role they performed on it. Produce a Team-to-Project table.
+5. **Gap honesty**: Where evidence is missing, write one short "Bid-Team Action:" sentence. Do not pretend evidence exists.
+6. **Financial rule**: ${noFinancial ? "TECHNICAL PROPOSAL ONLY — zero financial content. No rates, pricing, cost estimates, or financial offers anywhere in the document." : "Do not quote prices. Financial capacity statements (audited turnover, bank reference) are permitted if required by the evaluation criteria."}
+7. **No AI traces**: Never write "As an AI", "Certainly!", "I cannot", "Please note", "[INSERT]", or any placeholder brackets.
+8. **Narrative throughline**: The same two strongest project names MUST appear in the Cover Letter, Executive Summary, AND Section B. This is not optional.
+9. **Proposal length and depth**: Write the full proposal. Do not truncate or summarise sections. Each section must be substantive — minimum 3 paragraphs for major sections.
+
+---
+
+## STEP 4 — FORBIDDEN PHRASES (auto-fail if present)
+- "extensive experience" without a specific project name
+- "committed to excellence / quality / delivering results"
+- "leading firm in the region / country"
+- "team of qualified professionals"
+- "we look forward to the opportunity"
+- "our company is pleased to submit"
+- "we are confident that we can"
+- Any text in [square brackets] as a placeholder
+- Generic methodology steps like "Stage 1: Planning, Stage 2: Execution" without specific deliverables
+
+---
+
+## SUBMISSION DETAILS (embed in cover letter and cover page)
+- Submit to emails: ${exactEmails || "see tender submission instructions"}
+- Exact subject line: "${exactSubject}"
+- Financial proposal excluded: ${noFinancial ? "YES — technical proposal only, confirmed" : "N/A"}
+
+---
+
+## MANDATORY PROPOSAL STRUCTURE
+Write ALL of these in order:
+
+### COVER LETTER
+- Addressed to the client by name and position (if known)
+- Subject line: exact tender reference and title
+- **Opening paragraph (most important)**: cite the company's STRONGEST 1-2 specific projects comparable to this tender BY NAME and ETB/contract value — not generic capability statements
+- Second paragraph: briefly introduce the proposed team lead(s) and their comparable previous role
+- List the enclosed appendices by letter (Appendix A, B, C…)
+- Confirm technical-only proposal if required
+- Signed by the General Manager / Principal with name, title, and company
+
+### COVER PAGE / TITLE PAGE
+- Tender title and company name in bold
+- Submitted to / Submitted by blocks
+- Exact email recipients and subject line
+- Submission date
+- 3-5 headline facts (e.g., "2 Hospitals Designed | ETB 675M+ Healthcare Portfolio | 12-Expert Multidisciplinary Team | EIASC Grade A Licensed")
+
+### TABLE OF CONTENTS
+- All sections with sub-sections and approximate structure
+
+### EXECUTIVE SUMMARY (3-4 strong paragraphs, no bullet lists)
+- Lead sentence: "We have already delivered this assignment. [Company] designed / supervised / assessed [Project Name] (ETB X, Client Y) — a [parallel description]. The same team is available for this engagement."
+- Second paragraph: address the top evaluation criterion directly with evidence
+- Third paragraph: explain the technical approach at a high level — why it is the right approach for this specific scope and client
+- Fourth paragraph: confirm compliance, team availability, and commitment
+
+${sectionStructureGuidance}
+
+### SECTION A: COMPANY PROFILE
+A.1 Company Background — founding year, licence grade, registered address, staff headcount, total projects completed, key sectors, certifications
+A.2 Corporate Information Table — legal name | registration no. | TIN/VAT | address | GM name | email | phone | website
+A.3 Core Service Lines — bulleted disciplines directly relevant to this tender (not a generic list)
+A.4 Proposed Project Team — table: Expert Name | Discipline & Licence | Years' Experience | Role on This Assignment | Comparable Previous Project
+A.5 Team-to-Project Experience Mapping — table: Expert & Proposed Role | Previous Comparable Project | Role Previously Performed | Key Technical Contribution
+A.6 Specialist Engagement Plan — if the tender requires a specialist (e.g., biomedical engineer) not in the core team, name the planned specialist and their integration role
+
+### SECTION B: RELEVANT EXPERIENCE
+B.1 Portfolio Overview — total projects, total healthcare/relevant sector value, geographic spread
+B.2 Featured Project 1 (most comparable) — Name | Client | Country | Value | Year | Scope | Services Provided | Why this directly demonstrates capacity for this tender | Client contact for reference
+B.3 Featured Project 2 (second most comparable) — same structure
+B.4 Additional Projects — concise table with Name | Client | Country | Value | Sector | Key Services
+B.5 Client References — confirmed client names and, if available, contact details for reference letters
+
+### SECTION C: TECHNICAL APPROACH
+C.1 Understanding of the Assignment — what the client needs, what the key technical challenges are, and what the winning proposal must demonstrate
+C.2 Technical Methodology — numbered sub-sections matching the tender's scope items
+${healthcareGuidance}
+${facilityGuidance}
+C.3 Work Plan and Deliverables — stages, deliverables, responsible experts, timelines
+C.4 Quality Assurance — staged design review gates, independent technical review, document control, submission quality control
+
+### SECTION D: ADDITIONAL INFORMATION
+D.1 Value to the Client — specific, evidence-backed value propositions for THIS client (not marketing boilerplate)
+D.2 In-House Capabilities Beyond Minimum Scope — what additional value the firm brings without extra cost
+D.3 Professional Certifications and Affiliations — list ISO, donor compliance records, professional body memberships with registration numbers
+D.4 Declaration of Eligibility — formal statement confirming the firm meets all eligibility requirements stated in the tender
+
+### APPENDICES REGISTER
+List appendices in the required format, e.g.:
+- Appendix A: Company Registration Documents and Licences
+- Appendix B: Audited Financial Statements
+- Appendix C: Curricula Vitae of Proposed Experts
+- Appendix D: Project References and Client Letters
+- Appendix E: Project Photos, Drawings and Completion Evidence
+
+---
+
+## TENDER INFORMATION
+
+TENDER TITLE: ${params.tenderTitle}
+CLIENT: ${params.clientName}
+
+TENDER TEXT / FULL SCOPE EXTRACT:
+${params.tenderText.slice(0, 48_000)}
 
 AI ANALYSIS SUMMARY:
 ${params.analysisSummary}
 
-EVALUATION METHODOLOGY / CRITERIA:
+EVALUATION CRITERIA — answer each one explicitly in the proposal:
 ${params.evaluationMethodology}
 
-SUBMISSION NOTES:
+SUBMISSION RULES:
 ${params.submissionNotes}
 
 CONSOLIDATED REQUIREMENTS:
-${params.requirements.slice(0, 22_000)}
+${params.requirements.slice(0, 20_000)}
 
-COMPANY PROFILE AND SUPPORT DOCUMENT EVIDENCE:
+---
+
+## COMPANY EVIDENCE — USE THIS, DO NOT INVENT ANYTHING
+
+COMPANY PROFILE:
 ${params.companyProfile.slice(0, 16_000)}
 
-SELECTED / BEST EXPERT EVIDENCE:
-${params.experts.slice(0, 16_000)}
+PROPOSED EXPERT EVIDENCE:
+${params.experts.slice(0, 18_000)}
 
-SELECTED / BEST PROJECT EVIDENCE:
-${params.projects.slice(0, 16_000)}
+RELEVANT PROJECT EVIDENCE:
+${params.projects.slice(0, 18_000)}
 
-COMPLIANCE MATRIX / GAPS / REVIEW ITEMS:
+COMPLIANCE / GAPS / BID-TEAM ACTIONS:
 ${params.compliance.slice(0, 14_000)}
 
-DIFFERENTIATORS TO USE:
+KEY DIFFERENTIATORS TO WEAVE INTO THE NARRATIVE:
 ${params.differentiators}
 
-Before writing, silently choose the top two project references and the strongest proposed team. Then write the proposal so those selected proof points appear repeatedly and consistently across the document.`;
+---
 
-  return generate(prompt, process.env.GEMINI_PROPOSAL_MODEL || DEFAULT_GEMINI_MODEL);
+Now write the complete technical proposal. Start with the Cover Letter. The evaluator must feel — after the first two pages — that this firm has already delivered this exact project and is simply repeating a proven capability.`;
+
+  return generateWithBestModel(prompt);
 }
 
-export async function generateProposal(params: {
-  tenderTitle: string;
-  tenderDescription: string;
-  requirements: string;
-  companyName: string;
-  companyProfile: string;
-  serviceLines: string;
-}): Promise<string> {
-  const prompt = `You are a professional bid writer for an engineering consultancy. Write formal proposal content based ONLY on the provided company information — never invent projects, staff, or certifications.
-
-TENDER: ${params.tenderTitle}
-DESCRIPTION: ${params.tenderDescription}
-KEY REQUIREMENTS: ${params.requirements}
-
-COMPANY: ${params.companyName}
-COMPANY PROFILE: ${params.companyProfile}
-SERVICE LINES: ${params.serviceLines}
-
-Write a formal proposal with these sections (use ## headings):
-## Executive Summary
-## Understanding of Requirements
-## Technical Approach
-## Company Qualifications
-## Why Choose Us
-
-Reference tender requirements directly. Use only the company information provided above.`;
-
-  return generate(prompt, process.env.GEMINI_PROPOSAL_MODEL || DEFAULT_GEMINI_MODEL);
+function extractTenderSections(tenderText: string): string[] {
+  const sectionPatterns = [
+    /^(?:SECTION\s+[A-Z0-9]+|Section\s+[A-Z0-9]+)\s*[:\-–]\s*(.+)$/gm,
+    /^([A-Z]\.\s+(?:Company Profile|Relevant Experience|Technical Approach|Additional Information|Proposed Team|Financial Information|Methodology|Team Composition|Understanding of Assignment|Project Experience|Evaluation Criteria|Value[- ]Added)[^\n]*)$/gm,
+    /^(\d+\.\s+(?:Company Profile|Relevant Experience|Technical Approach|Additional Information|Executive Summary|Introduction|Methodology|Team|Understanding|Background|Evaluation)[^\n]*)$/gm,
+    /^((?:Executive Summary|Company Profile|Proposed Team|Relevant Experience|Technical Approach|Additional Information|Compliance|Declaration)\b[^\n]{0,60})$/gm,
+  ];
+  const sections: string[] = [];
+  const seen = new Set<string>();
+  for (const pattern of sectionPatterns) {
+    for (const match of tenderText.matchAll(pattern)) {
+      const label = (match[1] ?? match[0]).trim().slice(0, 80);
+      if (label && !seen.has(label.toLowerCase()) && label.length > 4) {
+        seen.add(label.toLowerCase());
+        sections.push(label);
+      }
+    }
+  }
+  return sections.slice(0, 12);
 }
+
