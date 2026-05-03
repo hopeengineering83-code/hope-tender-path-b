@@ -1,5 +1,8 @@
 export function polishBenchmarkOutput(markdown: string): string {
   return markdown
+    .replace(/=+\s*PAGE\s+\d+\s*=+/gi, "")
+    .replace(/<PARSED TEXT FOR PAGE:[^>]+>/gi, "")
+    .replace(/\bPARSED TEXT FOR PAGE\b[^\n]*/gi, "")
     .replace(/Senior-level requirement bundle consolidating \d+ extracted tender instruction\(s\)\.?/gi, "")
     .replace(/Key evidence interpreted:\s*/gi, "")
     .replace(/Company evidence available:\s*/gi, "")
