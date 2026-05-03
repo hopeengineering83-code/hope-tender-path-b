@@ -308,8 +308,30 @@ export function submissionPlanFileCount(plan: SubmissionPlan): number {
   return plan.files.filter((file) => file.required).length;
 }
 
+export function hasExplicitSubmissionScope(tender: TenderLike): boolean {
+  return parseStringArray(tender.exactFileNaming).length > 0
+    || parseStringArray(tender.exactFileOrder).length > 0
+    || (tender.requirements ?? []).some((requirement) => Boolean(requirement.exactFileName));
+}
+
+export function plannedSubmissionTargetFiles(plan: SubmissionPlan): SubmissionPlanFile[] {
+  return plan.files.filter((file) => file.required);
+}
+
+export function submissionPlanFileKey(fileName?: string | null): string {
+  return fileKey(fileName ?? "");
+}
+
+export function plannedSubmissionTargetKeys(plan: SubmissionPlan): Set<string> {
+  return new Set(plannedSubmissionTargetFiles(plan).map((file) => submissionPlanFileKey(file.exactFileName)));
+}
+
 function generatedDocumentKey(document: GeneratedDocumentLike): string {
-  return fileKey(document.exactFileName || document.name || document.documentType || "");
+  return fileKey(document.exactFileName || document.name || document.documentType || document.id || "");
+}
+
+export function generatedDocumentSubmissionKey(document: GeneratedDocumentLike): string {
+  return generatedDocumentKey(document);
 }
 
 export function findExtraGeneratedDocuments(plan: SubmissionPlan, generatedDocuments: GeneratedDocumentLike[]): GeneratedDocumentLike[] {
