@@ -144,7 +144,8 @@ export async function extractCompanyKnowledgeWithAI(params: {
   }
 
   const client = new GoogleGenerativeAI(apiKey);
-  const model = client.getGenerativeModel({ model: "gemini-2.0-flash" });
+  const extractModel = process.env.GEMINI_EXTRACT_MODEL || process.env.GEMINI_MODEL || "gemini-2.0-flash";
+  const model = client.getGenerativeModel({ model: extractModel });
 
   // Process each type independently up to MAX_CHUNKS each — interleaving then slicing
   // caused project chunks to be entirely dropped when expert text alone filled the quota.

@@ -197,6 +197,7 @@ export async function runTenderEngine(tenderId: string, userId: string) {
       analysisSummary: analysis.summary,
       exactFileNaming: JSON.stringify(analysis.exactFileNaming),
       exactFileOrder: JSON.stringify(analysis.exactFileOrder),
+      evaluationMethodology: (analysis as { evaluationMethodology?: string | null }).evaluationMethodology ?? null,
       readinessScore,
       status: reviewNeeded ? "COMPLIANCE_REVIEW" : "MATCHED",
       stage: reviewNeeded ? "COMPLIANCE" : "MATCHING",

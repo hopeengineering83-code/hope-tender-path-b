@@ -1,3 +1,7 @@
+/**
+ * @deprecated LEGACY — NOT called by any route. Active engine is generate-elite.ts.
+ * Kept as reference only. DO NOT re-route to this file.
+ */
 import {
   Document, Packer, Paragraph, TextRun, HeadingLevel,
   AlignmentType, BorderStyle, Header, Footer, ImageRun,

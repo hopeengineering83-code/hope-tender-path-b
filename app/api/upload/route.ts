@@ -164,12 +164,13 @@ export async function POST(req: Request) {
     if (uploadedCompanyId && companyDocsUploaded > 0 && companyDocsWithUsableText > 0) {
       try {
         const primaryImport = await importCompanyKnowledgeFromDocuments(uploadedCompanyId);
-        // Safety import is a regex fallback — skip it when AI succeeded to avoid
+        // Safety import is a regex fallback — skip it when AI ran successfully to avoid
         // adding false-positive names on top of correct AI results.
-        const aiSucceeded = primaryImport.aiUsed && primaryImport.aiFailures === 0 &&
-          (primaryImport.expertsCreated > 0 || primaryImport.projectsCreated > 0);
+        // Note: AI creating 0 records is valid (e.g. support/legal docs have no CVs or projects).
+        // Only run safety import when AI was disabled or experienced failures.
+        const aiRanSuccessfully = primaryImport.aiUsed && primaryImport.aiFailures === 0;
         const emptyResult = { docsScanned: 0, expertsCreated: 0, projectsCreated: 0, expertNamesDetected: 0, projectNamesDetected: 0 };
-        const safetyImport = aiSucceeded ? emptyResult : await runCompanyKnowledgeSafetyImport(prisma, uploadedCompanyId);
+        const safetyImport = aiRanSuccessfully ? emptyResult : await runCompanyKnowledgeSafetyImport(prisma, uploadedCompanyId);
         knowledgeImport = { ...primaryImport, safetyImport };
         await logAction({
           userId,

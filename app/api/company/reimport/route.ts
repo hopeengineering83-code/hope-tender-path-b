@@ -95,11 +95,10 @@ export async function POST() {
 
   // Safety import is a regex fallback — only run it when the AI extraction
   // found nothing (all AI calls failed or returned zero results). Running it
-  // unconditionally adds false-positive names on top of correct AI results.
-  const aiSucceeded = primary.aiUsed && primary.aiFailures === 0 &&
-    (primary.expertsCreated > 0 || primary.projectsCreated > 0);
+  // Safety import runs only when AI was disabled or failed — not when AI ran cleanly with 0 results.
+  const aiRanSuccessfully = primary.aiUsed && primary.aiFailures === 0;
   const emptyResult = { docsScanned: 0, expertsCreated: 0, projectsCreated: 0, expertNamesDetected: 0, projectNamesDetected: 0 };
-  const safety = aiSucceeded ? emptyResult : await runCompanyKnowledgeSafetyImport(prisma, company.id);
+  const safety = aiRanSuccessfully ? emptyResult : await runCompanyKnowledgeSafetyImport(prisma, company.id);
   const cleanupAfter = await cleanupSupportDocImportedRecords(company.id);
 
   return NextResponse.json({
