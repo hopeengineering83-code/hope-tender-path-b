@@ -3,7 +3,7 @@ import { getSession } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { Document, Packer, Paragraph, TextRun, HeadingLevel } from "docx";
 import { logAction } from "../../../../../lib/audit";
-import { buildSubmissionPlan, findExtraGeneratedDocuments, findMissingGeneratedDocuments } from "../../../../../lib/engine/submission-plan";
+import { buildSubmissionPlan, findExtraGeneratedDocuments, findMissingGeneratedDocuments, hasExplicitSubmissionScope, plannedSubmissionTargetFiles } from "../../../../../lib/engine/submission-plan";
 
 function safeParseArr(v: unknown): string[] {
   try { return JSON.parse(v as string) as string[]; } catch { return []; }
@@ -194,9 +194,8 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     const requiredNames = safeParseArr(tender.exactFileNaming).map(normalizeName);
     const requiredOrder = safeParseArr(tender.exactFileOrder).map(normalizeName);
     const generatedNames = generatedDocs.map((d) => normalizeName(d.exactFileName ?? generatedFileName(d.name)));
-    const hasExplicitSubmissionScope = requiredNames.length > 0 || requiredOrder.length > 0 || tender.requirements.some((requirement) => Boolean(requirement.exactFileName));
 
-    if (hasExplicitSubmissionScope) {
+    if (hasExplicitSubmissionScope(tender)) {
       const submissionPlan = buildSubmissionPlan({
         id: tender.id,
         title: tender.title,
@@ -212,7 +211,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
           error: "ZIP export blocked by submission plan mismatch",
           missing: missingPlanFiles.map((file) => file.exactFileName),
           extras: extraGeneratedDocs.map((doc) => doc.exactFileName ?? generatedFileName(doc.name ?? doc.documentType ?? doc.id ?? "document")),
-          requiredCount: submissionPlan.files.filter((file) => file.required).length,
+          requiredCount: plannedSubmissionTargetFiles(submissionPlan).length,
           generatedCount: generatedDocs.length,
         }, { status: 409 });
       }
