@@ -596,6 +596,32 @@ Tables are mandatory for the sections marked TABLE below. Use standard Markdown 
 
 For any tender involving site selection, premises identification, beneficiary selection, or asset assessment, also include a **Weighted Assessment Matrix** table with columns: Criterion | Weight | What Is Evaluated. Each criterion gets a percentage weight totalling 100%.
 
+**B.1 Client References — TABLE (place BEFORE B.2 Project Portfolio):**
+\`\`\`
+| Project / Client | Reference Contact & Title | Contact Details & Reference | Contract Value |
+|---|---|---|---|
+| G+6 Dr. Abdul Seid Hospital — Gimba City Administration | Tariku Abebaw, Building Officer | South Wollo, Ref ጂ/ከ/መ/ል/1591/18 dated 19/01/2018 E.C. | ETB 550,074,678 |
+\`\`\`
+
+**A.6 Specialist Engagement Plan — only emit when the tender requires a discipline NOT covered by the proposed core team (e.g., biomedical engineer, telecoms specialist, QHSE auditor):**
+- One paragraph (50–80 words) on scope of services with named deliverables
+- Bulleted **Integration Plan** with 4 timeline phases (assessment / design development / detailed design / commissioning)
+- Closing sentence confirming requirements are embedded from schematic stage, not retrospectively
+
+**D.1 Value Framework — TABLE (4–6 evaluator-facing benefit pillars):**
+\`\`\`
+## D.1 Value Framework — What [Client Name] Gains
+
+| Framework Pillar | What This Engagement Delivers |
+|---|---|
+| Facility Intelligence | [Client] identifies the right premises with confidence. Weighted site assessment scores each shortlisted property against five sector-specific criteria. In-house geotechnical capability delivers subsurface findings within days, protecting acquisition timelines. |
+| Workflow Engineering | Patients experience shorter waiting times and staff cover less unnecessary distance. … |
+\`\`\`
+
+**D.4 Declaration of Eligibility — formal language with named GM and license:**
+"We, [Company], hereby declare that this Technical Proposal has been prepared specifically in response to [Tender Title] for [Client]. All information provided is accurate and supported by documentary evidence available on request. The firm meets all eligibility requirements stated in the tender …
+Signed: [GM Name], License [License Number], on behalf of [Company]."
+
 **Rule:** If you cannot fill a table cell from the EVIDENCE sections, write a single short "Bid-Team Action: confirm X before submission." cell — do NOT fabricate data and do NOT leave the cell empty.
 
 ---

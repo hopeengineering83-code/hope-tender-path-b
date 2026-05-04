@@ -8,7 +8,18 @@ import { appendEvaluatorResponseMatrix } from "./proposal-evaluator-matrix";
 import { buildClientProposalStrengtheningSections } from "./proposal-strengthening-sections";
 import { benchmarkAuditSummary } from "./proposal-benchmark-audit";
 import { polishBenchmarkOutput } from "./benchmark-output-polisher";
-import { buildBenchmarkTablesBlock, makeHasHeadingChecker } from "./benchmark-tables";
+import {
+  buildBenchmarkTablesBlock,
+  buildClientReferencesTable,
+  buildCoverLetterOpener,
+  buildDeclaration,
+  buildExecutiveSummaryOpener,
+  buildPortfolioReadingGuide,
+  buildSpecialistEngagementSection,
+  buildSubmittedByToBlock,
+  buildValueFrameworkTable,
+  makeHasHeadingChecker,
+} from "./benchmark-tables";
 
 const BRAND_BLUE = "1F4E79";
 const BRAND_GRAY = "595959";
@@ -400,13 +411,50 @@ function buildCoverBlock(params: { tenderTitle: string; clientName: string; comp
   ];
 }
 
-function buildProfessionalDocument(params: { tenderTitle: string; clientName: string; companyName: string; reference?: string | null; children: (Paragraph | Table)[] }): Document {
+function buildContactFooterText(company: { name: string; address?: string | null; phone?: string | null; email?: string | null; website?: string | null }): string {
+  const parts: string[] = [];
+  if (company.address) parts.push(company.address);
+  if (company.phone) parts.push(`Tel: ${company.phone}`);
+  if (company.email) parts.push(company.email);
+  if (company.website) parts.push(company.website);
+  return parts.length > 0 ? parts.join(" | ") : "";
+}
+
+function buildProfessionalDocument(params: {
+  tenderTitle: string;
+  clientName: string;
+  companyName: string;
+  reference?: string | null;
+  contactFooter?: string;
+  children: (Paragraph | Table)[];
+}): Document {
   const header = new Header({
     children: [new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: params.companyName, bold: true, color: BRAND_BLUE, size: 18 }), new TextRun({ text: " | Technical Proposal", color: BRAND_GRAY, size: 18 })] })],
   });
-  const footer = new Footer({
-    children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Confidential bid document | Page ", size: 16, color: BRAND_GRAY }), new TextRun({ children: [PageNumber.CURRENT], size: 16, color: BRAND_GRAY })] })],
-  });
+  // Footer carries the company contact strip on every page when company profile
+  // includes address / phone / email / website. Mirrors the benchmark's per-page
+  // contact band. Falls back to the prior page-number-only footer when contact
+  // info is not yet on file.
+  const footerChildren: Paragraph[] = [];
+  if (params.contactFooter) {
+    footerChildren.push(
+      new Paragraph({
+        alignment: AlignmentType.CENTER,
+        children: [new TextRun({ text: params.contactFooter, size: 14, color: BRAND_GRAY })],
+        spacing: { after: 40 },
+      }),
+    );
+  }
+  footerChildren.push(
+    new Paragraph({
+      alignment: AlignmentType.CENTER,
+      children: [
+        new TextRun({ text: "Confidential bid document | Page ", size: 16, color: BRAND_GRAY }),
+        new TextRun({ children: [PageNumber.CURRENT], size: 16, color: BRAND_GRAY }),
+      ],
+    }),
+  );
+  const footer = new Footer({ children: footerChildren });
   return new Document({
     creator: params.companyName,
     title: params.tenderTitle,
@@ -557,12 +605,51 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     alreadyHasHeading: upstreamCheck,
   });
 
-  const combinedMarkdown = [matrixMarkdown, strengtheningMarkdown, benchmarkTables].filter(Boolean).join("\n\n");
+  // Round-2 benchmark sections — same idempotency rule. Each section is appended
+  // only if the upstream output did not already produce an equivalent heading.
+  const round2Sections: string[] = [];
+  if (!upstreamCheck("B.1 Client References") && !upstreamCheck("Client References")) {
+    round2Sections.push(buildClientReferencesTable(projects));
+  }
+  if (!upstreamCheck("B.2.0 Portfolio Reading Guide") && !upstreamCheck("Portfolio Reading Guide")) {
+    const guide = buildPortfolioReadingGuide({ projects, primarySector: intelligence.primarySector, tenderTitle: tender.title });
+    if (guide) round2Sections.push(guide);
+  }
+  const specialistSection = buildSpecialistEngagementSection({ tenderText: intelligence.tenderText, companyName: company.name });
+  if (specialistSection) {
+    const triggeredHeading = specialistSection.split("\n", 1)[0]?.replace(/^##\s+/, "") ?? "";
+    if (triggeredHeading && !upstreamCheck(triggeredHeading)) {
+      round2Sections.push(specialistSection);
+    }
+  }
+  if (!upstreamCheck("D.1 Value Framework") && !upstreamCheck(`D.1 Value Framework — What ${intelligence.clientName} Gains`) && !upstreamCheck("Value Framework")) {
+    round2Sections.push(buildValueFrameworkTable({ primarySector: intelligence.primarySector, clientName: intelligence.clientName }));
+  }
+  if (!upstreamCheck("D.4 Declaration of Eligibility") && !upstreamCheck("Declaration of Eligibility") && !upstreamCheck("Declaration")) {
+    round2Sections.push(buildDeclaration({
+      companyName: company.name,
+      clientName: intelligence.clientName,
+      tenderTitle: tender.title,
+      // Company schema does not have explicit GM/license columns — left null until
+      // the user adds these to the company profile. Falls back to generic signature.
+      companyGM: null,
+      companyGMLicense: null,
+    }));
+  }
+
+  const combinedMarkdown = [matrixMarkdown, strengtheningMarkdown, benchmarkTables, ...round2Sections].filter(Boolean).join("\n\n");
   const finalized = finalizeClientReadyProposalMarkdown(combinedMarkdown, guardInput);
   const clientMarkdown = cleanClientLanguage(finalized.markdown);
   const auditSummary = benchmarkAuditSummary(clientMarkdown);
   const children = markdownToDocx(clientMarkdown);
-  const doc = buildProfessionalDocument({ tenderTitle: tender.title, clientName: intelligence.clientName, companyName: company.name, reference: tender.reference, children });
+  const contactFooter = buildContactFooterText({
+    name: company.name,
+    address: company.address,
+    phone: company.phone,
+    email: company.email,
+    website: company.website,
+  });
+  const doc = buildProfessionalDocument({ tenderTitle: tender.title, clientName: intelligence.clientName, companyName: company.name, reference: tender.reference, contactFooter, children });
 
   const fileContent = (await Packer.toBuffer(doc)).toString("base64");
   const summary = `${mode} technical proposal generated. ${finalized.internalSummary}. ${auditSummary}. Inputs: ${intelligence.requiredSections.length} section group(s), ${intelligence.themes.length} tender theme(s), ${experts.length} reviewed expert(s), ${projects.length} reviewed project(s), ${companyEvidenceLines.length} company evidence item(s), ${projectEvidenceLines.length} project evidence attachment(s).${aiError ? ` AI fallback reason: ${aiError}` : ""}`;
