@@ -551,6 +551,55 @@ Keep these four anchors in mind. They must appear — by name, value, and role �
 
 ---
 
+## STEP 5 — TABLE FORMAT (use these exact Markdown table shapes)
+
+Tables are mandatory for the sections marked TABLE below. Use standard Markdown table syntax. Cells must contain real, evidence-grounded values from the EVIDENCE sections — never placeholders.
+
+**A.4 Proposed Project Team — TABLE (one row per expert):**
+\`\`\`
+| # | Expert & Position | Qualifications & Licenses | Comparable Sector Experience | Role on This Assignment |
+|---|---|---|---|---|
+| 1 | Eng. Ahmed Kebede, Project Principal | B.Sc. Civil (AAIT 2015), PPE Structural IPSTE/6884 valid 2030 | G+6 Hospital (ETB 550M); Eco-Park (ETB 27.5B WB ESF) | Project leadership, client liaison, final design sign-off |
+| 2 | … | … | … | … |
+\`\`\`
+
+**A.5 Team-to-Project Experience Mapping — TABLE:**
+\`\`\`
+| Expert & Role on This Project | Role Previously Performed | Previous Comparable Project | Key Technical Contribution |
+|---|---|---|---|
+| Daniel Getachew, MEP Lead | Lead Electrical Engineer | Dr. Abdul Seid Hospital (ETB 550M) | Medical-grade power, UPS for life-critical loads, imaging room power |
+\`\`\`
+
+**B.2 / B.3 Featured Project Cards — TABLE per project (2-column metadata):**
+\`\`\`
+### G+6 General Hospital, Dr. Abdul Seid
+
+| Field | Detail |
+|---|---|
+| Client | Gimba City Administration, South Wollo Zone |
+| Location & Scale | South Wollo, Ethiopia — 7,000 m² built-up |
+| Duration | 2015–2018 (Completed) |
+| Contract Value | ETB 550,074,678 |
+| Testimony Reference | Ref ጂ/ከ/መ/ል/1591/18, dated 19/01/2018 E.C. — Tariku Abebaw, Building Officer |
+| Services Provided | Feasibility, geotechnical, full architectural/structural/MEP design, BOQ, supervision |
+| Relevance to This Assignment | All six clinical departments required by this tender were included; same proposed team |
+\`\`\`
+
+**C.4 Three-Stage Quality Review — TABLE:**
+\`\`\`
+| Stage | Milestone | Review Authority and Required Action |
+|---|---|---|
+| Stage 1 | 30% Schematic Design | Senior Engineer + QA Manager. Sector-protocol gate-check. Written sign-off required. |
+| Stage 2 | 60% Developed Design | Deputy GM. Regulatory pre-check. Written approval required. |
+| Stage 3 | 100% Pre-Issue Final Package | General Manager / Principal. Final sign-off. All review comments resolved. |
+\`\`\`
+
+For any tender involving site selection, premises identification, beneficiary selection, or asset assessment, also include a **Weighted Assessment Matrix** table with columns: Criterion | Weight | What Is Evaluated. Each criterion gets a percentage weight totalling 100%.
+
+**Rule:** If you cannot fill a table cell from the EVIDENCE sections, write a single short "Bid-Team Action: confirm X before submission." cell — do NOT fabricate data and do NOT leave the cell empty.
+
+---
+
 ## SUBMISSION DETAILS (embed in cover letter and cover page)
 - Submit to emails: ${exactEmails || "see tender submission instructions"}
 - Exact subject line: "${exactSubject}"

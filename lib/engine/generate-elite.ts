@@ -8,6 +8,7 @@ import { appendEvaluatorResponseMatrix } from "./proposal-evaluator-matrix";
 import { buildClientProposalStrengtheningSections } from "./proposal-strengthening-sections";
 import { benchmarkAuditSummary } from "./proposal-benchmark-audit";
 import { polishBenchmarkOutput } from "./benchmark-output-polisher";
+import { buildBenchmarkTablesBlock, makeHasHeadingChecker } from "./benchmark-tables";
 
 const BRAND_BLUE = "1F4E79";
 const BRAND_GRAY = "595959";
@@ -540,7 +541,23 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   const matrixMarkdown = appendEvaluatorResponseMatrix(sourceMarkdown, evaluatorMatrixInput);
   const isHealthcare = /health|hospital|medical|clinic|radiology|laboratory|pharmacy|patient|specialty|OPD|in-patient|emergency/i.test(`${intelligence.primarySector}\n${intelligence.tenderText}`);
   const strengtheningMarkdown = buildClientProposalStrengtheningSections({ clientName: intelligence.clientName, tenderTitle: tender.title, companyName: company.name, projectLines, expertLines, companyEvidenceLines, projectEvidenceLines, isHealthcare, existingMarkdown: matrixMarkdown });
-  const combinedMarkdown = [matrixMarkdown, strengtheningMarkdown].filter(Boolean).join("\n\n");
+
+  // Inject benchmark-quality tabular sections (Proposed Team, Team-to-Project Mapping,
+  // Project Portfolio cards, Three-Stage Review, optional Assessment Matrix) only if
+  // the upstream output (AI or fallback) didn't already produce them. This guarantees
+  // every proposal carries the high-evidence-density tables the benchmark uses.
+  const upstreamCheck = makeHasHeadingChecker(`${matrixMarkdown}\n${strengtheningMarkdown}`);
+  const benchmarkTables = buildBenchmarkTablesBlock({
+    experts,
+    projects,
+    companyName: company.name,
+    tenderTitle: tender.title,
+    primarySector: intelligence.primarySector,
+    assignmentRoleHint: `Aligned to ${tender.title} scope and ${intelligence.clientName} evaluation criteria.`,
+    alreadyHasHeading: upstreamCheck,
+  });
+
+  const combinedMarkdown = [matrixMarkdown, strengtheningMarkdown, benchmarkTables].filter(Boolean).join("\n\n");
   const finalized = finalizeClientReadyProposalMarkdown(combinedMarkdown, guardInput);
   const clientMarkdown = cleanClientLanguage(finalized.markdown);
   const auditSummary = benchmarkAuditSummary(clientMarkdown);
