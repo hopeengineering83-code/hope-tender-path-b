@@ -38,6 +38,7 @@ import {
   buildUnderstandingSection,
   buildValueAddedServices,
 } from "./understanding-and-value-added";
+import { reorderToCanonicalSequence } from "./section-reorderer";
 
 const BRAND_BLUE = "1F4E79";
 const BRAND_GRAY = "595959";
@@ -769,7 +770,11 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     markdown: throughline.markdown,
     primarySector: intelligence.primarySector,
   });
-  const finalized = finalizeClientReadyProposalMarkdown(enriched.markdown, guardInput);
+  // Round-7: reorder all sections into canonical proposal sequence (Cover Letter → Cover Page →
+  // TOC → Executive Summary → Why Us → A.x → B.x → C.x → D.x → E.x → Submission Control Sheet)
+  // so the appended deterministic sections don't show up out of order at the end of the document.
+  const reordered = reorderToCanonicalSequence(enriched.markdown);
+  const finalized = finalizeClientReadyProposalMarkdown(reordered, guardInput);
   const clientMarkdown = cleanClientLanguage(finalized.markdown);
   const auditSummary = benchmarkAuditSummary(clientMarkdown);
   const children = markdownToDocx(clientMarkdown);
