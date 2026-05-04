@@ -19,6 +19,11 @@ type Company = {
   id?: string; name: string; legalName: string; description: string; website: string;
   address: string; phone: string; email: string; knowledgeMode: string;
   serviceLines: string[]; sectors: string[]; profileSummary: string;
+  // Round-10 institutional metadata fields
+  gmName?: string | null; gmTitle?: string | null; gmLicense?: string | null;
+  foundingYear?: number | null; headcount?: number | null;
+  licenseGrade?: string | null; registrationNumber?: string | null;
+  tin?: string | null; vat?: string | null;
   experts?: Expert[]; projects?: Project[];
 };
 type UploadItem = { file: File; status: "queued"|"uploading"|"done"|"error"; error?: string; category: string };
@@ -42,7 +47,7 @@ const CAT_COLORS: Record<string,string> = {
   PORTFOLIO:"bg-teal-100 text-teal-700",COMPLIANCE_RECORD:"bg-rose-100 text-rose-700",OTHER:"bg-slate-100 text-slate-500",
 };
 const ACCEPT = ".pdf,.doc,.docx,.xls,.xlsx,.ods,.ppt,.pptx,.csv,.txt,.rtf,.jpg,.jpeg,.png,.gif,.webp";
-const empty: Company = { name:"",legalName:"",description:"",website:"",address:"",phone:"",email:"",knowledgeMode:"PROFILE_FIRST",serviceLines:[],sectors:[],profileSummary:"" };
+const empty: Company = { name:"",legalName:"",description:"",website:"",address:"",phone:"",email:"",knowledgeMode:"PROFILE_FIRST",serviceLines:[],sectors:[],profileSummary:"",gmName:"",gmTitle:"",gmLicense:"",foundingYear:null,headcount:null,licenseGrade:"",registrationNumber:"",tin:"",vat:"" };
 
 function fmt(b: number) { return b<1024?`${b} B`:b<1048576?`${(b/1024).toFixed(0)} KB`:`${(b/1048576).toFixed(1)} MB`; }
 function ext(name: string) { return name.toLowerCase().split(".").pop()??""; }
@@ -323,6 +328,23 @@ export default function CompanyPage() {
           <textarea value={company.profileSummary} onChange={e=>setCompany({...company,profileSummary:e.target.value})} rows={4} placeholder="Profile summary — used in proposal drafting" className="w-full rounded-lg border px-3 py-2 text-sm" />
           <input value={serviceLinesTxt} onChange={e=>setServiceLinesTxt(e.target.value)} placeholder="Service lines (comma-separated)" className="w-full rounded-lg border px-3 py-2 text-sm" />
           <input value={sectorsTxt} onChange={e=>setSectorsTxt(e.target.value)} placeholder="Sectors (comma-separated)" className="w-full rounded-lg border px-3 py-2 text-sm" />
+
+          <div className="mt-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
+            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-600">Authorising representative & institutional metadata</h3>
+            <p className="mb-3 text-xs text-slate-500">Used in the proposal&apos;s D.4 Declaration of Eligibility, Cover Page Submitted-by block, A.1 Company Background, and A.2 Corporate Information.</p>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <input value={company.gmName ?? ""} onChange={e=>setCompany({...company,gmName:e.target.value})} placeholder="GM / authorising representative name (e.g., Eng. Ahmed Kebede Tekaw)" className="rounded-lg border px-3 py-2 text-sm" />
+              <input value={company.gmTitle ?? ""} onChange={e=>setCompany({...company,gmTitle:e.target.value})} placeholder="GM title (e.g., General Manager and Founder)" className="rounded-lg border px-3 py-2 text-sm" />
+              <input value={company.gmLicense ?? ""} onChange={e=>setCompany({...company,gmLicense:e.target.value})} placeholder="GM license / registration (e.g., IPSTE/6884)" className="rounded-lg border px-3 py-2 text-sm" />
+              <input value={company.licenseGrade ?? ""} onChange={e=>setCompany({...company,licenseGrade:e.target.value})} placeholder="License grade / category (e.g., Grade I)" className="rounded-lg border px-3 py-2 text-sm" />
+              <input value={company.registrationNumber ?? ""} onChange={e=>setCompany({...company,registrationNumber:e.target.value})} placeholder="Business registration number" className="rounded-lg border px-3 py-2 text-sm" />
+              <input value={company.tin ?? ""} onChange={e=>setCompany({...company,tin:e.target.value})} placeholder="TIN (Tax Identification Number)" className="rounded-lg border px-3 py-2 text-sm" />
+              <input value={company.vat ?? ""} onChange={e=>setCompany({...company,vat:e.target.value})} placeholder="VAT registration" className="rounded-lg border px-3 py-2 text-sm" />
+              <input value={company.foundingYear ?? ""} onChange={e=>setCompany({...company,foundingYear:e.target.value?Number(e.target.value):null})} type="number" placeholder="Founding year (e.g., 2019)" className="rounded-lg border px-3 py-2 text-sm" />
+              <input value={company.headcount ?? ""} onChange={e=>setCompany({...company,headcount:e.target.value?Number(e.target.value):null})} type="number" placeholder="Permanent staff headcount" className="rounded-lg border px-3 py-2 text-sm" />
+            </div>
+          </div>
+
           <button type="submit" disabled={saving||!company.name} className="rounded-lg bg-black px-6 py-2 text-sm text-white hover:bg-slate-800 disabled:opacity-50">
             {saving ? "Saving…" : "Save Profile"}
           </button>
