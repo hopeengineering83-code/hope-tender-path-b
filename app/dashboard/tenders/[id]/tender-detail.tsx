@@ -14,6 +14,18 @@ function renderInline(text: string): React.ReactNode[] {
   });
 }
 
+function parseDocumentQuality(contentSummary: string | null | undefined): { qualityScore: number; benchmarkScore: number; verdict: string } | null {
+  if (!contentSummary) return null;
+  const qMatch = contentSummary.match(/Quality score: (\d+)\/100/);
+  const bMatch = contentSummary.match(/Benchmark audit (\d+)\/100 \(([A-Z_]+)\)/);
+  if (!qMatch && !bMatch) return null;
+  return {
+    qualityScore: qMatch ? parseInt(qMatch[1], 10) : 0,
+    benchmarkScore: bMatch ? parseInt(bMatch[1], 10) : 0,
+    verdict: bMatch?.[2] ?? "PENDING",
+  };
+}
+
 function ProposalMarkdown({ markdown }: { markdown: string }) {
   const lines = markdown.replace(/\r/g, "").split("\n");
   const elements: React.ReactNode[] = [];
@@ -570,6 +582,11 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
     (tender.requirements.length === 0 ? 0
       : Math.max(0, Math.round(((tender.requirements.length - criticalGaps) / tender.requirements.length) * 100)));
 
+  const proposalQuality = (() => {
+    const proposal = tender.generatedDocuments.find((d) => d.documentType === "TECHNICAL_PROPOSAL" && d.contentSummary);
+    return parseDocumentQuality(proposal?.contentSummary);
+  })();
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
@@ -639,7 +656,7 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
 
       {error && <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
 
-      <div className="grid gap-4 md:grid-cols-3 xl:grid-cols-6">
+      <div className={`grid gap-4 md:grid-cols-3 ${proposalQuality ? "xl:grid-cols-7" : "xl:grid-cols-6"}`}>
         <div className="rounded-2xl border bg-white p-5 shadow-sm">
           <p className="text-sm text-slate-500">Files</p>
           <p className="mt-1 text-3xl font-bold text-slate-900">{tender.files.length}</p>
@@ -675,6 +692,17 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
               style={{ width: `${readinessScore}%` }} />
           </div>
         </div>
+        {proposalQuality && (
+          <div className="rounded-2xl border bg-white p-5 shadow-sm">
+            <p className="text-sm text-slate-500">Proposal Quality</p>
+            <p className={`mt-1 text-3xl font-bold ${proposalQuality.qualityScore >= 80 ? "text-green-600" : proposalQuality.qualityScore >= 60 ? "text-amber-500" : "text-red-500"}`}>
+              {proposalQuality.qualityScore}/100
+            </p>
+            <p className={`mt-1 text-xs font-medium ${proposalQuality.verdict === "BENCHMARK_READY" ? "text-green-600" : "text-amber-600"}`}>
+              {proposalQuality.verdict === "BENCHMARK_READY" ? "Benchmark ready ✓" : proposalQuality.benchmarkScore > 0 ? `Benchmark ${proposalQuality.benchmarkScore}/100` : "Generate docs to score"}
+            </p>
+          </div>
+        )}
       </div>
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,2fr),minmax(360px,1fr)]">
@@ -998,6 +1026,24 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
                             </span>
                           )}
                         </div>
+                        {(() => {
+                          const q = parseDocumentQuality(doc.contentSummary);
+                          if (!q) return null;
+                          return (
+                            <div className="flex flex-wrap gap-1.5 mt-1">
+                              {q.qualityScore > 0 && (
+                                <span className={`text-xs font-medium px-1.5 py-0.5 rounded-md ${q.qualityScore >= 80 ? "bg-green-50 text-green-700" : q.qualityScore >= 60 ? "bg-amber-50 text-amber-700" : "bg-red-50 text-red-600"}`}>
+                                  Quality {q.qualityScore}/100
+                                </span>
+                              )}
+                              {q.benchmarkScore > 0 && (
+                                <span className={`text-xs font-medium px-1.5 py-0.5 rounded-md ${q.verdict === "BENCHMARK_READY" ? "bg-green-50 text-green-700" : "bg-amber-50 text-amber-700"}`}>
+                                  Benchmark {q.benchmarkScore}/100{q.verdict === "BENCHMARK_READY" ? " ✓" : ""}
+                                </span>
+                              )}
+                            </div>
+                          );
+                        })()}
                         {doc.reviewNotes && (
                           <p className="mt-1 text-xs text-slate-500 italic">&ldquo;{doc.reviewNotes}&rdquo;</p>
                         )}
