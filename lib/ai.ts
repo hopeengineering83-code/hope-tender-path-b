@@ -381,6 +381,76 @@ ${text.slice(0, 60_000)}`;
 
 // ─── Proposal generation ──────────────────────────────────────────────────────
 
+/**
+ * Targeted refinement pass: takes a generated proposal markdown, the quality
+ * scorer's weak-axis list, and the original input parameters, and asks the AI
+ * to rewrite the weak sections in place. Returns the refined markdown, or
+ * null if no AI provider is available or refinement fails.
+ *
+ * This is the multi-pass quality lift: the first pass produces a complete
+ * proposal; the scorer identifies weak axes; this pass targets them
+ * specifically, instructing the AI to keep the existing structure and tables
+ * intact and only rewrite the prose that's weak.
+ */
+export async function refineProposalWithAI(input: {
+  currentMarkdown: string;
+  weakAxes: string[];
+  tenderTitle: string;
+  clientName: string;
+  primarySector: string;
+  topProjectNames: string[];
+  topExpertNames: string[];
+}): Promise<string | null> {
+  if (input.weakAxes.length === 0) return null;
+  if (!isAIEnabled()) return null;
+
+  const axisDirectives: Record<string, string> = {
+    structureCompleteness: "Add any missing canonical sections (Cover Letter, Executive Summary, Section A/B/C/D, Declaration). Do NOT delete existing sections; only add what is missing.",
+    evidenceDensity: "Rewrite generic paragraphs (without project names, ETB values, license numbers, dates, or named clients) so each substantive paragraph carries at least one specific evidence anchor drawn from the existing project / expert references in the document. Keep all tables intact.",
+    tableCoverage: "Where a section refers to data that should be tabular (project portfolio, team, risks, work plan, value framework), convert prose lists to Markdown tables matching the structures already used elsewhere in the document.",
+    sectorVocabulary: `Strengthen the Section C technical methodology with sector-specific vocabulary appropriate to ${input.primarySector}. Use terms in context, not as a glossary list.`,
+    throughlineConsistency: `Ensure these specific projects appear by name in the Cover Letter, Executive Summary, AND Section B Relevant Experience: ${input.topProjectNames.join("; ") || "the strongest comparable projects available in the document"}.`,
+    aiTraceFreedom: `Remove any AI-trace phrases ("As an AI", "Certainly!", "Please note", "[INSERT]", any [square bracket] placeholders, "we look forward to the opportunity", "committed to excellence", "team of qualified professionals"). Replace with substantive content.`,
+  };
+
+  const directives = input.weakAxes.map((axis) => `- **${axis}**: ${axisDirectives[axis] ?? "Strengthen this axis using the evidence already in the document."}`).join("\n");
+
+  const prompt = `You are refining an existing technical proposal for tender "${input.tenderTitle}" submitted to ${input.clientName} (sector: ${input.primarySector}).
+
+Below is the current full proposal markdown. A deterministic quality scorer flagged these weak axes:
+
+${directives}
+
+## YOUR TASK
+
+Return the COMPLETE refined proposal markdown. Keep:
+- All existing section headings
+- All existing tables (do not break Markdown table syntax)
+- All existing factual claims (project names, ETB values, license numbers, dates, client names)
+- All existing appendix references
+
+Only rewrite the prose to address the weak axes above. The output must be the FULL document, not a diff. Do NOT add explanations or commentary outside the markdown.
+
+## EXISTING PROPOSAL
+
+${input.currentMarkdown.slice(0, 80_000)}
+
+## REFINED PROPOSAL (return the complete document)
+`;
+
+  try {
+    if (isClaudeEnabled()) {
+      const claudeResult = await generateWithClaude(prompt);
+      if (claudeResult) return claudeResult;
+    }
+    if (apiKey) return await generateWithBestModel(prompt);
+  } catch (err) {
+    console.warn(`[ai] refineProposalWithAI failed: ${err instanceof Error ? err.message : String(err)}`);
+    return null;
+  }
+  return null;
+}
+
 export async function generateBenchmarkProposalWithAI(params: AIBidWriterInput): Promise<string> {
   const noFinancial = /technical proposal only|no financial|financial.*not required|financial proposal.*not/i.test(
     params.submissionNotes + params.tenderText,
