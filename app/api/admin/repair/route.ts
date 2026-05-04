@@ -13,10 +13,11 @@ import { cleanTenderTitle, cleanClientName } from "../../../../lib/engine/propos
  *  3. Return diagnostic summary
  *
  * Query params:
- *   ?step=extract     — only re-extract text (skip import)
- *   ?step=import      — only run import (skip re-extraction)
- *   ?step=labels      — clean tender titles and client names for all tenders
- *   ?step=all (default) — extract + import (labels must be run separately)
+ *   ?step=extract      — only re-extract text (skip import)
+ *   ?step=import       — only run import (skip re-extraction)
+ *   ?step=labels       — clean tender titles and client names for all tenders
+ *   ?step=requirements — clear false-positive expert/project quantities (e.g. "Section 29 Expert")
+ *   ?step=all (default) — extract + import (labels/requirements must be run separately)
  */
 export async function POST(req: Request) {
   let actor;
@@ -40,6 +41,7 @@ export async function POST(req: Request) {
     reextraction: null as null | { total: number; success: number; failed: number; skipped: number; details: Array<{ name: string; chars: number; status: string; error?: string }> },
     import: null as null | { docsProcessed: number; expertsCreated: number; projectsCreated: number; aiUsed: boolean; aiFailures: number },
     labels: null as null | { total: number; updated: number; details: Array<{ id: string; before: string; after: string }> },
+    requirements: null as null | { scanned: number; cleared: number },
     timestamp: new Date().toISOString(),
   };
 
@@ -129,6 +131,28 @@ export async function POST(req: Request) {
     }
 
     results.labels = { total: tenders.length, updated, details };
+  }
+
+  // ── Step 4: Clear false-positive requirement quantities ───────────────────
+  // Fixes over-extraction of section/page numbers into requiredQuantity (e.g. "Section 29 Expert
+  // Requirements" → requiredQuantity=29). Caps EXPERT at 20, PROJECT_EXPERIENCE at 15.
+  if (step === "requirements") {
+    const tenderIds = (await prisma.tender.findMany({ where: { userId: actor.id }, select: { id: true } })).map((t) => t.id);
+    const oversized = await prisma.tenderRequirement.findMany({
+      where: {
+        tenderId: { in: tenderIds },
+        OR: [
+          { requirementType: "EXPERT", requiredQuantity: { gt: 20 } },
+          { requirementType: "PROJECT_EXPERIENCE", requiredQuantity: { gt: 15 } },
+        ],
+      },
+      select: { id: true },
+    });
+    if (oversized.length > 0) {
+      await prisma.tenderRequirement.updateMany({ where: { id: { in: oversized.map((r: { id: string }) => r.id) } }, data: { requiredQuantity: null } });
+    }
+    const allReqs = await prisma.tenderRequirement.count({ where: { tenderId: { in: tenderIds } } });
+    results.requirements = { scanned: allReqs, cleared: oversized.length };
   }
 
   return NextResponse.json(results);

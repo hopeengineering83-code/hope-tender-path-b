@@ -56,6 +56,7 @@ export async function validateTender(tenderId: string): Promise<ValidationReport
       generatedDocuments: true,
       expertMatches: { where: { isSelected: true } },
       projectMatches: { where: { isSelected: true } },
+      complianceMatrix: { select: { requirementId: true, supportLevel: true } },
     },
   });
 
@@ -118,8 +119,15 @@ export async function validateTender(tenderId: string): Promise<ValidationReport
     if (outOfOrder) issues.push({ code: "FILE_ORDER_MISMATCH", severity: "WARN", message: `Generated document order may not match the tender-required order. Expected: ${requiredOrder.join(" -> ")}.` });
   }
 
-  const unresolvedMandatory = tender.requirements.filter((r) => r.priority === "MANDATORY" && !r.isResolved);
-  if (unresolvedMandatory.length > 0) issues.push({ code: "UNRESOLVED_MANDATORY_REQUIREMENTS", severity: "WARN", message: `${unresolvedMandatory.length} mandatory requirement(s) not yet marked as resolved. Proposal is draft-ready; final submission should verify these items.` });
+  const coveredRequirementIds = new Set(
+    tender.complianceMatrix
+      .filter((m) => m.supportLevel && m.supportLevel !== "NONE" && m.supportLevel !== "NOT_COVERED")
+      .map((m) => m.requirementId)
+  );
+  const unresolvedMandatory = tender.requirements.filter(
+    (r) => r.priority === "MANDATORY" && !r.isResolved && !coveredRequirementIds.has(r.id)
+  );
+  if (unresolvedMandatory.length > 0) issues.push({ code: "UNRESOLVED_MANDATORY_REQUIREMENTS", severity: "WARN", message: `${unresolvedMandatory.length} mandatory requirement(s) not yet marked as resolved or covered by compliance evidence. Proposal is draft-ready; final submission should verify these items.` });
 
   const expertRequirementQty = exactSelectionLimit(tender.requirements, "EXPERT");
   if (expertRequirementQty > 0 && tender.expertMatches.length < expertRequirementQty) issues.push({ code: "EXPERT_QUANTITY_SHORTFALL", severity: "WARN", message: staffingShortfallMessage("expert", expertRequirementQty, tender.expertMatches.length) });

@@ -86,8 +86,9 @@ async function generateWithClaude(prompt: string): Promise<string | null> {
       if (/401|403|invalid api key|authentication/i.test(msg)) {
         throw new Error(`Anthropic API key invalid — check ANTHROPIC_API_KEY in environment variables. (${msg})`);
       }
-      // 429 — rate limit, surface immediately
+      // 429 — rate limit, retry with backoff
       if (/429|rate.?limit/i.test(msg)) {
+        if (CLAUDE_PROPOSAL_MODELS.indexOf(modelName) < CLAUDE_PROPOSAL_MODELS.length - 1) continue;
         throw new Error(`Anthropic API rate limit reached — try again in a moment. (${msg})`);
       }
       // 404 / model not found — try next model
@@ -107,6 +108,34 @@ function isModelUnavailableError(message: string): boolean {
   return /404|not found|not supported for generateContent|models\//i.test(message);
 }
 
+function isRateLimitError(message: string): boolean {
+  return /429|rate.?limit|quota.?exceed|resource.?exhausted/i.test(message);
+}
+
+async function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function withRateLimitRetry<T>(fn: () => Promise<T>, maxRetries = 3): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (isRateLimitError(msg) && attempt < maxRetries - 1) {
+        const delay = Math.pow(2, attempt) * 2000; // 2s, 4s, 8s
+        console.warn(`[ai] Rate limit hit (attempt ${attempt + 1}/${maxRetries}), retrying after ${delay}ms...`);
+        await sleep(delay);
+        lastError = err;
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw lastError ?? new Error("Max retries exceeded");
+}
+
 function uniqueModels(primary: string): string[] {
   return Array.from(new Set([primary, ...FALLBACK_GEMINI_MODELS]));
 }
@@ -116,15 +145,18 @@ async function generate(prompt: string, modelName = DEFAULT_GEMINI_MODEL): Promi
 
   for (const candidate of uniqueModels(modelName || DEFAULT_GEMINI_MODEL)) {
     try {
-      const model = getModel(candidate);
-      const result = await model.generateContent(prompt);
-      const text = result.response.text();
-      if (!text || text.trim().length === 0) throw new Error(`Empty response from Gemini API using ${candidate}`);
+      const text = await withRateLimitRetry(async () => {
+        const model = getModel(candidate);
+        const result = await model.generateContent(prompt);
+        const t = result.response.text();
+        if (!t || t.trim().length === 0) throw new Error(`Empty response from Gemini API using ${candidate}`);
+        return t;
+      });
       return text;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       errors.push(`${candidate}: ${msg}`);
-      if (msg.includes("429")) throw new Error("Gemini API rate limit reached — try again in a moment");
+      if (isRateLimitError(msg)) throw new Error("Gemini API rate limit reached after retries — try again in a moment");
       if (msg.includes("403") || msg.includes("API_KEY_INVALID") || msg.includes("API key not valid"))
         throw new Error("Gemini API key invalid or missing — check GEMINI_API_KEY in environment variables");
       if (!isModelUnavailableError(msg)) throw err;
@@ -136,25 +168,23 @@ async function generate(prompt: string, modelName = DEFAULT_GEMINI_MODEL): Promi
 
 // Try PROPOSAL_MODELS in order until one succeeds — gives the best available model for proposal writing.
 async function generateWithBestModel(prompt: string): Promise<string> {
-  const tryModel = async (name: string): Promise<string> => {
-    const model = getModel(name);
-    const result = await model.generateContent(prompt);
-    const text = result.response.text();
-    if (!text || text.trim().length === 0) throw new Error("Empty response from Gemini API");
-    return text;
-  };
-
   let lastError: unknown;
   for (const modelName of PROPOSAL_MODELS) {
     try {
-      return await tryModel(modelName);
+      return await withRateLimitRetry(async () => {
+        const model = getModel(modelName);
+        const result = await model.generateContent(prompt);
+        const text = result.response.text();
+        if (!text || text.trim().length === 0) throw new Error("Empty response from Gemini API");
+        return text;
+      });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      if (msg.includes("429")) throw new Error("Gemini API rate limit reached — try again in a moment");
+      if (isRateLimitError(msg)) throw new Error("Gemini API rate limit reached after retries — try again in a moment");
       if (msg.includes("403") || msg.includes("API_KEY_INVALID") || msg.includes("API key not valid"))
         throw new Error("Gemini API key invalid or missing — check GEMINI_API_KEY in environment variables");
       // Model unavailable — try the next one in the chain
-      if (msg.includes("404") || msg.includes("not found") || msg.includes("deprecated") || msg.includes("not supported") || msg.includes("invalid")) {
+      if (isModelUnavailableError(msg) || msg.includes("deprecated") || msg.includes("invalid")) {
         lastError = err;
         continue;
       }
