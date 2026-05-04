@@ -22,13 +22,26 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     return NextResponse.json({ error: error instanceof Error ? error.message : "Validation failed" }, { status: 500 });
   }
 
+  // Persist the full issue list in audit metadata so we have a record of what
+  // failed at each validation run. Previously only the count was stored, so a
+  // reviewer could not see *which* issues blocked an export after the fact.
+  const blockCount = report.issues.filter((i) => i.severity === "BLOCK").length;
+  const warnCount = report.issues.filter((i) => i.severity === "WARN").length;
+
   await logAction({
     userId,
     action: "TENDER_VALIDATED",
     entityType: "Tender",
     entityId: id,
-    description: `Validated tender "${tender.title}" — ${report.passed ? "PASSED" : "FAILED"}`,
-    metadata: { tenderId: id, passed: report.passed, issues: report.issues.length },
+    description: `Validated tender "${tender.title}" — ${report.passed ? "PASSED" : "FAILED"} (${blockCount} block, ${warnCount} warn)`,
+    metadata: {
+      tenderId: id,
+      passed: report.passed,
+      checkedAt: report.checkedAt,
+      blockCount,
+      warnCount,
+      issues: report.issues.map((i) => ({ code: i.code, severity: i.severity, message: i.message })),
+    },
   });
 
   if (report.passed) {

@@ -38,6 +38,13 @@ export async function runTenderEngine(tenderId: string, userId: string) {
   if (!company) throw new Error("Company profile required before engine run");
 
   let analysis: ReturnType<typeof analyzeTender>;
+  // Track which analysis path was used so callers can surface this to the
+  // user. Previously a silent fallback to regex left no signal — a UI showing
+  // "ANALYZED" gave no indication of whether the AI key was missing, the
+  // model was unavailable, or the upload simply had too little extractable
+  // text. Captured below and written to Tender.notes.
+  let analysisMethod: "AI" | "REGEX_FALLBACK_AI_DISABLED" | "REGEX_FALLBACK_NO_TEXT" | "REGEX_FALLBACK_AI_ERROR" = "REGEX_FALLBACK_AI_DISABLED";
+  let analysisFallbackReason: string | null = null;
 
   if (isAIEnabled()) {
     const tenderText = tender.files
@@ -68,14 +75,21 @@ export async function runTenderEngine(tenderId: string, userId: string) {
           exactFileNaming: aiResult.exactFileNaming ?? [],
           exactFileOrder: aiResult.exactFileOrder ?? [],
         };
+        analysisMethod = "AI";
       } catch (err) {
         console.error("[engine] AI analysis failed — falling back to regex:", err);
+        analysisMethod = "REGEX_FALLBACK_AI_ERROR";
+        analysisFallbackReason = err instanceof Error ? err.message : String(err);
         analysis = analyzeTender(tender);
       }
     } else {
+      analysisMethod = "REGEX_FALLBACK_NO_TEXT";
+      analysisFallbackReason = `Extracted tender text is only ${tenderText.length} chars; AI analysis needs at least 500.`;
       analysis = analyzeTender(tender);
     }
   } else {
+    analysisMethod = "REGEX_FALLBACK_AI_DISABLED";
+    analysisFallbackReason = "GEMINI_API_KEY is not configured.";
     analysis = analyzeTender(tender);
   }
 
@@ -203,6 +217,9 @@ export async function runTenderEngine(tenderId: string, userId: string) {
       stage: reviewNeeded ? "COMPLIANCE" : "MATCHING",
       notes: [
         "Senior consultant mode: broad-fit matching uses capability families, sector/service equivalence, and professional judgment instead of exact wording only.",
+        analysisMethod === "AI"
+          ? "Analysis source: Gemini AI."
+          : `Analysis source: regex fallback (${analysisMethod}). ${analysisFallbackReason ?? ""}`.trim(),
         hardGaps > 0 ? `${hardGaps} hard evidence gap(s) remain.` : null,
         reviewGaps > 0 ? `${reviewGaps} senior review item(s) remain; these are not automatic fatal blockers.` : null,
         knowledgeReadiness.hasBlockingExperts ? `${knowledgeReadiness.aiDraftExperts + knowledgeReadiness.regexDraftExperts} expert record(s) are draft and excluded from final evidence until REVIEWED.` : null,
