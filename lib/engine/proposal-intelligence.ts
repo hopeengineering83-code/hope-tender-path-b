@@ -135,12 +135,67 @@ export const PROPOSAL_THEMES: ProposalTheme[] = [
   {
     code: "URBAN_MASTER_PLANNING",
     label: "Urban planning, master planning and landscape architecture",
-    triggers: [/urban/i, /master plan/i, /city plan/i, /municipal/i, /landscape/i, /park/i, /eco-park/i, /public.*space/i, /mixed.use/i],
-    proofTerms: [/urban/i, /master plan/i, /landscape/i, /park/i, /zoning/i, /planning/i, /municipal/i],
+    triggers: [/urban/i, /master plan/i, /city plan/i, /municipal/i, /landscape/i, /park/i, /eco-park/i, /public.*space/i, /mixed.use/i, /spatial.*plan/i],
+    proofTerms: [/urban/i, /master plan/i, /landscape/i, /park/i, /zoning/i, /planning/i, /municipal/i, /GIS/i],
     methodologyBullets: [
-      "spatial analysis and land-use zoning: GIS-based site assessment, catchment analysis, and regulatory compliance review",
-      "master plan with phasing strategy, infrastructure integration, green space design, and stakeholder engagement plan",
-      "detailed landscape drawings, planting schedules, lighting design, and public-realm specifications",
+      "GIS-based spatial analysis and land-use zoning: site assessment, catchment analysis, demographic projections, and regulatory compliance review",
+      "master plan with phasing strategy, infrastructure integration, green space design, stakeholder engagement plan, and investment roadmap",
+      "detailed landscape drawings, planting schedules, lighting design, public-realm specifications, and implementation manual",
+    ],
+  },
+  {
+    code: "ROAD_TRANSPORT",
+    label: "Road design, bridge engineering and transport infrastructure",
+    triggers: [/road.*design/i, /road.*rehab/i, /bridge.*design/i, /highway/i, /pavement/i, /transport.*infra/i, /culvert/i, /road.*supervision/i],
+    proofTerms: [/road/i, /bridge/i, /pavement/i, /highway/i, /culvert/i, /drainage/i, /transport/i, /ERA/i, /AASHTO/i],
+    methodologyBullets: [
+      "route survey and alignment design: topographic survey, geotechnical investigation (CBR, proctor, borehole/test pit), traffic count and ESAL design traffic calculation",
+      "pavement design per ERA/AASHTO standard: layer thicknesses, surfacing specification, drainage design (culverts, side drains), bridge/structure design and safety audit",
+      "construction supervision: materials testing programme (CBR, compaction, aggregate quality), progress reporting, variation control, payment certification, as-built documentation",
+    ],
+  },
+  {
+    code: "ENVIRONMENTAL_SOCIAL",
+    label: "Environmental and social impact assessment, safeguards and ESMP",
+    triggers: [/ESIA/i, /ESMP/i, /environmental.*impact/i, /social.*safeguard/i, /environmental.*assess/i, /EHS/i, /resettlement/i, /biodiversity/i],
+    proofTerms: [/ESIA/i, /ESMP/i, /environmental/i, /social/i, /safeguard/i, /mitigation/i, /stakeholder/i, /baseline/i, /ESF/i],
+    methodologyBullets: [
+      "baseline data collection: physical environment survey, biological/ecological survey, socioeconomic baseline — all primary field data, not desktop-only",
+      "impact identification and assessment matrix: impact significance rating, mitigation hierarchy (avoid → minimise → restore → offset) for each impact pathway",
+      "ESMP: management measures, monitoring indicators, institutional responsibilities, reporting schedule, grievance mechanism, and donor-standard (World Bank ESF/IFC PS) compliance package",
+    ],
+  },
+  {
+    code: "ICT_DIGITAL",
+    label: "ICT systems, digital platforms and information management",
+    triggers: [/ICT/i, /information.*system/i, /software.*develop/i, /digital.*platform/i, /database/i, /MIS/i, /ERP/i, /network.*design/i, /cyber/i],
+    proofTerms: [/ICT/i, /software/i, /system/i, /database/i, /platform/i, /network/i, /data/i, /MIS/i, /ERP/i, /deployment/i],
+    methodologyBullets: [
+      "requirements analysis and system architecture: business process review, functional specification, application/database/infrastructure layer design, security controls (access management, encryption, audit trail)",
+      "phased implementation: agile/iterative delivery, integration with existing systems (APIs, data migration), acceptance testing (unit/integration/UAT), training programme and change management",
+      "go-live and post-deployment: deployment checklist, parallel-run, SLA definition, support model, documentation set, source code and data handover",
+    ],
+  },
+  {
+    code: "EDUCATION_FACILITY",
+    label: "Education facility design, school and campus development",
+    triggers: [/school.*design/i, /university.*design/i, /campus.*develop/i, /education.*facilit/i, /training.*cent/i, /vocational.*facilit/i],
+    proofTerms: [/school/i, /university/i, /campus/i, /education/i, /classroom/i, /laboratory/i, /training/i, /faculty/i],
+    methodologyBullets: [
+      "functional brief and space schedule: classrooms, laboratories, library, administration, sanitation (pupil-ratio compliance), sports/recreation — with climate-responsive and accessible design",
+      "MEP coordination: power supply, backup solar/generator, water and sanitation, ICT cabling, fire detection and emergency systems",
+      "construction supervision and regulatory sign-off: materials testing, progress reporting, defects register, education authority functional approval, fire certificate, handover documentation",
+    ],
+  },
+  {
+    code: "SOCIAL_ADVISORY",
+    label: "Social development, advisory services and institutional strengthening",
+    triggers: [/social.*develop/i, /advisory.*service/i, /institutional.*strength/i, /capacity.*build/i, /livelihood/i, /community.*develop/i, /NGO/i, /welfare/i],
+    proofTerms: [/social/i, /advisory/i, /capacity/i, /stakeholder/i, /community/i, /governance/i, /livelihood/i, /training/i],
+    methodologyBullets: [
+      "situational analysis and needs assessment: participatory methodology, stakeholder mapping, baseline data collection, gap analysis against target outcomes",
+      "programme design: theory of change, activity schedule, indicator framework (output/outcome/impact), M&E plan, risk register",
+      "implementation: community mobilisation, capacity building workshops, institutional partnerships, progress reporting, adaptive management, and final evaluation methodology",
     ],
   },
 ];
@@ -158,12 +213,19 @@ function projectScore(project: ProjectLite, themes: ProposalTheme[], tenderText:
   const text = textOf(project.name, project.clientName, project.country, project.sector, project.summary, ...safeParseArr(project.serviceAreas));
   let score = 0;
   for (const t of themes) score += scoreTextAgainstTheme(text, t);
-  // Sector-match bonuses
+  // Sector-match bonuses — direct sector overlap is the strongest relevance signal
   if (/hospital|health|medical|clinic/i.test(text) && /hospital|health|medical|clinic/i.test(tenderText)) score += 15;
   if (/renovation|modification|retrofit|existing/i.test(text) && /renovation|premises|existing|assessment/i.test(tenderText)) score += 8;
-  if (/water|borehole|pump|hydraulic/i.test(text) && /water|borehole|pump|hydraulic/i.test(tenderText)) score += 10;
-  if (/structural|foundation|geotechnical/i.test(text) && /structural|foundation|geotechnical/i.test(tenderText)) score += 6;
-  // Contract value bonus (bigger projects = stronger evidence)
+  if (/water|borehole|pump|hydraulic|WASH|irrigation/i.test(text) && /water|borehole|pump|hydraulic|WASH|irrigation/i.test(tenderText)) score += 12;
+  if (/road|bridge|highway|pavement|transport.*infra/i.test(text) && /road|bridge|highway|pavement|transport.*infra/i.test(tenderText)) score += 12;
+  if (/structural|foundation|geotechnical/i.test(text) && /structural|foundation|geotechnical/i.test(tenderText)) score += 8;
+  if (/ESIA|ESMP|environmental.*impact|social.*safeguard/i.test(text) && /ESIA|ESMP|environmental.*impact|social.*safeguard/i.test(tenderText)) score += 12;
+  if (/ICT|software|information.*system|MIS|ERP|digital.*platform/i.test(text) && /ICT|software|information.*system|MIS|ERP|digital/i.test(tenderText)) score += 12;
+  if (/urban|master plan|municipal|spatial.*plan/i.test(text) && /urban|master plan|municipal|spatial.*plan/i.test(tenderText)) score += 10;
+  if (/school|university|campus|education/i.test(text) && /school|university|campus|education/i.test(tenderText)) score += 10;
+  if (/social.*develop|advisory|capacity.*build|community/i.test(text) && /social.*develop|advisory|capacity.*build|community/i.test(tenderText)) score += 8;
+  if (/World Bank|UNDP|donor.*fund/i.test(text) && /World Bank|UNDP|donor.*fund/i.test(tenderText)) score += 6;
+  // Contract value bonus (bigger projects = stronger institutional evidence)
   if (project.contractValue) score += Math.min(6, Math.log10(project.contractValue));
   // Country match bonus
   if (project.country && tenderText.toLowerCase().includes(project.country.toLowerCase())) score += 3;
@@ -174,14 +236,20 @@ function expertScore(expert: ExpertLite, themes: ProposalTheme[], tenderText: st
   const text = textOf(expert.fullName, expert.title, expert.profile, ...safeParseArr(expert.disciplines), ...safeParseArr(expert.sectors), ...safeParseArr(expert.certifications));
   let score = 0;
   for (const t of themes) score += scoreTextAgainstTheme(text, t);
-  // Role-match bonuses
-  if (/architect/i.test(text) && /architect|design|layout|space/i.test(tenderText)) score += 10;
-  if (/MEP|electrical|mechanical|sanitary/i.test(text) && /MEP|electrical|medical gas|equipment|sanitary/i.test(tenderText)) score += 8;
+  // Role-match bonuses — discipline relevance to the detected tender scope
+  if (/architect/i.test(text) && /architect|design|layout|space|building/i.test(tenderText)) score += 10;
+  if (/MEP|electrical|mechanical|sanitary/i.test(text) && /MEP|electrical|medical gas|equipment|sanitary|building.*service/i.test(tenderText)) score += 8;
   if (/biomedical|bio-medical/i.test(text) && /biomedical|bio-medical|medical equipment/i.test(tenderText)) score += 12;
-  if (/structural/i.test(text) && /structural|adequacy|seismic|building/i.test(tenderText)) score += 7;
-  if (/project manager|team leader|principal|director/i.test(text)) score += 4;
-  if (/geotechnical|hydrogeol|drilling/i.test(text) && /geotechnical|drilling|borehole|soil/i.test(tenderText)) score += 8;
-  if (/environmental|social|safeguard/i.test(text) && /environmental|ESF|World Bank|safeguard/i.test(tenderText)) score += 6;
+  if (/structural/i.test(text) && /structural|adequacy|seismic|building|bridge/i.test(tenderText)) score += 8;
+  if (/project manager|team leader|principal|director|programme.*manager/i.test(text)) score += 4;
+  if (/geotechnical|hydrogeol|drilling/i.test(text) && /geotechnical|drilling|borehole|soil|foundation/i.test(tenderText)) score += 10;
+  if (/environmental|social|safeguard|ESIA|ESMP/i.test(text) && /environmental|ESIA|ESMP|ESF|World Bank|safeguard/i.test(tenderText)) score += 10;
+  if (/hydraulic|water.*engineer|civil.*engineer.*water|hydrologist/i.test(text) && /water supply|hydraulic|borehole|WASH|irrigation/i.test(tenderText)) score += 10;
+  if (/road.*engineer|highway|transport.*engineer|pavement/i.test(text) && /road|bridge|highway|pavement|transport/i.test(tenderText)) score += 10;
+  if (/ICT|software|system.*analyst|database|network.*engineer|developer/i.test(text) && /ICT|software|system|MIS|ERP|digital/i.test(tenderText)) score += 10;
+  if (/urban.*planner|town.*planner|spatial.*planner|GIS/i.test(text) && /urban|master plan|spatial.*plan|GIS/i.test(tenderText)) score += 8;
+  if (/social.*specialist|community.*develop|livelihoods/i.test(text) && /social|community|stakeholder|livelihood/i.test(tenderText)) score += 8;
+  if (/education.*specialist|school.*designer|campus.*architect/i.test(text) && /school|university|campus|education/i.test(tenderText)) score += 8;
   if (expert.yearsExperience) score += Math.min(6, expert.yearsExperience / 4);
   return score;
 }
@@ -209,22 +277,48 @@ function detectRequiredSections(tenderText: string): string[] {
 
 function detectEvaluationCriteria(tenderText: string): string[] {
   const criteria: string[] = [];
-  // Look for numbered/bulleted evaluation criteria
   const evalSection = tenderText.match(/evaluation criteria[\s\S]{0,2000}/i)?.[0] ?? tenderText;
+
+  // Healthcare
   if (/healthcare.*experience|similar.*hospital|medical.*facility.*experience/i.test(evalSection)) criteria.push("Relevant healthcare / similar medical facility project experience — lead with named hospitals, values, and client references");
-  if (/portfolio|quality.*portfolio|relevance.*portfolio/i.test(evalSection)) criteria.push("Quality and relevance of project portfolio — include photos, drawings, and project outcome evidence");
   if (/technical understanding|facility design|clinical|healthcare.*design/i.test(evalSection)) criteria.push("Technical understanding of healthcare facility design — demonstrate clinical workflow, IPC, MEP integration knowledge");
+
+  // Water/Infrastructure
+  if (/water.*experience|water.*project|hydraulic|WASH|sanitation.*experience/i.test(evalSection)) criteria.push("Relevant water supply / sanitation / hydraulic engineering project experience — lead with named schemes, capacities, and client references");
+  if (/borehole|groundwater|hydrogeol/i.test(evalSection)) criteria.push("Hydrogeological and borehole investigation expertise — show yield, depth, and field supervision evidence");
+
+  // Road/Bridge
+  if (/road.*experience|bridge.*experience|transport.*experience|pavement.*design/i.test(evalSection)) criteria.push("Relevant road / bridge / transport infrastructure experience — lead with route length, contract value, and supervision outcomes");
+  if (/traffic.*study|pavement.*design|highway.*design/i.test(evalSection)) criteria.push("Technical depth in road design — demonstrate pavement design, drainage, and safety audit capability");
+
+  // Environmental/Social
+  if (/ESIA|environmental.*experience|social.*assessment|safeguard.*experience/i.test(evalSection)) criteria.push("ESIA/ESMP experience — show accepted reports, donor compliance, and stakeholder engagement track record");
+  if (/World Bank|UNDP|donor.*standard|safeguard.*framework/i.test(evalSection)) criteria.push("Donor compliance track record (World Bank ESF, IFC PS, or equivalent) — position as risk reduction advantage");
+
+  // ICT
+  if (/ICT.*experience|system.*develop|software.*experience|MIS|ERP/i.test(evalSection)) criteria.push("Relevant ICT / system development experience — show deployed systems, user counts, and client references");
+  if (/data.*security|cyber|network.*design/i.test(evalSection)) criteria.push("Technical depth in data security, network architecture, and system resilience");
+
+  // Urban Planning
+  if (/urban.*experience|master.*plan.*experience|planning.*experience|GIS/i.test(evalSection)) criteria.push("Urban / master planning experience — show plans delivered, scale, and regulatory alignment outcomes");
+
+  // Education
+  if (/school.*design|university.*design|education.*facility.*experience/i.test(evalSection)) criteria.push("Education facility design experience — show comparable school/campus projects with functional approval outcomes");
+
+  // Universal criteria
+  if (/portfolio|quality.*portfolio|relevance.*portfolio/i.test(evalSection)) criteria.push("Quality and relevance of project portfolio — include photos, drawings, and project outcome evidence");
   if (/professional team|multidisciplinary|strength.*team|key.*personnel|team.*composition/i.test(evalSection)) criteria.push("Strength of professional team — show each expert's role on a comparable previous project");
-  if (/water.*experience|water.*project|infrastructure.*experience/i.test(evalSection)) criteria.push("Relevant water infrastructure / engineering project experience");
-  if (/company.*profile|firm.*profile|organisational.*capacity/i.test(evalSection)) criteria.push("Company profile and organisational capacity — licence grade, staff count, ISO certification");
+  if (/company.*profile|firm.*profile|organisational.*capacity/i.test(evalSection)) criteria.push("Company profile and organisational capacity — licence grade, staff count, registrations, certifications");
   if (/submission.*requirement|compliance.*submission|format.*requirement/i.test(evalSection)) criteria.push("Compliance with all submission requirements — section structure, file format, subject line, deadline");
   if (/value.*added|additional.*service|added.*value/i.test(evalSection)) criteria.push("Value-added services and in-house capabilities beyond minimum scope");
+  if (/methodology|technical.*approach|work.*plan/i.test(evalSection)) criteria.push("Quality of technical methodology — demonstrate structured, deliverable-linked work plan with QA gates");
+
   return criteria.length > 0 ? criteria : [
-    "Relevant project experience — lead with highest-value comparable projects",
-    "Team qualifications — show licences, disciplines, and comparable previous roles",
-    "Technical approach — demonstrate understanding of scope and methodology",
-    "Company capacity — licence grade, completed projects, certifications",
-    "Compliance with submission requirements",
+    "Relevant project experience — lead with highest-value comparable projects by sector",
+    "Team qualifications and comparable previous roles — show licences and specific project assignments",
+    "Technical approach and methodology — demonstrate scope understanding, deliverables, and QA process",
+    "Company capacity — licence grade, completed projects, institutional certifications",
+    "Compliance with all submission format and document requirements",
   ];
 }
 
@@ -279,12 +373,18 @@ function detectThemes(tenderText: string): ProposalTheme[] {
 
 function inferSector(tenderText: string): string {
   if (/health|hospital|medical|clinic|specialty.*cent/i.test(tenderText)) return "Healthcare / Medical Facility Design";
-  if (/water supply|borehole|pump|hydraulic|irrigation|WASH/i.test(tenderText)) return "Water Infrastructure";
-  if (/road|bridge|highway|transport/i.test(tenderText)) return "Transport Infrastructure";
-  if (/urban|master plan|municipal|eco.?park/i.test(tenderText)) return "Urban / Master Planning";
-  if (/school|education|university|campus/i.test(tenderText)) return "Education Facility";
-  if (/hotel|hospitality|resort/i.test(tenderText)) return "Hospitality";
+  if (/water supply|borehole|pump|hydraulic|irrigation|WASH|sanitation|wastewater/i.test(tenderText)) return "Water & Sanitation Infrastructure";
+  if (/road.*design|road.*rehab|bridge.*design|highway|pavement.*design/i.test(tenderText)) return "Road / Bridge / Transport Infrastructure";
+  if (/ESIA|ESMP|environmental.*impact|social.*safeguard|resettlement|biodiversity.*assess/i.test(tenderText)) return "Environmental & Social Impact Assessment";
+  if (/ICT|software.*develop|information.*system|digital.*platform|MIS|ERP|database.*system/i.test(tenderText)) return "ICT / Digital Systems";
+  if (/urban|master plan|municipal.*develop|eco.?park|spatial.*plan/i.test(tenderText)) return "Urban / Master Planning";
+  if (/school.*design|university.*design|campus.*develop|education.*facilit/i.test(tenderText)) return "Education Facility Design";
+  if (/social.*develop|advisory.*service|institutional.*strength|capacity.*build|community.*develop/i.test(tenderText)) return "Social Development & Advisory";
+  if (/hotel|hospitality|resort/i.test(tenderText)) return "Hospitality & Tourism";
   if (/factory|industrial|manufacturing/i.test(tenderText)) return "Industrial / Manufacturing";
+  if (/geotechnical|soil.*investigation|foundation.*design|seismic/i.test(tenderText)) return "Geotechnical & Structural Engineering";
+  if (/renovation|modification|retrofit|existing building/i.test(tenderText)) return "Building Renovation & Adaptation";
+  if (/architecture|building.*design|construction.*supervision|structural.*design/i.test(tenderText)) return "Building Design & Construction Supervision";
   return "General Consultancy / Engineering";
 }
 

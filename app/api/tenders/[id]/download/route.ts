@@ -7,7 +7,10 @@ import { buildSubmissionPlan, findExtraGeneratedDocuments, findMissingGeneratedD
 import { safeFileBaseName } from "../../../../../lib/engine/proposal-labels";
 
 function safeParseArr(v: unknown): string[] {
-  try { return JSON.parse(v as string) as string[]; } catch { return []; }
+  try {
+    const parsed = JSON.parse(v as string);
+    return Array.isArray(parsed) ? parsed.map(String).filter(Boolean) : [];
+  } catch { return []; }
 }
 
 function normalizeName(value: string): string {
@@ -197,6 +200,11 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     const generatedNames = generatedDocs.map((d) => normalizeName(d.exactFileName ?? generatedFileName(d.name)));
 
     if (hasExplicitSubmissionScope(tender)) {
+      // Submission plan is the authoritative scope check — it uses a normaliser that strips
+      // extensions and collapses hyphens/dashes to spaces, so filenames like
+      // "Technical-Proposal.docx" and "Technical Proposal.docx" are treated as equivalent.
+      // Skip the legacy requiredNames / requiredOrder checks below to avoid false 400 errors
+      // caused by the two normalisers disagreeing on the same filenames.
       const submissionPlan = buildSubmissionPlan({
         id: tender.id,
         title: tender.title,
@@ -216,23 +224,25 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
           generatedCount: generatedDocs.length,
         }, { status: 409 });
       }
-    }
-
-    if (requiredNames.length > 0) {
-      const missing = requiredNames.filter((name) => !generatedNames.includes(name));
-      const extras = generatedNames.filter((name) => !requiredNames.includes(name));
-      if (missing.length > 0 || extras.length > 0 || generatedDocs.length !== requiredNames.length) {
-        return NextResponse.json(
-          { error: "Generated package does not match tender-required file naming scope.", missing, extras, requiredCount: requiredNames.length, generatedCount: generatedDocs.length },
-          { status: 400 },
-        );
+    } else {
+      // Legacy filename checks — only run when there is no explicit submission plan scope
+      // so we don't double-validate with a different normaliser.
+      if (requiredNames.length > 0) {
+        const missing = requiredNames.filter((name) => !generatedNames.includes(name));
+        const extras = generatedNames.filter((name) => !requiredNames.includes(name));
+        if (missing.length > 0 || extras.length > 0 || generatedDocs.length !== requiredNames.length) {
+          return NextResponse.json(
+            { error: "Generated package does not match tender-required file naming scope.", missing, extras, requiredCount: requiredNames.length, generatedCount: generatedDocs.length },
+            { status: 400 },
+          );
+        }
       }
-    }
 
-    if (requiredOrder.length > 0) {
-      const outOfOrder = requiredOrder.some((name, index) => generatedNames[index] !== name);
-      if (outOfOrder) {
-        return NextResponse.json({ error: "Generated package order does not match tender-required file order.", requiredOrder, generatedOrder: generatedNames }, { status: 400 });
+      if (requiredOrder.length > 0) {
+        const outOfOrder = requiredOrder.some((name, index) => generatedNames[index] !== name);
+        if (outOfOrder) {
+          return NextResponse.json({ error: "Generated package order does not match tender-required file order.", requiredOrder, generatedOrder: generatedNames }, { status: 400 });
+        }
       }
     }
 
