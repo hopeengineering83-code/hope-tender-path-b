@@ -39,6 +39,7 @@ import {
   buildValueAddedServices,
 } from "./understanding-and-value-added";
 import { reorderToCanonicalSequence } from "./section-reorderer";
+import { renderDynamicTableOfContents } from "./dynamic-toc";
 
 const BRAND_BLUE = "1F4E79";
 const BRAND_GRAY = "595959";
@@ -774,7 +775,11 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   // TOC → Executive Summary → Why Us → A.x → B.x → C.x → D.x → E.x → Submission Control Sheet)
   // so the appended deterministic sections don't show up out of order at the end of the document.
   const reordered = reorderToCanonicalSequence(enriched.markdown);
-  const finalized = finalizeClientReadyProposalMarkdown(reordered, guardInput);
+  // Round-8: replace the static TOC with one built from the actual section
+  // headings present in the (now reordered) document. The fallback writes a
+  // generic TOC that doesn't reflect the 30+ sections this pipeline produces.
+  const withDynamicToc = renderDynamicTableOfContents(reordered);
+  const finalized = finalizeClientReadyProposalMarkdown(withDynamicToc, guardInput);
   const clientMarkdown = cleanClientLanguage(finalized.markdown);
   const auditSummary = benchmarkAuditSummary(clientMarkdown);
   const children = markdownToDocx(clientMarkdown);
