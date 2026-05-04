@@ -56,9 +56,16 @@ function numberFromText(value: string): number | null {
   return word ? WORD_NUMBERS[word[1]] ?? null : null;
 }
 
-function inferQuantity(text: string) {
+function inferQuantity(text: string): number | null {
   const numeric = text.match(/\b(\d{1,3}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty)\s+(?:key\s+)?(experts?|specialists?|personnel|staff|projects?|references?|assignments?|forms?|annexes?|appendices|copies|sets|files|documents)\b/i);
-  if (numeric) return numberFromText(numeric[1]);
+  if (numeric) {
+    // Reject if the number looks like a section/clause/page/appendix reference
+    // e.g. "Section 29 Expert Requirements" or "Annex 5 Forms"
+    const idx = text.indexOf(numeric[0]);
+    const before = text.slice(Math.max(0, idx - 50), idx);
+    if (/\b(?:section|clause|article|page|appendix|annex|item|part|chapter|schedule|no\.?|number|ref|figure|table)\s*[:\.\-]?\s*\d*\s*$/i.test(before)) return null;
+    return numberFromText(numeric[1]);
+  }
   const atLeast = text.match(/(?:at\s+least|minimum\s+of|not\s+less\s+than)\s+(\d{1,3}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty)/i);
   if (atLeast) return numberFromText(atLeast[1]);
   return null;
@@ -251,7 +258,11 @@ export function normalizeStrategicRequirements(requirements: RequirementDraft[])
     if (group.length === 0) continue;
     const first = group[0];
     const priority = group.reduce((acc, item) => strongestPriority(acc, item.priority), first.priority);
-    const quantity = Math.max(...group.map((item) => item.requiredQuantity ?? 0), 0) || null;
+    // Cap quantities by type to reject false positives (form rows, section numbers, page counts).
+    // Real tenders ask for at most ~15 expert CVs or ~10 project references.
+    const rawQty = Math.max(...group.map((item) => item.requiredQuantity ?? 0), 0) || null;
+    const qtyMax = first.requirementType === "EXPERT" ? 20 : first.requirementType === "PROJECT_EXPERIENCE" ? 15 : 50;
+    const quantity = rawQty !== null && rawQty <= qtyMax ? rawQty : null;
     const pageLimit = Math.max(...group.map((item) => item.pageLimit ?? 0), 0) || null;
     const exactOrder = Math.min(...group.map((item) => item.exactOrder ?? 9999));
     const samples = group

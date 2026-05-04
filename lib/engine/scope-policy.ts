@@ -52,7 +52,7 @@ export function exactSelectionLimit(requirements: ScopeRequirement[], type: stri
     .filter((requirement) => (requirement.requiredQuantity ?? 0) > 0)
     .filter((requirement) => hasExplicitQuantityLanguage(requirement, type))
     .map((requirement) => requirement.requiredQuantity ?? 0)
-    .filter((quantity) => quantity > 0 && quantity <= 50);
+    .filter((quantity) => quantity > 0 && quantity <= (type === "EXPERT" ? 20 : 15));
 
   return explicit.length > 0 ? Math.max(...explicit) : 0;
 }
