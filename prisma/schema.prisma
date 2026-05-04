@@ -56,6 +56,19 @@ model Company {
   profileSummary    String?
   knowledgeMode     String                    @default("PROFILE_FIRST")
   setupCompletedAt  DateTime?
+  // Authorising representative (used in D.4 Declaration of Eligibility,
+  // Cover Page Submitted-by/to block, and A.1 Company Background)
+  gmName            String?
+  gmTitle           String?
+  gmLicense         String?
+  // Institutional metadata (used in A.0 Portfolio at a Glance, A.1 Company
+  // Background, A.7 In-House Capabilities)
+  foundingYear      Int?
+  headcount         Int?
+  licenseGrade      String?
+  registrationNumber String?
+  tin               String?
+  vat               String?
   userId            String                    @unique
   user              User                      @relation(fields: [userId], references: [id], onDelete: Cascade)
   experts           Expert[]

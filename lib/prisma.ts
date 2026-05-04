@@ -89,6 +89,25 @@ async function bootstrap(client: PrismaClient): Promise<void> {
   )`);
   await client.$executeRawUnsafe(`CREATE UNIQUE INDEX IF NOT EXISTS "Company_userId_key" ON "Company"("userId")`);
 
+  // Round-10: institutional metadata fields used by the proposal generator
+  // (D.4 Declaration, A.1/A.2 Company sections, Submitted-by/to block).
+  // ALTER TABLE IF NOT EXISTS COLUMN — safe to run repeatedly on existing
+  // databases. Each column is added independently so partial migrations
+  // succeed.
+  for (const [col, type] of [
+    ["gmName", "TEXT"],
+    ["gmTitle", "TEXT"],
+    ["gmLicense", "TEXT"],
+    ["foundingYear", "INTEGER"],
+    ["headcount", "INTEGER"],
+    ["licenseGrade", "TEXT"],
+    ["registrationNumber", "TEXT"],
+    ["tin", "TEXT"],
+    ["vat", "TEXT"],
+  ] as const) {
+    await client.$executeRawUnsafe(`ALTER TABLE "Company" ADD COLUMN IF NOT EXISTS "${col}" ${type}`);
+  }
+
   await client.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "AppSettings" (
     "id" TEXT NOT NULL PRIMARY KEY,
     "companyId" TEXT NOT NULL,

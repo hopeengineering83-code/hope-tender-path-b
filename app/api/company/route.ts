@@ -194,6 +194,16 @@ export async function PUT(req: Request) {
         profileSummary: keepOrNull(body.profileSummary),
         knowledgeMode: clean(body.knowledgeMode) || "PROFILE_FIRST",
         setupCompletedAt: body.setupCompletedAt ? new Date(body.setupCompletedAt as string) : null,
+        // Round-10: institutional metadata used by the proposal generator
+        gmName: keepOrNull(body.gmName),
+        gmTitle: keepOrNull(body.gmTitle),
+        gmLicense: keepOrNull(body.gmLicense),
+        foundingYear: typeof body.foundingYear === "number" ? body.foundingYear : (clean(body.foundingYear) ? Number(clean(body.foundingYear)) : null),
+        headcount: typeof body.headcount === "number" ? body.headcount : (clean(body.headcount) ? Number(clean(body.headcount)) : null),
+        licenseGrade: keepOrNull(body.licenseGrade),
+        registrationNumber: keepOrNull(body.registrationNumber),
+        tin: keepOrNull(body.tin),
+        vat: keepOrNull(body.vat),
         userId,
       },
       update: {
@@ -210,6 +220,16 @@ export async function PUT(req: Request) {
         profileSummary: chooseIncomingOrExisting(body.profileSummary, existing?.profileSummary),
         ...(body.knowledgeMode !== undefined && { knowledgeMode: clean(body.knowledgeMode) || existing?.knowledgeMode || "PROFILE_FIRST" }),
         ...(body.setupCompletedAt !== undefined && { setupCompletedAt: new Date(body.setupCompletedAt as string) }),
+        // Round-10: institutional metadata
+        ...(body.gmName !== undefined && { gmName: chooseIncomingOrExisting(body.gmName, existing?.gmName) }),
+        ...(body.gmTitle !== undefined && { gmTitle: chooseIncomingOrExisting(body.gmTitle, existing?.gmTitle) }),
+        ...(body.gmLicense !== undefined && { gmLicense: chooseIncomingOrExisting(body.gmLicense, existing?.gmLicense) }),
+        ...(body.foundingYear !== undefined && { foundingYear: typeof body.foundingYear === "number" ? body.foundingYear : (clean(body.foundingYear) ? Number(clean(body.foundingYear)) : null) }),
+        ...(body.headcount !== undefined && { headcount: typeof body.headcount === "number" ? body.headcount : (clean(body.headcount) ? Number(clean(body.headcount)) : null) }),
+        ...(body.licenseGrade !== undefined && { licenseGrade: chooseIncomingOrExisting(body.licenseGrade, existing?.licenseGrade) }),
+        ...(body.registrationNumber !== undefined && { registrationNumber: chooseIncomingOrExisting(body.registrationNumber, existing?.registrationNumber) }),
+        ...(body.tin !== undefined && { tin: chooseIncomingOrExisting(body.tin, existing?.tin) }),
+        ...(body.vat !== undefined && { vat: chooseIncomingOrExisting(body.vat, existing?.vat) }),
         updatedAt: new Date(),
       },
       include: {

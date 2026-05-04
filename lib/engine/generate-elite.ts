@@ -199,7 +199,12 @@ function fallbackProposalMarkdown(params: {
   tenderTitle: string;
   clientName: string;
   companyName: string;
+  companyLegalName?: string | null;
   companyAddress?: string | null;
+  companyTIN?: string | null;
+  companyVAT?: string | null;
+  companyGM?: string | null;
+  companyGMLicense?: string | null;
   primarySector: string;
   requirements: string[];
   differentiators: string[];
@@ -266,7 +271,12 @@ function fallbackProposalMarkdown(params: {
   // to a minimal block when company metadata is sparse.
   lines.push(buildSubmittedByToBlock({
     companyName: params.companyName,
+    companyLegalName: params.companyLegalName ?? null,
     companyAddress: params.companyAddress ?? null,
+    companyTIN: params.companyTIN ?? null,
+    companyVAT: params.companyVAT ?? null,
+    companyGM: params.companyGM ?? null,
+    companyGMLicense: params.companyGMLicense ?? null,
     clientName: params.clientName,
     exactEmails: params.exactEmails ?? [],
     exactSubject,
@@ -629,11 +639,11 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
       mode = "AI bid-writer + evaluator response matrix + full evidence library + client-ready benchmark finalizer + professional DOCX polish";
     } catch (error) {
       aiError = error instanceof Error ? error.message : String(error);
-      sourceMarkdown = fallbackProposalMarkdown({ tenderTitle: tender.title, clientName: intelligence.clientName, companyName: company.name, companyAddress: company.address, primarySector: intelligence.primarySector, requirements: requirementLines, differentiators: intelligence.differentiators, submissionRules: intelligence.submissionRules, expertLines, projectLines, experts: experts as ExpertRecord[], projects: projects as ProjectRecord[], reviewedExpertCount: experts.length, companyEvidenceLines, projectEvidenceLines, complianceLines, expertRequired, projectRequired, themes: intelligence.themes, evaluationCriteria: intelligence.evaluationCriteria, appendixList: intelligence.appendixList, noFinancialProposal: intelligence.noFinancialProposal, exactEmails: intelligence.exactEmails, exactSubjectLine: intelligence.exactSubjectLine, gapsToAddressInNarrative: intelligence.gapsToAddressInNarrative, requiredSections: intelligence.requiredSections, tenderDeadline: tender.deadline });
+      sourceMarkdown = fallbackProposalMarkdown({ tenderTitle: tender.title, clientName: intelligence.clientName, companyName: company.name, companyLegalName: company.legalName, companyAddress: company.address, companyTIN: company.tin, companyVAT: company.vat, companyGM: company.gmName, companyGMLicense: company.gmLicense, primarySector: intelligence.primarySector, requirements: requirementLines, differentiators: intelligence.differentiators, submissionRules: intelligence.submissionRules, expertLines, projectLines, experts: experts as ExpertRecord[], projects: projects as ProjectRecord[], reviewedExpertCount: experts.length, companyEvidenceLines, projectEvidenceLines, complianceLines, expertRequired, projectRequired, themes: intelligence.themes, evaluationCriteria: intelligence.evaluationCriteria, appendixList: intelligence.appendixList, noFinancialProposal: intelligence.noFinancialProposal, exactEmails: intelligence.exactEmails, exactSubjectLine: intelligence.exactSubjectLine, gapsToAddressInNarrative: intelligence.gapsToAddressInNarrative, requiredSections: intelligence.requiredSections, tenderDeadline: tender.deadline });
       mode = "deterministic benchmark fallback + evaluator response matrix + client-ready benchmark finalizer + professional DOCX polish";
     }
   } else {
-    sourceMarkdown = fallbackProposalMarkdown({ tenderTitle: tender.title, clientName: intelligence.clientName, companyName: company.name, companyAddress: company.address, primarySector: intelligence.primarySector, requirements: requirementLines, differentiators: intelligence.differentiators, submissionRules: intelligence.submissionRules, expertLines, projectLines, experts: experts as ExpertRecord[], projects: projects as ProjectRecord[], reviewedExpertCount: experts.length, companyEvidenceLines, projectEvidenceLines, complianceLines, expertRequired, projectRequired, themes: intelligence.themes, evaluationCriteria: intelligence.evaluationCriteria, appendixList: intelligence.appendixList, noFinancialProposal: intelligence.noFinancialProposal, exactEmails: intelligence.exactEmails, exactSubjectLine: intelligence.exactSubjectLine, gapsToAddressInNarrative: intelligence.gapsToAddressInNarrative, requiredSections: intelligence.requiredSections, tenderDeadline: tender.deadline });
+    sourceMarkdown = fallbackProposalMarkdown({ tenderTitle: tender.title, clientName: intelligence.clientName, companyName: company.name, companyLegalName: company.legalName, companyAddress: company.address, companyTIN: company.tin, companyVAT: company.vat, companyGM: company.gmName, companyGMLicense: company.gmLicense, primarySector: intelligence.primarySector, requirements: requirementLines, differentiators: intelligence.differentiators, submissionRules: intelligence.submissionRules, expertLines, projectLines, experts: experts as ExpertRecord[], projects: projects as ProjectRecord[], reviewedExpertCount: experts.length, companyEvidenceLines, projectEvidenceLines, complianceLines, expertRequired, projectRequired, themes: intelligence.themes, evaluationCriteria: intelligence.evaluationCriteria, appendixList: intelligence.appendixList, noFinancialProposal: intelligence.noFinancialProposal, exactEmails: intelligence.exactEmails, exactSubjectLine: intelligence.exactSubjectLine, gapsToAddressInNarrative: intelligence.gapsToAddressInNarrative, requiredSections: intelligence.requiredSections, tenderDeadline: tender.deadline });
   }
 
   const matrixMarkdown = appendEvaluatorResponseMatrix(sourceMarkdown, evaluatorMatrixInput);
@@ -680,10 +690,11 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
       companyName: company.name,
       clientName: intelligence.clientName,
       tenderTitle: tender.title,
-      // Company schema does not have explicit GM/license columns — left null until
-      // the user adds these to the company profile. Falls back to generic signature.
-      companyGM: null,
-      companyGMLicense: null,
+      // Round-10: gmName / gmLicense come from the Company schema. When the
+      // user has populated them, the declaration carries a real signature
+      // line; otherwise it falls back to the generic "General Manager" line.
+      companyGM: company.gmName ?? null,
+      companyGMLicense: company.gmLicense ?? null,
     }));
   }
 
