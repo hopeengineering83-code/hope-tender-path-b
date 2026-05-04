@@ -22,6 +22,10 @@ import {
   type ExpertRecord,
   type ProjectRecord,
 } from "./benchmark-tables";
+import { enforceNarrativeThroughline } from "./narrative-throughline-enforcer";
+import { enrichSectorVocabulary } from "./sector-vocabulary-enricher";
+import { buildPortfolioMetricsBlock, computePortfolioMetrics } from "./portfolio-metrics";
+import { buildPrincipalQualificationsSection } from "./principal-qualifications";
 
 const BRAND_BLUE = "1F4E79";
 const BRAND_GRAY = "595959";
@@ -669,8 +673,36 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     }));
   }
 
+  // Round-4: Portfolio at a Glance + Principal Qualifications. Both gated by
+  // the heading-idempotency check so they don't duplicate AI-produced content.
+  if (!upstreamCheck("A.0 Portfolio at a Glance") && !upstreamCheck("Portfolio at a Glance")) {
+    const metrics = computePortfolioMetrics({
+      experts: experts as ExpertRecord[],
+      projects: projects as ProjectRecord[],
+    });
+    round2Sections.push(buildPortfolioMetricsBlock(metrics, company.name));
+  }
+  if (!upstreamCheck("A.4.1 Principal Qualifications — Detailed Bios") && !upstreamCheck("Principal Qualifications") && !upstreamCheck("Detailed Bios")) {
+    const cv = buildPrincipalQualificationsSection({ experts: experts as ExpertRecord[], topN: 5 });
+    if (cv) round2Sections.push(cv);
+  }
+
   const combinedMarkdown = [matrixMarkdown, strengtheningMarkdown, benchmarkTables, ...round2Sections].filter(Boolean).join("\n\n");
-  const finalized = finalizeClientReadyProposalMarkdown(combinedMarkdown, guardInput);
+
+  // Round-4 self-healing pass: enforce the benchmark "narrative throughline"
+  // rule (top 1–2 projects must appear in Cover Letter, Executive Summary,
+  // and Section B/Relevant Experience) and ensure sector-specific technical
+  // vocabulary is present. Both are idempotent — if the upstream output
+  // already covers them, nothing is added.
+  const throughline = enforceNarrativeThroughline({
+    markdown: combinedMarkdown,
+    topProjects: (projects as ProjectRecord[]).slice(0, 2),
+  });
+  const enriched = enrichSectorVocabulary({
+    markdown: throughline.markdown,
+    primarySector: intelligence.primarySector,
+  });
+  const finalized = finalizeClientReadyProposalMarkdown(enriched.markdown, guardInput);
   const clientMarkdown = cleanClientLanguage(finalized.markdown);
   const auditSummary = benchmarkAuditSummary(clientMarkdown);
   const children = markdownToDocx(clientMarkdown);
