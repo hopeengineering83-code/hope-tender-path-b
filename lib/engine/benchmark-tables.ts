@@ -11,7 +11,7 @@
  * with the data the company has.
  */
 
-type ExpertRecord = {
+export type ExpertRecord = {
   fullName: string;
   title?: string | null;
   email?: string | null;
@@ -23,7 +23,7 @@ type ExpertRecord = {
   profile?: string | null;
 };
 
-type ProjectRecord = {
+export type ProjectRecord = {
   name: string;
   clientName?: string | null;
   country?: string | null;
