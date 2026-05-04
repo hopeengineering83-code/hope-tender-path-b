@@ -13,8 +13,8 @@ const SIGNALS: Array<{ label: string; patterns: RegExp[] }> = [
   { label: "value / scale proof", patterns: [/value/i, /contract/i, /ETB|USD|EUR|GBP|AED|SAR/i, /million|billion/i, /m\b/i] },
   { label: "expert / CV proof", patterns: [/expert/i, /CV/i, /team/i, /specialist/i, /qualification/i, /licence|license/i] },
   { label: "appendix proof", patterns: [/appendix/i, /certificate/i, /registration/i, /licence|license/i, /photo/i, /drawing/i] },
-  { label: "healthcare functional proof", patterns: [/Emergency/i, /OPD/i, /In-patient/i, /Laboratory/i, /Radiology/i, /Imaging/i, /Pharmacy/i] },
-  { label: "biomedical / MEP proof", patterns: [/biomedical/i, /medical equipment/i, /medical gas/i, /MEP/i, /HVAC/i, /electrical/i, /radiation shielding/i] },
+  { label: "sector-specific functional depth", patterns: [/Emergency|OPD|Laboratory|Radiology|Pharmacy|patient flow|hydraulic.*model|borehole|water.*treatment|WASH|road.*design|pavement|bridge.*design|ESIA|ESMP|environmental.*impact|master.*plan|GIS.*analysis|ICT.*architect|software.*develop|MIS.*develop|school.*design|campus|education.*facilit/i] },
+  { label: "technical systems integration", patterns: [/biomedical/i, /medical equipment/i, /medical gas/i, /MEP/i, /HVAC/i, /radiation shielding/i, /hydraulic.*system/i, /pipeline.*network/i, /structural.*design/i, /network.*infrastructure/i, /laboratory.*equipment/i] },
   { label: "approval / QA proof", patterns: [/approval/i, /regulatory/i, /QA|QC/i, /quality assurance/i, /review gate/i, /document control/i] },
   { label: "bid-review controls", patterns: [/bid-team confirmation/i, /to be confirmed/i, /unsupported claim/i, /evidence control/i, /source traceability/i] },
 ];

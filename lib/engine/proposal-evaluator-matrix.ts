@@ -32,14 +32,24 @@ function take(lines: string[], count: number, maxLen = 260): string[] {
     .map((line) => line.length > maxLen ? `${line.slice(0, maxLen - 1)}…` : line);
 }
 
-function pickEvidence(input: EvaluatorMatrixInput, index: number): string {
+function pickEvidence(requirement: string, input: EvaluatorMatrixInput, index: number): string {
   const pool = [
     ...take(input.projectLines, 4, 260),
     ...take(input.expertLines, 4, 240),
     ...take(input.companyEvidenceLines, 3, 240),
     ...take(input.projectEvidenceLines, 3, 240),
   ];
-  return pool[index % Math.max(pool.length, 1)] || "Bid-team confirmation: attach verified supporting evidence before final submission.";
+  if (pool.length === 0) return "Bid-team confirmation: attach verified supporting evidence before final submission.";
+  const reqWords = requirement.toLowerCase().split(/\W+/).filter((w) => w.length > 3);
+  if (reqWords.length > 0) {
+    const scored = pool.map((line) => {
+      const lower = line.toLowerCase();
+      return { line, score: reqWords.filter((w) => lower.includes(w)).length };
+    });
+    scored.sort((a, b) => b.score - a.score);
+    if (scored[0].score > 0) return scored[0].line;
+  }
+  return pool[index % pool.length];
 }
 
 function proofItems(input: EvaluatorMatrixInput): string[] {
@@ -68,7 +78,7 @@ export function appendEvaluatorResponseMatrix(markdown: string, input: Evaluator
     output += `\n\n### Evaluation Point ${index + 1}`;
     output += `\n- **Evaluator concern:** ${requirement}`;
     output += "\n- **Response strategy:** Address the requirement directly, show how the method reduces delivery risk, and connect the response to verified evidence.";
-    output += `\n- **Mapped evidence:** ${pickEvidence(input, index)}`;
+    output += `\n- **Mapped evidence:** ${pickEvidence(requirement, input, index)}`;
     output += "\n- **Bid-review action:** Confirm attachment, file name, signature/stamp status and compliance before final submission.";
   });
 
