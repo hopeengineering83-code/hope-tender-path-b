@@ -26,6 +26,11 @@ import { enforceNarrativeThroughline } from "./narrative-throughline-enforcer";
 import { enrichSectorVocabulary } from "./sector-vocabulary-enricher";
 import { buildPortfolioMetricsBlock, computePortfolioMetrics } from "./portfolio-metrics";
 import { buildPrincipalQualificationsSection } from "./principal-qualifications";
+import { buildRisksMitigationsTable } from "./risks-mitigations";
+import { buildWhyUsSummary } from "./why-us-summary";
+import { buildWorkPlanTable } from "./work-plan-timeline";
+import { buildBidComplianceMapping } from "./bid-compliance-mapping";
+import { formatQualityScoreSummary, scoreProposalQuality } from "./proposal-quality-scorer";
 
 const BRAND_BLUE = "1F4E79";
 const BRAND_GRAY = "595959";
@@ -687,6 +692,29 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     if (cv) round2Sections.push(cv);
   }
 
+  // Round-5: high-impact evaluator-friendly sections.
+  if (!upstreamCheck(`Why ${company.name} for ${intelligence.clientName}`) && !upstreamCheck("Why Us") && !upstreamCheck(`Why ${company.name}`)) {
+    const whyUs = buildWhyUsSummary({
+      companyName: company.name,
+      clientName: intelligence.clientName,
+      experts: experts as ExpertRecord[],
+      projects: projects as ProjectRecord[],
+      differentiators: intelligence.differentiators,
+      primarySector: intelligence.primarySector,
+    });
+    if (whyUs) round2Sections.push(whyUs);
+  }
+  if (!upstreamCheck("C.5 Risk Register and Mitigation Strategy") && !upstreamCheck("Risk Register") && !upstreamCheck("Risks and Mitigations")) {
+    round2Sections.push(buildRisksMitigationsTable({ primarySector: intelligence.primarySector, clientName: intelligence.clientName }));
+  }
+  if (!upstreamCheck("C.6 Work Plan and Schedule") && !upstreamCheck("Work Plan") && !upstreamCheck("Schedule")) {
+    round2Sections.push(buildWorkPlanTable({ primarySector: intelligence.primarySector }));
+  }
+  if (!upstreamCheck("E.1 Bid Compliance Mapping — Tender Requirements to Proposal Sections") && !upstreamCheck("Bid Compliance Mapping") && !upstreamCheck("Tender Requirements Mapping")) {
+    const mapping = buildBidComplianceMapping({ requirements: tender.requirements });
+    if (mapping) round2Sections.push(mapping);
+  }
+
   const combinedMarkdown = [matrixMarkdown, strengtheningMarkdown, benchmarkTables, ...round2Sections].filter(Boolean).join("\n\n");
 
   // Round-4 self-healing pass: enforce the benchmark "narrative throughline"
@@ -716,7 +744,12 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   const doc = buildProfessionalDocument({ tenderTitle: tender.title, clientName: intelligence.clientName, companyName: company.name, reference: tender.reference, contactFooter, children });
 
   const fileContent = (await Packer.toBuffer(doc)).toString("base64");
-  const summary = `${mode} technical proposal generated. ${finalized.internalSummary}. ${auditSummary}. Inputs: ${intelligence.requiredSections.length} section group(s), ${intelligence.themes.length} tender theme(s), ${experts.length} reviewed expert(s), ${projects.length} reviewed project(s), ${companyEvidenceLines.length} company evidence item(s), ${projectEvidenceLines.length} project evidence attachment(s).${aiError ? ` AI fallback reason: ${aiError}` : ""}`;
+  const qualityScore = scoreProposalQuality({
+    markdown: clientMarkdown,
+    primarySector: intelligence.primarySector,
+    topProjects: (projects as ProjectRecord[]).slice(0, 2),
+  });
+  const summary = `${mode} technical proposal generated. ${finalized.internalSummary}. ${auditSummary}. ${formatQualityScoreSummary(qualityScore)}. Inputs: ${intelligence.requiredSections.length} section group(s), ${intelligence.themes.length} tender theme(s), ${experts.length} reviewed expert(s), ${projects.length} reviewed project(s), ${companyEvidenceLines.length} company evidence item(s), ${projectEvidenceLines.length} project evidence attachment(s).${aiError ? ` AI fallback reason: ${aiError}` : ""}`;
 
   const target = await prisma.generatedDocument.findFirst({ where: { tenderId, documentType: { in: ["TECHNICAL_PROPOSAL", "PROPOSAL", "METHODOLOGY"] } }, orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }] });
   if (target) {
