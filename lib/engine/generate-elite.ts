@@ -8,6 +8,38 @@ import { appendEvaluatorResponseMatrix } from "./proposal-evaluator-matrix";
 import { buildClientProposalStrengtheningSections } from "./proposal-strengthening-sections";
 import { benchmarkAuditSummary } from "./proposal-benchmark-audit";
 import { polishBenchmarkOutput } from "./benchmark-output-polisher";
+import {
+  buildBenchmarkTablesBlock,
+  buildClientReferencesTable,
+  buildCoverLetterOpener,
+  buildDeclaration,
+  buildExecutiveSummaryOpener,
+  buildPortfolioReadingGuide,
+  buildSpecialistEngagementSection,
+  buildSubmittedByToBlock,
+  buildValueFrameworkTable,
+  makeHasHeadingChecker,
+  type ExpertRecord,
+  type ProjectRecord,
+} from "./benchmark-tables";
+import { enforceNarrativeThroughline } from "./narrative-throughline-enforcer";
+import { enrichSectorVocabulary } from "./sector-vocabulary-enricher";
+import { buildPortfolioMetricsBlock, computePortfolioMetrics } from "./portfolio-metrics";
+import { buildPrincipalQualificationsSection } from "./principal-qualifications";
+import { buildRisksMitigationsTable } from "./risks-mitigations";
+import { buildWhyUsSummary } from "./why-us-summary";
+import { buildWorkPlanTable } from "./work-plan-timeline";
+import { buildBidComplianceMapping } from "./bid-compliance-mapping";
+import { formatQualityScoreSummary, scoreProposalQuality } from "./proposal-quality-scorer";
+import {
+  buildCertificationsSection,
+  buildConflictOfInterestSection,
+  buildInHouseCapabilitiesSection,
+  buildUnderstandingSection,
+  buildValueAddedServices,
+} from "./understanding-and-value-added";
+import { reorderToCanonicalSequence } from "./section-reorderer";
+import { renderDynamicTableOfContents } from "./dynamic-toc";
 
 const BRAND_BLUE = "1F4E79";
 const BRAND_GRAY = "595959";
@@ -167,12 +199,17 @@ function fallbackProposalMarkdown(params: {
   tenderTitle: string;
   clientName: string;
   companyName: string;
+  companyAddress?: string | null;
   primarySector: string;
   requirements: string[];
   differentiators: string[];
   submissionRules: string[];
   expertLines: string[];
   projectLines: string[];
+  // Round-3: real records flow through so the openers can use ETB values and project names
+  experts?: ExpertRecord[];
+  projects?: ProjectRecord[];
+  reviewedExpertCount?: number;
   companyEvidenceLines: string[];
   projectEvidenceLines: string[];
   complianceLines: string[];
@@ -186,6 +223,7 @@ function fallbackProposalMarkdown(params: {
   exactSubjectLine?: string | null;
   gapsToAddressInNarrative?: string[];
   requiredSections?: string[];
+  tenderDeadline?: Date | string | null;
 }): string {
   const expertSelected = params.expertLines.length;
   const projectSelected = params.projectLines.length;
@@ -196,6 +234,8 @@ function fallbackProposalMarkdown(params: {
   const sections = params.requiredSections ?? [];
   const exactSubject = params.exactSubjectLine ?? `Technical Proposal for ${params.tenderTitle}`;
   const emailLine = params.exactEmails?.length ? `To: ${params.exactEmails.join("; ")}` : `To: ${params.clientName}`;
+  const reviewedProjects = params.projects ?? [];
+  const reviewedExperts = params.experts ?? [];
   const lines: string[] = [];
 
   // ── Cover Letter ─────────────────────────────────────────────────────────────
@@ -203,24 +243,35 @@ function fallbackProposalMarkdown(params: {
   lines.push(emailLine);
   lines.push(`Subject: ${exactSubject}`);
   if (params.noFinancialProposal) lines.push("Note: This is a TECHNICAL PROPOSAL ONLY. No financial offer or pricing is included, as required by the tender instructions.");
-  lines.push(
-    `${params.companyName} is pleased to submit this technical proposal in response to your invitation for ${params.tenderTitle}. ` +
-    `We have reviewed the tender requirements carefully and structured this response to address each evaluation criterion with direct evidence from our portfolio and team.`,
-  );
-  if (params.projectLines.length > 0) {
-    lines.push(`Our strongest comparable project references are included in Section B, including ${params.projectLines.slice(0, 2).map((l) => l.split("—")[0].trim()).join(" and ")}.`);
-  }
+  // Project-anchored opener (replaces the prior generic "we are pleased to submit"
+  // boilerplate). When reviewed projects exist, the opener names the top 1–2 with
+  // ETB values and same-team continuity language, matching the benchmark pattern.
+  lines.push(buildCoverLetterOpener({
+    companyName: params.companyName,
+    clientName: params.clientName,
+    tenderTitle: params.tenderTitle,
+    projects: reviewedProjects,
+  }));
   if (params.differentiators.length > 0) {
     lines.push("Key differentiators that make us well-placed to serve this assignment:");
     lines.push(...params.differentiators.slice(0, 3).map((d) => `- ${d}`));
   }
-  lines.push(`We trust this proposal demonstrates our capacity, commitment, and technical depth. We look forward to the opportunity to discuss further.\n\nSincerely,\n${params.companyName}`);
+  lines.push(`We trust this proposal demonstrates our capacity, commitment, and technical depth.\n\nSincerely,\n${params.companyName}`);
 
   // ── Cover Page ────────────────────────────────────────────────────────────────
   lines.push("# Technical Proposal");
   lines.push(`**${params.tenderTitle}**`);
-  lines.push(`Client: ${params.clientName}`);
-  lines.push(`Prepared by: ${params.companyName}`);
+  // Submitted-by / Submitted-to 2-column metadata block (mirrors benchmark's
+  // cover page table). Pulls from company profile when available; falls back
+  // to a minimal block when company metadata is sparse.
+  lines.push(buildSubmittedByToBlock({
+    companyName: params.companyName,
+    companyAddress: params.companyAddress ?? null,
+    clientName: params.clientName,
+    exactEmails: params.exactEmails ?? [],
+    exactSubject,
+    deadline: params.tenderDeadline ?? null,
+  }));
   lines.push(`Sector: ${params.primarySector}`);
 
   // ── Table of Contents ─────────────────────────────────────────────────────────
@@ -235,12 +286,23 @@ function fallbackProposalMarkdown(params: {
   lines.push(...tocItems.map((item, i) => `${i + 1}. ${item}`));
 
   // ── Executive Summary ─────────────────────────────────────────────────────────
+  // Lead sentence enforces the benchmark "[Company] has already delivered this
+  // assignment [N times]" pattern when reviewed projects exist; otherwise emits
+  // a Source-Evidence Action note rather than vague boilerplate.
   lines.push("# Executive Summary");
-  lines.push(
-    `${params.companyName} presents this technical proposal as a ${params.primarySector} assignment requiring an evidence-led, evaluator-facing response. ` +
-    `We have ${projectSelected > 0 ? `${projectSelected} directly relevant project reference(s)` : "comparable project experience"} and ` +
-    `${expertSelected > 0 ? `${expertSelected} reviewed specialist(s)` : "a qualified professional team"} aligned to the scope.`,
-  );
+  lines.push(buildExecutiveSummaryOpener({
+    companyName: params.companyName,
+    clientName: params.clientName,
+    projects: reviewedProjects,
+    reviewedExpertCount: params.reviewedExpertCount ?? reviewedExperts.length,
+  }));
+  if (reviewedProjects.length === 0) {
+    // Fall back to a compact metadata sentence so the section is not empty.
+    lines.push(
+      `${params.companyName} presents this technical proposal as a ${params.primarySector} assignment requiring an evidence-led, evaluator-facing response. ` +
+      `${expertSelected > 0 ? `${expertSelected} reviewed specialist(s)` : "A qualified professional team"} ${expertSelected > 0 ? "are" : "is"} aligned to the scope.`,
+    );
+  }
   if (evalCriteria.length > 0) {
     lines.push("## Our response maps directly to the evaluation criteria:");
     lines.push(...evalCriteria.slice(0, 5).map((c) => `- ${c}`));
@@ -399,13 +461,50 @@ function buildCoverBlock(params: { tenderTitle: string; clientName: string; comp
   ];
 }
 
-function buildProfessionalDocument(params: { tenderTitle: string; clientName: string; companyName: string; reference?: string | null; children: (Paragraph | Table)[] }): Document {
+function buildContactFooterText(company: { name: string; address?: string | null; phone?: string | null; email?: string | null; website?: string | null }): string {
+  const parts: string[] = [];
+  if (company.address) parts.push(company.address);
+  if (company.phone) parts.push(`Tel: ${company.phone}`);
+  if (company.email) parts.push(company.email);
+  if (company.website) parts.push(company.website);
+  return parts.length > 0 ? parts.join(" | ") : "";
+}
+
+function buildProfessionalDocument(params: {
+  tenderTitle: string;
+  clientName: string;
+  companyName: string;
+  reference?: string | null;
+  contactFooter?: string;
+  children: (Paragraph | Table)[];
+}): Document {
   const header = new Header({
     children: [new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: params.companyName, bold: true, color: BRAND_BLUE, size: 18 }), new TextRun({ text: " | Technical Proposal", color: BRAND_GRAY, size: 18 })] })],
   });
-  const footer = new Footer({
-    children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Confidential bid document | Page ", size: 16, color: BRAND_GRAY }), new TextRun({ children: [PageNumber.CURRENT], size: 16, color: BRAND_GRAY })] })],
-  });
+  // Footer carries the company contact strip on every page when company profile
+  // includes address / phone / email / website. Mirrors the benchmark's per-page
+  // contact band. Falls back to the prior page-number-only footer when contact
+  // info is not yet on file.
+  const footerChildren: Paragraph[] = [];
+  if (params.contactFooter) {
+    footerChildren.push(
+      new Paragraph({
+        alignment: AlignmentType.CENTER,
+        children: [new TextRun({ text: params.contactFooter, size: 14, color: BRAND_GRAY })],
+        spacing: { after: 40 },
+      }),
+    );
+  }
+  footerChildren.push(
+    new Paragraph({
+      alignment: AlignmentType.CENTER,
+      children: [
+        new TextRun({ text: "Confidential bid document | Page ", size: 16, color: BRAND_GRAY }),
+        new TextRun({ children: [PageNumber.CURRENT], size: 16, color: BRAND_GRAY }),
+      ],
+    }),
+  );
+  const footer = new Footer({ children: footerChildren });
   return new Document({
     creator: params.companyName,
     title: params.tenderTitle,
@@ -530,25 +629,176 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
       mode = "AI bid-writer + evaluator response matrix + full evidence library + client-ready benchmark finalizer + professional DOCX polish";
     } catch (error) {
       aiError = error instanceof Error ? error.message : String(error);
-      sourceMarkdown = fallbackProposalMarkdown({ tenderTitle: tender.title, clientName: intelligence.clientName, companyName: company.name, primarySector: intelligence.primarySector, requirements: requirementLines, differentiators: intelligence.differentiators, submissionRules: intelligence.submissionRules, expertLines, projectLines, companyEvidenceLines, projectEvidenceLines, complianceLines, expertRequired, projectRequired, themes: intelligence.themes, evaluationCriteria: intelligence.evaluationCriteria, appendixList: intelligence.appendixList, noFinancialProposal: intelligence.noFinancialProposal, exactEmails: intelligence.exactEmails, exactSubjectLine: intelligence.exactSubjectLine, gapsToAddressInNarrative: intelligence.gapsToAddressInNarrative, requiredSections: intelligence.requiredSections });
+      sourceMarkdown = fallbackProposalMarkdown({ tenderTitle: tender.title, clientName: intelligence.clientName, companyName: company.name, companyAddress: company.address, primarySector: intelligence.primarySector, requirements: requirementLines, differentiators: intelligence.differentiators, submissionRules: intelligence.submissionRules, expertLines, projectLines, experts: experts as ExpertRecord[], projects: projects as ProjectRecord[], reviewedExpertCount: experts.length, companyEvidenceLines, projectEvidenceLines, complianceLines, expertRequired, projectRequired, themes: intelligence.themes, evaluationCriteria: intelligence.evaluationCriteria, appendixList: intelligence.appendixList, noFinancialProposal: intelligence.noFinancialProposal, exactEmails: intelligence.exactEmails, exactSubjectLine: intelligence.exactSubjectLine, gapsToAddressInNarrative: intelligence.gapsToAddressInNarrative, requiredSections: intelligence.requiredSections, tenderDeadline: tender.deadline });
       mode = "deterministic benchmark fallback + evaluator response matrix + client-ready benchmark finalizer + professional DOCX polish";
     }
   } else {
-    sourceMarkdown = fallbackProposalMarkdown({ tenderTitle: tender.title, clientName: intelligence.clientName, companyName: company.name, primarySector: intelligence.primarySector, requirements: requirementLines, differentiators: intelligence.differentiators, submissionRules: intelligence.submissionRules, expertLines, projectLines, companyEvidenceLines, projectEvidenceLines, complianceLines, expertRequired, projectRequired, themes: intelligence.themes, evaluationCriteria: intelligence.evaluationCriteria, appendixList: intelligence.appendixList, noFinancialProposal: intelligence.noFinancialProposal, exactEmails: intelligence.exactEmails, exactSubjectLine: intelligence.exactSubjectLine, gapsToAddressInNarrative: intelligence.gapsToAddressInNarrative, requiredSections: intelligence.requiredSections });
+    sourceMarkdown = fallbackProposalMarkdown({ tenderTitle: tender.title, clientName: intelligence.clientName, companyName: company.name, companyAddress: company.address, primarySector: intelligence.primarySector, requirements: requirementLines, differentiators: intelligence.differentiators, submissionRules: intelligence.submissionRules, expertLines, projectLines, experts: experts as ExpertRecord[], projects: projects as ProjectRecord[], reviewedExpertCount: experts.length, companyEvidenceLines, projectEvidenceLines, complianceLines, expertRequired, projectRequired, themes: intelligence.themes, evaluationCriteria: intelligence.evaluationCriteria, appendixList: intelligence.appendixList, noFinancialProposal: intelligence.noFinancialProposal, exactEmails: intelligence.exactEmails, exactSubjectLine: intelligence.exactSubjectLine, gapsToAddressInNarrative: intelligence.gapsToAddressInNarrative, requiredSections: intelligence.requiredSections, tenderDeadline: tender.deadline });
   }
 
   const matrixMarkdown = appendEvaluatorResponseMatrix(sourceMarkdown, evaluatorMatrixInput);
   const isHealthcare = /health|hospital|medical|clinic|radiology|laboratory|pharmacy|patient|specialty|OPD|in-patient|emergency/i.test(`${intelligence.primarySector}\n${intelligence.tenderText}`);
   const strengtheningMarkdown = buildClientProposalStrengtheningSections({ clientName: intelligence.clientName, tenderTitle: tender.title, companyName: company.name, projectLines, expertLines, companyEvidenceLines, projectEvidenceLines, isHealthcare, existingMarkdown: matrixMarkdown });
-  const combinedMarkdown = [matrixMarkdown, strengtheningMarkdown].filter(Boolean).join("\n\n");
-  const finalized = finalizeClientReadyProposalMarkdown(combinedMarkdown, guardInput);
+
+  // Inject benchmark-quality tabular sections (Proposed Team, Team-to-Project Mapping,
+  // Project Portfolio cards, Three-Stage Review, optional Assessment Matrix) only if
+  // the upstream output (AI or fallback) didn't already produce them. This guarantees
+  // every proposal carries the high-evidence-density tables the benchmark uses.
+  const upstreamCheck = makeHasHeadingChecker(`${matrixMarkdown}\n${strengtheningMarkdown}`);
+  const benchmarkTables = buildBenchmarkTablesBlock({
+    experts,
+    projects,
+    companyName: company.name,
+    tenderTitle: tender.title,
+    primarySector: intelligence.primarySector,
+    assignmentRoleHint: `Aligned to ${tender.title} scope and ${intelligence.clientName} evaluation criteria.`,
+    alreadyHasHeading: upstreamCheck,
+  });
+
+  // Round-2 benchmark sections — same idempotency rule. Each section is appended
+  // only if the upstream output did not already produce an equivalent heading.
+  const round2Sections: string[] = [];
+  if (!upstreamCheck("B.1 Client References") && !upstreamCheck("Client References")) {
+    round2Sections.push(buildClientReferencesTable(projects));
+  }
+  if (!upstreamCheck("B.2.0 Portfolio Reading Guide") && !upstreamCheck("Portfolio Reading Guide")) {
+    const guide = buildPortfolioReadingGuide({ projects, primarySector: intelligence.primarySector, tenderTitle: tender.title });
+    if (guide) round2Sections.push(guide);
+  }
+  const specialistSection = buildSpecialistEngagementSection({ tenderText: intelligence.tenderText, companyName: company.name });
+  if (specialistSection) {
+    const triggeredHeading = specialistSection.split("\n", 1)[0]?.replace(/^##\s+/, "") ?? "";
+    if (triggeredHeading && !upstreamCheck(triggeredHeading)) {
+      round2Sections.push(specialistSection);
+    }
+  }
+  if (!upstreamCheck("D.1 Value Framework") && !upstreamCheck(`D.1 Value Framework — What ${intelligence.clientName} Gains`) && !upstreamCheck("Value Framework")) {
+    round2Sections.push(buildValueFrameworkTable({ primarySector: intelligence.primarySector, clientName: intelligence.clientName }));
+  }
+  if (!upstreamCheck("D.4 Declaration of Eligibility") && !upstreamCheck("Declaration of Eligibility") && !upstreamCheck("Declaration")) {
+    round2Sections.push(buildDeclaration({
+      companyName: company.name,
+      clientName: intelligence.clientName,
+      tenderTitle: tender.title,
+      // Company schema does not have explicit GM/license columns — left null until
+      // the user adds these to the company profile. Falls back to generic signature.
+      companyGM: null,
+      companyGMLicense: null,
+    }));
+  }
+
+  // Round-4: Portfolio at a Glance + Principal Qualifications. Both gated by
+  // the heading-idempotency check so they don't duplicate AI-produced content.
+  if (!upstreamCheck("A.0 Portfolio at a Glance") && !upstreamCheck("Portfolio at a Glance")) {
+    const metrics = computePortfolioMetrics({
+      experts: experts as ExpertRecord[],
+      projects: projects as ProjectRecord[],
+    });
+    round2Sections.push(buildPortfolioMetricsBlock(metrics, company.name));
+  }
+  if (!upstreamCheck("A.4.1 Principal Qualifications — Detailed Bios") && !upstreamCheck("Principal Qualifications") && !upstreamCheck("Detailed Bios")) {
+    const cv = buildPrincipalQualificationsSection({ experts: experts as ExpertRecord[], topN: 5 });
+    if (cv) round2Sections.push(cv);
+  }
+
+  // Round-5: high-impact evaluator-friendly sections.
+  if (!upstreamCheck(`Why ${company.name} for ${intelligence.clientName}`) && !upstreamCheck("Why Us") && !upstreamCheck(`Why ${company.name}`)) {
+    const whyUs = buildWhyUsSummary({
+      companyName: company.name,
+      clientName: intelligence.clientName,
+      experts: experts as ExpertRecord[],
+      projects: projects as ProjectRecord[],
+      differentiators: intelligence.differentiators,
+      primarySector: intelligence.primarySector,
+    });
+    if (whyUs) round2Sections.push(whyUs);
+  }
+  if (!upstreamCheck("C.5 Risk Register and Mitigation Strategy") && !upstreamCheck("Risk Register") && !upstreamCheck("Risks and Mitigations")) {
+    round2Sections.push(buildRisksMitigationsTable({ primarySector: intelligence.primarySector, clientName: intelligence.clientName }));
+  }
+  if (!upstreamCheck("C.6 Work Plan and Schedule") && !upstreamCheck("Work Plan") && !upstreamCheck("Schedule")) {
+    round2Sections.push(buildWorkPlanTable({ primarySector: intelligence.primarySector }));
+  }
+  if (!upstreamCheck("E.1 Bid Compliance Mapping — Tender Requirements to Proposal Sections") && !upstreamCheck("Bid Compliance Mapping") && !upstreamCheck("Tender Requirements Mapping")) {
+    const mapping = buildBidComplianceMapping({ requirements: tender.requirements });
+    if (mapping) round2Sections.push(mapping);
+  }
+
+  // Round-6: more evaluator-facing sections (Understanding, Value-Added,
+  // Certifications, In-House Capabilities, Conflict of Interest).
+  if (!upstreamCheck("C.1 Understanding of the Assignment") && !upstreamCheck("Understanding of the Assignment") && !upstreamCheck("Understanding of Assignment")) {
+    round2Sections.push(buildUnderstandingSection({
+      tenderTitle: tender.title,
+      clientName: intelligence.clientName,
+      primarySector: intelligence.primarySector,
+      evaluationCriteria: intelligence.evaluationCriteria,
+    }));
+  }
+  if (!upstreamCheck("D.2 Value-Added Services") && !upstreamCheck("Value-Added Services") && !upstreamCheck("Value Added Services")) {
+    round2Sections.push(buildValueAddedServices({ primarySector: intelligence.primarySector, companyName: company.name }));
+  }
+  if (!upstreamCheck("D.3 Professional Certifications and Affiliations") && !upstreamCheck("Professional Certifications") && !upstreamCheck("Certifications and Affiliations")) {
+    round2Sections.push(buildCertificationsSection({ experts: experts as ExpertRecord[], companyName: company.name }));
+  }
+  if (!upstreamCheck("A.7 In-House Capabilities") && !upstreamCheck("In-House Capabilities")) {
+    round2Sections.push(buildInHouseCapabilitiesSection({
+      companyName: company.name,
+      serviceLines: safeParseArr(company.serviceLines),
+      sectors: safeParseArr(company.sectors),
+      evidenceLines: companyEvidenceLines,
+    }));
+  }
+  if (!upstreamCheck("D.5 Declaration of No Conflict of Interest") && !upstreamCheck("Conflict of Interest") && !upstreamCheck("No Conflict of Interest")) {
+    round2Sections.push(buildConflictOfInterestSection({
+      companyName: company.name,
+      clientName: intelligence.clientName,
+      tenderTitle: tender.title,
+    }));
+  }
+
+  const combinedMarkdown = [matrixMarkdown, strengtheningMarkdown, benchmarkTables, ...round2Sections].filter(Boolean).join("\n\n");
+
+  // Round-4 self-healing pass: enforce the benchmark "narrative throughline"
+  // rule (top 1–2 projects must appear in Cover Letter, Executive Summary,
+  // and Section B/Relevant Experience) and ensure sector-specific technical
+  // vocabulary is present. Both are idempotent — if the upstream output
+  // already covers them, nothing is added.
+  const throughline = enforceNarrativeThroughline({
+    markdown: combinedMarkdown,
+    topProjects: (projects as ProjectRecord[]).slice(0, 2),
+  });
+  const enriched = enrichSectorVocabulary({
+    markdown: throughline.markdown,
+    primarySector: intelligence.primarySector,
+  });
+  // Round-7: reorder all sections into canonical proposal sequence (Cover Letter → Cover Page →
+  // TOC → Executive Summary → Why Us → A.x → B.x → C.x → D.x → E.x → Submission Control Sheet)
+  // so the appended deterministic sections don't show up out of order at the end of the document.
+  const reordered = reorderToCanonicalSequence(enriched.markdown);
+  // Round-8: replace the static TOC with one built from the actual section
+  // headings present in the (now reordered) document. The fallback writes a
+  // generic TOC that doesn't reflect the 30+ sections this pipeline produces.
+  const withDynamicToc = renderDynamicTableOfContents(reordered);
+  const finalized = finalizeClientReadyProposalMarkdown(withDynamicToc, guardInput);
   const clientMarkdown = cleanClientLanguage(finalized.markdown);
   const auditSummary = benchmarkAuditSummary(clientMarkdown);
   const children = markdownToDocx(clientMarkdown);
-  const doc = buildProfessionalDocument({ tenderTitle: tender.title, clientName: intelligence.clientName, companyName: company.name, reference: tender.reference, children });
+  const contactFooter = buildContactFooterText({
+    name: company.name,
+    address: company.address,
+    phone: company.phone,
+    email: company.email,
+    website: company.website,
+  });
+  const doc = buildProfessionalDocument({ tenderTitle: tender.title, clientName: intelligence.clientName, companyName: company.name, reference: tender.reference, contactFooter, children });
 
   const fileContent = (await Packer.toBuffer(doc)).toString("base64");
-  const summary = `${mode} technical proposal generated. ${finalized.internalSummary}. ${auditSummary}. Inputs: ${intelligence.requiredSections.length} section group(s), ${intelligence.themes.length} tender theme(s), ${experts.length} reviewed expert(s), ${projects.length} reviewed project(s), ${companyEvidenceLines.length} company evidence item(s), ${projectEvidenceLines.length} project evidence attachment(s).${aiError ? ` AI fallback reason: ${aiError}` : ""}`;
+  const qualityScore = scoreProposalQuality({
+    markdown: clientMarkdown,
+    primarySector: intelligence.primarySector,
+    topProjects: (projects as ProjectRecord[]).slice(0, 2),
+  });
+  const summary = `${mode} technical proposal generated. ${finalized.internalSummary}. ${auditSummary}. ${formatQualityScoreSummary(qualityScore)}. Inputs: ${intelligence.requiredSections.length} section group(s), ${intelligence.themes.length} tender theme(s), ${experts.length} reviewed expert(s), ${projects.length} reviewed project(s), ${companyEvidenceLines.length} company evidence item(s), ${projectEvidenceLines.length} project evidence attachment(s).${aiError ? ` AI fallback reason: ${aiError}` : ""}`;
 
   const target = await prisma.generatedDocument.findFirst({ where: { tenderId, documentType: { in: ["TECHNICAL_PROPOSAL", "PROPOSAL", "METHODOLOGY"] } }, orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }] });
   if (target) {

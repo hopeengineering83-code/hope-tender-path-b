@@ -2,6 +2,7 @@
 const { GoogleGenerativeAI } = require("@google/generative-ai") as typeof import("@google/generative-ai");
 
 const apiKey = process.env.GEMINI_API_KEY;
+const anthropicApiKey = process.env.ANTHROPIC_API_KEY;
 const DEFAULT_GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-pro";
 const FALLBACK_GEMINI_MODELS = (process.env.GEMINI_FALLBACK_MODELS || "gemini-2.5-flash,gemini-2.0-flash")
   .split(",")
@@ -10,6 +11,14 @@ const FALLBACK_GEMINI_MODELS = (process.env.GEMINI_FALLBACK_MODELS || "gemini-2.
 
 // Model chain for proposal generation — tried in order until one succeeds.
 const PROPOSAL_MODELS = ["gemini-2.5-pro", "gemini-2.0-flash", "gemini-1.5-pro"];
+
+// Claude models in preference order. Claude is preferred over Gemini for
+// proposal generation when ANTHROPIC_API_KEY is configured, because the
+// benchmark used for the quality target is Claude-generated.
+const CLAUDE_PROPOSAL_MODELS = (process.env.ANTHROPIC_PROPOSAL_MODELS || "claude-sonnet-4-5,claude-opus-4-5,claude-3-5-sonnet-latest")
+  .split(",")
+  .map((m) => m.trim())
+  .filter(Boolean);
 
 function getClient() {
   if (!apiKey) throw new Error("GEMINI_API_KEY not configured");
@@ -21,7 +30,77 @@ function getModel(modelName = DEFAULT_GEMINI_MODEL) {
 }
 
 export function isAIEnabled() {
-  return Boolean(apiKey);
+  return Boolean(apiKey || anthropicApiKey);
+}
+
+export function isClaudeEnabled() {
+  return Boolean(anthropicApiKey);
+}
+
+// ─── Claude (Anthropic) provider ──────────────────────────────────────────────
+// Lazy-loaded so the @anthropic-ai/sdk package is only required when the user
+// has set ANTHROPIC_API_KEY. Falls back gracefully (returns null) when the
+// SDK is not installed or the key is not configured.
+//
+// Claude is the preferred provider for proposal generation when configured —
+// the reference benchmark used to design the prompt and table structure is
+// itself Claude-generated, so Claude output is what the prompt is tuned for.
+async function generateWithClaude(prompt: string): Promise<string | null> {
+  if (!anthropicApiKey) return null;
+
+  let Anthropic: { new (config: { apiKey: string }): unknown };
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    Anthropic = require("@anthropic-ai/sdk").default ?? require("@anthropic-ai/sdk").Anthropic;
+  } catch {
+    console.warn("[ai] ANTHROPIC_API_KEY is set but @anthropic-ai/sdk is not installed — falling back to Gemini.");
+    return null;
+  }
+
+  const client = new (Anthropic as new (config: { apiKey: string }) => {
+    messages: { create: (input: unknown) => Promise<{ content: Array<{ type: string; text?: string }> }> };
+  })({ apiKey: anthropicApiKey });
+
+  const errors: string[] = [];
+  for (const modelName of CLAUDE_PROPOSAL_MODELS) {
+    try {
+      const response = await client.messages.create({
+        model: modelName,
+        max_tokens: 16000,
+        messages: [{ role: "user", content: prompt }],
+      });
+      const text = response.content
+        .filter((c) => c.type === "text")
+        .map((c) => c.text ?? "")
+        .join("\n")
+        .trim();
+      if (text.length === 0) {
+        errors.push(`${modelName}: empty response`);
+        continue;
+      }
+      return text;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      errors.push(`${modelName}: ${msg}`);
+      // 401 / 403 — credentials are wrong, no point trying other models
+      if (/401|403|invalid api key|authentication/i.test(msg)) {
+        throw new Error(`Anthropic API key invalid — check ANTHROPIC_API_KEY in environment variables. (${msg})`);
+      }
+      // 429 — rate limit, surface immediately
+      if (/429|rate.?limit/i.test(msg)) {
+        throw new Error(`Anthropic API rate limit reached — try again in a moment. (${msg})`);
+      }
+      // 404 / model not found — try next model
+      if (/404|not.?found|model_not_found|invalid_request/i.test(msg)) continue;
+      // Other errors — let the fallback to Gemini take over (return null)
+      console.warn(`[ai] Claude generation failed (${modelName}): ${msg} — falling through to next model.`);
+    }
+  }
+
+  if (errors.length > 0) {
+    console.warn(`[ai] All Claude models exhausted. Errors: ${errors.join(" | ")} — falling back to Gemini.`);
+  }
+  return null;
 }
 
 function isModelUnavailableError(message: string): boolean {
@@ -551,6 +630,81 @@ Keep these four anchors in mind. They must appear — by name, value, and role �
 
 ---
 
+## STEP 5 — TABLE FORMAT (use these exact Markdown table shapes)
+
+Tables are mandatory for the sections marked TABLE below. Use standard Markdown table syntax. Cells must contain real, evidence-grounded values from the EVIDENCE sections — never placeholders.
+
+**A.4 Proposed Project Team — TABLE (one row per expert):**
+\`\`\`
+| # | Expert & Position | Qualifications & Licenses | Comparable Sector Experience | Role on This Assignment |
+|---|---|---|---|---|
+| 1 | Eng. Ahmed Kebede, Project Principal | B.Sc. Civil (AAIT 2015), PPE Structural IPSTE/6884 valid 2030 | G+6 Hospital (ETB 550M); Eco-Park (ETB 27.5B WB ESF) | Project leadership, client liaison, final design sign-off |
+| 2 | … | … | … | … |
+\`\`\`
+
+**A.5 Team-to-Project Experience Mapping — TABLE:**
+\`\`\`
+| Expert & Role on This Project | Role Previously Performed | Previous Comparable Project | Key Technical Contribution |
+|---|---|---|---|
+| Daniel Getachew, MEP Lead | Lead Electrical Engineer | Dr. Abdul Seid Hospital (ETB 550M) | Medical-grade power, UPS for life-critical loads, imaging room power |
+\`\`\`
+
+**B.2 / B.3 Featured Project Cards — TABLE per project (2-column metadata):**
+\`\`\`
+### G+6 General Hospital, Dr. Abdul Seid
+
+| Field | Detail |
+|---|---|
+| Client | Gimba City Administration, South Wollo Zone |
+| Location & Scale | South Wollo, Ethiopia — 7,000 m² built-up |
+| Duration | 2015–2018 (Completed) |
+| Contract Value | ETB 550,074,678 |
+| Testimony Reference | Ref ጂ/ከ/መ/ል/1591/18, dated 19/01/2018 E.C. — Tariku Abebaw, Building Officer |
+| Services Provided | Feasibility, geotechnical, full architectural/structural/MEP design, BOQ, supervision |
+| Relevance to This Assignment | All six clinical departments required by this tender were included; same proposed team |
+\`\`\`
+
+**C.4 Three-Stage Quality Review — TABLE:**
+\`\`\`
+| Stage | Milestone | Review Authority and Required Action |
+|---|---|---|
+| Stage 1 | 30% Schematic Design | Senior Engineer + QA Manager. Sector-protocol gate-check. Written sign-off required. |
+| Stage 2 | 60% Developed Design | Deputy GM. Regulatory pre-check. Written approval required. |
+| Stage 3 | 100% Pre-Issue Final Package | General Manager / Principal. Final sign-off. All review comments resolved. |
+\`\`\`
+
+For any tender involving site selection, premises identification, beneficiary selection, or asset assessment, also include a **Weighted Assessment Matrix** table with columns: Criterion | Weight | What Is Evaluated. Each criterion gets a percentage weight totalling 100%.
+
+**B.1 Client References — TABLE (place BEFORE B.2 Project Portfolio):**
+\`\`\`
+| Project / Client | Reference Contact & Title | Contact Details & Reference | Contract Value |
+|---|---|---|---|
+| G+6 Dr. Abdul Seid Hospital — Gimba City Administration | Tariku Abebaw, Building Officer | South Wollo, Ref ጂ/ከ/መ/ል/1591/18 dated 19/01/2018 E.C. | ETB 550,074,678 |
+\`\`\`
+
+**A.6 Specialist Engagement Plan — only emit when the tender requires a discipline NOT covered by the proposed core team (e.g., biomedical engineer, telecoms specialist, QHSE auditor):**
+- One paragraph (50–80 words) on scope of services with named deliverables
+- Bulleted **Integration Plan** with 4 timeline phases (assessment / design development / detailed design / commissioning)
+- Closing sentence confirming requirements are embedded from schematic stage, not retrospectively
+
+**D.1 Value Framework — TABLE (4–6 evaluator-facing benefit pillars):**
+\`\`\`
+## D.1 Value Framework — What [Client Name] Gains
+
+| Framework Pillar | What This Engagement Delivers |
+|---|---|
+| Facility Intelligence | [Client] identifies the right premises with confidence. Weighted site assessment scores each shortlisted property against five sector-specific criteria. In-house geotechnical capability delivers subsurface findings within days, protecting acquisition timelines. |
+| Workflow Engineering | Patients experience shorter waiting times and staff cover less unnecessary distance. … |
+\`\`\`
+
+**D.4 Declaration of Eligibility — formal language with named GM and license:**
+"We, [Company], hereby declare that this Technical Proposal has been prepared specifically in response to [Tender Title] for [Client]. All information provided is accurate and supported by documentary evidence available on request. The firm meets all eligibility requirements stated in the tender …
+Signed: [GM Name], License [License Number], on behalf of [Company]."
+
+**Rule:** If you cannot fill a table cell from the EVIDENCE sections, write a single short "Bid-Team Action: confirm X before submission." cell — do NOT fabricate data and do NOT leave the cell empty.
+
+---
+
 ## SUBMISSION DETAILS (embed in cover letter and cover page)
 - Submit to emails: ${exactEmails || "see tender submission instructions"}
 - Exact subject line: "${exactSubject}"
@@ -669,7 +823,16 @@ ${params.differentiators}
 
 Now write the complete technical proposal. Start with the Cover Letter. The evaluator must feel — after the first two pages — that this firm has already delivered this exact project and is simply repeating a proven capability.`;
 
-  return generateWithBestModel(prompt);
+  // Claude is the preferred provider when configured — the reference benchmark
+  // is Claude-generated, so the prompt is tuned for Claude's strengths. Falls
+  // back to Gemini when Claude fails or returns null. Falls back to the
+  // deterministic engine path when both fail (handled in generateTenderDocuments).
+  if (isClaudeEnabled()) {
+    const claudeResult = await generateWithClaude(prompt);
+    if (claudeResult) return claudeResult;
+  }
+  if (apiKey) return generateWithBestModel(prompt);
+  throw new Error("No AI provider configured — set ANTHROPIC_API_KEY (preferred) or GEMINI_API_KEY in environment variables.");
 }
 
 function extractTenderSections(tenderText: string): string[] {

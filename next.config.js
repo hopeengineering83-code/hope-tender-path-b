@@ -52,8 +52,9 @@ assertProductionEnv();
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // pdf-parse, mammoth, bcryptjs load native binaries — must stay in Node, not bundled by webpack
-  serverExternalPackages: ["pdf-parse", "mammoth", "bcryptjs", "xlsx"],
+  // pdf-parse, mammoth, bcryptjs load native binaries — must stay in Node, not bundled by webpack.
+  // @anthropic-ai/sdk is loaded via require() at runtime so webpack should not bundle it server-side.
+  serverExternalPackages: ["pdf-parse", "mammoth", "bcryptjs", "xlsx", "@anthropic-ai/sdk"],
   experimental: {
     serverActions: { bodySizeLimit: "10mb" },
   },
