@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { getSession } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
+import { validateTender } from "../../../../../lib/engine/validate";
+import { logAction } from "../../../../../lib/audit";
 
 export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const userId = await getSession();
@@ -39,21 +41,67 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       return NextResponse.json({ error: "Run the tender engine before export preparation." }, { status: 400 });
     }
 
+    // Run final validation before allowing export preparation. Catches:
+    // selected drafts, placeholder text in generated docs, missing required
+    // file names / order, missing exact file names. BLOCK issues halt export.
+    const report = await validateTender(id);
+    const blockingIssues = report.issues.filter((issue) => issue.severity === "BLOCK");
+    if (blockingIssues.length > 0) {
+      return NextResponse.json(
+        {
+          error: `Validation failed — resolve ${blockingIssues.length} blocking issue(s) before export.`,
+          issues: blockingIssues,
+        },
+        { status: 400 },
+      );
+    }
+
+    const generatedFileNames = tender.generatedDocuments
+      .filter((doc) => doc.generationStatus === "GENERATED")
+      .sort((a, b) => (a.exactOrder ?? Number.MAX_SAFE_INTEGER) - (b.exactOrder ?? Number.MAX_SAFE_INTEGER))
+      .map((doc) => doc.exactFileName ?? doc.name);
+
+    // Persist the ExportPackage — was previously returned as a mock with a fresh
+    // UUID and never written, leaving no audit trail and breaking the
+    // ExportPackage relation documented in the schema.
+    const existingPackage = await prisma.exportPackage.findFirst({ where: { tenderId: id }, orderBy: { createdAt: "desc" } });
+    const exportPackage = existingPackage
+      ? await prisma.exportPackage.update({
+          where: { id: existingPackage.id },
+          data: { status: "READY", fileList: JSON.stringify(generatedFileNames) },
+        })
+      : await prisma.exportPackage.create({
+          data: { tenderId: id, status: "READY", fileList: JSON.stringify(generatedFileNames), downloadCount: 0 },
+        });
+
     await prisma.tender.update({
       where: { id },
       data: { status: "EXPORTED", stage: "EXPORT" },
     });
 
-    return NextResponse.json({
-      success: true,
-      exportPackage: {
-        id: crypto.randomUUID(),
-        tenderId: tender.id,
-        name: `${tender.title} Submission Package`,
-        format: "ZIP",
-        exportStatus: "ready",
+    await logAction({
+      userId,
+      action: "EXPORT_PACKAGE_CREATE",
+      entityType: "Tender",
+      entityId: id,
+      description: `Prepared export package for "${tender.title}" — ${generatedFileNames.length} file(s)`,
+      metadata: { exportPackageId: exportPackage.id, fileCount: generatedFileNames.length, validationPassed: true },
+    });
+
+    return NextResponse.json(
+      {
+        success: true,
+        exportPackage: {
+          id: exportPackage.id,
+          tenderId: tender.id,
+          status: exportPackage.status,
+          fileList: generatedFileNames,
+          name: `${tender.title} Submission Package`,
+          format: "ZIP",
+        },
       },
-    }, { status: 201 });
+      { status: 201 },
+    );
   } catch (error) {
     console.error("Export preparation failed:", error);
     return NextResponse.json({ error: "Export preparation failed" }, { status: 500 });

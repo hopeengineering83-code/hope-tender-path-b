@@ -31,6 +31,7 @@ export async function applyActiveUploadedLetterheadToTenderDocuments(tenderId: s
   const company = await prisma.company.findUnique({
     where: { userId },
     include: {
+      settings: { select: { allowBrandingDefault: true } },
       assets: {
         where: { assetType: "LETTERHEAD", isActive: true },
         select: { fileContent: true, originalFileName: true, mimeType: true },
@@ -38,6 +39,12 @@ export async function applyActiveUploadedLetterheadToTenderDocuments(tenderId: s
       },
     },
   });
+
+  // Honour the user's global AppSettings preference. The previous
+  // implementation only checked tender-level prohibitions, so a user who had
+  // turned branding off in settings still got letterhead applied. The default
+  // when no AppSettings row exists is `true`, preserving prior behaviour.
+  if (company?.settings && company.settings.allowBrandingDefault === false) return 0;
 
   const letterhead = company?.assets?.[0];
   if (!letterhead?.fileContent) return 0;
