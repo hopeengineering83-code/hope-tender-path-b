@@ -15,7 +15,7 @@ const PROPOSAL_MODELS = ["gemini-2.5-pro", "gemini-2.0-flash", "gemini-1.5-pro"]
 // Claude models in preference order. Claude is preferred over Gemini for
 // proposal generation when ANTHROPIC_API_KEY is configured, because the
 // benchmark used for the quality target is Claude-generated.
-const CLAUDE_PROPOSAL_MODELS = (process.env.ANTHROPIC_PROPOSAL_MODELS || "claude-sonnet-4-5,claude-opus-4-5,claude-3-5-sonnet-latest")
+const CLAUDE_PROPOSAL_MODELS = (process.env.ANTHROPIC_PROPOSAL_MODELS || "claude-opus-4-7,claude-sonnet-4-6,claude-haiku-4-5-20251001")
   .split(",")
   .map((m) => m.trim())
   .filter(Boolean);
