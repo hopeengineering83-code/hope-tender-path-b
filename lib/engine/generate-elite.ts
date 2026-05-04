@@ -1,6 +1,6 @@
 import { AlignmentType, BorderStyle, Document, Footer, Header, HeadingLevel, Packer, PageNumber, Paragraph, Table, TableBorders, TableCell, TableRow, TextRun, WidthType } from "docx";
 import { prisma } from "../prisma";
-import { generateBenchmarkProposalWithAI, isAIEnabled } from "../ai";
+import { generateBenchmarkProposalWithAI, isAIEnabled, refineProposalWithAI } from "../ai";
 import { buildProposalIntelligence, expertProofLine, projectProofLine, safeParseArr } from "./proposal-intelligence";
 import { exactSelectionLimit } from "./scope-policy";
 import { finalizeClientReadyProposalMarkdown } from "./proposal-benchmark-guard";
@@ -803,13 +803,56 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   });
   const doc = buildProfessionalDocument({ tenderTitle: tender.title, clientName: intelligence.clientName, companyName: company.name, reference: tender.reference, contactFooter, children });
 
-  const fileContent = (await Packer.toBuffer(doc)).toString("base64");
-  const qualityScore = scoreProposalQuality({
-    markdown: clientMarkdown,
+  // Round-11: multi-pass refinement. Score the assembled proposal; if it
+  // falls below threshold and the AI is configured, ask the AI to rewrite
+  // the weak axes only. Re-score after refinement and use whichever output
+  // is stronger. Skipped when AI is not available or refinement returns
+  // null (e.g., model failure). Idempotent: never weakens the proposal,
+  // only replaces if refinement raises the score.
+  const QUALITY_REFINEMENT_THRESHOLD = 70;
+  let workingMarkdown = clientMarkdown;
+  let qualityScore = scoreProposalQuality({
+    markdown: workingMarkdown,
     primarySector: intelligence.primarySector,
     topProjects: (projects as ProjectRecord[]).slice(0, 2),
   });
-  const summary = `${mode} technical proposal generated. ${finalized.internalSummary}. ${auditSummary}. ${formatQualityScoreSummary(qualityScore)}. Inputs: ${intelligence.requiredSections.length} section group(s), ${intelligence.themes.length} tender theme(s), ${experts.length} reviewed expert(s), ${projects.length} reviewed project(s), ${companyEvidenceLines.length} company evidence item(s), ${projectEvidenceLines.length} project evidence attachment(s).${aiError ? ` AI fallback reason: ${aiError}` : ""}`;
+  let refinementApplied = false;
+  if (qualityScore.total < QUALITY_REFINEMENT_THRESHOLD && qualityScore.weakAxes.length > 0 && isAIEnabled()) {
+    try {
+      const refined = await refineProposalWithAI({
+        currentMarkdown: workingMarkdown,
+        weakAxes: qualityScore.weakAxes,
+        tenderTitle: tender.title,
+        clientName: intelligence.clientName,
+        primarySector: intelligence.primarySector,
+        topProjectNames: (projects as ProjectRecord[]).slice(0, 2).map((p) => p.name).filter(Boolean),
+        topExpertNames: (experts as ExpertRecord[]).slice(0, 3).map((e) => e.fullName).filter(Boolean),
+      });
+      if (refined && refined.length > workingMarkdown.length * 0.7) {
+        const refinedClean = cleanClientLanguage(refined);
+        const refinedScore = scoreProposalQuality({
+          markdown: refinedClean,
+          primarySector: intelligence.primarySector,
+          topProjects: (projects as ProjectRecord[]).slice(0, 2),
+        });
+        if (refinedScore.total > qualityScore.total) {
+          workingMarkdown = refinedClean;
+          qualityScore = refinedScore;
+          refinementApplied = true;
+        }
+      }
+    } catch (err) {
+      console.warn(`[generate-elite] Refinement pass failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  // Re-render the DOCX from the (possibly refined) markdown.
+  const finalChildren = refinementApplied ? markdownToDocx(workingMarkdown) : children;
+  const finalDoc = refinementApplied
+    ? buildProfessionalDocument({ tenderTitle: tender.title, clientName: intelligence.clientName, companyName: company.name, reference: tender.reference, contactFooter, children: finalChildren })
+    : doc;
+  const fileContent = (await Packer.toBuffer(finalDoc)).toString("base64");
+  const summary = `${mode}${refinementApplied ? " + AI refinement pass" : ""} technical proposal generated. ${finalized.internalSummary}. ${auditSummary}. ${formatQualityScoreSummary(qualityScore)}. Inputs: ${intelligence.requiredSections.length} section group(s), ${intelligence.themes.length} tender theme(s), ${experts.length} reviewed expert(s), ${projects.length} reviewed project(s), ${companyEvidenceLines.length} company evidence item(s), ${projectEvidenceLines.length} project evidence attachment(s).${aiError ? ` AI fallback reason: ${aiError}` : ""}`;
 
   const target = await prisma.generatedDocument.findFirst({ where: { tenderId, documentType: { in: ["TECHNICAL_PROPOSAL", "PROPOSAL", "METHODOLOGY"] } }, orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }] });
   if (target) {
