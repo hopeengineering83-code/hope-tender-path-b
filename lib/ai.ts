@@ -2,6 +2,7 @@
 const { GoogleGenerativeAI } = require("@google/generative-ai") as typeof import("@google/generative-ai");
 
 const apiKey = process.env.GEMINI_API_KEY;
+const anthropicApiKey = process.env.ANTHROPIC_API_KEY;
 const DEFAULT_GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-pro";
 const FALLBACK_GEMINI_MODELS = (process.env.GEMINI_FALLBACK_MODELS || "gemini-2.5-flash,gemini-2.0-flash")
   .split(",")
@@ -10,6 +11,14 @@ const FALLBACK_GEMINI_MODELS = (process.env.GEMINI_FALLBACK_MODELS || "gemini-2.
 
 // Model chain for proposal generation — tried in order until one succeeds.
 const PROPOSAL_MODELS = ["gemini-2.5-pro", "gemini-2.0-flash", "gemini-1.5-pro"];
+
+// Claude models in preference order. Claude is preferred over Gemini for
+// proposal generation when ANTHROPIC_API_KEY is configured, because the
+// benchmark used for the quality target is Claude-generated.
+const CLAUDE_PROPOSAL_MODELS = (process.env.ANTHROPIC_PROPOSAL_MODELS || "claude-sonnet-4-5,claude-opus-4-5,claude-3-5-sonnet-latest")
+  .split(",")
+  .map((m) => m.trim())
+  .filter(Boolean);
 
 function getClient() {
   if (!apiKey) throw new Error("GEMINI_API_KEY not configured");
@@ -21,7 +30,77 @@ function getModel(modelName = DEFAULT_GEMINI_MODEL) {
 }
 
 export function isAIEnabled() {
-  return Boolean(apiKey);
+  return Boolean(apiKey || anthropicApiKey);
+}
+
+export function isClaudeEnabled() {
+  return Boolean(anthropicApiKey);
+}
+
+// ─── Claude (Anthropic) provider ──────────────────────────────────────────────
+// Lazy-loaded so the @anthropic-ai/sdk package is only required when the user
+// has set ANTHROPIC_API_KEY. Falls back gracefully (returns null) when the
+// SDK is not installed or the key is not configured.
+//
+// Claude is the preferred provider for proposal generation when configured —
+// the reference benchmark used to design the prompt and table structure is
+// itself Claude-generated, so Claude output is what the prompt is tuned for.
+async function generateWithClaude(prompt: string): Promise<string | null> {
+  if (!anthropicApiKey) return null;
+
+  let Anthropic: { new (config: { apiKey: string }): unknown };
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    Anthropic = require("@anthropic-ai/sdk").default ?? require("@anthropic-ai/sdk").Anthropic;
+  } catch {
+    console.warn("[ai] ANTHROPIC_API_KEY is set but @anthropic-ai/sdk is not installed — falling back to Gemini.");
+    return null;
+  }
+
+  const client = new (Anthropic as new (config: { apiKey: string }) => {
+    messages: { create: (input: unknown) => Promise<{ content: Array<{ type: string; text?: string }> }> };
+  })({ apiKey: anthropicApiKey });
+
+  const errors: string[] = [];
+  for (const modelName of CLAUDE_PROPOSAL_MODELS) {
+    try {
+      const response = await client.messages.create({
+        model: modelName,
+        max_tokens: 16000,
+        messages: [{ role: "user", content: prompt }],
+      });
+      const text = response.content
+        .filter((c) => c.type === "text")
+        .map((c) => c.text ?? "")
+        .join("\n")
+        .trim();
+      if (text.length === 0) {
+        errors.push(`${modelName}: empty response`);
+        continue;
+      }
+      return text;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      errors.push(`${modelName}: ${msg}`);
+      // 401 / 403 — credentials are wrong, no point trying other models
+      if (/401|403|invalid api key|authentication/i.test(msg)) {
+        throw new Error(`Anthropic API key invalid — check ANTHROPIC_API_KEY in environment variables. (${msg})`);
+      }
+      // 429 — rate limit, surface immediately
+      if (/429|rate.?limit/i.test(msg)) {
+        throw new Error(`Anthropic API rate limit reached — try again in a moment. (${msg})`);
+      }
+      // 404 / model not found — try next model
+      if (/404|not.?found|model_not_found|invalid_request/i.test(msg)) continue;
+      // Other errors — let the fallback to Gemini take over (return null)
+      console.warn(`[ai] Claude generation failed (${modelName}): ${msg} — falling through to next model.`);
+    }
+  }
+
+  if (errors.length > 0) {
+    console.warn(`[ai] All Claude models exhausted. Errors: ${errors.join(" | ")} — falling back to Gemini.`);
+  }
+  return null;
 }
 
 function isModelUnavailableError(message: string): boolean {
@@ -744,7 +823,16 @@ ${params.differentiators}
 
 Now write the complete technical proposal. Start with the Cover Letter. The evaluator must feel — after the first two pages — that this firm has already delivered this exact project and is simply repeating a proven capability.`;
 
-  return generateWithBestModel(prompt);
+  // Claude is the preferred provider when configured — the reference benchmark
+  // is Claude-generated, so the prompt is tuned for Claude's strengths. Falls
+  // back to Gemini when Claude fails or returns null. Falls back to the
+  // deterministic engine path when both fail (handled in generateTenderDocuments).
+  if (isClaudeEnabled()) {
+    const claudeResult = await generateWithClaude(prompt);
+    if (claudeResult) return claudeResult;
+  }
+  if (apiKey) return generateWithBestModel(prompt);
+  throw new Error("No AI provider configured — set ANTHROPIC_API_KEY (preferred) or GEMINI_API_KEY in environment variables.");
 }
 
 function extractTenderSections(tenderText: string): string[] {

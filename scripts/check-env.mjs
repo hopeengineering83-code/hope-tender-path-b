@@ -38,12 +38,25 @@ const ALWAYS_REQUIRED = [
   },
 ];
 
-// Optional — app builds and runs without these, but with reduced capability
+// Optional — app builds and runs without these, but with reduced capability.
+// At least one of ANTHROPIC_API_KEY or GEMINI_API_KEY should be set for AI
+// generation; the proposal pipeline prefers Claude when available, and falls
+// back to Gemini for both proposal generation and CV/project extraction.
 const OPTIONAL = [
+  {
+    name: "ANTHROPIC_API_KEY",
+    description:
+      "Anthropic Claude API key (sk-ant-..., 97+ chars). PREFERRED provider for proposal generation; the reference benchmark is Claude-generated so output quality is highest with Claude. Get from https://console.anthropic.com/settings/keys.",
+    validate: (v) => {
+      if (!v.startsWith("sk-ant-")) return `Expected a Claude API key starting with "sk-ant-". Got: "${v.slice(0, 8)}..." — check you have not set a Gemini or OpenAI key here.`;
+      if (v.length < 50) return `Claude API key is too short (${v.length} chars). A real key is 97+ characters.`;
+      return null;
+    },
+  },
   {
     name: "GEMINI_API_KEY",
     description:
-      "Google Gemini API key (AIza..., 39 chars) for AI extraction. Without this, all imported records are REGEX_DRAFT only.",
+      "Google Gemini API key (AIza..., 39 chars). Used as a fallback for proposal generation and as the primary engine for CV/project extraction. Without this AND ANTHROPIC_API_KEY, all imported records are REGEX_DRAFT only.",
     validate: (v) => {
       if (!v.startsWith("AIza")) return `Expected a Gemini API key starting with "AIza". Got: "${v.slice(0, 8)}..." — check you have not set an Anthropic or OpenAI key here.`;
       if (v.length < 35) return `Gemini API key is too short (${v.length} chars). A real key is 39 characters.`;
