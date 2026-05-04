@@ -31,6 +31,13 @@ import { buildWhyUsSummary } from "./why-us-summary";
 import { buildWorkPlanTable } from "./work-plan-timeline";
 import { buildBidComplianceMapping } from "./bid-compliance-mapping";
 import { formatQualityScoreSummary, scoreProposalQuality } from "./proposal-quality-scorer";
+import {
+  buildCertificationsSection,
+  buildConflictOfInterestSection,
+  buildInHouseCapabilitiesSection,
+  buildUnderstandingSection,
+  buildValueAddedServices,
+} from "./understanding-and-value-added";
 
 const BRAND_BLUE = "1F4E79";
 const BRAND_GRAY = "595959";
@@ -713,6 +720,38 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   if (!upstreamCheck("E.1 Bid Compliance Mapping — Tender Requirements to Proposal Sections") && !upstreamCheck("Bid Compliance Mapping") && !upstreamCheck("Tender Requirements Mapping")) {
     const mapping = buildBidComplianceMapping({ requirements: tender.requirements });
     if (mapping) round2Sections.push(mapping);
+  }
+
+  // Round-6: more evaluator-facing sections (Understanding, Value-Added,
+  // Certifications, In-House Capabilities, Conflict of Interest).
+  if (!upstreamCheck("C.1 Understanding of the Assignment") && !upstreamCheck("Understanding of the Assignment") && !upstreamCheck("Understanding of Assignment")) {
+    round2Sections.push(buildUnderstandingSection({
+      tenderTitle: tender.title,
+      clientName: intelligence.clientName,
+      primarySector: intelligence.primarySector,
+      evaluationCriteria: intelligence.evaluationCriteria,
+    }));
+  }
+  if (!upstreamCheck("D.2 Value-Added Services") && !upstreamCheck("Value-Added Services") && !upstreamCheck("Value Added Services")) {
+    round2Sections.push(buildValueAddedServices({ primarySector: intelligence.primarySector, companyName: company.name }));
+  }
+  if (!upstreamCheck("D.3 Professional Certifications and Affiliations") && !upstreamCheck("Professional Certifications") && !upstreamCheck("Certifications and Affiliations")) {
+    round2Sections.push(buildCertificationsSection({ experts: experts as ExpertRecord[], companyName: company.name }));
+  }
+  if (!upstreamCheck("A.7 In-House Capabilities") && !upstreamCheck("In-House Capabilities")) {
+    round2Sections.push(buildInHouseCapabilitiesSection({
+      companyName: company.name,
+      serviceLines: safeParseArr(company.serviceLines),
+      sectors: safeParseArr(company.sectors),
+      evidenceLines: companyEvidenceLines,
+    }));
+  }
+  if (!upstreamCheck("D.5 Declaration of No Conflict of Interest") && !upstreamCheck("Conflict of Interest") && !upstreamCheck("No Conflict of Interest")) {
+    round2Sections.push(buildConflictOfInterestSection({
+      companyName: company.name,
+      clientName: intelligence.clientName,
+      tenderTitle: tender.title,
+    }));
   }
 
   const combinedMarkdown = [matrixMarkdown, strengtheningMarkdown, benchmarkTables, ...round2Sections].filter(Boolean).join("\n\n");
