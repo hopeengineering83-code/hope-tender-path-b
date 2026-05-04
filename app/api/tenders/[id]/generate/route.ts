@@ -3,7 +3,7 @@ import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../.
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { generateTenderDocuments } from "../../../../../lib/engine/generate-elite";
 import { applyActiveUploadedLetterheadToTenderDocuments } from "../../../../../lib/engine/apply-active-letterhead";
-import { buildSubmissionPlan, findExtraGeneratedDocuments, findMissingGeneratedDocuments, generatedDocumentSubmissionKey, hasExplicitSubmissionScope, plannedSubmissionTargetFiles, plannedSubmissionTargetKeys } from "../../../../../lib/engine/submission-plan";
+import { buildSubmissionPlan, findExtraGeneratedDocuments, findMissingGeneratedDocuments, generatedDocumentSubmissionKey, hasExplicitSubmissionScope, plannedSubmissionTargetFiles, plannedSubmissionTargetKeys, type SubmissionPlanFile } from "../../../../../lib/engine/submission-plan";
 import { polishBenchmarkOutput } from "../../../../../lib/engine/benchmark-output-polisher";
 import { logAction } from "../../../../../lib/audit";
 import { Document, HeadingLevel, Packer, Paragraph, TextRun } from "docx";
@@ -38,6 +38,66 @@ function heading(text: string): Paragraph {
 
 function bullet(text: string): Paragraph {
   return new Paragraph({ text: shortText(text, 560), bullet: { level: 0 }, spacing: { after: 80, line: 260 } });
+}
+
+function plannedRecordDocumentType(file: SubmissionPlanFile): string {
+  const label = `${file.exactFileName} ${file.documentType}`.toLowerCase();
+  if (/technical[-\s_]*proposal|methodology|technical approach/.test(label)) return "TECHNICAL_PROPOSAL";
+  if (/financial|price|commercial/.test(label)) return "FINANCIAL_PROPOSAL";
+  if (/expert|cv|personnel|staff/.test(label)) return "EXPERT_CV_PACKAGE";
+  if (/project|experience|reference/.test(label)) return "PROJECT_REFERENCE_PACKAGE";
+  if (/form|declaration|annex|schedule|certificate|compliance/.test(label)) return "FORM_OR_ANNEX";
+  return file.documentType || "TENDER_REQUIRED_FILE";
+}
+
+async function ensurePlannedGeneratedDocumentRecords(tenderId: string, plannedFiles: SubmissionPlanFile[]): Promise<number> {
+  if (plannedFiles.length === 0) return 0;
+  const existing = await prisma.generatedDocument.findMany({
+    where: { tenderId },
+    select: { id: true, name: true, exactFileName: true, documentType: true, exactOrder: true, format: true, generationStatus: true, fileContent: true },
+  });
+  const byKey = new Map(existing.map((doc) => [generatedDocumentSubmissionKey(doc), doc]));
+  let created = 0;
+
+  for (const file of plannedFiles) {
+    const key = generatedDocumentSubmissionKey({ exactFileName: file.exactFileName });
+    const current = byKey.get(key);
+    const documentType = plannedRecordDocumentType(file);
+    if (!current) {
+      await prisma.generatedDocument.create({
+        data: {
+          tenderId,
+          name: file.exactFileName.replace(/\.[a-z0-9]{2,5}$/i, ""),
+          documentType,
+          format: file.format,
+          exactFileName: file.exactFileName,
+          exactOrder: file.exactOrder,
+          generationStatus: "PLANNED",
+          validationStatus: "PENDING",
+          reviewStatus: "PENDING",
+          contentSummary: `Planned tender-required file from submission plan. Source requirements: ${file.sourceRequirementIds.join(", ") || "exact file naming/order instruction"}.`,
+        },
+      });
+      created += 1;
+      continue;
+    }
+
+    if (current.generationStatus !== "GENERATED") {
+      await prisma.generatedDocument.update({
+        where: { id: current.id },
+        data: {
+          name: current.name || file.exactFileName.replace(/\.[a-z0-9]{2,5}$/i, ""),
+          documentType,
+          format: file.format,
+          exactFileName: file.exactFileName,
+          exactOrder: file.exactOrder,
+          contentSummary: current.fileContent ? current.generationStatus : `Planned tender-required file from submission plan. Source requirements: ${file.sourceRequirementIds.join(", ") || "exact file naming/order instruction"}.`,
+          updatedAt: new Date(),
+        },
+      });
+    }
+  }
+  return created;
 }
 
 async function makeSupportDocx(tenderTitle: string, title: string, sections: Array<{ title: string; lines: string[] }>): Promise<string> {
@@ -188,6 +248,8 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   if (draftProjects.length > 0) warnings.push(`${draftProjects.length} selected project(s) are unreviewed drafts: ${draftProjects.map((m) => m.project.name).join(", ")}. Review them in the Knowledge Review page for more accurate proposals.`);
 
   try {
+    const plannedRecordCount = explicitSubmissionScope ? await ensurePlannedGeneratedDocumentRecords(id, plannedTargetFiles) : 0;
+    if (plannedRecordCount > 0) warnings.push(`${plannedRecordCount} missing tender-required file target(s) were added to the Generated outputs plan before generation.`);
     await generateTenderDocuments(id, userId);
     const supportDocumentCount = await fillPlannedSupportDocuments(id, plannedFileKeys);
     if (supportDocumentCount > 0) warnings.push(explicitSubmissionScope
@@ -207,9 +269,9 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
 
     if (reviewedExpertCount > 0 || draftExperts.length > 0 || reviewedProjectCount > 0 || draftProjects.length > 0) await prisma.generatedDocument.updateMany({ where: { tenderId: id }, data: { reviewedExpertCount, draftExpertCount: draftExperts.length, reviewedProjectCount, draftProjectCount: draftProjects.length, updatedAt: new Date() } });
 
-    await logAction({ userId, action: "TENDER_GENERATED", entityType: "Tender", entityId: id, description: `Generated benchmark-quality documents for tender "${tender.title}" — ${reviewedExpertCount} reviewed experts, ${draftExperts.length} draft experts, ${reviewedProjectCount} reviewed projects, ${draftProjects.length} draft projects, ${supportDocumentCount} supporting package documents, ${letterheadAppliedCount} uploaded letterhead overlays, ${seniorReviewCriticals.length} senior-review gaps`, metadata: { tenderId: id, reviewedExpertCount, draftExpertCount: draftExperts.length, reviewedProjectCount, draftProjectCount: draftProjects.length, supportDocumentCount, letterheadAppliedCount, seniorReviewGapCount: seniorReviewCriticals.length, explicitSubmissionScope, plannedTargetCount: plannedTargetFiles.length, missingPlanFileCount: missingPlanFiles.length, extraGeneratedFileCount: extraGeneratedDocs.length, warnings } });
+    await logAction({ userId, action: "TENDER_GENERATED", entityType: "Tender", entityId: id, description: `Generated benchmark-quality documents for tender "${tender.title}" — ${reviewedExpertCount} reviewed experts, ${draftExperts.length} draft experts, ${reviewedProjectCount} reviewed projects, ${draftProjects.length} draft projects, ${supportDocumentCount} supporting package documents, ${letterheadAppliedCount} uploaded letterhead overlays, ${seniorReviewCriticals.length} senior-review gaps`, metadata: { tenderId: id, reviewedExpertCount, draftExpertCount: draftExperts.length, reviewedProjectCount, draftProjectCount: draftProjects.length, plannedRecordCount, supportDocumentCount, letterheadAppliedCount, seniorReviewGapCount: seniorReviewCriticals.length, explicitSubmissionScope, plannedTargetCount: plannedTargetFiles.length, missingPlanFileCount: missingPlanFiles.length, extraGeneratedFileCount: extraGeneratedDocs.length, warnings } });
     const updatedTender = await prisma.tender.findFirst({ where: { id, userId }, include: { generatedDocuments: { orderBy: { exactOrder: "asc" } } } });
-    return NextResponse.json({ success: true, tender: updatedTender, warnings, supportDocumentCount, letterheadAppliedCount, submissionPlan: explicitSubmissionScope ? { plannedTargetCount: plannedTargetFiles.length, missing: missingPlanFiles.map((file) => file.exactFileName), extras: extraGeneratedDocs.map((doc) => doc.exactFileName ?? doc.name ?? doc.documentType ?? doc.id ?? "document") } : null });
+    return NextResponse.json({ success: true, tender: updatedTender, warnings, plannedRecordCount, supportDocumentCount, letterheadAppliedCount, submissionPlan: explicitSubmissionScope ? { plannedTargetCount: plannedTargetFiles.length, missing: missingPlanFiles.map((file) => file.exactFileName), extras: extraGeneratedDocs.map((doc) => doc.exactFileName ?? doc.name ?? doc.documentType ?? doc.id ?? "document") } : null });
   } catch (error) {
     console.error("[generate] error:", error);
     return NextResponse.json({ error: error instanceof Error ? error.message : "Document generation failed" }, { status: 500 });
