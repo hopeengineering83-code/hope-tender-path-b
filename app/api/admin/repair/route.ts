@@ -3,6 +3,7 @@ import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../.
 import { prisma, prismaReady } from "../../../../lib/prisma";
 import { extractTextFromBuffer, getFileTypeLabel, isMeaningfulExtraction } from "../../../../lib/extract-text";
 import { importCompanyKnowledgeFromDocuments } from "../../../../lib/company-knowledge-import-safe";
+import { cleanTenderTitle, cleanClientName } from "../../../../lib/engine/proposal-labels";
 
 /**
  * POST /api/admin/repair
@@ -14,7 +15,8 @@ import { importCompanyKnowledgeFromDocuments } from "../../../../lib/company-kno
  * Query params:
  *   ?step=extract     — only re-extract text (skip import)
  *   ?step=import      — only run import (skip re-extraction)
- *   ?step=all (default) — both
+ *   ?step=labels      — clean tender titles and client names for all tenders
+ *   ?step=all (default) — extract + import (labels must be run separately)
  */
 export async function POST(req: Request) {
   let actor;
@@ -37,6 +39,7 @@ export async function POST(req: Request) {
     step,
     reextraction: null as null | { total: number; success: number; failed: number; skipped: number; details: Array<{ name: string; chars: number; status: string; error?: string }> },
     import: null as null | { docsProcessed: number; expertsCreated: number; projectsCreated: number; aiUsed: boolean; aiFailures: number },
+    labels: null as null | { total: number; updated: number; details: Array<{ id: string; before: string; after: string }> },
     timestamp: new Date().toISOString(),
   };
 
@@ -92,6 +95,40 @@ export async function POST(req: Request) {
   if (step === "import" || step === "all") {
     const importResult = await importCompanyKnowledgeFromDocuments(company.id);
     results.import = importResult;
+  }
+
+  // ── Step 3: Clean tender titles and client names ───────────────────────────
+  if (step === "labels") {
+    const tenders = await prisma.tender.findMany({
+      where: { userId: actor.id },
+      select: { id: true, title: true, clientName: true, description: true },
+    });
+
+    let updated = 0;
+    const details: Array<{ id: string; before: string; after: string }> = [];
+
+    for (const t of tenders) {
+      const cleanedClient = cleanClientName(t.clientName, t.description);
+      const cleanedTitle = cleanTenderTitle(t.title, { clientName: cleanedClient, description: t.description ?? undefined });
+
+      const titleChanged = cleanedTitle !== (t.title ?? "");
+      const clientChanged = cleanedClient !== (t.clientName ?? "");
+
+      if (titleChanged || clientChanged) {
+        await prisma.tender.update({
+          where: { id: t.id },
+          data: {
+            ...(titleChanged ? { title: cleanedTitle } : {}),
+            ...(clientChanged ? { clientName: cleanedClient } : {}),
+            updatedAt: new Date(),
+          },
+        });
+        updated++;
+        details.push({ id: t.id, before: `"${t.title}" / "${t.clientName}"`, after: `"${cleanedTitle}" / "${cleanedClient}"` });
+      }
+    }
+
+    results.labels = { total: tenders.length, updated, details };
   }
 
   return NextResponse.json(results);
