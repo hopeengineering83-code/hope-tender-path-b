@@ -301,7 +301,7 @@ async function generate(prompt: string, modelName = DEFAULT_GEMINI_MODEL): Promi
  * For the extraction-only callers (which currently rely on `generate`
  * throwing for the user to see), this preserves the exception flow.
  */
-async function generateWithFallback(prompt: string, opts?: { systemPrompt?: string; geminiModel?: string }): Promise<string> {
+export async function generateWithFallback(prompt: string, opts?: { systemPrompt?: string; geminiModel?: string }): Promise<string> {
   if (isClaudeEnabled()) {
     const claudeResult = await generateWithClaude(prompt, opts?.systemPrompt);
     if (claudeResult) return claudeResult;
