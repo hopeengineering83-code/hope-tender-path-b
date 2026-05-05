@@ -4,6 +4,7 @@ import { getSession } from "../../../lib/auth";
 import { prisma, prismaReady } from "../../../lib/prisma";
 import { StatusBadge } from "../../../components/status-badge";
 import { formatDate, formatTenderStatus, parseTenderStatus } from "../../../lib/tender-workflow";
+import { cleanClientName, cleanTenderTitle } from "../../../lib/engine/proposal-labels";
 
 const STATUS_FILTERS = [
   "ALL",
@@ -108,8 +109,11 @@ export default async function TendersPage({
                 return (
                   <tr key={tender.id} className="hover:bg-slate-50">
                     <td className="px-6 py-4">
-                      <p className="font-medium text-slate-900">{tender.title}</p>
-                      {tender.clientName && <p className="text-xs text-slate-400">{tender.clientName}</p>}
+                      <p className="font-medium text-slate-900">{cleanTenderTitle(tender.title, { clientName: tender.clientName })}</p>
+                      {(() => {
+                        const c = cleanClientName(tender.clientName);
+                        return c && c !== "Client" ? <p className="text-xs text-slate-400">{c}</p> : null;
+                      })()}
                     </td>
                     <td className="px-6 py-4 text-slate-500">{tender.reference || "—"}</td>
                     <td className="px-6 py-4 text-slate-500">{formatDate(tender.deadline)}</td>
