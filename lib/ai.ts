@@ -15,10 +15,24 @@ const PROPOSAL_MODELS = ["gemini-2.5-pro", "gemini-2.0-flash", "gemini-1.5-pro"]
 // Claude models in preference order. Claude is preferred over Gemini for
 // proposal generation when ANTHROPIC_API_KEY is configured, because the
 // benchmark used for the quality target is Claude-generated.
-const CLAUDE_PROPOSAL_MODELS = (process.env.ANTHROPIC_PROPOSAL_MODELS || "claude-opus-4-7,claude-sonnet-4-6,claude-haiku-4-5-20251001")
+//
+// The default chain prefers stable, widely-available aliases so it works
+// on a fresh Anthropic account without configuration. To pin specific
+// snapshot models, override via ANTHROPIC_PROPOSAL_MODELS — comma-separated.
+const CLAUDE_PROPOSAL_MODELS = (process.env.ANTHROPIC_PROPOSAL_MODELS || "claude-sonnet-4-5,claude-opus-4-1,claude-3-5-sonnet-latest,claude-3-5-haiku-latest")
   .split(",")
   .map((m) => m.trim())
   .filter(Boolean);
+
+// Maximum output tokens per Claude call. Anthropic Free Tier caps output at
+// 4K tokens/minute per model; paid tiers go much higher. Default is set
+// conservatively so a single call cannot exceed the Free Tier per-minute
+// budget. Override via ANTHROPIC_MAX_OUTPUT_TOKENS for paid tiers.
+const CLAUDE_MAX_OUTPUT_TOKENS = (() => {
+  const raw = Number(process.env.ANTHROPIC_MAX_OUTPUT_TOKENS);
+  if (Number.isFinite(raw) && raw > 0) return Math.min(raw, 64000);
+  return 4000;
+})();
 
 function getClient() {
   if (!apiKey) throw new Error("GEMINI_API_KEY not configured");
@@ -75,39 +89,54 @@ async function generateWithClaude(prompt: string): Promise<string | null> {
 
   const errors: string[] = [];
   for (const modelName of CLAUDE_PROPOSAL_MODELS) {
-    try {
-      const response = await client.messages.create({
-        model: modelName,
-        max_tokens: 16000,
-        messages: [{ role: "user", content: prompt }],
-      });
-      const text = response.content
-        .filter((c) => c.type === "text")
-        .map((c) => c.text ?? "")
-        .join("\n")
-        .trim();
-      if (text.length === 0) {
-        errors.push(`${modelName}: empty response`);
-        continue;
+    // Per-model rate-limit retry: Free Tier accounts hit 429 frequently. Try
+    // each model up to 3 times with exponential backoff (2s, 4s, 8s) before
+    // moving on to the next model in the chain.
+    let attemptError: string | null = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const response = await client.messages.create({
+          model: modelName,
+          max_tokens: CLAUDE_MAX_OUTPUT_TOKENS,
+          messages: [{ role: "user", content: prompt }],
+        });
+        const text = response.content
+          .filter((c) => c.type === "text")
+          .map((c) => c.text ?? "")
+          .join("\n")
+          .trim();
+        if (text.length === 0) {
+          attemptError = `${modelName}: empty response`;
+          break; // empty response is not retryable
+        }
+        return text;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        attemptError = `${modelName}: ${msg}`;
+        // 401 / 403 — credentials are wrong, no point retrying or trying other models
+        if (/401|403|invalid api key|authentication/i.test(msg)) {
+          throw new Error(`Anthropic API key invalid — check ANTHROPIC_API_KEY in environment variables. (${msg})`);
+        }
+        // 429 — rate limit. Retry this model with backoff before falling
+        // through to the next model. Free Tier hits this often.
+        if (/429|rate.?limit|over.?capacity|tokens per minute/i.test(msg)) {
+          if (attempt < 2) {
+            const delayMs = 2000 * Math.pow(2, attempt); // 2s, 4s
+            console.warn(`[ai] Claude rate-limit on ${modelName} (attempt ${attempt + 1}/3) — backing off ${delayMs}ms.`);
+            await new Promise((resolve) => setTimeout(resolve, delayMs));
+            continue;
+          }
+          // 3rd attempt also rate-limited — move to next model
+          break;
+        }
+        // 404 / model not found / invalid request — don't retry, move on
+        if (/404|not.?found|model_not_found|invalid_request/i.test(msg)) break;
+        // Other errors — log and move on
+        console.warn(`[ai] Claude generation failed (${modelName}): ${msg} — moving to next model.`);
+        break;
       }
-      return text;
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`${modelName}: ${msg}`);
-      // 401 / 403 — credentials are wrong, no point trying other models
-      if (/401|403|invalid api key|authentication/i.test(msg)) {
-        throw new Error(`Anthropic API key invalid — check ANTHROPIC_API_KEY in environment variables. (${msg})`);
-      }
-      // 429 — rate limit, retry with backoff
-      if (/429|rate.?limit/i.test(msg)) {
-        if (CLAUDE_PROPOSAL_MODELS.indexOf(modelName) < CLAUDE_PROPOSAL_MODELS.length - 1) continue;
-        throw new Error(`Anthropic API rate limit reached — try again in a moment. (${msg})`);
-      }
-      // 404 / model not found — try next model
-      if (/404|not.?found|model_not_found|invalid_request/i.test(msg)) continue;
-      // Other errors — let the fallback to Gemini take over (return null)
-      console.warn(`[ai] Claude generation failed (${modelName}): ${msg} — falling through to next model.`);
     }
+    if (attemptError) errors.push(attemptError);
   }
 
   if (errors.length > 0) {
