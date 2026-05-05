@@ -37,6 +37,18 @@ export function isClaudeEnabled() {
   return Boolean(anthropicApiKey);
 }
 
+// Last AI provider that successfully produced a proposal output. Set inside
+// generateBenchmarkProposalWithAI / refineProposalWithAI; read by callers
+// (e.g., generate-elite.ts) so the GeneratedDocument.contentSummary can
+// surface which provider was actually used (rather than a generic "AI"
+// label). Reset to null whenever a generation request fails entirely.
+type AIProvider = "claude" | "gemini" | null;
+let lastProposalProvider: AIProvider = null;
+
+export function getLastProposalProvider(): AIProvider {
+  return lastProposalProvider;
+}
+
 // ─── Claude (Anthropic) provider ──────────────────────────────────────────────
 // Lazy-loaded so the @anthropic-ai/sdk package is only required when the user
 // has set ANTHROPIC_API_KEY. Falls back gracefully (returns null) when the
@@ -481,9 +493,16 @@ ${input.currentMarkdown}
   try {
     if (isClaudeEnabled()) {
       const claudeResult = await generateWithClaude(prompt);
-      if (claudeResult) return claudeResult;
+      if (claudeResult) {
+        lastProposalProvider = "claude";
+        return claudeResult;
+      }
     }
-    if (apiKey) return await generateWithBestModel(prompt);
+    if (apiKey) {
+      const geminiResult = await generateWithBestModel(prompt);
+      lastProposalProvider = "gemini";
+      return geminiResult;
+    }
   } catch (err) {
     console.warn(`[ai] refineProposalWithAI failed: ${err instanceof Error ? err.message : String(err)}`);
     return null;
@@ -937,11 +956,21 @@ Now write the complete technical proposal. Start with the Cover Letter. The eval
   // is Claude-generated, so the prompt is tuned for Claude's strengths. Falls
   // back to Gemini when Claude fails or returns null. Falls back to the
   // deterministic engine path when both fail (handled in generateTenderDocuments).
+  // The chosen provider is recorded in lastProposalProvider so callers can
+  // surface "Claude" vs "Gemini" in the GeneratedDocument.contentSummary.
   if (isClaudeEnabled()) {
     const claudeResult = await generateWithClaude(prompt);
-    if (claudeResult) return claudeResult;
+    if (claudeResult) {
+      lastProposalProvider = "claude";
+      return claudeResult;
+    }
   }
-  if (apiKey) return generateWithBestModel(prompt);
+  if (apiKey) {
+    const geminiResult = await generateWithBestModel(prompt);
+    lastProposalProvider = "gemini";
+    return geminiResult;
+  }
+  lastProposalProvider = null;
   throw new Error("No AI provider configured — set ANTHROPIC_API_KEY (preferred) or GEMINI_API_KEY in environment variables.");
 }
 

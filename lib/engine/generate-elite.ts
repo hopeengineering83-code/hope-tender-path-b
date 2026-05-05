@@ -1,6 +1,6 @@
 import { AlignmentType, BorderStyle, Document, Footer, Header, HeadingLevel, Packer, PageNumber, Paragraph, Table, TableBorders, TableCell, TableRow, TextRun, WidthType } from "docx";
 import { prisma } from "../prisma";
-import { generateBenchmarkProposalWithAI, isAIEnabled, refineProposalWithAI } from "../ai";
+import { generateBenchmarkProposalWithAI, getLastProposalProvider, isAIEnabled, refineProposalWithAI } from "../ai";
 import { buildProposalIntelligence, expertProofLine, projectProofLine, safeParseArr } from "./proposal-intelligence";
 import { exactSelectionLimit } from "./scope-policy";
 import { finalizeClientReadyProposalMarkdown } from "./proposal-benchmark-guard";
@@ -647,7 +647,8 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
         compliance: [...BENCHMARK_CONTEXT_LINES, ...complianceLines].join("\n"),
         differentiators: [...BENCHMARK_CONTEXT_LINES, ...intelligence.differentiators, ...companyEvidenceLines.slice(0, 8)].join("\n"),
       });
-      mode = "AI bid-writer + evaluator response matrix + full evidence library + client-ready benchmark finalizer + professional DOCX polish";
+      const provider = getLastProposalProvider() ?? "ai";
+      mode = `${provider === "claude" ? "Claude" : provider === "gemini" ? "Gemini" : "AI"} bid-writer + evaluator response matrix + full evidence library + client-ready benchmark finalizer + professional DOCX polish`;
     } catch (error) {
       aiError = error instanceof Error ? error.message : String(error);
       sourceMarkdown = fallbackProposalMarkdown({ tenderTitle: cleanedTenderTitle, clientName: intelligence.clientName, companyName: company.name, companyLegalName: company.legalName, companyAddress: company.address, companyTIN: company.tin, companyVAT: company.vat, companyGM: company.gmName, companyGMLicense: company.gmLicense, primarySector: intelligence.primarySector, requirements: requirementLines, differentiators: intelligence.differentiators, submissionRules: intelligence.submissionRules, expertLines, projectLines, experts: experts as ExpertRecord[], projects: projects as ProjectRecord[], reviewedExpertCount: experts.length, companyEvidenceLines, projectEvidenceLines, complianceLines, expertRequired, projectRequired, themes: intelligence.themes, evaluationCriteria: intelligence.evaluationCriteria, appendixList: intelligence.appendixList, noFinancialProposal: intelligence.noFinancialProposal, exactEmails: intelligence.exactEmails, exactSubjectLine: intelligence.exactSubjectLine, gapsToAddressInNarrative: intelligence.gapsToAddressInNarrative, requiredSections: intelligence.requiredSections, tenderDeadline: tender.deadline });
@@ -863,7 +864,11 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     ? buildProfessionalDocument({ tenderTitle: cleanedTenderTitle, clientName: intelligence.clientName, companyName: company.name, reference: tender.reference, contactFooter, children: finalChildren })
     : doc;
   const fileContent = (await Packer.toBuffer(finalDoc)).toString("base64");
-  const summary = `${mode}${refinementApplied ? " + AI refinement pass" : ""} technical proposal generated. ${finalized.internalSummary}. ${auditSummary}. ${formatQualityScoreSummary(qualityScore)}. Inputs: ${intelligence.requiredSections.length} section group(s), ${intelligence.themes.length} tender theme(s), ${experts.length} reviewed expert(s), ${projects.length} reviewed project(s), ${companyEvidenceLines.length} company evidence item(s), ${projectEvidenceLines.length} project evidence attachment(s).${aiError ? ` AI fallback reason: ${aiError}` : ""}`;
+  const refinementProvider = refinementApplied ? getLastProposalProvider() : null;
+  const refinementLabel = refinementApplied
+    ? ` + ${refinementProvider === "claude" ? "Claude" : refinementProvider === "gemini" ? "Gemini" : "AI"} refinement pass`
+    : "";
+  const summary = `${mode}${refinementLabel} technical proposal generated. ${finalized.internalSummary}. ${auditSummary}. ${formatQualityScoreSummary(qualityScore)}. Inputs: ${intelligence.requiredSections.length} section group(s), ${intelligence.themes.length} tender theme(s), ${experts.length} reviewed expert(s), ${projects.length} reviewed project(s), ${companyEvidenceLines.length} company evidence item(s), ${projectEvidenceLines.length} project evidence attachment(s).${aiError ? ` AI fallback reason: ${aiError}` : ""}`;
 
   const target = await prisma.generatedDocument.findFirst({ where: { tenderId, documentType: { in: ["TECHNICAL_PROPOSAL", "PROPOSAL", "METHODOLOGY"] } }, orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }] });
   if (target) {
