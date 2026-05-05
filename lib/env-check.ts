@@ -4,20 +4,33 @@
  * Fails LOUDLY — throws at module load time so the process crashes with
  * a clear message rather than silently degrading.
  *
- * ARCHITECTURE: GEMINI_API_KEY is required in ALL environments because:
- *   - Without it, every imported expert/project is classified as REGEX_DRAFT
+ * ARCHITECTURE: at least one AI provider key is required in ALL environments:
+ *   - ANTHROPIC_API_KEY (preferred — Claude provider, what the prompt is tuned for)
+ *   - GEMINI_API_KEY    (fallback — used for proposal generation when Claude is
+ *                        not configured, and as the primary engine for CV /
+ *                        project extraction)
+ *
+ * Without EITHER key:
+ *   - Every imported expert/project is classified as REGEX_DRAFT
  *   - REGEX_DRAFT records are BLOCKED from use in final proposal generation
- *   - A deployment without the key can never complete the proposal workflow
+ *   - A deployment with no AI key can never complete the proposal workflow
  */
 
 const REQUIRED_VARS: Array<{ name: string; description: string }> = [
   { name: "DATABASE_URL", description: "PostgreSQL connection string (postgresql://...)" },
   { name: "SESSION_SECRET", description: "At least 32-character random string for HMAC session signing" },
+];
+
+const AI_PROVIDER_KEYS: Array<{ name: string; description: string }> = [
+  {
+    name: "ANTHROPIC_API_KEY",
+    description: "Anthropic Claude API key (sk-ant-...). PREFERRED provider for proposal generation.",
+  },
   {
     name: "GEMINI_API_KEY",
     description:
-      "Google Gemini API key — required for AI extraction. Without this, all imported records " +
-      "are REGEX_DRAFT and will be BLOCKED from final proposal generation.",
+      "Google Gemini API key (AIza...). Fallback for proposal generation; primary engine for CV/project extraction. " +
+      "Without an AI key, all imported records are REGEX_DRAFT and BLOCKED from final proposal generation.",
   },
 ];
 
@@ -46,6 +59,18 @@ export function checkEnv(): void {
       if (!process.env[name]) {
         missing.push(`  ✗ ${name}: ${description}`);
       }
+    }
+  }
+
+  // At least one of the AI provider keys must be set. The check is
+  // satisfied by EITHER key, so we add to `missing` only when both are
+  // absent — and we present both as alternatives so operators see the
+  // full set of options.
+  const hasAnyAIKey = AI_PROVIDER_KEYS.some(({ name }) => Boolean(process.env[name]));
+  if (!hasAnyAIKey) {
+    missing.push("  ✗ Set at least one AI provider key:");
+    for (const { name, description } of AI_PROVIDER_KEYS) {
+      missing.push(`      • ${name}: ${description}`);
     }
   }
 
@@ -94,7 +119,7 @@ export function checkEnv(): void {
 }
 
 export function isAIConfigured(): boolean {
-  return Boolean(process.env.GEMINI_API_KEY);
+  return Boolean(process.env.ANTHROPIC_API_KEY || process.env.GEMINI_API_KEY);
 }
 
 // Alias used in diagnostics and other routes
