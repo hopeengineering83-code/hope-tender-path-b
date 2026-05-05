@@ -30,13 +30,21 @@ export async function GET() {
       : "SESSION_SECRET missing",
   };
 
-  // Required env vars (presence only — values are never returned)
+  // Required env vars (presence only — values are never returned).
+  // The AI provider requirement is "either ANTHROPIC_API_KEY or GEMINI_API_KEY"
+  // (Claude preferred; Gemini fallback + primary CV/project extraction engine).
+  // At least one must be set for the app to function.
+  const hasAnthropic = Boolean(process.env.ANTHROPIC_API_KEY);
+  const hasGemini = Boolean(process.env.GEMINI_API_KEY);
+  const hasAnyAIKey = hasAnthropic || hasGemini;
   checks.env = {
-    ok: Boolean(process.env.DATABASE_URL && process.env.SESSION_SECRET && process.env.GEMINI_API_KEY),
+    ok: Boolean(process.env.DATABASE_URL && process.env.SESSION_SECRET) && hasAnyAIKey,
     detail: [
       process.env.DATABASE_URL ? "DATABASE_URL ✓" : "DATABASE_URL ✗",
       process.env.SESSION_SECRET ? "SESSION_SECRET ✓" : "SESSION_SECRET ✗",
-      process.env.GEMINI_API_KEY ? "GEMINI_API_KEY ✓" : "GEMINI_API_KEY ✗",
+      hasAnthropic ? "ANTHROPIC_API_KEY ✓" : "ANTHROPIC_API_KEY ✗",
+      hasGemini ? "GEMINI_API_KEY ✓" : "GEMINI_API_KEY ✗",
+      hasAnyAIKey ? "AI provider ✓" : "AI provider ✗ (set ANTHROPIC_API_KEY or GEMINI_API_KEY)",
     ].join(", "),
   };
 
