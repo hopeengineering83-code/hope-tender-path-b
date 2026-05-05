@@ -433,51 +433,59 @@ function makeDifferentiators(
   const companyText = textOf(company.profileSummary, company.description, safeParseArr(company.serviceLines).join(", "));
   const items: string[] = [];
 
-  // Healthcare positioning
+  // The strings below are CLIENT-FACING differentiator claims — they appear
+  // verbatim in the Cover Letter / Why Us / Executive Summary as bullets.
+  // They MUST read as statements about the firm, not as instructions to a
+  // writer. Avoid imperative verbs ("Show", "Map", "Describe", "Position",
+  // "LEAD WITH", "Frame as"), AI-prompt language ("Proposal must address",
+  // "Create a Team-to-Project table"), and meta-commentary about the
+  // proposal itself ("position it as", "should be framed as").
+
+  // Healthcare positioning — claim, not instruction.
   if (themes.some((t) => t.code === "HEALTHCARE")) {
     if (/hospital|health.*facilit|medical.*cent/i.test(allProjectText)) {
-      items.push("LEAD WITH DIRECT HOSPITAL EXPERIENCE: name the specific hospitals designed/renovated, their contract values (ETB), and the client. Position it as 'we have already done this exact project — here is the evidence.'");
+      items.push("Direct healthcare facility delivery experience: prior hospital and medical-centre projects in the firm's reviewed portfolio give this engagement a same-team continuity advantage.");
     }
-    items.push("Show clinical depth — not just architecture. Proposal must address IPC compliance, clinical zone segregation, radiation shielding, medical gas, and Ethiopian Health Authority licensing explicitly.");
-    items.push("Map each proposed expert to their ROLE on a previous hospital project (not just qualifications). Create a Team-to-Project mapping table.");
+    items.push("Healthcare-specific design depth: IPC compliance, clinical zone segregation, radiation shielding for imaging, medical gas coordination, and Health Authority licensing are core deliverables, not afterthoughts.");
+    items.push("Each proposed lead has performed a comparable role on a previous reviewed project — credentials matched to actual delivery, not just discipline.");
   }
 
-  // Facility assessment
+  // Facility assessment — claim, not instruction.
   if (themes.some((t) => t.code === "FACILITY_ASSESSMENT")) {
-    items.push("Describe the structured assessment methodology for shortlisted properties: structural adequacy, spatial feasibility, utilities, accessibility, expansion. Position in-house geotechnical capability as a due-diligence advantage.");
+    items.push("Structured property assessment methodology covering structural adequacy, spatial feasibility, utility availability, accessibility, and expansion potential, backed by in-house geotechnical capability for due-diligence speed.");
   }
 
-  // Donor compliance
+  // Donor compliance — claim, not instruction.
   if (/World Bank|ESF|UNDP|British Council/i.test(companyText + allProjectText)) {
-    items.push("Donor compliance track record (World Bank ESF, British Council) should be positioned as a risk-reduction advantage — it means documentation already exceeds what the client's regulator requires.");
+    items.push("Donor-grade documentation track record (World Bank ESF, British Council, equivalent): documentation discipline exceeds typical regulatory requirements, reducing approval risk.");
   }
 
-  // In-house geotechnical
+  // In-house geotechnical — claim.
   if (/geotechnical|drilling rig|soil.*machine|laboratory/i.test(companyText)) {
-    items.push("In-house geotechnical capability (drilling rigs, soil lab) eliminates sub-contractor delays at the site-assessment stage. Frame as schedule protection.");
+    items.push("In-house geotechnical capability (drilling rigs, soil testing laboratory) removes sub-contractor coordination from the site-assessment phase and protects acquisition timelines.");
   }
 
-  // MEP in-house
+  // MEP in-house — claim.
   if (/MEP|electrical.*engineer|sanitary.*engineer|mechanical/i.test(allExpertText)) {
-    items.push("Multidisciplinary in-house MEP team (electrical, sanitary, mechanical) — positions the firm as a single-source solution. Reduces coordination risk and response time.");
+    items.push("Single-source multidisciplinary MEP team (electrical, sanitary, mechanical) under one firm — coordination is internal, not contractual.");
   }
 
-  // Large project scale
+  // Large project scale — already a claim, kept.
   const bigProjects = projects.filter((p) => (p.contractValue ?? 0) >= 100_000_000);
   if (bigProjects.length > 0) {
     const biggest = bigProjects.sort((a, b) => (b.contractValue ?? 0) - (a.contractValue ?? 0))[0];
     const val = money(biggest.contractValue, biggest.currency);
-    items.push(`High-value project track record (${val ?? "large scale"} — ${biggest.name}): demonstrates institutional capacity and financial accountability at the scale this tender requires.`);
+    items.push(`High-value institutional project track record (${val ?? "large scale"} — ${biggest.name}): documented delivery at the scale this engagement requires.`);
   }
 
-  // PhD / senior credentials
+  // PhD / senior credentials — claim.
   if (/PhD|doctorate|Eindhoven|Oxford|imperial/i.test(allExpertText)) {
-    items.push("Team includes PhD-qualified specialists — position as evidence of deep technical capability, not just practical experience.");
+    items.push("Team includes PhD-qualified specialists — deep technical capability supported by international academic credentials.");
   }
 
-  // Pharo-specific
+  // Pharo-specific — claim, not instruction.
   if (/pharo/i.test(tenderText)) {
-    items.push("Pharo Ventures is a private-sector investor — proposal tone should emphasise schedule certainty, documentation quality, and institutional discipline, not just technical competence.");
+    items.push("Engagement model tuned to private-sector investor expectations: schedule certainty, audit-ready documentation, and institutional delivery discipline alongside technical depth.");
   }
 
   return Array.from(new Set(items)).slice(0, 8);
@@ -513,6 +521,8 @@ function detectGaps(themes: ProposalTheme[], topProjects: ProjectLite[], topExpe
 
 // ─── Public interface ─────────────────────────────────────────────────────────
 
+import { cleanClientName, cleanTenderTitle } from "./proposal-labels";
+
 export function buildProposalIntelligence(params: {
   tender: TenderLite;
   company: CompanyLite;
@@ -541,10 +551,26 @@ export function buildProposalIntelligence(params: {
   const exactSubjectLine = detectExactSubjectLine(tenderText);
   const noFinancialProposal = /financial proposal.*not|technical proposal only|no financial proposal|financial.*not.*required/i.test(tenderText);
 
+  // Sanitize the tender title and client name. When the intake stage extracts
+  // garbage from the tender PDF (multi-line body text containing markers
+  // like "Headquarters:", "Photos or drawings", "Relationship:"), these
+  // values propagate to every section of the generated proposal — Cover
+  // Letter, Cover Page, Executive Summary, Why Us, Value Framework, support
+  // doc boilerplate. cleanTenderTitle / cleanClientName already detect and
+  // reject the garbage patterns; we just need to apply them here.
+  const detectedClient = cleanClientName(tender.clientName, tender.description);
+  const finalClientName = detectedClient !== "Client"
+    ? detectedClient
+    : (/pharo/i.test(tenderText) ? "Pharo Ventures" : "The Client");
+  const finalAssignmentName = cleanTenderTitle(tender.title, {
+    clientName: finalClientName,
+    description: tender.description,
+  });
+
   return {
     tenderText,
-    clientName: tender.clientName || (/pharo/i.test(tenderText) ? "Pharo Ventures" : "The Client"),
-    assignmentName: tender.title,
+    clientName: finalClientName,
+    assignmentName: finalAssignmentName,
     primarySector: inferSector(tenderText),
     requiredSections: detectRequiredSections(tenderText),
     evaluationCriteria: detectEvaluationCriteria(tenderText),

@@ -5,6 +5,7 @@ import { generateTenderDocuments } from "../../../../../lib/engine/generate-elit
 import { applyActiveUploadedLetterheadToTenderDocuments } from "../../../../../lib/engine/apply-active-letterhead";
 import { buildSubmissionPlan, findExtraGeneratedDocuments, findMissingGeneratedDocuments, generatedDocumentSubmissionKey, hasExplicitSubmissionScope, plannedSubmissionTargetFiles, plannedSubmissionTargetKeys, type SubmissionPlanFile } from "../../../../../lib/engine/submission-plan";
 import { polishBenchmarkOutput } from "../../../../../lib/engine/benchmark-output-polisher";
+import { cleanTenderTitle, cleanClientName } from "../../../../../lib/engine/proposal-labels";
 import { logAction } from "../../../../../lib/audit";
 import { Document, HeadingLevel, Packer, Paragraph, TextRun } from "docx";
 
@@ -163,7 +164,11 @@ async function fillPlannedSupportDocuments(tenderId: string, plannedFileKeys?: S
   });
   if (!tender) return 0;
 
-  const requirements = tender.requirements.map((r) => `${r.priority} ${r.requirementType}: ${r.title} — ${shortText(r.description, 380)}`);
+  // Internal classifier prefixes (priority + requirementType, e.g. "MANDATORY
+  // FORM:", "SCORED TECHNICAL:", "INFORMATIONAL EXPERT:") were leaking into
+  // user-facing support documents. Drop the prefix; keep just the requirement
+  // title and description, which is the evaluator-facing content.
+  const requirements = tender.requirements.map((r) => `${r.title} — ${shortText(r.description, 380)}`);
   const experts = tender.expertMatches.filter((m) => m.expert.trustLevel === "REVIEWED").map((m) => `${m.expert.fullName}${m.expert.title ? ` — ${m.expert.title}` : ""}${m.expert.yearsExperience ? ` | ${m.expert.yearsExperience}+ years` : ""}${m.expert.profile ? ` | ${shortText(m.expert.profile, 260)}` : ""}`);
   const projects = tender.projectMatches.filter((m) => m.project.trustLevel === "REVIEWED").map((m) => `${m.project.name}${m.project.clientName ? ` — ${m.project.clientName}` : ""}${m.project.country ? ` | ${m.project.country}` : ""}${m.project.summary ? ` | ${shortText(m.project.summary, 300)}` : ""}`);
 
@@ -181,7 +186,13 @@ async function fillPlannedSupportDocuments(tenderId: string, plannedFileKeys?: S
 
   for (const doc of incomplete) {
     const title = clean(doc.exactFileName || doc.name);
-    const fileContent = await makeSupportDocx(tender.title, title, supportSections(title, { tenderTitle: tender.title, requirements, experts, projects }));
+    // Sanitize the tender title before passing it into the support-doc
+    // boilerplate. The raw tender.title can be multi-line garbage from
+    // PDF extraction (e.g., "discipline and long-term commitment
+    // Headquarters: Not specified..."), and it propagates verbatim into
+    // every support document's first paragraph if used directly.
+    const cleanTitle = cleanTenderTitle(tender.title, { clientName: cleanClientName(tender.clientName, tender.description), description: tender.description });
+    const fileContent = await makeSupportDocx(cleanTitle, title, supportSections(title, { tenderTitle: cleanTitle, requirements, experts, projects }));
     await prisma.generatedDocument.update({
       where: { id: doc.id },
       data: {
