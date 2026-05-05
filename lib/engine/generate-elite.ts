@@ -944,6 +944,18 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   // is stronger. Skipped when AI is not available or refinement returns
   // null (e.g., model failure). Idempotent: never weakens the proposal,
   // only replaces if refinement raises the score.
+  //
+  // Refinement adds a second Claude call (typically 30–60s). On Vercel
+  // Hobby (60s function timeout) the first generation pass already
+  // consumes most of the budget — running refinement on top reliably
+  // exceeds the limit and the function dies. PROPOSAL_REFINEMENT_DISABLED
+  // env var lets operators on Hobby disable the second pass and keep
+  // the first Claude output as-is. The deterministic backstops
+  // (Sections E/F/G/H from PR #230 + #231) plus the in-prompt
+  // Section-E-through-H instructions (PR #228) already give strong
+  // structural guarantees without refinement, so disabling has minimal
+  // quality impact on properly-tuned tenders.
+  const REFINEMENT_DISABLED = process.env.PROPOSAL_REFINEMENT_DISABLED === "true";
   const QUALITY_REFINEMENT_THRESHOLD = 70;
   let workingMarkdown = clientMarkdown;
   let qualityScore = scoreProposalQuality({
@@ -952,7 +964,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     topProjects: (projects as ProjectRecord[]).slice(0, 2),
   });
   let refinementApplied = false;
-  if (qualityScore.total < QUALITY_REFINEMENT_THRESHOLD && qualityScore.weakAxes.length > 0 && isAIEnabled()) {
+  if (!REFINEMENT_DISABLED && qualityScore.total < QUALITY_REFINEMENT_THRESHOLD && qualityScore.weakAxes.length > 0 && isAIEnabled()) {
     try {
       const refined = await refineProposalWithAI({
         currentMarkdown: workingMarkdown,
