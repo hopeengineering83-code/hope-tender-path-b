@@ -102,9 +102,13 @@ async function ensurePlannedGeneratedDocumentRecords(tenderId: string, plannedFi
 }
 
 async function makeSupportDocx(tenderTitle: string, title: string, sections: Array<{ title: string; lines: string[] }>): Promise<string> {
+  // The opening paragraph identifies which tender this file belongs to.
+  // Written in evaluator-facing language; no "supporting package document
+  // for [tender]" boilerplate that previously echoed garbled tender titles.
+  const opening = `Tender: ${shortText(tenderTitle, 200)}. Package item: ${title}.`;
   const children: Paragraph[] = [
     para(title, true),
-    para(`Supporting package document for ${shortText(tenderTitle, 220)}. This document presents the relevant tender requirement response, supporting evidence and submission controls in a client-ready package format.`),
+    para(opening),
   ];
   for (const section of sections) {
     children.push(heading(section.title));
@@ -115,36 +119,119 @@ async function makeSupportDocx(tenderTitle: string, title: string, sections: Arr
   return buffer.toString("base64");
 }
 
-function supportSections(docName: string, context: { tenderTitle: string; requirements: string[]; experts: string[]; projects: string[] }): Array<{ title: string; lines: string[] }> {
+/**
+ * Classify a tender-required support document by file name. Substantive docs
+ * carry real content (CVs, project references, methodology); placeholder
+ * docs are slots for tender-issued forms / templates / certificates and
+ * should be clearly labelled rather than filled with generic boilerplate.
+ */
+type SupportDocKind =
+  | "EXPERT_CV"
+  | "PROJECT_REFERENCES"
+  | "METHODOLOGY"
+  | "COMPANY_PROFILE"
+  | "FINANCIAL_PLACEHOLDER"
+  | "LEGAL_PLACEHOLDER"
+  | "FORM_PLACEHOLDER"
+  | "DECLARATION_PLACEHOLDER"
+  | "ANNEX_PLACEHOLDER"
+  | "SUBMISSION_RULES_PLACEHOLDER"
+  | "SECTOR_TECHNICAL_SCOPE"
+  | "GENERIC";
+
+function classifySupportDoc(docName: string): SupportDocKind {
   const name = docName.toLowerCase();
-  if (/expert|cv/.test(name)) return [
-    { title: "Expert CV Register", lines: context.experts.slice(0, 20) },
-    { title: "Role and Requirement Mapping", lines: context.requirements.slice(0, 10) },
-    { title: "CV Attachment Control", lines: ["Reviewed CVs and professional credentials are included for the proposed personnel required by the tender.", "Each proposed expert is mapped to role, qualification, comparable experience and assignment responsibility."] },
+  if (/\bexpert|\bcv\b|personnel|key staff/.test(name)) return "EXPERT_CV";
+  if (/(experience|portfolio).*?(project|reference)|project reference|past performance/.test(name)) return "PROJECT_REFERENCES";
+  if (/methodology|work plan|technical approach/.test(name)) return "METHODOLOGY";
+  if (/company profile|capability statement/.test(name)) return "COMPANY_PROFILE";
+  if (/financial|audited|turnover|bank/.test(name)) return "FINANCIAL_PLACEHOLDER";
+  if (/legal|registration|licensing|tax/.test(name)) return "LEGAL_PLACEHOLDER";
+  if (/declaration|certificate|compliance evidence/.test(name)) return "DECLARATION_PLACEHOLDER";
+  if (/\bform|template/.test(name)) return "FORM_PLACEHOLDER";
+  if (/annex|appendix/.test(name)) return "ANNEX_PLACEHOLDER";
+  if (/submission|deadline|delivery|formatting|packaging|schedule|programme/.test(name)) return "SUBMISSION_RULES_PLACEHOLDER";
+  if (/scope|water|solar|design|supervision|feasibility|technical requirement/.test(name)) return "SECTOR_TECHNICAL_SCOPE";
+  return "GENERIC";
+}
+
+function supportSections(docName: string, context: { tenderTitle: string; requirements: string[]; experts: string[]; projects: string[] }): Array<{ title: string; lines: string[] }> {
+  const kind = classifySupportDoc(docName);
+
+  // Substantive documents — receive real content built from reviewed evidence.
+  if (kind === "EXPERT_CV") return [
+    { title: "Expert CV Register", lines: context.experts.length > 0 ? context.experts.slice(0, 20) : ["Source-evidence action: confirm that reviewed expert CVs are attached separately. This package item is the cover/index for those CVs."] },
+    { title: "Role-to-Requirement Mapping", lines: context.requirements.slice(0, 10) },
+    { title: "CV Attachment Control", lines: ["Each proposed expert's CV, professional licence, and educational certificate is included as a separate file in this package or the appendix.", "Each CV is mapped to a specific role, qualification, comparable previous project, and assignment responsibility."] },
   ];
-  if (/financial|audited|capacity/.test(name)) return [
-    { title: "Financial Capacity Evidence", lines: ["Financial capacity evidence should include audited financial statements, tax evidence, bank/financial records or equivalent documents required by the tender.", "No financial offer, fee, rate or price is included in this support document unless expressly required by the tender."] },
-    { title: "Tender Requirement Mapping", lines: context.requirements.slice(0, 10) },
+
+  if (kind === "PROJECT_REFERENCES") return [
+    { title: "Relevant Project References", lines: context.projects.length > 0 ? context.projects.slice(0, 18) : ["Source-evidence action: confirm that reviewed comparable project references are attached separately with completion certificates and client testimony letters."] },
+    { title: "Evidence Attachment Control", lines: ["Project evidence: completion certificates, client testimony letters, contracts, photos and drawings, where required by the tender.", "Each reference is selected from the firm's reviewed portfolio for direct comparability to the tender scope."] },
   ];
-  if (/form|template|declaration|certificate|compliance/.test(name)) return [
-    { title: "Required Forms and Declarations", lines: context.requirements.slice(0, 12) },
-    { title: "Completion Control", lines: ["Tender-issued forms and declarations are completed in the required format.", "Signature, stamp, date, file name, file order and attachment requirements are checked before submission."] },
+
+  if (kind === "METHODOLOGY") return [
+    { title: "Technical Methodology — Tender Requirements Addressed", lines: context.requirements.slice(0, 14) },
+    { title: "Work Plan", lines: ["Each tender scope item is mapped to a deliverable, a responsible expert, a quality-review gate, and a submission milestone.", "Senior technical review and final compliance verification are applied before each deliverable issue.", "The detailed methodology, phasing, and deliverables are presented in the main Technical Proposal document; this support file is the methodology cover for package indexing."] },
   ];
-  if (/methodology|work plan|approach/.test(name)) return [
-    { title: "Technical Methodology", lines: context.requirements.slice(0, 14) },
-    { title: "Work Plan", lines: ["The work plan responds to the confirmed scope and deliverables from the tender documents.", "Each task is mapped to responsible experts, deliverables, QA checks and submission milestones.", "Senior technical review and final compliance verification are applied before submission."] },
+
+  if (kind === "COMPANY_PROFILE") return [
+    { title: "Company Profile and Capability Statement — Tender Alignment", lines: context.requirements.slice(0, 12) },
+    { title: "Capability Evidence", lines: [...context.experts.slice(0, 8), ...context.projects.slice(0, 8)].filter(Boolean) },
   ];
-  if (/experience|project|reference/.test(name)) return [
-    { title: "Relevant Project References", lines: context.projects.slice(0, 18) },
-    { title: "Evidence Attachment Control", lines: ["Project evidence may include completion certificates, client testimony, contracts, photos, drawings or references where required by the tender."] },
+
+  if (kind === "SECTOR_TECHNICAL_SCOPE") return [
+    { title: `Tender Scope Items Addressed in This Package`, lines: context.requirements.slice(0, 16) },
+    { title: "Linked Evidence", lines: [...context.experts.slice(0, 6), ...context.projects.slice(0, 6)].filter(Boolean) },
   ];
-  if (/scope|technical requirement|water|solar|feasibility|design|supervision|appendix|annex|submission|deadline|delivery|formatting|packaging/.test(name)) return [
-    { title: "Tender Requirement Response", lines: context.requirements.slice(0, 16) },
-    { title: "Submission Package Control", lines: ["This document corresponds to the tender source section or package item with the same title.", "Tender-issued annexes, templates or attachments are inserted or substituted where applicable."] },
+
+  // Placeholder documents — these are slots where the firm is expected to
+  // insert tender-issued originals (forms / templates / certificates / scans).
+  // We deliberately do NOT fill them with generic narrative content; instead
+  // we emit a clear placeholder notice so the bid team knows what to insert.
+  const placeholderIntro = (): string[] => [
+    "PLACEHOLDER FOR TENDER-ISSUED ORIGINAL.",
+    "This file in the submission package is reserved for the tender-issued original document(s) listed below. Replace this placeholder before final submission with the signed / stamped / certified original(s) — do not submit this generated placeholder file.",
   ];
+
+  if (kind === "FINANCIAL_PLACEHOLDER") return [
+    { title: "Required Original Documents", lines: ["Audited financial statements for the years specified in the tender.", "Tax / VAT certificates valid at submission date.", "Bank reference letter or proof of liquid capacity if requested by the tender.", "Annual turnover declaration in the format the tender prescribes."] },
+    { title: "Insertion Instructions", lines: placeholderIntro() },
+    { title: "No Financial Offer Included", lines: ["This is a TECHNICAL submission. No financial offer, fee schedule, rate, or price is included in this file or anywhere in the technical package."] },
+  ];
+
+  if (kind === "LEGAL_PLACEHOLDER") return [
+    { title: "Required Original Documents", lines: ["Business registration certificate.", "Tax Identification Number (TIN) certificate.", "VAT registration certificate.", "Trade / professional licence valid at submission date.", "Sector-specific authority registration (e.g., Construction Authority grade certificate).", "Any other eligibility documents the tender prescribes."] },
+    { title: "Insertion Instructions", lines: placeholderIntro() },
+  ];
+
+  if (kind === "FORM_PLACEHOLDER") return [
+    { title: "Tender-Issued Forms / Templates", lines: ["The forms and templates issued with the tender RFP must be completed exactly as issued (do not retype, do not reformat).", "Each form is signed and stamped where the tender requires it.", "File names match the tender's exact-naming rule."] },
+    { title: "Insertion Instructions", lines: placeholderIntro() },
+  ];
+
+  if (kind === "DECLARATION_PLACEHOLDER") return [
+    { title: "Required Declarations and Certificates", lines: ["Declaration of eligibility / no debarment.", "Declaration of no conflict of interest.", "Compliance certificates (ISO, sector-specific) where applicable.", "Any other declaration template prescribed by the tender."] },
+    { title: "Signature Control", lines: ["Each declaration is signed by an authorised representative of the firm and dated within the tender window.", "Stamps are applied where the tender prescribes."] },
+    { title: "Insertion Instructions", lines: placeholderIntro() },
+  ];
+
+  if (kind === "ANNEX_PLACEHOLDER") return [
+    { title: "Annexes / Appendices Listed in the Tender", lines: context.requirements.slice(0, 8).length > 0 ? context.requirements.slice(0, 8) : ["Refer to the tender document for the exact annex / appendix list."] },
+    { title: "Insertion Instructions", lines: placeholderIntro() },
+  ];
+
+  if (kind === "SUBMISSION_RULES_PLACEHOLDER") return [
+    { title: "Submission Rules Summary", lines: context.requirements.slice(0, 10).length > 0 ? context.requirements.slice(0, 10) : ["Refer to the tender document for the submission method, deadline, and packaging rules."] },
+    { title: "Pre-Submission Checklist", lines: ["File names match the tender's exact-naming rule.", "File order matches the tender's exact-order rule (where stated).", "All declarations are signed and stamped.", "Submission deadline is confirmed in the tender's stated time zone.", "Submission email recipients / portal address are taken verbatim from the tender."] },
+  ];
+
+  // Generic fallback — for any doc whose name doesn't match the patterns above.
+  // Better to be honest about it than to dump fake content.
   return [
-    { title: "Tender Package Response", lines: context.requirements.slice(0, 12) },
-    { title: "Supporting Evidence", lines: [...context.projects, ...context.experts].slice(0, 12) },
+    { title: "Tender Package Item", lines: ["This file corresponds to a tender-required submission item. Refer to the tender document for the exact content and format."] },
+    { title: "Linked Tender Requirements", lines: context.requirements.slice(0, 8) },
+    { title: "Insertion Instructions", lines: placeholderIntro() },
   ];
 }
 
