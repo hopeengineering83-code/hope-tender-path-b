@@ -4,6 +4,17 @@ export type CompanyLite = { name: string; legalName?: string | null; description
 export type ExpertLite = { fullName: string; title?: string | null; yearsExperience?: number | null; disciplines: string; sectors: string; certifications: string; profile?: string | null };
 export type ProjectLite = { name: string; clientName?: string | null; country?: string | null; sector?: string | null; serviceAreas: string; contractValue?: number | null; currency?: string | null; summary?: string | null };
 export type ProposalTheme = { code: string; label: string; triggers: RegExp[]; proofTerms: RegExp[]; methodologyBullets: string[] };
+export type EvaluationWeight = { criterion: string; weight: string; rawMatch: string };
+export type CommercialTerms = {
+  bidBond: string | null;
+  performanceGuarantee: string | null;
+  bidValidityDays: number | null;
+  clarificationDeadline: string | null;
+  preBidMeeting: string | null;
+  contractDuration: string | null;
+  consortiaRules: string | null;
+  localContent: string | null;
+};
 export type ProposalIntelligence = {
   tenderText: string;
   clientName: string;
@@ -11,6 +22,8 @@ export type ProposalIntelligence = {
   primarySector: string;
   requiredSections: string[];
   evaluationCriteria: string[];
+  evaluationWeights: EvaluationWeight[];
+  commercialTerms: CommercialTerms;
   submissionRules: string[];
   differentiators: string[];
   themes: ProposalTheme[];
@@ -519,6 +532,126 @@ function detectGaps(themes: ProposalTheme[], topProjects: ProjectLite[], topExpe
   return gaps;
 }
 
+// ─── Evaluation weight extraction ─────────────────────────────────────────────
+
+/**
+ * Detect numeric evaluation weights in the tender text. Tenders state weights
+ * in many shapes:
+ *   "Technical 70%, Financial 30%"
+ *   "Relevant Experience — 25 points"
+ *   "Methodology Approach — 20 marks"
+ *   "Quality of Proposed Team: 15%"
+ *   "(weight 30)"
+ *
+ * Returns each detected criterion with its weight verbatim. Used downstream to
+ * populate the EVALUATION CRITERIA RESPONSE MIRROR table in the proposal so
+ * the bid writer can echo the evaluator's own language back at them.
+ */
+function detectEvaluationWeights(tenderText: string): EvaluationWeight[] {
+  // Anchor on the evaluation-criteria zone if we can find one — otherwise scan whole text.
+  const evalZone = tenderText.match(/(evaluation criteria|scoring|technical evaluation|points allocation)[\s\S]{0,3500}/i)?.[0] ?? tenderText;
+
+  const weights: EvaluationWeight[] = [];
+  const seen = new Set<string>();
+
+  // Patterns that work well across real tenders:
+  //   "Criterion name 25%"
+  //   "Criterion name — 25 points"
+  //   "Criterion name: 25 marks"
+  //   "Criterion name (30)"
+  const patterns = [
+    /([A-Z][A-Za-z &/(),'\-]{8,80}?)\s*[—\-:]\s*(\d{1,2})\s*(?:%|percent|points|marks|pts)/g,
+    /([A-Z][A-Za-z &/(),'\-]{8,80}?)\s*\((\d{1,2})\s*(?:%|points|marks|pts)?\)/g,
+    /([A-Z][A-Za-z &/(),'\-]{8,80}?)\s+(\d{1,2})\s*%/g,
+  ];
+
+  for (const pattern of patterns) {
+    for (const match of evalZone.matchAll(pattern)) {
+      const criterion = clean(match[1]).replace(/^[•\-*\d.]+\s*/, "");
+      const weight = match[2];
+      const numeric = Number(weight);
+      // Reject obvious noise: years, page numbers, years-experience, percentages on technical content
+      if (!Number.isFinite(numeric) || numeric < 5 || numeric > 100) continue;
+      // Reject criterion strings that look like prose, year mentions, or addresses
+      if (/^(in|of|the|to|and|for|with|by|at|on|from)\s/i.test(criterion)) continue;
+      if (/\bpage\b|\byear\b|\bcopy\b|\bcopies\b/i.test(criterion)) continue;
+      if (criterion.length < 8 || criterion.length > 80) continue;
+      const key = `${criterion.toLowerCase()}|${weight}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      weights.push({ criterion, weight: `${weight}${match[0].includes("%") ? "%" : match[0].includes("points") || match[0].includes("pts") ? " points" : match[0].includes("marks") ? " marks" : "%"}`, rawMatch: match[0].trim() });
+    }
+  }
+
+  return weights.slice(0, 12);
+}
+
+// ─── Commercial terms extraction ──────────────────────────────────────────────
+
+/**
+ * Detect commercial terms scattered through tender text:
+ *   - bid bond / earnest money deposit (EMD)
+ *   - performance guarantee
+ *   - bid validity period
+ *   - clarification / pre-bid question deadline
+ *   - pre-bid meeting / site visit
+ *   - contract duration
+ *   - joint-venture / consortia rules
+ *   - local-content requirement
+ *
+ * These are CRITICAL for go/no-go decisions and contract-risk assessment but
+ * have historically been buried in tender prose. Surfacing them lets the
+ * proposal narrative explicitly confirm compliance and lets the bid manager
+ * size up commercial risk.
+ */
+function detectCommercialTerms(tenderText: string): CommercialTerms {
+  const text = tenderText.replace(/\s+/g, " ");
+
+  const bidBondMatch =
+    text.match(/(?:bid bond|earnest money|EMD|bid security)[^.]*?(?:USD|ETB|EUR|GBP|\$|£|€|ETB|Birr|NGN|KES|ZAR)\s*[\d,.]+(?:\s*(?:million|m|thousand|k))?/i) ??
+    text.match(/(?:bid bond|earnest money|EMD|bid security)[^.]*?(\d+(?:\.\d+)?\s*(?:%|percent))/i) ??
+    text.match(/(?:bid bond|earnest money|EMD|bid security)[^.]{5,150}/i);
+
+  const performanceGuaranteeMatch =
+    text.match(/performance (?:guarantee|bond|security)[^.]*?(\d+(?:\.\d+)?\s*(?:%|percent))/i) ??
+    text.match(/performance (?:guarantee|bond|security)[^.]*?(?:USD|ETB|EUR|GBP|\$|£|€)\s*[\d,.]+/i) ??
+    text.match(/performance (?:guarantee|bond|security)[^.]{5,150}/i);
+
+  const validityMatch =
+    text.match(/(?:bid|proposal|offer)\s+(?:shall\s+)?(?:remain\s+)?valid[^.]*?(\d{2,3})\s*(?:calendar\s+)?days/i) ??
+    text.match(/validity\s+(?:period\s+)?(?:of\s+)?(\d{2,3})\s*(?:calendar\s+)?days/i);
+
+  const clarificationMatch =
+    text.match(/(?:clarification|question|pre[- ]bid\s+question)\s+(?:request|submission)?\s*(?:deadline|by|before|no later than)[^.]{5,200}/i) ??
+    text.match(/(?:clarifications?|questions?)\s+(?:must|should|shall)\s+(?:be\s+)?(?:received|submitted)[^.]{5,200}/i);
+
+  const preBidMatch =
+    text.match(/(?:pre[- ]?bid\s+(?:meeting|conference)|site\s+visit|bidders?\s+conference)[^.]{5,250}/i);
+
+  const contractDurationMatch =
+    text.match(/(?:contract|assignment|consultancy)\s+(?:duration|period)\s*(?:of|is|shall be|:)\s*(\d{1,3}\s*(?:days|weeks|months|years))/i) ??
+    text.match(/(?:duration|period)\s+(?:of\s+)?(\d{1,3}\s*(?:weeks|months|years))/i);
+
+  const consortiaMatch =
+    text.match(/(?:joint\s+venture|JV|consort(?:ium|ia))[^.]{5,300}/i) ??
+    text.match(/(?:lead\s+firm|associate\s+firm|sub[- ]?consultant)[^.]{5,200}/i);
+
+  const localContentMatch =
+    text.match(/(?:local\s+content|domestic\s+content|local\s+(?:firm|consultant|engineer))[^.]{5,250}/i) ??
+    text.match(/\b(\d{1,3})\s*%[^.]{0,40}(?:local|domestic|national|in[- ]country)/i);
+
+  return {
+    bidBond: bidBondMatch ? clean(bidBondMatch[0]).slice(0, 240) : null,
+    performanceGuarantee: performanceGuaranteeMatch ? clean(performanceGuaranteeMatch[0]).slice(0, 240) : null,
+    bidValidityDays: validityMatch ? Number(validityMatch[1]) : null,
+    clarificationDeadline: clarificationMatch ? clean(clarificationMatch[0]).slice(0, 280) : null,
+    preBidMeeting: preBidMatch ? clean(preBidMatch[0]).slice(0, 280) : null,
+    contractDuration: contractDurationMatch ? clean(contractDurationMatch[0]).slice(0, 200) : null,
+    consortiaRules: consortiaMatch ? clean(consortiaMatch[0]).slice(0, 320) : null,
+    localContent: localContentMatch ? clean(localContentMatch[0]).slice(0, 240) : null,
+  };
+}
+
 // ─── Public interface ─────────────────────────────────────────────────────────
 
 import { cleanClientName, cleanTenderTitle } from "./proposal-labels";
@@ -574,6 +707,8 @@ export function buildProposalIntelligence(params: {
     primarySector: inferSector(tenderText),
     requiredSections: detectRequiredSections(tenderText),
     evaluationCriteria: detectEvaluationCriteria(tenderText),
+    evaluationWeights: detectEvaluationWeights(tenderText),
+    commercialTerms: detectCommercialTerms(tenderText),
     submissionRules: detectSubmissionRules(tender, tenderText),
     differentiators: makeDifferentiators(company, topProjects, topExperts, themes, tenderText),
     themes,

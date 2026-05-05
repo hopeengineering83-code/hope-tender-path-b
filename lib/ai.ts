@@ -71,7 +71,38 @@ export function getLastProposalProvider(): AIProvider {
 // Claude is the preferred provider for proposal generation when configured —
 // the reference benchmark used to design the prompt and table structure is
 // itself Claude-generated, so Claude output is what the prompt is tuned for.
-async function generateWithClaude(prompt: string): Promise<string | null> {
+// Default system prompt used for proposal generation. A strong system prompt
+// frames Claude as a senior bid director and locks in evaluator-first thinking,
+// evidence-discipline, and structural completeness BEFORE the user prompt is
+// processed. Anthropic explicitly recommends moving role/persona/output rules
+// into the system prompt rather than the user message — Claude obeys system
+// content more reliably and it does not get lost when user input is long.
+//
+// Callers may override per-call (e.g., extraction prompts pass a narrower
+// system prompt; refinement passes use a focused one).
+const DEFAULT_PROPOSAL_SYSTEM_PROMPT = `You are a senior bid director and proposal author with 25 years of experience winning competitive technical and financial proposals for World Bank, UNDP, AfDB, EU, USAID, GIZ, government, and large private-sector clients across Africa, Asia, and the Middle East. You have written, reviewed, or evaluated more than 2,000 tender submissions.
+
+Your operating principles, in priority order:
+
+1. EVALUATOR FIRST. Before writing a single word, you map every section of the proposal back to the evaluation criteria stated by the client. Every paragraph either scores points against a stated criterion or it does not exist.
+
+2. EVIDENCE OVER INTENT. Every claim of capability is anchored in a specific named project, contract value, expert name + license, or client reference drawn from the COMPANY EVIDENCE the user provides. Generic "we are committed to" / "extensive experience in" / "team of qualified professionals" language is forbidden — it is a signal of weak proposals and you reject it.
+
+3. NARRATIVE THROUGHLINE. The two strongest comparable projects (and the named experts who delivered them) appear by name in the Cover Letter, the Executive Summary, AND the Relevant Experience section. The reader must finish page 2 thinking "this firm has already done this exact assignment."
+
+4. COMPLIANCE DISCIPLINE. Every mandatory requirement in the tender is explicitly addressed and traceable. Where the firm cannot meet a requirement, you say so and propose a credible mitigation; you never silently drop a requirement.
+
+5. TENDER-SPECIFIC, NEVER GENERIC. The proposal is shaped by THIS tender's exact section structure, file naming rules, page limits, subject line, deadline, and submission instructions — not a reusable template.
+
+6. STRUCTURAL COMPLETENESS. You write the FULL proposal in one pass: Cover Letter, Cover Page, Table of Contents, Executive Summary, Section A (Company Profile), Section B (Relevant Experience), Section C (Technical Approach with sector-specific methodology), Section D (Additional Information), Compliance Matrix, Evaluation Self-Score, Appendices Register. You do not truncate, summarize, or stop early.
+
+7. MARKDOWN RIGOR. Tables are real Markdown tables. Headings are real Markdown headings (#, ##, ###). No "[INSERT]" placeholders, no square-bracket TODOs, no AI-trace phrases ("As an AI…", "Certainly!", "I'd be happy to…", "Please note…"), no apologies, no preamble before the Cover Letter, no commentary after the proposal.
+
+8. HONESTY ABOUT GAPS. If the COMPANY EVIDENCE genuinely does not support a claim, you write a single short "Bid-Team Action: confirm X before submission." note in place of the missing fact. You do NOT fabricate project names, contract values, license numbers, or client references.
+
+You output the proposal directly. You never explain what you are about to do, never ask clarifying questions, never repeat the user's instructions back. You start with the Cover Letter.`;
+
+async function generateWithClaude(prompt: string, systemPrompt: string = DEFAULT_PROPOSAL_SYSTEM_PROMPT): Promise<string | null> {
   if (!anthropicApiKey) return null;
 
   let Anthropic: { new (config: { apiKey: string }): unknown };
@@ -98,6 +129,7 @@ async function generateWithClaude(prompt: string): Promise<string | null> {
         const response = await client.messages.create({
           model: modelName,
           max_tokens: CLAUDE_MAX_OUTPUT_TOKENS,
+          system: systemPrompt,
           messages: [{ role: "user", content: prompt }],
         });
         const text = response.content
@@ -310,13 +342,15 @@ Analyze the tender and return ONLY a valid JSON object — no explanation, no ma
 Step 1 — Identify: client name, tender title, tender reference, deadline, submission method, email recipients, exact subject line required, country/location.
 Step 2 — Detect: is financial proposal excluded? Is this technical-only? Are there shortlisting stages?
 Step 3 — Extract SECTIONS: what sections must the proposal contain (Company Profile, Relevant Experience, Technical Approach, Additional Information, etc.)?
-Step 4 — Extract EVALUATION CRITERIA: what will evaluators score and how?
+Step 4 — Extract EVALUATION CRITERIA: what will evaluators score and how? IMPORTANT — capture numeric WEIGHTS (e.g., "Technical 70%, Financial 30%", "Relevant Experience 25 points", sub-criteria weights). If a weight is stated anywhere in the document (criteria table, scoring matrix, or prose), include it verbatim in evaluationMethodology and in the per-criterion weights array.
 Step 5 — Extract QUALIFICATION REQUIREMENTS: required licences, team composition, healthcare experience, donor compliance standards.
 Step 6 — Extract EXPERT REQUIREMENTS: how many experts, what disciplines, what minimum experience?
 Step 7 — Extract PROJECT REQUIREMENTS: how many references, what sector/type, what minimum value/scale?
 Step 8 — Extract FORMAT/SUBMISSION RULES: file format, naming, page limits, appendix structure.
-Step 9 — Build strategic requirement bundles: consolidate related requirements into strategic groups.
-Step 10 — Write evaluationMethodology: how the proposal should be structured to score maximum points against each criterion.
+Step 9 — Extract COMMERCIAL TERMS: bid bond / EMD amount and form (cash, bank guarantee, insurance bond), performance guarantee percentage, bid validity period (days), clarification / pre-bid question deadline, site visit / pre-bid meeting date and venue, contract duration, currency, payment terms. These are critical for risk assessment — capture them when present.
+Step 10 — Extract ELIGIBILITY GATES: eligible jurisdictions (countries / regions), consortia / joint-venture rules, local-content percentage, registration requirements, debarment / sanctions exclusions.
+Step 11 — Build strategic requirement bundles: consolidate related requirements into strategic groups.
+Step 12 — Write evaluationMethodology: how the proposal should be structured to score maximum points against each criterion, criterion-by-criterion with weights when known.
 
 ## CRITICAL RULES:
 - Do NOT convert table-of-contents entries, page numbers, clause numbers, scores, years, percentages, or page references into quantity requirements.
@@ -345,8 +379,8 @@ JSON structure required:
   ],
   "exactFileNaming": ["exact filenames required by the tender"],
   "exactFileOrder": ["files in the required submission order"],
-  "evaluationMethodology": "Detailed scoring guidance: for each evaluation criterion, explain what evidence to present, what to emphasise, and what the evaluator is looking for. Include criterion weights if specified.",
-  "submissionNotes": "Complete submission instructions: deadline with time and timezone, email recipients (all), exact subject line (verbatim), file format requirements, financial proposal restriction (yes/no), appendix lettering, and any other document-control notes."
+  "evaluationMethodology": "Detailed scoring guidance: for each evaluation criterion, explain what evidence to present, what to emphasise, and what the evaluator is looking for. Include criterion weights verbatim if specified (e.g., 'Technical 70% / Financial 30%; Relevant Experience 25 points; Methodology 20 points').",
+  "submissionNotes": "Complete submission instructions: deadline with time and timezone, email recipients (all), exact subject line (verbatim), file format requirements, financial proposal restriction (yes/no), appendix lettering, and any other document-control notes. ALSO include when stated: bid bond amount and form, performance guarantee percentage, bid validity period in days, clarification / pre-bid question deadline, site visit or pre-bid meeting date and venue, contract duration, currency, payment terms, eligibility jurisdictions, consortia / joint-venture rules, local-content requirement."
 }
 
 TENDER DOCUMENT (${trimmedTender.length.toLocaleString()} chars):
@@ -389,7 +423,7 @@ Return ONLY a valid JSON array — no explanation, no markdown. Each element:
   "sourceSnippet": "verbatim extract ≤500 chars proving this person exists"
 }
 
-Rules: only include people clearly named in the document. Do NOT invent any field — use null if uncertain. sourceSnippet must be a direct quote.
+Rules: only include people clearly named in the document. Do NOT invent any field — use null if uncertain. sourceSnippet must be a direct quote that lets a human verify the extraction. Prefer quotes that include a job title, certification number, or project reference so the source is unambiguous. If two candidates share a similar name, treat them as separate records only when the source clearly distinguishes them (different title, different project, different certifications).
 
 DOCUMENT TEXT (${text.length.toLocaleString()} chars):
 ${text.slice(0, 60_000)}`;
@@ -430,7 +464,7 @@ Return ONLY a valid JSON array — no explanation, no markdown. Each element:
   "sourceSnippet": "verbatim extract ≤500 chars proving this project"
 }
 
-Rules: only include projects clearly in the document. Do NOT invent values. sourceSnippet must be a direct quote.
+Rules: only include projects clearly in the document. Do NOT invent values. sourceSnippet must be a direct quote that includes the project name AND at least one verifiable detail (client, value, year, or location). When the same project appears in multiple sections of the document with different values or descriptions, prefer the version that includes the contract value and client name. Reject candidates that are obviously cover-page reference lists, table-of-contents entries, or generic capability statements without a specific project name.
 
 DOCUMENT TEXT (${text.length.toLocaleString()} chars):
 ${text.slice(0, 60_000)}`;
@@ -927,6 +961,56 @@ D.1 Value to the Client — specific, evidence-backed value propositions for THI
 D.2 In-House Capabilities Beyond Minimum Scope — what additional value the firm brings without extra cost
 D.3 Professional Certifications and Affiliations — list ISO, donor compliance records, professional body memberships with registration numbers
 D.4 Declaration of Eligibility — formal statement confirming the firm meets all eligibility requirements stated in the tender
+
+### SECTION E: COMPLIANCE MATRIX (mandatory — TABLE)
+For EVERY mandatory and scored requirement listed in CONSOLIDATED REQUIREMENTS / TENDER TEXT, produce one row:
+
+\`\`\`
+| # | Requirement (verbatim or close paraphrase from tender) | Where Addressed in This Proposal (section + sub-section) | Supporting Evidence (project name / expert name / appendix letter) | Compliance Status |
+|---|---|---|---|---|
+| 1 | "Minimum 10 years' experience in healthcare facility design" | Section A.1 + B.2 | 12 years; G+6 Dr. Abdul Seid Hospital (ETB 550M, 2018) | FULLY MET |
+| 2 | "Lead Architect must hold EIASC Grade A licence" | Section A.4 | Dr. Almaz Tadesse, EIASC Grade A IPSTE/6884 valid 2030 | FULLY MET |
+| 3 | "Submit 3 client reference letters with seal" | Appendix D | Pharo Foundation, MoH, Gimba City Admin reference letters | PARTIALLY MET — Bid-Team Action: confirm Gimba seal before submission |
+\`\`\`
+
+Rules: every requirement gets one row. Compliance Status MUST be one of FULLY MET / PARTIALLY MET / NOT MET. Where NOT MET, the row must propose a credible mitigation in the same row (subcontractor, joint venture, deferred delivery, etc.). Do not silently skip a requirement — if you cannot map it, write a Bid-Team Action note.
+
+### SECTION F: EVALUATION CRITERIA RESPONSE MIRROR (mandatory — TABLE)
+The evaluator will score this proposal against the criteria listed in EVALUATION CRITERIA. For each criterion, mirror the criterion language back and point to where in the proposal it is answered:
+
+\`\`\`
+| Evaluation Criterion (echoed in tender language) | Weight (if stated) | Where This Proposal Answers It | Strongest Evidence Anchor |
+|---|---|---|---|
+| "Relevant healthcare facility experience" | 25% | Section B.2, B.3 + Cover Letter para 1 | G+6 Dr. Abdul Seid Hospital (ETB 550M, 2018) — same scope, same team |
+| "Strength of proposed multidisciplinary team" | 20% | Section A.4, A.5 (Team-to-Project mapping) | 12-expert team incl. Dr. Almaz Tadesse, EIASC Grade A |
+\`\`\`
+
+If the tender lists weights, populate the Weight column verbatim. If weights are not stated, leave blank — do not invent. Mirroring criterion language back to the evaluator using their exact wording is a high-leverage scoring tactic and is non-optional.
+
+### SECTION G: WIN THEMES & DISCRIMINATORS (mandatory — short narrative + TABLE)
+A win theme is a defensible reason this firm wins this tender. A discriminator is a specific advantage we hold that competitors typically lack. Derive 3–5 themes from the COMPANY EVIDENCE — never invent.
+
+Open with one paragraph (60–120 words) framing the firm's overall positioning for THIS tender. Then the table:
+
+\`\`\`
+| Win Theme | Discriminator (what we have, others typically don't) | Linked Evaluation Criterion | Evidence Anchor |
+|---|---|---|---|
+| Proven hospital delivery track record | 2 fully-completed G+6 hospitals delivered with same team available now | Relevant healthcare experience (25%) | Dr. Abdul Seid Hospital ETB 550M; St. Paul's specialist wing ETB 312M |
+| In-house geotechnical capability | Owned drilling rig + licensed lab on staff (most peers subcontract) | Quality of methodology (15%) | 8 boreholes self-supervised on Eco-Park assignment 2022 |
+\`\`\`
+
+### SECTION H: PROPOSAL SELF-SCORE (mandatory — TABLE)
+After completing all sections above, evaluate this proposal against the stated criteria as if you were the client's evaluation panel. Be honest — over-confident self-scores damage credibility.
+
+\`\`\`
+| Evaluation Criterion | Weight | Self-Score (0–10) | Rationale (1 short sentence with evidence) | Risk to Score / Mitigation |
+|---|---|---|---|---|
+| Relevant healthcare experience | 25% | 9 | Two named comparable hospitals (ETB 550M + ETB 312M) with same team | Mitigation: client letters in Appendix D confirm performance |
+| Methodology depth | 20% | 8 | Section C.2 covers all 7 clinical zones + MEP integration | Risk: biomedical engineer named as engagement, not on staff |
+| Financial capacity | 15% | 6 | Bid-Team Action: confirm latest audited turnover before submission | Mitigation: bank reference letter to be attached |
+\`\`\`
+
+End with: "Predicted overall technical score: X / 100. Top three risks to address before submission: 1. … 2. … 3. …"
 
 ### APPENDICES REGISTER
 List appendices in the required format, e.g.:
