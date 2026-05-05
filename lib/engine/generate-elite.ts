@@ -35,6 +35,7 @@ import { buildComplianceMatrixSection, hasComplianceMatrixHeading } from "./comp
 import { buildEvaluatorMirrorSection, hasEvaluatorMirrorHeading } from "./evaluator-mirror-builder";
 import { buildWinThemesSection, hasWinThemesHeading } from "./win-themes-builder";
 import { buildSelfScoreSection, hasSelfScoreHeading } from "./self-score-builder";
+import { extractTenderLanguageEchoes, formatEchoesForPrompt } from "./tender-language-echoes";
 import { formatQualityScoreSummary, scoreProposalQuality } from "./proposal-quality-scorer";
 import {
   buildCertificationsSection,
@@ -642,6 +643,14 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     (w) => `- ${w.criterion} — ${w.weight} (raw match: "${w.rawMatch}")`,
   );
 
+  // Extract verbatim evaluator-language phrases from the tender text and
+  // build a prompt-ready directive block. Echoing the evaluator's exact
+  // wording is one of the highest-leverage scoring tactics on competitive
+  // tenders. Empty when no high-signal phrases were found — caller-side
+  // .filter(Boolean) drops the empty block from the joined prompt.
+  const tenderLanguageEchoes = extractTenderLanguageEchoes(intelligence.tenderText, 12);
+  const tenderLanguageEchoBlock = formatEchoesForPrompt(tenderLanguageEchoes);
+
   const submissionNotes = [
     tender.submissionMethod,
     tender.submissionAddress,
@@ -677,6 +686,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
         evaluationMethodology: [
           clean(tender.evaluationMethodology) || intelligence.evaluationCriteria.join("; "),
           ...(evaluationWeightLines.length > 0 ? ["", "Numeric evaluation weights detected in tender (echo verbatim in the EVALUATION CRITERIA RESPONSE MIRROR table):", ...evaluationWeightLines] : []),
+          tenderLanguageEchoBlock,
         ].filter(Boolean).join("\n"),
         submissionNotes: [BENCHMARK_CONTEXT_LINES.join("\n"), submissionNotes].filter(Boolean).join("\n"),
         requirements: [...BENCHMARK_CONTEXT_LINES, ...requirementLines].join("\n"),

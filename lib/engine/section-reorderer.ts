@@ -35,7 +35,16 @@ const TOP_LEVEL_ORDER: { match: RegExp; rank: number }[] = [
   { match: /^section b\b|^b\.|^relevant experience$|^project portfolio$/i, rank: 300 },
   { match: /^section c\b|^c\.|^technical approach$|^methodology$/i, rank: 400 },
   { match: /^section d\b|^d\.|^additional information$|^value/i, rank: 500 },
-  { match: /^section e\b|^e\.|^bid compliance|^compliance and bid review/i, rank: 600 },
+  { match: /^section e\b|^e\.|^bid compliance|^compliance and bid review|^compliance matrix/i, rank: 600 },
+  // Sections F/G/H are evaluator-facing tables introduced by PR #228.
+  // They must always land BEFORE Appendices (rank 700) and AFTER the
+  // Compliance Matrix (rank 600). Each gets its own rank slot so the
+  // canonical sequence is E → F → G → H → Appendices regardless of
+  // whether they were produced by the AI, by the deterministic
+  // backstops (PR #231), or appended by some downstream enricher.
+  { match: /^section f\b|^f\.|^evaluation\s+criteria\s+response\s+mirror|^evaluation\s+(?:criteria\s+)?response|^evaluator(?:'s)?\s+mirror|^evaluation\s+mirror/i, rank: 650 },
+  { match: /^section g\b|^g\.|^win\s+themes?|^themes?\s+(?:and|&)\s+discriminators?/i, rank: 660 },
+  { match: /^section h\b|^h\.|^(?:proposal\s+)?self.score/i, rank: 670 },
   { match: /^appendi[cx]/i, rank: 700 },
   { match: /^declaration\b|^declaration of/i, rank: 800 }, // covered by D.4 within section D
   { match: /^submission control sheet|^submission/i, rank: 900 },
@@ -43,11 +52,16 @@ const TOP_LEVEL_ORDER: { match: RegExp; rank: number }[] = [
 
 // Sub-rank within each section — alphanumerical sub-ID heading prefixes (A.0, A.4, A.4.1, B.2.0, etc.)
 function extractSubId(heading: string): number {
+  // Parent-section heading like "SECTION E: COMPLIANCE MATRIX" or
+  // "F. Evaluation Mirror" must sort BEFORE its sub-IDs (e.g., "E.1 Bid
+  // Compliance Mapping" with sub-ID 100). Returning 0 places the
+  // un-numbered parent section at the start of its group.
+  if (/^section\s+[A-H]\b/i.test(heading)) return 0;
+  if (/^[A-H]\.\s*[A-Z][a-z]/.test(heading)) return 0;
   // e.g. "A.4.1 Principal Qualifications" → 410
-  // e.g. "A.4 Proposed Team" → 400 (but ranked among A's)
+  // e.g. "A.4 Proposed Team" → 400
   // e.g. "B.2 Project Portfolio" → 200
-  // Returns a numeric sub-rank used to sort within a top-level group.
-  const match = heading.match(/^([A-E])\.(\d+)(?:\.(\d+))?/i);
+  const match = heading.match(/^([A-H])\.(\d+)(?:\.(\d+))?/i);
   if (!match) return 9999;
   const major = parseInt(match[2], 10);
   const minor = match[3] ? parseInt(match[3], 10) : 0;
