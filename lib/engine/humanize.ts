@@ -1,4 +1,4 @@
-import { isAIEnabled } from "../ai";
+import { generateWithFallback, isAIEnabled } from "../ai";
 
 // Patterns that signal AI-generated or template text
 const AI_PATTERNS = [
@@ -46,14 +46,17 @@ function basicCleanup(text: string): string {
   return out;
 }
 
-async function humanizeWithAI(text: string): Promise<string> {
-  const { GoogleGenerativeAI } = await import("@google/generative-ai");
-  const client = new GoogleGenerativeAI(process.env.GEMINI_API_KEY ?? "");
-  const model = client.getGenerativeModel({ model: "gemini-2.0-flash" });
+const HUMANIZE_SYSTEM_PROMPT = `You are a senior proposal editor at a consultancy firm. You take draft proposal text written by a junior author or an AI assistant and rewrite it so it sounds like a senior consultant wrote it from scratch — professional, confident, business-grade, evidence-led, and free of AI traces. You preserve every fact in the source text. You never invent new claims, numbers, project names, or expert names. You return only the rewritten text — no commentary, no preamble, no explanation of what you changed.`;
 
-  const result = await model.generateContent(`You are a professional proposal editor for a consultancy firm.
-The following text was drafted for a tender proposal.
-Rewrite it to sound like it was written by a senior consultant — professional, confident, and business-grade.
+/**
+ * AI-powered humanization pass. Tries Claude first via the shared
+ * generateWithFallback helper (which falls back to Gemini if Claude
+ * fails AND Gemini is configured). Wrapped in try/catch by the caller
+ * — if every provider fails, the deterministic basicCleanup result
+ * is returned instead, so the proposal still ships.
+ */
+async function humanizeWithAI(text: string): Promise<string> {
+  const prompt = `The following text was drafted for a tender proposal. Rewrite it to sound like it was written by a senior consultant — professional, confident, and business-grade.
 
 Rules:
 - Remove any AI traces ("As an AI...", "Certainly!", "Of course!", etc.)
@@ -64,9 +67,10 @@ Rules:
 - Return only the rewritten text, no commentary
 
 TEXT TO REWRITE:
-${text.slice(0, 6000)}`);
+${text.slice(0, 6000)}`;
 
-  return result.response.text() || text;
+  const result = await generateWithFallback(prompt, { systemPrompt: HUMANIZE_SYSTEM_PROMPT });
+  return result || text;
 }
 
 export async function humanize(text: string): Promise<string> {
