@@ -12,7 +12,7 @@
     "public/**/*",
     "prisma/**/*",
     "package.json",
-    "next.config.mjs"
+    "next.config.js"
   ],
   "mac": {
     "category": "public.app-category.business",
