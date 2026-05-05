@@ -84,14 +84,28 @@ function detectSector(primarySector: string): string {
 }
 
 function paragraphHasEvidence(paragraph: string): boolean {
-  // Specific evidence markers: ETB amounts, m² scale, license numbers, year tags, donor names
+  // Specific evidence markers: ETB amounts, m² scale, license numbers, donor
+  // names, dates with context, named assets. The year marker is intentionally
+  // restrictive — a bare four-digit year alone (e.g., "in 2023") is too weak
+  // a signal; we require the year to appear in a context that signals it is
+  // a date marker rather than incidental text. This is paired with the
+  // named-asset and dated-range markers so genuine date references in
+  // evidence-rich paragraphs still match.
   const markers = [
     /\b(ETB|USD|EUR|GBP)\s*[\d,]+/i,
     /\b\d{1,3}(?:,\d{3})*\s*m[²2]/i,
     /\b(IPSTE|PPE|PSNE|PPECM|PPME|PPSTE|PEPCM|PAR|PPA)\/\d+/i,
     /\b(World Bank|UNDP|USAID|British Council|ESF|IFC|JICA|GIZ|KFW|ADB|AFDB|IGAD)\b/i,
-    /\b(20\d{2}|19\d{2})\b/, // year
-    /\b(Hospital|Project|Centre|Center|Plant|Park|Building|School|University|Bridge|Road) [A-Z]/, // named asset
+    // Year ranges (e.g., 2018–2022, 2018-2022) — strong date evidence
+    /\b(?:19|20)\d{2}\s*[-–—]\s*(?:19|20)\d{2}\b/,
+    // Parenthesised year (e.g., "(2023)") — strong date evidence
+    /\((?:19|20)\d{2}(?:[\/,;\s]|\b)/,
+    // Year preceded by a date-marker preposition / verb (e.g., "in 2023",
+    // "since 2018", "completed 2024", "delivered 2022")
+    /\b(?:in|since|from|between|completed|delivered|signed|awarded|established|founded|certified)\s+(?:19|20)\d{2}\b/i,
+    // Named asset (e.g., "Hospital A", "Project Pharo") — distinct from
+    // generic capability talk
+    /\b(Hospital|Project|Centre|Center|Plant|Park|Building|School|University|Bridge|Road) [A-Z]/,
   ];
   return markers.some((m) => m.test(paragraph));
 }
