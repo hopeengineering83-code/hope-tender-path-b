@@ -10,7 +10,23 @@ import { logAction } from "../../../../../lib/audit";
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
 
-const AI_ANALYSIS_TIMEOUT_MS = 25_000;
+// In-route timeout for the analyzeWithAI() call. This is a SECOND timeout
+// layered inside the Vercel maxDuration window — its purpose is to fail
+// gracefully (return a deterministic-fallback analysis) before Vercel
+// kills the whole function. Default leaves a 10-second buffer below
+// maxDuration so the route has time to handle the timeout, run the
+// fallback, and respond.
+//
+// Default raised from 25s → 50s to fit Claude (Tier 1+) which routinely
+// takes 25–45s for tender analysis on long source documents. Override
+// via AI_ANALYSIS_TIMEOUT_MS (e.g. when on Vercel Pro with maxDuration
+// 300, set AI_ANALYSIS_TIMEOUT_MS=240000 to give Claude 4 minutes
+// before falling back).
+const AI_ANALYSIS_TIMEOUT_MS = (() => {
+  const raw = Number(process.env.AI_ANALYSIS_TIMEOUT_MS);
+  if (Number.isFinite(raw) && raw >= 5_000 && raw <= 600_000) return raw;
+  return 50_000;
+})();
 const MAX_FILE_CHARS_FOR_AI_ANALYSIS = 3_500;
 
 async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
