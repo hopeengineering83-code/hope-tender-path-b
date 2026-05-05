@@ -139,40 +139,67 @@ hope-tender-path-b/
 │   ├── company-knowledge-safety-import.ts
 │   └── engine/                       # ~30 specialist modules (see below)
 │
-├── lib/engine/                       # Tender engine
+├── lib/engine/                       # Tender engine — 46 modules
+│   │
+│   │ ── Core orchestration & analysis ──────────────────────────────────
 │   ├── run-tender-engine.ts          # Entry point — runs analysis → matching → compliance
 │   ├── analysis.ts                   # Extract requirements from tender docs
 │   ├── matching.ts                   # Score experts/projects against tender
 │   ├── compliance.ts                 # Build compliance matrix + gap list
 │   ├── validate.ts                   # Final-output validator (placeholders, AI traces, etc.)
-│   ├── generate.ts                   # Base proposal generator
-│   ├── generate-elite.ts             # Premium generator with full benchmark/audit pipeline
-│   ├── humanize.ts                   # Strip AI artifacts, soften LLM tone
 │   ├── documents.ts                  # GeneratedDocument CRUD helpers
 │   ├── submission-plan.ts            # Required file order + naming
-│   ├── tender-metadata.ts
+│   ├── tender-metadata.ts            # Per-tender derived metadata
 │   ├── scope-policy.ts               # Enforces "do not generate beyond tender scope"
-│   ├── controlled-proposal-assembler.ts        # Strips AI traces line by line
-│   ├── proposal-evaluator-matrix.ts            # Evaluator-criterion scoring
-│   ├── proposal-benchmark-audit.ts             # Audit against winning-proposal benchmark
-│   ├── proposal-benchmark-guard.ts             # Guard rails for benchmark output
-│   ├── winning-proposal-benchmark.ts           # Benchmark reference
-│   ├── proposal-intelligence.ts
-│   ├── proposal-labels.ts
-│   ├── proposal-proof-density.ts
-│   ├── proposal-strengthening-sections.ts
+│   ├── proposal-intelligence.ts      # Sector detection, theme matching, evaluator criteria
+│   ├── proposal-labels.ts            # Safe filename / safe heading helpers
+│   ├── types.ts                      # Shared types
+│   │
+│   │ ── Generation ─────────────────────────────────────────────────────
+│   ├── generate.ts                   # Base proposal generator
+│   ├── generate-elite.ts             # Primary generator + benchmark/audit pipeline
+│   ├── humanize.ts                   # Strip AI artifacts, soften LLM tone
+│   │
+│   │ ── Benchmark-quality tabular sections (rounds 1–6) ────────────────
+│   ├── benchmark-tables.ts           # A.4, A.5, B.2, C.3, C.1.1, B.1, D.1, A.6, D.4 + openers
+│   ├── understanding-and-value-added.ts # C.1, D.2, D.3, A.7, D.5
+│   ├── risks-mitigations.ts          # C.5 Risk Register (sector-aware)
+│   ├── why-us-summary.ts             # "Why [Company] for [Client]" 5-bullet
+│   ├── work-plan-timeline.ts         # C.6 Work Plan and Schedule (sector-aware)
+│   ├── bid-compliance-mapping.ts     # E.1 Tender requirements → proposal sections
+│   ├── portfolio-metrics.ts          # A.0 Portfolio at a Glance metric tiles
+│   ├── principal-qualifications.ts   # A.4.1 Detailed expert bios
+│   │
+│   │ ── Self-healing post-generation enrichers (round 4) ───────────────
+│   ├── narrative-throughline-enforcer.ts # Top projects in CL/ES/B
+│   ├── sector-vocabulary-enricher.ts # Inject missing sector terms
+│   ├── section-reorderer.ts          # Canonical section sequence
+│   ├── dynamic-toc.ts                # TOC from actual sections
+│   │
+│   │ ── Quality scoring & refinement (rounds 5, 11) ────────────────────
+│   ├── proposal-quality-scorer.ts    # 0–100 score over 6 axes
+│   │
+│   │ ── Evaluator response & branding ──────────────────────────────────
+│   ├── proposal-evaluator-matrix.ts  # Evaluator-criterion scoring
+│   ├── proposal-benchmark-audit.ts   # Audit against winning-proposal benchmark
+│   ├── proposal-benchmark-guard.ts   # Guard rails for benchmark output
+│   ├── winning-proposal-benchmark.ts # Benchmark reference
+│   ├── proposal-proof-density.ts     # Proof-density measurement
+│   ├── proposal-strengthening-sections.ts # Evaluator-decision narrative
 │   ├── proof-density-repair-guidance.ts
+│   ├── controlled-proposal-assembler.ts # Strips AI traces line by line
 │   ├── benchmark-output-polisher.ts
 │   ├── client-language-finalizer.ts
 │   ├── markdown-heading-dedupe.ts
+│   ├── apply-active-letterhead.ts    # Apply brand assets if AppSettings allow
+│   ├── docx-letterhead-template.ts
+│   │
+│   │ ── Reserved / experimental (not currently invoked) ────────────────
 │   ├── fallback-abcd-structure.ts
 │   ├── fallback-proof-opening.ts
 │   ├── quick-draft-benchmark.ts
 │   ├── quick-draft-evidence-context.ts
-│   ├── quick-draft-provisional-evidence.ts
-│   ├── apply-active-letterhead.ts              # Apply brand assets if AppSettings allow
-│   ├── docx-letterhead-template.ts
-│   └── types.ts
+│   └── quick-draft-provisional-evidence.ts
 │
 ├── components/                       # Reusable UI
 │   ├── login-form.tsx
@@ -183,7 +210,10 @@ hope-tender-path-b/
 │
 ├── prisma/
 │   ├── schema.prisma                 # 17 models — see § 3
-│   └── seed.ts                       # Creates admin@hope.local / Admin123!
+│   ├── seed.ts                       # Creates admin@hope.local / Admin123!
+│   └── demo-seed.ts                  # OPTIONAL: populates the seed admin's
+│                                     # company with a demo knowledge vault
+│                                     # (6 reviewed experts + 6 reviewed projects)
 │
 ├── public/
 │   ├── manifest.json                 # PWA manifest
