@@ -4,6 +4,11 @@ import { prisma, prismaReady } from "../../../../lib/prisma";
 import { ensureCompanyForUser } from "../../../../lib/company-workspace";
 import { logAction } from "../../../../lib/audit";
 
+// Vercel route timeout — plan-B import processes all uploaded documents.
+// 60 = Hobby max; Pro applies its own plan limit when exceeded.
+export const maxDuration = 60;
+export const dynamic = "force-dynamic";
+
 type TrustLevel = "REVIEWED" | "AI_DRAFT" | "REGEX_DRAFT";
 
 type PlanBExpert = {

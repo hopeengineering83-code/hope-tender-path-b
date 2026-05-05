@@ -6,6 +6,11 @@ import { runCompanyKnowledgeSafetyImport } from "../../../../lib/company-knowled
 import { extractTextFromBuffer, getFileTypeLabel, isMeaningfulExtraction } from "../../../../lib/extract-text";
 import { ensureCompanyForUser } from "../../../../lib/company-workspace";
 
+// Vercel route timeout — full reimport runs Claude across every document.
+// 60 = Hobby max; Pro applies its own plan limit when exceeded.
+export const maxDuration = 60;
+export const dynamic = "force-dynamic";
+
 const SUPPORT_ONLY_CATEGORIES = new Set([
   "COMPANY_PROFILE",
   "LEGAL_REGISTRATION",

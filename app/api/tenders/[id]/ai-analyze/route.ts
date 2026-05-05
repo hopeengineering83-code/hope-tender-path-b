@@ -5,6 +5,11 @@ import { analyzeWithAI, isAIEnabled } from "../../../../../lib/ai";
 import { analyzeTender } from "../../../../../lib/engine/analysis";
 import { logAction } from "../../../../../lib/audit";
 
+// Vercel route timeout — Claude tender analysis needs >10s default.
+// 60 = Hobby max; Pro applies its own plan limit when exceeded.
+export const maxDuration = 60;
+export const dynamic = "force-dynamic";
+
 const AI_ANALYSIS_TIMEOUT_MS = 25_000;
 const MAX_FILE_CHARS_FOR_AI_ANALYSIS = 3_500;
 

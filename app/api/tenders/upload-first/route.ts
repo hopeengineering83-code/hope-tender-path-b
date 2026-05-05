@@ -6,6 +6,11 @@ import { logAction } from "../../../../lib/audit";
 import { inferTenderMetadata } from "../../../../lib/engine/tender-metadata";
 import { runTenderEngine } from "../../../../lib/engine/run-tender-engine";
 
+// Vercel route timeout — full intake pipeline (PDF extraction + tender
+// engine analysis). 60 = Hobby max; Pro applies its own plan limit.
+export const maxDuration = 60;
+export const dynamic = "force-dynamic";
+
 const MAX_BYTES = 10 * 1024 * 1024;
 const ALLOWED_MIME = new Set([
   "application/pdf",

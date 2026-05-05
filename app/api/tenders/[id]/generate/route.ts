@@ -1,5 +1,15 @@
 import { NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
+
+// Vercel route timeout configuration. Default for Next.js App Router on
+// Vercel is 10 seconds — far too short for a Claude proposal generation
+// (analyze 10–20s, generate 30–90s, optionally refine 30–60s, plus the
+// deterministic enrichers). 60 is the Hobby-plan maximum; on Pro plans
+// Vercel will use the plan limit when this value exceeds it. Without
+// this export the function would silently time out at 10s and the UI
+// would hang on "Generating…".
+export const maxDuration = 60;
+export const dynamic = "force-dynamic";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { generateTenderDocuments } from "../../../../../lib/engine/generate-elite";
 import { applyActiveUploadedLetterheadToTenderDocuments } from "../../../../../lib/engine/apply-active-letterhead";
