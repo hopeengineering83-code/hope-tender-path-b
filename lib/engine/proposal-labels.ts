@@ -88,6 +88,60 @@ export function cleanTenderTitle(value?: string | null, context?: { clientName?:
   return stripped.length > 120 ? `${stripped.slice(0, 119).trim()}…` : stripped;
 }
 
+/**
+ * Format a TenderRequirement title + description into a single user-facing
+ * line, with two cleanups that real-world output exposed as bugs:
+ *
+ * 1. If the description repeats the same phrase 3+ times separated by " — "
+ *    or " | " or ". " (a common artifact of the AI analysis step echoing
+ *    a requirement back into its own description), reduce to one copy.
+ *
+ * 2. If the description starts with the title verbatim, strip the duplicate
+ *    leading title.
+ *
+ * 3. If the description is empty, the same as the title, or contains only
+ *    the title, return just the title with no separator.
+ *
+ * Intended call sites:
+ *   const requirements = tender.requirements.map(formatRequirementLine)
+ */
+export function formatRequirementLine(req: { title?: string | null; description?: string | null }, maxDescriptionChars = 380): string {
+  const title = normalizeLabel(req.title);
+  let desc = normalizeLabel(req.description);
+
+  // Dedupe internal repetition of "X — X — X — X" or "X | X | X" patterns.
+  // Common when the AI analysis stage echoes the requirement title back
+  // into its own description multiple times.
+  const repeatSeparators = [" — ", " | ", ". "];
+  for (const sep of repeatSeparators) {
+    const parts = desc.split(sep).map((s) => s.trim()).filter(Boolean);
+    if (parts.length >= 3) {
+      const unique = Array.from(new Set(parts));
+      if (unique.length === 1) {
+        desc = unique[0];
+        break;
+      }
+      if (unique.length < Math.max(2, parts.length / 2)) {
+        desc = unique.join(sep);
+      }
+    }
+  }
+
+  // Strip leading title duplication: when desc starts with the title.
+  if (title && desc.toLowerCase().startsWith(title.toLowerCase())) {
+    const stripped = desc.slice(title.length).replace(/^[\s—–.,:;|—]+/, "").trim();
+    if (stripped) desc = stripped;
+    else desc = ""; // entire description was just the title
+  }
+
+  // No useful description → return just the title.
+  if (!desc || desc === title) return title;
+
+  // Truncate long descriptions.
+  const shortDesc = desc.length > maxDescriptionChars ? `${desc.slice(0, maxDescriptionChars - 1).trim()}…` : desc;
+  return title ? `${title} — ${shortDesc}` : shortDesc;
+}
+
 export function safeFileBaseName(value?: string | null, fallback = "submission-package"): string {
   const cleaned = cleanTenderTitle(value, { fallback })
     .replace(/[^a-zA-Z0-9]+/g, "-")

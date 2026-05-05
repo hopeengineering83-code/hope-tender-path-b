@@ -8,6 +8,7 @@ import { appendEvaluatorResponseMatrix } from "./proposal-evaluator-matrix";
 import { buildClientProposalStrengtheningSections } from "./proposal-strengthening-sections";
 import { benchmarkAuditSummary } from "./proposal-benchmark-audit";
 import { polishBenchmarkOutput } from "./benchmark-output-polisher";
+import { formatRequirementLine } from "./proposal-labels";
 import {
   buildBenchmarkTablesBlock,
   buildClientReferencesTable,
@@ -603,11 +604,11 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   const cleanedTenderTitle = intelligence.assignmentName;
   const tenderText = [cleanedTenderTitle, tender.reference, intelligence.clientName, tender.description, tender.intakeSummary, tender.analysisSummary, tender.evaluationMethodology, ...tender.files.map((f) => `${f.originalFileName}\n${f.extractedText ?? ""}`)].filter(Boolean).join("\n\n");
   // Requirement lines for AI prompt context AND for downstream rendering.
-  // Internal classifier prefixes (priority + requirementType, e.g.
-  // "MANDATORY FORM:") were leaking into user-facing support documents.
-  // Drop the prefix; keep just the title and description, which is what
-  // both the AI and the user need.
-  const requirementLines = tender.requirements.map((r) => `${r.title} — ${r.description}`);
+  // formatRequirementLine handles three real-world content-quality issues:
+  //   - drops internal classifier prefixes (MANDATORY FORM:, etc.)
+  //   - dedupes "X — X — X" internal repetition from the AI analysis step
+  //   - strips title-in-description duplication
+  const requirementLines = tender.requirements.map((r) => formatRequirementLine(r));
   const expertLines = experts.map(expertProofLine);
   const projectLines = projects.map(projectProofLine);
   const evidenceContextLines = [...companyEvidenceLines, ...projectEvidenceLines];
