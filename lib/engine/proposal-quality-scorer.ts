@@ -4,20 +4,35 @@
  * so they can decide whether to regenerate, manually edit, or accept.
  *
  * Scoring axes (each 0–10, weighted equally):
- *   - structureCompleteness: presence of required sections
+ *   - structureCompleteness: presence of required sections (Cover Letter, ES, A–D)
  *   - evidenceDensity: ratio of paragraphs containing specific evidence
  *     (project names, ETB values, license numbers, dates) to total
  *   - tableCoverage: count of distinct table-style sections present
  *   - sectorVocabulary: ratio of expected sector terms present
  *   - throughlineConsistency: top 1–2 projects appear in CL, ES, B
  *   - aiTraceFreedom: absence of forbidden phrases
+ *   - complianceMatrixCoverage: Section E (Compliance Matrix) is present and
+ *     populated with FULLY MET / PARTIALLY MET / NOT MET status cells
+ *   - evaluatorMirrorCoverage: Section F (Evaluation Criteria Response Mirror)
+ *     is present and echoes evaluator language with weight + section pointer
+ *   - winThemesPresence: Section G (Win Themes & Discriminators) has both a
+ *     framing paragraph and a discriminator-vs-criterion table
+ *   - selfScorePresence: Section H (Proposal Self-Score) has 0–10 scoring
+ *     against criteria with rationale and predicted overall score
  *
- * Returns score (0–100) and a list of weak axes for transparency.
+ * Returns score (0–100) and a list of weak axes for transparency. Total is
+ * normalised: 10 axes × 10 max = 100 raw, so the score IS the percentage.
+ *
+ * The four new axes (complianceMatrixCoverage, evaluatorMirrorCoverage,
+ * winThemesPresence, selfScorePresence) verify that the four mandatory
+ * output sections introduced in PR #228 are actually produced. Without
+ * these axes the AI could silently skip them and the deficiency would not
+ * surface to the refinement loop.
  *
  * NOTE: This is computed at generation time and embedded in the
  * GeneratedDocument.contentSummary field for surfacing in the UI.
  * It does not auto-repair; that is the job of the throughline
- * enforcer and vocabulary enricher.
+ * enforcer, vocabulary enricher, and refinement pass.
  */
 
 import type { ProjectRecord } from "./benchmark-tables";
@@ -31,6 +46,10 @@ export type QualityScore = {
     sectorVocabulary: number;
     throughlineConsistency: number;
     aiTraceFreedom: number;
+    complianceMatrixCoverage: number;
+    evaluatorMirrorCoverage: number;
+    winThemesPresence: number;
+    selfScorePresence: number;
   };
   weakAxes: string[];
   notes: string[];
@@ -206,6 +225,82 @@ export function scoreProposalQuality(opts: {
     notes.push(`AI / forbidden phrase trace detected: ${traces.length} hit(s).`);
   }
 
+  // 7. Compliance matrix coverage (0–10)
+  // Section E (Compliance Matrix) requires: a section heading mentioning
+  // "Compliance Matrix" AND at least one row with a FULLY/PARTIALLY/NOT MET
+  // status cell. A missing or empty matrix is the single biggest reason
+  // proposals score below the technical pass mark on regulated tenders.
+  let complianceMatrixCoverage = 0;
+  const matrixHeadingRe = /(^|\n)\s*#{1,4}\s*(?:section\s*[E:.\-\s]*)?\s*compliance\s+matrix/i;
+  const hasMatrixHeading = matrixHeadingRe.test(md);
+  const statusCellMatches = (md.match(/\b(FULLY MET|PARTIALLY MET|NOT MET|NOT_MET|FULLY_MET|PARTIALLY_MET)\b/gi) ?? []).length;
+  if (hasMatrixHeading) complianceMatrixCoverage += 4;
+  if (statusCellMatches >= 1) complianceMatrixCoverage += 2;
+  if (statusCellMatches >= 5) complianceMatrixCoverage += 2;
+  if (statusCellMatches >= 10) complianceMatrixCoverage += 2;
+  complianceMatrixCoverage = Math.min(10, complianceMatrixCoverage);
+  if (complianceMatrixCoverage < 6) {
+    weakAxes.push("complianceMatrixCoverage");
+    notes.push(`Compliance Matrix (Section E) ${hasMatrixHeading ? "heading present" : "MISSING"}; ${statusCellMatches} status cell(s) detected.`);
+  }
+
+  // 8. Evaluator mirror coverage (0–10)
+  // Section F (Evaluation Criteria Response Mirror) requires: heading +
+  // either a weight column OR a "where this proposal answers it" pointer.
+  // The mirror is what gets the proposal scored on the evaluator's rubric
+  // line by line — its absence costs points across every criterion.
+  let evaluatorMirrorCoverage = 0;
+  const mirrorHeadingRe = /(^|\n)\s*#{1,4}\s*(?:section\s*[F:.\-\s]*)?\s*(?:evaluation\s+criteria\s+response\s+mirror|evaluation\s+(?:criteria\s+)?response|evaluator(?:'s)?\s+mirror|evaluation\s+mirror)/i;
+  const hasMirrorHeading = mirrorHeadingRe.test(md);
+  const weightCellMatches = (md.match(/\b\d{1,2}\s*%(?:\s*\||\s*\n)/g) ?? []).length;
+  const sectionPointerMatches = (md.match(/\b(?:Section|Sec\.?)\s*[A-H](?:\.\d)?(?:\s*\||\s*[+&,])/gi) ?? []).length;
+  if (hasMirrorHeading) evaluatorMirrorCoverage += 5;
+  if (weightCellMatches >= 2) evaluatorMirrorCoverage += 2;
+  if (sectionPointerMatches >= 3) evaluatorMirrorCoverage += 3;
+  evaluatorMirrorCoverage = Math.min(10, evaluatorMirrorCoverage);
+  if (evaluatorMirrorCoverage < 6) {
+    weakAxes.push("evaluatorMirrorCoverage");
+    notes.push(`Evaluation Criteria Response Mirror (Section F) ${hasMirrorHeading ? "present" : "MISSING"}; ${weightCellMatches} weight cell(s), ${sectionPointerMatches} section pointer(s).`);
+  }
+
+  // 9. Win themes presence (0–10)
+  // Section G (Win Themes & Discriminators) requires: heading + table with
+  // Discriminator + Linked Evaluation Criterion columns, and at least one
+  // framing paragraph. Themes without discriminator-vs-criterion mapping
+  // are just marketing fluff.
+  let winThemesPresence = 0;
+  const themesHeadingRe = /(^|\n)\s*#{1,4}\s*(?:section\s*[G:.\-\s]*)?\s*(?:win\s+themes?|themes?\s+(?:and|&)\s+discriminators?)/i;
+  const hasThemesHeading = themesHeadingRe.test(md);
+  const discriminatorMentions = (md.match(/\bdiscriminator/gi) ?? []).length;
+  const themeRowMatches = (md.match(/\|\s*[^|\n]{8,80}\s*\|\s*[^|\n]{12,160}\s*\|\s*[^|\n]{6,80}\s*\|/g) ?? []).length;
+  if (hasThemesHeading) winThemesPresence += 5;
+  if (discriminatorMentions >= 1) winThemesPresence += 2;
+  if (themeRowMatches >= 2) winThemesPresence += 3;
+  winThemesPresence = Math.min(10, winThemesPresence);
+  if (winThemesPresence < 6) {
+    weakAxes.push("winThemesPresence");
+    notes.push(`Win Themes & Discriminators (Section G) ${hasThemesHeading ? "present" : "MISSING"}; ${discriminatorMentions} discriminator mention(s).`);
+  }
+
+  // 10. Self-score presence (0–10)
+  // Section H (Proposal Self-Score) requires: heading + numeric scores
+  // (X/10) + a "Predicted overall" or "Top three risks" closing line.
+  // The self-score is what catches under-prepared submissions before
+  // they reach the evaluator.
+  let selfScorePresence = 0;
+  const selfScoreHeadingRe = /(^|\n)\s*#{1,4}\s*(?:section\s*[H:.\-\s]*)?\s*(?:proposal\s+)?self.score/i;
+  const hasSelfScoreHeading = selfScoreHeadingRe.test(md);
+  const scoreCellMatches = (md.match(/\b(?:10|[0-9])\s*\/\s*10\b/g) ?? []).length;
+  const overallScoreMatches = /(?:predicted\s+overall|overall\s+technical\s+score|top\s+three\s+risks?)/i.test(md);
+  if (hasSelfScoreHeading) selfScorePresence += 4;
+  if (scoreCellMatches >= 3) selfScorePresence += 3;
+  if (overallScoreMatches) selfScorePresence += 3;
+  selfScorePresence = Math.min(10, selfScorePresence);
+  if (selfScorePresence < 6) {
+    weakAxes.push("selfScorePresence");
+    notes.push(`Proposal Self-Score (Section H) ${hasSelfScoreHeading ? "present" : "MISSING"}; ${scoreCellMatches} score cell(s); overall-score line ${overallScoreMatches ? "present" : "missing"}.`);
+  }
+
   const axes = {
     structureCompleteness,
     evidenceDensity,
@@ -213,13 +308,19 @@ export function scoreProposalQuality(opts: {
     sectorVocabulary,
     throughlineConsistency,
     aiTraceFreedom,
+    complianceMatrixCoverage,
+    evaluatorMirrorCoverage,
+    winThemesPresence,
+    selfScorePresence,
   };
-  const total = Math.round(((axes.structureCompleteness + axes.evidenceDensity + axes.tableCoverage + axes.sectorVocabulary + axes.throughlineConsistency + axes.aiTraceFreedom) / 60) * 100);
+  // 10 axes × 10 max = 100 raw — the sum IS the percentage, no scaling needed.
+  const total = axes.structureCompleteness + axes.evidenceDensity + axes.tableCoverage + axes.sectorVocabulary + axes.throughlineConsistency + axes.aiTraceFreedom + axes.complianceMatrixCoverage + axes.evaluatorMirrorCoverage + axes.winThemesPresence + axes.selfScorePresence;
 
   return { total, axes, weakAxes, notes };
 }
 
 export function formatQualityScoreSummary(score: QualityScore): string {
-  const axes = `structure ${score.axes.structureCompleteness}/10, evidence ${score.axes.evidenceDensity}/10, tables ${score.axes.tableCoverage}/10, vocabulary ${score.axes.sectorVocabulary}/10, throughline ${score.axes.throughlineConsistency}/10, ai-trace-free ${score.axes.aiTraceFreedom}/10`;
+  const a = score.axes;
+  const axes = `structure ${a.structureCompleteness}/10, evidence ${a.evidenceDensity}/10, tables ${a.tableCoverage}/10, vocabulary ${a.sectorVocabulary}/10, throughline ${a.throughlineConsistency}/10, ai-trace-free ${a.aiTraceFreedom}/10, compliance-matrix ${a.complianceMatrixCoverage}/10, evaluator-mirror ${a.evaluatorMirrorCoverage}/10, win-themes ${a.winThemesPresence}/10, self-score ${a.selfScorePresence}/10`;
   return `Quality score: ${score.total}/100 (${axes})${score.weakAxes.length > 0 ? `. Weak axes: ${score.weakAxes.join(", ")}` : ""}`;
 }
