@@ -17,6 +17,7 @@ AI-powered tender proposal generation and compliance engine for Hope Urban Plann
 9. [PWA installation](#9-pwa-installation-mobile--desktop-browser)
 10. [Desktop packaging (Electron)](#10-desktop-packaging-electron)
 11. [Guardrails enforced in code](#11-guardrails-enforced-in-code)
+12. [Generation pipeline — sections produced](#12-generation-pipeline--sections-produced)
 
 ---
 
@@ -630,6 +631,86 @@ The user-stated guardrails map directly to existing code:
 | Do not stop at architecture diagrams | Generator outputs DOCX files matching `Tender.exactFileNaming` and `exactFileOrder` — actual deliverables |
 | Do not leave core features as TODOs | No `TODO` / `FIXME` / `XXX` markers in code (grepped) |
 | Do not produce a demo-only shell | Full database, full auth, full audit log, full export pipeline — see `prisma/schema.prisma` |
+
+---
+
+## 12. Generation pipeline — sections produced
+
+The proposal generator produces a structured document in canonical order, regardless of whether the AI step succeeded, partially succeeded, or fell back to deterministic generation. Each section below is appended only when no equivalent heading exists in the upstream output (idempotent, no duplicates).
+
+### Pipeline order
+
+```
+1. AI / fallback first draft        (lib/engine/generate-elite.ts → AI prompt or fallbackProposalMarkdown)
+2. Evaluator response matrix        (lib/engine/proposal-evaluator-matrix.ts)
+3. Strengthening sections           (lib/engine/proposal-strengthening-sections.ts)
+4. Benchmark tables                 (lib/engine/benchmark-tables.ts)
+5. Round-2 / 4 / 5 / 6 sections     (the modules listed below)
+6. Throughline enforcer             (lib/engine/narrative-throughline-enforcer.ts)
+7. Sector vocabulary enricher       (lib/engine/sector-vocabulary-enricher.ts)
+8. Canonical section reorderer      (lib/engine/section-reorderer.ts)
+9. Dynamic Table of Contents        (lib/engine/dynamic-toc.ts)
+10. finalizeClientReadyProposalMarkdown / cleanClientLanguage
+11. Quality scorer                  (lib/engine/proposal-quality-scorer.ts)
+12. Multi-pass refinement (cond.)   (lib/ai.ts → refineProposalWithAI, only if score < 70)
+13. DOCX render                     (docx package, lib/engine/apply-active-letterhead)
+```
+
+### Sections in the rendered DOCX (canonical order)
+
+| Section | Source module |
+|---|---|
+| Cover Letter (project-anchored opening) | fallbackProposalMarkdown / `buildCoverLetterOpener` |
+| Cover Page (Submitted-by/to metadata table) | `buildSubmittedByToBlock` |
+| Table of Contents (dynamic, from actual sections) | `dynamic-toc.ts` |
+| Executive Summary ("[Company] has already delivered…") | `buildExecutiveSummaryOpener` |
+| Why [Company] for [Client] (5 evidence-anchored bullets) | `why-us-summary.ts` |
+| A.0 Portfolio at a Glance (metric tiles) | `portfolio-metrics.ts` |
+| A.1 Company Background | AI / fallback |
+| A.2 Corporate Information (TIN, VAT, license, founding year, headcount) | AI / fallback (uses Round-10 fields) |
+| A.4 Proposed Project Team (table) | `benchmark-tables.ts → buildProposedTeamTable` |
+| A.4.1 Principal Qualifications — Detailed Bios | `principal-qualifications.ts` |
+| A.5 Team-to-Project Experience Mapping | `benchmark-tables.ts → buildTeamToProjectMappingTable` |
+| A.6 Specialist Engagement Plan (conditional) | `benchmark-tables.ts → buildSpecialistEngagementSection` |
+| A.7 In-House Capabilities | `understanding-and-value-added.ts → buildInHouseCapabilitiesSection` |
+| B.1 Client References (table) | `benchmark-tables.ts → buildClientReferencesTable` |
+| B.2.0 Portfolio Reading Guide | `benchmark-tables.ts → buildPortfolioReadingGuide` |
+| B.2 Project Portfolio Cards | `benchmark-tables.ts → buildProjectPortfolioCards` |
+| C.1 Understanding of the Assignment | `understanding-and-value-added.ts → buildUnderstandingSection` |
+| C.1.1 Weighted Assessment Matrix (conditional) | `benchmark-tables.ts → buildAssessmentMatrix` |
+| C.2 Technical Methodology | AI / fallback (sector-aware via `proposal-intelligence.ts` themes) |
+| C.3 Three-Stage Quality Review | `benchmark-tables.ts → buildThreeStageReviewTable` |
+| C.4 Sector-Specific Technical Standards | `sector-vocabulary-enricher.ts` (only when terms missing) |
+| C.5 Risk Register and Mitigation Strategy | `risks-mitigations.ts` |
+| C.6 Work Plan and Schedule | `work-plan-timeline.ts` |
+| D.1 Value Framework — What [Client] Gains | `benchmark-tables.ts → buildValueFrameworkTable` |
+| D.2 Value-Added Services | `understanding-and-value-added.ts → buildValueAddedServices` |
+| D.3 Professional Certifications and Affiliations | `understanding-and-value-added.ts → buildCertificationsSection` |
+| D.4 Declaration of Eligibility (uses `Company.gmName` + `Company.gmLicense` when set) | `benchmark-tables.ts → buildDeclaration` |
+| D.5 Declaration of No Conflict of Interest | `understanding-and-value-added.ts → buildConflictOfInterestSection` |
+| E.1 Bid Compliance Mapping | `bid-compliance-mapping.ts` |
+| Submission Control Sheet | fallbackProposalMarkdown |
+
+### Quality scoring
+
+After rendering, `proposal-quality-scorer.ts` produces a 0–100 score over six axes:
+
+1. **structureCompleteness** — presence of canonical sections
+2. **evidenceDensity** — fraction of substantive paragraphs with specific evidence (project name, ETB value, license number, donor reference)
+3. **tableCoverage** — count of distinct table-style sections present
+4. **sectorVocabulary** — fraction of expected sector terms present
+5. **throughlineConsistency** — top 1–2 projects appearing in Cover Letter, Executive Summary, AND Section B
+6. **aiTraceFreedom** — absence of forbidden phrases ("As an AI", "[INSERT]", etc.)
+
+The score plus the weak-axis list is embedded in `GeneratedDocument.contentSummary`. If the score is below 70 and an AI provider is configured, the proposal is sent for one targeted refinement pass via `refineProposalWithAI`; the refined output is adopted only if its score is strictly higher (idempotent — never weakens the proposal).
+
+### Idempotency guarantees
+
+- All round-1–13 enrichers gate on `makeHasHeadingChecker` so they never duplicate AI-produced equivalents.
+- The throughline enforcer only inserts "Comparable reference anchor" sentences for projects not already named in a target section.
+- The vocabulary enricher only emits the standards section when fewer than 70 % of expected sector terms are present.
+- The section reorderer never deletes content; only reorders top-level sections.
+- The refinement pass keeps all tables and factual claims intact, rewrites only prose.
 
 ---
 
