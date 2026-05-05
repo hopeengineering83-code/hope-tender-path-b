@@ -5,6 +5,11 @@ import { extractTextFromBuffer, detectCategoryFromFile, getFileTypeLabel, isMean
 import { logAction } from "../../../lib/audit";
 import { ensureCompanyForUser } from "../../../lib/company-workspace";
 import { importCompanyKnowledgeFromDocuments } from "../../../lib/company-knowledge-import-safe";
+
+// Vercel route timeout — file ingestion calls Claude for expert/project
+// extraction during knowledge import. 60 = Hobby max.
+export const maxDuration = 60;
+export const dynamic = "force-dynamic";
 import { runTenderEngine } from "../../../lib/engine/run-tender-engine";
 import { runCompanyKnowledgeSafetyImport } from "../../../lib/company-knowledge-safety-import";
 

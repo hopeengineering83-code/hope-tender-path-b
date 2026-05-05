@@ -5,6 +5,11 @@ import { importCompanyKnowledgeFromDocuments } from "../../../../../lib/company-
 import { logAction } from "../../../../../lib/audit";
 import { isAIEnabled } from "../../../../../lib/ai";
 
+// Vercel route timeout — knowledge repair runs Claude expert / project
+// extraction across all uploaded documents. 60 = Hobby max.
+export const maxDuration = 60;
+export const dynamic = "force-dynamic";
+
 type Gap = { severity: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL"; title: string; detail: string };
 
 async function getCompany(userId: string) {

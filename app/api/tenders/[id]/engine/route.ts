@@ -3,6 +3,11 @@ import { getSession } from "../../../../../lib/auth";
 import { prismaReady } from "../../../../../lib/prisma";
 import { runTenderEngine } from "../../../../../lib/engine/run-tender-engine";
 
+// Vercel route timeout — engine runs analyze + extract + match. Default
+// 10s is too short. 60 = Hobby max; Pro uses its own plan limit.
+export const maxDuration = 60;
+export const dynamic = "force-dynamic";
+
 export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const userId = await getSession();
   if (!userId) {

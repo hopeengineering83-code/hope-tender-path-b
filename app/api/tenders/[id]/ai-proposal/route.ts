@@ -4,6 +4,11 @@ import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { generateBenchmarkProposalWithAI, isAIEnabled } from "../../../../../lib/ai";
 import { buildProposalIntelligence, expertProofLine, projectProofLine, safeParseArr } from "../../../../../lib/engine/proposal-intelligence";
 
+// Vercel route timeout — Claude proposal generation needs >10s default.
+// 60 = Hobby max; Pro applies its own plan limit when this is exceeded.
+export const maxDuration = 60;
+export const dynamic = "force-dynamic";
+
 function _clean(text?: string | null): string {
   return (text ?? "").replace(/\s+/g, " ").trim();
 }
