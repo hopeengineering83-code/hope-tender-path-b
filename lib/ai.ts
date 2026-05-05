@@ -41,14 +41,30 @@ const CLAUDE_PROPOSAL_MODELS = (process.env.ANTHROPIC_PROPOSAL_MODELS || "claude
   .map(normalizeClaudeModelName)
   .filter(Boolean);
 
-// Maximum output tokens per Claude call. Anthropic Free Tier caps output at
-// 4K tokens/minute per model; paid tiers go much higher. Default is set
-// conservatively so a single call cannot exceed the Free Tier per-minute
-// budget. Override via ANTHROPIC_MAX_OUTPUT_TOKENS for paid tiers.
+// Maximum output tokens per Claude call. Two distinct constraints apply:
+//   - Anthropic Free Tier caps output at 4K tokens/minute per model.
+//     Paid tiers go much higher (Tier 2 = 16K output / minute).
+//   - Vercel serverless function timeout caps wall-clock time.
+//     Hobby = 60s, Pro = 300s. Claude's response time scales roughly
+//     linearly with output token count — 8K tokens ≈ 25–40s, 16K ≈
+//     60–120s. On Vercel Hobby, requesting 16K output reliably blows
+//     the 60s budget and the function dies before Claude responds.
+//
+// Default is set to 8000 — a Hobby-tier-compatible value that still
+// produces a comprehensive proposal (≈ 6,000 words) in time. The
+// deterministic backstops (Sections E/F/G/H from PR #230 + #231)
+// guarantee the four mandatory evaluator-facing tables are present
+// even when Claude's output is tighter, so the trade-off has minimal
+// quality impact.
+//
+// Operators on Vercel Pro (300s function timeout) can raise this to
+// 16000 via the ANTHROPIC_MAX_OUTPUT_TOKENS env var. Operators on
+// Anthropic Tier 3+ AND Vercel Enterprise could go higher still
+// (capped at 64000 for safety).
 const CLAUDE_MAX_OUTPUT_TOKENS = (() => {
   const raw = Number(process.env.ANTHROPIC_MAX_OUTPUT_TOKENS);
   if (Number.isFinite(raw) && raw > 0) return Math.min(raw, 64000);
-  return 4000;
+  return 8000;
 })();
 
 function getClient() {
