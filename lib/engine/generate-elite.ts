@@ -51,6 +51,32 @@ const BRAND_BLUE = "1F4E79";
 const BRAND_GRAY = "595959";
 const LIGHT_BLUE = "D9EAF7";
 
+// In-pipeline timeout for the Claude proposal call. Layered INSIDE the
+// Vercel maxDuration window so the engine can fail gracefully (fall
+// back to the deterministic markdown builder) before Vercel kills the
+// function with a 504. 45_000 leaves a 15-second buffer for the
+// downstream deterministic enrichers + DB writes + DOCX rendering.
+// Override via AI_PROPOSAL_TIMEOUT_MS for Vercel Pro tiers.
+const PROPOSAL_AI_TIMEOUT_MS = (() => {
+  const raw = Number(process.env.AI_PROPOSAL_TIMEOUT_MS);
+  if (Number.isFinite(raw) && raw >= 5_000 && raw <= 600_000) return raw;
+  return 45_000;
+})();
+
+async function withProposalAiTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`AI proposal timed out after ${Math.round(ms / 1000)} seconds (in-pipeline guard before Vercel function timeout)`)), ms);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 function parseInlineRuns(text: string, opts?: { size?: number; color?: string; font?: string }): TextRun[] {
   const size = opts?.size ?? 22;
   const color = opts?.color ?? "222222";
@@ -678,24 +704,27 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
 
   if (isAIEnabled()) {
     try {
-      sourceMarkdown = await generateBenchmarkProposalWithAI({
-        tenderTitle: cleanedTenderTitle,
-        clientName: intelligence.clientName,
-        tenderText: [BENCHMARK_CONTEXT_LINES.join("\n"), tenderText].join("\n\n"),
-        analysisSummary: clean(tender.analysisSummary) || intelligence.tenderText.slice(0, 2000),
-        evaluationMethodology: [
-          clean(tender.evaluationMethodology) || intelligence.evaluationCriteria.join("; "),
-          ...(evaluationWeightLines.length > 0 ? ["", "Numeric evaluation weights detected in tender (echo verbatim in the EVALUATION CRITERIA RESPONSE MIRROR table):", ...evaluationWeightLines] : []),
-          tenderLanguageEchoBlock,
-        ].filter(Boolean).join("\n"),
-        submissionNotes: [BENCHMARK_CONTEXT_LINES.join("\n"), submissionNotes].filter(Boolean).join("\n"),
-        requirements: [...BENCHMARK_CONTEXT_LINES, ...requirementLines].join("\n"),
-        companyProfile: `${company.name}\n${company.legalName ?? ""}\n${company.profileSummary ?? company.description ?? ""}\nServices: ${safeParseArr(company.serviceLines).join(", ")}\nSectors: ${safeParseArr(company.sectors).join(", ")}\n\nWider company evidence library:\n${evidenceContextLines.join("\n").slice(0, 18_000)}`,
-        experts: expertLines.join("\n"),
-        projects: [...projectLines, ...projectEvidenceLines].join("\n"),
-        compliance: [...BENCHMARK_CONTEXT_LINES, ...complianceLines].join("\n"),
-        differentiators: [...BENCHMARK_CONTEXT_LINES, ...intelligence.differentiators, ...companyEvidenceLines.slice(0, 8)].join("\n"),
-      });
+      sourceMarkdown = await withProposalAiTimeout(
+        generateBenchmarkProposalWithAI({
+          tenderTitle: cleanedTenderTitle,
+          clientName: intelligence.clientName,
+          tenderText: [BENCHMARK_CONTEXT_LINES.join("\n"), tenderText].join("\n\n"),
+          analysisSummary: clean(tender.analysisSummary) || intelligence.tenderText.slice(0, 2000),
+          evaluationMethodology: [
+            clean(tender.evaluationMethodology) || intelligence.evaluationCriteria.join("; "),
+            ...(evaluationWeightLines.length > 0 ? ["", "Numeric evaluation weights detected in tender (echo verbatim in the EVALUATION CRITERIA RESPONSE MIRROR table):", ...evaluationWeightLines] : []),
+            tenderLanguageEchoBlock,
+          ].filter(Boolean).join("\n"),
+          submissionNotes: [BENCHMARK_CONTEXT_LINES.join("\n"), submissionNotes].filter(Boolean).join("\n"),
+          requirements: [...BENCHMARK_CONTEXT_LINES, ...requirementLines].join("\n"),
+          companyProfile: `${company.name}\n${company.legalName ?? ""}\n${company.profileSummary ?? company.description ?? ""}\nServices: ${safeParseArr(company.serviceLines).join(", ")}\nSectors: ${safeParseArr(company.sectors).join(", ")}\n\nWider company evidence library:\n${evidenceContextLines.join("\n").slice(0, 9_000)}`,
+          experts: expertLines.join("\n"),
+          projects: [...projectLines, ...projectEvidenceLines].join("\n"),
+          compliance: [...BENCHMARK_CONTEXT_LINES, ...complianceLines].join("\n"),
+          differentiators: [...BENCHMARK_CONTEXT_LINES, ...intelligence.differentiators, ...companyEvidenceLines.slice(0, 8)].join("\n"),
+        }),
+        PROPOSAL_AI_TIMEOUT_MS,
+      );
       const provider = getLastProposalProvider() ?? "ai";
       mode = `${provider === "claude" ? "Claude" : provider === "gemini" ? "Gemini" : "AI"} bid-writer + evaluator response matrix + full evidence library + client-ready benchmark finalizer + professional DOCX polish`;
     } catch (error) {

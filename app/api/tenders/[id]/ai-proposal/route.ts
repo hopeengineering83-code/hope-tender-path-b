@@ -9,6 +9,31 @@ import { buildProposalIntelligence, expertProofLine, projectProofLine, safeParse
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
 
+// In-route timeout for the Claude proposal call. Layered INSIDE the
+// Vercel maxDuration window so the route can fail gracefully (return
+// the deterministic fallback proposal) before Vercel kills the
+// function with a 504. 50_000 leaves a 10-second buffer for response
+// handling. Override via AI_PROPOSAL_TIMEOUT_MS for Vercel Pro tiers.
+const AI_PROPOSAL_TIMEOUT_MS = (() => {
+  const raw = Number(process.env.AI_PROPOSAL_TIMEOUT_MS);
+  if (Number.isFinite(raw) && raw >= 5_000 && raw <= 600_000) return raw;
+  return 50_000;
+})();
+
+async function withProposalTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`AI proposal timed out after ${Math.round(ms / 1000)} seconds`)), ms);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 function _clean(text?: string | null): string {
   return (text ?? "").replace(/\s+/g, " ").trim();
 }
@@ -201,24 +226,27 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     let fallback = false;
 
     try {
-      proposal = await generateBenchmarkProposalWithAI({
-        tenderTitle: tender.title,
-        clientName: intelligence.clientName,
-        tenderText,
-        analysisSummary: _clean(tender.analysisSummary) || intelligence.tenderText.slice(0, 2000),
-        evaluationMethodology: _clean(tender.evaluationMethodology) || intelligence.evaluationCriteria.join("; "),
-        submissionNotes,
-        requirements: requirementLines.join("\n"),
-        companyProfile:
-          `${company.name}\n${(company as { legalName?: string | null }).legalName ?? ""}\n${company.profileSummary ?? (company as { description?: string | null }).description ?? ""}\n` +
-          `Services: ${safeParseArr((company as { serviceLines?: string | null }).serviceLines).join(", ")}\n` +
-          `Sectors: ${safeParseArr((company as { sectors?: string | null }).sectors).join(", ")}\n\n` +
-          `Wider company evidence library:\n${evidenceContextLines.join("\n").slice(0, 18_000)}`,
-        experts: expertLines.join("\n"),
-        projects: [...projectLines, ...projectEvidenceLines].join("\n"),
-        compliance: complianceLines.join("\n"),
-        differentiators: intelligence.differentiators.join("\n"),
-      });
+      proposal = await withProposalTimeout(
+        generateBenchmarkProposalWithAI({
+          tenderTitle: tender.title,
+          clientName: intelligence.clientName,
+          tenderText,
+          analysisSummary: _clean(tender.analysisSummary) || intelligence.tenderText.slice(0, 2000),
+          evaluationMethodology: _clean(tender.evaluationMethodology) || intelligence.evaluationCriteria.join("; "),
+          submissionNotes,
+          requirements: requirementLines.join("\n"),
+          companyProfile:
+            `${company.name}\n${(company as { legalName?: string | null }).legalName ?? ""}\n${company.profileSummary ?? (company as { description?: string | null }).description ?? ""}\n` +
+            `Services: ${safeParseArr((company as { serviceLines?: string | null }).serviceLines).join(", ")}\n` +
+            `Sectors: ${safeParseArr((company as { sectors?: string | null }).sectors).join(", ")}\n\n` +
+            `Wider company evidence library:\n${evidenceContextLines.join("\n").slice(0, 9_000)}`,
+          experts: expertLines.join("\n"),
+          projects: [...projectLines, ...projectEvidenceLines].join("\n"),
+          compliance: complianceLines.join("\n"),
+          differentiators: intelligence.differentiators.join("\n"),
+        }),
+        AI_PROPOSAL_TIMEOUT_MS,
+      );
     } catch (aiError) {
       const msg = aiError instanceof Error ? aiError.message : String(aiError);
       console.error("Benchmark AI proposal failed in /ai-proposal route:", aiError);

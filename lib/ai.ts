@@ -1134,7 +1134,7 @@ TENDER TITLE: ${params.tenderTitle}
 CLIENT: ${params.clientName}
 
 TENDER TEXT / FULL SCOPE EXTRACT:
-${params.tenderText.slice(0, 48_000)}
+${params.tenderText.slice(0, 24_000)}
 
 AI ANALYSIS SUMMARY:
 ${params.analysisSummary}
@@ -1146,23 +1146,23 @@ SUBMISSION RULES:
 ${params.submissionNotes}
 
 CONSOLIDATED REQUIREMENTS:
-${params.requirements.slice(0, 20_000)}
+${params.requirements.slice(0, 12_000)}
 
 ---
 
 ## COMPANY EVIDENCE — USE THIS, DO NOT INVENT ANYTHING
 
 COMPANY PROFILE:
-${params.companyProfile.slice(0, 16_000)}
+${params.companyProfile.slice(0, 8_000)}
 
 PROPOSED EXPERT EVIDENCE:
-${params.experts.slice(0, 18_000)}
+${params.experts.slice(0, 9_000)}
 
 RELEVANT PROJECT EVIDENCE:
-${params.projects.slice(0, 18_000)}
+${params.projects.slice(0, 9_000)}
 
 COMPLIANCE / GAPS / BID-TEAM ACTIONS:
-${params.compliance.slice(0, 14_000)}
+${params.compliance.slice(0, 8_000)}
 
 KEY DIFFERENTIATORS TO WEAVE INTO THE NARRATIVE:
 ${params.differentiators}
