@@ -339,7 +339,20 @@ export function buildBenchmarkTablesBlock(opts: {
 }
 
 export function makeHasHeadingChecker(markdown: string): (heading: string) => boolean {
-  const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  // Strip common conjunctions ("and", "or", "&") before normalizing so that
+  // headings like "Risk Register & Mitigation Strategy" and "Risk Register
+  // and Mitigation Strategy" hash to the same key. Without this, an AI that
+  // emits "Risk Register & Mitigation Strategy" would not match the
+  // upstreamCheck("Risk Register and Mitigation Strategy") call in
+  // generate-elite.ts and the deterministic enricher would duplicate the
+  // section.
+  const normalize = (s: string) =>
+    s
+      .toLowerCase()
+      .replace(/&/g, " ")
+      .replace(/\b(and|or)\b/g, " ")
+      .replace(/[^a-z0-9]+/g, " ")
+      .trim();
   const headings = new Set(
     markdown
       .split(/\n+/)
