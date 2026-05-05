@@ -32,6 +32,9 @@ import { buildWhyUsSummary } from "./why-us-summary";
 import { buildWorkPlanTable } from "./work-plan-timeline";
 import { buildBidComplianceMapping } from "./bid-compliance-mapping";
 import { buildComplianceMatrixSection, hasComplianceMatrixHeading } from "./compliance-matrix-builder";
+import { buildEvaluatorMirrorSection, hasEvaluatorMirrorHeading } from "./evaluator-mirror-builder";
+import { buildWinThemesSection, hasWinThemesHeading } from "./win-themes-builder";
+import { buildSelfScoreSection, hasSelfScoreHeading } from "./self-score-builder";
 import { formatQualityScoreSummary, scoreProposalQuality } from "./proposal-quality-scorer";
 import {
   buildCertificationsSection,
@@ -815,26 +818,81 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     }));
   }
 
-  // Round-12: deterministic Section E (Compliance Matrix) backstop.
-  // Section E is the single most-evaluated section on regulated tenders.
-  // The AI prompt (PR #228) asks Claude to produce it, but the AI may
-  // omit it under output-token pressure. The scorer (PR #229) catches the
-  // omission and triggers refinement, but refinement also requires AI.
-  // This deterministic builder uses the actual database state
-  // (tender.requirements + tender.complianceMatrix + tender.complianceGaps)
-  // to construct Section E from the data we already have. It is appended
-  // only when the AI / fallback output has no Compliance Matrix heading
-  // with at least one status cell — the hasComplianceMatrixHeading guard
-  // makes it idempotent.
-  const deterministicComplianceMatrix = !hasComplianceMatrixHeading(`${matrixMarkdown}\n${strengtheningMarkdown}`)
+  // Round-12: deterministic Section E–H backstops.
+  // Sections E (Compliance Matrix), F (Evaluation Criteria Response Mirror),
+  // G (Win Themes & Discriminators), and H (Proposal Self-Score) are the
+  // four mandatory output sections introduced by PR #228. The AI prompt
+  // asks Claude to produce them, the scorer (PR #229) catches when a
+  // section is missing and triggers refinement — but refinement also
+  // requires AI. When AI is unavailable (rate-limited, quota exhausted,
+  // API key issue), or when Claude omits a section under output-token
+  // pressure, these deterministic builders construct the section from
+  // the structured intelligence + database state we already have. Each
+  // builder is idempotent — its has*Heading guard returns null when the
+  // upstream output already produced an equivalent heading.
+  const upstreamMarkdownForBackstops = `${matrixMarkdown}\n${strengtheningMarkdown}\n${benchmarkTables}\n${round2Sections.join("\n")}`;
+  const deterministicComplianceMatrix = !hasComplianceMatrixHeading(upstreamMarkdownForBackstops)
     ? buildComplianceMatrixSection({
         requirements: tender.requirements,
         matrixRows: tender.complianceMatrix,
         gaps: tender.complianceGaps,
       })
     : null;
+  const deterministicEvaluatorMirror = !hasEvaluatorMirrorHeading(upstreamMarkdownForBackstops)
+    ? buildEvaluatorMirrorSection({
+        evaluationCriteria: intelligence.evaluationCriteria,
+        evaluationWeights: intelligence.evaluationWeights,
+        topProjectName: (projects as ProjectRecord[])[0]?.name ?? null,
+        topExpertName: (experts as ExpertRecord[])[0]?.fullName ?? null,
+        primarySector: intelligence.primarySector,
+      })
+    : null;
+  const deterministicWinThemes = !hasWinThemesHeading(upstreamMarkdownForBackstops)
+    ? buildWinThemesSection({
+        differentiators: intelligence.differentiators,
+        evaluationCriteria: intelligence.evaluationCriteria,
+        topProjects: (projects as ProjectRecord[]).slice(0, 5),
+        topExperts: (experts as ExpertRecord[]).slice(0, 5),
+        companyName: company.name,
+        clientName: intelligence.clientName,
+        primarySector: intelligence.primarySector,
+      })
+    : null;
 
-  const combinedMarkdown = [matrixMarkdown, strengtheningMarkdown, benchmarkTables, ...round2Sections, deterministicComplianceMatrix].filter(Boolean).join("\n\n");
+  // Section H must observe whether E/F/G are now in place — its score
+  // heuristic credits the proposal for having them. We compose the
+  // upstream markdown plus our own deterministic E/F/G when they are
+  // being added so the self-score reflects the assembled document, not
+  // the raw AI output.
+  const upstreamWithBackstops = [
+    upstreamMarkdownForBackstops,
+    deterministicComplianceMatrix,
+    deterministicEvaluatorMirror,
+    deterministicWinThemes,
+  ].filter(Boolean).join("\n\n");
+  const deterministicSelfScore = !hasSelfScoreHeading(upstreamMarkdownForBackstops)
+    ? buildSelfScoreSection({
+        evaluationCriteria: intelligence.evaluationCriteria,
+        evaluationWeights: intelligence.evaluationWeights,
+        topProjects: (projects as ProjectRecord[]).slice(0, 5),
+        topExperts: (experts as ExpertRecord[]).slice(0, 5),
+        hasComplianceMatrix: hasComplianceMatrixHeading(upstreamWithBackstops),
+        hasEvaluatorMirror: hasEvaluatorMirrorHeading(upstreamWithBackstops),
+        hasWinThemes: hasWinThemesHeading(upstreamWithBackstops),
+        primarySector: intelligence.primarySector,
+      })
+    : null;
+
+  const combinedMarkdown = [
+    matrixMarkdown,
+    strengtheningMarkdown,
+    benchmarkTables,
+    ...round2Sections,
+    deterministicComplianceMatrix,
+    deterministicEvaluatorMirror,
+    deterministicWinThemes,
+    deterministicSelfScore,
+  ].filter(Boolean).join("\n\n");
 
   // Round-4 self-healing pass: enforce the benchmark "narrative throughline"
   // rule (top 1–2 projects must appear in Cover Letter, Executive Summary,
