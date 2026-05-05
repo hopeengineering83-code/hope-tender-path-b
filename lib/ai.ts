@@ -1134,35 +1134,35 @@ TENDER TITLE: ${params.tenderTitle}
 CLIENT: ${params.clientName}
 
 TENDER TEXT / FULL SCOPE EXTRACT:
-${params.tenderText.slice(0, 24_000)}
+${params.tenderText.slice(0, 14_000)}
 
 AI ANALYSIS SUMMARY:
-${params.analysisSummary}
+${params.analysisSummary.slice(0, 4_000)}
 
 EVALUATION CRITERIA — answer each one explicitly in the proposal:
-${params.evaluationMethodology}
+${params.evaluationMethodology.slice(0, 4_000)}
 
 SUBMISSION RULES:
-${params.submissionNotes}
+${params.submissionNotes.slice(0, 3_000)}
 
 CONSOLIDATED REQUIREMENTS:
-${params.requirements.slice(0, 12_000)}
+${params.requirements.slice(0, 7_000)}
 
 ---
 
 ## COMPANY EVIDENCE — USE THIS, DO NOT INVENT ANYTHING
 
 COMPANY PROFILE:
-${params.companyProfile.slice(0, 8_000)}
+${params.companyProfile.slice(0, 5_000)}
 
 PROPOSED EXPERT EVIDENCE:
-${params.experts.slice(0, 9_000)}
+${params.experts.slice(0, 6_000)}
 
 RELEVANT PROJECT EVIDENCE:
-${params.projects.slice(0, 9_000)}
+${params.projects.slice(0, 6_000)}
 
 COMPLIANCE / GAPS / BID-TEAM ACTIONS:
-${params.compliance.slice(0, 8_000)}
+${params.compliance.slice(0, 5_000)}
 
 KEY DIFFERENTIATORS TO WEAVE INTO THE NARRATIVE:
 ${params.differentiators}

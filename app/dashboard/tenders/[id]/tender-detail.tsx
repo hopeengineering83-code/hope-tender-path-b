@@ -4,6 +4,7 @@ import { useState, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { StatusBadge } from "../../../../components/status-badge";
 import { NEXT_STATUS, formatDate, formatTenderStatus } from "../../../../lib/tender-workflow";
+import { cleanClientName, cleanTenderTitle } from "../../../../lib/engine/proposal-labels";
 
 function renderInline(text: string): React.ReactNode[] {
   const parts = text.split(/(\*\*[^*\n]+\*\*|\*[^*\n]+\*|_[^_\n]+_)/g);
@@ -587,17 +588,30 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
     return parseDocumentQuality(proposal?.contentSummary);
   })();
 
+  // Apply the same label-sanitization helpers that proposal generation uses,
+  // at display time. The intake stage sometimes captures multi-line garbage
+  // from the tender PDF (e.g., "discipline and long-term commitment
+  // Headquarters: Not specified in texts, but active in East Africa…")
+  // into tender.title and tender.clientName. cleanTenderTitle and
+  // cleanClientName already detect and reject those patterns; this surfaces
+  // a clean label on the dashboard without requiring an admin DB cleanup.
+  // The raw tender.title / tender.clientName are still in the DB and can
+  // be edited via the tender Edit page if the user wants to change them.
+  const displayTitle = cleanTenderTitle(tender.title, { clientName: tender.clientName, description: tender.description });
+  const displayClient = cleanClientName(tender.clientName, tender.description);
+  const displayClientLine = displayClient && displayClient !== "Client" ? ` · ${displayClient}` : "";
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div>
           <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-bold text-slate-900">{tender.title}</h1>
+            <h1 className="text-2xl font-bold text-slate-900">{displayTitle}</h1>
             <StatusBadge status={tender.status} />
           </div>
           <p className="mt-2 text-sm text-slate-500">
             {tender.reference ? `Ref ${tender.reference}` : "No reference yet"}
-            {tender.clientName ? ` · ${tender.clientName}` : ""}
+            {displayClientLine}
           </p>
         </div>
 
@@ -737,7 +751,7 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
               </div>
             ) : (
               <dl className="mt-5 grid gap-4 md:grid-cols-2">
-                <div><dt className="text-sm text-slate-500">Client</dt><dd className="mt-1 font-medium text-slate-900">{tender.clientName || "—"}</dd></div>
+                <div><dt className="text-sm text-slate-500">Client</dt><dd className="mt-1 font-medium text-slate-900">{displayClient && displayClient !== "Client" ? displayClient : (tender.clientName || "—")}</dd></div>
                 <div><dt className="text-sm text-slate-500">Deadline</dt><dd className="mt-1 font-medium text-slate-900">{formatDate(tender.deadline)}</dd></div>
                 <div><dt className="text-sm text-slate-500">Category</dt><dd className="mt-1 font-medium text-slate-900">{tender.category}</dd></div>
                 <div><dt className="text-sm text-slate-500">Submission</dt><dd className="mt-1 font-medium text-slate-900">{tender.submissionMethod || "—"}</dd></div>
