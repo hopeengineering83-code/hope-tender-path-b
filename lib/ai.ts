@@ -19,9 +19,26 @@ const PROPOSAL_MODELS = ["gemini-2.5-pro", "gemini-2.0-flash", "gemini-1.5-pro"]
 // The default chain prefers stable, widely-available aliases so it works
 // on a fresh Anthropic account without configuration. To pin specific
 // snapshot models, override via ANTHROPIC_PROPOSAL_MODELS — comma-separated.
+//
+// Model-name normalization: Anthropic model IDs are case-sensitive AND
+// require dashes, not dots ("claude-sonnet-4-5", NOT "Claude-sonnet-4.5").
+// Real-world deploy logs caught users entering "Claude-sonnet-4.5" in the
+// env var and getting 404 errors on every model in the chain. We
+// normalize each entry: lowercase, replace any dot with a dash, and
+// collapse runs of dashes. This means typo-tolerant configuration —
+// "Claude-Sonnet-4.5", "claude.sonnet.4.5", "claude_sonnet_4_5" all
+// resolve to the canonical "claude-sonnet-4-5".
+function normalizeClaudeModelName(raw: string): string {
+  return raw
+    .trim()
+    .toLowerCase()
+    .replace(/[._\s]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
 const CLAUDE_PROPOSAL_MODELS = (process.env.ANTHROPIC_PROPOSAL_MODELS || "claude-sonnet-4-5,claude-opus-4-1,claude-3-5-sonnet-latest,claude-3-5-haiku-latest")
   .split(",")
-  .map((m) => m.trim())
+  .map(normalizeClaudeModelName)
   .filter(Boolean);
 
 // Maximum output tokens per Claude call. Anthropic Free Tier caps output at
@@ -265,6 +282,37 @@ async function generate(prompt: string, modelName = DEFAULT_GEMINI_MODEL): Promi
   throw new Error(`Gemini model unavailable. Tried: ${uniqueModels(modelName || DEFAULT_GEMINI_MODEL).join(", ")}. Errors: ${errors.join(" | ")}`);
 }
 
+/**
+ * Try Claude first, then fall back to Gemini. Used by analyzeWithAI and
+ * the extractor functions so they no longer hard-fail when only
+ * ANTHROPIC_API_KEY is set. Real-world deploy logs showed
+ * /api/tenders/.../ai-analyze returning "GEMINI_API_KEY not configured"
+ * because analyzeWithAI was Gemini-only — even when Anthropic was set up
+ * and working for /generate.
+ *
+ * The systemPrompt is optional. When omitted, Claude uses its default
+ * behaviour (no persona override). For analysis / extraction we want
+ * Claude to behave as a JSON-emitting parser — the user prompt itself
+ * carries that instruction.
+ *
+ * Falls back to Gemini ONLY when Claude is not configured OR Claude
+ * returned an empty response. When Claude throws (rate limit, bad key,
+ * model 404), we re-throw so the caller can surface the actual cause.
+ * For the extraction-only callers (which currently rely on `generate`
+ * throwing for the user to see), this preserves the exception flow.
+ */
+async function generateWithFallback(prompt: string, opts?: { systemPrompt?: string; geminiModel?: string }): Promise<string> {
+  if (isClaudeEnabled()) {
+    const claudeResult = await generateWithClaude(prompt, opts?.systemPrompt);
+    if (claudeResult) return claudeResult;
+    // Claude returned null (all models failed) — try Gemini if available.
+    if (apiKey) return generate(prompt, opts?.geminiModel);
+    throw new Error(`Claude returned empty / 404 / rate-limited on all models in chain (${CLAUDE_PROPOSAL_MODELS.join(", ")}) and GEMINI_API_KEY is not set. If ANTHROPIC_PROPOSAL_MODELS is set, model IDs must be lowercase with dashes (e.g. "claude-sonnet-4-5").`);
+  }
+  if (apiKey) return generate(prompt, opts?.geminiModel);
+  throw new Error("No AI provider configured — set ANTHROPIC_API_KEY (preferred) or GEMINI_API_KEY.");
+}
+
 // Try PROPOSAL_MODELS in order until one succeeds — gives the best available model for proposal writing.
 async function generateWithBestModel(prompt: string): Promise<string> {
   let lastError: unknown;
@@ -412,7 +460,10 @@ JSON structure required:
 TENDER DOCUMENT (${trimmedTender.length.toLocaleString()} chars):
 ${trimmedTender}`;
 
-  const text = await generate(prompt, process.env.GEMINI_ANALYSIS_MODEL || DEFAULT_GEMINI_MODEL);
+  const text = await generateWithFallback(prompt, {
+    systemPrompt: "You are a senior tender analyst. Output ONLY a valid JSON object — no markdown, no code fences, no preamble. The JSON object must match the structure described in the user prompt exactly.",
+    geminiModel: process.env.GEMINI_ANALYSIS_MODEL || DEFAULT_GEMINI_MODEL,
+  });
   // Strip markdown code fences if the model wrapped its JSON
   const cleaned = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
   const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
@@ -454,7 +505,10 @@ Rules: only include people clearly named in the document. Do NOT invent any fiel
 DOCUMENT TEXT (${text.length.toLocaleString()} chars):
 ${text.slice(0, 60_000)}`;
 
-  const raw = await generate(prompt, process.env.GEMINI_EXTRACTION_MODEL || "gemini-2.5-flash");
+  const raw = await generateWithFallback(prompt, {
+    systemPrompt: "You are a CV parsing engine. Output ONLY a valid JSON array — no markdown, no code fences, no preamble. Each element must match the schema in the user prompt exactly.",
+    geminiModel: process.env.GEMINI_EXTRACTION_MODEL || "gemini-2.5-flash",
+  });
   const jsonMatch = raw.match(/\[[\s\S]*\]/);
   if (!jsonMatch) return [];
   try {
@@ -495,7 +549,10 @@ Rules: only include projects clearly in the document. Do NOT invent values. sour
 DOCUMENT TEXT (${text.length.toLocaleString()} chars):
 ${text.slice(0, 60_000)}`;
 
-  const raw = await generate(prompt, process.env.GEMINI_EXTRACTION_MODEL || "gemini-2.5-flash");
+  const raw = await generateWithFallback(prompt, {
+    systemPrompt: "You are a project portfolio parsing engine. Output ONLY a valid JSON array — no markdown, no code fences, no preamble. Each element must match the schema in the user prompt exactly.",
+    geminiModel: process.env.GEMINI_EXTRACTION_MODEL || "gemini-2.5-flash",
+  });
   const jsonMatch = raw.match(/\[[\s\S]*\]/);
   if (!jsonMatch) return [];
   try {
@@ -1104,11 +1161,17 @@ Now write the complete technical proposal. Start with the Cover Letter. The eval
   // deterministic engine path when both fail (handled in generateTenderDocuments).
   // The chosen provider is recorded in lastProposalProvider so callers can
   // surface "Claude" vs "Gemini" in the GeneratedDocument.contentSummary.
+  let claudeError: string | null = null;
   if (isClaudeEnabled()) {
-    const claudeResult = await generateWithClaude(prompt);
-    if (claudeResult) {
-      lastProposalProvider = "claude";
-      return claudeResult;
+    try {
+      const claudeResult = await generateWithClaude(prompt);
+      if (claudeResult) {
+        lastProposalProvider = "claude";
+        return claudeResult;
+      }
+      claudeError = `all configured Claude models returned empty / not-found / rate-limited (chain: ${CLAUDE_PROPOSAL_MODELS.join(", ")}). Check ANTHROPIC_PROPOSAL_MODELS — model IDs must be lowercase with dashes (e.g. "claude-sonnet-4-5", NOT "Claude-sonnet-4.5")`;
+    } catch (err) {
+      claudeError = err instanceof Error ? err.message : String(err);
     }
   }
   if (apiKey) {
@@ -1117,7 +1180,19 @@ Now write the complete technical proposal. Start with the Cover Letter. The eval
     return geminiResult;
   }
   lastProposalProvider = null;
-  throw new Error("No AI provider configured — set ANTHROPIC_API_KEY (preferred) or GEMINI_API_KEY in environment variables.");
+  // Diagnostic error message: distinguishes between (a) no key at all,
+  // (b) Anthropic key present but Claude failed, (c) both configured but
+  // both failed. Real-world deploy logs showed users with ANTHROPIC_API_KEY
+  // set seeing the "No AI provider configured" message and assuming the
+  // key wasn't loaded — when in fact the model name was wrong.
+  if (anthropicApiKey && !apiKey) {
+    throw new Error(`Claude (Anthropic) is configured but did not produce a proposal: ${claudeError ?? "unknown error"}. Set GEMINI_API_KEY as a fallback, OR fix the Claude model chain.`);
+  }
+  if (!anthropicApiKey && !apiKey) {
+    throw new Error("No AI provider configured — set ANTHROPIC_API_KEY (preferred) or GEMINI_API_KEY in environment variables.");
+  }
+  // anthropicApiKey present, apiKey present, both failed
+  throw new Error(`Both AI providers failed. Claude: ${claudeError ?? "unknown"}. Gemini also failed (see prior log lines).`);
 }
 
 function extractTenderSections(tenderText: string): string[] {
