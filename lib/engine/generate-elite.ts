@@ -595,8 +595,19 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   const projectRequired = exactSelectionLimit(tender.requirements, "PROJECT_EXPERIENCE");
 
   const intelligence = buildProposalIntelligence({ tender, company, requirements: tender.requirements, experts, projects });
-  const tenderText = [tender.title, tender.reference, tender.clientName, tender.description, tender.intakeSummary, tender.analysisSummary, tender.evaluationMethodology, ...tender.files.map((f) => `${f.originalFileName}\n${f.extractedText ?? ""}`)].filter(Boolean).join("\n\n");
-  const requirementLines = tender.requirements.map((r) => `${r.priority} ${r.requirementType}: ${r.title} — ${r.description}`);
+  // Cleaned tender title (sanitized via cleanTenderTitle inside
+  // buildProposalIntelligence). Used everywhere a user-facing label is
+  // needed; the raw tender.title is intentionally kept out of generated
+  // content because intake-stage extraction can produce multi-line garbage
+  // that propagates to every section if used directly.
+  const cleanedTenderTitle = intelligence.assignmentName;
+  const tenderText = [cleanedTenderTitle, tender.reference, intelligence.clientName, tender.description, tender.intakeSummary, tender.analysisSummary, tender.evaluationMethodology, ...tender.files.map((f) => `${f.originalFileName}\n${f.extractedText ?? ""}`)].filter(Boolean).join("\n\n");
+  // Requirement lines for AI prompt context AND for downstream rendering.
+  // Internal classifier prefixes (priority + requirementType, e.g.
+  // "MANDATORY FORM:") were leaking into user-facing support documents.
+  // Drop the prefix; keep just the title and description, which is what
+  // both the AI and the user need.
+  const requirementLines = tender.requirements.map((r) => `${r.title} — ${r.description}`);
   const expertLines = experts.map(expertProofLine);
   const projectLines = projects.map(projectProofLine);
   const evidenceContextLines = [...companyEvidenceLines, ...projectEvidenceLines];
@@ -613,8 +624,8 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     ...(projectRequired > projectLines.length ? [`Senior review: add/confirm ${projectRequired - projectLines.length} project reference(s) if the tender quantity is mandatory.`] : []),
   ];
 
-  const guardInput = { tenderTitle: tender.title, clientName: intelligence.clientName, companyName: company.name, submissionNotes, expertCount: expertLines.length, projectCount: projectLines.length, complianceLines };
-  const evaluatorMatrixInput = { tenderTitle: tender.title, clientName: intelligence.clientName, requirements: requirementLines, expertLines, projectLines, companyEvidenceLines, projectEvidenceLines, complianceLines, differentiators: intelligence.differentiators };
+  const guardInput = { tenderTitle: cleanedTenderTitle, clientName: intelligence.clientName, companyName: company.name, submissionNotes, expertCount: expertLines.length, projectCount: projectLines.length, complianceLines };
+  const evaluatorMatrixInput = { tenderTitle: cleanedTenderTitle, clientName: intelligence.clientName, requirements: requirementLines, expertLines, projectLines, companyEvidenceLines, projectEvidenceLines, complianceLines, differentiators: intelligence.differentiators };
 
   let sourceMarkdown: string;
   let mode = "deterministic benchmark";
@@ -623,7 +634,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   if (isAIEnabled()) {
     try {
       sourceMarkdown = await generateBenchmarkProposalWithAI({
-        tenderTitle: tender.title,
+        tenderTitle: cleanedTenderTitle,
         clientName: intelligence.clientName,
         tenderText: [BENCHMARK_CONTEXT_LINES.join("\n"), tenderText].join("\n\n"),
         analysisSummary: clean(tender.analysisSummary) || intelligence.tenderText.slice(0, 2000),
@@ -639,16 +650,16 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
       mode = "AI bid-writer + evaluator response matrix + full evidence library + client-ready benchmark finalizer + professional DOCX polish";
     } catch (error) {
       aiError = error instanceof Error ? error.message : String(error);
-      sourceMarkdown = fallbackProposalMarkdown({ tenderTitle: tender.title, clientName: intelligence.clientName, companyName: company.name, companyLegalName: company.legalName, companyAddress: company.address, companyTIN: company.tin, companyVAT: company.vat, companyGM: company.gmName, companyGMLicense: company.gmLicense, primarySector: intelligence.primarySector, requirements: requirementLines, differentiators: intelligence.differentiators, submissionRules: intelligence.submissionRules, expertLines, projectLines, experts: experts as ExpertRecord[], projects: projects as ProjectRecord[], reviewedExpertCount: experts.length, companyEvidenceLines, projectEvidenceLines, complianceLines, expertRequired, projectRequired, themes: intelligence.themes, evaluationCriteria: intelligence.evaluationCriteria, appendixList: intelligence.appendixList, noFinancialProposal: intelligence.noFinancialProposal, exactEmails: intelligence.exactEmails, exactSubjectLine: intelligence.exactSubjectLine, gapsToAddressInNarrative: intelligence.gapsToAddressInNarrative, requiredSections: intelligence.requiredSections, tenderDeadline: tender.deadline });
+      sourceMarkdown = fallbackProposalMarkdown({ tenderTitle: cleanedTenderTitle, clientName: intelligence.clientName, companyName: company.name, companyLegalName: company.legalName, companyAddress: company.address, companyTIN: company.tin, companyVAT: company.vat, companyGM: company.gmName, companyGMLicense: company.gmLicense, primarySector: intelligence.primarySector, requirements: requirementLines, differentiators: intelligence.differentiators, submissionRules: intelligence.submissionRules, expertLines, projectLines, experts: experts as ExpertRecord[], projects: projects as ProjectRecord[], reviewedExpertCount: experts.length, companyEvidenceLines, projectEvidenceLines, complianceLines, expertRequired, projectRequired, themes: intelligence.themes, evaluationCriteria: intelligence.evaluationCriteria, appendixList: intelligence.appendixList, noFinancialProposal: intelligence.noFinancialProposal, exactEmails: intelligence.exactEmails, exactSubjectLine: intelligence.exactSubjectLine, gapsToAddressInNarrative: intelligence.gapsToAddressInNarrative, requiredSections: intelligence.requiredSections, tenderDeadline: tender.deadline });
       mode = "deterministic benchmark fallback + evaluator response matrix + client-ready benchmark finalizer + professional DOCX polish";
     }
   } else {
-    sourceMarkdown = fallbackProposalMarkdown({ tenderTitle: tender.title, clientName: intelligence.clientName, companyName: company.name, companyLegalName: company.legalName, companyAddress: company.address, companyTIN: company.tin, companyVAT: company.vat, companyGM: company.gmName, companyGMLicense: company.gmLicense, primarySector: intelligence.primarySector, requirements: requirementLines, differentiators: intelligence.differentiators, submissionRules: intelligence.submissionRules, expertLines, projectLines, experts: experts as ExpertRecord[], projects: projects as ProjectRecord[], reviewedExpertCount: experts.length, companyEvidenceLines, projectEvidenceLines, complianceLines, expertRequired, projectRequired, themes: intelligence.themes, evaluationCriteria: intelligence.evaluationCriteria, appendixList: intelligence.appendixList, noFinancialProposal: intelligence.noFinancialProposal, exactEmails: intelligence.exactEmails, exactSubjectLine: intelligence.exactSubjectLine, gapsToAddressInNarrative: intelligence.gapsToAddressInNarrative, requiredSections: intelligence.requiredSections, tenderDeadline: tender.deadline });
+    sourceMarkdown = fallbackProposalMarkdown({ tenderTitle: cleanedTenderTitle, clientName: intelligence.clientName, companyName: company.name, companyLegalName: company.legalName, companyAddress: company.address, companyTIN: company.tin, companyVAT: company.vat, companyGM: company.gmName, companyGMLicense: company.gmLicense, primarySector: intelligence.primarySector, requirements: requirementLines, differentiators: intelligence.differentiators, submissionRules: intelligence.submissionRules, expertLines, projectLines, experts: experts as ExpertRecord[], projects: projects as ProjectRecord[], reviewedExpertCount: experts.length, companyEvidenceLines, projectEvidenceLines, complianceLines, expertRequired, projectRequired, themes: intelligence.themes, evaluationCriteria: intelligence.evaluationCriteria, appendixList: intelligence.appendixList, noFinancialProposal: intelligence.noFinancialProposal, exactEmails: intelligence.exactEmails, exactSubjectLine: intelligence.exactSubjectLine, gapsToAddressInNarrative: intelligence.gapsToAddressInNarrative, requiredSections: intelligence.requiredSections, tenderDeadline: tender.deadline });
   }
 
   const matrixMarkdown = appendEvaluatorResponseMatrix(sourceMarkdown, evaluatorMatrixInput);
   const isHealthcare = /health|hospital|medical|clinic|radiology|laboratory|pharmacy|patient|specialty|OPD|in-patient|emergency/i.test(`${intelligence.primarySector}\n${intelligence.tenderText}`);
-  const strengtheningMarkdown = buildClientProposalStrengtheningSections({ clientName: intelligence.clientName, tenderTitle: tender.title, companyName: company.name, projectLines, expertLines, companyEvidenceLines, projectEvidenceLines, isHealthcare, existingMarkdown: matrixMarkdown });
+  const strengtheningMarkdown = buildClientProposalStrengtheningSections({ clientName: intelligence.clientName, tenderTitle: cleanedTenderTitle, companyName: company.name, projectLines, expertLines, companyEvidenceLines, projectEvidenceLines, isHealthcare, existingMarkdown: matrixMarkdown });
 
   // Inject benchmark-quality tabular sections (Proposed Team, Team-to-Project Mapping,
   // Project Portfolio cards, Three-Stage Review, optional Assessment Matrix) only if
@@ -659,9 +670,9 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     experts,
     projects,
     companyName: company.name,
-    tenderTitle: tender.title,
+    tenderTitle: cleanedTenderTitle,
     primarySector: intelligence.primarySector,
-    assignmentRoleHint: `Aligned to ${tender.title} scope and ${intelligence.clientName} evaluation criteria.`,
+    assignmentRoleHint: `Aligned to ${cleanedTenderTitle} scope and ${intelligence.clientName} evaluation criteria.`,
     alreadyHasHeading: upstreamCheck,
   });
 
@@ -672,7 +683,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     round2Sections.push(buildClientReferencesTable(projects));
   }
   if (!upstreamCheck("B.2.0 Portfolio Reading Guide") && !upstreamCheck("Portfolio Reading Guide")) {
-    const guide = buildPortfolioReadingGuide({ projects, primarySector: intelligence.primarySector, tenderTitle: tender.title });
+    const guide = buildPortfolioReadingGuide({ projects, primarySector: intelligence.primarySector, tenderTitle: cleanedTenderTitle });
     if (guide) round2Sections.push(guide);
   }
   const specialistSection = buildSpecialistEngagementSection({ tenderText: intelligence.tenderText, companyName: company.name });
@@ -689,7 +700,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     round2Sections.push(buildDeclaration({
       companyName: company.name,
       clientName: intelligence.clientName,
-      tenderTitle: tender.title,
+      tenderTitle: cleanedTenderTitle,
       // Round-10: gmName / gmLicense come from the Company schema. When the
       // user has populated them, the declaration carries a real signature
       // line; otherwise it falls back to the generic "General Manager" line.
@@ -739,7 +750,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   // Certifications, In-House Capabilities, Conflict of Interest).
   if (!upstreamCheck("C.1 Understanding of the Assignment") && !upstreamCheck("Understanding of the Assignment") && !upstreamCheck("Understanding of Assignment")) {
     round2Sections.push(buildUnderstandingSection({
-      tenderTitle: tender.title,
+      tenderTitle: cleanedTenderTitle,
       clientName: intelligence.clientName,
       primarySector: intelligence.primarySector,
       evaluationCriteria: intelligence.evaluationCriteria,
@@ -763,7 +774,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     round2Sections.push(buildConflictOfInterestSection({
       companyName: company.name,
       clientName: intelligence.clientName,
-      tenderTitle: tender.title,
+      tenderTitle: cleanedTenderTitle,
     }));
   }
 
@@ -801,7 +812,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     email: company.email,
     website: company.website,
   });
-  const doc = buildProfessionalDocument({ tenderTitle: tender.title, clientName: intelligence.clientName, companyName: company.name, reference: tender.reference, contactFooter, children });
+  const doc = buildProfessionalDocument({ tenderTitle: cleanedTenderTitle, clientName: intelligence.clientName, companyName: company.name, reference: tender.reference, contactFooter, children });
 
   // Round-11: multi-pass refinement. Score the assembled proposal; if it
   // falls below threshold and the AI is configured, ask the AI to rewrite
@@ -822,7 +833,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
       const refined = await refineProposalWithAI({
         currentMarkdown: workingMarkdown,
         weakAxes: qualityScore.weakAxes,
-        tenderTitle: tender.title,
+        tenderTitle: cleanedTenderTitle,
         clientName: intelligence.clientName,
         primarySector: intelligence.primarySector,
         topProjectNames: (projects as ProjectRecord[]).slice(0, 2).map((p) => p.name).filter(Boolean),
@@ -849,7 +860,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   // Re-render the DOCX from the (possibly refined) markdown.
   const finalChildren = refinementApplied ? markdownToDocx(workingMarkdown) : children;
   const finalDoc = refinementApplied
-    ? buildProfessionalDocument({ tenderTitle: tender.title, clientName: intelligence.clientName, companyName: company.name, reference: tender.reference, contactFooter, children: finalChildren })
+    ? buildProfessionalDocument({ tenderTitle: cleanedTenderTitle, clientName: intelligence.clientName, companyName: company.name, reference: tender.reference, contactFooter, children: finalChildren })
     : doc;
   const fileContent = (await Packer.toBuffer(finalDoc)).toString("base64");
   const summary = `${mode}${refinementApplied ? " + AI refinement pass" : ""} technical proposal generated. ${finalized.internalSummary}. ${auditSummary}. ${formatQualityScoreSummary(qualityScore)}. Inputs: ${intelligence.requiredSections.length} section group(s), ${intelligence.themes.length} tender theme(s), ${experts.length} reviewed expert(s), ${projects.length} reviewed project(s), ${companyEvidenceLines.length} company evidence item(s), ${projectEvidenceLines.length} project evidence attachment(s).${aiError ? ` AI fallback reason: ${aiError}` : ""}`;
