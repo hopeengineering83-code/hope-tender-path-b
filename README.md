@@ -32,7 +32,8 @@ AI-powered tender proposal generation and compliance engine for Hope Urban Plann
 | ORM | Prisma 6.19 |
 | Database | PostgreSQL (Neon, Supabase, Railway) |
 | Auth | bcryptjs + HMAC-signed sessions, Postgres-backed |
-| AI | Google Gemini (`gemini-2.5-pro` by default) |
+| AI (preferred) | Anthropic Claude when `ANTHROPIC_API_KEY` is set (model chain configurable via `ANTHROPIC_PROPOSAL_MODELS`) |
+| AI (fallback) | Google Gemini (`gemini-2.5-pro` by default) — used when Claude not configured, and for CV/project extraction |
 | Document I/O | `docx` (write), `mammoth` + `pdf-parse` + `pdf2json` + `pdfjs-dist` (read), `xlsx`, `jszip` |
 | Validation | `zod` |
 | PWA | manifest + service worker (`public/sw.js`) |
@@ -426,9 +427,21 @@ DATABASE_URL="postgresql://USER:PASSWORD@HOST:5432/DBNAME?sslmode=require"
 # Must be ≥32 chars, must not be a known insecure default.
 SESSION_SECRET="<64-character random hex>"
 
-# ── Strongly recommended (without it, all imported records stay REGEX_DRAFT) ─
+# ── Recommended (set at least one of the two AI keys below) ─────────────────
 
-# Google Gemini API key (https://aistudio.google.com/app/apikey)
+# Anthropic Claude — PREFERRED provider for proposal generation. The
+# generation prompt is tuned for Claude. Get a key from:
+# https://console.anthropic.com/settings/keys
+# Format: sk-ant-... (97+ chars). Optional but strongly recommended.
+# ANTHROPIC_API_KEY="sk-ant-..."
+
+# Override the Claude model chain (comma-separated, tried in order)
+# ANTHROPIC_PROPOSAL_MODELS="claude-opus-4-7,claude-sonnet-4-6,claude-haiku-4-5-20251001"
+
+# Google Gemini — fallback for proposal generation (when Claude is not
+# configured) and primary engine for CV/project extraction. Without
+# either AI key, all imported records remain REGEX_DRAFT only.
+# https://aistudio.google.com/app/apikey
 # Format: AIza + 35 alphanumerics (39 chars total)
 GEMINI_API_KEY="AIza..."
 
@@ -451,6 +464,7 @@ The validator (`scripts/check-env.mjs`) rejects:
 - A `DATABASE_URL` that isn't `postgresql://` / `postgres://` (SQLite is **not supported** in production)
 - A `SESSION_SECRET` shorter than 32 chars or matching a known placeholder
 - A `GEMINI_API_KEY` that doesn't start with `AIza` (catches accidentally-pasted Anthropic / OpenAI keys)
+- An `ANTHROPIC_API_KEY` that doesn't start with `sk-ant-` or is unreasonably short (catches accidentally-pasted Gemini / OpenAI keys)
 
 ---
 
@@ -459,7 +473,7 @@ The validator (`scripts/check-env.mjs`) rejects:
 ### Prerequisites
 - Node.js 20+
 - A PostgreSQL database (Neon free tier works)
-- A Google Gemini API key
+- An AI provider key — at least one of: an Anthropic Claude API key (preferred) or a Google Gemini API key
 
 ### Local development
 ```bash
@@ -469,6 +483,11 @@ cp .env.example .env.local       # then edit with real values
 npm install                      # also runs `prisma generate`
 npx prisma migrate deploy        # apply schema
 npm run db:seed                  # creates admin@hope.local / Admin123!
+npm run db:demo-seed             # OPTIONAL — populates the seed admin's
+                                 # company with a demo knowledge vault
+                                 # (6 reviewed experts + 6 reviewed
+                                 # projects) so the proposal generator
+                                 # can be tested immediately
 npm run dev                      # http://localhost:3000
 ```
 
