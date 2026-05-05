@@ -5,7 +5,7 @@ import { generateTenderDocuments } from "../../../../../lib/engine/generate-elit
 import { applyActiveUploadedLetterheadToTenderDocuments } from "../../../../../lib/engine/apply-active-letterhead";
 import { buildSubmissionPlan, findExtraGeneratedDocuments, findMissingGeneratedDocuments, generatedDocumentSubmissionKey, hasExplicitSubmissionScope, plannedSubmissionTargetFiles, plannedSubmissionTargetKeys, type SubmissionPlanFile } from "../../../../../lib/engine/submission-plan";
 import { polishBenchmarkOutput } from "../../../../../lib/engine/benchmark-output-polisher";
-import { cleanTenderTitle, cleanClientName } from "../../../../../lib/engine/proposal-labels";
+import { cleanTenderTitle, cleanClientName, formatRequirementLine } from "../../../../../lib/engine/proposal-labels";
 import { logAction } from "../../../../../lib/audit";
 import { Document, HeadingLevel, Packer, Paragraph, TextRun } from "docx";
 
@@ -251,11 +251,11 @@ async function fillPlannedSupportDocuments(tenderId: string, plannedFileKeys?: S
   });
   if (!tender) return 0;
 
-  // Internal classifier prefixes (priority + requirementType, e.g. "MANDATORY
-  // FORM:", "SCORED TECHNICAL:", "INFORMATIONAL EXPERT:") were leaking into
-  // user-facing support documents. Drop the prefix; keep just the requirement
-  // title and description, which is the evaluator-facing content.
-  const requirements = tender.requirements.map((r) => `${r.title} — ${shortText(r.description, 380)}`);
+  // formatRequirementLine handles three real-world quality issues:
+  //   - drops internal classifier prefixes (MANDATORY FORM: etc.)
+  //   - dedupes "X — X — X" internal repetition from AI analysis
+  //   - strips title-in-description duplication
+  const requirements = tender.requirements.map((r) => formatRequirementLine(r, 380));
   const experts = tender.expertMatches.filter((m) => m.expert.trustLevel === "REVIEWED").map((m) => `${m.expert.fullName}${m.expert.title ? ` — ${m.expert.title}` : ""}${m.expert.yearsExperience ? ` | ${m.expert.yearsExperience}+ years` : ""}${m.expert.profile ? ` | ${shortText(m.expert.profile, 260)}` : ""}`);
   const projects = tender.projectMatches.filter((m) => m.project.trustLevel === "REVIEWED").map((m) => `${m.project.name}${m.project.clientName ? ` — ${m.project.clientName}` : ""}${m.project.country ? ` | ${m.project.country}` : ""}${m.project.summary ? ` | ${shortText(m.project.summary, 300)}` : ""}`);
 
