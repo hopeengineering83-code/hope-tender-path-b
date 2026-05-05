@@ -422,6 +422,12 @@ ${text.slice(0, 60_000)}`;
  * specifically, instructing the AI to keep the existing structure and tables
  * intact and only rewrite the prose that's weak.
  */
+// Maximum input size for the refinement prompt. Above this, the proposal is
+// large enough that silently truncating to fit the prompt would risk dropping
+// real sections from the output. We skip refinement instead — the original
+// (already-comprehensive) output is kept and the score is recorded as-is.
+const REFINEMENT_MAX_INPUT_CHARS = 80_000;
+
 export async function refineProposalWithAI(input: {
   currentMarkdown: string;
   weakAxes: string[];
@@ -433,6 +439,10 @@ export async function refineProposalWithAI(input: {
 }): Promise<string | null> {
   if (input.weakAxes.length === 0) return null;
   if (!isAIEnabled()) return null;
+  if (input.currentMarkdown.length > REFINEMENT_MAX_INPUT_CHARS) {
+    console.warn(`[ai] refineProposalWithAI: skipping refinement — proposal is ${input.currentMarkdown.length} chars, exceeds ${REFINEMENT_MAX_INPUT_CHARS}-char budget. Original output kept as-is.`);
+    return null;
+  }
 
   const axisDirectives: Record<string, string> = {
     structureCompleteness: "Add any missing canonical sections (Cover Letter, Executive Summary, Section A/B/C/D, Declaration). Do NOT delete existing sections; only add what is missing.",
@@ -463,7 +473,7 @@ Only rewrite the prose to address the weak axes above. The output must be the FU
 
 ## EXISTING PROPOSAL
 
-${input.currentMarkdown.slice(0, 80_000)}
+${input.currentMarkdown}
 
 ## REFINED PROPOSAL (return the complete document)
 `;
