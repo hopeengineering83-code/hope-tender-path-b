@@ -36,12 +36,20 @@ export function getSystemReadiness(): SystemReadiness {
     },
     {
       key: "ai_extraction",
-      title: "AI extraction key (Google Gemini)",
-      severity: has(process.env.GEMINI_API_KEY) ? "OK" : "CRITICAL",
+      title: "AI provider key (Claude preferred, Gemini fallback)",
+      // OK when either provider is configured. The AI surfaces accept both:
+      // Claude (lib/ai.ts) for proposal generation when ANTHROPIC_API_KEY is
+      // set, Gemini for proposal generation fallback and CV/project extraction.
+      severity: has(process.env.ANTHROPIC_API_KEY) || has(process.env.GEMINI_API_KEY) ? "OK" : "CRITICAL",
       requiredForProduction: true,
-      detail: has(process.env.GEMINI_API_KEY)
-        ? "GEMINI_API_KEY is configured. Gemini AI extraction is enabled for CVs, project portfolios, and tender documents."
-        : "GEMINI_API_KEY is missing. Complex PDFs can only be parsed with weak rule-based (regex) extraction. All imported records will be REGEX_DRAFT and cannot be used in final proposals.",
+      detail:
+        has(process.env.ANTHROPIC_API_KEY) && has(process.env.GEMINI_API_KEY)
+          ? "Both ANTHROPIC_API_KEY and GEMINI_API_KEY are configured. Proposal generation uses Claude (preferred); CV/project extraction uses Gemini."
+          : has(process.env.ANTHROPIC_API_KEY)
+          ? "ANTHROPIC_API_KEY is configured. Claude is enabled for proposal generation. CV/project extraction will run if GEMINI_API_KEY is also set; otherwise extraction degrades to regex-only and imported records remain REGEX_DRAFT."
+          : has(process.env.GEMINI_API_KEY)
+          ? "GEMINI_API_KEY is configured. Gemini is enabled for proposal generation and CV/project extraction. Set ANTHROPIC_API_KEY to switch generation to Claude (preferred)."
+          : "No AI provider key set (ANTHROPIC_API_KEY or GEMINI_API_KEY). Complex PDFs can only be parsed with weak rule-based (regex) extraction. All imported records will be REGEX_DRAFT and cannot be used in final proposals.",
     },
     {
       key: "session_secret",
