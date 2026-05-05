@@ -246,7 +246,7 @@ hope-tender-path-b/
 - **`Session`** — token, expiresAt, userId (cascade delete)
 
 ### Company workspace (one per User)
-- **`Company`** — name, legalName, description, website, contact, country, `serviceLines` (JSON), `sectors` (JSON), `profileSummary`, `knowledgeMode` (default `PROFILE_FIRST`), `setupCompletedAt`
+- **`Company`** — name, legalName, description, website, contact, country, `serviceLines` (JSON), `sectors` (JSON), `profileSummary`, `knowledgeMode` (default `PROFILE_FIRST`), `setupCompletedAt`. **Institutional metadata** (used by the proposal generator's D.4 Declaration, Cover Page Submitted-by/to block, A.0 Portfolio at a Glance, A.1 Company Background, A.2 Corporate Information): `gmName`, `gmTitle`, `gmLicense`, `foundingYear`, `headcount`, `licenseGrade`, `registrationNumber`, `tin`, `vat`. All institutional fields are optional — the generator falls back to generic rendering when unset.
 - **`AppSettings`** — `defaultCurrency`, `aiStrictMode`, **`allowBrandingDefault`**, **`allowSignatureDefault`**, **`allowStampDefault`**, `exportFormat`, `pageNumbering`, `includeTableOfContents`, `language`. *These flags directly enforce the "do not force cover/signature/stamp if prohibited" guardrails.*
 - **`CompanyDocument`** — uploaded file (PDF/DOCX/XLSX), `category`, `extractedText`, `aiExtractionStatus` (`PENDING`/`EXTRACTING`/`EXTRACTED`/`FAILED`), `aiExtractedAt`
 - **`CompanyAsset`** — brand asset (letterhead, logo, stamp, signature), `assetType`, `isActive`
