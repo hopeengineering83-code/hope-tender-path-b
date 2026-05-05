@@ -37,9 +37,82 @@ function isRtf(mime: string, ext: string) { return mime === "application/rtf" ||
 function isText(mime: string, ext: string) { return mime.startsWith("text/") || ["txt", "md", "json", "xml"].includes(ext); }
 function isImage(mime: string, ext: string) { return mime.startsWith("image/") || ["jpg", "jpeg", "png", "gif", "webp", "bmp", "svg", "tiff"].includes(ext); }
 
+// Common proposal-vocabulary words that pdf-parse / pdfjs frequently splits
+// into a leading capital and the rest (e.g., "T echnical" instead of
+// "Technical"). The repair below builds case-sensitive word-boundary
+// patterns from this list and re-joins. Keep the list to high-confidence
+// proposal vocabulary so the repair never produces false positives.
+const PDF_BROKEN_WORDS = [
+  "Technical", "Approach", "Table", "Section", "Proposal", "Generate",
+  "Tender", "Total", "Title", "Project", "Process", "Provide",
+  "Architecture", "Architectural", "Engineering", "Building",
+  "Construction", "Consultant", "Consultancy", "Contract",
+  "Document", "Documentation", "Design", "Detail",
+  "Feasibility", "Financial", "Foundation", "File",
+  "Hospital", "Health", "Healthcare", "Headquarters",
+  "Investigation", "Implementation", "Industrial",
+  "Master", "Methodology", "Management", "Material",
+  "Office", "Officer", "Operation", "Organization",
+  "Photos", "Plan", "Planning", "Personnel",
+  "Quality", "Quantity",
+  "Reference", "References", "Region", "Registration",
+  "Specification", "Specified", "Strategic", "Submission",
+  "Supervisor", "Supervision", "Support",
+  "Understanding", "Urban", "Utility",
+];
+
+const PDF_BROKEN_WORD_REPAIRS: Array<[RegExp, string]> = (() => {
+  const out: Array<[RegExp, string]> = [];
+  for (const word of PDF_BROKEN_WORDS) {
+    const first = word.charAt(0);
+    const rest = word.slice(1);
+    if (!first || !rest) continue;
+    out.push([new RegExp(`\\b${first}\\s+${rest}\\b`, "g"), word]);
+  }
+  return out;
+})();
+
 function normalizeExtractedText(text: string, limit = MAX_EXTRACTED_TEXT_CHARS): string {
-  return (text ?? "")
+  // Round-extraction-artifacts: pdf-parse / pdfjs frequently produce
+  // ligatures (ﬁ, ﬂ, ﬀ), zero-width characters, smart quotes, and
+  // broken-letterform words ("T echnical" instead of "Technical"). Without
+  // normalisation these flow through every downstream proposal section.
+  // Each replace below is a single targeted artifact class.
+  let out = (text ?? "")
     .replace(/\u0000/g, " ")
+    // Common PDF ligatures (U+FB00–U+FB06) — replace with letter pairs so
+    // text is searchable / readable. Without this, words like "specified",
+    // "office", "official" appear with unusual glyphs in every section.
+    .replace(/ﬀ/g, "ff")
+    .replace(/ﬁ/g, "fi")
+    .replace(/ﬂ/g, "fl")
+    .replace(/ﬃ/g, "ffi")
+    .replace(/ﬄ/g, "ffl")
+    .replace(/ﬅ/g, "ft")
+    .replace(/ﬆ/g, "st")
+    // Smart quotes → ASCII apostrophe / double-quote
+    .replace(/[‘’‚‛]/g, "'")
+    .replace(/[“”„‟]/g, "\"")
+    // Ellipsis → three dots
+    .replace(/…/g, "...")
+    // Non-breaking / thin / hair / narrow / figure spaces → regular space
+    .replace(/[     ]/g, " ")
+    // Zero-width spaces / joiners / BOM → drop entirely
+    .replace(/[​‌‍﻿]/g, "")
+    // Glyph-noise runs: 5+ consecutive single-capital letters separated by
+    // single spaces (e.g., "G G E N E R A T E G P D F"). These are font
+    // glyphs from icons/emojis that pdf-parse re-emitted as letterforms.
+    // Real text rarely produces this pattern at length 5+ (acronyms like
+    // USA / PLC are 3 chars).
+    .replace(/(?:\b[A-Z]\s+){5,}[A-Z]\b/g, " ");
+
+  // Repair common proposal-vocabulary words split by PDF extraction
+  // (e.g., "T echnical Approach" → "Technical Approach").
+  for (const [pattern, replacement] of PDF_BROKEN_WORD_REPAIRS) {
+    out = out.replace(pattern, replacement);
+  }
+
+  return out
     .replace(/[ \t]{2,}/g, " ")
     .replace(/\n{3,}/g, "\n\n")
     .trim()
