@@ -65,10 +65,32 @@ function escCell(text: string | null | undefined): string {
 }
 
 function fmtMoney(value: number | null | undefined, currency: string | null | undefined): string {
-  if (value === null || value === undefined || Number.isNaN(value)) return "Value on file";
+  // Only emit a money string when there is a real value. Returning the
+  // placeholder "Value on file" everywhere a value is missing leads to
+  // proposals peppered with "(Value on file, Client)" parentheticals,
+  // which read like unfilled template slots. Callers should use
+  // hasContractValue() to decide whether to render the parenthetical at
+  // all.
+  if (value === null || value === undefined || Number.isNaN(value) || value <= 0) return "";
   const cur = currency || "ETB";
   const formatted = Math.round(value).toLocaleString("en-US");
   return `${cur} ${formatted}`;
+}
+
+function hasContractValue(value: number | null | undefined): boolean {
+  return value !== null && value !== undefined && Number.isFinite(value) && value > 0;
+}
+
+// Composes "Project Name (ETB 350M, Client Name)" when value is present,
+// "Project Name (Client Name)" when value is missing, and just
+// "Project Name" when both are missing. Centralised so the same shape is
+// used in Cover Letter, Executive Summary, Team-to-Project mapping, and
+// other prose contexts.
+function fmtProjectInline(project: Pick<ProjectRecord, "name" | "contractValue" | "currency" | "clientName">): string {
+  const parts: string[] = [];
+  if (hasContractValue(project.contractValue)) parts.push(fmtMoney(project.contractValue, project.currency));
+  if (project.clientName) parts.push(project.clientName);
+  return parts.length > 0 ? `${project.name} (${parts.join(", ")})` : project.name;
 }
 
 function fmtDateRange(start: Date | string | null | undefined, end: Date | string | null | undefined): string {
@@ -156,7 +178,7 @@ export function buildTeamToProjectMappingTable(experts: ExpertRecord[], projects
           expertSectors.some((s) => projectSector.includes(s));
       }) ?? projects[idx % projects.length];
 
-    const projectLabel = `${matchedProject.name}${matchedProject.contractValue ? ` (${fmtMoney(matchedProject.contractValue, matchedProject.currency)})` : ""}${matchedProject.clientName ? `, ${matchedProject.clientName}` : ""}`;
+    const projectLabel = fmtProjectInline(matchedProject);
     const previousRole = expert.title?.toLowerCase().includes("lead") || expert.title?.toLowerCase().includes("principal")
       ? expert.title
       : `Senior ${expert.title || "Specialist"}`;
@@ -204,7 +226,7 @@ export function buildProjectPortfolioCards(projects: ProjectRecord[], tenderTitl
       `| Client | ${escCell(project.clientName || "Client on file")} |`,
       `| Location & Scale | ${escCell([project.country, ...safeArr(project.serviceAreas).slice(0, 3)].filter(Boolean).join(" — ") || "Scale on file")} |`,
       `| Duration | ${escCell(fmtDateRange(project.startDate, project.endDate))} |`,
-      `| Contract Value | ${escCell(fmtMoney(project.contractValue, project.currency))} |`,
+      `| Contract Value | ${escCell(hasContractValue(project.contractValue) ? fmtMoney(project.contractValue, project.currency) : "Value detail in Appendix B (project reference)")} |`,
       `| Services Provided | ${escCell(safeArr(project.serviceAreas).join(", ") || project.summary || "Service detail on file")} |`,
       `| Relevance to This Assignment | ${escCell(buildRelevanceStatement(project, tenderTitle, primarySector))} |`,
     );
@@ -652,7 +674,7 @@ export function buildCoverLetterOpener(opts: {
   }
 
   const projectFragment = top
-    .map((p) => `${p.name} (${fmtMoney(p.contractValue, p.currency)}${p.clientName ? `, ${p.clientName}` : ""})`)
+    .map(fmtProjectInline)
     .join(top.length === 2 ? " and " : "");
 
   return [
@@ -676,11 +698,11 @@ export function buildExecutiveSummaryOpener(opts: {
 
   if (top.length === 1) {
     const p = top[0];
-    return `${opts.companyName} has already delivered this assignment. ${p.name} (${fmtMoney(p.contractValue, p.currency)}${p.clientName ? `, ${p.clientName}` : ""}) is the directly comparable reference; the same lead team is available for ${opts.clientName}'s engagement today. ${opts.reviewedExpertCount > 0 ? `${opts.reviewedExpertCount} reviewed specialist(s) are confirmed for this assignment.` : ""}`.trim();
+    return `${opts.companyName} has already delivered this assignment. ${fmtProjectInline(p)} is the directly comparable reference; the same lead team is available for ${opts.clientName}'s engagement today. ${opts.reviewedExpertCount > 0 ? `${opts.reviewedExpertCount} reviewed specialist(s) are confirmed for this assignment.` : ""}`.trim();
   }
 
   const [a, b] = top;
-  return `${opts.companyName} has already delivered this assignment twice. Once as ${a.name} (${fmtMoney(a.contractValue, a.currency)}${a.clientName ? `, ${a.clientName}` : ""}); and once as ${b.name} (${fmtMoney(b.contractValue, b.currency)}${b.clientName ? `, ${b.clientName}` : ""}). The same lead team that delivered both is available for ${opts.clientName}'s engagement today, with zero learning curve. ${opts.reviewedExpertCount > 0 ? `${opts.reviewedExpertCount} reviewed specialist(s) are confirmed for this assignment.` : ""}`.trim();
+  return `${opts.companyName} has already delivered this assignment twice. Once as ${fmtProjectInline(a)}; and once as ${fmtProjectInline(b)}. The same lead team that delivered both is available for ${opts.clientName}'s engagement today, with zero learning curve. ${opts.reviewedExpertCount > 0 ? `${opts.reviewedExpertCount} reviewed specialist(s) are confirmed for this assignment.` : ""}`.trim();
 }
 
 // ─── D.4 Declaration with GM name + license ──────────────────────────────────
