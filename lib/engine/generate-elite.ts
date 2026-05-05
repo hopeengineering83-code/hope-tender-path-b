@@ -31,6 +31,7 @@ import { buildRisksMitigationsTable } from "./risks-mitigations";
 import { buildWhyUsSummary } from "./why-us-summary";
 import { buildWorkPlanTable } from "./work-plan-timeline";
 import { buildBidComplianceMapping } from "./bid-compliance-mapping";
+import { buildComplianceMatrixSection, hasComplianceMatrixHeading } from "./compliance-matrix-builder";
 import { formatQualityScoreSummary, scoreProposalQuality } from "./proposal-quality-scorer";
 import {
   buildCertificationsSection,
@@ -814,7 +815,26 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     }));
   }
 
-  const combinedMarkdown = [matrixMarkdown, strengtheningMarkdown, benchmarkTables, ...round2Sections].filter(Boolean).join("\n\n");
+  // Round-12: deterministic Section E (Compliance Matrix) backstop.
+  // Section E is the single most-evaluated section on regulated tenders.
+  // The AI prompt (PR #228) asks Claude to produce it, but the AI may
+  // omit it under output-token pressure. The scorer (PR #229) catches the
+  // omission and triggers refinement, but refinement also requires AI.
+  // This deterministic builder uses the actual database state
+  // (tender.requirements + tender.complianceMatrix + tender.complianceGaps)
+  // to construct Section E from the data we already have. It is appended
+  // only when the AI / fallback output has no Compliance Matrix heading
+  // with at least one status cell — the hasComplianceMatrixHeading guard
+  // makes it idempotent.
+  const deterministicComplianceMatrix = !hasComplianceMatrixHeading(`${matrixMarkdown}\n${strengtheningMarkdown}`)
+    ? buildComplianceMatrixSection({
+        requirements: tender.requirements,
+        matrixRows: tender.complianceMatrix,
+        gaps: tender.complianceGaps,
+      })
+    : null;
+
+  const combinedMarkdown = [matrixMarkdown, strengtheningMarkdown, benchmarkTables, ...round2Sections, deterministicComplianceMatrix].filter(Boolean).join("\n\n");
 
   // Round-4 self-healing pass: enforce the benchmark "narrative throughline"
   // rule (top 1–2 projects must appear in Cover Letter, Executive Summary,
