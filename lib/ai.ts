@@ -102,6 +102,32 @@ Your operating principles, in priority order:
 
 You output the proposal directly. You never explain what you are about to do, never ask clarifying questions, never repeat the user's instructions back. You start with the Cover Letter.`;
 
+// System prompt for the refinement pass. Differs from the proposal-generation
+// system prompt because the input is an already-complete proposal: the AI
+// must PRESERVE existing structure and facts, not rewrite from scratch.
+//
+// Frames Claude as a senior bid reviewer — the persona that, in real bid
+// teams, takes a near-complete draft and shores up its weakest sections
+// without disturbing what already works. This persona is materially
+// different from the bid-writer persona used at generation time.
+const REFINEMENT_SYSTEM_PROMPT = `You are a senior bid reviewer with 25 years of experience. A proposal has been written by a competent author and a deterministic quality scorer has flagged specific weak axes. Your job is to STRENGTHEN those axes without disturbing anything that already works.
+
+Operating principles, in priority order:
+
+1. PRESERVE EVERYTHING THAT IS ALREADY GOOD. Do NOT delete sections, do NOT remove tables, do NOT change factual claims (project names, contract values, license numbers, dates, client names, expert names). The author got those facts from the evidence library and they are correct.
+
+2. REWRITE ONLY THE WEAK AXES. The user message will list specific axes (e.g., complianceMatrixCoverage, evidenceDensity, sectorVocabulary). Address each named axis. Do not refactor the whole document.
+
+3. ADDITIVE WHERE POSSIBLE. If an axis is weak because a section is missing, ADD the section in its correct position relative to the rest of the proposal. Do not delete adjacent sections to make room.
+
+4. RETURN THE COMPLETE DOCUMENT. The output is the full refined proposal markdown — not a diff, not a list of changes, not commentary. The output must be a drop-in replacement for the input.
+
+5. NO COMMENTARY OUTSIDE THE MARKDOWN. Do not write "Here is the refined proposal:" or "I've made the following changes:". Start the output with the existing first line of the document and end with the existing last line, with the refinements integrated in place.
+
+6. EVIDENCE STAYS GROUNDED. If a paragraph needs an evidence anchor and the document does not contain a suitable one, write a single short "Bid-Team Action: confirm X before submission." note in place of the missing fact. Do NOT fabricate facts to fill gaps.
+
+You are not the original author. You are a senior pair of eyes adding the discipline that makes the proposal evaluator-ready.`;
+
 async function generateWithClaude(prompt: string, systemPrompt: string = DEFAULT_PROPOSAL_SYSTEM_PROMPT): Promise<string | null> {
   if (!anthropicApiKey) return null;
 
@@ -526,6 +552,10 @@ export async function refineProposalWithAI(input: {
     sectorVocabulary: `Strengthen the Section C technical methodology with sector-specific vocabulary appropriate to ${input.primarySector}. Use terms in context, not as a glossary list.`,
     throughlineConsistency: `Ensure these specific projects appear by name in the Cover Letter, Executive Summary, AND Section B Relevant Experience: ${input.topProjectNames.join("; ") || "the strongest comparable projects available in the document"}.`,
     aiTraceFreedom: `Remove any AI-trace phrases ("As an AI", "Certainly!", "Please note", "[INSERT]", any [square bracket] placeholders, "we look forward to the opportunity", "committed to excellence", "team of qualified professionals"). Replace with substantive content.`,
+    complianceMatrixCoverage: "Add or complete Section E: Compliance Matrix. Format MUST be a Markdown table with columns: # | Requirement (verbatim from tender) | Where Addressed in This Proposal (section + sub-section) | Supporting Evidence | Compliance Status. Compliance Status MUST be one of FULLY MET / PARTIALLY MET / NOT MET. Every mandatory and scored requirement listed in the document must have a row. For NOT MET rows, propose a credible mitigation in the same row (subcontractor, joint venture, deferred delivery).",
+    evaluatorMirrorCoverage: "Add or complete Section F: Evaluation Criteria Response Mirror. Format MUST be a Markdown table with columns: Evaluation Criterion (echoed in tender language) | Weight (if stated) | Where This Proposal Answers It | Strongest Evidence Anchor. Mirror the evaluator's exact wording back at them — this is a high-leverage scoring tactic. If weights are stated anywhere in the document, populate them verbatim.",
+    winThemesPresence: "Add or complete Section G: Win Themes & Discriminators. Open with one paragraph (60–120 words) framing the firm's overall positioning for THIS tender, then a Markdown table with columns: Win Theme | Discriminator (what we have, others typically don't) | Linked Evaluation Criterion | Evidence Anchor. Provide 3–5 themes drawn ONLY from the existing evidence in the document.",
+    selfScorePresence: "Add or complete Section H: Proposal Self-Score. Format MUST be a Markdown table with columns: Evaluation Criterion | Weight | Self-Score (0–10) | Rationale | Risk to Score / Mitigation. End with: \"Predicted overall technical score: X / 100. Top three risks to address before submission: 1. … 2. … 3. …\". Be honest — over-confident self-scores damage credibility.",
   };
 
   const directives = input.weakAxes.map((axis) => `- **${axis}**: ${axisDirectives[axis] ?? "Strengthen this axis using the evidence already in the document."}`).join("\n");
@@ -555,7 +585,10 @@ ${input.currentMarkdown}
 
   try {
     if (isClaudeEnabled()) {
-      const claudeResult = await generateWithClaude(prompt);
+      // Pass the dedicated REFINEMENT_SYSTEM_PROMPT so Claude is framed as a
+      // senior bid REVIEWER (preserve-then-strengthen), not as the bid
+      // WRITER persona used at generation time.
+      const claudeResult = await generateWithClaude(prompt, REFINEMENT_SYSTEM_PROMPT);
       if (claudeResult) {
         lastProposalProvider = "claude";
         return claudeResult;
