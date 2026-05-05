@@ -147,16 +147,28 @@ export function scoreProposalQuality(opts: {
   }
 
   // 5. Throughline consistency (0–10)
+  // When no reviewed projects exist, the throughline cannot be measured — there
+  // is nothing to thread through CL/ES/B. Return a neutral 5 (matching the
+  // pattern used by the sectorVocabulary axis when no expected terms apply)
+  // and surface the underlying issue as a note. Returning 10 ("perfect") here
+  // would mask the fact that the proposal has no project anchors at all.
   const top = opts.topProjects.slice(0, 2);
-  let throughlineConsistency = 10;
-  if (top.length > 0) {
+  let throughlineConsistency: number;
+  if (top.length === 0) {
+    throughlineConsistency = 5;
+    notes.push("Throughline axis is neutral (no reviewed projects available to anchor Cover Letter / Executive Summary / Section B).");
+  } else {
     const sections = ["cover letter", "executive summary", "section b"];
     let matches = 0;
     let total = 0;
     for (const project of top) {
       const projectKey = project.name.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
       if (!projectKey || projectKey.length < 4) continue;
-      const distinctive = projectKey.split(" ").filter((t) => t.length > 2).slice(0, 3).join(" ");
+      const tokens = projectKey.split(" ").filter((t) => t.length > 2);
+      // Require at least 3 distinctive tokens before allowing a partial-name
+      // match. Without this guard, single-token distinctives (e.g., "hospital"
+      // for project name "G+6 Hospital") would over-match unrelated text.
+      const distinctive = tokens.length >= 3 ? tokens.slice(0, 3).join(" ") : "";
       for (const section of sections) {
         total++;
         // crude: look at the rough region after each section heading
@@ -165,11 +177,11 @@ export function scoreProposalQuality(opts: {
         if (match.includes(projectKey) || (distinctive && match.includes(distinctive))) matches++;
       }
     }
-    if (total > 0) throughlineConsistency = Math.round((matches / total) * 10);
-  }
-  if (top.length > 0 && throughlineConsistency < 6) {
-    weakAxes.push("throughlineConsistency");
-    notes.push("Top reviewed projects do not consistently appear in Cover Letter, Executive Summary, and Section B.");
+    throughlineConsistency = total > 0 ? Math.round((matches / total) * 10) : 5;
+    if (throughlineConsistency < 6) {
+      weakAxes.push("throughlineConsistency");
+      notes.push("Top reviewed projects do not consistently appear in Cover Letter, Executive Summary, and Section B.");
+    }
   }
 
   // 6. AI-trace freedom (0–10)
