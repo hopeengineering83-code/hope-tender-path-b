@@ -612,7 +612,38 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   const expertLines = experts.map(expertProofLine);
   const projectLines = projects.map(projectProofLine);
   const evidenceContextLines = [...companyEvidenceLines, ...projectEvidenceLines];
-  const submissionNotes = [tender.submissionMethod, tender.submissionAddress, ...intelligence.submissionRules].filter(Boolean).join("\n");
+  // Surface the structured commercial terms (bid bond, performance guarantee,
+  // bid validity, clarification deadline, pre-bid meeting, contract duration,
+  // consortia rules, local-content requirement) that detectCommercialTerms
+  // pulled from the raw tender text. These have been historically buried in
+  // the prose AND missing from the AI prompt's submissionNotes block — so
+  // the proposal narrative cannot confirm compliance against them. Surfacing
+  // them here makes the AI explicitly state validity, EMD, etc., in the
+  // Cover Letter / Compliance Matrix.
+  const commercialTermLines: string[] = [];
+  const ct = intelligence.commercialTerms;
+  if (ct.bidBond) commercialTermLines.push(`Bid bond / EMD: ${ct.bidBond}`);
+  if (ct.performanceGuarantee) commercialTermLines.push(`Performance guarantee: ${ct.performanceGuarantee}`);
+  if (ct.bidValidityDays) commercialTermLines.push(`Bid validity period: ${ct.bidValidityDays} days from submission`);
+  if (ct.clarificationDeadline) commercialTermLines.push(`Clarification / pre-bid question deadline: ${ct.clarificationDeadline}`);
+  if (ct.preBidMeeting) commercialTermLines.push(`Pre-bid meeting / site visit: ${ct.preBidMeeting}`);
+  if (ct.contractDuration) commercialTermLines.push(`Contract duration: ${ct.contractDuration}`);
+  if (ct.consortiaRules) commercialTermLines.push(`Joint venture / consortium rules: ${ct.consortiaRules}`);
+  if (ct.localContent) commercialTermLines.push(`Local content / national-firm requirement: ${ct.localContent}`);
+
+  // Surface numeric evaluation weights as criterion-with-weight lines. These
+  // feed the EVALUATION CRITERIA RESPONSE MIRROR table that the AI is now
+  // instructed to produce.
+  const evaluationWeightLines = intelligence.evaluationWeights.map(
+    (w) => `- ${w.criterion} — ${w.weight} (raw match: "${w.rawMatch}")`,
+  );
+
+  const submissionNotes = [
+    tender.submissionMethod,
+    tender.submissionAddress,
+    ...intelligence.submissionRules,
+    ...(commercialTermLines.length > 0 ? ["", "Commercial terms detected in tender — confirm compliance in Cover Letter and Compliance Matrix:", ...commercialTermLines] : []),
+  ].filter(Boolean).join("\n");
   const complianceLines = [
     ...tender.complianceMatrix.map((m) => {
       const req = m.requirement?.title ?? m.requirement?.description ?? "Requirement evidence row";
@@ -639,7 +670,10 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
         clientName: intelligence.clientName,
         tenderText: [BENCHMARK_CONTEXT_LINES.join("\n"), tenderText].join("\n\n"),
         analysisSummary: clean(tender.analysisSummary) || intelligence.tenderText.slice(0, 2000),
-        evaluationMethodology: clean(tender.evaluationMethodology) || intelligence.evaluationCriteria.join("; "),
+        evaluationMethodology: [
+          clean(tender.evaluationMethodology) || intelligence.evaluationCriteria.join("; "),
+          ...(evaluationWeightLines.length > 0 ? ["", "Numeric evaluation weights detected in tender (echo verbatim in the EVALUATION CRITERIA RESPONSE MIRROR table):", ...evaluationWeightLines] : []),
+        ].filter(Boolean).join("\n"),
         submissionNotes: [BENCHMARK_CONTEXT_LINES.join("\n"), submissionNotes].filter(Boolean).join("\n"),
         requirements: [...BENCHMARK_CONTEXT_LINES, ...requirementLines].join("\n"),
         companyProfile: `${company.name}\n${company.legalName ?? ""}\n${company.profileSummary ?? company.description ?? ""}\nServices: ${safeParseArr(company.serviceLines).join(", ")}\nSectors: ${safeParseArr(company.sectors).join(", ")}\n\nWider company evidence library:\n${evidenceContextLines.join("\n").slice(0, 18_000)}`,
