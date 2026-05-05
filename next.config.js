@@ -8,10 +8,12 @@
 function assertProductionEnv() {
   if (process.env.NODE_ENV !== "production") return;
 
+  // DATABASE_URL and SESSION_SECRET are unconditionally required.
+  // The AI key requirement is "either ANTHROPIC_API_KEY or GEMINI_API_KEY"
+  // — both are accepted by lib/ai.ts (Claude preferred, Gemini fallback).
   const required = [
     ["DATABASE_URL", "PostgreSQL connection string"],
     ["SESSION_SECRET", "HMAC session signing secret (min 32 chars)"],
-    ["GEMINI_API_KEY", "Google Gemini API key for AI extraction and proposal generation"],
   ];
 
   const missing = required.filter(([name]) => !process.env[name]);
@@ -29,6 +31,20 @@ function assertProductionEnv() {
       "",
     ];
     console.error(lines.join("\n"));
+    process.exit(1);
+  }
+
+  // AI key requirement — at least one of the two must be present.
+  if (!process.env.ANTHROPIC_API_KEY && !process.env.GEMINI_API_KEY) {
+    console.error(
+      "\n╔══════════════════════════════════════════════════════════════╗" +
+      "\n║  BUILD FAILED — No AI provider key configured.              ║" +
+      "\n╚══════════════════════════════════════════════════════════════╝" +
+      "\n\nSet at least one of:" +
+      "\n  ✗ ANTHROPIC_API_KEY  (preferred — Claude provider)" +
+      "\n  ✗ GEMINI_API_KEY     (fallback — Gemini provider)" +
+      "\n\nWithout either, AI proposal generation and CV/project extraction\nare disabled and imported records remain REGEX_DRAFT only.\n"
+    );
     process.exit(1);
   }
 
@@ -58,9 +74,10 @@ const nextConfig = {
   experimental: {
     serverActions: { bodySizeLimit: "10mb" },
   },
-  // Surface missing env vars in the build output
+  // Surface missing env vars in the build output. AI is enabled when EITHER
+  // provider is configured (lib/ai.ts accepts both, Claude preferred).
   env: {
-    NEXT_PUBLIC_AI_ENABLED: process.env.GEMINI_API_KEY ? "true" : "false",
+    NEXT_PUBLIC_AI_ENABLED: (process.env.ANTHROPIC_API_KEY || process.env.GEMINI_API_KEY) ? "true" : "false",
   },
 };
 
