@@ -9,6 +9,7 @@
     "start": "next start",
     "db:seed": "tsx prisma/seed.ts",
     "db:demo-seed": "tsx prisma/demo-seed.ts",
+    "db:push": "prisma db push --accept-data-loss=false",
     "electron": "electron electron/main.js",
     "electron:local": "cross-env HOPE_TENDER_DESKTOP_MODE=local-server electron electron/main.js",
     "build:desktop": "electron-builder --config electron/electron-builder.json --win --mac --linux",
