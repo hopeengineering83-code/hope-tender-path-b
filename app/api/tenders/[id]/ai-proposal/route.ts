@@ -233,6 +233,33 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       // proposal generation inside Vercel Hobby's 60s function cap.
       const generationMode = (process.env.PROPOSAL_GENERATION_MODE || "parallel").toLowerCase();
       const useParallel = generationMode === "parallel";
+      // PR #257 — pull structured Company fields once so we can
+      // populate companyVault. The "as { ... }" casts work around
+      // partial Prisma type narrowing in this route's findUnique
+      // include shape.
+      type _CompanyFields = {
+        legalName?: string | null;
+        address?: string | null;
+        phone?: string | null;
+        email?: string | null;
+        website?: string | null;
+        country?: string | null;
+        foundingYear?: number | null;
+        headcount?: number | null;
+        licenseGrade?: string | null;
+        registrationNumber?: string | null;
+        tin?: string | null;
+        vat?: string | null;
+        gmName?: string | null;
+        gmTitle?: string | null;
+        gmLicense?: string | null;
+        description?: string | null;
+        serviceLines?: string | null;
+        sectors?: string | null;
+        complianceRecords?: Array<{ title?: string | null; complianceType?: string | null; referenceNumber?: string | null; status?: string | null }>;
+      };
+      const c = company as typeof company & _CompanyFields;
+
       const aiInput = {
         tenderTitle: tender.title,
         clientName: intelligence.clientName,
@@ -242,14 +269,47 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
         submissionNotes,
         requirements: requirementLines.join("\n"),
         companyProfile:
-          `${company.name}\n${(company as { legalName?: string | null }).legalName ?? ""}\n${company.profileSummary ?? (company as { description?: string | null }).description ?? ""}\n` +
-          `Services: ${safeParseArr((company as { serviceLines?: string | null }).serviceLines).join(", ")}\n` +
-          `Sectors: ${safeParseArr((company as { sectors?: string | null }).sectors).join(", ")}\n\n` +
+          `${company.name}\n${c.legalName ?? ""}\n${company.profileSummary ?? c.description ?? ""}\n` +
+          `Services: ${safeParseArr(c.serviceLines).join(", ")}\n` +
+          `Sectors: ${safeParseArr(c.sectors).join(", ")}\n\n` +
           `Wider company evidence library:\n${evidenceContextLines.join("\n").slice(0, 9_000)}`,
         experts: expertLines.join("\n"),
         projects: [...projectLines, ...projectEvidenceLines].join("\n"),
         compliance: complianceLines.join("\n"),
         differentiators: intelligence.differentiators.join("\n"),
+        // PR #257 — structured company-vault fields. See generate-elite.ts
+        // for the full rationale.
+        companyVault: {
+          name: company.name,
+          legalName: c.legalName,
+          address: c.address,
+          phone: c.phone,
+          email: c.email,
+          website: c.website,
+          country: c.country,
+          foundingYear: c.foundingYear,
+          headcount: c.headcount,
+          licenseGrade: c.licenseGrade,
+          registrationNumber: c.registrationNumber,
+          tin: c.tin,
+          vat: c.vat,
+          gmName: c.gmName,
+          gmTitle: c.gmTitle,
+          gmLicense: c.gmLicense,
+          profileSummary: company.profileSummary ?? c.description,
+          serviceLines: safeParseArr(c.serviceLines),
+          sectors: safeParseArr(c.sectors),
+          complianceLines: (c.complianceRecords ?? [])
+            .map((r) => {
+              const parts: string[] = [];
+              if (r.title) parts.push(r.title);
+              if (r.complianceType) parts.push(r.complianceType);
+              if (r.referenceNumber) parts.push(`Ref: ${r.referenceNumber}`);
+              if (r.status) parts.push(`Status: ${r.status}`);
+              return parts.join(" — ");
+            })
+            .filter((s) => s.length > 0),
+        },
       };
       proposal = await withProposalTimeout(
         useParallel ? generateProposalSectionsParallel(aiInput) : generateBenchmarkProposalWithAI(aiInput),

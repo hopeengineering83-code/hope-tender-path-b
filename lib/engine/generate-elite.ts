@@ -780,6 +780,50 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
         projects: [...projectLines, ...projectEvidenceLines].join("\n"),
         compliance: [...BENCHMARK_CONTEXT_LINES, ...complianceLines].join("\n"),
         differentiators: [...BENCHMARK_CONTEXT_LINES, ...intelligence.differentiators, ...companyEvidenceLines.slice(0, 8)].join("\n"),
+        // PR #257 — structured company-vault fields. Used by the
+        // deterministic section fallback (proposal-sections.ts
+        // buildSectionFallback) to emit REAL data instead of
+        // "Bid-Team Action: confirm X" placeholders when the AI
+        // returns thin output OR when the deterministic fallback
+        // runs. The complianceLines aggregate every CompanyComplianceRecord
+        // already loaded above; passing them through here lets D.3
+        // populate with the firm's actual ISO / professional-body /
+        // donor-compliance records instead of a generic placeholder.
+        companyVault: {
+          name: company.name,
+          legalName: company.legalName,
+          address: company.address,
+          phone: company.phone,
+          email: company.email,
+          website: company.website,
+          country: company.country,
+          foundingYear: company.foundingYear,
+          headcount: company.headcount,
+          licenseGrade: company.licenseGrade,
+          registrationNumber: company.registrationNumber,
+          tin: company.tin,
+          vat: company.vat,
+          gmName: company.gmName,
+          gmTitle: company.gmTitle,
+          gmLicense: company.gmLicense,
+          profileSummary: company.profileSummary ?? company.description,
+          serviceLines: safeParseArr(company.serviceLines),
+          sectors: safeParseArr(company.sectors),
+          // Format every CompanyComplianceRecord into a one-line
+          // citation. complianceLines (above) already includes these
+          // among other things; this filtered list is just the
+          // certification-relevant rows for D.3.
+          complianceLines: (company.complianceRecords ?? [])
+            .map((r) => {
+              const parts: string[] = [];
+              if (r.title) parts.push(r.title);
+              if (r.complianceType) parts.push(r.complianceType);
+              if (r.referenceNumber) parts.push(`Ref: ${r.referenceNumber}`);
+              if (r.status) parts.push(`Status: ${r.status}`);
+              return parts.join(" — ");
+            })
+            .filter((s) => s.length > 0),
+        },
       };
 
       sourceMarkdown = await withProposalAiTimeout(
