@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSession } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
-import { generateBenchmarkProposalWithAI, isAIEnabled } from "../../../../../lib/ai";
+import { generateBenchmarkProposalWithAI, generateProposalSectionsParallel, isAIEnabled } from "../../../../../lib/ai";
 import { buildProposalIntelligence, expertProofLine, projectProofLine, safeParseArr } from "../../../../../lib/engine/proposal-intelligence";
 
 // Vercel route timeout — Claude proposal generation needs >10s default.
@@ -226,25 +226,33 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     let fallback = false;
 
     try {
+      // PROPOSAL_GENERATION_MODE — same env-flag as generate-elite.ts.
+      // Default "parallel" runs four concurrent Claude calls (one per
+      // section cluster) and stitches them; "single" reverts to the
+      // legacy monolithic call. The parallel path was added to fit
+      // proposal generation inside Vercel Hobby's 60s function cap.
+      const generationMode = (process.env.PROPOSAL_GENERATION_MODE || "parallel").toLowerCase();
+      const useParallel = generationMode === "parallel";
+      const aiInput = {
+        tenderTitle: tender.title,
+        clientName: intelligence.clientName,
+        tenderText,
+        analysisSummary: _clean(tender.analysisSummary) || intelligence.tenderText.slice(0, 2000),
+        evaluationMethodology: _clean(tender.evaluationMethodology) || intelligence.evaluationCriteria.join("; "),
+        submissionNotes,
+        requirements: requirementLines.join("\n"),
+        companyProfile:
+          `${company.name}\n${(company as { legalName?: string | null }).legalName ?? ""}\n${company.profileSummary ?? (company as { description?: string | null }).description ?? ""}\n` +
+          `Services: ${safeParseArr((company as { serviceLines?: string | null }).serviceLines).join(", ")}\n` +
+          `Sectors: ${safeParseArr((company as { sectors?: string | null }).sectors).join(", ")}\n\n` +
+          `Wider company evidence library:\n${evidenceContextLines.join("\n").slice(0, 9_000)}`,
+        experts: expertLines.join("\n"),
+        projects: [...projectLines, ...projectEvidenceLines].join("\n"),
+        compliance: complianceLines.join("\n"),
+        differentiators: intelligence.differentiators.join("\n"),
+      };
       proposal = await withProposalTimeout(
-        generateBenchmarkProposalWithAI({
-          tenderTitle: tender.title,
-          clientName: intelligence.clientName,
-          tenderText,
-          analysisSummary: _clean(tender.analysisSummary) || intelligence.tenderText.slice(0, 2000),
-          evaluationMethodology: _clean(tender.evaluationMethodology) || intelligence.evaluationCriteria.join("; "),
-          submissionNotes,
-          requirements: requirementLines.join("\n"),
-          companyProfile:
-            `${company.name}\n${(company as { legalName?: string | null }).legalName ?? ""}\n${company.profileSummary ?? (company as { description?: string | null }).description ?? ""}\n` +
-            `Services: ${safeParseArr((company as { serviceLines?: string | null }).serviceLines).join(", ")}\n` +
-            `Sectors: ${safeParseArr((company as { sectors?: string | null }).sectors).join(", ")}\n\n` +
-            `Wider company evidence library:\n${evidenceContextLines.join("\n").slice(0, 9_000)}`,
-          experts: expertLines.join("\n"),
-          projects: [...projectLines, ...projectEvidenceLines].join("\n"),
-          compliance: complianceLines.join("\n"),
-          differentiators: intelligence.differentiators.join("\n"),
-        }),
+        useParallel ? generateProposalSectionsParallel(aiInput) : generateBenchmarkProposalWithAI(aiInput),
         AI_PROPOSAL_TIMEOUT_MS,
       );
     } catch (aiError) {

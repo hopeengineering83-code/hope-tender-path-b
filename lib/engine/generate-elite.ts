@@ -1,6 +1,6 @@
 import { AlignmentType, BorderStyle, Document, Footer, Header, HeadingLevel, Packer, PageNumber, Paragraph, Table, TableBorders, TableCell, TableRow, TextRun, WidthType } from "docx";
 import { prisma } from "../prisma";
-import { generateBenchmarkProposalWithAI, getLastProposalProvider, isAIEnabled, refineProposalWithAI } from "../ai";
+import { generateBenchmarkProposalWithAI, generateProposalSectionsParallel, getLastProposalProvider, isAIEnabled, refineProposalWithAI } from "../ai";
 import { buildProposalIntelligence, expertProofLine, projectProofLine, safeParseArr } from "./proposal-intelligence";
 import { exactSelectionLimit } from "./scope-policy";
 import { finalizeClientReadyProposalMarkdown } from "./proposal-benchmark-guard";
@@ -704,29 +704,52 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
 
   if (isAIEnabled()) {
     try {
+      // PROPOSAL_GENERATION_MODE controls which AI path produces the
+      // first-draft markdown. Default: "parallel" — runs four small
+      // concurrent Claude calls (one per section cluster) and stitches
+      // them. This was added to address the systemic Vercel-Hobby 60s
+      // timeout: the legacy "single" path asked Claude for ~8K output
+      // tokens in one call (25–55s wall time), which routinely exceeded
+      // the per-section in-pipeline budget. The parallel path runs four
+      // calls of 1500–2800 output tokens each, finishing in ~25s wall
+      // time. See lib/engine/proposal-sections.ts for per-section
+      // system prompts and deterministic fallbacks.
+      //
+      // Set PROPOSAL_GENERATION_MODE=single to revert to the legacy
+      // monolithic-call path (useful for A/B comparison and as an
+      // escape hatch on Vercel Pro tiers where the 300s budget makes
+      // the single-call path viable).
+      const generationMode = (process.env.PROPOSAL_GENERATION_MODE || "parallel").toLowerCase();
+      const useParallel = generationMode === "parallel";
+
+      const aiInput = {
+        tenderTitle: cleanedTenderTitle,
+        clientName: intelligence.clientName,
+        tenderText: [BENCHMARK_CONTEXT_LINES.join("\n"), tenderText].join("\n\n"),
+        analysisSummary: clean(tender.analysisSummary) || intelligence.tenderText.slice(0, 2000),
+        evaluationMethodology: [
+          clean(tender.evaluationMethodology) || intelligence.evaluationCriteria.join("; "),
+          ...(evaluationWeightLines.length > 0 ? ["", "Numeric evaluation weights detected in tender (echo verbatim in the EVALUATION CRITERIA RESPONSE MIRROR table):", ...evaluationWeightLines] : []),
+          tenderLanguageEchoBlock,
+        ].filter(Boolean).join("\n"),
+        submissionNotes: [BENCHMARK_CONTEXT_LINES.join("\n"), submissionNotes].filter(Boolean).join("\n"),
+        requirements: [...BENCHMARK_CONTEXT_LINES, ...requirementLines].join("\n"),
+        companyProfile: `${company.name}\n${company.legalName ?? ""}\n${company.profileSummary ?? company.description ?? ""}\nServices: ${safeParseArr(company.serviceLines).join(", ")}\nSectors: ${safeParseArr(company.sectors).join(", ")}\n\nWider company evidence library:\n${evidenceContextLines.join("\n").slice(0, 9_000)}`,
+        experts: expertLines.join("\n"),
+        projects: [...projectLines, ...projectEvidenceLines].join("\n"),
+        compliance: [...BENCHMARK_CONTEXT_LINES, ...complianceLines].join("\n"),
+        differentiators: [...BENCHMARK_CONTEXT_LINES, ...intelligence.differentiators, ...companyEvidenceLines.slice(0, 8)].join("\n"),
+      };
+
       sourceMarkdown = await withProposalAiTimeout(
-        generateBenchmarkProposalWithAI({
-          tenderTitle: cleanedTenderTitle,
-          clientName: intelligence.clientName,
-          tenderText: [BENCHMARK_CONTEXT_LINES.join("\n"), tenderText].join("\n\n"),
-          analysisSummary: clean(tender.analysisSummary) || intelligence.tenderText.slice(0, 2000),
-          evaluationMethodology: [
-            clean(tender.evaluationMethodology) || intelligence.evaluationCriteria.join("; "),
-            ...(evaluationWeightLines.length > 0 ? ["", "Numeric evaluation weights detected in tender (echo verbatim in the EVALUATION CRITERIA RESPONSE MIRROR table):", ...evaluationWeightLines] : []),
-            tenderLanguageEchoBlock,
-          ].filter(Boolean).join("\n"),
-          submissionNotes: [BENCHMARK_CONTEXT_LINES.join("\n"), submissionNotes].filter(Boolean).join("\n"),
-          requirements: [...BENCHMARK_CONTEXT_LINES, ...requirementLines].join("\n"),
-          companyProfile: `${company.name}\n${company.legalName ?? ""}\n${company.profileSummary ?? company.description ?? ""}\nServices: ${safeParseArr(company.serviceLines).join(", ")}\nSectors: ${safeParseArr(company.sectors).join(", ")}\n\nWider company evidence library:\n${evidenceContextLines.join("\n").slice(0, 9_000)}`,
-          experts: expertLines.join("\n"),
-          projects: [...projectLines, ...projectEvidenceLines].join("\n"),
-          compliance: [...BENCHMARK_CONTEXT_LINES, ...complianceLines].join("\n"),
-          differentiators: [...BENCHMARK_CONTEXT_LINES, ...intelligence.differentiators, ...companyEvidenceLines.slice(0, 8)].join("\n"),
-        }),
+        useParallel
+          ? generateProposalSectionsParallel(aiInput)
+          : generateBenchmarkProposalWithAI(aiInput),
         PROPOSAL_AI_TIMEOUT_MS,
       );
       const provider = getLastProposalProvider() ?? "ai";
-      mode = `${provider === "claude" ? "Claude" : provider === "gemini" ? "Gemini" : "AI"} bid-writer + evaluator response matrix + full evidence library + client-ready benchmark finalizer + professional DOCX polish`;
+      const pathLabel = useParallel ? "section-parallel" : "single-call";
+      mode = `${provider === "claude" ? "Claude" : provider === "gemini" ? "Gemini" : "AI"} ${pathLabel} bid-writer + evaluator response matrix + full evidence library + client-ready benchmark finalizer + professional DOCX polish`;
     } catch (error) {
       aiError = error instanceof Error ? error.message : String(error);
       sourceMarkdown = fallbackProposalMarkdown({ tenderTitle: cleanedTenderTitle, clientName: intelligence.clientName, companyName: company.name, companyLegalName: company.legalName, companyAddress: company.address, companyTIN: company.tin, companyVAT: company.vat, companyGM: company.gmName, companyGMLicense: company.gmLicense, primarySector: intelligence.primarySector, requirements: requirementLines, differentiators: intelligence.differentiators, submissionRules: intelligence.submissionRules, expertLines, projectLines, experts: experts as ExpertRecord[], projects: projects as ProjectRecord[], reviewedExpertCount: experts.length, companyEvidenceLines, projectEvidenceLines, complianceLines, expertRequired, projectRequired, themes: intelligence.themes, evaluationCriteria: intelligence.evaluationCriteria, appendixList: intelligence.appendixList, noFinancialProposal: intelligence.noFinancialProposal, exactEmails: intelligence.exactEmails, exactSubjectLine: intelligence.exactSubjectLine, gapsToAddressInNarrative: intelligence.gapsToAddressInNarrative, requiredSections: intelligence.requiredSections, tenderDeadline: tender.deadline });
