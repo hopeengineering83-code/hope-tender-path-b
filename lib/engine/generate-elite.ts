@@ -1224,11 +1224,92 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     : "";
   const summary = `${mode}${refinementLabel} technical proposal generated. ${finalized.internalSummary}. ${auditSummary}. ${formatQualityScoreSummary(qualityScore)}. Inputs: ${intelligence.requiredSections.length} section group(s), ${intelligence.themes.length} tender theme(s), ${experts.length} reviewed expert(s), ${projects.length} reviewed project(s), ${companyEvidenceLines.length} company evidence item(s), ${projectEvidenceLines.length} project evidence attachment(s).${aiError ? ` AI fallback reason: ${aiError}` : ""}`;
 
-  const target = await prisma.generatedDocument.findFirst({ where: { tenderId, documentType: { in: ["TECHNICAL_PROPOSAL", "PROPOSAL", "METHODOLOGY"] } }, orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }] });
-  if (target) {
-    await prisma.generatedDocument.update({ where: { id: target.id }, data: { name: "Client-Ready Benchmark Technical Proposal", documentType: "TECHNICAL_PROPOSAL", exactFileName: target.exactFileName || "Technical-Proposal.docx", fileContent, generationStatus: "GENERATED", validationStatus: "PENDING", contentSummary: summary, updatedAt: new Date() } });
+  // ─── Save the main Technical Proposal (PR #256 fix) ─────────────────────
+  // BUG (pre-PR #256): the engine looked for a planned slot whose
+  // documentType was TECHNICAL_PROPOSAL / PROPOSAL / METHODOLOGY and
+  // OVERWROTE that slot's content while preserving its exactFileName.
+  // For tenders where the submission plan classifies an unrelated
+  // requirement (e.g., "Submission formatting, file and packaging rules")
+  // as METHODOLOGY type, the main proposal got stuffed into that slot
+  // and the resulting ZIP contained a file named
+  // "Submission formatting, file and packaging rules.docx" that
+  // ACTUALLY held the entire Technical Proposal. The user's submission
+  // package was missing a recognisable "Technical Proposal" file
+  // because of this misrouting.
+  //
+  // FIX: only reuse a planned slot if its filename clearly indicates
+  // the main proposal ("technical proposal", "main proposal",
+  // "technical bid"). Otherwise always create a fresh
+  // Technical-Proposal.docx record and let the misclassified planned
+  // slot remain as a support doc (filled later by
+  // fillPlannedSupportDocuments).
+  const target = await prisma.generatedDocument.findFirst({
+    where: {
+      tenderId,
+      documentType: { in: ["TECHNICAL_PROPOSAL", "PROPOSAL", "METHODOLOGY"] },
+    },
+    orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }],
+  });
+  // Only reuse the slot if the filename is a real proposal-named slot.
+  // This regex catches genuine main-proposal slot names while rejecting
+  // accidental METHODOLOGY-classified support slots.
+  const isMainProposalSlotName = (name: string | null | undefined) =>
+    typeof name === "string" && /\b(technical[-\s_]*proposal|technical[-\s_]*bid|main[-\s_]*proposal|proposal[-\s_]*document|consultancy[-\s_]*proposal)\b/i.test(name);
+  const reuseTarget = target && isMainProposalSlotName(target.exactFileName ?? target.name);
+
+  if (reuseTarget && target) {
+    await prisma.generatedDocument.update({
+      where: { id: target.id },
+      data: {
+        name: "Client-Ready Benchmark Technical Proposal",
+        documentType: "TECHNICAL_PROPOSAL",
+        // Keep target.exactFileName because it's a genuine
+        // proposal-named slot the tender required.
+        exactFileName: target.exactFileName ?? "Technical-Proposal.docx",
+        fileContent,
+        generationStatus: "GENERATED",
+        validationStatus: "PENDING",
+        contentSummary: summary,
+        updatedAt: new Date(),
+      },
+    });
   } else {
-    await prisma.generatedDocument.create({ data: { tenderId, name: "Client-Ready Benchmark Technical Proposal", documentType: "TECHNICAL_PROPOSAL", format: "DOCX", exactFileName: "Technical-Proposal.docx", exactOrder: 1, fileContent, generationStatus: "GENERATED", validationStatus: "PENDING", contentSummary: summary } });
+    // No suitable slot OR the existing slot had the wrong name —
+    // always emit Technical-Proposal.docx as a fresh record.
+    // Use upsert-ish pattern: if a Technical-Proposal record exists
+    // already, update; otherwise create.
+    const existing = await prisma.generatedDocument.findFirst({
+      where: { tenderId, exactFileName: "Technical-Proposal.docx" },
+    });
+    if (existing) {
+      await prisma.generatedDocument.update({
+        where: { id: existing.id },
+        data: {
+          name: "Client-Ready Benchmark Technical Proposal",
+          documentType: "TECHNICAL_PROPOSAL",
+          fileContent,
+          generationStatus: "GENERATED",
+          validationStatus: "PENDING",
+          contentSummary: summary,
+          updatedAt: new Date(),
+        },
+      });
+    } else {
+      await prisma.generatedDocument.create({
+        data: {
+          tenderId,
+          name: "Client-Ready Benchmark Technical Proposal",
+          documentType: "TECHNICAL_PROPOSAL",
+          format: "DOCX",
+          exactFileName: "Technical-Proposal.docx",
+          exactOrder: 1,
+          fileContent,
+          generationStatus: "GENERATED",
+          validationStatus: "PENDING",
+          contentSummary: summary,
+        },
+      });
+    }
   }
 
   await prisma.tender.update({ where: { id: tenderId }, data: { status: "GENERATED", stage: "GENERATION", updatedAt: new Date() } });

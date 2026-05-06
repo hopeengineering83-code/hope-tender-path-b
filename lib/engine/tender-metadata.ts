@@ -128,6 +128,39 @@ function summaryFromText(text: string): string | null {
 
 export function inferTenderMetadata(extractedText: string, fallbackFileName: string): TenderMetadataDraft {
   const text = extractedText.slice(0, 250_000);
+
+  // PR #256 — refuse to fabricate metadata when extraction yielded
+  // almost nothing. Pre-fix behaviour set title="FILE: Path tender.pdf"
+  // and clientName=null when PDF extraction returned 0 chars, then
+  // the description fell back to "Tender created from uploaded
+  // document: Path tender.pdf" — that string then propagated into
+  // every generated proposal section as the client name and tender
+  // title. Exactly the catastrophic metadata-poisoning the user saw
+  // on Path tender.
+  //
+  // New behaviour: when extracted text is < 500 chars, return a
+  // metadata draft flagged with a clear "[REVIEW NEEDED]" prefix so
+  // downstream code (and the user) sees that the tender intake
+  // didn't get usable text. The OCR fallback (PR #243) should fire
+  // BEFORE this is called for scanned PDFs; if it didn't, the user
+  // needs to enable PDF_OCR_ENABLED=true.
+  const trimmedLen = text.trim().length;
+  if (trimmedLen < 500) {
+    const baseFileName = fallbackFileName.replace(/\.[^.]+$/, "").replace(/[_-]+/g, " ").trim() || "Untitled tender";
+    return {
+      title: `[REVIEW NEEDED] ${baseFileName}`,
+      reference: null,
+      clientName: null,
+      country: null,
+      category: "General",
+      deadline: null,
+      submissionMethod: null,
+      submissionAddress: null,
+      description: `Tender intake from "${fallbackFileName}" extracted only ${trimmedLen} characters of text — not enough for automatic metadata inference. Likely a scanned PDF without an OCR text layer. Set PDF_OCR_ENABLED=true and re-upload, OR use the Edit form to fill in tender title, client, reference number, and deadline manually.`,
+      intakeSummary: null,
+    };
+  }
+
   const title = inferTitle(text, fallbackFileName);
   const reference = inferReference(text);
   const clientName = inferClient(text);
@@ -137,7 +170,12 @@ export function inferTenderMetadata(extractedText: string, fallbackFileName: str
   const submissionMethod = inferSubmissionMethod(text);
   const submissionAddress = inferSubmissionAddress(text);
   const intakeSummary = summaryFromText(text);
-  const description = intakeSummary?.slice(0, 1200) ?? `Tender created from uploaded document: ${fallbackFileName}`;
+  // PR #256 — drop the misleading "Tender created from uploaded
+  // document: X" default. When the intake summary is null but the
+  // text is rich (>500 chars), use a portion of the raw text as the
+  // description so downstream prompts have substantive context. NEVER
+  // use the filename as a fake description.
+  const description = intakeSummary?.slice(0, 1200) ?? text.slice(0, 1200) ?? null;
 
   return { title, reference, clientName, country, category, deadline, submissionMethod, submissionAddress, description, intakeSummary };
 }
