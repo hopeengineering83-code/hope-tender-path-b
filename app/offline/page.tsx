@@ -6,8 +6,14 @@
 // This page is precached at service-worker install time. It must be
 // fully self-contained (no async data fetching) so it renders
 // instantly when the network is down.
+//
+// PR #250 — Server component (so metadata export works AND the page
+// is statically prerendered for the service-worker cache). The retry
+// button is split into a small "use client" sub-component so the
+// onClick handler doesn't break prerendering.
 
 import Link from "next/link";
+import { RetryButton } from "./_components/retry-button";
 
 export const metadata = {
   title: "Offline — Hope Tender",
@@ -67,15 +73,7 @@ export default function OfflinePage() {
         </div>
 
         <div className="mt-6 flex flex-col gap-2">
-          <button
-            type="button"
-            onClick={() => {
-              if (typeof window !== "undefined") window.location.reload();
-            }}
-            className="w-full rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-slate-800"
-          >
-            Retry connection
-          </button>
+          <RetryButton />
           <Link
             href="/dashboard"
             className="w-full rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-center text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50"
