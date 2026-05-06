@@ -15,6 +15,9 @@ export type AuditAction =
   // PR #247 — DocumentComment audit actions for the per-document
   // approval / threaded-comment workflow.
   | "DOCUMENT_COMMENT" | "DOCUMENT_COMMENT_UPDATE"
+  // PR #251 — Evaluator Persona Simulator runs (4-persona synthetic
+  // panel scoring before submission).
+  | "EVALUATOR_SIMULATION_RUN"
   | "TENDER_DUPLICATE";
 
 export async function logAction(opts: {
