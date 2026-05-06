@@ -18,6 +18,9 @@ export type AuditAction =
   // PR #251 — Evaluator Persona Simulator runs (4-persona synthetic
   // panel scoring before submission).
   | "EVALUATOR_SIMULATION_RUN"
+  // PR #255 — Multi-Perspective AI Rematch (re-scores expert/project
+  // matches via Claude with 4-perspective evaluation).
+  | "AI_REMATCH_RUN"
   | "TENDER_DUPLICATE";
 
 export async function logAction(opts: {

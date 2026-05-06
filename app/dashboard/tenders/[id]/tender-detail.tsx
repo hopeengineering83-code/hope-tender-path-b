@@ -7,6 +7,7 @@ import { NEXT_STATUS, formatDate, formatTenderStatus } from "../../../../lib/ten
 import { cleanClientName, cleanTenderTitle } from "../../../../lib/engine/proposal-labels";
 import { BidStrategyPanel } from "../../../../components/bid-strategy-panel";
 import { EvaluatorSimulatorPanel } from "../../../../components/evaluator-simulator-panel";
+import { AIRematchButton } from "../../../../components/ai-rematch-button";
 
 function renderInline(text: string): React.ReactNode[] {
   const parts = text.split(/(\*\*[^*\n]+\*\*|\*[^*\n]+\*|_[^_\n]+_)/g);
@@ -903,6 +904,24 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
               proposal as a real evaluation panel would. Catches issues
               before the actual evaluator sees them. User-triggered. */}
           <EvaluatorSimulatorPanel tenderId={tender.id} />
+
+          {/* AI Multi-Perspective Rematch (PR #255) — re-scores experts
+              and projects through 4 evaluator lenses (Discipline / Scale
+              / Sector / Role+Recency). Replaces lexical TF-IDF ranking
+              with senior-bid-director judgment. User-triggered, ~$0.07
+              per rematch. */}
+          <AIRematchButton
+            tenderId={tender.id}
+            experts={(tender.expertMatches ?? []).map((m) => ({
+              id: m.expert?.id ?? "",
+              fullName: m.expert?.fullName ?? "Expert",
+            }))}
+            projects={(tender.projectMatches ?? []).map((m) => ({
+              id: m.project?.id ?? "",
+              name: m.project?.name ?? "Project",
+            }))}
+            onRematchComplete={() => router.refresh()}
+          />
 
           <div className="rounded-2xl border bg-white p-6 shadow-sm">
             <h2 className="text-lg font-semibold text-slate-900">Compliance gaps</h2>
