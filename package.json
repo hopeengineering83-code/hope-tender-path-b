@@ -8,8 +8,15 @@
     "postinstall": "prisma generate",
     "start": "next start",
     "db:seed": "tsx prisma/seed.ts",
-    "db:demo-seed": "tsx prisma/demo-seed.ts"
+    "db:demo-seed": "tsx prisma/demo-seed.ts",
+    "electron": "electron electron/main.js",
+    "electron:local": "cross-env HOPE_TENDER_DESKTOP_MODE=local-server electron electron/main.js",
+    "build:desktop": "electron-builder --config electron/electron-builder.json --win --mac --linux",
+    "build:desktop:win": "electron-builder --config electron/electron-builder.json --win",
+    "build:desktop:mac": "electron-builder --config electron/electron-builder.json --mac",
+    "build:desktop:linux": "electron-builder --config electron/electron-builder.json --linux"
   },
+  "main": "electron/main.js",
   "dependencies": {
     "@anthropic-ai/sdk": "^0.65.0",
     "@google/generative-ai": "^0.24.1",
