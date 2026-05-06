@@ -47,11 +47,43 @@ export async function runTenderEngine(tenderId: string, userId: string) {
   let analysisFallbackReason: string | null = null;
 
   if (isAIEnabled()) {
+    // ─── Tender text assembly ─────────────────────────────────────────────
+    // BUG FIX (PR #244): the previous filter `!/^\[/.test(t.trim())`
+    // dropped ANY extracted text that started with a bracket. But
+    // extract-text.ts deliberately prepends a legitimate header for
+    // multi-page PDFs and OCR'd PDFs:
+    //
+    //   "[PDF text extracted from 13 page(s) using pdf2json.]\n\n<real content>"
+    //   "[PDF text extracted via Claude vision OCR — 52 page(s).]\n\n<real content>"
+    //
+    // Those are NOT error placeholders — they're metadata followed by
+    // real tender content. The old filter discarded the entire string,
+    // collapsing tenderText to 0 chars and forcing the engine into
+    // REGEX_FALLBACK_NO_TEXT mode even when extraction succeeded with
+    // 14K+ chars of usable text. Users saw "Extracted tender text is
+    // only 0 chars" while their PDF had clearly extracted content.
+    //
+    // The fix:
+    //   1. STRIP the legitimate "[PDF text extracted ...]" header line
+    //      so the AI doesn't see it as the first line of the tender.
+    //   2. Filter out ONLY actual error placeholders by name
+    //      (Scanned PDF / Extraction failed / Image: / Legacy .doc).
+    //   3. Drop the 80K char pre-truncation — analyzeWithAI now does
+    //      chunked multi-call analysis for big tenders (PR #242), so
+    //      passing the full text through is correct. Truncating here
+    //      defeated the chunked path for everything routed through
+    //      run-tender-engine.
     const tenderText = tender.files
-      .map((f) => f.extractedText ?? "")
-      .filter((t) => t.length > 100 && !/^\[/.test(t.trim()))
-      .join("\n\n--- NEXT DOCUMENT ---\n\n")
-      .slice(0, 80_000);
+      .map((f) => (f.extractedText ?? "").trim())
+      // Strip the legitimate extraction-header line (kept in extract-text
+      // for diagnostics) before AI sees the content. Both pdf2json/pdfjs
+      // multi-page header AND the Claude vision OCR header from PR #243.
+      .map((t) => t.replace(/^\[(?:PDF text|OCR text)[^\]]*\]\s*\n+/i, ""))
+      // Filter out ONLY actual error placeholders by name. Real content
+      // that happens to start with `[` (e.g., `[Page 1]` markers from
+      // pdf2json) is preserved.
+      .filter((t) => t.length > 100 && !/^\[(?:Scanned PDF|Extraction failed|Image:|Legacy \.doc)/i.test(t))
+      .join("\n\n--- NEXT DOCUMENT ---\n\n");
 
     if (tenderText.length > 500) {
       try {
@@ -218,7 +250,7 @@ export async function runTenderEngine(tenderId: string, userId: string) {
       notes: [
         "Senior consultant mode: broad-fit matching uses capability families, sector/service equivalence, and professional judgment instead of exact wording only.",
         analysisMethod === "AI"
-          ? "Analysis source: Gemini AI."
+          ? "Analysis source: AI (chunked multi-call when tender > 60K chars)."
           : `Analysis source: regex fallback (${analysisMethod}). ${analysisFallbackReason ?? ""}`.trim(),
         hardGaps > 0 ? `${hardGaps} hard evidence gap(s) remain.` : null,
         reviewGaps > 0 ? `${reviewGaps} senior review item(s) remain; these are not automatic fatal blockers.` : null,
