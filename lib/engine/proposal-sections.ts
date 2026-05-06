@@ -336,38 +336,135 @@ Start directly with "# Section D: Additional Information". Do NOT output any oth
 }
 
 // ─── Public spec builder ─────────────────────────────────────────────────────
+//
+// `deep` flag — when true, each section's max_output_tokens scales up
+// roughly 2× so the proposal uses the full Anthropic Tier 2+ output
+// budget (16K tokens/min). This is the "FULL POWER" mode the user
+// asked for: each call produces materially longer prose, the four
+// calls together emit ~16K tokens of Claude content per proposal
+// instead of ~8K.
+//
+// Deep mode also enables the Section C drill-down (see
+// buildSectionCDrillDownSpec below) — a chained second call that
+// re-writes Section C's Methodology sub-sections with much more depth.
 
-export function buildProposalSectionSpecs(input: AIBidWriterInput): ProposalSectionSpec[] {
+export function buildProposalSectionSpecs(input: AIBidWriterInput, opts?: { deep?: boolean }): ProposalSectionSpec[] {
+  const deep = opts?.deep === true;
   return [
     {
       id: "cover-and-summary",
       title: "Cover Letter and Executive Summary",
       systemPrompt: COVER_AND_SUMMARY_SYSTEM_PROMPT,
       userPrompt: buildCoverAndSummaryPrompt(input),
-      maxOutputTokens: 1800,
+      maxOutputTokens: deep ? 3000 : 1800,
     },
     {
       id: "company-and-experience",
       title: "Section A (Company Profile) and Section B (Relevant Experience)",
       systemPrompt: COMPANY_AND_EXPERIENCE_SYSTEM_PROMPT,
       userPrompt: buildCompanyAndExperiencePrompt(input),
-      maxOutputTokens: 2400,
+      maxOutputTokens: deep ? 4500 : 2400,
     },
     {
       id: "technical-approach",
       title: "Section C: Technical Approach",
       systemPrompt: TECHNICAL_APPROACH_SYSTEM_PROMPT,
       userPrompt: buildTechnicalApproachPrompt(input),
-      maxOutputTokens: 2800,
+      maxOutputTokens: deep ? 5500 : 2800,
     },
     {
       id: "additional-and-declaration",
       title: "Section D, Appendix Register, and Declaration",
       systemPrompt: ADDITIONAL_AND_DECLARATION_SYSTEM_PROMPT,
       userPrompt: buildAdditionalAndDeclarationPrompt(input),
-      maxOutputTokens: 1600,
+      maxOutputTokens: deep ? 2700 : 1600,
     },
   ];
+}
+
+// ─── Section C drill-down (deep-mode chained second call) ────────────────────
+//
+// When PROPOSAL_DEEP_MODE=true, the orchestrator runs ONE more chained
+// Claude call that takes the just-generated Section C and asks the AI
+// to deepen the Methodology sub-section specifically — adding 2-3
+// paragraphs per scope item, naming experts inline, citing previous
+// projects when the methodology element was demonstrated there.
+//
+// The drilled-down output replaces the original Section C in the final
+// stitched proposal. Net: Section C becomes much more substantive
+// without making any single Claude call long enough to time out.
+
+export const TECHNICAL_APPROACH_DRILLDOWN_SYSTEM_PROMPT = `You are a senior sector technical lead deepening Section C — the Technical Approach — of a competitive technical proposal. The first-pass author has produced a complete Section C with the right structure (C.1 Understanding, C.2 Methodology, C.3 Work Plan, C.4 QA). Your job is to REWRITE the same Section C with substantially more depth — 2-3 paragraphs per methodology sub-section, named experts inline, evidence anchors from prior projects.
+
+Operating principles:
+
+1. PRESERVE STRUCTURE. Keep the existing sub-section headings (C.1, C.2.x, C.3, C.4). Do NOT add new top-level headings. Do NOT change the section number.
+
+2. PRESERVE FACTS. The first-pass author drew project names, expert names, and license numbers from the evidence library. Those facts are correct. Do NOT change them, do NOT delete them, do NOT substitute different ones.
+
+3. DEEPEN METHODOLOGY (C.2). Each scope item that was written as a single paragraph now becomes 2-3 paragraphs:
+   - paragraph 1: WHAT the methodology covers and the standards / conventions it follows
+   - paragraph 2: HOW the firm has executed this methodology element on a previous comparable project (named project + the specific methodology technique used)
+   - paragraph 3 (when applicable): WHO on the proposed team will lead this element and what their comparable previous role was
+
+4. DEEPEN WORK PLAN (C.3). The Work Plan table stays a table, but each row now carries: stage, deliverable, responsible named expert, timeline, quality gate, AND a one-line note linking the deliverable to a tender requirement number / scope item.
+
+5. DEEPEN QA (C.4). The Quality Review gates table now carries: stage, milestone, review authority, required action, AND a one-line note on what evidence the gate produces (sign-off memo, regulatory submission, design review record).
+
+6. NO AI TRACES. Never write "As an AI", "Certainly!", "Please note", or [square bracket] placeholders. Where a fact is missing, write a "Bid-Team Action: confirm X before submission." note.
+
+7. OUTPUT SHAPE. Output Section C only — as a single top-level Markdown heading (# Section C: Technical Approach) with sub-sections (## C.1, ## C.2 with numbered sub-headings, ## C.3, ## C.4). Do not output cover letter, executive summary, Section A/B/D, or any commentary. Start directly with # Section C.`;
+
+function buildTechnicalApproachDrillDownPrompt(input: AIBidWriterInput, firstPassSectionC: string): string {
+  return `Deepen Section C — Technical Approach — for this technical proposal. The first-pass version is below; rewrite it with substantially more methodology depth and evidence integration.
+
+## TENDER
+TITLE: ${input.tenderTitle}
+CLIENT: ${input.clientName}
+
+## TENDER TEXT (use to align methodology vocabulary to THIS sector)
+${input.tenderText.slice(0, 8_000)}
+
+## EVALUATION CRITERIA (your methodology must score against these)
+${input.evaluationMethodology.slice(0, 3_000)}
+
+## CONSOLIDATED REQUIREMENTS (especially methodology and technical requirements)
+${input.requirements.slice(0, 4_500)}
+
+## PROPOSED EXPERTS (name them inline in C.2 — each scope item gets a responsible named expert)
+${input.experts.slice(0, 5_000)}
+
+## RELEVANT PROJECT EVIDENCE (cite specific projects when they demonstrated a methodology element)
+${input.projects.slice(0, 5_000)}
+
+## FIRST-PASS SECTION C (preserve the structure; deepen each sub-section)
+${firstPassSectionC}
+
+## YOUR OUTPUT
+Rewrite Section C with materially more methodology depth:
+- C.1 Understanding: 3-4 substantive paragraphs anchored to the tender's stated context
+- C.2 Methodology: each scope item → 2-3 paragraphs (what / how with evidence anchor / who from the proposed team)
+- C.3 Work Plan and Deliverables: full Markdown table with one row per stage (Stage | Deliverable | Responsible Expert | Timeline | Quality Gate | Tender Requirement Reference)
+- C.4 Quality Assurance: full Markdown table (Stage | Milestone | Review Authority | Required Action | Evidence Output)
+
+Start directly with "# Section C: Technical Approach". Do NOT output any other sections.`;
+}
+
+export function buildSectionCDrillDownSpec(input: AIBidWriterInput, firstPassSectionC: string): ProposalSectionSpec {
+  return {
+    id: "technical-approach", // same id — the drill-down REPLACES the first-pass Section C
+    title: "Section C: Technical Approach (deep drill-down)",
+    systemPrompt: TECHNICAL_APPROACH_DRILLDOWN_SYSTEM_PROMPT,
+    userPrompt: buildTechnicalApproachDrillDownPrompt(input, firstPassSectionC),
+    maxOutputTokens: 6000,
+  };
+}
+
+// Helper: extract just the Section C portion from a stitched proposal
+// markdown so the drill-down call has the right input to deepen.
+export function extractSectionCFromMarkdown(markdown: string): string | null {
+  const sectionCMatch = markdown.match(/^# Section C[\s\S]*?(?=^# (?!Section C)|$(?![\r\n]))/m);
+  return sectionCMatch ? sectionCMatch[0].trim() : null;
 }
 
 // ─── Deterministic per-section fallback markdown ─────────────────────────────
