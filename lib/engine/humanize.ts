@@ -46,6 +46,21 @@ function basicCleanup(text: string): string {
   return out;
 }
 
+// Deterministic-only humanization (no AI call).
+//
+// This is the FAST path used inside generate-elite.ts on every proposal.
+// It runs the same AI-trace pattern stripper as the full humanize()
+// function, but does NOT call Claude for a stylistic rewrite — so it
+// adds ~1ms per proposal instead of ~15-30s.
+//
+// The full AI-rewrite path remains available via humanize() below for
+// callers who want a senior-editor-quality stylistic pass; that path
+// is opt-in via PROPOSAL_HUMANIZE_AI=true so Vercel Hobby tier users
+// don't blow their 60s function budget on a 6th Claude call.
+export function humanizeDeterministic(text: string): string {
+  return basicCleanup(text);
+}
+
 const HUMANIZE_SYSTEM_PROMPT = `You are a senior proposal editor at a consultancy firm. You take draft proposal text written by a junior author or an AI assistant and rewrite it so it sounds like a senior consultant wrote it from scratch — professional, confident, business-grade, evidence-led, and free of AI traces. You preserve every fact in the source text. You never invent new claims, numbers, project names, or expert names. You return only the rewritten text — no commentary, no preamble, no explanation of what you changed.`;
 
 /**
