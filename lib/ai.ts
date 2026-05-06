@@ -427,6 +427,43 @@ export type AIBidWriterInput = {
   projects: string;
   compliance: string;
   differentiators: string;
+  // PR #257 — structured company-vault fields used by the
+  // deterministic section fallback (proposal-sections.ts
+  // buildSectionFallback). When the AI returns a thin Section A or
+  // the deterministic fallback runs entirely, the renderer can now
+  // emit REAL company data — founding year, headcount, license
+  // grade, GM name + license, TIN, VAT, etc. — from the Company
+  // table instead of "Bid-Team Action: confirm" placeholders.
+  //
+  // Optional so existing callers (legacy generate.ts, isolated
+  // tests) continue to work. When omitted, the fallback emits the
+  // same Bid-Team Action notes as before for that field.
+  companyVault?: {
+    name?: string | null;
+    legalName?: string | null;
+    address?: string | null;
+    phone?: string | null;
+    email?: string | null;
+    website?: string | null;
+    country?: string | null;
+    foundingYear?: number | null;
+    headcount?: number | null;
+    licenseGrade?: string | null;
+    registrationNumber?: string | null;
+    tin?: string | null;
+    vat?: string | null;
+    gmName?: string | null;
+    gmTitle?: string | null;
+    gmLicense?: string | null;
+    profileSummary?: string | null;
+    serviceLines?: string[] | null;
+    sectors?: string[] | null;
+    // Compliance / certification records — already-formatted strings
+    // for the D.3 Professional Certifications section. Caller
+    // formats from CompanyComplianceRecord rows; the renderer just
+    // prints the lines.
+    complianceLines?: string[] | null;
+  };
 };
 
 // ─── Tender analysis ─────────────────────────────────────────────────────────

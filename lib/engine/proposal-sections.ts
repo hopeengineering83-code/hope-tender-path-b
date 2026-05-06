@@ -214,6 +214,34 @@ Start directly with "# Cover Letter". Do NOT output any other sections, table of
 }
 
 function buildCompanyAndExperiencePrompt(input: AIBidWriterInput): string {
+  // PR #257 — structured company-vault fields injected directly into
+  // the prompt so Claude can quote real founding year, headcount,
+  // license grade, GM name + license, TIN, VAT, etc. instead of
+  // "Bid-Team Action: confirm" placeholders. The free-form
+  // companyProfile string remains as supplementary context for
+  // narrative paragraphs.
+  const v = input.companyVault ?? {};
+  const vaultLines: string[] = [];
+  if (v.name) vaultLines.push(`Name: ${v.name}`);
+  if (v.legalName && v.legalName !== v.name) vaultLines.push(`Legal name: ${v.legalName}`);
+  if (v.foundingYear) vaultLines.push(`Founding year: ${v.foundingYear}`);
+  if (v.headcount) vaultLines.push(`Headcount: ${v.headcount}`);
+  if (v.licenseGrade) vaultLines.push(`Licence grade: ${v.licenseGrade}`);
+  if (v.registrationNumber) vaultLines.push(`Registration number: ${v.registrationNumber}`);
+  if (v.tin) vaultLines.push(`TIN: ${v.tin}`);
+  if (v.vat) vaultLines.push(`VAT: ${v.vat}`);
+  if (v.address) vaultLines.push(`Address: ${v.address}`);
+  if (v.country) vaultLines.push(`Country: ${v.country}`);
+  if (v.phone) vaultLines.push(`Phone: ${v.phone}`);
+  if (v.email) vaultLines.push(`Email: ${v.email}`);
+  if (v.website) vaultLines.push(`Website: ${v.website}`);
+  if (v.gmName) vaultLines.push(`General Manager: ${v.gmName}${v.gmTitle ? `, ${v.gmTitle}` : ""}${v.gmLicense ? ` (License ${v.gmLicense})` : ""}`);
+  if (v.serviceLines && v.serviceLines.length > 0) vaultLines.push(`Service lines: ${v.serviceLines.join(", ")}`);
+  if (v.sectors && v.sectors.length > 0) vaultLines.push(`Sectors: ${v.sectors.join(", ")}`);
+  const vaultBlock = vaultLines.length > 0
+    ? `\n## STRUCTURED COMPANY VAULT FIELDS (use these EXACT values in Section A.1 prose and the A.2 Corporate Information Table — do not invent or alter)\n${vaultLines.join("\n")}\n`
+    : "";
+
   return `Write Section A (Company Profile) and Section B (Relevant Experience) for this technical proposal.
 
 ## TENDER
@@ -222,6 +250,7 @@ CLIENT: ${input.clientName}
 
 ## EVALUATION CRITERIA (especially the experience and team criteria)
 ${input.evaluationMethodology.slice(0, 2_500)}
+${vaultBlock}
 
 ## CONSOLIDATED REQUIREMENTS (especially eligibility, team composition, project experience)
 ${input.requirements.slice(0, 4_000)}
@@ -499,36 +528,7 @@ export function buildSectionFallback(spec: ProposalSectionSpec, input: AIBidWrit
       ].join("\n\n");
 
     case "company-and-experience":
-      return [
-        "# Section A: Company Profile",
-        "## A.1 Company Background",
-        "Bid-Team Action: confirm founding year, licence grade, registered address, GM name, staff headcount, total projects, key sectors, and certifications before submission.",
-        "## A.2 Corporate Information Table",
-        "| Field | Detail |",
-        "|---|---|",
-        "| Legal name | Bid-Team Action: confirm |",
-        "| Registration number | Bid-Team Action: confirm |",
-        "| TIN / VAT | Bid-Team Action: confirm |",
-        "| Registered address | Bid-Team Action: confirm |",
-        "## A.3 Core Service Lines",
-        "Refer to the COMPANY EVIDENCE section in the underlying knowledge base for service lines directly relevant to this tender.",
-        "## A.4 Proposed Project Team",
-        "The proposed team is built from the firm's reviewed expert library. See Section B for project-side evidence.",
-        "## A.5 Team-to-Project Experience Mapping",
-        "Each proposed expert is mapped to a previous comparable project — see deterministic Team-to-Project Mapping table built downstream.",
-        "",
-        "# Section B: Relevant Experience",
-        "## B.1 Portfolio Overview",
-        "The firm's portfolio relevant to this assignment is summarised in the deterministic Portfolio at a Glance and Project Portfolio sections built downstream from the reviewed evidence library.",
-        "## B.2 Featured Project 1",
-        "Bid-Team Action: confirm the strongest comparable project as the featured card before submission.",
-        "## B.3 Featured Project 2",
-        "Bid-Team Action: confirm the second strongest comparable project as the featured card before submission.",
-        "## B.4 Additional Projects",
-        "See deterministic project portfolio table built downstream.",
-        "## B.5 Client References",
-        "See deterministic Client References table built downstream.",
-      ].join("\n\n");
+      return buildCompanyAndExperienceFallback(input);
 
     case "technical-approach":
       return [
@@ -548,28 +548,155 @@ export function buildSectionFallback(spec: ProposalSectionSpec, input: AIBidWrit
       ].join("\n\n");
 
     case "additional-and-declaration":
-      return [
-        "# Section D: Additional Information",
-        "## D.1 Value to the Client",
-        "See deterministic Value Framework table built downstream.",
-        "## D.2 In-House Capabilities Beyond Minimum Scope",
-        "Bid-Team Action: confirm in-house capabilities (geotechnical lab, BIM, GIS, drone survey, in-house lab testing, etc.) before submission.",
-        "## D.3 Professional Certifications and Affiliations",
-        "Bid-Team Action: confirm registration / certificate numbers and dates before submission.",
-        "## D.4 Declaration of Eligibility",
-        "The firm meets all eligibility requirements stated in the tender.",
-        "",
-        "# Appendix Register",
-        "- Appendix A: Company Registration Documents and Licences",
-        "- Appendix B: Audited Financial Statements",
-        "- Appendix C: Curricula Vitae of Proposed Experts",
-        "- Appendix D: Project References and Client Letters",
-        "- Appendix E: Project Photos, Drawings and Completion Evidence",
-        "",
-        "# Declaration",
-        "We hereby declare that this Technical Proposal has been prepared specifically in response to the captioned tender. All information provided is accurate and supported by documentary evidence available on request.",
-        "",
-        "Bid-Team Action: confirm signature block (GM name, title, licence, company) before submission.",
-      ].join("\n\n");
+      return buildAdditionalAndDeclarationFallback(input);
   }
+}
+
+// ─── Substantive deterministic content (PR #257) ─────────────────────────────
+//
+// These helpers replace the "Bid-Team Action: confirm X" placeholders
+// with REAL company-vault data when available. Only fall back to a
+// Bid-Team Action note when a specific field is genuinely missing.
+//
+// The renderer never invents data — it only emits what's actually in
+// the vault. When a field is null/empty, that specific cell falls back
+// to a short Bid-Team Action note for THAT field only, preserving the
+// rest of the section's substantive content.
+
+// Helper: emits "VALUE" if present, else "Bid-Team Action: confirm LABEL"
+function vaultField(value: string | number | null | undefined, label: string): string {
+  if (value === null || value === undefined) return `Bid-Team Action: confirm ${label}`;
+  const s = typeof value === "string" ? value.trim() : String(value);
+  return s.length > 0 ? s : `Bid-Team Action: confirm ${label}`;
+}
+
+// Helper: emits a comma-joined string from an array, or a fallback note
+function vaultList(values: string[] | null | undefined, label: string): string {
+  if (!values || values.length === 0) return `Bid-Team Action: confirm ${label}`;
+  return values.filter((v) => v && v.trim().length > 0).join(", ") || `Bid-Team Action: confirm ${label}`;
+}
+
+function buildCompanyAndExperienceFallback(input: AIBidWriterInput): string {
+  const v = input.companyVault ?? {};
+  const companyName = v.name?.trim() || input.clientName || "the firm";
+
+  // ── A.1 Company Background — built from real vault data ──────────────
+  // When founding year, headcount, license grade are present, emit a
+  // proper paragraph naming them. Falls through to "Bid-Team Action"
+  // ONLY for fields that are genuinely missing.
+  const a1Parts: string[] = [];
+  a1Parts.push(`**${companyName}**${v.legalName && v.legalName !== v.name ? ` (legal: ${v.legalName})` : ""}`);
+  if (v.foundingYear) a1Parts.push(`founded ${v.foundingYear}`);
+  if (v.headcount) a1Parts.push(`${v.headcount} professionals on staff`);
+  if (v.licenseGrade) a1Parts.push(`holds ${v.licenseGrade} licence grade`);
+  if (v.country) a1Parts.push(`registered in ${v.country}`);
+  const a1Sentence = a1Parts.length >= 2
+    ? `${a1Parts[0]} is a professional consultancy ${a1Parts.slice(1).join(", ")}.`
+    : `${companyName} is a professional consultancy operating in the sector. Bid-Team Action: confirm founding year, licence grade, headcount, and registration country before submission.`;
+
+  const a1ServicesSentence = v.serviceLines && v.serviceLines.length > 0
+    ? `Core service lines include: ${v.serviceLines.join(", ")}.`
+    : "";
+  const a1SectorsSentence = v.sectors && v.sectors.length > 0
+    ? `Sector experience spans: ${v.sectors.join(", ")}.`
+    : "";
+  const a1Profile = v.profileSummary?.trim()
+    ? v.profileSummary.trim()
+    : "";
+
+  // ── A.2 Corporate Information Table — real values per row ────────────
+  const a2Rows = [
+    `| Legal name | ${vaultField(v.legalName ?? v.name, "legal name")} |`,
+    `| Registration number | ${vaultField(v.registrationNumber, "registration number")} |`,
+    `| TIN | ${vaultField(v.tin, "TIN")} |`,
+    `| VAT | ${vaultField(v.vat, "VAT")} |`,
+    `| Registered address | ${vaultField(v.address, "registered address")} |`,
+    `| Country | ${vaultField(v.country, "country")} |`,
+    `| Phone | ${vaultField(v.phone, "phone")} |`,
+    `| Email | ${vaultField(v.email, "email")} |`,
+    `| Website | ${vaultField(v.website, "website")} |`,
+    `| General Manager | ${vaultField(v.gmName, "GM name")}${v.gmTitle ? `, ${v.gmTitle}` : ""}${v.gmLicense ? ` (License ${v.gmLicense})` : ""} |`,
+    `| Founding year | ${vaultField(v.foundingYear, "founding year")} |`,
+    `| Staff headcount | ${vaultField(v.headcount, "staff headcount")} |`,
+    `| Licence grade | ${vaultField(v.licenseGrade, "licence grade")} |`,
+  ];
+
+  // ── A.3 Core Service Lines — actual list ─────────────────────────────
+  const a3Body = v.serviceLines && v.serviceLines.length > 0
+    ? v.serviceLines.map((s) => `- ${s}`).join("\n")
+    : "Bid-Team Action: confirm the firm's core service lines relevant to this tender before submission.";
+
+  return [
+    "# Section A: Company Profile",
+    "## A.1 Company Background",
+    a1Sentence,
+    a1Profile,
+    a1ServicesSentence,
+    a1SectorsSentence,
+    "## A.2 Corporate Information Table",
+    "| Field | Detail |",
+    "|---|---|",
+    ...a2Rows,
+    "## A.3 Core Service Lines",
+    a3Body,
+    "## A.4 Proposed Project Team",
+    "The proposed team is built from the firm's reviewed expert library. See Section A.4 deterministic Proposed Team table built downstream from the reviewed expert pool.",
+    "## A.5 Team-to-Project Experience Mapping",
+    "Each proposed expert is mapped to a previous comparable project — see deterministic Team-to-Project Mapping table built downstream.",
+    "",
+    "# Section B: Relevant Experience",
+    "## B.1 Portfolio Overview",
+    "The firm's portfolio relevant to this assignment is summarised in the deterministic Portfolio at a Glance and Project Portfolio sections built downstream from the reviewed evidence library.",
+    "## B.2 Featured Project 1",
+    "See the deterministic Featured Project Card built downstream from the top-scored reviewed project.",
+    "## B.3 Featured Project 2",
+    "See the deterministic Featured Project Card built downstream from the second-highest-scored reviewed project.",
+    "## B.4 Additional Projects",
+    "See deterministic project portfolio table built downstream.",
+    "## B.5 Client References",
+    "See deterministic Client References table built downstream.",
+  ].filter((s) => s !== "").join("\n\n");
+}
+
+function buildAdditionalAndDeclarationFallback(input: AIBidWriterInput): string {
+  const v = input.companyVault ?? {};
+  const companyName = v.name?.trim() || "the firm";
+  const tenderTitle = input.tenderTitle?.trim() || "the captioned tender";
+
+  // ── D.3 Professional Certifications — real compliance lines ──────────
+  const d3Body = v.complianceLines && v.complianceLines.length > 0
+    ? v.complianceLines.map((c) => `- ${c}`).join("\n")
+    : "Bid-Team Action: confirm registration / certificate numbers and dates before submission. The Knowledge Vault should hold the firm's ISO certifications, professional body memberships, and donor compliance records.";
+
+  // ── D.4 Declaration of Eligibility — names a real GM if available ───
+  const d4Body = v.gmName
+    ? `**${companyName}** declares that it meets all eligibility requirements stated in this tender. Signed: ${v.gmName}${v.gmTitle ? `, ${v.gmTitle}` : ", General Manager"}${v.gmLicense ? ` (License ${v.gmLicense})` : ""}.`
+    : `**${companyName}** declares that it meets all eligibility requirements stated in this tender. Bid-Team Action: confirm signature block (GM name, title, licence) before submission.`;
+
+  // ── Declaration — formal close with named GM ─────────────────────────
+  const declarationBody = v.gmName
+    ? `We, ${v.legalName ?? companyName}, hereby declare that this Technical Proposal has been prepared specifically in response to ${tenderTitle}. All information provided is accurate and supported by documentary evidence available on request. Signed: ${v.gmName}${v.gmTitle ? `, ${v.gmTitle}` : ", General Manager"}${v.gmLicense ? ` (License ${v.gmLicense})` : ""}, on behalf of ${companyName}.`
+    : `We, ${companyName}, hereby declare that this Technical Proposal has been prepared specifically in response to ${tenderTitle}. All information provided is accurate and supported by documentary evidence available on request. Bid-Team Action: confirm signature block (GM name, title, licence) before submission.`;
+
+  return [
+    "# Section D: Additional Information",
+    "## D.1 Value to the Client",
+    "See deterministic Value Framework table built downstream.",
+    "## D.2 In-House Capabilities Beyond Minimum Scope",
+    "Bid-Team Action: confirm in-house capabilities (geotechnical lab, BIM, GIS, drone survey, in-house lab testing, etc.) before submission. The Knowledge Vault should hold these capability records.",
+    "## D.3 Professional Certifications and Affiliations",
+    d3Body,
+    "## D.4 Declaration of Eligibility",
+    d4Body,
+    "",
+    "# Appendix Register",
+    "- Appendix A: Company Registration Documents and Licences",
+    "- Appendix B: Audited Financial Statements",
+    "- Appendix C: Curricula Vitae of Proposed Experts",
+    "- Appendix D: Project References and Client Letters",
+    "- Appendix E: Project Photos, Drawings and Completion Evidence",
+    "",
+    "# Declaration",
+    declarationBody,
+  ].filter(Boolean).join("\n\n");
 }
