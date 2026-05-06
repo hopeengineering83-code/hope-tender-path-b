@@ -17,6 +17,7 @@ import { buildSubmissionPlan, findExtraGeneratedDocuments, findMissingGeneratedD
 import { polishBenchmarkOutput } from "../../../../../lib/engine/benchmark-output-polisher";
 import { cleanTenderTitle, cleanClientName, formatRequirementLine } from "../../../../../lib/engine/proposal-labels";
 import { logAction } from "../../../../../lib/audit";
+import { childLogger, reportError, time } from "../../../../../lib/observability";
 import { Document, HeadingLevel, Packer, Paragraph, TextRun } from "docx";
 
 function criticalGapIsHardBlock(gap: { title: string; description: string; mitigationPlan: string | null }) {
@@ -355,11 +356,24 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   if (draftExperts.length > 0) warnings.push(`${draftExperts.length} selected expert(s) are unreviewed drafts: ${draftExperts.map((m) => m.expert.fullName).join(", ")}. Review them in the Knowledge Review page for more accurate proposals.`);
   if (draftProjects.length > 0) warnings.push(`${draftProjects.length} selected project(s) are unreviewed drafts: ${draftProjects.map((m) => m.project.name).join(", ")}. Review them in the Knowledge Review page for more accurate proposals.`);
 
+  // PR #254 — structured logging. childLogger pre-binds tenderId+route
+  // to every line so the operator can filter Vercel/Datadog logs by
+  // tenderId across the entire generation lifecycle.
+  const log = childLogger({ tenderId: id, userId, route: "/api/tenders/[id]/generate" });
+  log.info("generation_started", { reviewedExpertCount, draftExpertCount: draftExperts.length, reviewedProjectCount, draftProjectCount: draftProjects.length });
+
   try {
-    const plannedRecordCount = explicitSubmissionScope ? await ensurePlannedGeneratedDocumentRecords(id, plannedTargetFiles) : 0;
+    const plannedRecordCount = explicitSubmissionScope
+      ? await time("generate.plan_records", () => ensurePlannedGeneratedDocumentRecords(id, plannedTargetFiles), { tenderId: id })
+      : 0;
     if (plannedRecordCount > 0) warnings.push(`${plannedRecordCount} missing tender-required file target(s) were added to the Generated outputs plan before generation.`);
-    await generateTenderDocuments(id, userId);
-    const supportDocumentCount = await fillPlannedSupportDocuments(id, plannedFileKeys);
+
+    // The hot path — wrap in time() so we get duration_ms on every
+    // generation. Visible in logs as a "metric" event with status=ok
+    // / status=error and elapsed milliseconds.
+    await time("generate.tender_documents", () => generateTenderDocuments(id, userId), { tenderId: id });
+
+    const supportDocumentCount = await time("generate.fill_support_docs", () => fillPlannedSupportDocuments(id, plannedFileKeys), { tenderId: id });
     if (supportDocumentCount > 0) warnings.push(explicitSubmissionScope
       ? `${supportDocumentCount} planned package document(s) were generated with distinct tender-specific content for export readiness.`
       : `${supportDocumentCount} remaining package document(s) were generated with distinct tender-specific content for export readiness.`);
@@ -381,7 +395,11 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     const updatedTender = await prisma.tender.findFirst({ where: { id, userId }, include: { generatedDocuments: { orderBy: { exactOrder: "asc" } } } });
     return NextResponse.json({ success: true, tender: updatedTender, warnings, plannedRecordCount, supportDocumentCount, letterheadAppliedCount, submissionPlan: explicitSubmissionScope ? { plannedTargetCount: plannedTargetFiles.length, missing: missingPlanFiles.map((file) => file.exactFileName), extras: extraGeneratedDocs.map((doc) => doc.exactFileName ?? doc.name ?? doc.documentType ?? doc.id ?? "document") } : null });
   } catch (error) {
-    console.error("[generate] error:", error);
+    // PR #254 — route errors through reportError so they reach Sentry
+    // (when SENTRY_DSN is set) AND appear as structured "unhandled_error"
+    // events in the Vercel logs. Replaces the prior plain console.error
+    // call which was just unstructured prose.
+    void reportError(error, { tenderId: id, userId, route: "/api/tenders/[id]/generate" });
     return NextResponse.json({ error: error instanceof Error ? error.message : "Document generation failed" }, { status: 500 });
   }
 }
