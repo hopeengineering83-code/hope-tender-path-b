@@ -97,9 +97,18 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
 
     if (isAIEnabled()) {
       try {
+        // Strip the legitimate "[PDF text extracted from N page(s) using XXX.]"
+        // header line that extract-text.ts prepends to multi-page PDFs and
+        // OCR'd PDFs. Without this strip, the AI's prompt gets a confusing
+        // metadata line where it expects tender content. Same fix as
+        // run-tender-engine.ts (PR #244 — root-cause unblock for the
+        // "Extracted tender text is only 0 chars" symptom).
+        const stripExtractionHeader = (txt: string): string =>
+          txt.replace(/^\[(?:PDF text|OCR text)[^\]]*\]\s*\n+/i, "").trim();
+
         const fileTexts = tenderRecord.files
           .map((f) => f.extractedText
-            ? `[FILE: ${f.originalFileName}]\n${f.extractedText.slice(0, MAX_FILE_CHARS_FOR_AI_ANALYSIS)}`
+            ? `[FILE: ${f.originalFileName}]\n${stripExtractionHeader(f.extractedText).slice(0, MAX_FILE_CHARS_FOR_AI_ANALYSIS)}`
             : `[FILE: ${f.originalFileName} ${f.classification ?? ""}]`)
           .join("\n\n");
 
@@ -137,6 +146,21 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
             });
           }
 
+          // Clear stale "Analysis source: regex fallback (REGEX_FALLBACK_NO_TEXT)"
+          // line from notes when this AI run succeeds. Previously the notes
+          // field stayed stale because runTenderEngine had stamped a
+          // fallback message on first upload (due to the bracket-prefix
+          // bug, fixed in PR #244 elsewhere). Even after AI Analyze
+          // succeeded, users saw the misleading "0 chars / regex fallback"
+          // message in the Notes panel. Surgical fix: replace ONLY the
+          // "Analysis source: ..." line, preserve every other line in
+          // notes (matching summary, expert/project counts, etc.).
+          const existingNotes = (tenderRecord.notes ?? "").split("\n");
+          const updatedNotesLines = existingNotes
+            .filter((line) => !/^Analysis source:/i.test(line.trim()))
+            .concat(["Analysis source: AI (re-run via AI Analyze button)."]);
+          const updatedNotes = updatedNotesLines.join("\n").trim() || null;
+
           await tx.tender.update({
             where: { id },
             data: {
@@ -144,6 +168,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
               evaluationMethodology: aiResult.evaluationMethodology || null,
               exactFileNaming: JSON.stringify(aiResult.exactFileNaming),
               exactFileOrder: JSON.stringify(aiResult.exactFileOrder),
+              notes: updatedNotes,
               status: "ANALYZED",
               stage: "ANALYSIS",
             },
