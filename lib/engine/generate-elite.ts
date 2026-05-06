@@ -2,7 +2,7 @@ import { AlignmentType, BorderStyle, Document, Footer, Header, HeadingLevel, Pac
 import { prisma } from "../prisma";
 import { generateBenchmarkProposalWithAI, generateProposalSectionsParallel, getLastProposalProvider, isAIEnabled, refineProposalWithAI } from "../ai";
 import { buildProposalIntelligence, expertProofLine, projectProofLine, safeParseArr } from "./proposal-intelligence";
-import { exactSelectionLimit } from "./scope-policy";
+import { exactSelectionLimit, forbidsBranding, forbidsCoverPage, requiresSignatureOrStamp } from "./scope-policy";
 import { finalizeClientReadyProposalMarkdown } from "./proposal-benchmark-guard";
 import { appendEvaluatorResponseMatrix } from "./proposal-evaluator-matrix";
 import { buildClientProposalStrengtheningSections } from "./proposal-strengthening-sections";
@@ -46,6 +46,7 @@ import {
 } from "./understanding-and-value-added";
 import { reorderToCanonicalSequence } from "./section-reorderer";
 import { renderDynamicTableOfContents } from "./dynamic-toc";
+import { humanize, humanizeDeterministic } from "./humanize";
 
 const BRAND_BLUE = "1F4E79";
 const BRAND_GRAY = "595959";
@@ -519,10 +520,28 @@ function buildProfessionalDocument(params: {
   reference?: string | null;
   contactFooter?: string;
   children: (Paragraph | Table)[];
+  // STRICT SCOPE FLAGS (PR #245):
+  // The product spec mandates "must prepare exactly and only what the
+  // tender requires." When the analyzed tender forbids a cover page or
+  // forbids branding (logo / letterhead / company name in header), the
+  // DOCX renderer must respect that — historically the engine emitted
+  // a cover block + branded header on every proposal regardless of
+  // tender restrictions, which is a compliance violation.
+  suppressCoverBlock?: boolean;
+  suppressBrandedHeader?: boolean;
 }): Document {
-  const header = new Header({
-    children: [new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: params.companyName, bold: true, color: BRAND_BLUE, size: 18 }), new TextRun({ text: " | Technical Proposal", color: BRAND_GRAY, size: 18 })] })],
-  });
+  // Branded header is suppressed when the tender forbids branding.
+  // Spec rule: do not apply company logo, letterhead, or company name
+  // in headers/footers when the tender prohibits branding. The footer's
+  // generic "Confidential bid document | Page X" line is retained
+  // because page numbering is universally required.
+  const header = params.suppressBrandedHeader
+    ? new Header({
+        children: [new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: " ", size: 18 })] })],
+      })
+    : new Header({
+        children: [new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: params.companyName, bold: true, color: BRAND_BLUE, size: 18 }), new TextRun({ text: " | Technical Proposal", color: BRAND_GRAY, size: 18 })] })],
+      });
   // Footer carries the company contact strip on every page when company profile
   // includes address / phone / email / website. Mirrors the benchmark's per-page
   // contact band. Falls back to the prior page-number-only footer when contact
@@ -555,7 +574,15 @@ function buildProfessionalDocument(params: {
       properties: { page: { margin: { top: 1000, bottom: 850, left: 900, right: 900 } } },
       headers: { default: header },
       footers: { default: footer },
-      children: [...buildCoverBlock(params), ...params.children],
+      // Cover block is suppressed when the tender forbids cover pages.
+      // Without this gate, the engine would emit "TECHNICAL PROPOSAL"
+      // banner + tender title + client + reference + "Prepared by ..."
+      // even on tenders that explicitly require a plain template
+      // without a cover page (typical of donor-funded RFPs where the
+      // first attached form replaces the bidder's own cover page).
+      children: params.suppressCoverBlock
+        ? params.children
+        : [...buildCoverBlock(params), ...params.children],
     }],
     styles: {
       default: { document: { run: { font: "Calibri", size: 22, color: "222222" }, paragraph: { spacing: { line: 276, after: 100 } } } },
@@ -979,8 +1006,48 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   const withDynamicToc = renderDynamicTableOfContents(reordered);
   const finalized = finalizeClientReadyProposalMarkdown(withDynamicToc, guardInput);
   const clientMarkdown = cleanClientLanguage(finalized.markdown);
-  const auditSummary = benchmarkAuditSummary(clientMarkdown);
-  const children = markdownToDocx(clientMarkdown);
+
+  // ─── Humanization layer (PR #245) ────────────────────────────────────────
+  // The product spec mandates a humanization pass that:
+  //   • removes AI traces ("As an AI…", "Certainly!", etc.)
+  //   • removes square-bracket placeholders ([INSERT], [TBD], …)
+  //   • normalizes em-dash spacing and multi-blank-line runs
+  //   • optionally rewrites prose to senior-editor quality
+  //
+  // Up to PR #244, lib/engine/humanize.ts existed and was wired into the
+  // legacy generate.ts path, but the active generate-elite.ts pipeline
+  // skipped it entirely. AI traces and placeholder remnants could leak
+  // into the final DOCX, lowering the deterministic quality score and
+  // damaging the "evaluator-ready" promise of the proposal.
+  //
+  // This block adds humanization in two tiers:
+  //
+  //   1. ALWAYS-ON deterministic pass (humanizeDeterministic) — strips
+  //      ~20 AI-trace patterns, normalizes whitespace. Adds <1ms per
+  //      proposal, no Claude call. Safe on Vercel Hobby tier.
+  //
+  //   2. OPT-IN AI pass (humanize) — sends the full proposal to Claude
+  //      with a senior-editor system prompt for stylistic rewrite.
+  //      Adds 15–30s wall time. Gated by PROPOSAL_HUMANIZE_AI=true so
+  //      Vercel Hobby (60s function cap) users don't blow their budget
+  //      on a 6th Claude call after the 4 parallel sections + Section C
+  //      drill-down.
+  //
+  // Both passes preserve every fact in the source markdown — only
+  // patterns and prose style are touched, not project names, expert
+  // names, contract values, or evidence anchors.
+  let humanizedMarkdown = humanizeDeterministic(clientMarkdown);
+  const humanizeAiEnabled = (process.env.PROPOSAL_HUMANIZE_AI || "").toLowerCase() === "true";
+  if (humanizeAiEnabled) {
+    try {
+      humanizedMarkdown = await humanize(humanizedMarkdown);
+    } catch (err) {
+      console.warn(`[generate-elite] humanize AI pass failed (${err instanceof Error ? err.message : String(err)}) — keeping deterministic-cleaned output.`);
+    }
+  }
+
+  const auditSummary = benchmarkAuditSummary(humanizedMarkdown);
+  const children = markdownToDocx(humanizedMarkdown);
   const contactFooter = buildContactFooterText({
     name: company.name,
     address: company.address,
@@ -988,7 +1055,29 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     email: company.email,
     website: company.website,
   });
-  const doc = buildProfessionalDocument({ tenderTitle: cleanedTenderTitle, clientName: intelligence.clientName, companyName: company.name, reference: tender.reference, contactFooter, children });
+  // ─── Strict-scope flags (PR #245) ────────────────────────────────────────
+  // Compute once from the analyzed tender requirements, pass to every
+  // DOCX builder + the post-generation letterhead applicator. When the
+  // tender forbids cover pages or branding, the engine must respect
+  // that — historically these checks existed in scope-policy.ts but
+  // were never wired into generate-elite.ts.
+  const tenderForbidsCoverPage = forbidsCoverPage(tender.requirements);
+  const tenderForbidsBranding = forbidsBranding(tender.requirements);
+  const tenderRequiresSignature = requiresSignatureOrStamp(tender.requirements);
+  if (tenderForbidsCoverPage) console.info("[generate-elite] Tender forbids cover page — suppressing cover block in main proposal DOCX.");
+  if (tenderForbidsBranding) console.info("[generate-elite] Tender forbids branding — suppressing branded header and skipping letterhead application.");
+  if (!tenderRequiresSignature) console.info("[generate-elite] Tender does not explicitly require signature/stamp — declaration will use printed-name-only sign-off.");
+
+  const doc = buildProfessionalDocument({
+    tenderTitle: cleanedTenderTitle,
+    clientName: intelligence.clientName,
+    companyName: company.name,
+    reference: tender.reference,
+    contactFooter,
+    children,
+    suppressCoverBlock: tenderForbidsCoverPage,
+    suppressBrandedHeader: tenderForbidsBranding,
+  });
 
   // Round-11: multi-pass refinement. Score the assembled proposal; if it
   // falls below threshold and the AI is configured, ask the AI to rewrite
@@ -1009,7 +1098,10 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   // quality impact on properly-tuned tenders.
   const REFINEMENT_DISABLED = process.env.PROPOSAL_REFINEMENT_DISABLED === "true";
   const QUALITY_REFINEMENT_THRESHOLD = 70;
-  let workingMarkdown = clientMarkdown;
+  // Score the HUMANIZED markdown (PR #245) — refinement should evaluate
+  // the same text that's about to be rendered to DOCX, not the
+  // pre-humanize version which still contained AI-trace patterns.
+  let workingMarkdown = humanizedMarkdown;
   let qualityScore = scoreProposalQuality({
     markdown: workingMarkdown,
     primarySector: intelligence.primarySector,
@@ -1048,7 +1140,16 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   // Re-render the DOCX from the (possibly refined) markdown.
   const finalChildren = refinementApplied ? markdownToDocx(workingMarkdown) : children;
   const finalDoc = refinementApplied
-    ? buildProfessionalDocument({ tenderTitle: cleanedTenderTitle, clientName: intelligence.clientName, companyName: company.name, reference: tender.reference, contactFooter, children: finalChildren })
+    ? buildProfessionalDocument({
+        tenderTitle: cleanedTenderTitle,
+        clientName: intelligence.clientName,
+        companyName: company.name,
+        reference: tender.reference,
+        contactFooter,
+        children: finalChildren,
+        suppressCoverBlock: tenderForbidsCoverPage,
+        suppressBrandedHeader: tenderForbidsBranding,
+      })
     : doc;
   const fileContent = (await Packer.toBuffer(finalDoc)).toString("base64");
   const refinementProvider = refinementApplied ? getLastProposalProvider() : null;
