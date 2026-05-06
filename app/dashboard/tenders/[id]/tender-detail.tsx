@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { StatusBadge } from "../../../../components/status-badge";
 import { NEXT_STATUS, formatDate, formatTenderStatus } from "../../../../lib/tender-workflow";
 import { cleanClientName, cleanTenderTitle } from "../../../../lib/engine/proposal-labels";
+import { BidStrategyPanel } from "../../../../components/bid-strategy-panel";
 
 function renderInline(text: string): React.ReactNode[] {
   const parts = text.split(/(\*\*[^*\n]+\*\*|\*[^*\n]+\*|_[^_\n]+_)/g);
@@ -888,6 +889,12 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
               </ul>
             )}
           </div>
+
+          {/* Bid Strategy panel (PR #249) — beyond-spec feature.
+              Surfaces win probability + strategic recommendation BEFORE
+              the bid team commits effort to generation. Saves 40+
+              person-hours per misjudged bid. */}
+          <BidStrategyPanel tenderId={tender.id} />
 
           <div className="rounded-2xl border bg-white p-6 shadow-sm">
             <h2 className="text-lg font-semibold text-slate-900">Compliance gaps</h2>
