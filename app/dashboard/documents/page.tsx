@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import { DocumentReviewPanel } from "../../../components/document-review-panel";
+import { SkeletonTable } from "../../../components/skeleton";
 
 type GeneratedDocument = {
   id: string;
@@ -95,8 +96,11 @@ export default function DocumentsPage() {
   if (loading) {
     return (
       <div className="space-y-6">
-        <h1 className="text-2xl font-bold text-slate-900">Generated Documents</h1>
-        <div className="py-12 text-center text-sm text-slate-400">Loading…</div>
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900">Generated Documents</h1>
+          <p className="mt-1 text-sm text-slate-500">Loading documents…</p>
+        </div>
+        <SkeletonTable rows={5} columns={6} />
       </div>
     );
   }
@@ -155,8 +159,10 @@ export default function DocumentsPage() {
                   <p className="text-sm text-slate-400">No document plan yet. Run the tender engine first.</p>
                 </div>
               ) : (
-                <div className="border-t">
-                  <table className="w-full text-sm">
+                /* PR #253 — table-scroll wrapper makes this dense table horizontally
+                   scrollable on mobile, and aria-label gives screen-reader context. */
+                <div className="border-t table-scroll">
+                  <table className="w-full text-sm" role="table" aria-label="Generated documents">
                     <thead>
                       <tr className="border-b bg-slate-50 text-left text-xs text-slate-500">
                         <th className="px-4 py-2.5 font-medium">#</th>
@@ -202,19 +208,24 @@ export default function DocumentsPage() {
                               <div className="flex items-center gap-1.5">
                                 {doc.generationStatus === "GENERATED" && (
                                   <button
+                                    type="button"
                                     onClick={() => downloadDoc(tender.id, doc.id)}
                                     className="rounded border px-2.5 py-1 text-xs text-blue-600 hover:bg-blue-50"
                                     title="Download document"
+                                    aria-label={`Download ${doc.exactFileName || doc.name}`}
                                   >
-                                    ↓
+                                    <span aria-hidden="true">↓</span>
                                   </button>
                                 )}
                                 <button
+                                  type="button"
                                   onClick={() => setExpandedDocId(expandedDocId === doc.id ? null : doc.id)}
                                   className={`rounded border px-2.5 py-1 text-xs ${expandedDocId === doc.id ? "border-slate-900 bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-50"}`}
                                   title="Review & comment"
+                                  aria-label={`${expandedDocId === doc.id ? "Close" : "Open"} review and comments for ${doc.exactFileName || doc.name}`}
+                                  aria-expanded={expandedDocId === doc.id}
                                 >
-                                  💬
+                                  <span aria-hidden="true">💬</span>
                                 </button>
                               </div>
                             </td>

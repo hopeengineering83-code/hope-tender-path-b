@@ -56,10 +56,14 @@ export default async function DashboardLayout({ children }: { children: ReactNod
   if (!userId) redirect("/login");
 
   await prismaReady;
-  const user = await prisma.user.findUnique({ where: { id: userId } });
+  // PR #253 — parallelize the user + company fetch. These two queries
+  // are independent; running them in parallel saves ~1 round-trip
+  // (typically 30-80ms) on every dashboard page load.
+  const [user, company] = await Promise.all([
+    prisma.user.findUnique({ where: { id: userId } }),
+    prisma.company.findUnique({ where: { userId } }),
+  ]);
   if (!user) redirect("/login");
-
-  const company = await prisma.company.findUnique({ where: { userId } });
 
   const groups = NAV_GROUPS_BASE
     .filter((g) => !g.roles || g.roles.includes(user.role))
@@ -67,6 +71,11 @@ export default async function DashboardLayout({ children }: { children: ReactNod
 
   return (
     <div className="min-h-screen bg-slate-50 lg:flex">
+      {/* Skip-link for keyboard users (PR #253). Hidden until focused;
+          jumping past the nav directly to main content is a WCAG 2.4.1
+          requirement. */}
+      <a href="#main-content" className="skip-link">Skip to main content</a>
+
       <div className="flex items-center justify-between border-b bg-white px-4 py-3 lg:hidden">
         <div>
           <p className="text-sm font-bold text-slate-900">Hope Tender</p>
@@ -74,7 +83,10 @@ export default async function DashboardLayout({ children }: { children: ReactNod
         <MobileSidebarToggle groups={groups} user={{ email: user.email, role: user.role, name: user.name }} company={company} />
       </div>
 
-      <aside className="hidden lg:flex lg:min-h-screen lg:w-72 lg:flex-col lg:border-r lg:bg-white">
+      <aside
+        className="hidden lg:flex lg:min-h-screen lg:w-72 lg:flex-col lg:border-r lg:bg-white"
+        aria-label="Primary navigation"
+      >
         <div className="border-b px-5 py-5">
           <h1 className="text-base font-bold text-slate-900 leading-tight">Hope Tender</h1>
           <p className="mt-0.5 text-xs text-slate-400 leading-snug">
@@ -98,7 +110,7 @@ export default async function DashboardLayout({ children }: { children: ReactNod
         </div>
       </aside>
 
-      <main className="flex-1 overflow-auto">
+      <main id="main-content" className="flex-1 overflow-auto" tabIndex={-1}>
         <div className="mx-auto max-w-7xl p-4 lg:p-8">{children}</div>
       </main>
     </div>
