@@ -49,6 +49,7 @@ import { renderDynamicTableOfContents } from "./dynamic-toc";
 import { humanize, humanizeDeterministic } from "./humanize";
 import { injectEvidenceMarkers } from "./evidence-marker-injector";
 import { amplifySectionCDepth } from "./section-c-depth-amplifier";
+import { buildRubricPromptDirective, ensureRubricHeadings } from "./rubric-driven-sections";
 
 const BRAND_BLUE = "1F4E79";
 const BRAND_GRAY = "595959";
@@ -772,6 +773,11 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
           clean(tender.evaluationMethodology) || intelligence.evaluationCriteria.join("; "),
           ...(evaluationWeightLines.length > 0 ? ["", "Numeric evaluation weights detected in tender (echo verbatim in the EVALUATION CRITERIA RESPONSE MIRROR table):", ...evaluationWeightLines] : []),
           tenderLanguageEchoBlock,
+          // PR #258 — rubric-driven section directive injected here
+          // so Claude organises its output around the tender's exact
+          // rubric (e.g., SV 01, EXP 01, PER 01). Empty when the
+          // tender has no extracted weights — prompt unchanged.
+          buildRubricPromptDirective(intelligence.evaluationWeights),
         ].filter(Boolean).join("\n"),
         submissionNotes: [BENCHMARK_CONTEXT_LINES.join("\n"), submissionNotes].filter(Boolean).join("\n"),
         requirements: [...BENCHMARK_CONTEXT_LINES, ...requirementLines].join("\n"),
@@ -1155,6 +1161,23 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     console.info(`[generate-elite] Section C depth amplifier: added ${addedCount} sub-section(s), deepened ${deepenedCount} thin sub-section(s).`);
   }
   humanizedMarkdown = sectionCAmp.markdown;
+
+  // ─── Rubric-driven section enforcement (PR #258) ─────────────────────────
+  // When the tender has explicit evaluation criteria with weights
+  // (e.g., "Social Value 25%, Experience 30%, Personnel 25%,
+  // Methodology 20%"), ensure each criterion has a dedicated
+  // sub-section heading the evaluator can score against directly.
+  // The AI has been prompted to emit these (via the prompt directive
+  // injected into evaluationMethodology); this post-pass injects
+  // stubs for any criterion the AI missed, with a Bid-Team Action
+  // note pointing the user at the gap.
+  //
+  // Does nothing when intelligence.evaluationWeights is empty.
+  const rubricResult = ensureRubricHeadings(humanizedMarkdown, intelligence.evaluationWeights);
+  if (rubricResult.missingCriteria.length > 0) {
+    console.info(`[generate-elite] Rubric post-pass: injected ${rubricResult.missingCriteria.length} missing rubric sub-section stub(s) for criteria: ${rubricResult.missingCriteria.join("; ")}`);
+  }
+  humanizedMarkdown = rubricResult.markdown;
 
   const auditSummary = benchmarkAuditSummary(humanizedMarkdown);
   const children = markdownToDocx(humanizedMarkdown);

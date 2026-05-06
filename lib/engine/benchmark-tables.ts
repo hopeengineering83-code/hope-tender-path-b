@@ -24,6 +24,7 @@ export type ExpertRecord = {
 };
 
 export type ProjectRecord = {
+  id?: string | null;
   name: string;
   clientName?: string | null;
   country?: string | null;
@@ -34,6 +35,25 @@ export type ProjectRecord = {
   currency?: string | null;
   startDate?: Date | string | null;
   endDate?: Date | string | null;
+  // PR #258 — optional ProjectEvidence rows used by buildProjectPortfolioCards
+  // to enrich each card with testimony reference, date, author, and contact.
+  // These come from ProjectEvidence (related to Project via projectId).
+  // When evidences is omitted, the card falls back to the basic format.
+  evidences?: ProjectEvidenceRecord[];
+  // Optional funding source extracted from project metadata (e.g.,
+  // "World Bank ESF", "British Council") for sector cards where it
+  // matters to evaluators.
+  funding?: string | null;
+};
+
+export type ProjectEvidenceRecord = {
+  id?: string | null;
+  title?: string | null;
+  evidenceType?: string | null;
+  description?: string | null;
+  fileName?: string | null;
+  extractedText?: string | null;
+  metadata?: string | null; // JSON-encoded
 };
 
 function safeArr(value: unknown): string[] {
@@ -200,7 +220,25 @@ export function buildTeamToProjectMappingTable(experts: ExpertRecord[], projects
 
 /**
  * B.x Project Portfolio Cards — one rich card per top project, formatted as a 2-column metadata table.
- * Mirrors the benchmark "Client | Location & Scale | Duration | Construction Cost | Testimony Reference | Services Provided | Relevance to This Assignment" structure.
+ *
+ * PR #258 — extended card structure to mirror the benchmark Claude-AI
+ * proposal exactly. Each card now includes:
+ *   • Client
+ *   • Location & Scale
+ *   • Duration
+ *   • Contract Value
+ *   • Testimony Reference (from ProjectEvidence "TESTIMONY_LETTER" rows)
+ *   • Testimony Date (parsed from evidence description / metadata)
+ *   • Testimony Author (parsed from evidence description / metadata)
+ *   • Client Contact and Email (parsed from evidence description / metadata)
+ *   • Funding Source (when project.funding is present)
+ *   • Services Provided
+ *   • Relevance to This Assignment
+ *
+ * The pre-PR format had only 6 fields and skipped testimony/contact —
+ * which is exactly the gap the file diff exposed (Claude's cards had
+ * full reference numbers + dates + author names; the app's portfolio
+ * file dumped them as a single garbled line).
  */
 export function buildProjectPortfolioCards(projects: ProjectRecord[], tenderTitle: string, primarySector: string): string {
   if (projects.length === 0) {
@@ -220,20 +258,108 @@ export function buildProjectPortfolioCards(projects: ProjectRecord[], tenderTitl
   for (const project of projects.slice(0, 9)) {
     const title = `${project.name}${project.sector ? ` — ${project.sector}` : ""}`;
     cards.push(`### ${title}`);
-    cards.push(
-      `| Field | Detail |`,
-      `|---|---|`,
-      `| Client | ${escCell(project.clientName || "Client on file")} |`,
-      `| Location & Scale | ${escCell([project.country, ...safeArr(project.serviceAreas).slice(0, 3)].filter(Boolean).join(" — ") || "Scale on file")} |`,
-      `| Duration | ${escCell(fmtDateRange(project.startDate, project.endDate))} |`,
-      `| Contract Value | ${escCell(hasContractValue(project.contractValue) ? fmtMoney(project.contractValue, project.currency) : "Value detail in Appendix B (project reference)")} |`,
-      `| Services Provided | ${escCell(safeArr(project.serviceAreas).join(", ") || project.summary || "Service detail on file")} |`,
-      `| Relevance to This Assignment | ${escCell(buildRelevanceStatement(project, tenderTitle, primarySector))} |`,
-    );
-    cards.push("");
+
+    // Extract testimony / reference fields from ProjectEvidence rows
+    // when present. Each card-row is conditional — only emitted when
+    // we actually have a value, so a project with no evidence still
+    // gets a clean card without empty rows.
+    const testimony = extractTestimonyFields(project.evidences ?? []);
+    const rows: string[] = [];
+    rows.push(`| Client | ${escCell(project.clientName || "Client on file")} |`);
+    rows.push(`| Location & Scale | ${escCell([project.country, ...safeArr(project.serviceAreas).slice(0, 3)].filter(Boolean).join(" — ") || "Scale on file")} |`);
+    rows.push(`| Duration | ${escCell(fmtDateRange(project.startDate, project.endDate))} |`);
+    rows.push(`| Contract Value | ${escCell(hasContractValue(project.contractValue) ? fmtMoney(project.contractValue, project.currency) : "Value detail in Appendix B (project reference)")} |`);
+
+    if (testimony.referenceNumber) rows.push(`| Testimony Reference | ${escCell(testimony.referenceNumber)} |`);
+    if (testimony.date) rows.push(`| Testimony Date | ${escCell(testimony.date)} |`);
+    if (testimony.author) rows.push(`| Testimony Author | ${escCell(testimony.author)} |`);
+    if (testimony.contact) rows.push(`| Client Contact and Email | ${escCell(testimony.contact)} |`);
+    if (project.funding) rows.push(`| Funding Source | ${escCell(project.funding)} |`);
+
+    rows.push(`| Services Provided | ${escCell(safeArr(project.serviceAreas).join(", ") || project.summary || "Service detail on file")} |`);
+    rows.push(`| Relevance to This Assignment | ${escCell(buildRelevanceStatement(project, tenderTitle, primarySector))} |`);
+
+    cards.push(`| Field | Detail |`, `|---|---|`, ...rows, "");
   }
 
   return cards.join("\n");
+}
+
+/**
+ * Extract testimony-card fields from a Project's ProjectEvidence rows.
+ *
+ * Looks for evidence with type matching TESTIMONY_LETTER /
+ * REFERENCE_LETTER / COMPLETION_CERTIFICATE / etc. and parses common
+ * patterns from the description field:
+ *
+ *   "Ref ABC/123 dated 19/01/2018 E.C. — Author Name, Title"
+ *   "Reference No: XYZ/456, Date: 12 March 2024, Signed: Name (Title)"
+ *   "Authored by NAME (TITLE) on DATE"
+ *
+ * Also pulls structured fields from the evidence's metadata JSON when
+ * present (preferred over description parsing because it's more
+ * reliable).
+ */
+function extractTestimonyFields(evidences: ProjectEvidenceRecord[]): {
+  referenceNumber: string | null;
+  date: string | null;
+  author: string | null;
+  contact: string | null;
+} {
+  let referenceNumber: string | null = null;
+  let date: string | null = null;
+  let author: string | null = null;
+  let contact: string | null = null;
+
+  // Filter to evidence rows that are likely testimonies / reference
+  // letters. evidenceType is free-form; we accept several variants.
+  const testimonialEvidence = evidences.filter((e) => {
+    const t = (e.evidenceType ?? "").toLowerCase();
+    return /testimony|testimon|reference|letter|certificate|completion/.test(t);
+  });
+
+  for (const ev of testimonialEvidence) {
+    // First check structured metadata
+    if (ev.metadata) {
+      try {
+        const meta = JSON.parse(ev.metadata) as Record<string, string | undefined>;
+        if (!referenceNumber && meta.referenceNumber) referenceNumber = String(meta.referenceNumber);
+        if (!date && meta.date) date = String(meta.date);
+        if (!author && meta.author) author = String(meta.author);
+        if (!contact && meta.contact) contact = String(meta.contact);
+      } catch { /* metadata isn't valid JSON; fall through to description parsing */ }
+    }
+
+    // Then parse description prose. Description format varies but
+    // common patterns include:
+    //   "Ref XYZ/123, dated 19/01/2018 E.C. — Author Name, Title"
+    //   "Reference No: XYZ/123 | Date: 12 March 2024 | Signed: Name"
+    const desc = ev.description ?? "";
+    if (!referenceNumber) {
+      const refMatch = desc.match(/(?:ref(?:erence)?[.\s:]*(?:no\.?\s*)?[:\-]?\s*)([A-Za-z0-9ሀ-፿\/_\-.]{3,80})/i);
+      if (refMatch) referenceNumber = refMatch[1].trim();
+    }
+    if (!date) {
+      // Match common date formats including Ethiopian E.C.
+      const dateMatch = desc.match(/(?:dated?|date[.\s:]*[:\-]?\s*)?(\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4}(?:\s*E\.?C\.?)?)/i)
+        ?? desc.match(/((?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+\d{4})/i);
+      if (dateMatch) date = dateMatch[1].trim();
+    }
+    if (!author) {
+      const authorMatch = desc.match(/(?:author(?:ed by)?|signed by|signed:|by:)\s*([^,;|\n]{3,80}?)(?:[,;|]|$)/i);
+      if (authorMatch) author = authorMatch[1].trim();
+    }
+    if (!contact) {
+      // Look for an email address; pair with any nearby name
+      const emailMatch = desc.match(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/);
+      if (emailMatch) contact = emailMatch[0];
+    }
+
+    // Stop early once we have all four fields filled
+    if (referenceNumber && date && author && contact) break;
+  }
+
+  return { referenceNumber, date, author, contact };
 }
 
 function buildRelevanceStatement(project: ProjectRecord, tenderTitle: string, primarySector: string): string {
