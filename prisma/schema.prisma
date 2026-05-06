@@ -18,6 +18,9 @@ model User {
   sessions     Session[]
   tenders      Tender[]
   auditLogs    AuditLog[]
+  // PR #247 — DocumentReview / DocumentComment back-relations
+  documentReviews  DocumentReview[]
+  documentComments DocumentComment[]
   createdAt    DateTime    @default(now())
   updatedAt    DateTime    @updatedAt
 }
@@ -429,8 +432,71 @@ model GeneratedDocument {
   draftExpertCount    Int?   @default(0)
   reviewedProjectCount Int?  @default(0)
   draftProjectCount   Int?   @default(0)
+  // Multi-reviewer audit trail (PR #247): per-document review actions
+  // and threaded comments. The aggregate reviewStatus / reviewedBy /
+  // reviewedAt fields above are kept for backwards compat (set to the
+  // most-recent action), but the full history is in DocumentReview.
+  reviews          DocumentReview[]
+  comments         DocumentComment[]
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
+}
+
+// Per-document review action audit trail (PR #247).
+// Closes the spec's Module #16 gap: "approve, reject, mark ready for
+// export, maintain approval history, internal comments". Up to PR #246
+// the GeneratedDocument carried only a single reviewStatus +
+// reviewedBy + reviewedAt — destructive update on each action with no
+// history. This model preserves every approval action ever taken on
+// the document for compliance / audit purposes.
+//
+// One row per action. Multiple reviewers can each approve/reject the
+// same document; the aggregate reviewStatus on GeneratedDocument is
+// updated to the most recent decision but every prior action remains.
+model DocumentReview {
+  id           String            @id @default(uuid())
+  documentId   String
+  document     GeneratedDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  reviewerId   String
+  reviewer     User              @relation(fields: [reviewerId], references: [id], onDelete: Cascade)
+  // APPROVED | REJECTED | CHANGES_REQUESTED | READY_FOR_EXPORT
+  action       String
+  notes        String?
+  // Snapshot of the document's reviewStatus AT the time of this action,
+  // so the audit trail shows the full state machine progression.
+  priorStatus  String
+  newStatus    String
+  createdAt    DateTime          @default(now())
+
+  @@index([documentId, createdAt])
+  @@index([reviewerId])
+}
+
+// Threaded comment on a generated document (PR #247).
+// Supports flat threads via parentId. UI renders top-level comments
+// as cards with reply chains nested underneath. parentId NULL = root
+// comment.
+model DocumentComment {
+  id           String            @id @default(uuid())
+  documentId   String
+  document     GeneratedDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  authorId     String
+  author       User              @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  parentId     String?
+  parent       DocumentComment?  @relation("CommentReplies", fields: [parentId], references: [id], onDelete: Cascade)
+  replies      DocumentComment[] @relation("CommentReplies")
+  body         String
+  // INTERNAL = visible to reviewers only; CLIENT_FACING never used in
+  // current scope but reserved for future "share with client for
+  // review" workflows.
+  visibility   String            @default("INTERNAL")
+  resolvedAt   DateTime?
+  resolvedBy   String?
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+
+  @@index([documentId, createdAt])
+  @@index([authorId])
 }
 
 model ExportPackage {

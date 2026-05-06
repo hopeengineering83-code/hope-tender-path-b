@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
+import { DocumentReviewPanel } from "../../../components/document-review-panel";
 
 type GeneratedDocument = {
   id: string;
@@ -22,6 +23,8 @@ type Tender = {
   status: string;
   generatedDocuments: GeneratedDocument[];
 };
+
+type CurrentUser = { id: string; email: string; role: string };
 
 const GEN_COLORS: Record<string, string> = {
   GENERATED: "bg-green-100 text-green-700",
@@ -45,18 +48,41 @@ const REV_COLORS: Record<string, string> = {
 export default function DocumentsPage() {
   const [tenders, setTenders] = useState<Tender[]>([]);
   const [loading, setLoading] = useState(true);
+  const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
+  // Per-document review panel expansion state. Only one panel open at a
+  // time keeps the list scannable; clicking the same row again collapses.
+  const [expandedDocId, setExpandedDocId] = useState<string | null>(null);
 
   useEffect(() => {
     async function load() {
       try {
-        const res = await fetch("/api/documents");
-        if (res.ok) setTenders(await res.json());
+        const [tendersRes, meRes] = await Promise.all([
+          fetch("/api/documents"),
+          fetch("/api/auth/me"),
+        ]);
+        if (tendersRes.ok) setTenders(await tendersRes.json());
+        if (meRes.ok) {
+          const me = await meRes.json();
+          if (me?.user) setCurrentUser({ id: me.user.id, email: me.user.email, role: me.user.role });
+        }
       } finally {
         setLoading(false);
       }
     }
-    load();
+    void load();
   }, []);
+
+  // Reload tender list when a review action mutates document state.
+  // The review panel calls onActionTaken after a successful action;
+  // we re-fetch so the table's reviewStatus column updates.
+  async function reloadDocs() {
+    try {
+      const res = await fetch("/api/documents");
+      if (res.ok) setTenders(await res.json());
+    } catch {
+      // Non-fatal; the panel itself shows the latest state.
+    }
+  }
 
   function downloadDoc(tenderId: string, docId: string) {
     window.open(`/api/tenders/${tenderId}/download?docId=${docId}`, "_blank");
@@ -144,44 +170,70 @@ export default function DocumentsPage() {
                     </thead>
                     <tbody>
                       {tender.generatedDocuments.map((doc) => (
-                        <tr key={doc.id} className="border-b last:border-0 hover:bg-slate-50">
-                          <td className="px-4 py-3 text-slate-400">{doc.exactOrder ?? "—"}</td>
-                          <td className="px-4 py-3">
-                            <p className="font-medium text-slate-900">{doc.exactFileName || doc.name}</p>
-                            {doc.contentSummary && (
-                              <p className="mt-0.5 text-xs text-slate-500 line-clamp-1">{doc.contentSummary}</p>
-                            )}
-                            {doc.reviewNotes && (
-                              <p className="mt-0.5 text-xs text-slate-400 italic">&ldquo;{doc.reviewNotes}&rdquo;</p>
-                            )}
-                          </td>
-                          <td className="px-4 py-3 text-xs text-slate-500">{doc.documentType}</td>
-                          <td className="px-4 py-3">
-                            <span className={`rounded px-2 py-0.5 text-xs font-medium ${GEN_COLORS[doc.generationStatus] ?? "bg-slate-100 text-slate-500"}`}>
-                              {doc.generationStatus}
-                            </span>
-                          </td>
-                          <td className="px-4 py-3">
-                            <span className={`rounded px-2 py-0.5 text-xs font-medium ${VAL_COLORS[doc.validationStatus] ?? "bg-slate-100 text-slate-500"}`}>
-                              {doc.validationStatus}
-                            </span>
-                          </td>
-                          <td className="px-4 py-3">
-                            <span className={`rounded px-2 py-0.5 text-xs font-medium ${REV_COLORS[doc.reviewStatus] ?? "bg-slate-100 text-slate-500"}`}>
-                              {doc.reviewStatus}
-                            </span>
-                          </td>
-                          <td className="px-4 py-3">
-                            {doc.generationStatus === "GENERATED" && (
-                              <button
-                                onClick={() => downloadDoc(tender.id, doc.id)}
-                                className="rounded border px-2.5 py-1 text-xs text-blue-600 hover:bg-blue-50"
-                              >
-                                ↓
-                              </button>
-                            )}
-                          </td>
-                        </tr>
+                        <>
+                          <tr key={doc.id} className="border-b last:border-0 hover:bg-slate-50">
+                            <td className="px-4 py-3 text-slate-400">{doc.exactOrder ?? "—"}</td>
+                            <td className="px-4 py-3">
+                              <p className="font-medium text-slate-900">{doc.exactFileName || doc.name}</p>
+                              {doc.contentSummary && (
+                                <p className="mt-0.5 text-xs text-slate-500 line-clamp-1">{doc.contentSummary}</p>
+                              )}
+                              {doc.reviewNotes && (
+                                <p className="mt-0.5 text-xs text-slate-400 italic">&ldquo;{doc.reviewNotes}&rdquo;</p>
+                              )}
+                            </td>
+                            <td className="px-4 py-3 text-xs text-slate-500">{doc.documentType}</td>
+                            <td className="px-4 py-3">
+                              <span className={`rounded px-2 py-0.5 text-xs font-medium ${GEN_COLORS[doc.generationStatus] ?? "bg-slate-100 text-slate-500"}`}>
+                                {doc.generationStatus}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3">
+                              <span className={`rounded px-2 py-0.5 text-xs font-medium ${VAL_COLORS[doc.validationStatus] ?? "bg-slate-100 text-slate-500"}`}>
+                                {doc.validationStatus}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3">
+                              <span className={`rounded px-2 py-0.5 text-xs font-medium ${REV_COLORS[doc.reviewStatus] ?? "bg-slate-100 text-slate-500"}`}>
+                                {doc.reviewStatus}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3">
+                              <div className="flex items-center gap-1.5">
+                                {doc.generationStatus === "GENERATED" && (
+                                  <button
+                                    onClick={() => downloadDoc(tender.id, doc.id)}
+                                    className="rounded border px-2.5 py-1 text-xs text-blue-600 hover:bg-blue-50"
+                                    title="Download document"
+                                  >
+                                    ↓
+                                  </button>
+                                )}
+                                <button
+                                  onClick={() => setExpandedDocId(expandedDocId === doc.id ? null : doc.id)}
+                                  className={`rounded border px-2.5 py-1 text-xs ${expandedDocId === doc.id ? "border-slate-900 bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-50"}`}
+                                  title="Review & comment"
+                                >
+                                  💬
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                          {expandedDocId === doc.id && (
+                            <tr key={`${doc.id}-panel`} className="border-b last:border-0 bg-slate-50/60">
+                              <td colSpan={7} className="px-4 py-4">
+                                <DocumentReviewPanel
+                                  tenderId={tender.id}
+                                  docId={doc.id}
+                                  docName={doc.exactFileName || doc.name}
+                                  currentReviewStatus={doc.reviewStatus}
+                                  currentUserRole={currentUser?.role ?? "VIEWER"}
+                                  onActionTaken={() => void reloadDocs()}
+                                />
+                              </td>
+                            </tr>
+                          )}
+                        </>
                       ))}
                     </tbody>
                   </table>

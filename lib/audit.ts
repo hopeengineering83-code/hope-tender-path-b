@@ -12,6 +12,9 @@ export type AuditAction =
   | "OVERRIDE" | "GAP_RESOLVED"
   | "CREATE" | "UPDATE" | "DELETE"
   | "DOCUMENT_REVIEW"
+  // PR #247 — DocumentComment audit actions for the per-document
+  // approval / threaded-comment workflow.
+  | "DOCUMENT_COMMENT" | "DOCUMENT_COMMENT_UPDATE"
   | "TENDER_DUPLICATE";
 
 export async function logAction(opts: {
