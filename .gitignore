@@ -2,6 +2,12 @@ node_modules
 .next
 .vercel
 .env
+.env.production
 *.log
 .claude/
 *.tsbuildinfo
+
+# PR #256 — local-only benchmark samples used for gap analysis.
+# Contains sensitive tender PDFs and generated proposals; never
+# commit to git.
+benchmark-samples/
