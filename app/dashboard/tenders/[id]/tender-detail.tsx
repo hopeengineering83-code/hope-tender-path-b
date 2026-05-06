@@ -6,6 +6,7 @@ import { StatusBadge } from "../../../../components/status-badge";
 import { NEXT_STATUS, formatDate, formatTenderStatus } from "../../../../lib/tender-workflow";
 import { cleanClientName, cleanTenderTitle } from "../../../../lib/engine/proposal-labels";
 import { BidStrategyPanel } from "../../../../components/bid-strategy-panel";
+import { EvaluatorSimulatorPanel } from "../../../../components/evaluator-simulator-panel";
 
 function renderInline(text: string): React.ReactNode[] {
   const parts = text.split(/(\*\*[^*\n]+\*\*|\*[^*\n]+\*|_[^_\n]+_)/g);
@@ -895,6 +896,13 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
               the bid team commits effort to generation. Saves 40+
               person-hours per misjudged bid. */}
           <BidStrategyPanel tenderId={tender.id} />
+
+          {/* Evaluator Persona Simulator panel (PR #251) — pre-submission
+              red team. 4 parallel Claude calls with specialist personas
+              (Technical / Compliance / End-User / Commercial) score the
+              proposal as a real evaluation panel would. Catches issues
+              before the actual evaluator sees them. User-triggered. */}
+          <EvaluatorSimulatorPanel tenderId={tender.id} />
 
           <div className="rounded-2xl border bg-white p-6 shadow-sm">
             <h2 className="text-lg font-semibold text-slate-900">Compliance gaps</h2>
