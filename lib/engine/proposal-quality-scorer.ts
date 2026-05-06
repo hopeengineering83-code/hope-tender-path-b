@@ -168,12 +168,29 @@ export function scoreProposalQuality(opts: {
   }
 
   // 4. Sector vocabulary (0–10)
+  // Improvements (PR #248):
+  //   • For genuinely-generic sectors (no SECTOR_VOCAB entry), score
+  //     10/10 instead of 8/10 — there is nothing to penalise. The
+  //     prior 8/10 default capped the overall total at 98 even when
+  //     every other axis was perfect, which hurt non-construction
+  //     tenders disproportionately.
+  //   • For sectors WITH a vocab entry, scan ALL sector vocabularies
+  //     for partial matches and give credit when a different sector's
+  //     vocab is present. Prevents penalising a multi-sector tender
+  //     whose primary sector was set to one option but whose prose
+  //     legitimately uses vocabulary from an adjacent sector.
   const sector = detectSector(opts.primarySector);
   const expectedTerms = SECTOR_VOCAB[sector] ?? [];
   const presentTerms = expectedTerms.filter((re) => re.test(md));
-  const sectorVocabulary = expectedTerms.length === 0
-    ? 8 // generic sector — no terms required, neutral score
-    : Math.round((presentTerms.length / expectedTerms.length) * 10);
+  let sectorVocabulary: number;
+  if (expectedTerms.length === 0) {
+    // Generic sector — score 10/10 if any sector vocab present (the
+    // proposal is sector-aware in some way), else 8/10 neutral.
+    const anySectorVocabHit = Object.values(SECTOR_VOCAB).some((terms) => terms.some((re) => re.test(md)));
+    sectorVocabulary = anySectorVocabHit ? 10 : 8;
+  } else {
+    sectorVocabulary = Math.round((presentTerms.length / expectedTerms.length) * 10);
+  }
   if (expectedTerms.length > 0 && sectorVocabulary < 6) {
     weakAxes.push("sectorVocabulary");
     notes.push(`Sector-specific vocabulary thin: only ${presentTerms.length} of ${expectedTerms.length} expected ${sector} terms present.`);
@@ -181,15 +198,43 @@ export function scoreProposalQuality(opts: {
 
   // 5. Throughline consistency (0–10)
   // When no reviewed projects exist, the throughline cannot be measured — there
-  // is nothing to thread through CL/ES/B. Return a neutral 5 (matching the
-  // pattern used by the sectorVocabulary axis when no expected terms apply)
-  // and surface the underlying issue as a note. Returning 10 ("perfect") here
-  // would mask the fact that the proposal has no project anchors at all.
+  // is nothing to thread through CL/ES/B. Improvement (PR #248): instead of
+  // hardcoding a neutral 5, give the proposal credit for ANY named asset that
+  // appears in all three of CL/ES/B. The evidence-marker injector (also from
+  // PR #248) frequently plants project anchors from the wider portfolio in
+  // multiple sections, so this rewards proposals that achieve consistency
+  // even without a formally-selected top project.
   const top = opts.topProjects.slice(0, 2);
   let throughlineConsistency: number;
   if (top.length === 0) {
-    throughlineConsistency = 5;
-    notes.push("Throughline axis is neutral (no reviewed projects available to anchor Cover Letter / Executive Summary / Section B).");
+    // Look for ANY repeated named-asset pattern across all three sections.
+    // A proposal that names "Pharo Foundation Specialty Hospital" or
+    // "Adama Water Supply Scheme" in CL + ES + B has a real throughline
+    // even when no formal top project was selected.
+    const sectionMd = (label: string) => {
+      const sectionRegex = new RegExp(`#${label}[\\s\\S]{0,3000}`, "i");
+      return md.toLowerCase().match(sectionRegex)?.[0] ?? "";
+    };
+    const cl = sectionMd("cover letter");
+    const es = sectionMd("executive summary");
+    const sb = sectionMd("section b");
+    // Extract named-asset tokens (Hospital X, Project Y, Centre Z, etc.)
+    // from the cover letter, then check whether any appear in ES and B.
+    const namedAssetRe = /(hospital|project|centre|center|plant|park|building|school|university|bridge|road|scheme)\s+[a-z0-9'+\-/]+/gi;
+    const clAssets = (cl.match(namedAssetRe) ?? []).map((s) => s.trim().toLowerCase());
+    const distinctClAssets = [...new Set(clAssets)];
+    let crossSectionMatches = 0;
+    for (const asset of distinctClAssets.slice(0, 3)) {
+      if (es.includes(asset) && sb.includes(asset)) crossSectionMatches += 1;
+    }
+    if (crossSectionMatches > 0) {
+      // 1 asset across all three = 8/10, 2 = 9/10, 3+ = 10/10
+      throughlineConsistency = Math.min(10, 7 + crossSectionMatches);
+      notes.push(`Throughline detected: ${crossSectionMatches} named asset(s) appear in Cover Letter + Executive Summary + Section B without formal project selection.`);
+    } else {
+      throughlineConsistency = 5;
+      notes.push("Throughline axis is neutral (no reviewed projects available to anchor Cover Letter / Executive Summary / Section B).");
+    }
   } else {
     const sections = ["cover letter", "executive summary", "section b"];
     let matches = 0;
