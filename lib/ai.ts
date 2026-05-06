@@ -161,7 +161,7 @@ Operating principles, in priority order:
 
 You are not the original author. You are a senior pair of eyes adding the discipline that makes the proposal evaluator-ready.`;
 
-async function generateWithClaude(prompt: string, systemPrompt: string = DEFAULT_PROPOSAL_SYSTEM_PROMPT): Promise<string | null> {
+async function generateWithClaude(prompt: string, systemPrompt: string = DEFAULT_PROPOSAL_SYSTEM_PROMPT, maxTokensOverride?: number): Promise<string | null> {
   if (!anthropicApiKey) return null;
 
   let Anthropic: { new (config: { apiKey: string }): unknown };
@@ -177,6 +177,15 @@ async function generateWithClaude(prompt: string, systemPrompt: string = DEFAULT
     messages: { create: (input: unknown) => Promise<{ content: Array<{ type: string; text?: string }> }> };
   })({ apiKey: anthropicApiKey });
 
+  // Per-call max_tokens. When the section-parallel generator passes a tight
+  // per-section budget (e.g., 1800 for cover+exec, 2800 for technical
+  // approach), Claude returns faster — generation time scales roughly with
+  // output token count. The single-call path leaves the override unset and
+  // continues to use CLAUDE_MAX_OUTPUT_TOKENS so behaviour is unchanged.
+  const effectiveMaxTokens = (typeof maxTokensOverride === "number" && Number.isFinite(maxTokensOverride) && maxTokensOverride > 0)
+    ? Math.min(maxTokensOverride, 64000)
+    : CLAUDE_MAX_OUTPUT_TOKENS;
+
   const errors: string[] = [];
   for (const modelName of CLAUDE_PROPOSAL_MODELS) {
     // Per-model rate-limit retry: Free Tier accounts hit 429 frequently. Try
@@ -187,7 +196,7 @@ async function generateWithClaude(prompt: string, systemPrompt: string = DEFAULT
       try {
         const response = await client.messages.create({
           model: modelName,
-          max_tokens: CLAUDE_MAX_OUTPUT_TOKENS,
+          max_tokens: effectiveMaxTokens,
           system: systemPrompt,
           messages: [{ role: "user", content: prompt }],
         });
@@ -1209,6 +1218,211 @@ Now write the complete technical proposal. Start with the Cover Letter. The eval
   }
   // anthropicApiKey present, apiKey present, both failed
   throw new Error(`Both AI providers failed. Claude: ${claudeError ?? "unknown"}. Gemini also failed (see prior log lines).`);
+}
+
+// ─── Section-parallel proposal generation ────────────────────────────────────
+//
+// Replaces the single-call `generateBenchmarkProposalWithAI` with FOUR
+// parallel Claude calls, each scoped to one logical proposal cluster.
+// See lib/engine/proposal-sections.ts for the per-section system
+// prompts, user prompts, and deterministic fallbacks.
+//
+// WHY THIS EXISTS — On Vercel Hobby (60s function cap), the single-call
+// path frequently exceeded the budget because Claude needed 25–55s to
+// emit ~8K output tokens AND 14K input tokens slowed time-to-first-token
+// further. Section-parallel generation cuts wall time roughly in half by
+// running 4 small calls concurrently, each with ~3K input tokens and
+// ~1500–2800 output tokens.
+//
+// FAILURE ISOLATION — Each section call has its own timeout. If one
+// section times out, the other three still ship; the failed section is
+// substituted with a deterministic fallback (Bid-Team Action notes +
+// table skeletons) so the downstream stitch + canonical-reorder + DOCX
+// pipeline still produces a complete proposal. This is materially better
+// than the single-call path, where any failure produced ZERO Claude
+// output and dropped to the entirely-deterministic fallback.
+
+import {
+  buildProposalSectionSpecs,
+  buildSectionFallback,
+  type ProposalSectionSpec,
+  type ProposalSectionId,
+} from "./engine/proposal-sections";
+
+// Default per-section timeout. At Tier 2 with the slice budgets in
+// proposal-sections.ts, each section typically completes in 12–25s.
+// 30s gives headroom for occasional cold starts and TTFT variance while
+// staying well inside the 50s in-pipeline budget that callers
+// (generate-elite.ts, ai-proposal/route.ts) wrap around the whole
+// generation. Override with PROPOSAL_SECTION_TIMEOUT_MS for higher tiers.
+const PROPOSAL_SECTION_TIMEOUT_MS = (() => {
+  const raw = Number(process.env.PROPOSAL_SECTION_TIMEOUT_MS);
+  if (Number.isFinite(raw) && raw >= 5_000 && raw <= 600_000) return raw;
+  return 30_000;
+})();
+
+interface SectionResult {
+  id: ProposalSectionId;
+  title: string;
+  markdown: string;
+  source: "claude" | "gemini" | "fallback";
+  error?: string;
+  durationMs: number;
+}
+
+async function generateOneSection(spec: ProposalSectionSpec): Promise<SectionResult> {
+  const t0 = Date.now();
+
+  // Per-section timeout — independent from the orchestrator's overall
+  // timeout. If THIS section runs long, only THIS section falls back to
+  // deterministic; the other parallel calls keep running.
+  const sectionTimeout = new Promise<null>((_, reject) =>
+    setTimeout(
+      () => reject(new Error(`section "${spec.id}" timed out after ${Math.round(PROPOSAL_SECTION_TIMEOUT_MS / 1000)}s`)),
+      PROPOSAL_SECTION_TIMEOUT_MS,
+    ),
+  );
+
+  // Try Claude first (preferred provider — system prompts in
+  // proposal-sections.ts are tuned for Claude personas).
+  if (isClaudeEnabled()) {
+    try {
+      const claudeResult = await Promise.race([
+        generateWithClaude(spec.userPrompt, spec.systemPrompt, spec.maxOutputTokens),
+        sectionTimeout,
+      ]);
+      if (claudeResult && claudeResult.trim().length > 0) {
+        return {
+          id: spec.id,
+          title: spec.title,
+          markdown: claudeResult,
+          source: "claude",
+          durationMs: Date.now() - t0,
+        };
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[ai] section "${spec.id}" Claude failed (${msg}) — trying Gemini per-section fallback.`);
+      // Fall through to Gemini if available; otherwise to deterministic.
+      // We do NOT propagate the timeout to the caller — single-section
+      // timeouts must NOT abort the parallel batch.
+    }
+  }
+
+  // Gemini per-section fallback. generate-elite.ts and ai-proposal/route.ts
+  // already use generateBenchmarkProposalWithAI's Gemini chain when Claude
+  // is missing entirely; here we use it as a per-section recovery so a
+  // single Claude section failure doesn't force the whole proposal back to
+  // deterministic.
+  if (apiKey) {
+    try {
+      // Prepend the section's system-prompt persona to the user prompt so
+      // Gemini approximates the per-section role. Gemini doesn't have a
+      // separate `system` channel for the SDK call we're using.
+      const geminiPrompt = `${spec.systemPrompt}\n\n---\n\n${spec.userPrompt}`;
+      const text = await Promise.race([
+        generateWithBestModel(geminiPrompt),
+        sectionTimeout,
+      ]);
+      if (text && text.trim().length > 0) {
+        return {
+          id: spec.id,
+          title: spec.title,
+          markdown: text,
+          source: "gemini",
+          durationMs: Date.now() - t0,
+        };
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[ai] section "${spec.id}" Gemini fallback failed (${msg}) — using deterministic fallback for this section.`);
+    }
+  }
+
+  // Both providers failed (or unavailable). Use the deterministic
+  // per-section fallback. The downstream pipeline's enrichers will
+  // populate structured tables (Compliance Matrix, Evaluator Mirror,
+  // Win Themes, Self-Score, Project Portfolio, etc.) so the section
+  // is not empty even when the AI didn't produce prose.
+  return {
+    id: spec.id,
+    title: spec.title,
+    markdown: "[FALLBACK]", // sentinel — replaced below by buildSectionFallback at orchestrator
+    source: "fallback",
+    error: "all AI providers failed or unavailable for this section",
+    durationMs: Date.now() - t0,
+  };
+}
+
+/**
+ * Section-parallel replacement for generateBenchmarkProposalWithAI.
+ *
+ * Runs 4 small Claude calls concurrently (one per logical section
+ * cluster) and stitches the results into a single proposal markdown.
+ *
+ * Returns Promise<string> for drop-in compatibility with the existing
+ * single-call signature. Diagnostic info goes to console.warn /
+ * console.info and lastProposalProvider is set so callers can label
+ * the proposal source on the GeneratedDocument record.
+ *
+ * On total failure (all four sections fail to produce AI prose), the
+ * function still returns a complete deterministic-fallback markdown so
+ * the calling route can write a proposal record. Callers that want to
+ * detect "all sections fell back" can check lastProposalProvider —
+ * it will be null in that case.
+ */
+export async function generateProposalSectionsParallel(input: AIBidWriterInput): Promise<string> {
+  const t0 = Date.now();
+  const specs = buildProposalSectionSpecs(input);
+
+  // Promise.allSettled — we never reject the whole batch even if every
+  // section fails, because we want a shippable markdown either way.
+  const results = await Promise.all(specs.map(generateOneSection));
+
+  // Build per-section markdown, substituting deterministic fallback for
+  // any section whose source is "fallback".
+  const sections = results.map((r, i) => {
+    if (r.source === "fallback") {
+      return {
+        ...r,
+        markdown: buildSectionFallback(specs[i], input),
+      };
+    }
+    return r;
+  });
+
+  // Set lastProposalProvider to the dominant successful source. If
+  // ANY section used Claude, label as Claude (Claude is the headline
+  // provider). If all successful sections used Gemini, label as Gemini.
+  // If every section fell back, set null so callers can see total AI
+  // failure.
+  const usedClaude = sections.some((s) => s.source === "claude");
+  const usedGemini = sections.some((s) => s.source === "gemini");
+  const allFell = sections.every((s) => s.source === "fallback");
+  if (allFell) {
+    lastProposalProvider = null;
+  } else if (usedClaude) {
+    lastProposalProvider = "claude";
+  } else if (usedGemini) {
+    lastProposalProvider = "gemini";
+  }
+
+  // Diagnostic summary line — surfaces in Vercel runtime logs so
+  // operators can see which sections completed via Claude vs Gemini vs
+  // deterministic, and how long each took. This is the only feedback
+  // signal once we're past the prompt-shrinking phase.
+  const totalMs = Date.now() - t0;
+  const summary = sections
+    .map((s) => `${s.id}=${s.source}(${Math.round(s.durationMs / 100) / 10}s)`)
+    .join(" ");
+  console.info(`[ai] section-parallel generation finished in ${Math.round(totalMs / 100) / 10}s — ${summary}`);
+
+  // Stitch in canonical order. Cover+Summary first, then A+B, then C,
+  // then D+Appendices+Declaration. The downstream section-reorderer in
+  // generate-elite.ts will further reorder based on rank if upstream
+  // produced sections in a different order, but we ship them in the
+  // right order here so the reorderer is a no-op in the happy path.
+  return sections.map((s) => s.markdown.trim()).filter(Boolean).join("\n\n");
 }
 
 function extractTenderSections(tenderText: string): string[] {
