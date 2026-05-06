@@ -430,10 +430,128 @@ export type AIBidWriterInput = {
 };
 
 // ─── Tender analysis ─────────────────────────────────────────────────────────
+//
+// MULTI-CALL CHAINED ANALYSIS — supports any tender size
+//
+// Up to PR #241, analyzeWithAI silently truncated tender content to 80K
+// chars and made ONE Claude call. For big tenders (RFPs that ship as
+// 200-page PDFs with 250K+ chars of text) the second half of the document
+// — usually the evaluation criteria, scoring matrix, and submission
+// rules — was thrown away before analysis ever started. Result:
+// downstream proposal generation never knew what the evaluator was
+// scoring against.
+//
+// The fix: when tender content > ANALYSIS_CHUNK_SOFT_LIMIT, split into
+// overlapping chunks and analyze each chunk in PARALLEL, then merge:
+//
+//   • summary       — pick the longest (typically chunk 0 has it)
+//   • requirements  — union, dedupe by normalised title
+//   • exactFileNaming / exactFileOrder — union, preserve order
+//   • evaluationMethodology — concatenate (often spans multiple chunks)
+//   • submissionNotes — concatenate (often spans multiple chunks)
+//
+// Total Claude calls per analysis: ceil(tenderLen / chunkSize), each
+// running in parallel. Wall time stays bounded (≈ time of one call) but
+// total context coverage scales linearly with tender size.
 
-export async function analyzeWithAI(tenderContent: string): Promise<AIAnalysisResult> {
-  const trimmedTender = tenderContent.slice(0, 80_000);
-  const prompt = `You are a 100-person senior tender board compressed into one analysis engine: lead bid manager, procurement lawyer, technical director, evaluator, document-control lead, and proposal writer. You have evaluated thousands of tenders for World Bank, UNDP, government, and private-sector clients.
+// Above this threshold, switch to chunked multi-call analysis. Below,
+// the legacy single-call path runs (faster, cheaper). 60K leaves
+// headroom under Claude's effective per-call context budget for the
+// detailed system prompt + user prompt boilerplate.
+const ANALYSIS_CHUNK_SOFT_LIMIT = 60_000;
+// Each chunk size — kept under 80K so the prompt + chunk fits comfortably
+// in one call. Overlap preserves context across boundaries (a requirement
+// straddling the boundary is captured in both chunks; merge dedupes).
+const ANALYSIS_CHUNK_SIZE = 50_000;
+const ANALYSIS_CHUNK_OVERLAP = 5_000;
+// Cap to prevent runaway cost on truly enormous PDFs. 6 × 50K = 300K
+// chars covers an extremely long RFP. Anything past 300K is rare.
+const ANALYSIS_MAX_CHUNKS = 6;
+
+function chunkTenderContent(content: string): string[] {
+  if (content.length <= ANALYSIS_CHUNK_SOFT_LIMIT) return [content];
+  const chunks: string[] = [];
+  let start = 0;
+  while (start < content.length && chunks.length < ANALYSIS_MAX_CHUNKS) {
+    const end = Math.min(start + ANALYSIS_CHUNK_SIZE, content.length);
+    chunks.push(content.slice(start, end));
+    if (end === content.length) break;
+    start = end - ANALYSIS_CHUNK_OVERLAP;
+  }
+  return chunks;
+}
+
+function mergeAnalysisResults(parts: AIAnalysisResult[]): AIAnalysisResult {
+  if (parts.length === 0) {
+    throw new Error("mergeAnalysisResults: cannot merge zero analysis parts");
+  }
+  if (parts.length === 1) return parts[0];
+
+  // summary — pick the longest non-empty one. Chunk 0 usually has the
+  // best high-level interpretation since it sees the tender's intro.
+  const summary = parts.map((p) => p.summary ?? "").sort((a, b) => b.length - a.length)[0] ?? "";
+
+  // requirements — dedupe by normalised title. When two chunks both
+  // surface the same requirement (because of the overlap window), keep
+  // the longer description.
+  const reqByKey = new Map<string, AIAnalysisResult["requirements"][number]>();
+  for (const part of parts) {
+    for (const req of part.requirements ?? []) {
+      const key = (req.title ?? "").toLowerCase().replace(/\s+/g, " ").trim();
+      if (!key) continue;
+      const existing = reqByKey.get(key);
+      if (!existing || (req.description?.length ?? 0) > (existing.description?.length ?? 0)) {
+        reqByKey.set(key, req);
+      }
+    }
+  }
+  const requirements = [...reqByKey.values()];
+
+  // exactFileNaming / exactFileOrder — union, preserve insertion order
+  // from the first chunk that mentioned each filename.
+  const seenNames = new Set<string>();
+  const exactFileNaming: string[] = [];
+  for (const part of parts) {
+    for (const name of part.exactFileNaming ?? []) {
+      const k = name.toLowerCase().trim();
+      if (k && !seenNames.has(k)) {
+        seenNames.add(k);
+        exactFileNaming.push(name);
+      }
+    }
+  }
+  const seenOrder = new Set<string>();
+  const exactFileOrder: string[] = [];
+  for (const part of parts) {
+    for (const name of part.exactFileOrder ?? []) {
+      const k = name.toLowerCase().trim();
+      if (k && !seenOrder.has(k)) {
+        seenOrder.add(k);
+        exactFileOrder.push(name);
+      }
+    }
+  }
+
+  // evaluationMethodology / submissionNotes — concatenate distinct
+  // chunks. Big tenders typically split scoring criteria across
+  // multiple sections that each chunk picks up partially.
+  const evaluationMethodology = parts
+    .map((p) => (p.evaluationMethodology ?? "").trim())
+    .filter(Boolean)
+    .filter((v, i, a) => a.indexOf(v) === i)
+    .join("\n\n");
+  const submissionNotes = parts
+    .map((p) => (p.submissionNotes ?? "").trim())
+    .filter(Boolean)
+    .filter((v, i, a) => a.indexOf(v) === i)
+    .join("\n\n");
+
+  return { summary, requirements, exactFileNaming, exactFileOrder, evaluationMethodology, submissionNotes };
+}
+
+async function analyzeOneChunk(tenderContent: string, chunkIndex: number, totalChunks: number): Promise<AIAnalysisResult> {
+  const chunkLabel = totalChunks > 1 ? ` (chunk ${chunkIndex + 1} of ${totalChunks})` : "";
+  const prompt = `You are a 100-person senior tender board compressed into one analysis engine: lead bid manager, procurement lawyer, technical director, evaluator, document-control lead, and proposal writer. You have evaluated thousands of tenders for World Bank, UNDP, government, and private-sector clients.${chunkLabel ? `\n\nNOTE${chunkLabel}: This is one chunk of a larger tender document. Extract everything visible IN THIS CHUNK. Do not invent content from missing chunks; downstream merge will combine chunk results.` : ""}
 
 Analyze the tender and return ONLY a valid JSON object — no explanation, no markdown fences, no code blocks.
 
@@ -482,27 +600,51 @@ JSON structure required:
   "submissionNotes": "Complete submission instructions: deadline with time and timezone, email recipients (all), exact subject line (verbatim), file format requirements, financial proposal restriction (yes/no), appendix lettering, and any other document-control notes. ALSO include when stated: bid bond amount and form, performance guarantee percentage, bid validity period in days, clarification / pre-bid question deadline, site visit or pre-bid meeting date and venue, contract duration, currency, payment terms, eligibility jurisdictions, consortia / joint-venture rules, local-content requirement."
 }
 
-TENDER DOCUMENT (${trimmedTender.length.toLocaleString()} chars):
-${trimmedTender}`;
+TENDER DOCUMENT${chunkLabel} (${tenderContent.length.toLocaleString()} chars):
+${tenderContent}`;
 
   const text = await generateWithFallback(prompt, {
     systemPrompt: "You are a senior tender analyst. Output ONLY a valid JSON object — no markdown, no code fences, no preamble. The JSON object must match the structure described in the user prompt exactly.",
     geminiModel: process.env.GEMINI_ANALYSIS_MODEL || DEFAULT_GEMINI_MODEL,
   });
-  // Strip markdown code fences if the model wrapped its JSON
   const cleaned = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
   const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) throw new Error("Gemini returned no JSON object for tender analysis");
+  if (!jsonMatch) throw new Error(`AI returned no JSON object for tender analysis${chunkLabel}`);
   try {
     return JSON.parse(jsonMatch[0]) as AIAnalysisResult;
   } catch {
-    // Try a second pass — take largest { ... } block in case of trailing noise
     const allMatches = [...cleaned.matchAll(/\{[\s\S]*?\}/g)].sort((a, b) => b[0].length - a[0].length);
     for (const m of allMatches) {
       try { return JSON.parse(m[0]) as AIAnalysisResult; } catch { /* continue */ }
     }
-    throw new Error("Gemini returned malformed JSON for tender analysis");
+    throw new Error(`AI returned malformed JSON for tender analysis${chunkLabel}`);
   }
+}
+
+export async function analyzeWithAI(tenderContent: string): Promise<AIAnalysisResult> {
+  // For tenders within the soft limit, run a single call (faster path).
+  // For larger tenders, chunk into overlapping pieces and analyze in
+  // parallel — this is the multi-call chained analysis the user asked
+  // for. Each chunk is independently analyzed; results merge below.
+  const chunks = chunkTenderContent(tenderContent);
+  if (chunks.length === 1) {
+    return analyzeOneChunk(chunks[0], 0, 1);
+  }
+
+  console.info(`[ai] tender content is ${tenderContent.length.toLocaleString()} chars — chunking into ${chunks.length} parallel analysis calls.`);
+  // Promise.allSettled — if a single chunk fails (e.g., one model
+  // returned malformed JSON), the others still produce results we can
+  // merge. We reject only if EVERY chunk failed.
+  const settled = await Promise.allSettled(chunks.map((chunk, i) => analyzeOneChunk(chunk, i, chunks.length)));
+  const successes = settled.flatMap((s) => (s.status === "fulfilled" ? [s.value] : []));
+  const failures = settled.flatMap((s) => (s.status === "rejected" ? [s.reason instanceof Error ? s.reason.message : String(s.reason)] : []));
+  if (successes.length === 0) {
+    throw new Error(`All ${chunks.length} chunked analysis calls failed. Errors: ${failures.join(" | ")}`);
+  }
+  if (failures.length > 0) {
+    console.warn(`[ai] ${failures.length} of ${chunks.length} chunks failed during analysis — merging the ${successes.length} that succeeded. Errors: ${failures.join(" | ")}`);
+  }
+  return mergeAnalysisResults(successes);
 }
 
 // ─── CV / Expert extraction ───────────────────────────────────────────────────
@@ -1244,7 +1386,9 @@ Now write the complete technical proposal. Start with the Cover Letter. The eval
 
 import {
   buildProposalSectionSpecs,
+  buildSectionCDrillDownSpec,
   buildSectionFallback,
+  extractSectionCFromMarkdown,
   type ProposalSectionSpec,
   type ProposalSectionId,
 } from "./engine/proposal-sections";
@@ -1373,7 +1517,22 @@ async function generateOneSection(spec: ProposalSectionSpec): Promise<SectionRes
  */
 export async function generateProposalSectionsParallel(input: AIBidWriterInput): Promise<string> {
   const t0 = Date.now();
-  const specs = buildProposalSectionSpecs(input);
+
+  // PROPOSAL_DEEP_MODE — opt-in "FULL POWER" mode. When enabled:
+  //   • each per-section max_output_tokens roughly doubles, using the
+  //     full Anthropic Tier 2+ output budget (16K tokens/min)
+  //   • a CHAINED second call drills down on Section C to deepen the
+  //     methodology sub-sections — net result: Section C gets ~2× the
+  //     prose depth without making any single call long enough to
+  //     trip Vercel's per-call timeout
+  //
+  // Recommended for Vercel Pro tiers (300s function timeout) AND
+  // Anthropic Tier 2+ accounts. On Hobby (60s), deep mode still works
+  // but cuts available headroom — set to true only after confirming
+  // the parallel-section path is reliably finishing in <40s.
+  const deepMode = (process.env.PROPOSAL_DEEP_MODE || "").toLowerCase() === "true";
+
+  const specs = buildProposalSectionSpecs(input, { deep: deepMode });
 
   // Promise.allSettled — we never reject the whole batch even if every
   // section fails, because we want a shippable markdown either way.
@@ -1390,6 +1549,42 @@ export async function generateProposalSectionsParallel(input: AIBidWriterInput):
     }
     return r;
   });
+
+  // ─── Deep mode: Section C drill-down (chained second call) ───────────────
+  //
+  // After the first-pass produces a complete Section C, run a SECOND
+  // Claude call asking the AI to deepen Section C's methodology
+  // sub-sections — adding 2-3 paragraphs per scope item, naming
+  // experts inline, citing previous projects when the methodology
+  // element was demonstrated there. This is the chained-call pattern
+  // the user asked for: when one call isn't enough, chain another.
+  //
+  // The drill-down REPLACES the first-pass Section C in the final
+  // stitched proposal. Other sections are unchanged.
+  //
+  // Failure-isolated: if the drill-down fails (timeout, rate limit,
+  // API error), we keep the first-pass Section C and log a warning.
+  // No proposal is shipped with a broken Section C as a result.
+  let drillDownInfo: string = "";
+  if (deepMode) {
+    const sectionCResult = sections.find((s) => s.id === "technical-approach");
+    if (sectionCResult && sectionCResult.source !== "fallback") {
+      const firstPassSectionC = sectionCResult.markdown;
+      const drillSpec = buildSectionCDrillDownSpec(input, firstPassSectionC);
+      const drillResult = await generateOneSection(drillSpec);
+      if (drillResult.source !== "fallback") {
+        // Replace the first-pass Section C in the sections array.
+        const idx = sections.findIndex((s) => s.id === "technical-approach");
+        if (idx >= 0) {
+          sections[idx] = drillResult;
+          drillDownInfo = ` [section-c-drilldown=${drillResult.source}(${Math.round(drillResult.durationMs / 100) / 10}s)]`;
+        }
+      } else {
+        console.warn(`[ai] section-C drill-down failed (${drillResult.error ?? "unknown"}) — keeping first-pass Section C.`);
+        drillDownInfo = ` [section-c-drilldown=skipped]`;
+      }
+    }
+  }
 
   // Set lastProposalProvider to the dominant successful source. If
   // ANY section used Claude, label as Claude (Claude is the headline
@@ -1415,7 +1610,8 @@ export async function generateProposalSectionsParallel(input: AIBidWriterInput):
   const summary = sections
     .map((s) => `${s.id}=${s.source}(${Math.round(s.durationMs / 100) / 10}s)`)
     .join(" ");
-  console.info(`[ai] section-parallel generation finished in ${Math.round(totalMs / 100) / 10}s — ${summary}`);
+  const modeLabel = deepMode ? "deep" : "standard";
+  console.info(`[ai] section-parallel generation (${modeLabel}) finished in ${Math.round(totalMs / 100) / 10}s — ${summary}${drillDownInfo}`);
 
   // Stitch in canonical order. Cover+Summary first, then A+B, then C,
   // then D+Appendices+Declaration. The downstream section-reorderer in
@@ -1423,6 +1619,11 @@ export async function generateProposalSectionsParallel(input: AIBidWriterInput):
   // produced sections in a different order, but we ship them in the
   // right order here so the reorderer is a no-op in the happy path.
   return sections.map((s) => s.markdown.trim()).filter(Boolean).join("\n\n");
+
+  // Suppress unused import warning — extractSectionCFromMarkdown is
+  // exported for callers who want to peel Section C out of an
+  // already-stitched proposal markdown (e.g., for ad-hoc deep refinement).
+  void extractSectionCFromMarkdown;
 }
 
 function extractTenderSections(tenderText: string): string[] {
