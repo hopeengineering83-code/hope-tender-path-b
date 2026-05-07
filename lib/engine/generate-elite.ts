@@ -36,6 +36,7 @@ import { buildEvaluatorMirrorSection, hasEvaluatorMirrorHeading } from "./evalua
 import { buildWinThemesSection, hasWinThemesHeading } from "./win-themes-builder";
 import { buildSelfScoreSection, hasSelfScoreHeading } from "./self-score-builder";
 import { extractTenderLanguageEchoes, formatEchoesForPrompt } from "./tender-language-echoes";
+import { extractTenderFacts, formatFactsForPrompt, buildTenderSpecificsBlock } from "./tender-facts-extractor";
 import { formatQualityScoreSummary, scoreProposalQuality } from "./proposal-quality-scorer";
 import {
   buildCertificationsSection,
@@ -859,6 +860,21 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   const tenderLanguageEchoes = extractTenderLanguageEchoes(intelligence.tenderText, 12);
   const tenderLanguageEchoBlock = formatEchoesForPrompt(tenderLanguageEchoes);
 
+  // PR K — Tender FACTS extractor (numbers, dates, RFP IDs, brand
+  // names, file formats, deliverable codes, locations, quantities).
+  // Where tender-language-echoes captures evaluator vocabulary, this
+  // captures the tender's CONCRETE DATA — the verbatim numbers that
+  // prove the bidder read the document. Both flow into the AI prompt;
+  // the facts also flow into a deterministic Section C.0 "Tender
+  // Specifics Recognised by This Proposal" table that ALWAYS appears
+  // at the top of Section C.
+  const tenderFacts = extractTenderFacts(intelligence.tenderText);
+  const tenderFactsPromptBlock = formatFactsForPrompt(tenderFacts);
+  const tenderSpecificsTable = buildTenderSpecificsBlock(tenderFacts);
+  if (tenderFacts.rawCount > 0) {
+    console.info(`[generate-elite] Tender facts extracted: ${tenderFacts.rfpIds.length} RFP ID(s), ${tenderFacts.deadlines.length} deadline(s), ${tenderFacts.deliverableCodes.length} deliverable code(s), ${tenderFacts.quantities.length} quantity(s).`);
+  }
+
   const submissionNotes = [
     tender.submissionMethod,
     tender.submissionAddress,
@@ -913,6 +929,14 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
           clean(tender.evaluationMethodology) || intelligence.evaluationCriteria.join("; "),
           ...(evaluationWeightLines.length > 0 ? ["", "Numeric evaluation weights detected in tender (echo verbatim in the EVALUATION CRITERIA RESPONSE MIRROR table):", ...evaluationWeightLines] : []),
           tenderLanguageEchoBlock,
+          // PR K — tender-FACTS prompt block. Forces Claude to weave
+          // verbatim RFP IDs, deadlines, validity periods, deliverable
+          // codes (D1–Dn), site/location names, distinctive quantities
+          // (room counts, sqm, person counts), file format requirements,
+          // and brand/website mentions into the proposal. Without this,
+          // Claude writes a generic methodology that could fit any
+          // tender. Empty when no facts found.
+          tenderFactsPromptBlock,
           // PR #258 — rubric-driven section directive injected here
           // so Claude organises its output around the tender's exact
           // rubric (e.g., SV 01, EXP 01, PER 01). Empty when the
@@ -1281,6 +1305,45 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     console.info(`[generate-elite] Evidence-marker injector added ${evidenceInjection.injected} anchor sentence(s) to lift evidenceDensity score.`);
   }
   humanizedMarkdown = evidenceInjection.markdown;
+
+  // ─── Tender Specifics block (PR K) ───────────────────────────────────────
+  // Insert the deterministic "C.0 Tender Specifics Recognised by This
+  // Proposal" table at the top of Section C. This is the un-skippable
+  // proof that the bidder read the document — verbatim RFP ID,
+  // deadline, validity period, deliverable codes, location, file
+  // formats, brand, distinctive quantities. ALWAYS present when the
+  // tender text yielded any facts; idempotent via marker comment.
+  if (tenderSpecificsTable && !humanizedMarkdown.includes("<!-- tender-facts:specifics -->")) {
+    // Insert just after Section C heading; fall back to before
+    // Section C.1 if no Section C heading found.
+    const lines = humanizedMarkdown.split("\n");
+    let insertAt = -1;
+    for (let i = 0; i < lines.length; i += 1) {
+      if (/^#\s+Section\s+C\b/i.test(lines[i]) || /^#\s+Technical\s+Approach/i.test(lines[i])) {
+        insertAt = i + 1;
+        break;
+      }
+    }
+    if (insertAt < 0) {
+      // No Section C heading — insert before C.1 if present
+      for (let i = 0; i < lines.length; i += 1) {
+        if (/^##\s+C\.1\b/i.test(lines[i]) || /^##\s+Understanding\s+of\s+the\s+Assignment/i.test(lines[i])) {
+          insertAt = i;
+          break;
+        }
+      }
+    }
+    if (insertAt >= 0) {
+      humanizedMarkdown = [
+        ...lines.slice(0, insertAt),
+        "",
+        tenderSpecificsTable,
+        "",
+        ...lines.slice(insertAt),
+      ].join("\n");
+      console.info(`[generate-elite] Tender Specifics (C.0) block injected.`);
+    }
+  }
 
   // ─── Section C depth amplifier (PR #252) ─────────────────────────────────
   // Closes the final 5-point gap to 100/100. When the AI returns a thin
