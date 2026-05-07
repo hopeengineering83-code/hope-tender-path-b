@@ -330,22 +330,26 @@ ${input.experts.slice(0, 4_000)}
 ## RELEVANT PROJECT EVIDENCE (cite specific projects when they demonstrate a methodology element)
 ${input.projects.slice(0, 4_000)}
 
-## DETERMINISTIC POST-INJECTION (DO NOT DUPLICATE THESE TABLES)
+## DETERMINISTIC POST-INJECTION (DO NOT DUPLICATE THESE STRUCTURES)
 After your output is generated, the engine will deterministically inject the
-following structured tables into Section C — these will be appended at the
-end of your section automatically. DO NOT write your own version of any
-table in this list, because that wastes output tokens and creates duplicate
-or contradictory content:
+following structured content into Section C — these will be appended
+automatically. DO NOT write your own version of any structure in this list,
+because that wastes output tokens and creates duplicate or contradictory
+content:
 
-- Project Phasing and Deliverables (5-phase table with deliverables,
-  durations, responsible expert)
-- RACI Matrix (8 activities × team roles, with R/A/C/I assignments)
-- Risk Register (5–7 sector-specific risks, category, likelihood, impact,
-  mitigation, owner)
-- Quality Assurance Plan and Inspection & Test Plan (ITP) (checkpoints,
-  criterion, method, frequency, responsible, hold/witness/review)
-- Communication and Reporting Protocol (cadenced meetings/reports with
-  named owners and formats)
+C.0 Tender Specifics Recognised by This Proposal (verbatim RFP ID,
+deadline, validity, deliverable codes, location, file formats, brand,
+distinctive quantities — auto-populated from tender text)
+- Project Phasing and Deliverables (5-phase table)
+- RACI Matrix (8 activities × team roles)
+- Risk Register (5–7 sector-specific risks)
+- Quality Assurance Plan + Inspection & Test Plan (ITP)
+- Communication and Reporting Protocol
+- Deliverable-to-Project Crosswalk (D-codes mapped to projects)
+- Phase-by-Phase Methodology Narrative (6 phase paragraphs, named expert
+  per phase, sector-specific activities, artefacts per phase)
+- Tender-Specific Innovation Hooks (named/branded innovations when tender
+  carries brand or website)
 
 Use your output tokens for what an AI does best: substantive PROSE methodology,
 sector vocabulary in context, named-expert anchoring, project evidence
@@ -403,25 +407,36 @@ ${input.companyProfile.slice(0, 3_500)}
 ## COMPLIANCE / EVIDENCE / GAPS
 ${input.compliance.slice(0, 3_500)}
 
-## DETERMINISTIC POST-INJECTION (DO NOT DUPLICATE THESE TABLES)
+## DETERMINISTIC POST-INJECTION (DO NOT DUPLICATE THESE STRUCTURES)
 After your output is generated, the engine will deterministically inject
-the following Section D / value-added structural tables into the proposal
-automatically. DO NOT write your own versions:
+the following Section A / D / E / Closers structural content into the
+proposal automatically. DO NOT write your own versions:
 
-- Sustainability and ESG Plan (climate, gender, universal design,
-  environmental compliance with KPIs)
-- Health and Safety Plan (management system, PPE, RAMS, incident reporting,
-  emergency response, sub-contractor governance)
-- Innovation and Value Engineering Proposals (beyond-spec offerings with
-  client-value rationale, effort, inclusion status)
-- Local Content and Capacity Building (employment %, supplier development,
-  knowledge transfer, training)
-- Win Themes and Discriminators (mapped to tender pains)
-- Submission Readiness Checklist
-- Mobilization and Resourcing Plan
+Section A additions (auto-injected at end of Section A):
+- PER 01 — Personnel Loading Table (Role | Expert | Licence | Days)
+- PER 02 — Per-Expert Profile Cards (9 vertical 7-row cards)
+- Project Management Organogram (PM + 3 streams with named experts)
+- Mobilization and Resourcing Plan (week-by-week ramp-up)
+
+Section D additions (auto-injected end of Section D):
+- Sustainability and ESG Plan
+- Health and Safety Plan
+- Innovation and Value Engineering Proposals
+- Local Content and Capacity Building
+- Win Themes and Discriminators
+
+Closers (auto-injected before Section E):
+- Tender-Specific Obstacles and Mitigation
+- Commercial Understanding and Compliance
+- Anti-Bribery, Ethics, and Conflict of Interest Declaration (8 clauses
+  with vault GM signature)
+
+End of document:
+- Submission Readiness Checklist (bid-manager tear-out)
 
 Use your output tokens for substantive narrative on D.1 Value to the
-Client and D.2 In-House Capabilities, plus the formal Declaration block.
+Client and D.2 In-House Capabilities only. Do NOT write a separate
+Declaration block — the engine emits the 8-clause structured one.
 
 ## YOUR OUTPUT
 Three top-level Markdown sections:
