@@ -4,6 +4,7 @@ import { prisma, prismaReady } from "../../../../lib/prisma";
 import { isAIEnabled } from "../../../../lib/ai";
 import { TenderDetail } from "./tender-detail";
 import { ExecutiveSnapshot } from "./executive-snapshot";
+import { TenderAICopilotPanel } from "../../../../components/tender-ai-copilot-panel";
 
 export default async function TenderPage({ params }: { params: Promise<{ id: string }> }) {
   const userId = await getSession();
@@ -38,10 +39,13 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
 
   if (!tender) notFound();
 
+  const ai = isAIEnabled();
+
   return (
     <>
       <ExecutiveSnapshot tender={tender} />
-      <TenderDetail tender={tender} aiEnabled={isAIEnabled()} />
+      {ai && <TenderAICopilotPanel tenderId={tender.id} />}
+      <TenderDetail tender={tender} aiEnabled={ai} />
     </>
   );
 }
