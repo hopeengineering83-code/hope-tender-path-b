@@ -1134,7 +1134,34 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     sourceMarkdown = fallbackProposalMarkdown({ tenderTitle: cleanedTenderTitle, clientName: intelligence.clientName, companyName: company.name, companyLegalName: company.legalName, companyAddress: company.address, companyTIN: company.tin, companyVAT: company.vat, companyGM: company.gmName, companyGMLicense: company.gmLicense, primarySector: intelligence.primarySector, requirements: requirementLines, differentiators: intelligence.differentiators, submissionRules: intelligence.submissionRules, expertLines, projectLines, experts: experts as ExpertRecord[], projects: projects as ProjectRecord[], reviewedExpertCount: experts.length, companyEvidenceLines, projectEvidenceLines, complianceLines, expertRequired, projectRequired, themes: intelligence.themes, evaluationCriteria: intelligence.evaluationCriteria, appendixList: intelligence.appendixList, noFinancialProposal: intelligence.noFinancialProposal, exactEmails: intelligence.exactEmails, exactSubjectLine: intelligence.exactSubjectLine, gapsToAddressInNarrative: intelligence.gapsToAddressInNarrative, requiredSections: intelligence.requiredSections, tenderDeadline: tender.deadline });
   }
 
-  const matrixMarkdown = appendEvaluatorResponseMatrix(sourceMarkdown, evaluatorMatrixInput);
+  // PR NN: Strip any AI-produced Section H (Proposal Self-Score) from the raw AI
+  // output before the deterministic backstop is applied. The AI is prompted to
+  // produce Section H, but its version uses rough estimates while the deterministic
+  // builder (buildSelfScoreSection) uses the structured evidence we have. Keeping
+  // both would give duplicate headings; the deterministic version always wins.
+  function stripAiSectionH(md: string): string {
+    const lines = md.split("\n");
+    const out: string[] = [];
+    let i = 0;
+    while (i < lines.length) {
+      const isSelfScore = /(^|\n)\s*#{1,4}\s*(?:section\s*[H:.\-\s]*)?\s*(?:proposal\s+)?self.?score\b/i.test(lines[i]);
+      if (isSelfScore) {
+        const level = lines[i].match(/^(#+)\s/)?.[1].length ?? 2;
+        i += 1;
+        while (i < lines.length) {
+          const m = lines[i].match(/^(#+)\s/);
+          if (m && m[1].length <= level) break;
+          i += 1;
+        }
+        continue;
+      }
+      out.push(lines[i]);
+      i += 1;
+    }
+    return out.join("\n");
+  }
+
+  const matrixMarkdown = appendEvaluatorResponseMatrix(stripAiSectionH(sourceMarkdown), evaluatorMatrixInput);
   const isHealthcare = /health|hospital|medical|clinic|radiology|laboratory|pharmacy|patient|specialty|OPD|in-patient|emergency/i.test(`${intelligence.primarySector}\n${intelligence.tenderText}`);
   const strengtheningMarkdown = buildClientProposalStrengtheningSections({ clientName: intelligence.clientName, tenderTitle: cleanedTenderTitle, companyName: company.name, projectLines, expertLines, companyEvidenceLines, projectEvidenceLines, isHealthcare, existingMarkdown: matrixMarkdown });
 
@@ -1311,18 +1338,20 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     deterministicEvaluatorMirror,
     deterministicWinThemes,
   ].filter(Boolean).join("\n\n");
-  const deterministicSelfScore = !hasSelfScoreHeading(upstreamMarkdownForBackstops)
-    ? buildSelfScoreSection({
-        evaluationCriteria: intelligence.evaluationCriteria,
-        evaluationWeights: intelligence.evaluationWeights,
-        topProjects: (projects as ProjectRecord[]).slice(0, 5),
-        topExperts: (experts as ExpertRecord[]).slice(0, 5),
-        hasComplianceMatrix: hasComplianceMatrixHeading(upstreamWithBackstops),
-        hasEvaluatorMirror: hasEvaluatorMirrorHeading(upstreamWithBackstops),
-        hasWinThemes: hasWinThemesHeading(upstreamWithBackstops),
-        primarySector: intelligence.primarySector,
-      })
-    : null;
+  // PR NN: Always add the deterministic Section H — the AI's version was stripped
+  // from sourceMarkdown above, so there is no duplicate. The deterministic builder
+  // uses structured evaluation criteria + evidence from the vault, producing a
+  // more accurate and consistent self-score than ad-hoc AI output.
+  const deterministicSelfScore = buildSelfScoreSection({
+    evaluationCriteria: intelligence.evaluationCriteria,
+    evaluationWeights: intelligence.evaluationWeights,
+    topProjects: (projects as ProjectRecord[]).slice(0, 5),
+    topExperts: (experts as ExpertRecord[]).slice(0, 5),
+    hasComplianceMatrix: hasComplianceMatrixHeading(upstreamWithBackstops),
+    hasEvaluatorMirror: hasEvaluatorMirrorHeading(upstreamWithBackstops),
+    hasWinThemes: hasWinThemesHeading(upstreamWithBackstops),
+    primarySector: intelligence.primarySector,
+  });
 
   const combinedMarkdown = [
     matrixMarkdown,

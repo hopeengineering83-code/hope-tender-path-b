@@ -50,9 +50,22 @@ const INTERNAL_REVIEW_HEADINGS: RegExp[] = [
   /^##?\s+Sector-Specific\s+Methodology\s+Depth\b/i,
   /^##?\s+Client-Ready\s+Appendix\s+Register\b/i,
   /^##?\s+Final\s+Claim\s+(?:and|&)\s+Evidence\s+Control\b/i,
-  // Also catch generic bid-team metadata bleeds:
+  // Generic bid-team metadata bleeds:
   /^##?\s+Senior\s+Bid\s+Review\s+(?:Notes|Memo)\b/i,
   /^##?\s+Internal\s+(?:Bid|Review)\s+Notes\b/i,
+  // PR DD additions: additional internal sections seen in real AI output
+  /^##?\s+Bid-Team\s+(?:Action|Notes?|Review)\b/i,
+  /^##?\s+Proposal\s+(?:Checklist|Review\s+Notes?|Quality\s+Control)\b/i,
+  /^##?\s+Evidence\s+Gap\s+(?:Register|Analysis)\b/i,
+  /^##?\s+Submission\s+Control\s+(?:Sheet|Checklist|Register)\b/i,
+  /^##?\s+Competitive\s+(?:Intelligence|Positioning)\s+(?:Notes?|Analysis)\b/i,
+  /^##?\s+Pre-Submission\s+(?:Review|Checklist|Notes?)\b/i,
+  /^##?\s+Technical\s+Review\s+(?:Panel|Notes?|Memo)\b/i,
+  /^##?\s+Bid\s+Review\s+(?:Panel|Notes?|Memo|Control)\b/i,
+  /^##?\s+Quality\s+(?:Gate|Control)\s+(?:Notes?|Review|Checklist)\b/i,
+  /^##?\s+Benchmark\s+(?:Analysis|Scoring|Notes?)\b/i,
+  /^##?\s+How\s+(?:This\s+)?(?:Proposal|Bid)\s+(?:Was\s+Built|Scores?)\b/i,
+  /^##?\s+Proposal\s+Build\s+(?:Notes?|Log|Strategy)\b/i,
 ];
 
 function isInternalReviewHeading(line: string): boolean {
