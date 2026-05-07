@@ -7,6 +7,32 @@
 
 import { generateWithFallback } from "../ai";
 
+// Per-call wall-clock cap so a hung AI provider doesn't exhaust the
+// route's Vercel maxDuration=60s window. Default 40s leaves 20s for
+// the parallel sister call + DB writes. Override via env var.
+const REMATCH_TIMEOUT_MS = (() => {
+  const raw = Number(process.env.REMATCH_TIMEOUT_MS);
+  if (Number.isFinite(raw) && raw >= 10_000 && raw <= 120_000) return raw;
+  return 40_000;
+})();
+
+async function withRematchTimeout<T>(promise: Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`AI rematch timed out after ${Math.round(REMATCH_TIMEOUT_MS / 1000)}s — reduce candidate pool or retry`)),
+          REMATCH_TIMEOUT_MS,
+        );
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 export type MatchPerspective =
   | "DISCIPLINE_FIT"
   | "SCOPE_COVERAGE"
@@ -156,7 +182,7 @@ function buildExpertUserPrompt(opts: { tenderTitle: string; tenderRequirementsTe
     `disciplines: ${e.disciplines.length ? e.disciplines.join(", ") : "<not specified>"}`,
     `sectors: ${e.sectors.length ? e.sectors.join(", ") : "<not specified>"}`,
     `certifications: ${e.certifications.length ? e.certifications.join(", ") : "<none>"}`,
-    `profile: ${(e.profile ?? "").replace(/\s+/g, " ").slice(0, 1_200)}`,
+    `profile: ${(e.profile ?? "").replace(/\s+/g, " ").slice(0, 800)}`,
     `trustLevel: ${e.trustLevel ?? "unknown"}`,
   ].join("\n")).join("\n---\n");
 
@@ -173,7 +199,7 @@ function buildProjectUserPrompt(opts: { tenderTitle: string; tenderRequirementsT
     `service_areas: ${p.serviceAreas.length ? p.serviceAreas.join(", ") : "<not specified>"}`,
     `contract_value: ${p.contractValue ? `${p.currency || "USD"} ${p.contractValue.toLocaleString()}` : "<unknown value>"}`,
     `period: ${p.startDate ? new Date(p.startDate).getFullYear() : "?"}-${p.endDate ? new Date(p.endDate).getFullYear() : "ongoing"}`,
-    `summary: ${(p.summary ?? "").replace(/\s+/g, " ").slice(0, 1_200)}`,
+    `summary: ${(p.summary ?? "").replace(/\s+/g, " ").slice(0, 800)}`,
     `trustLevel: ${p.trustLevel ?? "unknown"}`,
   ].join("\n")).join("\n---\n");
 
@@ -256,7 +282,7 @@ export async function aiRematchExperts(opts: { tenderTitle: string; tenderRequir
   const t0 = Date.now();
   let raw: string;
   try {
-    raw = await generateWithFallback(buildExpertUserPrompt(opts), { systemPrompt: EXPERT_MATCHER_SYSTEM_PROMPT });
+    raw = await withRematchTimeout(generateWithFallback(buildExpertUserPrompt(opts), { systemPrompt: EXPERT_MATCHER_SYSTEM_PROMPT }));
   } catch (err) {
     console.warn(`[ai-multi-perspective-matcher] Expert rematch AI call failed: ${err instanceof Error ? err.message : String(err)}`);
     return null;
@@ -271,7 +297,7 @@ export async function aiRematchProjects(opts: { tenderTitle: string; tenderRequi
   const t0 = Date.now();
   let raw: string;
   try {
-    raw = await generateWithFallback(buildProjectUserPrompt(opts), { systemPrompt: PROJECT_MATCHER_SYSTEM_PROMPT });
+    raw = await withRematchTimeout(generateWithFallback(buildProjectUserPrompt(opts), { systemPrompt: PROJECT_MATCHER_SYSTEM_PROMPT }));
   } catch (err) {
     console.warn(`[ai-multi-perspective-matcher] Project rematch AI call failed: ${err instanceof Error ? err.message : String(err)}`);
     return null;

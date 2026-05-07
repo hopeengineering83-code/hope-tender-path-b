@@ -18,7 +18,7 @@ import { childLogger, time, reportError } from "../../../../../lib/observability
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
 
-const PRE_FILTER_LIMIT = 30;
+const PRE_FILTER_LIMIT = 20;
 const PORTFOLIO_ITERATIONS = 20;
 
 type RequirementForLimit = {
