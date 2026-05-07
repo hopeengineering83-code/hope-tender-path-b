@@ -56,6 +56,7 @@ import { injectWinThemesTable } from "./win-themes-table";
 import { injectMobilizationAndChecklist } from "./mobilization-and-checklist";
 import { stripPlaceholders } from "./placeholder-stripper";
 import { injectPersonnelDeep } from "./personnel-deep";
+import { injectTenderClosers } from "./tender-closers";
 import { buildRubricPromptDirective, ensureRubricHeadings } from "./rubric-driven-sections";
 
 const BRAND_BLUE = "1F4E79";
@@ -1476,6 +1477,42 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     console.info(`[generate-elite] Personnel deep treatment injected: ${personnelInjected.join(", ")}.`);
   }
   humanizedMarkdown = personnelDeep.markdown;
+
+  // ─── Tender closers (PR M) ───────────────────────────────────────────────
+  // Three close-out structures the benchmark Claude proposal carries:
+  //   1. Tender-Specific Obstacles and Mitigation — parses tender text
+  //      for area contradictions, file format requirements, brand
+  //      mentions, schedule tightness, site-visit logistics, revision
+  //      rounds. Replaces "we read the document" with proof of it.
+  //   2. Commercial Understanding and Compliance — parses tender for
+  //      validity period, payment terms, two-envelope rule, tax
+  //      treatment, revision count, file format. Closes with verbatim
+  //      acknowledgement. Looks like the bidder is across the
+  //      commercial clauses — not just the technical scope.
+  //   3. Anti-Bribery, Ethics and Conflict of Interest Declaration —
+  //      8-clause declaration with vault Code of Ethics ref,
+  //      Ethiopian law citation, GM signature block.
+  // Idempotent via marker comments. Inserts before Section E /
+  // Compliance Matrix.
+  const closers = injectTenderClosers(humanizedMarkdown, {
+    tenderText: intelligence.tenderText,
+    ethicsVault: {
+      companyName: company.name,
+      legalName: company.legalName,
+      gmName: company.gmName,
+      gmTitle: company.gmTitle,
+      gmLicense: company.gmLicense,
+      // Optional vault override — when companies populate these in
+      // their profile, they get used; otherwise generic defaults apply.
+      codeOfEthicsRef: null,
+      countryLegalCitation: null,
+    },
+  });
+  const closersInjected = Object.entries(closers.injected).filter(([, v]) => v).map(([k]) => k);
+  if (closersInjected.length > 0) {
+    console.info(`[generate-elite] Tender closers injected: ${closersInjected.join(", ")}.`);
+  }
+  humanizedMarkdown = closers.markdown;
 
   // ─── Rubric-driven section enforcement (PR #258) ─────────────────────────
   // When the tender has explicit evaluation criteria with weights
