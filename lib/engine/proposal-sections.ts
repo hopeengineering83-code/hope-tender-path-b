@@ -767,7 +767,17 @@ function buildCompanyAndExperienceFallback(input: AIBidWriterInput): string {
     : "";
 
   // ── A.2 Corporate Information Table — real values per row ────────────
-  const a2Rows = [
+  // PR S FIX — Build the table as ONE string with single-newline row
+  // separators. The previous version pushed each row as a separate
+  // array element joined later with "\n\n" — markdown table parsers
+  // treat blank lines as table-end, so only the FIRST row rendered
+  // as a table and every subsequent row leaked into the body text
+  // with the next heading bleeding into the cell. Real output showed
+  //   "| Registered address | Bid-Team Action: ... — # A.3 Core Service Lines"
+  // exactly because of this double-newline-separator bug.
+  const a2Table = [
+    "| Field | Detail |",
+    "|---|---|",
     `| Legal name | ${vaultField(v.legalName ?? v.name, "legal name")} |`,
     `| Registration number | ${vaultField(v.registrationNumber, "registration number")} |`,
     `| TIN | ${vaultField(v.tin, "TIN")} |`,
@@ -781,7 +791,7 @@ function buildCompanyAndExperienceFallback(input: AIBidWriterInput): string {
     `| Founding year | ${vaultField(v.foundingYear, "founding year")} |`,
     `| Staff headcount | ${vaultField(v.headcount, "staff headcount")} |`,
     `| Licence grade | ${vaultField(v.licenseGrade, "licence grade")} |`,
-  ];
+  ].join("\n");
 
   // ── A.3 Core Service Lines — actual list ─────────────────────────────
   const a3Body = v.serviceLines && v.serviceLines.length > 0
@@ -796,9 +806,7 @@ function buildCompanyAndExperienceFallback(input: AIBidWriterInput): string {
     a1ServicesSentence,
     a1SectorsSentence,
     "## A.2 Corporate Information Table",
-    "| Field | Detail |",
-    "|---|---|",
-    ...a2Rows,
+    a2Table,
     "## A.3 Core Service Lines",
     a3Body,
     "## A.4 Proposed Project Team",
