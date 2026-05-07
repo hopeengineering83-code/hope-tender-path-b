@@ -273,7 +273,9 @@ function buildTable(opts: BuildOpts): string {
   const head = "| # | Tender Pain / Need | Our Strength | Discriminator | Evidence Anchor |";
   const sep = "|---|--------------------|--------------|---------------|-----------------|";
   const body = all.map((r, i) => {
-    const project = opts.projects[i % Math.max(1, opts.projects.length)];
+    // Use each project once; once exhausted fall back to the row's own
+    // evidenceFallback text rather than cycling the same projects repeatedly.
+    const project = i < opts.projects.length ? opts.projects[i] : undefined;
     const evidence = projectAnchorCell(project, r.evidenceFallback);
     return `| ${i + 1} | ${r.pain} | ${r.strength} | ${r.discriminator} | ${evidence} |`;
   });

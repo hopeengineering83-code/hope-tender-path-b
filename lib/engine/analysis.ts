@@ -17,8 +17,16 @@ const WORD_NUMBERS: Record<string, number> = {
   ten: 10,
   eleven: 11,
   twelve: 12,
+  thirteen: 13,
+  fourteen: 14,
   fifteen: 15,
+  sixteen: 16,
+  seventeen: 17,
+  eighteen: 18,
+  nineteen: 19,
   twenty: 20,
+  "twenty-five": 25,
+  thirty: 30,
 };
 
 function cleanWhitespace(text: string): string {
@@ -52,12 +60,12 @@ function inferType(text: string): string {
 function numberFromText(value: string): number | null {
   const digit = value.match(/\b(\d{1,3})\b/);
   if (digit) return Number(digit[1]);
-  const word = value.toLowerCase().match(/\b(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty)\b/);
+  const word = value.toLowerCase().match(/\b(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|twenty-five|thirty)\b/);
   return word ? WORD_NUMBERS[word[1]] ?? null : null;
 }
 
 function inferQuantity(text: string): number | null {
-  const numeric = text.match(/\b(\d{1,3}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty)\s+(?:key\s+)?(experts?|specialists?|personnel|staff|projects?|references?|assignments?|forms?|annexes?|appendices|copies|sets|files|documents)\b/i);
+  const numeric = text.match(/\b(\d{1,3}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|twenty-five|thirty)\s+(?:key\s+)?(experts?|specialists?|personnel|staff|projects?|references?|assignments?|forms?|annexes?|appendices|copies|sets|files|documents)\b/i);
   if (numeric) {
     // Reject if the number looks like a section/clause/page/appendix reference
     // e.g. "Section 29 Expert Requirements" or "Annex 5 Forms"
@@ -66,7 +74,7 @@ function inferQuantity(text: string): number | null {
     if (/\b(?:section|clause|article|page|appendix|annex|item|part|chapter|schedule|no\.?|number|ref|figure|table)\s*[:\.\-]?\s*\d*\s*$/i.test(before)) return null;
     return numberFromText(numeric[1]);
   }
-  const atLeast = text.match(/(?:at\s+least|minimum\s+of|not\s+less\s+than)\s+(\d{1,3}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty)/i);
+  const atLeast = text.match(/(?:at\s+least|minimum\s+of|not\s+less\s+than)\s+(\d{1,3}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|twenty-five|thirty)/i);
   if (atLeast) return numberFromText(atLeast[1]);
   return null;
 }

@@ -248,7 +248,7 @@ function supportSections(docName: string, context: { tenderTitle: string; requir
 
 function isMainProposalLike(doc: { name: string; exactFileName: string | null; documentType: string }): boolean {
   const label = `${doc.name} ${doc.exactFileName ?? ""}`.toLowerCase();
-  return /client-ready benchmark technical proposal|technical-proposal\.docx$/.test(label) || (doc.documentType === "TECHNICAL_PROPOSAL" && /feasibility, design and supervision technical scope/i.test(doc.name));
+  return /\bclient-ready benchmark technical proposal\b|technical-proposal\.docx$/.test(label) || (doc.documentType === "TECHNICAL_PROPOSAL" && /feasibility, design and supervision technical scope/i.test(doc.name));
 }
 
 async function fillPlannedSupportDocuments(tenderId: string, plannedFileKeys?: Set<string>): Promise<number> {
