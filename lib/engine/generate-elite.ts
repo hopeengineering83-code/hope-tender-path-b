@@ -57,6 +57,7 @@ import { injectMobilizationAndChecklist } from "./mobilization-and-checklist";
 import { stripPlaceholders } from "./placeholder-stripper";
 import { injectPersonnelDeep } from "./personnel-deep";
 import { injectTenderClosers } from "./tender-closers";
+import { injectDeliverableAndPhases } from "./deliverable-and-phases";
 import { buildRubricPromptDirective, ensureRubricHeadings } from "./rubric-driven-sections";
 
 const BRAND_BLUE = "1F4E79";
@@ -1477,6 +1478,31 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     console.info(`[generate-elite] Personnel deep treatment injected: ${personnelInjected.join(", ")}.`);
   }
   humanizedMarkdown = personnelDeep.markdown;
+
+  // ─── Deliverable crosswalk + phase narrative + branded innovation (PR N)
+  // Three more structures the benchmark Claude proposal carries:
+  //   1. Deliverable-to-Project Crosswalk — extracts D-codes from
+  //      tender, maps each code to most relevant reviewed project
+  //      (proof that this firm has delivered each scope element).
+  //   2. Phase-by-Phase Methodology Narrative — 6 phase paragraphs
+  //      naming the responsible expert + sector-specific activities +
+  //      artefacts produced per phase (60-110 words each).
+  //   3. Branded Innovation Hooks — when the tender mentions a brand
+  //      or website, emits "Innovation 2: <BRAND> Brand Integration
+  //      from Day One" + dashboard + post-handover advisory hooks.
+  // Sector-aware, vault-aware, idempotent. Inserts at end of Section C.
+  const deliverablePhases = injectDeliverableAndPhases(humanizedMarkdown, {
+    tenderText: intelligence.tenderText,
+    projects: evidenceLibrary,
+    experts: experts as unknown as Parameters<typeof injectDeliverableAndPhases>[1]["experts"],
+    primarySector: intelligence.primarySector,
+    companyName: company.name,
+  });
+  const dpInjected = Object.entries(deliverablePhases.injected).filter(([, v]) => v).map(([k]) => k);
+  if (dpInjected.length > 0) {
+    console.info(`[generate-elite] Deliverable + phase + branded innovation injected: ${dpInjected.join(", ")}.`);
+  }
+  humanizedMarkdown = deliverablePhases.markdown;
 
   // ─── Tender closers (PR M) ───────────────────────────────────────────────
   // Three close-out structures the benchmark Claude proposal carries:
