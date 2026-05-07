@@ -1201,7 +1201,11 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   }
 
   // Round-5: high-impact evaluator-friendly sections.
-  if (!upstreamCheck(`Why ${company.name} for ${intelligence.clientName}`) && !upstreamCheck("Why Us") && !upstreamCheck(`Why ${company.name}`)) {
+  // PR BB: Suppress Why Us when the deterministic Section G (Win Themes & Discriminators)
+  // will be added — both sections cover the same ground (firm strengths + discriminators)
+  // and two overlapping sections confuse evaluators and bloat the TOC.
+  const winThemesInUpstream = hasWinThemesHeading(`${matrixMarkdown}\n${strengtheningMarkdown}\n${benchmarkTables}`);
+  if (!winThemesInUpstream && !upstreamCheck(`Why ${company.name} for ${intelligence.clientName}`) && !upstreamCheck("Why Us") && !upstreamCheck(`Why ${company.name}`)) {
     const whyUs = buildWhyUsSummary({
       companyName: company.name,
       clientName: intelligence.clientName,

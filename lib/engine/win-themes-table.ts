@@ -293,7 +293,7 @@ function buildTable(opts: BuildOpts): string {
 
   return [
     MARKER,
-    `## Win Themes and Discriminators`,
+    `## Section G: Win Themes and Discriminators`,
     "",
     `The table below maps each tender pain or need to a specific firm strength, the quantified discriminator that sets us apart, and the evidence anchor a client can verify. Each row is a discriminator, not a marketing claim — backed by methodology, vault, or a written commitment in this proposal.`,
     "",
@@ -357,7 +357,7 @@ export function injectWinThemesTable(
       ...lines.slice(0, insert.line),
       "",
       // Drop the heading line from our block since one already exists.
-      block.replace(/^## Win Themes and Discriminators\n/, "").replace(/^<!-- win-themes:table -->\n/, `${MARKER}\n`),
+      block.replace(/^## Section G: Win Themes and Discriminators\n/, "").replace(/^<!-- win-themes:table -->\n/, `${MARKER}\n`),
       "",
       ...lines.slice(insert.line),
     ];
