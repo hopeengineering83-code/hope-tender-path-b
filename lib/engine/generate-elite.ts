@@ -50,6 +50,7 @@ import { humanize, humanizeDeterministic } from "./humanize";
 import { injectEvidenceMarkers } from "./evidence-marker-injector";
 import { amplifySectionCDepth } from "./section-c-depth-amplifier";
 import { injectMethodologyTables } from "./methodology-tables";
+import { injectBeyondSpecTables } from "./beyond-spec-tables";
 import { buildRubricPromptDirective, ensureRubricHeadings } from "./rubric-driven-sections";
 
 const BRAND_BLUE = "1F4E79";
@@ -1295,6 +1296,26 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     console.info(`[generate-elite] Methodology tables injected: ${newlyInjected.join(", ")}`);
   }
   humanizedMarkdown = methodologyTables.markdown;
+
+  // ─── Beyond-spec tables (PR F) ───────────────────────────────────────────
+  // Section D ("value added") differentiator tables. Modern tenders
+  // (donor-funded, corporate RFP) carry explicit ESG / H&S / Innovation /
+  // Local Content evaluation criteria. Without dedicated tables here,
+  // Section D plateaus at one paragraph of generic prose. This pass
+  // injects four tables:
+  //   1. Sustainability & ESG Plan (climate / gender / universal design / environmental)
+  //   2. Health & Safety Plan (management system, PPE, RAMS, incident reporting)
+  //   3. Innovation & Value Engineering (beyond-spec proposals with client value)
+  //   4. Local Content & Capacity Building (employment, supplier dev, training)
+  // Sector-aware row content; idempotent via marker comments.
+  const beyondSpec = injectBeyondSpecTables(humanizedMarkdown, {
+    primarySector: intelligence.primarySector,
+  });
+  const beyondSpecAdded = beyondSpec.injected.filter((i) => i.reason === "MISSING").map((i) => i.key);
+  if (beyondSpecAdded.length > 0) {
+    console.info(`[generate-elite] Beyond-spec tables injected: ${beyondSpecAdded.join(", ")}`);
+  }
+  humanizedMarkdown = beyondSpec.markdown;
 
   // ─── Rubric-driven section enforcement (PR #258) ─────────────────────────
   // When the tender has explicit evaluation criteria with weights
