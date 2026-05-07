@@ -55,25 +55,36 @@ function perspectiveScore(assessment: CandidateAssessment, key: MatchPerspective
   return (assessment.perspectives[key] ?? 5) / 10;
 }
 
+function criticalFloor(assessment: CandidateAssessment): number {
+  return Math.min(
+    assessment.perspectives.DISCIPLINE_FIT ?? 5,
+    assessment.perspectives.SCOPE_COVERAGE ?? 5,
+    assessment.perspectives.EVIDENCE_QUALITY ?? 5,
+    assessment.perspectives.COMPLIANCE_CRITICALITY ?? 5,
+    assessment.perspectives.MANDATORY_ELIGIBILITY ?? 5,
+  );
+}
+
 function rankForCycle(assessment: CandidateAssessment, cycle: number): number {
   const weights: Array<Partial<Record<MatchPerspective, number>>> = [
-    { DISCIPLINE_FIT: 0.24, SCOPE_COVERAGE: 0.18, SECTOR_FIT: 0.18, COMPLIANCE_CRITICALITY: 0.14 },
-    { SECTOR_FIT: 0.28, ROLE_RECENCY: 0.18, EVIDENCE_QUALITY: 0.16 },
-    { SCOPE_COVERAGE: 0.25, PORTFOLIO_CONTRIBUTION: 0.20, DISCIPLINE_FIT: 0.16 },
-    { EVIDENCE_QUALITY: 0.24, COMPLIANCE_CRITICALITY: 0.20, SENIORITY_OR_SCALE: 0.16 },
-    { SENIORITY_OR_SCALE: 0.23, ROLE_RECENCY: 0.20, DISCIPLINE_FIT: 0.16 },
+    { DISCIPLINE_FIT: 0.22, SCOPE_COVERAGE: 0.18, MANDATORY_ELIGIBILITY: 0.15, COMPLIANCE_CRITICALITY: 0.12 },
+    { SECTOR_FIT: 0.22, ROLE_RECENCY: 0.16, EVIDENCE_QUALITY: 0.18, DELIVERY_RISK: 0.12 },
+    { SCOPE_COVERAGE: 0.22, PORTFOLIO_CONTRIBUTION: 0.18, DIFFERENTIATION: 0.14, DISCIPLINE_FIT: 0.12 },
+    { EVIDENCE_QUALITY: 0.22, COMPLIANCE_CRITICALITY: 0.18, MANDATORY_ELIGIBILITY: 0.16, SENIORITY_OR_SCALE: 0.10 },
+    { SENIORITY_OR_SCALE: 0.18, DELIVERY_RISK: 0.16, ROLE_RECENCY: 0.14, COMMERCIAL_VALUE: 0.10 },
   ];
 
   const activeWeights = weights[cycle % weights.length] ?? {};
-  let score = assessment.overallScore * 0.55;
+  let score = assessment.overallScore * 0.48;
   for (const key of Object.keys(activeWeights) as MatchPerspective[]) {
     score += perspectiveScore(assessment, key) * (activeWeights[key] ?? 0);
   }
 
-  const perspectiveValues = Object.values(assessment.perspectives);
-  const minimumPerspective = perspectiveValues.length > 0 ? Math.min(...perspectiveValues) : 5;
-  if (minimumPerspective < 3) score -= 0.08;
-  if (assessment.recommendSelection) score += 0.04;
+  const floor = criticalFloor(assessment);
+  if (floor < 3) score -= 0.18;
+  else if (floor < 4) score -= 0.10;
+  else if (floor < 5) score -= 0.04;
+  if (assessment.recommendSelection) score += 0.03;
   return score;
 }
 
@@ -85,11 +96,9 @@ function setScore(selected: CandidateAssessment[]): number {
     (sum, key) => sum + Math.max(...selected.map((assessment) => perspectiveScore(assessment, key))),
     0,
   ) / Math.max(perspectives.length, 1);
-  const weakPenalty = selected.filter((assessment) => {
-    const values = Object.values(assessment.perspectives);
-    return values.length > 0 && Math.min(...values) < 3;
-  }).length * 0.03;
-  return averageScore * 0.62 + coverageScore * 0.38 - weakPenalty;
+  const floorAverage = selected.reduce((sum, assessment) => sum + criticalFloor(assessment), 0) / selected.length / 10;
+  const weakPenalty = selected.filter((assessment) => criticalFloor(assessment) < 4).length * 0.05;
+  return averageScore * 0.50 + coverageScore * 0.30 + floorAverage * 0.20 - weakPenalty;
 }
 
 function selectBestAvailable(assessments: CandidateAssessment[], limit: number): Set<string> {
@@ -116,7 +125,7 @@ function withAppliedSelection(assessment: CandidateAssessment, selectedIds: Set<
 }
 
 function appendRematchNote(existingNotes: string | null, selectedExpertCount: number, selectedProjectCount: number): string {
-  const note = `AI Multi-Perspective Rematch applied to main engine match records. ${selectedExpertCount} expert(s) and ${selectedProjectCount} project reference(s) selected after ${PORTFOLIO_ITERATIONS} best-available portfolio passes. Compliance review should be refreshed/confirmed before final export.`;
+  const note = `AI Multi-Perspective Rematch applied to main engine match records. ${selectedExpertCount} expert(s) and ${selectedProjectCount} project reference(s) selected after ${PORTFOLIO_ITERATIONS} best-available portfolio passes using 12-perspective scoring and critical-floor risk control. Compliance review should be refreshed/confirmed before final export.`;
   if (!existingNotes?.trim()) return note;
   if (existingNotes.includes("AI Multi-Perspective Rematch applied to main engine match records")) return existingNotes;
   return `${existingNotes.trim()}\n${note}`;
@@ -137,7 +146,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   await prismaReady;
   const log = childLogger({ tenderId, userId: actor.id, route: "/api/tenders/[id]/ai-rematch" });
-  log.info("ai_rematch_started", { applySelections, poolLimit: PRE_FILTER_LIMIT, iterations: PORTFOLIO_ITERATIONS });
+  log.info("ai_rematch_started", { applySelections, poolLimit: PRE_FILTER_LIMIT, iterations: PORTFOLIO_ITERATIONS, perspectives: 12 });
 
   const tender = await prisma.tender.findFirst({
     where: { id: tenderId, userId: actor.id },
@@ -326,7 +335,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     action: "AI_REMATCH_RUN",
     entityType: "Tender",
     entityId: tenderId,
-    description: `${actor.email} ran strengthened AI rematch on "${tender.title}" — ${expertsUpdated} expert(s), ${projectsUpdated} project(s), selected ${selectedExpertIds.size} expert(s) and ${selectedProjectIds.size} project(s)${applySelections ? "; applied to main engine" : ""}`,
+    description: `${actor.email} ran 12-perspective AI rematch on "${tender.title}" — ${expertsUpdated} expert(s), ${projectsUpdated} project(s), selected ${selectedExpertIds.size} expert(s) and ${selectedProjectIds.size} project(s)${applySelections ? "; applied to main engine" : ""}`,
     metadata: {
       tenderId,
       expertsUpdated,
@@ -335,11 +344,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       selectedExpertCount: selectedExpertIds.size,
       selectedProjectCount: selectedProjectIds.size,
       iterations: PORTFOLIO_ITERATIONS,
+      perspectives: 12,
+      criticalFloorControl: true,
       complianceStatePreserved: true,
     },
   });
 
-  log.info("ai_rematch_done", { expertsUpdated, projectsUpdated, applySelections, selectedExpertCount: selectedExpertIds.size, selectedProjectCount: selectedProjectIds.size });
+  log.info("ai_rematch_done", { expertsUpdated, projectsUpdated, applySelections, selectedExpertCount: selectedExpertIds.size, selectedProjectCount: selectedProjectIds.size, perspectives: 12 });
 
   return NextResponse.json({
     success: true,
@@ -349,6 +360,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     selectedExpertCount: selectedExpertIds.size,
     selectedProjectCount: selectedProjectIds.size,
     iterations: PORTFOLIO_ITERATIONS,
+    perspectives: 12,
+    criticalFloorControl: true,
     complianceStatePreserved: true,
     expertBatch: expertBatchForResponse,
     projectBatch: projectBatchForResponse,
