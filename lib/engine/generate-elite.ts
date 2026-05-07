@@ -821,6 +821,105 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   // that propagates to every section if used directly.
   const cleanedTenderTitle = intelligence.assignmentName;
   const tenderText = [cleanedTenderTitle, tender.reference, intelligence.clientName, tender.description, tender.intakeSummary, tender.analysisSummary, tender.evaluationMethodology, ...tender.files.map((f) => `${f.originalFileName}\n${f.extractedText ?? ""}`)].filter(Boolean).join("\n\n");
+
+  // ─── PR R — Auto multi-perspective AI re-ranking ─────────────────────────
+  // The lexical scoring (proposal-intelligence.ts) is single-axis token
+  // overlap. The user's gap analysis flagged: "the scoring and weighing
+  // matrix is very poor — it doesn't analyse from many perspectives".
+  // The multi-perspective matcher (lib/engine/ai-multi-perspective-matcher)
+  // already exists but was only triggered manually via the "AI Rematch" UI
+  // button. This wires it to fire AUTOMATICALLY before generation.
+  //
+  // Each call sends pre-filtered candidates to Claude for scoring across
+  // 4 perspectives:
+  //   1. DISCIPLINE_FIT — does discipline match tender scope?
+  //   2. SENIORITY_OR_SCALE — years/licence (experts), value/scope (projects)
+  //   3. SECTOR_FIT — sector overlap with tender
+  //   4. RECENCY_OR_ROLE — recent comparable role/delivery
+  //
+  // Results re-rank the experts and projects arrays so the most
+  // multi-axis-relevant candidates flow into the AI prompt + every
+  // downstream deterministic builder. Cost ~$0.07 per tender at Tier 2
+  // rates. Two parallel Claude calls (~5 sec wall-time).
+  //
+  // Falls back silently to lexical scoring on any AI error — never
+  // blocks generation.
+  if (isAIEnabled() && (experts.length > 0 || projects.length > 0)) {
+    try {
+      const { aiRematchExperts, aiRematchProjects } = await import("./ai-multi-perspective-matcher");
+      const tenderRequirementsText = [
+        cleanedTenderTitle,
+        intelligence.tenderText.slice(0, 4_000),
+        ...tender.requirements.slice(0, 12).map((r) => `${r.priority ?? ""} ${r.title ?? ""}: ${r.description ?? ""}`),
+      ].filter(Boolean).join("\n");
+
+      const expertCandidates = experts.slice(0, 15).map((e) => ({
+        id: e.id,
+        fullName: e.fullName,
+        title: e.title ?? null,
+        yearsExperience: e.yearsExperience ?? null,
+        disciplines: safeParseArr(e.disciplines),
+        sectors: safeParseArr(e.sectors),
+        certifications: safeParseArr(e.certifications),
+        profile: e.profile ?? null,
+        trustLevel: e.trustLevel ?? null,
+      }));
+      const projectCandidates = projects.slice(0, 15).map((p) => ({
+        id: p.id,
+        name: p.name,
+        clientName: p.clientName ?? null,
+        country: p.country ?? null,
+        sector: p.sector ?? null,
+        serviceAreas: safeParseArr(p.serviceAreas),
+        summary: p.summary ?? null,
+        contractValue: p.contractValue ?? null,
+        currency: p.currency ?? null,
+        startDate: p.startDate ?? null,
+        endDate: p.endDate ?? null,
+        trustLevel: p.trustLevel ?? null,
+      }));
+
+      const [expertBatch, projectBatch] = await Promise.all([
+        expertCandidates.length > 0 ? aiRematchExperts({
+          tenderTitle: cleanedTenderTitle,
+          tenderRequirementsText,
+          evaluationMethodology: intelligence.evaluationCriteria.join("; ") || "—",
+          candidates: expertCandidates,
+        }) : Promise.resolve(null),
+        projectCandidates.length > 0 ? aiRematchProjects({
+          tenderTitle: cleanedTenderTitle,
+          tenderRequirementsText,
+          tenderCategory: tender.category ?? null,
+          candidates: projectCandidates,
+        }) : Promise.resolve(null),
+      ]);
+
+      // Re-sort experts/projects by AI overall score. Candidates without
+      // an assessment fall back to their original lexical position.
+      if (expertBatch?.assessments?.length) {
+        const scoreMap = new Map<string, number>();
+        for (const a of expertBatch.assessments) scoreMap.set(a.candidateId, a.overallScore);
+        experts = [...experts].sort((a, b) => {
+          const sa = scoreMap.get(a.id) ?? -1;
+          const sb = scoreMap.get(b.id) ?? -1;
+          return sb - sa;
+        });
+        console.info(`[generate-elite] AI multi-perspective expert re-rank: ${expertBatch.assessments.length} candidate(s) scored over ${Math.round(expertBatch.durationMs / 1000)}s.`);
+      }
+      if (projectBatch?.assessments?.length) {
+        const scoreMap = new Map<string, number>();
+        for (const a of projectBatch.assessments) scoreMap.set(a.candidateId, a.overallScore);
+        projects = [...projects].sort((a, b) => {
+          const sa = scoreMap.get(a.id) ?? -1;
+          const sb = scoreMap.get(b.id) ?? -1;
+          return sb - sa;
+        });
+        console.info(`[generate-elite] AI multi-perspective project re-rank: ${projectBatch.assessments.length} candidate(s) scored over ${Math.round(projectBatch.durationMs / 1000)}s.`);
+      }
+    } catch (err) {
+      console.warn(`[generate-elite] AI multi-perspective match failed (falling back to lexical): ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
   // Requirement lines for AI prompt context AND for downstream rendering.
   // formatRequirementLine handles three real-world content-quality issues:
   //   - drops internal classifier prefixes (MANDATORY FORM:, etc.)
