@@ -49,6 +49,7 @@ import { renderDynamicTableOfContents } from "./dynamic-toc";
 import { humanize, humanizeDeterministic } from "./humanize";
 import { injectEvidenceMarkers } from "./evidence-marker-injector";
 import { amplifySectionCDepth } from "./section-c-depth-amplifier";
+import { injectMethodologyTables } from "./methodology-tables";
 import { buildRubricPromptDirective, ensureRubricHeadings } from "./rubric-driven-sections";
 
 const BRAND_BLUE = "1F4E79";
@@ -1270,6 +1271,30 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     console.info(`[generate-elite] Section C depth amplifier: added ${addedCount} sub-section(s), deepened ${deepenedCount} thin sub-section(s).`);
   }
   humanizedMarkdown = sectionCAmp.markdown;
+
+  // ─── Methodology tables (PR E) ───────────────────────────────────────────
+  // Real elite tender proposals (the Claude AI benchmark) carry FIVE
+  // structural tables that evaluators tick off directly:
+  //   1. Project Phasing Table
+  //   2. RACI Matrix
+  //   3. Risk Register
+  //   4. Quality Assurance Plan / ITP
+  //   5. Communication & Reporting Protocol
+  // Each is injected only if neither the heading nor an idempotency
+  // marker (<!-- methodology-table:KEY -->) already exists. Row content
+  // is sector-aware and vault-aware (RACI uses real expert names when
+  // the team is selected; Risk/QA carry sector-specific clauses for
+  // healthcare / water / road / urban / generic).
+  const methodologyTables = injectMethodologyTables(humanizedMarkdown, {
+    primarySector: intelligence.primarySector,
+    experts: allSelectedExperts as unknown as Parameters<typeof injectMethodologyTables>[1]["experts"],
+    projects: evidenceLibrary,
+  });
+  const newlyInjected = methodologyTables.injected.filter((i) => i.reason === "MISSING").map((i) => i.key);
+  if (newlyInjected.length > 0) {
+    console.info(`[generate-elite] Methodology tables injected: ${newlyInjected.join(", ")}`);
+  }
+  humanizedMarkdown = methodologyTables.markdown;
 
   // ─── Rubric-driven section enforcement (PR #258) ─────────────────────────
   // When the tender has explicit evaluation criteria with weights
