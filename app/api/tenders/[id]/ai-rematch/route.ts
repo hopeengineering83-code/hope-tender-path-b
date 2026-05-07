@@ -235,8 +235,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     .map((requirement) => `[${requirement.priority}] ${requirement.requirementType}: ${requirement.title}: ${requirement.description}`)
     .join("\n");
 
-  let expertBatch: MatchAssessmentBatch | null;
-  let projectBatch: MatchAssessmentBatch | null;
+  let expertBatch: MatchAssessmentBatch | null = null;
+  let projectBatch: MatchAssessmentBatch | null = null;
   try {
     [expertBatch, projectBatch] = await time("ai-rematch.parallel_calls", () => Promise.all([
       expertCandidates.length > 0
