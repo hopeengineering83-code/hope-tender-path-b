@@ -65,6 +65,7 @@ import { injectDeliverableAndPhases } from "./deliverable-and-phases";
 import { buildRubricPromptDirective, ensureRubricHeadings } from "./rubric-driven-sections";
 import { injectCoverPageAndRfpMeta } from "./cover-page-injector";
 import { injectJvDisclosure } from "./jv-disclosure";
+import { deduplicateTables, injectQaThresholds, injectAppendixReadinessRegister } from "./advanced-quality-passes";
 
 const BRAND_BLUE = "1F4E79";
 const BRAND_GRAY = "595959";
@@ -1861,6 +1862,47 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     console.info("[generate-elite] RFP reference metadata bar injected under cover letter subject line (PR II).");
   }
   humanizedMarkdown = coverAndMeta.markdown;
+
+  // ─── PR HH: Content-level table deduplication ───────────────────────────
+  // After all deterministic builders have run, remove duplicate Markdown
+  // tables that share the same column header row. The AI and the
+  // deterministic builders may both emit a Team-to-Project mapping table
+  // or a QA review table with identical headers. Keep the LAST occurrence
+  // (deterministic builders run last, so the structured version survives).
+  const dedupedTables = deduplicateTables(humanizedMarkdown);
+  if (dedupedTables.removed > 0) {
+    console.info(`[generate-elite] Duplicate table deduplicator removed ${dedupedTables.removed} line(s) from ${Math.floor(dedupedTables.removed / 3)} duplicate table block(s) (PR HH).`);
+  }
+  humanizedMarkdown = dedupedTables.markdown;
+
+  // ─── PR LL: QA numeric threshold injection ────────────────────────────────
+  // Extract numeric thresholds from the tender text (review rounds, day
+  // limits, ISO standards, defect tolerances) and inject a
+  // "Tender-Specific Quality Requirements" table below the C.3 QA section.
+  // Elevates the QA section from generic to tender-responsive.
+  const qaThresholds = injectQaThresholds(humanizedMarkdown, intelligence.tenderText);
+  if (qaThresholds.injected) {
+    console.info("[generate-elite] QA tender-specific numeric thresholds injected below C.3 (PR LL).");
+  }
+  humanizedMarkdown = qaThresholds.markdown;
+
+  // ─── PR MM: Appendix readiness register cross-check ──────────────────────
+  // Scan for Annex/Appendix references in the assembled proposal and build
+  // a "Appendix Readiness Register" table at end-of-document listing each
+  // annex, its inferred content, and readiness status (vault document
+  // available vs. Bid-Team Action). Flags missing documents before
+  // submission. Idempotent via marker.
+  const vaultDocNames = [
+    ...(company.documents ?? []).map((d: any) => d.originalFileName ?? d.fileName ?? ""),
+    ...(company.legalRecords ?? []).map((r: any) => r.title ?? r.recordType ?? ""),
+    ...(company.financialRecords ?? []).map((r: any) => `${r.recordType ?? ""} ${r.fiscalYear ?? ""}`.trim()),
+    ...(company.complianceRecords ?? []).map((r: any) => r.title ?? r.complianceType ?? ""),
+  ].filter(Boolean);
+  const appendixReg = injectAppendixReadinessRegister(humanizedMarkdown, vaultDocNames);
+  if (appendixReg.injected) {
+    console.info("[generate-elite] Appendix Readiness Register cross-check injected (PR MM).");
+  }
+  humanizedMarkdown = appendixReg.markdown;
 
   // ─── PR JJ: Three-column DOCX signature block ─────────────────────────────
   // Inject a "Signed | Company Stamp | Date" signature block after the
