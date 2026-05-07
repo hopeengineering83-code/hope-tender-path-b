@@ -106,13 +106,13 @@ function extractQaThresholds(tenderText: string): QaThreshold[] {
   const seen = new Set<string>();
 
   const patterns: Array<[string, RegExp]> = [
-    ["Maximum deliverable review period", /(\d+)\s*(?:working\s+)?days?\s+(?:for|per)\s+(?:review|comment|feedback)/i],
+    ["Maximum deliverable review period", /(\d+)\s*(?:working\s+|calendar\s+)?days?\s+(?:for|per|of|after|from|within)\s+(?:review|comment|feedback|submission|notification)/i],
     ["Required review rounds", /(\d+)\s+(?:rounds?|cycles?|iterations?)\s+of\s+(?:review|revision|comment)/i],
     ["Quality inspection frequency", /(?:quality|QA|QC)\s+inspection(?:s)?\s+(?:every|each|per)\s+(\d+)\s*(?:week|month|day|deliverable)/i],
     ["ISO / QMS standard required", /(ISO\s*\d{4,5}(?::\d{4})?)/i],
     ["Maximum defect / error tolerance", /(\d+(?:\.\d+)?\s*%)\s*(?:defect|error|non-conformance|failure)\s+(?:rate|tolerance|limit)/i],
-    ["Minimum peer-review experience", /peer[\s-]?reviewer.*?(\d+)\s*(?:years?|yr)/i],
-    ["Design review stage requirement", /(30%|60%|90%|100%)\s*(?:design\s+review|gate\s+review|stage\s+review)/i],
+    ["Minimum peer-review experience", /peer[\s-]?reviewer.{0,40}?(\d+)\s*(?:years?|yr)/i],
+    ["Design review stage requirement", /(\d{1,3})%\s*(?:design\s+review|gate\s+review|stage\s+review)/i],
   ];
 
   for (const [label, re] of patterns) {
@@ -196,15 +196,18 @@ interface AnnexRef {
   inferredContent: string;
 }
 
+// Labels aligned with inferPackageReference() in compliance-matrix-builder.ts
+// so the Appendix Readiness Register and Section E Compliance Matrix
+// use consistent annex descriptions throughout the proposal.
 function inferAnnexContent(label: string): string {
   const l = label.toUpperCase();
   const map: Record<string, string> = {
-    A: "CV & Expert Qualifications",
+    A: "CV & Qualifications",
     B: "Project Reference Sheets",
     C: "Company Profile",
     D: "Declarations & Undertakings",
-    E: "Audited Financial Statements",
-    F: "Eligibility / Registration Certificates",
+    E: "Financial Records",
+    F: "Eligibility Documents",
     G: "Tender Forms",
     H: "Consortium / MoU Agreement",
     I: "Technical Drawings / Plans",
@@ -269,9 +272,9 @@ export function injectAppendixReadinessRegister(
   const block = [
     "",
     APPENDIX_REG_MARKER,
-    "## Appendix Readiness Register",
+    "## Annex & Appendix Readiness Register",
     "",
-    "Cross-check of all annexes referenced in this proposal against the company vault. Items marked 'Bid-Team Action' require preparation before the submission package is assembled.",
+    "Cross-check of all annexes and appendices referenced in this proposal against the company vault. Items marked 'Bid-Team Action' require preparation before the submission package is assembled.",
     "",
     "| Annex | Inferred Content | Readiness Status |",
     "|---|---|---|",

@@ -75,19 +75,26 @@ const SECTOR_VOCAB: Record<string, RegExp[]> = {
   education: [/pupil.ratio/i, /accessible/i, /climate.responsive/i, /fire egress/i],
 };
 
+// Keep this list aligned with hasForbiddenWeakness() in proposal-benchmark-guard.ts.
+// The guard normalises/strips these; the scorer reports them as a quality penalty.
 const FORBIDDEN_PHRASES = [
   /as an ai/i,
+  /\blanguage model\b/i,
   /chatgpt/i,
   /openai/i,
   /lorem ipsum/i,
   /\bplaceholder\b/i,
   /sample text/i,
+  /\btodo\b/i,
+  /\btbd\b/i,
+  /to be determined/i,
+  /n\/a \(pending\)/i,
   /committed to excellence/i,
   /leading firm in the region/i,
   /team of qualified professionals/i,
   /we look forward to the opportunity/i,
   /\[INSERT[^\]]*\]/i,
-  /\bTBD\b/i,
+  /\[(?:PLACEHOLDER|NAME|DATE|TBD|ADD|ENTER|SPECIFY|YOUR)[^\]]{0,60}\]/i,
 ];
 
 function detectSector(primarySector: string): string {
@@ -152,7 +159,13 @@ export function scoreProposalQuality(opts: {
     .map((p) => p.replace(/\s+/g, " ").trim())
     .filter((p) => p.length > 80 && !p.startsWith("|") && !p.startsWith("#"));
   const withEvidence = paragraphs.filter(paragraphHasEvidence).length;
-  const evidenceDensity = paragraphs.length > 0 ? Math.round((withEvidence / paragraphs.length) * 10) : 5;
+  // Floor at 6 when fewer than 6 paragraphs exist — a short but focused
+  // proposal should not be penalised the same as a long evidence-thin one.
+  const evidenceDensity = paragraphs.length === 0
+    ? 5
+    : paragraphs.length < 6
+      ? Math.max(6, Math.round((withEvidence / paragraphs.length) * 10))
+      : Math.round((withEvidence / paragraphs.length) * 10);
   if (evidenceDensity < 5) {
     weakAxes.push("evidenceDensity");
     notes.push(`Only ${withEvidence} of ${paragraphs.length} substantive paragraphs cite specific evidence (projects/values/licenses).`);

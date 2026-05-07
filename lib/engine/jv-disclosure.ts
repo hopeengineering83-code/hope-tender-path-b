@@ -75,7 +75,7 @@ function buildJvTable(opts: JvDisclosureOpts): string {
     rows.push(`| **Submission type** | Single firm — ${escCell(opts.companyName)} submits as the sole bidder. No consortium or joint-venture arrangement applies to this bid. |`);
     rows.push(`| **Sub-consultants** | Sub-consultants, if any, are engaged under ${escCell(opts.companyName)}'s sole responsibility and do not constitute a consortium for the purpose of this tender. |`);
     rows.push(`| **Conflict of interest** | No consortium partner relationship exists that would create a conflict of interest with the client or other bidders. |`);
-    rows.push(`| **Consortium eligibility** | Tender clause noted: _${escCell(opts.consortiaRules.slice(0, 200))}_ — not applicable to this single-firm submission. |`);
+    rows.push(`| **Consortium eligibility** | Tender clause noted: _${escCell(opts.consortiaRules.slice(0, 500))}_ — not applicable to this single-firm submission. |`);
   }
 
   const framing = hasPartners

@@ -96,7 +96,7 @@ function buildCoverPageBlock(opts: CoverPageOpts): string {
     meta.push(["Prepared by", gmLine]);
   }
 
-  lines.push("| | |");
+  lines.push("| **Field** | **Details** |");
   lines.push("|---|---|");
   for (const [k, v] of meta) {
     lines.push(`| **${k}** | ${v} |`);

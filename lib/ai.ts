@@ -36,10 +36,13 @@ function normalizeClaudeModelName(raw: string): string {
     .replace(/-+/g, "-")
     .replace(/^-+|-+$/g, "");
 }
-const CLAUDE_PROPOSAL_MODELS = (process.env.ANTHROPIC_PROPOSAL_MODELS || "claude-sonnet-4-5,claude-opus-4-1,claude-3-5-sonnet-latest,claude-3-5-haiku-latest")
+const _rawModels = (process.env.ANTHROPIC_PROPOSAL_MODELS || "claude-sonnet-4-5,claude-opus-4-1,claude-3-5-sonnet-latest,claude-3-5-haiku-latest")
   .split(",")
   .map(normalizeClaudeModelName)
   .filter(Boolean);
+const CLAUDE_PROPOSAL_MODELS = _rawModels.length > 0
+  ? _rawModels
+  : ["claude-sonnet-4-5", "claude-3-5-sonnet-latest"];
 
 // Maximum output tokens per Claude call. Two distinct constraints apply:
 //   - Anthropic Free Tier caps output at 4K tokens/minute per model.
