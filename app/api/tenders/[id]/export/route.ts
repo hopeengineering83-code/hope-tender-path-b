@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getSession } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { validateTender } from "../../../../../lib/engine/validate";
+import { checkExportReadiness, exportReadinessError } from "../../../../../lib/engine/export-readiness";
 import { logAction } from "../../../../../lib/audit";
 
 export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -41,9 +42,6 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       return NextResponse.json({ error: "Run the tender engine before export preparation." }, { status: 400 });
     }
 
-    // Run final validation before allowing export preparation. Catches:
-    // selected drafts, placeholder text in generated docs, missing required
-    // file names / order, missing exact file names. BLOCK issues halt export.
     const report = await validateTender(id);
     const blockingIssues = report.issues.filter((issue) => issue.severity === "BLOCK");
     if (blockingIssues.length > 0) {
@@ -56,14 +54,26 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       );
     }
 
-    const generatedFileNames = tender.generatedDocuments
-      .filter((doc) => doc.generationStatus === "GENERATED")
+    const generatedDocuments = tender.generatedDocuments.filter((doc) => doc.generationStatus === "GENERATED");
+    if (generatedDocuments.length === 0) {
+      return NextResponse.json({ error: "No generated documents are available for export." }, { status: 400 });
+    }
+
+    const readiness = checkExportReadiness(generatedDocuments);
+    if (!readiness.ok) {
+      return NextResponse.json(
+        {
+          error: exportReadinessError(readiness.failures),
+          failures: readiness.failures,
+        },
+        { status: 409 },
+      );
+    }
+
+    const generatedFileNames = generatedDocuments
       .sort((a, b) => (a.exactOrder ?? Number.MAX_SAFE_INTEGER) - (b.exactOrder ?? Number.MAX_SAFE_INTEGER))
       .map((doc) => doc.exactFileName ?? doc.name);
 
-    // Persist the ExportPackage — was previously returned as a mock with a fresh
-    // UUID and never written, leaving no audit trail and breaking the
-    // ExportPackage relation documented in the schema.
     const existingPackage = await prisma.exportPackage.findFirst({ where: { tenderId: id }, orderBy: { createdAt: "desc" } });
     const exportPackage = existingPackage
       ? await prisma.exportPackage.update({
@@ -85,7 +95,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       entityType: "Tender",
       entityId: id,
       description: `Prepared export package for "${tender.title}" — ${generatedFileNames.length} file(s)`,
-      metadata: { exportPackageId: exportPackage.id, fileCount: generatedFileNames.length, validationPassed: true },
+      metadata: { exportPackageId: exportPackage.id, fileCount: generatedFileNames.length, validationPassed: true, reviewGatePassed: true },
     });
 
     return NextResponse.json(
