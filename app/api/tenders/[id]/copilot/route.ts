@@ -50,25 +50,31 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     .map((log) => `${log.action}: ${short(log.description, 300)}`)
     .slice(0, 15);
 
-  const response = await answerTenderCopilotQuestion({
-    question,
-    context: {
-      tenderTitle: tender.title,
-      tenderSummary: [
-        tender.analysisSummary ? `Analysis: ${short(tender.analysisSummary, 900)}` : null,
-        tender.evaluationMethodology ? `Evaluation: ${short(tender.evaluationMethodology, 900)}` : null,
-        tender.notes ? `Notes: ${short(tender.notes, 900)}` : null,
-        `Status=${tender.status}, stage=${tender.stage}, readiness=${Math.round(tender.readinessScore ?? 0)}/100`,
-      ].filter(Boolean).join("\n"),
-      requirements: tender.requirements.map((req) => `[${req.priority}] ${req.requirementType}: ${req.title} — ${short(req.description, 360)}`),
-      complianceGaps: tender.complianceGaps.map((gap) => `[${gap.severity}] ${gap.title} — ${short(gap.description, 360)}${gap.mitigationPlan ? ` | Mitigation: ${short(gap.mitigationPlan, 220)}` : ""}`),
-      selectedExperts: tender.expertMatches.map((match) => `${match.expert.fullName}${match.expert.title ? ` — ${match.expert.title}` : ""}; score=${Math.round(match.score * 100)}%; trust=${match.expert.trustLevel}; rationale=${short(match.rationale, 360)}; profile=${short(match.expert.profile, 240)}`),
-      selectedProjects: tender.projectMatches.map((match) => `${match.project.name}${match.project.clientName ? ` — ${match.project.clientName}` : ""}; score=${Math.round(match.score * 100)}%; trust=${match.project.trustLevel}; rationale=${short(match.rationale, 360)}; summary=${short(match.project.summary, 260)}`),
-      generatedDocuments: tender.generatedDocuments.map((doc) => `${doc.name} (${doc.documentType}) generation=${doc.generationStatus}, validation=${doc.validationStatus}, review=${doc.reviewStatus}; ${short(doc.contentSummary, 320)}`),
-      controls,
-      recentAudit: recentAudit.map((log) => `${log.action}: ${short(log.description, 360)}`),
-    },
-  });
+  let response;
+  try {
+    response = await answerTenderCopilotQuestion({
+      question,
+      context: {
+        tenderTitle: tender.title,
+        tenderSummary: [
+          tender.analysisSummary ? `Analysis: ${short(tender.analysisSummary, 900)}` : null,
+          tender.evaluationMethodology ? `Evaluation: ${short(tender.evaluationMethodology, 900)}` : null,
+          tender.notes ? `Notes: ${short(tender.notes, 900)}` : null,
+          `Status=${tender.status}, stage=${tender.stage}, readiness=${Math.round(tender.readinessScore ?? 0)}/100`,
+        ].filter(Boolean).join("\n"),
+        requirements: tender.requirements.map((req) => `[${req.priority}] ${req.requirementType}: ${req.title} — ${short(req.description, 360)}`),
+        complianceGaps: tender.complianceGaps.map((gap) => `[${gap.severity}] ${gap.title} — ${short(gap.description, 360)}${gap.mitigationPlan ? ` | Mitigation: ${short(gap.mitigationPlan, 220)}` : ""}`),
+        selectedExperts: tender.expertMatches.map((match) => `${match.expert.fullName}${match.expert.title ? ` — ${match.expert.title}` : ""}; score=${Math.round(match.score * 100)}%; trust=${match.expert.trustLevel}; rationale=${short(match.rationale, 360)}; profile=${short(match.expert.profile, 240)}`),
+        selectedProjects: tender.projectMatches.map((match) => `${match.project.name}${match.project.clientName ? ` — ${match.project.clientName}` : ""}; score=${Math.round(match.score * 100)}%; trust=${match.project.trustLevel}; rationale=${short(match.rationale, 360)}; summary=${short(match.project.summary, 260)}`),
+        generatedDocuments: tender.generatedDocuments.map((doc) => `${doc.name} (${doc.documentType}) generation=${doc.generationStatus}, validation=${doc.validationStatus}, review=${doc.reviewStatus}; ${short(doc.contentSummary, 320)}`),
+        controls,
+        recentAudit: recentAudit.map((log) => `${log.action}: ${short(log.description, 360)}`),
+      },
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "Copilot AI call failed.";
+    return NextResponse.json({ error: msg }, { status: 502 });
+  }
 
   await logAction({
     userId: actor.id,

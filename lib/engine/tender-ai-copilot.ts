@@ -1,5 +1,27 @@
 import { generateWithFallback } from "../ai";
 
+// Per-call wall-clock cap so a hung AI provider doesn't block the route's
+// maxDuration=60s window. Override via COPILOT_TIMEOUT_MS env var.
+const COPILOT_TIMEOUT_MS = (() => {
+  const raw = Number(process.env.COPILOT_TIMEOUT_MS);
+  if (Number.isFinite(raw) && raw >= 5_000 && raw <= 120_000) return raw;
+  return 45_000;
+})();
+
+async function withCopilotTimeout<T>(promise: Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`Copilot AI call timed out after ${Math.round(COPILOT_TIMEOUT_MS / 1000)}s`)), COPILOT_TIMEOUT_MS);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 export type TenderCopilotContext = {
   tenderTitle: string;
   tenderSummary: string;
@@ -79,9 +101,16 @@ export async function answerTenderCopilotQuestion(input: { question: string; con
   const question = input.question.trim();
   if (question.length < 3) throw new Error("Question must be at least 3 characters.");
   const prompt = `TENDER CONTEXT\n${buildContextText(input.context)}\n\nUSER QUESTION\n${question}\n\nAnswer as Tender AI Copilot using the required JSON shape.`;
-  const raw = await generateWithFallback(prompt, { systemPrompt: SYSTEM_PROMPT });
-  const parsed = parseJson(raw);
-  if (!parsed) throw new Error("AI copilot returned malformed JSON. Retry the question.");
+
+  // Try once; if JSON is malformed, retry once before throwing.
+  let parsed: Record<string, unknown> | null = null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const raw = await withCopilotTimeout(generateWithFallback(prompt, { systemPrompt: SYSTEM_PROMPT }));
+    parsed = parseJson(raw);
+    if (parsed) break;
+    if (attempt === 0) console.warn("[copilot] Malformed JSON on first attempt — retrying.");
+  }
+  if (!parsed) throw new Error("AI copilot returned malformed JSON after retry. Please rephrase the question.");
 
   const recommendations = Array.isArray(parsed.recommendations) ? parsed.recommendations.map(String).filter(Boolean).slice(0, 8) : [];
   const evidenceReferences = Array.isArray(parsed.evidenceReferences) ? parsed.evidenceReferences.map(String).filter(Boolean).slice(0, 10) : [];

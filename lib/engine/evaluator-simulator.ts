@@ -251,6 +251,17 @@ function synthesizeRationale(score: number, verdict: SimulationResult["verdict"]
   return `Predicted overall score ${score}/100 — NEEDS WORK. The proposal has usable strengths, but ${objectionCount} objection(s) and ${actionCount} action(s) should be closed before final export.`;
 }
 
+// Per-simulation wall-clock timeout. The route sets maxDuration=60; with 4
+// concurrent persona calls each potentially taking ~15s, a single slow model
+// could exceed Vercel's function limit. This guard races the entire panel
+// against a timeout so the route can return a partial or null result rather
+// than a 504. Override via EVALUATOR_SIMULATION_TIMEOUT_MS.
+const SIMULATION_TIMEOUT_MS = (() => {
+  const raw = Number(process.env.EVALUATOR_SIMULATION_TIMEOUT_MS);
+  if (Number.isFinite(raw) && raw >= 10_000 && raw <= 300_000) return raw;
+  return 50_000;
+})();
+
 export async function simulateEvaluatorPanel(input: {
   tenderTitle: string;
   proposalMarkdown: string;
@@ -258,12 +269,31 @@ export async function simulateEvaluatorPanel(input: {
   context?: EvaluatorContext;
 }): Promise<SimulationResult | null> {
   const userPrompt = buildUserPrompt(input.proposalMarkdown, input.evaluationCriteria, input.tenderTitle, input.context);
-  const settled = await Promise.allSettled([
+
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<null>((resolve) => {
+    timeoutHandle = setTimeout(() => {
+      console.warn(`[evaluator-simulator] Simulation timed out after ${Math.round(SIMULATION_TIMEOUT_MS / 1000)}s — returning null.`);
+      resolve(null);
+    }, SIMULATION_TIMEOUT_MS);
+  });
+
+  const panelPromise = Promise.allSettled([
     runPersona("TECHNICAL", TECHNICAL_EVALUATOR_PROMPT, userPrompt),
     runPersona("COMPLIANCE", COMPLIANCE_EVALUATOR_PROMPT, userPrompt),
     runPersona("END_USER", END_USER_EVALUATOR_PROMPT, userPrompt),
     runPersona("COMMERCIAL", COMMERCIAL_EVALUATOR_PROMPT, userPrompt),
   ]);
+
+  const settled = await Promise.race([
+    panelPromise.then((results) => {
+      clearTimeout(timeoutHandle);
+      return results;
+    }),
+    timeoutPromise,
+  ]);
+
+  if (!settled) return null;
 
   const assessments = settled.flatMap((s) => (s.status === "fulfilled" && s.value ? [s.value] : []));
   if (assessments.length === 0) {

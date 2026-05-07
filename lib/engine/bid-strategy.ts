@@ -253,10 +253,11 @@ function scoreEvaluationAlignment(input: BidStrategyInput): { score: number; ali
   const methodologyLower = methodology.toLowerCase();
   const aligned: string[] = [];
   for (const service of firmServices) {
-    const tokens = tokenize(service);
-    const distinctive = [...tokens].find((t) => t.length >= 5);
-    if (!distinctive) continue;
-    if (methodologyLower.includes(distinctive)) aligned.push(service);
+    const tokens = [...tokenize(service)].filter((t) => t.length >= 5);
+    // Accept the service when ANY of its long tokens appears in the methodology
+    // text — the prior `find` returned only the first token, missing services
+    // whose identifying term was not their first long word.
+    if (tokens.some((t) => methodologyLower.includes(t))) aligned.push(service);
   }
   // Each aligned firm-service against methodology = ~15 points, floor 40
   const score = Math.max(40, Math.min(100, 40 + aligned.length * 15));
