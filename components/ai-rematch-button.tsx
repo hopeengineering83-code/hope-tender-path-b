@@ -12,6 +12,8 @@ type Perspective =
   | "COMPLIANCE_CRITICALITY"
   | "PORTFOLIO_CONTRIBUTION";
 
+type RawPerspective = Perspective | "RECENCY_OR_ROLE";
+
 const PERSPECTIVE_LABEL: Record<Perspective, string> = {
   DISCIPLINE_FIT: "Discipline",
   SCOPE_COVERAGE: "Scope",
@@ -37,7 +39,7 @@ const PERSPECTIVE_ORDER: Perspective[] = [
 interface CandidateAssessment {
   candidateId: string;
   overallScore: number;
-  perspectives: Partial<Record<Perspective, number>>;
+  perspectives: Partial<Record<RawPerspective, number>>;
   strength: string;
   concern: string;
   recommendSelection: boolean;
@@ -70,10 +72,16 @@ function scoreColor(score: number): string {
   return "bg-red-500";
 }
 
+function scoreForPerspective(assessment: CandidateAssessment, key: Perspective): number | undefined {
+  if (key === "ROLE_RECENCY") return assessment.perspectives.ROLE_RECENCY ?? assessment.perspectives.RECENCY_OR_ROLE;
+  return assessment.perspectives[key];
+}
+
 function perspectiveEntries(assessment: CandidateAssessment): Array<[Perspective, number]> {
   return PERSPECTIVE_ORDER
-    .filter((key) => typeof assessment.perspectives[key] === "number")
-    .map((key) => [key, assessment.perspectives[key] ?? 5]);
+    .map((key) => [key, scoreForPerspective(assessment, key)] as const)
+    .filter((entry): entry is readonly [Perspective, number] => typeof entry[1] === "number")
+    .map(([key, score]) => [key, score]);
 }
 
 export function AIRematchButton({ tenderId, experts = [], projects = [], onRematchComplete }: AIRematchButtonProps) {
