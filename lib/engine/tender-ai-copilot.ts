@@ -15,27 +15,21 @@ export type TenderCopilotContext = {
 export type TenderCopilotResponse = {
   answer: string;
   recommendations: string[];
+  evidenceReferences: string[];
   risks: Array<{ title: string; severity: "HIGH" | "MEDIUM" | "LOW"; detail: string }>;
   nextActions: Array<{ title: string; owner: "TECHNICAL" | "COMPLIANCE" | "COMMERCIAL" | "PROPOSAL" | "MANAGEMENT"; priority: "HIGH" | "MEDIUM" | "LOW"; detail: string }>;
   confidence: "HIGH" | "MEDIUM" | "LOW";
 };
 
-const SYSTEM_PROMPT = `You are Tender AI Copilot: a senior bid director, tender evaluator, procurement compliance reviewer, commercial reviewer, and proposal strategist combined.
+const SYSTEM_PROMPT = `You are Tender AI Copilot: a senior bid director, procurement reviewer, commercial reviewer, and proposal strategist.
 
-You answer questions inside a tender workspace. You must reason from the supplied tender context only. You do not invent missing certificates, project values, expert credentials, client names, deadlines, or compliance status.
+Use only the supplied tender context. Relate requirements, compliance gaps, selected experts, selected projects, generated documents, controls, and audit events. Be practical and give owners/actions.
 
-Your job:
-- Answer the user's question directly.
-- Relate tender requirements, compliance gaps, selected experts, selected projects, generated documents, controls, and audit events.
-- Be practical: identify what to do next, who should own it, and what risk remains.
-- If evidence is weak or missing, say so clearly and mark confidence LOW or MEDIUM.
-- Do not give generic tender advice when the context contains specific evidence.
-- If the user asks for a decision, give a recommendation and the conditions.
-
-Return ONLY valid JSON with this shape:
+Return ONLY valid JSON:
 {
   "answer": "direct answer in 3-8 concise paragraphs",
   "recommendations": ["specific recommendation"],
+  "evidenceReferences": ["Requirement / Compliance gap / Selected expert / Selected project / Generated document / Audit item used"],
   "risks": [{ "title": "risk", "severity": "HIGH" | "MEDIUM" | "LOW", "detail": "why it matters" }],
   "nextActions": [{ "title": "action", "owner": "TECHNICAL" | "COMPLIANCE" | "COMMERCIAL" | "PROPOSAL" | "MANAGEMENT", "priority": "HIGH" | "MEDIUM" | "LOW", "detail": "exact next step" }],
   "confidence": "HIGH" | "MEDIUM" | "LOW"
@@ -66,11 +60,7 @@ function parseJson(raw: string): Record<string, unknown> | null {
   const cleaned = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
   const match = cleaned.match(/\{[\s\S]*\}/);
   if (!match) return null;
-  try {
-    return JSON.parse(match[0]) as Record<string, unknown>;
-  } catch {
-    return null;
-  }
+  try { return JSON.parse(match[0]) as Record<string, unknown>; } catch { return null; }
 }
 
 function severity(value: unknown): "HIGH" | "MEDIUM" | "LOW" {
@@ -94,6 +84,7 @@ export async function answerTenderCopilotQuestion(input: { question: string; con
   if (!parsed) throw new Error("AI copilot returned malformed JSON. Retry the question.");
 
   const recommendations = Array.isArray(parsed.recommendations) ? parsed.recommendations.map(String).filter(Boolean).slice(0, 8) : [];
+  const evidenceReferences = Array.isArray(parsed.evidenceReferences) ? parsed.evidenceReferences.map(String).filter(Boolean).slice(0, 10) : [];
   const risks = Array.isArray(parsed.risks)
     ? (parsed.risks as Array<Record<string, unknown>>).map((risk) => ({
         title: typeof risk.title === "string" ? risk.title.slice(0, 140) : "Risk",
@@ -110,11 +101,5 @@ export async function answerTenderCopilotQuestion(input: { question: string; con
       })).slice(0, 10)
     : [];
 
-  return {
-    answer: typeof parsed.answer === "string" ? parsed.answer.slice(0, 4_000) : "No answer returned.",
-    recommendations,
-    risks,
-    nextActions,
-    confidence: confidence(parsed.confidence),
-  };
+  return { answer: typeof parsed.answer === "string" ? parsed.answer.slice(0, 4_000) : "No answer returned.", recommendations, evidenceReferences, risks, nextActions, confidence: confidence(parsed.confidence) };
 }
