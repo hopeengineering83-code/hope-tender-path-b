@@ -63,6 +63,7 @@ import { injectPersonnelDeep } from "./personnel-deep";
 import { injectTenderClosers } from "./tender-closers";
 import { injectDeliverableAndPhases } from "./deliverable-and-phases";
 import { buildRubricPromptDirective, ensureRubricHeadings } from "./rubric-driven-sections";
+import { injectCoverPageAndRfpMeta } from "./cover-page-injector";
 
 const BRAND_BLUE = "1F4E79";
 const BRAND_GRAY = "595959";
@@ -1794,6 +1795,41 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     console.info(`[generate-elite] Placeholder stripper: removed ${stripped.removedLines} line(s), ${stripped.removedParagraphs} paragraph(s); blanked ${stripped.blankedCells} table cell(s).`);
   }
   humanizedMarkdown = stripped.markdown;
+
+  // ─── Markdown cover page + RFP meta bar (PR EE + PR II) ─────────────────
+  // PR EE: Inject a formal markdown cover page at the very top of the proposal
+  // (company name, tender title, client, reference, date, validity, contact).
+  // This is distinct from the DOCX buildCoverBlock — it provides the same
+  // context in the markdown / PDF export path.
+  // PR II: Inject "RFP # | Submission: date | Validity: X days" as a reference
+  // bar immediately under the cover letter subject line when missing.
+  // Both are idempotent via marker comments.
+  const coverAndMeta = injectCoverPageAndRfpMeta(humanizedMarkdown, {
+    companyName: company.name,
+    companyLegalName: company.legalName,
+    tenderTitle: cleanedTenderTitle,
+    clientName: intelligence.clientName,
+    reference: tender.reference,
+    exactSubjectLine: intelligence.exactSubjectLine,
+    submissionDate: tender.deadline,
+    proposalValidityDays: intelligence.commercialTerms?.bidValidityDays
+      ? Number(String(intelligence.commercialTerms.bidValidityDays).match(/\d+/)?.[0] ?? "") || null
+      : null,
+    address: company.address,
+    phone: company.phone,
+    email: company.email,
+    website: company.website,
+    tin: company.tin,
+    gmName: company.gmName,
+    gmTitle: company.gmTitle,
+  });
+  if (coverAndMeta.coverPageInjected) {
+    console.info("[generate-elite] Markdown cover page injected (PR EE).");
+  }
+  if (coverAndMeta.rfpMetaInjected) {
+    console.info("[generate-elite] RFP reference metadata bar injected under cover letter subject line (PR II).");
+  }
+  humanizedMarkdown = coverAndMeta.markdown;
 
   const auditSummary = benchmarkAuditSummary(humanizedMarkdown);
   const children = markdownToDocx(humanizedMarkdown);
