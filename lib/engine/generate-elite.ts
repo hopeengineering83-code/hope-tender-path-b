@@ -51,6 +51,7 @@ import { injectEvidenceMarkers } from "./evidence-marker-injector";
 import { amplifySectionCDepth } from "./section-c-depth-amplifier";
 import { injectMethodologyTables } from "./methodology-tables";
 import { injectBeyondSpecTables } from "./beyond-spec-tables";
+import { injectWinThemesTable } from "./win-themes-table";
 import { buildRubricPromptDirective, ensureRubricHeadings } from "./rubric-driven-sections";
 
 const BRAND_BLUE = "1F4E79";
@@ -1316,6 +1317,28 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     console.info(`[generate-elite] Beyond-spec tables injected: ${beyondSpecAdded.join(", ")}`);
   }
   humanizedMarkdown = beyondSpec.markdown;
+
+  // ─── Win Themes & Discriminators table (PR G) ────────────────────────────
+  // The 10-axis quality scorer's winThemesPresence axis caps at 7/10
+  // unless there are >= 2 table rows under a Win Themes heading. Existing
+  // proposal-evaluator-matrix emits bullets, never a table. This pass
+  // injects a 4-column table mapping each tender pain → firm strength →
+  // quantified discriminator → evidence anchor. Sector-aware default
+  // rows; tender-specific rows pulled from gapsToAddressInNarrative +
+  // themes. Idempotent via <!-- win-themes:table --> marker.
+  const winThemes = injectWinThemesTable(humanizedMarkdown, {
+    primarySector: intelligence.primarySector,
+    projects: evidenceLibrary,
+    differentiators: intelligence.differentiators,
+    gapsToAddressInNarrative: intelligence.gapsToAddressInNarrative,
+    themes: (intelligence.themes ?? []).map((t) => t.label),
+    evaluationCriteria: intelligence.evaluationCriteria,
+    companyName: company.name,
+  });
+  if (winThemes.injected) {
+    console.info(`[generate-elite] Win Themes table injected (Section G).`);
+  }
+  humanizedMarkdown = winThemes.markdown;
 
   // ─── Rubric-driven section enforcement (PR #258) ─────────────────────────
   // When the tender has explicit evaluation criteria with weights
