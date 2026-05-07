@@ -55,6 +55,7 @@ import { injectBeyondSpecTables } from "./beyond-spec-tables";
 import { injectWinThemesTable } from "./win-themes-table";
 import { injectMobilizationAndChecklist } from "./mobilization-and-checklist";
 import { stripPlaceholders } from "./placeholder-stripper";
+import { injectPersonnelDeep } from "./personnel-deep";
 import { buildRubricPromptDirective, ensureRubricHeadings } from "./rubric-driven-sections";
 
 const BRAND_BLUE = "1F4E79";
@@ -1452,6 +1453,29 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     console.info(`[generate-elite] Submission Readiness Checklist injected.`);
   }
   humanizedMarkdown = mobAndChecklist.markdown;
+
+  // ─── Personnel deep treatment (PR L) ────────────────────────────────────
+  // Three personnel structures the benchmark Claude proposal carries
+  // but the app didn't generate:
+  //   1. PER 01 — Personnel Loading Table (Role | Expert | Licence | Days)
+  //   2. PER 02 — Per-Expert Profile Cards (7-row vertical block per expert
+  //      covering education, licence, software, sectors, key projects,
+  //      core competencies, signed-availability declaration)
+  //   3. Project Management Organogram (PM at top, sector-aware streams
+  //      with named experts and licence codes)
+  // Vault-aware (real names + licences when available), sector-aware
+  // (healthcare/water/road/urban/generic role sets and stream structures),
+  // idempotent via marker comments. Injects at end of Section A.
+  const personnelDeep = injectPersonnelDeep(humanizedMarkdown, {
+    experts: experts as unknown as Parameters<typeof injectPersonnelDeep>[1]["experts"],
+    projects: evidenceLibrary,
+    primarySector: intelligence.primarySector,
+  });
+  const personnelInjected = Object.entries(personnelDeep.injected).filter(([, v]) => v).map(([k]) => k);
+  if (personnelInjected.length > 0) {
+    console.info(`[generate-elite] Personnel deep treatment injected: ${personnelInjected.join(", ")}.`);
+  }
+  humanizedMarkdown = personnelDeep.markdown;
 
   // ─── Rubric-driven section enforcement (PR #258) ─────────────────────────
   // When the tender has explicit evaluation criteria with weights
