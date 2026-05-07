@@ -330,19 +330,58 @@ ${input.experts.slice(0, 4_000)}
 ## RELEVANT PROJECT EVIDENCE (cite specific projects when they demonstrate a methodology element)
 ${input.projects.slice(0, 4_000)}
 
+## DETERMINISTIC POST-INJECTION (DO NOT DUPLICATE THESE TABLES)
+After your output is generated, the engine will deterministically inject the
+following structured tables into Section C — these will be appended at the
+end of your section automatically. DO NOT write your own version of any
+table in this list, because that wastes output tokens and creates duplicate
+or contradictory content:
+
+- Project Phasing and Deliverables (5-phase table with deliverables,
+  durations, responsible expert)
+- RACI Matrix (8 activities × team roles, with R/A/C/I assignments)
+- Risk Register (5–7 sector-specific risks, category, likelihood, impact,
+  mitigation, owner)
+- Quality Assurance Plan and Inspection & Test Plan (ITP) (checkpoints,
+  criterion, method, frequency, responsible, hold/witness/review)
+- Communication and Reporting Protocol (cadenced meetings/reports with
+  named owners and formats)
+
+Use your output tokens for what an AI does best: substantive PROSE methodology,
+sector vocabulary in context, named-expert anchoring, project evidence
+anchoring, and tender-clause echoing. Leave the deterministic tables to the
+engine.
+
 ## YOUR OUTPUT
-One top-level Markdown section:
+One top-level Markdown section, FOCUSED on prose methodology:
 - # Section C: Technical Approach
-  - ## C.1 Understanding of the Assignment — what the client needs, key technical challenges, what the winning proposal must demonstrate (3 paragraphs, evidence-anchored)
-  - ## C.2 Technical Methodology — numbered sub-sections matching the tender's scope items in the tender's order. Sector vocabulary used in context, not as a glossary. Each sub-section ties to a deliverable, a responsible named expert, and a quality-review gate.
-  - ## C.3 Work Plan and Deliverables — Markdown table with columns: Stage | Deliverable | Responsible Expert | Timeline | Quality Gate
-  - ## C.4 Quality Assurance — staged design-review gates table with columns: Stage | Milestone | Review Authority and Required Action
+  - ## C.1 Understanding of the Assignment — what the client needs, the key
+    technical challenges, what the winning proposal must demonstrate
+    (3–4 substantive paragraphs, evidence-anchored)
+  - ## C.2 Technical Methodology — numbered sub-sections matching the
+    tender's scope items in the tender's order. Sector vocabulary used in
+    context, not as a glossary. Each sub-section ties to a deliverable, a
+    responsible named expert, and a quality-review gate. Cite specific
+    projects from the evidence library where they demonstrate a methodology
+    element.
+  - ## C.3 Work Plan and Deliverables — 2–3 paragraphs of NARRATIVE describing
+    how phases interlock and where the critical path runs. (The engine
+    appends a Phasing table separately — do not duplicate.)
+  - ## C.4 Quality Assurance — 2–3 paragraphs of NARRATIVE on the firm's QA
+    philosophy: how 30%/60%/100% gates work, peer-review discipline,
+    independent reviewer role, and how client comments are tracked.
+    (The engine appends a QA/ITP table separately — do not duplicate.)
 
-Forbidden phrases: "extensive experience" without a project name; "committed to excellence/quality"; "team of qualified professionals"; "leading firm"; "we look forward to the opportunity"; generic methodology steps without specific deliverables; any [square bracket] placeholder.
+Forbidden phrases: "extensive experience" without a project name;
+"committed to excellence/quality"; "team of qualified professionals";
+"leading firm"; "we look forward to the opportunity"; generic methodology
+steps without specific deliverables; any [square bracket] placeholder.
 
-Where evidence is genuinely missing, write a "Bid-Team Action: confirm X before submission." note instead of fabricating.
+Where evidence is genuinely missing, write a "Bid-Team Action: confirm X
+before submission." note instead of fabricating.
 
-Start directly with "# Section C: Technical Approach". Do NOT output any other top-level sections.`;
+Start directly with "# Section C: Technical Approach". Do NOT output any
+other top-level sections.`;
 }
 
 function buildAdditionalAndDeclarationPrompt(input: AIBidWriterInput): string {
@@ -363,6 +402,26 @@ ${input.companyProfile.slice(0, 3_500)}
 
 ## COMPLIANCE / EVIDENCE / GAPS
 ${input.compliance.slice(0, 3_500)}
+
+## DETERMINISTIC POST-INJECTION (DO NOT DUPLICATE THESE TABLES)
+After your output is generated, the engine will deterministically inject
+the following Section D / value-added structural tables into the proposal
+automatically. DO NOT write your own versions:
+
+- Sustainability and ESG Plan (climate, gender, universal design,
+  environmental compliance with KPIs)
+- Health and Safety Plan (management system, PPE, RAMS, incident reporting,
+  emergency response, sub-contractor governance)
+- Innovation and Value Engineering Proposals (beyond-spec offerings with
+  client-value rationale, effort, inclusion status)
+- Local Content and Capacity Building (employment %, supplier development,
+  knowledge transfer, training)
+- Win Themes and Discriminators (mapped to tender pains)
+- Submission Readiness Checklist
+- Mobilization and Resourcing Plan
+
+Use your output tokens for substantive narrative on D.1 Value to the
+Client and D.2 In-House Capabilities, plus the formal Declaration block.
 
 ## YOUR OUTPUT
 Three top-level Markdown sections:
