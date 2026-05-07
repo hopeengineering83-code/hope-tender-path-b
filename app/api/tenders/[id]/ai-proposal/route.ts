@@ -181,7 +181,16 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       differentiators: [],
       submissionRules: [],
     });
-    await prisma.tender.update({ where: { id }, data: { intakeSummary: proposal, notes: tender.notes } });
+    // PR T FIX — DO NOT overwrite tender.intakeSummary with the
+    // generated proposal text. intakeSummary is the INITIAL intake
+    // notes from tender extraction; storing the generated proposal
+    // there created a feedback loop where each regeneration fed the
+    // previous proposal back as input, polluting tender content with
+    // stale references (e.g., a Path tender ended up containing Pharo
+    // Ventures references because a prior generation had been written
+    // back into intakeSummary). Generated proposals are returned in
+    // the response and saved as TenderFile records elsewhere — we do
+    // not store the output back in the tender's input fields.
     return NextResponse.json({ success: true, proposal, fallback: true });
   }
 
@@ -342,7 +351,9 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       });
     }
 
-    await prisma.tender.update({ where: { id }, data: { intakeSummary: proposal, notes: tender.notes } });
+    // PR T FIX — see note above; intakeSummary must NOT be overwritten
+    // with generated-proposal text or every regeneration feeds the
+    // previous one back as input to the next.
     return NextResponse.json({ success: true, proposal, fallback });
   } catch (error) {
     console.error("Proposal generation route error:", error);

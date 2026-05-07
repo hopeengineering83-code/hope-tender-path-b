@@ -665,9 +665,33 @@ export function buildProposalIntelligence(params: {
 }): ProposalIntelligence {
   const { tender, company, requirements, experts, projects } = params;
 
+  // PR T FIX — Defensive: if tender.intakeSummary or tender.analysisSummary
+  // contains content that looks like a previously generated proposal
+  // (a feedback-loop bug now patched at the write side, but still
+  // possible for tenders saved before PR T deploy), strip them out
+  // before they pollute downstream matching/scoring.
+  const looksLikeGeneratedProposal = (text: string | null | undefined): boolean => {
+    if (!text || text.length < 200) return false;
+    // Heuristics for generated-proposal artefacts:
+    // - explicit Section A/B/C/D/E headings in close proximity
+    // - Cover Letter heading
+    // - Executive Summary heading
+    // - "We submit this Technical Proposal"
+    const t = text.slice(0, 4_000);
+    if (/^#\s+(Cover Letter|Executive Summary|Section [A-H])/im.test(t)) return true;
+    if (/##\s+A\.\d.*##\s+B\.\d/s.test(t)) return true;
+    if (/We submit this Technical Proposal|We hereby declare|RACI Matrix|Win Themes/i.test(t)) return true;
+    return false;
+  };
+  const cleanIntake = looksLikeGeneratedProposal(tender.intakeSummary) ? null : tender.intakeSummary;
+  const cleanAnalysis = looksLikeGeneratedProposal(tender.analysisSummary) ? null : tender.analysisSummary;
+  if (cleanIntake !== tender.intakeSummary || cleanAnalysis !== tender.analysisSummary) {
+    console.warn("[proposal-intelligence] Stripped stale proposal-text from intakeSummary/analysisSummary (feedback-loop guard).");
+  }
+
   const tenderText = textOf(
     tender.title, tender.reference, tender.clientName, tender.country,
-    tender.description, tender.intakeSummary, tender.analysisSummary,
+    tender.description, cleanIntake, cleanAnalysis,
     tender.evaluationMethodology, tender.submissionAddress, tender.submissionMethod,
     ...requirements.map((r) => `${r.title} ${r.description} ${r.requirementType} ${r.priority}`),
   );
