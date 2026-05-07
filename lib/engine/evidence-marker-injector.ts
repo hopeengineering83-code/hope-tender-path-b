@@ -158,9 +158,43 @@ export function injectEvidenceMarkers(
     return { markdown, injected: 0 };
   }
 
-  // Cap total injections — too many anchors hurts readability and the
-  // scorer doesn't reward density above ~80% of paragraphs anyway.
-  const INJECTION_CAP = 12;
+  // PR Q FIX — Cap total injections at 4 (was 12). The previous cap
+  // bloated the proposal with 10+ "Comparable reference anchor" /
+  // "Consistent with the firm's delivery on X" sentences that the
+  // benchmark gap analysis flagged as "looks like templated AI
+  // output." Real elite proposals make project anchors count by
+  // using them sparingly — a project name appears once, in the
+  // most natural place.
+  const INJECTION_CAP = 4;
+
+  // PR Q FIX — Identify Cover Letter and Executive Summary line
+  // ranges so we DON'T auto-inject anchor sentences into them. Those
+  // sections are hand-crafted (or vault-built); padding them with
+  // "Consistent with the firm's delivery on X" turns them into
+  // brochure copy.
+  const lines = markdown.split("\n");
+  const protectedLineRanges: Array<{ start: number; end: number }> = [];
+  for (let i = 0; i < lines.length; i += 1) {
+    if (/^#\s+(Cover Letter|Executive Summary|Why\s+|Letter of Transmittal)/i.test(lines[i])) {
+      const start = i;
+      let end = lines.length;
+      for (let j = i + 1; j < lines.length; j += 1) {
+        if (/^#\s+/.test(lines[j])) { end = j; break; }
+      }
+      protectedLineRanges.push({ start, end });
+    }
+  }
+
+  // Helper: is this paragraph inside a protected zone?
+  // We approximate paragraph→line position via cumulative chars.
+  const paragraphStartLine = (paraStartChar: number): number => {
+    let acc = 0;
+    for (let i = 0; i < lines.length; i += 1) {
+      acc += lines[i].length + 1;
+      if (acc >= paraStartChar) return i;
+    }
+    return lines.length;
+  };
 
   // Split markdown by blank lines into paragraph-units, preserving
   // separators so we can re-join faithfully.
@@ -168,13 +202,21 @@ export function injectEvidenceMarkers(
   let injected = 0;
   let cursorIdx = 0;
 
+  let charsScanned = 0;
   for (let i = 0; i < blocks.length && injected < INJECTION_CAP; i += 1) {
     const block = blocks[i];
+    const blockChars = charsScanned;
+    charsScanned += block.length;
     if (!block || block.match(/^\n+$/)) continue; // it's a separator
 
     const trimmed = block.trim();
     if (shouldSkipParagraph(trimmed)) continue;
     if (paragraphHasEvidence(trimmed)) continue;
+
+    // Skip if this paragraph falls inside Cover Letter / Exec
+    // Summary / Why Us / Letter of Transmittal protected zones.
+    const startLine = paragraphStartLine(blockChars);
+    if (protectedLineRanges.some((r) => startLine >= r.start && startLine < r.end)) continue;
 
     const project = candidates[cursorIdx % candidates.length];
     // PR #256 — pass the cursor as templateIndex so consecutive
