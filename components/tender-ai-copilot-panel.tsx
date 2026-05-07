@@ -8,6 +8,7 @@ type Owner = "TECHNICAL" | "COMPLIANCE" | "COMMERCIAL" | "PROPOSAL" | "MANAGEMEN
 type CopilotResponse = {
   answer: string;
   recommendations: string[];
+  evidenceReferences?: string[];
   risks: Array<{ title: string; severity: Priority; detail: string }>;
   nextActions: Array<{ title: string; owner: Owner; priority: Priority; detail: string }>;
   confidence: Priority;
@@ -39,6 +40,8 @@ export function TenderAICopilotPanel({ tenderId }: { tenderId: string }) {
   const [question, setQuestion] = useState("");
   const [response, setResponse] = useState<CopilotResponse | null>(null);
   const [loading, setLoading] = useState(false);
+  const [recording, setRecording] = useState(false);
+  const [recordedCount, setRecordedCount] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   async function ask(q = question) {
@@ -46,6 +49,7 @@ export function TenderAICopilotPanel({ tenderId }: { tenderId: string }) {
     if (trimmed.length < 3) return;
     setLoading(true);
     setError(null);
+    setRecordedCount(null);
     try {
       const res = await fetch(`/api/tenders/${tenderId}/copilot`, {
         method: "POST",
@@ -63,6 +67,59 @@ export function TenderAICopilotPanel({ tenderId }: { tenderId: string }) {
     }
   }
 
+  async function recordControls() {
+    if (!response) return;
+    setRecording(true);
+    setError(null);
+    let count = 0;
+    try {
+      for (const action of response.nextActions) {
+        const res = await fetch(`/api/tenders/${tenderId}/controls`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            type: "TASK",
+            title: action.title,
+            description: action.detail,
+            owner: action.owner,
+            priority: action.priority,
+            status: "OPEN",
+            sourceReference: "Tender AI Copilot",
+            impact: `Confidence ${response.confidence}`,
+            metadata: { source: "copilot", question },
+          }),
+        });
+        if (!res.ok) throw new Error(`Failed to record task: ${action.title}`);
+        count += 1;
+      }
+      for (const risk of response.risks) {
+        const res = await fetch(`/api/tenders/${tenderId}/controls`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            type: "RISK",
+            title: risk.title,
+            description: risk.detail,
+            priority: risk.severity,
+            status: "OPEN",
+            sourceReference: "Tender AI Copilot",
+            impact: risk.severity,
+            metadata: { source: "copilot", question },
+          }),
+        });
+        if (!res.ok) throw new Error(`Failed to record risk: ${risk.title}`);
+        count += 1;
+      }
+      setRecordedCount(count);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to record controls");
+    } finally {
+      setRecording(false);
+    }
+  }
+
+  const canRecord = response && (response.nextActions.length > 0 || response.risks.length > 0);
+
   return (
     <div className="rounded-2xl border bg-white p-5 shadow-sm">
       <div className="flex items-start justify-between gap-3">
@@ -74,6 +131,7 @@ export function TenderAICopilotPanel({ tenderId }: { tenderId: string }) {
       </div>
 
       {error && <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700">{error}</div>}
+      {recordedCount !== null && <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-700">Recorded {recordedCount} Copilot action/risk item(s) into tender controls.</div>}
 
       <div className="mt-4 space-y-2">
         <textarea
@@ -84,25 +142,19 @@ export function TenderAICopilotPanel({ tenderId }: { tenderId: string }) {
           className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-400"
         />
         <div className="flex flex-wrap gap-2">
-          <button
-            type="button"
-            disabled={loading || question.trim().length < 3}
-            onClick={() => void ask()}
-            className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-medium text-white hover:bg-slate-800 disabled:opacity-50"
-          >
+          <button type="button" disabled={loading || question.trim().length < 3} onClick={() => void ask()} className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-medium text-white hover:bg-slate-800 disabled:opacity-50">
             {loading ? "Thinking…" : "Ask Copilot"}
           </button>
           {QUICK_QUESTIONS.slice(0, 3).map((q) => (
-            <button
-              key={q}
-              type="button"
-              disabled={loading}
-              onClick={() => void ask(q)}
-              className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-[11px] text-slate-600 hover:bg-slate-50 disabled:opacity-50"
-            >
+            <button key={q} type="button" disabled={loading} onClick={() => void ask(q)} className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-[11px] text-slate-600 hover:bg-slate-50 disabled:opacity-50">
               {q}
             </button>
           ))}
+          {canRecord && (
+            <button type="button" disabled={recording} onClick={() => void recordControls()} className="rounded-lg border border-emerald-300 bg-emerald-50 px-2.5 py-1.5 text-[11px] font-medium text-emerald-700 hover:bg-emerald-100 disabled:opacity-50">
+              {recording ? "Recording…" : "Record actions/risks"}
+            </button>
+          )}
         </div>
       </div>
 
@@ -111,6 +163,15 @@ export function TenderAICopilotPanel({ tenderId }: { tenderId: string }) {
           <div className="rounded-xl border border-slate-100 bg-slate-50 p-4">
             <p className="whitespace-pre-wrap text-sm leading-relaxed text-slate-800">{response.answer}</p>
           </div>
+
+          {response.evidenceReferences && response.evidenceReferences.length > 0 && (
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Evidence used</p>
+              <ul className="mt-2 list-disc space-y-1 pl-5 text-xs text-slate-600">
+                {response.evidenceReferences.map((ref, i) => <li key={i}>{ref}</li>)}
+              </ul>
+            </div>
+          )}
 
           {response.recommendations.length > 0 && (
             <div>
@@ -129,10 +190,7 @@ export function TenderAICopilotPanel({ tenderId }: { tenderId: string }) {
                   <li key={i} className="rounded-lg border border-amber-100 bg-amber-50 p-2.5 text-xs">
                     <div className="flex items-start gap-2">
                       <span className={`mt-0.5 shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${SEVERITY_BADGE[risk.severity]}`}>{risk.severity}</span>
-                      <div>
-                        <p className="font-medium text-amber-900">{risk.title}</p>
-                        <p className="mt-0.5 text-amber-700">{risk.detail}</p>
-                      </div>
+                      <div><p className="font-medium text-amber-900">{risk.title}</p><p className="mt-0.5 text-amber-700">{risk.detail}</p></div>
                     </div>
                   </li>
                 ))}
@@ -149,10 +207,7 @@ export function TenderAICopilotPanel({ tenderId }: { tenderId: string }) {
                     <div className="flex flex-wrap items-start gap-2">
                       <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${SEVERITY_BADGE[action.priority]}`}>{action.priority}</span>
                       <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${OWNER_BADGE[action.owner]}`}>{action.owner}</span>
-                      <div className="min-w-0 flex-1">
-                        <p className="font-medium text-slate-900">{action.title}</p>
-                        <p className="mt-0.5 text-slate-600">{action.detail}</p>
-                      </div>
+                      <div className="min-w-0 flex-1"><p className="font-medium text-slate-900">{action.title}</p><p className="mt-0.5 text-slate-600">{action.detail}</p></div>
                     </div>
                   </li>
                 ))}
