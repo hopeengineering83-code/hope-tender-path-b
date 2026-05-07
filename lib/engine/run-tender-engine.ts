@@ -1,5 +1,6 @@
 import { randomUUID } from "crypto";
 import { prisma } from "../prisma";
+import { logAction } from "../audit";
 import { analyzeTender, normalizeStrategicRequirements } from "./analysis";
 import { analyzeWithAI, isAIEnabled } from "../ai";
 import { buildCompliance } from "./compliance";
@@ -12,14 +13,6 @@ function chunks<T>(items: T[], size = 100): T[][] {
   return out;
 }
 
-function metadata(value: Record<string, unknown>): string {
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return "{}";
-  }
-}
-
 async function writeEngineRunAudit(args: {
   userId: string;
   tenderId: string;
@@ -27,15 +20,13 @@ async function writeEngineRunAudit(args: {
   description: string;
   metadata: Record<string, unknown>;
 }) {
-  await prisma.auditLog.create({
-    data: {
-      userId: args.userId,
-      action: args.action,
-      entityType: "Tender",
-      entityId: args.tenderId,
-      description: args.description,
-      metadata: metadata(args.metadata),
-    },
+  await logAction({
+    userId: args.userId,
+    action: args.action,
+    entityType: "Tender",
+    entityId: args.tenderId,
+    description: args.description,
+    metadata: args.metadata,
   });
 }
 

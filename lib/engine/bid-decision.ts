@@ -61,7 +61,15 @@ export function evaluateBidDecision(input: BidDecisionInput): BidDecisionResult 
 
   const deadlineScore = days === null ? 55 : days < 0 ? 0 : days <= 2 ? 15 : days <= 7 ? 45 : days <= 14 ? 70 : 90;
   const complianceScore = clamp(100 - unresolvedCritical.length * 35 - unresolvedHigh.length * 15);
-  const eligibilityScore = clamp(100 - Math.max(0, mandatoryCount - input.requirements.length * 0.55) * 3 - unresolvedCritical.length * 25);
+  // Eligibility: driven by critical gaps only — a tender with many mandatory
+  // requirements but zero unresolved critical gaps should not be penalised.
+  // Each unresolved CRITICAL gap carries a 25-point eligibility penalty
+  // (potential disqualifier). When there are no mandatory requirements at all,
+  // score slightly conservatively (80) — the tender may not have been fully
+  // analysed yet.
+  const eligibilityScore = mandatoryCount === 0
+    ? clamp(80 - unresolvedCritical.length * 25)
+    : clamp(100 - unresolvedCritical.length * 25);
   const teamScore = clamp(expertFit * 0.72 + Math.min(input.expertMatches.length, 6) * 4.5);
   const referenceScore = clamp(projectFit * 0.72 + Math.min(input.projectMatches.length, 5) * 5);
   const commercialScore = input.budget && input.budget > 0 ? 75 : 55;

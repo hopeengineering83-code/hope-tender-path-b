@@ -22,6 +22,11 @@ export type AuditAction =
   // matches via Claude with 4-perspective evaluation).
   | "AI_REMATCH_RUN"
   | "TENDER_DUPLICATE"
+  // Tender engine audit trail (run-tender-engine.ts writeEngineRunAudit).
+  | "TENDER_ENGINE_RUN_STARTED"
+  | "TENDER_ENGINE_RUN_COMPLETED"
+  | "TENDER_ENGINE_RUN_FAILED"
+  | "TENDER_ENGINE_DOCUMENTS_SUPERSEDED"
   // Bid/No-Bid decision engine applied or overridden.
   | "TENDER_BID_DECISION_APPLIED"
   // Tender AI Copilot question answered.
