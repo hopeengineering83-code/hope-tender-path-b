@@ -1,31 +1,18 @@
 "use client";
 
-// Evaluator Persona Simulator panel (PR #251) — beyond-spec UI.
-//
-// Renders a "Simulate Panel" button + result card on the tender
-// workspace. When clicked, calls /api/tenders/[id]/evaluator-simulation,
-// which spawns 4 parallel Claude calls each acting as a different
-// evaluator persona, then displays:
-//
-//   • Predicted overall score (0-100) with verdict color
-//   • Per-persona assessments (collapsible)
-//   • Top 6 objections (severity-ranked)
-//   • Top 4 commendations
-//   • Per-criterion score heatmap
-//
-// The simulation takes 25-50 seconds. The user opts in by clicking —
-// never auto-runs (each simulation makes 4 Claude calls = ~$0.10-0.18).
-
 import { useState } from "react";
 
 type Persona = "TECHNICAL" | "COMPLIANCE" | "END_USER" | "COMMERCIAL";
+type Owner = "TECHNICAL" | "COMPLIANCE" | "COMMERCIAL" | "PROPOSAL" | "MANAGEMENT";
+type Priority = "HIGH" | "MEDIUM" | "LOW";
 
 interface PersonaAssessment {
   persona: Persona;
   personaSummary: string;
   criterionScores: Array<{ criterion: string; score: number; rationale: string }>;
-  objections: Array<{ title: string; severity: "HIGH" | "MEDIUM" | "LOW"; detail: string }>;
+  objections: Array<{ title: string; severity: Priority; detail: string }>;
   commendations: Array<{ title: string; detail: string }>;
+  actions?: Array<{ title: string; owner: Owner; priority: Priority; detail: string }>;
   durationMs: number;
 }
 
@@ -33,8 +20,10 @@ interface SimulationResult {
   predictedOverallScore: number;
   verdict: "STRONG_BID" | "NEEDS_WORK" | "WEAK_BID";
   personaAssessments: PersonaAssessment[];
-  topObjections: Array<{ persona: Persona; title: string; severity: "HIGH" | "MEDIUM" | "LOW"; detail: string }>;
+  topObjections: Array<{ persona: Persona; title: string; severity: Priority; detail: string }>;
   topCommendations: Array<{ persona: Persona; title: string; detail: string }>;
+  actionPlan?: Array<{ persona: Persona; title: string; owner: Owner; priority: Priority; detail: string }>;
+  riskRegister?: Array<{ title: string; severity: Priority; detail: string }>;
   rationale: string;
   computedAt: string;
 }
@@ -63,10 +52,18 @@ const VERDICT_STYLE: Record<SimulationResult["verdict"], { bg: string; ring: str
   WEAK_BID: { bg: "bg-red-50", ring: "ring-red-300", text: "text-red-800", label: "WEAK BID" },
 };
 
-const SEVERITY_BADGE: Record<"HIGH" | "MEDIUM" | "LOW", string> = {
+const SEVERITY_BADGE: Record<Priority, string> = {
   HIGH: "bg-red-100 text-red-700",
   MEDIUM: "bg-amber-100 text-amber-700",
   LOW: "bg-slate-100 text-slate-600",
+};
+
+const OWNER_BADGE: Record<Owner, string> = {
+  TECHNICAL: "bg-blue-100 text-blue-700",
+  COMPLIANCE: "bg-purple-100 text-purple-700",
+  COMMERCIAL: "bg-emerald-100 text-emerald-700",
+  PROPOSAL: "bg-slate-100 text-slate-700",
+  MANAGEMENT: "bg-orange-100 text-orange-700",
 };
 
 function scoreColor(score: number): string {
@@ -86,9 +83,7 @@ export function EvaluatorSimulatorPanel({ tenderId }: EvaluatorSimulatorPanelPro
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/tenders/${tenderId}/evaluator-simulation`, {
-        method: "POST",
-      });
+      const res = await fetch(`/api/tenders/${tenderId}/evaluator-simulation`, { method: "POST" });
       if (!res.ok) {
         const errBody = await res.json().catch(() => ({} as { error?: string; code?: string }));
         throw new Error(errBody.error ?? `Simulation failed (${res.status})`);
@@ -111,30 +106,27 @@ export function EvaluatorSimulatorPanel({ tenderId }: EvaluatorSimulatorPanelPro
     });
   }
 
+  const actionPlan = simulation?.actionPlan ?? [];
+  const riskRegister = simulation?.riskRegister ?? [];
+
   return (
     <div className="rounded-2xl border bg-white p-5 shadow-sm">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <h3 className="text-sm font-semibold text-slate-900">Synthetic Evaluator Panel</h3>
-          <p className="mt-0.5 text-xs text-slate-500">Pre-submission red team — 4 specialist personas score the proposal as a real evaluation panel would</p>
+          <h3 className="text-sm font-semibold text-slate-900">Evidence-Aware Evaluator Committee</h3>
+          <p className="mt-0.5 text-xs text-slate-500">Pre-submission red team — 4 specialist personas review proposal text, requirements, selected experts/projects, compliance gaps, and match rationales.</p>
         </div>
       </div>
 
-      {error && (
-        <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700">{error}</div>
-      )}
+      {error && <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700">{error}</div>}
 
       {!simulation && !loading && (
         <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4">
           <p className="text-xs text-slate-700">
-            Spawn 4 parallel Claude calls — Technical, Compliance, End-User, and Commercial evaluators — to score the proposal before real submission. Takes 25–50 seconds. Costs ~$0.10–0.18 per run.
+            Runs Technical, Compliance, End-User, and Commercial evaluator personas against the current bid package and structured tender evidence. Produces objections, action plan, and risk register.
           </p>
-          <button
-            type="button"
-            onClick={() => void runSimulation()}
-            className="mt-3 rounded-lg bg-slate-900 px-4 py-2 text-xs font-medium text-white transition-colors hover:bg-slate-800"
-          >
-            Simulate evaluator panel
+          <button type="button" onClick={() => void runSimulation()} className="mt-3 rounded-lg bg-slate-900 px-4 py-2 text-xs font-medium text-white transition-colors hover:bg-slate-800">
+            Run evaluator committee
           </button>
         </div>
       )}
@@ -143,14 +135,13 @@ export function EvaluatorSimulatorPanel({ tenderId }: EvaluatorSimulatorPanelPro
         <div className="mt-4 rounded-xl border border-blue-200 bg-blue-50 p-4">
           <div className="flex items-center gap-3">
             <div className="h-3 w-3 animate-pulse rounded-full bg-blue-500"></div>
-            <p className="text-xs text-blue-800">Running 4-persona simulation… This typically takes 25–50 seconds.</p>
+            <p className="text-xs text-blue-800">Running evidence-aware committee… This typically takes 25–50 seconds.</p>
           </div>
         </div>
       )}
 
       {simulation && (
         <div className="mt-4 space-y-4">
-          {/* Headline */}
           <div className={`rounded-xl p-4 ring-2 ${VERDICT_STYLE[simulation.verdict].ring} ${VERDICT_STYLE[simulation.verdict].bg}`}>
             <div className="flex items-baseline justify-between">
               <div>
@@ -166,19 +157,54 @@ export function EvaluatorSimulatorPanel({ tenderId }: EvaluatorSimulatorPanelPro
             <p className="mt-3 text-xs leading-relaxed text-slate-700">{simulation.rationale}</p>
           </div>
 
-          {/* Top objections */}
+          {actionPlan.length > 0 && (
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Committee action plan ({actionPlan.length})</p>
+              <ul className="mt-2 space-y-2">
+                {actionPlan.map((action, i) => (
+                  <li key={i} className="rounded-lg border border-slate-100 bg-white p-2.5 text-xs">
+                    <div className="flex flex-wrap items-start gap-2">
+                      <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${SEVERITY_BADGE[action.priority]}`}>{action.priority}</span>
+                      <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${OWNER_BADGE[action.owner]}`}>{action.owner}</span>
+                      <span className="shrink-0 text-base" title={PERSONA_LABEL[action.persona]}>{PERSONA_ICON[action.persona]}</span>
+                      <div className="min-w-0 flex-1">
+                        <p className="font-medium text-slate-900">{action.title}</p>
+                        <p className="mt-0.5 text-slate-600">{action.detail}</p>
+                      </div>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {riskRegister.length > 0 && (
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Risk register ({riskRegister.length})</p>
+              <ul className="mt-2 space-y-2">
+                {riskRegister.map((risk, i) => (
+                  <li key={i} className="rounded-lg border border-amber-100 bg-amber-50 p-2.5 text-xs">
+                    <div className="flex items-start gap-2">
+                      <span className={`mt-0.5 shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${SEVERITY_BADGE[risk.severity]}`}>{risk.severity}</span>
+                      <div className="min-w-0">
+                        <p className="font-medium text-amber-900">{risk.title}</p>
+                        <p className="mt-0.5 text-amber-700">{risk.detail}</p>
+                      </div>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
           {simulation.topObjections.length > 0 && (
             <div>
-              <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-                Top objections to address ({simulation.topObjections.length})
-              </p>
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Top objections to address ({simulation.topObjections.length})</p>
               <ul className="mt-2 space-y-2">
                 {simulation.topObjections.map((obj, i) => (
                   <li key={i} className="rounded-lg border border-slate-100 bg-white p-2.5 text-xs">
                     <div className="flex items-start gap-2">
-                      <span className={`mt-0.5 shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${SEVERITY_BADGE[obj.severity]}`}>
-                        {obj.severity}
-                      </span>
+                      <span className={`mt-0.5 shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${SEVERITY_BADGE[obj.severity]}`}>{obj.severity}</span>
                       <span className="mt-0.5 shrink-0 text-base" title={PERSONA_LABEL[obj.persona]}>{PERSONA_ICON[obj.persona]}</span>
                       <div className="min-w-0">
                         <p className="font-medium text-slate-900">{obj.title}</p>
@@ -192,12 +218,9 @@ export function EvaluatorSimulatorPanel({ tenderId }: EvaluatorSimulatorPanelPro
             </div>
           )}
 
-          {/* Top commendations */}
           {simulation.topCommendations.length > 0 && (
             <div>
-              <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-                Strengths the panel praised
-              </p>
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Strengths the panel praised</p>
               <ul className="mt-2 space-y-2">
                 {simulation.topCommendations.map((com, i) => (
                   <li key={i} className="rounded-lg border border-emerald-100 bg-emerald-50 p-2.5 text-xs">
@@ -215,22 +238,15 @@ export function EvaluatorSimulatorPanel({ tenderId }: EvaluatorSimulatorPanelPro
             </div>
           )}
 
-          {/* Per-persona breakdown */}
           <div>
             <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Persona breakdown</p>
             <div className="mt-2 space-y-2">
               {simulation.personaAssessments.map((a) => {
                 const expanded = expandedPersonas.has(a.persona);
-                const avgScore = a.criterionScores.length > 0
-                  ? Math.round(a.criterionScores.reduce((s, c) => s + c.score, 0) / a.criterionScores.length * 10) / 10
-                  : 0;
+                const avgScore = a.criterionScores.length > 0 ? Math.round(a.criterionScores.reduce((s, c) => s + c.score, 0) / a.criterionScores.length * 10) / 10 : 0;
                 return (
                   <div key={a.persona} className="rounded-lg border border-slate-100 bg-white">
-                    <button
-                      type="button"
-                      onClick={() => togglePersona(a.persona)}
-                      className="flex w-full items-center justify-between gap-3 p-3 text-left text-xs hover:bg-slate-50"
-                    >
+                    <button type="button" onClick={() => togglePersona(a.persona)} className="flex w-full items-center justify-between gap-3 p-3 text-left text-xs hover:bg-slate-50">
                       <div className="flex items-center gap-2">
                         <span className="text-base">{PERSONA_ICON[a.persona]}</span>
                         <span className="font-medium text-slate-900">{PERSONA_LABEL[a.persona]}</span>
@@ -242,9 +258,7 @@ export function EvaluatorSimulatorPanel({ tenderId }: EvaluatorSimulatorPanelPro
                     </button>
                     {expanded && (
                       <div className="border-t border-slate-100 p-3 text-xs">
-                        {a.personaSummary && (
-                          <p className="italic text-slate-600">&ldquo;{a.personaSummary}&rdquo;</p>
-                        )}
+                        {a.personaSummary && <p className="italic text-slate-600">&ldquo;{a.personaSummary}&rdquo;</p>}
                         {a.criterionScores.length > 0 && (
                           <div className="mt-3">
                             <p className="font-semibold uppercase tracking-wide text-slate-500 text-[10px]">Criterion scores</p>
@@ -255,12 +269,18 @@ export function EvaluatorSimulatorPanel({ tenderId }: EvaluatorSimulatorPanelPro
                                     <span className="truncate text-slate-700">{c.criterion}</span>
                                     <span className="shrink-0 font-medium text-slate-900">{c.score}/10</span>
                                   </div>
-                                  <div className="h-1.5 overflow-hidden rounded-full bg-slate-100">
-                                    <div className={`h-full ${scoreColor(c.score)}`} style={{ width: `${c.score * 10}%` }} />
-                                  </div>
+                                  <div className="h-1.5 overflow-hidden rounded-full bg-slate-100"><div className={`h-full ${scoreColor(c.score)}`} style={{ width: `${c.score * 10}%` }} /></div>
                                   {c.rationale && <p className="text-[11px] text-slate-500">{c.rationale}</p>}
                                 </li>
                               ))}
+                            </ul>
+                          </div>
+                        )}
+                        {a.actions && a.actions.length > 0 && (
+                          <div className="mt-3">
+                            <p className="font-semibold uppercase tracking-wide text-slate-500 text-[10px]">Persona actions</p>
+                            <ul className="mt-1.5 space-y-1">
+                              {a.actions.map((action, i) => <li key={i} className="text-[11px] text-slate-600">• [{action.priority}] {action.title}</li>)}
                             </ul>
                           </div>
                         )}
@@ -275,13 +295,7 @@ export function EvaluatorSimulatorPanel({ tenderId }: EvaluatorSimulatorPanelPro
 
           <div className="flex items-center justify-between">
             <p className="text-[10px] text-slate-400">Computed {new Date(simulation.computedAt).toLocaleString()}</p>
-            <button
-              type="button"
-              onClick={() => void runSimulation()}
-              className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-700 transition-colors hover:bg-slate-50"
-            >
-              Re-run simulation
-            </button>
+            <button type="button" onClick={() => void runSimulation()} className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-700 transition-colors hover:bg-slate-50">Re-run committee</button>
           </div>
         </div>
       )}
