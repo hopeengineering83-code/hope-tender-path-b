@@ -673,12 +673,62 @@ export function buildProposalIntelligence(params: {
   );
 
   const themes = detectThemes(tenderText);
-  const topProjects = [...projects]
+
+  // PR Q FIX — Hard sector filter. When the tender text yields a
+  // distinctive sector (healthcare / water / road / urban / education
+  // / environmental / ICT), projects whose own sector or summary
+  // shows ZERO relevance to that sector are filtered out before
+  // ranking. Without this, a healthcare tender surfaces residential /
+  // warehouse projects when the lexical scoring degrades to "biggest
+  // contract value wins". The benchmark gap analysis showed exactly
+  // this on the Pharo tender — Warehouse & Landscaping was anchoring
+  // the cover letter for a hospital bid.
+  const detectedSector = inferSector(tenderText);
+  const sectorFilter = (text: string): boolean => {
+    if (detectedSector === "General Consultancy / Engineering") return true; // no filter
+    if (/Healthcare/.test(detectedSector)) return /health|hospital|medical|clinic|patient|specialty.*cent|pharma|biomedical|MoH|emergency|outpatient|in-?patient|imaging|laboratory/i.test(text);
+    if (/Water/.test(detectedSector)) return /water|borehole|pump|hydraulic|irrigation|WASH|sanitation|wastewater|sewer|drainage|hydrogeo/i.test(text);
+    if (/Road|Bridge|Transport/.test(detectedSector)) return /road|bridge|highway|pavement|transport|drainage|culvert|alignment|corridor/i.test(text);
+    if (/Urban|Master Plan/.test(detectedSector)) return /urban|master plan|municipal|spatial.*plan|land.?use|zoning|GIS|eco.?park|city/i.test(text);
+    if (/Education/.test(detectedSector)) return /school|university|campus|education|classroom|library|lab/i.test(text);
+    if (/Environmental|Social.*Impact/.test(detectedSector)) return /ESIA|ESMP|environmental|social.*safeguard|resettlement|biodiversity|impact.*assess/i.test(text);
+    if (/ICT|Digital/.test(detectedSector)) return /ICT|software|digital|MIS|ERP|database|web|app|cloud|server|network/i.test(text);
+    if (/Geotechnical|Structural/.test(detectedSector)) return /geotechnical|soil|foundation|seismic|borehole|drilling|structural/i.test(text);
+    if (/Hospitality|Tourism/.test(detectedSector)) return /hotel|hospitality|resort|tourism|lodge/i.test(text);
+    if (/Industrial|Manufacturing/.test(detectedSector)) return /factory|industrial|manufacturing|plant|warehouse/i.test(text);
+    if (/Renovation|Adaptation/.test(detectedSector)) return /renovation|modification|retrofit|existing|adaptation|interior/i.test(text);
+    if (/Building Design/.test(detectedSector)) return /architecture|building|design|construction|residential|commercial|interior/i.test(text);
+    return true;
+  };
+
+  const projectIsRelevant = (p: ProjectLite): boolean => {
+    const t = textOf(p.name, p.summary, p.sector, p.clientName, ...safeParseArr(p.serviceAreas));
+    return sectorFilter(t);
+  };
+  const expertIsRelevant = (e: ExpertLite): boolean => {
+    const t = textOf(e.fullName, e.title, e.profile, ...safeParseArr(e.disciplines), ...safeParseArr(e.sectors), ...safeParseArr(e.certifications));
+    return sectorFilter(t);
+  };
+
+  // Apply filter — but DON'T let the filter strip everything when
+  // the vault genuinely has no on-sector records (false negatives are
+  // worse than false positives here). When 0 relevant projects/experts
+  // are found, fall back to unfiltered.
+  const projectsRelevant = projects.filter(projectIsRelevant);
+  const expertsRelevant = experts.filter(expertIsRelevant);
+  const projectPool = projectsRelevant.length >= 3 ? projectsRelevant : projects;
+  const expertPool = expertsRelevant.length >= 3 ? expertsRelevant : experts;
+
+  const topProjects = [...projectPool]
     .sort((a, b) => projectScore(b, themes, tenderText) - projectScore(a, themes, tenderText))
     .slice(0, 10);
-  const topExperts = [...experts]
+  const topExperts = [...expertPool]
     .sort((a, b) => expertScore(b, themes, tenderText) - expertScore(a, themes, tenderText))
     .slice(0, 14);
+
+  if (detectedSector !== "General Consultancy / Engineering") {
+    console.info(`[proposal-intelligence] Sector filter (${detectedSector}): kept ${projectPool.length}/${projects.length} projects, ${expertPool.length}/${experts.length} experts.`);
+  }
 
   const exactEmails = detectExactEmails(tenderText);
   const exactSubjectLine = detectExactSubjectLine(tenderText);
@@ -691,10 +741,17 @@ export function buildProposalIntelligence(params: {
   // Letter, Cover Page, Executive Summary, Why Us, Value Framework, support
   // doc boilerplate. cleanTenderTitle / cleanClientName already detect and
   // reject the garbage patterns; we just need to apply them here.
+  // PR Q FIX — removed hardcoded "if mentions pharo → Pharo Ventures"
+  // fallback. That string match fired on ANY tender whose text or
+  // requirements (or stale prior-tender intelligence) mentioned the
+  // word "pharo" — including projects in the company vault. Result:
+  // Path tenders generated proposals addressed to Pharo Ventures.
+  // Now: trust the cleanClientName output. When the client cannot be
+  // determined, use a neutral placeholder the bid team must fill in.
   const detectedClient = cleanClientName(tender.clientName, tender.description);
   const finalClientName = detectedClient !== "Client"
     ? detectedClient
-    : (/pharo/i.test(tenderText) ? "Pharo Ventures" : "The Client");
+    : "The Client";
   const finalAssignmentName = cleanTenderTitle(tender.title, {
     clientName: finalClientName,
     description: tender.description,

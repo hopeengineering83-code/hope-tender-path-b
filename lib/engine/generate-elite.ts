@@ -55,6 +55,7 @@ import { injectBeyondSpecTables } from "./beyond-spec-tables";
 import { injectWinThemesTable } from "./win-themes-table";
 import { injectMobilizationAndChecklist } from "./mobilization-and-checklist";
 import { stripPlaceholders } from "./placeholder-stripper";
+import { suppressDuplicateSectionHeadings } from "./duplicate-section-suppressor";
 import { injectPersonnelDeep } from "./personnel-deep";
 import { injectTenderClosers } from "./tender-closers";
 import { injectDeliverableAndPhases } from "./deliverable-and-phases";
@@ -1556,6 +1557,22 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     console.info(`[generate-elite] Rubric post-pass: injected ${rubricResult.missingCriteria.length} missing rubric sub-section stub(s) for criteria: ${rubricResult.missingCriteria.join("; ")}`);
   }
   humanizedMarkdown = rubricResult.markdown;
+
+  // ─── Duplicate section heading suppressor (PR Q) ─────────────────────────
+  // After every deterministic post-pass has run, scan for level-2
+  // headings whose numeric prefix (B.1, C.3, D.1 etc.) is shared by
+  // multiple sections and renumber the duplicates with a/b/c suffix.
+  // Without this, the TOC carries entries like:
+  //   B.1 Portfolio Overview
+  //   B.1 Client References     ← shared prefix
+  //   C.3 Work Plan and Deliverables
+  //   C.3 Quality Assurance     ← shared prefix
+  // which evaluators read as a rendering bug. NEVER deletes content.
+  const dedupeResult = suppressDuplicateSectionHeadings(humanizedMarkdown);
+  if (dedupeResult.renumbered > 0) {
+    console.info(`[generate-elite] Duplicate section suppressor: renumbered ${dedupeResult.renumbered} duplicate-prefix heading(s).`);
+  }
+  humanizedMarkdown = dedupeResult.markdown;
 
   // ─── Placeholder stripper (PR J) — LAST post-pass before DOCX render ────
   // Removes "Bid-Team Action: confirm X" lines and italic placeholder
