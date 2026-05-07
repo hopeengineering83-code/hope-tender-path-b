@@ -230,19 +230,55 @@ Two top-level Markdown sections:
 - # Cover Letter
 - # Executive Summary
 
-Cover Letter requirements:
-- Addressed to the client by name; subject line carries the exact tender title
-- Opening paragraph names the strongest 1–2 comparable projects BY NAME with contract values
-- Second paragraph introduces the proposed lead expert(s) with comparable previous role
-- Closing paragraph confirms enclosed appendices, technical-only status (when applicable), and signature block
+LENGTH REQUIREMENTS (BENCHMARK MATCH — non-negotiable):
+- Cover Letter: minimum 5 paragraphs of 70–120 words each (~400–600 words total).
+  Target proposal-quality density. Do NOT write 4 short paragraphs.
+- Executive Summary: minimum 5 paragraphs of 70–120 words each (~400–600 words total).
+  Each paragraph carries at least one project name + contract value OR
+  named expert + licence OR specific tender clause echoed verbatim.
 
-Executive Summary requirements (3–4 paragraphs, no bullet lists):
-- Lead sentence pattern: "We have already delivered this assignment. [Company] designed/supervised/assessed [Project Name] (contract value, Client) — a [parallel description]. The same team is available for this engagement."
-- Address the top evaluation criterion directly with evidence
-- Brief technical-approach overview tuned to THIS tender's scope
-- Confirm compliance, team availability, and commitment
+Cover Letter structure (each paragraph ~70–120 words):
+- Para 1 — Opening: Name the firm; address the client (use ONLY the
+  CLIENT field); state the exact tender title; reference the strongest
+  1–2 comparable projects BY NAME with contract value AND name the lead
+  expert from each. End with "the same team is proposed for this
+  engagement."
+- Para 2 — Tender understanding: Echo 2–3 verbatim phrases from the
+  tender's evaluation criteria or scope. Demonstrate the bidder has
+  read the tender end-to-end.
+- Para 3 — Capacity statement: List the firm's relevant in-house
+  capabilities + total project portfolio + key resources (BIM, GIS,
+  drone, in-house lab, etc.) — anchor each to evidence.
+- Para 4 — Team and methodology: Introduce the proposed lead expert(s)
+  by name + licence + comparable previous role. State the methodology
+  framework in one sentence.
+- Para 5 — Compliance and signature: Confirm enclosed appendices, file
+  format compliance, deadline awareness, technical-only status (when
+  applicable), and a formal signature block (GM name + title +
+  licence + company).
 
-Start directly with "# Cover Letter". Do NOT output any other sections, table of contents, or commentary.`;
+Executive Summary structure (each paragraph ~70–120 words):
+- Para 1 — Evidence anchor: "We have already delivered this assignment.
+  [Company] designed/supervised/assessed [Project Name] (contract value,
+  Client) — a [parallel description]. The same team is available for
+  this engagement."
+- Para 2 — Top evaluation criterion: Address the highest-weighted
+  evaluation criterion directly with concrete evidence (project name,
+  expert role on it, deliverable that scored).
+- Para 3 — Technical approach overview: Three to four sentences on
+  methodology phases tuned to THIS tender's scope items in the tender's
+  order.
+- Para 4 — Risk and quality: One paragraph confirming the firm's QA
+  philosophy (peer review at 30%/60%/100% gates, independent reviewer)
+  + the 2–3 highest-impact risks with named mitigations.
+- Para 5 — Compliance and continuity: Confirm full compliance with
+  every stated requirement, team availability for the engagement
+  window, post-handover advisory window, and adherence to commercial
+  terms (validity, payment, taxes).
+
+Start directly with "# Cover Letter". Do NOT output any other sections,
+table of contents, or commentary. Do NOT use bullet lists in either
+section — use prose paragraphs only.`;
 }
 
 function buildCompanyAndExperiencePrompt(input: AIBidWriterInput): string {
@@ -491,28 +527,33 @@ export function buildProposalSectionSpecs(input: AIBidWriterInput, opts?: { deep
       title: "Cover Letter and Executive Summary",
       systemPrompt: COVER_AND_SUMMARY_SYSTEM_PROMPT,
       userPrompt: buildCoverAndSummaryPrompt(input),
-      maxOutputTokens: deep ? 3000 : 1800,
+      // PR Z — bumped to support the new minimum length requirements
+      // (5 paragraphs of 70-120 words each = ~600 words = ~900 tokens
+      // for cover letter + 600 for exec summary = ~1500 tokens minimum
+      // BEFORE the AI's headers/formatting overhead). 4500 deep / 3000
+      // standard leaves headroom.
+      maxOutputTokens: deep ? 4500 : 3000,
     },
     {
       id: "company-and-experience",
       title: "Section A (Company Profile) and Section B (Relevant Experience)",
       systemPrompt: COMPANY_AND_EXPERIENCE_SYSTEM_PROMPT,
       userPrompt: buildCompanyAndExperiencePrompt(input),
-      maxOutputTokens: deep ? 4500 : 2400,
+      maxOutputTokens: deep ? 5500 : 3200,
     },
     {
       id: "technical-approach",
       title: "Section C: Technical Approach",
       systemPrompt: TECHNICAL_APPROACH_SYSTEM_PROMPT,
       userPrompt: buildTechnicalApproachPrompt(input),
-      maxOutputTokens: deep ? 5500 : 2800,
+      maxOutputTokens: deep ? 6500 : 3600,
     },
     {
       id: "additional-and-declaration",
       title: "Section D, Appendix Register, and Declaration",
       systemPrompt: ADDITIONAL_AND_DECLARATION_SYSTEM_PROMPT,
       userPrompt: buildAdditionalAndDeclarationPrompt(input),
-      maxOutputTokens: deep ? 2700 : 1600,
+      maxOutputTokens: deep ? 3500 : 2200,
     },
   ];
 }
