@@ -55,6 +55,7 @@ import { injectBeyondSpecTables } from "./beyond-spec-tables";
 import { injectWinThemesTable } from "./win-themes-table";
 import { injectMobilizationAndChecklist } from "./mobilization-and-checklist";
 import { stripPlaceholders } from "./placeholder-stripper";
+import { enforceClientName } from "./client-name-enforcer";
 import { suppressDuplicateSectionHeadings } from "./duplicate-section-suppressor";
 import { injectPersonnelDeep } from "./personnel-deep";
 import { injectTenderClosers } from "./tender-closers";
@@ -1672,6 +1673,33 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     console.info(`[generate-elite] Duplicate section suppressor: renumbered ${dedupeResult.renumbered} duplicate-prefix heading(s).`);
   }
   humanizedMarkdown = dedupeResult.markdown;
+
+  // ─── Client name enforcer (PR V) ────────────────────────────────────────
+  // Final pass that detects and corrects client-name substitutions.
+  // The AI sometimes pulls a client name from the firm's project
+  // history (e.g., "Pharo Ventures" when the canonical client is
+  // "The Client") and uses it in the cover letter "To:" line, the
+  // subject line, and the executive summary's first paragraph. The
+  // user's gap analysis flagged this as the single most damaging
+  // bug. This pass:
+  //   1. Collects the firm's vault project clients
+  //   2. Scrubs any of those names from the Cover Letter / Exec
+  //      Summary zone if they don't match the canonical client
+  //   3. Replaces with canonical name (or [CLIENT TO BE CONFIRMED]
+  //      if canonical itself is a placeholder)
+  // Operates ONLY in the cover-letter zone — Section B project cards
+  // legitimately reference firm-history clients and must not be touched.
+  const knownFirmClients = (company.projects ?? [])
+    .map((p) => (p as { clientName?: string | null }).clientName)
+    .filter((c): c is string => Boolean(c && c.trim().length >= 3));
+  const enforced = enforceClientName(humanizedMarkdown, {
+    canonicalClientName: intelligence.clientName,
+    knownFirmClients,
+  });
+  if (enforced.substitutionsMade > 0) {
+    console.warn(`[generate-elite] Client name enforcer scrubbed ${enforced.substitutionsMade} hallucinated client substitution(s) in Cover Letter / Executive Summary zone.`);
+  }
+  humanizedMarkdown = enforced.markdown;
 
   // ─── Placeholder stripper (PR J) — LAST post-pass before DOCX render ────
   // Removes "Bid-Team Action: confirm X" lines and italic placeholder
