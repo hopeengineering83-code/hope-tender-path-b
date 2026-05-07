@@ -10,7 +10,11 @@ type Perspective =
   | "ROLE_RECENCY"
   | "EVIDENCE_QUALITY"
   | "COMPLIANCE_CRITICALITY"
-  | "PORTFOLIO_CONTRIBUTION";
+  | "PORTFOLIO_CONTRIBUTION"
+  | "MANDATORY_ELIGIBILITY"
+  | "DELIVERY_RISK"
+  | "DIFFERENTIATION"
+  | "COMMERCIAL_VALUE";
 
 type RawPerspective = Perspective | "RECENCY_OR_ROLE";
 
@@ -23,6 +27,10 @@ const PERSPECTIVE_LABEL: Record<Perspective, string> = {
   EVIDENCE_QUALITY: "Evidence",
   COMPLIANCE_CRITICALITY: "Compliance",
   PORTFOLIO_CONTRIBUTION: "Portfolio",
+  MANDATORY_ELIGIBILITY: "Eligibility",
+  DELIVERY_RISK: "Low-risk delivery",
+  DIFFERENTIATION: "Differentiation",
+  COMMERCIAL_VALUE: "Commercial value",
 };
 
 const PERSPECTIVE_ORDER: Perspective[] = [
@@ -34,6 +42,10 @@ const PERSPECTIVE_ORDER: Perspective[] = [
   "EVIDENCE_QUALITY",
   "COMPLIANCE_CRITICALITY",
   "PORTFOLIO_CONTRIBUTION",
+  "MANDATORY_ELIGIBILITY",
+  "DELIVERY_RISK",
+  "DIFFERENTIATION",
+  "COMMERCIAL_VALUE",
 ];
 
 interface CandidateAssessment {
@@ -84,6 +96,12 @@ function perspectiveEntries(assessment: CandidateAssessment): Array<[Perspective
     .map(([key, score]) => [key, score]);
 }
 
+function criticalFloor(assessment: CandidateAssessment): number | null {
+  const keys: Perspective[] = ["DISCIPLINE_FIT", "SCOPE_COVERAGE", "EVIDENCE_QUALITY", "COMPLIANCE_CRITICALITY", "MANDATORY_ELIGIBILITY"];
+  const values = keys.map((key) => scoreForPerspective(assessment, key)).filter((v): v is number => typeof v === "number");
+  return values.length ? Math.min(...values) : null;
+}
+
 export function AIRematchButton({ tenderId, experts = [], projects = [], onRematchComplete }: AIRematchButtonProps) {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<AIRematchResult | null>(null);
@@ -121,6 +139,7 @@ export function AIRematchButton({ tenderId, experts = [], projects = [], onRemat
 
   function CandidateCard({ category, assessment }: { category: "EXPERT" | "PROJECT"; assessment: CandidateAssessment }) {
     const entries = perspectiveEntries(assessment);
+    const floor = criticalFloor(assessment);
     return (
       <li className="rounded-lg border border-slate-100 bg-white p-3">
         <div className="flex items-start justify-between gap-3">
@@ -139,6 +158,7 @@ export function AIRematchButton({ tenderId, experts = [], projects = [], onRemat
                 </div>
               ))}
             </div>
+            {floor !== null && <p className="mt-2 text-xs text-slate-600">Critical-floor: {floor}/10 across discipline, scope, evidence, compliance, and eligibility.</p>}
             {assessment.strength && <p className="mt-2 text-xs text-emerald-700">✓ {assessment.strength}</p>}
             {assessment.concern && <p className="mt-1 text-xs text-amber-700">⚠ {assessment.concern}</p>}
           </div>
@@ -163,7 +183,7 @@ export function AIRematchButton({ tenderId, experts = [], projects = [], onRemat
           <div>
             <h3 className="text-sm font-semibold text-slate-900">AI Multi-Perspective Rematch</h3>
             <p className="mt-0.5 text-xs text-slate-500">
-              Re-score experts &amp; projects through 8 evaluator lenses, then run 20 best-available portfolio passes and apply the strongest selection to the main engine.
+              Re-score experts &amp; projects through 12 evaluator lenses, then run 20 best-available portfolio passes with critical-floor risk control and apply the strongest selection to the main engine.
             </p>
           </div>
         </div>
@@ -195,7 +215,7 @@ export function AIRematchButton({ tenderId, experts = [], projects = [], onRemat
         {loading && (
           <div className="mt-3 flex items-center gap-2 text-xs text-slate-500">
             <div className="h-2 w-2 animate-pulse rounded-full bg-slate-400" />
-            <span>AI is evaluating candidates across 8 perspectives and 20 selection passes…</span>
+            <span>AI is evaluating candidates across 12 perspectives and 20 selection passes…</span>
           </div>
         )}
 
@@ -226,7 +246,7 @@ export function AIRematchButton({ tenderId, experts = [], projects = [], onRemat
               <div>
                 <h2 className="text-lg font-semibold text-slate-900">Rematch results</h2>
                 <p className="mt-0.5 text-xs text-slate-500">
-                  {result.expertsUpdated} expert(s) and {result.projectsUpdated} project(s) re-scored across 8 perspectives.
+                  {result.expertsUpdated} expert(s) and {result.projectsUpdated} project(s) re-scored across 12 perspectives.
                   {typeof result.iterations === "number" && ` Best-available selection used ${result.iterations} portfolio passes.`}
                   {result.applySelections && " Selections were applied to the main engine."}
                 </p>
