@@ -64,6 +64,7 @@ import { injectTenderClosers } from "./tender-closers";
 import { injectDeliverableAndPhases } from "./deliverable-and-phases";
 import { buildRubricPromptDirective, ensureRubricHeadings } from "./rubric-driven-sections";
 import { injectCoverPageAndRfpMeta } from "./cover-page-injector";
+import { injectJvDisclosure } from "./jv-disclosure";
 
 const BRAND_BLUE = "1F4E79";
 const BRAND_GRAY = "595959";
@@ -1707,6 +1708,23 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     console.info(`[generate-elite] Rubric post-pass: injected ${rubricResult.missingCriteria.length} missing rubric sub-section stub(s) for criteria: ${rubricResult.missingCriteria.join("; ")}`);
   }
   humanizedMarkdown = rubricResult.markdown;
+
+  // ─── JV / Consortia disclosure table (PR GG) ─────────────────────────────
+  // When the tender intelligence detected a JV/consortium clause, inject a
+  // "D.6 JV / Partnership Disclosure" section that explicitly states whether
+  // the bid is a single-firm or consortium submission. Evaluators on
+  // JV-eligible tenders need this to score the "Organisation and Teaming"
+  // criterion. Idempotent via marker; inserts before Section E.
+  if (intelligence.commercialTerms?.consortiaRules) {
+    const jvResult = injectJvDisclosure(humanizedMarkdown, {
+      consortiaRules: intelligence.commercialTerms.consortiaRules,
+      companyName: company.name,
+    });
+    if (jvResult.injected) {
+      console.info("[generate-elite] JV/Consortia Partnership Disclosure table injected (PR GG).");
+    }
+    humanizedMarkdown = jvResult.markdown;
+  }
 
   // ─── Duplicate section heading suppressor (PR Q) ─────────────────────────
   // After every deterministic post-pass has run, scan for level-2
