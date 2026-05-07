@@ -309,12 +309,20 @@ async function extractPdf(buffer: Buffer): Promise<string> {
 
   // 4th-engine fallback: Claude vision OCR for scanned PDFs.
   // Triggers when all three text-layer extractors returned essentially
-  // nothing AND PDF_OCR_ENABLED=true is set (opt-in, gated to avoid
-  // surprise costs). Runs synchronously in the upload route — that
-  // route's maxDuration=60 leaves enough headroom for a ~30s OCR call.
-  const ocrEnabled = (process.env.PDF_OCR_ENABLED || "").toLowerCase() === "true";
+  // nothing.
+  //
+  // PR U FIX — OCR was opt-in via PDF_OCR_ENABLED=true. The user's
+  // production deployment had this env var unset, so when a scanned
+  // tender PDF was uploaded the extraction returned 0 chars and the
+  // engine silently produced a generic proposal. Now: OCR runs by
+  // DEFAULT whenever ANTHROPIC_API_KEY is present (which the engine
+  // already requires for proposal generation). The user can still
+  // opt-out with PDF_OCR_ENABLED=false.
+  const ocrFlag = (process.env.PDF_OCR_ENABLED || "").toLowerCase();
+  const hasAnthropicKey = Boolean(process.env.ANTHROPIC_API_KEY);
+  const ocrEnabled = ocrFlag === "true" || (ocrFlag !== "false" && hasAnthropicKey);
   if ((!best?.text || best.text.length < 20) && ocrEnabled) {
-    console.info(`[extract-text] PDF has no text layer (${pages} pages) — running Claude vision OCR fallback.`);
+    console.info(`[extract-text] PDF has no text layer (${pages} pages) — running Claude vision OCR fallback (default-on, set PDF_OCR_ENABLED=false to disable).`);
     const ocrText = await extractPdfWithClaudeVision(buffer, pages);
     if (ocrText && ocrText.length >= 20) {
       const normalized = normalizeExtractedText(ocrText);
@@ -325,7 +333,7 @@ async function extractPdf(buffer: Buffer): Promise<string> {
 
   if (!best?.text || best.text.length < 20) {
     if (!ocrEnabled) {
-      return `[Scanned PDF — ${pages} page(s). Text layer not found. Set PDF_OCR_ENABLED=true (with ANTHROPIC_API_KEY configured) to run Claude vision OCR on scanned PDFs automatically at upload time.]`;
+      return `[Scanned PDF — ${pages} page(s). Text layer not found. Vision OCR fallback is disabled (PDF_OCR_ENABLED=false or no ANTHROPIC_API_KEY). Re-enable OCR or upload a digital PDF / DOCX with selectable text.]`;
     }
     return `[Scanned PDF — ${pages} page(s). Text layer not found and Claude vision OCR returned empty. The PDF may be image-only with very low resolution, password-protected, or otherwise unreadable. Try uploading a higher-resolution scan or a digital PDF.]`;
   }
