@@ -267,8 +267,8 @@ function buildTable(opts: BuildOpts): string {
   });
 
   // Tender-specific rows come first; generic rows fill the remainder.
-  // Cap at 8 rows total so the table reads tightly.
-  const all = [...tenderRows, ...sectorRows].slice(0, 8);
+  // Cap at 10 rows so the table covers complex tenders without becoming unwieldy.
+  const all = [...tenderRows, ...sectorRows].slice(0, 10);
 
   const head = "| # | Tender Pain / Need | Our Strength | Discriminator | Evidence Anchor |";
   const sep = "|---|--------------------|--------------|---------------|-----------------|";

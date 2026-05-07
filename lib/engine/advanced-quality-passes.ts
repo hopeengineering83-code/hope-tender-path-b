@@ -106,13 +106,13 @@ function extractQaThresholds(tenderText: string): QaThreshold[] {
   const seen = new Set<string>();
 
   const patterns: Array<[string, RegExp]> = [
-    ["Maximum deliverable review period", /(\d+)\s*(?:working\s+)?days?\s+(?:for|per)\s+(?:review|comment|feedback)/i],
+    ["Maximum deliverable review period", /(\d+)\s*(?:working\s+|calendar\s+)?days?\s+(?:for|per|of|after|from|within)\s+(?:review|comment|feedback|submission|notification)/i],
     ["Required review rounds", /(\d+)\s+(?:rounds?|cycles?|iterations?)\s+of\s+(?:review|revision|comment)/i],
     ["Quality inspection frequency", /(?:quality|QA|QC)\s+inspection(?:s)?\s+(?:every|each|per)\s+(\d+)\s*(?:week|month|day|deliverable)/i],
     ["ISO / QMS standard required", /(ISO\s*\d{4,5}(?::\d{4})?)/i],
     ["Maximum defect / error tolerance", /(\d+(?:\.\d+)?\s*%)\s*(?:defect|error|non-conformance|failure)\s+(?:rate|tolerance|limit)/i],
-    ["Minimum peer-review experience", /peer[\s-]?reviewer.*?(\d+)\s*(?:years?|yr)/i],
-    ["Design review stage requirement", /(30%|60%|90%|100%)\s*(?:design\s+review|gate\s+review|stage\s+review)/i],
+    ["Minimum peer-review experience", /peer[\s-]?reviewer.{0,40}?(\d+)\s*(?:years?|yr)/i],
+    ["Design review stage requirement", /(\d{1,3})%\s*(?:design\s+review|gate\s+review|stage\s+review)/i],
   ];
 
   for (const [label, re] of patterns) {

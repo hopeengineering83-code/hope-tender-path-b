@@ -381,7 +381,10 @@ function detectThemes(tenderText: string): ProposalTheme[] {
   const scored = PROPOSAL_THEMES.map((t) => ({ theme: t, score: t.triggers.filter((p) => p.test(tenderText)).length }))
     .filter((s) => s.score > 0)
     .sort((a, b) => b.score - a.score);
-  return scored.length ? scored.map((s) => s.theme) : [PROPOSAL_THEMES[6]]; // default: donor compliance
+  // Return only matched themes. An empty array is correct when no themes
+  // trigger — forcing donor-compliance on an unrelated tender (e.g. road
+  // design) injects irrelevant methodology bullets and hurts quality.
+  return scored.map((s) => s.theme);
 }
 
 function inferSector(tenderText: string): string {

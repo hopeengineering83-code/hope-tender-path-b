@@ -152,7 +152,13 @@ export function scoreProposalQuality(opts: {
     .map((p) => p.replace(/\s+/g, " ").trim())
     .filter((p) => p.length > 80 && !p.startsWith("|") && !p.startsWith("#"));
   const withEvidence = paragraphs.filter(paragraphHasEvidence).length;
-  const evidenceDensity = paragraphs.length > 0 ? Math.round((withEvidence / paragraphs.length) * 10) : 5;
+  // Floor at 6 when fewer than 6 paragraphs exist — a short but focused
+  // proposal should not be penalised the same as a long evidence-thin one.
+  const evidenceDensity = paragraphs.length === 0
+    ? 5
+    : paragraphs.length < 6
+      ? Math.max(6, Math.round((withEvidence / paragraphs.length) * 10))
+      : Math.round((withEvidence / paragraphs.length) * 10);
   if (evidenceDensity < 5) {
     weakAxes.push("evidenceDensity");
     notes.push(`Only ${withEvidence} of ${paragraphs.length} substantive paragraphs cite specific evidence (projects/values/licenses).`);
