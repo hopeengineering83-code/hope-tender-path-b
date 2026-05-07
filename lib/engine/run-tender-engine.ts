@@ -23,7 +23,7 @@ function metadata(value: Record<string, unknown>): string {
 async function writeEngineRunAudit(args: {
   userId: string;
   tenderId: string;
-  action: "TENDER_ENGINE_RUN_STARTED" | "TENDER_ENGINE_RUN_COMPLETED" | "TENDER_ENGINE_RUN_FAILED";
+  action: "TENDER_ENGINE_RUN_STARTED" | "TENDER_ENGINE_RUN_COMPLETED" | "TENDER_ENGINE_RUN_FAILED" | "TENDER_ENGINE_DOCUMENTS_SUPERSEDED";
   description: string;
   metadata: Record<string, unknown>;
 }) {
@@ -78,8 +78,8 @@ export async function runTenderEngine(tenderId: string, userId: string) {
       tenderFileCount: tender.files.length,
       companyExpertCount: company.experts.length,
       companyProjectCount: company.projects.length,
-      destructiveCurrentStateRefresh: true,
-      note: "Current-state engine artifacts are refreshed in place; this audit record preserves the run identity and run-level counts.",
+      destructiveCurrentStateRefresh: false,
+      note: "Current-state matching/compliance artifacts are refreshed in place; generated document history is preserved by superseding older documents instead of deleting them.",
     },
   });
 
@@ -191,20 +191,78 @@ export async function runTenderEngine(tenderId: string, userId: string) {
     const supportedOrReviewableCount = compliance.matrices.filter((m) => ["SUPPORTED", "EVIDENCE_PENDING_REVIEW", "PARTIAL"].includes(m.supportStatus)).length;
     const readinessScore = Math.max(0, Math.min(100, Math.round((supportedOrReviewableCount / Math.max(compliance.matrices.length, 1)) * 100)));
 
+    const activeGeneratedDocuments = await prisma.generatedDocument.findMany({
+      where: { tenderId, generationStatus: { not: "SUPERSEDED" } },
+      select: {
+        id: true,
+        name: true,
+        documentType: true,
+        exactFileName: true,
+        exactOrder: true,
+        generationStatus: true,
+        validationStatus: true,
+        reviewStatus: true,
+        reviewedBy: true,
+        reviewedAt: true,
+        createdAt: true,
+        updatedAt: true,
+        _count: { select: { reviews: true, comments: true } },
+      },
+    });
+
     const existingCounts = await Promise.all([
       prisma.tenderRequirement.count({ where: { tenderId } }),
       prisma.tenderExpertMatch.count({ where: { tenderId } }),
       prisma.tenderProjectMatch.count({ where: { tenderId } }),
       prisma.complianceMatrix.count({ where: { tenderId } }),
       prisma.complianceGap.count({ where: { tenderId } }),
-      prisma.generatedDocument.count({ where: { tenderId } }),
+      prisma.generatedDocument.count({ where: { tenderId, generationStatus: { not: "SUPERSEDED" } } }),
     ]);
+
+    if (activeGeneratedDocuments.length > 0) {
+      await writeEngineRunAudit({
+        userId,
+        tenderId,
+        action: "TENDER_ENGINE_DOCUMENTS_SUPERSEDED",
+        description: `Superseded ${activeGeneratedDocuments.length} generated document(s) before engine rerun for "${tender.title}"`,
+        metadata: {
+          engineRunId,
+          supersededAt: new Date().toISOString(),
+          preservedGeneratedDocuments: activeGeneratedDocuments.map((doc) => ({
+            id: doc.id,
+            name: doc.name,
+            documentType: doc.documentType,
+            exactFileName: doc.exactFileName,
+            exactOrder: doc.exactOrder,
+            generationStatus: doc.generationStatus,
+            validationStatus: doc.validationStatus,
+            reviewStatus: doc.reviewStatus,
+            reviewedBy: doc.reviewedBy,
+            reviewedAt: doc.reviewedAt?.toISOString() ?? null,
+            reviewCount: doc._count.reviews,
+            commentCount: doc._count.comments,
+            createdAt: doc.createdAt.toISOString(),
+            updatedAt: doc.updatedAt.toISOString(),
+          })),
+        },
+      });
+
+      await prisma.generatedDocument.updateMany({
+        where: { tenderId, generationStatus: { not: "SUPERSEDED" } },
+        data: {
+          generationStatus: "SUPERSEDED",
+          validationStatus: "SUPERSEDED",
+          reviewStatus: "SUPERSEDED",
+          reviewNotes: `Superseded by tender engine run ${engineRunId}. Review/comment history preserved on this historical document record.`,
+          updatedAt: new Date(),
+        },
+      });
+    }
 
     await prisma.tenderExpertMatch.deleteMany({ where: { tenderId } });
     await prisma.tenderProjectMatch.deleteMany({ where: { tenderId } });
     await prisma.complianceGap.deleteMany({ where: { tenderId } });
     await prisma.complianceMatrix.deleteMany({ where: { tenderId } });
-    await prisma.generatedDocument.deleteMany({ where: { tenderId } });
     await prisma.tenderRequirement.deleteMany({ where: { tenderId } });
 
     for (const batch of chunks(requirementRows, 100)) await prisma.tenderRequirement.createMany({ data: batch });
@@ -268,6 +326,7 @@ export async function runTenderEngine(tenderId: string, userId: string) {
         stage: reviewNeeded ? "COMPLIANCE" : "MATCHING",
         notes: [
           `Engine run ID: ${engineRunId}`,
+          activeGeneratedDocuments.length > 0 ? `${activeGeneratedDocuments.length} previous generated document(s) were superseded and preserved for audit/review history.` : null,
           "Senior consultant mode: broad-fit matching uses capability families, sector/service equivalence, and professional judgment instead of exact wording only.",
           analysisMethod === "AI"
             ? "Analysis source: AI (chunked multi-call when tender > 60K chars)."
@@ -302,7 +361,7 @@ export async function runTenderEngine(tenderId: string, userId: string) {
           projectMatches: existingCounts[2],
           complianceRows: existingCounts[3],
           gaps: existingCounts[4],
-          generatedDocuments: existingCounts[5],
+          activeGeneratedDocuments: existingCounts[5],
         },
         newStateCounts: {
           requirements: requirementRows.length,
@@ -311,6 +370,7 @@ export async function runTenderEngine(tenderId: string, userId: string) {
           complianceRows: matrixRows.length,
           gaps: gapRows.length,
           generatedDocuments: documentRows.length,
+          supersededGeneratedDocuments: activeGeneratedDocuments.length,
         },
         readinessScore,
         hardGapCount: hardGaps,
@@ -329,7 +389,7 @@ export async function runTenderEngine(tenderId: string, userId: string) {
         projectMatches: { orderBy: { score: "desc" }, include: { project: true } },
         complianceGaps: { orderBy: { createdAt: "desc" } },
         complianceMatrix: { orderBy: { createdAt: "asc" } },
-        generatedDocuments: { orderBy: { exactOrder: "asc" }, select: { id: true, name: true, documentType: true, generationStatus: true, validationStatus: true, reviewStatus: true, exactFileName: true, exactOrder: true, contentSummary: true } },
+        generatedDocuments: { where: { generationStatus: { not: "SUPERSEDED" } }, orderBy: { exactOrder: "asc" }, select: { id: true, name: true, documentType: true, generationStatus: true, validationStatus: true, reviewStatus: true, exactFileName: true, exactOrder: true, contentSummary: true } },
       },
     });
   } catch (error) {
