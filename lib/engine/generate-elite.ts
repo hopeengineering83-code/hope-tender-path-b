@@ -53,6 +53,7 @@ import { injectMethodologyTables } from "./methodology-tables";
 import { injectBeyondSpecTables } from "./beyond-spec-tables";
 import { injectWinThemesTable } from "./win-themes-table";
 import { injectMobilizationAndChecklist } from "./mobilization-and-checklist";
+import { stripPlaceholders } from "./placeholder-stripper";
 import { buildRubricPromptDirective, ensureRubricHeadings } from "./rubric-driven-sections";
 
 const BRAND_BLUE = "1F4E79";
@@ -756,6 +757,17 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
         where: { trustLevel: "REVIEWED" },
         orderBy: [{ contractValue: "desc" }, { updatedAt: "desc" }],
         take: 8,
+        include: { evidences: { orderBy: { createdAt: "desc" }, take: 5 } },
+      },
+      // PR J — vault-fallback experts. When zero experts are selected
+      // for a tender, the deterministic Section A.4 / A.5 builders
+      // emit placeholder text. With the vault loaded here, when the
+      // selected list is empty we substitute the firm's reviewed expert
+      // roster so the proposal carries real names + licences instead.
+      experts: {
+        where: { trustLevel: "REVIEWED" },
+        orderBy: [{ yearsExperience: "desc" }, { updatedAt: "desc" }],
+        take: 12,
       },
     },
   });
@@ -763,8 +775,23 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
 
   const allSelectedExperts = tender.expertMatches.map((m) => m.expert);
   const allSelectedProjects = tender.projectMatches.map((m) => m.project);
-  const experts = allSelectedExperts.filter((e) => e.trustLevel === "REVIEWED");
-  const projects = allSelectedProjects.filter((p) => p.trustLevel === "REVIEWED");
+  let experts = allSelectedExperts.filter((e) => e.trustLevel === "REVIEWED");
+  let projects = allSelectedProjects.filter((p) => p.trustLevel === "REVIEWED");
+
+  // PR J — vault-fallback when the bid team forgot to select.
+  // If no expert / project was selected for this tender, fall back to
+  // the firm's reviewed vault roster so deterministic builders never
+  // see an empty array. Without this, Sections A.4, A.5, B.2 emit
+  // "Source-evidence action: select reviewed records before final
+  // submission" placeholder text (the exact gap the user flagged).
+  if (experts.length === 0 && (company.experts ?? []).length > 0) {
+    experts = company.experts as typeof experts;
+    console.warn(`[generate-elite] No experts selected for tender — falling back to ${experts.length} reviewed vault expert(s).`);
+  }
+  if (projects.length === 0 && (company.projects ?? []).length > 0) {
+    projects = company.projects as typeof projects;
+    console.warn(`[generate-elite] No projects selected for tender — falling back to ${projects.length} reviewed vault project(s).`);
+  }
 
   // Warn about draft records silently excluded from generation (they are not blocked here —
   // the route gate handles blocking. This provides auditability in the return value.)
@@ -1379,6 +1406,18 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     console.info(`[generate-elite] Rubric post-pass: injected ${rubricResult.missingCriteria.length} missing rubric sub-section stub(s) for criteria: ${rubricResult.missingCriteria.join("; ")}`);
   }
   humanizedMarkdown = rubricResult.markdown;
+
+  // ─── Placeholder stripper (PR J) — LAST post-pass before DOCX render ────
+  // Removes "Bid-Team Action: confirm X" lines and italic placeholder
+  // paragraphs that visually scream "internal draft". Replaces table-cell
+  // placeholders with em-dash to keep table layouts intact. NEVER
+  // fabricates — if the data wasn't supplied earlier, the placeholder
+  // is silently removed.
+  const stripped = stripPlaceholders(humanizedMarkdown);
+  if (stripped.removedLines > 0 || stripped.blankedCells > 0 || stripped.removedParagraphs > 0) {
+    console.info(`[generate-elite] Placeholder stripper: removed ${stripped.removedLines} line(s), ${stripped.removedParagraphs} paragraph(s); blanked ${stripped.blankedCells} table cell(s).`);
+  }
+  humanizedMarkdown = stripped.markdown;
 
   const auditSummary = benchmarkAuditSummary(humanizedMarkdown);
   const children = markdownToDocx(humanizedMarkdown);
