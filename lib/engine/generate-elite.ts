@@ -52,6 +52,7 @@ import { amplifySectionCDepth } from "./section-c-depth-amplifier";
 import { injectMethodologyTables } from "./methodology-tables";
 import { injectBeyondSpecTables } from "./beyond-spec-tables";
 import { injectWinThemesTable } from "./win-themes-table";
+import { injectMobilizationAndChecklist } from "./mobilization-and-checklist";
 import { buildRubricPromptDirective, ensureRubricHeadings } from "./rubric-driven-sections";
 
 const BRAND_BLUE = "1F4E79";
@@ -1339,6 +1340,28 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     console.info(`[generate-elite] Win Themes table injected (Section G).`);
   }
   humanizedMarkdown = winThemes.markdown;
+
+  // ─── Mobilization plan + Submission Readiness checklist (PR H) ──────────
+  // Two more deterministic sections that elite proposals carry:
+  //   1. Mobilization & Resourcing Plan — week-by-week ramp-up table
+  //      (team, workspace, software, equipment, support staff, QA,
+  //      communication). Donor-funded engagements explicitly score
+  //      "implementation arrangements" and look for this.
+  //   2. Submission Readiness Checklist — tear-out final-checks list
+  //      grouped by Identity, Eligibility, Technical, Team, Format,
+  //      Submission. Mandatory vs Recommended items.
+  // Idempotent via marker comments. Mobilization sits in Section A;
+  // Checklist sits at end of document.
+  const mobAndChecklist = injectMobilizationAndChecklist(humanizedMarkdown, {
+    experts: allSelectedExperts as unknown as Parameters<typeof injectMobilizationAndChecklist>[1]["experts"],
+  });
+  if (mobAndChecklist.injected.mobilization) {
+    console.info(`[generate-elite] Mobilization & Resourcing Plan injected.`);
+  }
+  if (mobAndChecklist.injected.checklist) {
+    console.info(`[generate-elite] Submission Readiness Checklist injected.`);
+  }
+  humanizedMarkdown = mobAndChecklist.markdown;
 
   // ─── Rubric-driven section enforcement (PR #258) ─────────────────────────
   // When the tender has explicit evaluation criteria with weights
