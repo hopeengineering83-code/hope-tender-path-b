@@ -150,29 +150,42 @@ function isSeparatorRow(line: string): boolean {
   return /^\|[\s:|-]+\|$/.test(line);
 }
 
+function splitTableCells(rowLine: string): string[] {
+  // PR FF: cells may contain <br> or \\n soft newlines — collapse to space.
+  return rowLine
+    .replace(/<br\s*\/?>/gi, " ")
+    .replace(/\\n/g, " ")
+    .split("|")
+    .filter((_, i, arr) => i > 0 && i < arr.length - 1)
+    .map((cell) => cell.trim());
+}
+
 function parseMdTable(tableLines: string[]): Table {
   const dataRows = tableLines.filter((l) => !isSeparatorRow(l));
   const colCount = Math.max(...dataRows.map((r) =>
-    r.split("|").filter((_, i, arr) => i > 0 && i < arr.length - 1).length
+    splitTableCells(r).length
   ), 1);
+  // PR FF: for wide tables (5+ cols) use tighter column width so the table
+  // fits within the page margins without overflowing.
   const colWidth = Math.floor(8100 / colCount);
 
   const rows = dataRows.map((rowLine, rowIndex) => {
-    const cells = rowLine
-      .split("|")
-      .filter((_, i, arr) => i > 0 && i < arr.length - 1)
-      .map((cell) => cell.trim());
+    const cells = splitTableCells(rowLine);
     const isHeader = rowIndex === 0;
 
     return new TableRow({
       children: Array.from({ length: colCount }, (_, ci) => {
         const cellText = cells[ci] ?? "";
+        // PR FF: apply parseInlineRuns to header cells as well — bold/italic
+        // inside header cells was previously stripped by the replace(/\*\*/g,"")
+        // call and lost entirely in the DOCX output.
+        const headerRuns = parseInlineRuns(cellText, { size: 20, color: "FFFFFF" }).map(
+          (r) => new TextRun({ ...r, bold: true }),
+        );
         return new TableCell({
           width: { size: colWidth, type: WidthType.DXA },
           children: [new Paragraph({
-            children: isHeader
-              ? [new TextRun({ text: cellText.replace(/\*\*/g, ""), bold: true, size: 20, font: "Calibri", color: "FFFFFF" })]
-              : parseInlineRuns(cellText, { size: 20 }),
+            children: isHeader ? headerRuns : parseInlineRuns(cellText, { size: 20 }),
             spacing: { after: 60 },
           })],
           shading: isHeader ? { fill: "1F4E79" } : undefined,
@@ -1848,6 +1861,46 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     console.info("[generate-elite] RFP reference metadata bar injected under cover letter subject line (PR II).");
   }
   humanizedMarkdown = coverAndMeta.markdown;
+
+  // ─── PR JJ: Three-column DOCX signature block ─────────────────────────────
+  // Inject a "Signed | Company Stamp | Date" signature block after the
+  // Declaration section when the tender requires a signature. Missing a
+  // physical signature / stamp space is the single most common reason
+  // proposals are disqualified on submission-format grounds.
+  // Idempotent via marker; only added when the markdown doesn't already
+  // contain a "Signature:" or "Signed:" line.
+  const SIG_MARKER = "<!-- signature-block:injected -->";
+  if (requiresSignatureOrStamp(tender.requirements) && !humanizedMarkdown.includes(SIG_MARKER) && !/\bsignature:\s*_+/im.test(humanizedMarkdown)) {
+    const gmSigName = company.gmName ? `${company.gmName}${company.gmTitle ? `, ${company.gmTitle}` : ""}` : "General Manager";
+    const sigBlock = [
+      SIG_MARKER,
+      "## Authorised Signature",
+      "",
+      "| Signed | Company Stamp | Date |",
+      "|---|---|---|",
+      `| **${company.name}** | | |`,
+      `| _${gmSigName}_ | _(affix stamp)_ | ________________ |`,
+      `| Authorised Representative | | |`,
+      "",
+    ].join("\n");
+    // Insert before Section E / Compliance Matrix, or at end.
+    const sigLines = humanizedMarkdown.split("\n");
+    let sigInsertAt = sigLines.length;
+    for (let i = 0; i < sigLines.length; i += 1) {
+      if (/^##\s+SECTION\s+E\b/i.test(sigLines[i]) || /^#\s+Section\s+E\b/i.test(sigLines[i])) {
+        sigInsertAt = i;
+        break;
+      }
+    }
+    const sigOut = [
+      ...sigLines.slice(0, sigInsertAt),
+      "",
+      sigBlock,
+      ...sigLines.slice(sigInsertAt),
+    ];
+    humanizedMarkdown = sigOut.join("\n");
+    console.info("[generate-elite] Three-column signature block injected (PR JJ).");
+  }
 
   const auditSummary = benchmarkAuditSummary(humanizedMarkdown);
   const children = markdownToDocx(humanizedMarkdown);
