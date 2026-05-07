@@ -496,15 +496,112 @@ function buildProjectEvidenceLines(projects: any[]): string[] {
   return projects.flatMap((project: any) => (project.evidences ?? []).slice(0, 5).map((evidence: any) => `Project evidence for ${project.name}: ${evidence.title} | type: ${evidence.evidenceType}${evidence.fileName ? ` | file: ${evidence.fileName}` : ""}${evidence.description ? ` | ${shortText(evidence.description, 280)}` : ""}${evidence.extractedText ? ` | text: ${shortText(evidence.extractedText, 520)}` : ""}`)).slice(0, 30);
 }
 
-function buildCoverBlock(params: { tenderTitle: string; clientName: string; companyName: string; reference?: string | null }): Paragraph[] {
-  return [
-    new Paragraph({ alignment: AlignmentType.CENTER, spacing: { before: 120, after: 260 }, children: [new TextRun({ text: "TECHNICAL PROPOSAL", bold: true, size: 44, color: BRAND_BLUE, font: "Calibri" })] }),
-    new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 160 }, children: [new TextRun({ text: params.tenderTitle, bold: true, size: 32, color: "222222", font: "Calibri" })] }),
-    new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 80 }, children: [new TextRun({ text: `Client: ${params.clientName}`, size: 24, color: BRAND_GRAY, font: "Calibri" })] }),
-    ...(params.reference ? [new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 80 }, children: [new TextRun({ text: `Reference: ${params.reference}`, size: 22, color: BRAND_GRAY, font: "Calibri" })] })] : []),
-    new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 360 }, children: [new TextRun({ text: `Prepared by ${params.companyName}`, size: 24, bold: true, color: BRAND_BLUE, font: "Calibri" })] }),
-    new Paragraph({ border: { bottom: { color: BRAND_BLUE, style: BorderStyle.SINGLE, size: 12, space: 1 } }, spacing: { after: 300 }, children: [new TextRun("")] }),
-  ];
+function buildCoverBlock(params: {
+  tenderTitle: string;
+  clientName: string;
+  companyName: string;
+  reference?: string | null;
+  // PR #259 — full company-vault credentials surfaced on the
+  // cover page. When provided, the page now includes registered
+  // address, TIN, VAT, license grade, GM with PPE license, phone,
+  // email, website — matching the Claude benchmark proposal's
+  // cover page exactly.
+  vault?: {
+    serviceLines?: string[] | null;
+    address?: string | null;
+    phone?: string | null;
+    email?: string | null;
+    website?: string | null;
+    tin?: string | null;
+    vat?: string | null;
+    licenseGrade?: string | null;
+    gmName?: string | null;
+    gmTitle?: string | null;
+    gmLicense?: string | null;
+    submissionDate?: Date | string | null;
+    proposalValidityDays?: number | null;
+    exactSubjectLine?: string | null;
+  };
+}): Paragraph[] {
+  const v = params.vault ?? {};
+  const blocks: Paragraph[] = [];
+
+  // Optional service-line tagline (Claude's PATH cover page had:
+  // "Design | Interior Design | Water Drilling | Geotechnical
+  // Investigation | Contract Administration").
+  if (v.serviceLines && v.serviceLines.length > 0) {
+    blocks.push(new Paragraph({
+      alignment: AlignmentType.CENTER,
+      spacing: { before: 60, after: 60 },
+      children: [new TextRun({ text: v.serviceLines.slice(0, 6).join("  |  "), italics: true, size: 18, color: BRAND_GRAY, font: "Calibri" })],
+    }));
+  }
+
+  blocks.push(new Paragraph({ alignment: AlignmentType.CENTER, spacing: { before: 120, after: 200 }, children: [new TextRun({ text: "TECHNICAL PROPOSAL", bold: true, size: 44, color: BRAND_BLUE, font: "Calibri" })] }));
+
+  // Reference line (e.g., "RFP No. 2026-024")
+  if (params.reference) {
+    blocks.push(new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 100 }, children: [new TextRun({ text: params.reference, bold: true, size: 26, color: BRAND_BLUE, font: "Calibri" })] }));
+  }
+
+  blocks.push(new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 160 }, children: [new TextRun({ text: params.tenderTitle, bold: true, size: 30, color: "222222", font: "Calibri" })] }));
+  blocks.push(new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 100 }, children: [new TextRun({ text: `Submitted to: ${params.clientName}`, size: 24, color: BRAND_GRAY, font: "Calibri" })] }));
+
+  // Submission date | Validity (Claude's pattern: "Submission Date:
+  // 25 March 2026 | Proposal Validity: 90 Days")
+  const dateBits: string[] = [];
+  if (v.submissionDate) {
+    const d = new Date(v.submissionDate);
+    if (!Number.isNaN(d.getTime())) dateBits.push(`Submission Date: ${d.toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })}`);
+  }
+  if (v.proposalValidityDays) dateBits.push(`Proposal Validity: ${v.proposalValidityDays} Days`);
+  if (dateBits.length > 0) {
+    blocks.push(new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 280 }, children: [new TextRun({ text: dateBits.join("  |  "), size: 20, color: BRAND_GRAY, font: "Calibri" })] }));
+  } else {
+    blocks.push(new Paragraph({ spacing: { after: 280 }, children: [new TextRun("")] }));
+  }
+
+  // "Prepared by" line — bold company name in brand color
+  blocks.push(new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 60 }, children: [new TextRun({ text: params.companyName, bold: true, size: 26, color: BRAND_BLUE, font: "Calibri" })] }));
+
+  // Address line
+  if (v.address) {
+    blocks.push(new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 40 }, children: [new TextRun({ text: v.address, size: 18, color: BRAND_GRAY, font: "Calibri" })] }));
+  }
+
+  // Tax + license registration line — "TIN: ... | VAT Reg. No.: ... | Category 1 (Grade I)"
+  const regBits: string[] = [];
+  if (v.tin) regBits.push(`TIN: ${v.tin}`);
+  if (v.vat) regBits.push(`VAT Reg. No.: ${v.vat}`);
+  if (v.licenseGrade) regBits.push(v.licenseGrade);
+  if (regBits.length > 0) {
+    blocks.push(new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 40 }, children: [new TextRun({ text: regBits.join("  |  "), size: 16, color: BRAND_GRAY, font: "Calibri" })] }));
+  }
+
+  // Phone | Email | Website line
+  const contactBits: string[] = [];
+  if (v.phone) contactBits.push(`Tel: ${v.phone}`);
+  if (v.email) contactBits.push(v.email);
+  if (v.website) contactBits.push(v.website);
+  if (contactBits.length > 0) {
+    blocks.push(new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 60 }, children: [new TextRun({ text: contactBits.join("  |  "), size: 16, color: BRAND_GRAY, font: "Calibri" })] }));
+  }
+
+  // GM signatory line
+  if (v.gmName) {
+    const gmText = `${v.gmName}, ${v.gmTitle ?? "General Manager"}${v.gmLicense ? `  |  ${v.gmLicense}` : ""}`;
+    blocks.push(new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 40 }, children: [new TextRun({ text: gmText, size: 16, color: BRAND_GRAY, italics: true, font: "Calibri" })] }));
+  }
+
+  // Email subject line — extracted from tender's exact subject (PR #259)
+  if (v.exactSubjectLine) {
+    blocks.push(new Paragraph({ alignment: AlignmentType.CENTER, spacing: { before: 100, after: 40 }, children: [new TextRun({ text: `Email Subject Line: [${v.exactSubjectLine}]`, size: 16, color: "222222", font: "Calibri", italics: true })] }));
+  }
+
+  // Section divider
+  blocks.push(new Paragraph({ border: { bottom: { color: BRAND_BLUE, style: BorderStyle.SINGLE, size: 12, space: 1 } }, spacing: { before: 200, after: 300 }, children: [new TextRun("")] }));
+
+  return blocks;
 }
 
 function buildContactFooterText(company: { name: string; address?: string | null; phone?: string | null; email?: string | null; website?: string | null }): string {
@@ -532,6 +629,12 @@ function buildProfessionalDocument(params: {
   // tender restrictions, which is a compliance violation.
   suppressCoverBlock?: boolean;
   suppressBrandedHeader?: boolean;
+  // PR #259 — pass-through to buildCoverBlock for full vault-aware
+  // cover page (TIN, VAT, license grade, GM with PPE license,
+  // service-line tagline, submission date + validity, exact subject
+  // line). When omitted, cover block falls back to the basic
+  // tenderTitle + clientName + companyName layout.
+  coverVault?: Parameters<typeof buildCoverBlock>[0]["vault"];
 }): Document {
   // Branded header is suppressed when the tender forbids branding.
   // Spec rule: do not apply company logo, letterhead, or company name
@@ -585,7 +688,13 @@ function buildProfessionalDocument(params: {
       // first attached form replaces the bidder's own cover page).
       children: params.suppressCoverBlock
         ? params.children
-        : [...buildCoverBlock(params), ...params.children],
+        : [...buildCoverBlock({
+            tenderTitle: params.tenderTitle,
+            clientName: params.clientName,
+            companyName: params.companyName,
+            reference: params.reference,
+            vault: params.coverVault,
+          }), ...params.children],
     }],
     styles: {
       default: { document: { run: { font: "Calibri", size: 22, color: "222222" }, paragraph: { spacing: { line: 276, after: 100 } } } },
@@ -1201,6 +1310,29 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   if (tenderForbidsBranding) console.info("[generate-elite] Tender forbids branding — suppressing branded header and skipping letterhead application.");
   if (!tenderRequiresSignature) console.info("[generate-elite] Tender does not explicitly require signature/stamp — declaration will use printed-name-only sign-off.");
 
+  // PR #259 — vault-aware cover page. Surfaces TIN, VAT, license
+  // grade, GM with PPE license, service-line tagline, submission date,
+  // proposal validity, exact subject line. Falls back gracefully on
+  // any field that's null in the Company table.
+  const coverVault = {
+    serviceLines: safeParseArr(company.serviceLines),
+    address: company.address,
+    phone: company.phone,
+    email: company.email,
+    website: company.website,
+    tin: company.tin,
+    vat: company.vat,
+    licenseGrade: company.licenseGrade,
+    gmName: company.gmName,
+    gmTitle: company.gmTitle,
+    gmLicense: company.gmLicense,
+    submissionDate: tender.deadline,
+    proposalValidityDays: intelligence.commercialTerms?.bidValidityDays
+      ? Number(String(intelligence.commercialTerms.bidValidityDays).match(/\d+/)?.[0] ?? "")
+      : null,
+    exactSubjectLine: intelligence.exactSubjectLine,
+  };
+
   const doc = buildProfessionalDocument({
     tenderTitle: cleanedTenderTitle,
     clientName: intelligence.clientName,
@@ -1210,6 +1342,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     children,
     suppressCoverBlock: tenderForbidsCoverPage,
     suppressBrandedHeader: tenderForbidsBranding,
+    coverVault,
   });
 
   // Round-11: multi-pass refinement. Score the assembled proposal; if it
@@ -1282,6 +1415,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
         children: finalChildren,
         suppressCoverBlock: tenderForbidsCoverPage,
         suppressBrandedHeader: tenderForbidsBranding,
+        coverVault, // PR #259 — same vault on the refined re-render
       })
     : doc;
   const fileContent = (await Packer.toBuffer(finalDoc)).toString("base64");
