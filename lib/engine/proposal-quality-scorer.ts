@@ -75,19 +75,26 @@ const SECTOR_VOCAB: Record<string, RegExp[]> = {
   education: [/pupil.ratio/i, /accessible/i, /climate.responsive/i, /fire egress/i],
 };
 
+// Keep this list aligned with hasForbiddenWeakness() in proposal-benchmark-guard.ts.
+// The guard normalises/strips these; the scorer reports them as a quality penalty.
 const FORBIDDEN_PHRASES = [
   /as an ai/i,
+  /\blanguage model\b/i,
   /chatgpt/i,
   /openai/i,
   /lorem ipsum/i,
   /\bplaceholder\b/i,
   /sample text/i,
+  /\btodo\b/i,
+  /\btbd\b/i,
+  /to be determined/i,
+  /n\/a \(pending\)/i,
   /committed to excellence/i,
   /leading firm in the region/i,
   /team of qualified professionals/i,
   /we look forward to the opportunity/i,
   /\[INSERT[^\]]*\]/i,
-  /\bTBD\b/i,
+  /\[(?:PLACEHOLDER|NAME|DATE|TBD|ADD|ENTER|SPECIFY|YOUR)[^\]]{0,60}\]/i,
 ];
 
 function detectSector(primarySector: string): string {

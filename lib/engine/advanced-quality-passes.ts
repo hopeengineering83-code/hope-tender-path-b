@@ -196,15 +196,18 @@ interface AnnexRef {
   inferredContent: string;
 }
 
+// Labels aligned with inferPackageReference() in compliance-matrix-builder.ts
+// so the Appendix Readiness Register and Section E Compliance Matrix
+// use consistent annex descriptions throughout the proposal.
 function inferAnnexContent(label: string): string {
   const l = label.toUpperCase();
   const map: Record<string, string> = {
-    A: "CV & Expert Qualifications",
+    A: "CV & Qualifications",
     B: "Project Reference Sheets",
     C: "Company Profile",
     D: "Declarations & Undertakings",
-    E: "Audited Financial Statements",
-    F: "Eligibility / Registration Certificates",
+    E: "Financial Records",
+    F: "Eligibility Documents",
     G: "Tender Forms",
     H: "Consortium / MoU Agreement",
     I: "Technical Drawings / Plans",
@@ -269,9 +272,9 @@ export function injectAppendixReadinessRegister(
   const block = [
     "",
     APPENDIX_REG_MARKER,
-    "## Appendix Readiness Register",
+    "## Annex & Appendix Readiness Register",
     "",
-    "Cross-check of all annexes referenced in this proposal against the company vault. Items marked 'Bid-Team Action' require preparation before the submission package is assembled.",
+    "Cross-check of all annexes and appendices referenced in this proposal against the company vault. Items marked 'Bid-Team Action' require preparation before the submission package is assembled.",
     "",
     "| Annex | Inferred Content | Readiness Status |",
     "|---|---|---|",

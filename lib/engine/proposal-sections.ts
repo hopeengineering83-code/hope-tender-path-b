@@ -685,13 +685,14 @@ export function buildSectionFallback(spec: ProposalSectionSpec, input: AIBidWrit
     case "company-and-experience":
       return buildCompanyAndExperienceFallback(input);
 
-    case "technical-approach":
+    case "technical-approach": {
+      const tenderRef = input.tenderTitle ? `**${input.tenderTitle}**` : "this assignment";
       return [
         "# Section C: Technical Approach",
         "## C.1 Understanding of the Assignment",
-        `${input.clientName} requires the assignment described in this tender. Bid-Team Action: confirm the three key technical challenges and the single most-decisive evaluation driver before submission.`,
+        `${input.clientName} requires ${tenderRef}. Our firm's understanding of the core technical challenge is set out below; each scope item is addressed in sequence in Section C.2. Bid-Team Action: confirm the three key technical challenges and the single most-decisive evaluation driver before submission.`,
         "## C.2 Technical Methodology",
-        "The methodology will be structured to match each tender scope item in the tender's order. Each sub-section ties to a named deliverable, a responsible named expert from Section A.4, and a quality-review gate. Bid-Team Action: confirm sector-specific methodology depth.",
+        `The methodology for ${tenderRef} is structured to address each scope item in the tender's stated order. Each sub-section ties to a named deliverable, a responsible named expert from Section A.4, and a quality-review gate. Bid-Team Action: confirm sector-specific methodology depth before submission.`,
         "## C.3 Work Plan and Deliverables",
         "| Stage | Deliverable | Responsible Expert | Timeline | Quality Gate |",
         "|---|---|---|---|---|",
@@ -701,6 +702,7 @@ export function buildSectionFallback(spec: ProposalSectionSpec, input: AIBidWrit
         "## C.4 Quality Assurance",
         "Staged design-review gates are applied at 30 / 60 / 100% milestones. See deterministic Three-Stage Quality Review table built downstream.",
       ].join("\n\n");
+    }
 
     case "additional-and-declaration":
       return buildAdditionalAndDeclarationFallback(input);
