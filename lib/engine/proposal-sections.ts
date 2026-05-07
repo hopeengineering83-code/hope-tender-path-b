@@ -335,17 +335,28 @@ ${input.projects.slice(0, 6_000)}
 ## YOUR OUTPUT
 Two top-level Markdown sections:
 - # Section A: Company Profile
-  - ## A.1 Company Background — founding year, licence grade, registered address, staff headcount, total projects, key sectors, certifications
+  - ## A.1 Company Background — 2 substantive paragraphs (~80–120 words each) covering founding year, licence grade, registered address, staff headcount, total projects, key sectors, certifications. Quote vault values verbatim. Open with the firm's most differentiating trait (PhD-qualified specialists, in-house geotech lab, donor-funded experience) — not generic "leading firm" language.
   - ## A.2 Corporate Information Table — Markdown table with: legal name | registration no. | TIN/VAT | address | GM name | email | phone
-  - ## A.3 Core Service Lines — disciplines directly relevant to this tender (not a generic list)
+  - ## A.3 Core Service Lines — bulleted list of 5–8 service lines directly relevant to THIS tender's scope (not a generic catalogue). Each bullet 8–18 words.
   - ## A.4 Proposed Project Team — Markdown table with columns: # | Expert & Position | Qualifications & Licenses | Comparable Sector Experience | Role on This Assignment
   - ## A.5 Team-to-Project Experience Mapping — Markdown table with columns: Expert & Role on This Project | Role Previously Performed | Previous Comparable Project | Key Technical Contribution
+
 - # Section B: Relevant Experience
-  - ## B.1 Portfolio Overview — total projects, total relevant-sector value, geographic spread (1 short paragraph)
-  - ## B.2 Featured Project 1 — full project card (Markdown table) for the most comparable project
-  - ## B.3 Featured Project 2 — full project card (Markdown table) for the second most comparable project
+  - ## B.1 Portfolio Overview — 1–2 paragraphs (~80–120 words) covering total projects, total relevant-sector value, geographic spread, donor exposure, recent flagship deliveries
+  - ## B.2 Featured Project 1 — full project card (Markdown table) for the most comparable project, plus a 2–3 sentence "Why this anchors THIS tender" narrative under the table
+  - ## B.3 Featured Project 2 — full project card (Markdown table) for the second most comparable project, plus a 2–3 sentence "Why this anchors THIS tender" narrative
   - ## B.4 Additional Projects — Markdown table with columns: Name | Client | Country | Value | Sector | Key Services
   - ## B.5 Client References — Markdown table with columns: Project / Client | Reference Contact & Title | Contact Details | Contract Value
+
+LENGTH REQUIREMENTS:
+- Section A total: minimum 600 words across A.1 + A.3 prose plus the
+  three tables. Do NOT write thin one-paragraph backgrounds.
+- Section B total: minimum 500 words across B.1 + the two featured-
+  project narratives plus the tables.
+
+CLIENT NAME FIDELITY: Use ONLY the CLIENT field above as the client.
+Firm-history project clients are referenced in Section B project cards
+but NEVER substituted for the current tender's client.
 
 Where evidence is genuinely missing, write a "Bid-Team Action: confirm X before submission." note in the cell or paragraph — do NOT fabricate.
 
@@ -406,22 +417,36 @@ engine.
 ## YOUR OUTPUT
 One top-level Markdown section, FOCUSED on prose methodology:
 - # Section C: Technical Approach
-  - ## C.1 Understanding of the Assignment — what the client needs, the key
-    technical challenges, what the winning proposal must demonstrate
-    (3–4 substantive paragraphs, evidence-anchored)
-  - ## C.2 Technical Methodology — numbered sub-sections matching the
-    tender's scope items in the tender's order. Sector vocabulary used in
-    context, not as a glossary. Each sub-section ties to a deliverable, a
-    responsible named expert, and a quality-review gate. Cite specific
-    projects from the evidence library where they demonstrate a methodology
-    element.
-  - ## C.3 Work Plan and Deliverables — 2–3 paragraphs of NARRATIVE describing
-    how phases interlock and where the critical path runs. (The engine
-    appends a Phasing table separately — do not duplicate.)
-  - ## C.4 Quality Assurance — 2–3 paragraphs of NARRATIVE on the firm's QA
-    philosophy: how 30%/60%/100% gates work, peer-review discipline,
-    independent reviewer role, and how client comments are tracked.
-    (The engine appends a QA/ITP table separately — do not duplicate.)
+  - ## C.1 Understanding of the Assignment — 4 substantive paragraphs
+    (~100–140 words each, ~500 words total). Para 1: what the client
+    actually needs (echo verbatim tender quotes). Para 2: the key
+    technical challenges THIS tender will face (cite specific quantities,
+    standards, deliverable codes from tender). Para 3: what a winning
+    proposal must demonstrate — and what differentiates this firm.
+    Para 4: how the firm's prior comparable projects already prove
+    capacity (cite 2 project names + values).
+  - ## C.2 Technical Methodology — minimum 6 numbered sub-sections matching
+    the tender's scope items in the tender's order. Each sub-section is
+    100–180 words. Sector vocabulary used in context, not as a glossary.
+    Each sub-section ties to a deliverable, a responsible named expert
+    (use real names from the EXPERT EVIDENCE), and a quality-review gate.
+    Cite specific projects from the evidence library where they demonstrate
+    a methodology element. NO generic "Stage 1: Planning, Stage 2:
+    Execution" — every step is sector-specific and tender-specific.
+  - ## C.3 Work Plan and Deliverables — 3 paragraphs of NARRATIVE
+    (~80–120 words each) describing how phases interlock, where the
+    critical path runs, what artefacts are produced per phase, and
+    how client decisions gate phase transitions. (The engine appends
+    a Phasing table separately — do not duplicate the table.)
+  - ## C.4 Quality Assurance — 3 paragraphs of NARRATIVE (~80–120 words
+    each) on the firm's QA philosophy: how 30%/60%/100% gates work,
+    peer-review discipline, independent reviewer role, how client
+    comments are tracked, deliverable acceptance thresholds. (The
+    engine appends a QA/ITP table separately — do not duplicate.)
+
+LENGTH REQUIREMENT: Section C total minimum 1,800 words across C.1
++ C.2 + C.3 + C.4. The Section C narrative is the heart of the
+proposal; thin Section C = lost bid.
 
 Forbidden phrases: "extensive experience" without a project name;
 "committed to excellence/quality"; "team of qualified professionals";
