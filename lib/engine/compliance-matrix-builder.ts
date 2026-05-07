@@ -77,6 +77,39 @@ function priorityRank(p?: string | null): number {
   return 4;
 }
 
+/**
+ * PR KK: Map a requirement type to the submission package appendix / annex
+ * reference that carries the corresponding document. Evaluators use this
+ * to locate evidence in the submission package without reading the full
+ * proposal narrative.
+ */
+function inferPackageReference(req: RequirementLite): string {
+  const type = (req.requirementType ?? "").toUpperCase();
+  const text = `${req.title ?? ""} ${req.description ?? ""}`.toLowerCase();
+
+  if (type === "EXPERT" || /expert|cv|curriculum vitae|key personnel|team composition/.test(text))
+    return "Annex A — CV & Qualifications";
+  if (type === "PROJECT_EXPERIENCE" || /project.*experience|similar.*project|portfolio|reference/.test(text))
+    return "Annex B — Project Reference Sheets";
+  if (type === "DECLARATION" || /declaration|conflict.*interest|eligibility|anti.corruption/.test(text))
+    return "Annex D — Declarations";
+  if (type === "FINANCIAL" || /financial|turnover|audit|balance.*sheet|bank.*statement/.test(text))
+    return "Annex E — Financial Records";
+  if (type === "ELIGIBILITY" || /registration|licen[sc]e|certificate|tin|vat|accreditation/.test(text))
+    return "Annex F — Eligibility Documents";
+  if (type === "ANNEX" || /annex|appendix/.test(text))
+    return "Annex (per tender numbering)";
+  if (type === "FORM" || /form|template|fill.*in|bid.*form/.test(text))
+    return "Annex G — Tender Forms";
+  if (type === "METHODOLOGY" || /methodology|technical.*approach|work.*plan|scope.*understanding/.test(text))
+    return "Section C — Technical Methodology";
+  if (type === "FORMAT" || /page.*limit|font.*size|file.*format|file.*naming/.test(text))
+    return "Submission Package Cover Sheet";
+  if (type === "COMPANY_PROFILE" || /company.*profile|firm.*profile/.test(text))
+    return "Annex C — Company Profile";
+  return "Proposal body (cross-referenced)";
+}
+
 function inferProposalLocation(req: RequirementLite): string {
   const text = `${req.title ?? ""} ${req.description ?? ""}`.toLowerCase();
   const type = (req.requirementType ?? "").toUpperCase();
@@ -221,7 +254,8 @@ export function buildComplianceMatrixSection(input: ComplianceMatrixBuilderInput
       else mandatoryNotMet++;
     }
 
-    rows.push(`| ${idx + 1} | ${escCell(reqText)} | ${escCell(proposalLocation)} | ${escCell(evidenceCell)} | ${status} |`);
+    const packageRef = inferPackageReference(req);
+    rows.push(`| ${idx + 1} | ${escCell(reqText)} | ${escCell(proposalLocation)} | ${escCell(packageRef)} | ${escCell(evidenceCell)} | ${status} |`);
   });
 
   if (rows.length === 0) return null;
@@ -238,10 +272,10 @@ export function buildComplianceMatrixSection(input: ComplianceMatrixBuilderInput
     "",
     summaryLine,
     "",
-    "| # | Requirement (paraphrased from tender) | Where Addressed in This Proposal | Supporting Evidence / Mitigation | Compliance Status |",
-    "|---|---|---|---|---|",
+    "| # | Requirement (paraphrased from tender) | Where Addressed in This Proposal | Package Reference (Annex / Section) | Supporting Evidence / Mitigation | Compliance Status |",
+    "|---|---|---|---|---|---|",
     ...rows,
     "",
-    "_Compliance Status definitions: FULLY MET = evidence in the proposal directly satisfies the requirement; PARTIALLY MET = evidence partially satisfies the requirement and a mitigation plan is provided; NOT MET = the firm cannot meet the requirement as stated and a credible mitigation (subcontractor, joint venture, deferred delivery, or alternative approach) is proposed in the same row._",
+    "_Compliance Status: FULLY MET = evidence directly satisfies the requirement; PARTIALLY MET = partially satisfies, mitigation provided; NOT MET = cannot meet as stated, credible mitigation proposed. Package Reference = the annex or section in the submission package where the evaluator will find the supporting document._",
   ].join("\n");
 }

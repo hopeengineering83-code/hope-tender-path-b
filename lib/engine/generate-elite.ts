@@ -63,6 +63,9 @@ import { injectPersonnelDeep } from "./personnel-deep";
 import { injectTenderClosers } from "./tender-closers";
 import { injectDeliverableAndPhases } from "./deliverable-and-phases";
 import { buildRubricPromptDirective, ensureRubricHeadings } from "./rubric-driven-sections";
+import { injectCoverPageAndRfpMeta } from "./cover-page-injector";
+import { injectJvDisclosure } from "./jv-disclosure";
+import { deduplicateTables, injectQaThresholds, injectAppendixReadinessRegister } from "./advanced-quality-passes";
 
 const BRAND_BLUE = "1F4E79";
 const BRAND_GRAY = "595959";
@@ -148,29 +151,42 @@ function isSeparatorRow(line: string): boolean {
   return /^\|[\s:|-]+\|$/.test(line);
 }
 
+function splitTableCells(rowLine: string): string[] {
+  // PR FF: cells may contain <br> or \\n soft newlines — collapse to space.
+  return rowLine
+    .replace(/<br\s*\/?>/gi, " ")
+    .replace(/\\n/g, " ")
+    .split("|")
+    .filter((_, i, arr) => i > 0 && i < arr.length - 1)
+    .map((cell) => cell.trim());
+}
+
 function parseMdTable(tableLines: string[]): Table {
   const dataRows = tableLines.filter((l) => !isSeparatorRow(l));
   const colCount = Math.max(...dataRows.map((r) =>
-    r.split("|").filter((_, i, arr) => i > 0 && i < arr.length - 1).length
+    splitTableCells(r).length
   ), 1);
+  // PR FF: for wide tables (5+ cols) use tighter column width so the table
+  // fits within the page margins without overflowing.
   const colWidth = Math.floor(8100 / colCount);
 
   const rows = dataRows.map((rowLine, rowIndex) => {
-    const cells = rowLine
-      .split("|")
-      .filter((_, i, arr) => i > 0 && i < arr.length - 1)
-      .map((cell) => cell.trim());
+    const cells = splitTableCells(rowLine);
     const isHeader = rowIndex === 0;
 
     return new TableRow({
       children: Array.from({ length: colCount }, (_, ci) => {
         const cellText = cells[ci] ?? "";
+        // PR FF: apply parseInlineRuns to header cells as well — bold/italic
+        // inside header cells was previously stripped by the replace(/\*\*/g,"")
+        // call and lost entirely in the DOCX output.
+        const headerRuns = parseInlineRuns(cellText, { size: 20, color: "FFFFFF" }).map(
+          (r) => new TextRun({ ...r, bold: true }),
+        );
         return new TableCell({
           width: { size: colWidth, type: WidthType.DXA },
           children: [new Paragraph({
-            children: isHeader
-              ? [new TextRun({ text: cellText.replace(/\*\*/g, ""), bold: true, size: 20, font: "Calibri", color: "FFFFFF" })]
-              : parseInlineRuns(cellText, { size: 20 }),
+            children: isHeader ? headerRuns : parseInlineRuns(cellText, { size: 20 }),
             spacing: { after: 60 },
           })],
           shading: isHeader ? { fill: "1F4E79" } : undefined,
@@ -1134,7 +1150,34 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     sourceMarkdown = fallbackProposalMarkdown({ tenderTitle: cleanedTenderTitle, clientName: intelligence.clientName, companyName: company.name, companyLegalName: company.legalName, companyAddress: company.address, companyTIN: company.tin, companyVAT: company.vat, companyGM: company.gmName, companyGMLicense: company.gmLicense, primarySector: intelligence.primarySector, requirements: requirementLines, differentiators: intelligence.differentiators, submissionRules: intelligence.submissionRules, expertLines, projectLines, experts: experts as ExpertRecord[], projects: projects as ProjectRecord[], reviewedExpertCount: experts.length, companyEvidenceLines, projectEvidenceLines, complianceLines, expertRequired, projectRequired, themes: intelligence.themes, evaluationCriteria: intelligence.evaluationCriteria, appendixList: intelligence.appendixList, noFinancialProposal: intelligence.noFinancialProposal, exactEmails: intelligence.exactEmails, exactSubjectLine: intelligence.exactSubjectLine, gapsToAddressInNarrative: intelligence.gapsToAddressInNarrative, requiredSections: intelligence.requiredSections, tenderDeadline: tender.deadline });
   }
 
-  const matrixMarkdown = appendEvaluatorResponseMatrix(sourceMarkdown, evaluatorMatrixInput);
+  // PR NN: Strip any AI-produced Section H (Proposal Self-Score) from the raw AI
+  // output before the deterministic backstop is applied. The AI is prompted to
+  // produce Section H, but its version uses rough estimates while the deterministic
+  // builder (buildSelfScoreSection) uses the structured evidence we have. Keeping
+  // both would give duplicate headings; the deterministic version always wins.
+  function stripAiSectionH(md: string): string {
+    const lines = md.split("\n");
+    const out: string[] = [];
+    let i = 0;
+    while (i < lines.length) {
+      const isSelfScore = /(^|\n)\s*#{1,4}\s*(?:section\s*[H:.\-\s]*)?\s*(?:proposal\s+)?self.?score\b/i.test(lines[i]);
+      if (isSelfScore) {
+        const level = lines[i].match(/^(#+)\s/)?.[1].length ?? 2;
+        i += 1;
+        while (i < lines.length) {
+          const m = lines[i].match(/^(#+)\s/);
+          if (m && m[1].length <= level) break;
+          i += 1;
+        }
+        continue;
+      }
+      out.push(lines[i]);
+      i += 1;
+    }
+    return out.join("\n");
+  }
+
+  const matrixMarkdown = appendEvaluatorResponseMatrix(stripAiSectionH(sourceMarkdown), evaluatorMatrixInput);
   const isHealthcare = /health|hospital|medical|clinic|radiology|laboratory|pharmacy|patient|specialty|OPD|in-patient|emergency/i.test(`${intelligence.primarySector}\n${intelligence.tenderText}`);
   const strengtheningMarkdown = buildClientProposalStrengtheningSections({ clientName: intelligence.clientName, tenderTitle: cleanedTenderTitle, companyName: company.name, projectLines, expertLines, companyEvidenceLines, projectEvidenceLines, isHealthcare, existingMarkdown: matrixMarkdown });
 
@@ -1201,7 +1244,11 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   }
 
   // Round-5: high-impact evaluator-friendly sections.
-  if (!upstreamCheck(`Why ${company.name} for ${intelligence.clientName}`) && !upstreamCheck("Why Us") && !upstreamCheck(`Why ${company.name}`)) {
+  // PR BB: Suppress Why Us when the deterministic Section G (Win Themes & Discriminators)
+  // will be added — both sections cover the same ground (firm strengths + discriminators)
+  // and two overlapping sections confuse evaluators and bloat the TOC.
+  const winThemesInUpstream = hasWinThemesHeading(`${matrixMarkdown}\n${strengtheningMarkdown}\n${benchmarkTables}`);
+  if (!winThemesInUpstream && !upstreamCheck(`Why ${company.name} for ${intelligence.clientName}`) && !upstreamCheck("Why Us") && !upstreamCheck(`Why ${company.name}`)) {
     const whyUs = buildWhyUsSummary({
       companyName: company.name,
       clientName: intelligence.clientName,
@@ -1307,18 +1354,20 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     deterministicEvaluatorMirror,
     deterministicWinThemes,
   ].filter(Boolean).join("\n\n");
-  const deterministicSelfScore = !hasSelfScoreHeading(upstreamMarkdownForBackstops)
-    ? buildSelfScoreSection({
-        evaluationCriteria: intelligence.evaluationCriteria,
-        evaluationWeights: intelligence.evaluationWeights,
-        topProjects: (projects as ProjectRecord[]).slice(0, 5),
-        topExperts: (experts as ExpertRecord[]).slice(0, 5),
-        hasComplianceMatrix: hasComplianceMatrixHeading(upstreamWithBackstops),
-        hasEvaluatorMirror: hasEvaluatorMirrorHeading(upstreamWithBackstops),
-        hasWinThemes: hasWinThemesHeading(upstreamWithBackstops),
-        primarySector: intelligence.primarySector,
-      })
-    : null;
+  // PR NN: Always add the deterministic Section H — the AI's version was stripped
+  // from sourceMarkdown above, so there is no duplicate. The deterministic builder
+  // uses structured evaluation criteria + evidence from the vault, producing a
+  // more accurate and consistent self-score than ad-hoc AI output.
+  const deterministicSelfScore = buildSelfScoreSection({
+    evaluationCriteria: intelligence.evaluationCriteria,
+    evaluationWeights: intelligence.evaluationWeights,
+    topProjects: (projects as ProjectRecord[]).slice(0, 5),
+    topExperts: (experts as ExpertRecord[]).slice(0, 5),
+    hasComplianceMatrix: hasComplianceMatrixHeading(upstreamWithBackstops),
+    hasEvaluatorMirror: hasEvaluatorMirrorHeading(upstreamWithBackstops),
+    hasWinThemes: hasWinThemesHeading(upstreamWithBackstops),
+    primarySector: intelligence.primarySector,
+  });
 
   const combinedMarkdown = [
     matrixMarkdown,
@@ -1674,6 +1723,23 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   }
   humanizedMarkdown = rubricResult.markdown;
 
+  // ─── JV / Consortia disclosure table (PR GG) ─────────────────────────────
+  // When the tender intelligence detected a JV/consortium clause, inject a
+  // "D.6 JV / Partnership Disclosure" section that explicitly states whether
+  // the bid is a single-firm or consortium submission. Evaluators on
+  // JV-eligible tenders need this to score the "Organisation and Teaming"
+  // criterion. Idempotent via marker; inserts before Section E.
+  if (intelligence.commercialTerms?.consortiaRules) {
+    const jvResult = injectJvDisclosure(humanizedMarkdown, {
+      consortiaRules: intelligence.commercialTerms.consortiaRules,
+      companyName: company.name,
+    });
+    if (jvResult.injected) {
+      console.info("[generate-elite] JV/Consortia Partnership Disclosure table injected (PR GG).");
+    }
+    humanizedMarkdown = jvResult.markdown;
+  }
+
   // ─── Duplicate section heading suppressor (PR Q) ─────────────────────────
   // After every deterministic post-pass has run, scan for level-2
   // headings whose numeric prefix (B.1, C.3, D.1 etc.) is shared by
@@ -1761,6 +1827,122 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     console.info(`[generate-elite] Placeholder stripper: removed ${stripped.removedLines} line(s), ${stripped.removedParagraphs} paragraph(s); blanked ${stripped.blankedCells} table cell(s).`);
   }
   humanizedMarkdown = stripped.markdown;
+
+  // ─── Markdown cover page + RFP meta bar (PR EE + PR II) ─────────────────
+  // PR EE: Inject a formal markdown cover page at the very top of the proposal
+  // (company name, tender title, client, reference, date, validity, contact).
+  // This is distinct from the DOCX buildCoverBlock — it provides the same
+  // context in the markdown / PDF export path.
+  // PR II: Inject "RFP # | Submission: date | Validity: X days" as a reference
+  // bar immediately under the cover letter subject line when missing.
+  // Both are idempotent via marker comments.
+  const coverAndMeta = injectCoverPageAndRfpMeta(humanizedMarkdown, {
+    companyName: company.name,
+    companyLegalName: company.legalName,
+    tenderTitle: cleanedTenderTitle,
+    clientName: intelligence.clientName,
+    reference: tender.reference,
+    exactSubjectLine: intelligence.exactSubjectLine,
+    submissionDate: tender.deadline,
+    proposalValidityDays: intelligence.commercialTerms?.bidValidityDays
+      ? Number(String(intelligence.commercialTerms.bidValidityDays).match(/\d+/)?.[0] ?? "") || null
+      : null,
+    address: company.address,
+    phone: company.phone,
+    email: company.email,
+    website: company.website,
+    tin: company.tin,
+    gmName: company.gmName,
+    gmTitle: company.gmTitle,
+  });
+  if (coverAndMeta.coverPageInjected) {
+    console.info("[generate-elite] Markdown cover page injected (PR EE).");
+  }
+  if (coverAndMeta.rfpMetaInjected) {
+    console.info("[generate-elite] RFP reference metadata bar injected under cover letter subject line (PR II).");
+  }
+  humanizedMarkdown = coverAndMeta.markdown;
+
+  // ─── PR HH: Content-level table deduplication ───────────────────────────
+  // After all deterministic builders have run, remove duplicate Markdown
+  // tables that share the same column header row. The AI and the
+  // deterministic builders may both emit a Team-to-Project mapping table
+  // or a QA review table with identical headers. Keep the LAST occurrence
+  // (deterministic builders run last, so the structured version survives).
+  const dedupedTables = deduplicateTables(humanizedMarkdown);
+  if (dedupedTables.removed > 0) {
+    console.info(`[generate-elite] Duplicate table deduplicator removed ${dedupedTables.removed} line(s) from ${Math.floor(dedupedTables.removed / 3)} duplicate table block(s) (PR HH).`);
+  }
+  humanizedMarkdown = dedupedTables.markdown;
+
+  // ─── PR LL: QA numeric threshold injection ────────────────────────────────
+  // Extract numeric thresholds from the tender text (review rounds, day
+  // limits, ISO standards, defect tolerances) and inject a
+  // "Tender-Specific Quality Requirements" table below the C.3 QA section.
+  // Elevates the QA section from generic to tender-responsive.
+  const qaThresholds = injectQaThresholds(humanizedMarkdown, intelligence.tenderText);
+  if (qaThresholds.injected) {
+    console.info("[generate-elite] QA tender-specific numeric thresholds injected below C.3 (PR LL).");
+  }
+  humanizedMarkdown = qaThresholds.markdown;
+
+  // ─── PR MM: Appendix readiness register cross-check ──────────────────────
+  // Scan for Annex/Appendix references in the assembled proposal and build
+  // a "Appendix Readiness Register" table at end-of-document listing each
+  // annex, its inferred content, and readiness status (vault document
+  // available vs. Bid-Team Action). Flags missing documents before
+  // submission. Idempotent via marker.
+  const vaultDocNames = [
+    ...(company.documents ?? []).map((d: any) => d.originalFileName ?? d.fileName ?? ""),
+    ...(company.legalRecords ?? []).map((r: any) => r.title ?? r.recordType ?? ""),
+    ...(company.financialRecords ?? []).map((r: any) => `${r.recordType ?? ""} ${r.fiscalYear ?? ""}`.trim()),
+    ...(company.complianceRecords ?? []).map((r: any) => r.title ?? r.complianceType ?? ""),
+  ].filter(Boolean);
+  const appendixReg = injectAppendixReadinessRegister(humanizedMarkdown, vaultDocNames);
+  if (appendixReg.injected) {
+    console.info("[generate-elite] Appendix Readiness Register cross-check injected (PR MM).");
+  }
+  humanizedMarkdown = appendixReg.markdown;
+
+  // ─── PR JJ: Three-column DOCX signature block ─────────────────────────────
+  // Inject a "Signed | Company Stamp | Date" signature block after the
+  // Declaration section when the tender requires a signature. Missing a
+  // physical signature / stamp space is the single most common reason
+  // proposals are disqualified on submission-format grounds.
+  // Idempotent via marker; only added when the markdown doesn't already
+  // contain a "Signature:" or "Signed:" line.
+  const SIG_MARKER = "<!-- signature-block:injected -->";
+  if (requiresSignatureOrStamp(tender.requirements) && !humanizedMarkdown.includes(SIG_MARKER) && !/\bsignature:\s*_+/im.test(humanizedMarkdown)) {
+    const gmSigName = company.gmName ? `${company.gmName}${company.gmTitle ? `, ${company.gmTitle}` : ""}` : "General Manager";
+    const sigBlock = [
+      SIG_MARKER,
+      "## Authorised Signature",
+      "",
+      "| Signed | Company Stamp | Date |",
+      "|---|---|---|",
+      `| **${company.name}** | | |`,
+      `| _${gmSigName}_ | _(affix stamp)_ | ________________ |`,
+      `| Authorised Representative | | |`,
+      "",
+    ].join("\n");
+    // Insert before Section E / Compliance Matrix, or at end.
+    const sigLines = humanizedMarkdown.split("\n");
+    let sigInsertAt = sigLines.length;
+    for (let i = 0; i < sigLines.length; i += 1) {
+      if (/^##\s+SECTION\s+E\b/i.test(sigLines[i]) || /^#\s+Section\s+E\b/i.test(sigLines[i])) {
+        sigInsertAt = i;
+        break;
+      }
+    }
+    const sigOut = [
+      ...sigLines.slice(0, sigInsertAt),
+      "",
+      sigBlock,
+      ...sigLines.slice(sigInsertAt),
+    ];
+    humanizedMarkdown = sigOut.join("\n");
+    console.info("[generate-elite] Three-column signature block injected (PR JJ).");
+  }
 
   const auditSummary = benchmarkAuditSummary(humanizedMarkdown);
   const children = markdownToDocx(humanizedMarkdown);

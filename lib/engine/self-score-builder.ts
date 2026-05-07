@@ -100,12 +100,12 @@ function predictScore(criterion: string, input: SelfScoreBuilderInput): { score:
 
   // Expert-evidence boost.
   const wantsTeam = /team|expert|personnel|cv|qualification|multidisciplinary/.test(c);
-  if (wantsTeam && input.topExperts.length >= 2) {
+  if (wantsTeam && input.topExperts.length >= 1) {
     score += 2;
     rationaleParts.push(`${input.topExperts.length} reviewed expert(s) on the proposed team`);
-  } else if (wantsTeam && input.topExperts.length < 2) {
-    risks.push(`Team thin: only ${input.topExperts.length} reviewed expert(s) selected`);
-  } else if (input.topExperts.length >= 2) {
+  } else if (wantsTeam && input.topExperts.length === 0) {
+    risks.push("No reviewed experts selected — confirm team before submission");
+  } else if (input.topExperts.length >= 1) {
     score += 1;
   }
 
@@ -166,7 +166,7 @@ export function buildSelfScoreSection(input: SelfScoreBuilderInput): string | nu
   if (criteria.length === 0) return null;
 
   type Row = { criterion: string; weight: string; score: number; rationale: string; risk: string };
-  const rows: Row[] = criteria.slice(0, 10).map((criterion) => {
+  const rows: Row[] = criteria.slice(0, 20).map((criterion) => {
     const { score, rationale, risk } = predictScore(criterion, input);
     return {
       criterion,

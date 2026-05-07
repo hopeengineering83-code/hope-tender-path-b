@@ -403,9 +403,10 @@ function inferSector(tenderText: string): string {
 
 function detectAppendixList(tenderText: string): string[] {
   const appendices: string[] = [];
-  const matches = tenderText.matchAll(/[Aa]ppendi[cx]\s+([A-F])\s*[:\-–]\s*([^\n]{5,120})/g);
+  const matches = tenderText.matchAll(/(?:[Aa]ppendi[cx]|[Aa]nnex)\s+([A-Z]|\d{1,2})\s*[:\-–]\s*([^\n]{5,120})/g);
   for (const m of matches) {
-    appendices.push(`Appendix ${m[1].toUpperCase()}: ${m[2].trim()}`);
+    const label = /^\d/.test(m[1]) ? m[1] : m[1].toUpperCase();
+    appendices.push(`Appendix ${label}: ${m[2].trim()}`);
   }
   if (appendices.length === 0) {
     // Generate standard appendix list from context
