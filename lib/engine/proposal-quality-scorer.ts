@@ -119,6 +119,7 @@ const SECTOR_VOCAB: Record<string, RegExp[]> = {
 const FORBIDDEN_PHRASES = [
   // AI / model self-references
   /as an ai/i,
+  /\bi am an ai\b/i,
   /\blanguage model\b/i,
   /chatgpt/i,
   /openai/i,
@@ -170,6 +171,12 @@ const FORBIDDEN_PHRASES = [
   /\bgoing forward,?\s+we\b/i,
   /\bneedless to say\b/i,
   /\bthat being said\b/i,
+  // Placeholder styles (from PR)
+  /\{(?:INSERT|PLACEHOLDER|NAME|DATE|TBD|ADD|ENTER|COMPANY|FIRM|CLIENT)[^}]{0,60}\}/i,
+  /<<(?:INSERT|NAME|DATE|COMPANY|PLACEHOLDER|YOUR)[^>]{0,60}>>/i,
+  /__(?:INSERT|NAME|DATE|COMPANY|PLACEHOLDER|YOUR)[A-Z_]{0,40}__/,
+  /\bI cannot\b/i,
+  /\bI'm unable\b/i,
 ];
 
 function detectSector(primarySector: string): string {
@@ -201,6 +208,9 @@ function detectSector(primarySector: string): string {
   if (/finance|bank|micro.?finance|insurance|credit|lending|investment fund/.test(s)) return "financial";
   if (/telecom|broadband|spectrum|mobile network|isp|telecommunications/.test(s)) return "telecoms";
   if (/\bport\b|harbor|harbour|maritime|quay|berth|shipping terminal/.test(s)) return "port";
+  if (/structural|reinforced concrete|steel struct|seismic analysis|finite element/.test(s)) return "structural";
+  if (/renovati|refurb|retrofit|adaptive reuse|existing building/.test(s)) return "renovation";
+  if (/social|capacity build|livelihood|community develop|beneficiary|gender mainstreaming/.test(s)) return "social";
   return "generic";
 }
 
@@ -443,25 +453,31 @@ export function scoreProposalQuality(opts: {
       notes.push("Throughline axis is neutral (no reviewed projects available to anchor Cover Letter / Executive Summary / Section B).");
     }
   } else {
-    const sections = ["cover letter", "executive summary", "section b"];
+    // Section aliases: each entry is a list of heading patterns that mean the same section.
+    const sectionAliases = [
+      ["cover letter"],
+      ["executive summary"],
+      ["section b", "relevant experience", "project portfolio", "project references", "similar experience", "our experience"],
+    ];
+    const sectionText = (aliases: string[]): string => {
+      for (const alias of aliases) {
+        const re = new RegExp(`#[^\\n]*${alias.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}[^\\n]*\\n[\\s\\S]{0,3000}`, "i");
+        const m = md.toLowerCase().match(re)?.[0];
+        if (m) return m;
+      }
+      return "";
+    };
     let matches = 0;
     let total = 0;
     for (const project of top) {
       const projectKey = project.name.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
       if (!projectKey || projectKey.length < 4) continue;
       const tokens = projectKey.split(" ").filter((t) => t.length > 2);
-      // Require at least 3 distinctive tokens before allowing a partial-name
-      // match. Without this guard, single-token distinctives (e.g., "hospital"
-      // for project name "G+6 Hospital") would over-match unrelated text.
       const distinctive = tokens.length >= 3 ? tokens.slice(0, 3).join(" ") : "";
-      for (const section of sections) {
+      for (const aliases of sectionAliases) {
         total++;
-        const sectionPattern = section === "section b"
-          ? "section\\s*b(?:[^a-z]|$)|relevant experience|project portfolio"
-          : section;
-        const sectionRegex = new RegExp(`#{1,3}\\s*(?:${sectionPattern})[\\s\\S]{0,3000}`, "i");
-        const match = md.toLowerCase().match(sectionRegex)?.[0] ?? "";
-        if (match.includes(projectKey) || (distinctive && match.includes(distinctive))) matches++;
+        const sectionContent = sectionText(aliases);
+        if (sectionContent.includes(projectKey) || (distinctive && sectionContent.includes(distinctive))) matches++;
       }
     }
     throughlineConsistency = total > 0 ? Math.round((matches / total) * 10) : 5;
