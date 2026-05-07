@@ -55,6 +55,8 @@ import { injectBeyondSpecTables } from "./beyond-spec-tables";
 import { injectWinThemesTable } from "./win-themes-table";
 import { injectMobilizationAndChecklist } from "./mobilization-and-checklist";
 import { stripPlaceholders } from "./placeholder-stripper";
+import { stripInternalReviewSections } from "./internal-review-stripper";
+import { reorderSectionsAndRebuildToc } from "./section-orderer-and-toc";
 import { enforceClientName } from "./client-name-enforcer";
 import { suppressDuplicateSectionHeadings } from "./duplicate-section-suppressor";
 import { injectPersonnelDeep } from "./personnel-deep";
@@ -1714,6 +1716,39 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     console.warn(`[generate-elite] Client name enforcer scrubbed ${enforced.substitutionsMade} hallucinated client substitution(s) in Cover Letter / Executive Summary zone.`);
   }
   humanizedMarkdown = enforced.markdown;
+
+  // ─── Internal review section stripper (PR X) ─────────────────────────────
+  // Remove bid-team-internal review/QA sections from the client-facing
+  // proposal: Evaluator Response Matrix, Claim-to-Evidence Proof Map,
+  // Unsupported Claim Control, Delivery Methodology Work Plan, Evidence-
+  // Based Appendix Register, Final Submission Control Checklist,
+  // Benchmark Opening Proof Strategy, Evaluator Decision Narrative,
+  // Evaluator-Facing Team-to-Assignment Mapping, Sector-Specific
+  // Methodology Depth, Client-Ready Appendix Register, Final Claim and
+  // Evidence Control. These were originally designed as bid-team aids;
+  // shipping them in the technical proposal makes the document look
+  // unfinished. Real output had ~12 such sections in the TOC.
+  const internalStrip = stripInternalReviewSections(humanizedMarkdown);
+  if (internalStrip.removedSections.length > 0) {
+    console.info(`[generate-elite] Internal-review stripper removed ${internalStrip.removedSections.length} bid-team section(s) from client-facing proposal: ${internalStrip.removedSections.slice(0, 5).join("; ")}${internalStrip.removedSections.length > 5 ? " …" : ""}`);
+  }
+  humanizedMarkdown = internalStrip.markdown;
+
+  // ─── Section orderer + auto-TOC (PR Y) ───────────────────────────────────
+  // After every post-pass has run (and the internal-review stripper has
+  // removed bid-team-only content), reorder all level-1 sections into
+  // canonical proposal flow:
+  //   Cover Letter → Executive Summary → Section A → B → C → D → E
+  //   → F → G → H → Appendix Register → Declaration → Submission
+  //   Readiness Checklist → (other custom sections in insertion order)
+  // Then drop any AI-emitted Table of Contents (which won't reflect the
+  // post-pass mutations) and emit a fresh one at the very top derived
+  // from the actual final headings.
+  const sectionOrderResult = reorderSectionsAndRebuildToc(humanizedMarkdown);
+  if (sectionOrderResult.reorderedSectionCount > 0) {
+    console.info(`[generate-elite] Section orderer: reordered ${sectionOrderResult.reorderedSectionCount} section(s); rebuilt TOC with ${sectionOrderResult.tocEntries} entries.`);
+  }
+  humanizedMarkdown = sectionOrderResult.markdown;
 
   // ─── Placeholder stripper (PR J) — LAST post-pass before DOCX render ────
   // Removes "Bid-Team Action: confirm X" lines and italic placeholder
