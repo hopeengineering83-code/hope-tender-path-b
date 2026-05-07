@@ -12,6 +12,33 @@ function chunks<T>(items: T[], size = 100): T[][] {
   return out;
 }
 
+function metadata(value: Record<string, unknown>): string {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return "{}";
+  }
+}
+
+async function writeEngineRunAudit(args: {
+  userId: string;
+  tenderId: string;
+  action: "TENDER_ENGINE_RUN_STARTED" | "TENDER_ENGINE_RUN_COMPLETED" | "TENDER_ENGINE_RUN_FAILED";
+  description: string;
+  metadata: Record<string, unknown>;
+}) {
+  await prisma.auditLog.create({
+    data: {
+      userId: args.userId,
+      action: args.action,
+      entityType: "Tender",
+      entityId: args.tenderId,
+      description: args.description,
+      metadata: metadata(args.metadata),
+    },
+  });
+}
+
 export async function runTenderEngine(tenderId: string, userId: string) {
   const tender = await prisma.tender.findFirst({
     where: { id: tenderId, userId },
@@ -37,243 +64,288 @@ export async function runTenderEngine(tenderId: string, userId: string) {
   });
   if (!company) throw new Error("Company profile required before engine run");
 
-  let analysis: ReturnType<typeof analyzeTender>;
-  // Track which analysis path was used so callers can surface this to the
-  // user. Previously a silent fallback to regex left no signal — a UI showing
-  // "ANALYZED" gave no indication of whether the AI key was missing, the
-  // model was unavailable, or the upload simply had too little extractable
-  // text. Captured below and written to Tender.notes.
-  let analysisMethod: "AI" | "REGEX_FALLBACK_AI_DISABLED" | "REGEX_FALLBACK_NO_TEXT" | "REGEX_FALLBACK_AI_ERROR" = "REGEX_FALLBACK_AI_DISABLED";
-  let analysisFallbackReason: string | null = null;
+  const engineRunId = randomUUID();
+  const startedAt = new Date();
 
-  if (isAIEnabled()) {
-    // ─── Tender text assembly ─────────────────────────────────────────────
-    // BUG FIX (PR #244): the previous filter `!/^\[/.test(t.trim())`
-    // dropped ANY extracted text that started with a bracket. But
-    // extract-text.ts deliberately prepends a legitimate header for
-    // multi-page PDFs and OCR'd PDFs:
-    //
-    //   "[PDF text extracted from 13 page(s) using pdf2json.]\n\n<real content>"
-    //   "[PDF text extracted via Claude vision OCR — 52 page(s).]\n\n<real content>"
-    //
-    // Those are NOT error placeholders — they're metadata followed by
-    // real tender content. The old filter discarded the entire string,
-    // collapsing tenderText to 0 chars and forcing the engine into
-    // REGEX_FALLBACK_NO_TEXT mode even when extraction succeeded with
-    // 14K+ chars of usable text. Users saw "Extracted tender text is
-    // only 0 chars" while their PDF had clearly extracted content.
-    //
-    // The fix:
-    //   1. STRIP the legitimate "[PDF text extracted ...]" header line
-    //      so the AI doesn't see it as the first line of the tender.
-    //   2. Filter out ONLY actual error placeholders by name
-    //      (Scanned PDF / Extraction failed / Image: / Legacy .doc).
-    //   3. Drop the 80K char pre-truncation — analyzeWithAI now does
-    //      chunked multi-call analysis for big tenders (PR #242), so
-    //      passing the full text through is correct. Truncating here
-    //      defeated the chunked path for everything routed through
-    //      run-tender-engine.
-    const tenderText = tender.files
-      .map((f) => (f.extractedText ?? "").trim())
-      // Strip the legitimate extraction-header line (kept in extract-text
-      // for diagnostics) before AI sees the content. Both pdf2json/pdfjs
-      // multi-page header AND the Claude vision OCR header from PR #243.
-      .map((t) => t.replace(/^\[(?:PDF text|OCR text)[^\]]*\]\s*\n+/i, ""))
-      // Filter out ONLY actual error placeholders by name. Real content
-      // that happens to start with `[` (e.g., `[Page 1]` markers from
-      // pdf2json) is preserved.
-      .filter((t) => t.length > 100 && !/^\[(?:Scanned PDF|Extraction failed|Image:|Legacy \.doc)/i.test(t))
-      .join("\n\n--- NEXT DOCUMENT ---\n\n");
+  await writeEngineRunAudit({
+    userId,
+    tenderId,
+    action: "TENDER_ENGINE_RUN_STARTED",
+    description: `Started tender engine run for "${tender.title}"`,
+    metadata: {
+      engineRunId,
+      startedAt: startedAt.toISOString(),
+      tenderFileCount: tender.files.length,
+      companyExpertCount: company.experts.length,
+      companyProjectCount: company.projects.length,
+      destructiveCurrentStateRefresh: true,
+      note: "Current-state engine artifacts are refreshed in place; this audit record preserves the run identity and run-level counts.",
+    },
+  });
 
-    if (tenderText.length > 500) {
-      try {
-        const aiResult = await analyzeWithAI(tenderText);
-        const rawRequirements = aiResult.requirements.map((req, idx) => ({
-          title: req.title,
-          description: req.description,
-          requirementType: req.requirementType,
-          priority: req.priority,
-          requiredQuantity: req.requiredQuantity ?? null,
-          pageLimit: req.pageLimit ?? null,
-          exactFileName: req.exactFileName ?? null,
-          exactOrder: idx + 1,
-          restrictions: req.restrictions ?? null,
-          sectionReference: req.sectionReference ?? null,
-        }));
-        const strategicRequirements = normalizeStrategicRequirements(rawRequirements);
-        analysis = {
-          summary: `Senior consultant interpretation: consolidated ${rawRequirements.length} extracted instruction(s) into ${strategicRequirements.length} strategic requirement bundle(s). ${aiResult.summary}`,
-          requirements: strategicRequirements,
-          exactFileNaming: aiResult.exactFileNaming ?? [],
-          exactFileOrder: aiResult.exactFileOrder ?? [],
-        };
-        analysisMethod = "AI";
-      } catch (err) {
-        console.error("[engine] AI analysis failed — falling back to regex:", err);
-        analysisMethod = "REGEX_FALLBACK_AI_ERROR";
-        analysisFallbackReason = err instanceof Error ? err.message : String(err);
+  try {
+    let analysis: ReturnType<typeof analyzeTender>;
+    let analysisMethod: "AI" | "REGEX_FALLBACK_AI_DISABLED" | "REGEX_FALLBACK_NO_TEXT" | "REGEX_FALLBACK_AI_ERROR" = "REGEX_FALLBACK_AI_DISABLED";
+    let analysisFallbackReason: string | null = null;
+
+    if (isAIEnabled()) {
+      const tenderText = tender.files
+        .map((f) => (f.extractedText ?? "").trim())
+        .map((t) => t.replace(/^\[(?:PDF text|OCR text)[^\]]*\]\s*\n+/i, ""))
+        .filter((t) => t.length > 100 && !/^\[(?:Scanned PDF|Extraction failed|Image:|Legacy \.doc)/i.test(t))
+        .join("\n\n--- NEXT DOCUMENT ---\n\n");
+
+      if (tenderText.length > 500) {
+        try {
+          const aiResult = await analyzeWithAI(tenderText);
+          const rawRequirements = aiResult.requirements.map((req, idx) => ({
+            title: req.title,
+            description: req.description,
+            requirementType: req.requirementType,
+            priority: req.priority,
+            requiredQuantity: req.requiredQuantity ?? null,
+            pageLimit: req.pageLimit ?? null,
+            exactFileName: req.exactFileName ?? null,
+            exactOrder: idx + 1,
+            restrictions: req.restrictions ?? null,
+            sectionReference: req.sectionReference ?? null,
+          }));
+          const strategicRequirements = normalizeStrategicRequirements(rawRequirements);
+          analysis = {
+            summary: `Senior consultant interpretation: consolidated ${rawRequirements.length} extracted instruction(s) into ${strategicRequirements.length} strategic requirement bundle(s). ${aiResult.summary}`,
+            requirements: strategicRequirements,
+            exactFileNaming: aiResult.exactFileNaming ?? [],
+            exactFileOrder: aiResult.exactFileOrder ?? [],
+          };
+          analysisMethod = "AI";
+        } catch (err) {
+          console.error("[engine] AI analysis failed — falling back to regex:", err);
+          analysisMethod = "REGEX_FALLBACK_AI_ERROR";
+          analysisFallbackReason = err instanceof Error ? err.message : String(err);
+          analysis = analyzeTender(tender);
+        }
+      } else {
+        analysisMethod = "REGEX_FALLBACK_NO_TEXT";
+        analysisFallbackReason = `Extracted tender text is only ${tenderText.length} chars; AI analysis needs at least 500.`;
         analysis = analyzeTender(tender);
       }
     } else {
-      analysisMethod = "REGEX_FALLBACK_NO_TEXT";
-      analysisFallbackReason = `Extracted tender text is only ${tenderText.length} chars; AI analysis needs at least 500.`;
+      analysisMethod = "REGEX_FALLBACK_AI_DISABLED";
+      analysisFallbackReason = "GEMINI_API_KEY is not configured.";
       analysis = analyzeTender(tender);
     }
-  } else {
-    analysisMethod = "REGEX_FALLBACK_AI_DISABLED";
-    analysisFallbackReason = "GEMINI_API_KEY is not configured.";
-    analysis = analyzeTender(tender);
-  }
 
-  const reviewedExperts = company.experts.filter((expert) => expert.trustLevel === "REVIEWED");
-  const reviewedProjects = company.projects.filter((project) => project.trustLevel === "REVIEWED");
-  const aiDraftExpertCount = company.experts.filter((e) => e.trustLevel === "AI_DRAFT").length;
-  const aiDraftProjectCount = company.projects.filter((p) => p.trustLevel === "AI_DRAFT").length;
-  const regexDraftExpertCount = company.experts.filter((e) => !e.trustLevel || e.trustLevel === "REGEX_DRAFT").length;
-  const regexDraftProjectCount = company.projects.filter((p) => !p.trustLevel || p.trustLevel === "REGEX_DRAFT").length;
+    const reviewedExperts = company.experts.filter((expert) => expert.trustLevel === "REVIEWED");
+    const reviewedProjects = company.projects.filter((project) => project.trustLevel === "REVIEWED");
+    const aiDraftExpertCount = company.experts.filter((e) => e.trustLevel === "AI_DRAFT").length;
+    const aiDraftProjectCount = company.projects.filter((p) => p.trustLevel === "AI_DRAFT").length;
+    const regexDraftExpertCount = company.experts.filter((e) => !e.trustLevel || e.trustLevel === "REGEX_DRAFT").length;
+    const regexDraftProjectCount = company.projects.filter((p) => !p.trustLevel || p.trustLevel === "REGEX_DRAFT").length;
 
-  const knowledge = {
-    companyId: company.id,
-    experts: [...reviewedExperts, ...company.experts.filter((e) => e.trustLevel !== "REVIEWED")],
-    projects: [...reviewedProjects, ...company.projects.filter((p) => p.trustLevel !== "REVIEWED")],
-    documents: company.documents,
-    legalRecords: company.legalRecords,
-    financialRecords: company.financialRecords,
-    complianceRecords: company.complianceRecords,
-  };
+    const knowledge = {
+      companyId: company.id,
+      experts: [...reviewedExperts, ...company.experts.filter((e) => e.trustLevel !== "REVIEWED")],
+      projects: [...reviewedProjects, ...company.projects.filter((p) => p.trustLevel !== "REVIEWED")],
+      documents: company.documents,
+      legalRecords: company.legalRecords,
+      financialRecords: company.financialRecords,
+      complianceRecords: company.complianceRecords,
+    };
 
-  const knowledgeReadiness = {
-    reviewedExperts: reviewedExperts.length,
-    reviewedProjects: reviewedProjects.length,
-    aiDraftExperts: aiDraftExpertCount,
-    aiDraftProjects: aiDraftProjectCount,
-    regexDraftExperts: regexDraftExpertCount,
-    regexDraftProjects: regexDraftProjectCount,
-    hasUsableExperts: reviewedExperts.length > 0,
-    hasUsableProjects: reviewedProjects.length > 0,
-    hasBlockingExperts: aiDraftExpertCount + regexDraftExpertCount > 0,
-    hasBlockingProjects: aiDraftProjectCount + regexDraftProjectCount > 0,
-  };
+    const knowledgeReadiness = {
+      reviewedExperts: reviewedExperts.length,
+      reviewedProjects: reviewedProjects.length,
+      aiDraftExperts: aiDraftExpertCount,
+      aiDraftProjects: aiDraftProjectCount,
+      regexDraftExperts: regexDraftExpertCount,
+      regexDraftProjects: regexDraftProjectCount,
+      hasUsableExperts: reviewedExperts.length > 0,
+      hasUsableProjects: reviewedProjects.length > 0,
+      hasBlockingExperts: aiDraftExpertCount + regexDraftExpertCount > 0,
+      hasBlockingProjects: aiDraftProjectCount + regexDraftProjectCount > 0,
+    };
 
-  const matching = buildMatches(analysis.requirements, knowledge, tender.category, tender.title);
-  const createdRequirements = analysis.requirements.map((requirement) => ({ id: randomUUID(), requirement }));
-  const requirementRows = createdRequirements.map(({ id, requirement }) => ({
-    id,
-    tenderId,
-    title: requirement.title,
-    description: requirement.description,
-    requirementType: requirement.requirementType,
-    priority: requirement.priority,
-    requiredQuantity: requirement.requiredQuantity ?? null,
-    pageLimit: requirement.pageLimit ?? null,
-    exactFileName: requirement.exactFileName ?? null,
-    exactOrder: requirement.exactOrder ?? null,
-    restrictions: requirement.restrictions ?? null,
-    sectionReference: requirement.sectionReference ?? null,
-  }));
-
-  const compliance = buildCompliance(createdRequirements, knowledge, matching);
-  const hasDraftKnowledge = aiDraftExpertCount + regexDraftExpertCount + aiDraftProjectCount + regexDraftProjectCount > 0;
-  const documentPlan = buildDocumentPlan(createdRequirements);
-  const hardGaps = compliance.gaps.filter((gap) => gap.severity === "CRITICAL").length;
-  const reviewGaps = compliance.gaps.filter((gap) => gap.severity === "HIGH").length + (hasDraftKnowledge ? 1 : 0);
-  const reviewNeeded = hardGaps > 0 || reviewGaps > 0;
-  const supportedOrReviewableCount = compliance.matrices.filter((m) => ["SUPPORTED", "EVIDENCE_PENDING_REVIEW", "PARTIAL"].includes(m.supportStatus)).length;
-  const readinessScore = Math.max(0, Math.min(100, Math.round((supportedOrReviewableCount / Math.max(compliance.matrices.length, 1)) * 100)));
-
-  await prisma.tenderExpertMatch.deleteMany({ where: { tenderId } });
-  await prisma.tenderProjectMatch.deleteMany({ where: { tenderId } });
-  await prisma.complianceGap.deleteMany({ where: { tenderId } });
-  await prisma.complianceMatrix.deleteMany({ where: { tenderId } });
-  await prisma.generatedDocument.deleteMany({ where: { tenderId } });
-  await prisma.tenderRequirement.deleteMany({ where: { tenderId } });
-
-  for (const batch of chunks(requirementRows, 100)) await prisma.tenderRequirement.createMany({ data: batch });
-
-  const expertMatchRows = matching.expertMatches.map((match) => ({ tenderId, expertId: match.expertId, score: match.score, rationale: match.rationale, isSelected: match.isSelected }));
-  for (const batch of chunks(expertMatchRows, 100)) await prisma.tenderExpertMatch.createMany({ data: batch, skipDuplicates: true });
-
-  const projectMatchRows = matching.projectMatches.map((match) => ({ tenderId, projectId: match.projectId, score: match.score, rationale: match.rationale, isSelected: match.isSelected }));
-  for (const batch of chunks(projectMatchRows, 100)) await prisma.tenderProjectMatch.createMany({ data: batch, skipDuplicates: true });
-
-  const matrixRows = compliance.matrices.map((matrix) => ({
-    tenderId,
-    requirementId: matrix.requirementId,
-    evidenceType: matrix.evidenceType,
-    evidenceSource: matrix.evidenceSource,
-    evidenceReference: matrix.evidenceReference ?? null,
-    supportLevel: matrix.supportStatus,
-    notes: [matrix.evidenceSummary, matrix.notes].filter(Boolean).join(" | ") || null,
-  }));
-  for (const batch of chunks(matrixRows, 100)) await prisma.complianceMatrix.createMany({ data: batch });
-
-  const gapRows = compliance.gaps.map((gap) => ({
-    tenderId,
-    requirementId: gap.requirementId ?? null,
-    severity: gap.severity,
-    title: gap.title,
-    description: gap.description,
-    mitigationPlan: gap.mitigationPlan ?? null,
-  }));
-  if (hasDraftKnowledge) {
-    gapRows.push({
+    const matching = buildMatches(analysis.requirements, knowledge, tender.category, tender.title);
+    const createdRequirements = analysis.requirements.map((requirement) => ({ id: randomUUID(), requirement }));
+    const requirementRows = createdRequirements.map(({ id, requirement }) => ({
+      id,
       tenderId,
-      requirementId: null,
-      severity: "HIGH",
-      title: "Draft company knowledge requires review",
-      description: `The company knowledge base contains ${aiDraftExpertCount} AI_DRAFT expert(s), ${regexDraftExpertCount} REGEX_DRAFT expert(s), ${aiDraftProjectCount} AI_DRAFT project(s), and ${regexDraftProjectCount} REGEX_DRAFT project(s). Draft records are not used as final submission evidence until marked REVIEWED.`,
-      mitigationPlan: "Open Company Knowledge Review, verify source evidence, correct fields, and mark valid expert/project records as REVIEWED before final generation.",
+      title: requirement.title,
+      description: requirement.description,
+      requirementType: requirement.requirementType,
+      priority: requirement.priority,
+      requiredQuantity: requirement.requiredQuantity ?? null,
+      pageLimit: requirement.pageLimit ?? null,
+      exactFileName: requirement.exactFileName ?? null,
+      exactOrder: requirement.exactOrder ?? null,
+      restrictions: requirement.restrictions ?? null,
+      sectionReference: requirement.sectionReference ?? null,
+    }));
+
+    const compliance = buildCompliance(createdRequirements, knowledge, matching);
+    const hasDraftKnowledge = aiDraftExpertCount + regexDraftExpertCount + aiDraftProjectCount + regexDraftProjectCount > 0;
+    const documentPlan = buildDocumentPlan(createdRequirements);
+    const hardGaps = compliance.gaps.filter((gap) => gap.severity === "CRITICAL").length;
+    const reviewGaps = compliance.gaps.filter((gap) => gap.severity === "HIGH").length + (hasDraftKnowledge ? 1 : 0);
+    const reviewNeeded = hardGaps > 0 || reviewGaps > 0;
+    const supportedOrReviewableCount = compliance.matrices.filter((m) => ["SUPPORTED", "EVIDENCE_PENDING_REVIEW", "PARTIAL"].includes(m.supportStatus)).length;
+    const readinessScore = Math.max(0, Math.min(100, Math.round((supportedOrReviewableCount / Math.max(compliance.matrices.length, 1)) * 100)));
+
+    const existingCounts = await Promise.all([
+      prisma.tenderRequirement.count({ where: { tenderId } }),
+      prisma.tenderExpertMatch.count({ where: { tenderId } }),
+      prisma.tenderProjectMatch.count({ where: { tenderId } }),
+      prisma.complianceMatrix.count({ where: { tenderId } }),
+      prisma.complianceGap.count({ where: { tenderId } }),
+      prisma.generatedDocument.count({ where: { tenderId } }),
+    ]);
+
+    await prisma.tenderExpertMatch.deleteMany({ where: { tenderId } });
+    await prisma.tenderProjectMatch.deleteMany({ where: { tenderId } });
+    await prisma.complianceGap.deleteMany({ where: { tenderId } });
+    await prisma.complianceMatrix.deleteMany({ where: { tenderId } });
+    await prisma.generatedDocument.deleteMany({ where: { tenderId } });
+    await prisma.tenderRequirement.deleteMany({ where: { tenderId } });
+
+    for (const batch of chunks(requirementRows, 100)) await prisma.tenderRequirement.createMany({ data: batch });
+
+    const expertMatchRows = matching.expertMatches.map((match) => ({ tenderId, expertId: match.expertId, score: match.score, rationale: match.rationale, isSelected: match.isSelected }));
+    for (const batch of chunks(expertMatchRows, 100)) await prisma.tenderExpertMatch.createMany({ data: batch, skipDuplicates: true });
+
+    const projectMatchRows = matching.projectMatches.map((match) => ({ tenderId, projectId: match.projectId, score: match.score, rationale: match.rationale, isSelected: match.isSelected }));
+    for (const batch of chunks(projectMatchRows, 100)) await prisma.tenderProjectMatch.createMany({ data: batch, skipDuplicates: true });
+
+    const matrixRows = compliance.matrices.map((matrix) => ({
+      tenderId,
+      requirementId: matrix.requirementId,
+      evidenceType: matrix.evidenceType,
+      evidenceSource: matrix.evidenceSource,
+      evidenceReference: matrix.evidenceReference ?? null,
+      supportLevel: matrix.supportStatus,
+      notes: [matrix.evidenceSummary, matrix.notes].filter(Boolean).join(" | ") || null,
+    }));
+    for (const batch of chunks(matrixRows, 100)) await prisma.complianceMatrix.createMany({ data: batch });
+
+    const gapRows = compliance.gaps.map((gap) => ({
+      tenderId,
+      requirementId: gap.requirementId ?? null,
+      severity: gap.severity,
+      title: gap.title,
+      description: gap.description,
+      mitigationPlan: gap.mitigationPlan ?? null,
+    }));
+    if (hasDraftKnowledge) {
+      gapRows.push({
+        tenderId,
+        requirementId: null,
+        severity: "HIGH",
+        title: "Draft company knowledge requires review",
+        description: `The company knowledge base contains ${aiDraftExpertCount} AI_DRAFT expert(s), ${regexDraftExpertCount} REGEX_DRAFT expert(s), ${aiDraftProjectCount} AI_DRAFT project(s), and ${regexDraftProjectCount} REGEX_DRAFT project(s). Draft records are not used as final submission evidence until marked REVIEWED.`,
+        mitigationPlan: "Open Company Knowledge Review, verify source evidence, correct fields, and mark valid expert/project records as REVIEWED before final generation.",
+      });
+    }
+    for (const batch of chunks(gapRows, 100)) await prisma.complianceGap.createMany({ data: batch });
+
+    const documentRows = documentPlan.documents.map((document) => ({
+      tenderId,
+      name: document.name,
+      documentType: document.documentType,
+      exactFileName: document.exactFileName ?? null,
+      exactOrder: typeof document.exactOrder === "number" ? document.exactOrder : null,
+      contentSummary: document.contentSummary,
+    }));
+    for (const batch of chunks(documentRows, 100)) await prisma.generatedDocument.createMany({ data: batch });
+
+    await prisma.tender.update({
+      where: { id: tenderId },
+      data: {
+        analysisSummary: analysis.summary,
+        exactFileNaming: JSON.stringify(analysis.exactFileNaming),
+        exactFileOrder: JSON.stringify(analysis.exactFileOrder),
+        evaluationMethodology: (analysis as { evaluationMethodology?: string | null }).evaluationMethodology ?? null,
+        readinessScore,
+        status: reviewNeeded ? "COMPLIANCE_REVIEW" : "MATCHED",
+        stage: reviewNeeded ? "COMPLIANCE" : "MATCHING",
+        notes: [
+          `Engine run ID: ${engineRunId}`,
+          "Senior consultant mode: broad-fit matching uses capability families, sector/service equivalence, and professional judgment instead of exact wording only.",
+          analysisMethod === "AI"
+            ? "Analysis source: AI (chunked multi-call when tender > 60K chars)."
+            : `Analysis source: regex fallback (${analysisMethod}). ${analysisFallbackReason ?? ""}`.trim(),
+          hardGaps > 0 ? `${hardGaps} hard evidence gap(s) remain.` : null,
+          reviewGaps > 0 ? `${reviewGaps} senior review item(s) remain; these are not automatic fatal blockers.` : null,
+          knowledgeReadiness.hasBlockingExperts ? `${knowledgeReadiness.aiDraftExperts + knowledgeReadiness.regexDraftExperts} expert record(s) are draft and excluded from final evidence until REVIEWED.` : null,
+          knowledgeReadiness.hasBlockingProjects ? `${knowledgeReadiness.aiDraftProjects + knowledgeReadiness.regexDraftProjects} project record(s) are draft and excluded from final evidence until REVIEWED.` : null,
+          !knowledgeReadiness.hasUsableExperts ? "No REVIEWED experts found — review extracted CV records before final generation." : null,
+          !knowledgeReadiness.hasUsableProjects ? "No REVIEWED projects found — review extracted project records before final generation." : null,
+          knowledgeReadiness.reviewedExperts > 0 ? `${knowledgeReadiness.reviewedExperts} REVIEWED expert(s) available for final generation.` : null,
+          knowledgeReadiness.reviewedProjects > 0 ? `${knowledgeReadiness.reviewedProjects} REVIEWED project(s) available for final generation.` : null,
+        ].filter(Boolean).join("\n") || null,
+      },
     });
+
+    await writeEngineRunAudit({
+      userId,
+      tenderId,
+      action: "TENDER_ENGINE_RUN_COMPLETED",
+      description: `Completed tender engine run for "${tender.title}"`,
+      metadata: {
+        engineRunId,
+        startedAt: startedAt.toISOString(),
+        completedAt: new Date().toISOString(),
+        durationMs: Date.now() - startedAt.getTime(),
+        analysisMethod,
+        analysisFallbackReason,
+        previousStateCounts: {
+          requirements: existingCounts[0],
+          expertMatches: existingCounts[1],
+          projectMatches: existingCounts[2],
+          complianceRows: existingCounts[3],
+          gaps: existingCounts[4],
+          generatedDocuments: existingCounts[5],
+        },
+        newStateCounts: {
+          requirements: requirementRows.length,
+          expertMatches: expertMatchRows.length,
+          projectMatches: projectMatchRows.length,
+          complianceRows: matrixRows.length,
+          gaps: gapRows.length,
+          generatedDocuments: documentRows.length,
+        },
+        readinessScore,
+        hardGapCount: hardGaps,
+        reviewGapCount: reviewGaps,
+        reviewNeeded,
+        knowledgeReadiness,
+      },
+    });
+
+    return prisma.tender.findUnique({
+      where: { id: tenderId },
+      include: {
+        files: { select: { id: true, originalFileName: true, mimeType: true, size: true, classification: true, extractedText: true, createdAt: true } },
+        requirements: true,
+        expertMatches: { orderBy: { score: "desc" }, include: { expert: true } },
+        projectMatches: { orderBy: { score: "desc" }, include: { project: true } },
+        complianceGaps: { orderBy: { createdAt: "desc" } },
+        complianceMatrix: { orderBy: { createdAt: "asc" } },
+        generatedDocuments: { orderBy: { exactOrder: "asc" }, select: { id: true, name: true, documentType: true, generationStatus: true, validationStatus: true, reviewStatus: true, exactFileName: true, exactOrder: true, contentSummary: true } },
+      },
+    });
+  } catch (error) {
+    await writeEngineRunAudit({
+      userId,
+      tenderId,
+      action: "TENDER_ENGINE_RUN_FAILED",
+      description: `Tender engine run failed for "${tender.title}"`,
+      metadata: {
+        engineRunId,
+        startedAt: startedAt.toISOString(),
+        failedAt: new Date().toISOString(),
+        durationMs: Date.now() - startedAt.getTime(),
+        error: error instanceof Error ? error.message : String(error),
+      },
+    });
+    throw error;
   }
-  for (const batch of chunks(gapRows, 100)) await prisma.complianceGap.createMany({ data: batch });
-
-  const documentRows = documentPlan.documents.map((document) => ({
-    tenderId,
-    name: document.name,
-    documentType: document.documentType,
-    exactFileName: document.exactFileName ?? null,
-    exactOrder: typeof document.exactOrder === "number" ? document.exactOrder : null,
-    contentSummary: document.contentSummary,
-  }));
-  for (const batch of chunks(documentRows, 100)) await prisma.generatedDocument.createMany({ data: batch });
-
-  await prisma.tender.update({
-    where: { id: tenderId },
-    data: {
-      analysisSummary: analysis.summary,
-      exactFileNaming: JSON.stringify(analysis.exactFileNaming),
-      exactFileOrder: JSON.stringify(analysis.exactFileOrder),
-      evaluationMethodology: (analysis as { evaluationMethodology?: string | null }).evaluationMethodology ?? null,
-      readinessScore,
-      status: reviewNeeded ? "COMPLIANCE_REVIEW" : "MATCHED",
-      stage: reviewNeeded ? "COMPLIANCE" : "MATCHING",
-      notes: [
-        "Senior consultant mode: broad-fit matching uses capability families, sector/service equivalence, and professional judgment instead of exact wording only.",
-        analysisMethod === "AI"
-          ? "Analysis source: AI (chunked multi-call when tender > 60K chars)."
-          : `Analysis source: regex fallback (${analysisMethod}). ${analysisFallbackReason ?? ""}`.trim(),
-        hardGaps > 0 ? `${hardGaps} hard evidence gap(s) remain.` : null,
-        reviewGaps > 0 ? `${reviewGaps} senior review item(s) remain; these are not automatic fatal blockers.` : null,
-        knowledgeReadiness.hasBlockingExperts ? `${knowledgeReadiness.aiDraftExperts + knowledgeReadiness.regexDraftExperts} expert record(s) are draft and excluded from final evidence until REVIEWED.` : null,
-        knowledgeReadiness.hasBlockingProjects ? `${knowledgeReadiness.aiDraftProjects + knowledgeReadiness.regexDraftProjects} project record(s) are draft and excluded from final evidence until REVIEWED.` : null,
-        !knowledgeReadiness.hasUsableExperts ? "No REVIEWED experts found — review extracted CV records before final generation." : null,
-        !knowledgeReadiness.hasUsableProjects ? "No REVIEWED projects found — review extracted project records before final generation." : null,
-        knowledgeReadiness.reviewedExperts > 0 ? `${knowledgeReadiness.reviewedExperts} REVIEWED expert(s) available for final generation.` : null,
-        knowledgeReadiness.reviewedProjects > 0 ? `${knowledgeReadiness.reviewedProjects} REVIEWED project(s) available for final generation.` : null,
-      ].filter(Boolean).join("\n") || null,
-    },
-  });
-
-  return prisma.tender.findUnique({
-    where: { id: tenderId },
-    include: {
-      files: { select: { id: true, originalFileName: true, mimeType: true, size: true, classification: true, extractedText: true, createdAt: true } },
-      requirements: true,
-      expertMatches: { orderBy: { score: "desc" }, include: { expert: true } },
-      projectMatches: { orderBy: { score: "desc" }, include: { project: true } },
-      complianceGaps: { orderBy: { createdAt: "desc" } },
-      complianceMatrix: { orderBy: { createdAt: "asc" } },
-      generatedDocuments: { orderBy: { exactOrder: "asc" }, select: { id: true, name: true, documentType: true, generationStatus: true, validationStatus: true, reviewStatus: true, exactFileName: true, exactOrder: true, contentSummary: true } },
-    },
-  });
 }
