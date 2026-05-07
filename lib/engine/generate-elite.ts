@@ -1087,6 +1087,11 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
           // citation. complianceLines (above) already includes these
           // among other things; this filtered list is just the
           // certification-relevant rows for D.3.
+          // PR W — pass firm-history client names to the cover-letter
+          // prompt as a "DO NOT use these as the client of THIS tender"
+          // list. Belt-and-braces with the post-pass enforcer (PR V).
+          // companyVault block placement keeps this in lockstep with
+          // the rest of the vault data.
           complianceLines: (company.complianceRecords ?? [])
             .map((r) => {
               const parts: string[] = [];
@@ -1098,6 +1103,15 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
             })
             .filter((s) => s.length > 0),
         },
+        // PR W — list of clients from the firm's vault project history
+        // that the AI must NEVER substitute as the client of this
+        // tender (they are the firm's PREVIOUS clients, not the
+        // current one). Pulled from company.projects loaded above.
+        doNotUseAsClient: Array.from(new Set(
+          (company.projects ?? [])
+            .map((p) => (p as { clientName?: string | null }).clientName)
+            .filter((c): c is string => Boolean(c && c.trim().length >= 3))
+        )),
       };
 
       sourceMarkdown = await withProposalAiTimeout(

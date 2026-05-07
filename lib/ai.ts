@@ -464,6 +464,13 @@ export type AIBidWriterInput = {
     // prints the lines.
     complianceLines?: string[] | null;
   };
+  // PR W — list of client names that appear in the FIRM's project
+  // history but are NOT the client of THIS tender. Fed to prompts
+  // as a "DO NOT use these as the client of this tender" directive
+  // so the AI doesn't substitute Pharo Ventures (etc.) into the
+  // cover letter "To:" line just because the firm has prior Pharo
+  // projects in the vault.
+  doNotUseAsClient?: string[];
 };
 
 // ─── Tender analysis ─────────────────────────────────────────────────────────
