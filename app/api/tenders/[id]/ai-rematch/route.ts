@@ -7,6 +7,7 @@ import {
   formatAssessmentRationale,
   type CandidateAssessment,
   type ExpertCandidateInput,
+  type MatchAssessmentBatch,
   type MatchPerspective,
   type ProjectCandidateInput,
 } from "../../../../../lib/engine/ai-multi-perspective-matcher";
@@ -63,13 +64,14 @@ function rankForCycle(assessment: CandidateAssessment, cycle: number): number {
     { SENIORITY_OR_SCALE: 0.23, ROLE_RECENCY: 0.20, DISCIPLINE_FIT: 0.16 },
   ];
 
-  const activeWeights = weights[cycle % weights.length];
+  const activeWeights = weights[cycle % weights.length] ?? {};
   let score = assessment.overallScore * 0.55;
   for (const key of Object.keys(activeWeights) as MatchPerspective[]) {
     score += perspectiveScore(assessment, key) * (activeWeights[key] ?? 0);
   }
 
-  const minimumPerspective = Math.min(...Object.values(assessment.perspectives));
+  const perspectiveValues = Object.values(assessment.perspectives);
+  const minimumPerspective = perspectiveValues.length > 0 ? Math.min(...perspectiveValues) : 5;
   if (minimumPerspective < 3) score -= 0.08;
   if (assessment.recommendSelection) score += 0.04;
   return score;
@@ -78,12 +80,15 @@ function rankForCycle(assessment: CandidateAssessment, cycle: number): number {
 function setScore(selected: CandidateAssessment[]): number {
   if (selected.length === 0) return 0;
   const averageScore = selected.reduce((sum, assessment) => sum + assessment.overallScore, 0) / selected.length;
-  const perspectives = Object.keys(selected[0].perspectives) as MatchPerspective[];
+  const perspectives = Object.keys(selected[0]?.perspectives ?? {}) as MatchPerspective[];
   const coverageScore = perspectives.reduce(
     (sum, key) => sum + Math.max(...selected.map((assessment) => perspectiveScore(assessment, key))),
     0,
   ) / Math.max(perspectives.length, 1);
-  const weakPenalty = selected.filter((assessment) => Math.min(...Object.values(assessment.perspectives)) < 3).length * 0.03;
+  const weakPenalty = selected.filter((assessment) => {
+    const values = Object.values(assessment.perspectives);
+    return values.length > 0 && Math.min(...values) < 3;
+  }).length * 0.03;
   return averageScore * 0.62 + coverageScore * 0.38 - weakPenalty;
 }
 
@@ -230,8 +235,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     .map((requirement) => `[${requirement.priority}] ${requirement.requirementType}: ${requirement.title}: ${requirement.description}`)
     .join("\n");
 
-  let expertBatch;
-  let projectBatch;
+  let expertBatch: MatchAssessmentBatch | null;
+  let projectBatch: MatchAssessmentBatch | null;
   try {
     [expertBatch, projectBatch] = await time("ai-rematch.parallel_calls", () => Promise.all([
       expertCandidates.length > 0
