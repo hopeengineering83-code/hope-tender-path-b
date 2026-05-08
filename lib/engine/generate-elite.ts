@@ -2120,6 +2120,62 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     }
   }
 
+  // ─── PR UU — re-apply idempotent finalisers after refinement ────────────
+  // The refinement pass asks Claude to STRENGTHEN weak axes — which often
+  // means adding evidence anchors, deepening prose, or restating sections.
+  // Refinement runs AFTER all 20+ deterministic post-passes, so its
+  // output skipped:
+  //   • duplicate-section heading suppressor (PR Q)
+  //   • client-name enforcer (PR V)
+  //   • internal-review-section stripper (PR X)
+  //   • section orderer + auto-TOC rebuild (PR Y)
+  //   • placeholder stripper (PR J)
+  //
+  // Side-effect of skipping: refined output occasionally introduced
+  // duplicate "Section A" or "Cover Letter" headings (Claude restates
+  // them when answering an axis), and any new "Bid-Team Action: ..."
+  // strings the AI inserted weren't stripped before DOCX render.
+  //
+  // Each of these passes is idempotent — running them a second time on
+  // already-clean markdown is a no-op. Re-running them on the refined
+  // output catches any duplicates / leaks Claude introduced in the
+  // refinement. If refinement didn't run, this whole block is a no-op
+  // (workingMarkdown === humanizedMarkdown).
+  if (refinementApplied) {
+    const reDedup = suppressDuplicateSectionHeadings(workingMarkdown);
+    if (reDedup.renumbered > 0) {
+      console.info(`[generate-elite] Post-refinement re-dedupe: renumbered ${reDedup.renumbered} duplicate-prefix heading(s) introduced by refinement.`);
+    }
+    workingMarkdown = reDedup.markdown;
+
+    const reEnforced = enforceClientName(workingMarkdown, {
+      canonicalClientName: intelligence.clientName,
+      knownFirmClients,
+    });
+    if (reEnforced.substitutionsMade > 0) {
+      console.warn(`[generate-elite] Post-refinement client-name enforcer scrubbed ${reEnforced.substitutionsMade} hallucinated substitution(s) introduced by refinement.`);
+    }
+    workingMarkdown = reEnforced.markdown;
+
+    const reStrip = stripInternalReviewSections(workingMarkdown);
+    if (reStrip.removedSections.length > 0) {
+      console.info(`[generate-elite] Post-refinement internal-review stripper removed ${reStrip.removedSections.length} bid-team section(s) re-introduced by refinement.`);
+    }
+    workingMarkdown = reStrip.markdown;
+
+    const reOrder = reorderSectionsAndRebuildToc(workingMarkdown);
+    if (reOrder.reorderedSectionCount > 0) {
+      console.info(`[generate-elite] Post-refinement reorder: re-sequenced ${reOrder.reorderedSectionCount} section(s); TOC rebuilt.`);
+    }
+    workingMarkdown = reOrder.markdown;
+
+    const reStripPlaceholders = stripPlaceholders(workingMarkdown);
+    if (reStripPlaceholders.removedLines + reStripPlaceholders.blankedCells + reStripPlaceholders.removedParagraphs > 0) {
+      console.info(`[generate-elite] Post-refinement placeholder stripper: removed ${reStripPlaceholders.removedLines} line(s), ${reStripPlaceholders.removedParagraphs} paragraph(s); blanked ${reStripPlaceholders.blankedCells} table cell(s).`);
+    }
+    workingMarkdown = reStripPlaceholders.markdown;
+  }
+
   // Re-render the DOCX from the (possibly refined) markdown.
   const finalChildren = refinementApplied ? markdownToDocx(workingMarkdown) : children;
   const finalDoc = refinementApplied
