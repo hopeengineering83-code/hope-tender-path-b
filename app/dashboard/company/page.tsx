@@ -90,22 +90,22 @@ export default function CompanyPage() {
 
   async function loadDocs() {
     const r = await fetch("/api/company/documents");
-    const d = await r.json() as { documents?: CompanyDoc[] };
-    setDocs(d.documents ?? []);
+    const d = await r.json() as { items?: CompanyDoc[] };
+    setDocs(d.items ?? []);
   }
 
   useEffect(() => {
     Promise.all([
       fetch("/api/company").then(r=>r.json()),
       fetch("/api/company/documents").then(r=>r.json()),
-    ]).then(([c, d]: [{ company?: Company } & Company, { documents?: CompanyDoc[] }]) => {
+    ]).then(([c, d]: [{ company?: Company } & Company, { items?: CompanyDoc[] }]) => {
       const co = c.company ?? c;
       if (co.name !== undefined) {
         setCompany({ ...empty, ...(co as Company) });
         setServiceLinesTxt(((co as Company).serviceLines||[]).join(", "));
         setSectorsTxt(((co as Company).sectors||[]).join(", "));
       }
-      setDocs(d.documents ?? []);
+      setDocs(d.items ?? []);
     }).finally(() => setLoading(false));
   }, []);
 
