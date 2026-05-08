@@ -863,6 +863,17 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   //
   // Falls back silently to lexical scoring on any AI error — never
   // blocks generation.
+  //
+  // BUDGET GUARD (post-pull) — when this auto-rematch runs INSIDE
+  // generate-elite, it competes with the 4 parallel section calls +
+  // post-passes + DOCX render against Vercel Hobby's 60s function
+  // budget. The rematcher's internal REMATCH_TIMEOUT_MS (default 40s)
+  // is for the standalone manual rematch route — too long here. We
+  // wrap the parallel pair in our own 18s race guard so the full
+  // pipeline keeps room for generation. Skipping this on a slow
+  // network just means experts/projects keep their lexical order —
+  // PR Q's hard sector filter still applies.
+  const AUTO_REMATCH_BUDGET_MS = Number(process.env.AUTO_REMATCH_BUDGET_MS) || 18_000;
   if (isAIEnabled() && (experts.length > 0 || projects.length > 0)) {
     try {
       const { aiRematchExperts, aiRematchProjects } = await import("./ai-multi-perspective-matcher");
@@ -898,7 +909,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
         trustLevel: p.trustLevel ?? null,
       }));
 
-      const [expertBatch, projectBatch] = await Promise.all([
+      const rematchPair = Promise.all([
         expertCandidates.length > 0 ? aiRematchExperts({
           tenderTitle: cleanedTenderTitle,
           tenderRequirementsText,
@@ -912,6 +923,16 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
           candidates: projectCandidates,
         }) : Promise.resolve(null),
       ]);
+      const budgetGuard = new Promise<null>((resolve) =>
+        setTimeout(() => resolve(null), AUTO_REMATCH_BUDGET_MS)
+      );
+      // If the budget elapses before either AI call returns, we get
+      // null and skip the re-rank entirely (lexical order kept).
+      const raceResult = await Promise.race([rematchPair, budgetGuard]);
+      if (raceResult === null) {
+        console.warn(`[generate-elite] AI multi-perspective re-rank skipped — exceeded ${AUTO_REMATCH_BUDGET_MS}ms auto-budget. Lexical order kept.`);
+      }
+      const [expertBatch, projectBatch] = raceResult ?? [null, null];
 
       // Re-sort experts/projects by AI overall score. Candidates without
       // an assessment fall back to their original lexical position.
