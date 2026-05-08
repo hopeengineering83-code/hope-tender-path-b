@@ -2040,7 +2040,19 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   // structural guarantees without refinement, so disabling has minimal
   // quality impact on properly-tuned tenders.
   const REFINEMENT_DISABLED = process.env.PROPOSAL_REFINEMENT_DISABLED === "true";
-  const QUALITY_REFINEMENT_THRESHOLD = 70;
+  // PR QQ — raised refinement target from 70 to 82 (Claude AI benchmark
+  // territory). Below 82 means at least one of the 10 axes is weak;
+  // refinement targets those axes specifically. Capped at 82 (not 90+)
+  // because refinement uses the AI's same context budget — pushing too
+  // high would force the AI to fabricate content to satisfy axes the
+  // vault data can't support. 82 is the empirical sweet spot.
+  const QUALITY_REFINEMENT_THRESHOLD = Number(process.env.QUALITY_REFINEMENT_THRESHOLD) || 82;
+  // PR QQ — allow up to 2 refinement attempts. If the first pass
+  // improves the score by < 5 points but the score is still below
+  // threshold, the second pass targets the still-weak axes with the
+  // first refinement's output as the starting point. Caps at 2 because
+  // a third pass rarely improves and burns AI budget.
+  const MAX_REFINEMENT_ATTEMPTS = Number(process.env.MAX_REFINEMENT_ATTEMPTS) || 2;
   // Score the HUMANIZED markdown (PR #245) — refinement should evaluate
   // the same text that's about to be rendered to DOCX, not the
   // pre-humanize version which still contained AI-trace patterns.
@@ -2051,7 +2063,15 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     topProjects: (projects as ProjectRecord[]).slice(0, 2),
   });
   let refinementApplied = false;
-  if (!REFINEMENT_DISABLED && qualityScore.total < QUALITY_REFINEMENT_THRESHOLD && qualityScore.weakAxes.length > 0 && isAIEnabled()) {
+  let refinementAttempts = 0;
+  while (
+    !REFINEMENT_DISABLED &&
+    refinementAttempts < MAX_REFINEMENT_ATTEMPTS &&
+    qualityScore.total < QUALITY_REFINEMENT_THRESHOLD &&
+    qualityScore.weakAxes.length > 0 &&
+    isAIEnabled()
+  ) {
+    refinementAttempts += 1;
     try {
       const refined = await refineProposalWithAI({
         currentMarkdown: workingMarkdown,
@@ -2070,13 +2090,33 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
           topProjects: (projects as ProjectRecord[]).slice(0, 2),
         });
         if (refinedScore.total > qualityScore.total) {
+          const lift = refinedScore.total - qualityScore.total;
           workingMarkdown = refinedClean;
           qualityScore = refinedScore;
           refinementApplied = true;
+          console.info(`[generate-elite] Refinement attempt ${refinementAttempts}/${MAX_REFINEMENT_ATTEMPTS}: ${qualityScore.total - lift} → ${qualityScore.total} (+${lift}). Weak axes remaining: ${qualityScore.weakAxes.length}.`);
+          // If the lift was meaningful AND the score is still below
+          // threshold AND we have attempts left, the loop will try
+          // another pass with the refined output as input.
+          // Stop early when the lift is < 2 points (diminishing returns).
+          if (lift < 2) {
+            console.info(`[generate-elite] Refinement lift ${lift} < 2 — stopping early to avoid AI budget burn.`);
+            break;
+          }
+        } else {
+          // Refinement made score WORSE or equal — keep the previous
+          // version and stop attempting.
+          console.info(`[generate-elite] Refinement attempt ${refinementAttempts} did not improve score (${qualityScore.total} unchanged). Stopping.`);
+          break;
         }
+      } else {
+        // Refined output too short — keep the previous version.
+        console.warn(`[generate-elite] Refinement attempt ${refinementAttempts} returned thin output (${refined?.length ?? 0} chars vs ${workingMarkdown.length}). Stopping.`);
+        break;
       }
     } catch (err) {
-      console.warn(`[generate-elite] Refinement pass failed: ${err instanceof Error ? err.message : String(err)}`);
+      console.warn(`[generate-elite] Refinement pass ${refinementAttempts} failed: ${err instanceof Error ? err.message : String(err)}`);
+      break;
     }
   }
 
