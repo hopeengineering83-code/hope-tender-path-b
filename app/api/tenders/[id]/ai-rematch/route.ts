@@ -261,7 +261,31 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   }
 
   if (!expertBatch && !projectBatch) {
-    return NextResponse.json({ error: "AI rematch returned no usable assessments.", code: "NO_ASSESSMENTS" }, { status: 502 });
+    // PR SS — give the user actionable diagnostic detail. The pre-fix
+    // message was opaque ("AI rematch returned no usable assessments")
+    // and didn't tell the bid team which path failed or why. Common
+    // root causes:
+    //   • Both AI calls timed out (typical on first cold-start + 20-
+    //     candidate prompt hitting Vercel Hobby's 60s window)
+    //   • The AI returned content but JSON parsing failed even after
+    //     the 5 tolerant strategies in parseAssessmentArray
+    //   • ANTHROPIC_API_KEY missing or expired
+    //
+    // CRITICAL — even when this fails, PR RR ensures the user's manual
+    // selections remain intact in the database. Nothing is wiped.
+    return NextResponse.json(
+      {
+        error: "AI rematch returned no usable assessments. Your existing manual selections were NOT changed.",
+        code: "NO_ASSESSMENTS",
+        diagnostics: {
+          expertCandidatesSent: expertCandidates.length,
+          projectCandidatesSent: projectCandidates.length,
+          recoveryAdvice: "Check ANTHROPIC_API_KEY is set and not rate-limited. If the issue persists, reduce the candidate pool by deselecting low-relevance items before clicking Re-score, OR raise REMATCH_TIMEOUT_MS / AUTO_REMATCH_BUDGET_MS env vars on the deployment.",
+          userSelectionsPreserved: true,
+        },
+      },
+      { status: 502 }
+    );
   }
 
   const aiSelectedExpertIds = expertBatch
