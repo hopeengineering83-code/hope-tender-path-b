@@ -52,6 +52,18 @@ export function checkExportReadiness(docs: ExportReadyDocument[], opts: { requir
 }
 
 export function exportReadinessError(failures: ExportReadinessFailure[]): string {
-  if (failures.length === 1) return "Final export blocked: 1 document is not ready for export.";
-  return `Final export blocked: ${failures.length} documents are not ready for export.`;
+  // PR PP — return an actionable error message that names each blocking
+  // document and the specific reasons. Without this, the user saw only
+  // "Final export blocked: N documents are not ready for export" with no
+  // way to know what to fix.
+  if (failures.length === 0) return "";
+  const summary = failures.length === 1
+    ? "Final export blocked: 1 document is not ready for export."
+    : `Final export blocked: ${failures.length} documents are not ready for export.`;
+  const details = failures
+    .slice(0, 6)
+    .map((f) => `• ${f.fileName} — ${f.reasons.join("; ")}`)
+    .join("\n");
+  const truncationNote = failures.length > 6 ? `\n• … and ${failures.length - 6} more` : "";
+  return `${summary}\n${details}${truncationNote}`;
 }
