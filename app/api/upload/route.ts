@@ -6,6 +6,7 @@ import { logAction } from "../../../lib/audit";
 import { ensureCompanyForUser } from "../../../lib/company-workspace";
 import { importCompanyKnowledgeFromDocuments } from "../../../lib/company-knowledge-import-safe";
 import { rateLimit, UPLOAD_RATE_LIMIT } from "../../../lib/rate-limit";
+import { extractRequestId } from "../../../lib/request-id";
 
 // Vercel route timeout — file ingestion calls Claude for expert/project
 // extraction during knowledge import. 60 = Hobby max.
@@ -28,6 +29,7 @@ function extractionMetadata(fileTypeLabel: string, extractedText: string) {
 }
 
 export async function POST(req: Request) {
+  const requestId = extractRequestId(req);
   const userId = await getSession();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
@@ -122,6 +124,7 @@ export async function POST(req: Request) {
           entityId: fileRecord.id,
           description: `Uploaded ${fileTypeLabel} "${file.name}" to tender — ${extraction.extracted ? `${extraction.extractedChars.toLocaleString()} chars extracted` : extraction.extractionMessage}`,
           metadata: { tenderId, fileName: file.name, ...extraction },
+          requestId,
         });
 
         tenderFilesUploaded += 1;
@@ -162,6 +165,7 @@ export async function POST(req: Request) {
           entityId: docRecord.id,
           description: `Uploaded ${fileTypeLabel} "${file.name}" (${category}) — ${extraction.extracted ? `${extraction.extractedChars.toLocaleString()} chars extracted` : extraction.extractionMessage}`,
           metadata: { companyId: company.id, fileName: file.name, category, ...extraction },
+          requestId,
         });
 
         companyDocsUploaded += 1;
@@ -193,6 +197,7 @@ export async function POST(req: Request) {
           entityId: uploadedCompanyId,
           description: `Auto-imported company knowledge after upload: ${primaryImport.expertsCreated + safetyImport.expertsCreated} experts and ${primaryImport.projectsCreated + safetyImport.projectsCreated} projects created`,
           metadata: knowledgeImport,
+          requestId,
         });
       } catch (err) {
         knowledgeImportError = err instanceof Error ? err.message : String(err);
@@ -204,6 +209,7 @@ export async function POST(req: Request) {
           entityId: uploadedCompanyId,
           description: `Company knowledge auto-import failed after upload: ${knowledgeImportError}`,
           metadata: { error: knowledgeImportError },
+          requestId,
         });
       }
     }
@@ -225,6 +231,7 @@ export async function POST(req: Request) {
           entityId: tenderId,
           description: `Auto-ran tender analysis/matching/compliance after ${tenderFilesUploaded} tender file upload(s)`,
           metadata: tenderEngine,
+          requestId,
         });
       } catch (err) {
         tenderEngineError = err instanceof Error ? err.message : String(err);
@@ -236,6 +243,7 @@ export async function POST(req: Request) {
           entityId: tenderId,
           description: `Tender engine auto-run failed after upload: ${tenderEngineError}`,
           metadata: { error: tenderEngineError },
+          requestId,
         });
       }
     }

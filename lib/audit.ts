@@ -50,8 +50,12 @@ export async function logAction(opts: {
   entityId?: string;
   description: string;
   metadata?: Record<string, unknown>;
+  requestId?: string;
 }) {
   try {
+    const meta = opts.requestId
+      ? { ...opts.metadata, requestId: opts.requestId }
+      : (opts.metadata ?? {});
     await prisma.auditLog.create({
       data: {
         userId: opts.userId ?? null,
@@ -59,7 +63,7 @@ export async function logAction(opts: {
         entityType: opts.entityType ?? null,
         entityId: opts.entityId ?? null,
         description: opts.description,
-        metadata: JSON.stringify(opts.metadata ?? {}),
+        metadata: JSON.stringify(meta),
       },
     });
   } catch {

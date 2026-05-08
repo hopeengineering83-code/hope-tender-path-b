@@ -5,6 +5,7 @@ import { analyzeWithAI, isAIEnabled } from "../../../../../lib/ai";
 import { analyzeTender } from "../../../../../lib/engine/analysis";
 import { logAction } from "../../../../../lib/audit";
 import { rateLimit, AI_RATE_LIMIT } from "../../../../../lib/rate-limit";
+import { extractRequestId } from "../../../../../lib/request-id";
 
 // Vercel route timeout — Claude tender analysis needs >10s default.
 // 60 = Hobby max; Pro applies its own plan limit when exceeded.
@@ -44,7 +45,8 @@ async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   }
 }
 
-export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const requestId = extractRequestId(req);
   const userId = await getSession();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
@@ -201,6 +203,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       entityId: id,
       description: `Analyzed tender "${tenderRecord.title}" — ${analysisResult.requirementCount} requirements extracted${analysisResult.fallback ? " using fallback" : ""}`,
       metadata: { ai: analysisResult.ai, fallback: analysisResult.fallback, requirementCount: analysisResult.requirementCount },
+      requestId,
     });
 
     const updated = await prisma.tender.findUnique({
