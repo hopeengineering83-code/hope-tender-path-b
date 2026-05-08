@@ -1,6 +1,49 @@
 import { NextResponse } from "next/server";
 import { prisma, prismaReady } from "../../../lib/prisma";
 
+const AI_PROBE_TIMEOUT_MS = 5_000;
+
+async function probeWithTimeout(fn: () => Promise<{ ok: boolean; detail: string }>): Promise<{ ok: boolean; detail: string }> {
+  return Promise.race([
+    fn(),
+    new Promise<{ ok: boolean; detail: string }>((resolve) =>
+      setTimeout(() => resolve({ ok: false, detail: "Timed out after 5s" }), AI_PROBE_TIMEOUT_MS)
+    ),
+  ]);
+}
+
+async function probeAnthropic(): Promise<{ ok: boolean; detail: string }> {
+  const key = process.env.ANTHROPIC_API_KEY;
+  if (!key) return { ok: false, detail: "ANTHROPIC_API_KEY not set" };
+  try {
+    const res = await fetch("https://api.anthropic.com/v1/models", {
+      headers: { "x-api-key": key, "anthropic-version": "2023-06-01" },
+    });
+    if (res.ok) {
+      const data = await res.json() as { data?: unknown[] };
+      return { ok: true, detail: `Reachable — ${Array.isArray(data.data) ? data.data.length : "?"} models available` };
+    }
+    return { ok: false, detail: `HTTP ${res.status} — ${res.statusText}` };
+  } catch (e) {
+    return { ok: false, detail: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+async function probeGemini(): Promise<{ ok: boolean; detail: string }> {
+  const key = process.env.GEMINI_API_KEY;
+  if (!key) return { ok: false, detail: "GEMINI_API_KEY not set" };
+  try {
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${key}`);
+    if (res.ok) {
+      const data = await res.json() as { models?: unknown[] };
+      return { ok: true, detail: `Reachable — ${Array.isArray(data.models) ? data.models.length : "?"} models available` };
+    }
+    return { ok: false, detail: `HTTP ${res.status} — ${res.statusText}` };
+  } catch (e) {
+    return { ok: false, detail: e instanceof Error ? e.message : String(e) };
+  }
+}
+
 export async function GET() {
   const checks: Record<string, { ok: boolean; detail: string }> = {};
 
@@ -31,9 +74,6 @@ export async function GET() {
   };
 
   // Required env vars (presence only — values are never returned).
-  // The AI provider requirement is "either ANTHROPIC_API_KEY or GEMINI_API_KEY"
-  // (Claude preferred; Gemini fallback + primary CV/project extraction engine).
-  // At least one must be set for the app to function.
   const hasAnthropic = Boolean(process.env.ANTHROPIC_API_KEY);
   const hasGemini = Boolean(process.env.GEMINI_API_KEY);
   const hasAnyAIKey = hasAnthropic || hasGemini;
@@ -48,6 +88,17 @@ export async function GET() {
     ].join(", "),
   };
 
-  const allOk = Object.values(checks).every((c) => c.ok);
-  return NextResponse.json({ ok: allOk, checks }, { status: allOk ? 200 : 503 });
+  // AI provider connectivity — lightweight model-list probes (read-only, no cost)
+  [checks.anthropic, checks.gemini] = await Promise.all([
+    probeWithTimeout(probeAnthropic),
+    probeWithTimeout(probeGemini),
+  ]);
+
+  // Overall: database + session + at least one AI provider reachable
+  const aiOk = checks.anthropic.ok || checks.gemini.ok;
+  const allOk = checks.database.ok && checks.session.ok && aiOk;
+  return NextResponse.json(
+    { ok: allOk, checks, aiProvider: checks.anthropic.ok ? "anthropic" : checks.gemini.ok ? "gemini" : "none" },
+    { status: allOk ? 200 : 503 }
+  );
 }
