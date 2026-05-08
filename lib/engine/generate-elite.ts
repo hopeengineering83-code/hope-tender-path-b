@@ -873,8 +873,15 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   // pipeline keeps room for generation. Skipping this on a slow
   // network just means experts/projects keep their lexical order —
   // PR Q's hard sector filter still applies.
+  // PR WW — tier-aware auto-rematch. On Tier 1 the rematch's 12-perspective
+  // batch can hit the rate limit; skip it entirely and rely on lexical +
+  // sector-filter scoring (PR Q). Manual "Re-score" button still works
+  // independently per-tender. Tier 2+ keeps the auto-rematch with the
+  // 18s budget guard (PR OO).
+  const tierForRematch = (process.env.ANTHROPIC_TIER || "").trim();
+  const AUTO_REMATCH_DISABLED_BY_TIER = tierForRematch === "1";
   const AUTO_REMATCH_BUDGET_MS = Number(process.env.AUTO_REMATCH_BUDGET_MS) || 18_000;
-  if (isAIEnabled() && (experts.length > 0 || projects.length > 0)) {
+  if (!AUTO_REMATCH_DISABLED_BY_TIER && isAIEnabled() && (experts.length > 0 || projects.length > 0)) {
     try {
       const { aiRematchExperts, aiRematchProjects } = await import("./ai-multi-perspective-matcher");
       const tenderRequirementsText = [
@@ -2047,12 +2054,20 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   // high would force the AI to fabricate content to satisfy axes the
   // vault data can't support. 82 is the empirical sweet spot.
   const QUALITY_REFINEMENT_THRESHOLD = Number(process.env.QUALITY_REFINEMENT_THRESHOLD) || 82;
-  // PR QQ — allow up to 2 refinement attempts. If the first pass
-  // improves the score by < 5 points but the score is still below
-  // threshold, the second pass targets the still-weak axes with the
-  // first refinement's output as the starting point. Caps at 2 because
-  // a third pass rarely improves and burns AI budget.
-  const MAX_REFINEMENT_ATTEMPTS = Number(process.env.MAX_REFINEMENT_ATTEMPTS) || 2;
+  // PR WW — tier-aware refinement attempt cap. The pre-PR-WW default
+  // was 2 (Tier 3+ comfortable). On Tier 1/2 the second attempt risks
+  // hitting the per-minute output-token rate limit and returning 429.
+  // New default by tier:
+  //   Tier 1 (10K/min): 0 attempts — refinement skipped, deterministic
+  //                     post-passes do the heavy lifting
+  //   Tier 2 (16K/min, default): 1 attempt
+  //   Tier 3+ (80K/min): 2 attempts
+  // Override with MAX_REFINEMENT_ATTEMPTS env var.
+  const tierForRefinement = (process.env.ANTHROPIC_TIER || "").trim();
+  const tierDefaultAttempts = tierForRefinement === "1" ? 0
+    : tierForRefinement === "3" || tierForRefinement === "4" ? 2
+    : 1; // Tier 2 default
+  const MAX_REFINEMENT_ATTEMPTS = Number(process.env.MAX_REFINEMENT_ATTEMPTS) || tierDefaultAttempts;
   // Score the HUMANIZED markdown (PR #245) — refinement should evaluate
   // the same text that's about to be rendered to DOCX, not the
   // pre-humanize version which still contained AI-trace patterns.
