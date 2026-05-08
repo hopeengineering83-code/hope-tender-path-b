@@ -34,6 +34,7 @@ export async function GET(req: Request) {
   const projects = await prisma.project.findMany({
     where: {
       companyId: company.id,
+      deletedAt: null,
       ...(trustLevel ? { trustLevel } : {}),
       ...(q ? { OR: [{ name: { contains: q } }, { clientName: { contains: q } }, { sector: { contains: q } }] } : {}),
     },

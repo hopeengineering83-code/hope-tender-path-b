@@ -173,12 +173,15 @@ model Expert {
   // Source document that produced this record
   sourceDocumentId String?
   sourceDocument   CompanyDocument? @relation(fields: [sourceDocumentId], references: [id], onDelete: SetNull)
+  deletedAt        DateTime?
+  deletedBy        String?
   createdAt        DateTime         @default(now())
   updatedAt        DateTime         @updatedAt
   tenderMatches    TenderExpertMatch[]
 
   @@index([companyId])
   @@index([trustLevel])
+  @@index([deletedAt])
 }
 
 // trustLevel values: REGEX_DRAFT | AI_DRAFT | REVIEWED
@@ -205,12 +208,15 @@ model Project {
   sourceDocumentId String?
   sourceDocument   CompanyDocument? @relation(fields: [sourceDocumentId], references: [id], onDelete: SetNull)
   evidences     ProjectEvidence[]
+  deletedAt     DateTime?
+  deletedBy     String?
   createdAt     DateTime         @default(now())
   updatedAt     DateTime         @updatedAt
   tenderMatches TenderProjectMatch[]
 
   @@index([companyId])
   @@index([trustLevel])
+  @@index([deletedAt])
 }
 
 model ProjectEvidence {

@@ -39,6 +39,7 @@ export async function GET(req: Request) {
   const experts = await prisma.expert.findMany({
     where: {
       companyId: company.id,
+      deletedAt: null,
       ...(trustLevel ? { trustLevel } : {}),
       ...(q ? { OR: [{ fullName: { contains: q } }, { title: { contains: q } }] } : {}),
     },
