@@ -291,6 +291,9 @@ type Tender = {
   expertMatches?: ExpertMatch[];
   projectMatches?: ProjectMatch[];
   complianceMatrix?: ComplianceMatrixEntry[];
+  bidOutcome?: string | null;
+  bidOutcomeNote?: string | null;
+  bidOutcomeAt?: string | Date | null;
 };
 
 const CATEGORIES = ["General", "IT", "Construction", "Services", "Consulting", "Supply", "Healthcare", "Education", "Other"];
@@ -322,6 +325,9 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [error, setError] = useState("");
   const [aiProposal, setAiProposal] = useState("");
+  const [bidOutcome, setBidOutcome] = useState(initial.bidOutcome ?? "");
+  const [bidOutcomeNote, setBidOutcomeNote] = useState(initial.bidOutcomeNote ?? "");
+  const [savingOutcome, setSavingOutcome] = useState(false);
   const [form, setForm] = useState({
     title: initial.title,
     reference: initial.reference ?? "",
@@ -493,6 +499,22 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
 
   function downloadZip() {
     window.open(`/api/tenders/${tender.id}/download?type=zip`, "_blank");
+  }
+
+  async function saveBidOutcome() {
+    setSavingOutcome(true);
+    setError("");
+    try {
+      const res = await fetch(`/api/tenders/${tender.id}/bid-outcome`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ bidOutcome: bidOutcome || null, bidOutcomeNote: bidOutcomeNote || null }),
+      });
+      if (!res.ok) { const d = await res.json().catch(() => ({})); setError((d as { error?: string }).error || "Failed to save bid outcome"); return; }
+      const updated = await res.json() as { tender: { bidOutcome?: string | null; bidOutcomeNote?: string | null; bidOutcomeAt?: string | null } };
+      setTender((prev) => ({ ...prev, bidOutcome: updated.tender.bidOutcome, bidOutcomeNote: updated.tender.bidOutcomeNote, bidOutcomeAt: updated.tender.bidOutcomeAt }));
+    } catch { setError("Network error saving bid outcome"); }
+    finally { setSavingOutcome(false); }
   }
 
   async function submitReview(docId: string, reviewStatus: string) {
@@ -763,6 +785,40 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
                 <div className="md:col-span-2"><dt className="text-sm text-slate-500">Analysis Summary</dt><dd className="mt-1 whitespace-pre-wrap text-slate-900">{tender.analysisSummary || "—"}</dd></div>
                 <div className="md:col-span-2"><dt className="text-sm text-slate-500">Evaluation Methodology</dt><dd className="mt-1 whitespace-pre-wrap text-slate-900">{tender.evaluationMethodology || "—"}</dd></div>
                 <div className="md:col-span-2"><dt className="text-sm text-slate-500">Notes</dt><dd className="mt-1 whitespace-pre-wrap text-slate-900">{tender.notes || "—"}</dd></div>
+                <div className="md:col-span-2 pt-2 border-t">
+                  <dt className="text-sm font-medium text-slate-700 mb-2">Bid Outcome</dt>
+                  <dd>
+                    <div className="flex flex-wrap items-start gap-3">
+                      <select
+                        value={bidOutcome}
+                        onChange={(e) => setBidOutcome(e.target.value)}
+                        className="rounded-lg border px-3 py-2 text-sm"
+                      >
+                        <option value="">Not recorded</option>
+                        <option value="WON">Won</option>
+                        <option value="LOST">Lost</option>
+                        <option value="WITHDRAWN">Withdrawn</option>
+                        <option value="PENDING">Pending result</option>
+                      </select>
+                      <input
+                        value={bidOutcomeNote}
+                        onChange={(e) => setBidOutcomeNote(e.target.value)}
+                        placeholder="Optional note (reason for loss, award value, etc.)"
+                        className="flex-1 min-w-[200px] rounded-lg border px-3 py-2 text-sm"
+                      />
+                      <button
+                        onClick={saveBidOutcome}
+                        disabled={savingOutcome}
+                        className="rounded-lg bg-slate-800 px-4 py-2 text-sm text-white hover:bg-slate-700 disabled:opacity-50"
+                      >
+                        {savingOutcome ? "Saving..." : "Save Outcome"}
+                      </button>
+                    </div>
+                    {tender.bidOutcomeAt && (
+                      <p className="mt-1 text-xs text-slate-400">Recorded {formatDate(tender.bidOutcomeAt)}</p>
+                    )}
+                  </dd>
+                </div>
               </dl>
             )}
           </div>

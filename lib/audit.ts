@@ -40,7 +40,8 @@ export type AuditAction =
   | "TENDER_CONTROL_MILESTONE"
   | "TENDER_CONTROL_TASK"
   | "TENDER_CONTROL_RISK"
-  | "TENDER_CONTROL_COMMERCIAL_ASSUMPTION";
+  | "TENDER_CONTROL_COMMERCIAL_ASSUMPTION"
+  | "TENDER_BID_OUTCOME_SET";
 
 export async function logAction(opts: {
   userId?: string;
