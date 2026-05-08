@@ -20,6 +20,7 @@ import { cleanTenderTitle, cleanClientName, formatRequirementLine } from "../../
 import { logAction } from "../../../../../lib/audit";
 import { extractRequestId } from "../../../../../lib/request-id";
 import { createJob, advanceJob, completeJob, failJob } from "../../../../../lib/job-store";
+import { createNotification } from "../../../../../lib/notifications";
 import { childLogger, reportError, time } from "../../../../../lib/observability";
 import { Document, HeadingLevel, Packer, Paragraph, TextRun } from "docx";
 
@@ -387,6 +388,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const updatedTender = await prisma.tender.findFirst({ where: { id, userId }, include: { generatedDocuments: { orderBy: { exactOrder: "asc" } } } });
     const jobResult = { warnings, supportDocumentCount, letterheadAppliedCount };
     completeJob(job.id, jobResult);
+    void createNotification({ userId, type: "TENDER_GENERATED", title: `Documents generated for "${tender.title}"`, body: `${(updatedTender?.generatedDocuments ?? []).length} document(s) ready for review.`, entityType: "Tender", entityId: id, link: `/dashboard/tenders/${id}` });
     return NextResponse.json({ success: true, jobId: job.id, tender: updatedTender, warnings, plannedRecordCount, supportDocumentCount, letterheadAppliedCount, submissionPlan: explicitSubmissionScope ? { plannedTargetCount: plannedTargetFiles.length, missing: missingPlanFiles.map((file) => file.exactFileName), extras: extraGeneratedDocs.map((doc) => doc.exactFileName ?? doc.name ?? doc.documentType ?? doc.id ?? "document") } : null });
   } catch (error) {
     failJob(job.id, error instanceof Error ? error.message : String(error));

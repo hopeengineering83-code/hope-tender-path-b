@@ -6,6 +6,7 @@ import { analyzeTender } from "../../../../../lib/engine/analysis";
 import { logAction } from "../../../../../lib/audit";
 import { rateLimit, AI_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import { extractRequestId } from "../../../../../lib/request-id";
+import { createNotification } from "../../../../../lib/notifications";
 
 // Vercel route timeout — Claude tender analysis needs >10s default.
 // 60 = Hobby max; Pro applies its own plan limit when exceeded.
@@ -211,6 +212,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       include: { requirements: true, files: true, complianceGaps: true, generatedDocuments: true },
     });
 
+    void createNotification({ userId, type: "TENDER_ANALYZED", title: `Analysis complete for "${tenderRecord.title}"`, body: `${analysisResult.requirementCount} requirements extracted${analysisResult.fallback ? " (regex fallback)" : " by AI"}.`, entityType: "Tender", entityId: id, link: `/dashboard/tenders/${id}` });
     return NextResponse.json({ success: true, ...analysisResult, tender: updated });
   } catch (error) {
     console.error("Analysis route error:", error);

@@ -6,6 +6,7 @@ import { LogoutButton } from "../../components/logout-button";
 import { NavLinks } from "../../components/nav-links";
 import { MobileSidebarToggle } from "../../components/mobile-sidebar-toggle";
 import type { ReactNode } from "react";
+import { NotificationBell } from "../components/notification-bell";
 
 const NAV_GROUPS_BASE = [
   {
@@ -59,9 +60,10 @@ export default async function DashboardLayout({ children }: { children: ReactNod
   // PR #253 — parallelize the user + company fetch. These two queries
   // are independent; running them in parallel saves ~1 round-trip
   // (typically 30-80ms) on every dashboard page load.
-  const [user, company] = await Promise.all([
+  const [user, company, unreadCount] = await Promise.all([
     prisma.user.findUnique({ where: { id: userId } }),
     prisma.company.findUnique({ where: { userId } }),
+    prisma.notification.count({ where: { userId, readAt: null } }).catch(() => 0),
   ]);
   if (!user) redirect("/login");
 
@@ -111,6 +113,9 @@ export default async function DashboardLayout({ children }: { children: ReactNod
       </aside>
 
       <main id="main-content" className="flex-1 overflow-auto" tabIndex={-1}>
+        <div className="sticky top-0 z-30 flex justify-end border-b bg-white/90 px-4 py-2 backdrop-blur-sm lg:px-8">
+          <NotificationBell initialUnread={unreadCount} />
+        </div>
         <div className="mx-auto max-w-7xl p-4 lg:p-8">{children}</div>
       </main>
     </div>
