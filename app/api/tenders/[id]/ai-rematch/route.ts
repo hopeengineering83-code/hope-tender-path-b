@@ -264,19 +264,44 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     return NextResponse.json({ error: "AI rematch returned no usable assessments.", code: "NO_ASSESSMENTS" }, { status: 502 });
   }
 
-  const selectedExpertIds = expertBatch
+  const aiSelectedExpertIds = expertBatch
     ? selectBestAvailable(expertBatch.assessments, selectionLimit(tender.requirements, "EXPERT", expertBatch.assessments.length))
     : new Set<string>();
-  const selectedProjectIds = projectBatch
+  const aiSelectedProjectIds = projectBatch
     ? selectBestAvailable(projectBatch.assessments, selectionLimit(tender.requirements, "PROJECT_EXPERIENCE", projectBatch.assessments.length))
     : new Set<string>();
 
-  if (applySelections) {
-    await Promise.all([
-      prisma.tenderExpertMatch.updateMany({ where: { tenderId }, data: { isSelected: false } }),
-      prisma.tenderProjectMatch.updateMany({ where: { tenderId }, data: { isSelected: false } }),
-    ]);
-  }
+  // PR RR — UNION selection semantics. The pre-fix behaviour was:
+  // "applySelections=true" cleared ALL existing isSelected to false then
+  // set true only for AI-recommended candidates. Bug: if a user had
+  // manually selected 8 experts but the AI batch returned only 5
+  // usable assessments (or zero — the "no usable assessments" case
+  // shown in production), the user's other selections were silently
+  // wiped.
+  //
+  // New behaviour: AI selections AUGMENT the user's existing manual
+  // selections — they never replace them. Manual selections always
+  // persist; AI recommendations are added on top so the bid team can
+  // see both their picks and the AI's picks.
+  //
+  // Result: "selected projects and experts must be included and added
+  // to the main proposal even if the score is below 90 percent" — the
+  // user's exact requirement.
+  const userSelectedExpertIds = new Set(
+    tender.expertMatches.filter((m) => m.isSelected).map((m) => m.expert.id)
+  );
+  const userSelectedProjectIds = new Set(
+    tender.projectMatches.filter((m) => m.isSelected).map((m) => m.project.id)
+  );
+  const selectedExpertIds = new Set<string>([...userSelectedExpertIds, ...aiSelectedExpertIds]);
+  const selectedProjectIds = new Set<string>([...userSelectedProjectIds, ...aiSelectedProjectIds]);
+
+  // applySelections=true means PERSIST the union back to the DB so the
+  // main engine picks them up. We do NOT clear anything first — the
+  // updateMany.set-isSelected-false call from the pre-fix version is
+  // gone. Each match record we touch below sets isSelected to its
+  // membership in the union; matches we DON'T touch keep their
+  // existing state.
 
   const expertBatchForResponse = expertBatch
     ? { ...expertBatch, assessments: expertBatch.assessments.map((assessment) => withAppliedSelection(assessment, selectedExpertIds)) }
