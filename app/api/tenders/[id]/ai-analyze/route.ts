@@ -4,6 +4,7 @@ import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { analyzeWithAI, isAIEnabled } from "../../../../../lib/ai";
 import { analyzeTender } from "../../../../../lib/engine/analysis";
 import { logAction } from "../../../../../lib/audit";
+import { rateLimit, AI_RATE_LIMIT } from "../../../../../lib/rate-limit";
 
 // Vercel route timeout — Claude tender analysis needs >10s default.
 // 60 = Hobby max; Pro applies its own plan limit when exceeded.
@@ -46,6 +47,14 @@ async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
 export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const userId = await getSession();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const rl = rateLimit(`analyze:${userId}`, AI_RATE_LIMIT);
+  if (!rl.allowed) {
+    return NextResponse.json(
+      { error: "Rate limit exceeded — too many analysis requests. Please wait a minute and retry.", retryAfter: Math.ceil((rl.resetAt - Date.now()) / 1000) },
+      { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } }
+    );
+  }
 
   await prismaReady;
   const { id } = await params;

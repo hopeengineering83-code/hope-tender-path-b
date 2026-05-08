@@ -13,6 +13,7 @@ export const dynamic = "force-dynamic";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { generateTenderDocuments } from "../../../../../lib/engine/generate-elite";
 import { applyActiveUploadedLetterheadToTenderDocuments } from "../../../../../lib/engine/apply-active-letterhead";
+import { rateLimit, AI_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import { buildSubmissionPlan, findExtraGeneratedDocuments, findMissingGeneratedDocuments, generatedDocumentSubmissionKey, hasExplicitSubmissionScope, plannedSubmissionTargetFiles, plannedSubmissionTargetKeys, type SubmissionPlanFile } from "../../../../../lib/engine/submission-plan";
 import { polishBenchmarkOutput } from "../../../../../lib/engine/benchmark-output-polisher";
 import { cleanTenderTitle, cleanClientName, formatRequirementLine } from "../../../../../lib/engine/proposal-labels";
@@ -290,6 +291,15 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   }
 
   const userId = actor.id;
+
+  const rl = rateLimit(`gen:${userId}`, AI_RATE_LIMIT);
+  if (!rl.allowed) {
+    return NextResponse.json(
+      { error: "Rate limit exceeded — too many generation requests. Please wait a minute and retry.", retryAfter: Math.ceil((rl.resetAt - Date.now()) / 1000) },
+      { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } }
+    );
+  }
+
   await prismaReady;
   const { id } = await params;
 

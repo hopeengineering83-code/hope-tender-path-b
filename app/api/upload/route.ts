@@ -5,6 +5,7 @@ import { extractTextFromBuffer, detectCategoryFromFile, getFileTypeLabel, isMean
 import { logAction } from "../../../lib/audit";
 import { ensureCompanyForUser } from "../../../lib/company-workspace";
 import { importCompanyKnowledgeFromDocuments } from "../../../lib/company-knowledge-import-safe";
+import { rateLimit, UPLOAD_RATE_LIMIT } from "../../../lib/rate-limit";
 
 // Vercel route timeout — file ingestion calls Claude for expert/project
 // extraction during knowledge import. 60 = Hobby max.
@@ -29,6 +30,14 @@ function extractionMetadata(fileTypeLabel: string, extractedText: string) {
 export async function POST(req: Request) {
   const userId = await getSession();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const rl = rateLimit(`upload:${userId}`, UPLOAD_RATE_LIMIT);
+  if (!rl.allowed) {
+    return NextResponse.json(
+      { error: "Upload rate limit exceeded — maximum 5 uploads per minute. Please wait and retry.", retryAfter: Math.ceil((rl.resetAt - Date.now()) / 1000) },
+      { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } }
+    );
+  }
 
   await prismaReady;
 

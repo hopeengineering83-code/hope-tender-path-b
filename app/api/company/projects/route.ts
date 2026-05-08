@@ -18,19 +18,35 @@ function normalizeProject(p: Record<string, unknown>) {
   return { ...p, serviceAreas: safeParseArr(p.serviceAreas) };
 }
 
-export async function GET() {
+export async function GET(req: Request) {
   const userId = await getSession();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   await prismaReady;
 
+  const { searchParams } = new URL(req.url);
+  const limit = Math.min(Number(searchParams.get("limit") ?? "100"), 200);
+  const cursor = searchParams.get("cursor") ?? undefined;
+  const trustLevel = searchParams.get("trustLevel") ?? undefined;
+  const q = searchParams.get("q") ?? "";
+
   const company = await ensureCompanyForUser(prisma, userId);
 
   const projects = await prisma.project.findMany({
-    where: { companyId: company.id },
+    where: {
+      companyId: company.id,
+      ...(trustLevel ? { trustLevel } : {}),
+      ...(q ? { OR: [{ name: { contains: q } }, { clientName: { contains: q } }, { sector: { contains: q } }] } : {}),
+    },
     orderBy: [{ trustLevel: "asc" }, { createdAt: "desc" }],
+    take: limit + 1,
+    ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
   });
 
-  return NextResponse.json(projects.map(normalizeProject));
+  const hasMore = projects.length > limit;
+  const items = hasMore ? projects.slice(0, limit) : projects;
+  const nextCursor = hasMore ? items[items.length - 1].id : null;
+
+  return NextResponse.json({ items: items.map(normalizeProject), nextCursor, hasMore });
 }
 
 export async function POST(req: Request) {
