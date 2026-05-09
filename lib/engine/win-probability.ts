@@ -25,6 +25,9 @@
 
 export type WinProbabilityInput = {
   primarySector: string;
+  // Tender-level signals for budget proximity and category alignment bonuses
+  tenderBudget?: number | null;
+  tenderCategory?: string | null;
   // Selected projects with their sectors and contract values
   projects: Array<{
     clientName?: string | null;
@@ -87,7 +90,11 @@ function sectorsOverlap(a: string, b: string[]): boolean {
 }
 
 // ── Axis 1: Evidence match (0–30) ─────────────────────────────────────────
-function scoreEvidenceMatch(primarySector: string, projects: WinProbabilityInput["projects"]): { score: number; notes: string[] } {
+function scoreEvidenceMatch(
+  primarySector: string,
+  projects: WinProbabilityInput["projects"],
+  opts?: { tenderBudget?: number | null; tenderCategory?: string | null },
+): { score: number; notes: string[] } {
   if (projects.length === 0) return { score: 0, notes: ["No reviewed projects selected — evidence score is zero."] };
 
   let matched = 0;
@@ -109,13 +116,27 @@ function scoreEvidenceMatch(primarySector: string, projects: WinProbabilityInput
   else if (projects.length >= 2) base = 5; // projects present but sector mismatch
   else base = 3;
 
-  const score = Math.min(30, base + valueBonus);
   const notes: string[] = [];
   if (matched > 0) notes.push(`${matched} of ${projects.length} project(s) are in the same sector.`);
   else notes.push(`No selected projects match the tender sector (${primarySector}). Add comparable references.`);
   if (hasContractValue > 0) notes.push(`${hasContractValue} project(s) have contract values (evidence quality boost).`);
 
-  return { score, notes };
+  // Budget proximity bonus (+3): at least one project value is within 0.3x–3x of tender budget
+  let budgetBonus = 0;
+  const tb = opts?.tenderBudget;
+  if (tb && tb > 0) {
+    const proximate = projects.some((p) => {
+      if (!p.contractValue || p.contractValue <= 0) return false;
+      const ratio = p.contractValue / tb;
+      return ratio >= 0.3 && ratio <= 3.0;
+    });
+    if (proximate) {
+      budgetBonus = 3;
+      notes.push("At least one project is at a comparable contract scale to the tender budget (+3 pts).");
+    }
+  }
+
+  return { score: Math.min(30, base + valueBonus + budgetBonus), notes };
 }
 
 // ── Axis 2: Team strength (0–25) ──────────────────────────────────────────
@@ -213,7 +234,7 @@ function scoreHistoricalOutcomes(
 
 // ── Public scorer ─────────────────────────────────────────────────────────
 export function computeWinProbability(input: WinProbabilityInput): WinProbabilityResult {
-  const ev = scoreEvidenceMatch(input.primarySector, input.projects);
+  const ev = scoreEvidenceMatch(input.primarySector, input.projects, { tenderBudget: input.tenderBudget, tenderCategory: input.tenderCategory });
   const ts = scoreTeamStrength(input.primarySector, input.experts);
   const cp = scoreCompliancePosture(input.complianceGaps);
   const ho = scoreHistoricalOutcomes(input.primarySector, input.bidOutcomes);

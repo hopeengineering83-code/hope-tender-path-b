@@ -2311,6 +2311,8 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     : "";
   const winProb = computeWinProbability({
     primarySector: intelligence.primarySector,
+    tenderBudget: (tender as { budget?: number | null }).budget ?? null,
+    tenderCategory: tender.category ?? null,
     projects: projects as Parameters<typeof computeWinProbability>[0]["projects"],
     experts: experts as Parameters<typeof computeWinProbability>[0]["experts"],
     complianceGaps: tender.complianceGaps,

@@ -123,6 +123,8 @@ export async function GET(
   // actionable per-axis scores with explanatory notes.
   const winProbability = computeWinProbability({
     primarySector: tender.category ?? "General",
+    tenderBudget: (tender as { budget?: number | null }).budget ?? null,
+    tenderCategory: tender.category ?? null,
     projects: tender.projectMatches.map((m) => ({
       sectors: (m.project as { sectors?: string | null }).sectors ?? (m.project.sector ? JSON.stringify([m.project.sector]) : null),
       contractValue: (m.project as { contractValue?: number | null }).contractValue ?? null,

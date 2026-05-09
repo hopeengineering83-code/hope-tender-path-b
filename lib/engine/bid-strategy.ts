@@ -110,7 +110,7 @@ export interface BidStrategy {
   recommendation: BidRecommendation;
   bidPosture: BidPosture;
   rationale: string;
-  topRisks: Array<{ title: string; severity: "HIGH" | "MEDIUM" | "LOW"; mitigation: string }>;
+  topRisks: Array<{ title: string; severity: "HIGH" | "MEDIUM" | "LOW"; mitigation: string; category: "COMPLIANCE" | "CAPABILITY" | "PORTFOLIO" | "ELIGIBILITY" }>;
   topAdvantages: Array<{ title: string; evidenceAnchor: string }>;
   dimensionScores: {
     capabilityCoverage: number;
@@ -322,6 +322,7 @@ function buildTopRisks(
       title: `${compliance.criticalGaps} unresolved CRITICAL compliance gap${compliance.criticalGaps > 1 ? "s" : ""}`,
       severity: "HIGH",
       mitigation: "Resolve every CRITICAL gap before generation. The submission engine blocks ZIP export when CRITICAL gaps are unresolved.",
+      category: "COMPLIANCE",
     });
   }
 
@@ -330,6 +331,7 @@ function buildTopRisks(
       title: `Capability gap: ${capability.missingDisciplines.slice(0, 3).join(", ")}`,
       severity: capability.missingDisciplines.length >= 3 ? "HIGH" : "MEDIUM",
       mitigation: "Either propose a JV/subcontract with a firm covering the missing discipline, OR add reviewed experts to the knowledge vault before bidding.",
+      category: "CAPABILITY",
     });
   }
 
@@ -338,6 +340,7 @@ function buildTopRisks(
       title: "Project portfolio shows weak fit to this tender",
       severity: "HIGH",
       mitigation: "Add at least 2 directly-comparable reviewed project references to the knowledge vault. Without strong portfolio anchors the proposal cannot demonstrate prior delivery.",
+      category: "PORTFOLIO",
     });
   }
 
@@ -346,6 +349,7 @@ function buildTopRisks(
       title: `Eligibility artifacts missing: ${eligibility.missingArtifacts.join("; ")}`,
       severity: eligibility.missingArtifacts.length >= 2 ? "HIGH" : "MEDIUM",
       mitigation: "Upload the missing artifacts to the knowledge vault. Most tenders block bids that lack registration / audited statements / minimum portfolio depth.",
+      category: "ELIGIBILITY",
     });
   }
 
