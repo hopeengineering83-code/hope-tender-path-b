@@ -520,6 +520,7 @@ async function bootstrap(client: PrismaClient): Promise<void> {
     FOREIGN KEY ("tenderId") REFERENCES "Tender"("id") ON DELETE CASCADE
   )`);
 
+
   // ── indexes (each wrapped so one failure never blocks the rest) ──────────
   const idxStatements = [
     `CREATE INDEX IF NOT EXISTS "CompanyDocument_companyId_idx" ON "CompanyDocument"("companyId")`,
