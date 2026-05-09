@@ -4,6 +4,7 @@ export type ProposalRuntimeProfile = {
   proposalAiTimeoutMs: number;
   routeMaxDurationSeconds: number;
   safetyBufferSeconds: number;
+  longRouteExplicitlyEnabled: boolean;
   canRunProposalGeneration: boolean;
   warnings: string[];
   recommendations: string[];
@@ -16,40 +17,44 @@ function readNumberEnv(name: string): number | null {
   return Number.isFinite(value) ? value : null;
 }
 
-function configuredMaxOutputTokens(tier: string | null): number {
-  const explicit = readNumberEnv("ANTHROPIC_MAX_OUTPUT_TOKENS");
-  if (explicit && explicit > 0) return Math.min(explicit, 64_000);
-  return tier === "1" ? 8_000 : 16_000;
+function longRouteEnabled(routeMaxDurationSeconds: number): boolean {
+  const explicit = (process.env.AI_PROPOSAL_LONG_ROUTE_ENABLED || "").trim().toLowerCase();
+  return ["1", "true", "yes"].includes(explicit) && routeMaxDurationSeconds >= 240;
 }
 
-function configuredProposalTimeoutMs(tier: string | null): number {
-  const explicit = readNumberEnv("AI_PROPOSAL_TIMEOUT_MS");
-  if (explicit && explicit >= 5_000 && explicit <= 600_000) return explicit;
-  return tier === "1" ? 45_000 : 220_000;
-}
-
-export function getProposalRuntimeProfile(routeMaxDurationSeconds = 300): ProposalRuntimeProfile {
+export function getProposalRuntimeProfile(routeMaxDurationSeconds = 60): ProposalRuntimeProfile {
   const tier = (process.env.ANTHROPIC_TIER || "").trim() || null;
-  const maxOutputTokens = configuredMaxOutputTokens(tier);
-  const proposalAiTimeoutMs = configuredProposalTimeoutMs(tier);
-  const safetyBufferSeconds = 30;
+  const longRouteExplicitlyEnabled = longRouteEnabled(routeMaxDurationSeconds);
+  const explicitTokens = readNumberEnv("ANTHROPIC_MAX_OUTPUT_TOKENS");
+  const explicitTimeout = readNumberEnv("AI_PROPOSAL_TIMEOUT_MS");
+  const maxOutputTokens = explicitTokens && explicitTokens > 0
+    ? Math.min(explicitTokens, 64_000)
+    : longRouteExplicitlyEnabled && tier !== "1"
+      ? 16_000
+      : 8_000;
+  const proposalAiTimeoutMs = explicitTimeout && explicitTimeout >= 5_000 && explicitTimeout <= 600_000
+    ? explicitTimeout
+    : longRouteExplicitlyEnabled && tier !== "1"
+      ? 220_000
+      : 45_000;
+  const safetyBufferSeconds = routeMaxDurationSeconds >= 240 ? 30 : 15;
   const safeBudgetMs = Math.max(5_000, (routeMaxDurationSeconds - safetyBufferSeconds) * 1_000);
   const warnings: string[] = [];
   const recommendations: string[] = [];
 
   if (!tier) {
-    warnings.push("ANTHROPIC_TIER is not set. The app defaults to Tier 2-style 16K output and 220s proposal timeout.");
-    recommendations.push("Set ANTHROPIC_TIER=1 for Vercel Hobby / low Anthropic rate limits, or ANTHROPIC_TIER=2 for Vercel Pro + Anthropic Tier 2.");
+    warnings.push("ANTHROPIC_TIER is not set. The app is using the deploy-safe 8K / 45s profile until long-route capacity is explicitly enabled.");
+    recommendations.push("Set ANTHROPIC_TIER=2 and AI_PROPOSAL_LONG_ROUTE_ENABLED=true only on Vercel Pro/Enterprise or another runtime with a >=240s route budget.");
   }
 
-  if (maxOutputTokens >= 16_000 && routeMaxDurationSeconds < 240) {
-    warnings.push(`Configured output budget is ${maxOutputTokens} tokens but route maxDuration is only ${routeMaxDurationSeconds}s.`);
-    recommendations.push("Use a 300s route cap for 16K proposal generation, or lower ANTHROPIC_MAX_OUTPUT_TOKENS to 8000.");
+  if (maxOutputTokens >= 16_000 && !longRouteExplicitlyEnabled) {
+    warnings.push("16K output is configured without AI_PROPOSAL_LONG_ROUTE_ENABLED=true and a >=240s route budget.");
+    recommendations.push("Enable long-route mode only after confirming the deployment supports long serverless functions, or lower ANTHROPIC_MAX_OUTPUT_TOKENS to 8000.");
   }
 
   if (proposalAiTimeoutMs > safeBudgetMs) {
     warnings.push(`AI proposal timeout ${Math.round(proposalAiTimeoutMs / 1000)}s exceeds safe route budget ${Math.round(safeBudgetMs / 1000)}s.`);
-    recommendations.push(`Set AI_PROPOSAL_TIMEOUT_MS <= ${safeBudgetMs} or increase the route maxDuration.`);
+    recommendations.push(`Set AI_PROPOSAL_TIMEOUT_MS <= ${safeBudgetMs} or use a route/runtime that supports the requested timeout.`);
   }
 
   if (tier === "1" && maxOutputTokens > 8_000) {
@@ -63,6 +68,7 @@ export function getProposalRuntimeProfile(routeMaxDurationSeconds = 300): Propos
     proposalAiTimeoutMs,
     routeMaxDurationSeconds,
     safetyBufferSeconds,
+    longRouteExplicitlyEnabled,
     canRunProposalGeneration: warnings.length === 0,
     warnings,
     recommendations,
