@@ -171,6 +171,15 @@ export async function runTenderEngine(tenderId: string, userId: string) {
       exactOrder: requirement.exactOrder ?? null,
       restrictions: requirement.restrictions ?? null,
       sectionReference: requirement.sectionReference ?? null,
+      // PR XX-G9 — pass through page-level source coordinates when the
+      // requirement extractor populated them. When the extractor doesn't
+      // know, sourceConfidence stays at 0 and the audit-grade UI can
+      // surface a "Bid-Team to confirm source" badge.
+      sourceTenderFileId: requirement.sourceTenderFileId ?? null,
+      sourcePageNumber: requirement.sourcePageNumber ?? null,
+      sourceSectionHeading: requirement.sourceSectionHeading ?? null,
+      sourceExactQuote: requirement.sourceExactQuote ?? null,
+      sourceConfidence: typeof requirement.sourceConfidence === "number" ? requirement.sourceConfidence : 0,
     }));
 
     const compliance = buildCompliance(createdRequirements, knowledge, matching);

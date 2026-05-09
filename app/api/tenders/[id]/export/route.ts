@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getSession } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { validateTender } from "../../../../../lib/engine/validate";
-import { checkExportReadiness, exportReadinessError } from "../../../../../lib/engine/export-readiness";
+import { checkExportReadiness, checkFullExportReadiness, exportReadinessError } from "../../../../../lib/engine/export-readiness";
 import { logAction } from "../../../../../lib/audit";
 
 export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -59,12 +59,16 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       return NextResponse.json({ error: "No generated documents are available for export." }, { status: 400 });
     }
 
-    const readiness = checkExportReadiness(generatedDocuments);
+    // PR XX-G4 — full readiness check: per-document + tender-level blockers
+    // (HIGH evaluator objections, pricing workbook leakage). The export
+    // gate now closes when EITHER set of blockers is non-empty.
+    const readiness = await checkFullExportReadiness({ tenderId: tender.id, docs: generatedDocuments });
     if (!readiness.ok) {
       return NextResponse.json(
         {
-          error: exportReadinessError(readiness.failures),
+          error: exportReadinessError(readiness.failures, readiness.tenderLevelBlockers),
           failures: readiness.failures,
+          tenderLevelBlockers: readiness.tenderLevelBlockers ?? [],
         },
         { status: 409 },
       );

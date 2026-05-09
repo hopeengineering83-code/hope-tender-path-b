@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { requireUser, unauthorizedResponse, forbiddenResponse } from "../../../../../lib/auth";
 import { answerTenderCopilotQuestion } from "../../../../../lib/engine/tender-ai-copilot";
+import { buildEvidenceGraph } from "../../../../../lib/evidence-graph";
 import { logAction } from "../../../../../lib/audit";
 
 export const maxDuration = 60;
@@ -50,10 +51,17 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     .map((log) => `${log.action}: ${short(log.description, 300)}`)
     .slice(0, 15);
 
+  // PR XX-G2 — build the evidence graph once and pass to the Copilot.
+  // The Copilot returns evidenceIds that the server filters against the
+  // graph; hallucinated IDs are dropped before responses leave the box.
+  const company = await prisma.company.findFirst({ where: { userId: actor.id }, select: { id: true } });
+  const evidenceGraph = await buildEvidenceGraph(id, company?.id ?? null);
+
   let response;
   try {
     response = await answerTenderCopilotQuestion({
       question,
+      evidenceGraph,
       context: {
         tenderTitle: tender.title,
         tenderSummary: [
@@ -82,7 +90,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     entityType: "Tender",
     entityId: id,
     description: `${actor.email} asked Tender AI Copilot: ${short(question, 180)}`,
-    metadata: { tenderId: id, question, confidence: response.confidence, riskCount: response.risks.length, actionCount: response.nextActions.length },
+    metadata: { tenderId: id, question, confidence: response.confidence, riskCount: response.risks.length, actionCount: response.nextActions.length, verifiedEvidenceCount: response.evidenceUsed.length, droppedEvidenceCount: response.evidenceDropped?.length ?? 0 },
   });
 
   return NextResponse.json({ success: true, response });

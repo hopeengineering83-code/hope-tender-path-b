@@ -1,4 +1,5 @@
 import { generateWithFallback } from "../ai";
+import { buildEvidencePromptBlock, verifyEvidenceIds, type EvidenceGraph, type EvidenceNode } from "../evidence-graph";
 
 // Per-call wall-clock cap so a hung AI provider doesn't block the route's
 // maxDuration=60s window. Override via COPILOT_TIMEOUT_MS env var.
@@ -37,7 +38,15 @@ export type TenderCopilotContext = {
 export type TenderCopilotResponse = {
   answer: string;
   recommendations: string[];
+  // Free-text references kept for backward compatibility with existing UI.
   evidenceReferences: string[];
+  // PR XX-G2 — verified evidence nodes the AI cited via stable IDs.
+  // Server-side filtered against the evidence graph; hallucinated IDs are
+  // dropped before returning. The UI should prefer this over evidenceReferences.
+  evidenceUsed: EvidenceNode[];
+  // IDs the AI claimed but the graph didn't contain (logged for prompt
+  // tuning; the array is in the response only when it's non-empty).
+  evidenceDropped?: string[];
   risks: Array<{ title: string; severity: "HIGH" | "MEDIUM" | "LOW"; detail: string }>;
   nextActions: Array<{ title: string; owner: "TECHNICAL" | "COMPLIANCE" | "COMMERCIAL" | "PROPOSAL" | "MANAGEMENT"; priority: "HIGH" | "MEDIUM" | "LOW"; detail: string }>;
   confidence: "HIGH" | "MEDIUM" | "LOW";
@@ -51,11 +60,14 @@ CLIENT NAME FIDELITY (CRITICAL): The "Tender:" line in the context is the canoni
 
 EVIDENCE-ONLY: If a fact is not in the supplied context, do NOT fabricate. Set confidence to LOW and explicitly note "Information not available in current tender context — Bid-Team to confirm".
 
+EVIDENCE GRAPH (CRITICAL): When the prompt includes an "EVIDENCE GRAPH" section, treat it as the canonical list of citable IDs. When you reference any requirement, expert, project, document, or compliance row, include its ID in the "evidenceIds" array. Do NOT invent IDs. Do NOT paraphrase IDs. The server filters out unrecognised IDs and only your verified citations are shown to the user.
+
 Return ONLY valid JSON:
 {
   "answer": "direct answer in 3-8 concise paragraphs",
   "recommendations": ["specific recommendation"],
   "evidenceReferences": ["Requirement / Compliance gap / Selected expert / Selected project / Generated document / Audit item used"],
+  "evidenceIds": ["exact ID copied from the EVIDENCE GRAPH block"],
   "risks": [{ "title": "risk", "severity": "HIGH" | "MEDIUM" | "LOW", "detail": "why it matters" }],
   "nextActions": [{ "title": "action", "owner": "TECHNICAL" | "COMPLIANCE" | "COMMERCIAL" | "PROPOSAL" | "MANAGEMENT", "priority": "HIGH" | "MEDIUM" | "LOW", "detail": "exact next step" }],
   "confidence": "HIGH" | "MEDIUM" | "LOW"
@@ -101,10 +113,11 @@ function confidence(value: unknown): "HIGH" | "MEDIUM" | "LOW" {
   return (["HIGH", "MEDIUM", "LOW"].includes(value as string) ? value : "MEDIUM") as "HIGH" | "MEDIUM" | "LOW";
 }
 
-export async function answerTenderCopilotQuestion(input: { question: string; context: TenderCopilotContext }): Promise<TenderCopilotResponse> {
+export async function answerTenderCopilotQuestion(input: { question: string; context: TenderCopilotContext; evidenceGraph?: EvidenceGraph }): Promise<TenderCopilotResponse> {
   const question = input.question.trim();
   if (question.length < 3) throw new Error("Question must be at least 3 characters.");
-  const prompt = `TENDER CONTEXT\n${buildContextText(input.context)}\n\nUSER QUESTION\n${question}\n\nAnswer as Tender AI Copilot using the required JSON shape.`;
+  const evidenceBlock = input.evidenceGraph ? `\n\n${buildEvidencePromptBlock(input.evidenceGraph)}` : "";
+  const prompt = `TENDER CONTEXT\n${buildContextText(input.context)}${evidenceBlock}\n\nUSER QUESTION\n${question}\n\nAnswer as Tender AI Copilot using the required JSON shape.`;
 
   // Try once; if JSON is malformed, retry once before throwing.
   let parsed: Record<string, unknown> | null = null;
@@ -134,5 +147,30 @@ export async function answerTenderCopilotQuestion(input: { question: string; con
       })).slice(0, 10)
     : [];
 
-  return { answer: typeof parsed.answer === "string" ? parsed.answer.slice(0, 4_000) : "No answer returned.", recommendations, evidenceReferences, risks, nextActions, confidence: confidence(parsed.confidence) };
+  // PR XX-G2 — verify AI-claimed evidenceIds against the supplied graph.
+  // Hallucinated IDs are silently dropped before the response leaves the
+  // server. Verified nodes carry stable IDs + snippet + link the UI can
+  // render as "Evidence used" with click-through.
+  let evidenceUsed: EvidenceNode[] = [];
+  let evidenceDropped: string[] = [];
+  if (input.evidenceGraph && Array.isArray(parsed.evidenceIds)) {
+    const claimed = (parsed.evidenceIds as unknown[]).map((v) => (typeof v === "string" ? v : "")).filter(Boolean);
+    const { verified, dropped } = verifyEvidenceIds(input.evidenceGraph, claimed);
+    evidenceUsed = verified.slice(0, 12);
+    evidenceDropped = dropped;
+    if (dropped.length > 0) {
+      console.warn(`[copilot] Dropped ${dropped.length} unrecognised evidenceId(s):`, dropped.slice(0, 5));
+    }
+  }
+
+  return {
+    answer: typeof parsed.answer === "string" ? parsed.answer.slice(0, 4_000) : "No answer returned.",
+    recommendations,
+    evidenceReferences,
+    evidenceUsed,
+    ...(evidenceDropped.length > 0 ? { evidenceDropped } : {}),
+    risks,
+    nextActions,
+    confidence: confidence(parsed.confidence),
+  };
 }

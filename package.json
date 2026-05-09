@@ -6,6 +6,7 @@
     "dev": "next dev",
     "build": "node scripts/check-env.mjs && prisma generate && next build",
     "typecheck": "tsc --noEmit",
+    "test": "node scripts/run-tests.mjs",
     "lint": "next lint || echo 'Next lint is unavailable in this Next.js version; run typecheck and build instead.'",
     "postinstall": "prisma generate",
     "start": "next start",

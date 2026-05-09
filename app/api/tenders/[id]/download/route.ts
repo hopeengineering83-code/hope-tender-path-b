@@ -5,7 +5,7 @@ import { Document, Packer, Paragraph, TextRun } from "docx";
 import { logAction } from "../../../../../lib/audit";
 import { buildSubmissionPlan, findExtraGeneratedDocuments, findMissingGeneratedDocuments, hasExplicitSubmissionScope, plannedSubmissionTargetFiles } from "../../../../../lib/engine/submission-plan";
 import { safeFileBaseName } from "../../../../../lib/engine/proposal-labels";
-import { checkExportReadiness, exportReadinessError } from "../../../../../lib/engine/export-readiness";
+import { checkExportReadiness, checkFullExportReadiness, exportReadinessError } from "../../../../../lib/engine/export-readiness";
 
 function safeParseArr(v: unknown): string[] {
   try {
@@ -201,12 +201,17 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
       return NextResponse.json({ error: "ZIP export blocked by final validation", failures: validationFailures }, { status: 409 });
     }
 
-    const readiness = checkExportReadiness(
-      generatedDocs.map((doc) => ({ ...doc, validationStatus: "VALIDATED" })),
-      { requireFileContent: true },
-    );
+    // PR XX-G4 — ZIP export now also enforces tender-level blockers
+    // (HIGH evaluator objections, pricing leakage). Per-doc check
+    // already passed `validateDocsForExport`; the readiness call adds
+    // the tender-level gate.
+    const readiness = await checkFullExportReadiness({
+      tenderId: tender.id,
+      docs: generatedDocs.map((doc) => ({ ...doc, validationStatus: "VALIDATED" })),
+      requireFileContent: true,
+    });
     if (!readiness.ok) {
-      return NextResponse.json({ error: exportReadinessError(readiness.failures), failures: readiness.failures }, { status: 409 });
+      return NextResponse.json({ error: exportReadinessError(readiness.failures, readiness.tenderLevelBlockers), failures: readiness.failures, tenderLevelBlockers: readiness.tenderLevelBlockers ?? [] }, { status: 409 });
     }
 
     const requiredNames = safeParseArr(tender.exactFileNaming).map(normalizeName);

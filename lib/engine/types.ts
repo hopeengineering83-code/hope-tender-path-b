@@ -24,6 +24,19 @@ export type RequirementDraft = {
   exactOrder?: number | null;
   restrictions?: string | null;
   sectionReference?: string | null;
+  // ─── G9: page-level source coordinates ──────────────────────────────
+  // Populated by the requirement extractor when the source tender file's
+  // page index, section heading, and exact verbatim quote are detected.
+  // Powers the audit-grade "where in the tender does this come from?"
+  // workflow.
+  sourceTenderFileId?: string | null;
+  sourcePageNumber?: number | null;
+  sourceSectionHeading?: string | null;
+  sourceExactQuote?: string | null;
+  // sourceConfidence is `number | undefined` (no `null`) because the
+  // Prisma column has a non-null default of 0 and the create input
+  // type does not accept null.
+  sourceConfidence?: number;
 };
 
 export type CompanyDocumentSnapshot = {

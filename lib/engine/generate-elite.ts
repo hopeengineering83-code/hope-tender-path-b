@@ -2352,35 +2352,39 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   // Keeps only the last 5 versions per tender (oldest pruned automatically).
   // Versions let users compare previous generations and roll back when a
   // regeneration produces worse output than the prior run.
+  // PR XX-A — switched to typed Prisma access. Bootstrap migration in
+  // lib/prisma.ts:508 still creates the table for envs without Prisma
+  // migrations, so this is a pure type-safety upgrade.
   try {
-    const existingVersions = await prisma.$queryRawUnsafe<Array<{ version: number; id: string }>>(
-      `SELECT "version", "id" FROM "ProposalVersion" WHERE "tenderId" = $1 ORDER BY "version" DESC`,
-      tenderId
-    );
+    const existingVersions = await prisma.proposalVersion.findMany({
+      where: { tenderId },
+      select: { id: true, version: true },
+      orderBy: { version: "desc" },
+    });
     const nextVersion = existingVersions.length > 0 ? existingVersions[0].version + 1 : 1;
 
-    await prisma.$executeRawUnsafe(
-      `INSERT INTO "ProposalVersion" ("id","tenderId","version","markdown","fileContent","benchmarkScore","qualityScore","winProbabilityScore","mode","summary","createdAt")
-       VALUES (gen_random_uuid(),$1,$2,$3,$4,$5,$6,$7,$8,$9,NOW())`,
-      tenderId,
-      nextVersion,
-      workingMarkdown,
-      fileContent,
-      finalized.score.score,
-      qualityScore.total,
-      winProb.score,
-      mode,
-      summary.slice(0, 500),
-    );
+    await prisma.proposalVersion.create({
+      data: {
+        tenderId,
+        version: nextVersion,
+        markdown: workingMarkdown,
+        fileContent,
+        benchmarkScore: finalized.score.score,
+        qualityScore: qualityScore.total,
+        winProbabilityScore: winProb.score,
+        mode,
+        summary: summary.slice(0, 500),
+      },
+    });
     console.info(`[generate-elite] Proposal version ${nextVersion} saved.`);
 
     // Prune versions beyond the last 5.
     if (existingVersions.length >= 5) {
       const idsToDelete = existingVersions.slice(4).map((v) => v.id);
-      for (const vId of idsToDelete) {
-        await prisma.$executeRawUnsafe(`DELETE FROM "ProposalVersion" WHERE "id" = $1`, vId);
+      if (idsToDelete.length > 0) {
+        await prisma.proposalVersion.deleteMany({ where: { id: { in: idsToDelete } } });
+        console.info(`[generate-elite] Pruned ${idsToDelete.length} old proposal version(s) (keeping last 5).`);
       }
-      console.info(`[generate-elite] Pruned ${idsToDelete.length} old proposal version(s) (keeping last 5).`);
     }
   } catch (vErr) {
     // Version saving is non-critical — never block the main proposal.

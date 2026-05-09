@@ -22,23 +22,25 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   const tender = await prisma.tender.findFirst({ where: { id, userId }, select: { id: true } });
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
 
-  const versions = await prisma.$queryRawUnsafe<Array<{
-    id: string;
-    version: number;
-    benchmarkScore: number | null;
-    qualityScore: number | null;
-    winProbabilityScore: number | null;
-    mode: string | null;
-    summary: string | null;
-    createdAt: string;
-  }>>(
-    `SELECT "id","version","benchmarkScore","qualityScore","winProbabilityScore","mode","summary","createdAt"
-     FROM "ProposalVersion"
-     WHERE "tenderId" = $1
-     ORDER BY "version" DESC
-     LIMIT 5`,
-    id
-  );
+  // PR XX-A — switched from $queryRawUnsafe to typed Prisma access.
+  // The Prisma model now exists and the bootstrap migration in
+  // lib/prisma.ts:508 still creates the table for production envs that
+  // may not have run a Prisma migration (Vercel + bootstrap-on-boot).
+  const versions = await prisma.proposalVersion.findMany({
+    where: { tenderId: id },
+    select: {
+      id: true,
+      version: true,
+      benchmarkScore: true,
+      qualityScore: true,
+      winProbabilityScore: true,
+      mode: true,
+      summary: true,
+      createdAt: true,
+    },
+    orderBy: { version: "desc" },
+    take: 5,
+  });
 
   return NextResponse.json({ versions });
 }

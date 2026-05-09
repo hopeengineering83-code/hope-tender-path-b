@@ -26,17 +26,12 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   const tender = await prisma.tender.findFirst({ where: { id, userId }, select: { id: true } });
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
 
-  const rows = await prisma.$queryRawUnsafe<Array<{
-    id: string; version: number; markdown: string; fileContent: string | null;
-    benchmarkScore: number | null; qualityScore: number | null; winProbabilityScore: number | null;
-    mode: string | null; summary: string | null; createdAt: string;
-  }>>(
-    `SELECT * FROM "ProposalVersion" WHERE "id" = $1 AND "tenderId" = $2 LIMIT 1`,
-    versionId, id
-  );
-
-  if (rows.length === 0) return NextResponse.json({ error: "Version not found" }, { status: 404 });
-  return NextResponse.json({ version: rows[0] });
+  // PR XX-A — typed access via Prisma model.
+  const version = await prisma.proposalVersion.findFirst({
+    where: { id: versionId, tenderId: id },
+  });
+  if (!version) return NextResponse.json({ error: "Version not found" }, { status: 404 });
+  return NextResponse.json({ version });
 }
 
 export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string; versionId: string }> }) {
@@ -49,10 +44,11 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
   const tender = await prisma.tender.findFirst({ where: { id, userId }, select: { id: true } });
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
 
-  await prisma.$executeRawUnsafe(
-    `DELETE FROM "ProposalVersion" WHERE "id" = $1 AND "tenderId" = $2`,
-    versionId, id
-  );
+  // PR XX-A — typed delete; deleteMany is safer than delete because it
+  // doesn't throw when the row already vanished (idempotent).
+  await prisma.proposalVersion.deleteMany({
+    where: { id: versionId, tenderId: id },
+  });
 
   return NextResponse.json({ success: true });
 }
@@ -73,15 +69,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const tender = await prisma.tender.findFirst({ where: { id, userId }, select: { id: true } });
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
 
-  const rows = await prisma.$queryRawUnsafe<Array<{
-    id: string; version: number; markdown: string; fileContent: string | null; summary: string | null;
-  }>>(
-    `SELECT "id","version","markdown","fileContent","summary" FROM "ProposalVersion" WHERE "id" = $1 AND "tenderId" = $2 LIMIT 1`,
-    versionId, id
-  );
-
-  if (rows.length === 0) return NextResponse.json({ error: "Version not found" }, { status: 404 });
-  const v = rows[0];
+  // PR XX-A — typed access via Prisma model.
+  const v = await prisma.proposalVersion.findFirst({
+    where: { id: versionId, tenderId: id },
+    select: { id: true, version: true, markdown: true, fileContent: true, summary: true },
+  });
+  if (!v) return NextResponse.json({ error: "Version not found" }, { status: 404 });
 
   // Update the live Technical Proposal generated document for this tender.
   const existing = await prisma.generatedDocument.findFirst({

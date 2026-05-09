@@ -362,6 +362,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     ? { ...projectBatch, assessments: projectBatch.assessments.map((assessment) => withAppliedSelection(assessment, selectedProjectIds)) }
     : null;
 
+  // PR XX-G3 — write per-dimension scores into MatchScoreBreakdown so
+  // readiness, bid/no-bid, evaluator simulator, and proposal generator
+  // can consume identical 12-dimension scoring objects. The scalar
+  // overallScore is still written to TenderExpertMatch.score for
+  // backward-compatible UI ranking.
+  const { writeScoreBreakdown } = await import("../../../../../lib/engine/score-breakdown-writer");
+
   let expertsUpdated = 0;
   if (expertBatchForResponse) {
     for (const assessment of expertBatchForResponse.assessments) {
@@ -374,6 +381,19 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           rationale: formatAssessmentRationale(assessment),
           ...(applySelections ? { isSelected: selectedExpertIds.has(assessment.candidateId) } : {}),
         },
+      });
+      // Persist per-dimension scores. AI scoring uses 0–10; writer expects
+      // 0–100, so multiply by 10.
+      const perspectives100 = Object.fromEntries(
+        Object.entries(assessment.perspectives).map(([k, v]) => [k, Number(v) * 10])
+      ) as Partial<Record<MatchPerspective, number>>;
+      await writeScoreBreakdown({
+        tenderId,
+        entityType: "EXPERT",
+        entityId: assessment.candidateId,
+        perspectives: perspectives100,
+        rationales: { DISCIPLINE_FIT: assessment.strength?.slice(0, 400), DELIVERY_RISK: assessment.concern?.slice(0, 400) },
+        source: "AI_REMATCH",
       });
       expertsUpdated += 1;
     }
@@ -391,6 +411,17 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           rationale: formatAssessmentRationale(assessment),
           ...(applySelections ? { isSelected: selectedProjectIds.has(assessment.candidateId) } : {}),
         },
+      });
+      const perspectives100 = Object.fromEntries(
+        Object.entries(assessment.perspectives).map(([k, v]) => [k, Number(v) * 10])
+      ) as Partial<Record<MatchPerspective, number>>;
+      await writeScoreBreakdown({
+        tenderId,
+        entityType: "PROJECT",
+        entityId: assessment.candidateId,
+        perspectives: perspectives100,
+        rationales: { DISCIPLINE_FIT: assessment.strength?.slice(0, 400), DELIVERY_RISK: assessment.concern?.slice(0, 400) },
+        source: "AI_REMATCH",
       });
       projectsUpdated += 1;
     }

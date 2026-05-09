@@ -520,6 +520,142 @@ async function bootstrap(client: PrismaClient): Promise<void> {
     FOREIGN KEY ("tenderId") REFERENCES "Tender"("id") ON DELETE CASCADE
   )`);
 
+  // ─── 12-perspective scoring breakdown (G3) ─────────────────────────────
+  // Stores per-dimension scores for each TenderExpertMatch / TenderProjectMatch
+  // so the engine match path AND the AI rematch path write into ONE table
+  // and downstream consumers (readiness, bid/no-bid, evaluator simulator,
+  // proposal generator) all read identical scoring objects.
+  await client.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "MatchScoreBreakdown" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "tenderId" TEXT NOT NULL,
+    "entityType" TEXT NOT NULL,
+    "entityId" TEXT NOT NULL,
+    "dimensionCode" TEXT NOT NULL,
+    "score" DOUBLE PRECISION NOT NULL,
+    "weight" DOUBLE PRECISION NOT NULL DEFAULT 1.0,
+    "rationale" TEXT,
+    "source" TEXT NOT NULL DEFAULT 'ENGINE_MATCH',
+    "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`);
+
+  // ─── Evaluator objections (G4) ─────────────────────────────────────────
+  // Structured red-team objections the evaluator simulator raises against
+  // each proposal version. HIGH severity + OPEN status blocks export.
+  await client.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "EvaluatorObjection" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "tenderId" TEXT NOT NULL,
+    "proposalVersion" INTEGER NOT NULL DEFAULT 1,
+    "severity" TEXT NOT NULL,
+    "category" TEXT NOT NULL,
+    "title" TEXT NOT NULL,
+    "description" TEXT NOT NULL,
+    "sectionRef" TEXT,
+    "recommendedAction" TEXT,
+    "status" TEXT NOT NULL DEFAULT 'OPEN',
+    "resolvedAt" TIMESTAMPTZ,
+    "resolvedBy" TEXT,
+    "resolutionNote" TEXT,
+    "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`);
+
+  // ─── Section-level evidence map (G5) ───────────────────────────────────
+  // Each generated proposal section is recorded with which requirements
+  // it covers, which evidence IDs it cites, the text hash, and reviewer
+  // status. Powers weak-section + missing-criterion-depth detectors and
+  // ensures section regeneration preserves evidence references.
+  await client.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "SectionEvidenceMap" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "tenderId" TEXT NOT NULL,
+    "proposalVersion" INTEGER NOT NULL DEFAULT 1,
+    "sectionId" TEXT NOT NULL,
+    "sectionTitle" TEXT NOT NULL,
+    "requirementIds" TEXT NOT NULL DEFAULT '',
+    "evidenceIds" TEXT NOT NULL DEFAULT '',
+    "expertIds" TEXT NOT NULL DEFAULT '',
+    "projectIds" TEXT NOT NULL DEFAULT '',
+    "textHash" TEXT,
+    "wordCount" INTEGER NOT NULL DEFAULT 0,
+    "reviewerStatus" TEXT NOT NULL DEFAULT 'PENDING',
+    "reviewerNote" TEXT,
+    "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`);
+
+  // ─── AI job queue (G6) ─────────────────────────────────────────────────
+  // Long-running AI workflows (proposal generation, large rematch,
+  // evaluator simulation, deep Copilot analysis) are enqueued and
+  // resumable across requests so they no longer time out at 60s.
+  await client.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "AiJob" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "tenderId" TEXT,
+    "userId" TEXT NOT NULL,
+    "jobType" TEXT NOT NULL,
+    "status" TEXT NOT NULL DEFAULT 'QUEUED',
+    "input" TEXT NOT NULL DEFAULT '{}',
+    "output" TEXT,
+    "errorMessage" TEXT,
+    "retries" INTEGER NOT NULL DEFAULT 0,
+    "startedAt" TIMESTAMPTZ,
+    "finishedAt" TIMESTAMPTZ,
+    "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`);
+  await client.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "AiJobStep" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "jobId" TEXT NOT NULL,
+    "stepIndex" INTEGER NOT NULL,
+    "stepName" TEXT NOT NULL,
+    "status" TEXT NOT NULL DEFAULT 'PENDING',
+    "message" TEXT,
+    "startedAt" TIMESTAMPTZ,
+    "finishedAt" TIMESTAMPTZ,
+    "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    FOREIGN KEY ("jobId") REFERENCES "AiJob"("id") ON DELETE CASCADE
+  )`);
+
+  // ─── Pricing engine (G8) ───────────────────────────────────────────────
+  // PricingWorkbook (one per tender) + CostLine rows. Replaces ad-hoc
+  // commercial assumptions with a real pricing workbook the export gate
+  // can validate (no price leakage, separate envelopes, etc.).
+  await client.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "PricingWorkbook" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "tenderId" TEXT NOT NULL UNIQUE,
+    "currency" TEXT NOT NULL DEFAULT 'USD',
+    "validityDays" INTEGER NOT NULL DEFAULT 90,
+    "vatPercent" DOUBLE PRECISION NOT NULL DEFAULT 0,
+    "withholdingPct" DOUBLE PRECISION NOT NULL DEFAULT 0,
+    "contingencyPct" DOUBLE PRECISION NOT NULL DEFAULT 0,
+    "scenario" TEXT NOT NULL DEFAULT 'BALANCED',
+    "noPriceLeakage" BOOLEAN NOT NULL DEFAULT TRUE,
+    "notes" TEXT,
+    "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`);
+  await client.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "CostLine" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "workbookId" TEXT NOT NULL,
+    "category" TEXT NOT NULL,
+    "label" TEXT NOT NULL,
+    "quantity" DOUBLE PRECISION NOT NULL DEFAULT 1,
+    "unit" TEXT NOT NULL DEFAULT 'DAY',
+    "rate" DOUBLE PRECISION NOT NULL DEFAULT 0,
+    "expertId" TEXT,
+    "total" DOUBLE PRECISION NOT NULL DEFAULT 0,
+    "notes" TEXT,
+    "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    FOREIGN KEY ("workbookId") REFERENCES "PricingWorkbook"("id") ON DELETE CASCADE
+  )`);
+
+  // ─── G9: page-level requirement source coordinates ─────────────────────
+  await ensureColumn(client, "TenderRequirement", "sourceTenderFileId", "TEXT");
+  await ensureColumn(client, "TenderRequirement", "sourcePageNumber", "INTEGER");
+  await ensureColumn(client, "TenderRequirement", "sourceSectionHeading", "TEXT");
+  await ensureColumn(client, "TenderRequirement", "sourceExactQuote", "TEXT");
+  await ensureColumn(client, "TenderRequirement", "sourceConfidence", "DOUBLE PRECISION NOT NULL DEFAULT 0");
+
 
   // ── indexes (each wrapped so one failure never blocks the rest) ──────────
   const idxStatements = [
@@ -539,6 +675,27 @@ async function bootstrap(client: PrismaClient): Promise<void> {
     `CREATE INDEX IF NOT EXISTS "Project_deletedAt_idx" ON "Project"("deletedAt")`,
     `CREATE INDEX IF NOT EXISTS "ProposalVersion_tenderId_idx" ON "ProposalVersion"("tenderId")`,
     `CREATE INDEX IF NOT EXISTS "ProposalVersion_tenderId_version_idx" ON "ProposalVersion"("tenderId", "version")`,
+    // G3 — MatchScoreBreakdown
+    `CREATE UNIQUE INDEX IF NOT EXISTS "MatchScoreBreakdown_unique_dim" ON "MatchScoreBreakdown"("tenderId", "entityType", "entityId", "dimensionCode")`,
+    `CREATE INDEX IF NOT EXISTS "MatchScoreBreakdown_tenderId_entityType_idx" ON "MatchScoreBreakdown"("tenderId", "entityType")`,
+    `CREATE INDEX IF NOT EXISTS "MatchScoreBreakdown_tenderId_entityId_idx" ON "MatchScoreBreakdown"("tenderId", "entityId")`,
+    // G4 — EvaluatorObjection
+    `CREATE INDEX IF NOT EXISTS "EvaluatorObjection_tenderId_status_idx" ON "EvaluatorObjection"("tenderId", "status")`,
+    `CREATE INDEX IF NOT EXISTS "EvaluatorObjection_tenderId_severity_status_idx" ON "EvaluatorObjection"("tenderId", "severity", "status")`,
+    // G5 — SectionEvidenceMap
+    `CREATE UNIQUE INDEX IF NOT EXISTS "SectionEvidenceMap_unique_section" ON "SectionEvidenceMap"("tenderId", "proposalVersion", "sectionId")`,
+    `CREATE INDEX IF NOT EXISTS "SectionEvidenceMap_tenderId_idx" ON "SectionEvidenceMap"("tenderId")`,
+    // G6 — AiJob / AiJobStep
+    `CREATE INDEX IF NOT EXISTS "AiJob_userId_status_idx" ON "AiJob"("userId", "status")`,
+    `CREATE INDEX IF NOT EXISTS "AiJob_tenderId_jobType_idx" ON "AiJob"("tenderId", "jobType")`,
+    `CREATE INDEX IF NOT EXISTS "AiJob_status_createdAt_idx" ON "AiJob"("status", "createdAt")`,
+    `CREATE INDEX IF NOT EXISTS "AiJobStep_jobId_stepIndex_idx" ON "AiJobStep"("jobId", "stepIndex")`,
+    // G8 — PricingWorkbook / CostLine
+    `CREATE INDEX IF NOT EXISTS "PricingWorkbook_tenderId_idx" ON "PricingWorkbook"("tenderId")`,
+    `CREATE INDEX IF NOT EXISTS "CostLine_workbookId_idx" ON "CostLine"("workbookId")`,
+    // G9 — TenderRequirement source coords
+    `CREATE INDEX IF NOT EXISTS "TenderRequirement_tenderId_idx" ON "TenderRequirement"("tenderId")`,
+    `CREATE INDEX IF NOT EXISTS "TenderRequirement_sourceTenderFileId_idx" ON "TenderRequirement"("sourceTenderFileId")`,
   ];
   for (const sql of idxStatements) {
     try { await client.$executeRawUnsafe(sql); } catch (e) {
