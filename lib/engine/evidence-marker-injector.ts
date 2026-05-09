@@ -167,19 +167,41 @@ export function injectEvidenceMarkers(
   // most natural place.
   const INJECTION_CAP = 4;
 
-  // PR Q FIX — Identify Cover Letter and Executive Summary line
-  // ranges so we DON'T auto-inject anchor sentences into them. Those
-  // sections are hand-crafted (or vault-built); padding them with
-  // "Consistent with the firm's delivery on X" turns them into
-  // brochure copy.
+  // PR Q FIX — Identify protected line ranges where we DON'T auto-inject
+  // anchor sentences. Those zones are hand-crafted (or vault-built);
+  // padding them with "Consistent with the firm's delivery on X" turns
+  // them into brochure copy.
+  //
+  // PR XX-G7 FOLLOWUP — widened the protected list. May-7 benchmark
+  // analysis showed markers leaking into Biomedical Engineering
+  // Specialist Engagement Plan, Risk Register, Innovation sections,
+  // QA Plan, and Compliance / Declaration sections. Each of these has
+  // its own evidence patterns the engine populates separately;
+  // injecting generic project anchors there reads as obvious AI filler.
   const lines = markdown.split("\n");
   const protectedLineRanges: Array<{ start: number; end: number }> = [];
+  // Both H1 (#) and H2 (##) headings are scanned: a Biomedical or Risk
+  // sub-section under Section A or C is at H2/H3 level.
+  const PROTECTED_HEADING_PATTERNS: RegExp[] = [
+    /^#+\s+(Cover Letter|Executive Summary|Why\s+(?:Us|HOPE|HAEC)|Letter of Transmittal)/i,
+    /^#+\s+(Innovations?|Innovation\s+\d|Value-?Added)/i,
+    /^#+\s+(Biomedical|Medical Equipment|Clinical Workflow|Healthcare Compliance)/i,
+    /^#+\s+(Risk Register|Risks?\s+and\s+Mitigations?|Risk and Mitigation)/i,
+    /^#+\s+(Quality Assurance|QA Plan|Three-Stage)/i,
+    /^#+\s+(Declaration|Anti-?Bribery|Conflict of Interest|Eligibility|No Conflict)/i,
+    /^#+\s+(Compliance Matrix|Compliance Mapping|Submission Readiness|Pre-Submission)/i,
+    /^#+\s+(Win Themes?|Discriminators?)/i,
+  ];
   for (let i = 0; i < lines.length; i += 1) {
-    if (/^#\s+(Cover Letter|Executive Summary|Why\s+|Letter of Transmittal)/i.test(lines[i])) {
+    if (PROTECTED_HEADING_PATTERNS.some((rx) => rx.test(lines[i]))) {
       const start = i;
+      // Find the end: next heading at the SAME OR HIGHER level.
+      const headingMatch = lines[i].match(/^(#+)\s/);
+      const startLevel = headingMatch ? headingMatch[1].length : 1;
       let end = lines.length;
       for (let j = i + 1; j < lines.length; j += 1) {
-        if (/^#\s+/.test(lines[j])) { end = j; break; }
+        const m = lines[j].match(/^(#+)\s/);
+        if (m && m[1].length <= startLevel) { end = j; break; }
       }
       protectedLineRanges.push({ start, end });
     }

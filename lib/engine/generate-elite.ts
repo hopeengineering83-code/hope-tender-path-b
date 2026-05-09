@@ -841,8 +841,33 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   // needed; the raw tender.title is intentionally kept out of generated
   // content because intake-stage extraction can produce multi-line garbage
   // that propagates to every section if used directly.
-  const cleanedTenderTitle = intelligence.assignmentName;
+  let cleanedTenderTitle = intelligence.assignmentName;
   const tenderText = [cleanedTenderTitle, tender.reference, intelligence.clientName, tender.description, tender.intakeSummary, tender.analysisSummary, tender.evaluationMethodology, ...tender.files.map((f) => `${f.originalFileName}\n${f.extractedText ?? ""}`)].filter(Boolean).join("\n\n");
+
+  // ─── G1 fix: canonical-title re-extractor ──────────────────────────────────
+  // intelligence.assignmentName is sanitized but still based on tender.title,
+  // which the user typed at upload time and is often generic ("PATH Tender",
+  // "Pharo Foundation Tender"). Try to recover the canonical RFP title from
+  // the tender body — patterns like "RFP No. 2026-024 — Architectural Design
+  // …" or "Tender Title: …". When confidence is high AND the stored title
+  // looks generic, override.
+  try {
+    const { extractCanonicalTenderTitle, pickBestTenderTitle } = await import("./tender-title-extractor");
+    const tenderBody = tender.files.map((f) => f.extractedText ?? "").filter((t) => t.length > 100).join("\n\n");
+    if (tenderBody.length > 100) {
+      const extracted = extractCanonicalTenderTitle(tenderBody);
+      const picked = pickBestTenderTitle(cleanedTenderTitle, extracted);
+      if (picked.source === "EXTRACTED" && picked.title !== cleanedTenderTitle) {
+        // Prefix the RFP ID when one was found alongside the title.
+        const final = picked.rfpId ? `${picked.rfpId} — ${picked.title}` : picked.title;
+        console.info(`[generate-elite] Tender title overridden: "${cleanedTenderTitle}" → "${final}" (extracted from tender body)`);
+        cleanedTenderTitle = final;
+      }
+    }
+  } catch (tErr) {
+    // Non-critical: stored title is still usable. Log and continue.
+    console.warn("[generate-elite] tender-title-extractor failed:", tErr instanceof Error ? tErr.message : tErr);
+  }
 
   // ─── PR R — Auto multi-perspective AI re-ranking ─────────────────────────
   // The lexical scoring (proposal-intelligence.ts) is single-axis token
@@ -1612,16 +1637,52 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   // is sector-aware and vault-aware (RACI uses real expert names when
   // the team is selected; Risk/QA carry sector-specific clauses for
   // healthcare / water / road / urban / generic).
+  // ─── G10 follow-up: detect tender's stated total duration ──────────────
+  // If the tender body carries an explicit total like "28 calendar days
+  // from signed contract" or "delivered within 45 days", parse the
+  // number and pass it so the phasing table renders day-numbered rows
+  // ("Days 1–3", "Days 4–8") instead of generic "Weeks 1–2".
+  const totalDaysMatch = tenderText.match(/\b(\d{1,3})\s*(?:calendar\s+|working\s+|business\s+)?days?\b(?!\s*(?:after|before|prior|notice|advance))/i);
+  const totalDays = totalDaysMatch ? Number(totalDaysMatch[1]) : undefined;
+  if (totalDays && totalDays >= 7 && totalDays <= 1000) {
+    console.info(`[generate-elite] Detected total project duration: ${totalDays} days — phasing table will use day-numbered rows.`);
+  }
+
   const methodologyTables = injectMethodologyTables(humanizedMarkdown, {
     primarySector: intelligence.primarySector,
     experts: allSelectedExperts as unknown as Parameters<typeof injectMethodologyTables>[1]["experts"],
     projects: evidenceLibrary,
+    totalDays: totalDays && totalDays >= 7 && totalDays <= 1000 ? totalDays : undefined,
   });
+  humanizedMarkdown = methodologyTables.markdown;
+
+  // ─── G11 fix: Deliverable-Specific QA Checklist ────────────────────────
+  // Append a deliverable-numbered QA checklist (D1, D2, …) at the end of
+  // Section C. The Claude AI benchmark for the Path tender included a
+  // 7-row table mapping each QA Check Item → Responsible → Deliverable
+  // Code → Acceptance Standard. Without this, our generic 3-stage QA
+  // gate looks thin. Idempotent (marker comment skips re-injection).
+  try {
+    const { injectDeliverableQaChecklist } = await import("./deliverable-qa-checklist");
+    const qaChecklist = injectDeliverableQaChecklist(humanizedMarkdown, {
+      tenderText,
+      primarySector: intelligence.primarySector,
+      experts: allSelectedExperts as unknown as Parameters<typeof injectDeliverableQaChecklist>[1]["experts"],
+    });
+    if (qaChecklist.injected) {
+      console.info(`[generate-elite] Deliverable QA Checklist injected with ${qaChecklist.rowsRendered} row(s).`);
+      humanizedMarkdown = qaChecklist.markdown;
+    }
+  } catch (qaErr) {
+    console.warn("[generate-elite] Deliverable QA Checklist injection failed:", qaErr instanceof Error ? qaErr.message : qaErr);
+  }
   const newlyInjected = methodologyTables.injected.filter((i) => i.reason === "MISSING").map((i) => i.key);
   if (newlyInjected.length > 0) {
     console.info(`[generate-elite] Methodology tables injected: ${newlyInjected.join(", ")}`);
   }
-  humanizedMarkdown = methodologyTables.markdown;
+  // NOTE: humanizedMarkdown was already updated above by methodologyTables
+  // and again by the QA-checklist injection — do NOT re-assign from
+  // methodologyTables.markdown here, that would clobber the QA checklist.
 
   // ─── Beyond-spec tables (PR F) ───────────────────────────────────────────
   // Section D ("value added") differentiator tables. Modern tenders

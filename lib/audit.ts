@@ -41,7 +41,10 @@ export type AuditAction =
   | "TENDER_CONTROL_TASK"
   | "TENDER_CONTROL_RISK"
   | "TENDER_CONTROL_COMMERCIAL_ASSUMPTION"
-  | "TENDER_BID_OUTCOME_SET";
+  | "TENDER_BID_OUTCOME_SET"
+  // Maintenance: regenerate Expert CV DOCX files after the trace-stripper
+  // fix landed in expert-cv-docx.ts. Triggered via /regenerate-cvs.
+  | "EXPERT_CV_REGENERATE";
 
 export async function logAction(opts: {
   userId?: string;

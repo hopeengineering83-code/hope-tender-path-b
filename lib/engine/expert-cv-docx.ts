@@ -40,10 +40,53 @@ function safeArr(json: string | null | undefined): string[] {
   if (!json) return [];
   try {
     const parsed = JSON.parse(json);
-    return Array.isArray(parsed) ? parsed.filter((s): s is string => typeof s === "string" && s.trim().length > 0) : [];
+    return Array.isArray(parsed) ? parsed.filter((s): s is string => typeof s === "string" && s.trim().length > 0).map(stripForbiddenTraces) : [];
   } catch {
     return [];
   }
+}
+
+// ─── Forbidden-trace sanitizer (CV-DOCX export-blocker fix) ───────────────────
+// The export validator (app/api/tenders/[id]/download/route.ts) refuses to
+// ship any DOCX that contains markers like "==PAGE 5==", "PARSED TEXT FOR
+// PAGE", "AI_DRAFT", "remove before submission", "[INSERT NAME]", etc. These
+// markers come from PDF extraction headers in the source CV files and from
+// AI prep notes embedded in the user's company profile / expert profile
+// fields.
+//
+// Before this fix, every Expert CV the engine generated carried the source
+// PDF's "==PAGE N==" page-number markers verbatim into the output Word
+// document — which then failed final validation, blocking the entire ZIP
+// export. We now strip the same set of patterns the validator looks for
+// PRIOR to rendering, so the generated CV cannot trip the gate.
+//
+// The patterns mirror app/api/tenders/[id]/download/route.ts:77 exactly.
+// Keep the two lists in sync.
+const FORBIDDEN_TRACE_PATTERNS: RegExp[] = [
+  /=+\s*PAGE\s+\d+\s*=+/gi,
+  /PARSED TEXT FOR PAGE[^\n]*/gi,
+  /<PARSED TEXT FOR PAGE:[^>]+>/gi,
+  /\[(?:PDF text|OCR text)[^\]]*\]/gi,
+  /\bAI_DRAFT\b/gi,
+  /\bREGEX_DRAFT\b/gi,
+  /remove before submission/gi,
+  /sample text/gi,
+  /lorem ipsum/gi,
+  /as an AI/gi,
+  /AI-generated/gi,
+  /source snippet/gi,
+  /deterministic safety import/gi,
+  /Company evidence available:/gi,
+  /Project evidence available:/gi,
+  /\[\s*(?:INSERT|TBD|TBA|TODO|FILL[-_\s]*IN|PLACEHOLDER|YOUR\s+\w+\s+HERE|DATE|NAME|CLIENT|VALUE|AMOUNT)\b[^\]]*\]/gi,
+];
+
+export function stripForbiddenTraces(text: string | null | undefined): string {
+  if (!text) return "";
+  let out = String(text);
+  for (const p of FORBIDDEN_TRACE_PATTERNS) out = out.replace(p, " ");
+  // Collapse run-on whitespace produced by the substitutions.
+  return out.replace(/[ \t]{2,}/g, " ").replace(/\n{3,}/g, "\n\n").trim();
 }
 
 function para(text: string, opts?: { bold?: boolean; size?: number; color?: string; italic?: boolean; alignment?: (typeof AlignmentType)[keyof typeof AlignmentType] }): Paragraph {
@@ -109,6 +152,16 @@ export type ExpertCvInput = {
 };
 
 export async function generateExpertCvDocx(expert: ExpertCvInput): Promise<Buffer> {
+  // ── Sanitize every input field BEFORE rendering ────────────────────────
+  // Strips forbidden-output traces (PDF page markers, AI prep notes, draft
+  // labels) that would otherwise cause the export validator to reject the
+  // generated DOCX. Mirrors the validator's pattern list exactly.
+  const fullName = stripForbiddenTraces(expert.fullName) || "Proposed Expert";
+  const title = expert.title ? stripForbiddenTraces(expert.title) : null;
+  const email = expert.email ? stripForbiddenTraces(expert.email) : null;
+  const phone = expert.phone ? stripForbiddenTraces(expert.phone) : null;
+  const profileSan = expert.profile ? stripForbiddenTraces(expert.profile) : null;
+
   const disciplines = safeArr(expert.disciplines);
   const sectors = safeArr(expert.sectors);
   const certs = safeArr(expert.certifications);
@@ -116,19 +169,19 @@ export async function generateExpertCvDocx(expert: ExpertCvInput): Promise<Buffe
   // ── Header block ────────────────────────────────────────────────────────
   const headerRows: Paragraph[] = [
     new Paragraph({
-      children: [new TextRun({ text: expert.fullName, bold: true, size: 36, color: BRAND_BLUE, font: "Calibri" })],
+      children: [new TextRun({ text: fullName, bold: true, size: 36, color: BRAND_BLUE, font: "Calibri" })],
       spacing: { after: 60 },
     }),
   ];
-  if (expert.title) {
+  if (title) {
     headerRows.push(new Paragraph({
-      children: [new TextRun({ text: expert.title, size: 24, color: GRAY, font: "Calibri", italics: true })],
+      children: [new TextRun({ text: title, size: 24, color: GRAY, font: "Calibri", italics: true })],
       spacing: { after: 40 },
     }));
   }
   const contactParts: string[] = [];
-  if (expert.email) contactParts.push(expert.email);
-  if (expert.phone) contactParts.push(expert.phone);
+  if (email) contactParts.push(email);
+  if (phone) contactParts.push(phone);
   if (contactParts.length > 0) {
     headerRows.push(para(contactParts.join("  |  "), { color: GRAY, size: 20 }));
   }
@@ -154,9 +207,9 @@ export async function generateExpertCvDocx(expert: ExpertCvInput): Promise<Buffe
   }
 
   // ── Profile narrative ────────────────────────────────────────────────
-  if (expert.profile && expert.profile.trim().length > 0) {
+  if (profileSan && profileSan.trim().length > 0) {
     children.push(sectionHeading("Profile"));
-    const profileParas = expert.profile.trim().split(/\n{2,}/).filter((p) => p.trim().length > 0);
+    const profileParas = profileSan.trim().split(/\n{2,}/).filter((p) => p.trim().length > 0);
     for (const profilePara of profileParas) {
       children.push(para(profilePara.trim(), { size: 20 }));
     }
