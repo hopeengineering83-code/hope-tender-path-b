@@ -33,6 +33,20 @@ type BidStrategy = {
   computedAt: string;
 };
 
+type WinProbabilityBreakdown = {
+  score: number;
+  label: "Strong" | "Competitive" | "Fair" | "Weak";
+  breakdown: {
+    evidenceMatch: number;
+    teamStrength: number;
+    compliancePosture: number;
+    historicalOutcomes: number;
+  };
+  notes: string[];
+};
+
+type HistoricalBidStats = { total: number; wins: number };
+
 interface BidStrategyPanelProps {
   tenderId: string;
   // Optional: collapsed by default to keep the workspace scannable.
@@ -74,6 +88,8 @@ function dimensionBarColor(score: number): string {
 
 export function BidStrategyPanel({ tenderId, defaultExpanded = true }: BidStrategyPanelProps) {
   const [strategy, setStrategy] = useState<BidStrategy | null>(null);
+  const [winBreakdown, setWinBreakdown] = useState<WinProbabilityBreakdown | null>(null);
+  const [historicalStats, setHistoricalStats] = useState<HistoricalBidStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(defaultExpanded);
@@ -89,6 +105,8 @@ export function BidStrategyPanel({ tenderId, defaultExpanded = true }: BidStrate
       }
       const data = await res.json();
       setStrategy(data.strategy);
+      if (data.winProbabilityBreakdown) setWinBreakdown(data.winProbabilityBreakdown);
+      if (data.historicalBidStats) setHistoricalStats(data.historicalBidStats);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load bid strategy");
     } finally {
@@ -210,6 +228,56 @@ export function BidStrategyPanel({ tenderId, defaultExpanded = true }: BidStrate
                   </li>
                 ))}
               </ul>
+            </div>
+          )}
+
+          {/* Win probability 4-axis breakdown */}
+          {winBreakdown && (
+            <div className="mt-4">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                Win probability breakdown
+                <span className={`ml-2 rounded px-1.5 py-0.5 text-[10px] font-bold ${
+                  winBreakdown.label === "Strong" ? "bg-emerald-100 text-emerald-800" :
+                  winBreakdown.label === "Competitive" ? "bg-blue-100 text-blue-800" :
+                  winBreakdown.label === "Fair" ? "bg-amber-100 text-amber-800" :
+                  "bg-red-100 text-red-800"
+                }`}>{winBreakdown.label}</span>
+              </p>
+              <div className="mt-2 space-y-1.5">
+                {([
+                  { key: "evidenceMatch", label: "Evidence match", max: 30 },
+                  { key: "teamStrength", label: "Team strength", max: 25 },
+                  { key: "compliancePosture", label: "Compliance posture", max: 25 },
+                  { key: "historicalOutcomes", label: "Historical outcomes", max: 20 },
+                ] as const).map(({ key, label, max }) => {
+                  const val = winBreakdown.breakdown[key];
+                  const pct = Math.round((val / max) * 100);
+                  return (
+                    <div key={key} className="flex items-center gap-2">
+                      <span className="w-36 shrink-0 text-xs text-slate-700">{label}</span>
+                      <div className="h-2 flex-1 overflow-hidden rounded-full bg-slate-100">
+                        <div className={`h-full transition-all ${dimensionBarColor(pct)}`} style={{ width: `${pct}%` }} />
+                      </div>
+                      <span className="w-12 shrink-0 text-right text-xs font-medium text-slate-700">{val}/{max}</span>
+                    </div>
+                  );
+                })}
+              </div>
+              {winBreakdown.notes.length > 0 && (
+                <ul className="mt-2 space-y-0.5">
+                  {winBreakdown.notes.map((note, i) => (
+                    <li key={i} className="text-[11px] text-slate-500">• {note}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+
+          {/* Historical bid stats */}
+          {historicalStats && historicalStats.total > 0 && (
+            <div className="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">
+              Historical record: <strong>{historicalStats.wins}/{historicalStats.total}</strong> bids won
+              ({Math.round((historicalStats.wins / historicalStats.total) * 100)}% win rate) — factored into win probability.
             </div>
           )}
 

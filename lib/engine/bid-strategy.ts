@@ -96,6 +96,9 @@ export interface BidStrategyInput {
     projectCount: number;
     legalRecordCount: number;
     financialRecordCount: number;
+    // Historical bid outcomes — fetched from past Tender records with bidOutcome set
+    historicalWins?: number;
+    historicalTotal?: number;
   };
 }
 
@@ -416,13 +419,23 @@ export function computeBidStrategy(input: BidStrategyInput): BidStrategy {
   const eligibility = scoreEligibilityClearance(input);
 
   // Weighted average — see header comment for weights
-  const winProbability = Math.round(
+  let winProbability = Math.round(
     capability.score * 0.30 +
     experience.score * 0.25 +
     compliance.score * 0.20 +
     evaluation.score * 0.15 +
     eligibility.score * 0.10,
   );
+
+  // Blend in historical win rate when ≥3 past bids exist. Modifier: ±8 points
+  // centered at 40% win rate. Firms with >60% win rate get a boost; <20% get
+  // a penalty. This uses real outcomes data rather than capability proxies.
+  const { historicalWins = 0, historicalTotal = 0 } = input.company;
+  if (historicalTotal >= 3) {
+    const rate = historicalWins / historicalTotal;
+    const modifier = Math.round((rate - 0.4) * 20); // [-8, +12] range
+    winProbability = Math.max(0, Math.min(100, winProbability + modifier));
+  }
 
   const recommendation = synthesizeRecommendation(winProbability);
   const posture = synthesizePosture(recommendation, capability, experience, eligibility);

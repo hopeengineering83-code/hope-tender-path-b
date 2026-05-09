@@ -325,6 +325,11 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [error, setError] = useState("");
   const [aiProposal, setAiProposal] = useState("");
+  const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
+  const [generationPhase, setGenerationPhase] = useState("");
+  const [generationProgress, setGenerationProgress] = useState(0);
+  const [regeneratingSection, setRegeneratingSection] = useState<string | null>(null);
+  const [previewDocId, setPreviewDocId] = useState<string | null>(null);
   const [bidOutcome, setBidOutcome] = useState(initial.bidOutcome ?? "");
   const [bidOutcomeNote, setBidOutcomeNote] = useState(initial.bidOutcomeNote ?? "");
   const [savingOutcome, setSavingOutcome] = useState(false);
@@ -446,37 +451,101 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
     finally { setGenerating(false); }
   }
 
+  function showToast(message: string, type: "success" | "error" = "success") {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 5000);
+  }
+
+  // Phase-based progress animation for the 45-60s generation window.
+  // Gives users something meaningful to read instead of a frozen button.
+  const GENERATION_PHASES = [
+    { label: "Analyzing tender requirements…", pct: 8 },
+    { label: "Matching experts and projects…", pct: 20 },
+    { label: "Generating proposal sections (A–D)…", pct: 65 },
+    { label: "Refining and humanizing…", pct: 88 },
+    { label: "Saving documents…", pct: 97 },
+  ];
+  function startGenerationProgress() {
+    const durations = [6000, 14000, 35000, 10000, 5000];
+    let cumulative = 0;
+    GENERATION_PHASES.forEach((phase, i) => {
+      const delay = cumulative;
+      setTimeout(() => {
+        setGenerationPhase(phase.label);
+        setGenerationProgress(phase.pct);
+      }, delay);
+      cumulative += durations[i];
+    });
+  }
+  function stopGenerationProgress() {
+    setGenerationPhase("");
+    setGenerationProgress(0);
+  }
+
   async function handleGenerateDocs() {
     setGeneratingDocs(true);
     setError("");
+    startGenerationProgress();
     try {
       const res = await fetch(`/api/tenders/${tender.id}/generate`, { method: "POST" });
       const data = await res.json();
       if (!res.ok) { setError(data.error || "Generation failed"); return; }
       if (data.tender) setTender((cur) => ({ ...cur, ...data.tender }));
       router.refresh();
+      const q = data.tender?.generatedDocuments?.[0]?.contentSummary?.match(/Quality score: (\d+)\/100/);
+      showToast(`Documents generated${q ? ` — Quality ${q[1]}/100` : ""}`, "success");
     } catch { setError("Document generation failed"); }
-    finally { setGeneratingDocs(false); }
+    finally { setGeneratingDocs(false); stopGenerationProgress(); }
+  }
+
+  // Map document types → sectionId for section-level regeneration
+  const SECTION_ID_MAP: Record<string, string> = {
+    COVER_LETTER: "cover-and-summary",
+    EXECUTIVE_SUMMARY: "cover-and-summary",
+    COMPANY_EXPERIENCE: "company-and-experience",
+    TECHNICAL_PROPOSAL: "technical-approach",
+    METHODOLOGY: "technical-approach",
+    DECLARATION: "additional-and-declaration",
+    ADDITIONAL: "additional-and-declaration",
+  };
+
+  async function handleRegenerateSection(docId: string, documentType: string) {
+    const sectionId = SECTION_ID_MAP[documentType];
+    if (!sectionId) return;
+    setRegeneratingSection(docId);
+    setError("");
+    try {
+      const res = await fetch(`/api/tenders/${tender.id}/regenerate-section`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sectionId }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setError(data.error || "Section regeneration failed"); return; }
+      router.refresh();
+      showToast(`Section regenerated${data.fallback ? " (deterministic fallback)" : ""}`, "success");
+    } catch { setError("Section regeneration failed"); }
+    finally { setRegeneratingSection(null); }
   }
 
   async function handleGenerateFullPackage() {
     setGenerating(true);
     setError("");
+    startGenerationProgress();
     try {
-      // Step 1: Run engine (analysis + matching)
       const engineRes = await fetch(`/api/tenders/${tender.id}/engine`, { method: "POST" });
       const engineData = await engineRes.json();
       if (!engineRes.ok) { setError(engineData.error || "Engine run failed"); return; }
       if (engineData.tender) setTender((cur) => ({ ...cur, ...engineData.tender }));
 
-      // Step 2: Generate proposal documents
       const genRes = await fetch(`/api/tenders/${tender.id}/generate`, { method: "POST" });
       const genData = await genRes.json();
       if (!genRes.ok) { setError(genData.error || "Generation failed"); return; }
       if (genData.tender) setTender((cur) => ({ ...cur, ...genData.tender }));
       router.refresh();
+      showToast("Full package generated", "success");
     } catch { setError("Full package generation failed"); }
-    finally { setGenerating(false); }
+    finally { setGenerating(false); stopGenerationProgress(); }
   }
 
   async function handleValidate() {
@@ -711,7 +780,45 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
         </div>
       </div>
 
-      {error && <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
+      {/* Generation progress bar — visible during generate/generate-docs */}
+      {(generatingDocs || generating) && generationPhase && (
+        <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3">
+          <div className="flex items-center justify-between mb-1.5">
+            <p className="text-sm font-medium text-blue-800">{generationPhase}</p>
+            <p className="text-xs text-blue-600">{generationProgress}%</p>
+          </div>
+          <div className="h-1.5 w-full overflow-hidden rounded-full bg-blue-100">
+            <div
+              className="h-full rounded-full bg-blue-500 transition-all duration-1000 ease-in-out"
+              style={{ width: `${generationProgress}%` }}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Error display with recovery suggestions and retry */}
+      {error && (
+        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          <div className="flex items-start justify-between gap-2">
+            <div className="flex-1">
+              <p className="font-medium">{error}</p>
+              {/api key|anthropic|gemini|unauthorized/i.test(error) && (
+                <p className="mt-1 text-xs text-red-600">Check your AI provider API keys in Settings → AI Configuration.</p>
+              )}
+              {/rate limit|429|quota/i.test(error) && (
+                <p className="mt-1 text-xs text-red-600">AI provider rate limit hit. Wait 60 seconds and retry.</p>
+              )}
+              {/timeout|timed out/i.test(error) && (
+                <p className="mt-1 text-xs text-red-600">Request timed out. Try a smaller generation tier or retry.</p>
+              )}
+              {/network/i.test(error) && (
+                <p className="mt-1 text-xs text-red-600">Check your internet connection and retry.</p>
+              )}
+            </div>
+            <button onClick={() => setError("")} className="shrink-0 text-red-400 hover:text-red-600 text-xs">✕</button>
+          </div>
+        </div>
+      )}
 
       <div className={`grid gap-4 md:grid-cols-3 ${proposalQuality ? "xl:grid-cols-7" : "xl:grid-cols-6"}`}>
         <div className="rounded-2xl border bg-white p-5 shadow-sm">
@@ -1025,7 +1132,14 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
                 </span>
               </h2>
               <ul className="space-y-2">
-                {tender.expertMatches!.slice(0, 8).map((match) => (
+                {tender.expertMatches!.slice(0, 8).map((match) => {
+                  // Find the expert's CV document if one has been generated
+                  const cvDoc = tender.generatedDocuments.find(
+                    (d) => d.generationStatus === "GENERATED" &&
+                           d.documentType === "EXPERT_CV_PACKAGE" &&
+                           (d.name?.includes(match.expert.fullName) || d.exactFileName?.includes(match.expert.fullName.replace(/\s+/g, "-")))
+                  );
+                  return (
                   <li key={match.id} className={`rounded-xl border px-4 py-3 ${match.isSelected ? "border-green-200 bg-green-50" : ""}`}>
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0 flex-1">
@@ -1033,6 +1147,15 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
                           <p className="text-sm font-medium text-slate-900">{match.expert.fullName}</p>
                           {match.isSelected && <span className="rounded-full bg-green-500 px-2 py-0.5 text-[10px] font-bold text-white">SELECTED</span>}
                           <TrustBadge level={match.expert.trustLevel} />
+                          {cvDoc && (
+                            <button
+                              onClick={() => downloadDocById(cvDoc.id)}
+                              className="rounded border border-slate-200 px-1.5 py-0.5 text-[10px] text-slate-500 hover:bg-slate-100"
+                              title="Download expert CV"
+                            >
+                              ⬇ CV
+                            </button>
+                          )}
                         </div>
                         <p className="text-xs text-slate-500 mt-0.5">{match.expert.title ?? "Expert"}{match.expert.yearsExperience ? ` · ${match.expert.yearsExperience} yrs` : ""}</p>
                         <p className="mt-1 text-xs text-slate-500 truncate">{match.rationale}</p>
@@ -1046,7 +1169,8 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
                       </div>
                     </div>
                   </li>
-                ))}
+                  );
+                })}
               </ul>
             </div>
           )}
@@ -1170,7 +1294,27 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
                           <p className="mt-1 text-xs text-slate-500 italic">&ldquo;{doc.reviewNotes}&rdquo;</p>
                         )}
                       </div>
-                      <div className="flex items-center gap-2 shrink-0">
+                      <div className="flex items-center gap-1.5 shrink-0 flex-wrap justify-end">
+                        {/* L2: Inline content preview */}
+                        {doc.contentSummary && (
+                          <button
+                            onClick={() => setPreviewDocId(previewDocId === doc.id ? null : doc.id)}
+                            className="text-xs text-slate-500 hover:text-slate-800 border rounded px-2 py-0.5"
+                          >
+                            {previewDocId === doc.id ? "Hide" : "Preview"}
+                          </button>
+                        )}
+                        {/* H1: Regenerate section button */}
+                        {doc.generationStatus === "GENERATED" && SECTION_ID_MAP[doc.documentType] && (
+                          <button
+                            onClick={() => void handleRegenerateSection(doc.id, doc.documentType)}
+                            disabled={regeneratingSection === doc.id}
+                            className="text-xs text-purple-600 hover:text-purple-800 border border-purple-200 rounded px-2 py-0.5 disabled:opacity-50"
+                            title="Regenerate this section only (~20s)"
+                          >
+                            {regeneratingSection === doc.id ? "Regenerating…" : "↺"}
+                          </button>
+                        )}
                         {doc.generationStatus === "GENERATED" && (
                           <button
                             onClick={() => { setReviewingDocId(reviewingDocId === doc.id ? null : doc.id); setReviewNote(doc.reviewNotes ?? ""); }}
@@ -1184,6 +1328,17 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
                         )}
                       </div>
                     </div>
+
+                    {/* L2: Inline content preview panel */}
+                    {previewDocId === doc.id && doc.contentSummary && (
+                      <div className="border-t pt-2">
+                        <p className="text-xs font-medium text-slate-600 mb-1">Content preview</p>
+                        <div className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-700 max-h-48 overflow-y-auto whitespace-pre-wrap leading-relaxed">
+                          {doc.contentSummary}
+                        </div>
+                      </div>
+                    )}
+
                     {reviewingDocId === doc.id && (
                       <div className="border-t pt-2 space-y-2">
                         <textarea
@@ -1269,6 +1424,16 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
         loading={activityLoading}
         onLoad={loadActivity}
       />
+
+      {/* Toast notification — bottom-right fixed */}
+      {toast && (
+        <div className={`fixed bottom-6 right-6 z-50 flex items-center gap-3 rounded-xl px-4 py-3 shadow-lg text-sm font-medium ${
+          toast.type === "success" ? "bg-emerald-700 text-white" : "bg-red-700 text-white"
+        }`}>
+          {toast.type === "success" ? "✓" : "✗"} {toast.message}
+          <button onClick={() => setToast(null)} className="ml-1 opacity-70 hover:opacity-100">✕</button>
+        </div>
+      )}
     </div>
   );
 }

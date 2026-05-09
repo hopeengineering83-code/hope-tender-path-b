@@ -1,11 +1,12 @@
 import { NextResponse } from "next/server";
 import { getSession } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
-import { Document, Packer, Paragraph, TextRun } from "docx";
+import { Document, HeadingLevel, Packer, Paragraph, Table, TableBorders, TableCell, TableRow, TextRun, WidthType } from "docx";
 import { logAction } from "../../../../../lib/audit";
 import { buildSubmissionPlan, findExtraGeneratedDocuments, findMissingGeneratedDocuments, hasExplicitSubmissionScope, plannedSubmissionTargetFiles } from "../../../../../lib/engine/submission-plan";
 import { safeFileBaseName } from "../../../../../lib/engine/proposal-labels";
 import { checkExportReadiness, checkFullExportReadiness, exportReadinessError } from "../../../../../lib/engine/export-readiness";
+import { computeWinProbability } from "../../../../../lib/engine/win-probability";
 
 function safeParseArr(v: unknown): string[] {
   try {
@@ -142,7 +143,15 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
 
   const tender = await prisma.tender.findFirst({
     where: { id, userId },
-    include: { requirements: true, complianceGaps: true, generatedDocuments: true, exportPackages: true },
+    include: {
+      requirements: true,
+      complianceGaps: true,
+      generatedDocuments: true,
+      exportPackages: true,
+      // Needed for win probability report in ZIP
+      expertMatches: { where: { isSelected: true }, include: { expert: { select: { disciplines: true, sectors: true, yearsExperience: true } } } },
+      projectMatches: { where: { isSelected: true }, include: { project: { select: { sectors: true, contractValue: true } } } },
+    },
   });
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
 
@@ -264,9 +273,98 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
       zip.file(filename, buffer);
     }
 
+    // ── H4: Expert CV DOCX files in a CVs/ sub-folder ─────────────────
+    // Expert CV documents (EXPERT_CV_PACKAGE) are supplementary appendices
+    // that evaluators expect alongside the main proposal. They are NOT part
+    // of the submission plan scope check (which only covers the 6-8 main
+    // proposal files), so we add them separately into a CVs/ folder.
+    const cvDocs = tender.generatedDocuments.filter(
+      (d) => d.generationStatus === "GENERATED" && d.fileContent &&
+             (d.documentType === "EXPERT_CV_PACKAGE" || d.name?.startsWith("CV-")),
+    );
+    for (const cvDoc of cvDocs) {
+      const cvBuffer = Buffer.from(cvDoc.fileContent!, "base64");
+      const cvFilename = cvDoc.exactFileName ?? generatedFileName(cvDoc.name);
+      zip.file(`CVs/${cvFilename}`, cvBuffer);
+    }
+
+    // ── M6: Win-probability report DOCX ───────────────────────────────
+    // A concise internal report showing the 4-axis win-probability breakdown
+    // so bid managers can reference it during proposal review meetings.
+    try {
+      const pastOutcomes = await prisma.tender.findMany({
+        where: { userId, bidOutcome: { in: ["WON", "LOST"] } },
+        select: { bidOutcome: true, category: true },
+      });
+
+      const wpResult = computeWinProbability({
+        primarySector: tender.category ?? "General",
+        projects: tender.projectMatches.map((m) => ({
+          sectors: (m.project as { sectors?: string | null }).sectors,
+          contractValue: (m.project as { contractValue?: number | null }).contractValue,
+        })),
+        experts: tender.expertMatches.map((m) => ({
+          disciplines: (m.expert as { disciplines?: string | null }).disciplines,
+          sectors: (m.expert as { sectors?: string | null }).sectors,
+          yearsExperience: (m.expert as { yearsExperience?: number | null }).yearsExperience,
+        })),
+        complianceGaps: tender.complianceGaps.filter((g) => !g.isResolved),
+        bidOutcomes: pastOutcomes.map((t) => ({ won: t.bidOutcome === "WON", primarySector: t.category ?? null })),
+      });
+
+      const axisRows: [string, string, string][] = [
+        ["Evidence match", `${wpResult.breakdown.evidenceMatch}/30`, `${Math.round((wpResult.breakdown.evidenceMatch / 30) * 100)}%`],
+        ["Team strength", `${wpResult.breakdown.teamStrength}/25`, `${Math.round((wpResult.breakdown.teamStrength / 25) * 100)}%`],
+        ["Compliance posture", `${wpResult.breakdown.compliancePosture}/25`, `${Math.round((wpResult.breakdown.compliancePosture / 25) * 100)}%`],
+        ["Historical outcomes", `${wpResult.breakdown.historicalOutcomes}/20`, `${Math.round((wpResult.breakdown.historicalOutcomes / 20) * 100)}%`],
+      ];
+
+      const wpDoc = new Document({
+        styles: { default: { document: { run: { font: "Calibri", size: 22 }, paragraph: { spacing: { line: 276 } } } } },
+        sections: [{
+          properties: { page: { margin: { top: 720, bottom: 720, left: 900, right: 900 } } },
+          children: [
+            new Paragraph({ text: "Win Probability Report", heading: HeadingLevel.HEADING_1, spacing: { after: 120 } }),
+            new Paragraph({ children: [new TextRun({ text: `Tender: `, bold: true }), new TextRun({ text: tender.title })], spacing: { after: 60 } }),
+            new Paragraph({ children: [new TextRun({ text: `Overall score: `, bold: true }), new TextRun({ text: `${wpResult.score}/100 — ${wpResult.label}` })], spacing: { after: 200 } }),
+            new Table({
+              width: { size: 100, type: WidthType.PERCENTAGE },
+              borders: TableBorders.NONE,
+              rows: [
+                new TableRow({
+                  tableHeader: true,
+                  children: ["Axis", "Score", "Rate"].map((h) =>
+                    new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: h, bold: true, size: 20 })] })], shading: { fill: "1F4E79" }, margins: { top: 80, bottom: 80, left: 100, right: 100 } })
+                  ),
+                }),
+                ...axisRows.map(([axis, score, rate]) =>
+                  new TableRow({
+                    children: [axis, score, rate].map((v) =>
+                      new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: v, size: 20 })] })], margins: { top: 60, bottom: 60, left: 100, right: 100 } })
+                    ),
+                  })
+                ),
+              ],
+            }),
+            new Paragraph({ children: [new TextRun("")], spacing: { after: 200 } }),
+            new Paragraph({ text: "Key notes", heading: HeadingLevel.HEADING_2, spacing: { after: 80 } }),
+            ...wpResult.notes.map((note) => new Paragraph({ children: [new TextRun({ text: `• ${note}`, size: 20 })], spacing: { after: 60 } })),
+            new Paragraph({ children: [new TextRun({ text: `Generated: ${new Date().toLocaleString()}`, size: 18, color: "888888", italics: true })], spacing: { before: 300 } }),
+          ],
+        }],
+      });
+      const wpBuffer = await Packer.toBuffer(wpDoc);
+      zip.file("Win-Probability-Report.docx", wpBuffer);
+    } catch {
+      // Win probability report failure is non-blocking — the ZIP still exports
+    }
+
     const zipBuffer = await zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" });
     const zipName = `${safeFileBaseName(tender.title)}-submission-package.zip`;
-    const fileList = generatedDocs.map((doc) => doc.exactFileName ?? generatedFileName(doc.name));
+    const fileList = [
+      ...generatedDocs.map((doc) => doc.exactFileName ?? generatedFileName(doc.name)),
+      ...cvDocs.map((d) => `CVs/${d.exactFileName ?? generatedFileName(d.name)}`),
+    ];
 
     const existingPackage = tender.exportPackages[0];
     if (existingPackage) {
