@@ -46,28 +46,22 @@ const CLAUDE_PROPOSAL_MODELS = _rawModels.length > 0
 
 // Maximum output tokens per Claude call. Two distinct constraints apply:
 //   - Anthropic Free Tier caps output at 4K tokens/minute per model.
-//     Paid tiers go much higher (Tier 2 = 16K output / minute).
+//     Tier 2 = 16K output/min; Tier 3+ = 80K output/min.
 //   - Vercel serverless function timeout caps wall-clock time.
-//     Hobby = 60s, Pro = 300s. Claude's response time scales roughly
-//     linearly with output token count — 8K tokens ≈ 25–40s, 16K ≈
-//     60–120s. On Vercel Hobby, requesting 16K output reliably blows
-//     the 60s budget and the function dies before Claude responds.
+//     Hobby = 60s, Pro = 300s. Claude response time scales roughly
+//     linearly with output token count — 8K ≈ 25–40s, 16K ≈ 60–120s.
 //
-// Default is set to 8000 — a Hobby-tier-compatible value that still
-// produces a comprehensive proposal (≈ 6,000 words) in time. The
-// deterministic backstops (Sections E/F/G/H from PR #230 + #231)
-// guarantee the four mandatory evaluator-facing tables are present
-// even when Claude's output is tighter, so the trade-off has minimal
-// quality impact.
-//
-// Operators on Vercel Pro (300s function timeout) can raise this to
-// 16000 via the ANTHROPIC_MAX_OUTPUT_TOKENS env var. Operators on
-// Anthropic Tier 3+ AND Vercel Enterprise could go higher still
-// (capped at 64000 for safety).
+// Tier-aware defaults (override any time via ANTHROPIC_MAX_OUTPUT_TOKENS):
+//   Tier 1  (Vercel Hobby):   8 000 — stays within 60s function limit
+//   Tier 2+ (Vercel Pro):    16 000 — full proposal in one pass, ~60–120s,
+//                                      well within 300s Pro limit
+//   Tier 3+ (Enterprise):    16 000 — same cap; raise via env for longer docs
 const CLAUDE_MAX_OUTPUT_TOKENS = (() => {
   const raw = Number(process.env.ANTHROPIC_MAX_OUTPUT_TOKENS);
   if (Number.isFinite(raw) && raw > 0) return Math.min(raw, 64000);
-  return 8000;
+  // Tier-aware default: Tier 1 → 8K (Hobby-safe); Tier 2+ → 16K (Pro).
+  const tier = (process.env.ANTHROPIC_TIER || "").trim();
+  return tier === "1" ? 8000 : 16000;
 })();
 
 function getClient() {
