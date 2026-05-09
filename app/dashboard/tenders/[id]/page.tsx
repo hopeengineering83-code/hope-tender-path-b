@@ -7,6 +7,7 @@ import { ExecutiveSnapshot } from "./executive-snapshot";
 import { TenderAICopilotPanel } from "../../../../components/tender-ai-copilot-panel";
 import { ExportReadinessPanel } from "../../../../components/export-readiness-panel";
 import { EvaluatorObjectionsPanel } from "../../../../components/evaluator-objections-panel";
+import { PricingWorkbookPanel } from "../../../../components/pricing-workbook-panel";
 
 export default async function TenderPage({ params }: { params: Promise<{ id: string }> }) {
   const userId = await getSession();
@@ -48,6 +49,7 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
       <ExecutiveSnapshot tender={tender} />
       <ExportReadinessPanel tenderId={tender.id} />
       <EvaluatorObjectionsPanel tenderId={tender.id} />
+      <PricingWorkbookPanel tenderId={tender.id} />
       {ai && <TenderAICopilotPanel tenderId={tender.id} />}
       <TenderDetail tender={tender} aiEnabled={ai} />
     </>
