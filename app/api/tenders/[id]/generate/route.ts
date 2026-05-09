@@ -1,19 +1,16 @@
 import { NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 
-// Vercel route timeout configuration. Default for Next.js App Router on
-// Vercel is 10 seconds — far too short for a Claude proposal generation
-// (analyze 10–20s, generate 30–90s, optionally refine 30–60s, plus the
-// deterministic enrichers). 60 is the Hobby-plan maximum; on Pro plans
-// Vercel will use the plan limit when this value exceeds it. Without
-// this export the function would silently time out at 10s and the UI
-// would hang on "Generating…".
-export const maxDuration = 60;
+// Long-form AI proposal generation can require 16K Claude output and a 220s
+// in-pipeline timeout on Tier 2. Keep this route aligned with that target so
+// the app does not request work that the serverless route cannot finish.
+export const maxDuration = 300;
 export const dynamic = "force-dynamic";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { generateTenderDocuments } from "../../../../../lib/engine/generate-elite";
 import { applyActiveUploadedLetterheadToTenderDocuments } from "../../../../../lib/engine/apply-active-letterhead";
 import { rateLimit, AI_RATE_LIMIT } from "../../../../../lib/rate-limit";
+import { getProposalRuntimeProfile } from "../../../../../lib/ai-runtime-capability";
 import { buildSubmissionPlan, findExtraGeneratedDocuments, findMissingGeneratedDocuments, generatedDocumentSubmissionKey, hasExplicitSubmissionScope, plannedSubmissionTargetFiles, plannedSubmissionTargetKeys, type SubmissionPlanFile } from "../../../../../lib/engine/submission-plan";
 import { polishBenchmarkOutput } from "../../../../../lib/engine/benchmark-output-polisher";
 import { cleanTenderTitle, cleanClientName, formatRequirementLine } from "../../../../../lib/engine/proposal-labels";
@@ -296,6 +293,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   const userId = actor.id;
 
+  const runtimeProfile = getProposalRuntimeProfile(maxDuration);
+
   const rl = rateLimit(`gen:${userId}`, AI_RATE_LIMIT);
   if (!rl.allowed) {
     return NextResponse.json(
@@ -311,6 +310,18 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
   if (tender.status === "NO_BID") {
     return NextResponse.json({ error: "Generation blocked: this tender is marked NO_BID. Apply a BID or BID_WITH_CONDITIONS decision before generating proposal documents.", code: "NO_BID_BLOCK" }, { status: 409 });
+  }
+
+  if (!runtimeProfile.canRunProposalGeneration) {
+    await logAction({
+      userId,
+      action: "AI_RUNTIME_CAPABILITY_WARNING",
+      entityType: "Tender",
+      entityId: id,
+      description: `Proposal generation runtime configuration warning for "${tender.title}"`,
+      metadata: runtimeProfile,
+      requestId,
+    });
   }
 
   const submissionPlan = buildSubmissionPlan({
@@ -342,14 +353,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (selectedExpertMatches.length > 0 && reviewedExpertCount === 0 && expertRequirementExists > 0) return NextResponse.json({ error: `Generation blocked: ${selectedExpertMatches.length} expert(s) are selected but NONE have been reviewed. Go to the Knowledge Review page and review at least one expert before generating.`, code: "ALL_EXPERTS_UNREVIEWED", draftExperts: draftExperts.map((m) => m.expert.fullName) }, { status: 422 });
   if (selectedProjectMatches.length > 0 && reviewedProjectCount === 0 && projectRequirementExists > 0) return NextResponse.json({ error: `Generation blocked: ${selectedProjectMatches.length} project reference(s) are selected but NONE have been reviewed. Go to the Knowledge Review page and review at least one project before generating.`, code: "ALL_PROJECTS_UNREVIEWED", draftProjects: draftProjects.map((m) => m.project.name) }, { status: 422 });
 
-  const warnings: string[] = [];
+  const warnings: string[] = [...runtimeProfile.warnings];
   if (explicitSubmissionScope) warnings.push(`Submission plan target scope detected: ${plannedTargetFiles.length} tender-required file(s) will control generation reconciliation.`);
   if (seniorReviewCriticals.length > 0) warnings.push(`${seniorReviewCriticals.length} critical evidence/review gap(s) were carried into the proposal as senior bid-review items instead of blocking draft generation.`);
   if (draftExperts.length > 0) warnings.push(`${draftExperts.length} selected expert(s) are unreviewed drafts: ${draftExperts.map((m) => m.expert.fullName).join(", ")}. Review them in the Knowledge Review page for more accurate proposals.`);
   if (draftProjects.length > 0) warnings.push(`${draftProjects.length} selected project(s) are unreviewed drafts: ${draftProjects.map((m) => m.project.name).join(", ")}. Review them in the Knowledge Review page for more accurate proposals.`);
 
   const log = childLogger({ tenderId: id, userId, route: "/api/tenders/[id]/generate" });
-  log.info("generation_started", { reviewedExpertCount, draftExpertCount: draftExperts.length, reviewedProjectCount, draftProjectCount: draftProjects.length });
+  log.info("generation_started", { reviewedExpertCount, draftExpertCount: draftExperts.length, reviewedProjectCount, draftProjectCount: draftProjects.length, runtimeProfile });
 
   const job = createJob({ userId, tenderId: id, type: "GENERATE", steps: ["FETCH", "AI_GENERATE", "SAVE", "LETTERHEAD", "VALIDATE"] });
   advanceJob(job.id, "FETCH");
@@ -384,12 +395,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     advanceJob(job.id, "VALIDATE");
     if (reviewedExpertCount > 0 || draftExperts.length > 0 || reviewedProjectCount > 0 || draftProjects.length > 0) await prisma.generatedDocument.updateMany({ where: { tenderId: id }, data: { reviewedExpertCount, draftExpertCount: draftExperts.length, reviewedProjectCount, draftProjectCount: draftProjects.length, updatedAt: new Date() } });
 
-    await logAction({ userId, action: "TENDER_GENERATED", entityType: "Tender", entityId: id, description: `Generated benchmark-quality documents for tender "${tender.title}" — ${reviewedExpertCount} reviewed experts, ${draftExperts.length} draft experts, ${reviewedProjectCount} reviewed projects, ${draftProjects.length} draft projects, ${supportDocumentCount} supporting package documents, ${letterheadAppliedCount} uploaded letterhead overlays, ${seniorReviewCriticals.length} senior-review gaps`, metadata: { tenderId: id, reviewedExpertCount, draftExpertCount: draftExperts.length, reviewedProjectCount, draftProjectCount: draftProjects.length, plannedRecordCount, supportDocumentCount, letterheadAppliedCount, seniorReviewGapCount: seniorReviewCriticals.length, explicitSubmissionScope, plannedTargetCount: plannedTargetFiles.length, missingPlanFileCount: missingPlanFiles.length, extraGeneratedFileCount: extraGeneratedDocs.length, warnings }, requestId });
+    await logAction({ userId, action: "TENDER_GENERATED", entityType: "Tender", entityId: id, description: `Generated benchmark-quality documents for tender "${tender.title}" — ${reviewedExpertCount} reviewed experts, ${draftExperts.length} draft experts, ${reviewedProjectCount} reviewed projects, ${draftProjects.length} draft projects, ${supportDocumentCount} supporting package documents, ${letterheadAppliedCount} uploaded letterhead overlays, ${seniorReviewCriticals.length} senior-review gaps`, metadata: { tenderId: id, reviewedExpertCount, draftExpertCount: draftExperts.length, reviewedProjectCount, draftProjectCount: draftProjects.length, plannedRecordCount, supportDocumentCount, letterheadAppliedCount, seniorReviewGapCount: seniorReviewCriticals.length, explicitSubmissionScope, plannedTargetCount: plannedTargetFiles.length, missingPlanFileCount: missingPlanFiles.length, extraGeneratedFileCount: extraGeneratedDocs.length, runtimeProfile, warnings }, requestId });
     const updatedTender = await prisma.tender.findFirst({ where: { id, userId }, include: { generatedDocuments: { orderBy: { exactOrder: "asc" } } } });
-    const jobResult = { warnings, supportDocumentCount, letterheadAppliedCount };
+    const jobResult = { warnings, supportDocumentCount, letterheadAppliedCount, runtimeProfile };
     completeJob(job.id, jobResult);
     void createNotification({ userId, type: "TENDER_GENERATED", title: `Documents generated for "${tender.title}"`, body: `${(updatedTender?.generatedDocuments ?? []).length} document(s) ready for review.`, entityType: "Tender", entityId: id, link: `/dashboard/tenders/${id}` });
-    return NextResponse.json({ success: true, jobId: job.id, tender: updatedTender, warnings, plannedRecordCount, supportDocumentCount, letterheadAppliedCount, submissionPlan: explicitSubmissionScope ? { plannedTargetCount: plannedTargetFiles.length, missing: missingPlanFiles.map((file) => file.exactFileName), extras: extraGeneratedDocs.map((doc) => doc.exactFileName ?? doc.name ?? doc.documentType ?? doc.id ?? "document") } : null });
+    return NextResponse.json({ success: true, jobId: job.id, runtimeProfile, tender: updatedTender, warnings, plannedRecordCount, supportDocumentCount, letterheadAppliedCount, submissionPlan: explicitSubmissionScope ? { plannedTargetCount: plannedTargetFiles.length, missing: missingPlanFiles.map((file) => file.exactFileName), extras: extraGeneratedDocs.map((doc) => doc.exactFileName ?? doc.name ?? doc.documentType ?? doc.id ?? "document") } : null });
   } catch (error) {
     failJob(job.id, error instanceof Error ? error.message : String(error));
     void reportError(error, { tenderId: id, userId, route: "/api/tenders/[id]/generate" });
