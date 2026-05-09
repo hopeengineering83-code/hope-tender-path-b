@@ -49,7 +49,7 @@ import {
 } from "./understanding-and-value-added";
 import { reorderToCanonicalSequence } from "./section-reorderer";
 import { renderDynamicTableOfContents } from "./dynamic-toc";
-import { humanize, humanizeDeterministic } from "./humanize";
+import { humanize, humanizeDeterministic, humanizeOpeningSections } from "./humanize";
 import { injectEvidenceMarkers } from "./evidence-marker-injector";
 import { amplifySectionCDepth } from "./section-c-depth-amplifier";
 import { injectMethodologyTables } from "./methodology-tables";
@@ -1485,12 +1485,26 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   // patterns and prose style are touched, not project names, expert
   // names, contract values, or evidence anchors.
   let humanizedMarkdown = humanizeDeterministic(clientMarkdown);
+
+  // Targeted opening-sections polish: rewrites only the Cover Letter and
+  // Executive Summary (~500 tokens each) so the highest-read sections
+  // sound like a senior consultant wrote them. Always-on — the small
+  // token budget keeps wall time under 15s even on Hobby tier.
+  try {
+    humanizedMarkdown = await humanizeOpeningSections(humanizedMarkdown);
+    console.info("[generate-elite] Targeted Cover Letter + Executive Summary humanization applied.");
+  } catch (err) {
+    console.warn(`[generate-elite] Opening-sections humanize failed (${err instanceof Error ? err.message : String(err)}) — keeping deterministic output.`);
+  }
+
+  // Full-proposal AI humanization pass (opt-in via PROPOSAL_HUMANIZE_AI=true).
+  // Adds 25–45s. Not recommended on Vercel Hobby (60s limit).
   const humanizeAiEnabled = (process.env.PROPOSAL_HUMANIZE_AI || "").toLowerCase() === "true";
   if (humanizeAiEnabled) {
     try {
       humanizedMarkdown = await humanize(humanizedMarkdown);
     } catch (err) {
-      console.warn(`[generate-elite] humanize AI pass failed (${err instanceof Error ? err.message : String(err)}) — keeping deterministic-cleaned output.`);
+      console.warn(`[generate-elite] Full-proposal humanize AI pass failed (${err instanceof Error ? err.message : String(err)}) — keeping output from opening-sections pass.`);
     }
   }
 
@@ -2332,6 +2346,46 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   }
 
   await prisma.tender.update({ where: { id: tenderId }, data: { status: "GENERATED", stage: "GENERATION", updatedAt: new Date() } });
+
+  // ─── Proposal version snapshot ──────────────────────────────────────────────
+  // Save the current proposal as a numbered version in ProposalVersion.
+  // Keeps only the last 5 versions per tender (oldest pruned automatically).
+  // Versions let users compare previous generations and roll back when a
+  // regeneration produces worse output than the prior run.
+  try {
+    const existingVersions = await prisma.$queryRawUnsafe<Array<{ version: number; id: string }>>(
+      `SELECT "version", "id" FROM "ProposalVersion" WHERE "tenderId" = $1 ORDER BY "version" DESC`,
+      tenderId
+    );
+    const nextVersion = existingVersions.length > 0 ? existingVersions[0].version + 1 : 1;
+
+    await prisma.$executeRawUnsafe(
+      `INSERT INTO "ProposalVersion" ("id","tenderId","version","markdown","fileContent","benchmarkScore","qualityScore","winProbabilityScore","mode","summary","createdAt")
+       VALUES (gen_random_uuid(),$1,$2,$3,$4,$5,$6,$7,$8,$9,NOW())`,
+      tenderId,
+      nextVersion,
+      workingMarkdown,
+      fileContent,
+      finalized.score.score,
+      qualityScore.total,
+      winProb.score,
+      mode,
+      summary.slice(0, 500),
+    );
+    console.info(`[generate-elite] Proposal version ${nextVersion} saved.`);
+
+    // Prune versions beyond the last 5.
+    if (existingVersions.length >= 5) {
+      const idsToDelete = existingVersions.slice(4).map((v) => v.id);
+      for (const vId of idsToDelete) {
+        await prisma.$executeRawUnsafe(`DELETE FROM "ProposalVersion" WHERE "id" = $1`, vId);
+      }
+      console.info(`[generate-elite] Pruned ${idsToDelete.length} old proposal version(s) (keeping last 5).`);
+    }
+  } catch (vErr) {
+    // Version saving is non-critical — never block the main proposal.
+    console.warn("[generate-elite] Proposal version snapshot failed:", vErr instanceof Error ? vErr.message : vErr);
+  }
 
   // ─── Expert CV DOCX generation ──────────────────────────────────────────────
   // Generate one professional CV Word document per selected REVIEWED expert.
