@@ -6,6 +6,7 @@ import { analyzeWithAI, isAIEnabled } from "../ai";
 import { buildCompliance } from "./compliance";
 import { buildDocumentPlan } from "./documents";
 import { buildMatches } from "./matching";
+import { applyMainEngineBestAvailableSelection } from "./main-engine-selection-policy";
 
 function chunks<T>(items: T[], size = 100): T[][] {
   const out: T[][] = [];
@@ -156,7 +157,13 @@ export async function runTenderEngine(tenderId: string, userId: string) {
       hasBlockingProjects: aiDraftProjectCount + regexDraftProjectCount > 0,
     };
 
-    const matching = buildMatches(analysis.requirements, knowledge, tender.category, tender.title);
+    const initialMatching = buildMatches(analysis.requirements, knowledge, tender.category, tender.title);
+    const matching = applyMainEngineBestAvailableSelection({
+      requirements: analysis.requirements,
+      matching: initialMatching,
+      expertTrust: new Map(knowledge.experts.map((expert) => [expert.id, expert.trustLevel])),
+      projectTrust: new Map(knowledge.projects.map((project) => [project.id, project.trustLevel])),
+    });
 
     // ─── G9 follow-up: best-effort source-coord extraction ──────────────────
     // For each requirement we just extracted, run a regex-based matcher
@@ -440,6 +447,7 @@ export async function runTenderEngine(tenderId: string, userId: string) {
           `Engine run ID: ${engineRunId}`,
           activeGeneratedDocuments.length > 0 ? `${activeGeneratedDocuments.length} previous generated document(s) were superseded and preserved for audit/review history.` : null,
           "Senior consultant mode: broad-fit matching uses capability families, sector/service equivalence, and professional judgment instead of exact wording only.",
+          "Main engine selection: reviewed best-available evidence below 90% can be selected when no selected safe evidence exists for a required class; draft knowledge remains excluded from final evidence.",
           analysisMethod === "AI"
             ? "Analysis source: AI (chunked multi-call when tender > 60K chars)."
             : `Analysis source: regex fallback (${analysisMethod}). ${analysisFallbackReason ?? ""}`.trim(),
