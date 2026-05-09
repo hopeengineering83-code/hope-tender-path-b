@@ -738,21 +738,42 @@ export function buildProposalIntelligence(params: {
     return sectorFilter(t);
   };
 
-  // Apply filter — but DON'T let the filter strip everything when
-  // the vault genuinely has no on-sector records (false negatives are
-  // worse than false positives here). When 0 relevant projects/experts
-  // are found, fall back to unfiltered.
+  // Apply filter. PR XX-FOLLOWUP — tightened fallback semantics.
+  //
+  // BEFORE: when fewer than 3 sector-relevant records existed, we fell
+  // back to the UNFILTERED list. That meant a healthcare tender against
+  // a warehouse-heavy portfolio surfaced warehouse projects in the top
+  // 10 — exactly what produced the May-7 benchmark "Warehouse &
+  // Landscaping anchoring a hospital cover letter" failure.
+  //
+  // NOW: the sector-relevant list is ALWAYS the priority pool; we only
+  // top up from the unfiltered list when needed to meet a small minimum
+  // (5 projects / 8 experts). The top-up records are appended at the
+  // END after sector-relevant ones, so the lead anchor in the cover
+  // letter is always sector-relevant when even one such record exists.
   const projectsRelevant = projects.filter(projectIsRelevant);
   const expertsRelevant = experts.filter(expertIsRelevant);
-  const projectPool = projectsRelevant.length >= 3 ? projectsRelevant : projects;
-  const expertPool = expertsRelevant.length >= 3 ? expertsRelevant : experts;
+  const PROJECT_MIN_POOL = 5;
+  const EXPERT_MIN_POOL = 8;
 
-  const topProjects = [...projectPool]
+  const projectsRelevantSorted = [...projectsRelevant]
+    .sort((a, b) => projectScore(b, themes, tenderText) - projectScore(a, themes, tenderText));
+  const expertsRelevantSorted = [...expertsRelevant]
+    .sort((a, b) => expertScore(b, themes, tenderText) - expertScore(a, themes, tenderText));
+
+  // Top-up from non-relevant list only when relevant pool is too small.
+  const projectsBackfill = [...projects.filter((p) => !projectsRelevant.includes(p))]
     .sort((a, b) => projectScore(b, themes, tenderText) - projectScore(a, themes, tenderText))
-    .slice(0, 10);
-  const topExperts = [...expertPool]
+    .slice(0, Math.max(0, PROJECT_MIN_POOL - projectsRelevantSorted.length));
+  const expertsBackfill = [...experts.filter((e) => !expertsRelevant.includes(e))]
     .sort((a, b) => expertScore(b, themes, tenderText) - expertScore(a, themes, tenderText))
-    .slice(0, 14);
+    .slice(0, Math.max(0, EXPERT_MIN_POOL - expertsRelevantSorted.length));
+
+  const projectPool = [...projectsRelevantSorted, ...projectsBackfill];
+  const expertPool = [...expertsRelevantSorted, ...expertsBackfill];
+
+  const topProjects = projectPool.slice(0, 10);
+  const topExperts = expertPool.slice(0, 14);
 
   if (detectedSector !== "General Consultancy / Engineering") {
     console.info(`[proposal-intelligence] Sector filter (${detectedSector}): kept ${projectPool.length}/${projects.length} projects, ${expertPool.length}/${experts.length} experts.`);
