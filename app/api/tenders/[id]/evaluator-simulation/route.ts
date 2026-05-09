@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { requireUser, unauthorizedResponse, forbiddenResponse } from "../../../../../lib/auth";
 import { simulateEvaluatorPanel } from "../../../../../lib/engine/evaluator-simulator";
+import { scoreProposalQuality } from "../../../../../lib/engine/proposal-quality-scorer";
 import { logAction } from "../../../../../lib/audit";
 
 export const maxDuration = 60;
@@ -55,6 +56,20 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     }, { status: 400 });
   }
 
+  // Run quality scorer on proposal text to surface weak axes for evaluators.
+  const qualityScore = (() => {
+    try {
+      return scoreProposalQuality({ markdown: proposalContext, primarySector: "", topProjects: [] });
+    } catch {
+      return null;
+    }
+  })();
+  const weakAxesSummary = qualityScore && qualityScore.weakAxes.length > 0
+    ? `Quality scorer: ${qualityScore.total}/100 — weak axes: ${qualityScore.weakAxes.join(", ")}`
+    : qualityScore
+      ? `Quality scorer: ${qualityScore.total}/100 — all axes passing`
+      : "";
+
   const context = {
     requirements: tender.requirements.map((req) => `[${req.priority}] ${req.requirementType}: ${req.title} — ${short(req.description, 360)}`),
     complianceGaps: tender.complianceGaps.map((gap) => `[${gap.severity}] ${gap.title} — ${short(gap.description, 360)}${gap.mitigationPlan ? ` | Mitigation: ${short(gap.mitigationPlan, 220)}` : ""}`),
@@ -64,7 +79,10 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       ...tender.expertMatches.map((match) => `Expert ${match.expert.fullName}: ${short(match.rationale, 420)}`),
       ...tender.projectMatches.map((match) => `Project ${match.project.name}: ${short(match.rationale, 420)}`),
     ],
-    readinessSummary: `Tender readiness=${Math.round(tender.readinessScore ?? 0)}/100; open gaps=${tender.complianceGaps.length}; selected experts=${tender.expertMatches.length}; selected projects=${tender.projectMatches.length}; documents=${tender.generatedDocuments.length}`,
+    readinessSummary: [
+      `Tender readiness=${Math.round(tender.readinessScore ?? 0)}/100; open gaps=${tender.complianceGaps.length}; selected experts=${tender.expertMatches.length}; selected projects=${tender.projectMatches.length}; documents=${tender.generatedDocuments.length}`,
+      weakAxesSummary,
+    ].filter(Boolean).join(" | "),
   };
 
   await logAction({

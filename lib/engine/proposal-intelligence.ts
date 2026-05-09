@@ -563,10 +563,17 @@ function detectEvaluationWeights(tenderText: string): EvaluationWeight[] {
   //   "Criterion name — 25 points"
   //   "Criterion name: 25 marks"
   //   "Criterion name (30)"
+  //   "Criterion name 25 pts (sub1 10, sub2 8, sub3 7)" — sub-criterion hierarchies
   const patterns = [
     /([A-Z][A-Za-z &/(),'\-]{8,80}?)\s*[—\-:]\s*(\d{1,2})\s*(?:%|percent|points|marks|pts)/g,
     /([A-Z][A-Za-z &/(),'\-]{8,80}?)\s*\((\d{1,2})\s*(?:%|points|marks|pts)?\)/g,
     /([A-Z][A-Za-z &/(),'\-]{8,80}?)\s+(\d{1,2})\s*%/g,
+    // Sub-criterion hierarchy: "Criterion Name 25 pts (sub1 10, sub2 8)"
+    /([A-Z][A-Za-z &/(),'\-]{5,70}?)\s+(\d{1,2})\s*(?:pts|points|marks|%)\s*\([^)]{5,120}\)/g,
+    // Numbered list criterion: "1. Criterion Name: 30 marks"
+    /(?:^\s*\d+[.)]\s*)([A-Z][A-Za-z &/(),'\-]{5,70}?)\s*[:\-—]\s*(\d{1,2})\s*(?:%|points|marks|pts)/gm,
+    // Criterion with weight in brackets then colon: "Relevant Experience (30 marks):"
+    /([A-Z][A-Za-z &/(),'\-]{5,70}?)\s*\((\d{1,2})\s*(?:%|marks|points|pts)\)\s*[:\-]?/g,
   ];
 
   for (const pattern of patterns) {

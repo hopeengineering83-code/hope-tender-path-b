@@ -101,6 +101,11 @@ export type TenderLanguageEcho = { phrase: string; zone: "evaluation" | "scope" 
  * Extract evaluator-language echoes from a tender. Returns up to maxEchoes
  * verbatim phrases, prioritising the evaluation-criteria zone over the
  * scope zone, with stricter filters and length bounds.
+ *
+ * Also captures criterion-label phrases — the exact names evaluators use
+ * for each scoring axis (e.g. "Technical Methodology", "Relevant Experience
+ * in Similar Assignments") — since echoing a criterion's exact label is the
+ * highest-signal tactic available to a bidder.
  */
 export function extractTenderLanguageEchoes(tenderText: string, maxEchoes = 12): TenderLanguageEcho[] {
   if (!tenderText || tenderText.length < 200) return [];
@@ -108,9 +113,24 @@ export function extractTenderLanguageEchoes(tenderText: string, maxEchoes = 12):
   const echoes: TenderLanguageEcho[] = [];
   const seen = new Set<string>();
 
+  // Pass 1: extract criterion-label phrases — these appear before a score
+  // and are what the evaluator literally writes on their scoresheet.
+  const evalZoneText = evaluationZone(tenderText);
+  const criterionLabelRe = /([A-Z][A-Za-z &/(),'\-]{8,70}?)\s*(?:[:\-—]\s*\d{1,2}\s*(?:%|points?|marks?|pts)|(?:\s+\d{1,2}\s*(?:%|points?|marks?|pts)))/g;
+  for (const m of evalZoneText.matchAll(criterionLabelRe)) {
+    const label = clean(m[1]).replace(/^[\d.)\-•]+\s*/, "");
+    const wc = wordCount(label);
+    if (wc < 2 || wc > 10) continue;
+    if (hasNoise(label)) continue;
+    if (label.length < 8 || label.length > 70) continue;
+    const key = label.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    echoes.push({ phrase: label, zone: "evaluation" });
+    if (echoes.length >= maxEchoes) return echoes;
+  }
+
   const consider = (text: string, zone: "evaluation" | "scope") => {
-    // Split on sentence-ish boundaries. Keep relatively short fragments —
-    // these become echoable phrases.
     const fragments = text
       .replace(/\([^)]*\)/g, " ") // strip parentheticals
       .replace(/\[[^\]]*\]/g, " ") // strip brackets
@@ -125,11 +145,8 @@ export function extractTenderLanguageEchoes(tenderText: string, maxEchoes = 12):
       if (isMostlyStopwords(fragment)) continue;
       if (hasNoise(fragment)) continue;
       if (!hasEvaluatorSignal(fragment)) continue;
-      // Reject ALL-CAPS phrases (headers)
       if (fragment === fragment.toUpperCase() && fragment.length > 8) continue;
-      // Reject phrases that look like single proper nouns / titles
       if (/^[A-Z][^.]*$/.test(fragment) && wc <= 5 && !/[a-z]/.test(fragment)) continue;
-      // Strip a leading bullet/numbering marker
       const cleaned = fragment.replace(/^[\d.)]+\s*[-:]?\s*/, "").replace(/^[a-z][\)]\s*/i, "").trim();
       if (cleaned.length < 12) continue;
       const key = cleaned.toLowerCase();

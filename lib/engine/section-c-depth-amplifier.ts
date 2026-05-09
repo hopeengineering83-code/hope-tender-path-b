@@ -231,34 +231,62 @@ function diagnoseSubSections(sectionLines: string[]): {
 
 // Build the Section C addendum block — sub-sections that are missing,
 // PLUS depth paragraphs for sub-sections that exist but are thin.
+// When evaluationCriteria are provided, also injects dynamic C.5+
+// sub-sections for high-weight criteria that don't map to C.1-C.4.
 function buildAddendum(opts: {
   presentNumbers: Set<string>;
   thinNumbers: Set<string>;
   primarySector: string;
   projects: ProjectRecord[];
   companyName: string;
+  evaluationCriteria?: string[];
 }): string {
   const blocks: string[] = [];
   for (const spec of CANONICAL_SUB_SECTIONS) {
     const isPresent = opts.presentNumbers.has(spec.number);
     const isThin = opts.thinNumbers.has(spec.number);
     if (!isPresent) {
-      // Inject the full sub-section
       const depth = spec.buildDepth({ primarySector: opts.primarySector, projects: opts.projects, companyName: opts.companyName });
       if (depth.length === 0) continue;
       blocks.push(`## ${spec.heading}`, "", depth);
     } else if (isThin) {
-      // Append a depth paragraph WITHOUT a new heading (idempotent —
-      // we just inject extra body at the end of the section block).
-      // We emit the depth as a stand-alone paragraph, which the
-      // generate-elite stitcher will splice into the right region.
       const depth = spec.buildDepth({ primarySector: opts.primarySector, projects: opts.projects, companyName: opts.companyName });
       if (depth.length === 0) continue;
-      // Tag with a comment marker so we can find/replace deterministically
-      // in subsequent runs (idempotent guarantee).
       blocks.push(`<!-- section-c-amplifier:${spec.number} -->`, depth);
     }
   }
+
+  // Dynamic sub-sections: for evaluation criteria that don't map to C.1-C.4,
+  // inject a criterion-specific sub-section carrying sector vocabulary and
+  // an evidence anchor. This ensures the methodology depth directly mirrors
+  // what the evaluator will score.
+  if (opts.evaluationCriteria && opts.evaluationCriteria.length > 0) {
+    const CANONICAL_TOKENS = new Set(["understanding", "assignment", "methodology", "approach", "work", "plan", "deliverable", "quality", "assurance"]);
+    const criterionIsMapped = (c: string) => {
+      const tokens = c.toLowerCase().match(/[a-z]{5,}/g) ?? [];
+      return tokens.some((t) => CANONICAL_TOKENS.has(t));
+    };
+    const unmapped = opts.evaluationCriteria
+      .map((c) => c.replace(/\s*[-:]\s*\d+\s*(?:%|points?|marks?|pts).*$/i, "").trim())
+      .filter((c) => c.length >= 8 && !criterionIsMapped(c));
+    const seen = new Set<string>();
+    let dynIdx = 5;
+    for (const criterion of unmapped.slice(0, 3)) {
+      const key = criterion.toLowerCase().slice(0, 40);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const anchor = opts.projects[dynIdx % Math.max(1, opts.projects.length)]
+        ? projectAnchor(opts.projects[dynIdx % opts.projects.length], "demonstrated on")
+        : `Bid-Team Action: confirm ${criterion} evidence anchor before submission.`;
+      blocks.push(
+        `## C.${dynIdx} ${criterion}`,
+        "",
+        `${opts.companyName}'s approach to ${criterion} for this ${opts.primarySector.toLowerCase()} assignment is grounded in the firm's reviewed project portfolio. ${anchor}`,
+      );
+      dynIdx++;
+    }
+  }
+
   return blocks.join("\n\n");
 }
 
@@ -272,7 +300,7 @@ function buildAddendum(opts: {
  */
 export function amplifySectionCDepth(
   markdown: string,
-  opts: { primarySector: string; projects: ProjectRecord[]; companyName: string },
+  opts: { primarySector: string; projects: ProjectRecord[]; companyName: string; evaluationCriteria?: string[] },
 ): { markdown: string; injected: { number: string; mode: "ADDED" | "DEEPENED" }[] } {
   const sectionRange = locateSectionC(markdown);
   if (!sectionRange) return { markdown, injected: [] };
@@ -308,6 +336,7 @@ export function amplifySectionCDepth(
     primarySector: opts.primarySector,
     projects: opts.projects,
     companyName: opts.companyName,
+    evaluationCriteria: opts.evaluationCriteria,
   });
 
   if (!addendum) return { markdown, injected: [] };

@@ -69,6 +69,7 @@ import { injectCoverPageAndRfpMeta } from "./cover-page-injector";
 import { injectJvDisclosure } from "./jv-disclosure";
 import { deduplicateTables, injectQaThresholds, injectAppendixReadinessRegister } from "./advanced-quality-passes";
 import { generateExpertCvDocx, expertCvFileName } from "./expert-cv-docx";
+import { computeBidStrategy } from "./bid-strategy";
 
 const BRAND_BLUE = "1F4E79";
 const BRAND_GRAY = "595959";
@@ -902,14 +903,14 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   // network just means experts/projects keep their lexical order —
   // PR Q's hard sector filter still applies.
   // PR WW — tier-aware auto-rematch. On Tier 1 the rematch's 12-perspective
-  // batch can hit the rate limit; skip it entirely and rely on lexical +
-  // sector-filter scoring (PR Q). Manual "Re-score" button still works
-  // independently per-tender. Tier 2+ keeps the auto-rematch with the
-  // 18s budget guard (PR OO).
+  // batch can hit the rate limit; use a tighter 10s budget instead of the
+  // 18s budget used on Tier 2+. Tier 2+ keeps the full 18s budget (PR OO).
+  // Manual "Re-score" button still works independently per-tender on all tiers.
   const tierForRematch = (process.env.ANTHROPIC_TIER || "").trim();
-  const AUTO_REMATCH_DISABLED_BY_TIER = tierForRematch === "1";
-  const AUTO_REMATCH_BUDGET_MS = Number(process.env.AUTO_REMATCH_BUDGET_MS) || 18_000;
-  if (!AUTO_REMATCH_DISABLED_BY_TIER && isAIEnabled() && (experts.length > 0 || projects.length > 0)) {
+  const AUTO_REMATCH_BUDGET_MS = tierForRematch === "1"
+    ? Math.min(Number(process.env.AUTO_REMATCH_BUDGET_MS) || 10_000, 10_000)
+    : Number(process.env.AUTO_REMATCH_BUDGET_MS) || 18_000;
+  if (isAIEnabled() && (experts.length > 0 || projects.length > 0)) {
     try {
       const { aiRematchExperts, aiRematchProjects } = await import("./ai-multi-perspective-matcher");
       const tenderRequirementsText = [
@@ -1059,6 +1060,40 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     ...intelligence.submissionRules,
     ...(commercialTermLines.length > 0 ? ["", "Commercial terms detected in tender — confirm compliance in Cover Letter and Compliance Matrix:", ...commercialTermLines] : []),
   ].filter(Boolean).join("\n");
+  // Compute bid strategy and surface top risks into complianceLines so the AI
+  // narrative explicitly addresses the most critical bid gaps.
+  const bidStrategy = (() => {
+    try {
+      return computeBidStrategy({
+        tender: {
+          id: tender.id,
+          title: tender.title,
+          category: (tender as { category?: string | null }).category,
+          requirements: tender.requirements,
+          complianceGaps: tender.complianceGaps,
+          expertMatches: tender.expertMatches as Parameters<typeof computeBidStrategy>[0]["tender"]["expertMatches"],
+          projectMatches: tender.projectMatches as Parameters<typeof computeBidStrategy>[0]["tender"]["projectMatches"],
+          evaluationMethodology: tender.evaluationMethodology,
+          submissionMethod: tender.submissionMethod,
+        },
+        company: {
+          name: company.name,
+          sectors: (company as { sectors?: string | null }).sectors ?? "[]",
+          serviceLines: (company as { serviceLines?: string | null }).serviceLines ?? "[]",
+          licenseGrade: (company as { licenseGrade?: string | null }).licenseGrade,
+          country: (company as { country?: string | null }).country,
+          headcount: (company as { headcount?: number | null }).headcount,
+          expertCount: experts.length,
+          projectCount: projects.length,
+          legalRecordCount: (company.legalRecords ?? []).length,
+          financialRecordCount: (company.financialRecords ?? []).length,
+        },
+      });
+    } catch {
+      return null;
+    }
+  })();
+
   const complianceLines = [
     ...tender.complianceMatrix.map((m) => {
       const req = m.requirement?.title ?? m.requirement?.description ?? "Requirement evidence row";
@@ -1069,6 +1104,8 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     ...tender.complianceGaps.map((g) => `${g.severity}: ${g.title} — ${g.mitigationPlan || g.description}`),
     ...(expertRequired > expertLines.length ? [`Senior review: add/confirm ${expertRequired - expertLines.length} expert(s) if the tender quantity is mandatory.`] : []),
     ...(projectRequired > projectLines.length ? [`Senior review: add/confirm ${projectRequired - projectLines.length} project reference(s) if the tender quantity is mandatory.`] : []),
+    // Bid strategy top risks — surfaced so the AI addresses each in the Compliance/Risk section
+    ...(bidStrategy?.topRisks.map((r) => `BID RISK [${r.severity}] ${r.category}: ${r.title} — ${r.mitigation}`) ?? []),
   ];
 
   const guardInput = { tenderTitle: cleanedTenderTitle, clientName: intelligence.clientName, companyName: company.name, submissionNotes, expertCount: expertLines.length, projectCount: projectLines.length, complianceLines };
@@ -1616,6 +1653,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     primarySector: intelligence.primarySector,
     projects: evidenceLibrary,
     companyName: company.name,
+    evaluationCriteria: intelligence.evaluationCriteria,
   });
   if (sectionCAmp.injected.length > 0) {
     const addedCount = sectionCAmp.injected.filter((i) => i.mode === "ADDED").length;
