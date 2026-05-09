@@ -58,10 +58,14 @@ interface CandidateAssessment {
 }
 
 interface AIRematchResult {
-  success: boolean;
-  expertsUpdated: number;
-  projectsUpdated: number;
-  applySelections: boolean;
+  success?: boolean;
+  warning?: string;
+  code?: string;
+  expertsUpdated?: number;
+  projectsUpdated?: number;
+  expertsSelected?: number;
+  projectsSelected?: number;
+  applySelections?: boolean;
   selectedExpertCount?: number;
   selectedProjectCount?: number;
   iterations?: number;
@@ -219,7 +223,16 @@ export function AIRematchButton({ tenderId, experts = [], projects = [], onRemat
           </div>
         )}
 
-        {result && !showResult && (
+        {result?.warning && (
+          <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+            ⚠ {result.warning}
+            {result.expertsSelected != null && (
+              <span className="ml-1">({result.expertsSelected} expert(s), {result.projectsSelected} project(s) selected by engine score.)</span>
+            )}
+          </div>
+        )}
+
+        {result && !result.warning && !showResult && (
           <button
             type="button"
             onClick={() => setShowResult(true)}
@@ -230,7 +243,7 @@ export function AIRematchButton({ tenderId, experts = [], projects = [], onRemat
         )}
       </div>
 
-      {result && showResult && (
+      {result && !result.warning && showResult && (
         <div
           role="dialog"
           aria-modal="true"

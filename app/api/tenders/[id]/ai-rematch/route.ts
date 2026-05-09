@@ -270,31 +270,50 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   }
 
   if (!expertBatch && !projectBatch) {
-    // PR SS — give the user actionable diagnostic detail. The pre-fix
-    // message was opaque ("AI rematch returned no usable assessments")
-    // and didn't tell the bid team which path failed or why. Common
-    // root causes:
-    //   • Both AI calls timed out (typical on first cold-start + 20-
-    //     candidate prompt hitting Vercel Hobby's 60s window)
-    //   • The AI returned content but JSON parsing failed even after
-    //     the 5 tolerant strategies in parseAssessmentArray
-    //   • ANTHROPIC_API_KEY missing or expired
-    //
-    // CRITICAL — even when this fails, PR RR ensures the user's manual
-    // selections remain intact in the database. Nothing is wiped.
-    return NextResponse.json(
-      {
-        error: "AI rematch returned no usable assessments. Your existing manual selections were NOT changed.",
-        code: "NO_ASSESSMENTS",
-        diagnostics: {
-          expertCandidatesSent: expertCandidates.length,
-          projectCandidatesSent: projectCandidates.length,
-          recoveryAdvice: "Check ANTHROPIC_API_KEY is set and not rate-limited. If the issue persists, reduce the candidate pool by deselecting low-relevance items before clicking Re-score, OR raise REMATCH_TIMEOUT_MS / AUTO_REMATCH_BUDGET_MS env vars on the deployment.",
-          userSelectionsPreserved: true,
+    // AI scoring failed entirely (timeout, parse failure, or missing key).
+    // Rather than returning an error and leaving the user stuck, fall back
+    // to selecting the top-N candidates by their existing engine scores so
+    // the best available experts and projects are always selected.
+    if (!applySelections) {
+      return NextResponse.json(
+        {
+          warning: "AI scoring unavailable — showing top candidates by existing engine score. Click 'Re-score + apply selections' to apply.",
+          code: "AI_FALLBACK_PREVIEW",
+          expertAssessments: tender.expertMatches.slice(0, selectionLimit(tender.requirements, "EXPERT", tender.expertMatches.length)).map((m) => ({ candidateId: m.expert.id, name: m.expert.fullName, overallScore: m.score, recommendSelection: true, fallback: true })),
+          projectAssessments: tender.projectMatches.slice(0, selectionLimit(tender.requirements, "PROJECT_EXPERIENCE", tender.projectMatches.length)).map((m) => ({ candidateId: m.project.id, name: m.project.name, overallScore: m.score, recommendSelection: true, fallback: true })),
         },
-      },
-      { status: 502 }
-    );
+        { status: 200 }
+      );
+    }
+
+    // applySelections=true: persist the top-N by engine score to the DB
+    const expertLimit = selectionLimit(tender.requirements, "EXPERT", tender.expertMatches.length);
+    const projectLimit = selectionLimit(tender.requirements, "PROJECT_EXPERIENCE", tender.projectMatches.length);
+    const fallbackExpertIds = new Set(tender.expertMatches.slice(0, expertLimit).map((m) => m.expert.id));
+    const fallbackProjectIds = new Set(tender.projectMatches.slice(0, projectLimit).map((m) => m.project.id));
+
+    // Union with existing manual selections so nothing is lost
+    const mergedExpertIds = new Set([...tender.expertMatches.filter((m) => m.isSelected).map((m) => m.expert.id), ...fallbackExpertIds]);
+    const mergedProjectIds = new Set([...tender.projectMatches.filter((m) => m.isSelected).map((m) => m.project.id), ...fallbackProjectIds]);
+
+    for (const match of tender.expertMatches) {
+      if (mergedExpertIds.has(match.expert.id) !== match.isSelected) {
+        await prisma.tenderExpertMatch.update({ where: { id: match.id }, data: { isSelected: mergedExpertIds.has(match.expert.id) } });
+      }
+    }
+    for (const match of tender.projectMatches) {
+      if (mergedProjectIds.has(match.project.id) !== match.isSelected) {
+        await prisma.tenderProjectMatch.update({ where: { id: match.id }, data: { isSelected: mergedProjectIds.has(match.project.id) } });
+      }
+    }
+
+    return NextResponse.json({
+      warning: "AI scoring unavailable — top candidates selected by existing engine score.",
+      code: "AI_FALLBACK_APPLIED",
+      expertsSelected: mergedExpertIds.size,
+      projectsSelected: mergedProjectIds.size,
+      applySelections: true,
+    });
   }
 
   const aiSelectedExpertIds = expertBatch
