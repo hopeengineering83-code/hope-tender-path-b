@@ -6,10 +6,15 @@
  */
 
 import { generateWithFallback } from "../ai";
+import {
+  capabilityOverlapScore,
+  classifyUniversalTender,
+  isUnsafeSectorMismatch,
+  sectorOverlapScore,
+  universalProfileSummary,
+  type UniversalTenderProfile,
+} from "./universal-tender-taxonomy";
 
-// Per-call wall-clock cap so a hung AI provider doesn't exhaust the
-// route's Vercel maxDuration=60s window. Default 40s leaves 20s for
-// the parallel sister call + DB writes. Override via env var.
 const REMATCH_TIMEOUT_MS = (() => {
   const raw = Number(process.env.REMATCH_TIMEOUT_MS);
   if (Number.isFinite(raw) && raw >= 10_000 && raw <= 120_000) return raw;
@@ -115,17 +120,26 @@ const JSON_SHAPE = `OUTPUT STRICT JSON ARRAY ONLY:
   }
 ]`;
 
+const UNIVERSAL_TENDER_RULES = `UNIVERSAL TENDER RULES:
+- This app is for multidisciplinary consulting tenders, not one sector only. It must work for EOI, RFP, RFQ, ITT, prequalification, technical proposals, financial proposals, and framework bids.
+- Treat design, interior design, engineering design, supervision, contract administration, geotechnical investigation, urban planning, asset management, feasibility, BOQ/costing, MEP, environmental/social, procurement advisory, and project management as first-class service capabilities.
+- Match across service capability first, tender form second, sector third, and keyword overlap last.
+- A project from a different sector can be relevant when the same service capability is strong, for example supervision/contract administration/geotechnical investigation/design/asset management. Do not reject good multidisciplinary evidence only because the sector is adjacent.
+- But do not select unsafe sector mismatches where both service capability and sector are weak.
+- Best-available below 90 can be selected only after unsafe sector mismatches and mandatory-ineligible records are excluded.`;
+
 const HARD_SECTOR_RULES = `HARD SECTOR SAFETY RULES:
 - For hospital / healthcare / clinic / medical tenders, projects that are only warehouse, logistics, freight, cargo, terminal, supply-chain, or industrial storage experience are NOT comparable references unless the record explicitly says hospital/healthcare/clinical/medical/biomedical/pharmacy/laboratory scope.
 - A warehouse/logistics-only record for a hospital tender must receive SECTOR_FIT <= 2, DISCIPLINE_FIT <= 4, SCOPE_COVERAGE <= 4, MANDATORY_ELIGIBILITY <= 4, DELIVERY_RISK <= 3, and recommendSelection=false.
-- Similar wording applies to other sectors: sector mismatch must be treated as a real evaluator risk, not a keyword match.
-- Best-available below 90 can be selected only after excluding unsafe sector mismatches and mandatory-ineligible records.`;
+- Similar wording applies to other sectors: sector mismatch must be treated as a real evaluator risk, not a keyword match.`;
 
 const EXPERT_MATCHER_SYSTEM_PROMPT = `You are a senior bid director, technical evaluator, and red-team reviewer. You select expert teams for competitive tenders and think like a real evaluation panel, not a keyword search engine.
 
 Score EVERY candidate from TWELVE perspectives using only evidence in the candidate record. Do not invent project roles, certificates, healthcare experience, dates, availability, or responsibilities.
 
 ${PERSPECTIVE_SPEC}
+
+${UNIVERSAL_TENDER_RULES}
 
 ${HARD_SECTOR_RULES}
 
@@ -144,6 +158,8 @@ const PROJECT_MATCHER_SYSTEM_PROMPT = `You are a senior bid director, technical 
 Score EVERY project from TWELVE perspectives using only evidence in the project record. Do not invent clients, healthcare scopes, values, completion dates, certificates, or technical content.
 
 ${PERSPECTIVE_SPEC}
+
+${UNIVERSAL_TENDER_RULES}
 
 ${HARD_SECTOR_RULES}
 
@@ -184,51 +200,68 @@ export interface ProjectCandidateInput {
   trustLevel?: string | null;
 }
 
-function buildExpertUserPrompt(opts: { tenderTitle: string; tenderRequirementsText: string; evaluationMethodology: string; candidates: ExpertCandidateInput[] }): string {
-  const candidateLines = opts.candidates.map((e) => [
-    `id: ${e.id}`,
-    `name: ${e.fullName}${e.title ? ` (${e.title})` : ""}`,
-    `years_experience: ${e.yearsExperience ?? "unknown"}`,
-    `disciplines: ${e.disciplines.length ? e.disciplines.join(", ") : "<not specified>"}`,
-    `sectors: ${e.sectors.length ? e.sectors.join(", ") : "<not specified>"}`,
-    `certifications: ${e.certifications.length ? e.certifications.join(", ") : "<none>"}`,
-    `profile: ${(e.profile ?? "").replace(/\s+/g, " ").slice(0, 800)}`,
-    `trustLevel: ${e.trustLevel ?? "unknown"}`,
-  ].join("\n")).join("\n---\n");
+function tenderProfile(opts: { tenderTitle: string; tenderRequirementsText: string; tenderCategory?: string | null }): UniversalTenderProfile {
+  return classifyUniversalTender([opts.tenderTitle, opts.tenderCategory ?? "", opts.tenderRequirementsText].join("\n"));
+}
 
-  return `## TENDER\nTITLE: ${opts.tenderTitle}\n\n## TENDER REQUIREMENTS\n${opts.tenderRequirementsText.slice(0, 8_000)}\n\n## EVALUATION METHODOLOGY\n${opts.evaluationMethodology.slice(0, 4_000) || "(not provided — score against requirements)"}\n\n## CANDIDATE EXPERTS (${opts.candidates.length})\n${candidateLines}\n\nReturn one JSON object per candidate, scoring all twelve perspectives.`;
+function expertText(candidate: ExpertCandidateInput): string {
+  return [candidate.fullName, candidate.title, candidate.disciplines.join(" "), candidate.sectors.join(" "), candidate.certifications.join(" "), candidate.profile].filter(Boolean).join(" ");
+}
+
+function projectText(candidate: ProjectCandidateInput): string {
+  return [candidate.name, candidate.clientName, candidate.country, candidate.sector, candidate.serviceAreas.join(" "), candidate.summary].filter(Boolean).join(" ");
+}
+
+function buildExpertUserPrompt(opts: { tenderTitle: string; tenderRequirementsText: string; evaluationMethodology: string; candidates: ExpertCandidateInput[] }): string {
+  const tProfile = tenderProfile(opts);
+  const candidateLines = opts.candidates.map((e) => {
+    const profile = classifyUniversalTender(expertText(e));
+    return [
+      `id: ${e.id}`,
+      `name: ${e.fullName}${e.title ? ` (${e.title})` : ""}`,
+      `years_experience: ${e.yearsExperience ?? "unknown"}`,
+      `disciplines: ${e.disciplines.length ? e.disciplines.join(", ") : "<not specified>"}`,
+      `sectors: ${e.sectors.length ? e.sectors.join(", ") : "<not specified>"}`,
+      `certifications: ${e.certifications.length ? e.certifications.join(", ") : "<none>"}`,
+      `universal_candidate_profile: ${universalProfileSummary(profile)}`,
+      `profile: ${(e.profile ?? "").replace(/\s+/g, " ").slice(0, 800)}`,
+      `trustLevel: ${e.trustLevel ?? "unknown"}`,
+    ].join("\n");
+  }).join("\n---\n");
+
+  return `## TENDER\nTITLE: ${opts.tenderTitle}\nUNIVERSAL_TENDER_PROFILE: ${universalProfileSummary(tProfile)}\n\n## TENDER REQUIREMENTS\n${opts.tenderRequirementsText.slice(0, 8_000)}\n\n## EVALUATION METHODOLOGY\n${opts.evaluationMethodology.slice(0, 4_000) || "(not provided — score against requirements)"}\n\n## CANDIDATE EXPERTS (${opts.candidates.length})\n${candidateLines}\n\nReturn one JSON object per candidate, scoring all twelve perspectives.`;
 }
 
 function buildProjectUserPrompt(opts: { tenderTitle: string; tenderRequirementsText: string; tenderCategory?: string | null; candidates: ProjectCandidateInput[] }): string {
-  const candidateLines = opts.candidates.map((p) => [
-    `id: ${p.id}`,
-    `name: ${p.name}`,
-    `client: ${p.clientName ?? "<unknown>"}`,
-    `country: ${p.country ?? "<unknown>"}`,
-    `sector: ${p.sector ?? "<unknown>"}`,
-    `service_areas: ${p.serviceAreas.length ? p.serviceAreas.join(", ") : "<not specified>"}`,
-    `contract_value: ${p.contractValue ? `${p.currency || "USD"} ${p.contractValue.toLocaleString()}` : "<unknown value>"}`,
-    `period: ${p.startDate ? new Date(p.startDate).getFullYear() : "?"}-${p.endDate ? new Date(p.endDate).getFullYear() : "ongoing"}`,
-    `summary: ${(p.summary ?? "").replace(/\s+/g, " ").slice(0, 800)}`,
-    `trustLevel: ${p.trustLevel ?? "unknown"}`,
-  ].join("\n")).join("\n---\n");
+  const tProfile = tenderProfile(opts);
+  const candidateLines = opts.candidates.map((p) => {
+    const profile = classifyUniversalTender(projectText(p));
+    return [
+      `id: ${p.id}`,
+      `name: ${p.name}`,
+      `client: ${p.clientName ?? "<unknown>"}`,
+      `country: ${p.country ?? "<unknown>"}`,
+      `sector: ${p.sector ?? "<unknown>"}`,
+      `service_areas: ${p.serviceAreas.length ? p.serviceAreas.join(", ") : "<not specified>"}`,
+      `universal_candidate_profile: ${universalProfileSummary(profile)}`,
+      `contract_value: ${p.contractValue ? `${p.currency || "USD"} ${p.contractValue.toLocaleString()}` : "<unknown value>"}`,
+      `period: ${p.startDate ? new Date(p.startDate).getFullYear() : "?"}-${p.endDate ? new Date(p.endDate).getFullYear() : "ongoing"}`,
+      `summary: ${(p.summary ?? "").replace(/\s+/g, " ").slice(0, 800)}`,
+      `trustLevel: ${p.trustLevel ?? "unknown"}`,
+    ].join("\n");
+  }).join("\n---\n");
 
-  return `## TENDER\nTITLE: ${opts.tenderTitle}\nSECTOR: ${opts.tenderCategory ?? "<not specified>"}\n\n## TENDER REQUIREMENTS\n${opts.tenderRequirementsText.slice(0, 8_000)}\n\n## CANDIDATE PROJECTS (${opts.candidates.length})\n${candidateLines}\n\nReturn one JSON object per candidate, scoring all twelve perspectives.`;
+  return `## TENDER\nTITLE: ${opts.tenderTitle}\nSECTOR: ${opts.tenderCategory ?? "<not specified>"}\nUNIVERSAL_TENDER_PROFILE: ${universalProfileSummary(tProfile)}\n\n## TENDER REQUIREMENTS\n${opts.tenderRequirementsText.slice(0, 8_000)}\n\n## CANDIDATE PROJECTS (${opts.candidates.length})\n${candidateLines}\n\nReturn one JSON object per candidate, scoring all twelve perspectives.`;
 }
 
 function parseAssessmentArray(raw: string): Array<Record<string, unknown>> | null {
   if (!raw || typeof raw !== "string") return null;
-  const cleaned = raw
-    .replace(/^[\s\S]*?```(?:json)?\s*/i, (m) => m.includes("```") ? "" : m)
-    .replace(/```[\s\S]*$/i, "")
-    .trim();
-
+  const cleaned = raw.replace(/^[\s\S]*?```(?:json)?\s*/i, (m) => m.includes("```") ? "" : m).replace(/```[\s\S]*$/i, "").trim();
   try {
     const parsed = JSON.parse(cleaned);
     if (Array.isArray(parsed)) return parsed as Array<Record<string, unknown>>;
     if (parsed && typeof parsed === "object") {
-      const wrapperKeys = ["candidates", "assessments", "data", "results", "items", "scores"];
-      for (const key of wrapperKeys) {
+      for (const key of ["candidates", "assessments", "data", "results", "items", "scores"]) {
         const inner = (parsed as Record<string, unknown>)[key];
         if (Array.isArray(inner)) return inner as Array<Record<string, unknown>>;
       }
@@ -241,16 +274,8 @@ function parseAssessmentArray(raw: string): Array<Record<string, unknown>> | nul
     let start = -1;
     for (let i = 0; i < s.length; i += 1) {
       const ch = s[i];
-      if (ch === "[") {
-        if (depth === 0) start = i;
-        depth += 1;
-      } else if (ch === "]") {
-        depth -= 1;
-        if (depth === 0 && start >= 0) {
-          out.push(s.slice(start, i + 1));
-          start = -1;
-        }
-      }
+      if (ch === "[") { if (depth === 0) start = i; depth += 1; }
+      else if (ch === "]") { depth -= 1; if (depth === 0 && start >= 0) { out.push(s.slice(start, i + 1)); start = -1; } }
     }
     return out;
   };
@@ -261,15 +286,12 @@ function parseAssessmentArray(raw: string): Array<Record<string, unknown>> | nul
       if (Array.isArray(parsed) && parsed.length > 0) return parsed as Array<Record<string, unknown>>;
     } catch { /* continue */ }
   }
-
   for (const c of candidates) {
     try {
-      const repaired = c.replace(/,(\s*])/g, "$1").replace(/,(\s*})/g, "$1");
-      const parsed = JSON.parse(repaired);
+      const parsed = JSON.parse(c.replace(/,(\s*])/g, "$1").replace(/,(\s*})/g, "$1"));
       if (Array.isArray(parsed) && parsed.length > 0) return parsed as Array<Record<string, unknown>>;
     } catch { /* continue */ }
   }
-
   const firstBracket = cleaned.indexOf("[");
   if (firstBracket >= 0) {
     const tail = cleaned.slice(firstBracket);
@@ -278,22 +300,14 @@ function parseAssessmentArray(raw: string): Array<Record<string, unknown>> | nul
       const truncated = tail.slice(0, lastObjEnd + 1).replace(/,\s*$/, "") + "]";
       try {
         const parsed = JSON.parse(truncated);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          console.warn(`[ai-multi-perspective-matcher] Recovered ${parsed.length} candidates from truncated AI output via strategy 5.`);
-          return parsed as Array<Record<string, unknown>>;
-        }
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed as Array<Record<string, unknown>>;
       } catch { /* fall through */ }
       try {
-        const repaired = truncated.replace(/,(\s*])/g, "$1").replace(/,(\s*})/g, "$1");
-        const parsed = JSON.parse(repaired);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          console.warn(`[ai-multi-perspective-matcher] Recovered ${parsed.length} candidates from truncated AI output via strategy 5+repair.`);
-          return parsed as Array<Record<string, unknown>>;
-        }
+        const parsed = JSON.parse(truncated.replace(/,(\s*])/g, "$1").replace(/,(\s*})/g, "$1"));
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed as Array<Record<string, unknown>>;
       } catch { /* fall through */ }
     }
   }
-
   return null;
 }
 
@@ -328,13 +342,7 @@ function legacyPerspectiveValue(p: Record<string, unknown>, key: MatchPerspectiv
 
 function computeOverallScore(perspectives: Record<MatchPerspective, number>): number {
   const weighted = PERSPECTIVE_KEYS.reduce((sum, key) => sum + perspectives[key] * PERSPECTIVE_WEIGHTS[key], 0);
-  const criticalFloor = Math.min(
-    perspectives.DISCIPLINE_FIT,
-    perspectives.SCOPE_COVERAGE,
-    perspectives.EVIDENCE_QUALITY,
-    perspectives.COMPLIANCE_CRITICALITY,
-    perspectives.MANDATORY_ELIGIBILITY,
-  );
+  const criticalFloor = Math.min(perspectives.DISCIPLINE_FIT, perspectives.SCOPE_COVERAGE, perspectives.EVIDENCE_QUALITY, perspectives.COMPLIANCE_CRITICALITY, perspectives.MANDATORY_ELIGIBILITY);
   const riskPenalty = criticalFloor < 4 ? 0.07 : criticalFloor < 5 ? 0.035 : 0;
   return Math.max(0, Math.min(1, weighted / 10 - riskPenalty));
 }
@@ -342,33 +350,17 @@ function computeOverallScore(perspectives: Record<MatchPerspective, number>): nu
 const HEALTHCARE_RE = /\b(health|healthcare|hospital|medical|clinic|clinical|opd|ward|surgical|radiology|pharmacy|laboratory|biomedical|patient|maternity|emergency|icu|infection|ipc)\b/i;
 const LOGISTICS_RE = /\b(warehouse|logistics|freight|cargo|terminal|supply\s*chain|storage|depot|distribution\s+center|distribution\s+centre)\b/i;
 
-function projectText(candidate: ProjectCandidateInput): string {
-  return [
-    candidate.name,
-    candidate.clientName,
-    candidate.country,
-    candidate.sector,
-    candidate.serviceAreas.join(" "),
-    candidate.summary,
-  ].filter(Boolean).join(" ");
-}
-
 function isHospitalTender(opts: { tenderTitle: string; tenderRequirementsText: string; tenderCategory?: string | null }): boolean {
   return HEALTHCARE_RE.test([opts.tenderTitle, opts.tenderRequirementsText, opts.tenderCategory ?? ""].join(" "));
 }
 
-function applyProjectSectorSafety(
-  opts: { tenderTitle: string; tenderRequirementsText: string; tenderCategory?: string | null },
-  candidate: ProjectCandidateInput,
+function applyUniversalSafety(
+  requiredProfile: UniversalTenderProfile,
+  candidateProfile: UniversalTenderProfile,
   assessment: CandidateAssessment,
+  reason: string,
 ): CandidateAssessment {
-  const candidateText = projectText(candidate);
-  const hospitalTender = isHospitalTender(opts);
-  const candidateHasHealthcare = HEALTHCARE_RE.test(candidateText);
-  const logisticsOnlyCandidate = LOGISTICS_RE.test(candidateText) && !candidateHasHealthcare;
-
-  if (!hospitalTender || !logisticsOnlyCandidate) return assessment;
-
+  if (!isUnsafeSectorMismatch(requiredProfile, candidateProfile)) return assessment;
   const perspectives: Record<MatchPerspective, number> = {
     ...assessment.perspectives,
     DISCIPLINE_FIT: Math.min(assessment.perspectives.DISCIPLINE_FIT, 4),
@@ -379,15 +371,60 @@ function applyProjectSectorSafety(
     DELIVERY_RISK: Math.min(assessment.perspectives.DELIVERY_RISK, 3),
     PORTFOLIO_CONTRIBUTION: Math.min(assessment.perspectives.PORTFOLIO_CONTRIBUTION, 3),
   };
+  const concern = `UNSAFE_SECTOR_MISMATCH: ${reason}. Tender profile ${universalProfileSummary(requiredProfile)}; candidate profile ${universalProfileSummary(candidateProfile)}.`;
+  return { ...assessment, perspectives, overallScore: computeOverallScore(perspectives), recommendSelection: false, concern: assessment.concern ? `${concern} ${assessment.concern}`.slice(0, 360) : concern.slice(0, 360) };
+}
 
-  const sectorConcern = "SECTOR_MISMATCH: hospital/healthcare tender but this project evidence is warehouse/logistics-only with no explicit healthcare, hospital, clinical, medical, biomedical, pharmacy, or laboratory scope.";
+function applyCapabilityCalibration(requiredProfile: UniversalTenderProfile, candidateProfile: UniversalTenderProfile, assessment: CandidateAssessment): CandidateAssessment {
+  const capabilityScore = capabilityOverlapScore(requiredProfile.serviceCapabilities, candidateProfile.serviceCapabilities);
+  const sectorScore = sectorOverlapScore(requiredProfile.sectorDomains, candidateProfile.sectorDomains);
+  let perspectives = assessment.perspectives;
+
+  if (capabilityScore >= 0.5) {
+    perspectives = {
+      ...perspectives,
+      DISCIPLINE_FIT: Math.max(perspectives.DISCIPLINE_FIT, Math.min(10, 6 + Math.round(capabilityScore * 4))),
+      SCOPE_COVERAGE: Math.max(perspectives.SCOPE_COVERAGE, Math.min(10, 6 + Math.round(capabilityScore * 4))),
+      SECTOR_FIT: sectorScore === 0 ? Math.min(perspectives.SECTOR_FIT, 6) : Math.max(perspectives.SECTOR_FIT, Math.min(10, 6 + Math.round(sectorScore * 4))),
+    };
+  } else if (requiredProfile.serviceCapabilities.length > 0) {
+    perspectives = {
+      ...perspectives,
+      DISCIPLINE_FIT: Math.min(perspectives.DISCIPLINE_FIT, 5),
+      SCOPE_COVERAGE: Math.min(perspectives.SCOPE_COVERAGE, 5),
+    };
+  }
+
+  const overallScore = computeOverallScore(perspectives);
+  const criticalFloor = Math.min(perspectives.DISCIPLINE_FIT, perspectives.SCOPE_COVERAGE, perspectives.EVIDENCE_QUALITY, perspectives.COMPLIANCE_CRITICALITY, perspectives.MANDATORY_ELIGIBILITY);
   return {
     ...assessment,
     perspectives,
-    overallScore: computeOverallScore(perspectives),
-    recommendSelection: false,
-    concern: assessment.concern ? `${sectorConcern} ${assessment.concern}`.slice(0, 360) : sectorConcern,
+    overallScore,
+    recommendSelection: assessment.recommendSelection || (overallScore >= 0.60 && criticalFloor >= 3 && capabilityScore >= 0.34),
   };
+}
+
+function applyProjectSectorSafety(opts: { tenderTitle: string; tenderRequirementsText: string; tenderCategory?: string | null }, candidate: ProjectCandidateInput, assessment: CandidateAssessment): CandidateAssessment {
+  const requiredProfile = tenderProfile(opts);
+  const candidateProfile = classifyUniversalTender(projectText(candidate));
+  const candidateText = projectText(candidate);
+  const hospitalTender = isHospitalTender(opts);
+  const candidateHasHealthcare = HEALTHCARE_RE.test(candidateText);
+  const logisticsOnlyCandidate = LOGISTICS_RE.test(candidateText) && !candidateHasHealthcare;
+
+  const calibrated = applyCapabilityCalibration(requiredProfile, candidateProfile, assessment);
+  if (hospitalTender && logisticsOnlyCandidate) {
+    return applyUniversalSafety(requiredProfile, candidateProfile, calibrated, "hospital/healthcare tender but this project is warehouse/logistics-only with no explicit healthcare scope");
+  }
+  return applyUniversalSafety(requiredProfile, candidateProfile, calibrated, "sector and service capability overlap are both weak");
+}
+
+function applyExpertSafety(opts: { tenderTitle: string; tenderRequirementsText: string; tenderCategory?: string | null }, candidate: ExpertCandidateInput, assessment: CandidateAssessment): CandidateAssessment {
+  const requiredProfile = tenderProfile(opts);
+  const candidateProfile = classifyUniversalTender(expertText(candidate));
+  const calibrated = applyCapabilityCalibration(requiredProfile, candidateProfile, assessment);
+  return applyUniversalSafety(requiredProfile, candidateProfile, calibrated, "expert sector and service capability overlap are both weak");
 }
 
 function coerceAssessment(raw: Record<string, unknown>): CandidateAssessment | null {
@@ -419,7 +456,15 @@ export async function aiRematchExperts(opts: { tenderTitle: string; tenderRequir
   }
   const parsed = parseAssessmentArray(raw);
   if (!parsed) return null;
-  return { category: "EXPERT", assessments: parsed.map(coerceAssessment).filter((a): a is CandidateAssessment => a !== null), durationMs: Date.now() - t0 };
+  const byId = new Map(opts.candidates.map((candidate) => [candidate.id, candidate]));
+  const assessments = parsed
+    .map(coerceAssessment)
+    .filter((a): a is CandidateAssessment => a !== null)
+    .map((assessment) => {
+      const candidate = byId.get(assessment.candidateId);
+      return candidate ? applyExpertSafety({ ...opts, tenderCategory: null }, candidate, assessment) : assessment;
+    });
+  return { category: "EXPERT", assessments, durationMs: Date.now() - t0 };
 }
 
 export async function aiRematchProjects(opts: { tenderTitle: string; tenderRequirementsText: string; tenderCategory?: string | null; candidates: ProjectCandidateInput[] }): Promise<MatchAssessmentBatch | null> {
@@ -463,9 +508,9 @@ export function formatAssessmentRationale(assessment: CandidateAssessment): stri
     `Commercial value ${p.COMMERCIAL_VALUE}/10`,
   ].join(", ");
   const criticalFloor = Math.min(p.DISCIPLINE_FIT, p.SCOPE_COVERAGE, p.EVIDENCE_QUALITY, p.COMPLIANCE_CRITICALITY, p.MANDATORY_ELIGIBILITY);
-  const parts = [`[AI Multi-Perspective v4] Score ${pct}% — ${breakdown}. Critical-floor ${criticalFloor}/10.`];
+  const parts = [`[AI Multi-Perspective v5 Universal] Score ${pct}% — ${breakdown}. Critical-floor ${criticalFloor}/10.`];
   if (assessment.strength) parts.push(`✓ ${assessment.strength}`);
   if (assessment.concern) parts.push(`⚠ ${assessment.concern}`);
-  if (assessment.recommendSelection) parts.push("Selected by 20-iteration best-available portfolio pass with critical-floor risk control.");
+  if (assessment.recommendSelection) parts.push("Selected by 20-iteration best-available portfolio pass with universal service-capability calibration and critical-floor risk control.");
   return parts.join(" ");
 }
