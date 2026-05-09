@@ -16,6 +16,7 @@ const NAV_GROUPS_BASE = [
       { href: "/dashboard", label: "Overview", icon: "◼" },
       { href: "/dashboard/tenders", label: "Tenders", icon: "📋" },
       { href: "/dashboard/history", label: "Tender History", icon: "🕘" },
+      { href: "/dashboard/calendar", label: "Deadline Calendar", icon: "📅" },
     ],
   },
   {
