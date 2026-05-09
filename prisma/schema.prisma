@@ -21,6 +21,7 @@ model User {
   // PR #247 — DocumentReview / DocumentComment back-relations
   documentReviews  DocumentReview[]
   documentComments DocumentComment[]
+  notifications    Notification[]
   createdAt    DateTime    @default(now())
   updatedAt    DateTime    @updatedAt
 }
@@ -173,12 +174,15 @@ model Expert {
   // Source document that produced this record
   sourceDocumentId String?
   sourceDocument   CompanyDocument? @relation(fields: [sourceDocumentId], references: [id], onDelete: SetNull)
+  deletedAt        DateTime?
+  deletedBy        String?
   createdAt        DateTime         @default(now())
   updatedAt        DateTime         @updatedAt
   tenderMatches    TenderExpertMatch[]
 
   @@index([companyId])
   @@index([trustLevel])
+  @@index([deletedAt])
 }
 
 // trustLevel values: REGEX_DRAFT | AI_DRAFT | REVIEWED
@@ -205,12 +209,15 @@ model Project {
   sourceDocumentId String?
   sourceDocument   CompanyDocument? @relation(fields: [sourceDocumentId], references: [id], onDelete: SetNull)
   evidences     ProjectEvidence[]
+  deletedAt     DateTime?
+  deletedBy     String?
   createdAt     DateTime         @default(now())
   updatedAt     DateTime         @updatedAt
   tenderMatches TenderProjectMatch[]
 
   @@index([companyId])
   @@index([trustLevel])
+  @@index([deletedAt])
 }
 
 model ProjectEvidence {
@@ -296,6 +303,9 @@ model Tender {
   exactFileNaming       String               @default("[]")
   readinessScore        Float                @default(0)
   notes                 String?
+  bidOutcome            String?
+  bidOutcomeNote        String?
+  bidOutcomeAt          DateTime?
   createdAt             DateTime             @default(now())
   updatedAt             DateTime             @updatedAt
   userId                String
@@ -520,4 +530,21 @@ model AuditLog {
   description String
   metadata    String   @default("{}")
   createdAt   DateTime @default(now())
+}
+
+model Notification {
+  id        String    @id @default(uuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      String
+  title     String
+  body      String?
+  entityType String?
+  entityId   String?
+  link       String?
+  readAt     DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([userId, readAt])
+  @@index([userId, createdAt])
 }

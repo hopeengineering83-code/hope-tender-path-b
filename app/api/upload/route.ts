@@ -5,6 +5,9 @@ import { extractTextFromBuffer, detectCategoryFromFile, getFileTypeLabel, isMean
 import { logAction } from "../../../lib/audit";
 import { ensureCompanyForUser } from "../../../lib/company-workspace";
 import { importCompanyKnowledgeFromDocuments } from "../../../lib/company-knowledge-import-safe";
+import { rateLimit, UPLOAD_RATE_LIMIT } from "../../../lib/rate-limit";
+import { extractRequestId } from "../../../lib/request-id";
+import { createNotification } from "../../../lib/notifications";
 
 // Vercel route timeout — file ingestion calls Claude for expert/project
 // extraction during knowledge import. 60 = Hobby max.
@@ -27,8 +30,17 @@ function extractionMetadata(fileTypeLabel: string, extractedText: string) {
 }
 
 export async function POST(req: Request) {
+  const requestId = extractRequestId(req);
   const userId = await getSession();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const rl = rateLimit(`upload:${userId}`, UPLOAD_RATE_LIMIT);
+  if (!rl.allowed) {
+    return NextResponse.json(
+      { error: "Upload rate limit exceeded — maximum 5 uploads per minute. Please wait and retry.", retryAfter: Math.ceil((rl.resetAt - Date.now()) / 1000) },
+      { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } }
+    );
+  }
 
   await prismaReady;
 
@@ -113,6 +125,7 @@ export async function POST(req: Request) {
           entityId: fileRecord.id,
           description: `Uploaded ${fileTypeLabel} "${file.name}" to tender — ${extraction.extracted ? `${extraction.extractedChars.toLocaleString()} chars extracted` : extraction.extractionMessage}`,
           metadata: { tenderId, fileName: file.name, ...extraction },
+          requestId,
         });
 
         tenderFilesUploaded += 1;
@@ -153,6 +166,7 @@ export async function POST(req: Request) {
           entityId: docRecord.id,
           description: `Uploaded ${fileTypeLabel} "${file.name}" (${category}) — ${extraction.extracted ? `${extraction.extractedChars.toLocaleString()} chars extracted` : extraction.extractionMessage}`,
           metadata: { companyId: company.id, fileName: file.name, category, ...extraction },
+          requestId,
         });
 
         companyDocsUploaded += 1;
@@ -177,14 +191,20 @@ export async function POST(req: Request) {
         const emptyResult = { docsScanned: 0, expertsCreated: 0, projectsCreated: 0, expertNamesDetected: 0, projectNamesDetected: 0 };
         const safetyImport = aiRanSuccessfully ? emptyResult : await runCompanyKnowledgeSafetyImport(prisma, uploadedCompanyId);
         knowledgeImport = { ...primaryImport, safetyImport };
+        const totalExperts = primaryImport.expertsCreated + safetyImport.expertsCreated;
+        const totalProjects = primaryImport.projectsCreated + safetyImport.projectsCreated;
         await logAction({
           userId,
           action: "COMPANY_KNOWLEDGE_REPAIR",
           entityType: "Company",
           entityId: uploadedCompanyId,
-          description: `Auto-imported company knowledge after upload: ${primaryImport.expertsCreated + safetyImport.expertsCreated} experts and ${primaryImport.projectsCreated + safetyImport.projectsCreated} projects created`,
+          description: `Auto-imported company knowledge after upload: ${totalExperts} experts and ${totalProjects} projects created`,
           metadata: knowledgeImport,
+          requestId,
         });
+        if (totalExperts > 0 || totalProjects > 0) {
+          void createNotification({ userId, type: "KNOWLEDGE_IMPORTED", title: "Company knowledge updated", body: `${totalExperts} expert(s) and ${totalProjects} project(s) extracted from uploaded documents.`, entityType: "Company", entityId: uploadedCompanyId, link: "/dashboard/company" });
+        }
       } catch (err) {
         knowledgeImportError = err instanceof Error ? err.message : String(err);
         console.error("[upload] company knowledge auto-import failed:", err);
@@ -195,6 +215,7 @@ export async function POST(req: Request) {
           entityId: uploadedCompanyId,
           description: `Company knowledge auto-import failed after upload: ${knowledgeImportError}`,
           metadata: { error: knowledgeImportError },
+          requestId,
         });
       }
     }
@@ -216,6 +237,7 @@ export async function POST(req: Request) {
           entityId: tenderId,
           description: `Auto-ran tender analysis/matching/compliance after ${tenderFilesUploaded} tender file upload(s)`,
           metadata: tenderEngine,
+          requestId,
         });
       } catch (err) {
         tenderEngineError = err instanceof Error ? err.message : String(err);
@@ -227,6 +249,7 @@ export async function POST(req: Request) {
           entityId: tenderId,
           description: `Tender engine auto-run failed after upload: ${tenderEngineError}`,
           metadata: { error: tenderEngineError },
+          requestId,
         });
       }
     }

@@ -40,7 +40,8 @@ export type AuditAction =
   | "TENDER_CONTROL_MILESTONE"
   | "TENDER_CONTROL_TASK"
   | "TENDER_CONTROL_RISK"
-  | "TENDER_CONTROL_COMMERCIAL_ASSUMPTION";
+  | "TENDER_CONTROL_COMMERCIAL_ASSUMPTION"
+  | "TENDER_BID_OUTCOME_SET";
 
 export async function logAction(opts: {
   userId?: string;
@@ -49,8 +50,12 @@ export async function logAction(opts: {
   entityId?: string;
   description: string;
   metadata?: Record<string, unknown>;
+  requestId?: string;
 }) {
   try {
+    const meta = opts.requestId
+      ? { ...opts.metadata, requestId: opts.requestId }
+      : (opts.metadata ?? {});
     await prisma.auditLog.create({
       data: {
         userId: opts.userId ?? null,
@@ -58,7 +63,7 @@ export async function logAction(opts: {
         entityType: opts.entityType ?? null,
         entityId: opts.entityId ?? null,
         description: opts.description,
-        metadata: JSON.stringify(opts.metadata ?? {}),
+        metadata: JSON.stringify(meta),
       },
     });
   } catch {

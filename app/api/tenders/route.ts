@@ -15,6 +15,9 @@ export async function GET(req: Request) {
   const status = parseTenderStatus(searchParams.get("status") || undefined);
   const q = searchParams.get("q") || "";
 
+  const limit = Math.min(Number(searchParams.get("limit") ?? "50"), 200);
+  const cursor = searchParams.get("cursor") ?? undefined;
+
   const tenders = await prisma.tender.findMany({
     where: {
       userId,
@@ -34,10 +37,15 @@ export async function GET(req: Request) {
       },
     },
     orderBy: { createdAt: "desc" },
-    take: 200,
+    take: limit + 1,
+    ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
   });
 
-  return NextResponse.json(tenders);
+  const hasMore = tenders.length > limit;
+  const items = hasMore ? tenders.slice(0, limit) : tenders;
+  const nextCursor = hasMore ? items[items.length - 1].id : null;
+
+  return NextResponse.json({ items, nextCursor, hasMore });
 }
 
 export async function POST(req: Request) {
