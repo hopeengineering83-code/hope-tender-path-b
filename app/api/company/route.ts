@@ -239,6 +239,29 @@ export async function PUT(req: Request) {
     });
 
     await cleanupSupportDocImportedRecords(company.id);
+
+    // ─── Auto-extract structured facts from profileSummary (May-7 gap) ────
+    // The May-7 benchmark diff showed Section A.2 emitting "Bid-Team
+    // Action: confirm X" for every cell because the structured columns
+    // (foundingYear, headcount, gmName, tin, vat, licenseGrade) were
+    // empty. We now run a regex-based extractor over profileSummary and
+    // fill the gaps WITHOUT overwriting any value the user already
+    // entered manually. Idempotent: re-running produces the same fields.
+    try {
+      const { extractCompanyFacts, mergeFactsIntoCompany } = await import("../../../lib/engine/company-fact-extractor");
+      if (company.profileSummary && company.profileSummary.trim().length > 100) {
+        const extracted = extractCompanyFacts(company.profileSummary);
+        const update = mergeFactsIntoCompany(company, extracted);
+        if (Object.keys(update).length > 0) {
+          await prisma.company.update({ where: { id: company.id }, data: update });
+          console.info(`[company-fact-extractor] Auto-filled ${Object.keys(update).length} field(s):`, Object.keys(update).join(", "));
+        }
+      }
+    } catch (eErr) {
+      // Non-critical: the company is already saved. Log and continue.
+      console.warn("[company-fact-extractor] auto-extraction failed:", eErr instanceof Error ? eErr.message : eErr);
+    }
+
     const refreshed = await prisma.company.findUnique({
       where: { userId },
       include: { experts: { orderBy: { createdAt: "desc" } }, projects: { orderBy: { createdAt: "desc" } } },
