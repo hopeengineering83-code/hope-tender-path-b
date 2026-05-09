@@ -157,6 +157,65 @@ export async function runTenderEngine(tenderId: string, userId: string) {
     };
 
     const matching = buildMatches(analysis.requirements, knowledge, tender.category, tender.title);
+
+    // ─── G9 follow-up: best-effort source-coord extraction ──────────────────
+    // For each requirement we just extracted, run a regex-based matcher
+    // against the tender file text to find the source page, section
+    // heading, and verbatim quote. Result merged into RequirementDraft
+    // before the DB write below. No AI call, no network — pure regex.
+    // Bad matches surface as sourceConfidence=0 which the UI shows as
+    // "Bid-Team to confirm source" rather than displaying a false citation.
+    const filesWithText = tender.files.filter((f) => typeof f.extractedText === "string" && f.extractedText.length > 200);
+    if (filesWithText.length > 0 && analysis.requirements.length > 0) {
+      try {
+        const { extractRequirementSources } = await import("./requirement-source-extractor");
+        // Pair each requirement with a stable id we keep in sync with
+        // createdRequirements below (UUID).
+        const draftWithIds: Array<{ id: string; req: typeof analysis.requirements[number] }> = analysis.requirements.map((req) => ({ id: randomUUID(), req }));
+        // Try every file; for each requirement keep the highest-confidence
+        // source across files.
+        type Coord = { fileId?: string; pageNumber?: number; sectionHeading?: string; exactQuote?: string; confidence: number };
+        const bestByReqId = new Map<string, Coord>();
+        for (const file of filesWithText) {
+          const found = extractRequirementSources({
+            tenderFileId: file.id,
+            tenderFileText: file.extractedText ?? "",
+            requirements: draftWithIds.map((d) => ({ id: d.id, title: d.req.title, description: d.req.description })),
+          });
+          for (const f of found) {
+            if (f.sourceConfidence === 0) continue;
+            const prev = bestByReqId.get(f.requirementId);
+            if (!prev || f.sourceConfidence > prev.confidence) {
+              bestByReqId.set(f.requirementId, {
+                fileId: f.sourceTenderFileId,
+                pageNumber: f.sourcePageNumber,
+                sectionHeading: f.sourceSectionHeading,
+                exactQuote: f.sourceExactQuote,
+                confidence: f.sourceConfidence,
+              });
+            }
+          }
+        }
+        // Mutate each draft with the best coord found.
+        for (const { id, req } of draftWithIds) {
+          const coord = bestByReqId.get(id);
+          if (coord) {
+            req.sourceTenderFileId = coord.fileId ?? null;
+            req.sourcePageNumber = coord.pageNumber ?? null;
+            req.sourceSectionHeading = coord.sectionHeading ?? null;
+            req.sourceExactQuote = coord.exactQuote ?? null;
+            req.sourceConfidence = coord.confidence;
+          }
+        }
+        const matched = bestByReqId.size;
+        console.info(`[run-tender-engine] requirement source extractor: ${matched}/${analysis.requirements.length} requirements matched to a source paragraph.`);
+      } catch (eErr) {
+        // Source extraction is non-critical; the requirements still
+        // persist without source coords.
+        console.warn("[run-tender-engine] requirement source extractor failed:", eErr instanceof Error ? eErr.message : eErr);
+      }
+    }
+
     const createdRequirements = analysis.requirements.map((requirement) => ({ id: randomUUID(), requirement }));
     const requirementRows = createdRequirements.map(({ id, requirement }) => ({
       id,
@@ -272,6 +331,59 @@ export async function runTenderEngine(tenderId: string, userId: string) {
 
     const projectMatchRows = matching.projectMatches.map((match) => ({ tenderId, projectId: match.projectId, score: match.score, rationale: match.rationale, isSelected: match.isSelected }));
     for (const batch of chunks(projectMatchRows, 100)) await prisma.tenderProjectMatch.createMany({ data: batch, skipDuplicates: true });
+
+    // ─── G3 follow-up: 12-dimension scores from the deterministic engine ────
+    // The AI rematch route already writes 12-perspective scores to
+    // MatchScoreBreakdown. The original engine matcher only wrote a
+    // collapsed scalar to TenderExpertMatch.score / TenderProjectMatch.score
+    // which left readiness, bid/no-bid, evaluator simulator, and proposal
+    // generator unable to reason about WHICH dimension a candidate is weak
+    // on. We now write a deterministic breakdown for every match here so
+    // the data is consistent across both paths from the very first run.
+    //
+    // Source = "ENGINE_MATCH" so downstream consumers can tell apart the
+    // deterministic baseline from the AI-rescored values (the rematch
+    // route overwrites these rows when it runs, with source="AI_REMATCH").
+    try {
+      const { writeScoreBreakdown, deterministicScoreBreakdown } = await import("./score-breakdown-writer");
+      const tenderTextForScoring = [tender.title, tender.description ?? "", analysis.summary ?? ""].join("\n").slice(0, 8_000);
+      const evalText = (tender as { evaluationMethodology?: string | null }).evaluationMethodology ?? "";
+
+      // Experts
+      for (const m of matching.expertMatches) {
+        const expert = knowledge.experts.find((e) => e.id === m.expertId);
+        if (!expert) continue;
+        const candidateText = [expert.fullName ?? "", expert.title ?? "", expert.profile ?? "", expert.disciplines ?? "", expert.sectors ?? ""].join(" ");
+        const perspectives = deterministicScoreBreakdown({ candidateText, tenderText: tenderTextForScoring, evaluationText: evalText });
+        await writeScoreBreakdown({
+          tenderId,
+          entityType: "EXPERT",
+          entityId: expert.id,
+          perspectives,
+          source: "ENGINE_MATCH",
+        });
+      }
+
+      // Projects
+      for (const m of matching.projectMatches) {
+        const project = knowledge.projects.find((p) => p.id === m.projectId);
+        if (!project) continue;
+        const candidateText = [project.name ?? "", project.clientName ?? "", project.summary ?? "", project.sector ?? "", project.country ?? ""].join(" ");
+        const perspectives = deterministicScoreBreakdown({ candidateText, tenderText: tenderTextForScoring, evaluationText: evalText });
+        await writeScoreBreakdown({
+          tenderId,
+          entityType: "PROJECT",
+          entityId: project.id,
+          perspectives,
+          source: "ENGINE_MATCH",
+        });
+      }
+    } catch (sErr) {
+      // Score-breakdown writes are non-critical; the scalar score on
+      // TenderExpertMatch / TenderProjectMatch is still the source of
+      // truth for ranking. Log and continue.
+      console.warn("[run-tender-engine] deterministic score breakdown write failed:", sErr instanceof Error ? sErr.message : sErr);
+    }
 
     const matrixRows = compliance.matrices.map((matrix) => ({
       tenderId,
