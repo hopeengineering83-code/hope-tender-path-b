@@ -16,6 +16,7 @@ import { NextResponse } from "next/server";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { requireUser, unauthorizedResponse, forbiddenResponse } from "../../../../../lib/auth";
 import { computeBidStrategy } from "../../../../../lib/engine/bid-strategy";
+import { computeWinProbability } from "../../../../../lib/engine/win-probability";
 
 export async function GET(
   _req: Request,
@@ -33,49 +34,61 @@ export async function GET(
   const { id } = await params;
   await prismaReady;
 
-  const tender = await prisma.tender.findFirst({
-    where: { id, userId: actor.id },
-    include: {
-      requirements: { select: { title: true, description: true, requirementType: true, priority: true, requiredQuantity: true } },
-      complianceGaps: { select: { severity: true, isResolved: true, title: true } },
-      expertMatches: {
-        select: {
-          score: true,
-          isSelected: true,
-          expert: { select: { fullName: true, trustLevel: true, disciplines: true } },
+  const [tender, company, pastTenders] = await Promise.all([
+    prisma.tender.findFirst({
+      where: { id, userId: actor.id },
+      include: {
+        requirements: { select: { title: true, description: true, requirementType: true, priority: true, requiredQuantity: true } },
+        complianceGaps: { select: { severity: true, isResolved: true, title: true } },
+        expertMatches: {
+          where: { isSelected: true },
+          select: {
+            score: true,
+            isSelected: true,
+            expert: { select: { fullName: true, trustLevel: true, disciplines: true, sectors: true, yearsExperience: true } },
+          },
+        },
+        projectMatches: {
+          where: { isSelected: true },
+          select: {
+            score: true,
+            isSelected: true,
+            project: { select: { name: true, trustLevel: true, sector: true, serviceAreas: true, contractValue: true, sectors: true } },
+          },
         },
       },
-      projectMatches: {
-        select: {
-          score: true,
-          isSelected: true,
-          project: { select: { name: true, trustLevel: true, sector: true, serviceAreas: true } },
+    }),
+    prisma.company.findUnique({
+      where: { userId: actor.id },
+      select: {
+        name: true,
+        sectors: true,
+        serviceLines: true,
+        licenseGrade: true,
+        country: true,
+        headcount: true,
+        _count: {
+          select: {
+            experts: { where: { trustLevel: "REVIEWED" } },
+            projects: { where: { trustLevel: "REVIEWED" } },
+            legalRecords: true,
+            financialRecords: true,
+          },
         },
       },
-    },
-  });
-  if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
+    }),
+    // Historical bid outcomes — all past tenders with a resolved outcome
+    prisma.tender.findMany({
+      where: { userId: actor.id, bidOutcome: { in: ["WON", "LOST"] } },
+      select: { bidOutcome: true, category: true },
+    }),
+  ]);
 
-  const company = await prisma.company.findUnique({
-    where: { userId: actor.id },
-    select: {
-      name: true,
-      sectors: true,
-      serviceLines: true,
-      licenseGrade: true,
-      country: true,
-      headcount: true,
-      _count: {
-        select: {
-          experts: { where: { trustLevel: "REVIEWED" } },
-          projects: { where: { trustLevel: "REVIEWED" } },
-          legalRecords: true,
-          financialRecords: true,
-        },
-      },
-    },
-  });
+  if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
   if (!company) return NextResponse.json({ error: "Company profile required" }, { status: 400 });
+
+  const historicalTotal = pastTenders.length;
+  const historicalWins = pastTenders.filter((t) => t.bidOutcome === "WON").length;
 
   const strategy = computeBidStrategy({
     tender: {
@@ -100,8 +113,32 @@ export async function GET(
       projectCount: company._count.projects,
       legalRecordCount: company._count.legalRecords,
       financialRecordCount: company._count.financialRecords,
+      historicalWins,
+      historicalTotal,
     },
   });
 
-  return NextResponse.json({ strategy });
+  // Win-probability 4-axis breakdown (evidence match / team strength /
+  // compliance posture / historical outcomes) — surfaced in the panel as
+  // actionable per-axis scores with explanatory notes.
+  const winProbability = computeWinProbability({
+    primarySector: tender.category ?? "General",
+    projects: tender.projectMatches.map((m) => ({
+      sectors: (m.project as { sectors?: string | null }).sectors ?? (m.project.sector ? JSON.stringify([m.project.sector]) : null),
+      contractValue: (m.project as { contractValue?: number | null }).contractValue ?? null,
+    })),
+    experts: tender.expertMatches.map((m) => ({
+      disciplines: (m.expert as { disciplines?: string | null }).disciplines,
+      sectors: (m.expert as { sectors?: string | null }).sectors,
+      yearsExperience: (m.expert as { yearsExperience?: number | null }).yearsExperience,
+    })),
+    complianceGaps: tender.complianceGaps.filter((g) => !g.isResolved),
+    bidOutcomes: pastTenders.map((t) => ({ won: t.bidOutcome === "WON", primarySector: t.category ?? null })),
+  });
+
+  return NextResponse.json({
+    strategy,
+    winProbabilityBreakdown: winProbability,
+    historicalBidStats: { total: historicalTotal, wins: historicalWins },
+  });
 }

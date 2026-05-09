@@ -13,6 +13,7 @@ import Link from "next/link";
 import { getSession } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { checkExportReadiness, checkTenderLevelExportBlockers } from "../../../../../lib/engine/export-readiness";
+import { VersionActionsTable } from "./version-actions";
 
 export const dynamic = "force-dynamic";
 
@@ -38,15 +39,19 @@ export default async function TenderCommandCenter({ params }: { params: Promise<
   const docReadiness = checkExportReadiness(tender.generatedDocuments);
   const tenderBlockers = await checkTenderLevelExportBlockers(id);
 
-  const objections = await prisma.evaluatorObjection.findMany({
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const objections: any[] = await (prisma as any).evaluatorObjection.findMany({
     where: { tenderId: id },
     orderBy: [{ severity: "asc" }, { createdAt: "desc" }],
     take: 25,
   });
-  const openHigh = objections.filter((o) => o.status === "OPEN" && o.severity === "HIGH");
-  const openMedium = objections.filter((o) => o.status === "OPEN" && o.severity === "MEDIUM");
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const openHigh = objections.filter((o: any) => o.status === "OPEN" && o.severity === "HIGH");
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const openMedium = objections.filter((o: any) => o.status === "OPEN" && o.severity === "MEDIUM");
 
-  const proposalVersions = await prisma.proposalVersion.findMany({
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const proposalVersions: any[] = await (prisma as any).proposalVersion.findMany({
     where: { tenderId: id },
     orderBy: { version: "desc" },
     take: 5,
@@ -54,12 +59,14 @@ export default async function TenderCommandCenter({ params }: { params: Promise<
   });
   const latestVersion = proposalVersions[0];
 
-  const workbook = await prisma.pricingWorkbook.findUnique({
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const workbook: any = await (prisma as any).pricingWorkbook.findUnique({
     where: { tenderId: id },
     include: { lines: true },
   });
 
-  const recentJobs = await prisma.aiJob.findMany({
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const recentJobs: any[] = await (prisma as any).aiJob.findMany({
     where: { OR: [{ tenderId: id }, { userId }] },
     orderBy: { createdAt: "desc" },
     take: 6,
@@ -113,177 +120,193 @@ export default async function TenderCommandCenter({ params }: { params: Promise<
   }
 
   return (
-    <div style={{ padding: "1.5rem 2rem", maxWidth: 1280, margin: "0 auto" }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 24 }}>
+    <div className="mx-auto max-w-screen-xl px-4 py-6 sm:px-6 lg:px-8">
+      {/* Header */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between mb-6">
         <div>
-          <Link href={`/dashboard/tenders/${id}`} style={{ fontSize: 13, color: "#6b7280", textDecoration: "none" }}>← Tender detail</Link>
-          <h1 style={{ fontSize: 24, fontWeight: 700, marginTop: 8 }}>{tender.title}</h1>
-          <p style={{ color: "#6b7280", fontSize: 13 }}>Command Center — single view of readiness, blockers, and next best action.</p>
+          <Link href={`/dashboard/tenders/${id}`} className="text-sm text-slate-500 hover:text-slate-800 no-underline">
+            ← Tender detail
+          </Link>
+          <h1 className="mt-2 text-2xl font-bold text-slate-900">{tender.title}</h1>
+          <p className="text-sm text-slate-500">Command Center — single view of readiness, blockers, and next best action.</p>
         </div>
-        <div style={{ textAlign: "right" }}>
-          <div style={{ fontSize: 12, color: "#6b7280" }}>Status / Stage</div>
-          <div style={{ fontWeight: 600 }}>{tender.status} / {tender.stage}</div>
-          <div style={{ fontSize: 12, color: "#6b7280", marginTop: 4 }}>Readiness: {Math.round(tender.readinessScore ?? 0)}/100</div>
+        <div className="shrink-0 text-right text-sm">
+          <div className="text-xs text-slate-500">Status / Stage</div>
+          <div className="font-semibold text-slate-800">{tender.status} / {tender.stage}</div>
+          <div className="text-xs text-slate-500 mt-1">Readiness: {Math.round(tender.readinessScore ?? 0)}/100</div>
         </div>
       </div>
 
-      {/* Next best action — top of page */}
-      <section style={{ background: "#1d4ed8", color: "white", padding: 20, borderRadius: 8, marginBottom: 24 }}>
-        <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: 1, opacity: 0.85 }}>Next best action</div>
-        <div style={{ fontSize: 18, fontWeight: 600, marginTop: 4 }}>{nextAction.title}</div>
-        <div style={{ fontSize: 13, marginTop: 6, opacity: 0.9 }}>{nextAction.rationale}</div>
+      {/* Next best action banner */}
+      <section className="rounded-xl bg-blue-700 text-white p-5 mb-6">
+        <div className="text-xs font-semibold uppercase tracking-widest opacity-80">Next best action</div>
+        <div className="mt-1 text-lg font-semibold">{nextAction.title}</div>
+        <div className="mt-1 text-sm opacity-90">{nextAction.rationale}</div>
         {nextAction.href && (
-          <a href={nextAction.href} style={{ display: "inline-block", marginTop: 12, padding: "6px 12px", background: "white", color: "#1d4ed8", borderRadius: 4, fontWeight: 600, fontSize: 13, textDecoration: "none" }}>
+          <a
+            href={nextAction.href}
+            className="mt-3 inline-block rounded-lg bg-white px-3 py-1.5 text-xs font-semibold text-blue-700 hover:bg-blue-50 no-underline"
+          >
             Take action →
           </a>
         )}
       </section>
 
-      {/* 4-column status grid */}
-      <section style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 24 }}>
-        <Card title="Selected experts" value={tender.expertMatches.length} caption={tender.expertMatches.slice(0, 2).map((m) => m.expert.fullName).join(" • ") || "None"} />
-        <Card title="Selected projects" value={tender.projectMatches.length} caption={tender.projectMatches.slice(0, 2).map((m) => m.project.name).join(" • ") || "None"} />
-        <Card title="Documents" value={tender.generatedDocuments.length} caption={`${docReadiness.failures.length} not yet ready`} />
-        <Card title="Open HIGH objections" value={openHigh.length} caption={openHigh.length > 0 ? "Export gate is closed" : "Export gate clear"} highlight={openHigh.length > 0} />
+      {/* 4-column status grid — responsive */}
+      <section className="grid grid-cols-2 gap-3 sm:grid-cols-4 mb-6">
+        <StatCard title="Selected experts" value={tender.expertMatches.length} caption={tender.expertMatches.slice(0, 2).map((m) => m.expert.fullName).join(" · ") || "None"} />
+        <StatCard title="Selected projects" value={tender.projectMatches.length} caption={tender.projectMatches.slice(0, 2).map((m) => m.project.name).join(" · ") || "None"} />
+        <StatCard title="Documents" value={tender.generatedDocuments.length} caption={`${docReadiness.failures.length} not yet ready`} />
+        <StatCard title="Open HIGH objections" value={openHigh.length} caption={openHigh.length > 0 ? "Export gate is closed" : "Export gate clear"} highlight={openHigh.length > 0} />
       </section>
 
-      {/* Tender-level blockers */}
-      <section id="blockers" style={{ marginBottom: 24 }}>
-        <h2 style={sectionH2}>Export gate</h2>
+      {/* Export gate */}
+      <section id="blockers" className="mb-6">
+        <h2 className="mb-2 text-sm font-semibold text-slate-900">Export gate</h2>
         {docReadiness.ok && tenderBlockers.length === 0 ? (
-          <div style={successBox}>✓ Export gate is open. All documents READY_FOR_EXPORT and no tender-level blockers.</div>
+          <div className="rounded-lg bg-emerald-50 border border-emerald-200 px-4 py-3 text-sm text-emerald-800">
+            ✓ Export gate is open. All documents READY_FOR_EXPORT and no tender-level blockers.
+          </div>
         ) : (
-          <>
+          <div className="space-y-2">
             {tenderBlockers.length > 0 && (
-              <div style={errorBox}>
-                <div style={{ fontWeight: 600, marginBottom: 8 }}>Tender-level blockers ({tenderBlockers.length})</div>
+              <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-800">
+                <p className="font-semibold mb-2">Tender-level blockers ({tenderBlockers.length})</p>
                 {tenderBlockers.map((b, i) => (
-                  <div key={i} style={{ marginBottom: 6, fontSize: 13 }}>
-                    <span style={{ fontWeight: 600 }}>[{b.severity}]</span> {b.title}
-                    {b.recommendedAction && <div style={{ color: "#9ca3af", fontSize: 12, marginTop: 2 }}>Action: {b.recommendedAction}</div>}
+                  <div key={i} className="mb-1.5 text-xs">
+                    <span className="font-semibold">[{b.severity}]</span> {b.title}
+                    {b.recommendedAction && <div className="text-red-600 mt-0.5">Action: {b.recommendedAction}</div>}
                   </div>
                 ))}
               </div>
             )}
             {docReadiness.failures.length > 0 && (
-              <div style={{ ...errorBox, marginTop: 8 }}>
-                <div style={{ fontWeight: 600, marginBottom: 8 }}>Documents not ready ({docReadiness.failures.length})</div>
+              <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-800">
+                <p className="font-semibold mb-2">Documents not ready ({docReadiness.failures.length})</p>
                 {docReadiness.failures.slice(0, 6).map((f) => (
-                  <div key={f.documentId} style={{ marginBottom: 4, fontSize: 13 }}>• {f.fileName} — {f.reasons.join("; ")}</div>
+                  <div key={f.documentId} className="mb-1 text-xs">• {f.fileName} — {f.reasons.join("; ")}</div>
                 ))}
               </div>
             )}
-          </>
+          </div>
         )}
       </section>
 
       {/* Evaluator objections */}
-      <section id="evaluator" style={{ marginBottom: 24 }}>
-        <h2 style={sectionH2}>Evaluator objections</h2>
+      <section id="evaluator" className="mb-6">
+        <h2 className="mb-2 text-sm font-semibold text-slate-900">Evaluator objections</h2>
         {objections.length === 0 ? (
-          <div style={mutedBox}>No evaluator simulation has been run yet for this tender.</div>
+          <div className="rounded-lg bg-slate-50 border border-slate-200 px-4 py-3 text-sm text-slate-500">
+            No evaluator simulation has been run yet for this tender.
+          </div>
         ) : (
-          <table style={tableStyle}>
-            <thead>
-              <tr><th style={th}>Severity</th><th style={th}>Title</th><th style={th}>Status</th><th style={th}>Section</th></tr>
-            </thead>
-            <tbody>
-              {objections.slice(0, 15).map((o) => (
-                <tr key={o.id}>
-                  <td style={td}>{o.severity}</td>
-                  <td style={td}>{o.title}</td>
-                  <td style={td}>{o.status}</td>
-                  <td style={td}>{o.sectionRef ?? "—"}</td>
+          <div className="overflow-x-auto">
+            <table className="w-full border border-slate-200 rounded-lg border-collapse bg-white text-sm">
+              <thead>
+                <tr className="bg-slate-50">
+                  <th className="text-left px-3 py-2 text-xs text-slate-500 font-medium border-b border-slate-200">Severity</th>
+                  <th className="text-left px-3 py-2 text-xs text-slate-500 font-medium border-b border-slate-200">Title</th>
+                  <th className="text-left px-3 py-2 text-xs text-slate-500 font-medium border-b border-slate-200">Status</th>
+                  <th className="text-left px-3 py-2 text-xs text-slate-500 font-medium border-b border-slate-200 hidden sm:table-cell">Section</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {objections.slice(0, 15).map((o) => (
+                  <tr key={o.id} className="border-b border-slate-100 last:border-0 hover:bg-slate-50">
+                    <td className="px-3 py-2">
+                      <span className={`rounded px-1.5 py-0.5 text-xs font-medium ${o.severity === "HIGH" ? "bg-red-100 text-red-700" : o.severity === "MEDIUM" ? "bg-amber-100 text-amber-700" : "bg-slate-100 text-slate-600"}`}>
+                        {o.severity}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2 text-xs text-slate-800">{o.title}</td>
+                    <td className="px-3 py-2 text-xs text-slate-500">{o.status}</td>
+                    <td className="px-3 py-2 text-xs text-slate-400 hidden sm:table-cell">{o.sectionRef ?? "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
         {openMedium.length > 0 && (
-          <p style={{ fontSize: 12, color: "#9ca3af", marginTop: 8 }}>{openMedium.length} MEDIUM objection(s) open — non-blocking but worth closing before submission.</p>
+          <p className="mt-2 text-xs text-slate-400">{openMedium.length} MEDIUM objection(s) open — non-blocking but worth closing before submission.</p>
         )}
       </section>
 
-      {/* Proposal version history */}
-      <section style={{ marginBottom: 24 }}>
-        <h2 style={sectionH2}>Recent proposal versions</h2>
-        {proposalVersions.length === 0 ? (
-          <div style={mutedBox}>No proposal versions saved yet. Run the engine to create the first version.</div>
-        ) : (
-          <table style={tableStyle}>
-            <thead>
-              <tr><th style={th}>Version</th><th style={th}>Quality</th><th style={th}>Win Prob.</th><th style={th}>Mode</th><th style={th}>Created</th></tr>
-            </thead>
-            <tbody>
-              {proposalVersions.map((v) => (
-                <tr key={v.id}>
-                  <td style={td}>v{v.version}</td>
-                  <td style={td}>{v.qualityScore ?? "—"}</td>
-                  <td style={td}>{v.winProbabilityScore ?? "—"}</td>
-                  <td style={td}>{v.mode ?? "—"}</td>
-                  <td style={td}>{new Date(v.createdAt).toLocaleString()}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
+      {/* Proposal version history — with restore + preview actions */}
+      <section className="mb-6">
+        <h2 className="mb-2 text-sm font-semibold text-slate-900">Recent proposal versions</h2>
+        <VersionActionsTable versions={proposalVersions} tenderId={id} />
       </section>
 
       {/* Pricing workbook */}
-      <section style={{ marginBottom: 24 }}>
-        <h2 style={sectionH2}>Pricing workbook</h2>
+      <section className="mb-6">
+        <h2 className="mb-2 text-sm font-semibold text-slate-900">Pricing workbook</h2>
         {!workbook ? (
-          <div style={mutedBox}>No pricing workbook created yet.</div>
+          <div className="rounded-lg bg-slate-50 border border-slate-200 px-4 py-3 text-sm text-slate-500">
+            No pricing workbook created yet.
+          </div>
         ) : (
-          <div style={{ background: "#f9fafb", border: "1px solid #e5e7eb", borderRadius: 6, padding: 16, fontSize: 13 }}>
-            <div>Currency: <strong>{workbook.currency}</strong> • Validity: {workbook.validityDays} days • Scenario: <strong>{workbook.scenario}</strong></div>
-            <div style={{ marginTop: 6 }}>VAT {workbook.vatPercent}% • Withholding {workbook.withholdingPct}% • Contingency {workbook.contingencyPct}%</div>
-            <div style={{ marginTop: 6 }}>Cost lines: <strong>{workbook.lines.length}</strong></div>
-            <div style={{ marginTop: 6 }}>Price leakage check: {workbook.noPriceLeakage ? <span style={{ color: "#059669" }}>✓ clear</span> : <span style={{ color: "#b91c1c", fontWeight: 600 }}>✗ flagged — export blocked</span>}</div>
+          <div className="rounded-lg bg-slate-50 border border-slate-200 px-4 py-3 text-sm text-slate-700 space-y-1.5">
+            <div>Currency: <strong>{workbook.currency}</strong> · Validity: {workbook.validityDays} days · Scenario: <strong>{workbook.scenario}</strong></div>
+            <div>VAT {workbook.vatPercent}% · Withholding {workbook.withholdingPct}% · Contingency {workbook.contingencyPct}%</div>
+            <div>Cost lines: <strong>{workbook.lines.length}</strong></div>
+            <div>
+              Price leakage check:{" "}
+              {workbook.noPriceLeakage
+                ? <span className="text-emerald-700 font-medium">✓ clear</span>
+                : <span className="text-red-700 font-semibold">✗ flagged — export blocked</span>
+              }
+            </div>
           </div>
         )}
       </section>
 
       {/* Recent AI jobs */}
-      <section style={{ marginBottom: 24 }}>
-        <h2 style={sectionH2}>Recent background AI jobs</h2>
+      <section className="mb-6">
+        <h2 className="mb-2 text-sm font-semibold text-slate-900">Recent background AI jobs</h2>
         {recentJobs.length === 0 ? (
-          <div style={mutedBox}>No background AI jobs have been queued yet.</div>
+          <div className="rounded-lg bg-slate-50 border border-slate-200 px-4 py-3 text-sm text-slate-500">
+            No background AI jobs have been queued yet.
+          </div>
         ) : (
-          <table style={tableStyle}>
-            <thead><tr><th style={th}>Job type</th><th style={th}>Status</th><th style={th}>Created</th><th style={th}>Finished</th></tr></thead>
-            <tbody>
-              {recentJobs.map((j) => (
-                <tr key={j.id}>
-                  <td style={td}>{j.jobType}</td>
-                  <td style={td}>{j.status}</td>
-                  <td style={td}>{new Date(j.createdAt).toLocaleString()}</td>
-                  <td style={td}>{j.finishedAt ? new Date(j.finishedAt).toLocaleString() : "—"}</td>
+          <div className="overflow-x-auto">
+            <table className="w-full border border-slate-200 rounded-lg border-collapse bg-white text-sm">
+              <thead>
+                <tr className="bg-slate-50">
+                  <th className="text-left px-3 py-2 text-xs text-slate-500 font-medium border-b border-slate-200">Job type</th>
+                  <th className="text-left px-3 py-2 text-xs text-slate-500 font-medium border-b border-slate-200">Status</th>
+                  <th className="text-left px-3 py-2 text-xs text-slate-500 font-medium border-b border-slate-200">Created</th>
+                  <th className="text-left px-3 py-2 text-xs text-slate-500 font-medium border-b border-slate-200 hidden md:table-cell">Finished</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {recentJobs.map((j) => (
+                  <tr key={j.id} className="border-b border-slate-100 last:border-0 hover:bg-slate-50">
+                    <td className="px-3 py-2 text-xs text-slate-700">{j.jobType}</td>
+                    <td className="px-3 py-2">
+                      <span className={`rounded px-1.5 py-0.5 text-xs font-medium ${j.status === "DONE" ? "bg-green-100 text-green-700" : j.status === "FAILED" ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-700"}`}>
+                        {j.status}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2 text-xs text-slate-500">{new Date(j.createdAt).toLocaleString()}</td>
+                    <td className="px-3 py-2 text-xs text-slate-500 hidden md:table-cell">{j.finishedAt ? new Date(j.finishedAt).toLocaleString() : "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </section>
     </div>
   );
 }
 
-// ─── inline styles ───
-const sectionH2: React.CSSProperties = { fontSize: 15, fontWeight: 600, marginBottom: 8, color: "#111827" };
-const th: React.CSSProperties = { textAlign: "left", padding: "6px 8px", fontSize: 12, color: "#6b7280", borderBottom: "1px solid #e5e7eb" };
-const td: React.CSSProperties = { padding: "6px 8px", fontSize: 13, borderBottom: "1px solid #f3f4f6" };
-const tableStyle: React.CSSProperties = { width: "100%", background: "white", border: "1px solid #e5e7eb", borderRadius: 6, borderCollapse: "collapse" };
-const mutedBox: React.CSSProperties = { padding: 12, background: "#f9fafb", border: "1px solid #e5e7eb", borderRadius: 6, fontSize: 13, color: "#6b7280" };
-const successBox: React.CSSProperties = { padding: 12, background: "#ecfdf5", border: "1px solid #a7f3d0", borderRadius: 6, fontSize: 13, color: "#065f46" };
-const errorBox: React.CSSProperties = { padding: 12, background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 6, fontSize: 13, color: "#991b1b" };
-
-function Card({ title, value, caption, highlight }: { title: string; value: number | string; caption?: string; highlight?: boolean }) {
+function StatCard({ title, value, caption, highlight }: { title: string; value: number | string; caption?: string; highlight?: boolean }) {
   return (
-    <div style={{ background: highlight ? "#fef2f2" : "white", border: `1px solid ${highlight ? "#fecaca" : "#e5e7eb"}`, borderRadius: 6, padding: 12 }}>
-      <div style={{ fontSize: 11, color: "#6b7280", textTransform: "uppercase", letterSpacing: 0.4 }}>{title}</div>
-      <div style={{ fontSize: 22, fontWeight: 700, marginTop: 4, color: highlight ? "#991b1b" : "#111827" }}>{value}</div>
-      {caption && <div style={{ fontSize: 12, color: "#6b7280", marginTop: 4 }}>{caption}</div>}
+    <div className={`rounded-lg border p-3 ${highlight ? "bg-red-50 border-red-200" : "bg-white border-slate-200"}`}>
+      <div className="text-[11px] font-medium uppercase tracking-wide text-slate-500">{title}</div>
+      <div className={`mt-1 text-2xl font-bold ${highlight ? "text-red-700" : "text-slate-900"}`}>{value}</div>
+      {caption && <div className="mt-1 text-xs text-slate-500 truncate">{caption}</div>}
     </div>
   );
 }
