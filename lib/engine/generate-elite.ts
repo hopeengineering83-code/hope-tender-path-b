@@ -2355,6 +2355,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   // PR XX-A — switched to typed Prisma access. Bootstrap migration in
   // lib/prisma.ts:508 still creates the table for envs without Prisma
   // migrations, so this is a pure type-safety upgrade.
+  let savedProposalVersion = 1;
   try {
     const existingVersions = await prisma.proposalVersion.findMany({
       where: { tenderId },
@@ -2362,6 +2363,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
       orderBy: { version: "desc" },
     });
     const nextVersion = existingVersions.length > 0 ? existingVersions[0].version + 1 : 1;
+    savedProposalVersion = nextVersion;
 
     await prisma.proposalVersion.create({
       data: {
@@ -2389,6 +2391,31 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   } catch (vErr) {
     // Version saving is non-critical — never block the main proposal.
     console.warn("[generate-elite] Proposal version snapshot failed:", vErr instanceof Error ? vErr.message : vErr);
+  }
+
+  // ─── Section evidence map (G5 follow-up) ───────────────────────────────────
+  // Walks the stitched proposal markdown, splits it into top-level sections,
+  // and writes each one to SectionEvidenceMap. Powers the weak-section
+  // detector and the "where does this section's evidence live?" UI.
+  // Idempotent on (tenderId, proposalVersion, sectionId), so re-running
+  // the engine for the same tender just refreshes the rows.
+  // Wrapped in its own try so a write failure never blocks the main run.
+  try {
+    const { writeSectionEvidenceFromMarkdown } = await import("./section-evidence-map");
+    const requirementIds = tender.requirements.map((r) => r.id);
+    const expertIds = tender.expertMatches.map((m) => m.expert.id);
+    const projectIds = tender.projectMatches.map((m) => m.project.id);
+    const result = await writeSectionEvidenceFromMarkdown({
+      tenderId,
+      proposalVersion: savedProposalVersion,
+      markdown: workingMarkdown,
+      requirementIds,
+      expertIds,
+      projectIds,
+    });
+    console.info(`[generate-elite] Section evidence map: ${result.sectionsWritten} section(s) recorded for v${savedProposalVersion}.`);
+  } catch (sErr) {
+    console.warn("[generate-elite] Section evidence map write failed:", sErr instanceof Error ? sErr.message : sErr);
   }
 
   // ─── Expert CV DOCX generation ──────────────────────────────────────────────
