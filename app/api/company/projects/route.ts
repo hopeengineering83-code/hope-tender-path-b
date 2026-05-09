@@ -77,7 +77,28 @@ export async function POST(req: Request) {
       },
     });
 
-    return NextResponse.json(normalizeProject(project as unknown as Record<string, unknown>), { status: 201 });
+    // ─── Auto-extract project facts (May-7 gap fix) ───────────────────────
+    // Section B project cards used to render "Scale on file" / "Dates on
+    // file" / "Value detail in Appendix B" because contractValue, currency,
+    // country, startDate, endDate, sector were never populated. We now
+    // run the regex extractor over the just-created project's summary
+    // and fill ONLY the empty columns. Idempotent and never overwrites
+    // user-entered values.
+    if (project.summary && project.summary.trim().length > 50) {
+      try {
+        const { extractProjectFacts, mergeProjectFacts } = await import("../../../../lib/engine/project-fact-extractor");
+        const extracted = extractProjectFacts(project.summary, project.name);
+        const update = mergeProjectFacts(project, extracted);
+        if (Object.keys(update).length > 0) {
+          await prisma.project.update({ where: { id: project.id }, data: update });
+        }
+      } catch (eErr) {
+        console.warn("[project-fact-extractor] auto-extraction failed:", eErr instanceof Error ? eErr.message : eErr);
+      }
+    }
+
+    const refreshed = await prisma.project.findUnique({ where: { id: project.id } });
+    return NextResponse.json(normalizeProject((refreshed ?? project) as unknown as Record<string, unknown>), { status: 201 });
   } catch (error) {
     console.error(error);
     return NextResponse.json({ error: "Failed to create project" }, { status: 500 });
