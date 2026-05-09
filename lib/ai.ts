@@ -162,6 +162,8 @@ Operating principles, in priority order:
 
 6. EVIDENCE STAYS GROUNDED. If a paragraph needs an evidence anchor and the document does not contain a suitable one, write a single short "Bid-Team Action: confirm X before submission." note in place of the missing fact. Do NOT fabricate facts to fill gaps.
 
+7. NO-FINANCIAL RULE. If the tender is TECHNICAL ONLY (no financial proposal): the output must NEVER mention cost, pricing, savings, budget, rates, or commercials — not even "cost-effective", "budget-friendly", "value-engineered", or "affordable". Scan the full document and remove any such language before returning. If the tender does include a financial envelope, this rule does not apply.
+
 You are not the original author. You are a senior pair of eyes adding the discipline that makes the proposal evaluator-ready.`;
 
 async function generateWithClaude(prompt: string, systemPrompt: string = DEFAULT_PROPOSAL_SYSTEM_PROMPT, maxTokensOverride?: number): Promise<string | null> {

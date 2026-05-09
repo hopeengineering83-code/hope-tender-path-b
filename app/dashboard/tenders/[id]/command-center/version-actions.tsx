@@ -1,6 +1,6 @@
 "use client";
 
-// Version restore + preview client component for the Command Center.
+// Version restore + preview + diff client component for the Command Center.
 // Server component cannot run client-side interactions, so restore and
 // preview live here. Receives version metadata from the server component.
 
@@ -16,6 +16,9 @@ type VersionMeta = {
   createdAt: Date | string;
 };
 
+type DiffHunk = { type: "add" | "remove" | "context"; lines: string[] };
+type DiffResult = { baseVersion: number; compareVersion: number; added: number; removed: number; hunks: DiffHunk[] };
+
 export function VersionActionsTable({ versions, tenderId }: { versions: VersionMeta[]; tenderId: string }) {
   const router = useRouter();
   const [previewId, setPreviewId] = useState<string | null>(null);
@@ -24,6 +27,13 @@ export function VersionActionsTable({ versions, tenderId }: { versions: VersionM
   const [restoringId, setRestoringId] = useState<string | null>(null);
   const [confirmRestoreId, setConfirmRestoreId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // Diff state
+  const [diffBaseId, setDiffBaseId] = useState<string | null>(null);
+  const [diffCompareId, setDiffCompareId] = useState<string>("");
+  const [diffResult, setDiffResult] = useState<DiffResult | null>(null);
+  const [loadingDiff, setLoadingDiff] = useState(false);
+  const [showDiff, setShowDiff] = useState(false);
 
   async function loadPreview(versionId: string) {
     setLoadingPreview(true);
@@ -58,6 +68,23 @@ export function VersionActionsTable({ versions, tenderId }: { versions: VersionM
       setError(e instanceof Error ? e.message : "Restore failed");
     } finally {
       setRestoringId(null);
+    }
+  }
+
+  async function loadDiff(baseId: string, compareId: string) {
+    if (!compareId) return;
+    setLoadingDiff(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/tenders/${tenderId}/proposal-versions/${baseId}/diff?compare_to=${compareId}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Diff failed");
+      setDiffResult(data as DiffResult);
+      setShowDiff(true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Diff failed");
+    } finally {
+      setLoadingDiff(false);
     }
   }
 
@@ -107,7 +134,7 @@ export function VersionActionsTable({ versions, tenderId }: { versions: VersionM
                 <td className="px-3 py-2 text-xs text-slate-500 max-w-[120px] truncate hidden sm:table-cell">{v.mode ?? "—"}</td>
                 <td className="px-3 py-2 text-xs text-slate-500 hidden md:table-cell">{new Date(v.createdAt).toLocaleString()}</td>
                 <td className="px-3 py-2">
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
                     <button
                       onClick={() => void loadPreview(v.id)}
                       disabled={loadingPreview && previewId !== v.id}
@@ -115,6 +142,14 @@ export function VersionActionsTable({ versions, tenderId }: { versions: VersionM
                     >
                       {loadingPreview && previewId === v.id ? "Loading…" : "Preview"}
                     </button>
+                    {versions.length > 1 && (
+                      <button
+                        onClick={() => { setDiffBaseId(v.id); setDiffCompareId(""); setDiffResult(null); setShowDiff(false); }}
+                        className="rounded border border-indigo-200 px-2 py-0.5 text-xs text-indigo-700 hover:bg-indigo-50"
+                      >
+                        Compare
+                      </button>
+                    )}
                     {confirmRestoreId === v.id ? (
                       <div className="flex items-center gap-1">
                         <button
@@ -143,6 +178,33 @@ export function VersionActionsTable({ versions, tenderId }: { versions: VersionM
           </tbody>
         </table>
       </div>
+
+      {/* Compare picker */}
+      {diffBaseId && !showDiff && (
+        <div className="mt-3 flex items-center gap-2 rounded-lg border border-indigo-100 bg-indigo-50 px-3 py-2 text-xs">
+          <span className="text-indigo-700 font-medium">
+            Compare v{versions.find((v) => v.id === diffBaseId)?.version} against:
+          </span>
+          <select
+            value={diffCompareId}
+            onChange={(e) => setDiffCompareId(e.target.value)}
+            className="rounded border border-indigo-200 bg-white px-2 py-0.5 text-xs text-slate-700"
+          >
+            <option value="">Select version…</option>
+            {versions.filter((v) => v.id !== diffBaseId).map((v) => (
+              <option key={v.id} value={v.id}>v{v.version} — {new Date(v.createdAt).toLocaleDateString()}</option>
+            ))}
+          </select>
+          <button
+            onClick={() => void loadDiff(diffBaseId, diffCompareId)}
+            disabled={!diffCompareId || loadingDiff}
+            className="rounded bg-indigo-600 px-2 py-0.5 text-xs text-white hover:bg-indigo-700 disabled:opacity-50"
+          >
+            {loadingDiff ? "Loading…" : "Show Diff"}
+          </button>
+          <button onClick={() => setDiffBaseId(null)} className="text-indigo-400 hover:text-indigo-600">✕</button>
+        </div>
+      )}
 
       {/* Preview modal */}
       {previewId && (
@@ -174,6 +236,50 @@ export function VersionActionsTable({ versions, tenderId }: { versions: VersionM
               <pre className="whitespace-pre-wrap font-mono text-xs leading-relaxed text-slate-700 bg-slate-50 rounded-lg p-4">
                 {previewMarkdown}
               </pre>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Diff modal */}
+      {showDiff && diffResult && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="relative w-full max-w-5xl max-h-[90vh] flex flex-col bg-white rounded-2xl shadow-2xl overflow-hidden">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 shrink-0">
+              <div>
+                <h3 className="text-base font-semibold text-slate-900">
+                  v{diffResult.baseVersion} → v{diffResult.compareVersion} — What changed
+                </h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  <span className="text-emerald-600 font-medium">+{diffResult.added} added</span>
+                  {" · "}
+                  <span className="text-red-500 font-medium">−{diffResult.removed} removed</span>
+                  {" · "}
+                  {diffResult.hunks.length === 0 ? "No differences" : `${diffResult.hunks.length} change block(s)`}
+                </p>
+              </div>
+              <button
+                onClick={() => { setShowDiff(false); setDiffBaseId(null); setDiffResult(null); }}
+                className="rounded-lg border px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-50"
+              >
+                Close
+              </button>
+            </div>
+            <div className="overflow-y-auto flex-1 px-6 py-4 font-mono text-xs leading-relaxed">
+              {diffResult.hunks.length === 0 ? (
+                <p className="text-slate-400 py-8 text-center">These two versions are identical.</p>
+              ) : (
+                diffResult.hunks.map((hunk, i) => (
+                  <div key={i} className={`rounded px-3 py-1 mb-0.5 whitespace-pre-wrap ${hunk.type === "add" ? "bg-emerald-50 text-emerald-900" : hunk.type === "remove" ? "bg-red-50 text-red-900" : "bg-slate-50 text-slate-500"}`}>
+                    {hunk.lines.map((line, j) => (
+                      <div key={j}>
+                        {hunk.type === "add" ? "+ " : hunk.type === "remove" ? "− " : "  "}
+                        {line}
+                      </div>
+                    ))}
+                  </div>
+                ))
+              )}
             </div>
           </div>
         </div>

@@ -21,7 +21,7 @@ type BidStrategy = {
   recommendation: "BID_HARD" | "BID_CAREFULLY" | "DECLINE";
   bidPosture: "SOLO" | "JV_RECOMMENDED" | "SUBCONTRACT_REQUIRED" | "DECLINE";
   rationale: string;
-  topRisks: Array<{ title: string; severity: "HIGH" | "MEDIUM" | "LOW"; mitigation: string }>;
+  topRisks: Array<{ title: string; severity: "HIGH" | "MEDIUM" | "LOW"; mitigation: string; category?: "COMPLIANCE" | "CAPABILITY" | "PORTFOLIO" | "ELIGIBILITY" }>;
   topAdvantages: Array<{ title: string; evidenceAnchor: string }>;
   dimensionScores: {
     capabilityCoverage: number;
@@ -206,7 +206,14 @@ export function BidStrategyPanel({ tenderId, defaultExpanded = true }: BidStrate
                         {risk.severity}
                       </span>
                       <div className="min-w-0">
-                        <p className="font-medium text-slate-900">{risk.title}</p>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <p className="font-medium text-slate-900">{risk.title}</p>
+                          {risk.category && (
+                            <span className="rounded px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wide bg-slate-100 text-slate-500">
+                              {risk.category}
+                            </span>
+                          )}
+                        </div>
                         <p className="mt-0.5 text-slate-600">{risk.mitigation}</p>
                       </div>
                     </div>

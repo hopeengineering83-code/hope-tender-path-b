@@ -361,6 +361,29 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }
 
     if (!fallback) setCachedProposal(cacheKey, proposal, false);
+
+    // Persist the quick draft so users don't lose it on navigation.
+    // Stored as a PROPOSAL document — if a full-pipeline TECHNICAL_PROPOSAL
+    // already exists it is left untouched; this is a separate preview record.
+    if (!fallback) {
+      try {
+        await prisma.generatedDocument.create({
+          data: {
+            tenderId: id,
+            name: "AI Proposal (Quick Draft)",
+            documentType: "PROPOSAL",
+            generationStatus: "GENERATED",
+            validationStatus: "PENDING",
+            reviewStatus: "PENDING",
+            contentSummary: `Quick AI draft generated ${new Date().toLocaleString()}. Run Generate Docs for the full submission-ready package.`,
+            fileContent: Buffer.from(proposal).toString("base64"),
+          },
+        });
+      } catch {
+        // Non-blocking — draft already returned to UI
+      }
+    }
+
     // PR T FIX — see note above; intakeSummary must NOT be overwritten
     // with generated-proposal text or every regeneration feeds the
     // previous one back as input to the next.

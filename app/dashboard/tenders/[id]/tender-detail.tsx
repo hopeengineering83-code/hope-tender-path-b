@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { StatusBadge } from "../../../../components/status-badge";
 import { NEXT_STATUS, formatDate, formatTenderStatus } from "../../../../lib/tender-workflow";
@@ -336,6 +336,9 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
   const [activityLogs, setActivityLogs] = useState<{ id: string; action: string; description: string; createdAt: string }[]>([]);
   const [activityLoaded, setActivityLoaded] = useState(false);
   const [activityLoading, setActivityLoading] = useState(false);
+  const [autoSavedAt, setAutoSavedAt] = useState<Date | null>(null);
+  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isFirstRender = useRef(true);
   const [form, setForm] = useState({
     title: initial.title,
     reference: initial.reference ?? "",
@@ -376,6 +379,25 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
       setSaving(false);
     }
   }
+
+  // Debounced auto-save — fires 3s after the last form change while editing
+  useEffect(() => {
+    if (isFirstRender.current) { isFirstRender.current = false; return; }
+    if (!editing) return;
+    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    autoSaveTimerRef.current = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/tenders/${tender.id}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...form, budget: form.budget || null, deadline: form.deadline || null }),
+        });
+        if (res.ok) setAutoSavedAt(new Date());
+      } catch { /* silent — user can still manually save */ }
+    }, 3000);
+    return () => { if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form]);
 
   async function handleSave() {
     await save({
@@ -895,9 +917,14 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
                 <textarea value={form.analysisSummary} onChange={(e) => setForm({ ...form, analysisSummary: e.target.value })} className="w-full rounded-lg border px-3 py-2 text-sm" rows={4} placeholder="Internal analysis summary" />
                 <textarea value={form.evaluationMethodology} onChange={(e) => setForm({ ...form, evaluationMethodology: e.target.value })} className="w-full rounded-lg border px-3 py-2 text-sm" rows={4} placeholder="Evaluation methodology — how to score maximum points on each evaluation criterion (AI-extracted or manually added)" />
                 <textarea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} className="w-full rounded-lg border px-3 py-2 text-sm" rows={3} placeholder="Internal notes" />
-                <button onClick={handleSave} disabled={saving} className="rounded-lg bg-black px-5 py-2 text-sm text-white hover:bg-slate-800 disabled:opacity-50">
-                  {saving ? "Saving..." : "Save Changes"}
-                </button>
+                <div className="flex items-center gap-3">
+                  <button onClick={handleSave} disabled={saving} className="rounded-lg bg-black px-5 py-2 text-sm text-white hover:bg-slate-800 disabled:opacity-50">
+                    {saving ? "Saving..." : "Save Changes"}
+                  </button>
+                  {autoSavedAt && !saving && (
+                    <span className="text-xs text-slate-400">Auto-saved {autoSavedAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
+                  )}
+                </div>
               </div>
             ) : (
               <dl className="mt-5 grid gap-4 md:grid-cols-2">
@@ -1116,7 +1143,9 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
                       <p className="text-sm font-medium text-slate-900">{gap.title}</p>
                       <span className="text-xs font-medium text-amber-700">{gap.severity}</span>
                     </div>
-                    <p className="mt-2 text-sm text-slate-600">{gap.description}</p>
+                    <p className="mt-2 text-sm text-slate-600">
+                      {gap.description.length > 140 ? `${gap.description.slice(0, 140)}…` : gap.description}
+                    </p>
                   </li>
                 ))}
               </ul>
