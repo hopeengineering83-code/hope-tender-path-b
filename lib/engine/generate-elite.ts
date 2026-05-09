@@ -78,13 +78,17 @@ const LIGHT_BLUE = "D9EAF7";
 // In-pipeline timeout for the Claude proposal call. Layered INSIDE the
 // Vercel maxDuration window so the engine can fail gracefully (fall
 // back to the deterministic markdown builder) before Vercel kills the
-// function with a 504. 45_000 leaves a 15-second buffer for the
-// downstream deterministic enrichers + DB writes + DOCX rendering.
-// Override via AI_PROPOSAL_TIMEOUT_MS for Vercel Pro tiers.
+// function with a 504.
+//
+// Tier-aware defaults:
+//   Tier 1  (Vercel Hobby  60s):  45s — 15s buffer for enrichers + DOCX
+//   Tier 2+ (Vercel Pro  300s): 220s — 80s buffer; accommodates 16K output
+// Override via AI_PROPOSAL_TIMEOUT_MS.
 const PROPOSAL_AI_TIMEOUT_MS = (() => {
   const raw = Number(process.env.AI_PROPOSAL_TIMEOUT_MS);
   if (Number.isFinite(raw) && raw >= 5_000 && raw <= 600_000) return raw;
-  return 45_000;
+  const tier = (process.env.ANTHROPIC_TIER || "").trim();
+  return tier === "1" ? 45_000 : 220_000;
 })();
 
 async function withProposalAiTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
@@ -2183,13 +2187,17 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   // structural guarantees without refinement, so disabling has minimal
   // quality impact on properly-tuned tenders.
   const REFINEMENT_DISABLED = process.env.PROPOSAL_REFINEMENT_DISABLED === "true";
-  // PR QQ — raised refinement target from 70 to 82 (Claude AI benchmark
-  // territory). Below 82 means at least one of the 10 axes is weak;
-  // refinement targets those axes specifically. Capped at 82 (not 90+)
-  // because refinement uses the AI's same context budget — pushing too
-  // high would force the AI to fabricate content to satisfy axes the
-  // vault data can't support. 82 is the empirical sweet spot.
-  const QUALITY_REFINEMENT_THRESHOLD = Number(process.env.QUALITY_REFINEMENT_THRESHOLD) || 82;
+  // Refinement target: proposals below this score get an AI refinement pass.
+  // Tier-aware defaults:
+  //   Tier 1  (limited output budget):       82 — conservative, avoids 429s
+  //   Tier 2+ (16K tokens/min, Vercel Pro):  90 — targets benchmark territory
+  //   Tier 3+:                               92 — near-perfect target
+  // Override via QUALITY_REFINEMENT_THRESHOLD env var.
+  const tierForThreshold = (process.env.ANTHROPIC_TIER || "").trim();
+  const tierDefaultThreshold = tierForThreshold === "1" ? 82
+    : tierForThreshold === "3" || tierForThreshold === "4" ? 92
+    : 90; // Tier 2 default
+  const QUALITY_REFINEMENT_THRESHOLD = Number(process.env.QUALITY_REFINEMENT_THRESHOLD) || tierDefaultThreshold;
   // PR WW — tier-aware refinement attempt cap. The pre-PR-WW default
   // was 2 (Tier 3+ comfortable). On Tier 1/2 the second attempt risks
   // hitting the per-minute output-token rate limit and returning 429.
