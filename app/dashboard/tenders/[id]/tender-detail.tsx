@@ -328,6 +328,9 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
   const [bidOutcome, setBidOutcome] = useState(initial.bidOutcome ?? "");
   const [bidOutcomeNote, setBidOutcomeNote] = useState(initial.bidOutcomeNote ?? "");
   const [savingOutcome, setSavingOutcome] = useState(false);
+  const [activityLogs, setActivityLogs] = useState<{ id: string; action: string; description: string; createdAt: string }[]>([]);
+  const [activityLoaded, setActivityLoaded] = useState(false);
+  const [activityLoading, setActivityLoading] = useState(false);
   const [form, setForm] = useState({
     title: initial.title,
     reference: initial.reference ?? "",
@@ -499,6 +502,21 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
 
   function downloadZip() {
     window.open(`/api/tenders/${tender.id}/download?type=zip`, "_blank");
+  }
+
+  async function loadActivity() {
+    if (activityLoaded) return;
+    setActivityLoading(true);
+    try {
+      const res = await fetch(`/api/tenders/${tender.id}/activity?limit=30`);
+      if (res.ok) {
+        const data = await res.json() as { items: { id: string; action: string; description: string; createdAt: string }[] };
+        setActivityLogs(data.items);
+        setActivityLoaded(true);
+      }
+    } finally {
+      setActivityLoading(false);
+    }
   }
 
   async function saveBidOutcome() {
@@ -1242,6 +1260,84 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
           <div className="max-w-none">
             <ProposalMarkdown markdown={aiProposal} />
           </div>
+        </div>
+      )}
+
+      <ActivityFeed
+        logs={activityLogs}
+        loaded={activityLoaded}
+        loading={activityLoading}
+        onLoad={loadActivity}
+      />
+    </div>
+  );
+}
+
+function ActivityFeed({
+  logs,
+  loaded,
+  loading,
+  onLoad,
+}: {
+  logs: { id: string; action: string; description: string; createdAt: string }[];
+  loaded: boolean;
+  loading: boolean;
+  onLoad: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+
+  function toggle() {
+    setOpen((v) => {
+      if (!v) onLoad();
+      return !v;
+    });
+  }
+
+  function formatAction(action: string) {
+    return action.replace(/_/g, " ").toLowerCase().replace(/^\w/, (c) => c.toUpperCase());
+  }
+
+  function timeAgo(iso: string): string {
+    const diff = Date.now() - new Date(iso).getTime();
+    const m = Math.floor(diff / 60_000);
+    if (m < 1) return "just now";
+    if (m < 60) return `${m}m ago`;
+    const h = Math.floor(m / 60);
+    if (h < 24) return `${h}h ago`;
+    return `${Math.floor(h / 24)}d ago`;
+  }
+
+  return (
+    <div className="rounded-2xl border bg-white shadow-sm">
+      <button
+        onClick={toggle}
+        className="flex w-full items-center justify-between px-6 py-4 text-left"
+      >
+        <h2 className="text-lg font-semibold text-slate-900">Activity log</h2>
+        <span className="text-slate-400 transition-transform" style={{ transform: open ? "rotate(180deg)" : "none" }}>▾</span>
+      </button>
+
+      {open && (
+        <div className="border-t px-6 pb-6">
+          {loading && (
+            <p className="pt-4 text-sm text-slate-400">Loading activity…</p>
+          )}
+          {!loading && loaded && logs.length === 0 && (
+            <p className="pt-4 text-sm text-slate-400">No activity recorded for this tender yet.</p>
+          )}
+          {!loading && logs.length > 0 && (
+            <ol className="relative mt-4 border-l border-slate-200 ml-2 space-y-4">
+              {logs.map((log) => (
+                <li key={log.id} className="ml-4">
+                  <span className="absolute -left-[5px] mt-1.5 h-2.5 w-2.5 rounded-full border-2 border-white bg-blue-400" />
+                  <p className="text-sm text-slate-800">{log.description}</p>
+                  <p className="mt-0.5 text-xs text-slate-400">
+                    {formatAction(log.action)} · {timeAgo(log.createdAt)}
+                  </p>
+                </li>
+              ))}
+            </ol>
+          )}
         </div>
       )}
     </div>
