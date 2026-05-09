@@ -1,7 +1,8 @@
 import { AlignmentType, BorderStyle, Document, Footer, Header, HeadingLevel, Packer, PageNumber, Paragraph, Table, TableBorders, TableCell, TableRow, TextRun, WidthType } from "docx";
 import { prisma } from "../prisma";
 import { generateBenchmarkProposalWithAI, generateProposalSectionsParallel, getLastProposalProvider, isAIEnabled, refineProposalWithAI } from "../ai";
-import { buildProposalIntelligence, expertProofLine, projectProofLine, safeParseArr } from "./proposal-intelligence";
+import { buildCriterionEvidenceMap, buildProposalIntelligence, expertProofLine, projectProofLine, safeParseArr } from "./proposal-intelligence";
+import { enforceCanonicalNames } from "./entity-name-normalizer";
 import { exactSelectionLimit, forbidsBranding, forbidsCoverPage, requiresSignatureOrStamp } from "./scope-policy";
 import { finalizeClientReadyProposalMarkdown } from "./proposal-benchmark-guard";
 import { appendEvaluatorResponseMatrix } from "./proposal-evaluator-matrix";
@@ -1158,6 +1159,17 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
             .map((p) => (p as { clientName?: string | null }).clientName)
             .filter((c): c is string => Boolean(c && c.trim().length >= 3))
         )),
+        // Per-criterion evidence map — tells the AI which projects/experts
+        // are most relevant to each evaluation criterion, and at what depth
+        // (proportional to criterion weight). This eliminates the AI's
+        // tendency to spread evidence evenly across all sections regardless
+        // of scoring weight. Built from the extracted evaluationWeights +
+        // vault top candidates; empty string when no numeric weights found.
+        criterionEvidenceMap: buildCriterionEvidenceMap(
+          intelligence.evaluationWeights,
+          intelligence.topProjects,
+          intelligence.topExperts,
+        ),
       };
 
       sourceMarkdown = await withProposalAiTimeout(
@@ -1166,6 +1178,15 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
           : generateBenchmarkProposalWithAI(aiInput),
         PROPOSAL_AI_TIMEOUT_MS,
       );
+      // Canonical name normalization — fast post-assembly pass that replaces
+      // minor expert-name variations (Dr. X vs X, different middle initials)
+      // with the authoritative fullName from the Expert record, and strips
+      // spurious leading articles from project names ("the Hospital X" → "Hospital X").
+      // Runs on the raw AI output before any deterministic enrichers touch it
+      // so all downstream sections see consistent canonical names.
+      if (sourceMarkdown) {
+        sourceMarkdown = enforceCanonicalNames(sourceMarkdown, experts, projects);
+      }
       const provider = getLastProposalProvider() ?? "ai";
       const pathLabel = useParallel ? "section-parallel" : "single-call";
       mode = `${provider === "claude" ? "Claude" : provider === "gemini" ? "Gemini" : "AI"} ${pathLabel} bid-writer + evaluator response matrix + full evidence library + client-ready benchmark finalizer + professional DOCX polish`;
