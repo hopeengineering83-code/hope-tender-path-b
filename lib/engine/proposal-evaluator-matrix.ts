@@ -1,3 +1,5 @@
+import { classifyUniversalTender, universalProfileSummary } from "./universal-tender-taxonomy";
+
 export type EvaluatorMatrixInput = {
   tenderTitle: string;
   clientName: string;
@@ -10,6 +12,12 @@ export type EvaluatorMatrixInput = {
   differentiators: string[];
 };
 
+type EvidencePick = {
+  line: string;
+  supportLevel: "DIRECT" | "PARTIAL" | "NEEDS_CONFIRMATION";
+  score: number;
+};
+
 function clean(value?: string | null): string {
   return (value ?? "")
     .replace(/[\u0000-\u001F\u007F]/g, " ")
@@ -19,6 +27,8 @@ function clean(value?: string | null): string {
     .replace(/\bKey evidence interpreted:\s*/gi, "")
     .replace(/\bCompany evidence available:\s*/gi, "")
     .replace(/\bProject evidence available:\s*/gi, "")
+    .replace(/\bBid-team confirmation:\s*/gi, "")
+    .replace(/\bBid team\b/gi, "Proposal team")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -32,24 +42,69 @@ function take(lines: string[], count: number, maxLen = 260): string[] {
     .map((line) => line.length > maxLen ? `${line.slice(0, maxLen - 1)}…` : line);
 }
 
-function pickEvidence(requirement: string, input: EvaluatorMatrixInput, index: number): string {
-  const pool = [
-    ...take(input.projectLines, 4, 260),
-    ...take(input.expertLines, 4, 240),
-    ...take(input.companyEvidenceLines, 3, 240),
-    ...take(input.projectEvidenceLines, 3, 240),
+function tokenize(value: string): string[] {
+  return clean(value).toLowerCase().split(/\W+/).filter((w) => w.length > 3 && !/^(shall|must|required|requirement|proposal|tender|client|consultant|service|services|including|provide|submit|section|document)$/.test(w));
+}
+
+function evidencePool(input: EvaluatorMatrixInput): string[] {
+  return [
+    ...take(input.projectLines, 12, 320),
+    ...take(input.expertLines, 12, 280),
+    ...take(input.companyEvidenceLines, 12, 300),
+    ...take(input.projectEvidenceLines, 12, 320),
+    ...take(input.complianceLines, 10, 260),
   ];
-  if (pool.length === 0) return "Bid-team confirmation: attach verified supporting evidence before final submission.";
-  const reqWords = requirement.toLowerCase().split(/\W+/).filter((w) => w.length > 3);
-  if (reqWords.length > 0) {
-    const scored = pool.map((line) => {
-      const lower = line.toLowerCase();
-      return { line, score: reqWords.filter((w) => lower.includes(w)).length };
-    });
-    scored.sort((a, b) => b.score - a.score);
-    if (scored[0].score > 0) return scored[0].line;
+}
+
+function scoreEvidence(requirement: string, line: string): number {
+  const reqWords = tokenize(requirement);
+  const lower = clean(line).toLowerCase();
+  const lexical = reqWords.filter((w) => lower.includes(w)).length;
+  const reqProfile = classifyUniversalTender(requirement);
+  const lineProfile = classifyUniversalTender(line);
+  const capabilityOverlap = reqProfile.serviceCapabilities.filter((capability) => lineProfile.serviceCapabilities.includes(capability)).length;
+  const sectorOverlap = reqProfile.sectorDomains.filter((sector) => lineProfile.sectorDomains.includes(sector)).length;
+  const formOverlap = reqProfile.tenderForms.filter((form) => lineProfile.tenderForms.includes(form)).length;
+  const evidenceBonus = /reviewed|client|contract|completion|certificate|cv|years|license|licence|registration|audit|reference|value|etb|usd|project|expert/i.test(line) ? 2 : 0;
+  return lexical + capabilityOverlap * 4 + sectorOverlap * 3 + formOverlap * 2 + evidenceBonus;
+}
+
+function pickEvidence(requirement: string, input: EvaluatorMatrixInput, index: number): EvidencePick {
+  const pool = evidencePool(input);
+  if (pool.length === 0) {
+    return { line: "No reviewed evidence line is currently mapped. Add reviewed company/project/expert evidence before final submission.", supportLevel: "NEEDS_CONFIRMATION", score: 0 };
   }
-  return pool[index % pool.length];
+  const scored = pool.map((line) => ({ line, score: scoreEvidence(requirement, line) })).sort((a, b) => b.score - a.score);
+  const best = scored[0] ?? { line: pool[index % pool.length], score: 0 };
+  if (best.score >= 7) return { ...best, supportLevel: "DIRECT" };
+  if (best.score >= 3) return { ...best, supportLevel: "PARTIAL" };
+  return { line: pool[index % pool.length], score: best.score, supportLevel: "NEEDS_CONFIRMATION" };
+}
+
+function responseStrategy(requirement: string): string {
+  const profile = classifyUniversalTender(requirement);
+  const req = requirement.toLowerCase();
+  if (profile.serviceCapabilities.includes("GEOTECHNICAL_INVESTIGATION")) return "Respond with investigation methodology, borehole/testing plan, laboratory quality controls, reporting deliverables, and geotechnical risk controls.";
+  if (profile.serviceCapabilities.includes("URBAN_PLANNING")) return "Respond with spatial analysis, stakeholder engagement, land-use/zoning logic, scenario development, approval pathway, and implementation controls.";
+  if (profile.serviceCapabilities.includes("ASSET_MANAGEMENT")) return "Respond with asset inventory, condition assessment, lifecycle costing, maintenance planning, data handover, and operational risk reduction.";
+  if (profile.serviceCapabilities.includes("CONTRACT_ADMINISTRATION")) return "Respond with contract controls, variation/claim handling, payment certification, FIDIC or equivalent administration, reporting cadence, and dispute prevention.";
+  if (profile.serviceCapabilities.includes("SUPERVISION")) return "Respond with site supervision structure, QA/QC inspections, HSE coordination, progress reporting, non-conformance control, and handover management.";
+  if (profile.serviceCapabilities.includes("INTERIOR_DESIGN")) return "Respond with space planning, finish/material selection, user requirements, coordination with MEP/architecture, mock-up review, and quality-controlled deliverables.";
+  if (profile.serviceCapabilities.includes("ARCHITECTURAL_DESIGN") || profile.serviceCapabilities.includes("ENGINEERING_DESIGN")) return "Respond with design stages, discipline coordination, codes/standards, design review gates, drawings/specifications/BOQ deliverables, and constructability controls.";
+  if (/cv|expert|personnel|staff|team/i.test(req)) return "Respond with named reviewed experts, role mapping, qualifications, years of experience, comparable assignments, availability, and CV appendix control.";
+  if (/experience|reference|past|similar|project/i.test(req)) return "Respond with reviewed comparable projects, client names, scope similarity, value/scale where available, completion evidence, and attachment references.";
+  if (/financial|price|commercial|cost|boq/i.test(req)) return "Respond only in the commercial envelope where required; keep the technical proposal price-free and map the pricing workbook to the financial criteria.";
+  return "Respond directly to the requirement, explain the method, identify responsible evidence, state deliverables, and show evaluator-risk controls.";
+}
+
+function evaluatorAngle(requirement: string): string {
+  const profile = classifyUniversalTender(requirement);
+  const req = requirement.toLowerCase();
+  if (/mandatory|shall|must|required|eligib/i.test(req)) return "Mandatory compliance / pass-fail risk";
+  if (/score|evaluation|marks|technical/i.test(req)) return "Technical scoring / evaluator marks";
+  if (profile.serviceCapabilities.length > 0) return `Service capability fit — ${profile.serviceCapabilities.slice(0, 3).join(", ")}`;
+  if (profile.sectorDomains.length > 0) return `Sector relevance — ${profile.sectorDomains.slice(0, 3).join(", ")}`;
+  return "General evaluator concern";
 }
 
 function proofItems(input: EvaluatorMatrixInput): string[] {
@@ -61,12 +116,30 @@ function proofItems(input: EvaluatorMatrixInput): string[] {
   ];
 }
 
+function matrixTable(requirements: string[], input: EvaluatorMatrixInput): string {
+  const rows = [
+    "| # | Tender criterion / evaluator angle | Response strategy | Best mapped evidence | Support | Final action |",
+    "|---|---|---|---|---|---|",
+  ];
+  requirements.forEach((requirement, index) => {
+    const evidence = pickEvidence(requirement, input, index);
+    const action = evidence.supportLevel === "DIRECT"
+      ? "Use as proposal proof and attach/source-check before final export."
+      : evidence.supportLevel === "PARTIAL"
+        ? "Strengthen narrative with more direct document evidence before submission."
+        : "Do not overclaim; add reviewed evidence or soften the claim.";
+    rows.push(`| ${index + 1} | ${clean(requirement)}<br>${evaluatorAngle(requirement)} | ${responseStrategy(requirement)} | ${clean(evidence.line)} | ${evidence.supportLevel} | ${action} |`);
+  });
+  return rows.join("\n");
+}
+
 export function appendEvaluatorResponseMatrix(markdown: string, input: EvaluatorMatrixInput): string {
   let output = markdown.trim();
-  output += "\n\n## Evaluator Response Matrix";
-  output += `\nThis section summarises how the proposal responds to the evaluator's main concerns for ${clean(input.clientName)} / ${clean(input.tenderTitle)}.`;
+  const tenderProfile = classifyUniversalTender(`${input.tenderTitle}\n${input.requirements.join("\n")}`);
+  output += "\n\n## Tender Criteria Response Matrix";
+  output += `\nThis section maps the proposal response to the evaluator's criteria for ${clean(input.clientName)} / ${clean(input.tenderTitle)}. Universal tender profile: ${universalProfileSummary(tenderProfile)}.`;
 
-  const reqs = take(input.requirements, 8, 220);
+  const reqs = take(input.requirements, 14, 260);
   const finalReqs = reqs.length > 0 ? reqs : [
     "Technical understanding and methodology",
     "Relevant company experience",
@@ -74,32 +147,42 @@ export function appendEvaluatorResponseMatrix(markdown: string, input: Evaluator
     "Compliance with submission requirements",
   ];
 
-  finalReqs.forEach((requirement, index) => {
-    output += `\n\n### Evaluation Point ${index + 1}`;
-    output += `\n- **Evaluator concern:** ${requirement}`;
-    output += "\n- **Response strategy:** Address the requirement directly, show how the method reduces delivery risk, and connect the response to verified evidence.";
-    output += `\n- **Mapped evidence:** ${pickEvidence(requirement, input, index)}`;
-    output += "\n- **Bid-review action:** Confirm attachment, file name, signature/stamp status and compliance before final submission.";
-  });
+  output += "\n\n" + matrixTable(finalReqs, input);
+
+  output += "\n\n## Multi-Angle Proposal Quality Check";
+  output += "\nThe final proposal is checked from the following evaluator angles before submission:";
+  for (const angle of [
+    "Scope compliance: every major tender requirement has a direct response or a controlled evidence action.",
+    "Service-capability fit: design, supervision, contract administration, geotechnical, urban planning, asset management and other service lines are matched by capability, not by loose keywords.",
+    "Sector relevance: sector-specific evidence is preferred, while transferable service evidence is allowed only when capability fit is strong.",
+    "Expert credibility: named experts must be reviewed and mapped to roles, qualifications, CVs and responsibilities.",
+    "Project comparability: project references must show service similarity, scale/context, client evidence and attachment readiness.",
+    "Commercial separation: technical proposals must remain price-free unless the tender explicitly requires commercial content in the same envelope.",
+    "Submission control: file names, document order, signatures/stamps, deadline, method and appendices remain controlled through final export readiness.",
+  ]) output += `\n- ${angle}`;
 
   output += "\n\n## Claim-to-Evidence Proof Map";
-  output += "\nThe bid team should use this proof map to verify that proposal claims are backed by reviewed records before final submission.";
+  output += "\nThe proposal claims below must remain backed by reviewed records. Unsupported claims should be removed, softened, or converted into final evidence actions.";
   const proof = proofItems(input);
   if (proof.length > 0) {
-    for (const line of proof.slice(0, 28)) output += `\n- ${line}`;
+    for (const line of proof.slice(0, 30)) output += `\n- ${line}`;
   } else {
     output += "\n- Source proof must be confirmed before final submission.";
   }
 
-  output += "\n\n## Unsupported Claim Control";
-  output += "\nClaims about staff, projects, certifications, contract values, legal status, financial capacity, photos, drawings, or client approvals should be removed, softened, or marked for bid-team confirmation when no source record is available.";
+  output += "\n\n## Evidence Gaps and Anti-Hallucination Controls";
+  output += "\n- Do not invent staff, project roles, certificates, contract values, completion dates, sector experience, licences, financial capacity, photos, drawings, or client approvals.";
+  output += "\n- If the evidence is partial, present it as transferable or supporting evidence, not as exact same-scope experience.";
+  output += "\n- If the evidence is missing, add a final review action instead of making an unsupported claim.";
+  output += "\n- If the tender is an EOI/prequalification, emphasise capability, eligibility, shortlist logic and evidence register. If it is an RFP/technical proposal, emphasise methodology, team, work plan, QA/QC and deliverables.";
 
   output += "\n\n## Win Themes and Differentiators";
-  const differentiators = take(input.differentiators, 5, 280);
+  const differentiators = take(input.differentiators, 6, 280);
   const finalDifferentiators = differentiators.length > 0 ? differentiators : [
     "Evidence-led proposal built from reviewed company records.",
-    "Senior bid-review approach that separates true blockers from manageable evidence actions.",
-    "Technical methodology aligned to tender risks, deliverables, QA/QC, coordination, and submission controls.",
+    "Multidisciplinary engineering, design, supervision, contract administration and planning capability matched to tender scope.",
+    "Senior bid-review approach that separates hard blockers from manageable evidence actions.",
+    "Technical methodology aligned to tender risks, deliverables, QA/QC, coordination and submission controls.",
   ];
   for (const item of finalDifferentiators) output += `\n- ${item}`;
 
@@ -120,9 +203,9 @@ export function appendEvaluatorResponseMatrix(markdown: string, input: Evaluator
     ...take(input.projectLines, 5, 240).map((line) => `Project reference evidence: ${line}`),
   ];
   if (appendixLines.length > 0) {
-    for (const line of appendixLines.slice(0, 14)) output += `\n- ${line}`;
+    for (const line of appendixLines.slice(0, 16)) output += `\n- ${line}`;
   } else {
-    output += "\n- Appendix evidence to be confirmed by bid team before final submission.";
+    output += "\n- Appendix evidence to be confirmed before final submission.";
   }
 
   output += "\n\n## Final Submission Control Checklist";
