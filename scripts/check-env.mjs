@@ -75,6 +75,43 @@ const isProd = process.env.NODE_ENV === "production" && (!isVercel || isVercelPr
 const errors = [];
 const warnings = [];
 
+function readNumberEnv(name) {
+  const raw = process.env[name];
+  if (!raw) return null;
+  const value = Number(raw);
+  return Number.isFinite(value) ? value : null;
+}
+
+function validateAiProposalRuntime() {
+  const hasClaude = Boolean(process.env.ANTHROPIC_API_KEY);
+  if (!hasClaude) return;
+
+  const tier = (process.env.ANTHROPIC_TIER || "").trim();
+  const explicitTokens = readNumberEnv("ANTHROPIC_MAX_OUTPUT_TOKENS");
+  const explicitTimeout = readNumberEnv("AI_PROPOSAL_TIMEOUT_MS");
+  const longRouteEnabled = ["1", "true", "yes"].includes((process.env.AI_PROPOSAL_LONG_ROUTE_ENABLED || "").trim().toLowerCase());
+  const maxOutputTokens = explicitTokens && explicitTokens > 0 ? Math.min(explicitTokens, 64_000) : tier === "1" ? 8_000 : 16_000;
+  const proposalTimeoutMs = explicitTimeout && explicitTimeout >= 5_000 && explicitTimeout <= 600_000 ? explicitTimeout : tier === "1" ? 45_000 : 220_000;
+  const strict = ["1", "true", "yes"].includes((process.env.AI_PROPOSAL_STRICT_RUNTIME_CHECK || "").trim().toLowerCase());
+  const findings = [];
+
+  if (!tier) findings.push("ANTHROPIC_TIER is not set; non-Tier-1 defaults request 16K Claude output and 220s proposal timeout.");
+  if (maxOutputTokens >= 16_000 && !longRouteEnabled) findings.push("16K Claude output requires AI_PROPOSAL_LONG_ROUTE_ENABLED=true and deployment runtime that supports long functions.");
+  if (proposalTimeoutMs > 45_000 && !longRouteEnabled) findings.push(`${Math.round(proposalTimeoutMs / 1000)}s proposal timeout requires AI_PROPOSAL_LONG_ROUTE_ENABLED=true and long-function runtime capacity.`);
+  if (tier === "1" && maxOutputTokens > 8_000) findings.push("ANTHROPIC_TIER=1 is configured but ANTHROPIC_MAX_OUTPUT_TOKENS exceeds 8000.");
+
+  if (findings.length === 0) return;
+
+  const message = [
+    "AI proposal runtime configuration is unsafe for default 60s routes:",
+    ...findings.map((finding) => `    - ${finding}`),
+    "    Recommended: set ANTHROPIC_TIER=1 for 60s deployments, or enable AI_PROPOSAL_LONG_ROUTE_ENABLED=true only after confirming long-function runtime capacity.",
+  ].join("\n");
+
+  if (strict || isVercelProd) errors.push(`  ✗ AI_PROPOSAL_RUNTIME: ${message}`);
+  else warnings.push(`  ⚠  AI_PROPOSAL_RUNTIME: ${message}`);
+}
+
 for (const spec of OPTIONAL) {
   const value = process.env[spec.name];
   if (!value) {
@@ -117,6 +154,8 @@ for (const spec of PRODUCTION_REQUIRED) {
     }
   }
 }
+
+validateAiProposalRuntime();
 
 if (warnings.length > 0) {
   console.warn("\n⚠  BUILD WARNINGS — environment configuration issues:\n");
