@@ -3,6 +3,7 @@ import {
   aiRematchExperts,
   aiRematchProjects,
   formatAssessmentRationale,
+  PERSPECTIVE_KEYS,
   type CandidateAssessment,
   type ExpertCandidateInput,
   type MatchPerspective,
@@ -32,7 +33,23 @@ export type MainEngineAIRematchResult = {
   selectedExpertCount: number;
   selectedProjectCount: number;
   warning: string | null;
+  expertScoreBreakdowns: Record<string, Partial<Record<MatchPerspective, number>>>;
+  projectScoreBreakdowns: Record<string, Partial<Record<MatchPerspective, number>>>;
 };
+
+function emptyResult(matching: MatchingResult, warning: string): MainEngineAIRematchResult {
+  return {
+    matching,
+    aiApplied: false,
+    expertAssessments: 0,
+    projectAssessments: 0,
+    selectedExpertCount: matching.expertMatches.filter((match) => match.isSelected).length,
+    selectedProjectCount: matching.projectMatches.filter((match) => match.isSelected).length,
+    warning,
+    expertScoreBreakdowns: {},
+    projectScoreBreakdowns: {},
+  };
+}
 
 function safeParseJsonArray(value: string | null | undefined): string[] {
   if (!value) return [];
@@ -102,8 +119,7 @@ function rankForCycle(assessment: CandidateAssessment, cycle: number): number {
 function setScore(selected: CandidateAssessment[]): number {
   if (selected.length === 0) return 0;
   const averageScore = selected.reduce((sum, assessment) => sum + assessment.overallScore, 0) / selected.length;
-  const perspectives = Object.keys(selected[0]?.perspectives ?? {}) as MatchPerspective[];
-  const coverageScore = perspectives.reduce((sum, key) => sum + Math.max(...selected.map((assessment) => perspectiveScore(assessment, key))), 0) / Math.max(perspectives.length, 1);
+  const coverageScore = PERSPECTIVE_KEYS.reduce((sum, key) => sum + Math.max(...selected.map((assessment) => perspectiveScore(assessment, key))), 0) / PERSPECTIVE_KEYS.length;
   const floorAverage = selected.reduce((sum, assessment) => sum + criticalFloor(assessment), 0) / selected.length / 10;
   const weakPenalty = selected.filter((assessment) => criticalFloor(assessment) < 4).length * 0.05;
   return averageScore * 0.50 + coverageScore * 0.30 + floorAverage * 0.20 - weakPenalty;
@@ -128,6 +144,10 @@ function tenderRequirementsText(requirements: RequirementDraft[]): string {
   return requirements.map((requirement) => `[${requirement.priority}] ${requirement.requirementType}: ${requirement.title}: ${requirement.description}`).join("\n");
 }
 
+function toScoreBreakdown(assessment: CandidateAssessment): Partial<Record<MatchPerspective, number>> {
+  return Object.fromEntries(PERSPECTIVE_KEYS.map((key) => [key, Math.round(Math.max(0, Math.min(10, assessment.perspectives[key] ?? 0)) * 10)])) as Partial<Record<MatchPerspective, number>>;
+}
+
 export async function applyAIRematchToMainEngine(params: {
   tenderTitle: string;
   tenderCategory?: string | null;
@@ -139,7 +159,7 @@ export async function applyAIRematchToMainEngine(params: {
   const expertMatches = [...params.matching.expertMatches].sort((a, b) => b.score - a.score).slice(0, PRE_FILTER_LIMIT);
   const projectMatches = [...params.matching.projectMatches].sort((a, b) => b.score - a.score).slice(0, PRE_FILTER_LIMIT);
   if (expertMatches.length === 0 && projectMatches.length === 0) {
-    return { matching: params.matching, aiApplied: false, expertAssessments: 0, projectAssessments: 0, selectedExpertCount: 0, selectedProjectCount: 0, warning: "No deterministic matches available for main-engine AI rematch." };
+    return emptyResult(params.matching, "No deterministic matches available for main-engine AI rematch.");
   }
 
   const expertsById = new Map(params.knowledge.experts.map((expert) => [expert.id, expert]));
@@ -188,7 +208,7 @@ export async function applyAIRematchToMainEngine(params: {
     ]);
 
     if (!expertBatch && !projectBatch) {
-      return { matching: params.matching, aiApplied: false, expertAssessments: 0, projectAssessments: 0, selectedExpertCount: 0, selectedProjectCount: 0, warning: "AI rematch returned no usable assessments; deterministic main-engine matching was kept." };
+      return emptyResult(params.matching, "AI rematch returned no usable assessments; deterministic main-engine matching was kept.");
     }
 
     const expertAssessmentsById = new Map((expertBatch?.assessments ?? []).map((assessment) => [assessment.candidateId, assessment]));
@@ -219,8 +239,10 @@ export async function applyAIRematchToMainEngine(params: {
       selectedExpertCount: matching.expertMatches.filter((match) => match.isSelected).length,
       selectedProjectCount: matching.projectMatches.filter((match) => match.isSelected).length,
       warning: null,
+      expertScoreBreakdowns: Object.fromEntries([...expertAssessmentsById].map(([id, assessment]) => [id, toScoreBreakdown(assessment)])),
+      projectScoreBreakdowns: Object.fromEntries([...projectAssessmentsById].map(([id, assessment]) => [id, toScoreBreakdown(assessment)])),
     };
   } catch (error) {
-    return { matching: params.matching, aiApplied: false, expertAssessments: 0, projectAssessments: 0, selectedExpertCount: 0, selectedProjectCount: 0, warning: error instanceof Error ? error.message : String(error) };
+    return emptyResult(params.matching, error instanceof Error ? error.message : String(error));
   }
 }
