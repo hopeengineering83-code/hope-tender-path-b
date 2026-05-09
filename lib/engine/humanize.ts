@@ -98,3 +98,87 @@ export async function humanize(text: string): Promise<string> {
     return cleaned;
   }
 }
+
+// Targeted opening-sections humanizer.
+//
+// Extracts the Cover Letter and Executive Summary from a full proposal
+// markdown, sends only those two sections (~1500–3000 tokens) to the AI
+// for a senior-editor polish pass, and stitches the result back into the
+// full proposal. Always-on — no env var gate. The small token budget means
+// it costs ~8–15s on Vercel Hobby instead of the 25–45s a whole-proposal
+// humanization would cost. Falls back silently to the untouched sections
+// if the AI call fails.
+//
+// WHY ONLY THESE TWO SECTIONS
+// ────────────────────────────
+// Evaluators read the Cover Letter first and the Executive Summary second.
+// These sections decide whether the proposal stays in the "serious
+// contender" pile. AI-trace phrases ("Certainly!", "As an AI…") or
+// awkward transitions in those two sections cost disproportionately more
+// points than the same issues deep in Section C. Humanizing them
+// specifically — with a ~500-token budget each — is the highest-ROI
+// Claude call in the pipeline.
+
+const OPENING_HUMANIZE_SYSTEM_PROMPT = `You are a senior bid director with 25 years of proposal writing experience. You polish the opening two sections of a technical proposal — the Cover Letter and Executive Summary — so they read as if a confident, evidence-led senior consultant wrote them from scratch. You never invent facts. You remove all AI traces. You return ONLY the polished text with the same headings — no commentary, no preamble.`;
+
+function extractSection(markdown: string, headingPattern: RegExp): { text: string; start: number; end: number } | null {
+  const lines = markdown.split("\n");
+  let startLine = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (headingPattern.test(lines[i])) { startLine = i; break; }
+  }
+  if (startLine < 0) return null;
+
+  // Find the next top-level heading (# ) that isn't this one.
+  let endLine = lines.length;
+  for (let i = startLine + 1; i < lines.length; i++) {
+    if (/^# /.test(lines[i])) { endLine = i; break; }
+  }
+
+  const text = lines.slice(startLine, endLine).join("\n");
+  const start = lines.slice(0, startLine).join("\n").length + (startLine > 0 ? 1 : 0);
+  const end = start + text.length;
+  return { text, start, end };
+}
+
+export async function humanizeOpeningSections(markdown: string): Promise<string> {
+  if (!isAIEnabled()) return markdown;
+
+  const coverSection = extractSection(markdown, /^#\s+Cover\s+Letter/i);
+  const execSection = extractSection(markdown, /^#\s+Executive\s+Summary/i);
+
+  if (!coverSection && !execSection) return markdown;
+
+  const combined = [coverSection?.text, execSection?.text].filter(Boolean).join("\n\n");
+  if (combined.trim().length < 100) return markdown;
+
+  const prompt = `Polish the Cover Letter and Executive Summary below. Keep every fact, project name, expert name, contract value, and client name exactly as-is. Remove AI traces and awkward phrasing. Vary sentence length. Return the same two headings with the polished text under each — nothing else.
+
+${combined.slice(0, 5000)}`;
+
+  try {
+    const polished = await generateWithFallback(prompt, { systemPrompt: OPENING_HUMANIZE_SYSTEM_PROMPT });
+    if (!polished || polished.trim().length < 50) return markdown;
+
+    // Stitch polished sections back in by replacing the original text spans.
+    // Work from last to first so character offsets stay valid.
+    let result = markdown;
+    const polishedCover = extractSection(polished, /^#\s+Cover\s+Letter/i);
+    const polishedExec = extractSection(polished, /^#\s+Executive\s+Summary/i);
+
+    // Replace exec first (further down), then cover (start of doc).
+    if (execSection && polishedExec) {
+      const before = result.slice(0, execSection.start);
+      const after = result.slice(execSection.end);
+      result = before + polishedExec.text + after;
+    }
+    if (coverSection && polishedCover) {
+      const before = result.slice(0, coverSection.start);
+      const after = result.slice(coverSection.end);
+      result = before + polishedCover.text + after;
+    }
+    return result;
+  } catch {
+    return markdown;
+  }
+}

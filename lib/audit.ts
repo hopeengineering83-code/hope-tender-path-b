@@ -21,7 +21,30 @@ export type AuditAction =
   // PR #255 — Multi-Perspective AI Rematch (re-scores expert/project
   // matches via Claude with 4-perspective evaluation).
   | "AI_REMATCH_RUN"
-  | "TENDER_DUPLICATE";
+  | "TENDER_DUPLICATE"
+  // Tender engine audit trail (run-tender-engine.ts writeEngineRunAudit).
+  | "TENDER_ENGINE_RUN_STARTED"
+  | "TENDER_ENGINE_RUN_COMPLETED"
+  | "TENDER_ENGINE_RUN_FAILED"
+  | "TENDER_ENGINE_DOCUMENTS_SUPERSEDED"
+  // Bid/No-Bid decision engine applied or overridden.
+  | "TENDER_BID_DECISION_APPLIED"
+  // Tender AI Copilot question answered.
+  | "TENDER_COPILOT_QUESTION"
+  // Evaluator committee simulation result recorded.
+  | "EVALUATOR_COMMITTEE_RESULT"
+  // Tender Control Ledger entries (one per control type).
+  | "TENDER_CONTROL_ADDENDUM"
+  | "TENDER_CONTROL_CLARIFICATION"
+  | "TENDER_CONTROL_QUESTION"
+  | "TENDER_CONTROL_MILESTONE"
+  | "TENDER_CONTROL_TASK"
+  | "TENDER_CONTROL_RISK"
+  | "TENDER_CONTROL_COMMERCIAL_ASSUMPTION"
+  | "TENDER_BID_OUTCOME_SET"
+  // Maintenance: regenerate Expert CV DOCX files after the trace-stripper
+  // fix landed in expert-cv-docx.ts. Triggered via /regenerate-cvs.
+  | "EXPERT_CV_REGENERATE";
 
 export async function logAction(opts: {
   userId?: string;
@@ -30,8 +53,12 @@ export async function logAction(opts: {
   entityId?: string;
   description: string;
   metadata?: Record<string, unknown>;
+  requestId?: string;
 }) {
   try {
+    const meta = opts.requestId
+      ? { ...opts.metadata, requestId: opts.requestId }
+      : (opts.metadata ?? {});
     await prisma.auditLog.create({
       data: {
         userId: opts.userId ?? null,
@@ -39,7 +66,7 @@ export async function logAction(opts: {
         entityType: opts.entityType ?? null,
         entityId: opts.entityId ?? null,
         description: opts.description,
-        metadata: JSON.stringify(opts.metadata ?? {}),
+        metadata: JSON.stringify(meta),
       },
     });
   } catch {

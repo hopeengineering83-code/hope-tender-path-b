@@ -23,19 +23,36 @@ function normalizeExpert(e: Record<string, unknown>) {
   };
 }
 
-export async function GET() {
+export async function GET(req: Request) {
   const userId = await getSession();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   await prismaReady;
 
+  const { searchParams } = new URL(req.url);
+  const limit = Math.min(Number(searchParams.get("limit") ?? "100"), 200);
+  const cursor = searchParams.get("cursor") ?? undefined;
+  const trustLevel = searchParams.get("trustLevel") ?? undefined;
+  const q = searchParams.get("q") ?? "";
+
   const company = await ensureCompanyForUser(prisma, userId);
 
   const experts = await prisma.expert.findMany({
-    where: { companyId: company.id },
+    where: {
+      companyId: company.id,
+      deletedAt: null,
+      ...(trustLevel ? { trustLevel } : {}),
+      ...(q ? { OR: [{ fullName: { contains: q } }, { title: { contains: q } }] } : {}),
+    },
     orderBy: [{ trustLevel: "asc" }, { createdAt: "desc" }],
+    take: limit + 1,
+    ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
   });
 
-  return NextResponse.json(experts.map(normalizeExpert));
+  const hasMore = experts.length > limit;
+  const items = hasMore ? experts.slice(0, limit) : experts;
+  const nextCursor = hasMore ? items[items.length - 1].id : null;
+
+  return NextResponse.json({ items: items.map(normalizeExpert), nextCursor, hasMore });
 }
 
 export async function POST(req: Request) {

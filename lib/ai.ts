@@ -474,6 +474,13 @@ export type AIBidWriterInput = {
   // cover letter "To:" line just because the firm has prior Pharo
   // projects in the vault.
   doNotUseAsClient?: string[];
+  // Per-criterion evidence map — built by buildCriterionEvidenceMap()
+  // in proposal-intelligence.ts. Maps each evaluation criterion (with
+  // its numeric weight) to the best-matching projects and experts from
+  // the vault. Injected into the Section C prompt so the AI allocates
+  // prose depth proportionally to criterion weight rather than
+  // distributing content evenly across all sections.
+  criterionEvidenceMap?: string;
 };
 
 // ─── Tender analysis ─────────────────────────────────────────────────────────
@@ -800,6 +807,38 @@ ${text.slice(0, 60_000)}`;
 // (already-comprehensive) output is kept and the score is recorded as-is.
 const REFINEMENT_MAX_INPUT_CHARS = 80_000;
 
+// PR VV — per-call refinement timeout. Without this, refineProposalWithAI
+// could chew the entire Vercel Hobby 60s function budget on a single
+// call (large markdown input + slow Anthropic TTFT + retry on Gemini).
+// With PR QQ allowing up to 2 refinement attempts, the worst case
+// pre-PR-VV was 2 × 60s = 120s = guaranteed function timeout.
+//
+// Default 25s (env-overridable) gives Tier 2 enough room for a single
+// refinement on a 30K-char proposal while leaving budget for the rest
+// of the pipeline (section calls, auto-rematch, post-passes).
+const REFINEMENT_CALL_TIMEOUT_MS = (() => {
+  const raw = Number(process.env.REFINEMENT_CALL_TIMEOUT_MS);
+  if (Number.isFinite(raw) && raw >= 5_000 && raw <= 120_000) return raw;
+  return 25_000;
+})();
+
+async function withRefinementTimeout<T>(promise: Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`refineProposalWithAI timed out after ${Math.round(REFINEMENT_CALL_TIMEOUT_MS / 1000)}s`)),
+          REFINEMENT_CALL_TIMEOUT_MS,
+        );
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 export async function refineProposalWithAI(input: {
   currentMarkdown: string;
   weakAxes: string[];
@@ -859,14 +898,16 @@ ${input.currentMarkdown}
       // Pass the dedicated REFINEMENT_SYSTEM_PROMPT so Claude is framed as a
       // senior bid REVIEWER (preserve-then-strengthen), not as the bid
       // WRITER persona used at generation time.
-      const claudeResult = await generateWithClaude(prompt, REFINEMENT_SYSTEM_PROMPT);
+      // PR VV — wrapped in withRefinementTimeout so a slow call never
+      // exceeds the per-call budget. Falls through to Gemini on timeout.
+      const claudeResult = await withRefinementTimeout(generateWithClaude(prompt, REFINEMENT_SYSTEM_PROMPT));
       if (claudeResult) {
         lastProposalProvider = "claude";
         return claudeResult;
       }
     }
     if (apiKey) {
-      const geminiResult = await generateWithBestModel(prompt);
+      const geminiResult = await withRefinementTimeout(generateWithBestModel(prompt));
       lastProposalProvider = "gemini";
       return geminiResult;
     }

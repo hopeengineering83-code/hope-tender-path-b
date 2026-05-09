@@ -34,7 +34,7 @@ export async function GET(
   const company = await prisma.company.findUnique({ where: { userId } });
   if (!company) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  const expert = await prisma.expert.findFirst({ where: { id, companyId: company.id } });
+  const expert = await prisma.expert.findFirst({ where: { id, companyId: company.id, deletedAt: null } });
   if (!expert) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   return NextResponse.json(normalizeExpert(expert as unknown as Record<string, unknown>));
@@ -52,7 +52,7 @@ export async function PUT(
   const company = await prisma.company.findUnique({ where: { userId } });
   if (!company) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  const existing = await prisma.expert.findFirst({ where: { id, companyId: company.id } });
+  const existing = await prisma.expert.findFirst({ where: { id, companyId: company.id, deletedAt: null } });
   if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   try {
@@ -99,7 +99,7 @@ export async function PATCH(
   const company = await prisma.company.findUnique({ where: { userId } });
   if (!company) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  const existing = await prisma.expert.findFirst({ where: { id, companyId: company.id } });
+  const existing = await prisma.expert.findFirst({ where: { id, companyId: company.id, deletedAt: null } });
   if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   const body = await req.json() as { action?: string; notes?: string };
@@ -123,7 +123,7 @@ export async function PATCH(
 
 export async function DELETE(
   _req: Request,
-  { params }: { params: Promise<{ id: string }> },
+  { params }: { params: Promise<{ id: string }> }
 ) {
   const userId = await getSession();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -133,9 +133,9 @@ export async function DELETE(
   const company = await prisma.company.findUnique({ where: { userId } });
   if (!company) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  const existing = await prisma.expert.findFirst({ where: { id, companyId: company.id } });
+  const existing = await prisma.expert.findFirst({ where: { id, companyId: company.id, deletedAt: null } });
   if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  await prisma.expert.delete({ where: { id } });
+  await prisma.expert.update({ where: { id }, data: { deletedAt: new Date(), deletedBy: userId } });
   return NextResponse.json({ success: true });
 }

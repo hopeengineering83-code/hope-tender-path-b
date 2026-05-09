@@ -308,16 +308,51 @@ function commsRows(): CommsRow[] {
 
 // ─── Table builders ──────────────────────────────────────────────────────
 
-function buildPhasingTable(sector: string): string {
-  const rows = sectorPhasingRows(sector);
+/**
+ * Replace generic "Weeks 1–2" duration cells with concrete "Days 1–3"
+ * cells, given the tender's stated total day count. Distributes phases
+ * proportionally to the original week-range widths.
+ *
+ * Used when the tender text yields an explicit total like "28 calendar
+ * days from signed contract" — the May-7 benchmark Path tender had
+ * exactly that. Without this, the generated proposal phases say
+ * "Weeks 1–2" / "Weeks 3–6" while the tender expects day numbers.
+ */
+function rewritePhasesToDays(rows: PhasingRow[], totalDays: number): PhasingRow[] {
+  if (totalDays < 7 || totalDays > 1_000) return rows;
+  // Detect the maximum week number across rows so we can scale proportionally.
+  const ranges: Array<{ start: number; end: number }> = rows.map((r) => {
+    const m = r.duration.match(/(\d+)\s*[–-]\s*(\d+)/);
+    if (m) return { start: Number(m[1]), end: Number(m[2]) };
+    const single = r.duration.match(/Week\s+(\d+)/i);
+    if (single) return { start: Number(single[1]), end: Number(single[1]) };
+    return { start: 0, end: 0 };
+  });
+  const maxWeek = Math.max(1, ...ranges.map((r) => r.end));
+  return rows.map((r, i) => {
+    const range = ranges[i];
+    if (range.end === 0) return r; // unparseable — keep original
+    const daysStart = Math.max(1, Math.round((range.start - 1) * totalDays / maxWeek) + 1);
+    const daysEnd = Math.min(totalDays, Math.round(range.end * totalDays / maxWeek));
+    const dur = daysStart === daysEnd ? `Day ${daysStart}` : `Days ${daysStart}–${daysEnd}`;
+    return { ...r, duration: dur };
+  });
+}
+
+function buildPhasingTable(sector: string, totalDays?: number): string {
+  let rows = sectorPhasingRows(sector);
+  if (totalDays && totalDays > 0) rows = rewritePhasesToDays(rows, totalDays);
   const head = "| # | Phase | Key Deliverables | Indicative Duration | Responsible |";
   const sep = "|---|-------|------------------|---------------------|-------------|";
   const body = rows.map((r, i) => `| ${i + 1} | ${r.phase} | ${r.deliverables} | ${r.duration} | ${r.responsible} |`);
+  const intro = totalDays
+    ? `The engagement is delivered in ${rows.length} phases over ${totalDays} calendar days, each with a defined deliverable, duration, and responsible expert. Phase transitions are gated by client sign-off on the prior deliverable.`
+    : `The engagement is delivered in ${rows.length} phases, each with a defined deliverable, duration, and responsible expert. Phase transitions are gated by client sign-off on the prior deliverable.`;
   return [
     `<!-- methodology-table:phasing -->`,
     `## Project Phasing and Deliverables`,
     "",
-    `The engagement is delivered in five phases, each with a defined deliverable, duration, and responsible expert. Phase transitions are gated by client sign-off on the prior deliverable.`,
+    intro,
     "",
     head,
     sep,
@@ -464,6 +499,11 @@ export function injectMethodologyTables(
     primarySector: string;
     experts: ExpertRecord[];
     projects: ProjectRecord[];
+    // PR XX-G10 — when the tender text carries an explicit total
+    // duration (e.g., "28 calendar days from signed contract"), the
+    // phasing table renders "Day 1–3" / "Day 4–8" cells instead of
+    // generic "Weeks 1–2". Pass the parsed total here.
+    totalDays?: number;
   },
 ): MethodologyTablesResult {
   const present = detectExisting(markdown);
@@ -472,7 +512,7 @@ export function injectMethodologyTables(
   const blocks: string[] = [];
 
   if (!present.has("phasing")) {
-    blocks.push(buildPhasingTable(opts.primarySector));
+    blocks.push(buildPhasingTable(opts.primarySector, opts.totalDays));
     injected.push({ key: "phasing", reason: "MISSING" });
   } else {
     injected.push({ key: "phasing", reason: "SKIPPED_PRESENT" });

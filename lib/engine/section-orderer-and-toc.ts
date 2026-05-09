@@ -43,8 +43,13 @@ interface Section {
   startLine: number;
 }
 
+// PR PP — canonical order. Each regex matches the level-1 heading
+// that opens the corresponding canonical section. Multiple aliases
+// per slot are intentional — different builders historically used
+// slightly different headings (e.g., "Appendix Register" vs.
+// "Annex & Appendix Register" after the PR #261 unification).
 const CANONICAL_ORDER: RegExp[] = [
-  /^#\s+Cover\s+Letter\b/i,
+  /^#\s+(?:Letter\s+of\s+Transmittal|Cover\s+Letter|Covering\s+Letter|Transmittal\s+Letter)\b/i,
   /^#\s+Executive\s+Summary\b/i,
   /^#\s+Section\s+A\b/i,
   /^#\s+Section\s+B\b/i,
@@ -54,9 +59,9 @@ const CANONICAL_ORDER: RegExp[] = [
   /^#\s+Section\s+F\b/i,
   /^#\s+Section\s+G\b/i,
   /^#\s+Section\s+H\b/i,
-  /^#\s+Appendix\s+Register\b/i,
-  /^#\s+Declaration\b/i,
-  /^#\s+Submission\s+Readiness\s+Checklist\b/i,
+  /^#\s+(?:Annex(?:\s*(?:&|and|\+)\s*Appendix)?\s+Register|Appendix\s+Register|Appendices)\b/i,
+  /^#\s+(?:Formal\s+)?Declaration\b/i,
+  /^#\s+(?:Submission\s+Readiness\s+Checklist|Pre-Submission\s+Checklist|Final\s+Submission\s+Checklist)\b/i,
 ];
 
 function findCanonicalIndex(heading: string): number {

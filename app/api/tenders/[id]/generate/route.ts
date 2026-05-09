@@ -13,10 +13,14 @@ export const dynamic = "force-dynamic";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { generateTenderDocuments } from "../../../../../lib/engine/generate-elite";
 import { applyActiveUploadedLetterheadToTenderDocuments } from "../../../../../lib/engine/apply-active-letterhead";
+import { rateLimit, AI_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import { buildSubmissionPlan, findExtraGeneratedDocuments, findMissingGeneratedDocuments, generatedDocumentSubmissionKey, hasExplicitSubmissionScope, plannedSubmissionTargetFiles, plannedSubmissionTargetKeys, type SubmissionPlanFile } from "../../../../../lib/engine/submission-plan";
 import { polishBenchmarkOutput } from "../../../../../lib/engine/benchmark-output-polisher";
 import { cleanTenderTitle, cleanClientName, formatRequirementLine } from "../../../../../lib/engine/proposal-labels";
 import { logAction } from "../../../../../lib/audit";
+import { extractRequestId } from "../../../../../lib/request-id";
+import { createJob, advanceJob, completeJob, failJob } from "../../../../../lib/job-store";
+import { createNotification } from "../../../../../lib/notifications";
 import { childLogger, reportError, time } from "../../../../../lib/observability";
 import { Document, HeadingLevel, Packer, Paragraph, TextRun } from "docx";
 
@@ -113,9 +117,6 @@ async function ensurePlannedGeneratedDocumentRecords(tenderId: string, plannedFi
 }
 
 async function makeSupportDocx(tenderTitle: string, title: string, sections: Array<{ title: string; lines: string[] }>): Promise<string> {
-  // The opening paragraph identifies which tender this file belongs to.
-  // Written in evaluator-facing language; no "supporting package document
-  // for [tender]" boilerplate that previously echoed garbled tender titles.
   const opening = `Tender: ${shortText(tenderTitle, 200)}. Package item: ${title}.`;
   const children: Paragraph[] = [
     para(title, true),
@@ -130,12 +131,6 @@ async function makeSupportDocx(tenderTitle: string, title: string, sections: Arr
   return buffer.toString("base64");
 }
 
-/**
- * Classify a tender-required support document by file name. Substantive docs
- * carry real content (CVs, project references, methodology); placeholder
- * docs are slots for tender-issued forms / templates / certificates and
- * should be clearly labelled rather than filled with generic boilerplate.
- */
 type SupportDocKind =
   | "EXPERT_CV"
   | "PROJECT_REFERENCES"
@@ -169,7 +164,6 @@ function classifySupportDoc(docName: string): SupportDocKind {
 function supportSections(docName: string, context: { tenderTitle: string; requirements: string[]; experts: string[]; projects: string[] }): Array<{ title: string; lines: string[] }> {
   const kind = classifySupportDoc(docName);
 
-  // Substantive documents — receive real content built from reviewed evidence.
   if (kind === "EXPERT_CV") return [
     { title: "Expert CV Register", lines: context.experts.length > 0 ? context.experts.slice(0, 20) : ["Source-evidence action: confirm that reviewed expert CVs are attached separately. This package item is the cover/index for those CVs."] },
     { title: "Role-to-Requirement Mapping", lines: context.requirements.slice(0, 10) },
@@ -196,10 +190,6 @@ function supportSections(docName: string, context: { tenderTitle: string; requir
     { title: "Linked Evidence", lines: [...context.experts.slice(0, 6), ...context.projects.slice(0, 6)].filter(Boolean) },
   ];
 
-  // Placeholder documents — these are slots where the firm is expected to
-  // insert tender-issued originals (forms / templates / certificates / scans).
-  // We deliberately do NOT fill them with generic narrative content; instead
-  // we emit a clear placeholder notice so the bid team knows what to insert.
   const placeholderIntro = (): string[] => [
     "PLACEHOLDER FOR TENDER-ISSUED ORIGINAL.",
     "This file in the submission package is reserved for the tender-issued original document(s) listed below. Replace this placeholder before final submission with the signed / stamped / certified original(s) — do not submit this generated placeholder file.",
@@ -237,8 +227,6 @@ function supportSections(docName: string, context: { tenderTitle: string; requir
     { title: "Pre-Submission Checklist", lines: ["File names match the tender's exact-naming rule.", "File order matches the tender's exact-order rule (where stated).", "All declarations are signed and stamped.", "Submission deadline is confirmed in the tender's stated time zone.", "Submission email recipients / portal address are taken verbatim from the tender."] },
   ];
 
-  // Generic fallback — for any doc whose name doesn't match the patterns above.
-  // Better to be honest about it than to dump fake content.
   return [
     { title: "Tender Package Item", lines: ["This file corresponds to a tender-required submission item. Refer to the tender document for the exact content and format."] },
     { title: "Linked Tender Requirements", lines: context.requirements.slice(0, 8) },
@@ -262,10 +250,6 @@ async function fillPlannedSupportDocuments(tenderId: string, plannedFileKeys?: S
   });
   if (!tender) return 0;
 
-  // formatRequirementLine handles three real-world quality issues:
-  //   - drops internal classifier prefixes (MANDATORY FORM: etc.)
-  //   - dedupes "X — X — X" internal repetition from AI analysis
-  //   - strips title-in-description duplication
   const requirements = tender.requirements.map((r) => formatRequirementLine(r, 380));
   const experts = tender.expertMatches.filter((m) => m.expert.trustLevel === "REVIEWED").map((m) => `${m.expert.fullName}${m.expert.title ? ` — ${m.expert.title}` : ""}${m.expert.yearsExperience ? ` | ${m.expert.yearsExperience}+ years` : ""}${m.expert.profile ? ` | ${shortText(m.expert.profile, 260)}` : ""}`);
   const projects = tender.projectMatches.filter((m) => m.project.trustLevel === "REVIEWED").map((m) => `${m.project.name}${m.project.clientName ? ` — ${m.project.clientName}` : ""}${m.project.country ? ` | ${m.project.country}` : ""}${m.project.summary ? ` | ${shortText(m.project.summary, 300)}` : ""}`);
@@ -284,11 +268,6 @@ async function fillPlannedSupportDocuments(tenderId: string, plannedFileKeys?: S
 
   for (const doc of incomplete) {
     const title = clean(doc.exactFileName || doc.name);
-    // Sanitize the tender title before passing it into the support-doc
-    // boilerplate. The raw tender.title can be multi-line garbage from
-    // PDF extraction (e.g., "discipline and long-term commitment
-    // Headquarters: Not specified..."), and it propagates verbatim into
-    // every support document's first paragraph if used directly.
     const cleanTitle = cleanTenderTitle(tender.title, { clientName: cleanClientName(tender.clientName, tender.description), description: tender.description });
     const fileContent = await makeSupportDocx(cleanTitle, title, supportSections(title, { tenderTitle: cleanTitle, requirements, experts, projects }));
     await prisma.generatedDocument.update({
@@ -305,7 +284,8 @@ async function fillPlannedSupportDocuments(tenderId: string, plannedFileKeys?: S
   return incomplete.length;
 }
 
-export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const requestId = extractRequestId(req);
   let actor;
   try {
     actor = await requireRole("ADMIN", "PROPOSAL_MANAGER");
@@ -315,11 +295,23 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   }
 
   const userId = actor.id;
+
+  const rl = rateLimit(`gen:${userId}`, AI_RATE_LIMIT);
+  if (!rl.allowed) {
+    return NextResponse.json(
+      { error: "Rate limit exceeded — too many generation requests. Please wait a minute and retry.", retryAfter: Math.ceil((rl.resetAt - Date.now()) / 1000) },
+      { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } }
+    );
+  }
+
   await prismaReady;
   const { id } = await params;
 
   const tender = await prisma.tender.findFirst({ where: { id, userId }, include: { requirements: true } });
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
+  if (tender.status === "NO_BID") {
+    return NextResponse.json({ error: "Generation blocked: this tender is marked NO_BID. Apply a BID or BID_WITH_CONDITIONS decision before generating proposal documents.", code: "NO_BID_BLOCK" }, { status: 409 });
+  }
 
   const submissionPlan = buildSubmissionPlan({
     id: tender.id,
@@ -356,11 +348,11 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   if (draftExperts.length > 0) warnings.push(`${draftExperts.length} selected expert(s) are unreviewed drafts: ${draftExperts.map((m) => m.expert.fullName).join(", ")}. Review them in the Knowledge Review page for more accurate proposals.`);
   if (draftProjects.length > 0) warnings.push(`${draftProjects.length} selected project(s) are unreviewed drafts: ${draftProjects.map((m) => m.project.name).join(", ")}. Review them in the Knowledge Review page for more accurate proposals.`);
 
-  // PR #254 — structured logging. childLogger pre-binds tenderId+route
-  // to every line so the operator can filter Vercel/Datadog logs by
-  // tenderId across the entire generation lifecycle.
   const log = childLogger({ tenderId: id, userId, route: "/api/tenders/[id]/generate" });
   log.info("generation_started", { reviewedExpertCount, draftExpertCount: draftExperts.length, reviewedProjectCount, draftProjectCount: draftProjects.length });
+
+  const job = createJob({ userId, tenderId: id, type: "GENERATE", steps: ["FETCH", "AI_GENERATE", "SAVE", "LETTERHEAD", "VALIDATE"] });
+  advanceJob(job.id, "FETCH");
 
   try {
     const plannedRecordCount = explicitSubmissionScope
@@ -368,15 +360,15 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       : 0;
     if (plannedRecordCount > 0) warnings.push(`${plannedRecordCount} missing tender-required file target(s) were added to the Generated outputs plan before generation.`);
 
-    // The hot path — wrap in time() so we get duration_ms on every
-    // generation. Visible in logs as a "metric" event with status=ok
-    // / status=error and elapsed milliseconds.
+    advanceJob(job.id, "AI_GENERATE");
     await time("generate.tender_documents", () => generateTenderDocuments(id, userId), { tenderId: id });
 
+    advanceJob(job.id, "SAVE");
     const supportDocumentCount = await time("generate.fill_support_docs", () => fillPlannedSupportDocuments(id, plannedFileKeys), { tenderId: id });
     if (supportDocumentCount > 0) warnings.push(explicitSubmissionScope
       ? `${supportDocumentCount} planned package document(s) were generated with distinct tender-specific content for export readiness.`
       : `${supportDocumentCount} remaining package document(s) were generated with distinct tender-specific content for export readiness.`);
+    advanceJob(job.id, "LETTERHEAD");
     const letterheadAppliedCount = await applyActiveUploadedLetterheadToTenderDocuments(id, userId);
     if (letterheadAppliedCount > 0) warnings.push(`Uploaded Word letterhead applied to ${letterheadAppliedCount} generated DOCX file(s).`);
 
@@ -389,16 +381,17 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     if (missingPlanFiles.length > 0) warnings.push(`Submission plan still has ${missingPlanFiles.length} missing tender-required file(s): ${missingPlanFiles.map((file) => file.exactFileName).join(", ")}.`);
     if (extraGeneratedDocs.length > 0) warnings.push(`Generation produced ${extraGeneratedDocs.length} generated file(s) outside the explicit submission plan: ${extraGeneratedDocs.map((doc) => doc.exactFileName ?? doc.name ?? doc.documentType ?? doc.id ?? "document").join(", ")}. Final ZIP export will block until reconciled.`);
 
+    advanceJob(job.id, "VALIDATE");
     if (reviewedExpertCount > 0 || draftExperts.length > 0 || reviewedProjectCount > 0 || draftProjects.length > 0) await prisma.generatedDocument.updateMany({ where: { tenderId: id }, data: { reviewedExpertCount, draftExpertCount: draftExperts.length, reviewedProjectCount, draftProjectCount: draftProjects.length, updatedAt: new Date() } });
 
-    await logAction({ userId, action: "TENDER_GENERATED", entityType: "Tender", entityId: id, description: `Generated benchmark-quality documents for tender "${tender.title}" — ${reviewedExpertCount} reviewed experts, ${draftExperts.length} draft experts, ${reviewedProjectCount} reviewed projects, ${draftProjects.length} draft projects, ${supportDocumentCount} supporting package documents, ${letterheadAppliedCount} uploaded letterhead overlays, ${seniorReviewCriticals.length} senior-review gaps`, metadata: { tenderId: id, reviewedExpertCount, draftExpertCount: draftExperts.length, reviewedProjectCount, draftProjectCount: draftProjects.length, plannedRecordCount, supportDocumentCount, letterheadAppliedCount, seniorReviewGapCount: seniorReviewCriticals.length, explicitSubmissionScope, plannedTargetCount: plannedTargetFiles.length, missingPlanFileCount: missingPlanFiles.length, extraGeneratedFileCount: extraGeneratedDocs.length, warnings } });
+    await logAction({ userId, action: "TENDER_GENERATED", entityType: "Tender", entityId: id, description: `Generated benchmark-quality documents for tender "${tender.title}" — ${reviewedExpertCount} reviewed experts, ${draftExperts.length} draft experts, ${reviewedProjectCount} reviewed projects, ${draftProjects.length} draft projects, ${supportDocumentCount} supporting package documents, ${letterheadAppliedCount} uploaded letterhead overlays, ${seniorReviewCriticals.length} senior-review gaps`, metadata: { tenderId: id, reviewedExpertCount, draftExpertCount: draftExperts.length, reviewedProjectCount, draftProjectCount: draftProjects.length, plannedRecordCount, supportDocumentCount, letterheadAppliedCount, seniorReviewGapCount: seniorReviewCriticals.length, explicitSubmissionScope, plannedTargetCount: plannedTargetFiles.length, missingPlanFileCount: missingPlanFiles.length, extraGeneratedFileCount: extraGeneratedDocs.length, warnings }, requestId });
     const updatedTender = await prisma.tender.findFirst({ where: { id, userId }, include: { generatedDocuments: { orderBy: { exactOrder: "asc" } } } });
-    return NextResponse.json({ success: true, tender: updatedTender, warnings, plannedRecordCount, supportDocumentCount, letterheadAppliedCount, submissionPlan: explicitSubmissionScope ? { plannedTargetCount: plannedTargetFiles.length, missing: missingPlanFiles.map((file) => file.exactFileName), extras: extraGeneratedDocs.map((doc) => doc.exactFileName ?? doc.name ?? doc.documentType ?? doc.id ?? "document") } : null });
+    const jobResult = { warnings, supportDocumentCount, letterheadAppliedCount };
+    completeJob(job.id, jobResult);
+    void createNotification({ userId, type: "TENDER_GENERATED", title: `Documents generated for "${tender.title}"`, body: `${(updatedTender?.generatedDocuments ?? []).length} document(s) ready for review.`, entityType: "Tender", entityId: id, link: `/dashboard/tenders/${id}` });
+    return NextResponse.json({ success: true, jobId: job.id, tender: updatedTender, warnings, plannedRecordCount, supportDocumentCount, letterheadAppliedCount, submissionPlan: explicitSubmissionScope ? { plannedTargetCount: plannedTargetFiles.length, missing: missingPlanFiles.map((file) => file.exactFileName), extras: extraGeneratedDocs.map((doc) => doc.exactFileName ?? doc.name ?? doc.documentType ?? doc.id ?? "document") } : null });
   } catch (error) {
-    // PR #254 — route errors through reportError so they reach Sentry
-    // (when SENTRY_DSN is set) AND appear as structured "unhandled_error"
-    // events in the Vercel logs. Replaces the prior plain console.error
-    // call which was just unstructured prose.
+    failJob(job.id, error instanceof Error ? error.message : String(error));
     void reportError(error, { tenderId: id, userId, route: "/api/tenders/[id]/generate" });
     return NextResponse.json({ error: error instanceof Error ? error.message : "Document generation failed" }, { status: 500 });
   }

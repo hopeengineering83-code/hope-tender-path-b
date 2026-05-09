@@ -738,21 +738,42 @@ export function buildProposalIntelligence(params: {
     return sectorFilter(t);
   };
 
-  // Apply filter — but DON'T let the filter strip everything when
-  // the vault genuinely has no on-sector records (false negatives are
-  // worse than false positives here). When 0 relevant projects/experts
-  // are found, fall back to unfiltered.
+  // Apply filter. PR XX-FOLLOWUP — tightened fallback semantics.
+  //
+  // BEFORE: when fewer than 3 sector-relevant records existed, we fell
+  // back to the UNFILTERED list. That meant a healthcare tender against
+  // a warehouse-heavy portfolio surfaced warehouse projects in the top
+  // 10 — exactly what produced the May-7 benchmark "Warehouse &
+  // Landscaping anchoring a hospital cover letter" failure.
+  //
+  // NOW: the sector-relevant list is ALWAYS the priority pool; we only
+  // top up from the unfiltered list when needed to meet a small minimum
+  // (5 projects / 8 experts). The top-up records are appended at the
+  // END after sector-relevant ones, so the lead anchor in the cover
+  // letter is always sector-relevant when even one such record exists.
   const projectsRelevant = projects.filter(projectIsRelevant);
   const expertsRelevant = experts.filter(expertIsRelevant);
-  const projectPool = projectsRelevant.length >= 3 ? projectsRelevant : projects;
-  const expertPool = expertsRelevant.length >= 3 ? expertsRelevant : experts;
+  const PROJECT_MIN_POOL = 5;
+  const EXPERT_MIN_POOL = 8;
 
-  const topProjects = [...projectPool]
+  const projectsRelevantSorted = [...projectsRelevant]
+    .sort((a, b) => projectScore(b, themes, tenderText) - projectScore(a, themes, tenderText));
+  const expertsRelevantSorted = [...expertsRelevant]
+    .sort((a, b) => expertScore(b, themes, tenderText) - expertScore(a, themes, tenderText));
+
+  // Top-up from non-relevant list only when relevant pool is too small.
+  const projectsBackfill = [...projects.filter((p) => !projectsRelevant.includes(p))]
     .sort((a, b) => projectScore(b, themes, tenderText) - projectScore(a, themes, tenderText))
-    .slice(0, 10);
-  const topExperts = [...expertPool]
+    .slice(0, Math.max(0, PROJECT_MIN_POOL - projectsRelevantSorted.length));
+  const expertsBackfill = [...experts.filter((e) => !expertsRelevant.includes(e))]
     .sort((a, b) => expertScore(b, themes, tenderText) - expertScore(a, themes, tenderText))
-    .slice(0, 14);
+    .slice(0, Math.max(0, EXPERT_MIN_POOL - expertsRelevantSorted.length));
+
+  const projectPool = [...projectsRelevantSorted, ...projectsBackfill];
+  const expertPool = [...expertsRelevantSorted, ...expertsBackfill];
+
+  const topProjects = projectPool.slice(0, 10);
+  const topExperts = expertPool.slice(0, 14);
 
   if (detectedSector !== "General Consultancy / Engineering") {
     console.info(`[proposal-intelligence] Sector filter (${detectedSector}): kept ${projectPool.length}/${projects.length} projects, ${expertPool.length}/${experts.length} experts.`);
@@ -827,4 +848,72 @@ export function expertProofLine(expert: ExpertLite): string {
     certs ? `Certifications/Licences: ${certs}` : null,
     profile || null,
   ].filter(Boolean).join(" | ");
+}
+
+/**
+ * Build a per-criterion evidence map — for each evaluation criterion (with its
+ * numeric weight), find the best-matching projects and experts from the firm's
+ * vault and return a structured block for injection into the Section C prompt.
+ *
+ * This tells the AI exactly which evidence to use for each weighted criterion
+ * instead of leaving it to guess from a flat list. The AI can then allocate
+ * prose depth proportionally: a 35%-weight methodology criterion gets 3×
+ * the depth of a 10%-weight compliance criterion.
+ */
+export function buildCriterionEvidenceMap(
+  weights: EvaluationWeight[],
+  topProjects: ProjectLite[],
+  topExperts: ExpertLite[],
+): string {
+  if (weights.length === 0) return "";
+
+  const lines: string[] = [
+    "EVALUATION CRITERION → BEST EVIDENCE MAP",
+    "(Allocate proposal depth PROPORTIONALLY to each criterion weight. Highest-weight criterion = most evidence-dense prose.)",
+  ];
+
+  for (const w of weights) {
+    const criterionLower = w.criterion.toLowerCase();
+    const keywords = criterionLower
+      .split(/\s+/)
+      .filter((k) => k.length > 3 && !/^(the|and|for|with|that|this|from|into|have|been|will|shall|must|only|also|when|where|which|their|each|both)$/.test(k));
+
+    if (keywords.length === 0) continue;
+
+    const scoredProjects = topProjects
+      .map((p) => {
+        const t = textOf(p.name, p.summary, p.sector, p.clientName, ...safeParseArr(p.serviceAreas)).toLowerCase();
+        const hits = keywords.filter((k) => t.includes(k)).length;
+        return { project: p, hits };
+      })
+      .filter((s) => s.hits > 0)
+      .sort((a, b) => b.hits - a.hits || (b.project.contractValue ?? 0) - (a.project.contractValue ?? 0))
+      .slice(0, 3);
+
+    const scoredExperts = topExperts
+      .map((e) => {
+        const t = textOf(e.fullName, e.title, e.profile, ...safeParseArr(e.disciplines), ...safeParseArr(e.sectors)).toLowerCase();
+        const hits = keywords.filter((k) => t.includes(k)).length;
+        return { expert: e, hits };
+      })
+      .filter((s) => s.hits > 0)
+      .sort((a, b) => b.hits - a.hits)
+      .slice(0, 3);
+
+    if (scoredProjects.length === 0 && scoredExperts.length === 0) continue;
+
+    lines.push(`\n[${w.weight}] ${w.criterion}`);
+    for (const { project } of scoredProjects) {
+      const val = project.contractValue
+        ? ` (${project.currency ?? "ETB"} ${(project.contractValue / 1_000_000).toFixed(1)}M)`
+        : "";
+      lines.push(`  PROJECT → ${project.name}${project.clientName ? ` — ${project.clientName}` : ""}${project.country ? `, ${project.country}` : ""}${val}`);
+    }
+    for (const { expert } of scoredExperts) {
+      const yrs = expert.yearsExperience ? ` (${expert.yearsExperience}yr)` : "";
+      lines.push(`  EXPERT  → ${expert.fullName}${expert.title ? `, ${expert.title}` : ""}${yrs}`);
+    }
+  }
+
+  return lines.length > 2 ? lines.join("\n") : "";
 }

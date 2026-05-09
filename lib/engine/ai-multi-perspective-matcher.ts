@@ -1,74 +1,59 @@
 /**
- * Multi-Perspective AI Matcher (PR #255).
- *
- * THE PROBLEM
- * The existing matcher (lib/engine/matching.ts) uses pure lexical
- * TF-IDF cosine similarity across 20 cycles + 21 hand-coded
- * capability families. It ranks candidates by token overlap.
- *
- * That misses fit:
- *   • Semantic equivalence: "hospital design" vs "healthcare
- *     facility planning" share zero distinctive tokens but mean
- *     the same thing. Lexical matching ignores them.
- *   • Role-fit reasoning: an expert with 10 years' structural
- *     engineering scores high on a tender for METHODOLOGY LEAD
- *     because the words overlap. But the role-fit is wrong.
- *   • Scale comparability: a USD 50K signage project scores high
- *     on a USD 50M hospital tender because both mention
- *     "construction supervision" — but the scale is incomparable.
- *   • Recency: a 2010 project scores the same as a 2024 project
- *     when their text content is similar. Real evaluators heavily
- *     weight recency.
- *
- * THE FIX
- * After the existing lexical matcher produces a top-N pre-filtered
- * pool, this module sends ALL of those candidates to Claude in
- * ONE structured prompt and asks it to score each candidate
- * across FOUR perspectives:
- *
- *   1. DISCIPLINE_FIT      — Does the candidate's discipline
- *                            match the tender's required scope?
- *   2. SENIORITY_OR_SCALE  — Experts: years of experience, license
- *                            level. Projects: contract value,
- *                            timeline, complexity.
- *   3. SECTOR_FIT          — Does the candidate's sector align
- *                            with the tender's sector or strongly
- *                            adjacent ones?
- *   4. RECENCY_OR_ROLE     — Experts: have they played a similar
- *                            role on a similar project recently?
- *                            Projects: how recent is the delivery,
- *                            and how comparable in client/scope?
- *
- * Each perspective scores 0-10. Final candidate score = weighted
- * average mapped to 0-1 range. Claude returns 1-line strength +
- * 1-line concern per candidate so the user sees WHY it's a match.
- *
- * COST
- * One Claude call per category (1 for experts, 1 for projects).
- * Each call evaluates up to 15 pre-filtered candidates. Input ~12K
- * chars, output ~3K. At Tier 2 rates: ~$0.03-0.04 per category,
- * ~$0.07 total per tender. User opts in by clicking "AI Rematch".
- *
- * NEVER FABRICATES
- * The prompt explicitly forbids hallucination. If the candidate
- * profile lacks information for a perspective, Claude returns a
- * neutral 5/10 with a note "INSUFFICIENT_INFO" rather than
- * inventing a score.
+ * Multi-Perspective AI Matcher.
+ * Scores experts/projects across twelve evaluator lenses. The route performs
+ * the final 20-iteration best-available portfolio selection and persists the
+ * selected rows into TenderExpertMatch / TenderProjectMatch.
  */
 
 import { generateWithFallback } from "../ai";
 
-// ─── Per-candidate AI assessment ────────────────────────────────────────────
+// Per-call wall-clock cap so a hung AI provider doesn't exhaust the
+// route's Vercel maxDuration=60s window. Default 40s leaves 20s for
+// the parallel sister call + DB writes. Override via env var.
+const REMATCH_TIMEOUT_MS = (() => {
+  const raw = Number(process.env.REMATCH_TIMEOUT_MS);
+  if (Number.isFinite(raw) && raw >= 10_000 && raw <= 120_000) return raw;
+  return 40_000;
+})();
 
-export type MatchPerspective = "DISCIPLINE_FIT" | "SENIORITY_OR_SCALE" | "SECTOR_FIT" | "RECENCY_OR_ROLE";
+async function withRematchTimeout<T>(promise: Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`AI rematch timed out after ${Math.round(REMATCH_TIMEOUT_MS / 1000)}s — reduce candidate pool or retry`)),
+          REMATCH_TIMEOUT_MS,
+        );
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+export type MatchPerspective =
+  | "DISCIPLINE_FIT"
+  | "SCOPE_COVERAGE"
+  | "SENIORITY_OR_SCALE"
+  | "SECTOR_FIT"
+  | "ROLE_RECENCY"
+  | "EVIDENCE_QUALITY"
+  | "COMPLIANCE_CRITICALITY"
+  | "PORTFOLIO_CONTRIBUTION"
+  | "MANDATORY_ELIGIBILITY"
+  | "DELIVERY_RISK"
+  | "DIFFERENTIATION"
+  | "COMMERCIAL_VALUE";
 
 export interface CandidateAssessment {
   candidateId: string;
-  overallScore: number;        // 0-1 (already scaled)
-  perspectives: Record<MatchPerspective, number>; // 0-10 each
-  strength: string;            // 1-line summary of why this is a strong match
-  concern: string;             // 1-line summary of the strongest reason for caution
-  recommendSelection: boolean; // Claude's go/no-go recommendation
+  overallScore: number;
+  perspectives: Record<MatchPerspective, number>;
+  strength: string;
+  concern: string;
+  recommendSelection: boolean;
 }
 
 export interface MatchAssessmentBatch {
@@ -77,125 +62,90 @@ export interface MatchAssessmentBatch {
   durationMs: number;
 }
 
-// ─── System prompts (one per category) ──────────────────────────────────────
+export const PERSPECTIVE_KEYS: MatchPerspective[] = [
+  "DISCIPLINE_FIT",
+  "SCOPE_COVERAGE",
+  "SENIORITY_OR_SCALE",
+  "SECTOR_FIT",
+  "ROLE_RECENCY",
+  "EVIDENCE_QUALITY",
+  "COMPLIANCE_CRITICALITY",
+  "PORTFOLIO_CONTRIBUTION",
+  "MANDATORY_ELIGIBILITY",
+  "DELIVERY_RISK",
+  "DIFFERENTIATION",
+  "COMMERCIAL_VALUE",
+];
 
-const EXPERT_MATCHER_SYSTEM_PROMPT = `You are a senior bid director with 25 years of experience selecting expert teams for competitive tenders. You have personally chosen team compositions for 800+ winning bids. You are pragmatic, evidence-led, and rigorous.
+const PERSPECTIVE_SPEC = `PERSPECTIVES (0-10 each):
+1. DISCIPLINE_FIT — exact professional/service discipline match to the tender's technical scope.
+2. SCOPE_COVERAGE — breadth of tender scope covered, not one keyword.
+3. SENIORITY_OR_SCALE — responsibility level, complexity, value/scale, leadership weight.
+4. SECTOR_FIT — same sector or strongly adjacent sector; unrelated sectors score low.
+5. ROLE_RECENCY — similar role/reference delivered recently; vague/old claims score lower.
+6. EVIDENCE_QUALITY — specificity and verifiability of evidence; named projects, client, value, dates, credentials.
+7. COMPLIANCE_CRITICALITY — ability to satisfy mandatory personnel/reference/eligibility clauses.
+8. PORTFOLIO_CONTRIBUTION — contribution to the whole selected set; fills a missing capability or sector gap.
+9. MANDATORY_ELIGIBILITY — likelihood this candidate passes strict tender eligibility wording without manual rescue.
+10. DELIVERY_RISK — delivery risk if selected; low risk scores high, high ambiguity/availability/fit risk scores low.
+11. DIFFERENTIATION — whether this candidate improves win strategy beyond minimum compliance.
+12. COMMERCIAL_VALUE — value-for-bid perspective: appropriate scale, cost/value credibility, and no obvious commercial mismatch.`;
 
-You are given:
-  • A tender's scope, requirements, and evaluation criteria.
-  • A pre-filtered pool of candidate experts from the firm's
-    knowledge vault, with their disciplines, sectors, years of
-    experience, certifications, and profile text.
-
-Your job: score each candidate from FOUR perspectives, return a
-JSON object per candidate with all four scores, an overall score,
-a 1-line strength, and a 1-line concern.
-
-PERSPECTIVES (each 0-10):
-
-  1. DISCIPLINE_FIT — Does this expert's discipline directly match
-     what the tender requires for their role? Be honest: a structural
-     engineer scoring high on a methodology-lead requirement is
-     mismatched even if some keywords overlap.
-
-  2. SENIORITY_OR_SCALE — Does the expert's years of experience and
-     licensing level match the seniority the tender requires? A
-     20-year licensed engineer fits a Project Principal role; a
-     5-year graduate does not.
-
-  3. SECTOR_FIT — Has the expert worked in this tender's specific
-     sector (healthcare, water, road, ICT, education, etc.)? Strong
-     adjacent-sector experience can score 7-8; weak adjacency 4-5;
-     irrelevant 0-2.
-
-  4. RECENCY_OR_ROLE — Has this expert played a SIMILAR ROLE on a
-     SIMILAR PROJECT recently? An expert listed as "Lead Architect
-     on G+6 Hospital 2023" scores 10 for a hospital lead-architect
-     tender. An expert with relevant skills but no comparable named
-     role scores 4-6.
-
-OUTPUT — STRICT JSON ARRAY:
+const JSON_SHAPE = `OUTPUT STRICT JSON ARRAY ONLY:
 [
   {
-    "candidateId": "<exact id from input>",
+    "candidateId": "<exact id>",
     "perspectives": {
       "DISCIPLINE_FIT": 0-10,
+      "SCOPE_COVERAGE": 0-10,
       "SENIORITY_OR_SCALE": 0-10,
       "SECTOR_FIT": 0-10,
-      "RECENCY_OR_ROLE": 0-10
+      "ROLE_RECENCY": 0-10,
+      "EVIDENCE_QUALITY": 0-10,
+      "COMPLIANCE_CRITICALITY": 0-10,
+      "PORTFOLIO_CONTRIBUTION": 0-10,
+      "MANDATORY_ELIGIBILITY": 0-10,
+      "DELIVERY_RISK": 0-10,
+      "DIFFERENTIATION": 0-10,
+      "COMMERCIAL_VALUE": 0-10
     },
-    "strength": "1 short sentence naming the strongest match dimension",
-    "concern": "1 short sentence naming the most important caveat",
+    "strength": "short evaluator-style reason to use this candidate",
+    "concern": "short evaluator-style weakness/evidence gap",
     "recommendSelection": true | false
   }
-]
+]`;
 
-RULES:
-- Score honestly. Do not inflate. Do not deflate.
-- If the candidate profile lacks information for a perspective,
-  score 5 and add "INSUFFICIENT_INFO" prefix to the concern field.
-- recommendSelection = true ONLY when overall fit is strong (avg 7+)
-  AND no perspective is below 4.
-- Output ONLY the JSON array — no markdown fences, no preamble.`;
+const EXPERT_MATCHER_SYSTEM_PROMPT = `You are a senior bid director, technical evaluator, and red-team reviewer. You select expert teams for competitive tenders and think like a real evaluation panel, not a keyword search engine.
 
-const PROJECT_MATCHER_SYSTEM_PROMPT = `You are a senior bid director with 25 years of experience selecting comparable project references for competitive tenders. You have evaluated thousands of project portfolios for fit-to-tender. You are pragmatic, evidence-led, and rigorous.
+Score EVERY candidate from TWELVE perspectives using only evidence in the candidate record. Do not invent project roles, certificates, healthcare experience, dates, availability, or responsibilities.
 
-You are given:
-  • A tender's scope, requirements, sector, and (where available)
-    contract value / timeline.
-  • A pre-filtered pool of candidate projects from the firm's
-    knowledge vault, with their names, clients, sectors, contract
-    values, currencies, durations, and summary text.
+${PERSPECTIVE_SPEC}
 
-Your job: score each project from FOUR perspectives.
+${JSON_SHAPE}
 
-PERSPECTIVES (each 0-10):
+Rules:
+- Think multi-dimensionally: technical fit, eligibility, evidence, delivery risk, strategy, and portfolio complement must all influence the score.
+- A weak but best-available candidate can still be useful; do not force 90% scores.
+- If information is missing, score the affected perspective 5 and prefix the concern with INSUFFICIENT_INFO.
+- DELIVERY_RISK is reverse-risk: 10 means low risk, 0 means unacceptable risk.
+- recommendSelection means "would consider for the best-available team", not "perfect match".
+- Output valid JSON only; no markdown fences.`;
 
-  1. DISCIPLINE_FIT — Does the project's scope of services match
-     the tender's required scope? "Construction supervision" of a
-     hospital matches a hospital tender; not all infrastructure
-     projects match every infrastructure tender.
+const PROJECT_MATCHER_SYSTEM_PROMPT = `You are a senior bid director, technical evaluator, and red-team reviewer. You select comparable project references for competitive tenders and think like a real evaluation panel, not a keyword search engine.
 
-  2. SENIORITY_OR_SCALE — Is the project's contract value and
-     timeline COMPARABLE to what the tender will require? A
-     10-million-dollar project is a comparable reference for a
-     10-million-dollar tender; a 50K signage project is not.
+Score EVERY project from TWELVE perspectives using only evidence in the project record. Do not invent clients, healthcare scopes, values, completion dates, certificates, or technical content.
 
-  3. SECTOR_FIT — Same sector as tender? Strongly adjacent? Or
-     unrelated? Score 9-10 for same sector, 6-8 for adjacent
-     (e.g., school project on healthcare tender = facility design
-     adjacency), 0-3 for unrelated.
+${PERSPECTIVE_SPEC}
 
-  4. RECENCY_OR_ROLE — When was the project completed? More recent
-     = more credible (current methods, current team, current
-     standards). A 2024 project scores 9-10; a 2018 project 6-7;
-     a pre-2015 project 3-5 unless extraordinary scope.
+${JSON_SHAPE}
 
-OUTPUT — STRICT JSON ARRAY:
-[
-  {
-    "candidateId": "<exact id from input>",
-    "perspectives": {
-      "DISCIPLINE_FIT": 0-10,
-      "SENIORITY_OR_SCALE": 0-10,
-      "SECTOR_FIT": 0-10,
-      "RECENCY_OR_ROLE": 0-10
-    },
-    "strength": "1 short sentence naming the strongest match dimension",
-    "concern": "1 short sentence naming the most important caveat",
-    "recommendSelection": true | false
-  }
-]
-
-RULES:
-- Score honestly. Do not inflate. Do not deflate.
-- If the project record lacks information for a perspective, score
-  5 and add "INSUFFICIENT_INFO" prefix to the concern field.
-- recommendSelection = true ONLY when overall fit is strong (avg 7+)
-  AND no perspective is below 4.
-- Output ONLY the JSON array — no markdown fences.`;
-
-// ─── Per-candidate prompt input shapes ─────────────────────────────────────
+Rules:
+- Think multi-dimensionally: technical fit, eligibility, evidence, scale, delivery risk, strategy, and portfolio complement must all influence the score.
+- A weak but best-available reference can still be selected when no perfect reference exists.
+- If information is missing, score the affected perspective 5 and prefix the concern with INSUFFICIENT_INFO.
+- DELIVERY_RISK is reverse-risk: 10 means low risk, 0 means unacceptable risk.
+- recommendSelection means "would consider for the best-available reference set", not "perfect match".
+- Output valid JSON only; no markdown fences.`;
 
 export interface ExpertCandidateInput {
   id: string;
@@ -224,238 +174,279 @@ export interface ProjectCandidateInput {
   trustLevel?: string | null;
 }
 
-// ─── Prompt builders ───────────────────────────────────────────────────────
+function buildExpertUserPrompt(opts: { tenderTitle: string; tenderRequirementsText: string; evaluationMethodology: string; candidates: ExpertCandidateInput[] }): string {
+  const candidateLines = opts.candidates.map((e) => [
+    `id: ${e.id}`,
+    `name: ${e.fullName}${e.title ? ` (${e.title})` : ""}`,
+    `years_experience: ${e.yearsExperience ?? "unknown"}`,
+    `disciplines: ${e.disciplines.length ? e.disciplines.join(", ") : "<not specified>"}`,
+    `sectors: ${e.sectors.length ? e.sectors.join(", ") : "<not specified>"}`,
+    `certifications: ${e.certifications.length ? e.certifications.join(", ") : "<none>"}`,
+    `profile: ${(e.profile ?? "").replace(/\s+/g, " ").slice(0, 800)}`,
+    `trustLevel: ${e.trustLevel ?? "unknown"}`,
+  ].join("\n")).join("\n---\n");
 
-function buildExpertUserPrompt(opts: {
-  tenderTitle: string;
-  tenderRequirementsText: string;
-  evaluationMethodology: string;
-  candidates: ExpertCandidateInput[];
-}): string {
-  const candidateLines = opts.candidates.map((e) => {
-    const disciplines = e.disciplines.length > 0 ? e.disciplines.join(", ") : "<not specified>";
-    const sectors = e.sectors.length > 0 ? e.sectors.join(", ") : "<not specified>";
-    const certs = e.certifications.length > 0 ? e.certifications.join(", ") : "<none>";
-    return [
-      `id: ${e.id}`,
-      `name: ${e.fullName}${e.title ? ` (${e.title})` : ""}`,
-      `years_experience: ${e.yearsExperience ?? "unknown"}`,
-      `disciplines: ${disciplines}`,
-      `sectors: ${sectors}`,
-      `certifications: ${certs}`,
-      `profile: ${(e.profile ?? "").replace(/\s+/g, " ").slice(0, 700)}`,
-      `trustLevel: ${e.trustLevel ?? "unknown"}`,
-    ].join("\n");
-  }).join("\n---\n");
-
-  return `## TENDER
-TITLE: ${opts.tenderTitle}
-
-## TENDER REQUIREMENTS
-${opts.tenderRequirementsText.slice(0, 4_000)}
-
-## EVALUATION METHODOLOGY
-${(opts.evaluationMethodology ?? "").slice(0, 2_500) || "(not provided — score against requirements)"}
-
-## CANDIDATE EXPERTS (${opts.candidates.length} pre-filtered by lexical matcher)
-${candidateLines}
-
-Return the JSON array as specified in the system prompt — one object per candidate, scoring all four perspectives.`;
+  return `## TENDER\nTITLE: ${opts.tenderTitle}\n\n## TENDER REQUIREMENTS\n${opts.tenderRequirementsText.slice(0, 8_000)}\n\n## EVALUATION METHODOLOGY\n${opts.evaluationMethodology.slice(0, 4_000) || "(not provided — score against requirements)"}\n\n## CANDIDATE EXPERTS (${opts.candidates.length})\n${candidateLines}\n\nReturn one JSON object per candidate, scoring all twelve perspectives.`;
 }
 
-function buildProjectUserPrompt(opts: {
-  tenderTitle: string;
-  tenderRequirementsText: string;
-  tenderCategory?: string | null;
-  candidates: ProjectCandidateInput[];
-}): string {
-  const candidateLines = opts.candidates.map((p) => {
-    const services = p.serviceAreas.length > 0 ? p.serviceAreas.join(", ") : "<not specified>";
-    const value = p.contractValue ? `${p.currency || "USD"} ${p.contractValue.toLocaleString()}` : "<unknown value>";
-    const dates = `${p.startDate ? new Date(p.startDate).getFullYear() : "?"}-${p.endDate ? new Date(p.endDate).getFullYear() : "ongoing"}`;
-    return [
-      `id: ${p.id}`,
-      `name: ${p.name}`,
-      `client: ${p.clientName ?? "<unknown>"}`,
-      `country: ${p.country ?? "<unknown>"}`,
-      `sector: ${p.sector ?? "<unknown>"}`,
-      `service_areas: ${services}`,
-      `contract_value: ${value}`,
-      `period: ${dates}`,
-      `summary: ${(p.summary ?? "").replace(/\s+/g, " ").slice(0, 700)}`,
-      `trustLevel: ${p.trustLevel ?? "unknown"}`,
-    ].join("\n");
-  }).join("\n---\n");
+function buildProjectUserPrompt(opts: { tenderTitle: string; tenderRequirementsText: string; tenderCategory?: string | null; candidates: ProjectCandidateInput[] }): string {
+  const candidateLines = opts.candidates.map((p) => [
+    `id: ${p.id}`,
+    `name: ${p.name}`,
+    `client: ${p.clientName ?? "<unknown>"}`,
+    `country: ${p.country ?? "<unknown>"}`,
+    `sector: ${p.sector ?? "<unknown>"}`,
+    `service_areas: ${p.serviceAreas.length ? p.serviceAreas.join(", ") : "<not specified>"}`,
+    `contract_value: ${p.contractValue ? `${p.currency || "USD"} ${p.contractValue.toLocaleString()}` : "<unknown value>"}`,
+    `period: ${p.startDate ? new Date(p.startDate).getFullYear() : "?"}-${p.endDate ? new Date(p.endDate).getFullYear() : "ongoing"}`,
+    `summary: ${(p.summary ?? "").replace(/\s+/g, " ").slice(0, 800)}`,
+    `trustLevel: ${p.trustLevel ?? "unknown"}`,
+  ].join("\n")).join("\n---\n");
 
-  return `## TENDER
-TITLE: ${opts.tenderTitle}
-SECTOR: ${opts.tenderCategory ?? "<not specified>"}
-
-## TENDER REQUIREMENTS (use to assess scope match)
-${opts.tenderRequirementsText.slice(0, 4_000)}
-
-## CANDIDATE PROJECTS (${opts.candidates.length} pre-filtered by lexical matcher)
-${candidateLines}
-
-Return the JSON array as specified in the system prompt — one object per candidate, scoring all four perspectives.`;
+  return `## TENDER\nTITLE: ${opts.tenderTitle}\nSECTOR: ${opts.tenderCategory ?? "<not specified>"}\n\n## TENDER REQUIREMENTS\n${opts.tenderRequirementsText.slice(0, 8_000)}\n\n## CANDIDATE PROJECTS (${opts.candidates.length})\n${candidateLines}\n\nReturn one JSON object per candidate, scoring all twelve perspectives.`;
 }
 
-// ─── JSON parsing (defensive) ──────────────────────────────────────────────
-
+/**
+ * Parse the AI multi-perspective rematch response with maximum tolerance
+ * for the real-world output shapes Claude actually emits.
+ *
+ * Pre-fix (strict): a single regex `/[\s\S]*]/` greedy match + JSON.parse.
+ * Failure modes that returned null:
+ *   1. Markdown fences ```json ... ```
+ *   2. Wrapper objects: { "candidates": [...], "summary": "..." }
+ *   3. Truncated output (max_tokens hit mid-array): `[{...}, {...},`
+ *   4. Trailing commas: `[{...},]` (Claude occasionally emits these)
+ *   5. Preamble text: "Here are the assessments:\n[...]"
+ *   6. Multiple JSON arrays in output (best-of-N hallucination)
+ *
+ * The user's production saw "AI rematch returned no usable assessments"
+ * — meaning BOTH AI calls returned content but parsing failed both. The
+ * post-PR-SS parser tries 5 increasingly-tolerant strategies in order:
+ *   1. Strict parse of the whole cleaned response
+ *   2. Strict parse of the LARGEST balanced JSON array in the response
+ *   3. Strict parse of any wrapper object's `candidates` / `assessments` /
+ *      `data` array property
+ *   4. Trailing-comma repair + re-parse
+ *   5. Truncation repair: balance-close the first incomplete array
+ *
+ * Returns the first non-null result. Logs (warn) which strategy succeeded
+ * so we know which AI quirk is most common in production.
+ */
 function parseAssessmentArray(raw: string): Array<Record<string, unknown>> | null {
-  const cleaned = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
-  const arrayMatch = cleaned.match(/\[[\s\S]*\]/);
-  if (!arrayMatch) return null;
+  if (!raw || typeof raw !== "string") return null;
+
+  // Strip code fences and trim — applies to every strategy below.
+  const cleaned = raw
+    .replace(/^[\s\S]*?```(?:json)?\s*/i, (m) => m.includes("```") ? "" : m) // strip everything up to first ``` if present
+    .replace(/```[\s\S]*$/i, "")
+    .trim();
+
+  // Strategy 1 — strict parse of the whole cleaned response.
   try {
-    const parsed = JSON.parse(arrayMatch[0]);
+    const parsed = JSON.parse(cleaned);
     if (Array.isArray(parsed)) return parsed as Array<Record<string, unknown>>;
-  } catch {
-    // Fallback: largest [...] block
-    const matches = [...cleaned.matchAll(/\[[\s\S]*?\]/g)].sort((a, b) => b[0].length - a[0].length);
-    for (const m of matches) {
+    // Wrapper object — strategy 3 unwrap inline.
+    if (parsed && typeof parsed === "object") {
+      const wrapperKeys = ["candidates", "assessments", "data", "results", "items", "scores"];
+      for (const key of wrapperKeys) {
+        const inner = (parsed as Record<string, unknown>)[key];
+        if (Array.isArray(inner)) return inner as Array<Record<string, unknown>>;
+      }
+    }
+  } catch { /* continue */ }
+
+  // Strategy 2 — find the largest balanced JSON array in the response.
+  // Use bracket-counting instead of greedy regex so nested arrays don't
+  // break the boundaries.
+  const findBalancedArrays = (s: string): string[] => {
+    const out: string[] = [];
+    let depth = 0;
+    let start = -1;
+    for (let i = 0; i < s.length; i += 1) {
+      const ch = s[i];
+      if (ch === "[") {
+        if (depth === 0) start = i;
+        depth += 1;
+      } else if (ch === "]") {
+        depth -= 1;
+        if (depth === 0 && start >= 0) {
+          out.push(s.slice(start, i + 1));
+          start = -1;
+        }
+      }
+    }
+    return out;
+  };
+  const candidates = findBalancedArrays(cleaned).sort((a, b) => b.length - a.length);
+  for (const c of candidates) {
+    try {
+      const parsed = JSON.parse(c);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed as Array<Record<string, unknown>>;
+      }
+    } catch { /* continue */ }
+  }
+
+  // Strategy 4 — trailing comma repair on each candidate array.
+  for (const c of candidates) {
+    try {
+      const repaired = c
+        .replace(/,(\s*])/g, "$1") // trailing comma before ]
+        .replace(/,(\s*})/g, "$1"); // trailing comma before }
+      const parsed = JSON.parse(repaired);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed as Array<Record<string, unknown>>;
+      }
+    } catch { /* continue */ }
+  }
+
+  // Strategy 5 — truncation repair. AI hit max_tokens mid-array.
+  // Find the first '[', then try to close it after the last fully-formed
+  // object (the last `}` followed by zero-or-more whitespace and either
+  // ',' or end-of-string).
+  const firstBracket = cleaned.indexOf("[");
+  if (firstBracket >= 0) {
+    const tail = cleaned.slice(firstBracket);
+    // Find the position of the last '}' in the tail.
+    const lastObjEnd = tail.lastIndexOf("}");
+    if (lastObjEnd > 0) {
+      // Truncate after that closing brace, drop any partial trailing
+      // object, and close the array with `]`.
+      const truncated = tail.slice(0, lastObjEnd + 1).replace(/,\s*$/, "") + "]";
       try {
-        const parsed = JSON.parse(m[0]);
-        if (Array.isArray(parsed)) return parsed as Array<Record<string, unknown>>;
-      } catch { /* continue */ }
+        const parsed = JSON.parse(truncated);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          console.warn(`[ai-multi-perspective-matcher] Recovered ${parsed.length} candidates from truncated AI output via strategy 5.`);
+          return parsed as Array<Record<string, unknown>>;
+        }
+      } catch { /* fall through */ }
+      // Try with trailing-comma repair too.
+      try {
+        const repaired = truncated
+          .replace(/,(\s*])/g, "$1")
+          .replace(/,(\s*})/g, "$1");
+        const parsed = JSON.parse(repaired);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          console.warn(`[ai-multi-perspective-matcher] Recovered ${parsed.length} candidates from truncated AI output via strategy 5+repair.`);
+          return parsed as Array<Record<string, unknown>>;
+        }
+      } catch { /* fall through */ }
     }
   }
+
   return null;
 }
 
-// ─── Per-perspective weights ───────────────────────────────────────────────
-// All four perspectives weighted equally — domain experts in the firm
-// can tune these via env vars later if some perspectives matter more
-// for their specific tender mix.
-
 const PERSPECTIVE_WEIGHTS: Record<MatchPerspective, number> = {
-  DISCIPLINE_FIT: 0.30,
-  SENIORITY_OR_SCALE: 0.25,
-  SECTOR_FIT: 0.25,
-  RECENCY_OR_ROLE: 0.20,
+  DISCIPLINE_FIT: 0.16,
+  SCOPE_COVERAGE: 0.13,
+  SENIORITY_OR_SCALE: 0.09,
+  SECTOR_FIT: 0.11,
+  ROLE_RECENCY: 0.08,
+  EVIDENCE_QUALITY: 0.09,
+  COMPLIANCE_CRITICALITY: 0.10,
+  PORTFOLIO_CONTRIBUTION: 0.07,
+  MANDATORY_ELIGIBILITY: 0.07,
+  DELIVERY_RISK: 0.04,
+  DIFFERENTIATION: 0.04,
+  COMMERCIAL_VALUE: 0.02,
 };
 
+function clampScore(value: unknown): number {
+  const n = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(n) ? Math.max(0, Math.min(10, n)) : 5;
+}
+
+function legacyPerspectiveValue(p: Record<string, unknown>, key: MatchPerspective): unknown {
+  if (key === "ROLE_RECENCY") return p.ROLE_RECENCY ?? p.RECENCY_OR_ROLE;
+  if (key === "MANDATORY_ELIGIBILITY") return p.MANDATORY_ELIGIBILITY ?? p.COMPLIANCE_CRITICALITY;
+  if (key === "DELIVERY_RISK") return p.DELIVERY_RISK ?? p.EVIDENCE_QUALITY;
+  if (key === "DIFFERENTIATION") return p.DIFFERENTIATION ?? p.PORTFOLIO_CONTRIBUTION;
+  if (key === "COMMERCIAL_VALUE") return p.COMMERCIAL_VALUE ?? p.SENIORITY_OR_SCALE;
+  return p[key];
+}
+
 function computeOverallScore(perspectives: Record<MatchPerspective, number>): number {
-  const weighted =
-    perspectives.DISCIPLINE_FIT * PERSPECTIVE_WEIGHTS.DISCIPLINE_FIT +
-    perspectives.SENIORITY_OR_SCALE * PERSPECTIVE_WEIGHTS.SENIORITY_OR_SCALE +
-    perspectives.SECTOR_FIT * PERSPECTIVE_WEIGHTS.SECTOR_FIT +
-    perspectives.RECENCY_OR_ROLE * PERSPECTIVE_WEIGHTS.RECENCY_OR_ROLE;
-  return Math.max(0, Math.min(1, weighted / 10));
+  const weighted = PERSPECTIVE_KEYS.reduce((sum, key) => sum + perspectives[key] * PERSPECTIVE_WEIGHTS[key], 0);
+  const criticalFloor = Math.min(
+    perspectives.DISCIPLINE_FIT,
+    perspectives.SCOPE_COVERAGE,
+    perspectives.EVIDENCE_QUALITY,
+    perspectives.COMPLIANCE_CRITICALITY,
+    perspectives.MANDATORY_ELIGIBILITY,
+  );
+  const riskPenalty = criticalFloor < 4 ? 0.07 : criticalFloor < 5 ? 0.035 : 0;
+  return Math.max(0, Math.min(1, weighted / 10 - riskPenalty));
 }
 
 function coerceAssessment(raw: Record<string, unknown>): CandidateAssessment | null {
   const candidateId = typeof raw.candidateId === "string" ? raw.candidateId : null;
   if (!candidateId) return null;
-
   const p = (raw.perspectives ?? {}) as Record<string, unknown>;
-  const perspectives: Record<MatchPerspective, number> = {
-    DISCIPLINE_FIT: clampScore(p.DISCIPLINE_FIT),
-    SENIORITY_OR_SCALE: clampScore(p.SENIORITY_OR_SCALE),
-    SECTOR_FIT: clampScore(p.SECTOR_FIT),
-    RECENCY_OR_ROLE: clampScore(p.RECENCY_OR_ROLE),
-  };
-
+  const perspectives = Object.fromEntries(PERSPECTIVE_KEYS.map((key) => [key, clampScore(legacyPerspectiveValue(p, key))])) as Record<MatchPerspective, number>;
+  const overallScore = computeOverallScore(perspectives);
+  const criticalFloor = Math.min(perspectives.DISCIPLINE_FIT, perspectives.SCOPE_COVERAGE, perspectives.EVIDENCE_QUALITY, perspectives.COMPLIANCE_CRITICALITY, perspectives.MANDATORY_ELIGIBILITY);
   return {
     candidateId,
     perspectives,
-    overallScore: computeOverallScore(perspectives),
-    strength: typeof raw.strength === "string" ? raw.strength.slice(0, 280) : "",
-    concern: typeof raw.concern === "string" ? raw.concern.slice(0, 280) : "",
-    recommendSelection: raw.recommendSelection === true,
+    overallScore,
+    strength: typeof raw.strength === "string" ? raw.strength.slice(0, 360) : "",
+    concern: typeof raw.concern === "string" ? raw.concern.slice(0, 360) : "",
+    recommendSelection: raw.recommendSelection === true || (overallScore >= 0.60 && criticalFloor >= 3),
   };
 }
 
-function clampScore(value: unknown): number {
-  const n = typeof value === "number" ? value : Number(value);
-  if (!Number.isFinite(n)) return 5; // neutral default
-  return Math.max(0, Math.min(10, n));
-}
-
-// ─── Main entry points ─────────────────────────────────────────────────────
-
-export async function aiRematchExperts(opts: {
-  tenderTitle: string;
-  tenderRequirementsText: string;
-  evaluationMethodology: string;
-  candidates: ExpertCandidateInput[];
-}): Promise<MatchAssessmentBatch | null> {
+export async function aiRematchExperts(opts: { tenderTitle: string; tenderRequirementsText: string; evaluationMethodology: string; candidates: ExpertCandidateInput[] }): Promise<MatchAssessmentBatch | null> {
   if (opts.candidates.length === 0) return null;
-
   const t0 = Date.now();
-  const userPrompt = buildExpertUserPrompt(opts);
-
   let raw: string;
   try {
-    raw = await generateWithFallback(userPrompt, { systemPrompt: EXPERT_MATCHER_SYSTEM_PROMPT });
+    raw = await withRematchTimeout(generateWithFallback(buildExpertUserPrompt(opts), { systemPrompt: EXPERT_MATCHER_SYSTEM_PROMPT }));
   } catch (err) {
     console.warn(`[ai-multi-perspective-matcher] Expert rematch AI call failed: ${err instanceof Error ? err.message : String(err)}`);
     return null;
   }
-
   const parsed = parseAssessmentArray(raw);
-  if (!parsed) {
-    console.warn("[ai-multi-perspective-matcher] Expert rematch — Claude returned malformed JSON.");
-    return null;
-  }
-
-  const assessments = parsed.map(coerceAssessment).filter((a): a is CandidateAssessment => a !== null);
-  return {
-    category: "EXPERT",
-    assessments,
-    durationMs: Date.now() - t0,
-  };
+  if (!parsed) return null;
+  return { category: "EXPERT", assessments: parsed.map(coerceAssessment).filter((a): a is CandidateAssessment => a !== null), durationMs: Date.now() - t0 };
 }
 
-export async function aiRematchProjects(opts: {
-  tenderTitle: string;
-  tenderRequirementsText: string;
-  tenderCategory?: string | null;
-  candidates: ProjectCandidateInput[];
-}): Promise<MatchAssessmentBatch | null> {
+export async function aiRematchProjects(opts: { tenderTitle: string; tenderRequirementsText: string; tenderCategory?: string | null; candidates: ProjectCandidateInput[] }): Promise<MatchAssessmentBatch | null> {
   if (opts.candidates.length === 0) return null;
-
   const t0 = Date.now();
-  const userPrompt = buildProjectUserPrompt(opts);
-
   let raw: string;
   try {
-    raw = await generateWithFallback(userPrompt, { systemPrompt: PROJECT_MATCHER_SYSTEM_PROMPT });
+    raw = await withRematchTimeout(generateWithFallback(buildProjectUserPrompt(opts), { systemPrompt: PROJECT_MATCHER_SYSTEM_PROMPT }));
   } catch (err) {
     console.warn(`[ai-multi-perspective-matcher] Project rematch AI call failed: ${err instanceof Error ? err.message : String(err)}`);
     return null;
   }
-
   const parsed = parseAssessmentArray(raw);
-  if (!parsed) {
-    console.warn("[ai-multi-perspective-matcher] Project rematch — Claude returned malformed JSON.");
-    return null;
-  }
-
-  const assessments = parsed.map(coerceAssessment).filter((a): a is CandidateAssessment => a !== null);
-  return {
-    category: "PROJECT",
-    assessments,
-    durationMs: Date.now() - t0,
-  };
+  if (!parsed) return null;
+  return { category: "PROJECT", assessments: parsed.map(coerceAssessment).filter((a): a is CandidateAssessment => a !== null), durationMs: Date.now() - t0 };
 }
 
-/**
- * Format a multi-perspective assessment as a human-readable
- * rationale string for storage in the existing
- * TenderExpertMatch.rationale / TenderProjectMatch.rationale field.
- *
- * Format (single line, easy to render in UI):
- *
- *   "[AI Multi-Perspective] Score 87% — Discipline 9/10, Scale 8/10,
- *   Sector 9/10, Role 8/10. ✓ Strong methodology-lead fit on hospital
- *   sector. ⚠ Limited international donor experience."
- */
 export function formatAssessmentRationale(assessment: CandidateAssessment): string {
   const pct = Math.round(assessment.overallScore * 100);
   const p = assessment.perspectives;
-  const breakdown = `Discipline ${p.DISCIPLINE_FIT}/10, Scale ${p.SENIORITY_OR_SCALE}/10, Sector ${p.SECTOR_FIT}/10, Role ${p.RECENCY_OR_ROLE}/10`;
-  const parts = [`[AI Multi-Perspective] Score ${pct}% — ${breakdown}.`];
+  const breakdown = [
+    `Discipline ${p.DISCIPLINE_FIT}/10`,
+    `Scope ${p.SCOPE_COVERAGE}/10`,
+    `Scale ${p.SENIORITY_OR_SCALE}/10`,
+    `Sector ${p.SECTOR_FIT}/10`,
+    `Role/Recency ${p.ROLE_RECENCY}/10`,
+    `Evidence ${p.EVIDENCE_QUALITY}/10`,
+    `Compliance ${p.COMPLIANCE_CRITICALITY}/10`,
+    `Portfolio ${p.PORTFOLIO_CONTRIBUTION}/10`,
+    `Eligibility ${p.MANDATORY_ELIGIBILITY}/10`,
+    `Low-risk delivery ${p.DELIVERY_RISK}/10`,
+    `Differentiation ${p.DIFFERENTIATION}/10`,
+    `Commercial value ${p.COMMERCIAL_VALUE}/10`,
+  ].join(", ");
+  const criticalFloor = Math.min(p.DISCIPLINE_FIT, p.SCOPE_COVERAGE, p.EVIDENCE_QUALITY, p.COMPLIANCE_CRITICALITY, p.MANDATORY_ELIGIBILITY);
+  const parts = [`[AI Multi-Perspective v3] Score ${pct}% — ${breakdown}. Critical-floor ${criticalFloor}/10.`];
   if (assessment.strength) parts.push(`✓ ${assessment.strength}`);
   if (assessment.concern) parts.push(`⚠ ${assessment.concern}`);
+  if (assessment.recommendSelection) parts.push("Selected by 20-iteration best-available portfolio pass with critical-floor risk control.");
   return parts.join(" ");
 }

@@ -16,7 +16,8 @@ export default async function DashboardPage() {
       where: { userId },
       select: {
         id: true, title: true, clientName: true, status: true, deadline: true,
-        readinessScore: true, createdAt: true,
+        readinessScore: true, budget: true, currency: true, createdAt: true,
+        bidOutcome: true,
         _count: { select: { requirements: true } },
         complianceGaps: { select: { isResolved: true, severity: true } },
       },
@@ -45,6 +46,18 @@ export default async function DashboardPage() {
     const d = new Date(t.deadline);
     return d >= now && d <= in7days && !["EXPORTED", "CLOSED"].includes(t.status);
   });
+
+  const tendersWithOutcome = tenders.filter((t) => t.bidOutcome && t.bidOutcome !== "PENDING");
+  const wonCount = tendersWithOutcome.filter((t) => t.bidOutcome === "WON").length;
+  const winRate = tendersWithOutcome.length > 0 ? Math.round((wonCount / tendersWithOutcome.length) * 100) : null;
+
+  const activeBudgets = tenders.filter((t) => !["DRAFT", "CLOSED"].includes(t.status) && t.budget);
+  const pipelineValue = activeBudgets.reduce((sum, t) => sum + (t.budget ?? 0), 0);
+
+  const scoredTenders = tenders.filter((t) => (t.readinessScore ?? 0) > 0);
+  const avgReadiness = scoredTenders.length > 0
+    ? Math.round(scoredTenders.reduce((s, t) => s + (t.readinessScore ?? 0), 0) / scoredTenders.length)
+    : null;
 
   const stats = {
     total: tenders.length,
@@ -106,6 +119,52 @@ export default async function DashboardPage() {
           </div>
         ))}
       </div>
+
+      {/* Analytics strip */}
+      {(winRate !== null || pipelineValue > 0 || avgReadiness !== null) && (
+        <div className="grid gap-4 grid-cols-2 xl:grid-cols-4">
+          {winRate !== null && (
+            <div className="rounded-2xl border bg-white p-5 shadow-sm">
+              <p className="text-sm text-slate-500">Win Rate</p>
+              <p className={`mt-1 text-3xl font-bold ${winRate >= 50 ? "text-green-600" : "text-amber-600"}`}>{winRate}%</p>
+              <p className="mt-1 text-xs text-slate-400">{wonCount} of {tendersWithOutcome.length} decided tenders</p>
+            </div>
+          )}
+          {pipelineValue > 0 && (
+            <div className="rounded-2xl border bg-white p-5 shadow-sm">
+              <p className="text-sm text-slate-500">Pipeline Value</p>
+              <p className="mt-1 text-2xl font-bold text-blue-600">
+                {pipelineValue >= 1_000_000
+                  ? `$${(pipelineValue / 1_000_000).toFixed(1)}M`
+                  : pipelineValue >= 1_000
+                  ? `$${(pipelineValue / 1_000).toFixed(0)}K`
+                  : `$${pipelineValue.toLocaleString()}`}
+              </p>
+              <p className="mt-1 text-xs text-slate-400">{activeBudgets.length} active tenders with budget</p>
+            </div>
+          )}
+          {avgReadiness !== null && (
+            <div className="rounded-2xl border bg-white p-5 shadow-sm">
+              <p className="text-sm text-slate-500">Avg Readiness</p>
+              <p className={`mt-1 text-3xl font-bold ${avgReadiness >= 80 ? "text-green-600" : avgReadiness >= 50 ? "text-amber-600" : "text-red-500"}`}>{avgReadiness}%</p>
+              <p className="mt-1 text-xs text-slate-400">across {scoredTenders.length} scored tender(s)</p>
+            </div>
+          )}
+          <div className="rounded-2xl border bg-white p-5 shadow-sm">
+            <p className="text-sm text-slate-500">Outcomes Tracked</p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {[["WON","bg-green-100 text-green-700"],["LOST","bg-red-100 text-red-700"],["WITHDRAWN","bg-slate-100 text-slate-600"],["PENDING","bg-amber-100 text-amber-700"]].map(([outcome, cls]) => {
+                const count = tenders.filter((t) => t.bidOutcome === outcome).length;
+                if (count === 0) return null;
+                return <span key={outcome} className={`rounded-full px-2 py-0.5 text-xs font-medium ${cls}`}>{outcome.toLowerCase()} {count}</span>;
+              })}
+              {tenders.filter((t) => !t.bidOutcome).length > 0 && (
+                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-400">unrecorded {tenders.filter((t) => !t.bidOutcome).length}</span>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,2fr),minmax(300px,1fr)]">
         {/* Pipeline table */}

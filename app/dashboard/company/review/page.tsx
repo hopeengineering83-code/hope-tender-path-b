@@ -66,6 +66,10 @@ export default function KnowledgeReviewPage() {
   const [repairing, setRepairing] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  const [selectedExperts, setSelectedExperts] = useState<Set<string>>(new Set());
+  const [selectedProjects, setSelectedProjects] = useState<Set<string>>(new Set());
+  const [batchingExperts, setBatchingExperts] = useState(false);
+  const [batchingProjects, setBatchingProjects] = useState(false);
 
   async function load() {
     setLoading(true);
@@ -81,10 +85,10 @@ export default function KnowledgeReviewPage() {
       if (!docsRes.ok) throw new Error("Failed to load documents");
       if (!diagRes.ok) throw new Error("Failed to load diagnostics");
       const companyJson = await companyRes.json() as Company;
-      const docsJson = await docsRes.json() as { documents?: CompanyDoc[] };
+      const docsJson = await docsRes.json() as { items?: CompanyDoc[] };
       const diagJson = await diagRes.json() as { diagnostics: Diagnostics };
       setCompany(companyJson);
-      setDocs(docsJson.documents ?? []);
+      setDocs(docsJson.items ?? []);
       setDiagnostics(diagJson.diagnostics);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load review data");
@@ -112,6 +116,50 @@ export default function KnowledgeReviewPage() {
       setError(err instanceof Error ? err.message : "Knowledge repair failed");
     } finally {
       setRepairing(false);
+    }
+  }
+
+  async function batchReviewExperts() {
+    if (selectedExperts.size === 0) return;
+    setBatchingExperts(true);
+    setError("");
+    try {
+      const res = await fetch("/api/company/experts/batch", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids: [...selectedExperts], trustLevel: "REVIEWED" }),
+      });
+      if (!res.ok) throw new Error("Batch review failed");
+      const json = await res.json() as { updated: number };
+      setMessage(`Marked ${json.updated} expert(s) as Reviewed.`);
+      setSelectedExperts(new Set());
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Batch review failed");
+    } finally {
+      setBatchingExperts(false);
+    }
+  }
+
+  async function batchReviewProjects() {
+    if (selectedProjects.size === 0) return;
+    setBatchingProjects(true);
+    setError("");
+    try {
+      const res = await fetch("/api/company/projects/batch", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids: [...selectedProjects], trustLevel: "REVIEWED" }),
+      });
+      if (!res.ok) throw new Error("Batch review failed");
+      const json = await res.json() as { updated: number };
+      setMessage(`Marked ${json.updated} project(s) as Reviewed.`);
+      setSelectedProjects(new Set());
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Batch review failed");
+    } finally {
+      setBatchingProjects(false);
     }
   }
 
@@ -194,13 +242,57 @@ export default function KnowledgeReviewPage() {
       </section>
 
       <section className="rounded-2xl border bg-white p-6 shadow-sm">
-        <div className="flex items-center justify-between gap-3"><h2 className="text-lg font-semibold text-slate-900">Experts</h2><span className="rounded-full bg-purple-50 px-3 py-1 text-xs font-medium text-purple-700">{experts.length} records</span></div>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <h2 className="text-lg font-semibold text-slate-900">Experts</h2>
+            <span className="rounded-full bg-purple-50 px-3 py-1 text-xs font-medium text-purple-700">{experts.length} records</span>
+          </div>
+          {draftExperts.length > 0 && (
+            <div className="flex gap-2">
+              <button
+                onClick={() => setSelectedExperts(new Set(draftExperts.map((e) => e.id)))}
+                className="rounded-lg border px-3 py-1.5 text-xs hover:bg-slate-50"
+              >
+                Select all drafts ({draftExperts.length})
+              </button>
+              <button
+                onClick={() => void batchReviewExperts()}
+                disabled={selectedExperts.size === 0 || batchingExperts}
+                className="rounded-lg bg-green-600 px-3 py-1.5 text-xs text-white hover:bg-green-700 disabled:opacity-50"
+              >
+                {batchingExperts ? "Marking..." : `Mark ${selectedExperts.size} as Reviewed`}
+              </button>
+            </div>
+          )}
+        </div>
         <div className="mt-4 space-y-3">
           {experts.map((expert) => {
             const badge = trustBadge(expert.trustLevel);
+            const isDraft = isDraftTrust(expert.trustLevel);
+            const isSelected = selectedExperts.has(expert.id);
             return (
               <details key={expert.id} className="rounded-xl border p-4 open:bg-slate-50">
-                <summary className="cursor-pointer list-none"><div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between"><div><p className="font-semibold text-slate-900">{expert.fullName}</p><p className="text-xs text-slate-500">{expert.title || "No reviewed title yet"}</p></div><span className={`w-fit rounded-full px-3 py-1 text-xs font-medium ${badge.cls}`}>{badge.label}</span></div></summary>
+                <summary className="cursor-pointer list-none">
+                  <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                    <div className="flex items-center gap-2">
+                      {isDraft && (
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={(e) => {
+                            const next = new Set(selectedExperts);
+                            if (e.target.checked) next.add(expert.id); else next.delete(expert.id);
+                            setSelectedExperts(next);
+                          }}
+                          onClick={(e) => e.stopPropagation()}
+                          className="h-4 w-4 rounded border-slate-300"
+                        />
+                      )}
+                      <div><p className="font-semibold text-slate-900">{expert.fullName}</p><p className="text-xs text-slate-500">{expert.title || "No reviewed title yet"}</p></div>
+                    </div>
+                    <span className={`w-fit rounded-full px-3 py-1 text-xs font-medium ${badge.cls}`}>{badge.label}</span>
+                  </div>
+                </summary>
                 <div className="mt-4 grid gap-3 md:grid-cols-2"><div className="rounded-lg bg-white p-3 text-sm"><p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Structured fields</p><dl className="mt-2 space-y-1 text-xs text-slate-600"><div><dt className="inline font-medium">Years:</dt> <dd className="inline">{expert.yearsExperience ?? "Not reviewed"}</dd></div><div><dt className="inline font-medium">Disciplines:</dt> <dd className="inline">{arr(expert.disciplines).join(", ") || "Not reviewed"}</dd></div><div><dt className="inline font-medium">Sectors:</dt> <dd className="inline">{arr(expert.sectors).join(", ") || "Not reviewed"}</dd></div><div><dt className="inline font-medium">Certifications:</dt> <dd className="inline">{arr(expert.certifications).join(", ") || "Not reviewed"}</dd></div></dl></div><div className="rounded-lg bg-white p-3 text-sm"><p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Source evidence</p><p className="mt-2 max-h-48 overflow-y-auto whitespace-pre-wrap text-xs leading-5 text-slate-600">{sourceSnippet(expert.profile)}</p></div></div>
               </details>
             );
@@ -210,13 +302,57 @@ export default function KnowledgeReviewPage() {
       </section>
 
       <section className="rounded-2xl border bg-white p-6 shadow-sm">
-        <div className="flex items-center justify-between gap-3"><h2 className="text-lg font-semibold text-slate-900">Projects</h2><span className="rounded-full bg-green-50 px-3 py-1 text-xs font-medium text-green-700">{projects.length} records</span></div>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <h2 className="text-lg font-semibold text-slate-900">Projects</h2>
+            <span className="rounded-full bg-green-50 px-3 py-1 text-xs font-medium text-green-700">{projects.length} records</span>
+          </div>
+          {draftProjects.length > 0 && (
+            <div className="flex gap-2">
+              <button
+                onClick={() => setSelectedProjects(new Set(draftProjects.map((p) => p.id)))}
+                className="rounded-lg border px-3 py-1.5 text-xs hover:bg-slate-50"
+              >
+                Select all drafts ({draftProjects.length})
+              </button>
+              <button
+                onClick={() => void batchReviewProjects()}
+                disabled={selectedProjects.size === 0 || batchingProjects}
+                className="rounded-lg bg-green-600 px-3 py-1.5 text-xs text-white hover:bg-green-700 disabled:opacity-50"
+              >
+                {batchingProjects ? "Marking..." : `Mark ${selectedProjects.size} as Reviewed`}
+              </button>
+            </div>
+          )}
+        </div>
         <div className="mt-4 space-y-3">
           {projects.map((project) => {
             const badge = trustBadge(project.trustLevel);
+            const isDraft = isDraftTrust(project.trustLevel);
+            const isSelected = selectedProjects.has(project.id);
             return (
               <details key={project.id} className="rounded-xl border p-4 open:bg-slate-50">
-                <summary className="cursor-pointer list-none"><div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between"><div><p className="font-semibold text-slate-900">{project.name}</p><p className="text-xs text-slate-500">{project.clientName || "No reviewed client yet"}{project.sector ? ` · ${project.sector}` : ""}</p></div><span className={`w-fit rounded-full px-3 py-1 text-xs font-medium ${badge.cls}`}>{badge.label}</span></div></summary>
+                <summary className="cursor-pointer list-none">
+                  <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                    <div className="flex items-center gap-2">
+                      {isDraft && (
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={(e) => {
+                            const next = new Set(selectedProjects);
+                            if (e.target.checked) next.add(project.id); else next.delete(project.id);
+                            setSelectedProjects(next);
+                          }}
+                          onClick={(e) => e.stopPropagation()}
+                          className="h-4 w-4 rounded border-slate-300"
+                        />
+                      )}
+                      <div><p className="font-semibold text-slate-900">{project.name}</p><p className="text-xs text-slate-500">{project.clientName || "No reviewed client yet"}{project.sector ? ` · ${project.sector}` : ""}</p></div>
+                    </div>
+                    <span className={`w-fit rounded-full px-3 py-1 text-xs font-medium ${badge.cls}`}>{badge.label}</span>
+                  </div>
+                </summary>
                 <div className="mt-4 grid gap-3 md:grid-cols-2"><div className="rounded-lg bg-white p-3 text-sm"><p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Structured fields</p><dl className="mt-2 space-y-1 text-xs text-slate-600"><div><dt className="inline font-medium">Country:</dt> <dd className="inline">{project.country || "Not reviewed"}</dd></div><div><dt className="inline font-medium">Sector:</dt> <dd className="inline">{project.sector || "Not reviewed"}</dd></div><div><dt className="inline font-medium">Services:</dt> <dd className="inline">{arr(project.serviceAreas).join(", ") || "Not reviewed"}</dd></div><div><dt className="inline font-medium">Value:</dt> <dd className="inline">{project.contractValue ? `${project.currency ?? ""} ${project.contractValue.toLocaleString()}` : "Not reviewed"}</dd></div></dl></div><div className="rounded-lg bg-white p-3 text-sm"><p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Source evidence</p><p className="mt-2 max-h-48 overflow-y-auto whitespace-pre-wrap text-xs leading-5 text-slate-600">{sourceSnippet(project.summary)}</p></div></div>
               </details>
             );

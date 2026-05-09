@@ -3,6 +3,7 @@ import { getSession } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { generateBenchmarkProposalWithAI, generateProposalSectionsParallel, isAIEnabled } from "../../../../../lib/ai";
 import { buildProposalIntelligence, expertProofLine, projectProofLine, safeParseArr } from "../../../../../lib/engine/proposal-intelligence";
+import { buildProposalCacheKey, getCachedProposal, setCachedProposal } from "../../../../../lib/proposal-cache";
 
 // Vercel route timeout — Claude proposal generation needs >10s default.
 // 60 = Hobby max; Pro applies its own plan limit when this is exceeded.
@@ -124,12 +125,14 @@ function fallbackProposal(params: {
   ].filter(Boolean).join("\n");
 }
 
-export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const userId = await getSession();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   await prismaReady;
   const { id } = await params;
+  const body = await req.json().catch(() => ({} as Record<string, unknown>));
+  const forceRefresh = body.forceRefresh === true;
 
   const [tender, company] = await Promise.all([
     prisma.tender.findFirst({
@@ -197,6 +200,18 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   const experts = tender.expertMatches.map((m) => m.expert).filter((e) => e.trustLevel === "REVIEWED");
   const projects = tender.projectMatches.map((m) => m.project).filter((p) => p.trustLevel === "REVIEWED");
 
+  const generationMode = (process.env.PROPOSAL_GENERATION_MODE || "parallel").toLowerCase();
+  const cacheKey = buildProposalCacheKey(
+    id,
+    experts.map((e) => e.id),
+    projects.map((p) => p.id),
+    generationMode
+  );
+  if (!forceRefresh) {
+    const cached = getCachedProposal(cacheKey);
+    if (cached) return NextResponse.json({ success: true, proposal: cached.proposal, fallback: cached.fallback, cached: true });
+  }
+
   const companyEvidenceLines = _buildCompanyEvidenceLines(company as unknown as Record<string, unknown>);
   const projectEvidenceLines = _buildProjectEvidenceLines(projects as Parameters<typeof _buildProjectEvidenceLines>[0]);
   const expertLines = experts.map(expertProofLine);
@@ -235,12 +250,6 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     let fallback = false;
 
     try {
-      // PROPOSAL_GENERATION_MODE — same env-flag as generate-elite.ts.
-      // Default "parallel" runs four concurrent Claude calls (one per
-      // section cluster) and stitches them; "single" reverts to the
-      // legacy monolithic call. The parallel path was added to fit
-      // proposal generation inside Vercel Hobby's 60s function cap.
-      const generationMode = (process.env.PROPOSAL_GENERATION_MODE || "parallel").toLowerCase();
       const useParallel = generationMode === "parallel";
       // PR #257 — pull structured Company fields once so we can
       // populate companyVault. The "as { ... }" casts work around
@@ -351,10 +360,11 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       });
     }
 
+    if (!fallback) setCachedProposal(cacheKey, proposal, false);
     // PR T FIX — see note above; intakeSummary must NOT be overwritten
     // with generated-proposal text or every regeneration feeds the
     // previous one back as input to the next.
-    return NextResponse.json({ success: true, proposal, fallback });
+    return NextResponse.json({ success: true, proposal, fallback, cached: false });
   } catch (error) {
     console.error("Proposal generation route error:", error);
     return NextResponse.json({ error: error instanceof Error ? error.message : "Proposal generation failed" }, { status: 500 });

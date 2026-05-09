@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
 import { getSession } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
-import { Document, Packer, Paragraph, TextRun, HeadingLevel } from "docx";
+import { Document, Packer, Paragraph, TextRun } from "docx";
 import { logAction } from "../../../../../lib/audit";
 import { buildSubmissionPlan, findExtraGeneratedDocuments, findMissingGeneratedDocuments, hasExplicitSubmissionScope, plannedSubmissionTargetFiles } from "../../../../../lib/engine/submission-plan";
 import { safeFileBaseName } from "../../../../../lib/engine/proposal-labels";
+import { checkExportReadiness, checkFullExportReadiness, exportReadinessError } from "../../../../../lib/engine/export-readiness";
 
 function safeParseArr(v: unknown): string[] {
   try {
@@ -73,31 +74,10 @@ async function validateGeneratedDocx(doc: {
     }
   }
 
-  // Some support documents in the submission package are LEGITIMATE
-  // placeholder slots — Financial evidence, Legal eligibility originals,
-  // Tender forms, Annex slots, Declarations. These docs CARRY the phrase
-  // "PLACEHOLDER FOR TENDER-ISSUED ORIGINAL" by design (see
-  // app/api/tenders/[id]/generate/route.ts: placeholderIntro). The user
-  // manually inserts the tender-issued originals before final submission.
-  //
-  // The previous validator used /placeholder/i as a forbidden pattern,
-  // which incorrectly blocked these legitimate slots and stopped the
-  // entire ZIP export. The fix: replace the broad word-match with
-  // square-bracket markers that ONLY ever come from AI failures
-  // (`[INSERT]`, `[TBD]`, `[TODO]`, `[YOUR NAME HERE]`, `[placeholder]`),
-  // AND explicitly whitelist the legitimate "PLACEHOLDER FOR TENDER-ISSUED
-  // ORIGINAL" boilerplate so the support documents pass validation.
-  const isLegitimatePlaceholderDoc = /placeholder for tender-issued original/i.test(text);
   const forbiddenPatterns = [
     /AI_DRAFT/i,
     /REGEX_DRAFT/i,
     /remove before submission/i,
-    // Square-bracket markers — these ONLY come from AI failures, never
-    // from legitimate proposal content. Catches:
-    //   [INSERT], [INSERT NAME], [INSERT ETB VALUE]
-    //   [TBD], [TBA], [TODO], [FILL IN]
-    //   [placeholder], [PLACEHOLDER TEXT]
-    //   [YOUR NAME HERE], [Date], [Client Name]
     /\[\s*(?:INSERT|TBD|TBA|TODO|FILL[-_\s]*IN|PLACEHOLDER|YOUR\s+\w+\s+HERE|DATE|NAME|CLIENT|VALUE|AMOUNT)\b[^\]]*\]/i,
     /sample text/i,
     /lorem ipsum/i,
@@ -113,32 +93,6 @@ async function validateGeneratedDocx(doc: {
   for (const pattern of forbiddenPatterns) {
     if (pattern.test(text) || pattern.test(doc.name) || pattern.test(filename)) {
       errors.push(`Forbidden final-output trace detected: ${pattern.source}`);
-    }
-  }
-
-  // Filename-level placeholder check: docs that are pure placeholder slots
-  // (financial / legal / forms / declarations / annex / submission rules)
-  // are EXPECTED to contain the boilerplate. We mark them as legitimate
-  // and skip the broader content checks for these only. Docs that AREN'T
-  // legitimate placeholders but somehow carry the boilerplate still fail
-  // (because something went wrong) — but the substantive proposal docs
-  // (Cover Letter, Executive Summary, Section A/B/C/D, Compliance Matrix)
-  // never carry that phrase, so they're unaffected.
-  if (isLegitimatePlaceholderDoc) {
-    const labelPart = `${filename} ${doc.name}`.toLowerCase();
-    const isExpectedPlaceholderSlot = /financial|audited|turnover|bank|legal|registration|licensing|tax|tender form|template|declaration|certificate|compliance evidence|annex|appendix|submission|deadline|delivery|formatting|packaging|programme/.test(labelPart);
-    if (isExpectedPlaceholderSlot) {
-      // Strip the legitimate-placeholder finding from the errors list.
-      // The boilerplate text was supposed to be there.
-      // (The square-bracket / AI-trace check above is unaffected — those
-      // patterns still fail. Only the legacy /placeholder/i broad match
-      // is being whitelisted here.)
-      const beforeCount = errors.length;
-      // No-op for now — the new pattern list above no longer contains
-      // the broad /placeholder/i, so nothing to strip. We keep the
-      // isLegitimatePlaceholderDoc check as a deliberate safety net in
-      // case future patterns reintroduce the broad match.
-      void beforeCount;
     }
   }
 
@@ -215,8 +169,13 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
       return NextResponse.json({ error: "Document export blocked by final validation", reasons: validation.errors }, { status: 409 });
     }
 
+    const readiness = checkExportReadiness([{ ...doc, validationStatus: "VALIDATED" }], { requireFileContent: true });
+    if (!readiness.ok) {
+      return NextResponse.json({ error: exportReadinessError(readiness.failures), failures: readiness.failures }, { status: 409 });
+    }
+
     const buffer = Buffer.from(doc.fileContent, "base64");
-    await logAction({ userId, action: "EXPORT_PACKAGE_DOWNLOAD", entityType: "GeneratedDocument", entityId: docId, description: `Downloaded validated generated document "${validation.filename}"` });
+    await logAction({ userId, action: "EXPORT_PACKAGE_DOWNLOAD", entityType: "GeneratedDocument", entityId: docId, description: `Downloaded reviewed and validated generated document "${validation.filename}"` });
     return new NextResponse(new Uint8Array(buffer), {
       headers: {
         "Content-Type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -242,16 +201,24 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
       return NextResponse.json({ error: "ZIP export blocked by final validation", failures: validationFailures }, { status: 409 });
     }
 
+    // PR XX-G4 — ZIP export now also enforces tender-level blockers
+    // (HIGH evaluator objections, pricing leakage). Per-doc check
+    // already passed `validateDocsForExport`; the readiness call adds
+    // the tender-level gate.
+    const readiness = await checkFullExportReadiness({
+      tenderId: tender.id,
+      docs: generatedDocs.map((doc) => ({ ...doc, validationStatus: "VALIDATED" })),
+      requireFileContent: true,
+    });
+    if (!readiness.ok) {
+      return NextResponse.json({ error: exportReadinessError(readiness.failures, readiness.tenderLevelBlockers), failures: readiness.failures, tenderLevelBlockers: readiness.tenderLevelBlockers ?? [] }, { status: 409 });
+    }
+
     const requiredNames = safeParseArr(tender.exactFileNaming).map(normalizeName);
     const requiredOrder = safeParseArr(tender.exactFileOrder).map(normalizeName);
     const generatedNames = generatedDocs.map((d) => normalizeName(d.exactFileName ?? generatedFileName(d.name)));
 
     if (hasExplicitSubmissionScope(tender)) {
-      // Submission plan is the authoritative scope check — it uses a normaliser that strips
-      // extensions and collapses hyphens/dashes to spaces, so filenames like
-      // "Technical-Proposal.docx" and "Technical Proposal.docx" are treated as equivalent.
-      // Skip the legacy requiredNames / requiredOrder checks below to avoid false 400 errors
-      // caused by the two normalisers disagreeing on the same filenames.
       const submissionPlan = buildSubmissionPlan({
         id: tender.id,
         title: tender.title,
@@ -272,8 +239,6 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
         }, { status: 409 });
       }
     } else {
-      // Legacy filename checks — only run when there is no explicit submission plan scope
-      // so we don't double-validate with a different normaliser.
       if (requiredNames.length > 0) {
         const missing = requiredNames.filter((name) => !generatedNames.includes(name));
         const extras = generatedNames.filter((name) => !requiredNames.includes(name));
@@ -310,7 +275,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
       await prisma.exportPackage.create({ data: { tenderId: id, status: "READY", fileList: JSON.stringify(fileList), downloadCount: 1 } });
     }
 
-    await logAction({ userId, action: "EXPORT_PACKAGE_DOWNLOAD", entityType: "Tender", entityId: id, description: `Downloaded validated ZIP package for "${tender.title}" (${generatedDocs.length} files)` });
+    await logAction({ userId, action: "EXPORT_PACKAGE_DOWNLOAD", entityType: "Tender", entityId: id, description: `Downloaded reviewed and validated ZIP package for "${tender.title}" (${generatedDocs.length} files)` });
 
     return new NextResponse(new Uint8Array(zipBuffer), { headers: { "Content-Type": "application/zip", "Content-Disposition": `attachment; filename="${zipName}"` } });
   }

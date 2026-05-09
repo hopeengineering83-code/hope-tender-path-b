@@ -364,6 +364,13 @@ Start directly with "# Section A: Company Profile". Do NOT output any cover lett
 }
 
 function buildTechnicalApproachPrompt(input: AIBidWriterInput): string {
+  // Criterion evidence map — inject when available so Claude knows
+  // exactly which evidence to cite per evaluation criterion, and at
+  // what prose depth (proportional to criterion weight).
+  const criterionBlock = input.criterionEvidenceMap && input.criterionEvidenceMap.trim().length > 0
+    ? `\n## CRITERION-TO-EVIDENCE ALLOCATION (NON-NEGOTIABLE — follow this exactly)\n${input.criterionEvidenceMap}\n\nFor EACH criterion above, write a dedicated sub-section in C.2 that:\n1. Cites the listed PROJECT(s) by name with contract value as proof of delivery\n2. Names the listed EXPERT(s) with their specific role on that project\n3. Allocates word count PROPORTIONAL to the criterion weight — the highest-weight criterion gets the longest, most evidence-dense sub-section\n`
+    : "";
+
   return `Write Section C — the Technical Approach — for this technical proposal.
 
 ## TENDER
@@ -376,9 +383,9 @@ ${input.tenderText.slice(0, 8_000)}
 ## ANALYSIS SUMMARY
 ${input.analysisSummary.slice(0, 2_500)}
 
-## EVALUATION CRITERIA (your methodology must score against these)
+## EVALUATION CRITERIA (your methodology must score against these — allocate depth proportionally to each criterion's weight)
 ${input.evaluationMethodology.slice(0, 2_500)}
-
+${criterionBlock}
 ## CONSOLIDATED REQUIREMENTS (especially technical and methodology requirements)
 ${input.requirements.slice(0, 4_000)}
 
@@ -544,41 +551,99 @@ Start directly with "# Section D: Additional Information". Do NOT output any oth
 // buildSectionCDrillDownSpec below) — a chained second call that
 // re-writes Section C's Methodology sub-sections with much more depth.
 
+// PR WW — tier-aware token budgets. The pre-PR-WW defaults were tuned
+// for Anthropic Tier 2 (16K output tokens/minute) and assumed deep mode
+// for Tier 2+. With users on Tier 1 (~10K output/min) hitting 429
+// rate-limit errors mid-generation, we need a tighter set of safe
+// defaults that fit inside the lowest practical tier.
+//
+// Tiers (Anthropic public, May 2026):
+//   • Tier 1 ($5 deposit, default new accounts): ~10K output/min
+//   • Tier 2 ($40 deposit): ~16K output/min
+//   • Tier 3 ($200 deposit): ~80K output/min
+//   • Tier 4 ($400 deposit): ~200K output/min
+//
+// Selection: ANTHROPIC_TIER env var (numeric: "1" | "2" | "3" | "4").
+// Default 2 — works for both Tier 1 (slightly tight, but the per-section
+// timeouts catch any 429-related slowness) and Tier 2 (comfortable).
+//
+// Per-section budgets sum to the 4 parallel calls' total output. On
+// Tier 1/2 we keep the sum at ~9.5K to leave room for prompt/system
+// overhead and any retry. Tier 3+ unlocks the rich-prose budgets.
+type Tier = 1 | 2 | 3 | 4;
+
+function detectTier(): Tier {
+  const raw = (process.env.ANTHROPIC_TIER || "").trim();
+  if (raw === "1") return 1;
+  if (raw === "3") return 3;
+  if (raw === "4") return 4;
+  return 2; // default — safe across Tier 1/2
+}
+
+interface TierBudget {
+  cover: number;
+  ab: number;
+  c: number;
+  d: number;
+  drillDown: number;
+}
+
+function tierBudget(tier: Tier, deep: boolean): TierBudget {
+  if (tier === 1) {
+    // Hard squeeze for 10K/min. Total ~7,200 leaves 2,800 headroom.
+    return { cover: 1700, ab: 2000, c: 2200, d: 1300, drillDown: 0 };
+  }
+  if (tier === 2) {
+    // Total ~10,400 — fits in 16K/min after prompt overhead.
+    // Section C gets 3,500 (up from 2,800) because Technical Approach
+    // is the highest-scored section in most tenders. The criterion-
+    // evidence map injected into the prompt makes each extra token
+    // highly productive — Claude uses it to write evidence-anchored
+    // depth per criterion rather than generic methodology.
+    // drillDown=2000 is only activated when PROPOSAL_DEEP_MODE=true
+    // AND the four parallel calls have already completed (serial, not
+    // parallel — net wall-time add is ~10-12s on a warm Claude tier).
+    return { cover: 2400, ab: 2500, c: 3500, d: 2000, drillDown: deep ? 2000 : 0 };
+  }
+  // Tier 3+: rich prose; deep mode activates full drill-down
+  if (deep) {
+    return { cover: 4500, ab: 5500, c: 6500, d: 3500, drillDown: 6000 };
+  }
+  return { cover: 3000, ab: 3200, c: 3600, d: 2200, drillDown: 0 };
+}
+
 export function buildProposalSectionSpecs(input: AIBidWriterInput, opts?: { deep?: boolean }): ProposalSectionSpec[] {
   const deep = opts?.deep === true;
+  const tier = detectTier();
+  const budget = tierBudget(tier, deep);
   return [
     {
       id: "cover-and-summary",
       title: "Cover Letter and Executive Summary",
       systemPrompt: COVER_AND_SUMMARY_SYSTEM_PROMPT,
       userPrompt: buildCoverAndSummaryPrompt(input),
-      // PR Z — bumped to support the new minimum length requirements
-      // (5 paragraphs of 70-120 words each = ~600 words = ~900 tokens
-      // for cover letter + 600 for exec summary = ~1500 tokens minimum
-      // BEFORE the AI's headers/formatting overhead). 4500 deep / 3000
-      // standard leaves headroom.
-      maxOutputTokens: deep ? 4500 : 3000,
+      maxOutputTokens: budget.cover,
     },
     {
       id: "company-and-experience",
       title: "Section A (Company Profile) and Section B (Relevant Experience)",
       systemPrompt: COMPANY_AND_EXPERIENCE_SYSTEM_PROMPT,
       userPrompt: buildCompanyAndExperiencePrompt(input),
-      maxOutputTokens: deep ? 5500 : 3200,
+      maxOutputTokens: budget.ab,
     },
     {
       id: "technical-approach",
       title: "Section C: Technical Approach",
       systemPrompt: TECHNICAL_APPROACH_SYSTEM_PROMPT,
       userPrompt: buildTechnicalApproachPrompt(input),
-      maxOutputTokens: deep ? 6500 : 3600,
+      maxOutputTokens: budget.c,
     },
     {
       id: "additional-and-declaration",
       title: "Section D, Appendix Register, and Declaration",
       systemPrompt: ADDITIONAL_AND_DECLARATION_SYSTEM_PROMPT,
       userPrompt: buildAdditionalAndDeclarationPrompt(input),
-      maxOutputTokens: deep ? 3500 : 2200,
+      maxOutputTokens: budget.d,
     },
   ];
 }

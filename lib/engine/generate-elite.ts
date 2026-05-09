@@ -1,7 +1,8 @@
 import { AlignmentType, BorderStyle, Document, Footer, Header, HeadingLevel, Packer, PageNumber, Paragraph, Table, TableBorders, TableCell, TableRow, TextRun, WidthType } from "docx";
 import { prisma } from "../prisma";
 import { generateBenchmarkProposalWithAI, generateProposalSectionsParallel, getLastProposalProvider, isAIEnabled, refineProposalWithAI } from "../ai";
-import { buildProposalIntelligence, expertProofLine, projectProofLine, safeParseArr } from "./proposal-intelligence";
+import { buildCriterionEvidenceMap, buildProposalIntelligence, expertProofLine, projectProofLine, safeParseArr } from "./proposal-intelligence";
+import { enforceCanonicalNames } from "./entity-name-normalizer";
 import { exactSelectionLimit, forbidsBranding, forbidsCoverPage, requiresSignatureOrStamp } from "./scope-policy";
 import { finalizeClientReadyProposalMarkdown } from "./proposal-benchmark-guard";
 import { appendEvaluatorResponseMatrix } from "./proposal-evaluator-matrix";
@@ -26,6 +27,7 @@ import {
 import { enforceNarrativeThroughline } from "./narrative-throughline-enforcer";
 import { enrichSectorVocabulary } from "./sector-vocabulary-enricher";
 import { buildPortfolioMetricsBlock, computePortfolioMetrics } from "./portfolio-metrics";
+import { computeWinProbability, formatWinProbability } from "./win-probability";
 import { buildPrincipalQualificationsSection } from "./principal-qualifications";
 import { buildRisksMitigationsTable } from "./risks-mitigations";
 import { buildWhyUsSummary } from "./why-us-summary";
@@ -47,7 +49,7 @@ import {
 } from "./understanding-and-value-added";
 import { reorderToCanonicalSequence } from "./section-reorderer";
 import { renderDynamicTableOfContents } from "./dynamic-toc";
-import { humanize, humanizeDeterministic } from "./humanize";
+import { humanize, humanizeDeterministic, humanizeOpeningSections } from "./humanize";
 import { injectEvidenceMarkers } from "./evidence-marker-injector";
 import { amplifySectionCDepth } from "./section-c-depth-amplifier";
 import { injectMethodologyTables } from "./methodology-tables";
@@ -66,6 +68,7 @@ import { buildRubricPromptDirective, ensureRubricHeadings } from "./rubric-drive
 import { injectCoverPageAndRfpMeta } from "./cover-page-injector";
 import { injectJvDisclosure } from "./jv-disclosure";
 import { deduplicateTables, injectQaThresholds, injectAppendixReadinessRegister } from "./advanced-quality-passes";
+import { generateExpertCvDocx, expertCvFileName } from "./expert-cv-docx";
 
 const BRAND_BLUE = "1F4E79";
 const BRAND_GRAY = "595959";
@@ -838,8 +841,33 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   // needed; the raw tender.title is intentionally kept out of generated
   // content because intake-stage extraction can produce multi-line garbage
   // that propagates to every section if used directly.
-  const cleanedTenderTitle = intelligence.assignmentName;
+  let cleanedTenderTitle = intelligence.assignmentName;
   const tenderText = [cleanedTenderTitle, tender.reference, intelligence.clientName, tender.description, tender.intakeSummary, tender.analysisSummary, tender.evaluationMethodology, ...tender.files.map((f) => `${f.originalFileName}\n${f.extractedText ?? ""}`)].filter(Boolean).join("\n\n");
+
+  // ─── G1 fix: canonical-title re-extractor ──────────────────────────────────
+  // intelligence.assignmentName is sanitized but still based on tender.title,
+  // which the user typed at upload time and is often generic ("PATH Tender",
+  // "Pharo Foundation Tender"). Try to recover the canonical RFP title from
+  // the tender body — patterns like "RFP No. 2026-024 — Architectural Design
+  // …" or "Tender Title: …". When confidence is high AND the stored title
+  // looks generic, override.
+  try {
+    const { extractCanonicalTenderTitle, pickBestTenderTitle } = await import("./tender-title-extractor");
+    const tenderBody = tender.files.map((f) => f.extractedText ?? "").filter((t) => t.length > 100).join("\n\n");
+    if (tenderBody.length > 100) {
+      const extracted = extractCanonicalTenderTitle(tenderBody);
+      const picked = pickBestTenderTitle(cleanedTenderTitle, extracted);
+      if (picked.source === "EXTRACTED" && picked.title !== cleanedTenderTitle) {
+        // Prefix the RFP ID when one was found alongside the title.
+        const final = picked.rfpId ? `${picked.rfpId} — ${picked.title}` : picked.title;
+        console.info(`[generate-elite] Tender title overridden: "${cleanedTenderTitle}" → "${final}" (extracted from tender body)`);
+        cleanedTenderTitle = final;
+      }
+    }
+  } catch (tErr) {
+    // Non-critical: stored title is still usable. Log and continue.
+    console.warn("[generate-elite] tender-title-extractor failed:", tErr instanceof Error ? tErr.message : tErr);
+  }
 
   // ─── PR R — Auto multi-perspective AI re-ranking ─────────────────────────
   // The lexical scoring (proposal-intelligence.ts) is single-axis token
@@ -863,7 +891,25 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   //
   // Falls back silently to lexical scoring on any AI error — never
   // blocks generation.
-  if (isAIEnabled() && (experts.length > 0 || projects.length > 0)) {
+  //
+  // BUDGET GUARD (post-pull) — when this auto-rematch runs INSIDE
+  // generate-elite, it competes with the 4 parallel section calls +
+  // post-passes + DOCX render against Vercel Hobby's 60s function
+  // budget. The rematcher's internal REMATCH_TIMEOUT_MS (default 40s)
+  // is for the standalone manual rematch route — too long here. We
+  // wrap the parallel pair in our own 18s race guard so the full
+  // pipeline keeps room for generation. Skipping this on a slow
+  // network just means experts/projects keep their lexical order —
+  // PR Q's hard sector filter still applies.
+  // PR WW — tier-aware auto-rematch. On Tier 1 the rematch's 12-perspective
+  // batch can hit the rate limit; skip it entirely and rely on lexical +
+  // sector-filter scoring (PR Q). Manual "Re-score" button still works
+  // independently per-tender. Tier 2+ keeps the auto-rematch with the
+  // 18s budget guard (PR OO).
+  const tierForRematch = (process.env.ANTHROPIC_TIER || "").trim();
+  const AUTO_REMATCH_DISABLED_BY_TIER = tierForRematch === "1";
+  const AUTO_REMATCH_BUDGET_MS = Number(process.env.AUTO_REMATCH_BUDGET_MS) || 18_000;
+  if (!AUTO_REMATCH_DISABLED_BY_TIER && isAIEnabled() && (experts.length > 0 || projects.length > 0)) {
     try {
       const { aiRematchExperts, aiRematchProjects } = await import("./ai-multi-perspective-matcher");
       const tenderRequirementsText = [
@@ -898,7 +944,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
         trustLevel: p.trustLevel ?? null,
       }));
 
-      const [expertBatch, projectBatch] = await Promise.all([
+      const rematchPair = Promise.all([
         expertCandidates.length > 0 ? aiRematchExperts({
           tenderTitle: cleanedTenderTitle,
           tenderRequirementsText,
@@ -912,6 +958,16 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
           candidates: projectCandidates,
         }) : Promise.resolve(null),
       ]);
+      const budgetGuard = new Promise<null>((resolve) =>
+        setTimeout(() => resolve(null), AUTO_REMATCH_BUDGET_MS)
+      );
+      // If the budget elapses before either AI call returns, we get
+      // null and skip the re-rank entirely (lexical order kept).
+      const raceResult = await Promise.race([rematchPair, budgetGuard]);
+      if (raceResult === null) {
+        console.warn(`[generate-elite] AI multi-perspective re-rank skipped — exceeded ${AUTO_REMATCH_BUDGET_MS}ms auto-budget. Lexical order kept.`);
+      }
+      const [expertBatch, projectBatch] = raceResult ?? [null, null];
 
       // Re-sort experts/projects by AI overall score. Candidates without
       // an assessment fall back to their original lexical position.
@@ -1130,6 +1186,17 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
             .map((p) => (p as { clientName?: string | null }).clientName)
             .filter((c): c is string => Boolean(c && c.trim().length >= 3))
         )),
+        // Per-criterion evidence map — tells the AI which projects/experts
+        // are most relevant to each evaluation criterion, and at what depth
+        // (proportional to criterion weight). This eliminates the AI's
+        // tendency to spread evidence evenly across all sections regardless
+        // of scoring weight. Built from the extracted evaluationWeights +
+        // vault top candidates; empty string when no numeric weights found.
+        criterionEvidenceMap: buildCriterionEvidenceMap(
+          intelligence.evaluationWeights,
+          intelligence.topProjects,
+          intelligence.topExperts,
+        ),
       };
 
       sourceMarkdown = await withProposalAiTimeout(
@@ -1138,6 +1205,15 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
           : generateBenchmarkProposalWithAI(aiInput),
         PROPOSAL_AI_TIMEOUT_MS,
       );
+      // Canonical name normalization — fast post-assembly pass that replaces
+      // minor expert-name variations (Dr. X vs X, different middle initials)
+      // with the authoritative fullName from the Expert record, and strips
+      // spurious leading articles from project names ("the Hospital X" → "Hospital X").
+      // Runs on the raw AI output before any deterministic enrichers touch it
+      // so all downstream sections see consistent canonical names.
+      if (sourceMarkdown) {
+        sourceMarkdown = enforceCanonicalNames(sourceMarkdown, experts, projects);
+      }
       const provider = getLastProposalProvider() ?? "ai";
       const pathLabel = useParallel ? "section-parallel" : "single-call";
       mode = `${provider === "claude" ? "Claude" : provider === "gemini" ? "Gemini" : "AI"} ${pathLabel} bid-writer + evaluator response matrix + full evidence library + client-ready benchmark finalizer + professional DOCX polish`;
@@ -1434,12 +1510,26 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   // patterns and prose style are touched, not project names, expert
   // names, contract values, or evidence anchors.
   let humanizedMarkdown = humanizeDeterministic(clientMarkdown);
+
+  // Targeted opening-sections polish: rewrites only the Cover Letter and
+  // Executive Summary (~500 tokens each) so the highest-read sections
+  // sound like a senior consultant wrote them. Always-on — the small
+  // token budget keeps wall time under 15s even on Hobby tier.
+  try {
+    humanizedMarkdown = await humanizeOpeningSections(humanizedMarkdown);
+    console.info("[generate-elite] Targeted Cover Letter + Executive Summary humanization applied.");
+  } catch (err) {
+    console.warn(`[generate-elite] Opening-sections humanize failed (${err instanceof Error ? err.message : String(err)}) — keeping deterministic output.`);
+  }
+
+  // Full-proposal AI humanization pass (opt-in via PROPOSAL_HUMANIZE_AI=true).
+  // Adds 25–45s. Not recommended on Vercel Hobby (60s limit).
   const humanizeAiEnabled = (process.env.PROPOSAL_HUMANIZE_AI || "").toLowerCase() === "true";
   if (humanizeAiEnabled) {
     try {
       humanizedMarkdown = await humanize(humanizedMarkdown);
     } catch (err) {
-      console.warn(`[generate-elite] humanize AI pass failed (${err instanceof Error ? err.message : String(err)}) — keeping deterministic-cleaned output.`);
+      console.warn(`[generate-elite] Full-proposal humanize AI pass failed (${err instanceof Error ? err.message : String(err)}) — keeping output from opening-sections pass.`);
     }
   }
 
@@ -1547,16 +1637,52 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   // is sector-aware and vault-aware (RACI uses real expert names when
   // the team is selected; Risk/QA carry sector-specific clauses for
   // healthcare / water / road / urban / generic).
+  // ─── G10 follow-up: detect tender's stated total duration ──────────────
+  // If the tender body carries an explicit total like "28 calendar days
+  // from signed contract" or "delivered within 45 days", parse the
+  // number and pass it so the phasing table renders day-numbered rows
+  // ("Days 1–3", "Days 4–8") instead of generic "Weeks 1–2".
+  const totalDaysMatch = tenderText.match(/\b(\d{1,3})\s*(?:calendar\s+|working\s+|business\s+)?days?\b(?!\s*(?:after|before|prior|notice|advance))/i);
+  const totalDays = totalDaysMatch ? Number(totalDaysMatch[1]) : undefined;
+  if (totalDays && totalDays >= 7 && totalDays <= 1000) {
+    console.info(`[generate-elite] Detected total project duration: ${totalDays} days — phasing table will use day-numbered rows.`);
+  }
+
   const methodologyTables = injectMethodologyTables(humanizedMarkdown, {
     primarySector: intelligence.primarySector,
     experts: allSelectedExperts as unknown as Parameters<typeof injectMethodologyTables>[1]["experts"],
     projects: evidenceLibrary,
+    totalDays: totalDays && totalDays >= 7 && totalDays <= 1000 ? totalDays : undefined,
   });
+  humanizedMarkdown = methodologyTables.markdown;
+
+  // ─── G11 fix: Deliverable-Specific QA Checklist ────────────────────────
+  // Append a deliverable-numbered QA checklist (D1, D2, …) at the end of
+  // Section C. The Claude AI benchmark for the Path tender included a
+  // 7-row table mapping each QA Check Item → Responsible → Deliverable
+  // Code → Acceptance Standard. Without this, our generic 3-stage QA
+  // gate looks thin. Idempotent (marker comment skips re-injection).
+  try {
+    const { injectDeliverableQaChecklist } = await import("./deliverable-qa-checklist");
+    const qaChecklist = injectDeliverableQaChecklist(humanizedMarkdown, {
+      tenderText,
+      primarySector: intelligence.primarySector,
+      experts: allSelectedExperts as unknown as Parameters<typeof injectDeliverableQaChecklist>[1]["experts"],
+    });
+    if (qaChecklist.injected) {
+      console.info(`[generate-elite] Deliverable QA Checklist injected with ${qaChecklist.rowsRendered} row(s).`);
+      humanizedMarkdown = qaChecklist.markdown;
+    }
+  } catch (qaErr) {
+    console.warn("[generate-elite] Deliverable QA Checklist injection failed:", qaErr instanceof Error ? qaErr.message : qaErr);
+  }
   const newlyInjected = methodologyTables.injected.filter((i) => i.reason === "MISSING").map((i) => i.key);
   if (newlyInjected.length > 0) {
     console.info(`[generate-elite] Methodology tables injected: ${newlyInjected.join(", ")}`);
   }
-  humanizedMarkdown = methodologyTables.markdown;
+  // NOTE: humanizedMarkdown was already updated above by methodologyTables
+  // and again by the QA-checklist injection — do NOT re-assign from
+  // methodologyTables.markdown here, that would clobber the QA checklist.
 
   // ─── Beyond-spec tables (PR F) ───────────────────────────────────────────
   // Section D ("value added") differentiator tables. Modern tenders
@@ -2019,7 +2145,27 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   // structural guarantees without refinement, so disabling has minimal
   // quality impact on properly-tuned tenders.
   const REFINEMENT_DISABLED = process.env.PROPOSAL_REFINEMENT_DISABLED === "true";
-  const QUALITY_REFINEMENT_THRESHOLD = 70;
+  // PR QQ — raised refinement target from 70 to 82 (Claude AI benchmark
+  // territory). Below 82 means at least one of the 10 axes is weak;
+  // refinement targets those axes specifically. Capped at 82 (not 90+)
+  // because refinement uses the AI's same context budget — pushing too
+  // high would force the AI to fabricate content to satisfy axes the
+  // vault data can't support. 82 is the empirical sweet spot.
+  const QUALITY_REFINEMENT_THRESHOLD = Number(process.env.QUALITY_REFINEMENT_THRESHOLD) || 82;
+  // PR WW — tier-aware refinement attempt cap. The pre-PR-WW default
+  // was 2 (Tier 3+ comfortable). On Tier 1/2 the second attempt risks
+  // hitting the per-minute output-token rate limit and returning 429.
+  // New default by tier:
+  //   Tier 1 (10K/min): 0 attempts — refinement skipped, deterministic
+  //                     post-passes do the heavy lifting
+  //   Tier 2 (16K/min, default): 1 attempt
+  //   Tier 3+ (80K/min): 2 attempts
+  // Override with MAX_REFINEMENT_ATTEMPTS env var.
+  const tierForRefinement = (process.env.ANTHROPIC_TIER || "").trim();
+  const tierDefaultAttempts = tierForRefinement === "1" ? 0
+    : tierForRefinement === "3" || tierForRefinement === "4" ? 2
+    : 1; // Tier 2 default
+  const MAX_REFINEMENT_ATTEMPTS = Number(process.env.MAX_REFINEMENT_ATTEMPTS) || tierDefaultAttempts;
   // Score the HUMANIZED markdown (PR #245) — refinement should evaluate
   // the same text that's about to be rendered to DOCX, not the
   // pre-humanize version which still contained AI-trace patterns.
@@ -2030,7 +2176,15 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     topProjects: (projects as ProjectRecord[]).slice(0, 2),
   });
   let refinementApplied = false;
-  if (!REFINEMENT_DISABLED && qualityScore.total < QUALITY_REFINEMENT_THRESHOLD && qualityScore.weakAxes.length > 0 && isAIEnabled()) {
+  let refinementAttempts = 0;
+  while (
+    !REFINEMENT_DISABLED &&
+    refinementAttempts < MAX_REFINEMENT_ATTEMPTS &&
+    qualityScore.total < QUALITY_REFINEMENT_THRESHOLD &&
+    qualityScore.weakAxes.length > 0 &&
+    isAIEnabled()
+  ) {
+    refinementAttempts += 1;
     try {
       const refined = await refineProposalWithAI({
         currentMarkdown: workingMarkdown,
@@ -2049,14 +2203,90 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
           topProjects: (projects as ProjectRecord[]).slice(0, 2),
         });
         if (refinedScore.total > qualityScore.total) {
+          const lift = refinedScore.total - qualityScore.total;
           workingMarkdown = refinedClean;
           qualityScore = refinedScore;
           refinementApplied = true;
+          console.info(`[generate-elite] Refinement attempt ${refinementAttempts}/${MAX_REFINEMENT_ATTEMPTS}: ${qualityScore.total - lift} → ${qualityScore.total} (+${lift}). Weak axes remaining: ${qualityScore.weakAxes.length}.`);
+          // If the lift was meaningful AND the score is still below
+          // threshold AND we have attempts left, the loop will try
+          // another pass with the refined output as input.
+          // Stop early when the lift is < 2 points (diminishing returns).
+          if (lift < 2) {
+            console.info(`[generate-elite] Refinement lift ${lift} < 2 — stopping early to avoid AI budget burn.`);
+            break;
+          }
+        } else {
+          // Refinement made score WORSE or equal — keep the previous
+          // version and stop attempting.
+          console.info(`[generate-elite] Refinement attempt ${refinementAttempts} did not improve score (${qualityScore.total} unchanged). Stopping.`);
+          break;
         }
+      } else {
+        // Refined output too short — keep the previous version.
+        console.warn(`[generate-elite] Refinement attempt ${refinementAttempts} returned thin output (${refined?.length ?? 0} chars vs ${workingMarkdown.length}). Stopping.`);
+        break;
       }
     } catch (err) {
-      console.warn(`[generate-elite] Refinement pass failed: ${err instanceof Error ? err.message : String(err)}`);
+      console.warn(`[generate-elite] Refinement pass ${refinementAttempts} failed: ${err instanceof Error ? err.message : String(err)}`);
+      break;
     }
+  }
+
+  // ─── PR UU — re-apply idempotent finalisers after refinement ────────────
+  // The refinement pass asks Claude to STRENGTHEN weak axes — which often
+  // means adding evidence anchors, deepening prose, or restating sections.
+  // Refinement runs AFTER all 20+ deterministic post-passes, so its
+  // output skipped:
+  //   • duplicate-section heading suppressor (PR Q)
+  //   • client-name enforcer (PR V)
+  //   • internal-review-section stripper (PR X)
+  //   • section orderer + auto-TOC rebuild (PR Y)
+  //   • placeholder stripper (PR J)
+  //
+  // Side-effect of skipping: refined output occasionally introduced
+  // duplicate "Section A" or "Cover Letter" headings (Claude restates
+  // them when answering an axis), and any new "Bid-Team Action: ..."
+  // strings the AI inserted weren't stripped before DOCX render.
+  //
+  // Each of these passes is idempotent — running them a second time on
+  // already-clean markdown is a no-op. Re-running them on the refined
+  // output catches any duplicates / leaks Claude introduced in the
+  // refinement. If refinement didn't run, this whole block is a no-op
+  // (workingMarkdown === humanizedMarkdown).
+  if (refinementApplied) {
+    const reDedup = suppressDuplicateSectionHeadings(workingMarkdown);
+    if (reDedup.renumbered > 0) {
+      console.info(`[generate-elite] Post-refinement re-dedupe: renumbered ${reDedup.renumbered} duplicate-prefix heading(s) introduced by refinement.`);
+    }
+    workingMarkdown = reDedup.markdown;
+
+    const reEnforced = enforceClientName(workingMarkdown, {
+      canonicalClientName: intelligence.clientName,
+      knownFirmClients,
+    });
+    if (reEnforced.substitutionsMade > 0) {
+      console.warn(`[generate-elite] Post-refinement client-name enforcer scrubbed ${reEnforced.substitutionsMade} hallucinated substitution(s) introduced by refinement.`);
+    }
+    workingMarkdown = reEnforced.markdown;
+
+    const reStrip = stripInternalReviewSections(workingMarkdown);
+    if (reStrip.removedSections.length > 0) {
+      console.info(`[generate-elite] Post-refinement internal-review stripper removed ${reStrip.removedSections.length} bid-team section(s) re-introduced by refinement.`);
+    }
+    workingMarkdown = reStrip.markdown;
+
+    const reOrder = reorderSectionsAndRebuildToc(workingMarkdown);
+    if (reOrder.reorderedSectionCount > 0) {
+      console.info(`[generate-elite] Post-refinement reorder: re-sequenced ${reOrder.reorderedSectionCount} section(s); TOC rebuilt.`);
+    }
+    workingMarkdown = reOrder.markdown;
+
+    const reStripPlaceholders = stripPlaceholders(workingMarkdown);
+    if (reStripPlaceholders.removedLines + reStripPlaceholders.blankedCells + reStripPlaceholders.removedParagraphs > 0) {
+      console.info(`[generate-elite] Post-refinement placeholder stripper: removed ${reStripPlaceholders.removedLines} line(s), ${reStripPlaceholders.removedParagraphs} paragraph(s); blanked ${reStripPlaceholders.blankedCells} table cell(s).`);
+    }
+    workingMarkdown = reStripPlaceholders.markdown;
   }
 
   // Re-render the DOCX from the (possibly refined) markdown.
@@ -2079,7 +2309,14 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   const refinementLabel = refinementApplied
     ? ` + ${refinementProvider === "claude" ? "Claude" : refinementProvider === "gemini" ? "Gemini" : "AI"} refinement pass`
     : "";
-  const summary = `${mode}${refinementLabel} technical proposal generated. ${finalized.internalSummary}. ${auditSummary}. ${formatQualityScoreSummary(qualityScore)}. Inputs: ${intelligence.requiredSections.length} section group(s), ${intelligence.themes.length} tender theme(s), ${experts.length} reviewed expert(s), ${projects.length} reviewed project(s), ${companyEvidenceLines.length} company evidence item(s), ${projectEvidenceLines.length} project evidence attachment(s).${aiError ? ` AI fallback reason: ${aiError}` : ""}`;
+  const winProb = computeWinProbability({
+    primarySector: intelligence.primarySector,
+    projects: projects as Parameters<typeof computeWinProbability>[0]["projects"],
+    experts: experts as Parameters<typeof computeWinProbability>[0]["experts"],
+    complianceGaps: tender.complianceGaps,
+    bidOutcomes: (company as { bidOutcomes?: Array<{ won: boolean; primarySector?: string | null }> }).bidOutcomes,
+  });
+  const summary = `${mode}${refinementLabel} technical proposal generated. ${finalized.internalSummary}. ${auditSummary}. ${formatQualityScoreSummary(qualityScore)}. ${formatWinProbability(winProb)}. Inputs: ${intelligence.requiredSections.length} section group(s), ${intelligence.themes.length} tender theme(s), ${experts.length} reviewed expert(s), ${projects.length} reviewed project(s), ${companyEvidenceLines.length} company evidence item(s), ${projectEvidenceLines.length} project evidence attachment(s).${aiError ? ` AI fallback reason: ${aiError}` : ""}`;
 
   // ─── Save the main Technical Proposal (PR #256 fix) ─────────────────────
   // BUG (pre-PR #256): the engine looked for a planned slot whose
@@ -2170,4 +2407,129 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   }
 
   await prisma.tender.update({ where: { id: tenderId }, data: { status: "GENERATED", stage: "GENERATION", updatedAt: new Date() } });
+
+  // ─── Proposal version snapshot ──────────────────────────────────────────────
+  // Save the current proposal as a numbered version in ProposalVersion.
+  // Keeps only the last 5 versions per tender (oldest pruned automatically).
+  // Versions let users compare previous generations and roll back when a
+  // regeneration produces worse output than the prior run.
+  // PR XX-A — switched to typed Prisma access. Bootstrap migration in
+  // lib/prisma.ts:508 still creates the table for envs without Prisma
+  // migrations, so this is a pure type-safety upgrade.
+  let savedProposalVersion = 1;
+  try {
+    const existingVersions = await prisma.proposalVersion.findMany({
+      where: { tenderId },
+      select: { id: true, version: true },
+      orderBy: { version: "desc" },
+    });
+    const nextVersion = existingVersions.length > 0 ? existingVersions[0].version + 1 : 1;
+    savedProposalVersion = nextVersion;
+
+    await prisma.proposalVersion.create({
+      data: {
+        tenderId,
+        version: nextVersion,
+        markdown: workingMarkdown,
+        fileContent,
+        benchmarkScore: finalized.score.score,
+        qualityScore: qualityScore.total,
+        winProbabilityScore: winProb.score,
+        mode,
+        summary: summary.slice(0, 500),
+      },
+    });
+    console.info(`[generate-elite] Proposal version ${nextVersion} saved.`);
+
+    // Prune versions beyond the last 5.
+    if (existingVersions.length >= 5) {
+      const idsToDelete = existingVersions.slice(4).map((v) => v.id);
+      if (idsToDelete.length > 0) {
+        await prisma.proposalVersion.deleteMany({ where: { id: { in: idsToDelete } } });
+        console.info(`[generate-elite] Pruned ${idsToDelete.length} old proposal version(s) (keeping last 5).`);
+      }
+    }
+  } catch (vErr) {
+    // Version saving is non-critical — never block the main proposal.
+    console.warn("[generate-elite] Proposal version snapshot failed:", vErr instanceof Error ? vErr.message : vErr);
+  }
+
+  // ─── Section evidence map (G5 follow-up) ───────────────────────────────────
+  // Walks the stitched proposal markdown, splits it into top-level sections,
+  // and writes each one to SectionEvidenceMap. Powers the weak-section
+  // detector and the "where does this section's evidence live?" UI.
+  // Idempotent on (tenderId, proposalVersion, sectionId), so re-running
+  // the engine for the same tender just refreshes the rows.
+  // Wrapped in its own try so a write failure never blocks the main run.
+  try {
+    const { writeSectionEvidenceFromMarkdown } = await import("./section-evidence-map");
+    const requirementIds = tender.requirements.map((r) => r.id);
+    const expertIds = tender.expertMatches.map((m) => m.expert.id);
+    const projectIds = tender.projectMatches.map((m) => m.project.id);
+    const result = await writeSectionEvidenceFromMarkdown({
+      tenderId,
+      proposalVersion: savedProposalVersion,
+      markdown: workingMarkdown,
+      requirementIds,
+      expertIds,
+      projectIds,
+    });
+    console.info(`[generate-elite] Section evidence map: ${result.sectionsWritten} section(s) recorded for v${savedProposalVersion}.`);
+  } catch (sErr) {
+    console.warn("[generate-elite] Section evidence map write failed:", sErr instanceof Error ? sErr.message : sErr);
+  }
+
+  // ─── Expert CV DOCX generation ──────────────────────────────────────────────
+  // Generate one professional CV Word document per selected REVIEWED expert.
+  // CVs are saved as separate GeneratedDocument records (documentType=
+  // "EXPERT_CV_PACKAGE") so the user can download them individually or as
+  // part of the ZIP bundle. They do NOT block the main proposal save above.
+  // Each CV follows the standard World Bank / FIDIC CV template layout.
+  if (experts.length > 0) {
+    const cvResults = await Promise.allSettled(
+      experts.slice(0, 12).map(async (expert) => {
+        const fileName = expertCvFileName(expert.fullName);
+        const cvBuffer = await generateExpertCvDocx({
+          fullName: expert.fullName,
+          title: (expert as { title?: string | null }).title,
+          email: (expert as { email?: string | null }).email,
+          phone: (expert as { phone?: string | null }).phone,
+          yearsExperience: (expert as { yearsExperience?: number | null }).yearsExperience,
+          disciplines: (expert as { disciplines?: string | null }).disciplines,
+          sectors: (expert as { sectors?: string | null }).sectors,
+          certifications: (expert as { certifications?: string | null }).certifications,
+          profile: (expert as { profile?: string | null }).profile,
+        });
+        const cvContent = cvBuffer.toString("base64");
+        const existing = await prisma.generatedDocument.findFirst({
+          where: { tenderId, exactFileName: fileName },
+        });
+        if (existing) {
+          await prisma.generatedDocument.update({
+            where: { id: existing.id },
+            data: { fileContent: cvContent, generationStatus: "GENERATED", updatedAt: new Date() },
+          });
+        } else {
+          await prisma.generatedDocument.create({
+            data: {
+              tenderId,
+              name: `CV — ${expert.fullName}`,
+              documentType: "EXPERT_CV_PACKAGE",
+              format: "DOCX",
+              exactFileName: fileName,
+              fileContent: cvContent,
+              generationStatus: "GENERATED",
+              validationStatus: "PENDING",
+              contentSummary: `Professional CV for ${expert.fullName}${(expert as { title?: string | null }).title ? `, ${(expert as { title?: string | null }).title}` : ""}.`,
+            },
+          });
+        }
+        return fileName;
+      })
+    );
+    const cvGenerated = cvResults.filter((r) => r.status === "fulfilled").length;
+    const cvFailed = cvResults.filter((r) => r.status === "rejected").length;
+    if (cvGenerated > 0) console.info(`[generate-elite] Expert CV DOCX: generated ${cvGenerated} CV(s).`);
+    if (cvFailed > 0) console.warn(`[generate-elite] Expert CV DOCX: ${cvFailed} CV(s) failed to generate.`);
+  }
 }

@@ -4,6 +4,9 @@ import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { analyzeWithAI, isAIEnabled } from "../../../../../lib/ai";
 import { analyzeTender } from "../../../../../lib/engine/analysis";
 import { logAction } from "../../../../../lib/audit";
+import { rateLimit, AI_RATE_LIMIT } from "../../../../../lib/rate-limit";
+import { extractRequestId } from "../../../../../lib/request-id";
+import { createNotification } from "../../../../../lib/notifications";
 
 // Vercel route timeout — Claude tender analysis needs >10s default.
 // 60 = Hobby max; Pro applies its own plan limit when exceeded.
@@ -43,9 +46,18 @@ async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   }
 }
 
-export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const requestId = extractRequestId(req);
   const userId = await getSession();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const rl = rateLimit(`analyze:${userId}`, AI_RATE_LIMIT);
+  if (!rl.allowed) {
+    return NextResponse.json(
+      { error: "Rate limit exceeded — too many analysis requests. Please wait a minute and retry.", retryAfter: Math.ceil((rl.resetAt - Date.now()) / 1000) },
+      { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } }
+    );
+  }
 
   await prismaReady;
   const { id } = await params;
@@ -192,6 +204,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       entityId: id,
       description: `Analyzed tender "${tenderRecord.title}" — ${analysisResult.requirementCount} requirements extracted${analysisResult.fallback ? " using fallback" : ""}`,
       metadata: { ai: analysisResult.ai, fallback: analysisResult.fallback, requirementCount: analysisResult.requirementCount },
+      requestId,
     });
 
     const updated = await prisma.tender.findUnique({
@@ -199,6 +212,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       include: { requirements: true, files: true, complianceGaps: true, generatedDocuments: true },
     });
 
+    void createNotification({ userId, type: "TENDER_ANALYZED", title: `Analysis complete for "${tenderRecord.title}"`, body: `${analysisResult.requirementCount} requirements extracted${analysisResult.fallback ? " (regex fallback)" : " by AI"}.`, entityType: "Tender", entityId: id, link: `/dashboard/tenders/${id}` });
     return NextResponse.json({ success: true, ...analysisResult, tender: updated });
   } catch (error) {
     console.error("Analysis route error:", error);

@@ -1,0 +1,152 @@
+import { prisma, prismaReady } from "../prisma";
+
+export type ExportReadyDocument = {
+  id: string;
+  name: string;
+  exactFileName: string | null;
+  generationStatus: string;
+  validationStatus: string;
+  reviewStatus: string;
+  fileContent?: string | null;
+};
+
+export type ExportReadinessFailure = {
+  documentId: string;
+  name: string;
+  fileName: string;
+  reasons: string[];
+};
+
+export type ExportReadinessResult = {
+  ok: boolean;
+  failures: ExportReadinessFailure[];
+  // PR XX-G4 — when a tender has unresolved HIGH evaluator objections OR
+  // a pricing workbook with leakage / unfilled mandatory rows, export
+  // is blocked even if every document is READY_FOR_EXPORT. This array
+  // describes those tender-level blockers so the UI can show them
+  // alongside the per-document failures.
+  tenderLevelBlockers?: Array<{ category: string; severity: string; title: string; recommendedAction?: string | null }>;
+};
+
+function generatedFileName(name: string): string {
+  return `${name.replace(/[^a-zA-Z0-9]/g, "-")}.docx`;
+}
+
+export function isReadyForFinalExport(doc: ExportReadyDocument): boolean {
+  return doc.generationStatus === "GENERATED" && doc.validationStatus === "VALIDATED" && doc.reviewStatus === "READY_FOR_EXPORT";
+}
+
+export function checkExportReadiness(docs: ExportReadyDocument[], opts: { requireFileContent?: boolean } = {}): ExportReadinessResult {
+  const failures: ExportReadinessFailure[] = [];
+
+  for (const doc of docs) {
+    const reasons: string[] = [];
+    if (doc.generationStatus !== "GENERATED") reasons.push(`generationStatus is ${doc.generationStatus}, expected GENERATED`);
+    if (doc.validationStatus !== "VALIDATED") reasons.push(`validationStatus is ${doc.validationStatus}, expected VALIDATED`);
+    if (doc.reviewStatus !== "READY_FOR_EXPORT") reasons.push(`reviewStatus is ${doc.reviewStatus}, expected READY_FOR_EXPORT`);
+    if (opts.requireFileContent && !doc.fileContent) reasons.push("fileContent is missing");
+
+    if (reasons.length > 0) {
+      failures.push({
+        documentId: doc.id,
+        name: doc.name,
+        fileName: doc.exactFileName ?? generatedFileName(doc.name),
+        reasons,
+      });
+    }
+  }
+
+  return { ok: failures.length === 0, failures };
+}
+
+export function exportReadinessError(failures: ExportReadinessFailure[], tenderLevelBlockers?: ExportReadinessResult["tenderLevelBlockers"]): string {
+  // PR PP — return an actionable error message that names each blocking
+  // document and the specific reasons. Without this, the user saw only
+  // "Final export blocked: N documents are not ready for export" with no
+  // way to know what to fix.
+  // PR XX-G4 — also surface tender-level blockers (unresolved HIGH
+  // evaluator objections, pricing-workbook problems) so the user knows
+  // why the export gate refuses to open even when documents look ready.
+  const out: string[] = [];
+  if (failures.length > 0) {
+    const summary = failures.length === 1
+      ? "Final export blocked: 1 document is not ready for export."
+      : `Final export blocked: ${failures.length} documents are not ready for export.`;
+    const details = failures
+      .slice(0, 6)
+      .map((f) => `• ${f.fileName} — ${f.reasons.join("; ")}`)
+      .join("\n");
+    const truncationNote = failures.length > 6 ? `\n• … and ${failures.length - 6} more` : "";
+    out.push(`${summary}\n${details}${truncationNote}`);
+  }
+  if (tenderLevelBlockers && tenderLevelBlockers.length > 0) {
+    const lines = tenderLevelBlockers.slice(0, 8).map((b) => {
+      const action = b.recommendedAction ? ` — Action: ${b.recommendedAction}` : "";
+      return `• [${b.severity}] ${b.title}${action}`;
+    });
+    out.push(`Tender-level blockers (${tenderLevelBlockers.length} unresolved):\n${lines.join("\n")}`);
+  }
+  return out.length === 0 ? "" : out.join("\n\n");
+}
+
+/**
+ * PR XX-G4 — checks tender-level blockers that should prevent final
+ * export even when the document set looks ready. Two categories:
+ *
+ *   1. EvaluatorObjection rows where severity="HIGH" AND status="OPEN"
+ *      ("rerun evaluator after fixes" workflow expects these to be
+ *      RESOLVED or WAIVED before the bid can ship).
+ *
+ *   2. PricingWorkbook integrity: workbook exists AND `noPriceLeakage`
+ *      is false → leakage flag is on, export is blocked. Workbook with
+ *      zero CostLines is a soft warning, not a blocker.
+ */
+export async function checkTenderLevelExportBlockers(tenderId: string): Promise<NonNullable<ExportReadinessResult["tenderLevelBlockers"]>> {
+  await prismaReady;
+  const blockers: NonNullable<ExportReadinessResult["tenderLevelBlockers"]> = [];
+
+  // ── Evaluator HIGH objections ──────────────────────────────────────
+  const highOpen = await prisma.evaluatorObjection.findMany({
+    where: { tenderId, status: "OPEN", severity: "HIGH" },
+    select: { id: true, title: true, severity: true, category: true, recommendedAction: true },
+    take: 20,
+  });
+  for (const o of highOpen) {
+    blockers.push({
+      category: `EVALUATOR_${o.category}`,
+      severity: o.severity,
+      title: o.title,
+      recommendedAction: o.recommendedAction,
+    });
+  }
+
+  // ── Pricing workbook leakage ───────────────────────────────────────
+  const workbook = await prisma.pricingWorkbook.findUnique({
+    where: { tenderId },
+    select: { id: true, noPriceLeakage: true },
+  });
+  if (workbook && workbook.noPriceLeakage === false) {
+    blockers.push({
+      category: "PRICING_LEAKAGE",
+      severity: "HIGH",
+      title: "Pricing leakage flag is set on the pricing workbook",
+      recommendedAction: "Confirm no prices, rates, or fees appear in the technical proposal envelope. Toggle noPriceLeakage=true once verified.",
+    });
+  }
+
+  return blockers;
+}
+
+/**
+ * Convenience wrapper that runs both per-document and tender-level
+ * checks and returns one consolidated ExportReadinessResult.
+ */
+export async function checkFullExportReadiness(opts: { tenderId: string; docs: ExportReadyDocument[]; requireFileContent?: boolean }): Promise<ExportReadinessResult> {
+  const perDoc = checkExportReadiness(opts.docs, { requireFileContent: opts.requireFileContent });
+  const tenderLevelBlockers = await checkTenderLevelExportBlockers(opts.tenderId);
+  return {
+    ok: perDoc.ok && tenderLevelBlockers.length === 0,
+    failures: perDoc.failures,
+    tenderLevelBlockers,
+  };
+}

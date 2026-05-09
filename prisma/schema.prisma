@@ -21,6 +21,7 @@ model User {
   // PR #247 — DocumentReview / DocumentComment back-relations
   documentReviews  DocumentReview[]
   documentComments DocumentComment[]
+  notifications    Notification[]
   createdAt    DateTime    @default(now())
   updatedAt    DateTime    @updatedAt
 }
@@ -173,12 +174,15 @@ model Expert {
   // Source document that produced this record
   sourceDocumentId String?
   sourceDocument   CompanyDocument? @relation(fields: [sourceDocumentId], references: [id], onDelete: SetNull)
+  deletedAt        DateTime?
+  deletedBy        String?
   createdAt        DateTime         @default(now())
   updatedAt        DateTime         @updatedAt
   tenderMatches    TenderExpertMatch[]
 
   @@index([companyId])
   @@index([trustLevel])
+  @@index([deletedAt])
 }
 
 // trustLevel values: REGEX_DRAFT | AI_DRAFT | REVIEWED
@@ -205,12 +209,15 @@ model Project {
   sourceDocumentId String?
   sourceDocument   CompanyDocument? @relation(fields: [sourceDocumentId], references: [id], onDelete: SetNull)
   evidences     ProjectEvidence[]
+  deletedAt     DateTime?
+  deletedBy     String?
   createdAt     DateTime         @default(now())
   updatedAt     DateTime         @updatedAt
   tenderMatches TenderProjectMatch[]
 
   @@index([companyId])
   @@index([trustLevel])
+  @@index([deletedAt])
 }
 
 model ProjectEvidence {
@@ -296,6 +303,9 @@ model Tender {
   exactFileNaming       String               @default("[]")
   readinessScore        Float                @default(0)
   notes                 String?
+  bidOutcome            String?
+  bidOutcomeNote        String?
+  bidOutcomeAt          DateTime?
   createdAt             DateTime             @default(now())
   updatedAt             DateTime             @updatedAt
   userId                String
@@ -342,9 +352,23 @@ model TenderRequirement {
   exactOrder           Int?
   restrictions         String?
   isResolved           Boolean            @default(false)
+  // ─── Page-level source coordinates (G9 fix) ──────────────────────────
+  // PR XX-G — adds audit-grade source references so each requirement
+  // can be cited back to the exact tender file, page, section heading,
+  // and verbatim quote. The Copilot, evaluator, and compliance matrix
+  // all read from these fields when surfacing "where in the tender does
+  // this come from?" answers.
+  sourceTenderFileId   String?
+  sourcePageNumber     Int?
+  sourceSectionHeading String?
+  sourceExactQuote     String?
+  sourceConfidence     Float              @default(0)
   complianceMatrixRows ComplianceMatrix[]
   createdAt            DateTime           @default(now())
   updatedAt            DateTime           @updatedAt
+
+  @@index([tenderId])
+  @@index([sourceTenderFileId])
 }
 
 model ComplianceMatrix {
@@ -520,4 +544,248 @@ model AuditLog {
   description String
   metadata    String   @default("{}")
   createdAt   DateTime @default(now())
+}
+
+model Notification {
+  id        String    @id @default(uuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      String
+  title     String
+  body      String?
+  entityType String?
+  entityId   String?
+  link       String?
+  readAt     DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([userId, readAt])
+  @@index([userId, createdAt])
+}
+
+// ─── ProposalVersion (G1 fix) ────────────────────────────────────────────────
+// PR XX-A — adds the missing Prisma model for proposal version history.
+// Bootstrap migration in lib/prisma.ts:508 already creates the table at
+// runtime; this model exposes it through the typed Prisma client so the
+// raw $queryRawUnsafe / $executeRawUnsafe calls in
+// app/api/tenders/[id]/proposal-versions/* and lib/engine/generate-elite.ts
+// can be replaced with type-safe access.
+model ProposalVersion {
+  id                  String   @id @default(uuid())
+  tenderId            String
+  version             Int
+  markdown            String
+  fileContent         String?
+  benchmarkScore      Int?
+  qualityScore        Int?
+  winProbabilityScore Int?
+  mode                String?
+  summary             String?
+  createdAt           DateTime @default(now())
+
+  @@index([tenderId])
+  @@index([tenderId, version])
+}
+
+// ─── MatchScoreBreakdown (G3 fix) ────────────────────────────────────────────
+// PR XX-B — stores 12-perspective dimension scores for each TenderExpertMatch
+// or TenderProjectMatch row. The original engine match path and the AI
+// rematch path now write into the SAME table, so readiness, bid/no-bid,
+// evaluator simulator, and proposal generator all consume identical
+// scoring objects. dimensionCode follows the 12 perspectives:
+// DISCIPLINE_FIT, SCOPE_COVERAGE, SENIORITY_OR_SCALE, SECTOR_FIT,
+// ROLE_RECENCY, EVIDENCE_QUALITY, COMPLIANCE_CRITICALITY,
+// PORTFOLIO_CONTRIBUTION, MANDATORY_ELIGIBILITY, DELIVERY_RISK,
+// DIFFERENTIATION, COMMERCIAL_VALUE.
+model MatchScoreBreakdown {
+  id              String   @id @default(uuid())
+  tenderId        String
+  // entityType: "EXPERT" or "PROJECT"
+  entityType      String
+  // entityId points at Expert.id or Project.id (no FK constraint because
+  // the entityType chooses the table — Prisma can't model that safely).
+  entityId        String
+  // dimensionCode: one of the 12 perspective codes above.
+  dimensionCode   String
+  // raw 0–100 score for this dimension.
+  score           Float
+  // weight assigned to this dimension when computing overall score.
+  weight          Float    @default(1.0)
+  // optional rationale (1–2 sentences) explaining the score.
+  rationale       String?
+  // source: "AI_REMATCH" | "ENGINE_MATCH" | "DETERMINISTIC_FALLBACK".
+  source          String   @default("ENGINE_MATCH")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([tenderId, entityType, entityId, dimensionCode])
+  @@index([tenderId, entityType])
+  @@index([tenderId, entityId])
+}
+
+// ─── EvaluatorObjection (G4 fix) ─────────────────────────────────────────────
+// PR XX-C — stores evaluator-simulator objections as structured rows so:
+//   1. HIGH-severity unresolved objections become export blockers
+//      (export-readiness checks this table).
+//   2. Score trend can be tracked across versions.
+//   3. The "rerun evaluator after fixes" workflow knows which objections
+//      were closed and which are still open.
+model EvaluatorObjection {
+  id              String    @id @default(uuid())
+  tenderId        String
+  // version of the proposal this objection was raised against.
+  proposalVersion Int       @default(1)
+  // severity: "HIGH" | "MEDIUM" | "LOW"
+  severity        String
+  // category: "EVIDENCE_GAP" | "COMPLIANCE_GAP" | "EVAL_CRITERION_MISS" |
+  // "FACT_ERROR" | "PRICING_GAP" | "OTHER"
+  category        String
+  title           String
+  description     String
+  // section the objection points at, e.g. "Section A.1", "Cover Letter".
+  sectionRef      String?
+  // recommended action to close the objection.
+  recommendedAction String?
+  // status: "OPEN" | "RESOLVED" | "WAIVED"
+  status          String    @default("OPEN")
+  resolvedAt      DateTime?
+  resolvedBy      String?
+  resolutionNote  String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([tenderId, status])
+  @@index([tenderId, severity, status])
+}
+
+// ─── SectionEvidenceMap (G5 fix) ─────────────────────────────────────────────
+// PR XX-D — section-level evidence map. Each generated proposal section is
+// recorded with which requirements it covers, which evidence IDs it cites,
+// the text hash (so we can detect when a section has been edited), and
+// reviewer status. Powers:
+//   • "weak section" detector  (low evidence count, no requirement coverage)
+//   • "missing criterion depth" detector  (criterion has no section)
+//   • Section regeneration that preserves evidence references.
+model SectionEvidenceMap {
+  id              String   @id @default(uuid())
+  tenderId        String
+  proposalVersion Int      @default(1)
+  // canonical section ID, e.g. "cover-letter", "section-a-1", "section-c-2".
+  sectionId       String
+  sectionTitle    String
+  // pipe-joined IDs to keep the schema portable across SQLite/Postgres.
+  requirementIds  String   @default("")
+  evidenceIds     String   @default("")
+  expertIds       String   @default("")
+  projectIds      String   @default("")
+  textHash        String?
+  wordCount       Int      @default(0)
+  reviewerStatus  String   @default("PENDING")
+  reviewerNote    String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([tenderId, proposalVersion, sectionId])
+  @@index([tenderId])
+}
+
+// ─── AiJob / AiJobStep (G6 fix) ──────────────────────────────────────────────
+// PR XX-E — background job queue. Long-running AI workflows (proposal
+// generation, large rematch, evaluator simulation, deep Copilot analysis)
+// can now be enqueued and resumed across requests, avoiding the 60s
+// Vercel Hobby cap and 300s Pro cap. UI polls /api/ai-jobs/[id] for
+// status and step-by-step logs.
+model AiJob {
+  id            String      @id @default(uuid())
+  tenderId      String?
+  userId        String
+  // jobType: "PROPOSAL_GENERATION" | "AI_REMATCH" | "EVALUATOR_SIM" |
+  // "COPILOT_DEEP_ANALYSIS" | "PROFILE_FACT_EXTRACTION"
+  jobType       String
+  // status: "QUEUED" | "RUNNING" | "SUCCEEDED" | "FAILED" | "CANCELED"
+  status        String      @default("QUEUED")
+  // input (JSON-serialised) and output (JSON-serialised, may include refs).
+  input         String      @default("{}")
+  output        String?
+  errorMessage  String?
+  retries       Int         @default(0)
+  startedAt     DateTime?
+  finishedAt    DateTime?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  steps         AiJobStep[]
+
+  @@index([userId, status])
+  @@index([tenderId, jobType])
+  @@index([status, createdAt])
+}
+
+model AiJobStep {
+  id          String   @id @default(uuid())
+  jobId       String
+  job         AiJob    @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  stepIndex   Int
+  stepName    String
+  status      String   @default("PENDING")
+  message     String?
+  startedAt   DateTime?
+  finishedAt  DateTime?
+  createdAt   DateTime @default(now())
+
+  @@index([jobId, stepIndex])
+}
+
+// ─── PricingWorkbook + CostLine (G8 fix) ─────────────────────────────────────
+// PR XX-F — structured pricing engine. Replaces ad-hoc commercial
+// assumptions with a real pricing workbook the user can fill in,
+// Copilot can reason against, and the export gate can validate.
+model PricingWorkbook {
+  id              String     @id @default(uuid())
+  tenderId        String     @unique
+  currency        String     @default("USD")
+  // validity period in days
+  validityDays    Int        @default(90)
+  // VAT / withholding tax percent (0 if exempt)
+  vatPercent      Float      @default(0)
+  withholdingPct  Float      @default(0)
+  // contingency percent applied to subtotal
+  contingencyPct  Float      @default(0)
+  // scenario the user has settled on: "AGGRESSIVE" | "BALANCED" | "CONSERVATIVE"
+  scenario        String     @default("BALANCED")
+  // explicit price-leakage check performed in technical envelope?
+  noPriceLeakage  Boolean    @default(true)
+  notes           String?
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+  lines           CostLine[]
+
+  @@index([tenderId])
+}
+
+model CostLine {
+  id              String          @id @default(uuid())
+  workbookId      String
+  workbook        PricingWorkbook @relation(fields: [workbookId], references: [id], onDelete: Cascade)
+  // category: "PERSONNEL" | "REIMBURSABLE" | "SUBCONSULTANT" | "EQUIPMENT" |
+  //           "TRAVEL" | "OTHER"
+  category        String
+  // role label (for personnel) or description otherwise
+  label           String
+  // for personnel: days / months allocated; for non-personnel: quantity
+  quantity        Float           @default(1)
+  // unit: "DAY" | "MONTH" | "LUMP_SUM" | "EACH" | "KM"
+  unit            String          @default("DAY")
+  rate            Float           @default(0)
+  // optional reference to the expert (for personnel rows) so we can
+  // automatically pull the proposed expert's role and license from
+  // the chosen team.
+  expertId        String?
+  // computed total = quantity * rate (kept on the row to avoid
+  // re-computing in every UI render).
+  total           Float           @default(0)
+  notes           String?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  @@index([workbookId])
 }
