@@ -1,7 +1,8 @@
 import { AlignmentType, BorderStyle, Document, Footer, Header, HeadingLevel, Packer, PageNumber, Paragraph, Table, TableBorders, TableCell, TableRow, TextRun, WidthType } from "docx";
 import { prisma } from "../prisma";
 import { generateBenchmarkProposalWithAI, generateProposalSectionsParallel, getLastProposalProvider, isAIEnabled, refineProposalWithAI } from "../ai";
-import { buildProposalIntelligence, expertProofLine, projectProofLine, safeParseArr } from "./proposal-intelligence";
+import { buildCriterionEvidenceMap, buildProposalIntelligence, expertProofLine, projectProofLine, safeParseArr } from "./proposal-intelligence";
+import { enforceCanonicalNames } from "./entity-name-normalizer";
 import { exactSelectionLimit, forbidsBranding, forbidsCoverPage, requiresSignatureOrStamp } from "./scope-policy";
 import { finalizeClientReadyProposalMarkdown } from "./proposal-benchmark-guard";
 import { appendEvaluatorResponseMatrix } from "./proposal-evaluator-matrix";
@@ -26,6 +27,7 @@ import {
 import { enforceNarrativeThroughline } from "./narrative-throughline-enforcer";
 import { enrichSectorVocabulary } from "./sector-vocabulary-enricher";
 import { buildPortfolioMetricsBlock, computePortfolioMetrics } from "./portfolio-metrics";
+import { computeWinProbability, formatWinProbability } from "./win-probability";
 import { buildPrincipalQualificationsSection } from "./principal-qualifications";
 import { buildRisksMitigationsTable } from "./risks-mitigations";
 import { buildWhyUsSummary } from "./why-us-summary";
@@ -47,7 +49,7 @@ import {
 } from "./understanding-and-value-added";
 import { reorderToCanonicalSequence } from "./section-reorderer";
 import { renderDynamicTableOfContents } from "./dynamic-toc";
-import { humanize, humanizeDeterministic } from "./humanize";
+import { humanize, humanizeDeterministic, humanizeOpeningSections } from "./humanize";
 import { injectEvidenceMarkers } from "./evidence-marker-injector";
 import { amplifySectionCDepth } from "./section-c-depth-amplifier";
 import { injectMethodologyTables } from "./methodology-tables";
@@ -66,6 +68,7 @@ import { buildRubricPromptDirective, ensureRubricHeadings } from "./rubric-drive
 import { injectCoverPageAndRfpMeta } from "./cover-page-injector";
 import { injectJvDisclosure } from "./jv-disclosure";
 import { deduplicateTables, injectQaThresholds, injectAppendixReadinessRegister } from "./advanced-quality-passes";
+import { generateExpertCvDocx, expertCvFileName } from "./expert-cv-docx";
 
 const BRAND_BLUE = "1F4E79";
 const BRAND_GRAY = "595959";
@@ -1158,6 +1161,17 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
             .map((p) => (p as { clientName?: string | null }).clientName)
             .filter((c): c is string => Boolean(c && c.trim().length >= 3))
         )),
+        // Per-criterion evidence map — tells the AI which projects/experts
+        // are most relevant to each evaluation criterion, and at what depth
+        // (proportional to criterion weight). This eliminates the AI's
+        // tendency to spread evidence evenly across all sections regardless
+        // of scoring weight. Built from the extracted evaluationWeights +
+        // vault top candidates; empty string when no numeric weights found.
+        criterionEvidenceMap: buildCriterionEvidenceMap(
+          intelligence.evaluationWeights,
+          intelligence.topProjects,
+          intelligence.topExperts,
+        ),
       };
 
       sourceMarkdown = await withProposalAiTimeout(
@@ -1166,6 +1180,15 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
           : generateBenchmarkProposalWithAI(aiInput),
         PROPOSAL_AI_TIMEOUT_MS,
       );
+      // Canonical name normalization — fast post-assembly pass that replaces
+      // minor expert-name variations (Dr. X vs X, different middle initials)
+      // with the authoritative fullName from the Expert record, and strips
+      // spurious leading articles from project names ("the Hospital X" → "Hospital X").
+      // Runs on the raw AI output before any deterministic enrichers touch it
+      // so all downstream sections see consistent canonical names.
+      if (sourceMarkdown) {
+        sourceMarkdown = enforceCanonicalNames(sourceMarkdown, experts, projects);
+      }
       const provider = getLastProposalProvider() ?? "ai";
       const pathLabel = useParallel ? "section-parallel" : "single-call";
       mode = `${provider === "claude" ? "Claude" : provider === "gemini" ? "Gemini" : "AI"} ${pathLabel} bid-writer + evaluator response matrix + full evidence library + client-ready benchmark finalizer + professional DOCX polish`;
@@ -1462,12 +1485,26 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   // patterns and prose style are touched, not project names, expert
   // names, contract values, or evidence anchors.
   let humanizedMarkdown = humanizeDeterministic(clientMarkdown);
+
+  // Targeted opening-sections polish: rewrites only the Cover Letter and
+  // Executive Summary (~500 tokens each) so the highest-read sections
+  // sound like a senior consultant wrote them. Always-on — the small
+  // token budget keeps wall time under 15s even on Hobby tier.
+  try {
+    humanizedMarkdown = await humanizeOpeningSections(humanizedMarkdown);
+    console.info("[generate-elite] Targeted Cover Letter + Executive Summary humanization applied.");
+  } catch (err) {
+    console.warn(`[generate-elite] Opening-sections humanize failed (${err instanceof Error ? err.message : String(err)}) — keeping deterministic output.`);
+  }
+
+  // Full-proposal AI humanization pass (opt-in via PROPOSAL_HUMANIZE_AI=true).
+  // Adds 25–45s. Not recommended on Vercel Hobby (60s limit).
   const humanizeAiEnabled = (process.env.PROPOSAL_HUMANIZE_AI || "").toLowerCase() === "true";
   if (humanizeAiEnabled) {
     try {
       humanizedMarkdown = await humanize(humanizedMarkdown);
     } catch (err) {
-      console.warn(`[generate-elite] humanize AI pass failed (${err instanceof Error ? err.message : String(err)}) — keeping deterministic-cleaned output.`);
+      console.warn(`[generate-elite] Full-proposal humanize AI pass failed (${err instanceof Error ? err.message : String(err)}) — keeping output from opening-sections pass.`);
     }
   }
 
@@ -2211,7 +2248,14 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   const refinementLabel = refinementApplied
     ? ` + ${refinementProvider === "claude" ? "Claude" : refinementProvider === "gemini" ? "Gemini" : "AI"} refinement pass`
     : "";
-  const summary = `${mode}${refinementLabel} technical proposal generated. ${finalized.internalSummary}. ${auditSummary}. ${formatQualityScoreSummary(qualityScore)}. Inputs: ${intelligence.requiredSections.length} section group(s), ${intelligence.themes.length} tender theme(s), ${experts.length} reviewed expert(s), ${projects.length} reviewed project(s), ${companyEvidenceLines.length} company evidence item(s), ${projectEvidenceLines.length} project evidence attachment(s).${aiError ? ` AI fallback reason: ${aiError}` : ""}`;
+  const winProb = computeWinProbability({
+    primarySector: intelligence.primarySector,
+    projects: projects as Parameters<typeof computeWinProbability>[0]["projects"],
+    experts: experts as Parameters<typeof computeWinProbability>[0]["experts"],
+    complianceGaps: tender.complianceGaps,
+    bidOutcomes: (company as { bidOutcomes?: Array<{ won: boolean; primarySector?: string | null }> }).bidOutcomes,
+  });
+  const summary = `${mode}${refinementLabel} technical proposal generated. ${finalized.internalSummary}. ${auditSummary}. ${formatQualityScoreSummary(qualityScore)}. ${formatWinProbability(winProb)}. Inputs: ${intelligence.requiredSections.length} section group(s), ${intelligence.themes.length} tender theme(s), ${experts.length} reviewed expert(s), ${projects.length} reviewed project(s), ${companyEvidenceLines.length} company evidence item(s), ${projectEvidenceLines.length} project evidence attachment(s).${aiError ? ` AI fallback reason: ${aiError}` : ""}`;
 
   // ─── Save the main Technical Proposal (PR #256 fix) ─────────────────────
   // BUG (pre-PR #256): the engine looked for a planned slot whose
@@ -2302,4 +2346,98 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   }
 
   await prisma.tender.update({ where: { id: tenderId }, data: { status: "GENERATED", stage: "GENERATION", updatedAt: new Date() } });
+
+  // ─── Proposal version snapshot ──────────────────────────────────────────────
+  // Save the current proposal as a numbered version in ProposalVersion.
+  // Keeps only the last 5 versions per tender (oldest pruned automatically).
+  // Versions let users compare previous generations and roll back when a
+  // regeneration produces worse output than the prior run.
+  try {
+    const existingVersions = await prisma.$queryRawUnsafe<Array<{ version: number; id: string }>>(
+      `SELECT "version", "id" FROM "ProposalVersion" WHERE "tenderId" = $1 ORDER BY "version" DESC`,
+      tenderId
+    );
+    const nextVersion = existingVersions.length > 0 ? existingVersions[0].version + 1 : 1;
+
+    await prisma.$executeRawUnsafe(
+      `INSERT INTO "ProposalVersion" ("id","tenderId","version","markdown","fileContent","benchmarkScore","qualityScore","winProbabilityScore","mode","summary","createdAt")
+       VALUES (gen_random_uuid(),$1,$2,$3,$4,$5,$6,$7,$8,$9,NOW())`,
+      tenderId,
+      nextVersion,
+      workingMarkdown,
+      fileContent,
+      finalized.score.score,
+      qualityScore.total,
+      winProb.score,
+      mode,
+      summary.slice(0, 500),
+    );
+    console.info(`[generate-elite] Proposal version ${nextVersion} saved.`);
+
+    // Prune versions beyond the last 5.
+    if (existingVersions.length >= 5) {
+      const idsToDelete = existingVersions.slice(4).map((v) => v.id);
+      for (const vId of idsToDelete) {
+        await prisma.$executeRawUnsafe(`DELETE FROM "ProposalVersion" WHERE "id" = $1`, vId);
+      }
+      console.info(`[generate-elite] Pruned ${idsToDelete.length} old proposal version(s) (keeping last 5).`);
+    }
+  } catch (vErr) {
+    // Version saving is non-critical — never block the main proposal.
+    console.warn("[generate-elite] Proposal version snapshot failed:", vErr instanceof Error ? vErr.message : vErr);
+  }
+
+  // ─── Expert CV DOCX generation ──────────────────────────────────────────────
+  // Generate one professional CV Word document per selected REVIEWED expert.
+  // CVs are saved as separate GeneratedDocument records (documentType=
+  // "EXPERT_CV_PACKAGE") so the user can download them individually or as
+  // part of the ZIP bundle. They do NOT block the main proposal save above.
+  // Each CV follows the standard World Bank / FIDIC CV template layout.
+  if (experts.length > 0) {
+    const cvResults = await Promise.allSettled(
+      experts.slice(0, 12).map(async (expert) => {
+        const fileName = expertCvFileName(expert.fullName);
+        const cvBuffer = await generateExpertCvDocx({
+          fullName: expert.fullName,
+          title: (expert as { title?: string | null }).title,
+          email: (expert as { email?: string | null }).email,
+          phone: (expert as { phone?: string | null }).phone,
+          yearsExperience: (expert as { yearsExperience?: number | null }).yearsExperience,
+          disciplines: (expert as { disciplines?: string | null }).disciplines,
+          sectors: (expert as { sectors?: string | null }).sectors,
+          certifications: (expert as { certifications?: string | null }).certifications,
+          profile: (expert as { profile?: string | null }).profile,
+        });
+        const cvContent = cvBuffer.toString("base64");
+        const existing = await prisma.generatedDocument.findFirst({
+          where: { tenderId, exactFileName: fileName },
+        });
+        if (existing) {
+          await prisma.generatedDocument.update({
+            where: { id: existing.id },
+            data: { fileContent: cvContent, generationStatus: "GENERATED", updatedAt: new Date() },
+          });
+        } else {
+          await prisma.generatedDocument.create({
+            data: {
+              tenderId,
+              name: `CV — ${expert.fullName}`,
+              documentType: "EXPERT_CV_PACKAGE",
+              format: "DOCX",
+              exactFileName: fileName,
+              fileContent: cvContent,
+              generationStatus: "GENERATED",
+              validationStatus: "PENDING",
+              contentSummary: `Professional CV for ${expert.fullName}${(expert as { title?: string | null }).title ? `, ${(expert as { title?: string | null }).title}` : ""}.`,
+            },
+          });
+        }
+        return fileName;
+      })
+    );
+    const cvGenerated = cvResults.filter((r) => r.status === "fulfilled").length;
+    const cvFailed = cvResults.filter((r) => r.status === "rejected").length;
+    if (cvGenerated > 0) console.info(`[generate-elite] Expert CV DOCX: generated ${cvGenerated} CV(s).`);
+    if (cvFailed > 0) console.warn(`[generate-elite] Expert CV DOCX: ${cvFailed} CV(s) failed to generate.`);
+  }
 }

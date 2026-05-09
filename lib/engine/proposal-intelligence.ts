@@ -828,3 +828,71 @@ export function expertProofLine(expert: ExpertLite): string {
     profile || null,
   ].filter(Boolean).join(" | ");
 }
+
+/**
+ * Build a per-criterion evidence map — for each evaluation criterion (with its
+ * numeric weight), find the best-matching projects and experts from the firm's
+ * vault and return a structured block for injection into the Section C prompt.
+ *
+ * This tells the AI exactly which evidence to use for each weighted criterion
+ * instead of leaving it to guess from a flat list. The AI can then allocate
+ * prose depth proportionally: a 35%-weight methodology criterion gets 3×
+ * the depth of a 10%-weight compliance criterion.
+ */
+export function buildCriterionEvidenceMap(
+  weights: EvaluationWeight[],
+  topProjects: ProjectLite[],
+  topExperts: ExpertLite[],
+): string {
+  if (weights.length === 0) return "";
+
+  const lines: string[] = [
+    "EVALUATION CRITERION → BEST EVIDENCE MAP",
+    "(Allocate proposal depth PROPORTIONALLY to each criterion weight. Highest-weight criterion = most evidence-dense prose.)",
+  ];
+
+  for (const w of weights) {
+    const criterionLower = w.criterion.toLowerCase();
+    const keywords = criterionLower
+      .split(/\s+/)
+      .filter((k) => k.length > 3 && !/^(the|and|for|with|that|this|from|into|have|been|will|shall|must|only|also|when|where|which|their|each|both)$/.test(k));
+
+    if (keywords.length === 0) continue;
+
+    const scoredProjects = topProjects
+      .map((p) => {
+        const t = textOf(p.name, p.summary, p.sector, p.clientName, ...safeParseArr(p.serviceAreas)).toLowerCase();
+        const hits = keywords.filter((k) => t.includes(k)).length;
+        return { project: p, hits };
+      })
+      .filter((s) => s.hits > 0)
+      .sort((a, b) => b.hits - a.hits || (b.project.contractValue ?? 0) - (a.project.contractValue ?? 0))
+      .slice(0, 3);
+
+    const scoredExperts = topExperts
+      .map((e) => {
+        const t = textOf(e.fullName, e.title, e.profile, ...safeParseArr(e.disciplines), ...safeParseArr(e.sectors)).toLowerCase();
+        const hits = keywords.filter((k) => t.includes(k)).length;
+        return { expert: e, hits };
+      })
+      .filter((s) => s.hits > 0)
+      .sort((a, b) => b.hits - a.hits)
+      .slice(0, 3);
+
+    if (scoredProjects.length === 0 && scoredExperts.length === 0) continue;
+
+    lines.push(`\n[${w.weight}] ${w.criterion}`);
+    for (const { project } of scoredProjects) {
+      const val = project.contractValue
+        ? ` (${project.currency ?? "ETB"} ${(project.contractValue / 1_000_000).toFixed(1)}M)`
+        : "";
+      lines.push(`  PROJECT → ${project.name}${project.clientName ? ` — ${project.clientName}` : ""}${project.country ? `, ${project.country}` : ""}${val}`);
+    }
+    for (const { expert } of scoredExperts) {
+      const yrs = expert.yearsExperience ? ` (${expert.yearsExperience}yr)` : "";
+      lines.push(`  EXPERT  → ${expert.fullName}${expert.title ? `, ${expert.title}` : ""}${yrs}`);
+    }
+  }
+
+  return lines.length > 2 ? lines.join("\n") : "";
+}

@@ -156,10 +156,27 @@ export function scoreBenchmarkProposalMarkdown(markdown: string, input: Benchmar
     strengths.push("Project/reference evidence is represented.");
   } else gaps.push("Project/reference evidence is weak or absent.");
 
-  if (/methodology|approach|work plan|quality assurance|deliverable|mobilization|risk|schedule|coordination/i.test(markdown)) {
-    score += 15;
-    strengths.push("Technical methodology language is present.");
-  } else gaps.push("Technical methodology is too weak.");
+  // Methodology depth scoring: count paragraphs (>150 chars) that contain
+  // BOTH a methodology term AND a deliverable/phase term. This rewards depth
+  // (many specific sub-sections) over mere presence of the word "methodology".
+  {
+    const methodParagraphs = markdown.split(/\n{2,}/).filter((p) => {
+      if (p.length < 150) return false;
+      const hasMethodTerm = /methodology|approach|work plan|quality assurance|deliverable|mobilization|risk management|schedule|coordination|technical solution/i.test(p);
+      const hasDepthTerm = /stage|phase|step|deliverable|milestone|review gate|output|report|inspection|QA|BOQ|specification|survey|assessment|design.*detail|supervision/i.test(p);
+      return hasMethodTerm && hasDepthTerm;
+    });
+    const methodScore = methodParagraphs.length >= 6 ? 15
+      : methodParagraphs.length >= 4 ? 13
+      : methodParagraphs.length >= 2 ? 10
+      : methodParagraphs.length >= 1 ? 7
+      : /methodology|approach|work plan|deliverable/i.test(markdown) ? 4
+      : 0;
+    score += methodScore;
+    if (methodScore >= 13) strengths.push(`Technical methodology has substantive depth (${methodParagraphs.length} evidence-linked paragraphs).`);
+    else if (methodScore >= 7) strengths.push("Technical methodology language is present but could be deeper.");
+    else gaps.push("Technical methodology is too shallow — needs more staged, deliverable-linked sub-sections.");
+  }
 
   if (/compliance|bid review|submission|appendix|declaration|evidence|mitigation|to be confirmed/i.test(markdown)) {
     score += 15;

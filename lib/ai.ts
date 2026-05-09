@@ -474,6 +474,13 @@ export type AIBidWriterInput = {
   // cover letter "To:" line just because the firm has prior Pharo
   // projects in the vault.
   doNotUseAsClient?: string[];
+  // Per-criterion evidence map — built by buildCriterionEvidenceMap()
+  // in proposal-intelligence.ts. Maps each evaluation criterion (with
+  // its numeric weight) to the best-matching projects and experts from
+  // the vault. Injected into the Section C prompt so the AI allocates
+  // prose depth proportionally to criterion weight rather than
+  // distributing content evenly across all sections.
+  criterionEvidenceMap?: string;
 };
 
 // ─── Tender analysis ─────────────────────────────────────────────────────────

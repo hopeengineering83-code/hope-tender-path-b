@@ -364,6 +364,13 @@ Start directly with "# Section A: Company Profile". Do NOT output any cover lett
 }
 
 function buildTechnicalApproachPrompt(input: AIBidWriterInput): string {
+  // Criterion evidence map — inject when available so Claude knows
+  // exactly which evidence to cite per evaluation criterion, and at
+  // what prose depth (proportional to criterion weight).
+  const criterionBlock = input.criterionEvidenceMap && input.criterionEvidenceMap.trim().length > 0
+    ? `\n## CRITERION-TO-EVIDENCE ALLOCATION (NON-NEGOTIABLE — follow this exactly)\n${input.criterionEvidenceMap}\n\nFor EACH criterion above, write a dedicated sub-section in C.2 that:\n1. Cites the listed PROJECT(s) by name with contract value as proof of delivery\n2. Names the listed EXPERT(s) with their specific role on that project\n3. Allocates word count PROPORTIONAL to the criterion weight — the highest-weight criterion gets the longest, most evidence-dense sub-section\n`
+    : "";
+
   return `Write Section C — the Technical Approach — for this technical proposal.
 
 ## TENDER
@@ -376,9 +383,9 @@ ${input.tenderText.slice(0, 8_000)}
 ## ANALYSIS SUMMARY
 ${input.analysisSummary.slice(0, 2_500)}
 
-## EVALUATION CRITERIA (your methodology must score against these)
+## EVALUATION CRITERIA (your methodology must score against these — allocate depth proportionally to each criterion's weight)
 ${input.evaluationMethodology.slice(0, 2_500)}
-
+${criterionBlock}
 ## CONSOLIDATED REQUIREMENTS (especially technical and methodology requirements)
 ${input.requirements.slice(0, 4_000)}
 
@@ -587,10 +594,18 @@ function tierBudget(tier: Tier, deep: boolean): TierBudget {
     return { cover: 1700, ab: 2000, c: 2200, d: 1300, drillDown: 0 };
   }
   if (tier === 2) {
-    // Total ~9,400 — fits comfortably in 16K/min after prompt overhead.
-    return { cover: 2400, ab: 2400, c: 2800, d: 1800, drillDown: 0 };
+    // Total ~10,400 — fits in 16K/min after prompt overhead.
+    // Section C gets 3,500 (up from 2,800) because Technical Approach
+    // is the highest-scored section in most tenders. The criterion-
+    // evidence map injected into the prompt makes each extra token
+    // highly productive — Claude uses it to write evidence-anchored
+    // depth per criterion rather than generic methodology.
+    // drillDown=2000 is only activated when PROPOSAL_DEEP_MODE=true
+    // AND the four parallel calls have already completed (serial, not
+    // parallel — net wall-time add is ~10-12s on a warm Claude tier).
+    return { cover: 2400, ab: 2500, c: 3500, d: 2000, drillDown: deep ? 2000 : 0 };
   }
-  // Tier 3+: rich prose; deep mode activates extra drill-down
+  // Tier 3+: rich prose; deep mode activates full drill-down
   if (deep) {
     return { cover: 4500, ab: 5500, c: 6500, d: 3500, drillDown: 6000 };
   }

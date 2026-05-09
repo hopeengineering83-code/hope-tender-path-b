@@ -503,6 +503,24 @@ async function bootstrap(client: PrismaClient): Promise<void> {
     FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE
   )`);
 
+  // Proposal version history — stores the last N markdown + DOCX snapshots
+  // for each tender so users can compare and roll back to any prior version.
+  await client.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "ProposalVersion" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "tenderId" TEXT NOT NULL,
+    "version" INTEGER NOT NULL,
+    "markdown" TEXT NOT NULL,
+    "fileContent" TEXT,
+    "benchmarkScore" INTEGER,
+    "qualityScore" INTEGER,
+    "winProbabilityScore" INTEGER,
+    "mode" TEXT,
+    "summary" TEXT,
+    "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    FOREIGN KEY ("tenderId") REFERENCES "Tender"("id") ON DELETE CASCADE
+  )`);
+
+
   // ── indexes (each wrapped so one failure never blocks the rest) ──────────
   const idxStatements = [
     `CREATE INDEX IF NOT EXISTS "CompanyDocument_companyId_idx" ON "CompanyDocument"("companyId")`,
@@ -519,6 +537,8 @@ async function bootstrap(client: PrismaClient): Promise<void> {
     `CREATE INDEX IF NOT EXISTS "Notification_userId_createdAt_idx" ON "Notification"("userId", "createdAt")`,
     `CREATE INDEX IF NOT EXISTS "Expert_deletedAt_idx" ON "Expert"("deletedAt")`,
     `CREATE INDEX IF NOT EXISTS "Project_deletedAt_idx" ON "Project"("deletedAt")`,
+    `CREATE INDEX IF NOT EXISTS "ProposalVersion_tenderId_idx" ON "ProposalVersion"("tenderId")`,
+    `CREATE INDEX IF NOT EXISTS "ProposalVersion_tenderId_version_idx" ON "ProposalVersion"("tenderId", "version")`,
   ];
   for (const sql of idxStatements) {
     try { await client.$executeRawUnsafe(sql); } catch (e) {
