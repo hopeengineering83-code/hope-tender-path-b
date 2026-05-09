@@ -33,6 +33,9 @@ export type AuditAction =
   | "TENDER_COPILOT_QUESTION"
   // Evaluator committee simulation result recorded.
   | "EVALUATOR_COMMITTEE_RESULT"
+  // Evaluator objection closure workflow.
+  | "EVALUATOR_OBJECTION_RESOLVED"
+  | "EVALUATOR_OBJECTION_WAIVED"
   // Tender Control Ledger entries (one per control type).
   | "TENDER_CONTROL_ADDENDUM"
   | "TENDER_CONTROL_CLARIFICATION"
