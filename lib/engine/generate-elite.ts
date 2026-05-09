@@ -27,6 +27,7 @@ import {
 import { enforceNarrativeThroughline } from "./narrative-throughline-enforcer";
 import { enrichSectorVocabulary } from "./sector-vocabulary-enricher";
 import { buildPortfolioMetricsBlock, computePortfolioMetrics } from "./portfolio-metrics";
+import { computeWinProbability, formatWinProbability } from "./win-probability";
 import { buildPrincipalQualificationsSection } from "./principal-qualifications";
 import { buildRisksMitigationsTable } from "./risks-mitigations";
 import { buildWhyUsSummary } from "./why-us-summary";
@@ -67,6 +68,7 @@ import { buildRubricPromptDirective, ensureRubricHeadings } from "./rubric-drive
 import { injectCoverPageAndRfpMeta } from "./cover-page-injector";
 import { injectJvDisclosure } from "./jv-disclosure";
 import { deduplicateTables, injectQaThresholds, injectAppendixReadinessRegister } from "./advanced-quality-passes";
+import { generateExpertCvDocx, expertCvFileName } from "./expert-cv-docx";
 
 const BRAND_BLUE = "1F4E79";
 const BRAND_GRAY = "595959";
@@ -2232,7 +2234,14 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   const refinementLabel = refinementApplied
     ? ` + ${refinementProvider === "claude" ? "Claude" : refinementProvider === "gemini" ? "Gemini" : "AI"} refinement pass`
     : "";
-  const summary = `${mode}${refinementLabel} technical proposal generated. ${finalized.internalSummary}. ${auditSummary}. ${formatQualityScoreSummary(qualityScore)}. Inputs: ${intelligence.requiredSections.length} section group(s), ${intelligence.themes.length} tender theme(s), ${experts.length} reviewed expert(s), ${projects.length} reviewed project(s), ${companyEvidenceLines.length} company evidence item(s), ${projectEvidenceLines.length} project evidence attachment(s).${aiError ? ` AI fallback reason: ${aiError}` : ""}`;
+  const winProb = computeWinProbability({
+    primarySector: intelligence.primarySector,
+    projects: projects as Parameters<typeof computeWinProbability>[0]["projects"],
+    experts: experts as Parameters<typeof computeWinProbability>[0]["experts"],
+    complianceGaps: tender.complianceGaps,
+    bidOutcomes: (company as { bidOutcomes?: Array<{ won: boolean; primarySector?: string | null }> }).bidOutcomes,
+  });
+  const summary = `${mode}${refinementLabel} technical proposal generated. ${finalized.internalSummary}. ${auditSummary}. ${formatQualityScoreSummary(qualityScore)}. ${formatWinProbability(winProb)}. Inputs: ${intelligence.requiredSections.length} section group(s), ${intelligence.themes.length} tender theme(s), ${experts.length} reviewed expert(s), ${projects.length} reviewed project(s), ${companyEvidenceLines.length} company evidence item(s), ${projectEvidenceLines.length} project evidence attachment(s).${aiError ? ` AI fallback reason: ${aiError}` : ""}`;
 
   // ─── Save the main Technical Proposal (PR #256 fix) ─────────────────────
   // BUG (pre-PR #256): the engine looked for a planned slot whose
@@ -2323,4 +2332,58 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   }
 
   await prisma.tender.update({ where: { id: tenderId }, data: { status: "GENERATED", stage: "GENERATION", updatedAt: new Date() } });
+
+  // ─── Expert CV DOCX generation ──────────────────────────────────────────────
+  // Generate one professional CV Word document per selected REVIEWED expert.
+  // CVs are saved as separate GeneratedDocument records (documentType=
+  // "EXPERT_CV_PACKAGE") so the user can download them individually or as
+  // part of the ZIP bundle. They do NOT block the main proposal save above.
+  // Each CV follows the standard World Bank / FIDIC CV template layout.
+  if (experts.length > 0) {
+    const cvResults = await Promise.allSettled(
+      experts.slice(0, 12).map(async (expert) => {
+        const fileName = expertCvFileName(expert.fullName);
+        const cvBuffer = await generateExpertCvDocx({
+          fullName: expert.fullName,
+          title: (expert as { title?: string | null }).title,
+          email: (expert as { email?: string | null }).email,
+          phone: (expert as { phone?: string | null }).phone,
+          yearsExperience: (expert as { yearsExperience?: number | null }).yearsExperience,
+          disciplines: (expert as { disciplines?: string | null }).disciplines,
+          sectors: (expert as { sectors?: string | null }).sectors,
+          certifications: (expert as { certifications?: string | null }).certifications,
+          profile: (expert as { profile?: string | null }).profile,
+        });
+        const cvContent = cvBuffer.toString("base64");
+        const existing = await prisma.generatedDocument.findFirst({
+          where: { tenderId, exactFileName: fileName },
+        });
+        if (existing) {
+          await prisma.generatedDocument.update({
+            where: { id: existing.id },
+            data: { fileContent: cvContent, generationStatus: "GENERATED", updatedAt: new Date() },
+          });
+        } else {
+          await prisma.generatedDocument.create({
+            data: {
+              tenderId,
+              name: `CV — ${expert.fullName}`,
+              documentType: "EXPERT_CV_PACKAGE",
+              format: "DOCX",
+              exactFileName: fileName,
+              fileContent: cvContent,
+              generationStatus: "GENERATED",
+              validationStatus: "PENDING",
+              contentSummary: `Professional CV for ${expert.fullName}${(expert as { title?: string | null }).title ? `, ${(expert as { title?: string | null }).title}` : ""}.`,
+            },
+          });
+        }
+        return fileName;
+      })
+    );
+    const cvGenerated = cvResults.filter((r) => r.status === "fulfilled").length;
+    const cvFailed = cvResults.filter((r) => r.status === "rejected").length;
+    if (cvGenerated > 0) console.info(`[generate-elite] Expert CV DOCX: generated ${cvGenerated} CV(s).`);
+    if (cvFailed > 0) console.warn(`[generate-elite] Expert CV DOCX: ${cvFailed} CV(s) failed to generate.`);
+  }
 }
