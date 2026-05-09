@@ -8,6 +8,7 @@ import { buildDocumentPlan } from "./documents";
 import { buildMatches } from "./matching";
 import { applyMainEngineBestAvailableSelection } from "./main-engine-selection-policy";
 import { applyAIRematchToMainEngine } from "./main-engine-ai-rematch";
+import type { MatchPerspective } from "./ai-multi-perspective-matcher";
 
 function chunks<T>(items: T[], size = 100): T[][] {
   const out: T[][] = [];
@@ -22,26 +23,25 @@ async function writeEngineRunAudit(args: {
   description: string;
   metadata: Record<string, unknown>;
 }) {
-  await logAction({
-    userId: args.userId,
-    action: args.action,
-    entityType: "Tender",
-    entityId: args.tenderId,
-    description: args.description,
-    metadata: args.metadata,
-  });
+  await logAction({ userId: args.userId, action: args.action, entityType: "Tender", entityId: args.tenderId, description: args.description, metadata: args.metadata });
 }
+
+type MainEngineAIRematchState = {
+  aiApplied: boolean;
+  expertAssessments: number;
+  projectAssessments: number;
+  selectedExpertCount: number;
+  selectedProjectCount: number;
+  warning: string | null;
+  expertScoreBreakdowns: Record<string, Partial<Record<MatchPerspective, number>>>;
+  projectScoreBreakdowns: Record<string, Partial<Record<MatchPerspective, number>>>;
+};
 
 export async function runTenderEngine(tenderId: string, userId: string) {
   const tender = await prisma.tender.findFirst({
     where: { id: tenderId, userId },
-    include: {
-      files: {
-        select: { id: true, originalFileName: true, mimeType: true, classification: true, extractedText: true },
-      },
-    },
+    include: { files: { select: { id: true, originalFileName: true, mimeType: true, classification: true, extractedText: true } } },
   });
-
   if (!tender) throw new Error("Tender not found");
 
   const company = await prisma.company.findUnique({
@@ -59,7 +59,6 @@ export async function runTenderEngine(tenderId: string, userId: string) {
 
   const engineRunId = randomUUID();
   const startedAt = new Date();
-
   await writeEngineRunAudit({
     userId,
     tenderId,
@@ -166,13 +165,15 @@ export async function runTenderEngine(tenderId: string, userId: string) {
       projectTrust: new Map(knowledge.projects.map((project) => [project.id, project.trustLevel])),
     });
 
-    let mainEngineAIRematch = {
+    let mainEngineAIRematch: MainEngineAIRematchState = {
       aiApplied: false,
       expertAssessments: 0,
       projectAssessments: 0,
       selectedExpertCount: matching.expertMatches.filter((match) => match.isSelected).length,
       selectedProjectCount: matching.projectMatches.filter((match) => match.isSelected).length,
-      warning: null as string | null,
+      warning: null,
+      expertScoreBreakdowns: {},
+      projectScoreBreakdowns: {},
     };
 
     if (isAIEnabled()) {
@@ -192,6 +193,8 @@ export async function runTenderEngine(tenderId: string, userId: string) {
         selectedExpertCount: aiRematch.selectedExpertCount,
         selectedProjectCount: aiRematch.selectedProjectCount,
         warning: aiRematch.warning,
+        expertScoreBreakdowns: aiRematch.expertScoreBreakdowns,
+        projectScoreBreakdowns: aiRematch.projectScoreBreakdowns,
       };
       if (aiRematch.warning) console.warn("[run-tender-engine] main-engine AI rematch warning:", aiRematch.warning);
     }
@@ -213,13 +216,7 @@ export async function runTenderEngine(tenderId: string, userId: string) {
             if (f.sourceConfidence === 0) continue;
             const prev = bestByReqId.get(f.requirementId);
             if (!prev || f.sourceConfidence > prev.confidence) {
-              bestByReqId.set(f.requirementId, {
-                fileId: f.sourceTenderFileId,
-                pageNumber: f.sourcePageNumber,
-                sectionHeading: f.sourceSectionHeading,
-                exactQuote: f.sourceExactQuote,
-                confidence: f.sourceConfidence,
-              });
+              bestByReqId.set(f.requirementId, { fileId: f.sourceTenderFileId, pageNumber: f.sourcePageNumber, sectionHeading: f.sourceSectionHeading, exactQuote: f.sourceExactQuote, confidence: f.sourceConfidence });
             }
           }
         }
@@ -233,8 +230,7 @@ export async function runTenderEngine(tenderId: string, userId: string) {
             req.sourceConfidence = coord.confidence;
           }
         }
-        const matched = bestByReqId.size;
-        console.info(`[run-tender-engine] requirement source extractor: ${matched}/${analysis.requirements.length} requirements matched to a source paragraph.`);
+        console.info(`[run-tender-engine] requirement source extractor: ${bestByReqId.size}/${analysis.requirements.length} requirements matched to a source paragraph.`);
       } catch (eErr) {
         console.warn("[run-tender-engine] requirement source extractor failed:", eErr instanceof Error ? eErr.message : eErr);
       }
@@ -272,23 +268,8 @@ export async function runTenderEngine(tenderId: string, userId: string) {
 
     const activeGeneratedDocuments = await prisma.generatedDocument.findMany({
       where: { tenderId, generationStatus: { not: "SUPERSEDED" } },
-      select: {
-        id: true,
-        name: true,
-        documentType: true,
-        exactFileName: true,
-        exactOrder: true,
-        generationStatus: true,
-        validationStatus: true,
-        reviewStatus: true,
-        reviewedBy: true,
-        reviewedAt: true,
-        createdAt: true,
-        updatedAt: true,
-        _count: { select: { reviews: true, comments: true } },
-      },
+      select: { id: true, name: true, documentType: true, exactFileName: true, exactOrder: true, generationStatus: true, validationStatus: true, reviewStatus: true, reviewedBy: true, reviewedAt: true, createdAt: true, updatedAt: true, _count: { select: { reviews: true, comments: true } } },
     });
-
     const existingCounts = await Promise.all([
       prisma.tenderRequirement.count({ where: { tenderId } }),
       prisma.tenderExpertMatch.count({ where: { tenderId } }),
@@ -325,17 +306,7 @@ export async function runTenderEngine(tenderId: string, userId: string) {
           })),
         },
       });
-
-      await prisma.generatedDocument.updateMany({
-        where: { tenderId, generationStatus: { not: "SUPERSEDED" } },
-        data: {
-          generationStatus: "SUPERSEDED",
-          validationStatus: "SUPERSEDED",
-          reviewStatus: "SUPERSEDED",
-          reviewNotes: `Superseded by tender engine run ${engineRunId}. Review/comment history preserved on this historical document record.`,
-          updatedAt: new Date(),
-        },
-      });
+      await prisma.generatedDocument.updateMany({ where: { tenderId, generationStatus: { not: "SUPERSEDED" } }, data: { generationStatus: "SUPERSEDED", validationStatus: "SUPERSEDED", reviewStatus: "SUPERSEDED", reviewNotes: `Superseded by tender engine run ${engineRunId}. Review/comment history preserved on this historical document record.`, updatedAt: new Date() } });
     }
 
     await prisma.tenderExpertMatch.deleteMany({ where: { tenderId } });
@@ -345,10 +316,8 @@ export async function runTenderEngine(tenderId: string, userId: string) {
     await prisma.tenderRequirement.deleteMany({ where: { tenderId } });
 
     for (const batch of chunks(requirementRows, 100)) await prisma.tenderRequirement.createMany({ data: batch });
-
     const expertMatchRows = matching.expertMatches.map((match) => ({ tenderId, expertId: match.expertId, score: match.score, rationale: match.rationale, isSelected: match.isSelected }));
     for (const batch of chunks(expertMatchRows, 100)) await prisma.tenderExpertMatch.createMany({ data: batch, skipDuplicates: true });
-
     const projectMatchRows = matching.projectMatches.map((match) => ({ tenderId, projectId: match.projectId, score: match.score, rationale: match.rationale, isSelected: match.isSelected }));
     for (const batch of chunks(projectMatchRows, 100)) await prisma.tenderProjectMatch.createMany({ data: batch, skipDuplicates: true });
 
@@ -360,61 +329,34 @@ export async function runTenderEngine(tenderId: string, userId: string) {
       for (const m of matching.expertMatches) {
         const expert = knowledge.experts.find((e) => e.id === m.expertId);
         if (!expert) continue;
+        const aiPerspectives = mainEngineAIRematch.expertScoreBreakdowns[m.expertId];
         const candidateText = [expert.fullName ?? "", expert.title ?? "", expert.profile ?? "", expert.disciplines ?? "", expert.sectors ?? ""].join(" ");
-        const perspectives = deterministicScoreBreakdown({ candidateText, tenderText: tenderTextForScoring, evaluationText: evalText });
-        await writeScoreBreakdown({ tenderId, entityType: "EXPERT", entityId: expert.id, perspectives, source: mainEngineAIRematch.aiApplied ? "AI_REMATCH" : "ENGINE_MATCH" });
+        const perspectives = aiPerspectives ?? deterministicScoreBreakdown({ candidateText, tenderText: tenderTextForScoring, evaluationText: evalText });
+        await writeScoreBreakdown({ tenderId, entityType: "EXPERT", entityId: expert.id, perspectives, source: aiPerspectives ? "AI_REMATCH" : "ENGINE_MATCH" });
       }
 
       for (const m of matching.projectMatches) {
         const project = knowledge.projects.find((p) => p.id === m.projectId);
         if (!project) continue;
+        const aiPerspectives = mainEngineAIRematch.projectScoreBreakdowns[m.projectId];
         const candidateText = [project.name ?? "", project.clientName ?? "", project.summary ?? "", project.sector ?? "", project.country ?? ""].join(" ");
-        const perspectives = deterministicScoreBreakdown({ candidateText, tenderText: tenderTextForScoring, evaluationText: evalText });
-        await writeScoreBreakdown({ tenderId, entityType: "PROJECT", entityId: project.id, perspectives, source: mainEngineAIRematch.aiApplied ? "AI_REMATCH" : "ENGINE_MATCH" });
+        const perspectives = aiPerspectives ?? deterministicScoreBreakdown({ candidateText, tenderText: tenderTextForScoring, evaluationText: evalText });
+        await writeScoreBreakdown({ tenderId, entityType: "PROJECT", entityId: project.id, perspectives, source: aiPerspectives ? "AI_REMATCH" : "ENGINE_MATCH" });
       }
     } catch (sErr) {
-      console.warn("[run-tender-engine] deterministic score breakdown write failed:", sErr instanceof Error ? sErr.message : sErr);
+      console.warn("[run-tender-engine] score breakdown write failed:", sErr instanceof Error ? sErr.message : sErr);
     }
 
-    const matrixRows = compliance.matrices.map((matrix) => ({
-      tenderId,
-      requirementId: matrix.requirementId,
-      evidenceType: matrix.evidenceType,
-      evidenceSource: matrix.evidenceSource,
-      evidenceReference: matrix.evidenceReference ?? null,
-      supportLevel: matrix.supportStatus,
-      notes: [matrix.evidenceSummary, matrix.notes].filter(Boolean).join(" | ") || null,
-    }));
+    const matrixRows = compliance.matrices.map((matrix) => ({ tenderId, requirementId: matrix.requirementId, evidenceType: matrix.evidenceType, evidenceSource: matrix.evidenceSource, evidenceReference: matrix.evidenceReference ?? null, supportLevel: matrix.supportStatus, notes: [matrix.evidenceSummary, matrix.notes].filter(Boolean).join(" | ") || null }));
     for (const batch of chunks(matrixRows, 100)) await prisma.complianceMatrix.createMany({ data: batch });
 
-    const gapRows = compliance.gaps.map((gap) => ({
-      tenderId,
-      requirementId: gap.requirementId ?? null,
-      severity: gap.severity,
-      title: gap.title,
-      description: gap.description,
-      mitigationPlan: gap.mitigationPlan ?? null,
-    }));
+    const gapRows = compliance.gaps.map((gap) => ({ tenderId, requirementId: gap.requirementId ?? null, severity: gap.severity, title: gap.title, description: gap.description, mitigationPlan: gap.mitigationPlan ?? null }));
     if (hasDraftKnowledge) {
-      gapRows.push({
-        tenderId,
-        requirementId: null,
-        severity: "HIGH",
-        title: "Draft company knowledge requires review",
-        description: `The company knowledge base contains ${aiDraftExpertCount} AI_DRAFT expert(s), ${regexDraftExpertCount} REGEX_DRAFT expert(s), ${aiDraftProjectCount} AI_DRAFT project(s), and ${regexDraftProjectCount} REGEX_DRAFT project(s). Draft records are not used as final submission evidence until marked REVIEWED.`,
-        mitigationPlan: "Open Company Knowledge Review, verify source evidence, correct fields, and mark valid expert/project records as REVIEWED before final generation.",
-      });
+      gapRows.push({ tenderId, requirementId: null, severity: "HIGH", title: "Draft company knowledge requires review", description: `The company knowledge base contains ${aiDraftExpertCount} AI_DRAFT expert(s), ${regexDraftExpertCount} REGEX_DRAFT expert(s), ${aiDraftProjectCount} AI_DRAFT project(s), and ${regexDraftProjectCount} REGEX_DRAFT project(s). Draft records are not used as final submission evidence until marked REVIEWED.`, mitigationPlan: "Open Company Knowledge Review, verify source evidence, correct fields, and mark valid expert/project records as REVIEWED before final generation." });
     }
     for (const batch of chunks(gapRows, 100)) await prisma.complianceGap.createMany({ data: batch });
 
-    const documentRows = documentPlan.documents.map((document) => ({
-      tenderId,
-      name: document.name,
-      documentType: document.documentType,
-      exactFileName: document.exactFileName ?? null,
-      exactOrder: typeof document.exactOrder === "number" ? document.exactOrder : null,
-      contentSummary: document.contentSummary,
-    }));
+    const documentRows = documentPlan.documents.map((document) => ({ tenderId, name: document.name, documentType: document.documentType, exactFileName: document.exactFileName ?? null, exactOrder: typeof document.exactOrder === "number" ? document.exactOrder : null, contentSummary: document.contentSummary }));
     for (const batch of chunks(documentRows, 100)) await prisma.generatedDocument.createMany({ data: batch });
 
     await prisma.tender.update({
@@ -434,9 +376,7 @@ export async function runTenderEngine(tenderId: string, userId: string) {
           "Main engine selection: reviewed best-available evidence below 90% can be selected when no selected safe evidence exists for a required class; draft knowledge remains excluded from final evidence.",
           mainEngineAIRematch.aiApplied ? `Main engine AI multi-perspective scoring applied automatically: ${mainEngineAIRematch.expertAssessments} expert assessment(s), ${mainEngineAIRematch.projectAssessments} project assessment(s), ${mainEngineAIRematch.selectedExpertCount} selected expert(s), ${mainEngineAIRematch.selectedProjectCount} selected project(s).` : null,
           mainEngineAIRematch.warning ? `Main engine AI multi-perspective scoring fallback: ${mainEngineAIRematch.warning}` : null,
-          analysisMethod === "AI"
-            ? "Analysis source: AI (chunked multi-call when tender > 60K chars)."
-            : `Analysis source: regex fallback (${analysisMethod}). ${analysisFallbackReason ?? ""}`.trim(),
+          analysisMethod === "AI" ? "Analysis source: AI (chunked multi-call when tender > 60K chars)." : `Analysis source: regex fallback (${analysisMethod}). ${analysisFallbackReason ?? ""}`.trim(),
           hardGaps > 0 ? `${hardGaps} hard evidence gap(s) remain.` : null,
           reviewGaps > 0 ? `${reviewGaps} senior review item(s) remain; these are not automatic fatal blockers.` : null,
           knowledgeReadiness.hasBlockingExperts ? `${knowledgeReadiness.aiDraftExperts + knowledgeReadiness.regexDraftExperts} expert record(s) are draft and excluded from final evidence until REVIEWED.` : null,
@@ -461,23 +401,8 @@ export async function runTenderEngine(tenderId: string, userId: string) {
         durationMs: Date.now() - startedAt.getTime(),
         analysisMethod,
         analysisFallbackReason,
-        previousStateCounts: {
-          requirements: existingCounts[0],
-          expertMatches: existingCounts[1],
-          projectMatches: existingCounts[2],
-          complianceRows: existingCounts[3],
-          gaps: existingCounts[4],
-          activeGeneratedDocuments: existingCounts[5],
-        },
-        newStateCounts: {
-          requirements: requirementRows.length,
-          expertMatches: expertMatchRows.length,
-          projectMatches: projectMatchRows.length,
-          complianceRows: matrixRows.length,
-          gaps: gapRows.length,
-          generatedDocuments: documentRows.length,
-          supersededGeneratedDocuments: activeGeneratedDocuments.length,
-        },
+        previousStateCounts: { requirements: existingCounts[0], expertMatches: existingCounts[1], projectMatches: existingCounts[2], complianceRows: existingCounts[3], gaps: existingCounts[4], activeGeneratedDocuments: existingCounts[5] },
+        newStateCounts: { requirements: requirementRows.length, expertMatches: expertMatchRows.length, projectMatches: projectMatchRows.length, complianceRows: matrixRows.length, gaps: gapRows.length, generatedDocuments: documentRows.length, supersededGeneratedDocuments: activeGeneratedDocuments.length },
         readinessScore,
         hardGapCount: hardGaps,
         reviewGapCount: reviewGaps,
@@ -500,19 +425,7 @@ export async function runTenderEngine(tenderId: string, userId: string) {
       },
     });
   } catch (error) {
-    await writeEngineRunAudit({
-      userId,
-      tenderId,
-      action: "TENDER_ENGINE_RUN_FAILED",
-      description: `Tender engine run failed for "${tender.title}"`,
-      metadata: {
-        engineRunId,
-        startedAt: startedAt.toISOString(),
-        failedAt: new Date().toISOString(),
-        durationMs: Date.now() - startedAt.getTime(),
-        error: error instanceof Error ? error.message : String(error),
-      },
-    });
+    await writeEngineRunAudit({ userId, tenderId, action: "TENDER_ENGINE_RUN_FAILED", description: `Tender engine run failed for "${tender.title}"`, metadata: { engineRunId, startedAt: startedAt.toISOString(), failedAt: new Date().toISOString(), durationMs: Date.now() - startedAt.getTime(), error: error instanceof Error ? error.message : String(error) } });
     throw error;
   }
 }
