@@ -115,11 +115,19 @@ const JSON_SHAPE = `OUTPUT STRICT JSON ARRAY ONLY:
   }
 ]`;
 
+const HARD_SECTOR_RULES = `HARD SECTOR SAFETY RULES:
+- For hospital / healthcare / clinic / medical tenders, projects that are only warehouse, logistics, freight, cargo, terminal, supply-chain, or industrial storage experience are NOT comparable references unless the record explicitly says hospital/healthcare/clinical/medical/biomedical/pharmacy/laboratory scope.
+- A warehouse/logistics-only record for a hospital tender must receive SECTOR_FIT <= 2, DISCIPLINE_FIT <= 4, SCOPE_COVERAGE <= 4, MANDATORY_ELIGIBILITY <= 4, DELIVERY_RISK <= 3, and recommendSelection=false.
+- Similar wording applies to other sectors: sector mismatch must be treated as a real evaluator risk, not a keyword match.
+- Best-available below 90 can be selected only after excluding unsafe sector mismatches and mandatory-ineligible records.`;
+
 const EXPERT_MATCHER_SYSTEM_PROMPT = `You are a senior bid director, technical evaluator, and red-team reviewer. You select expert teams for competitive tenders and think like a real evaluation panel, not a keyword search engine.
 
 Score EVERY candidate from TWELVE perspectives using only evidence in the candidate record. Do not invent project roles, certificates, healthcare experience, dates, availability, or responsibilities.
 
 ${PERSPECTIVE_SPEC}
+
+${HARD_SECTOR_RULES}
 
 ${JSON_SHAPE}
 
@@ -137,11 +145,13 @@ Score EVERY project from TWELVE perspectives using only evidence in the project 
 
 ${PERSPECTIVE_SPEC}
 
+${HARD_SECTOR_RULES}
+
 ${JSON_SHAPE}
 
 Rules:
 - Think multi-dimensionally: technical fit, eligibility, evidence, scale, delivery risk, strategy, and portfolio complement must all influence the score.
-- A weak but best-available reference can still be selected when no perfect reference exists.
+- A weak but best-available reference can still be selected when no perfect reference exists, but unsafe sector mismatches must not be selected.
 - If information is missing, score the affected perspective 5 and prefix the concern with INSUFFICIENT_INFO.
 - DELIVERY_RISK is reverse-risk: 10 means low risk, 0 means unacceptable risk.
 - recommendSelection means "would consider for the best-available reference set", not "perfect match".
@@ -206,46 +216,16 @@ function buildProjectUserPrompt(opts: { tenderTitle: string; tenderRequirementsT
   return `## TENDER\nTITLE: ${opts.tenderTitle}\nSECTOR: ${opts.tenderCategory ?? "<not specified>"}\n\n## TENDER REQUIREMENTS\n${opts.tenderRequirementsText.slice(0, 8_000)}\n\n## CANDIDATE PROJECTS (${opts.candidates.length})\n${candidateLines}\n\nReturn one JSON object per candidate, scoring all twelve perspectives.`;
 }
 
-/**
- * Parse the AI multi-perspective rematch response with maximum tolerance
- * for the real-world output shapes Claude actually emits.
- *
- * Pre-fix (strict): a single regex `/[\s\S]*]/` greedy match + JSON.parse.
- * Failure modes that returned null:
- *   1. Markdown fences ```json ... ```
- *   2. Wrapper objects: { "candidates": [...], "summary": "..." }
- *   3. Truncated output (max_tokens hit mid-array): `[{...}, {...},`
- *   4. Trailing commas: `[{...},]` (Claude occasionally emits these)
- *   5. Preamble text: "Here are the assessments:\n[...]"
- *   6. Multiple JSON arrays in output (best-of-N hallucination)
- *
- * The user's production saw "AI rematch returned no usable assessments"
- * — meaning BOTH AI calls returned content but parsing failed both. The
- * post-PR-SS parser tries 5 increasingly-tolerant strategies in order:
- *   1. Strict parse of the whole cleaned response
- *   2. Strict parse of the LARGEST balanced JSON array in the response
- *   3. Strict parse of any wrapper object's `candidates` / `assessments` /
- *      `data` array property
- *   4. Trailing-comma repair + re-parse
- *   5. Truncation repair: balance-close the first incomplete array
- *
- * Returns the first non-null result. Logs (warn) which strategy succeeded
- * so we know which AI quirk is most common in production.
- */
 function parseAssessmentArray(raw: string): Array<Record<string, unknown>> | null {
   if (!raw || typeof raw !== "string") return null;
-
-  // Strip code fences and trim — applies to every strategy below.
   const cleaned = raw
-    .replace(/^[\s\S]*?```(?:json)?\s*/i, (m) => m.includes("```") ? "" : m) // strip everything up to first ``` if present
+    .replace(/^[\s\S]*?```(?:json)?\s*/i, (m) => m.includes("```") ? "" : m)
     .replace(/```[\s\S]*$/i, "")
     .trim();
 
-  // Strategy 1 — strict parse of the whole cleaned response.
   try {
     const parsed = JSON.parse(cleaned);
     if (Array.isArray(parsed)) return parsed as Array<Record<string, unknown>>;
-    // Wrapper object — strategy 3 unwrap inline.
     if (parsed && typeof parsed === "object") {
       const wrapperKeys = ["candidates", "assessments", "data", "results", "items", "scores"];
       for (const key of wrapperKeys) {
@@ -255,9 +235,6 @@ function parseAssessmentArray(raw: string): Array<Record<string, unknown>> | nul
     }
   } catch { /* continue */ }
 
-  // Strategy 2 — find the largest balanced JSON array in the response.
-  // Use bracket-counting instead of greedy regex so nested arrays don't
-  // break the boundaries.
   const findBalancedArrays = (s: string): string[] => {
     const out: string[] = [];
     let depth = 0;
@@ -281,37 +258,23 @@ function parseAssessmentArray(raw: string): Array<Record<string, unknown>> | nul
   for (const c of candidates) {
     try {
       const parsed = JSON.parse(c);
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        return parsed as Array<Record<string, unknown>>;
-      }
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed as Array<Record<string, unknown>>;
     } catch { /* continue */ }
   }
 
-  // Strategy 4 — trailing comma repair on each candidate array.
   for (const c of candidates) {
     try {
-      const repaired = c
-        .replace(/,(\s*])/g, "$1") // trailing comma before ]
-        .replace(/,(\s*})/g, "$1"); // trailing comma before }
+      const repaired = c.replace(/,(\s*])/g, "$1").replace(/,(\s*})/g, "$1");
       const parsed = JSON.parse(repaired);
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        return parsed as Array<Record<string, unknown>>;
-      }
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed as Array<Record<string, unknown>>;
     } catch { /* continue */ }
   }
 
-  // Strategy 5 — truncation repair. AI hit max_tokens mid-array.
-  // Find the first '[', then try to close it after the last fully-formed
-  // object (the last `}` followed by zero-or-more whitespace and either
-  // ',' or end-of-string).
   const firstBracket = cleaned.indexOf("[");
   if (firstBracket >= 0) {
     const tail = cleaned.slice(firstBracket);
-    // Find the position of the last '}' in the tail.
     const lastObjEnd = tail.lastIndexOf("}");
     if (lastObjEnd > 0) {
-      // Truncate after that closing brace, drop any partial trailing
-      // object, and close the array with `]`.
       const truncated = tail.slice(0, lastObjEnd + 1).replace(/,\s*$/, "") + "]";
       try {
         const parsed = JSON.parse(truncated);
@@ -320,11 +283,8 @@ function parseAssessmentArray(raw: string): Array<Record<string, unknown>> | nul
           return parsed as Array<Record<string, unknown>>;
         }
       } catch { /* fall through */ }
-      // Try with trailing-comma repair too.
       try {
-        const repaired = truncated
-          .replace(/,(\s*])/g, "$1")
-          .replace(/,(\s*})/g, "$1");
+        const repaired = truncated.replace(/,(\s*])/g, "$1").replace(/,(\s*})/g, "$1");
         const parsed = JSON.parse(repaired);
         if (Array.isArray(parsed) && parsed.length > 0) {
           console.warn(`[ai-multi-perspective-matcher] Recovered ${parsed.length} candidates from truncated AI output via strategy 5+repair.`);
@@ -379,6 +339,57 @@ function computeOverallScore(perspectives: Record<MatchPerspective, number>): nu
   return Math.max(0, Math.min(1, weighted / 10 - riskPenalty));
 }
 
+const HEALTHCARE_RE = /\b(health|healthcare|hospital|medical|clinic|clinical|opd|ward|surgical|radiology|pharmacy|laboratory|biomedical|patient|maternity|emergency|icu|infection|ipc)\b/i;
+const LOGISTICS_RE = /\b(warehouse|logistics|freight|cargo|terminal|supply\s*chain|storage|depot|distribution\s+center|distribution\s+centre)\b/i;
+
+function projectText(candidate: ProjectCandidateInput): string {
+  return [
+    candidate.name,
+    candidate.clientName,
+    candidate.country,
+    candidate.sector,
+    candidate.serviceAreas.join(" "),
+    candidate.summary,
+  ].filter(Boolean).join(" ");
+}
+
+function isHospitalTender(opts: { tenderTitle: string; tenderRequirementsText: string; tenderCategory?: string | null }): boolean {
+  return HEALTHCARE_RE.test([opts.tenderTitle, opts.tenderRequirementsText, opts.tenderCategory ?? ""].join(" "));
+}
+
+function applyProjectSectorSafety(
+  opts: { tenderTitle: string; tenderRequirementsText: string; tenderCategory?: string | null },
+  candidate: ProjectCandidateInput,
+  assessment: CandidateAssessment,
+): CandidateAssessment {
+  const candidateText = projectText(candidate);
+  const hospitalTender = isHospitalTender(opts);
+  const candidateHasHealthcare = HEALTHCARE_RE.test(candidateText);
+  const logisticsOnlyCandidate = LOGISTICS_RE.test(candidateText) && !candidateHasHealthcare;
+
+  if (!hospitalTender || !logisticsOnlyCandidate) return assessment;
+
+  const perspectives: Record<MatchPerspective, number> = {
+    ...assessment.perspectives,
+    DISCIPLINE_FIT: Math.min(assessment.perspectives.DISCIPLINE_FIT, 4),
+    SCOPE_COVERAGE: Math.min(assessment.perspectives.SCOPE_COVERAGE, 4),
+    SECTOR_FIT: Math.min(assessment.perspectives.SECTOR_FIT, 2),
+    COMPLIANCE_CRITICALITY: Math.min(assessment.perspectives.COMPLIANCE_CRITICALITY, 4),
+    MANDATORY_ELIGIBILITY: Math.min(assessment.perspectives.MANDATORY_ELIGIBILITY, 4),
+    DELIVERY_RISK: Math.min(assessment.perspectives.DELIVERY_RISK, 3),
+    PORTFOLIO_CONTRIBUTION: Math.min(assessment.perspectives.PORTFOLIO_CONTRIBUTION, 3),
+  };
+
+  const sectorConcern = "SECTOR_MISMATCH: hospital/healthcare tender but this project evidence is warehouse/logistics-only with no explicit healthcare, hospital, clinical, medical, biomedical, pharmacy, or laboratory scope.";
+  return {
+    ...assessment,
+    perspectives,
+    overallScore: computeOverallScore(perspectives),
+    recommendSelection: false,
+    concern: assessment.concern ? `${sectorConcern} ${assessment.concern}`.slice(0, 360) : sectorConcern,
+  };
+}
+
 function coerceAssessment(raw: Record<string, unknown>): CandidateAssessment | null {
   const candidateId = typeof raw.candidateId === "string" ? raw.candidateId : null;
   if (!candidateId) return null;
@@ -423,7 +434,15 @@ export async function aiRematchProjects(opts: { tenderTitle: string; tenderRequi
   }
   const parsed = parseAssessmentArray(raw);
   if (!parsed) return null;
-  return { category: "PROJECT", assessments: parsed.map(coerceAssessment).filter((a): a is CandidateAssessment => a !== null), durationMs: Date.now() - t0 };
+  const byId = new Map(opts.candidates.map((candidate) => [candidate.id, candidate]));
+  const assessments = parsed
+    .map(coerceAssessment)
+    .filter((a): a is CandidateAssessment => a !== null)
+    .map((assessment) => {
+      const candidate = byId.get(assessment.candidateId);
+      return candidate ? applyProjectSectorSafety(opts, candidate, assessment) : assessment;
+    });
+  return { category: "PROJECT", assessments, durationMs: Date.now() - t0 };
 }
 
 export function formatAssessmentRationale(assessment: CandidateAssessment): string {
@@ -444,7 +463,7 @@ export function formatAssessmentRationale(assessment: CandidateAssessment): stri
     `Commercial value ${p.COMMERCIAL_VALUE}/10`,
   ].join(", ");
   const criticalFloor = Math.min(p.DISCIPLINE_FIT, p.SCOPE_COVERAGE, p.EVIDENCE_QUALITY, p.COMPLIANCE_CRITICALITY, p.MANDATORY_ELIGIBILITY);
-  const parts = [`[AI Multi-Perspective v3] Score ${pct}% — ${breakdown}. Critical-floor ${criticalFloor}/10.`];
+  const parts = [`[AI Multi-Perspective v4] Score ${pct}% — ${breakdown}. Critical-floor ${criticalFloor}/10.`];
   if (assessment.strength) parts.push(`✓ ${assessment.strength}`);
   if (assessment.concern) parts.push(`⚠ ${assessment.concern}`);
   if (assessment.recommendSelection) parts.push("Selected by 20-iteration best-available portfolio pass with critical-floor risk control.");
