@@ -1,4 +1,5 @@
 import { classifyUniversalTender, universalProfileSummary } from "./universal-tender-taxonomy";
+import { renderTenderResponseBlueprint } from "./tender-response-blueprint";
 
 export type EvaluatorMatrixInput = {
   tenderTitle: string;
@@ -136,6 +137,9 @@ function matrixTable(requirements: string[], input: EvaluatorMatrixInput): strin
 export function appendEvaluatorResponseMatrix(markdown: string, input: EvaluatorMatrixInput): string {
   let output = markdown.trim();
   const tenderProfile = classifyUniversalTender(`${input.tenderTitle}\n${input.requirements.join("\n")}`);
+
+  output += "\n\n" + renderTenderResponseBlueprint(input);
+
   output += "\n\n## Tender Criteria Response Matrix";
   output += `\nThis section maps the proposal response to the evaluator's criteria for ${clean(input.clientName)} / ${clean(input.tenderTitle)}. Universal tender profile: ${universalProfileSummary(tenderProfile)}.`;
 
