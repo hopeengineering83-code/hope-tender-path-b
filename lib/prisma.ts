@@ -479,6 +479,29 @@ async function bootstrap(client: PrismaClient): Promise<void> {
   // Project timeline fields
   await ensureColumn(client, "Project", "startDate", "TIMESTAMPTZ");
   await ensureColumn(client, "Project", "endDate", "TIMESTAMPTZ");
+  // Bid outcome tracking
+  await ensureColumn(client, "Tender", "bidOutcome", "TEXT");
+  await ensureColumn(client, "Tender", "bidOutcomeNote", "TEXT");
+  await ensureColumn(client, "Tender", "bidOutcomeAt", "TIMESTAMPTZ");
+  // Soft-delete for Expert + Project
+  await ensureColumn(client, "Expert", "deletedAt", "TIMESTAMPTZ");
+  await ensureColumn(client, "Expert", "deletedBy", "TEXT");
+  await ensureColumn(client, "Project", "deletedAt", "TIMESTAMPTZ");
+  await ensureColumn(client, "Project", "deletedBy", "TEXT");
+  // Notification table
+  await client.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "Notification" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "userId" TEXT NOT NULL,
+    "type" TEXT NOT NULL,
+    "title" TEXT NOT NULL,
+    "body" TEXT,
+    "entityType" TEXT,
+    "entityId" TEXT,
+    "link" TEXT,
+    "readAt" TIMESTAMPTZ,
+    "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE
+  )`);
 
   // ── indexes (each wrapped so one failure never blocks the rest) ──────────
   const idxStatements = [
@@ -492,6 +515,10 @@ async function bootstrap(client: PrismaClient): Promise<void> {
     `CREATE INDEX IF NOT EXISTS "TenderProjectMatch_tenderId_idx" ON "TenderProjectMatch"("tenderId")`,
     `CREATE UNIQUE INDEX IF NOT EXISTS "TenderExpertMatch_tenderId_expertId_key" ON "TenderExpertMatch"("tenderId", "expertId")`,
     `CREATE UNIQUE INDEX IF NOT EXISTS "TenderProjectMatch_tenderId_projectId_key" ON "TenderProjectMatch"("tenderId", "projectId")`,
+    `CREATE INDEX IF NOT EXISTS "Notification_userId_readAt_idx" ON "Notification"("userId", "readAt")`,
+    `CREATE INDEX IF NOT EXISTS "Notification_userId_createdAt_idx" ON "Notification"("userId", "createdAt")`,
+    `CREATE INDEX IF NOT EXISTS "Expert_deletedAt_idx" ON "Expert"("deletedAt")`,
+    `CREATE INDEX IF NOT EXISTS "Project_deletedAt_idx" ON "Project"("deletedAt")`,
   ];
   for (const sql of idxStatements) {
     try { await client.$executeRawUnsafe(sql); } catch (e) {
