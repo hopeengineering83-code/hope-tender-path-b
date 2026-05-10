@@ -66,6 +66,7 @@ describe("nodesByKind", () => {
 
 const hospitalTender = {
   tenderTitle: "RFP for Hospital Architectural Design, Interior Design, Supervision and Contract Administration",
+  clientName: "Health Client",
   requirements: [
     "The consultant shall provide hospital design, interior design, supervision and contract administration methodology.",
     "Bidders must submit similar healthcare project references and CVs for key experts.",
