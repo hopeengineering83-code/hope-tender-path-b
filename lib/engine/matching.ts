@@ -1,5 +1,6 @@
 import type { CompanyKnowledgeSnapshot, MatchingResult, RequirementDraft } from "./types";
 import { exactSelectionLimit } from "./scope-policy";
+import { deriveRequirementConstraintProfile } from "./requirement-constraints";
 
 // Per-record lexical interpretation cycles. For each candidate expert /
 // project, the matcher runs MATCHING_CYCLES different tokenization
@@ -270,8 +271,11 @@ function cycleQueryTokens(baseTokens: string[], cycle: number): string[] {
 }
 
 function selectedLimit(requirements: RequirementDraft[], type: string, available: number): number {
+  const profile = deriveRequirementConstraintProfile(requirements);
   const exact = exactSelectionLimit(requirements, type);
   if (exact > 0) return Math.min(exact, available);
+  if (type === "EXPERT" && profile.expertCount > 0) return Math.min(profile.expertCount, available);
+  if (type === "PROJECT_EXPERIENCE" && profile.projectCount > 0) return Math.min(profile.projectCount, available);
   const relevant = requirements.filter((r) => r.requirementType === type);
   if (relevant.length > 0) return Math.min(available, type === "EXPERT" ? 8 : 10);
   return Math.min(available, type === "EXPERT" ? 6 : 8);
