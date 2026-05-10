@@ -62,27 +62,52 @@ function tokens(value: string): string[] {
     .filter((word) => word.length >= 4 && !STOP.has(word));
 }
 
+function parseHeading(line: string): string | null {
+  const heading = line.match(/^(?:section\s+)?(\d{1,2}(?:\.\d{1,3}){0,3})\s+(.{4,140})$/i)
+    ?? line.match(/^(annex\s+[A-Z](?:\.\d{1,2})?)[\s:.\-]+(.{4,140})$/i)
+    ?? line.match(/^(article\s+[ivxlcdm]+)[\s:.\-]+(.{4,140})$/i);
+  return heading ? `${heading[1]} ${heading[2]}`.trim().slice(0, 140) : null;
+}
+
 function splitBlocks(text: string): Array<{ paragraph: string; pageNumber?: number; sectionHeading?: string }> {
   const out: Array<{ paragraph: string; pageNumber?: number; sectionHeading?: string }> = [];
   let currentPage: number | undefined;
   let currentHeading: string | undefined;
+
   for (const raw of text.replace(/\r\n?/g, "\n").split(/\n{2,}/)) {
-    const block = raw.trim();
-    if (!block) continue;
-    const page = block.match(/\[\s*page\s*(\d{1,4})\s*\]/i) ?? block.match(/^\(?\s*page\s+(\d{1,4})(?:\s+of\s+\d{1,4})?\s*\)?\s*$/i);
-    if (page) {
-      currentPage = Number(page[1]);
-      continue;
+    const lines = raw.split("\n").map((line) => line.trim()).filter(Boolean);
+    if (lines.length === 0) continue;
+    const paragraphLines: string[] = [];
+
+    for (const line of lines) {
+      const pageOnly = line.match(/^\[\s*page\s*(\d{1,4})\s*\]$/i)
+        ?? line.match(/^\(?\s*page\s+(\d{1,4})(?:\s+of\s+\d{1,4})?\s*\)?$/i);
+      if (pageOnly) {
+        currentPage = Number(pageOnly[1]);
+        continue;
+      }
+
+      const inlinePage = line.match(/\[\s*page\s*(\d{1,4})\s*\]/i);
+      let working = line;
+      if (inlinePage) {
+        currentPage = Number(inlinePage[1]);
+        working = line.replace(inlinePage[0], "").trim();
+        if (!working) continue;
+      }
+
+      const heading = parseHeading(working);
+      if (heading && working.length < 180) {
+        currentHeading = heading;
+        continue;
+      }
+
+      paragraphLines.push(working);
     }
-    const heading = block.match(/^(?:section\s+)?(\d{1,2}(?:\.\d{1,3}){0,3})\s+(.{4,140})$/i)
-      ?? block.match(/^(annex\s+[A-Z](?:\.\d{1,2})?)[\s:.\-]+(.{4,140})$/i)
-      ?? block.match(/^(article\s+[ivxlcdm]+)[\s:.\-]+(.{4,140})$/i);
-    if (heading) {
-      currentHeading = `${heading[1]} ${heading[2]}`.trim().slice(0, 140);
-      continue;
-    }
-    out.push({ paragraph: block, pageNumber: currentPage, sectionHeading: currentHeading });
+
+    const paragraph = paragraphLines.join(" ").trim();
+    if (paragraph) out.push({ paragraph, pageNumber: currentPage, sectionHeading: currentHeading });
   }
+
   return out;
 }
 
