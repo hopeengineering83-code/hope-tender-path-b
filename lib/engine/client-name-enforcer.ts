@@ -88,8 +88,10 @@ export function enforceClientName(
   let zoneStart = -1;
   let zoneEnd = -1;
   for (let i = 0; i < lines.length; i += 1) {
-    if (/^#\s+Cover Letter\b/i.test(lines[i]) && zoneStart < 0) zoneStart = i;
-    if (zoneStart >= 0 && /^#\s+Section A\b/i.test(lines[i])) { zoneEnd = i; break; }
+    if (/^#{1,4}\s+Cover Letter\b/i.test(lines[i]) && zoneStart < 0) zoneStart = i;
+    if (zoneStart >= 0 && /^#{1,4}\s+(?:Section\s+A\b|Company Profile\b|Corporate Information\b)/i.test(lines[i])) {
+      zoneEnd = i; break;
+    }
   }
   if (zoneEnd < 0) zoneEnd = lines.length;
   if (zoneStart < 0) return { markdown: result, substitutionsMade: 0 };
@@ -129,7 +131,9 @@ export function enforceClientName(
   for (let i = zoneStart; i < zoneEnd && i < lines.length; i += 1) {
     let line = lines[i];
     for (const wrongName of namesToReplace) {
-      const re = new RegExp(`\\b${escapeRegex(wrongName)}\\b`, "g");
+      // Use lookahead/lookbehind instead of \b so names with apostrophes
+      // (e.g. "O'Connor") match correctly — \b fails at non-word chars.
+      const re = new RegExp(`(?<![A-Za-z0-9])${escapeRegex(wrongName)}(?![A-Za-z0-9])`, "g");
       const before = line;
       line = line.replace(re, isPlaceholderClient(canonical) ? "[CLIENT TO BE CONFIRMED]" : canonical);
       if (line !== before) substitutionsMade += 1;

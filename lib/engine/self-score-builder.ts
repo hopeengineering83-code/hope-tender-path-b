@@ -64,7 +64,7 @@ export function hasSelfScoreHeading(markdown: string): boolean {
 
 function findWeight(criterion: string, weights: EvaluationWeightLite[]): string {
   if (weights.length === 0) return "—";
-  const distinctive = (s: string) => s.toLowerCase().match(/[a-z]{4,}/g) ?? [];
+  const distinctive = (s: string) => s.toLowerCase().match(/[a-z]{3,}/g) ?? [];
   const cTokens = new Set(distinctive(criterion));
   let bestScore = 0;
   let best = "";
@@ -139,7 +139,7 @@ function predictScore(criterion: string, input: SelfScoreBuilderInput): { score:
 
   // Numeric-weight boost.
   if (input.evaluationWeights.some((w) => {
-    const distinctive = (s: string) => s.toLowerCase().match(/[a-z]{4,}/g) ?? [];
+    const distinctive = (s: string) => s.toLowerCase().match(/[a-z]{3,}/g) ?? [];
     const wTokens = distinctive(w.criterion);
     const cTokens = new Set(distinctive(criterion));
     return wTokens.filter((t) => cTokens.has(t)).length >= 2;
@@ -166,7 +166,7 @@ export function buildSelfScoreSection(input: SelfScoreBuilderInput): string | nu
   if (criteria.length === 0) return null;
 
   type Row = { criterion: string; weight: string; score: number; rationale: string; risk: string };
-  const rows: Row[] = criteria.slice(0, 20).map((criterion) => {
+  const rows: Row[] = criteria.slice(0, 25).map((criterion) => {
     const { score, rationale, risk } = predictScore(criterion, input);
     return {
       criterion,

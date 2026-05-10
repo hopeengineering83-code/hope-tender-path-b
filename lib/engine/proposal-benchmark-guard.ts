@@ -66,7 +66,7 @@ function hasForbiddenWeakness(markdown: string): boolean {
 
 function mentionsAny(markdown: string, values: string[]): boolean {
   const lower = markdown.toLowerCase();
-  return values.filter(Boolean).some((value) => lower.includes(value.toLowerCase().slice(0, 80)));
+  return values.filter(Boolean).some((value) => lower.includes(value.toLowerCase().slice(0, 200)));
 }
 
 function normalizeWeakText(markdown: string): string {
@@ -78,7 +78,12 @@ function normalizeWeakText(markdown: string): string {
     .replace(/\bSure![^\n]*/gi, "")
     .replace(/\bOf course![^\n]*/gi, "")
     .replace(/\bI cannot[^.]*\./gi, "To be confirmed by bid team.")
-    .replace(/\bI'm unable[^.]*\./gi, "To be confirmed by bid team.")
+    .replace(/\bI(?:'m| am) unable[^.]*\./gi, "To be confirmed by bid team.")
+    .replace(/\bI(?:'d| would) be happy to[^.]*\./gi, "")
+    .replace(/\bI(?:'m| am) sorry[^.]*\./gi, "")
+    .replace(/\bRegrettably[^.]*\./gi, "")
+    .replace(/\bI(?:'m| am) not (?:sure|able to)[^.]*\./gi, "To be confirmed by bid team.")
+    .replace(/\bThis is a placeholder[^.]*\./gi, "")
     .replace(/\bPlease note that[^.]*\./gi, "")
     .replace(/\bI (?:believe|think|feel) that\b/gi, "")
     .replace(/\bIn my (?:view|opinion|assessment)\b/gi, "")
@@ -141,7 +146,7 @@ export function scoreBenchmarkProposalMarkdown(markdown: string, input: Benchmar
   const execSummaryMatch = markdown.match(/##?\s*Executive Summary[\s\S]{0,600}/i)?.[0] ?? "";
   const hasConcreteExecLead = execSummaryMatch.length > 0 &&
     (/ETB\s*\d|USD\s*\d|EUR\s*\d|\d+M\b|\d+B\b|billion|million/i.test(execSummaryMatch) ||
-     /(?:designed|delivered|supervised|completed|assessed|managed)\s+(?:the\s+)?[\w\s]{3,50}(?:hospital|clinic|project|centre|center|facility|school|bridge|road|water|tower)/i.test(execSummaryMatch));
+     /(?:designed|delivered|supervised|completed|assessed|managed|constructed|rehabilitated|upgraded|installed)\s+(?:the\s+)?[\w\s]{3,60}(?:hospital|clinic|project|centre|center|facility|school|bridge|road|water|tower|scheme|dam|reservoir|canal|station|terminal|port|plant|zone|corridor|institute|programme|pipeline|network|system)/i.test(execSummaryMatch));
   if (hasConcreteExecLead) {
     score += 5;
     strengths.push("Executive Summary opens with specific evidence — project name or contract value.");
@@ -226,7 +231,7 @@ function completeMissingClientSections(markdown: string, input: BenchmarkGuardIn
       output += "The technical approach is structured to directly address the scope of services and key technical requirements specified in the tender. The delivery methodology follows a staged process: (1) inception and document review, (2) stakeholder consultation and site data collection, (3) technical assessment and gap analysis, (4) concept and schematic design, (5) detailed design, specifications, BOQ, and cost estimates, (6) quality assurance review and client validation, and (7) construction-document finalisation and submission support. Each stage defines inputs, outputs, responsible experts, quality review checkpoints, and client approval milestones. The methodology incorporates risk controls for technical coordination, regulatory compliance, schedule management, and evidence sufficiency.\n";
     } else if (section === "Compliance and Bid Review Strategy") {
       output += "The proposal proceeds with the strongest reviewed evidence and carries unresolved evidence gaps as senior bid-review actions rather than unsupported claims.\n";
-      output += input.complianceLines.slice(0, 8).map((line) => `- ${line}`).join("\n") + "\n";
+      output += input.complianceLines.slice(0, 10).map((line) => `- ${line}`).join("\n") + "\n";
     } else if (section === "Appendix Register") {
       output += "Appendices should include only verified or bid-team-confirmed items: company registration, tax/legal documents, audited/financial documents, reviewed CVs, project references, certificates, forms, declarations, photos/drawings, and tender-specific schedules.\n";
     } else if (section === "Declaration") {
