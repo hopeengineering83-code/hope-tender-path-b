@@ -2,6 +2,7 @@ import { classifyUniversalTender, universalProfileSummary } from "./universal-te
 import { renderTenderResponseBlueprint } from "./tender-response-blueprint";
 import { applyProposalQualityRepairAddenda } from "./proposal-quality-repair";
 import { buildTenderFormStrategy, renderTenderFormStrategy } from "./tender-form-strategy";
+import { enforceTechnicalPriceSeparation } from "./proposal-price-leakage-guard";
 
 export type EvaluatorMatrixInput = {
   tenderTitle: string;
@@ -193,5 +194,5 @@ export function appendEvaluatorResponseMatrix(markdown: string, input: Evaluator
   for (const outputName of tenderFormStrategy.requiredOutputs.slice(0, 8)) output += `\n- Confirm required output is prepared/reconciled: ${outputName}.`;
   output += "\n- Confirm no unsupported claim, placeholder text, AI disclaimer, prohibited financial content or wrong file name remains in the final package.";
 
-  return applyProposalQualityRepairAddenda(output, input);
+  return enforceTechnicalPriceSeparation(applyProposalQualityRepairAddenda(output, input), input);
 }
