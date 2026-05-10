@@ -2,6 +2,7 @@ import { buildTenderFormStrategy, type TenderFormStrategy } from "./tender-form-
 import { buildTenderCriterionGraph, type TenderCriterionGraph, type TenderCriterionGraphNode } from "./tender-criterion-graph";
 import { buildTenderResponseBlueprint, type BlueprintEvidenceInput, type TenderResponseBlueprintItem } from "./tender-response-blueprint";
 import { classifyUniversalTender, universalProfileSummary } from "./universal-tender-taxonomy";
+import { buildSourceGroundedRequirementMap, renderSourceGroundedRequirementMap, type SourceGroundedRequirement, type TenderSourceDocument } from "./source-grounded-requirement-map";
 
 export type ProposalIntelligenceContractInput = BlueprintEvidenceInput & {
   evaluationCriteria?: string[];
@@ -10,6 +11,7 @@ export type ProposalIntelligenceContractInput = BlueprintEvidenceInput & {
   selectedProjectCount?: number;
   reviewedExpertCount?: number;
   reviewedProjectCount?: number;
+  tenderSources?: TenderSourceDocument[];
 };
 
 export type ProposalContractEvidenceSummary = {
@@ -21,6 +23,8 @@ export type ProposalContractEvidenceSummary = {
   directBlueprintEvidence: number;
   partialBlueprintEvidence: number;
   missingBlueprintEvidence: number;
+  groundedRequirements: number;
+  ungroundedRequirements: number;
 };
 
 export type ProposalContractRequirement = {
@@ -37,6 +41,7 @@ export type ProposalContractRequirement = {
   responseStrategy: string;
   responseAction: string;
   validationAction: string;
+  sourceGrounding: SourceGroundedRequirement | null;
 };
 
 export type ProposalContractSectionPlan = {
@@ -55,7 +60,7 @@ export type ProposalExportGate = {
 };
 
 export type ProposalIntelligenceContract = {
-  schemaVersion: "PIC-1";
+  schemaVersion: "PIC-2";
   tender: {
     title: string;
     clientName: string;
@@ -65,6 +70,7 @@ export type ProposalIntelligenceContract = {
   };
   tenderFormStrategy: TenderFormStrategy;
   criterionGraph: TenderCriterionGraph;
+  sourceGrounding: SourceGroundedRequirement[];
   requirements: ProposalContractRequirement[];
   sectionPlan: ProposalContractSectionPlan[];
   evidenceSummary: ProposalContractEvidenceSummary;
@@ -102,12 +108,14 @@ function bestSupport(a: TenderResponseBlueprintItem["evidenceSupport"], b: Tende
 function sectionInstruction(section: string, nodes: ProposalContractRequirement[]): string {
   const critical = nodes.filter((node) => node.riskLevel === "CRITICAL").length;
   const missing = nodes.filter((node) => node.evidenceSupport === "NEEDS_CONFIRMATION").length;
+  const ungrounded = nodes.filter((node) => node.sourceGrounding && !node.sourceGrounding.grounded).length;
   if (/commercial|financial/i.test(section)) return "Keep commercial/pricing content in the correct envelope or form; technical narrative must remain price-free when required.";
   if (/submission/i.test(section)) return "Write as a submission-control checklist with exact file, format, signature/stamp, recipient, deadline and channel checks.";
   if (/eligibility|forms|compliance/i.test(section)) return "Treat eligibility and prescribed forms as pass/fail controls; verify source documents and expiry/status before export.";
   if (/team|cv|personnel/i.test(section)) return "Map named reviewed experts to tender roles, CV proof, qualifications, licences, availability and comparable assignments.";
   if (/experience|references/i.test(section)) return "Use reviewed comparable project references and separate direct same-scope evidence from transferable evidence.";
   if (critical > 0) return "Do not finalize this section until critical requirement(s) are verified or formally waived by the bid lead.";
+  if (ungrounded > 0) return "Confirm tender source quotes before making strong claims for this section.";
   if (missing > 0) return "Write cautiously; convert missing evidence into final bid-team actions instead of unsupported claims.";
   return "Write direct evaluator-facing prose: requirement, response, evidence, deliverable, responsible role and risk control.";
 }
@@ -132,11 +140,13 @@ function buildExportGates(params: {
   graph: TenderCriterionGraph;
   blueprint: TenderResponseBlueprintItem[];
   tenderFormStrategy: TenderFormStrategy;
+  sourceMap: SourceGroundedRequirement[];
   input: ProposalIntelligenceContractInput;
 }): ProposalExportGate[] {
   const criticalNodes = params.graph.nodes.filter((node) => node.riskLevel === "CRITICAL");
   const highNodes = params.graph.nodes.filter((node) => node.riskLevel === "HIGH");
   const missingEvidence = params.blueprint.filter((item) => item.evidenceSupport === "NEEDS_CONFIRMATION");
+  const ungroundedMandatory = params.sourceMap.filter((item) => !item.grounded && /\bshall\b|\bmust\b|required|mandatory|failure\s+to|reject|disqualif/i.test(item.requirement));
   const reviewedExperts = params.input.reviewedExpertCount ?? params.input.expertLines.length;
   const reviewedProjects = params.input.reviewedProjectCount ?? params.input.projectLines.length;
   const selectedExperts = params.input.selectedExpertCount ?? params.input.expertLines.length;
@@ -149,6 +159,12 @@ function buildExportGates(params: {
       status: criticalNodes.length > 0 ? "BLOCK" : highNodes.length > 0 ? "WARN" : "PASS",
       rationale: `${criticalNodes.length} critical and ${highNodes.length} high-risk criterion graph node(s).`,
       action: criticalNodes.length > 0 ? "Block final export until critical nodes are verified or formally waived." : highNodes.length > 0 ? "Require senior bid review before export." : "No critical criterion blockers detected.",
+    },
+    {
+      gate: "Tender source grounding control",
+      status: ungroundedMandatory.length > 0 ? "BLOCK" : params.sourceMap.some((item) => !item.grounded) ? "WARN" : "PASS",
+      rationale: `${params.sourceMap.filter((item) => item.grounded).length}/${params.sourceMap.length} requirement(s) have source quote grounding; ${ungroundedMandatory.length} mandatory item(s) are ungrounded.`,
+      action: ungroundedMandatory.length > 0 ? "Block final export until mandatory requirements are traced to tender source quotes or formally waived." : "Confirm low-confidence/untraced source mappings during senior review.",
     },
     {
       gate: "Evidence support control",
@@ -181,9 +197,12 @@ export function buildProposalIntelligenceContract(input: ProposalIntelligenceCon
   });
   const criterionGraph = buildTenderCriterionGraph(input);
   const blueprint = buildTenderResponseBlueprint(input);
+  const sourceMap = buildSourceGroundedRequirementMap({ requirements: input.requirements, tenderSources: input.tenderSources ?? [] });
+  const sourceByRequirement = new Map(sourceMap.map((source) => [clean(source.requirement), source]));
   const requirements = criterionGraph.nodes.map((node, index) => {
     const item = blueprint[index] ?? blueprint.find((candidate) => clean(candidate.requirement) === clean(node.requirement));
     const serviceCapability = item?.serviceCapability ?? node.serviceCapabilities.join(", ");
+    const sourceGrounding = sourceByRequirement.get(clean(node.requirement)) ?? null;
     return {
       id: node.id,
       requirement: node.requirement,
@@ -197,12 +216,13 @@ export function buildProposalIntelligenceContract(input: ProposalIntelligenceCon
       evidenceLine: item?.evidenceLine ?? node.evidenceLine,
       responseStrategy: item?.responseStrategy ?? node.responseAction,
       responseAction: node.responseAction,
-      validationAction: node.validationAction,
+      validationAction: sourceGrounding && !sourceGrounding.grounded ? `${node.validationAction} ${sourceGrounding.validationAction}` : node.validationAction,
+      sourceGrounding,
     } satisfies ProposalContractRequirement;
   });
 
   return {
-    schemaVersion: "PIC-1",
+    schemaVersion: "PIC-2",
     tender: {
       title: clean(input.tenderTitle),
       clientName: clean(input.clientName),
@@ -212,6 +232,7 @@ export function buildProposalIntelligenceContract(input: ProposalIntelligenceCon
     },
     tenderFormStrategy,
     criterionGraph,
+    sourceGrounding: sourceMap,
     requirements,
     sectionPlan: buildSectionPlan(requirements),
     evidenceSummary: {
@@ -223,12 +244,15 @@ export function buildProposalIntelligenceContract(input: ProposalIntelligenceCon
       directBlueprintEvidence: countSupport(blueprint, "DIRECT"),
       partialBlueprintEvidence: countSupport(blueprint, "PARTIAL"),
       missingBlueprintEvidence: countSupport(blueprint, "NEEDS_CONFIRMATION"),
+      groundedRequirements: sourceMap.filter((source) => source.grounded).length,
+      ungroundedRequirements: sourceMap.filter((source) => !source.grounded).length,
     },
-    exportGates: buildExportGates({ graph: criterionGraph, blueprint, tenderFormStrategy, input }),
+    exportGates: buildExportGates({ graph: criterionGraph, blueprint, tenderFormStrategy, sourceMap, input }),
     writingRules: [
       "Every proposal paragraph must answer a tender requirement, prove a selected evidence point, or control a submission risk.",
       "DIRECT evidence supports confident claims; PARTIAL evidence must be framed as transferable/supporting; NEEDS_CONFIRMATION must become a final review action.",
       "Critical criterion graph nodes block final export until verified or formally waived by the bid lead.",
+      "Tender-source quotes/page references are authoritative; ungrounded mandatory requirements must be traced or formally waived before final export.",
       "Tender-form strategy controls the proposal shape: EOI/prequalification, RFP, RFQ, ITT, framework and two-envelope responses must not use the same narrative pattern.",
       "Commercial/pricing content must stay out of technical/two-envelope outputs unless the tender explicitly combines envelopes.",
     ],
@@ -250,7 +274,8 @@ export function renderProposalIntelligenceContract(input: ProposalIntelligenceCo
   return [
     "## Proposal Intelligence Contract",
     `Contract: ${contract.schemaVersion}. Tender: ${contract.tender.title}. Client: ${contract.tender.clientName}. Form: ${contract.tender.primaryTenderForm}${contract.tender.isTwoEnvelope ? " / two-envelope" : ""}. Universal profile: ${contract.tender.universalProfile}.`,
-    `Evidence summary: ${contract.evidenceSummary.expertLines} expert line(s), ${contract.evidenceSummary.projectLines} project line(s), ${contract.evidenceSummary.companyEvidenceLines} company evidence line(s), ${contract.evidenceSummary.projectEvidenceLines} project evidence attachment line(s), ${contract.evidenceSummary.complianceLines} compliance line(s). Blueprint evidence: ${contract.evidenceSummary.directBlueprintEvidence} DIRECT, ${contract.evidenceSummary.partialBlueprintEvidence} PARTIAL, ${contract.evidenceSummary.missingBlueprintEvidence} NEEDS_CONFIRMATION.`,
+    `Evidence summary: ${contract.evidenceSummary.expertLines} expert line(s), ${contract.evidenceSummary.projectLines} project line(s), ${contract.evidenceSummary.companyEvidenceLines} company evidence line(s), ${contract.evidenceSummary.projectEvidenceLines} project evidence attachment line(s), ${contract.evidenceSummary.complianceLines} compliance line(s). Blueprint evidence: ${contract.evidenceSummary.directBlueprintEvidence} DIRECT, ${contract.evidenceSummary.partialBlueprintEvidence} PARTIAL, ${contract.evidenceSummary.missingBlueprintEvidence} NEEDS_CONFIRMATION. Source grounding: ${contract.evidenceSummary.groundedRequirements} grounded, ${contract.evidenceSummary.ungroundedRequirements} ungrounded.`,
+    contract.sourceGrounding.length > 0 ? renderSourceGroundedRequirementMap({ sourceMap: contract.sourceGrounding }) : "## Source-Grounded Requirement Map\n\nNo tender source documents were provided to this contract. Requirements remain ungrounded until source text is supplied.",
     "### Contract Section Plan",
     sectionRows.join("\n"),
     "### Contract Export Gates",
@@ -266,6 +291,7 @@ export function renderProposalIntelligencePromptBlock(input: ProposalIntelligenc
     "PROPOSAL INTELLIGENCE CONTRACT — obey before drafting:",
     `Tender form: ${contract.tender.primaryTenderForm}${contract.tender.isTwoEnvelope ? "; strict two-envelope controls apply" : ""}.`,
     `Criterion graph: ${contract.criterionGraph.summary.totalCriteria} criteria; ${contract.criterionGraph.summary.criticalCount} critical; ${contract.criterionGraph.summary.highCount} high-risk; ${contract.criterionGraph.summary.missingEvidenceCount} missing evidence.`,
+    `Source grounding: ${contract.evidenceSummary.groundedRequirements} grounded; ${contract.evidenceSummary.ungroundedRequirements} ungrounded.`,
     "Section writing plan:",
     ...contract.sectionPlan.map((section) => `- ${section.section}: ${section.requirementIds.join(", ")} | evidence=${section.strongestEvidenceSupport} | risk=${section.riskLevel} | ${section.writingInstruction}`),
     "Export gates:",

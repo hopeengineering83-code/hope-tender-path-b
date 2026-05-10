@@ -27,7 +27,7 @@ describe("proposal intelligence contract", () => {
   it("builds a single controlling contract from form strategy, criterion graph, blueprint and evidence", () => {
     const contract = buildProposalIntelligenceContract(baseInput);
 
-    assert.equal(contract.schemaVersion, "PIC-1");
+    assert.equal(contract.schemaVersion, "PIC-2");
     assert.equal(contract.tender.primaryTenderForm, "RFP");
     assert.equal(contract.tender.isTwoEnvelope, true);
     assert.ok(contract.criterionGraph.nodes.length >= 4);
@@ -35,6 +35,7 @@ describe("proposal intelligence contract", () => {
     assert.ok(contract.requirements.some((item) => item.category === "PERSONNEL"));
     assert.ok(contract.sectionPlan.length >= 2);
     assert.ok(contract.exportGates.some((gate) => gate.gate === "Commercial / technical separation" && gate.status === "WARN"));
+    assert.ok(contract.exportGates.some((gate) => gate.gate === "Tender source grounding control"));
     assert.ok(contract.writingRules.some((rule) => /DIRECT evidence/i.test(rule)));
   });
 
@@ -64,9 +65,11 @@ describe("proposal intelligence contract", () => {
     const prompt = renderProposalIntelligencePromptBlock(baseInput);
 
     assert.match(rendered, /Proposal Intelligence Contract/i);
+    assert.match(rendered, /Source-Grounded Requirement Map/i);
     assert.match(rendered, /Contract Section Plan/i);
     assert.match(rendered, /Contract Export Gates/i);
     assert.match(prompt, /PROPOSAL INTELLIGENCE CONTRACT/i);
+    assert.match(prompt, /Source grounding/i);
     assert.match(prompt, /Section writing plan/i);
     assert.match(prompt, /Export gates/i);
   });
