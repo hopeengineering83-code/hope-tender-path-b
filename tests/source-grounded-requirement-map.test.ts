@@ -75,9 +75,10 @@ describe("source-grounded requirement map", () => {
       differentiators: [],
     });
 
-    assert.equal(contract.schemaVersion, "PIC-2");
+    assert.equal(contract.schemaVersion, "PIC-3");
     assert.ok(contract.sourceGrounding.length >= 2);
     assert.ok(contract.requirements.every((req) => req.sourceGrounding));
     assert.ok(contract.exportGates.some((gate) => gate.gate === "Tender source grounding control"));
+    assert.ok(contract.exportGates.some((gate) => gate.gate === "Evidence graph fit control"));
   });
 });

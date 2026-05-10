@@ -3,6 +3,7 @@ import { buildTenderCriterionGraph, type TenderCriterionGraph, type TenderCriter
 import { buildTenderResponseBlueprint, type BlueprintEvidenceInput, type TenderResponseBlueprintItem } from "./tender-response-blueprint";
 import { classifyUniversalTender, universalProfileSummary } from "./universal-tender-taxonomy";
 import { buildSourceGroundedRequirementMap, renderSourceGroundedRequirementMap, type SourceGroundedRequirement, type TenderSourceDocument } from "./source-grounded-requirement-map";
+import { buildEvidenceGraph, renderEvidenceGraph, type EvidenceGraph } from "./evidence-graph";
 
 export type ProposalIntelligenceContractInput = BlueprintEvidenceInput & {
   evaluationCriteria?: string[];
@@ -25,6 +26,13 @@ export type ProposalContractEvidenceSummary = {
   missingBlueprintEvidence: number;
   groundedRequirements: number;
   ungroundedRequirements: number;
+  directProjectEvidence: number;
+  directExpertEvidence: number;
+  transferableProjectEvidence: number;
+  transferableExpertEvidence: number;
+  unfitProjectEvidence: number;
+  unfitExpertEvidence: number;
+  unsafeEvidenceMismatches: number;
 };
 
 export type ProposalContractRequirement = {
@@ -60,7 +68,7 @@ export type ProposalExportGate = {
 };
 
 export type ProposalIntelligenceContract = {
-  schemaVersion: "PIC-2";
+  schemaVersion: "PIC-3";
   tender: {
     title: string;
     clientName: string;
@@ -71,6 +79,7 @@ export type ProposalIntelligenceContract = {
   tenderFormStrategy: TenderFormStrategy;
   criterionGraph: TenderCriterionGraph;
   sourceGrounding: SourceGroundedRequirement[];
+  evidenceGraph: EvidenceGraph;
   requirements: ProposalContractRequirement[];
   sectionPlan: ProposalContractSectionPlan[];
   evidenceSummary: ProposalContractEvidenceSummary;
@@ -141,6 +150,7 @@ function buildExportGates(params: {
   blueprint: TenderResponseBlueprintItem[];
   tenderFormStrategy: TenderFormStrategy;
   sourceMap: SourceGroundedRequirement[];
+  evidenceGraph: EvidenceGraph;
   input: ProposalIntelligenceContractInput;
 }): ProposalExportGate[] {
   const criticalNodes = params.graph.nodes.filter((node) => node.riskLevel === "CRITICAL");
@@ -152,6 +162,8 @@ function buildExportGates(params: {
   const selectedExperts = params.input.selectedExpertCount ?? params.input.expertLines.length;
   const selectedProjects = params.input.selectedProjectCount ?? params.input.projectLines.length;
   const hasPricingRisk = params.tenderFormStrategy.isTwoEnvelope || params.tenderFormStrategy.commercialControls.some((line) => /no price|two-envelope|financial envelope|technical proposal/i.test(line));
+  const hasNoUsableProject = params.input.projectLines.length > 0 && params.evidenceGraph.summary.directProjects + params.evidenceGraph.summary.transferableProjects === 0;
+  const hasNoUsableExpert = params.input.expertLines.length > 0 && params.evidenceGraph.summary.directExperts + params.evidenceGraph.summary.transferableExperts === 0;
 
   return [
     {
@@ -165,6 +177,12 @@ function buildExportGates(params: {
       status: ungroundedMandatory.length > 0 ? "BLOCK" : params.sourceMap.some((item) => !item.grounded) ? "WARN" : "PASS",
       rationale: `${params.sourceMap.filter((item) => item.grounded).length}/${params.sourceMap.length} requirement(s) have source quote grounding; ${ungroundedMandatory.length} mandatory item(s) are ungrounded.`,
       action: ungroundedMandatory.length > 0 ? "Block final export until mandatory requirements are traced to tender source quotes or formally waived." : "Confirm low-confidence/untraced source mappings during senior review.",
+    },
+    {
+      gate: "Evidence graph fit control",
+      status: params.evidenceGraph.summary.unsafeMismatchCount > 0 || hasNoUsableProject || hasNoUsableExpert ? "BLOCK" : params.evidenceGraph.summary.unfitProjects + params.evidenceGraph.summary.unfitExperts > 0 ? "WARN" : "PASS",
+      rationale: `${params.evidenceGraph.summary.unsafeMismatchCount} unsafe mismatch(es); ${params.evidenceGraph.summary.directProjects} direct project(s), ${params.evidenceGraph.summary.transferableProjects} transferable project(s), ${params.evidenceGraph.summary.directExperts} direct expert(s), ${params.evidenceGraph.summary.transferableExperts} transferable expert(s).`,
+      action: params.evidenceGraph.summary.unsafeMismatchCount > 0 ? "Remove unsafe project/expert evidence from primary proposal claims before final export." : hasNoUsableProject || hasNoUsableExpert ? "Add usable direct or transferable project/expert evidence before final export." : "Use DIRECT evidence for primary claims and TRANSFERABLE evidence only with explicit caveats.",
     },
     {
       gate: "Evidence support control",
@@ -198,6 +216,7 @@ export function buildProposalIntelligenceContract(input: ProposalIntelligenceCon
   const criterionGraph = buildTenderCriterionGraph(input);
   const blueprint = buildTenderResponseBlueprint(input);
   const sourceMap = buildSourceGroundedRequirementMap({ requirements: input.requirements, tenderSources: input.tenderSources ?? [] });
+  const evidenceGraph = buildEvidenceGraph({ tenderTitle: input.tenderTitle, requirements: input.requirements, projectLines: input.projectLines, expertLines: input.expertLines });
   const sourceByRequirement = new Map(sourceMap.map((source) => [clean(source.requirement), source]));
   const requirements = criterionGraph.nodes.map((node, index) => {
     const item = blueprint[index] ?? blueprint.find((candidate) => clean(candidate.requirement) === clean(node.requirement));
@@ -222,7 +241,7 @@ export function buildProposalIntelligenceContract(input: ProposalIntelligenceCon
   });
 
   return {
-    schemaVersion: "PIC-2",
+    schemaVersion: "PIC-3",
     tender: {
       title: clean(input.tenderTitle),
       clientName: clean(input.clientName),
@@ -233,6 +252,7 @@ export function buildProposalIntelligenceContract(input: ProposalIntelligenceCon
     tenderFormStrategy,
     criterionGraph,
     sourceGrounding: sourceMap,
+    evidenceGraph,
     requirements,
     sectionPlan: buildSectionPlan(requirements),
     evidenceSummary: {
@@ -246,11 +266,19 @@ export function buildProposalIntelligenceContract(input: ProposalIntelligenceCon
       missingBlueprintEvidence: countSupport(blueprint, "NEEDS_CONFIRMATION"),
       groundedRequirements: sourceMap.filter((source) => source.grounded).length,
       ungroundedRequirements: sourceMap.filter((source) => !source.grounded).length,
+      directProjectEvidence: evidenceGraph.summary.directProjects,
+      directExpertEvidence: evidenceGraph.summary.directExperts,
+      transferableProjectEvidence: evidenceGraph.summary.transferableProjects,
+      transferableExpertEvidence: evidenceGraph.summary.transferableExperts,
+      unfitProjectEvidence: evidenceGraph.summary.unfitProjects,
+      unfitExpertEvidence: evidenceGraph.summary.unfitExperts,
+      unsafeEvidenceMismatches: evidenceGraph.summary.unsafeMismatchCount,
     },
-    exportGates: buildExportGates({ graph: criterionGraph, blueprint, tenderFormStrategy, sourceMap, input }),
+    exportGates: buildExportGates({ graph: criterionGraph, blueprint, tenderFormStrategy, sourceMap, evidenceGraph, input }),
     writingRules: [
       "Every proposal paragraph must answer a tender requirement, prove a selected evidence point, or control a submission risk.",
       "DIRECT evidence supports confident claims; PARTIAL evidence must be framed as transferable/supporting; NEEDS_CONFIRMATION must become a final review action.",
+      "Evidence Graph DIRECT nodes are primary proof; TRANSFERABLE nodes require explicit caveats; UNFIT nodes must not be used as main proposal evidence.",
       "Critical criterion graph nodes block final export until verified or formally waived by the bid lead.",
       "Tender-source quotes/page references are authoritative; ungrounded mandatory requirements must be traced or formally waived before final export.",
       "Tender-form strategy controls the proposal shape: EOI/prequalification, RFP, RFQ, ITT, framework and two-envelope responses must not use the same narrative pattern.",
@@ -274,8 +302,9 @@ export function renderProposalIntelligenceContract(input: ProposalIntelligenceCo
   return [
     "## Proposal Intelligence Contract",
     `Contract: ${contract.schemaVersion}. Tender: ${contract.tender.title}. Client: ${contract.tender.clientName}. Form: ${contract.tender.primaryTenderForm}${contract.tender.isTwoEnvelope ? " / two-envelope" : ""}. Universal profile: ${contract.tender.universalProfile}.`,
-    `Evidence summary: ${contract.evidenceSummary.expertLines} expert line(s), ${contract.evidenceSummary.projectLines} project line(s), ${contract.evidenceSummary.companyEvidenceLines} company evidence line(s), ${contract.evidenceSummary.projectEvidenceLines} project evidence attachment line(s), ${contract.evidenceSummary.complianceLines} compliance line(s). Blueprint evidence: ${contract.evidenceSummary.directBlueprintEvidence} DIRECT, ${contract.evidenceSummary.partialBlueprintEvidence} PARTIAL, ${contract.evidenceSummary.missingBlueprintEvidence} NEEDS_CONFIRMATION. Source grounding: ${contract.evidenceSummary.groundedRequirements} grounded, ${contract.evidenceSummary.ungroundedRequirements} ungrounded.`,
+    `Evidence summary: ${contract.evidenceSummary.expertLines} expert line(s), ${contract.evidenceSummary.projectLines} project line(s), ${contract.evidenceSummary.companyEvidenceLines} company evidence line(s), ${contract.evidenceSummary.projectEvidenceLines} project evidence attachment line(s), ${contract.evidenceSummary.complianceLines} compliance line(s). Blueprint evidence: ${contract.evidenceSummary.directBlueprintEvidence} DIRECT, ${contract.evidenceSummary.partialBlueprintEvidence} PARTIAL, ${contract.evidenceSummary.missingBlueprintEvidence} NEEDS_CONFIRMATION. Source grounding: ${contract.evidenceSummary.groundedRequirements} grounded, ${contract.evidenceSummary.ungroundedRequirements} ungrounded. Evidence graph: ${contract.evidenceSummary.directProjectEvidence} direct project(s), ${contract.evidenceSummary.directExpertEvidence} direct expert(s), ${contract.evidenceSummary.unsafeEvidenceMismatches} unsafe mismatch(es).`,
     contract.sourceGrounding.length > 0 ? renderSourceGroundedRequirementMap({ sourceMap: contract.sourceGrounding }) : "## Source-Grounded Requirement Map\n\nNo tender source documents were provided to this contract. Requirements remain ungrounded until source text is supplied.",
+    renderEvidenceGraph({ graph: contract.evidenceGraph }),
     "### Contract Section Plan",
     sectionRows.join("\n"),
     "### Contract Export Gates",
@@ -292,6 +321,7 @@ export function renderProposalIntelligencePromptBlock(input: ProposalIntelligenc
     `Tender form: ${contract.tender.primaryTenderForm}${contract.tender.isTwoEnvelope ? "; strict two-envelope controls apply" : ""}.`,
     `Criterion graph: ${contract.criterionGraph.summary.totalCriteria} criteria; ${contract.criterionGraph.summary.criticalCount} critical; ${contract.criterionGraph.summary.highCount} high-risk; ${contract.criterionGraph.summary.missingEvidenceCount} missing evidence.`,
     `Source grounding: ${contract.evidenceSummary.groundedRequirements} grounded; ${contract.evidenceSummary.ungroundedRequirements} ungrounded.`,
+    `Evidence graph: directProjects=${contract.evidenceSummary.directProjectEvidence}; transferableProjects=${contract.evidenceSummary.transferableProjectEvidence}; directExperts=${contract.evidenceSummary.directExpertEvidence}; transferableExperts=${contract.evidenceSummary.transferableExpertEvidence}; unsafeMismatches=${contract.evidenceSummary.unsafeEvidenceMismatches}.`,
     "Section writing plan:",
     ...contract.sectionPlan.map((section) => `- ${section.section}: ${section.requirementIds.join(", ")} | evidence=${section.strongestEvidenceSupport} | risk=${section.riskLevel} | ${section.writingInstruction}`),
     "Export gates:",
