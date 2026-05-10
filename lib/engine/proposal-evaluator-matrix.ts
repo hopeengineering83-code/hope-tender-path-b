@@ -1,6 +1,7 @@
 import { classifyUniversalTender, universalProfileSummary } from "./universal-tender-taxonomy";
 import { renderTenderResponseBlueprint } from "./tender-response-blueprint";
 import { applyProposalQualityRepairAddenda } from "./proposal-quality-repair";
+import { buildTenderFormStrategy, renderTenderFormStrategy } from "./tender-form-strategy";
 
 export type EvaluatorMatrixInput = {
   tenderTitle: string;
@@ -73,9 +74,7 @@ function scoreEvidence(requirement: string, line: string): number {
 
 function pickEvidence(requirement: string, input: EvaluatorMatrixInput, index: number): EvidencePick {
   const pool = evidencePool(input);
-  if (pool.length === 0) {
-    return { line: "No reviewed evidence line is currently mapped. Add reviewed company/project/expert evidence before final submission.", supportLevel: "NEEDS_CONFIRMATION", score: 0 };
-  }
+  if (pool.length === 0) return { line: "No reviewed evidence line is currently mapped. Add reviewed company/project/expert evidence before final submission.", supportLevel: "NEEDS_CONFIRMATION", score: 0 };
   const scored = pool.map((line) => ({ line, score: scoreEvidence(requirement, line) })).sort((a, b) => b.score - a.score);
   const best = scored[0] ?? { line: pool[index % pool.length], score: 0 };
   if (best.score >= 7) return { ...best, supportLevel: "DIRECT" };
@@ -119,17 +118,10 @@ function proofItems(input: EvaluatorMatrixInput): string[] {
 }
 
 function matrixTable(requirements: string[], input: EvaluatorMatrixInput): string {
-  const rows = [
-    "| # | Tender criterion / evaluator angle | Response strategy | Best mapped evidence | Support | Final action |",
-    "|---|---|---|---|---|---|",
-  ];
+  const rows = ["| # | Tender criterion / evaluator angle | Response strategy | Best mapped evidence | Support | Final action |", "|---|---|---|---|---|---|"];
   requirements.forEach((requirement, index) => {
     const evidence = pickEvidence(requirement, input, index);
-    const action = evidence.supportLevel === "DIRECT"
-      ? "Use as proposal proof and attach/source-check before final export."
-      : evidence.supportLevel === "PARTIAL"
-        ? "Strengthen narrative with more direct document evidence before submission."
-        : "Do not overclaim; add reviewed evidence or soften the claim.";
+    const action = evidence.supportLevel === "DIRECT" ? "Use as proposal proof and attach/source-check before final export." : evidence.supportLevel === "PARTIAL" ? "Strengthen narrative with more direct document evidence before submission." : "Do not overclaim; add reviewed evidence or soften the claim.";
     rows.push(`| ${index + 1} | ${clean(requirement)}<br>${evaluatorAngle(requirement)} | ${responseStrategy(requirement)} | ${clean(evidence.line)} | ${evidence.supportLevel} | ${action} |`);
   });
   return rows.join("\n");
@@ -138,25 +130,22 @@ function matrixTable(requirements: string[], input: EvaluatorMatrixInput): strin
 export function appendEvaluatorResponseMatrix(markdown: string, input: EvaluatorMatrixInput): string {
   let output = markdown.trim();
   const tenderProfile = classifyUniversalTender(`${input.tenderTitle}\n${input.requirements.join("\n")}`);
+  const tenderFormStrategy = buildTenderFormStrategy({ tenderTitle: input.tenderTitle, requirements: input.requirements, submissionLines: input.complianceLines, extraText: input.clientName });
 
+  output += "\n\n" + renderTenderFormStrategy(tenderFormStrategy);
   output += "\n\n" + renderTenderResponseBlueprint(input);
 
   output += "\n\n## Tender Criteria Response Matrix";
   output += `\nThis section maps the proposal response to the evaluator's criteria for ${clean(input.clientName)} / ${clean(input.tenderTitle)}. Universal tender profile: ${universalProfileSummary(tenderProfile)}.`;
 
   const reqs = take(input.requirements, 14, 260);
-  const finalReqs = reqs.length > 0 ? reqs : [
-    "Technical understanding and methodology",
-    "Relevant company experience",
-    "Professional team and CV strength",
-    "Compliance with submission requirements",
-  ];
-
+  const finalReqs = reqs.length > 0 ? reqs : ["Technical understanding and methodology", "Relevant company experience", "Professional team and CV strength", "Compliance with submission requirements"];
   output += "\n\n" + matrixTable(finalReqs, input);
 
   output += "\n\n## Multi-Angle Proposal Quality Check";
   output += "\nThe final proposal is checked from the following evaluator angles before submission:";
   for (const angle of [
+    `Tender-form fit: ${tenderFormStrategy.primaryForm} response logic is applied, including ${tenderFormStrategy.isTwoEnvelope ? "strict two-envelope controls" : "commercial-content controls where applicable"}.`,
     "Scope compliance: every major tender requirement has a direct response or a controlled evidence action.",
     "Service-capability fit: design, supervision, contract administration, geotechnical, urban planning, asset management and other service lines are matched by capability, not by loose keywords.",
     "Sector relevance: sector-specific evidence is preferred, while transferable service evidence is allowed only when capability fit is strong.",
@@ -169,53 +158,39 @@ export function appendEvaluatorResponseMatrix(markdown: string, input: Evaluator
   output += "\n\n## Claim-to-Evidence Proof Map";
   output += "\nThe proposal claims below must remain backed by reviewed records. Unsupported claims should be removed, softened, or converted into final evidence actions.";
   const proof = proofItems(input);
-  if (proof.length > 0) {
-    for (const line of proof.slice(0, 30)) output += `\n- ${line}`;
-  } else {
-    output += "\n- Source proof must be confirmed before final submission.";
-  }
+  if (proof.length > 0) for (const line of proof.slice(0, 30)) output += `\n- ${line}`;
+  else output += "\n- Source proof must be confirmed before final submission.";
 
   output += "\n\n## Evidence Gaps and Anti-Hallucination Controls";
   output += "\n- Do not invent staff, project roles, certificates, contract values, completion dates, sector experience, licences, financial capacity, photos, drawings, or client approvals.";
   output += "\n- If the evidence is partial, present it as transferable or supporting evidence, not as exact same-scope experience.";
   output += "\n- If the evidence is missing, add a final review action instead of making an unsupported claim.";
-  output += "\n- If the tender is an EOI/prequalification, emphasise capability, eligibility, shortlist logic and evidence register. If it is an RFP/technical proposal, emphasise methodology, team, work plan, QA/QC and deliverables.";
+  output += `\n- Tender-form rule: ${tenderFormStrategy.proposalObjective}`;
+  for (const instruction of tenderFormStrategy.writingInstructions.slice(0, 4)) output += `\n- ${instruction}`;
+  for (const control of tenderFormStrategy.commercialControls.slice(0, 4)) output += `\n- ${control}`;
 
   output += "\n\n## Win Themes and Differentiators";
   const differentiators = take(input.differentiators, 6, 280);
-  const finalDifferentiators = differentiators.length > 0 ? differentiators : [
-    "Evidence-led proposal built from reviewed company records.",
-    "Multidisciplinary engineering, design, supervision, contract administration and planning capability matched to tender scope.",
-    "Senior bid-review approach that separates hard blockers from manageable evidence actions.",
-    "Technical methodology aligned to tender risks, deliverables, QA/QC, coordination and submission controls.",
-  ];
+  const finalDifferentiators = differentiators.length > 0 ? differentiators : ["Evidence-led proposal built from reviewed company records.", "Multidisciplinary engineering, design, supervision, contract administration and planning capability matched to tender scope.", "Senior bid-review approach that separates hard blockers from manageable evidence actions.", "Technical methodology aligned to tender risks, deliverables, QA/QC, coordination and submission controls."];
   for (const item of finalDifferentiators) output += `\n- ${item}`;
 
   output += "\n\n## Delivery Methodology Work Plan";
-  for (const phase of [
-    "Inception, tender confirmation and document-control setup.",
-    "Requirement review, evidence mapping and scope-by-scope response planning.",
-    "Technical methodology development with discipline coordination, deliverables, QA/QC and risk controls.",
-    "Senior review against evaluator logic, compliance matrix, appendix register and submission rules.",
-    "Final verification of signatures, stamps, CVs, references, file names, submission method and deadline.",
-  ]) output += `\n- ${phase}`;
+  const phases = tenderFormStrategy.primaryForm === "EOI" || tenderFormStrategy.primaryForm === "PREQUALIFICATION"
+    ? ["Eligibility and shortlist requirement confirmation.", "Company capability, similar assignment and key expert evidence mapping.", "Legal, financial, registration and declaration evidence control.", "Senior review against pass/fail and shortlist criteria.", "Final verification of signatures, forms, file names, submission method and deadline."]
+    : tenderFormStrategy.primaryForm === "RFQ"
+      ? ["RFQ scope and quotation-form confirmation.", "Technical compliance note and delivery schedule preparation.", "Pricing/BOQ/rate-card completion where required.", "Commercial assumptions, exclusions, validity and tax/VAT check.", "Final verification of signed quotation, file names, format and deadline."]
+      : ["Inception, tender confirmation and document-control setup.", "Requirement review, evidence mapping and scope-by-scope response planning.", "Technical methodology development with discipline coordination, deliverables, QA/QC and risk controls.", "Senior review against evaluator logic, compliance matrix, appendix register and submission rules.", "Final verification of signatures, stamps, CVs, references, file names, submission method and deadline."];
+  for (const phase of phases) output += `\n- ${phase}`;
 
   output += "\n\n## Evidence-Based Appendix Register";
-  const appendixLines = [
-    ...take(input.companyEvidenceLines, 5, 240),
-    ...take(input.projectEvidenceLines, 5, 240),
-    ...take(input.expertLines, 5, 220).map((line) => `CV / Expert evidence: ${line}`),
-    ...take(input.projectLines, 5, 240).map((line) => `Project reference evidence: ${line}`),
-  ];
-  if (appendixLines.length > 0) {
-    for (const line of appendixLines.slice(0, 16)) output += `\n- ${line}`;
-  } else {
-    output += "\n- Appendix evidence to be confirmed before final submission.";
-  }
+  const appendixLines = [...take(input.companyEvidenceLines, 5, 240), ...take(input.projectEvidenceLines, 5, 240), ...take(input.expertLines, 5, 220).map((line) => `CV / Expert evidence: ${line}`), ...take(input.projectLines, 5, 240).map((line) => `Project reference evidence: ${line}`)];
+  if (appendixLines.length > 0) for (const line of appendixLines.slice(0, 16)) output += `\n- ${line}`;
+  else output += "\n- Appendix evidence to be confirmed before final submission.";
 
   output += "\n\n## Final Submission Control Checklist";
   const checklist = take(input.complianceLines, 8, 260);
   for (const line of checklist) output += `\n- ${line}`;
+  for (const outputName of tenderFormStrategy.requiredOutputs.slice(0, 8)) output += `\n- Confirm required output is prepared/reconciled: ${outputName}.`;
   output += "\n- Confirm no unsupported claim, placeholder text, AI disclaimer, prohibited financial content or wrong file name remains in the final package.";
 
   return applyProposalQualityRepairAddenda(output, input);
