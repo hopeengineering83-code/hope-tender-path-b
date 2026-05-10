@@ -18,7 +18,12 @@ const MATCHING_CYCLES = 20;
 // coverage of what THIS tender actually demands.
 const PORTFOLIO_OPTIMIZATION_CYCLES = 20;
 
-const SELECTION_THRESHOLD = 0.90;
+// Lowered from 0.90 to 0.75 — at 0.90 experts/projects with slightly different
+// vocabulary (e.g., "infrastructure design" vs "civil design") were excluded
+// from the evidence library, causing Claude to fall back to placeholders.
+// A floor of 3 matches is enforced downstream so the evidence library is
+// never empty when candidates exist.
+const SELECTION_THRESHOLD = 0.75;
 
 type KnowledgeWithOptionalTrust = { trustLevel?: string | null };
 
@@ -228,13 +233,29 @@ function selectAboveThreshold<T extends { score: number; isSelected: boolean }>(
   if (limit <= 0) return matches.map((m) => ({ ...m, isSelected: false }));
 
   let selected = 0;
-  return matches.map((m) => {
+  const result = matches.map((m) => {
     if (m.score >= SELECTION_THRESHOLD && selected < limit) {
       selected += 1;
       return { ...m, isSelected: true };
     }
     return { ...m, isSelected: false };
   });
+
+  // Floor guarantee: always select the top 3 by score even when all fall
+  // below the threshold, so the evidence library passed to Claude is never
+  // empty when candidates exist.
+  const MIN_SELECTED = Math.min(3, limit, matches.length);
+  if (selected < MIN_SELECTED) {
+    let forcedCount = selected;
+    return result.map((m) => {
+      if (!m.isSelected && forcedCount < MIN_SELECTED) {
+        forcedCount += 1;
+        return { ...m, isSelected: true };
+      }
+      return m;
+    });
+  }
+  return result;
 }
 
 // ─── Portfolio optimization (Stage 2 selection) ──────────────────────────────
@@ -473,7 +494,7 @@ export function buildMatches(
       const topMatches = [...new Set(docTokens.filter((t) => baseQueryTokens.includes(t)))].slice(0, 8).join(", ");
       const families = capabilityFamilies(recordText).join(", ");
       const trustLabel = trustLevelLabel(trustLevel);
-      const thresholdLabel = score >= SELECTION_THRESHOLD ? "Auto-selected ≥90%." : "Below 90%; review only.";
+      const thresholdLabel = score >= SELECTION_THRESHOLD ? "Auto-selected ≥75%." : "Below 75%; review only.";
       return {
         expertId: expert.id,
         score,
@@ -516,7 +537,7 @@ export function buildMatches(
       const topMatches = [...new Set(docTokens.filter((t) => baseQueryTokens.includes(t)))].slice(0, 8).join(", ");
       const families = capabilityFamilies(recordText).join(", ");
       const trustLabel = trustLevelLabel(trustLevel);
-      const thresholdLabel = score >= SELECTION_THRESHOLD ? "Auto-selected ≥90%." : "Below 90%; review only.";
+      const thresholdLabel = score >= SELECTION_THRESHOLD ? "Auto-selected ≥75%." : "Below 75%; review only.";
       return {
         projectId: project.id,
         score,

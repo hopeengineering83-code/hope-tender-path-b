@@ -600,10 +600,9 @@ function tierBudget(tier: Tier, deep: boolean): TierBudget {
     // evidence map injected into the prompt makes each extra token
     // highly productive — Claude uses it to write evidence-anchored
     // depth per criterion rather than generic methodology.
-    // drillDown=2000 is only activated when PROPOSAL_DEEP_MODE=true
-    // AND the four parallel calls have already completed (serial, not
-    // parallel — net wall-time add is ~10-12s on a warm Claude tier).
-    return { cover: 2400, ab: 2500, c: 3500, d: 2000, drillDown: deep ? 2000 : 0 };
+    // drillDown=3000 is activated by default for Tier 2+ (auto deep mode).
+    // Serial after the four parallel calls — net wall-time ~12-18s.
+    return { cover: 2400, ab: 2500, c: 3500, d: 2000, drillDown: deep ? 3000 : 0 };
   }
   // Tier 3+: rich prose; deep mode activates full drill-down
   if (deep) {
@@ -882,6 +881,80 @@ function buildCoverAndSummaryFallback(input: AIBidWriterInput): string {
   ].filter((s) => s !== "").join("\n\n");
 }
 
+// ── Section B helpers — build real project cards from evidence text ──────────
+
+function buildSectionBPortfolioOverview(input: AIBidWriterInput): string {
+  const v = input.companyVault ?? {};
+  const companyName = v.name?.trim() || "the firm";
+  // Count evidence lines in the projects string as a rough portfolio size proxy
+  const projectLines = (input.projects ?? "").split("\n").filter((l) => l.trim().length > 20);
+  const count = projectLines.length > 0 ? `${projectLines.length}+` : "multiple";
+  return `${companyName} brings a portfolio of ${count} comparable project assignments relevant to this tender. Each featured project below demonstrates the firm's direct capacity for the scope items evaluated in this tender. See Sections B.2 and B.3 for the two most comparable assignments; the full portfolio is summarised in the downstream project table.`;
+}
+
+function buildSectionBFeaturedCards(input: AIBidWriterInput): string[] {
+  // Parse the projects evidence string to extract structured card data.
+  // The projects string is formatted by projectProofLine in proposal-intelligence.ts
+  // as multi-line blocks. We extract the first two blocks and format them as
+  // real Markdown tables rather than empty "see downstream" stubs.
+  const projectsText = (input.projects ?? "").trim();
+  if (!projectsText) {
+    return [
+      "## B.2 Featured Project 1",
+      "Bid-Team Action: populate with the most directly comparable project — client, location/scale, duration, contract value, testimony reference, services provided, and why it demonstrates capacity for this tender.",
+      "## B.3 Featured Project 2",
+      "Bid-Team Action: populate with the second most comparable project using the same format.",
+    ];
+  }
+
+  // Split on double-newline or "---" separator to isolate project blocks
+  const blocks = projectsText.split(/\n{2,}|^-{3,}$/m).map((b) => b.trim()).filter((b) => b.length > 40);
+
+  const makeCard = (block: string, num: number): string => {
+    // Extract fields via regex — these match the proof-line format:
+    // "Project: NAME", "Client: X", "Value: Y", "Sector: Z", etc.
+    const field = (label: string) => {
+      const m = block.match(new RegExp(`(?:^|\\n)\\s*${label}\\s*[:\\-]\\s*(.+)`, "i"));
+      return m ? m[1].trim().slice(0, 200) : null;
+    };
+    const name = field("Project|Name|Title") ?? block.split("\n")[0].slice(0, 100).replace(/^#+\s*/, "");
+    const client = field("Client");
+    const value = field("Value|Contract");
+    const sector = field("Sector|Type");
+    const duration = field("Duration|Period|Timeline|Year");
+    const services = field("Services|Scope|Deliverables|Activities");
+    const location = field("Location|Country|Region");
+
+    const rows: string[] = [
+      "| Field | Detail |",
+      "|---|---|",
+      `| Project name | ${name} |`,
+      client ? `| Client | ${client} |` : `| Client | Bid-Team Action: confirm client name |`,
+      location ? `| Location/Scale | ${location} |` : "",
+      duration ? `| Duration | ${duration} |` : `| Duration | Bid-Team Action: confirm |`,
+      value ? `| Contract value | ${value} |` : `| Contract value | Bid-Team Action: confirm |`,
+      services ? `| Services provided | ${services.slice(0, 180)} |` : "",
+      sector ? `| Sector | ${sector} |` : "",
+    ].filter(Boolean);
+
+    const why = `**Why this anchors this tender:** The ${name} engagement demonstrates the firm's capacity for the core scope items required by this tender. The proposed lead team includes the same experts who delivered this assignment. Bid-Team Action: add a 2–3 sentence tailored narrative before submission.`;
+
+    return [`## B.${num} Featured Project ${num - 1}`, rows.join("\n"), why].join("\n\n");
+  };
+
+  const card1 = blocks.length >= 1 ? makeCard(blocks[0], 2) : [
+    "## B.2 Featured Project 1",
+    "Bid-Team Action: populate with the most directly comparable project.",
+  ].join("\n\n");
+
+  const card2 = blocks.length >= 2 ? makeCard(blocks[1], 3) : [
+    "## B.3 Featured Project 2",
+    "Bid-Team Action: populate with the second most comparable project.",
+  ].join("\n\n");
+
+  return [card1, card2];
+}
+
 function buildCompanyAndExperienceFallback(input: AIBidWriterInput): string {
   const v = input.companyVault ?? {};
   const companyName = v.name?.trim() || input.clientName || "the firm";
@@ -960,11 +1033,8 @@ function buildCompanyAndExperienceFallback(input: AIBidWriterInput): string {
     "",
     "# Section B: Relevant Experience",
     "## B.1 Portfolio Overview",
-    "The firm's portfolio relevant to this assignment is summarised in the deterministic Portfolio at a Glance and Project Portfolio sections built downstream from the reviewed evidence library.",
-    "## B.2 Featured Project 1",
-    "See the deterministic Featured Project Card built downstream from the top-scored reviewed project.",
-    "## B.3 Featured Project 2",
-    "See the deterministic Featured Project Card built downstream from the second-highest-scored reviewed project.",
+    buildSectionBPortfolioOverview(input),
+    ...buildSectionBFeaturedCards(input),
     "## B.4 Additional Projects",
     "See deterministic project portfolio table built downstream.",
     "## B.5 Client References",
