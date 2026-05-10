@@ -3,6 +3,7 @@ import { getSession } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { generateBenchmarkProposalWithAI, generateProposalSectionsParallel, isAIEnabled } from "../../../../../lib/ai";
 import { buildProposalIntelligence, expertProofLine, projectProofLine, safeParseArr } from "../../../../../lib/engine/proposal-intelligence";
+import { augmentAIWriterInputWithContract } from "../../../../../lib/engine/ai-writer-contract-prompt";
 import { buildProposalCacheKey, getCachedProposal, setCachedProposal } from "../../../../../lib/proposal-cache";
 
 // Vercel route timeout — Claude proposal generation needs >10s default.
@@ -139,7 +140,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       where: { id, userId },
       include: {
         requirements: true,
-        files: { select: { originalFileName: true, extractedText: true } },
+        files: { select: { id: true, originalFileName: true, extractedText: true } },
         expertMatches: {
           where: { isSelected: true },
           include: { expert: true },
@@ -184,16 +185,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       differentiators: [],
       submissionRules: [],
     });
-    // PR T FIX — DO NOT overwrite tender.intakeSummary with the
-    // generated proposal text. intakeSummary is the INITIAL intake
-    // notes from tender extraction; storing the generated proposal
-    // there created a feedback loop where each regeneration fed the
-    // previous proposal back as input, polluting tender content with
-    // stale references (e.g., a Path tender ended up containing Pharo
-    // Ventures references because a prior generation had been written
-    // back into intakeSummary). Generated proposals are returned in
-    // the response and saved as TenderFile records elsewhere — we do
-    // not store the output back in the tender's input fields.
     return NextResponse.json({ success: true, proposal, fallback: true });
   }
 
@@ -251,10 +242,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
     try {
       const useParallel = generationMode === "parallel";
-      // PR #257 — pull structured Company fields once so we can
-      // populate companyVault. The "as { ... }" casts work around
-      // partial Prisma type narrowing in this route's findUnique
-      // include shape.
       type _CompanyFields = {
         legalName?: string | null;
         address?: string | null;
@@ -295,8 +282,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         projects: [...projectLines, ...projectEvidenceLines].join("\n"),
         compliance: complianceLines.join("\n"),
         differentiators: intelligence.differentiators.join("\n"),
-        // PR #257 — structured company-vault fields. See generate-elite.ts
-        // for the full rationale.
         companyVault: {
           name: company.name,
           legalName: c.legalName,
@@ -329,15 +314,39 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
             .filter((s) => s.length > 0),
         },
       };
+
+      const contractInput = {
+        tenderTitle: tender.title,
+        clientName: intelligence.clientName,
+        requirements: requirementLines,
+        expertLines,
+        projectLines,
+        companyEvidenceLines,
+        projectEvidenceLines,
+        complianceLines,
+        differentiators: intelligence.differentiators,
+        evaluationCriteria: intelligence.evaluationCriteria,
+        submissionRules: intelligence.submissionRules,
+        selectedExpertCount: tender.expertMatches.length,
+        selectedProjectCount: tender.projectMatches.length,
+        reviewedExpertCount: experts.length,
+        reviewedProjectCount: projects.length,
+        tenderSources: tender.files.map((file) => ({
+          id: file.id,
+          name: file.originalFileName,
+          text: file.extractedText ?? "",
+        })),
+      };
+      const contractedAiInput = augmentAIWriterInputWithContract(aiInput, contractInput);
+
       proposal = await withProposalTimeout(
-        useParallel ? generateProposalSectionsParallel(aiInput) : generateBenchmarkProposalWithAI(aiInput),
+        useParallel ? generateProposalSectionsParallel(contractedAiInput) : generateBenchmarkProposalWithAI(contractedAiInput),
         AI_PROPOSAL_TIMEOUT_MS,
       );
     } catch (aiError) {
       const msg = aiError instanceof Error ? aiError.message : String(aiError);
       console.error("Benchmark AI proposal failed in /ai-proposal route:", aiError);
 
-      // Rate limit: don't overwrite any existing proposal — ask user to retry
       if (msg.includes("rate limit") || msg.includes("429")) {
         return NextResponse.json({
           error: "Gemini API rate limit reached. Please wait 30–60 seconds and try again.",
@@ -362,9 +371,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
     if (!fallback) setCachedProposal(cacheKey, proposal, false);
 
-    // Persist the quick draft so users don't lose it on navigation.
-    // Stored as a PROPOSAL document — if a full-pipeline TECHNICAL_PROPOSAL
-    // already exists it is left untouched; this is a separate preview record.
     if (!fallback) {
       try {
         await prisma.generatedDocument.create({
@@ -384,9 +390,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       }
     }
 
-    // PR T FIX — see note above; intakeSummary must NOT be overwritten
-    // with generated-proposal text or every regeneration feeds the
-    // previous one back as input to the next.
     return NextResponse.json({ success: true, proposal, fallback, cached: false });
   } catch (error) {
     console.error("Proposal generation route error:", error);
