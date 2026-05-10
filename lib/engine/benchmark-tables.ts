@@ -383,13 +383,31 @@ function buildRelevanceStatement(project: ProjectRecord, tenderTitle: string, pr
  * The reviewer roles, milestones, and gate-checks are constants; the action items are tender-aware.
  */
 export function buildThreeStageReviewTable(companyName: string, primarySector: string): string {
-  const isDesignTender = /design|architect|building|construction|MEP|structural|engineer|consultancy|supervision/i.test(primarySector);
-  const stage1Action = isDesignTender ? "30% Schematic Design" : "30% Inception / Approach Review";
-  const stage1Detail = isDesignTender ? "floor plans, zoning, and MEP routing confirmed" : "scope, methodology, and stakeholder map confirmed";
-  const stage2Action = isDesignTender ? "60% Developed Design" : "60% Substantive Deliverable Review";
-  const stage2Detail = isDesignTender ? "all disciplines coordinated, specifications drafted" : "all work-streams coordinated, draft outputs produced";
-  const stage3Action = isDesignTender ? "100% Pre-Issue Final Package" : "100% Pre-Submission Final Package";
-  const stage3Detail = isDesignTender ? "complete drawing package, BOQ, and specifications finalised" : "complete deliverable package, supporting evidence, and sign-off finalised";
+  const isWaterTender = /water|borehole|hydraulic|sanitary|irrigation|sewage/i.test(primarySector);
+  const isRoadTender = /road|bridge|highway|pavement|transport(?!ation planning)/i.test(primarySector);
+  const isDesignTender = !isWaterTender && !isRoadTender &&
+    /design|architect|building|construction|MEP|structural|engineer|consultancy|supervision/i.test(primarySector);
+  const stage1Action = isWaterTender ? "30% Source Investigation & Demand Assessment"
+    : isRoadTender ? "30% Survey, Investigation & Preliminary Design"
+    : isDesignTender ? "30% Schematic Design"
+    : "30% Inception / Approach Review";
+  const stage1Detail = isWaterTender ? "yield, hydraulic model, pipe network, and pump station sizing confirmed"
+    : isRoadTender ? "topographic survey, geotechnical investigation, traffic analysis, and alignment confirmed"
+    : isDesignTender ? "floor plans, zoning, and MEP routing confirmed"
+    : "scope, methodology, and stakeholder map confirmed";
+  const stage2Action = isWaterTender ? "60% Detailed Design Review"
+    : isRoadTender ? "60% Detailed Design & Tender Documents"
+    : isDesignTender ? "60% Developed Design"
+    : "60% Substantive Deliverable Review";
+  const stage2Detail = isWaterTender ? "network model, pump station, treatment plant, and BOQ coordinated"
+    : isRoadTender ? "pavement design, drainage, structures, and specifications drafted"
+    : isDesignTender ? "all disciplines coordinated, specifications drafted"
+    : "all work-streams coordinated, draft outputs produced";
+  const stage3Action = isWaterTender || isRoadTender ? "100% Pre-Issue Tender Package" : isDesignTender ? "100% Pre-Issue Final Package" : "100% Pre-Submission Final Package";
+  const stage3Detail = isWaterTender ? "complete hydraulic design, BOQ, specifications, and O&M manual finalised"
+    : isRoadTender ? "complete drawings, BOQ, specifications, and road-safety audit finalised"
+    : isDesignTender ? "complete drawing package, BOQ, and specifications finalised"
+    : "complete deliverable package, supporting evidence, and sign-off finalised";
 
   return [
     "## C.3 Quality Assurance: Three-Stage Review",
