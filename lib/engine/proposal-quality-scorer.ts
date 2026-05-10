@@ -142,7 +142,7 @@ function paragraphHasEvidence(paragraph: string): boolean {
     /\((?:19|20)\d{2}(?:[\/,;\s]|\b)/,
     // Year preceded by a date-marker preposition / verb (e.g., "in 2023",
     // "since 2018", "completed 2024", "delivered 2022")
-    /\b(?:in|since|from|between|completed|delivered|signed|awarded|established|founded|certified)\s+(?:19|20)\d{2}\b/i,
+    /\b(?:in|since|from|between|during|throughout|across|within|after|prior|completed|delivered|signed|awarded|established|founded|certified|originally|initially)\s+(?:19|20)\d{2}\b/i,
     // Named asset (e.g., "Hospital A", "Project Pharo", "Adama Water Supply Scheme")
     /\b(Hospital|Project|Centre|Center|Plant|Park|Building|School|University|Bridge|Road|Scheme|Corridor|Zone|Facility|System|Network|Hub|Complex|Institute|Authority|Programme|Program|Rehabilitation|Upgrade|Extension|Expansion|Pipeline|Station|Terminal|Port|Dam|Reservoir|Canal|Substation) [A-Z]/,
     // Contract value without currency unit (e.g., "45 million", "2.3 billion")
@@ -250,7 +250,7 @@ export function scoreProposalQuality(opts: {
     const sb = sectionMd("section\\s*b(?:[^a-z]|$)|relevant experience|project portfolio");
     // Extract named-asset tokens (Hospital X, Project Y, Centre Z, etc.)
     // from the cover letter, then check whether any appear in ES and B.
-    const namedAssetRe = /(hospital|project|centre|center|plant|park|building|school|university|bridge|road|scheme|corridor|zone|facility|system|network|hub|complex|institute|authority|programme|program|rehabilitation|dam|reservoir|canal|station|terminal|port|substation)\s+[a-z0-9'+\-/]+/gi;
+    const namedAssetRe = /(hospital|project|centre|center|plant|park|building|school|university|bridge|road|scheme|corridor|zone|facility|system|network|hub|complex|institute|authority|programme|program|rehabilitation|dam|reservoir|canal|station|terminal|port|substation)\s+[A-Za-z0-9'+\-/]+/gi;
     const clAssets = (cl.match(namedAssetRe) ?? []).map((s) => s.trim().toLowerCase());
     const distinctClAssets = [...new Set(clAssets)];
     let crossSectionMatches = 0;

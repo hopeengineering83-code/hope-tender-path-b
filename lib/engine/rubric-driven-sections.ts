@@ -63,7 +63,7 @@ export interface RubricCriterion {
   // Verbatim weight string from the tender (e.g., "25%", "30 points")
   weight: string;
   // Numeric weight extracted from the verbatim string (0-100). Used
-  // to skip insignificant criteria (< 5%) that aren't worth restructuring
+  // to skip insignificant criteria (< 2%) that aren't worth restructuring
   // for.
   numericWeight: number | null;
   // Which canonical parent section this criterion belongs under
@@ -160,7 +160,7 @@ function parseNumericWeight(weight: string): number | null {
  */
 export function buildRubricCriteria(
   evaluationWeights: EvaluationWeight[],
-  minWeight = 5,
+  minWeight = 2,
 ): RubricCriterion[] {
   const criteria: RubricCriterion[] = [];
 
