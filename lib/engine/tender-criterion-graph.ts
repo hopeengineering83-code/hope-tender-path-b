@@ -53,12 +53,12 @@ function clean(value?: string | null): string {
 function classifyCategory(requirement: string): TenderCriterionCategory {
   const req = clean(requirement).toLowerCase();
   if (/disqualif|non[-\s]?responsive|reject|rejection|shall\s+be\s+rejected|will\s+not\s+be\s+considered|failure\s+to\s+submit/i.test(req)) return "DISQUALIFICATION";
+  if (/experience|similar|reference|past\s+project|past\s+assignment|track\s+record|assignment\s+reference|portfolio|client\s+certificate|completion\s+certificate|completion\s+certificates|similar\s+hospital|similar\s+healthcare|project\s+references?/i.test(req)) return "EXPERIENCE";
   if (/eligib|valid\s+registration|business\s+license|licence|tax\s+clearance|vat|tin|certificate|legal|financial\s+capacity|audited\s+accounts|bank\s+statement|bid\s+security/i.test(req)) return "ELIGIBILITY";
   if (/submission|deadline|portal|email|sealed|envelope|file\s+name|format|pdf|hard\s+copy|soft\s+copy|signature|stamp|signed/i.test(req)) return "SUBMISSION";
   if (/financial|price|pricing|commercial|boq|bill\s+of\s+quantit|fee|rate|quotation|currency|tax|vat|validity|discount/i.test(req)) return "COMMERCIAL";
   if (/evaluation|score|scoring|marks|weight|weighted|criteria|technical\s+points|method\s+of\s+award/i.test(req)) return "EVALUATION";
   if (/cv|expert|personnel|staff|team|key\s+professional|qualification|years\s+of\s+experience|availability/i.test(req)) return "PERSONNEL";
-  if (/experience|similar|reference|past\s+project|track\s+record|assignment|portfolio|client\s+certificate|completion/i.test(req)) return "EXPERIENCE";
   if (/contract|fidic|condition\s+of\s+contract|liquidated\s+damages|warranty|insurance|liability|claim|variation/i.test(req)) return "CONTRACTUAL";
   if (/quality|qa\/qc|qaqc|hse|safety|environment|risk\s+management|method\s+statement|iso/i.test(req)) return "QUALITY_HSE";
   if (/scope|methodology|approach|work\s+plan|deliverable|design|supervision|contract\s+administration|geotechnical|urban\s+planning|asset\s+management|interior/i.test(req)) return "TECHNICAL_SCOPE";
