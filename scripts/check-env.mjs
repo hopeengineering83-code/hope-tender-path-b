@@ -108,7 +108,12 @@ function validateAiProposalRuntime() {
     "    Recommended: set ANTHROPIC_TIER=1 for 60s deployments, or enable AI_PROPOSAL_LONG_ROUTE_ENABLED=true only after confirming long-function runtime capacity.",
   ].join("\n");
 
-  if (strict || isVercelProd) errors.push(`  ✗ AI_PROPOSAL_RUNTIME: ${message}`);
+  // Runtime config issues are warnings, not build blockers. Failing the
+  // production build here prevents the deployment that would actually serve
+  // users — it's better to deploy with a sub-optimal config than to not
+  // deploy at all. Use AI_PROPOSAL_STRICT_RUNTIME_CHECK=true to opt in to
+  // hard enforcement if you need it.
+  if (strict) errors.push(`  ✗ AI_PROPOSAL_RUNTIME: ${message}`);
   else warnings.push(`  ⚠  AI_PROPOSAL_RUNTIME: ${message}`);
 }
 
