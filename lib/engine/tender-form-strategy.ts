@@ -20,14 +20,14 @@ function includesAny(text: string, patterns: RegExp[]): boolean {
 }
 
 function detectPrimaryForm(forms: TenderForm[], text: string): TenderForm | "UNKNOWN" {
-  const priority: TenderForm[] = ["PREQUALIFICATION", "EOI", "RFP", "RFQ", "ITT", "FRAMEWORK", "TECHNICAL_PROPOSAL", "FINANCIAL_PROPOSAL", "CONSULTANCY"];
-  for (const form of priority) if (forms.includes(form)) return form;
-  if (/pre[-\s]?qualification|shortlist|registration\s+of\s+consultants/i.test(text)) return "PREQUALIFICATION";
   if (/expression\s+of\s+interest|\beoi\b/i.test(text)) return "EOI";
+  if (/pre[-\s]?qualification|registration\s+of\s+consultants/i.test(text)) return "PREQUALIFICATION";
   if (/request\s+for\s+proposals?|\brfp\b/i.test(text)) return "RFP";
   if (/request\s+for\s+quotations?|\brfq\b/i.test(text)) return "RFQ";
   if (/invitation\s+to\s+tender|invitation\s+for\s+bids?|\bitt\b/i.test(text)) return "ITT";
   if (/framework\s+agreement|call[-\s]?off|multiple\s+award/i.test(text)) return "FRAMEWORK";
+  const priority: TenderForm[] = ["EOI", "PREQUALIFICATION", "RFP", "RFQ", "ITT", "FRAMEWORK", "TECHNICAL_PROPOSAL", "FINANCIAL_PROPOSAL", "CONSULTANCY"];
+  for (const form of priority) if (forms.includes(form)) return form;
   return forms[0] ?? "UNKNOWN";
 }
 
