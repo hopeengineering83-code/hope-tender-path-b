@@ -1,5 +1,6 @@
 import { classifyUniversalTender, universalProfileSummary } from "./universal-tender-taxonomy";
 import { renderTenderResponseBlueprint } from "./tender-response-blueprint";
+import { applyProposalQualityRepairAddenda } from "./proposal-quality-repair";
 
 export type EvaluatorMatrixInput = {
   tenderTitle: string;
@@ -217,5 +218,5 @@ export function appendEvaluatorResponseMatrix(markdown: string, input: Evaluator
   for (const line of checklist) output += `\n- ${line}`;
   output += "\n- Confirm no unsupported claim, placeholder text, AI disclaimer, prohibited financial content or wrong file name remains in the final package.";
 
-  return output;
+  return applyProposalQualityRepairAddenda(output, input);
 }
