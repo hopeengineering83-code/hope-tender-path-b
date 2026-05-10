@@ -4,6 +4,7 @@ import { applyProposalQualityRepairAddenda } from "./proposal-quality-repair";
 import { buildTenderFormStrategy, renderTenderFormStrategy } from "./tender-form-strategy";
 import { enforceTechnicalPriceSeparation } from "./proposal-price-leakage-guard";
 import { renderTenderCriterionGraph } from "./tender-criterion-graph";
+import { renderProposalIntelligenceContract } from "./proposal-intelligence-contract";
 
 export type EvaluatorMatrixInput = {
   tenderTitle: string;
@@ -134,6 +135,7 @@ export function appendEvaluatorResponseMatrix(markdown: string, input: Evaluator
   const tenderProfile = classifyUniversalTender(`${input.tenderTitle}\n${input.requirements.join("\n")}`);
   const tenderFormStrategy = buildTenderFormStrategy({ tenderTitle: input.tenderTitle, requirements: input.requirements, submissionLines: input.complianceLines, extraText: input.clientName });
 
+  output += "\n\n" + renderProposalIntelligenceContract(input);
   output += "\n\n" + renderTenderFormStrategy(tenderFormStrategy);
   output += "\n\n" + renderTenderCriterionGraph(input);
   output += "\n\n" + renderTenderResponseBlueprint(input);
@@ -148,6 +150,7 @@ export function appendEvaluatorResponseMatrix(markdown: string, input: Evaluator
   output += "\n\n## Multi-Angle Proposal Quality Check";
   output += "\nThe final proposal is checked from the following evaluator angles before submission:";
   for (const angle of [
+    "Proposal Intelligence Contract: one controlling plan connects tender form, criterion graph, response blueprint, evidence summary, section plan and export gates.",
     `Tender-form fit: ${tenderFormStrategy.primaryForm} response logic is applied, including ${tenderFormStrategy.isTwoEnvelope ? "strict two-envelope controls" : "commercial-content controls where applicable"}.`,
     "Criterion graph control: eligibility, scope, experience, personnel, submission, commercial, evaluation and disqualification criteria are separated before final export.",
     "Scope compliance: every major tender requirement has a direct response or a controlled evidence action.",
