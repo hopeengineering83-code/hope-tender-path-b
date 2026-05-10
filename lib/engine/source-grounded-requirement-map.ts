@@ -52,6 +52,66 @@ function isMandatoryRequirement(requirement: string): boolean {
   return /\bshall\b|\bmust\b|required|mandatory|compulsory|pass\/fail|failure\s+to|non[-\s]?responsive|disqualif|reject|will\s+be\s+rejected/i.test(requirement);
 }
 
+const STOP = new Set("the a an of and or for to in on at by with as is are was were be been have has had this that these those will may must shall should can could it its their our we you bidder bidders proposal proposer proposers tender tenderer consultant consultants provide submit valid include includes included last these those".split(/\s+/));
+
+function tokens(value: string): string[] {
+  return clean(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9 ]+/g, " ")
+    .split(/\s+/)
+    .filter((word) => word.length >= 4 && !STOP.has(word));
+}
+
+function splitBlocks(text: string): Array<{ paragraph: string; pageNumber?: number; sectionHeading?: string }> {
+  const out: Array<{ paragraph: string; pageNumber?: number; sectionHeading?: string }> = [];
+  let currentPage: number | undefined;
+  let currentHeading: string | undefined;
+  for (const raw of text.replace(/\r\n?/g, "\n").split(/\n{2,}/)) {
+    const block = raw.trim();
+    if (!block) continue;
+    const page = block.match(/\[\s*page\s*(\d{1,4})\s*\]/i) ?? block.match(/^\(?\s*page\s+(\d{1,4})(?:\s+of\s+\d{1,4})?\s*\)?\s*$/i);
+    if (page) {
+      currentPage = Number(page[1]);
+      continue;
+    }
+    const heading = block.match(/^(?:section\s+)?(\d{1,2}(?:\.\d{1,3}){0,3})\s+(.{4,140})$/i)
+      ?? block.match(/^(annex\s+[A-Z](?:\.\d{1,2})?)[\s:.\-]+(.{4,140})$/i)
+      ?? block.match(/^(article\s+[ivxlcdm]+)[\s:.\-]+(.{4,140})$/i);
+    if (heading) {
+      currentHeading = `${heading[1]} ${heading[2]}`.trim().slice(0, 140);
+      continue;
+    }
+    out.push({ paragraph: block, pageNumber: currentPage, sectionHeading: currentHeading });
+  }
+  return out;
+}
+
+function lexicalFallback(input: {
+  requirementId: string;
+  requirement: string;
+  source: TenderSourceDocument;
+}): RequirementSource & { sourceTenderFileName?: string | null } | null {
+  const reqTokens = tokens(input.requirement);
+  if (reqTokens.length === 0) return null;
+  let best: { paragraph: string; pageNumber?: number; sectionHeading?: string; score: number } | null = null;
+  for (const block of splitBlocks(input.source.text)) {
+    const lower = clean(block.paragraph).toLowerCase();
+    const hits = reqTokens.filter((token) => lower.includes(token)).length;
+    const score = hits / Math.max(reqTokens.length, 1);
+    if (!best || score > best.score) best = { ...block, score };
+  }
+  if (!best || best.score < 0.45) return null;
+  return {
+    requirementId: input.requirementId,
+    sourceTenderFileId: input.source.id,
+    sourceTenderFileName: input.source.name ?? null,
+    sourcePageNumber: best.pageNumber,
+    sourceSectionHeading: best.sectionHeading,
+    sourceExactQuote: best.paragraph.length > 380 ? `${best.paragraph.slice(0, 379).trim()}…` : best.paragraph,
+    sourceConfidence: Math.min(0.85, Math.max(0.2, best.score)),
+  };
+}
+
 export function buildSourceGroundedRequirementMap(input: {
   requirements: string[];
   tenderSources: TenderSourceDocument[];
@@ -76,10 +136,14 @@ export function buildSourceGroundedRequirementMap(input: {
       requirements: requirements.map((req) => ({ id: req.id, title: req.title, description: req.description })),
       options: { minConfidence: input.minConfidence ?? 0.2, maxQuoteChars: 380 },
     });
-    for (const match of matches) {
-      const previous = bestById.get(match.requirementId);
-      if (!previous || match.sourceConfidence > previous.sourceConfidence) {
-        bestById.set(match.requirementId, { ...match, sourceTenderFileName: source.name ?? null });
+    for (const req of requirements) {
+      const match = matches.find((candidate) => candidate.requirementId === req.id);
+      const fallback = !match || match.sourceConfidence === 0 ? lexicalFallback({ requirementId: req.id, requirement: req.original, source }) : null;
+      const candidate = match && match.sourceConfidence > 0 ? { ...match, sourceTenderFileName: source.name ?? null } : fallback;
+      if (!candidate) continue;
+      const previous = bestById.get(candidate.requirementId);
+      if (!previous || candidate.sourceConfidence > previous.sourceConfidence) {
+        bestById.set(candidate.requirementId, candidate);
       }
     }
   }
