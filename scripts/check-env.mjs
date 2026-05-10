@@ -71,6 +71,8 @@ const PRODUCTION_REQUIRED = [];
 // Only VERCEL_ENV==="production" means an actual production deployment.
 const isVercel = process.env.VERCEL === "1";
 const isVercelProd = process.env.VERCEL_ENV === "production";
+const isVercelPreview = isVercel && process.env.VERCEL_ENV === "preview";
+const strictPreviewEnvCheck = ["1", "true", "yes"].includes((process.env.STRICT_PREVIEW_ENV_CHECK || "").trim().toLowerCase());
 const isProd = process.env.NODE_ENV === "production" && (!isVercel || isVercelProd);
 const errors = [];
 const warnings = [];
@@ -131,13 +133,18 @@ for (const spec of OPTIONAL) {
 
 for (const spec of ALWAYS_REQUIRED) {
   const value = process.env[spec.name];
+  const previewRelaxed = isVercelPreview && !strictPreviewEnvCheck;
   if (!value) {
-    errors.push(`  ✗ ${spec.name}: ${spec.description}`);
+    if (previewRelaxed) warnings.push(`  ⚠  ${spec.name}: Missing in Vercel preview. Deploy will continue, but runtime APIs depending on this variable will fail until configured.`);
+    else errors.push(`  ✗ ${spec.name}: ${spec.description}`);
     continue;
   }
   if (spec.validate) {
     const err = spec.validate(value);
-    if (err) errors.push(`  ✗ ${spec.name}: ${err}`);
+    if (err) {
+      if (previewRelaxed) warnings.push(`  ⚠  ${spec.name}: ${err} (preview build allowed; runtime may fail)`);
+      else errors.push(`  ✗ ${spec.name}: ${err}`);
+    }
   }
 }
 
