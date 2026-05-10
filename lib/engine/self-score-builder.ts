@@ -168,12 +168,20 @@ export function buildSelfScoreSection(input: SelfScoreBuilderInput): string | nu
   type Row = { criterion: string; weight: string; score: number; rationale: string; risk: string };
   const rows: Row[] = criteria.slice(0, 25).map((criterion) => {
     const { score, rationale, risk } = predictScore(criterion, input);
+    const weight = findWeight(criterion, input.evaluationWeights);
+    // Suppress the generic "Low predicted score" risk note for criteria that carry
+    // low numeric weight (< 10%) — the evaluator already sees the 0–10 score in the
+    // table; flagging every minor criterion as a risk creates noise.
+    const numericW = weight !== "—" ? parseFloat(weight) : NaN;
+    const effectiveRisk = (!isNaN(numericW) && numericW < 10 && risk.includes("Low predicted score"))
+      ? "Standard senior review before submission"
+      : risk;
     return {
       criterion,
-      weight: findWeight(criterion, input.evaluationWeights),
+      weight,
       score,
       rationale,
-      risk,
+      risk: effectiveRisk,
     };
   });
 

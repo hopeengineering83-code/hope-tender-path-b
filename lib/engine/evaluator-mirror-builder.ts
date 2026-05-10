@@ -108,7 +108,7 @@ function findWeight(criterion: string, weights: EvaluationWeightLite[]): string 
       best = w.weight;
     }
   }
-  return bestScore >= 2 ? best : "—";
+  return bestScore >= 1 ? best : "—";
 }
 
 export function buildEvaluatorMirrorSection(input: EvaluatorMirrorBuilderInput): string | null {
