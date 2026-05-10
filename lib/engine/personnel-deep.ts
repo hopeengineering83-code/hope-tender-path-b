@@ -227,7 +227,7 @@ function expertProjectsLine(e: ExpertRecord, projects: ProjectRecord[]): string 
     const pAreas = safeArr(p.serviceAreas).map((s) => s.toLowerCase());
     return expertSectors.some((s) => pSector.includes(s)) ||
       expertDisciplines.some((d) => pAreas.some((a) => a.includes(d)));
-  }).slice(0, 3);
+  }).slice(0, 5);
   if (matches.length === 0) return "Bid-Team Action: confirm key project references";
   return matches.map((p) => {
     const v = p.contractValue ? `${p.currency || "ETB"} ${Math.round(p.contractValue).toLocaleString("en-US")}` : "";

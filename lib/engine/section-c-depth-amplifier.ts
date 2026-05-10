@@ -223,7 +223,8 @@ function diagnoseSubSections(sectionLines: string[]): {
       !p.startsWith(">") &&
       !p.startsWith("- ")
     );
-    if (paragraphs.length < 2) thinNumbers.add(spec.number);
+    const wordCount = paragraphs.join(" ").split(/\s+/).filter(Boolean).length;
+    if (paragraphs.length < 2 || wordCount < 90) thinNumbers.add(spec.number);
   }
 
   return { presentNumbers, thinNumbers };

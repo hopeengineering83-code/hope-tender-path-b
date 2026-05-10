@@ -6,6 +6,7 @@ export type BenchmarkGuardInput = {
   expertCount: number;
   projectCount: number;
   complianceLines: string[];
+  primarySector?: string;
 };
 
 export type BenchmarkScore = {
@@ -191,10 +192,12 @@ export function scoreBenchmarkProposalMarkdown(markdown: string, input: Benchmar
     strengths.push("Compliance/bid-review strategy is visible.");
   } else gaps.push("Compliance and bid-review strategy is not visible enough.");
 
-  if (markdown.length >= 8000) {
+  const depthThreshold = /health|hospital|water|road|bridge|sanit|hydraulic/i.test(input.primarySector ?? "") ? 10000 : 8000;
+  const depthPartial = Math.round(depthThreshold * 0.56);
+  if (markdown.length >= depthThreshold) {
     score += 5;
     strengths.push("Proposal has enough narrative depth for a serious technical response.");
-  } else if (markdown.length >= 4500) {
+  } else if (markdown.length >= depthPartial) {
     score += 3;
     gaps.push("Proposal has moderate depth but may still be shorter than benchmark quality.");
   } else gaps.push("Proposal is too short for benchmark-quality technical submission.");

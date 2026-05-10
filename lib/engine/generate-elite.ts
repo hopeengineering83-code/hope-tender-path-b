@@ -1112,7 +1112,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     ...(bidStrategy?.topRisks.map((r) => `BID RISK [${r.severity}] ${r.category}: ${r.title} — ${r.mitigation}`) ?? []),
   ];
 
-  const guardInput = { tenderTitle: cleanedTenderTitle, clientName: intelligence.clientName, companyName: company.name, submissionNotes, expertCount: expertLines.length, projectCount: projectLines.length, complianceLines };
+  const guardInput = { tenderTitle: cleanedTenderTitle, clientName: intelligence.clientName, companyName: company.name, submissionNotes, expertCount: expertLines.length, projectCount: projectLines.length, complianceLines, primarySector: intelligence.primarySector };
   const evaluatorMatrixInput = { tenderTitle: cleanedTenderTitle, clientName: intelligence.clientName, requirements: requirementLines, expertLines, projectLines, companyEvidenceLines, projectEvidenceLines, complianceLines, differentiators: intelligence.differentiators };
 
   let sourceMarkdown: string;

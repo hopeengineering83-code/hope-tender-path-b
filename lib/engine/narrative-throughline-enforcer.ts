@@ -23,12 +23,19 @@ function projectMentioned(text: string, project: ProjectRecord): boolean {
   const haystack = normalize(text);
   const needle = normalize(project.name);
   if (!needle || needle.length < 4) return false;
-  // Match the full normalised name, OR the leading 3 distinctive tokens.
+  // Match the full normalised name.
   if (haystack.includes(needle)) return true;
   const tokens = needle.split(" ").filter((t) => t.length > 2);
+  // Match leading 3 distinctive tokens as a phrase.
   if (tokens.length >= 3) {
     const distinctive = tokens.slice(0, 3).join(" ");
     if (haystack.includes(distinctive)) return true;
+  }
+  // Match by token set: any 2+ distinctive tokens present covers abbreviated mentions
+  // (e.g., "Addis Water Scheme" matches "Addis Ababa Water Supply Scheme").
+  if (tokens.length >= 2) {
+    const matchCount = tokens.filter((t) => haystack.includes(t)).length;
+    if (matchCount >= Math.min(2, tokens.length)) return true;
   }
   return false;
 }

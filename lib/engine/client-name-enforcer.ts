@@ -89,7 +89,7 @@ export function enforceClientName(
   let zoneEnd = -1;
   for (let i = 0; i < lines.length; i += 1) {
     if (/^#{1,4}\s+Cover Letter\b/i.test(lines[i]) && zoneStart < 0) zoneStart = i;
-    if (zoneStart >= 0 && /^#{1,4}\s+(?:Section\s+A\b|Company Profile\b|Corporate Information\b)/i.test(lines[i])) {
+    if (zoneStart >= 0 && /^#{1,4}\s+(?:Section\s+B\b|Relevant Experience\b|Project Portfolio\b|Client References\b)/i.test(lines[i])) {
       zoneEnd = i; break;
     }
   }

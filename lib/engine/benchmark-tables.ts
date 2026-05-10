@@ -367,10 +367,10 @@ function buildRelevanceStatement(project: ProjectRecord, tenderTitle: string, pr
   const summary = (project.summary ?? "").replace(/\s+/g, " ").trim();
 
   if (summary && sectorMatch) {
-    return `Direct ${primarySector} relevance: ${summary.slice(0, 220)}`;
+    return `Direct ${primarySector} relevance: ${summary.slice(0, 280)}`;
   }
   if (summary) {
-    return `Demonstrates transferable competency for ${tenderTitle}: ${summary.slice(0, 220)}`;
+    return `Demonstrates transferable competency for ${tenderTitle}: ${summary.slice(0, 280)}`;
   }
   if (sectorMatch) {
     return `Direct ${primarySector} project — same team and methodology applicable to ${tenderTitle}.`;

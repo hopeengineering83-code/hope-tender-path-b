@@ -149,8 +149,8 @@ function inferProposalLocation(req: RequirementLite): string {
  */
 function statusFromSupportLevel(supportLevel?: string | null): "FULLY MET" | "PARTIALLY MET" | "NOT MET" {
   const v = (supportLevel ?? "").toUpperCase().trim();
-  if (v === "FULL" || v === "FULLY" || v === "FULL_SUPPORT" || v === "STRONG" || v === "FULLY MET") return "FULLY MET";
-  if (v === "NONE" || v === "MISSING" || v === "GAP" || v === "WEAK" || v === "NOT MET") return "NOT MET";
+  if (v.includes("FULL") || v.includes("STRONG") || v === "YES" || v === "MET") return "FULLY MET";
+  if (v.includes("NONE") || v.includes("MISSING") || v.includes("GAP") || v.includes("WEAK") || v.includes("NO ") || v === "NO" || v === "NOT") return "NOT MET";
   // Default to PARTIALLY MET for PARTIAL / unspecified — the intake's default
   // supportLevel is "PARTIAL" so this is the expected case for most rows.
   return "PARTIALLY MET";
