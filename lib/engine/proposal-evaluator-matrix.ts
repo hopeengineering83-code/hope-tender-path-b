@@ -3,6 +3,7 @@ import { renderTenderResponseBlueprint } from "./tender-response-blueprint";
 import { applyProposalQualityRepairAddenda } from "./proposal-quality-repair";
 import { buildTenderFormStrategy, renderTenderFormStrategy } from "./tender-form-strategy";
 import { enforceTechnicalPriceSeparation } from "./proposal-price-leakage-guard";
+import { renderTenderCriterionGraph } from "./tender-criterion-graph";
 
 export type EvaluatorMatrixInput = {
   tenderTitle: string;
@@ -134,6 +135,7 @@ export function appendEvaluatorResponseMatrix(markdown: string, input: Evaluator
   const tenderFormStrategy = buildTenderFormStrategy({ tenderTitle: input.tenderTitle, requirements: input.requirements, submissionLines: input.complianceLines, extraText: input.clientName });
 
   output += "\n\n" + renderTenderFormStrategy(tenderFormStrategy);
+  output += "\n\n" + renderTenderCriterionGraph(input);
   output += "\n\n" + renderTenderResponseBlueprint(input);
 
   output += "\n\n## Tender Criteria Response Matrix";
@@ -147,6 +149,7 @@ export function appendEvaluatorResponseMatrix(markdown: string, input: Evaluator
   output += "\nThe final proposal is checked from the following evaluator angles before submission:";
   for (const angle of [
     `Tender-form fit: ${tenderFormStrategy.primaryForm} response logic is applied, including ${tenderFormStrategy.isTwoEnvelope ? "strict two-envelope controls" : "commercial-content controls where applicable"}.`,
+    "Criterion graph control: eligibility, scope, experience, personnel, submission, commercial, evaluation and disqualification criteria are separated before final export.",
     "Scope compliance: every major tender requirement has a direct response or a controlled evidence action.",
     "Service-capability fit: design, supervision, contract administration, geotechnical, urban planning, asset management and other service lines are matched by capability, not by loose keywords.",
     "Sector relevance: sector-specific evidence is preferred, while transferable service evidence is allowed only when capability fit is strong.",
@@ -166,6 +169,7 @@ export function appendEvaluatorResponseMatrix(markdown: string, input: Evaluator
   output += "\n- Do not invent staff, project roles, certificates, contract values, completion dates, sector experience, licences, financial capacity, photos, drawings, or client approvals.";
   output += "\n- If the evidence is partial, present it as transferable or supporting evidence, not as exact same-scope experience.";
   output += "\n- If the evidence is missing, add a final review action instead of making an unsupported claim.";
+  output += "\n- If the criterion graph marks an item CRITICAL, block final export until verified or formally waived by the bid lead.";
   output += `\n- Tender-form rule: ${tenderFormStrategy.proposalObjective}`;
   for (const instruction of tenderFormStrategy.writingInstructions.slice(0, 4)) output += `\n- ${instruction}`;
   for (const control of tenderFormStrategy.commercialControls.slice(0, 4)) output += `\n- ${control}`;
