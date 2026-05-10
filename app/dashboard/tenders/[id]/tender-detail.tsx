@@ -255,6 +255,11 @@ type ProjectMatch = {
   };
 };
 
+type MatchingDiagnostics = {
+  experts: { selected: number; averageSelectedScore: number; lowConfidence: Array<{ id: string; score: number }>; lowCoverage: Array<{ id: string }> };
+  projects: { selected: number; averageSelectedScore: number; lowConfidence: Array<{ id: string; score: number }>; lowCoverage: Array<{ id: string }> };
+};
+
 type ComplianceMatrixEntry = {
   id: string;
   requirementId: string | null;
@@ -336,6 +341,7 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
   const [activityLogs, setActivityLogs] = useState<{ id: string; action: string; description: string; createdAt: string }[]>([]);
   const [activityLoaded, setActivityLoaded] = useState(false);
   const [activityLoading, setActivityLoading] = useState(false);
+  const [matchingDiagnostics, setMatchingDiagnostics] = useState<MatchingDiagnostics | null>(null);
   const [autoSavedAt, setAutoSavedAt] = useState<Date | null>(null);
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isFirstRender = useRef(true);
@@ -398,6 +404,21 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
     return () => { if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [form]);
+
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        const res = await fetch(`/api/tenders/${tender.id}/matching-diagnostics`);
+        if (!res.ok) return;
+        const data = await res.json() as MatchingDiagnostics;
+        if (active) setMatchingDiagnostics(data);
+      } catch {
+        // diagnostics are optional; keep UI resilient
+      }
+    })();
+    return () => { active = false; };
+  }, [tender.id]);
 
   async function handleSave() {
     await save({
@@ -801,6 +822,21 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
           </button>
         </div>
       </div>
+
+      {matchingDiagnostics && (
+        <div className="rounded-2xl border border-indigo-200 bg-indigo-50 p-4">
+          <h3 className="text-sm font-semibold text-indigo-900">Matching quality diagnostics</h3>
+          <p className="mt-1 text-xs text-indigo-700">
+            Expert avg {Math.round(matchingDiagnostics.experts.averageSelectedScore * 100)}% · Project avg {Math.round(matchingDiagnostics.projects.averageSelectedScore * 100)}%
+          </p>
+          <div className="mt-2 grid gap-2 text-xs text-indigo-800 sm:grid-cols-2">
+            <p>Experts low-confidence: {matchingDiagnostics.experts.lowConfidence.length}</p>
+            <p>Projects low-confidence: {matchingDiagnostics.projects.lowConfidence.length}</p>
+            <p>Experts zero-family-coverage: {matchingDiagnostics.experts.lowCoverage.length}</p>
+            <p>Projects zero-family-coverage: {matchingDiagnostics.projects.lowCoverage.length}</p>
+          </div>
+        </div>
+      )}
 
       {/* Generation progress bar — visible during generate/generate-docs */}
       {(generatingDocs || generating) && generationPhase && (
