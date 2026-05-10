@@ -36,7 +36,7 @@ function projectMentioned(text: string, project: ProjectRecord): boolean {
 type SectionMatcher = { label: string; headingPatterns: RegExp[] };
 
 const TARGET_SECTIONS: SectionMatcher[] = [
-  { label: "Cover Letter", headingPatterns: [/^cover letter$/i] },
+  { label: "Cover Letter", headingPatterns: [/^cover letter$/i, /^cover letter[\s:—\-]/i] },
   { label: "Executive Summary", headingPatterns: [/^executive summary$/i, /^executive summary[\s—:-]/i] },
   {
     label: "Section B / Relevant Experience",
@@ -78,7 +78,7 @@ export function enforceNarrativeThroughline(opts: {
   markdown: string;
   topProjects: ProjectRecord[];
 }): { markdown: string; injected: { section: string; project: string }[] } {
-  const top = opts.topProjects.slice(0, 2).filter((p) => p.name && p.name.trim().length >= 4);
+  const top = opts.topProjects.slice(0, 3).filter((p) => p.name && p.name.trim().length >= 4);
   if (top.length === 0) return { markdown: opts.markdown, injected: [] };
 
   const lines = opts.markdown.split("\n");

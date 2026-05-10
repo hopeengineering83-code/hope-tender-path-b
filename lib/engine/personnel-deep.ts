@@ -44,7 +44,7 @@ const MARKER_PROFILES = "<!-- personnel:per-02-profiles -->";
 const MARKER_ORGANOGRAM = "<!-- personnel:organogram -->";
 
 const HEADING_PATTERNS_LOADING: RegExp[] = [
-  /^##\s+PER\s*0?1\b/im,
+  /^##\s+PER[-\s]*0?1\b/im,
   /^##\s+Personnel\s+Loading/im,
   /^##\s+Personnel\s+Loading\s+Table/im,
   /^##\s+Person-?days?\s+(?:Assignment|Loading)/im,
