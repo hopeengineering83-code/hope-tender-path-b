@@ -1632,7 +1632,16 @@ export async function generateProposalSectionsParallel(input: AIBidWriterInput):
   // Anthropic Tier 2+ accounts. On Hobby (60s), deep mode still works
   // but cuts available headroom — set to true only after confirming
   // the parallel-section path is reliably finishing in <40s.
-  const deepMode = (process.env.PROPOSAL_DEEP_MODE || "").toLowerCase() === "true";
+  //
+  // Auto-activation: deep mode is enabled by default for Tier 2+ — the
+  // drill-down add-on call (~10–12s serial) is well within the 220s
+  // Tier 2 timeout and produces the biggest single quality lift.
+  // Override: set PROPOSAL_DEEP_MODE=false to force off on any tier.
+  const _tierForDeep = (process.env.ANTHROPIC_TIER || "").trim();
+  const _tierNumForDeep = _tierForDeep === "1" ? 1 : _tierForDeep === "3" ? 3 : _tierForDeep === "4" ? 4 : 2;
+  const deepMode = (process.env.PROPOSAL_DEEP_MODE || "").toLowerCase() === "false"
+    ? false
+    : (process.env.PROPOSAL_DEEP_MODE || "").toLowerCase() === "true" || _tierNumForDeep >= 2;
 
   const specs = buildProposalSectionSpecs(input, { deep: deepMode });
 

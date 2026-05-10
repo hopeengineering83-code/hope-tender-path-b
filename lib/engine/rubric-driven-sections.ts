@@ -127,7 +127,19 @@ function classifyCriterion(criterion: string): { parentSection: RubricSection; s
     return { parentSection: "SECTION_D", shortCode: "LC" };
   }
 
-  // Fallback — generic "OTHER" criterion goes under Section D
+  // Fuzzy keyword fallback — catches non-standard criterion wording before
+  // resorting to Section D. Order matters: methodology > experience > team.
+  if (/\b(methodology|approach|method|work\s+plan|delivery|deliverable|technical\s+solution|implementation)/.test(c)) {
+    return { parentSection: "SECTION_C", shortCode: "MA" };
+  }
+  if (/\b(experience|track\s+record|relevant|similar|background|history|past\s+work|assignment|project)/.test(c)) {
+    return { parentSection: "SECTION_B", shortCode: "EXP" };
+  }
+  if (/\b(team|expert|staff|personnel|human\s+resource|proposed\s+team|key\s+person|professional)/.test(c)) {
+    return { parentSection: "SECTION_A", shortCode: "PER" };
+  }
+
+  // True fallback — put unknown/value-type criteria under Section D
   return { parentSection: "SECTION_D", shortCode: "OTH" };
 }
 

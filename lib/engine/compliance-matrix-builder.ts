@@ -175,7 +175,16 @@ export function hasComplianceMatrixHeading(markdown: string): boolean {
  * fragment. Returns null when there are no requirements to map.
  */
 export function buildComplianceMatrixSection(input: ComplianceMatrixBuilderInput): string | null {
-  const reqs = input.requirements.filter((r) => (r.title ?? "").trim().length > 0 || (r.description ?? "").trim().length > 0);
+  const rawReqs = input.requirements.filter((r) => (r.title ?? "").trim().length > 0 || (r.description ?? "").trim().length > 0);
+  // Deduplicate by normalized title to prevent duplicate rows when the same
+  // requirement appears in both the requirements array and the tender text parse.
+  const seen = new Set<string>();
+  const reqs = rawReqs.filter((r) => {
+    const key = (r.title ?? r.description ?? "").toLowerCase().replace(/\s+/g, " ").trim().slice(0, 80);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
   if (reqs.length === 0) return null;
 
   // Index matrix rows + gaps by requirementId for fast lookup.
@@ -202,7 +211,7 @@ export function buildComplianceMatrixSection(input: ComplianceMatrixBuilderInput
   let mandatoryNotMet = 0;
 
   sorted.forEach((req, idx) => {
-    const reqText = (req.title || (req.description ?? "").slice(0, 140)).trim();
+    const reqText = (req.title || (req.description ?? "").slice(0, 220)).trim();
     const proposalLocation = inferProposalLocation(req);
 
     // Choose the strongest matrix row for the status (FULLY > PARTIALLY > NOT MET).

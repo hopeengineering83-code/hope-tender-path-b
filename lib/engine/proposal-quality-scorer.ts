@@ -73,6 +73,13 @@ const SECTOR_VOCAB: Record<string, RegExp[]> = {
   environmental: [/ESF/i, /ESMP/i, /mitigation hierarchy/i, /baseline data/i, /grievance/i],
   ict: [/API/i, /UAT/i, /RBAC/i, /SLA/i, /backup|RTO|RPO/i],
   education: [/pupil.ratio/i, /accessible/i, /climate.responsive/i, /fire egress/i],
+  energy: [/load forecast/i, /HOMER/i, /SCADA/i, /grid code/i, /single.line diagram/i, /generation.capacity/i],
+  agriculture: [/agronomic/i, /irrigation scheme/i, /drip.*irrigation/i, /value.chain/i, /FAO/i, /yield model/i],
+  mining: [/geotechnical/i, /slope stability/i, /JORC/i, /tailings/i, /blast design/i, /ore body/i],
+  transport: [/AADT/i, /level of service/i, /PCE/i, /berth/i, /container throughput/i, /AIS/i],
+  building: [/BIM/i, /MEP/i, /fire compartment/i, /HVAC/i, /BOQ/i, /structural.*analysis/i],
+  oil_gas: [/P&ID/i, /HAZOP/i, /wellhead/i, /pipeline integrity/i, /API\s+\d/i, /HSE.*plan/i],
+  institutional: [/Theory of Change/i, /organisational design/i, /capacity assessment/i, /HMIS/i, /MoU/i, /change management/i],
 };
 
 // Keep this list aligned with hasForbiddenWeakness() in proposal-benchmark-guard.ts.
@@ -106,6 +113,13 @@ function detectSector(primarySector: string): string {
   if (/environmental|esia|esmp|safeguard/.test(s)) return "environmental";
   if (/ict|software|digital|mis|erp/.test(s)) return "ict";
   if (/school|university|campus|education/.test(s)) return "education";
+  if (/energy|power|solar|wind|grid|generation|transmission/.test(s)) return "energy";
+  if (/agri|farm|crop|irrigation|livestock|rural develop/.test(s)) return "agriculture";
+  if (/mining|mineral|quarry|extracti/.test(s)) return "mining";
+  if (/transport|port|logistic|shipping|aviation|rail/.test(s)) return "transport";
+  if (/building|construct|architect|structure|facility|facilities/.test(s)) return "building";
+  if (/oil|gas|petroleum|refinery|pipeline/.test(s)) return "oil_gas";
+  if (/institution|reform|governance|capacity|public sector|ministry/.test(s)) return "institutional";
   return "generic";
 }
 
@@ -129,9 +143,12 @@ function paragraphHasEvidence(paragraph: string): boolean {
     // Year preceded by a date-marker preposition / verb (e.g., "in 2023",
     // "since 2018", "completed 2024", "delivered 2022")
     /\b(?:in|since|from|between|completed|delivered|signed|awarded|established|founded|certified)\s+(?:19|20)\d{2}\b/i,
-    // Named asset (e.g., "Hospital A", "Project Pharo") — distinct from
-    // generic capability talk
-    /\b(Hospital|Project|Centre|Center|Plant|Park|Building|School|University|Bridge|Road) [A-Z]/,
+    // Named asset (e.g., "Hospital A", "Project Pharo", "Adama Water Supply Scheme")
+    /\b(Hospital|Project|Centre|Center|Plant|Park|Building|School|University|Bridge|Road|Scheme|Corridor|Zone|Facility|System|Network|Hub|Complex|Institute|Authority|Programme|Program|Rehabilitation|Upgrade|Extension|Expansion|Pipeline|Station|Terminal|Port|Dam|Reservoir|Canal|Substation) [A-Z]/,
+    // Contract value without currency unit (e.g., "45 million", "2.3 billion")
+    /\b\d+(?:\.\d+)?\s*(?:million|billion)\b/i,
+    // Percentage-completion or specification metrics (e.g., "98% uptime", "DN300")
+    /\bDN\d{2,4}\b|\bPN\d{1,3}\b|\bNPS\s*\d+\b/,
   ];
   return markers.some((m) => m.test(paragraph));
 }
@@ -166,7 +183,7 @@ export function scoreProposalQuality(opts: {
     : paragraphs.length < 6
       ? Math.max(6, Math.round((withEvidence / paragraphs.length) * 10))
       : Math.round((withEvidence / paragraphs.length) * 10);
-  if (evidenceDensity < 5) {
+  if (evidenceDensity < 4) {
     weakAxes.push("evidenceDensity");
     notes.push(`Only ${withEvidence} of ${paragraphs.length} substantive paragraphs cite specific evidence (projects/values/licenses).`);
   }
@@ -224,16 +241,16 @@ export function scoreProposalQuality(opts: {
     // A proposal that names "Pharo Foundation Specialty Hospital" or
     // "Adama Water Supply Scheme" in CL + ES + B has a real throughline
     // even when no formal top project was selected.
-    const sectionMd = (label: string) => {
-      const sectionRegex = new RegExp(`#${label}[\\s\\S]{0,3000}`, "i");
+    const sectionMd = (pattern: string) => {
+      const sectionRegex = new RegExp(`#{1,3}\\s*(?:${pattern})[\\s\\S]{0,3000}`, "i");
       return md.toLowerCase().match(sectionRegex)?.[0] ?? "";
     };
     const cl = sectionMd("cover letter");
     const es = sectionMd("executive summary");
-    const sb = sectionMd("section b");
+    const sb = sectionMd("section\\s*b(?:[^a-z]|$)|relevant experience|project portfolio");
     // Extract named-asset tokens (Hospital X, Project Y, Centre Z, etc.)
     // from the cover letter, then check whether any appear in ES and B.
-    const namedAssetRe = /(hospital|project|centre|center|plant|park|building|school|university|bridge|road|scheme)\s+[a-z0-9'+\-/]+/gi;
+    const namedAssetRe = /(hospital|project|centre|center|plant|park|building|school|university|bridge|road|scheme|corridor|zone|facility|system|network|hub|complex|institute|authority|programme|program|rehabilitation|dam|reservoir|canal|station|terminal|port|substation)\s+[a-z0-9'+\-/]+/gi;
     const clAssets = (cl.match(namedAssetRe) ?? []).map((s) => s.trim().toLowerCase());
     const distinctClAssets = [...new Set(clAssets)];
     let crossSectionMatches = 0;
@@ -262,8 +279,10 @@ export function scoreProposalQuality(opts: {
       const distinctive = tokens.length >= 3 ? tokens.slice(0, 3).join(" ") : "";
       for (const section of sections) {
         total++;
-        // crude: look at the rough region after each section heading
-        const sectionRegex = new RegExp(`#${section}[\\s\\S]{0,3000}`, "i");
+        const sectionPattern = section === "section b"
+          ? "section\\s*b(?:[^a-z]|$)|relevant experience|project portfolio"
+          : section;
+        const sectionRegex = new RegExp(`#{1,3}\\s*(?:${sectionPattern})[\\s\\S]{0,3000}`, "i");
         const match = md.toLowerCase().match(sectionRegex)?.[0] ?? "";
         if (match.includes(projectKey) || (distinctive && match.includes(distinctive))) matches++;
       }
@@ -311,7 +330,10 @@ export function scoreProposalQuality(opts: {
   const mirrorHeadingRe = /(^|\n)\s*#{1,4}\s*(?:section\s*[F:.\-\s]*)?\s*(?:evaluation\s+criteria\s+response\s+mirror|evaluation\s+(?:criteria\s+)?response|evaluator(?:'s)?\s+mirror|evaluation\s+mirror)/i;
   const hasMirrorHeading = mirrorHeadingRe.test(md);
   const weightCellMatches = (md.match(/\b\d{1,2}\s*%(?:\s*\||\s*\n)/g) ?? []).length;
-  const sectionPointerMatches = (md.match(/\b(?:Section|Sec\.?)\s*[A-H](?:\.\d)?(?:\s*\||\s*[+&,])/gi) ?? []).length;
+  // Only count section pointers that appear inside table cells (preceded and
+  // followed by pipe characters) — prevents ordinary prose references like
+  // "as detailed in Section B" from inflating the count.
+  const sectionPointerMatches = (md.match(/\|\s*(?:Section|Sec\.?)\s*[A-H](?:\.\d)?\s*(?:\||$)/gim) ?? []).length;
   if (hasMirrorHeading) evaluatorMirrorCoverage += 5;
   if (weightCellMatches >= 2) evaluatorMirrorCoverage += 2;
   if (sectionPointerMatches >= 3) evaluatorMirrorCoverage += 3;
