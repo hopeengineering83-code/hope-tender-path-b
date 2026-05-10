@@ -255,6 +255,11 @@ type ProjectMatch = {
   };
 };
 
+type MatchingDiagnostics = {
+  experts: { selected: number; averageSelectedScore: number; lowConfidence: Array<{ id: string; score: number }>; lowCoverage: Array<{ id: string }>; hardExcluded: Array<{ id: string }> };
+  projects: { selected: number; averageSelectedScore: number; lowConfidence: Array<{ id: string; score: number }>; lowCoverage: Array<{ id: string }>; hardExcluded: Array<{ id: string }> };
+};
+
 type ComplianceMatrixEntry = {
   id: string;
   requirementId: string | null;
@@ -336,6 +341,8 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
   const [activityLogs, setActivityLogs] = useState<{ id: string; action: string; description: string; createdAt: string }[]>([]);
   const [activityLoaded, setActivityLoaded] = useState(false);
   const [activityLoading, setActivityLoading] = useState(false);
+  const [matchingDiagnostics, setMatchingDiagnostics] = useState<MatchingDiagnostics | null>(null);
+  const [diagnosticsLoading, setDiagnosticsLoading] = useState(false);
   const [autoSavedAt, setAutoSavedAt] = useState<Date | null>(null);
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isFirstRender = useRef(true);
@@ -398,6 +405,39 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
     return () => { if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [form]);
+
+  const loadDiagnostics = useCallback(async () => {
+    setDiagnosticsLoading(true);
+    try {
+      const res = await fetch(`/api/tenders/${tender.id}/matching-diagnostics`);
+      if (!res.ok) return;
+      const data = await res.json() as MatchingDiagnostics;
+      setMatchingDiagnostics(data);
+    } catch {
+      // diagnostics are optional; keep UI resilient
+    } finally {
+      setDiagnosticsLoading(false);
+    }
+  }, [tender.id]);
+
+  useEffect(() => {
+    let active = true;
+    setDiagnosticsLoading(true);
+    (async () => {
+      try {
+        const res = await fetch(`/api/tenders/${tender.id}/matching-diagnostics`);
+        if (!res.ok) return;
+        const data = await res.json() as MatchingDiagnostics;
+        if (active) setMatchingDiagnostics(data);
+        if (active) setDiagnosticsLoading(false);
+      } catch {
+        // diagnostics are optional; keep UI resilient
+      } finally {
+        if (active) setDiagnosticsLoading(false);
+      }
+    })();
+    return () => { active = false; };
+  }, [tender.id]);
 
   async function handleSave() {
     await save({
@@ -510,8 +550,24 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
     startGenerationProgress();
     try {
       const res = await fetch(`/api/tenders/${tender.id}/generate`, { method: "POST" });
-      const data = await res.json();
-      if (!res.ok) { setError(data.error || "Generation failed"); return; }
+      const data = await res.json() as { error?: string; code?: string; nextAction?: string; totalExpertMatches?: number; totalProjectMatches?: number; tender?: Tender };
+      if (!res.ok) {
+        if (data.code === "NO_EXPERT_MATCHES_SELECTED" || data.code === "NO_EXPERT_MATCHES_FOUND") {
+          setError(`${data.error || "Generation failed"} ${typeof data.totalExpertMatches === "number" ? `(${data.totalExpertMatches} expert match(es) found in total.)` : ""}`.trim());
+          return;
+        }
+        if (data.code === "NO_PROJECT_MATCHES_SELECTED" || data.code === "NO_PROJECT_MATCHES_FOUND") {
+          setError(`${data.error || "Generation failed"} ${typeof data.totalProjectMatches === "number" ? `(${data.totalProjectMatches} project match(es) found in total.)` : ""}`.trim());
+          return;
+        }
+        const actionHint = data.nextAction === "RUN_ENGINE"
+          ? " Use 'Run Engine' first, then retry generation."
+          : data.nextAction === "REVIEW_MATCHES"
+            ? " Open Expert/Project Matches and select the strongest reviewed evidence, then retry."
+            : "";
+        setError(`${data.error || "Generation failed"}${actionHint}`.trim());
+        return;
+      }
       if (data.tender) setTender((cur) => ({ ...cur, ...data.tender }));
       router.refresh();
       const q = data.tender?.generatedDocuments?.[0]?.contentSummary?.match(/Quality score: (\d+)\/100/);
@@ -711,8 +767,30 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
 
   const unresolvedGaps = tender.complianceGaps.filter((gap) => !gap.isResolved).length;
   const criticalGaps = tender.complianceGaps.filter((gap) => !gap.isResolved && gap.severity === "CRITICAL").length;
+  const criticalHardBlockExists = tender.complianceGaps.some((gap) =>
+    !gap.isResolved
+    && gap.severity === "CRITICAL"
+    && /(ineligible|debarred|blacklisted|deadline.*passed|late submission|missing required file name|missing exact file|signature prohibited|branding prohibited)/i.test(`${gap.title} ${gap.description}`),
+  );
   const highGaps = tender.complianceGaps.filter((gap) => !gap.isResolved && gap.severity === "HIGH").length;
   const mandatoryRequirements = tender.requirements.filter((req) => req.priority === "MANDATORY").length;
+  const expertReqExists = tender.requirements.some((req) => req.requirementType === "EXPERT");
+  const projectReqExists = tender.requirements.some((req) => req.requirementType === "PROJECT_EXPERIENCE");
+  const selectedExpertCount = tender.expertMatches?.filter((m) => m.isSelected).length ?? 0;
+  const selectedProjectCount = tender.projectMatches?.filter((m) => m.isSelected).length ?? 0;
+  const canGenerateDocs = tender.requirements.length > 0
+    && (!expertReqExists || selectedExpertCount > 0)
+    && (!projectReqExists || selectedProjectCount > 0)
+    && !criticalHardBlockExists;
+  const generateDisabledReason = tender.requirements.length === 0
+    ? "Run AI Analyze or Run Engine first to extract requirements"
+    : (expertReqExists && selectedExpertCount === 0)
+      ? "Select at least one expert match before generating"
+      : (projectReqExists && selectedProjectCount === 0)
+        ? "Select at least one project match before generating"
+        : criticalHardBlockExists
+          ? "Resolve critical hard blockers before generating"
+        : "Generate proposal documents";
   const readinessScore = tender.readinessScore ??
     (tender.requirements.length === 0 ? 0
       : Math.max(0, Math.round(((tender.requirements.length - criticalGaps) / tender.requirements.length) * 100)));
@@ -766,7 +844,8 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
             className="rounded-lg bg-black px-3 py-2 text-sm text-white hover:bg-slate-800 disabled:opacity-50">
             {engineRunning ? "Running…" : "Run Engine"}
           </button>
-          <button onClick={handleGenerateDocs} disabled={generatingDocs}
+          <button onClick={handleGenerateDocs} disabled={generatingDocs || !canGenerateDocs}
+            title={generateDisabledReason}
             className="rounded-lg bg-emerald-600 px-3 py-2 text-sm text-white hover:bg-emerald-700 disabled:opacity-50">
             {generatingDocs ? "Generating…" : "⚡ Generate Docs"}
           </button>
@@ -801,6 +880,36 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
           </button>
         </div>
       </div>
+
+      {matchingDiagnostics && (
+        <div className="rounded-2xl border border-indigo-200 bg-indigo-50 p-4">
+          <div className="flex items-center justify-between gap-2">
+            <h3 className="text-sm font-semibold text-indigo-900">Matching quality diagnostics</h3>
+            <div className="flex items-center gap-2">
+              <button onClick={loadDiagnostics} className="rounded-md border border-indigo-300 px-2 py-1 text-[11px] text-indigo-800 hover:bg-indigo-100">
+                {diagnosticsLoading ? "Refreshing..." : "Refresh"}
+              </button>
+              <button
+                onClick={() => window.open(`/api/tenders/${tender.id}/matching-diagnostics`, "_blank")}
+                className="rounded-md border border-indigo-300 px-2 py-1 text-[11px] text-indigo-800 hover:bg-indigo-100"
+              >
+                Open JSON
+              </button>
+            </div>
+          </div>
+          <p className="mt-1 text-xs text-indigo-700">
+            Expert avg {Math.round(matchingDiagnostics.experts.averageSelectedScore * 100)}% · Project avg {Math.round(matchingDiagnostics.projects.averageSelectedScore * 100)}%
+          </p>
+          <div className="mt-2 grid gap-2 text-xs text-indigo-800 sm:grid-cols-2">
+            <p>Experts low-confidence: {matchingDiagnostics.experts.lowConfidence.length}</p>
+            <p>Projects low-confidence: {matchingDiagnostics.projects.lowConfidence.length}</p>
+            <p>Experts zero-family-coverage: {matchingDiagnostics.experts.lowCoverage.length}</p>
+            <p>Projects zero-family-coverage: {matchingDiagnostics.projects.lowCoverage.length}</p>
+            <p>Experts hard-excluded: {matchingDiagnostics.experts.hardExcluded.length}</p>
+            <p>Projects hard-excluded: {matchingDiagnostics.projects.hardExcluded.length}</p>
+          </div>
+        </div>
+      )}
 
       {/* Generation progress bar — visible during generate/generate-docs */}
       {(generatingDocs || generating) && generationPhase && (
