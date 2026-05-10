@@ -145,6 +145,54 @@ function capabilityFamilies(text: string): CapabilityFamily[] {
   );
 }
 
+function criticalFamilyMismatchPenalty(queryText: string, recordText: string): number {
+  const requiredFamilies = capabilityFamilies(queryText);
+  const recordFamilies = capabilityFamilies(recordText);
+  if (requiredFamilies.length === 0 || recordFamilies.length === 0) return 0;
+
+  const sharedFamilies = requiredFamilies.filter((family) => recordFamilies.includes(family));
+  if (sharedFamilies.length > 0) return 0;
+
+  const strictFamilies: CapabilityFamily[] = [
+    "HEALTHCARE_FACILITIES",
+    "EDUCATION_FACILITIES",
+    "ICT_DIGITAL",
+    "MINING_EXTRACTIVES",
+    "TELECOMS",
+  ];
+
+  const requiresStrictFamily = requiredFamilies.some((family) => strictFamilies.includes(family));
+  return requiresStrictFamily ? -0.28 : -0.12;
+}
+
+function requirementWeight(priority: string): number {
+  if (priority === "MANDATORY") return 3;
+  if (priority === "SCORED") return 2;
+  return 1;
+}
+
+function weightedRequiredFamilies(requirements: RequirementDraft[], tenderTitle?: string | null, tenderSector?: string | null): CapabilityFamily[] {
+  const weighted: CapabilityFamily[] = [];
+  for (const requirement of requirements) {
+    const families = capabilityFamilies(`${requirement.title} ${requirement.description}`);
+    const weight = requirementWeight(requirement.priority);
+    for (let i = 0; i < weight; i += 1) weighted.push(...families);
+  }
+  if (tenderTitle) weighted.push(...capabilityFamilies(tenderTitle));
+  if (tenderSector) weighted.push(...capabilityFamilies(tenderSector));
+  return weighted;
+}
+
+function strictFamilyRequired(requiredFamilies: CapabilityFamily[]): boolean {
+  const strictFamilies: CapabilityFamily[] = ["HEALTHCARE_FACILITIES", "EDUCATION_FACILITIES", "ICT_DIGITAL", "MINING_EXTRACTIVES", "TELECOMS"];
+  return requiredFamilies.some((family) => strictFamilies.includes(family));
+}
+
+function minimumFamilyDiversity(requiredFamilies: CapabilityFamily[]): number {
+  if (strictFamilyRequired(requiredFamilies)) return Math.min(3, Math.max(2, requiredFamilies.length));
+  return Math.min(2, requiredFamilies.length);
+}
+
 function capabilityScore(queryText: string, recordText: string, type: "expert" | "project"): number {
   const qFamilies = capabilityFamilies(queryText);
   const rFamilies = capabilityFamilies(recordText);
@@ -378,7 +426,15 @@ function optimizePortfolioSelection<T extends { score: number; isSelected: boole
   // Pre-filter: only candidates above the selection threshold are
   // eligible. Keeps Stage 2 selecting from the same quality pool as
   // Stage 1 did.
-  const eligible = candidates.filter((c) => c.match.score >= SELECTION_THRESHOLD);
+  const hardFamilyGate = strictFamilyRequired(requiredFamilies);
+  const strictEligible = candidates.filter((c) => {
+    if (c.match.score < SELECTION_THRESHOLD) return false;
+    if (!hardFamilyGate) return true;
+    return c.capabilityFamilies.some((family) => requiredFamilies.includes(family));
+  });
+  const eligible = strictEligible.length > 0
+    ? strictEligible
+    : candidates.filter((c) => c.match.score >= SELECTION_THRESHOLD);
   if (eligible.length === 0) {
     // No eligible candidates — leave isSelected=false on everything,
     // matching the Stage 1 behaviour.
@@ -393,7 +449,7 @@ function optimizePortfolioSelection<T extends { score: number; isSelected: boole
     // cycle 1 starts with #2, etc. Once we've used all real seeds,
     // remaining cycles re-evaluate with random tie-breaking — cheap
     // exploration that catches alternative seeds we'd otherwise miss.
-    const seedIdx = cycle < eligible.length ? cycle : Math.floor(Math.random() * eligible.length);
+    const seedIdx = cycle % eligible.length;
     const seed = eligible[seedIdx];
     const remaining = eligible.filter((c, i) => i !== seedIdx);
     const set: PortfolioCandidate<T>[] = [seed];
@@ -419,6 +475,57 @@ function optimizePortfolioSelection<T extends { score: number; isSelected: boole
     if (setScore > bestScore) {
       bestScore = setScore;
       bestSet = set;
+    }
+  }
+
+  // Coverage rescue pass: if strict families are required and still missing
+  // from the winning set, swap in the highest scoring candidate carrying
+  // each missing family (while preserving set size).
+  if (hardFamilyGate && bestSet.length > 0) {
+    const covered = new Set<CapabilityFamily>();
+    for (const c of bestSet) for (const f of c.capabilityFamilies) covered.add(f);
+    const missing = requiredFamilies.filter((f) => !covered.has(f));
+    for (const family of missing) {
+      const replacement = eligible
+        .filter((c) => c.capabilityFamilies.includes(family) && !bestSet.includes(c))
+        .sort((a, b) => b.match.score - a.match.score)[0];
+      if (!replacement) continue;
+      const dropIdx = bestSet
+        .map((candidate, idx) => ({ idx, score: candidate.match.score, helps: candidate.capabilityFamilies.some((f) => missing.includes(f)) }))
+        .filter((item) => !item.helps)
+        .sort((a, b) => a.score - b.score)[0]?.idx;
+      if (dropIdx === undefined) continue;
+      bestSet.splice(dropIdx, 1, replacement);
+    }
+  }
+
+  // Diversity guardrail: enforce minimum distinct required-family coverage.
+  const minDiversity = minimumFamilyDiversity(requiredFamilies);
+  if (minDiversity > 0 && bestSet.length > 0) {
+    const distinctCovered = () => {
+      const set = new Set<CapabilityFamily>();
+      for (const c of bestSet) {
+        for (const f of c.capabilityFamilies) if (requiredFamilies.includes(f)) set.add(f);
+      }
+      return set;
+    };
+
+    let covered = distinctCovered();
+    if (covered.size < minDiversity) {
+      const missing = requiredFamilies.filter((f) => !covered.has(f));
+      for (const family of missing) {
+        if (covered.size >= minDiversity) break;
+        const replacement = eligible
+          .filter((c) => c.capabilityFamilies.includes(family) && !bestSet.includes(c))
+          .sort((a, b) => b.match.score - a.match.score)[0];
+        if (!replacement) continue;
+        const dropIdx = bestSet
+          .map((candidate, idx) => ({ idx, score: candidate.match.score, familyCount: candidate.capabilityFamilies.filter((f) => requiredFamilies.includes(f)).length }))
+          .sort((a, b) => (a.familyCount - b.familyCount) || (a.score - b.score))[0]?.idx;
+        if (dropIdx === undefined) continue;
+        bestSet.splice(dropIdx, 1, replacement);
+        covered = distinctCovered();
+      }
     }
   }
 
@@ -465,6 +572,8 @@ export function buildMatches(
   if (tenderTitle) queryParts.push(tenderTitle, tenderTitle);
   if (tenderSector) queryParts.push(tenderSector);
   const queryText = queryParts.join(" ");
+  const requiredFamiliesWeighted = weightedRequiredFamilies(requirements, tenderTitle, tenderSector);
+  const requiredFamiliesUnique = [...new Set(requiredFamiliesWeighted)];
   const baseQueryTokens = tokenize(queryText);
 
   const expertTexts = knowledge.experts.map((e) => [e.fullName, e.title, e.profile, ...parseArr(e.disciplines), ...parseArr(e.sectors), ...parseArr(e.certifications)].join(" "));
@@ -484,21 +593,27 @@ export function buildMatches(
         if (s > bestScore) { bestScore = s; bestCycle = cycle; }
       }
       const recordText = expertTexts[idx] ?? "";
+      const recordFamilies = capabilityFamilies(recordText);
       const trustLevel = optionalTrust(expert);
       const capability = capabilityScore(queryText, recordText, "expert");
+      const weightedCapability = requiredFamiliesWeighted.length === 0
+        ? capability
+        : requiredFamiliesWeighted.filter((family) => recordFamilies.includes(family)).length / requiredFamiliesWeighted.length;
       const sector = sectorBoost(tenderSector, parseArr(expert.sectors));
       const trust = trustLevelAdjustment(trustLevel);
       const experience = (expert.yearsExperience ?? 0) >= 15 ? 0.12 : (expert.yearsExperience ?? 0) >= 10 ? 0.10 : (expert.yearsExperience ?? 0) >= 5 ? 0.05 : 0;
-      const score = seniorScore({ cosine: bestScore, capability, sector, trust, experience, valueOrRecency: 0, hasRealText: docTokens.length > 8 });
+      const mismatchPenalty = criticalFamilyMismatchPenalty(queryText, recordText);
+      const score = Math.max(0, Math.min(1, seniorScore({ cosine: bestScore, capability: Math.max(capability, weightedCapability), sector, trust, experience, valueOrRecency: 0, hasRealText: docTokens.length > 8 }) + mismatchPenalty));
       const evidence = [expert.title, ...parseArr(expert.disciplines), ...parseArr(expert.sectors)].filter(Boolean).join(" · ");
       const topMatches = [...new Set(docTokens.filter((t) => baseQueryTokens.includes(t)))].slice(0, 8).join(", ");
-      const families = capabilityFamilies(recordText).join(", ");
+      const requiredFamilyHits = requiredFamiliesUnique.filter((family) => recordFamilies.includes(family)).length;
+      const families = recordFamilies.join(", ");
       const trustLabel = trustLevelLabel(trustLevel);
       const thresholdLabel = score >= SELECTION_THRESHOLD ? "Auto-selected ≥75%." : "Below 75%; review only.";
       return {
         expertId: expert.id,
         score,
-        rationale: `[${trustLabel}] 100-expert style broad-fit score using ${MATCHING_CYCLES} interpretation cycles; winning lexical cycle ${bestCycle}. ${thresholdLabel} Capability families: ${families || "general consultancy"}. Keywords: ${topMatches || evidence || "general professional profile"}.${expert.yearsExperience ? ` ${expert.yearsExperience} yrs experience.` : ""}`,
+        rationale: `[${trustLabel}] 100-expert style broad-fit score using ${MATCHING_CYCLES} interpretation cycles; winning lexical cycle ${bestCycle}. ${thresholdLabel} Required-family coverage: ${requiredFamilyHits}/${Math.max(requiredFamiliesUnique.length, 1)}. Capability families: ${families || "general consultancy"}. Keywords: ${topMatches || evidence || "general professional profile"}.${expert.yearsExperience ? ` ${expert.yearsExperience} yrs experience.` : ""}`,
         evidenceSummary: evidence || "No disciplines/sectors recorded — review the expert profile",
         isSelected: false,
       };
@@ -521,8 +636,12 @@ export function buildMatches(
         if (s > bestScore) { bestScore = s; bestCycle = cycle; }
       }
       const recordText = projectTexts[idx] ?? "";
+      const recordFamilies = capabilityFamilies(recordText);
       const trustLevel = optionalTrust(project);
       const capability = capabilityScore(queryText, recordText, "project");
+      const weightedCapability = requiredFamiliesWeighted.length === 0
+        ? capability
+        : requiredFamiliesWeighted.filter((family) => recordFamilies.includes(family)).length / requiredFamiliesWeighted.length;
       const sector = sectorBoost(tenderSector, [project.sector ?? "", ...parseArr(project.serviceAreas)]);
       const trust = trustLevelAdjustment(trustLevel);
       let recency = 0;
@@ -532,16 +651,18 @@ export function buildMatches(
         else if (ageYears < 10) recency += 0.03;
       }
       if ((project.contractValue ?? 0) > 100000) recency += 0.03;
-      const score = seniorScore({ cosine: bestScore, capability, sector, trust, experience: 0, valueOrRecency: recency, hasRealText: docTokens.length > 8 });
+      const mismatchPenalty = criticalFamilyMismatchPenalty(queryText, recordText);
+      const score = Math.max(0, Math.min(1, seniorScore({ cosine: bestScore, capability: Math.max(capability, weightedCapability), sector, trust, experience: 0, valueOrRecency: recency, hasRealText: docTokens.length > 8 }) + mismatchPenalty));
       const evidence = [project.sector, ...parseArr(project.serviceAreas)].filter(Boolean).join(" · ");
       const topMatches = [...new Set(docTokens.filter((t) => baseQueryTokens.includes(t)))].slice(0, 8).join(", ");
-      const families = capabilityFamilies(recordText).join(", ");
+      const requiredFamilyHits = requiredFamiliesUnique.filter((family) => recordFamilies.includes(family)).length;
+      const families = recordFamilies.join(", ");
       const trustLabel = trustLevelLabel(trustLevel);
       const thresholdLabel = score >= SELECTION_THRESHOLD ? "Auto-selected ≥75%." : "Below 75%; review only.";
       return {
         projectId: project.id,
         score,
-        rationale: `[${trustLabel}] 100-expert style broad-fit score using ${MATCHING_CYCLES} interpretation cycles; winning lexical cycle ${bestCycle}. ${thresholdLabel} Capability families: ${families || "general project profile"}. Keywords: ${topMatches || evidence || "general project profile"}.${project.contractValue ? ` Contract: ${project.currency ?? "USD"} ${project.contractValue.toLocaleString()}.` : ""}`,
+        rationale: `[${trustLabel}] 100-expert style broad-fit score using ${MATCHING_CYCLES} interpretation cycles; winning lexical cycle ${bestCycle}. ${thresholdLabel} Required-family coverage: ${requiredFamilyHits}/${Math.max(requiredFamiliesUnique.length, 1)}. Capability families: ${families || "general project profile"}. Keywords: ${topMatches || evidence || "general project profile"}.${project.contractValue ? ` Contract: ${project.currency ?? "USD"} ${project.contractValue.toLocaleString()}.` : ""}`,
         evidenceSummary: evidence || "No service areas recorded — review the project record",
         isSelected: false,
       };
@@ -571,7 +692,7 @@ export function buildMatches(
   // required disciplines.
 
   const requirementText = queryText;
-  const requiredFamilies = capabilityFamilies(requirementText);
+  const requiredFamilies = requiredFamiliesUnique.length > 0 ? requiredFamiliesUnique : capabilityFamilies(requirementText);
   const requirementDisciplineSources = [
     requirementText,
     ...requirements.map((r) => `${r.title} ${r.description}`),
