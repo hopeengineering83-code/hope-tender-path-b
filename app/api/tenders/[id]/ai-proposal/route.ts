@@ -2,7 +2,9 @@ import { NextResponse } from "next/server";
 import { getSession } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { generateBenchmarkProposalWithAI, generateProposalSectionsParallel, isAIEnabled } from "../../../../../lib/ai";
-import { buildProposalIntelligence, expertProofLine, projectProofLine, safeParseArr } from "../../../../../lib/engine/proposal-intelligence";
+import { buildProposalIntelligence, buildCriterionEvidenceMap, expertProofLine, projectProofLine, safeParseArr } from "../../../../../lib/engine/proposal-intelligence";
+import { applyAIWriterContractPrompt } from "../../../../../lib/engine/ai-writer-contract-prompt";
+import type { TenderSourceDocument } from "../../../../../lib/engine/source-grounded-requirement-map";
 import { buildProposalCacheKey, getCachedProposal, setCachedProposal } from "../../../../../lib/proposal-cache";
 
 // Vercel route timeout — Claude proposal generation needs >10s default.
@@ -278,7 +280,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       };
       const c = company as typeof company & _CompanyFields;
 
-      const aiInput = {
+      const criterionEvidenceMap = buildCriterionEvidenceMap(intelligence.evaluationWeights, projects, experts);
+
+      const aiInputBase = {
         tenderTitle: tender.title,
         clientName: intelligence.clientName,
         tenderText,
@@ -329,6 +333,34 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
             .filter((s) => s.length > 0),
         },
       };
+      const contractInput = {
+        tenderTitle: tender.title,
+        clientName: intelligence.clientName,
+        requirements: requirementLines,
+        expertLines,
+        projectLines,
+        companyEvidenceLines,
+        projectEvidenceLines,
+        complianceLines,
+        differentiators: intelligence.differentiators,
+        evaluationCriteria: intelligence.evaluationCriteria,
+        submissionRules: intelligence.submissionRules,
+        selectedExpertCount: tender.expertMatches.length,
+        selectedProjectCount: tender.projectMatches.length,
+        reviewedExpertCount: experts.length,
+        reviewedProjectCount: projects.length,
+        tenderSources: tender.files.map((file, index) => ({
+          id: `tender-file-${index + 1}`,
+          name: file.originalFileName || `Tender File ${index + 1}`,
+          text: file.extractedText || "",
+        })) as TenderSourceDocument[],
+      };
+
+      const aiInput = applyAIWriterContractPrompt({
+        aiInput: { ...aiInputBase, criterionEvidenceMap },
+        contractInput,
+      });
+
       proposal = await withProposalTimeout(
         useParallel ? generateProposalSectionsParallel(aiInput) : generateBenchmarkProposalWithAI(aiInput),
         AI_PROPOSAL_TIMEOUT_MS,

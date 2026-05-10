@@ -70,6 +70,8 @@ import { injectJvDisclosure } from "./jv-disclosure";
 import { deduplicateTables, injectQaThresholds, injectAppendixReadinessRegister } from "./advanced-quality-passes";
 import { generateExpertCvDocx, expertCvFileName } from "./expert-cv-docx";
 import { computeBidStrategy } from "./bid-strategy";
+import { applyAIWriterContractPrompt } from "./ai-writer-contract-prompt";
+import type { TenderSourceDocument } from "./source-grounded-requirement-map";
 
 const BRAND_BLUE = "1F4E79";
 const BRAND_GRAY = "595959";
@@ -1139,7 +1141,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
       const generationMode = (process.env.PROPOSAL_GENERATION_MODE || "parallel").toLowerCase();
       const useParallel = generationMode === "parallel";
 
-      const aiInput = {
+      const aiInputBase = {
         tenderTitle: cleanedTenderTitle,
         clientName: intelligence.clientName,
         tenderText: [BENCHMARK_CONTEXT_LINES.join("\n"), tenderText].join("\n\n"),
@@ -1239,6 +1241,34 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
           intelligence.topExperts,
         ),
       };
+
+      const contractInput = {
+        tenderTitle: cleanedTenderTitle,
+        clientName: intelligence.clientName,
+        requirements: requirementLines,
+        expertLines,
+        projectLines,
+        companyEvidenceLines,
+        projectEvidenceLines,
+        complianceLines,
+        differentiators: intelligence.differentiators,
+        evaluationCriteria: intelligence.evaluationCriteria,
+        submissionRules: intelligence.submissionRules,
+        selectedExpertCount: tender.expertMatches.length,
+        selectedProjectCount: tender.projectMatches.length,
+        reviewedExpertCount: experts.length,
+        reviewedProjectCount: projects.length,
+        tenderSources: tender.files.map((file, index) => ({
+          id: `tender-file-${index + 1}`,
+          name: file.originalFileName || `Tender File ${index + 1}`,
+          text: file.extractedText || "",
+        })) as TenderSourceDocument[],
+      };
+
+      const aiInput = applyAIWriterContractPrompt({
+        aiInput: aiInputBase,
+        contractInput,
+      });
 
       sourceMarkdown = await withProposalAiTimeout(
         useParallel
