@@ -1504,7 +1504,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   // already covers them, nothing is added.
   const throughline = enforceNarrativeThroughline({
     markdown: combinedMarkdown,
-    topProjects: (projects as ProjectRecord[]).slice(0, 2),
+    topProjects: (projects as ProjectRecord[]).slice(0, 3),
   });
   const enriched = enrichSectorVocabulary({
     markdown: throughline.markdown,
