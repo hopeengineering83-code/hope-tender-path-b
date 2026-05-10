@@ -183,6 +183,7 @@ export function buildProposalIntelligenceContract(input: ProposalIntelligenceCon
   const blueprint = buildTenderResponseBlueprint(input);
   const requirements = criterionGraph.nodes.map((node, index) => {
     const item = blueprint[index] ?? blueprint.find((candidate) => clean(candidate.requirement) === clean(node.requirement));
+    const serviceCapability = item?.serviceCapability ?? node.serviceCapabilities.join(", ");
     return {
       id: node.id,
       requirement: node.requirement,
@@ -190,7 +191,7 @@ export function buildProposalIntelligenceContract(input: ProposalIntelligenceCon
       mandatory: node.mandatory,
       riskLevel: node.riskLevel,
       proposalSection: node.proposalSection,
-      serviceCapability: item?.serviceCapability ?? node.serviceCapabilities.join(", ") || "General tender response capability",
+      serviceCapability: serviceCapability || "General tender response capability",
       evaluatorConcern: item?.evaluatorConcern ?? node.category,
       evidenceSupport: item?.evidenceSupport ?? node.evidenceSupport,
       evidenceLine: item?.evidenceLine ?? node.evidenceLine,
