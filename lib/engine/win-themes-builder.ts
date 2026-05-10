@@ -87,7 +87,7 @@ function extractDiscriminator(differentiator: string): string {
   let text = differentiator.trim();
   // Strip leading qualifiers
   text = text
-    .replace(/^(?:Direct|In-house|Single-source|Healthcare-specific|Donor-grade|Engagement model|Each proposed|Structured|Team includes|High-value)\s+/i, "")
+    .replace(/^(?:multi-?disciplinary|in-?house|single-?source|direct|proprietary|advanced|specialized|world-?class|industry-?leading|[a-z]+-?grade|healthcare-?specific|donor-?grade|structured|high-?value|each\s+proposed|team\s+includes|engagement\s+model)\s+/i, "")
     .replace(/^[a-z][a-zA-Z\s\-,]+:\s*/i, "")
     .trim();
   // Truncate at first sentence-ending punctuation if too long
