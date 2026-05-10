@@ -594,7 +594,17 @@ function detectEvaluationWeights(tenderText: string): EvaluationWeight[] {
     }
   }
 
-  return weights.slice(0, 12);
+  // Secondary dedup: merge entries where criterion text differs only by trailing
+  // punctuation or minor whitespace variation — pattern overlap can produce
+  // "Relevant Experience" and "Relevant Experience " as separate keys.
+  const criterionSeen = new Map<string, boolean>();
+  const deduped = weights.filter((w) => {
+    const normKey = w.criterion.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    if (criterionSeen.has(normKey)) return false;
+    criterionSeen.set(normKey, true);
+    return true;
+  });
+  return deduped.slice(0, 12);
 }
 
 // ─── Commercial terms extraction ──────────────────────────────────────────────

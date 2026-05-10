@@ -276,7 +276,8 @@ export function ensureRubricHeadings(
   // a stub injection.
   for (const h of headings) {
     const codeNumber = h.heading.split(" ").slice(0, 2).join(" "); // e.g., "SV 01"
-    const re = new RegExp(`\\b${codeNumber.replace(/\s+/g, "\\s+")}\\b`, "i");
+    // Accept space OR hyphen between code and number (SV 01, SV-01, SV01).
+    const re = new RegExp(`\\b${codeNumber.replace(/\s+/g, "[\\s\\-]*")}\\b`, "i");
     if (!re.test(markdown)) {
       missingCriteria.push(h.criterion);
       additions[h.parentSection].push(
