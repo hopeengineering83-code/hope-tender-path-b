@@ -65,6 +65,10 @@ function inferAnswerSection(criterion: string): string {
   if (/financial|turnover|audited|capacity/.test(c)) return "Section A.1 Company Background + Appendix E";
   if (/donor|safeguard|world.bank|undp|esf|ifc/.test(c)) return "Section C.2 Methodology + D.3 Certifications + Compliance Matrix";
   if (/compliance|format|submission|deadline/.test(c)) return "Section E Compliance Matrix + cover letter submission confirmation";
+  // Fuzzy fallback — catches non-standard criterion wording
+  if (/methodolog|approach|work.?plan|deliver|implement|technical.?solution/.test(c)) return "Section C.1 Understanding + C.2 Technical Methodology";
+  if (/experience|track.?record|relevant|similar|previous|background|history/.test(c)) return "Section B.1 Portfolio Overview + B.2 Featured Projects";
+  if (/team|expert|staff|personnel|human.?resource|proposed/.test(c)) return "Section A.4 Proposed Project Team + A.5 Team-to-Project Mapping";
   return "Section A–D (cross-referenced in Compliance Matrix)";
 }
 
@@ -92,7 +96,7 @@ function inferEvidenceAnchor(criterion: string, input: EvaluatorMirrorBuilderInp
  */
 function findWeight(criterion: string, weights: EvaluationWeightLite[]): string {
   if (weights.length === 0) return "—";
-  const distinctive = (s: string) => s.toLowerCase().match(/[a-z]{4,}/g) ?? [];
+  const distinctive = (s: string) => s.toLowerCase().match(/[a-z]{3,}/g) ?? [];
   const cTokens = new Set(distinctive(criterion));
   let bestScore = 0;
   let best = "";
@@ -111,7 +115,7 @@ export function buildEvaluatorMirrorSection(input: EvaluatorMirrorBuilderInput):
   const criteria = input.evaluationCriteria.filter((c) => c.trim().length > 0);
   if (criteria.length === 0) return null;
 
-  const rows = criteria.slice(0, 12).map((criterion) => {
+  const rows = criteria.slice(0, 20).map((criterion) => {
     const weight = findWeight(criterion, input.evaluationWeights);
     const answerSection = inferAnswerSection(criterion);
     const evidence = inferEvidenceAnchor(criterion, input);

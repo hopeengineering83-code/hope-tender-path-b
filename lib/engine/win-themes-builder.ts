@@ -63,7 +63,7 @@ export function hasWinThemesHeading(markdown: string): boolean {
  */
 function matchCriterion(differentiator: string, criteria: string[]): string {
   if (criteria.length === 0) return "Overall technical capability";
-  const distinctive = (s: string) => s.toLowerCase().match(/[a-z]{5,}/g) ?? [];
+  const distinctive = (s: string) => s.toLowerCase().match(/[a-z]{4,}/g) ?? [];
   const dTokens = new Set(distinctive(differentiator));
   let bestScore = 0;
   let best = criteria[0];
@@ -133,7 +133,7 @@ export function buildWinThemesSection(input: WinThemesBuilderInput): string | nu
   const claims = input.differentiators.filter((d) => d.trim().length >= 20);
   if (claims.length === 0) return null;
 
-  const themes = claims.slice(0, 5).map((claim, idx) => ({
+  const themes = claims.slice(0, 7).map((claim, idx) => ({
     label: buildThemeLabel(claim),
     discriminator: extractDiscriminator(claim),
     criterion: matchCriterion(claim, input.evaluationCriteria),
