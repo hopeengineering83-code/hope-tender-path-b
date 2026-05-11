@@ -3,13 +3,22 @@ import assert from "node:assert/strict";
 
 const ORIGINAL_ENV = { ...process.env };
 
+function setNodeEnv(value: "development" | "production" | "test") {
+  Object.defineProperty(process.env, "NODE_ENV", {
+    value,
+    configurable: true,
+    writable: true,
+    enumerable: true,
+  });
+}
+
 test.afterEach(() => {
   process.env = { ...ORIGINAL_ENV };
 });
 
 test("proposal cache is disabled by default on Vercel", async () => {
   process.env.VERCEL = "1";
-  process.env.NODE_ENV = "production";
+  setNodeEnv("production");
   delete process.env.ENABLE_IN_MEMORY_PROPOSAL_CACHE;
   delete process.env.DISABLE_IN_MEMORY_PROPOSAL_CACHE;
 
@@ -22,7 +31,7 @@ test("proposal cache is disabled by default on Vercel", async () => {
 
 test("proposal cache can be explicitly enabled for controlled deployments", async () => {
   process.env.VERCEL = "1";
-  process.env.NODE_ENV = "production";
+  setNodeEnv("production");
   process.env.ENABLE_IN_MEMORY_PROPOSAL_CACHE = "true";
   delete process.env.DISABLE_IN_MEMORY_PROPOSAL_CACHE;
 
