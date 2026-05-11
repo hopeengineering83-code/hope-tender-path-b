@@ -161,6 +161,20 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         legalRecords: { orderBy: { updatedAt: "desc" }, take: 12 },
         financialRecords: { orderBy: { fiscalYear: "desc" }, take: 12 },
         complianceRecords: { orderBy: { updatedAt: "desc" }, take: 12 },
+        // Vault fallback — mirrors generate-elite.ts: when selected
+        // records are all unreviewed we substitute the firm's reviewed
+        // vault so the AI proposal still has real names + evidence.
+        experts: {
+          where: { trustLevel: "REVIEWED" },
+          orderBy: [{ yearsExperience: "desc" }, { updatedAt: "desc" }],
+          take: 12,
+        },
+        projects: {
+          where: { trustLevel: "REVIEWED" },
+          orderBy: [{ contractValue: "desc" }, { updatedAt: "desc" }],
+          take: 8,
+          include: { evidences: { orderBy: { createdAt: "desc" }, take: 5 } },
+        },
       },
     }),
   ]);
@@ -197,8 +211,36 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     return NextResponse.json({ success: true, proposal, fallback: true });
   }
 
-  const experts = tender.expertMatches.map((m) => m.expert).filter((e) => e.trustLevel === "REVIEWED");
-  const projects = tender.projectMatches.map((m) => m.project).filter((p) => p.trustLevel === "REVIEWED");
+  let experts = tender.expertMatches.map((m) => m.expert).filter((e) => e.trustLevel === "REVIEWED");
+  let projects = tender.projectMatches.map((m) => m.project).filter((p) => p.trustLevel === "REVIEWED");
+
+  // Vault fallback: if selected matches are all unreviewed (AI_DRAFT /
+  // REGEX_DRAFT), use the company's reviewed vault — matching the same
+  // fallback logic as generate-elite.ts so the AI proposal always has
+  // real evidence rather than an empty context.
+  // Last-resort: if vault is also empty, include all selected matches
+  // regardless of trust level (this is a draft proposal, imperfect
+  // evidence beats no evidence).
+  const vaultExperts = (company as unknown as { experts?: typeof experts }).experts ?? [];
+  const vaultProjects = (company as unknown as { projects?: typeof projects }).projects ?? [];
+  if (experts.length === 0) {
+    if (vaultExperts.length > 0) {
+      experts = vaultExperts;
+      console.warn(`[ai-proposal] No REVIEWED selected experts — using ${experts.length} vault expert(s).`);
+    } else {
+      experts = tender.expertMatches.map((m) => m.expert);
+      if (experts.length > 0) console.warn(`[ai-proposal] No REVIEWED experts in vault — using ${experts.length} unreviewed selected expert(s).`);
+    }
+  }
+  if (projects.length === 0) {
+    if (vaultProjects.length > 0) {
+      projects = vaultProjects as typeof projects;
+      console.warn(`[ai-proposal] No REVIEWED selected projects — using ${projects.length} vault project(s).`);
+    } else {
+      projects = tender.projectMatches.map((m) => m.project);
+      if (projects.length > 0) console.warn(`[ai-proposal] No REVIEWED projects in vault — using ${projects.length} unreviewed selected project(s).`);
+    }
+  }
 
   const generationMode = (process.env.PROPOSAL_GENERATION_MODE || "parallel").toLowerCase();
   const cacheKey = buildProposalCacheKey(
