@@ -160,6 +160,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const tender = await prisma.tender.findFirst({ where: { id, userId }, include: { requirements: true } });
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
   if (tender.status === "NO_BID") return NextResponse.json({ error: "Generation blocked: this tender is marked NO_BID. Apply a BID or BID_WITH_CONDITIONS decision before generating proposal documents.", code: "NO_BID_BLOCK" }, { status: 409 });
+  if (tender.requirements.length === 0) {
+    return NextResponse.json({
+      error: "Generation blocked: no tender requirements were extracted yet. Run AI Analyze / Run Engine first, or add requirements manually before generating documents.",
+      code: "NO_REQUIREMENTS",
+      nextAction: "RUN_ENGINE",
+    }, { status: 422 });
+  }
 
   const submissionPlan = buildSubmissionPlan({ id: tender.id, title: tender.title, exactFileNaming: tender.exactFileNaming, exactFileOrder: tender.exactFileOrder, pageLimit: tender.pageLimit, requirements: tender.requirements });
   const explicitSubmissionScope = hasExplicitSubmissionScope(tender);
@@ -174,12 +181,38 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const promotion = await promoteBestAvailableReviewedMatchesForGeneration({ tenderId: id, requirements: tender.requirements });
   const selectedExpertMatches = await prisma.tenderExpertMatch.findMany({ where: { tenderId: id, isSelected: true }, include: { expert: { select: { fullName: true, trustLevel: true } } } });
   const selectedProjectMatches = await prisma.tenderProjectMatch.findMany({ where: { tenderId: id, isSelected: true }, include: { project: { select: { name: true, trustLevel: true } } } });
+  const [totalExpertMatches, totalProjectMatches] = await Promise.all([
+    prisma.tenderExpertMatch.count({ where: { tenderId: id } }),
+    prisma.tenderProjectMatch.count({ where: { tenderId: id } }),
+  ]);
   const draftExperts = selectedExpertMatches.filter((m) => m.expert.trustLevel !== "REVIEWED");
   const draftProjects = selectedProjectMatches.filter((m) => m.project.trustLevel !== "REVIEWED");
   const reviewedExpertCount = selectedExpertMatches.length - draftExperts.length;
   const reviewedProjectCount = selectedProjectMatches.length - draftProjects.length;
   const expertRequirementExists = await prisma.tenderRequirement.count({ where: { tenderId: id, requirementType: "EXPERT" } });
   const projectRequirementExists = await prisma.tenderRequirement.count({ where: { tenderId: id, requirementType: "PROJECT_EXPERIENCE" } });
+  if (expertRequirementExists > 0 && selectedExpertMatches.length === 0) {
+    const code = totalExpertMatches === 0 ? "NO_EXPERT_MATCHES_FOUND" : "NO_EXPERT_MATCHES_SELECTED";
+    return NextResponse.json({
+      error: totalExpertMatches === 0
+        ? "Generation blocked: tender requires experts but no expert matches exist yet. Run Engine first to generate matches."
+        : "Generation blocked: tender requires experts but no expert matches are selected. Run Engine and review/select expert matches before generating.",
+      code,
+      totalExpertMatches,
+      nextAction: totalExpertMatches === 0 ? "RUN_ENGINE" : "REVIEW_MATCHES",
+    }, { status: 422 });
+  }
+  if (projectRequirementExists > 0 && selectedProjectMatches.length === 0) {
+    const code = totalProjectMatches === 0 ? "NO_PROJECT_MATCHES_FOUND" : "NO_PROJECT_MATCHES_SELECTED";
+    return NextResponse.json({
+      error: totalProjectMatches === 0
+        ? "Generation blocked: tender requires project references but no project matches exist yet. Run Engine first to generate matches."
+        : "Generation blocked: tender requires project references but no project matches are selected. Run Engine and review/select project matches before generating.",
+      code,
+      totalProjectMatches,
+      nextAction: totalProjectMatches === 0 ? "RUN_ENGINE" : "REVIEW_MATCHES",
+    }, { status: 422 });
+  }
   if (selectedExpertMatches.length > 0 && reviewedExpertCount === 0 && expertRequirementExists > 0) return NextResponse.json({ error: `Generation blocked: ${selectedExpertMatches.length} expert(s) are selected but NONE have been reviewed. Go to the Knowledge Review page and review at least one expert before generating.`, code: "ALL_EXPERTS_UNREVIEWED", draftExperts: draftExperts.map((m) => m.expert.fullName) }, { status: 422 });
   if (selectedProjectMatches.length > 0 && reviewedProjectCount === 0 && projectRequirementExists > 0) return NextResponse.json({ error: `Generation blocked: ${selectedProjectMatches.length} project reference(s) are selected but NONE have been reviewed. Go to the Knowledge Review page and review at least one project before generating.`, code: "ALL_PROJECTS_UNREVIEWED", draftProjects: draftProjects.map((m) => m.project.name) }, { status: 422 });
 

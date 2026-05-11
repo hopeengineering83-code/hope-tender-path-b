@@ -60,12 +60,14 @@ export async function POST(req: Request) {
     }
 
     const usable = extracted.filter((x) => x.meaningful);
-    if (usable.length === 0) {
+    const weaklyUsable = extracted.filter((x) => !x.meaningful && (x.extractedText ?? "").trim().length >= 80);
+    const effectiveUsable = usable.length > 0 ? usable : weaklyUsable;
+    if (effectiveUsable.length === 0) {
       return NextResponse.json({ error: "No usable tender text extracted", errors }, { status: 422 });
     }
 
-    const combinedText = usable.map((x) => `FILE: ${x.file.name}\n${x.extractedText}`).join("\n\n--- NEXT TENDER FILE ---\n\n");
-    const metadata = inferTenderMetadata(combinedText, usable[0].file.name);
+    const combinedText = effectiveUsable.map((x) => `FILE: ${x.file.name}\n${x.extractedText}`).join("\n\n--- NEXT TENDER FILE ---\n\n");
+    const metadata = inferTenderMetadata(combinedText, effectiveUsable[0].file.name);
     const titleOverride = String(form.get("title") || "").trim();
     const refOverride = String(form.get("reference") || "").trim();
 
@@ -83,7 +85,7 @@ export async function POST(req: Request) {
         submissionMethod: metadata.submissionMethod,
         submissionAddress: metadata.submissionAddress,
         intakeSummary: metadata.intakeSummary,
-        notes: `Created by upload-first tender intake from ${usable.length} extracted file(s).`,
+        notes: `Created by upload-first tender intake from ${effectiveUsable.length} extracted file(s).`,
         status: "DRAFT",
         stage: "TENDER_INTAKE",
         userId,
@@ -114,6 +116,12 @@ export async function POST(req: Request) {
       });
     }
 
+    await prisma.company.upsert({
+      where: { userId },
+      update: {},
+      create: { name: "Company Profile", userId },
+    });
+
     let engineResult: unknown = null;
     let engineError: string | null = null;
     try {
@@ -124,7 +132,7 @@ export async function POST(req: Request) {
         entityType: "Tender",
         entityId: tender.id,
         description: `Upload-first tender intake auto-ran engine for "${tender.title}"`,
-        metadata: { files: usable.length },
+        metadata: { files: effectiveUsable.length },
       });
     } catch (err) {
       engineError = err instanceof Error ? err.message : String(err);
@@ -135,8 +143,8 @@ export async function POST(req: Request) {
       success: true,
       tenderId: tender.id,
       tender: engineResult ?? tender,
-      extractedFiles: usable.length,
-      skippedFiles: extracted.length - usable.length,
+      extractedFiles: effectiveUsable.length,
+      skippedFiles: extracted.length - effectiveUsable.length,
       metadata,
       errors,
       engineError,

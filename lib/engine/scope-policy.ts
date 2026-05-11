@@ -23,6 +23,28 @@ function allText(requirements: ScopeRequirement[]): string {
   return requirements.map(textFor).join("\n");
 }
 
+
+function inferQuantityFromText(requirement: ScopeRequirement, type: string): number {
+  const text = textFor(requirement);
+  const patterns = type === "EXPERT"
+    ? [
+      /(?:minimum|at\s+least|not\s+less\s+than|required|must\s+provide|shall\s+provide)\s*(?:of\s+)?(\d{1,2})\s*(?:key\s+)?(?:experts?|specialists?|personnel|staff|professionals)\b/i,
+      /(\d{1,2})\s*(?:key\s+)?(?:experts?|specialists?|personnel|staff|professionals)\b/i,
+    ]
+    : [
+      /(?:minimum|at\s+least|not\s+less\s+than|required|must\s+provide|shall\s+provide)\s*(?:of\s+)?(\d{1,2})\s*(?:similar\s+)?(?:projects?|assignments?|references?|contracts?)\b/i,
+      /(\d{1,2})\s*(?:similar\s+)?(?:projects?|assignments?|references?|contracts?)\b/i,
+    ];
+
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match?.[1]) {
+      const parsed = Number.parseInt(match[1], 10);
+      if (Number.isFinite(parsed) && parsed > 0 && parsed <= (type === "EXPERT" ? 20 : 15)) return parsed;
+    }
+  }
+  return 0;
+}
 function hasExplicitQuantityLanguage(requirement: ScopeRequirement, type: string): boolean {
   const text = textFor(requirement);
   if (type === "EXPERT") {
@@ -49,9 +71,12 @@ export function exactSelectionLimit(requirements: ScopeRequirement[], type: stri
   if (relevant.length === 0) return 0;
 
   const explicit = relevant
-    .filter((requirement) => (requirement.requiredQuantity ?? 0) > 0)
-    .filter((requirement) => hasExplicitQuantityLanguage(requirement, type))
-    .map((requirement) => requirement.requiredQuantity ?? 0)
+    .map((requirement) => {
+      const taggedQuantity = (requirement.requiredQuantity ?? 0) > 0 && hasExplicitQuantityLanguage(requirement, type)
+        ? (requirement.requiredQuantity ?? 0)
+        : 0;
+      return Math.max(taggedQuantity, inferQuantityFromText(requirement, type));
+    })
     .filter((quantity) => quantity > 0 && quantity <= (type === "EXPERT" ? 20 : 15));
 
   return explicit.length > 0 ? Math.max(...explicit) : 0;
