@@ -87,32 +87,10 @@ export async function POST(req: Request) {
     const refOverride = String(form.get("reference") || "").trim();
 
     // ─── Build the tender record with EVERY extracted field ──────────────
-    // The metadata extractor now returns 20+ fields. The base Tender model
-    // carries the core ones; extra detail (client contact person/email/
-    // phone, validity period, bid bond, pre-bid meeting, etc.) is stored
-    // in the `notes` field as a structured block so the user can see what
-    // was auto-extracted, plus the `intakeSummary` so the engine has
-    // substantive context.
-    const extraDetailLines: string[] = [];
-    if (metadata.clientContactName) extraDetailLines.push(`Client contact: ${metadata.clientContactName}${metadata.clientContactTitle ? ` (${metadata.clientContactTitle})` : ""}`);
-    if (metadata.clientContactEmail) extraDetailLines.push(`Client email: ${metadata.clientContactEmail}`);
-    if (metadata.clientContactPhone) extraDetailLines.push(`Client phone: ${metadata.clientContactPhone}`);
-    if (metadata.clientAddress) extraDetailLines.push(`Client address: ${metadata.clientAddress}`);
-    if (metadata.submissionEmails.length > 1) extraDetailLines.push(`Other submission emails: ${metadata.submissionEmails.slice(1).join(", ")}`);
-    if (metadata.validityDays) extraDetailLines.push(`Proposal validity: ${metadata.validityDays} days`);
-    if (metadata.bidBondAmount && metadata.bidBondCurrency) extraDetailLines.push(`Bid bond: ${metadata.bidBondCurrency} ${metadata.bidBondAmount.toLocaleString()}`);
-    if (metadata.preBidMeetingLocation) extraDetailLines.push(`Pre-bid meeting: ${metadata.preBidMeetingLocation}`);
-    if (metadata.mandatorySiteVisit) extraDetailLines.push(`Mandatory site visit: YES`);
-    if (metadata.numberOfCopiesRequired) extraDetailLines.push(`Copies required: original + ${metadata.numberOfCopiesRequired}`);
-    if (metadata.technicalWeight && metadata.financialWeight) extraDetailLines.push(`Evaluation: Technical ${metadata.technicalWeight}% / Financial ${metadata.financialWeight}%`);
-
-    const intakeNotes = [
-      `Created by upload-first tender intake from ${usable.length} extracted file(s).`,
-      ...(extraDetailLines.length > 0
-        ? ["", "Auto-extracted tender detail (review before final submission):", ...extraDetailLines.map((l) => `  • ${l}`)]
-        : []),
-    ].join("\n");
-
+    // The metadata extractor returns 20+ fields. PR XX-METADATA promoted
+    // the rich detail to dedicated Tender columns (bootstrap migration in
+    // lib/prisma.ts:489). When a field couldn't be extracted, the column
+    // stays null and the UI shows a "Bid-Team to confirm" badge.
     const tender = await prisma.tender.create({
       data: {
         id: crypto.randomUUID(),
@@ -129,7 +107,23 @@ export async function POST(req: Request) {
         submissionAddress: metadata.submissionAddress,
         intakeSummary: metadata.intakeSummary,
         pageLimit: metadata.pageLimit ?? null,
-        notes: intakeNotes,
+        // ─── Rich detail (PR XX-METADATA) ───
+        clientContactName: metadata.clientContactName,
+        clientContactTitle: metadata.clientContactTitle,
+        clientContactEmail: metadata.clientContactEmail,
+        clientContactPhone: metadata.clientContactPhone,
+        clientAddress: metadata.clientAddress,
+        submissionEmails: metadata.submissionEmails.length > 0 ? metadata.submissionEmails.join("|") : null,
+        validityDays: metadata.validityDays,
+        bidBondAmount: metadata.bidBondAmount,
+        bidBondCurrency: metadata.bidBondCurrency,
+        preBidMeetingDate: metadata.preBidMeetingDate,
+        preBidMeetingLocation: metadata.preBidMeetingLocation,
+        mandatorySiteVisit: metadata.mandatorySiteVisit,
+        numberOfCopiesRequired: metadata.numberOfCopiesRequired,
+        technicalWeight: metadata.technicalWeight,
+        financialWeight: metadata.financialWeight,
+        notes: `Created by upload-first tender intake from ${usable.length} extracted file(s). ${usable.length === 0 ? "No usable text was extracted — review and edit tender details manually." : "Rich detail auto-extracted — review the Tender Detail panel before final submission."}`,
         status: "DRAFT",
         stage: "TENDER_INTAKE",
         userId,
