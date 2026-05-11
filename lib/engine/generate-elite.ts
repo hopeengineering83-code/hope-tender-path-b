@@ -254,7 +254,12 @@ function markdownToDocx(markdown: string): (Paragraph | Table)[] {
     }
     if (tableBuffer.length > 0) flushTable();
 
-    if (!line) continue;
+    if (!line) {
+      // Preserve visual paragraph separation: emit a small spacer so
+      // consecutive body paragraphs don't collapse into a dense block.
+      out.push(new Paragraph({ children: [new TextRun("")], spacing: { after: 60 } }));
+      continue;
+    }
     if (line.startsWith("### ")) out.push(heading(line.slice(4).replace(/\*\*/g, ""), 3));
     else if (line.startsWith("## ")) out.push(heading(line.slice(3).replace(/\*\*/g, ""), 2));
     else if (line.startsWith("# ")) { h1Count++; out.push(heading(line.slice(2).replace(/\*\*/g, ""), 1, h1Count > 1)); }
