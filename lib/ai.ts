@@ -1393,7 +1393,7 @@ AI ANALYSIS SUMMARY:
 ${params.analysisSummary.slice(0, 4_000)}
 
 EVALUATION CRITERIA — answer each one explicitly in the proposal:
-${params.evaluationMethodology.slice(0, 4_000)}
+${params.evaluationMethodology.slice(0, 5_500)}
 
 SUBMISSION RULES:
 ${params.submissionNotes.slice(0, 3_000)}

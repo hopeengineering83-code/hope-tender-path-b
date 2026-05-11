@@ -652,7 +652,7 @@ export function buildMatches(
         : requiredFamiliesWeighted.filter((family) => recordFamilies.includes(family)).length / requiredFamiliesWeighted.length;
       const sector = sectorBoost(tenderSector, parseArr(expert.sectors));
       const trust = trustLevelAdjustment(trustLevel);
-      const experience = (expert.yearsExperience ?? 0) >= 15 ? 0.12 : (expert.yearsExperience ?? 0) >= 10 ? 0.10 : (expert.yearsExperience ?? 0) >= 5 ? 0.05 : 0;
+      const experience = Math.min(0.18, Math.max(0, (expert.yearsExperience ?? 0) * 0.008));
       const mismatchPenalty = criticalFamilyMismatchPenalty(queryText, recordText);
       const domainScore = domainTagMatchScore(constraintProfile.domainTags, recordText);
       const isHardExcluded = constraintProfile.strictDomain && domainScore === 0;

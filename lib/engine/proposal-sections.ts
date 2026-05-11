@@ -208,7 +208,7 @@ ${vaultContactBlock}${avoidBlock}
 ${input.submissionNotes.slice(0, 2_500)}
 
 ## EVALUATION CRITERIA
-${input.evaluationMethodology.slice(0, 2_500)}
+${input.evaluationMethodology.slice(0, 4_500)}
 
 ## KEY DIFFERENTIATORS
 ${input.differentiators.slice(0, 1_500)}
@@ -317,7 +317,7 @@ TITLE: ${input.tenderTitle}
 CLIENT: ${input.clientName}
 
 ## EVALUATION CRITERIA (especially the experience and team criteria)
-${input.evaluationMethodology.slice(0, 2_500)}
+${input.evaluationMethodology.slice(0, 4_500)}
 ${vaultBlock}
 
 ## CONSOLIDATED REQUIREMENTS (especially eligibility, team composition, project experience)
@@ -386,7 +386,7 @@ ${input.tenderText.slice(0, 8_000)}
 ${input.analysisSummary.slice(0, 2_500)}
 
 ## EVALUATION CRITERIA (your methodology must score against these — allocate depth proportionally to each criterion's weight)
-${input.evaluationMethodology.slice(0, 2_500)}
+${input.evaluationMethodology.slice(0, 4_500)}
 ${criterionBlock}
 ## CONSOLIDATED REQUIREMENTS (especially technical and methodology requirements)
 ${input.requirements.slice(0, 4_000)}
@@ -693,7 +693,7 @@ CLIENT: ${input.clientName}
 ${input.tenderText.slice(0, 8_000)}
 
 ## EVALUATION CRITERIA (your methodology must score against these)
-${input.evaluationMethodology.slice(0, 3_000)}
+${input.evaluationMethodology.slice(0, 4_500)}
 
 ## CONSOLIDATED REQUIREMENTS (especially methodology and technical requirements)
 ${input.requirements.slice(0, 4_500)}
