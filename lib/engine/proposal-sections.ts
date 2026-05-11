@@ -470,12 +470,13 @@ other top-level sections.`;
 }
 
 function buildAdditionalAndDeclarationPrompt(input: AIBidWriterInput): string {
+  const avoidD = (input.doNotUseAsClient ?? []).filter((c) => c && c.trim().length >= 3);
   return `Write Section D (Additional Information & Value), the Appendix Register, and the formal Declaration for this technical proposal.
 
 ## TENDER
 TITLE: ${input.tenderTitle}
 CLIENT: ${input.clientName}
-
+${avoidD.length > 0 ? `\nPREVIOUS CLIENTS — never use these as the client of THIS tender (they appear in Section B project cards as historical clients only):\n${avoidD.slice(0, 12).map((c) => `- ${c}`).join("\n")}\n` : ""}
 ## SUBMISSION RULES
 ${input.submissionNotes.slice(0, 2_500)}
 
