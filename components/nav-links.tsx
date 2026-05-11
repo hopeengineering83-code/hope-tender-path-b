@@ -7,7 +7,7 @@ type NavLink = { href: string; label: string; icon: string };
 type NavGroup = { title: string; links: NavLink[] };
 
 export function NavLinks({ groups }: { groups: NavGroup[] }) {
-  const pathname = usePathname();
+  const pathname = usePathname() ?? "";
 
   function isActive(href: string) {
     if (href === "/dashboard") return pathname === "/dashboard";
