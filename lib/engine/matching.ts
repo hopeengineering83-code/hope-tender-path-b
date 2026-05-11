@@ -228,13 +228,42 @@ function capabilityScore(queryText: string, recordText: string, type: "expert" |
   return Math.max(0, Math.min(1, score));
 }
 
+// Mutually-exclusive sector groups. When tender and item map to DIFFERENT
+// groups, the item is penalised (-0.20) regardless of lexical overlap.
+// This prevents a "healthcare supply warehouse" project from receiving a
+// sector boost for a healthcare tender, and pushes confirmed off-sector
+// items well below the 0.75 auto-select threshold.
+const SECTOR_CONFLICT_GROUPS: RegExp[] = [
+  /health|hospital|medical|clinic|patient|pharmacy|biomedical/,
+  /warehouse|logistics|cargo|freight|storage|supply.?chain|distribution.?cent/,
+  /water|borehole|hydraulic|irrigation|sanitation|sewer/,
+  /road|bridge|highway|pavement|transport(?!ation.?planning)/,
+  /school|university|campus|education|classroom/,
+  /industrial|manufacturing|factory/,
+];
+
 function sectorBoost(tenderSector: string | null | undefined, items: string[]): number {
   if (!tenderSector) return 0;
   const tender = tenderSector.toLowerCase();
   const itemText = items.join(" ").toLowerCase();
   if (!itemText) return 0;
-  if (items.some((item) => item.toLowerCase().includes(tender) || tender.includes(item.toLowerCase()))) return 0.15;
-  if (/urban|planning|infrastructure|water|sanitary|engineering|design|supervision/.test(tender) && /urban|planning|infrastructure|water|sanitary|engineering|design|supervision/.test(itemText)) return 0.12;
+
+  // Sector conflict penalty: confirmed cross-sector match → penalise
+  const tenderGroup = SECTOR_CONFLICT_GROUPS.findIndex((g) => g.test(tender));
+  const itemGroup = SECTOR_CONFLICT_GROUPS.findIndex((g) => g.test(itemText));
+  if (tenderGroup >= 0 && itemGroup >= 0 && tenderGroup !== itemGroup) return -0.20;
+
+  // Positive boost: word-boundary match (avoids substring false-positives like
+  // "healthcare supply warehouse" getting +0.15 for a healthcare tender).
+  const tenderWords = tender.split(/[\s/,;:&()+]+/).filter((w) => w.length >= 5);
+  if (tenderWords.length > 0 && tenderWords.some((w) => new RegExp(`\\b${w}\\b`).test(itemText))) return 0.15;
+  if (items.some((item) => {
+    const iWords = item.toLowerCase().split(/[\s/,;:&()+]+/).filter((w) => w.length >= 5);
+    return iWords.some((w) => new RegExp(`\\b${w}\\b`).test(tender));
+  })) return 0.15;
+
+  if (/urban|planning|infrastructure|water|sanitary|engineering|design|supervision/.test(tender) &&
+      /urban|planning|infrastructure|water|sanitary|engineering|design|supervision/.test(itemText)) return 0.12;
   return 0;
 }
 
@@ -307,14 +336,17 @@ function selectAboveThreshold<T extends { score: number; isSelected: boolean }>(
     return { ...m, isSelected: false };
   });
 
-  // Floor guarantee: always select the top 3 by score even when all fall
-  // below the threshold, so the evidence library passed to Claude is never
-  // empty when candidates exist.
+  // Floor guarantee: always select the top 3 by score when they fall just
+  // below threshold — but only when the candidate is borderline-relevant
+  // (score >= 0.40). Forcing in confirmed off-sector items (warehouse
+  // projects for healthcare tenders score ≈ 0.10–0.30 after the sector
+  // penalty) does more harm than running with fewer evidence items.
+  const MIN_FLOOR_SCORE = 0.40;
   const MIN_SELECTED = Math.min(3, limit, matches.length);
   if (selected < MIN_SELECTED) {
     let forcedCount = selected;
     return result.map((m) => {
-      if (!m.isSelected && forcedCount < MIN_SELECTED) {
+      if (!m.isSelected && forcedCount < MIN_SELECTED && m.score >= MIN_FLOOR_SCORE) {
         forcedCount += 1;
         return { ...m, isSelected: true };
       }
