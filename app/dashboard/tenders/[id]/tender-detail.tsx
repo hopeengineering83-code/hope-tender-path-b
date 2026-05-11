@@ -420,24 +420,8 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
     }
   }, [tender.id]);
 
-  useEffect(() => {
-    let active = true;
-    setDiagnosticsLoading(true);
-    (async () => {
-      try {
-        const res = await fetch(`/api/tenders/${tender.id}/matching-diagnostics`);
-        if (!res.ok) return;
-        const data = await res.json() as MatchingDiagnostics;
-        if (active) setMatchingDiagnostics(data);
-        if (active) setDiagnosticsLoading(false);
-      } catch {
-        // diagnostics are optional; keep UI resilient
-      } finally {
-        if (active) setDiagnosticsLoading(false);
-      }
-    })();
-    return () => { active = false; };
-  }, [tender.id]);
+  // Auto-fetch on mount; loadDiagnostics is also wired to the Refresh button.
+  useEffect(() => { void loadDiagnostics(); }, [loadDiagnostics]);
 
   async function handleSave() {
     await save({
