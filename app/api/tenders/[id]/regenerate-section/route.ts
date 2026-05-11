@@ -16,6 +16,7 @@ import { NextResponse } from "next/server";
 import { getSession } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { isAIEnabled, type AIBidWriterInput } from "../../../../../lib/ai";
+import { dbRateLimit } from "../../../../../lib/db-rate-limit";
 import { BENCHMARK_CONTEXT_LINES, buildProposalIntelligence, buildCriterionEvidenceMap, expertProofLine, projectProofLine, safeParseArr } from "../../../../../lib/engine/proposal-intelligence";
 import { buildRubricPromptDirective } from "../../../../../lib/engine/rubric-driven-sections";
 import { extractTenderLanguageEchoes, formatEchoesForPrompt } from "../../../../../lib/engine/tender-language-echoes";
@@ -25,22 +26,18 @@ import { buildProposalSectionSpecs, buildSectionFallback, type ProposalSectionId
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
 
-// Simple in-memory per-user rate limit: max 8 section regenerations per minute.
-// Resets on the rolling window; safe for single-instance deployments.
-const _regenLimit = new Map<string, { count: number; windowStart: number }>();
+// Global DB-backed per-user rate limit: max 8 section regenerations per minute.
+// This replaces the previous module-level Map, which reset on every serverless
+// cold start and could be bypassed across Vercel instances.
 const REGEN_LIMIT_MAX = 8;
 const REGEN_LIMIT_WINDOW_MS = 60_000;
 
-function checkRegenRateLimit(userId: string): boolean {
-  const now = Date.now();
-  const entry = _regenLimit.get(userId);
-  if (!entry || now - entry.windowStart > REGEN_LIMIT_WINDOW_MS) {
-    _regenLimit.set(userId, { count: 1, windowStart: now });
-    return true;
-  }
-  if (entry.count >= REGEN_LIMIT_MAX) return false;
-  entry.count += 1;
-  return true;
+async function checkRegenRateLimit(userId: string) {
+  return dbRateLimit(userId, {
+    scope: "regenerate_section",
+    limit: REGEN_LIMIT_MAX,
+    windowMs: REGEN_LIMIT_WINDOW_MS,
+  });
 }
 
 const VALID_SECTION_IDS: ProposalSectionId[] = [
@@ -101,10 +98,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     return NextResponse.json({ error: "AI is not configured. Set ANTHROPIC_API_KEY to enable section regeneration." }, { status: 503 });
   }
 
-  if (!checkRegenRateLimit(userId)) {
+  const regenLimit = await checkRegenRateLimit(userId);
+  if (!regenLimit.allowed) {
     return NextResponse.json({
       error: `Rate limit reached: maximum ${REGEN_LIMIT_MAX} section regenerations per minute. Please wait and try again.`,
       rateLimitRetry: true,
+      resetAt: regenLimit.resetAt.toISOString(),
     }, { status: 429 });
   }
 
