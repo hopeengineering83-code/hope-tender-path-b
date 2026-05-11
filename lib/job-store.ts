@@ -24,6 +24,17 @@ const JOB_TTL_MS = 2 * 60 * 60 * 1_000; // 2 hours
 const MAX_JOBS = 1_000;
 
 const jobs = new Map<string, Job>();
+let warnedServerlessJobStore = false;
+
+function warnServerlessJobStoreOnce(): void {
+  if (warnedServerlessJobStore) return;
+  if (!(process.env.VERCEL || process.env.NOW_REGION)) return;
+  warnedServerlessJobStore = true;
+  console.warn(
+    "[job-store] In-memory jobs are not durable on serverless deployments. " +
+    "Use the AiJob database-backed workflow for long-running production jobs."
+  );
+}
 
 function evict() {
   const now = Date.now();
@@ -37,6 +48,7 @@ function evict() {
 }
 
 export function createJob(params: Pick<Job, "userId" | "tenderId" | "type"> & { steps: string[] }): Job {
+  warnServerlessJobStoreOnce();
   evict();
   const stepLabels: Record<string, string> = {
     FETCH: "Loading tender data",
@@ -67,10 +79,12 @@ export function createJob(params: Pick<Job, "userId" | "tenderId" | "type"> & { 
 }
 
 export function getJob(id: string): Job | undefined {
+  warnServerlessJobStoreOnce();
   return jobs.get(id);
 }
 
 export function advanceJob(id: string, step: string): void {
+  warnServerlessJobStoreOnce();
   const job = jobs.get(id);
   if (!job) return;
   const stepEntry = job.steps.find((s) => s.step === step);
@@ -81,6 +95,7 @@ export function advanceJob(id: string, step: string): void {
 }
 
 export function completeJob(id: string, result: unknown): void {
+  warnServerlessJobStoreOnce();
   const job = jobs.get(id);
   if (!job) return;
   job.status = "DONE";
@@ -91,6 +106,7 @@ export function completeJob(id: string, result: unknown): void {
 }
 
 export function failJob(id: string, error: string): void {
+  warnServerlessJobStoreOnce();
   const job = jobs.get(id);
   if (!job) return;
   job.status = "FAILED";
