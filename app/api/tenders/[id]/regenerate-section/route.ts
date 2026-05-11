@@ -114,12 +114,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         // we substitute the firm's reviewed vault so the section AI always
         // has real evidence rather than an empty context.
         experts: {
-          where: { trustLevel: "REVIEWED" },
+          where: { trustLevel: "REVIEWED", deletedAt: null },
           orderBy: [{ yearsExperience: "desc" }, { updatedAt: "desc" }],
           take: 12,
         },
         projects: {
-          where: { trustLevel: "REVIEWED" },
+          where: { trustLevel: "REVIEWED", deletedAt: null },
           orderBy: [{ contractValue: "desc" }, { updatedAt: "desc" }],
           take: 8,
           include: { evidences: { orderBy: { createdAt: "desc" }, take: 5 } },
@@ -249,11 +249,19 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         .map((r) => [r.title, r.complianceType, r.referenceNumber ? `Ref: ${r.referenceNumber}` : "", r.status ? `Status: ${r.status}` : ""].filter(Boolean).join(" — "))
         .filter((s) => s.length > 0),
     },
-    doNotUseAsClient: Array.from(new Set(
-      (company as { projects?: Array<{ clientName?: string | null }> }).projects
-        ?.map((p) => p.clientName)
-        .filter((c): c is string => Boolean(c && c.trim().length >= 3)) ?? []
-    )),
+    doNotUseAsClient: (() => {
+      // Build from vault projects AND the resolved evidence projects (covers
+      // unreviewed-selected fallback path); exclude the current tender client
+      // so repeat-client tenders don't receive contradictory instructions.
+      const tenderClient = intelligence.clientName?.toLowerCase().trim() ?? "";
+      return Array.from(new Set([
+        ...((company as { projects?: Array<{ clientName?: string | null }> }).projects?.map((p) => p.clientName) ?? []),
+        ...projects.map((p) => p.clientName),
+      ].filter((cn): cn is string => {
+        if (!cn || cn.trim().length < 3) return false;
+        return cn.toLowerCase().trim() !== tenderClient;
+      })));
+    })(),
     criterionEvidenceMap: buildCriterionEvidenceMap(
       intelligence.evaluationWeights,
       intelligence.topProjects,

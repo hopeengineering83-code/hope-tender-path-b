@@ -168,12 +168,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         // records are all unreviewed we substitute the firm's reviewed
         // vault so the AI proposal still has real names + evidence.
         experts: {
-          where: { trustLevel: "REVIEWED" },
+          where: { trustLevel: "REVIEWED", deletedAt: null },
           orderBy: [{ yearsExperience: "desc" }, { updatedAt: "desc" }],
           take: 12,
         },
         projects: {
-          where: { trustLevel: "REVIEWED" },
+          where: { trustLevel: "REVIEWED", deletedAt: null },
           orderBy: [{ contractValue: "desc" }, { updatedAt: "desc" }],
           take: 8,
           include: { evidences: { orderBy: { createdAt: "desc" }, take: 5 } },
