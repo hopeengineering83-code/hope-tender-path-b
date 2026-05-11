@@ -10,7 +10,7 @@ type MatchWithSelection = {
 type ExpertMatch = MatchingResult["expertMatches"][number];
 type ProjectMatch = MatchingResult["projectMatches"][number];
 
-const MIN_REVIEWED_SAFE_SCORE = 0.55;
+const MIN_REVIEWED_SAFE_SCORE = 0.45;
 const DEFAULT_EXPERT_LIMIT = 4;
 const DEFAULT_PROJECT_LIMIT = 3;
 

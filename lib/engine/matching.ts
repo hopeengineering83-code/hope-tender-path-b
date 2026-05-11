@@ -262,7 +262,13 @@ function sectorBoost(tenderSector: string | null | undefined, items: string[]): 
     return iWords.some((w) => new RegExp(`\\b${w}\\b`).test(tender));
   })) return 0.15;
 
-  if (/urban|planning|infrastructure|water|sanitary|engineering|design|supervision/.test(tender) &&
+  // Generic fallback boost only when the tender is not in a specific
+  // conflict group. If the tender is sector-specific (healthcare, water,
+  // road, education, industrial, warehouse), "engineering" or "design"
+  // vocabulary alone does NOT earn a positive sector score — the item
+  // must match the tender's specific domain or earn 0.
+  if (tenderGroup < 0 &&
+      /urban|planning|infrastructure|water|sanitary|engineering|design|supervision/.test(tender) &&
       /urban|planning|infrastructure|water|sanitary|engineering|design|supervision/.test(itemText)) return 0.12;
   return 0;
 }
