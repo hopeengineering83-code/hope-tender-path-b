@@ -400,7 +400,7 @@ function detectThemes(tenderText: string): ProposalTheme[] {
   return scored.map((s) => s.theme);
 }
 
-function inferSector(tenderText: string): string {
+export function inferSector(tenderText: string): string {
   if (/health|hospital|medical|clinic|specialty.*cent/i.test(tenderText)) return "Healthcare / Medical Facility Design";
   if (/water supply|borehole|pump|hydraulic|irrigation|WASH|sanitation|wastewater/i.test(tenderText)) return "Water & Sanitation Infrastructure";
   if (/road.*design|road.*rehab|bridge.*design|highway|pavement.*design/i.test(tenderText)) return "Road / Bridge / Transport Infrastructure";
