@@ -11,6 +11,17 @@
 type Bucket = { tokens: number; resetAt: number };
 
 const buckets = new Map<string, Bucket>();
+let warnedPerInstanceLimit = false;
+
+function warnPerInstanceLimitOnce(): void {
+  if (warnedPerInstanceLimit) return;
+  if (!(process.env.VERCEL || process.env.NOW_REGION)) return;
+  warnedPerInstanceLimit = true;
+  console.warn(
+    "[rate-limit] In-memory rate limits are per serverless instance on Vercel. " +
+    "Use a shared KV/Redis backend for strict global enforcement."
+  );
+}
 
 export interface RateLimitConfig {
   /** Max requests allowed in the window */
@@ -26,6 +37,7 @@ export interface RateLimitResult {
 }
 
 export function rateLimit(key: string, cfg: RateLimitConfig): RateLimitResult {
+  warnPerInstanceLimitOnce();
   const now = Date.now();
   let bucket = buckets.get(key);
 
