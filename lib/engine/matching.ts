@@ -487,9 +487,14 @@ function marginalGainScore<T extends { score: number; isSelected: boolean }>(
   const requiredFamiliesCount = Math.max(requiredFamilies.length, 1);
   const requiredDisciplinesCount = Math.max(requiredDisciplines.size, 1);
 
+  // Family coverage is weighted higher than individual score so that
+  // a high-scoring but domain-mismatched record cannot displace a
+  // lower-scoring in-domain candidate who adds a new required family.
+  // Previous split (0.55 / 0.30) allowed a 0.90-scorer with 0 new
+  // families to edge out a 0.76-scorer who adds a required family.
   return (
-    candidate.match.score * 0.55 +
-    (newFamilies / requiredFamiliesCount) * 0.30 +
+    candidate.match.score * 0.40 +
+    (newFamilies / requiredFamiliesCount) * 0.45 +
     (newDisciplines / requiredDisciplinesCount) * 0.15
   );
 }
@@ -632,9 +637,15 @@ function seniorScore(params: {
   valueOrRecency: number;
   hasRealText: boolean;
 }): number {
+  // Cap the combined upside bonuses (trust + experience + recency) at 0.28
+  // so that a REVIEWED senior expert with matching sector cannot rescue a
+  // low-capability record above the 0.55 selection floor.  The sector
+  // component is kept outside the cap because it can be negative (sector
+  // conflict penalty −0.30) and must retain its full suppression effect.
+  const bonusCapped = Math.min(params.trust + params.experience + params.valueOrRecency, 0.28);
   const base = params.capability >= 0.72
-    ? (params.capability * 0.62 + params.cosine * 0.20 + params.sector + params.trust + params.experience + params.valueOrRecency)
-    : (params.capability * 0.42 + params.cosine * 0.35 + params.sector + params.trust + params.experience + params.valueOrRecency);
+    ? (params.capability * 0.62 + params.cosine * 0.20 + params.sector + bonusCapped)
+    : (params.capability * 0.42 + params.cosine * 0.35 + params.sector + bonusCapped);
   const evidenceConfidence = params.hasRealText ? 0.06 : -0.08;
   return Math.max(0, Math.min(1, base + evidenceConfidence));
 }

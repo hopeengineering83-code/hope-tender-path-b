@@ -1534,15 +1534,18 @@ interface SectionResult {
 async function generateOneSection(spec: ProposalSectionSpec): Promise<SectionResult> {
   const t0 = Date.now();
 
-  // Per-section timeout — independent from the orchestrator's overall
-  // timeout. If THIS section runs long, only THIS section falls back to
-  // deterministic; the other parallel calls keep running.
-  const sectionTimeout = new Promise<null>((_, reject) =>
-    setTimeout(
-      () => reject(new Error(`section "${spec.id}" timed out after ${Math.round(PROPOSAL_SECTION_TIMEOUT_MS / 1000)}s`)),
-      PROPOSAL_SECTION_TIMEOUT_MS,
-    ),
-  );
+  // Per-section timeout factory — creates a FRESH promise each time so
+  // that the Gemini fallback is not immediately rejected by an already-
+  // settled timeout from a prior Claude attempt (a settled-rejected
+  // promise in Promise.race resolves the race instantly).
+  function makeSectionTimeout() {
+    return new Promise<null>((_, reject) =>
+      setTimeout(
+        () => reject(new Error(`section "${spec.id}" timed out after ${Math.round(PROPOSAL_SECTION_TIMEOUT_MS / 1000)}s`)),
+        PROPOSAL_SECTION_TIMEOUT_MS,
+      )
+    );
+  }
 
   // Try Claude first (preferred provider — system prompts in
   // proposal-sections.ts are tuned for Claude personas).
@@ -1550,7 +1553,7 @@ async function generateOneSection(spec: ProposalSectionSpec): Promise<SectionRes
     try {
       const claudeResult = await Promise.race([
         generateWithClaude(spec.userPrompt, spec.systemPrompt, spec.maxOutputTokens),
-        sectionTimeout,
+        makeSectionTimeout(),
       ]);
       if (claudeResult && claudeResult.trim().length > 0) {
         return {
@@ -1583,7 +1586,7 @@ async function generateOneSection(spec: ProposalSectionSpec): Promise<SectionRes
       const geminiPrompt = `${spec.systemPrompt}\n\n---\n\n${spec.userPrompt}`;
       const text = await Promise.race([
         generateWithBestModel(geminiPrompt),
-        sectionTimeout,
+        makeSectionTimeout(),
       ]);
       if (text && text.trim().length > 0) {
         return {
@@ -1660,8 +1663,9 @@ export async function generateProposalSectionsParallel(input: AIBidWriterInput):
 
   const specs = buildProposalSectionSpecs(input, { deep: deepMode });
 
-  // Promise.allSettled — we never reject the whole batch even if every
-  // section fails, because we want a shippable markdown either way.
+  // generateOneSection never rejects — it catches all errors and returns
+  // a "fallback" SectionResult. Promise.all is therefore safe here; the
+  // comment "Promise.allSettled" in earlier drafts was stale.
   const results = await Promise.all(specs.map(generateOneSection));
 
   // Build per-section markdown, substituting deterministic fallback for

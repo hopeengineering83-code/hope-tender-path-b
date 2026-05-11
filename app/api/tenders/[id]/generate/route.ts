@@ -52,19 +52,28 @@ function plannedRecordDocumentType(file: SubmissionPlanFile): string {
 
 async function ensurePlannedGeneratedDocumentRecords(tenderId: string, plannedFiles: SubmissionPlanFile[]): Promise<number> {
   if (plannedFiles.length === 0) return 0;
-  const existing = await prisma.generatedDocument.findMany({ where: { tenderId }, select: { id: true, name: true, exactFileName: true, documentType: true, exactOrder: true, format: true, generationStatus: true, fileContent: true } });
-  const byKey = new Map(existing.map((doc) => [generatedDocumentSubmissionKey(doc), doc]));
+  // Re-read inside each iteration so concurrent "Generate" clicks don't
+  // race past the initial snapshot and produce duplicate records.
   let created = 0;
   for (const file of plannedFiles) {
     const key = generatedDocumentSubmissionKey({ exactFileName: file.exactFileName });
-    const current = byKey.get(key);
     const documentType = plannedRecordDocumentType(file);
+    const summary = `Planned tender-required file from submission plan. Source requirements: ${file.sourceRequirementIds.join(", ") || "exact file naming/order instruction"}.`;
+    const current = await prisma.generatedDocument.findFirst({
+      where: { tenderId, exactFileName: file.exactFileName ?? undefined },
+      select: { id: true, name: true, exactFileName: true, documentType: true, exactOrder: true, format: true, generationStatus: true, fileContent: true },
+    });
     if (!current) {
-      await prisma.generatedDocument.create({ data: { tenderId, name: file.exactFileName.replace(/\.[a-z0-9]{2,5}$/i, ""), documentType, format: file.format, exactFileName: file.exactFileName, exactOrder: file.exactOrder, generationStatus: "PLANNED", validationStatus: "PENDING", reviewStatus: "PENDING", contentSummary: `Planned tender-required file from submission plan. Source requirements: ${file.sourceRequirementIds.join(", ") || "exact file naming/order instruction"}.` } });
-      created += 1;
+      try {
+        await prisma.generatedDocument.create({ data: { tenderId, name: file.exactFileName.replace(/\.[a-z0-9]{2,5}$/i, ""), documentType, format: file.format, exactFileName: file.exactFileName, exactOrder: file.exactOrder, generationStatus: "PLANNED", validationStatus: "PENDING", reviewStatus: "PENDING", contentSummary: summary } });
+        created += 1;
+      } catch {
+        // Concurrent request already created this record — safe to ignore.
+      }
     } else if (current.generationStatus !== "GENERATED") {
-      await prisma.generatedDocument.update({ where: { id: current.id }, data: { name: current.name || file.exactFileName.replace(/\.[a-z0-9]{2,5}$/i, ""), documentType, format: file.format, exactFileName: file.exactFileName, exactOrder: file.exactOrder, contentSummary: current.fileContent ? current.generationStatus : `Planned tender-required file from submission plan. Source requirements: ${file.sourceRequirementIds.join(", ") || "exact file naming/order instruction"}.`, updatedAt: new Date() } });
+      await prisma.generatedDocument.update({ where: { id: current.id }, data: { name: current.name || file.exactFileName.replace(/\.[a-z0-9]{2,5}$/i, ""), documentType, format: file.format, exactFileName: file.exactFileName, exactOrder: file.exactOrder, contentSummary: current.fileContent ? current.generationStatus : summary, updatedAt: new Date() } });
     }
+    void key; // suppress unused variable warning
   }
   return created;
 }
