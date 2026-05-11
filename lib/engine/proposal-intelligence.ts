@@ -755,19 +755,27 @@ export function buildProposalIntelligence(params: {
     return sectorFilter(t);
   };
 
-  // Apply filter. PR XX-FOLLOWUP — tightened fallback semantics.
-  //
-  // BEFORE: when fewer than 3 sector-relevant records existed, we fell
-  // back to the UNFILTERED list. That meant a healthcare tender against
-  // a warehouse-heavy portfolio surfaced warehouse projects in the top
-  // 10 — exactly what produced the May-7 benchmark "Warehouse &
-  // Landscaping anchoring a hospital cover letter" failure.
-  //
-  // NOW: the sector-relevant list is ALWAYS the priority pool; we only
-  // top up from the unfiltered list when needed to meet a small minimum
-  // (5 projects / 8 experts). The top-up records are appended at the
-  // END after sector-relevant ones, so the lead anchor in the cover
-  // letter is always sector-relevant when even one such record exists.
+  // Hard-conflict predicate: items from a clearly DIFFERENT sector group
+  // are excluded from the backfill pool entirely. Unlike the binary
+  // sectorFilter above (which only tests for presence of positive
+  // keywords), this predicate tests for the PRESENCE of conflicting
+  // keywords — so a "General Infrastructure" project (no conflict keywords)
+  // still qualifies for backfill, but a "Warehouse & Logistics" project
+  // never backs up a healthcare tender.
+  const SECTOR_HARD_CONFLICTS: Array<{ tender: RegExp; exclude: RegExp }> = [
+    { tender: /Healthcare/, exclude: /warehouse|logistics|cargo|freight|storage|supply.?chain|distribution.?cent|industrial|manufacturing|factory/i },
+    { tender: /Water/, exclude: /warehouse|logistics|cargo|freight|storage|industrial|manufacturing|factory/i },
+    { tender: /Road|Bridge|Transport/, exclude: /warehouse|logistics|cargo|freight|storage|industrial|manufacturing|factory/i },
+    { tender: /Education/, exclude: /warehouse|logistics|cargo|freight|storage|industrial|manufacturing|factory/i },
+    { tender: /ICT|Digital/, exclude: /warehouse|logistics|cargo|freight|storage|industrial|manufacturing|factory/i },
+  ];
+  const isHardConflict = (text: string): boolean => {
+    if (detectedSector === "General Consultancy / Engineering") return false;
+    return SECTOR_HARD_CONFLICTS.some(
+      ({ tender: t, exclude: e }) => t.test(detectedSector) && e.test(text),
+    );
+  };
+
   const projectsRelevant = projects.filter(projectIsRelevant);
   const expertsRelevant = experts.filter(expertIsRelevant);
   const PROJECT_MIN_POOL = 5;
@@ -779,10 +787,21 @@ export function buildProposalIntelligence(params: {
     .sort((a, b) => expertScore(b, themes, tenderText) - expertScore(a, themes, tenderText));
 
   // Top-up from non-relevant list only when relevant pool is too small.
+  // Hard-conflict items (e.g. warehouse projects for a healthcare tender)
+  // are excluded even from backfill — a thinner pool is better than one
+  // polluted with off-sector anchors.
   const projectsBackfill = [...projects.filter((p) => !projectsRelevant.includes(p))]
+    .filter((p) => {
+      const t = textOf(p.name, p.summary, p.sector, p.clientName, ...safeParseArr(p.serviceAreas));
+      return !isHardConflict(t);
+    })
     .sort((a, b) => projectScore(b, themes, tenderText) - projectScore(a, themes, tenderText))
     .slice(0, Math.max(0, PROJECT_MIN_POOL - projectsRelevantSorted.length));
   const expertsBackfill = [...experts.filter((e) => !expertsRelevant.includes(e))]
+    .filter((e) => {
+      const t = textOf(e.fullName, e.title, e.profile, ...safeParseArr(e.disciplines), ...safeParseArr(e.sectors), ...safeParseArr(e.certifications));
+      return !isHardConflict(t);
+    })
     .sort((a, b) => expertScore(b, themes, tenderText) - expertScore(a, themes, tenderText))
     .slice(0, Math.max(0, EXPERT_MIN_POOL - expertsRelevantSorted.length));
 
