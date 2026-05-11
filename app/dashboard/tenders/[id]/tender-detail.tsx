@@ -511,6 +511,7 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
     { label: "Refining and humanizing…", pct: 88 },
     { label: "Saving documents…", pct: 97 },
   ];
+  const progressCreepRef = useRef<ReturnType<typeof setInterval> | null>(null);
   function startGenerationProgress() {
     const durations = [6000, 14000, 35000, 10000, 5000];
     let cumulative = 0;
@@ -519,11 +520,21 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
       setTimeout(() => {
         setGenerationPhase(phase.label);
         setGenerationProgress(phase.pct);
+        // After the last timed phase, start creeping from 97 → 99 at 0.1%
+        // per second so the bar stays alive during long AI generation calls
+        // instead of freezing at 97% for up to 2 minutes.
+        if (i === GENERATION_PHASES.length - 1) {
+          if (progressCreepRef.current) clearInterval(progressCreepRef.current);
+          progressCreepRef.current = setInterval(() => {
+            setGenerationProgress((prev) => (prev < 99 ? Math.min(99, prev + 0.1) : prev));
+          }, 1000);
+        }
       }, delay);
       cumulative += durations[i];
     });
   }
   function stopGenerationProgress() {
+    if (progressCreepRef.current) { clearInterval(progressCreepRef.current); progressCreepRef.current = null; }
     setGenerationPhase("");
     setGenerationProgress(0);
   }
