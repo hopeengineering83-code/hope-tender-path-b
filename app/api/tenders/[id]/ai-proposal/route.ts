@@ -2,7 +2,10 @@ import { NextResponse } from "next/server";
 import { getSession } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { generateBenchmarkProposalWithAI, generateProposalSectionsParallel, isAIEnabled } from "../../../../../lib/ai";
-import { buildProposalIntelligence, expertProofLine, projectProofLine, safeParseArr } from "../../../../../lib/engine/proposal-intelligence";
+import { buildProposalIntelligence, buildCriterionEvidenceMap, expertProofLine, projectProofLine, safeParseArr } from "../../../../../lib/engine/proposal-intelligence";
+import { buildRubricPromptDirective } from "../../../../../lib/engine/rubric-driven-sections";
+import { extractTenderLanguageEchoes, formatEchoesForPrompt } from "../../../../../lib/engine/tender-language-echoes";
+import { extractTenderFacts, formatFactsForPrompt } from "../../../../../lib/engine/tender-facts-extractor";
 import { buildProposalCacheKey, getCachedProposal, setCachedProposal } from "../../../../../lib/proposal-cache";
 
 // Vercel route timeout — Claude proposal generation needs >10s default.
@@ -66,6 +69,19 @@ function _buildProjectEvidenceLines(projects: { name?: string | null; evidences?
     )
   ).slice(0, 30);
 }
+
+const BENCHMARK_CONTEXT_LINES = [
+  "MANDATORY BENCHMARK STRUCTURE: Cover Letter; Technical Proposal; Table of Contents; Executive Summary; Company Profile; Proposed Team; Relevant Experience; Technical Approach; Compliance and Bid Review Strategy; Additional Information; Appendix Register; Declaration.",
+  "FIRST-DRAFT QUALITY RULE: The first AI draft must contain the benchmark structure, evaluator-facing narrative, evidence mapping, methodology depth, compliance strategy, appendix register, and final declaration.",
+  "EVIDENCE RULE: Use only provided experts, projects, company documents, legal records, financial records, compliance records, project evidence, compliance rows, and tender text. If evidence is missing, state it as a bid-team confirmation item, not as a fake claim.",
+  "CLIENT-READY RULE: Do not write internal benchmark review, auto-repair, debug, AI fallback, or quality-score sections inside the client proposal document.",
+  "FORBIDDEN PHRASES: Never write 'extensive experience' without a project name; 'committed to excellence/quality'; 'leading firm in the region'; 'team of qualified professionals'; 'we look forward to the opportunity'; 'as an AI'; 'certainly'; or any [square bracket] placeholder.",
+  "EVIDENCE DENSITY RULE: Every strong claim must cite a specific project name, ETB/contract value, expert name + licence, or client reference. No paragraph may be purely generic without one verifiable fact.",
+  "NARRATIVE THROUGHLINE RULE: The same two strongest project names MUST appear in the Cover Letter opening, Executive Summary first paragraph, AND Section B. This is not optional.",
+  "EXECUTIVE SUMMARY LEAD RULE: Executive Summary must open with: 'We have already delivered this assignment. [Company] designed/supervised/assessed [Project Name] (ETB X, Client Y) — a [parallel description].' This is the single most important sentence in the proposal.",
+  "TEAM-TO-PROJECT RULE: Each proposed expert must be linked in a table showing: Expert Name | Proposed Role | Previous Comparable Project | Role on That Project | Key Technical Contribution.",
+  "SECTION LENGTH RULE: Cover Letter ≥ 4 paragraphs; Executive Summary ≥ 3 paragraphs; each Section A/B/C ≥ 5 paragraphs with sub-sections. Do not truncate or summarise — write the full content.",
+];
 
 function fallbackProposal(params: {
   tenderTitle: string;
@@ -277,6 +293,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const submissionNotes = [tender.submissionMethod, tender.submissionAddress, ...intelligence.submissionRules].filter(Boolean).join("\n");
   const evidenceContextLines = [...companyEvidenceLines, ...projectEvidenceLines];
 
+  const evaluationWeightLines = intelligence.evaluationWeights.map(
+    (w) => `- ${w.criterion} — ${w.weight} (raw match: "${w.rawMatch}")`,
+  );
+  const tenderLanguageEchoes = extractTenderLanguageEchoes(intelligence.tenderText, 12);
+  const tenderLanguageEchoBlock = formatEchoesForPrompt(tenderLanguageEchoes);
+  const tenderFacts = extractTenderFacts(intelligence.tenderText);
+  const tenderFactsPromptBlock = formatFactsForPrompt(tenderFacts);
+
   const complianceLines = [
     ...tender.complianceMatrix.map((m) => {
       const req = m.requirement?.title ?? m.requirement?.description ?? "Requirement evidence row";
@@ -323,11 +347,17 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       const aiInput = {
         tenderTitle: tender.title,
         clientName: intelligence.clientName,
-        tenderText,
+        tenderText: [BENCHMARK_CONTEXT_LINES.join("\n"), tenderText].join("\n\n"),
         analysisSummary: _clean(tender.analysisSummary) || intelligence.tenderText.slice(0, 2000),
-        evaluationMethodology: _clean(tender.evaluationMethodology) || intelligence.evaluationCriteria.join("; "),
-        submissionNotes,
-        requirements: requirementLines.join("\n"),
+        evaluationMethodology: [
+          _clean(tender.evaluationMethodology) || intelligence.evaluationCriteria.join("; "),
+          ...(evaluationWeightLines.length > 0 ? ["", "Numeric evaluation weights detected in tender (echo verbatim in the EVALUATION CRITERIA RESPONSE MIRROR table):", ...evaluationWeightLines] : []),
+          tenderLanguageEchoBlock,
+          tenderFactsPromptBlock,
+          buildRubricPromptDirective(intelligence.evaluationWeights),
+        ].filter(Boolean).join("\n"),
+        submissionNotes: [BENCHMARK_CONTEXT_LINES.join("\n"), submissionNotes].filter(Boolean).join("\n"),
+        requirements: [...BENCHMARK_CONTEXT_LINES, ...requirementLines].join("\n"),
         companyProfile:
           `${company.name}\n${c.legalName ?? ""}\n${company.profileSummary ?? c.description ?? ""}\n` +
           `Services: ${safeParseArr(c.serviceLines).join(", ")}\n` +
@@ -335,8 +365,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           `Wider company evidence library:\n${evidenceContextLines.join("\n").slice(0, 9_000)}`,
         experts: expertLines.join("\n"),
         projects: [...projectLines, ...projectEvidenceLines].join("\n"),
-        compliance: complianceLines.join("\n"),
-        differentiators: intelligence.differentiators.join("\n"),
+        compliance: [...BENCHMARK_CONTEXT_LINES, ...complianceLines].join("\n"),
+        differentiators: [...BENCHMARK_CONTEXT_LINES, ...intelligence.differentiators, ...companyEvidenceLines.slice(0, 8)].join("\n"),
         // PR #257 — structured company-vault fields. See generate-elite.ts
         // for the full rationale.
         companyVault: {
@@ -370,6 +400,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
             })
             .filter((s) => s.length > 0),
         },
+        doNotUseAsClient: Array.from(new Set(
+          vaultProjects
+            .map((p) => (p as { clientName?: string | null }).clientName)
+            .filter((cn): cn is string => Boolean(cn && cn.trim().length >= 3))
+        )),
+        criterionEvidenceMap: buildCriterionEvidenceMap(
+          intelligence.evaluationWeights,
+          intelligence.topProjects,
+          intelligence.topExperts,
+        ),
       };
       proposal = await withProposalTimeout(
         useParallel ? generateProposalSectionsParallel(aiInput) : generateBenchmarkProposalWithAI(aiInput),
