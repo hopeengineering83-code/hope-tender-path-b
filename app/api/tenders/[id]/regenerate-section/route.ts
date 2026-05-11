@@ -16,7 +16,10 @@ import { NextResponse } from "next/server";
 import { getSession } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { isAIEnabled, type AIBidWriterInput } from "../../../../../lib/ai";
-import { buildProposalIntelligence, buildCriterionEvidenceMap, expertProofLine, projectProofLine, safeParseArr } from "../../../../../lib/engine/proposal-intelligence";
+import { BENCHMARK_CONTEXT_LINES, buildProposalIntelligence, buildCriterionEvidenceMap, expertProofLine, projectProofLine, safeParseArr } from "../../../../../lib/engine/proposal-intelligence";
+import { buildRubricPromptDirective } from "../../../../../lib/engine/rubric-driven-sections";
+import { extractTenderLanguageEchoes, formatEchoesForPrompt } from "../../../../../lib/engine/tender-language-echoes";
+import { extractTenderFacts, formatFactsForPrompt } from "../../../../../lib/engine/tender-facts-extractor";
 import { buildProposalSectionSpecs, buildSectionFallback, type ProposalSectionId } from "../../../../../lib/engine/proposal-sections";
 
 export const maxDuration = 60;
@@ -127,6 +130,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   const submissionNotes = [tender.submissionMethod, tender.submissionAddress, ...intelligence.submissionRules].filter(Boolean).join("\n");
 
+  const evaluationWeightLines = intelligence.evaluationWeights.map(
+    (w) => `- ${w.criterion} — ${w.weight} (raw match: "${w.rawMatch}")`,
+  );
+  const tenderLanguageEchoes = extractTenderLanguageEchoes(intelligence.tenderText, 12);
+  const tenderLanguageEchoBlock = formatEchoesForPrompt(tenderLanguageEchoes);
+  const tenderFacts = extractTenderFacts(intelligence.tenderText);
+  const tenderFactsPromptBlock = formatFactsForPrompt(tenderFacts);
+
   const companyEvidenceLines = buildCompanyEvidenceLines(company as unknown as Record<string, unknown>);
   const projectEvidenceLines = buildProjectEvidenceLines(projects as Parameters<typeof buildProjectEvidenceLines>[0]);
   const expertLines = experts.map(expertProofLine);
@@ -156,11 +167,17 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const aiInput: AIBidWriterInput = {
     tenderTitle: tender.title,
     clientName: intelligence.clientName,
-    tenderText,
+    tenderText: [BENCHMARK_CONTEXT_LINES.join("\n"), tenderText].join("\n\n"),
     analysisSummary: clean(tender.analysisSummary) || intelligence.tenderText.slice(0, 2000),
-    evaluationMethodology: clean(tender.evaluationMethodology) || intelligence.evaluationCriteria.join("; "),
-    submissionNotes,
-    requirements: requirementLines.join("\n"),
+    evaluationMethodology: [
+      clean(tender.evaluationMethodology) || intelligence.evaluationCriteria.join("; "),
+      ...(evaluationWeightLines.length > 0 ? ["", "Numeric evaluation weights detected in tender (echo verbatim in the EVALUATION CRITERIA RESPONSE MIRROR table):", ...evaluationWeightLines] : []),
+      tenderLanguageEchoBlock,
+      tenderFactsPromptBlock,
+      buildRubricPromptDirective(intelligence.evaluationWeights),
+    ].filter(Boolean).join("\n"),
+    submissionNotes: [BENCHMARK_CONTEXT_LINES.join("\n"), submissionNotes].filter(Boolean).join("\n"),
+    requirements: [...BENCHMARK_CONTEXT_LINES, ...requirementLines].join("\n"),
     companyProfile:
       `${company.name}\n${c.legalName ?? ""}\n${company.profileSummary ?? c.description ?? ""}\n` +
       `Services: ${safeParseArr(c.serviceLines).join(", ")}\n` +
@@ -168,8 +185,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       `Company evidence:\n${evidenceContextLines.join("\n").slice(0, 9_000)}`,
     experts: expertLines.join("\n"),
     projects: [...projectLines, ...projectEvidenceLines].join("\n"),
-    compliance: complianceLines.join("\n"),
-    differentiators: intelligence.differentiators.join("\n"),
+    compliance: [...BENCHMARK_CONTEXT_LINES, ...complianceLines].join("\n"),
+    differentiators: [...BENCHMARK_CONTEXT_LINES, ...intelligence.differentiators, ...companyEvidenceLines.slice(0, 8)].join("\n"),
     companyVault: {
       name: company.name,
       legalName: c.legalName,
