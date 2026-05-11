@@ -25,6 +25,13 @@ function isSameOriginRequest(req: NextRequest): boolean {
 }
 
 export function middleware(req: NextRequest) {
+  // Codespaces and local development proxy requests through preview domains,
+  // so strict Origin checks produce false positives. Keep this guard for
+  // production deployments only.
+  if (process.env.NODE_ENV !== "production") {
+    return NextResponse.next();
+  }
+
   if (!req.nextUrl.pathname.startsWith("/api/")) {
     return NextResponse.next();
   }
