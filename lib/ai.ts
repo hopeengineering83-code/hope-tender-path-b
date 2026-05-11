@@ -1635,7 +1635,7 @@ async function generateOneSection(spec: ProposalSectionSpec): Promise<SectionRes
  * detect "all sections fell back" can check lastProposalProvider —
  * it will be null in that case.
  */
-export async function generateProposalSectionsParallel(input: AIBidWriterInput): Promise<string> {
+export async function generateProposalSectionsParallel(input: AIBidWriterInput, sectionFilter?: ProposalSectionId[]): Promise<string> {
   const t0 = Date.now();
 
   // PROPOSAL_DEEP_MODE — opt-in "FULL POWER" mode. When enabled:
@@ -1661,12 +1661,19 @@ export async function generateProposalSectionsParallel(input: AIBidWriterInput):
     ? false
     : (process.env.PROPOSAL_DEEP_MODE || "").toLowerCase() === "true" || _tierNumForDeep >= 2;
 
-  const specs = buildProposalSectionSpecs(input, { deep: deepMode });
+  // Chunked mode: when a sectionFilter is provided the caller is making
+  // one of 3 sequential browser-side calls (each its own Vercel function
+  // invocation with a fresh 60s window). Use larger per-section token
+  // budgets and skip deep-mode drill-down — the extra first-pass tokens
+  // (7,500 vs 3,500 for Section C on Tier 2) compensate for no drill-down.
+  const isChunked = sectionFilter !== undefined && sectionFilter.length > 0;
+  const specs = buildProposalSectionSpecs(input, { deep: isChunked ? false : deepMode, chunked: isChunked });
+  const filteredSpecs = isChunked ? specs.filter((s) => sectionFilter.includes(s.id)) : specs;
 
   // generateOneSection never rejects — it catches all errors and returns
   // a "fallback" SectionResult. Promise.all is therefore safe here; the
   // comment "Promise.allSettled" in earlier drafts was stale.
-  const results = await Promise.all(specs.map(generateOneSection));
+  const results = await Promise.all(filteredSpecs.map(generateOneSection));
 
   // Build per-section markdown, substituting deterministic fallback for
   // any section whose source is "fallback".
@@ -1674,7 +1681,7 @@ export async function generateProposalSectionsParallel(input: AIBidWriterInput):
     if (r.source === "fallback") {
       return {
         ...r,
-        markdown: buildSectionFallback(specs[i], input),
+        markdown: buildSectionFallback(filteredSpecs[i], input),
       };
     }
     return r;
@@ -1696,7 +1703,7 @@ export async function generateProposalSectionsParallel(input: AIBidWriterInput):
   // API error), we keep the first-pass Section C and log a warning.
   // No proposal is shipped with a broken Section C as a result.
   let drillDownInfo: string = "";
-  if (deepMode) {
+  if (deepMode && !isChunked) {
     const sectionCResult = sections.find((s) => s.id === "technical-approach");
     if (sectionCResult && sectionCResult.source !== "fallback") {
       const firstPassSectionC = sectionCResult.markdown;
@@ -1740,7 +1747,7 @@ export async function generateProposalSectionsParallel(input: AIBidWriterInput):
   const summary = sections
     .map((s) => `${s.id}=${s.source}(${Math.round(s.durationMs / 100) / 10}s)`)
     .join(" ");
-  const modeLabel = deepMode ? "deep" : "standard";
+  const modeLabel = isChunked ? `chunked[${sectionFilter!.join(",")}]` : deepMode ? "deep" : "standard";
   console.info(`[ai] section-parallel generation (${modeLabel}) finished in ${Math.round(totalMs / 100) / 10}s — ${summary}${drillDownInfo}`);
 
   // Stitch in canonical order. Cover+Summary first, then A+B, then C,

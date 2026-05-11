@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getSession } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { generateBenchmarkProposalWithAI, generateProposalSectionsParallel, isAIEnabled } from "../../../../../lib/ai";
+import type { ProposalSectionId } from "../../../../../lib/engine/proposal-sections";
 import { BENCHMARK_CONTEXT_LINES, buildProposalIntelligence, buildCriterionEvidenceMap, expertProofLine, projectProofLine, safeParseArr } from "../../../../../lib/engine/proposal-intelligence";
 import { buildRubricPromptDirective } from "../../../../../lib/engine/rubric-driven-sections";
 import { extractTenderLanguageEchoes, formatEchoesForPrompt } from "../../../../../lib/engine/tender-language-echoes";
@@ -137,6 +138,19 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const body = await req.json().catch(() => ({} as Record<string, unknown>));
   const forceRefresh = body.forceRefresh === true;
 
+  // Chunked generation: browser sends chunk=1|2|3 to generate one section
+  // group per call, each within the 60s Hobby function limit.
+  //   1 → cover-and-summary + company-and-experience (parallel, ~27s)
+  //   2 → technical-approach only (single call, ~38s with Tier-2 budget)
+  //   3 → additional-and-declaration (single call, ~20s)
+  const CHUNK_MAP: Record<number, ProposalSectionId[]> = {
+    1: ["cover-and-summary", "company-and-experience"],
+    2: ["technical-approach"],
+    3: ["additional-and-declaration"],
+  };
+  const chunkNum = typeof body.chunk === "number" && body.chunk >= 1 && body.chunk <= 3 ? (body.chunk as 1 | 2 | 3) : undefined;
+  const sectionFilter = chunkNum !== undefined ? CHUNK_MAP[chunkNum] : undefined;
+
   const [tender, company] = await Promise.all([
     prisma.tender.findFirst({
       where: { id, userId },
@@ -246,13 +260,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   }
 
   const generationMode = (process.env.PROPOSAL_GENERATION_MODE || "parallel").toLowerCase();
+  // Skip cache for chunked requests — each chunk returns a partial proposal
+  // and should never serve a stale full-proposal cache entry.
   const cacheKey = buildProposalCacheKey(
     id,
     experts.map((e) => e.id),
     projects.map((p) => p.id),
     generationMode
   );
-  if (!forceRefresh) {
+  if (!forceRefresh && !sectionFilter) {
     const cached = getCachedProposal(cacheKey);
     if (cached) return NextResponse.json({ success: true, proposal: cached.proposal, fallback: cached.fallback, cached: true });
   }
@@ -406,10 +422,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           intelligence.topExperts,
         ),
       };
-      proposal = await withProposalTimeout(
-        useParallel ? generateProposalSectionsParallel(aiInput) : generateBenchmarkProposalWithAI(aiInput),
-        AI_PROPOSAL_TIMEOUT_MS,
-      );
+      // Chunked mode always uses parallel section generation (with a section
+      // filter) so the correct per-chunk budgets in proposal-sections.ts apply.
+      const generateFn = (useParallel || sectionFilter)
+        ? generateProposalSectionsParallel(aiInput, sectionFilter)
+        : generateBenchmarkProposalWithAI(aiInput);
+      proposal = await withProposalTimeout(generateFn, AI_PROPOSAL_TIMEOUT_MS);
     } catch (aiError) {
       const msg = aiError instanceof Error ? aiError.message : String(aiError);
       console.error("Benchmark AI proposal failed in /ai-proposal route:", aiError);
@@ -437,12 +455,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       });
     }
 
-    if (!fallback) setCachedProposal(cacheKey, proposal, false);
+    if (!fallback && !sectionFilter) setCachedProposal(cacheKey, proposal, false);
 
     // Persist the quick draft so users don't lose it on navigation.
-    // Stored as a PROPOSAL document — if a full-pipeline TECHNICAL_PROPOSAL
-    // already exists it is left untouched; this is a separate preview record.
-    if (!fallback) {
+    // Only save on the final chunk (chunk 3) or non-chunked calls — partial
+    // chunk results are intermediate and should not be stored as documents.
+    if (!fallback && (chunkNum === undefined || chunkNum === 3)) {
       try {
         await prisma.generatedDocument.create({
           data: {

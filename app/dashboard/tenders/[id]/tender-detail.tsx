@@ -483,16 +483,38 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
   async function handleAIProposal() {
     setGenerating(true);
     setError("");
+    // 3-call chunked generation — each call generates one section group in its
+    // own 60s Vercel function window, using 2× larger token budgets than the
+    // single-call path. Total output: ~22K tokens vs ~10.4K single-call.
+    const CHUNK_PHASES = [
+      { label: "Generating cover letter and company profile… (1/3)", pct: 20 },
+      { label: "Generating technical approach… (2/3)", pct: 60 },
+      { label: "Finalizing compliance and declaration… (3/3)", pct: 90 },
+    ];
+    const chunks: string[] = [];
     try {
-      const res = await fetch(`/api/tenders/${tender.id}/ai-proposal`, { method: "POST" });
-      const data = await res.json();
-      if (res.status === 429) {
-        setError(data.error || "Gemini rate limit — please wait 30–60 seconds and try again.");
-        return;
+      for (let chunk = 1; chunk <= 3; chunk++) {
+        setGenerationPhase(CHUNK_PHASES[chunk - 1].label);
+        setGenerationProgress(CHUNK_PHASES[chunk - 1].pct);
+        const res = await fetch(`/api/tenders/${tender.id}/ai-proposal`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ chunk }),
+        });
+        const data = await res.json();
+        if (res.status === 429) {
+          setError(data.error || "Rate limit — please wait 30–60 seconds and try again.");
+          return;
+        }
+        if (!res.ok) { setError(data.error || "Generation failed"); return; }
+        chunks.push(data.proposal || "");
+        // Show partial result after each chunk so the user sees progress.
+        setAiProposal(chunks.join("\n\n"));
       }
-      if (!res.ok) { setError(data.error || "Generation failed"); return; }
-      setAiProposal(data.proposal || "");
-      setForm((cur) => ({ ...cur, intakeSummary: data.proposal || cur.intakeSummary }));
+      setGenerationProgress(100);
+      const full = chunks.join("\n\n");
+      setAiProposal(full);
+      setForm((cur) => ({ ...cur, intakeSummary: full || cur.intakeSummary }));
     } catch { setError("Proposal generation failed"); }
     finally { setGenerating(false); }
   }
