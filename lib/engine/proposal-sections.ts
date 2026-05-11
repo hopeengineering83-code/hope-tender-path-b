@@ -614,10 +614,25 @@ function tierBudget(tier: Tier, deep: boolean): TierBudget {
   return { cover: 3000, ab: 3200, c: 3600, d: 2200, drillDown: 0 };
 }
 
-export function buildProposalSectionSpecs(input: AIBidWriterInput, opts?: { deep?: boolean }): ProposalSectionSpec[] {
+// Chunked budgets — used when each section group is its own Vercel invocation
+// (browser makes 3 sequential calls). Each call gets a fresh 60s window, so
+// we can allocate 2× the tokens vs the parallel-within-one-function budgets.
+// Caps are chosen to keep each individual Claude call under ~45s (leaving a
+// 15s buffer against the 60s Hobby function limit).
+//   Chunk 1: cover + AB in parallel  → max(cover, ab) ≈ 27s
+//   Chunk 2: technical approach only → c ≈ 38s
+//   Chunk 3: additional+declaration  → d ≈ 20s
+function chunkedTierBudget(tier: Tier): TierBudget {
+  if (tier === 1) return { cover: 2800, ab: 3000, c: 4000, d: 2500, drillDown: 0 };
+  if (tier === 2) return { cover: 4500, ab: 5500, c: 7500, d: 4000, drillDown: 0 };
+  return { cover: 6000, ab: 7500, c: 10000, d: 5000, drillDown: 0 };
+}
+
+export function buildProposalSectionSpecs(input: AIBidWriterInput, opts?: { deep?: boolean; chunked?: boolean }): ProposalSectionSpec[] {
   const deep = opts?.deep === true;
+  const chunked = opts?.chunked === true;
   const tier = detectTier();
-  const budget = tierBudget(tier, deep);
+  const budget = chunked ? chunkedTierBudget(tier) : tierBudget(tier, deep);
   return [
     {
       id: "cover-and-summary",
