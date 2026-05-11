@@ -25,6 +25,24 @@ import { buildProposalSectionSpecs, buildSectionFallback, type ProposalSectionId
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
 
+// Simple in-memory per-user rate limit: max 8 section regenerations per minute.
+// Resets on the rolling window; safe for single-instance deployments.
+const _regenLimit = new Map<string, { count: number; windowStart: number }>();
+const REGEN_LIMIT_MAX = 8;
+const REGEN_LIMIT_WINDOW_MS = 60_000;
+
+function checkRegenRateLimit(userId: string): boolean {
+  const now = Date.now();
+  const entry = _regenLimit.get(userId);
+  if (!entry || now - entry.windowStart > REGEN_LIMIT_WINDOW_MS) {
+    _regenLimit.set(userId, { count: 1, windowStart: now });
+    return true;
+  }
+  if (entry.count >= REGEN_LIMIT_MAX) return false;
+  entry.count += 1;
+  return true;
+}
+
 const VALID_SECTION_IDS: ProposalSectionId[] = [
   "cover-and-summary",
   "company-and-experience",
@@ -81,6 +99,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   if (!isAIEnabled()) {
     return NextResponse.json({ error: "AI is not configured. Set ANTHROPIC_API_KEY to enable section regeneration." }, { status: 503 });
+  }
+
+  if (!checkRegenRateLimit(userId)) {
+    return NextResponse.json({
+      error: `Rate limit reached: maximum ${REGEN_LIMIT_MAX} section regenerations per minute. Please wait and try again.`,
+      rateLimitRetry: true,
+    }, { status: 429 });
   }
 
   const [tender, company] = await Promise.all([

@@ -922,6 +922,13 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
         </div>
       )}
 
+      {/* Client name missing — proposals will use "The Client" as a placeholder */}
+      {(!tender.clientName || !tender.clientName.trim() || displayClient === "Client") && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          <span className="font-medium">Client name not set.</span> Generated proposals will use &ldquo;The Client&rdquo; as a placeholder. Edit the tender and fill in the Client Name field before generating documents.
+        </div>
+      )}
+
       {/* Error display with recovery suggestions and retry */}
       {error && (
         <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">

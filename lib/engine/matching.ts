@@ -181,9 +181,12 @@ function criticalFamilyMismatchPenalty(queryText: string, recordText: string): n
 
   // Proportional penalty: tender requires ≥ 4 families but record covers < 30%
   // of them. A single generic overlapping family (e.g. FEASIBILITY_DESIGN from a
-  // road firm for a water tender) should not completely suppress the penalty.
+  // road firm for a water tender) must not suppress the penalty entirely.
+  // Raised from -0.10 to -0.18 so that bonus stacking (trust+experience+sector)
+  // cannot push a low-coverage record above the 0.55 selection floor when there
+  // is a genuine sector conflict in play.
   if (requiredFamilies.length >= 4 && sharedFamilies.length / requiredFamilies.length < 0.30) {
-    return -0.10;
+    return -0.18;
   }
 
   return 0;
