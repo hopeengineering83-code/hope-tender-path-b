@@ -16,7 +16,7 @@ type Props = {
 
 export function MobileSidebarToggle({ groups, user, company }: Props) {
   const [open, setOpen] = useState(false);
-  const pathname = usePathname();
+  const pathname = usePathname() ?? "";
 
   function isActive(href: string) {
     if (href === "/dashboard") return pathname === "/dashboard";
