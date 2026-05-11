@@ -5,8 +5,8 @@ import Link from "next/link";
 
 function ResetForm() {
   const params = useSearchParams();
-  const token = params.get("token") ?? "";
-  const uid = params.get("uid") ?? "";
+  const token = params?.get("token") ?? "";
+  const uid = params?.get("uid") ?? "";
 
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
