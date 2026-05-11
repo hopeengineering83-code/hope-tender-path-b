@@ -1419,6 +1419,21 @@ ${params.compliance.slice(0, 5_000)}
 
 KEY DIFFERENTIATORS TO WEAVE INTO THE NARRATIVE:
 ${params.differentiators}
+${params.criterionEvidenceMap && params.criterionEvidenceMap.trim().length > 0
+  ? `
+---
+
+## CRITERION-TO-EVIDENCE ALLOCATION (follow this exactly — allocate prose depth proportional to weight)
+${params.criterionEvidenceMap}`
+  : ""}
+${params.doNotUseAsClient && params.doNotUseAsClient.length > 0
+  ? `
+---
+
+## PREVIOUS CLIENTS — DO NOT USE AS THE CLIENT OF THIS TENDER
+The following are clients from the firm's project history. They are NOT the client of this tender. Never address the Cover Letter or any section to these names:
+${params.doNotUseAsClient.slice(0, 12).map((c) => `- ${c}`).join("\n")}`
+  : ""}
 
 ---
 

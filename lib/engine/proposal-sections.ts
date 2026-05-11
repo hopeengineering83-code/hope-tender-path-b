@@ -357,7 +357,9 @@ LENGTH REQUIREMENTS:
 CLIENT NAME FIDELITY: Use ONLY the CLIENT field above as the client.
 Firm-history project clients are referenced in Section B project cards
 but NEVER substituted for the current tender's client.
-
+${(input.doNotUseAsClient ?? []).filter(Boolean).length > 0
+  ? `\nPREVIOUS CLIENTS (appear in Section B project cards only — NEVER as the client of THIS tender):\n${(input.doNotUseAsClient ?? []).slice(0, 12).map((c) => `- ${c}`).join("\n")}\n`
+  : ""}
 Where evidence is genuinely missing, write a "Bid-Team Action: confirm X before submission." note in the cell or paragraph — do NOT fabricate.
 
 Start directly with "# Section A: Company Profile". Do NOT output any cover letter, executive summary, technical approach, Section D, compliance matrix, declaration, or commentary.`;
@@ -704,7 +706,9 @@ ${input.projects.slice(0, 5_000)}
 
 ## FIRST-PASS SECTION C (preserve the structure; deepen each sub-section)
 ${firstPassSectionC}
-
+${input.criterionEvidenceMap && input.criterionEvidenceMap.trim().length > 0
+  ? `\n## CRITERION-TO-EVIDENCE ALLOCATION (follow this exactly when deepening each sub-section)\n${input.criterionEvidenceMap}\n`
+  : ""}
 ## YOUR OUTPUT
 Rewrite Section C with materially more methodology depth:
 - C.1 Understanding: 3-4 substantive paragraphs anchored to the tender's stated context
