@@ -5,9 +5,13 @@
 // empty are shown as "Bid-Team to confirm" so the user knows what
 // needs manual review before submission.
 //
-// Server component — pure presentation, no client state.
+// Server component — pure presentation. The "Re-extract from PDF"
+// button is a small client island.
+
+import { ReExtractMetadataButton } from "./re-extract-button";
 
 type TenderDetailLike = {
+  id: string;
   reference?: string | null;
   clientName?: string | null;
   clientContactName?: string | null;
@@ -72,16 +76,19 @@ export function TenderIntakeDetailPanel({ tender }: { tender: TenderDetailLike }
 
   return (
     <section className="rounded-2xl border bg-white p-6 shadow-sm">
-      <div className="flex items-center justify-between mb-4">
-        <div>
+      <div className="flex items-start justify-between mb-4 gap-4">
+        <div className="flex-1">
           <h2 className="text-lg font-semibold text-slate-900">Tender Detail</h2>
           <p className="mt-1 text-xs text-slate-500">
             Auto-extracted from the uploaded tender body. Review each field before final submission.
           </p>
         </div>
-        <div className="text-right">
-          <div className="text-xs text-slate-500">Auto-fill coverage</div>
-          <div className="text-lg font-bold text-slate-900">{filledCount} / {totalCount}</div>
+        <div className="flex items-center gap-4">
+          <div className="text-right">
+            <div className="text-xs text-slate-500">Auto-fill coverage</div>
+            <div className="text-lg font-bold text-slate-900">{filledCount} / {totalCount}</div>
+          </div>
+          <ReExtractMetadataButton tenderId={tender.id} />
         </div>
       </div>
 
