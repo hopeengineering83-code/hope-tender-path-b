@@ -387,11 +387,19 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
             })
             .filter((s) => s.length > 0),
         },
-        doNotUseAsClient: Array.from(new Set(
-          vaultProjects
-            .map((p) => (p as { clientName?: string | null }).clientName)
-            .filter((cn): cn is string => Boolean(cn && cn.trim().length >= 3))
-        )),
+        doNotUseAsClient: (() => {
+          // Build the exclusion list from ALL project clients (vault + selected),
+          // then remove the current tender client so repeat-client tenders don't
+          // receive contradictory "never use X as client" instructions.
+          const tenderClient = intelligence.clientName?.toLowerCase().trim() ?? "";
+          return Array.from(new Set([
+            ...vaultProjects.map((p) => (p as { clientName?: string | null }).clientName),
+            ...projects.map((p) => p.clientName),
+          ].filter((cn): cn is string => {
+            if (!cn || cn.trim().length < 3) return false;
+            return cn.toLowerCase().trim() !== tenderClient;
+          })));
+        })(),
         criterionEvidenceMap: buildCriterionEvidenceMap(
           intelligence.evaluationWeights,
           intelligence.topProjects,

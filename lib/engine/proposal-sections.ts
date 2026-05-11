@@ -761,7 +761,9 @@ export function buildSectionFallback(spec: ProposalSectionSpec, input: AIBidWrit
       const reqLines = input.requirements
         .split("\n")
         .map((l) => l.replace(/^[-*•]\s*/, "").replace(/^(MANDATORY|SCORED|INFORMATIONAL):?\s*/i, "").trim())
-        .filter((l) => l.length > 15 && !l.startsWith("MANDATORY BENCHMARK"))
+        // Exclude ALL BENCHMARK_CONTEXT_LINES injected as prompt meta-directives:
+        // they all start with an ALL-CAPS keyword followed by " RULE:" or " BENCHMARK"
+        .filter((l) => l.length > 15 && !/\bBENCHMARK\b|\bRULE:\s/i.test(l.slice(0, 60)))
         .slice(0, 8);
       // Parse top expert names
       const expertNames = input.experts
