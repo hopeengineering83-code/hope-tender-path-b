@@ -47,10 +47,13 @@ function headingExists(markdown: string, label: string): boolean {
       if (!/^#+\s/.test(line)) return false;
       const text = line.replace(/^#+\s*/, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
       if (text.includes(simple)) return true;
-      // Fuzzy: if the label has 2+ long words, accept if at least half are present
+      // Fuzzy: if the label has 2+ long words, require all for 2-word labels
+      // and at least 65% for longer ones. The old 50% floor allowed single-word
+      // false-matches ("Executive" alone satisfying "Executive Summary").
       if (words.length >= 2) {
         const hits = words.filter((w) => text.includes(w)).length;
-        return hits >= Math.ceil(words.length / 2);
+        const required = words.length <= 2 ? words.length : Math.ceil(words.length * 0.65);
+        return hits >= required;
       }
       return false;
     });
@@ -62,6 +65,8 @@ function hasForbiddenWeakness(markdown: string): boolean {
   if (/\[(?:INSERT|PLACEHOLDER|NAME|DATE|TBD|TBA|ADD|ENTER|SPECIFY|YOUR|FILL)[^\]]{0,200}\]/i.test(markdown)) return true;
   // Mustache / double-mustache template variables: {{variable}} or {variable}
   if (/\{\{?\s*\w[\w\s-]{0,60}\s*\}?\}/g.test(markdown)) return true;
+  // Unfilled action directives — indicate the AI echoed fallback template text
+  if (/\bBid-Team Action:/i.test(markdown)) return true;
   return false;
 }
 

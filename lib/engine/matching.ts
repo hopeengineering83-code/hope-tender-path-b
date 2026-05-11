@@ -61,17 +61,27 @@ type CapabilityFamily =
 
 const CAPABILITY_KEYWORDS: Record<CapabilityFamily, RegExp[]> = {
   WATER_SUPPLY: [/water/i, /supply/i, /sanitary/i, /hydraulic/i, /pipeline/i, /pipe/i, /borehole/i, /well/i, /drilling/i, /reservoir/i, /pump/i, /irrigation/i, /woreda/i, /kebele/i, /WASH/i, /sanitation/i],
-  SOLAR_PUMPING: [/solar/i, /pv/i, /photovoltaic/i, /pump/i, /pumping/i, /electromechanical/i, /electro/i, /mechanical/i, /power/i, /energy/i],
-  FEASIBILITY_DESIGN: [/feasibility/i, /study/i, /fsdd/i, /detailed\s+design/i, /design/i, /assessment/i, /investigation/i, /survey/i, /drawing/i, /specification/i, /bill\s+of\s+quantity/i, /boq/i],
-  SUPERVISION_CONTRACT: [/supervision/i, /construction\s+supervision/i, /contract\s+administration/i, /site/i, /quality\s+control/i, /resident/i, /inspection/i],
-  URBAN_MUNICIPAL: [/urban/i, /municipal/i, /town/i, /city/i, /woreda/i, /kebele/i, /master\s+plan/i, /planning/i, /settlement/i, /spatial/i, /zoning/i],
-  CIVIL_INFRASTRUCTURE: [/civil/i, /infrastructure/i, /road/i, /bridge/i, /drainage/i, /structure/i, /building/i, /rehabilitation/i, /establishment/i, /construction/i],
-  ELECTRO_MECHANICAL: [/electrical/i, /mechanical/i, /electro/i, /mep/i, /pump/i, /generator/i, /power/i, /motor/i, /HVAC/i, /cooling/i],
+  // power/energy/mechanical removed — too generic; belongs in ENERGY_POWER / ELECTRO_MECHANICAL
+  SOLAR_PUMPING: [/solar/i, /\bpv\b/i, /photovoltaic/i, /pump/i, /pumping/i, /electromechanical/i, /electro[\s-]mechanical/i],
+  // bare /design/i removed (matches "software design", "warehouse layout design");
+  // /study/i and /survey/i removed (too generic — covered by /feasibility/i for FDD work)
+  FEASIBILITY_DESIGN: [/feasibility/i, /\bfsdd\b/i, /detailed[\s-]+design/i, /\bddp\b/i, /assessment/i, /investigation/i, /drawing/i, /specification/i, /bill[\s-]+of[\s-]+quantit/i, /\bboq\b/i],
+  // bare /site/i removed ("website", "off-site storage"); bare /resident/i removed
+  SUPERVISION_CONTRACT: [/supervision/i, /construction\s+supervision/i, /contract\s+administration/i, /site\s+(?:engineer|supervisor|supervision|inspector|manager|representative)\b/i, /quality\s+control/i, /resident\s+engineer/i, /inspection/i],
+  // bare /planning/i removed ("event planning", "business planning"); keep /urban[\s-]+planning/i
+  URBAN_MUNICIPAL: [/urban/i, /municipal/i, /town/i, /city/i, /woreda/i, /kebele/i, /master[\s-]+plan/i, /urban[\s-]+planning/i, /settlement/i, /spatial/i, /zoning/i],
+  // /establishment/i removed (too generic — "business establishment")
+  CIVIL_INFRASTRUCTURE: [/civil/i, /infrastructure/i, /road/i, /bridge/i, /drainage/i, /structure/i, /building/i, /rehabilitation/i, /construction/i],
+  // /power/i removed ("manpower", "purchasing power"); /mechanical/i kept for MEP
+  ELECTRO_MECHANICAL: [/electrical/i, /mechanical/i, /electro/i, /\bmep\b/i, /pump/i, /generator/i, /motor/i, /\bHVAC\b/i, /cooling/i],
   GEOTECH_HYDROGEOLOGY: [/geotech/i, /geological/i, /hydrogeology/i, /soil/i, /foundation/i, /investigation/i, /drilling/i, /groundwater/i, /aquifer/i],
-  ENVIRONMENT_SOCIAL: [/environment/i, /social/i, /safeguard/i, /climate/i, /esmp/i, /esia/i, /impact/i, /resettlement/i, /biodiversity/i, /ESS\d/i, /ESF/i],
-  PROJECT_MANAGEMENT: [/project\s+management/i, /team\s+leader/i, /coordination/i, /schedule/i, /programme/i, /work\s+plan/i, /planning/i, /reporting/i, /PMI/i, /PMP/i],
-  ARCHITECTURE_BUILDINGS: [/architecture/i, /architectural/i, /building/i, /housing/i, /facility/i, /office/i, /hospital/i, /school/i, /campus/i],
-  FINANCIAL_LEGAL: [/financial/i, /audit/i, /turnover/i, /registration/i, /license/i, /certificate/i, /tax/i, /legal/i, /vat/i, /tin/i, /procurement/i],
+  ENVIRONMENT_SOCIAL: [/environment/i, /social/i, /safeguard/i, /climate/i, /\besmp\b/i, /\besia\b/i, /impact/i, /resettlement/i, /biodiversity/i, /ESS\d/i, /\bESF\b/i],
+  // bare /planning/i and /reporting/i removed (any consultant does these); use /project[\s-]+planning/i
+  PROJECT_MANAGEMENT: [/project[\s-]+management/i, /team[\s-]+leader/i, /coordination/i, /schedule/i, /programme/i, /work[\s-]+plan/i, /project[\s-]+planning/i, /\bPMI\b/i, /\bPMP\b/i],
+  // /facility/i removed ("facility management" too generic); /office/i removed;
+  // /hospital/, /school/, /campus/ removed — already in HEALTHCARE_FACILITIES/EDUCATION_FACILITIES
+  ARCHITECTURE_BUILDINGS: [/architecture/i, /architectural/i, /building/i, /housing/i, /residential/i],
+  FINANCIAL_LEGAL: [/financial/i, /audit/i, /turnover/i, /registration/i, /license/i, /certificate/i, /tax/i, /legal/i, /\bvat\b/i, /\btin\b/i, /procurement/i],
   // Universal families — added so the portfolio optimizer can match any
   // tender sector, not only the construction / consulting cluster.
   HEALTHCARE_FACILITIES: [/health/i, /hospital/i, /medical/i, /clinic/i, /OPD/i, /ward/i, /surgical/i, /radiology/i, /pharmacy/i, /laboratory/i, /biomedical/i, /pharma/i, /patient/i, /IPC\b/i],
@@ -152,18 +162,31 @@ function criticalFamilyMismatchPenalty(queryText: string, recordText: string): n
   if (requiredFamilies.length === 0 || recordFamilies.length === 0) return 0;
 
   const sharedFamilies = requiredFamilies.filter((family) => recordFamilies.includes(family));
-  if (sharedFamilies.length > 0) return 0;
 
-  const strictFamilies: CapabilityFamily[] = [
-    "HEALTHCARE_FACILITIES",
-    "EDUCATION_FACILITIES",
-    "ICT_DIGITAL",
-    "MINING_EXTRACTIVES",
-    "TELECOMS",
-  ];
+  if (sharedFamilies.length === 0) {
+    // Zero overlap: hard penalty — the record has no detectable family that
+    // the tender requires.  Strict sectors (healthcare, education, ICT, mining,
+    // telecoms) get a larger penalty because an unrelated record can never
+    // credibly fulfil those domains.
+    const strictFamilies: CapabilityFamily[] = [
+      "HEALTHCARE_FACILITIES",
+      "EDUCATION_FACILITIES",
+      "ICT_DIGITAL",
+      "MINING_EXTRACTIVES",
+      "TELECOMS",
+    ];
+    const requiresStrictFamily = requiredFamilies.some((family) => strictFamilies.includes(family));
+    return requiresStrictFamily ? -0.40 : -0.25;
+  }
 
-  const requiresStrictFamily = requiredFamilies.some((family) => strictFamilies.includes(family));
-  return requiresStrictFamily ? -0.28 : -0.12;
+  // Proportional penalty: tender requires ≥ 4 families but record covers < 30%
+  // of them. A single generic overlapping family (e.g. FEASIBILITY_DESIGN from a
+  // road firm for a water tender) should not completely suppress the penalty.
+  if (requiredFamilies.length >= 4 && sharedFamilies.length / requiredFamilies.length < 0.30) {
+    return -0.10;
+  }
+
+  return 0;
 }
 
 function requirementWeight(priority: string): number {
@@ -248,10 +271,12 @@ function sectorBoost(tenderSector: string | null | undefined, items: string[]): 
   const itemText = items.join(" ").toLowerCase();
   if (!itemText) return 0;
 
-  // Sector conflict penalty: confirmed cross-sector match → penalise
+  // Sector conflict penalty: confirmed cross-sector match → penalise harder
+  // (raised from -0.20 to -0.30 so a single high cosine score can no longer
+  // rescue a confirmed cross-sector item above the 0.75 selection threshold)
   const tenderGroup = SECTOR_CONFLICT_GROUPS.findIndex((g) => g.test(tender));
   const itemGroup = SECTOR_CONFLICT_GROUPS.findIndex((g) => g.test(itemText));
-  if (tenderGroup >= 0 && itemGroup >= 0 && tenderGroup !== itemGroup) return -0.20;
+  if (tenderGroup >= 0 && itemGroup >= 0 && tenderGroup !== itemGroup) return -0.30;
 
   // Positive boost: word-boundary match (avoids substring false-positives like
   // "healthcare supply warehouse" getting +0.15 for a healthcare tender).
@@ -262,7 +287,13 @@ function sectorBoost(tenderSector: string | null | undefined, items: string[]): 
     return iWords.some((w) => new RegExp(`\\b${w}\\b`).test(tender));
   })) return 0.15;
 
-  if (/urban|planning|infrastructure|water|sanitary|engineering|design|supervision/.test(tender) &&
+  // Generic fallback boost only when the tender is not in a specific
+  // conflict group. If the tender is sector-specific (healthcare, water,
+  // road, education, industrial, warehouse), "engineering" or "design"
+  // vocabulary alone does NOT earn a positive sector score — the item
+  // must match the tender's specific domain or earn 0.
+  if (tenderGroup < 0 &&
+      /urban|planning|infrastructure|water|sanitary|engineering|design|supervision/.test(tender) &&
       /urban|planning|infrastructure|water|sanitary|engineering|design|supervision/.test(itemText)) return 0.12;
   return 0;
 }
@@ -338,10 +369,11 @@ function selectAboveThreshold<T extends { score: number; isSelected: boolean }>(
 
   // Floor guarantee: always select the top 3 by score when they fall just
   // below threshold — but only when the candidate is borderline-relevant
-  // (score >= 0.40). Forcing in confirmed off-sector items (warehouse
-  // projects for healthcare tenders score ≈ 0.10–0.30 after the sector
-  // penalty) does more harm than running with fewer evidence items.
-  const MIN_FLOOR_SCORE = 0.40;
+  // (score >= 0.55). Raised from 0.40 to 0.55 so only items with meaningful
+  // overlap are force-promoted. Confirmed off-sector items (warehouse
+  // projects for water tenders score ≈ 0.10–0.40 after the sector and
+  // mismatch penalties) no longer slip through.
+  const MIN_FLOOR_SCORE = 0.55;
   const MIN_SELECTED = Math.min(3, limit, matches.length);
   if (selected < MIN_SELECTED) {
     let forcedCount = selected;
@@ -650,14 +682,18 @@ export function buildMatches(
       const weightedCapability = requiredFamiliesWeighted.length === 0
         ? capability
         : requiredFamiliesWeighted.filter((family) => recordFamilies.includes(family)).length / requiredFamiliesWeighted.length;
+      const effectiveCap = Math.max(capability, weightedCapability);
       const sector = sectorBoost(tenderSector, parseArr(expert.sectors));
       const trust = trustLevelAdjustment(trustLevel);
-      const experience = (expert.yearsExperience ?? 0) >= 15 ? 0.12 : (expert.yearsExperience ?? 0) >= 10 ? 0.10 : (expert.yearsExperience ?? 0) >= 5 ? 0.05 : 0;
+      const experience = Math.min(0.18, Math.max(0, (expert.yearsExperience ?? 0) * 0.008));
       const mismatchPenalty = criticalFamilyMismatchPenalty(queryText, recordText);
       const domainScore = domainTagMatchScore(constraintProfile.domainTags, recordText);
       const isHardExcluded = constraintProfile.strictDomain && domainScore === 0;
       const domainPenalty = isHardExcluded ? -0.9 : 0;
-      const computedScore = Math.max(0, Math.min(1, seniorScore({ cosine: bestScore, capability: Math.max(capability, weightedCapability), sector, trust, experience, valueOrRecency: 0, hasRealText: docTokens.length > 8 }) + mismatchPenalty + domainPenalty));
+      // Capability relevance gate: records with near-zero family overlap must
+      // not reach the 0.75 auto-select threshold on pure lexical similarity alone.
+      const capCeiling = effectiveCap < 0.15 ? 0.58 : 1.0;
+      const computedScore = Math.max(0, Math.min(capCeiling, seniorScore({ cosine: bestScore, capability: effectiveCap, sector, trust, experience, valueOrRecency: 0, hasRealText: docTokens.length > 8 }) + mismatchPenalty + domainPenalty));
       const score = isHardExcluded ? 0 : computedScore;
       const evidence = [expert.title, ...parseArr(expert.disciplines), ...parseArr(expert.sectors)].filter(Boolean).join(" · ");
       const topMatches = [...new Set(docTokens.filter((t) => baseQueryTokens.includes(t)))].slice(0, 8).join(", ");
@@ -700,6 +736,7 @@ export function buildMatches(
       const weightedCapability = requiredFamiliesWeighted.length === 0
         ? capability
         : requiredFamiliesWeighted.filter((family) => recordFamilies.includes(family)).length / requiredFamiliesWeighted.length;
+      const effectiveCap = Math.max(capability, weightedCapability);
       const sector = sectorBoost(tenderSector, [project.sector ?? "", ...parseArr(project.serviceAreas)]);
       const trust = trustLevelAdjustment(trustLevel);
       let recency = 0;
@@ -713,7 +750,10 @@ export function buildMatches(
       const domainScore = domainTagMatchScore(constraintProfile.domainTags, recordText);
       const isHardExcluded = constraintProfile.strictDomain && domainScore === 0;
       const domainPenalty = isHardExcluded ? -0.9 : 0;
-      const computedScore = Math.max(0, Math.min(1, seniorScore({ cosine: bestScore, capability: Math.max(capability, weightedCapability), sector, trust, experience: 0, valueOrRecency: recency, hasRealText: docTokens.length > 8 }) + mismatchPenalty + domainPenalty));
+      // Capability relevance gate: records with near-zero family overlap must
+      // not reach the 0.75 auto-select threshold on pure lexical similarity alone.
+      const capCeiling = effectiveCap < 0.15 ? 0.58 : 1.0;
+      const computedScore = Math.max(0, Math.min(capCeiling, seniorScore({ cosine: bestScore, capability: effectiveCap, sector, trust, experience: 0, valueOrRecency: recency, hasRealText: docTokens.length > 8 }) + mismatchPenalty + domainPenalty));
       const score = isHardExcluded ? 0 : computedScore;
       const evidence = [project.sector, ...parseArr(project.serviceAreas)].filter(Boolean).join(" · ");
       const topMatches = [...new Set(docTokens.filter((t) => baseQueryTokens.includes(t)))].slice(0, 8).join(", ");

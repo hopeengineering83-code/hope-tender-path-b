@@ -10,6 +10,9 @@ type MatchWithSelection = {
 type ExpertMatch = MatchingResult["expertMatches"][number];
 type ProjectMatch = MatchingResult["projectMatches"][number];
 
+// Aligned with MIN_FLOOR_SCORE in matching.ts (0.55) so the safety-net
+// fallback does not reintroduce off-sector reviewed records that the
+// tighter relevance gates in buildMatches are designed to exclude.
 const MIN_REVIEWED_SAFE_SCORE = 0.55;
 const DEFAULT_EXPERT_LIMIT = 4;
 const DEFAULT_PROJECT_LIMIT = 3;

@@ -208,7 +208,7 @@ ${vaultContactBlock}${avoidBlock}
 ${input.submissionNotes.slice(0, 2_500)}
 
 ## EVALUATION CRITERIA
-${input.evaluationMethodology.slice(0, 2_500)}
+${input.evaluationMethodology.slice(0, 4_500)}
 
 ## KEY DIFFERENTIATORS
 ${input.differentiators.slice(0, 1_500)}
@@ -317,7 +317,7 @@ TITLE: ${input.tenderTitle}
 CLIENT: ${input.clientName}
 
 ## EVALUATION CRITERIA (especially the experience and team criteria)
-${input.evaluationMethodology.slice(0, 2_500)}
+${input.evaluationMethodology.slice(0, 4_500)}
 ${vaultBlock}
 
 ## CONSOLIDATED REQUIREMENTS (especially eligibility, team composition, project experience)
@@ -357,7 +357,9 @@ LENGTH REQUIREMENTS:
 CLIENT NAME FIDELITY: Use ONLY the CLIENT field above as the client.
 Firm-history project clients are referenced in Section B project cards
 but NEVER substituted for the current tender's client.
-
+${(input.doNotUseAsClient ?? []).filter(Boolean).length > 0
+  ? `\nPREVIOUS CLIENTS (appear in Section B project cards only — NEVER as the client of THIS tender):\n${(input.doNotUseAsClient ?? []).slice(0, 12).map((c) => `- ${c}`).join("\n")}\n`
+  : ""}
 Where evidence is genuinely missing, write a "Bid-Team Action: confirm X before submission." note in the cell or paragraph — do NOT fabricate.
 
 Start directly with "# Section A: Company Profile". Do NOT output any cover letter, executive summary, technical approach, Section D, compliance matrix, declaration, or commentary.`;
@@ -384,7 +386,7 @@ ${input.tenderText.slice(0, 8_000)}
 ${input.analysisSummary.slice(0, 2_500)}
 
 ## EVALUATION CRITERIA (your methodology must score against these — allocate depth proportionally to each criterion's weight)
-${input.evaluationMethodology.slice(0, 2_500)}
+${input.evaluationMethodology.slice(0, 4_500)}
 ${criterionBlock}
 ## CONSOLIDATED REQUIREMENTS (especially technical and methodology requirements)
 ${input.requirements.slice(0, 4_000)}
@@ -468,12 +470,13 @@ other top-level sections.`;
 }
 
 function buildAdditionalAndDeclarationPrompt(input: AIBidWriterInput): string {
+  const avoidD = (input.doNotUseAsClient ?? []).filter((c) => c && c.trim().length >= 3);
   return `Write Section D (Additional Information & Value), the Appendix Register, and the formal Declaration for this technical proposal.
 
 ## TENDER
 TITLE: ${input.tenderTitle}
 CLIENT: ${input.clientName}
-
+${avoidD.length > 0 ? `\nPREVIOUS CLIENTS — never use these as the client of THIS tender (they appear in Section B project cards as historical clients only):\n${avoidD.slice(0, 12).map((c) => `- ${c}`).join("\n")}\n` : ""}
 ## SUBMISSION RULES
 ${input.submissionNotes.slice(0, 2_500)}
 
@@ -691,7 +694,7 @@ CLIENT: ${input.clientName}
 ${input.tenderText.slice(0, 8_000)}
 
 ## EVALUATION CRITERIA (your methodology must score against these)
-${input.evaluationMethodology.slice(0, 3_000)}
+${input.evaluationMethodology.slice(0, 4_500)}
 
 ## CONSOLIDATED REQUIREMENTS (especially methodology and technical requirements)
 ${input.requirements.slice(0, 4_500)}
@@ -704,7 +707,9 @@ ${input.projects.slice(0, 5_000)}
 
 ## FIRST-PASS SECTION C (preserve the structure; deepen each sub-section)
 ${firstPassSectionC}
-
+${input.criterionEvidenceMap && input.criterionEvidenceMap.trim().length > 0
+  ? `\n## CRITERION-TO-EVIDENCE ALLOCATION (follow this exactly when deepening each sub-section)\n${input.criterionEvidenceMap}\n`
+  : ""}
 ## YOUR OUTPUT
 Rewrite Section C with materially more methodology depth:
 - C.1 Understanding: 3-4 substantive paragraphs anchored to the tender's stated context
@@ -751,20 +756,46 @@ export function buildSectionFallback(spec: ProposalSectionSpec, input: AIBidWrit
 
     case "technical-approach": {
       const tenderRef = input.tenderTitle ? `**${input.tenderTitle}**` : "this assignment";
+      const client = input.clientName || "the Client";
+      // Parse top scored/mandatory requirements from the requirements string
+      const reqLines = input.requirements
+        .split("\n")
+        .map((l) => l.replace(/^[-*•]\s*/, "").replace(/^(MANDATORY|SCORED|INFORMATIONAL):?\s*/i, "").trim())
+        // Exclude ALL BENCHMARK_CONTEXT_LINES injected as prompt meta-directives:
+        // they all start with an ALL-CAPS keyword followed by " RULE:" or " BENCHMARK"
+        .filter((l) => l.length > 15 && !/\bBENCHMARK\b|\bRULE:\s/i.test(l.slice(0, 60)))
+        .slice(0, 8);
+      // Parse top expert names
+      const expertNames = input.experts
+        .split("\n")
+        .map((l) => l.match(/^\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)/)?.[1] ?? "")
+        .filter(Boolean)
+        .slice(0, 4);
+      const leadExpert = expertNames[0] || "Bid-Team Action: confirm lead expert";
+      const team = expertNames.length > 1 ? expertNames.join(", ") : leadExpert;
+      // Build methodology sections from top requirements
+      const methodBlocks = reqLines.slice(0, 6).map((req, i) => {
+        const expert = expertNames[i % expertNames.length] || "Bid-Team Action: confirm responsible expert";
+        return `### C.2.${i + 1} ${req.slice(0, 80)}\n\nOur approach to this requirement begins with a thorough review of ${client}'s stated scope, constraints, and any applicable standards. ${expert} will lead this scope item, applying the firm's proven methodology and drawing on comparable project experience. The deliverable for this scope item will be prepared at schematic, detailed, and final stages with internal QA review at each gate before submission to ${client} for approval. Bid-Team Action: add specific methodology text and project reference for this scope item before final submission.`;
+      });
+      const workPlanRows = [
+        ["1 — Inception", "Inception Report + Work Plan", leadExpert, "Week 1–2", "PM sign-off"],
+        ["2 — Data Collection", "Site Survey Report + Data Register", team, "Week 2–4", "Senior Engineer"],
+        ["3 — Analysis", "Technical Assessment Report", leadExpert, "Week 4–6", "QA peer review"],
+        ["4 — Concept Design", "Concept Design Package", leadExpert, "Week 6–8", "Client presentation"],
+        ["5 — Detailed Design", "Detailed Design + BOQ + Specs", team, "Week 8–14", "30%/60%/100% gates"],
+        ["6 — Final Submission", "Final Document Package", leadExpert, "Week 14–16", "Director sign-off"],
+      ];
       return [
         "# Section C: Technical Approach",
         "## C.1 Understanding of the Assignment",
-        `${input.clientName} requires ${tenderRef}. Our firm's understanding of the core technical challenge is set out below; each scope item is addressed in sequence in Section C.2. Bid-Team Action: confirm the three key technical challenges and the single most-decisive evaluation driver before submission.`,
+        `${client} requires ${tenderRef}. This assignment requires the proposed team to address the scope items in sequence, applying sector-specific technical standards and delivering each output at the quality level required for client approval. The three key technical challenges identified are: (1) alignment of the detailed scope with ${client}'s stated requirements and applicable standards; (2) ensuring the proposed team's expertise directly addresses the highest-weighted evaluation criteria; and (3) maintaining schedule discipline across a multi-stage delivery. Our approach in Section C.2 addresses each scope item in turn, naming the responsible expert and the quality gate for each deliverable.\n\nThe evaluation criteria identified in this tender require the firm to demonstrate not only technical competence but also the capacity to manage scope, schedule, and quality concurrently. Our methodology is built around a staged approach with explicit client-approval milestones at each phase transition, ensuring that ${client} retains oversight throughout the assignment and that no stage proceeds until the prior deliverable has been accepted.\n\nThe firm's comparable project portfolio demonstrates delivery of assignments of similar scope, sector, and complexity. The strongest project analogues are identified in Section B; each analogous project is cited within the methodology sections below to substantiate the proposed approach with direct precedent, not generic best-practice statements.`,
         "## C.2 Technical Methodology",
-        `The methodology for ${tenderRef} is structured to address each scope item in the tender's stated order. Each sub-section ties to a named deliverable, a responsible named expert from Section A.4, and a quality-review gate. Bid-Team Action: confirm sector-specific methodology depth before submission.`,
+        methodBlocks.length > 0 ? methodBlocks.join("\n\n") : `### C.2.1 Technical Methodology\n\nThe methodology for ${tenderRef} is structured to address each scope item in the tender's stated order. Each stage ties to a deliverable, a responsible named expert, and an internal quality-review gate. Bid-Team Action: confirm sector-specific methodology depth and project citations before submission.`,
         "## C.3 Work Plan and Deliverables",
-        "| Stage | Deliverable | Responsible Expert | Timeline | Quality Gate |",
-        "|---|---|---|---|---|",
-        "| Inception | Inception Report | Bid-Team Action | Bid-Team Action | Senior Engineer review |",
-        "| Concept | Concept Design Package | Bid-Team Action | Bid-Team Action | QA gate |",
-        "| Detailed | Detailed Design Package | Bid-Team Action | Bid-Team Action | Pre-issue gate |",
+        `The assignment is structured across six overlapping stages with defined deliverables, responsible experts, and client approval milestones. The critical path runs through the detailed design stage; all prior stages feed into it and each later stage depends on approved outputs from the one before.\n\n| Stage | Deliverable | Responsible Expert | Timeline | Quality Gate |\n|---|---|---|---|---|\n${workPlanRows.map((r) => `| ${r.join(" | ")} |`).join("\n")}`,
         "## C.4 Quality Assurance",
-        "Staged design-review gates are applied at 30 / 60 / 100% milestones. See deterministic Three-Stage Quality Review table built downstream.",
+        `Quality assurance for ${tenderRef} is managed through a three-gate internal review cycle: 30% gate (internal peer review by a senior engineer not on the primary design team), 60% gate (cross-discipline coordination check and client interim review), and 100% gate (director-level sign-off and final compliance verification before issue). No deliverable proceeds to the next stage without written confirmation that the prior gate has been passed.\n\nAll technical documents are version-controlled and issued with a revision history. Comments received from ${client} at each interim review are logged in a comment-response matrix and formally closed before the next stage begins. This approach ensures full traceability between ${client}'s requirements, the technical response, and the final submitted deliverables.\n\nRisk management is integrated into the QA programme: the top three technical risks for this assignment (scope ambiguity, tight schedule, and specialist availability) are tracked on a live risk register updated at each gate and shared with ${client} at every interim submission.`,
       ].join("\n\n");
     }
 

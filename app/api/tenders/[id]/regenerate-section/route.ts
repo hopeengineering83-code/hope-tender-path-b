@@ -16,7 +16,10 @@ import { NextResponse } from "next/server";
 import { getSession } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { isAIEnabled, type AIBidWriterInput } from "../../../../../lib/ai";
-import { buildProposalIntelligence, buildCriterionEvidenceMap, expertProofLine, projectProofLine, safeParseArr } from "../../../../../lib/engine/proposal-intelligence";
+import { BENCHMARK_CONTEXT_LINES, buildProposalIntelligence, buildCriterionEvidenceMap, expertProofLine, projectProofLine, safeParseArr } from "../../../../../lib/engine/proposal-intelligence";
+import { buildRubricPromptDirective } from "../../../../../lib/engine/rubric-driven-sections";
+import { extractTenderLanguageEchoes, formatEchoesForPrompt } from "../../../../../lib/engine/tender-language-echoes";
+import { extractTenderFacts, formatFactsForPrompt } from "../../../../../lib/engine/tender-facts-extractor";
 import { buildProposalSectionSpecs, buildSectionFallback, type ProposalSectionId } from "../../../../../lib/engine/proposal-sections";
 
 export const maxDuration = 60;
@@ -107,6 +110,20 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         legalRecords: { orderBy: { updatedAt: "desc" }, take: 12 },
         financialRecords: { orderBy: { fiscalYear: "desc" }, take: 12 },
         complianceRecords: { orderBy: { updatedAt: "desc" }, take: 12 },
+        // Vault fallback — when selected tender matches are all unreviewed
+        // we substitute the firm's reviewed vault so the section AI always
+        // has real evidence rather than an empty context.
+        experts: {
+          where: { trustLevel: "REVIEWED", deletedAt: null },
+          orderBy: [{ yearsExperience: "desc" }, { updatedAt: "desc" }],
+          take: 12,
+        },
+        projects: {
+          where: { trustLevel: "REVIEWED", deletedAt: null },
+          orderBy: [{ contractValue: "desc" }, { updatedAt: "desc" }],
+          take: 8,
+          include: { evidences: { orderBy: { createdAt: "desc" }, take: 5 } },
+        },
       },
     }),
   ]);
@@ -114,8 +131,32 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
   if (!company) return NextResponse.json({ error: "Company not found" }, { status: 404 });
 
-  const experts = tender.expertMatches.map((m) => m.expert).filter((e) => e.trustLevel === "REVIEWED");
-  const projects = tender.projectMatches.map((m) => m.project).filter((p) => p.trustLevel === "REVIEWED");
+  let experts = tender.expertMatches.map((m) => m.expert).filter((e) => e.trustLevel === "REVIEWED");
+  let projects = tender.projectMatches.map((m) => m.project).filter((p) => p.trustLevel === "REVIEWED");
+
+  // Vault fallback: if selected matches are all unreviewed, use the company's
+  // reviewed vault — same three-tier logic as ai-proposal/route.ts so every
+  // section regeneration has real evidence rather than an empty context.
+  const vaultExperts = (company as unknown as { experts?: typeof experts }).experts ?? [];
+  const vaultProjects = (company as unknown as { projects?: typeof projects }).projects ?? [];
+  if (experts.length === 0) {
+    if (vaultExperts.length > 0) {
+      experts = vaultExperts;
+      console.warn(`[regenerate-section] No REVIEWED selected experts — using ${experts.length} vault expert(s).`);
+    } else {
+      experts = tender.expertMatches.map((m) => m.expert);
+      if (experts.length > 0) console.warn(`[regenerate-section] No REVIEWED experts in vault — using ${experts.length} unreviewed selected expert(s).`);
+    }
+  }
+  if (projects.length === 0) {
+    if (vaultProjects.length > 0) {
+      projects = vaultProjects as typeof projects;
+      console.warn(`[regenerate-section] No REVIEWED selected projects — using ${projects.length} vault project(s).`);
+    } else {
+      projects = tender.projectMatches.map((m) => m.project);
+      if (projects.length > 0) console.warn(`[regenerate-section] No REVIEWED projects in vault — using ${projects.length} unreviewed selected project(s).`);
+    }
+  }
 
   const intelligence = buildProposalIntelligence({ tender, company, requirements: tender.requirements, experts, projects });
 
@@ -126,6 +167,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   ].filter(Boolean).join("\n\n");
 
   const submissionNotes = [tender.submissionMethod, tender.submissionAddress, ...intelligence.submissionRules].filter(Boolean).join("\n");
+
+  const evaluationWeightLines = intelligence.evaluationWeights.map(
+    (w) => `- ${w.criterion} — ${w.weight} (raw match: "${w.rawMatch}")`,
+  );
+  const tenderLanguageEchoes = extractTenderLanguageEchoes(intelligence.tenderText, 12);
+  const tenderLanguageEchoBlock = formatEchoesForPrompt(tenderLanguageEchoes);
+  const tenderFacts = extractTenderFacts(intelligence.tenderText);
+  const tenderFactsPromptBlock = formatFactsForPrompt(tenderFacts);
 
   const companyEvidenceLines = buildCompanyEvidenceLines(company as unknown as Record<string, unknown>);
   const projectEvidenceLines = buildProjectEvidenceLines(projects as Parameters<typeof buildProjectEvidenceLines>[0]);
@@ -156,11 +205,17 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const aiInput: AIBidWriterInput = {
     tenderTitle: tender.title,
     clientName: intelligence.clientName,
-    tenderText,
+    tenderText: [BENCHMARK_CONTEXT_LINES.join("\n"), tenderText].join("\n\n"),
     analysisSummary: clean(tender.analysisSummary) || intelligence.tenderText.slice(0, 2000),
-    evaluationMethodology: clean(tender.evaluationMethodology) || intelligence.evaluationCriteria.join("; "),
-    submissionNotes,
-    requirements: requirementLines.join("\n"),
+    evaluationMethodology: [
+      clean(tender.evaluationMethodology) || intelligence.evaluationCriteria.join("; "),
+      ...(evaluationWeightLines.length > 0 ? ["", "Numeric evaluation weights detected in tender (echo verbatim in the EVALUATION CRITERIA RESPONSE MIRROR table):", ...evaluationWeightLines] : []),
+      tenderLanguageEchoBlock,
+      tenderFactsPromptBlock,
+      buildRubricPromptDirective(intelligence.evaluationWeights),
+    ].filter(Boolean).join("\n"),
+    submissionNotes: [BENCHMARK_CONTEXT_LINES.join("\n"), submissionNotes].filter(Boolean).join("\n"),
+    requirements: [...BENCHMARK_CONTEXT_LINES, ...requirementLines].join("\n"),
     companyProfile:
       `${company.name}\n${c.legalName ?? ""}\n${company.profileSummary ?? c.description ?? ""}\n` +
       `Services: ${safeParseArr(c.serviceLines).join(", ")}\n` +
@@ -168,8 +223,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       `Company evidence:\n${evidenceContextLines.join("\n").slice(0, 9_000)}`,
     experts: expertLines.join("\n"),
     projects: [...projectLines, ...projectEvidenceLines].join("\n"),
-    compliance: complianceLines.join("\n"),
-    differentiators: intelligence.differentiators.join("\n"),
+    compliance: [...BENCHMARK_CONTEXT_LINES, ...complianceLines].join("\n"),
+    differentiators: [...BENCHMARK_CONTEXT_LINES, ...intelligence.differentiators, ...companyEvidenceLines.slice(0, 8)].join("\n"),
     companyVault: {
       name: company.name,
       legalName: c.legalName,
@@ -194,11 +249,19 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         .map((r) => [r.title, r.complianceType, r.referenceNumber ? `Ref: ${r.referenceNumber}` : "", r.status ? `Status: ${r.status}` : ""].filter(Boolean).join(" — "))
         .filter((s) => s.length > 0),
     },
-    doNotUseAsClient: Array.from(new Set(
-      (company as { projects?: Array<{ clientName?: string | null }> }).projects
-        ?.map((p) => p.clientName)
-        .filter((c): c is string => Boolean(c && c.trim().length >= 3)) ?? []
-    )),
+    doNotUseAsClient: (() => {
+      // Build from vault projects AND the resolved evidence projects (covers
+      // unreviewed-selected fallback path); exclude the current tender client
+      // so repeat-client tenders don't receive contradictory instructions.
+      const tenderClient = intelligence.clientName?.toLowerCase().trim() ?? "";
+      return Array.from(new Set([
+        ...((company as { projects?: Array<{ clientName?: string | null }> }).projects?.map((p) => p.clientName) ?? []),
+        ...projects.map((p) => p.clientName),
+      ].filter((cn): cn is string => {
+        if (!cn || cn.trim().length < 3) return false;
+        return cn.toLowerCase().trim() !== tenderClient;
+      })));
+    })(),
     criterionEvidenceMap: buildCriterionEvidenceMap(
       intelligence.evaluationWeights,
       intelligence.topProjects,

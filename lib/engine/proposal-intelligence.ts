@@ -36,6 +36,19 @@ export type ProposalIntelligence = {
   exactSubjectLine: string | null;
 };
 
+export const BENCHMARK_CONTEXT_LINES: string[] = [
+  "MANDATORY BENCHMARK STRUCTURE: Cover Letter; Technical Proposal; Table of Contents; Executive Summary; Company Profile; Proposed Team; Relevant Experience; Technical Approach; Compliance and Bid Review Strategy; Additional Information; Appendix Register; Declaration.",
+  "FIRST-DRAFT QUALITY RULE: The first AI draft must contain the benchmark structure, evaluator-facing narrative, evidence mapping, methodology depth, compliance strategy, appendix register, and final declaration.",
+  "EVIDENCE RULE: Use only provided experts, projects, company documents, legal records, financial records, compliance records, project evidence, compliance rows, and tender text. If evidence is missing, state it as a bid-team confirmation item, not as a fake claim.",
+  "CLIENT-READY RULE: Do not write internal benchmark review, auto-repair, debug, AI fallback, or quality-score sections inside the client proposal document.",
+  "FORBIDDEN PHRASES: Never write 'extensive experience' without a project name; 'committed to excellence/quality'; 'leading firm in the region'; 'team of qualified professionals'; 'we look forward to the opportunity'; 'as an AI'; 'certainly'; or any [square bracket] placeholder.",
+  "EVIDENCE DENSITY RULE: Every strong claim must cite a specific project name, ETB/contract value, expert name + licence, or client reference. No paragraph may be purely generic without one verifiable fact.",
+  "NARRATIVE THROUGHLINE RULE: The same two strongest project names MUST appear in the Cover Letter opening, Executive Summary first paragraph, AND Section B. This is not optional.",
+  "EXECUTIVE SUMMARY LEAD RULE: Executive Summary must open with: 'We have already delivered this assignment. [Company] designed/supervised/assessed [Project Name] (ETB X, Client Y) — a [parallel description].' This is the single most important sentence in the proposal.",
+  "TEAM-TO-PROJECT RULE: Each proposed expert must be linked in a table showing: Expert Name | Proposed Role | Previous Comparable Project | Role on That Project | Key Technical Contribution.",
+  "SECTION LENGTH RULE: Cover Letter ≥ 4 paragraphs; Executive Summary ≥ 3 paragraphs; each Section A/B/C ≥ 5 paragraphs with sub-sections. Do not truncate or summarise — write the full content.",
+];
+
 export function safeParseArr(value: string | null | undefined): string[] {
   if (!value) return [];
   try {
@@ -896,6 +909,11 @@ export function expertProofLine(expert: ExpertLite): string {
  * prose depth proportionally: a 35%-weight methodology criterion gets 3×
  * the depth of a 10%-weight compliance criterion.
  */
+function parseWeightNumber(weight: string): number {
+  const m = weight.match(/(\d+(?:\.\d+)?)/);
+  return m ? parseFloat(m[1]) : 0;
+}
+
 export function buildCriterionEvidenceMap(
   weights: EvaluationWeight[],
   topProjects: ProjectLite[],
@@ -903,12 +921,28 @@ export function buildCriterionEvidenceMap(
 ): string {
   if (weights.length === 0) return "";
 
+  // Calculate prose allocation from numeric weights.
+  // Total is the sum of all parsed weights — used to derive
+  // proportional word-count targets assuming ~3000 total words
+  // of evidence-linked prose across all criteria.
+  const TOTAL_WORDS = 3000;
+  const parsedWeights = weights.map((w) => parseWeightNumber(w.weight));
+  const weightSum = parsedWeights.reduce((s, v) => s + v, 0);
+
   const lines: string[] = [
-    "EVALUATION CRITERION → BEST EVIDENCE MAP",
-    "(Allocate proposal depth PROPORTIONALLY to each criterion weight. Highest-weight criterion = most evidence-dense prose.)",
+    "EVALUATION CRITERION → EVIDENCE & PROSE ALLOCATION MAP",
+    "RULE: Allocate prose depth PROPORTIONALLY to each weight. PRIMARY evidence must appear in the section with the stated word-count target. Never spread evidence evenly — the highest-weight criterion MUST have the most words.",
+    "",
   ];
 
-  for (const w of weights) {
+  for (let i = 0; i < weights.length; i++) {
+    const w = weights[i];
+    const parsedW = parsedWeights[i];
+    const targetWords = weightSum > 0 && parsedW > 0
+      ? Math.round((parsedW / weightSum) * TOTAL_WORDS / 100) * 100
+      : 0;
+    const wordTarget = targetWords > 0 ? `→ WRITE ~${targetWords} WORDS` : "";
+
     const criterionLower = w.criterion.toLowerCase();
     const keywords = criterionLower
       .split(/\s+/)
@@ -938,18 +972,34 @@ export function buildCriterionEvidenceMap(
 
     if (scoredProjects.length === 0 && scoredExperts.length === 0) continue;
 
-    lines.push(`\n[${w.weight}] ${w.criterion}`);
-    for (const { project } of scoredProjects) {
-      const val = project.contractValue
-        ? ` (${project.currency ?? "ETB"} ${(project.contractValue / 1_000_000).toFixed(1)}M)`
-        : "";
-      lines.push(`  PROJECT → ${project.name}${project.clientName ? ` — ${project.clientName}` : ""}${project.country ? `, ${project.country}` : ""}${val}`);
+    lines.push(`━━━ [${w.weight}] ${w.criterion} ${wordTarget} ━━━`);
+
+    if (scoredProjects.length > 0) {
+      lines.push("  CITE THESE PROJECTS (most comparable first):");
+      for (let pi = 0; pi < scoredProjects.length; pi++) {
+        const { project } = scoredProjects[pi];
+        const val = project.contractValue
+          ? ` | ${project.currency ?? "ETB"} ${(project.contractValue / 1_000_000).toFixed(1)}M`
+          : "";
+        const services = safeParseArr(project.serviceAreas).slice(0, 3).join(", ");
+        const rank = pi === 0 ? "PRIMARY" : "SUPPORTING";
+        lines.push(`    [${rank}] ${project.name}${project.clientName ? ` — ${project.clientName}` : ""}${project.country ? `, ${project.country}` : ""}${val}${services ? ` | ${services}` : ""}`);
+      }
     }
-    for (const { expert } of scoredExperts) {
-      const yrs = expert.yearsExperience ? ` (${expert.yearsExperience}yr)` : "";
-      lines.push(`  EXPERT  → ${expert.fullName}${expert.title ? `, ${expert.title}` : ""}${yrs}`);
+
+    if (scoredExperts.length > 0) {
+      lines.push("  ASSIGN THESE EXPERTS (highest relevance first):");
+      for (let ei = 0; ei < scoredExperts.length; ei++) {
+        const { expert } = scoredExperts[ei];
+        const yrs = expert.yearsExperience ? ` | ${expert.yearsExperience}yr exp` : "";
+        const certs = safeParseArr(expert.certifications).slice(0, 2).join(", ");
+        const rank = ei === 0 ? "LEAD" : "SUPPORT";
+        lines.push(`    [${rank}] ${expert.fullName}${expert.title ? ` — ${expert.title}` : ""}${yrs}${certs ? ` | ${certs}` : ""}`);
+      }
     }
+
+    lines.push("");
   }
 
-  return lines.length > 2 ? lines.join("\n") : "";
+  return lines.length > 3 ? lines.join("\n") : "";
 }

@@ -2,7 +2,10 @@ import { NextResponse } from "next/server";
 import { getSession } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { generateBenchmarkProposalWithAI, generateProposalSectionsParallel, isAIEnabled } from "../../../../../lib/ai";
-import { buildProposalIntelligence, expertProofLine, projectProofLine, safeParseArr } from "../../../../../lib/engine/proposal-intelligence";
+import { BENCHMARK_CONTEXT_LINES, buildProposalIntelligence, buildCriterionEvidenceMap, expertProofLine, projectProofLine, safeParseArr } from "../../../../../lib/engine/proposal-intelligence";
+import { buildRubricPromptDirective } from "../../../../../lib/engine/rubric-driven-sections";
+import { extractTenderLanguageEchoes, formatEchoesForPrompt } from "../../../../../lib/engine/tender-language-echoes";
+import { extractTenderFacts, formatFactsForPrompt } from "../../../../../lib/engine/tender-facts-extractor";
 import { buildProposalCacheKey, getCachedProposal, setCachedProposal } from "../../../../../lib/proposal-cache";
 
 // Vercel route timeout — Claude proposal generation needs >10s default.
@@ -165,12 +168,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         // records are all unreviewed we substitute the firm's reviewed
         // vault so the AI proposal still has real names + evidence.
         experts: {
-          where: { trustLevel: "REVIEWED" },
+          where: { trustLevel: "REVIEWED", deletedAt: null },
           orderBy: [{ yearsExperience: "desc" }, { updatedAt: "desc" }],
           take: 12,
         },
         projects: {
-          where: { trustLevel: "REVIEWED" },
+          where: { trustLevel: "REVIEWED", deletedAt: null },
           orderBy: [{ contractValue: "desc" }, { updatedAt: "desc" }],
           take: 8,
           include: { evidences: { orderBy: { createdAt: "desc" }, take: 5 } },
@@ -277,6 +280,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const submissionNotes = [tender.submissionMethod, tender.submissionAddress, ...intelligence.submissionRules].filter(Boolean).join("\n");
   const evidenceContextLines = [...companyEvidenceLines, ...projectEvidenceLines];
 
+  const evaluationWeightLines = intelligence.evaluationWeights.map(
+    (w) => `- ${w.criterion} — ${w.weight} (raw match: "${w.rawMatch}")`,
+  );
+  const tenderLanguageEchoes = extractTenderLanguageEchoes(intelligence.tenderText, 12);
+  const tenderLanguageEchoBlock = formatEchoesForPrompt(tenderLanguageEchoes);
+  const tenderFacts = extractTenderFacts(intelligence.tenderText);
+  const tenderFactsPromptBlock = formatFactsForPrompt(tenderFacts);
+
   const complianceLines = [
     ...tender.complianceMatrix.map((m) => {
       const req = m.requirement?.title ?? m.requirement?.description ?? "Requirement evidence row";
@@ -323,11 +334,17 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       const aiInput = {
         tenderTitle: tender.title,
         clientName: intelligence.clientName,
-        tenderText,
+        tenderText: [BENCHMARK_CONTEXT_LINES.join("\n"), tenderText].join("\n\n"),
         analysisSummary: _clean(tender.analysisSummary) || intelligence.tenderText.slice(0, 2000),
-        evaluationMethodology: _clean(tender.evaluationMethodology) || intelligence.evaluationCriteria.join("; "),
-        submissionNotes,
-        requirements: requirementLines.join("\n"),
+        evaluationMethodology: [
+          _clean(tender.evaluationMethodology) || intelligence.evaluationCriteria.join("; "),
+          ...(evaluationWeightLines.length > 0 ? ["", "Numeric evaluation weights detected in tender (echo verbatim in the EVALUATION CRITERIA RESPONSE MIRROR table):", ...evaluationWeightLines] : []),
+          tenderLanguageEchoBlock,
+          tenderFactsPromptBlock,
+          buildRubricPromptDirective(intelligence.evaluationWeights),
+        ].filter(Boolean).join("\n"),
+        submissionNotes: [BENCHMARK_CONTEXT_LINES.join("\n"), submissionNotes].filter(Boolean).join("\n"),
+        requirements: [...BENCHMARK_CONTEXT_LINES, ...requirementLines].join("\n"),
         companyProfile:
           `${company.name}\n${c.legalName ?? ""}\n${company.profileSummary ?? c.description ?? ""}\n` +
           `Services: ${safeParseArr(c.serviceLines).join(", ")}\n` +
@@ -335,8 +352,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           `Wider company evidence library:\n${evidenceContextLines.join("\n").slice(0, 9_000)}`,
         experts: expertLines.join("\n"),
         projects: [...projectLines, ...projectEvidenceLines].join("\n"),
-        compliance: complianceLines.join("\n"),
-        differentiators: intelligence.differentiators.join("\n"),
+        compliance: [...BENCHMARK_CONTEXT_LINES, ...complianceLines].join("\n"),
+        differentiators: [...BENCHMARK_CONTEXT_LINES, ...intelligence.differentiators, ...companyEvidenceLines.slice(0, 8)].join("\n"),
         // PR #257 — structured company-vault fields. See generate-elite.ts
         // for the full rationale.
         companyVault: {
@@ -370,6 +387,24 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
             })
             .filter((s) => s.length > 0),
         },
+        doNotUseAsClient: (() => {
+          // Build the exclusion list from ALL project clients (vault + selected),
+          // then remove the current tender client so repeat-client tenders don't
+          // receive contradictory "never use X as client" instructions.
+          const tenderClient = intelligence.clientName?.toLowerCase().trim() ?? "";
+          return Array.from(new Set([
+            ...vaultProjects.map((p) => (p as { clientName?: string | null }).clientName),
+            ...projects.map((p) => p.clientName),
+          ].filter((cn): cn is string => {
+            if (!cn || cn.trim().length < 3) return false;
+            return cn.toLowerCase().trim() !== tenderClient;
+          })));
+        })(),
+        criterionEvidenceMap: buildCriterionEvidenceMap(
+          intelligence.evaluationWeights,
+          intelligence.topProjects,
+          intelligence.topExperts,
+        ),
       };
       proposal = await withProposalTimeout(
         useParallel ? generateProposalSectionsParallel(aiInput) : generateBenchmarkProposalWithAI(aiInput),
