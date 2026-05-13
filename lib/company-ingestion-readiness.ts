@@ -1,3 +1,4 @@
+import type { PrismaClient } from "@prisma/client";
 import { prisma } from "./prisma";
 
 function hasUsefulText(text: string | null | undefined): boolean {
@@ -39,9 +40,9 @@ export type CompanyIngestionReadiness = {
   };
 };
 
-export async function getCompanyIngestionReadiness(companyId: string): Promise<CompanyIngestionReadiness> {
+export async function getCompanyIngestionReadiness(companyId: string, client: PrismaClient = prisma): Promise<CompanyIngestionReadiness> {
   const [company, docs, experts, projects, legalRecords, financialRecords, complianceRecords] = await Promise.all([
-    prisma.company.findUnique({
+    client.company.findUnique({
       where: { id: companyId },
       select: {
         id: true,
@@ -54,15 +55,15 @@ export async function getCompanyIngestionReadiness(companyId: string): Promise<C
         setupCompletedAt: true,
       },
     }),
-    prisma.companyDocument.findMany({
+    client.companyDocument.findMany({
       where: { companyId },
       select: { extractedText: true, aiExtractionStatus: true, aiExtractionError: true },
     }),
-    prisma.expert.findMany({ where: { companyId, deletedAt: null }, select: { trustLevel: true } }),
-    prisma.project.findMany({ where: { companyId, deletedAt: null }, select: { trustLevel: true } }),
-    prisma.legalRecord.count({ where: { companyId } }),
-    prisma.financialRecord.count({ where: { companyId } }),
-    prisma.companyComplianceRecord.count({ where: { companyId } }),
+    client.expert.findMany({ where: { companyId, deletedAt: null }, select: { trustLevel: true } }),
+    client.project.findMany({ where: { companyId, deletedAt: null }, select: { trustLevel: true } }),
+    client.legalRecord.count({ where: { companyId } }),
+    client.financialRecord.count({ where: { companyId } }),
+    client.companyComplianceRecord.count({ where: { companyId } }),
   ]);
 
   const reviewedExperts = experts.filter((expert) => expert.trustLevel === "REVIEWED").length;
