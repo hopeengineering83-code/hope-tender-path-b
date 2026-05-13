@@ -49,7 +49,7 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
 
   if (!tender) return null;
 
-  const companyReadiness = await getCompanyIngestionReadiness(company.id);
+  const companyReadiness = await getCompanyIngestionReadiness(company.id, client);
   const blockers: GenerationReadinessItem[] = companyReadiness.blockers.map((message) => ({ code: "COMPANY_INGESTION_NOT_READY", message, nextAction: "OPEN_COMPANY_READINESS" }));
   const warnings: GenerationReadinessItem[] = companyReadiness.warnings.map((message) => ({ code: "COMPANY_INGESTION_WARNING", message, nextAction: "OPEN_COMPANY_READINESS" }));
 
