@@ -15,23 +15,25 @@ type FakeClientOptions = {
   tender?: Record<string, unknown> | null;
 };
 
+const defaultCompany = {
+  id: "company-1",
+  userId: "user-1",
+  legalName: "Hope Urban Planning Architectural and Engineering Consultancy",
+  description: "A multidisciplinary engineering consultancy with tender proposal capability and institutional knowledge.",
+  profileSummary: "Experienced consultancy profile with experts, projects, statutory records, and proposal evidence.",
+  serviceLines: JSON.stringify(["Building", "Road", "Water"]),
+  sectors: JSON.stringify(["Engineering", "Urban planning"]),
+  licenseGrade: "Grade I",
+  setupCompletedAt: new Date("2026-01-01T00:00:00Z"),
+};
+
 function fakeClient(options: FakeClientOptions): PrismaClient {
-  const company = options.company ?? {
-    id: "company-1",
-    userId: "user-1",
-    legalName: "Hope Urban Planning Architectural and Engineering Consultancy",
-    description: "A multidisciplinary engineering consultancy with tender proposal capability and institutional knowledge.",
-    profileSummary: "Experienced consultancy profile with experts, projects, statutory records, and proposal evidence.",
-    serviceLines: JSON.stringify(["Building", "Road", "Water"]),
-    sectors: JSON.stringify(["Engineering", "Urban planning"]),
-    licenseGrade: "Grade I",
-    setupCompletedAt: new Date("2026-01-01T00:00:00Z"),
-  };
+  const company = Object.prototype.hasOwnProperty.call(options, "company") ? options.company : defaultCompany;
 
   return {
     company: {
       findUnique: async () => company,
-      create: async () => company,
+      create: async () => company ?? defaultCompany,
     },
     companyDocument: {
       findMany: async () => options.documents ?? [],
