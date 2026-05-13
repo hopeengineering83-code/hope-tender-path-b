@@ -7,6 +7,7 @@ import { promoteBestAvailableReviewedMatchesForGeneration } from "../../../../..
 import { applyActiveUploadedLetterheadToTenderDocuments } from "../../../../../lib/engine/apply-active-letterhead";
 import { rateLimit, AI_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import { buildSubmissionPlan, findExtraGeneratedDocuments, findMissingGeneratedDocuments, generatedDocumentSubmissionKey, hasExplicitSubmissionScope, plannedSubmissionTargetFiles, plannedSubmissionTargetKeys, type SubmissionPlanFile } from "../../../../../lib/engine/submission-plan";
+import { getCompanyIngestionReadiness } from "../../../../../lib/company-ingestion-readiness";
 import { polishBenchmarkOutput } from "../../../../../lib/engine/benchmark-output-polisher";
 import { cleanTenderTitle, cleanClientName, formatRequirementLine } from "../../../../../lib/engine/proposal-labels";
 import { logAction } from "../../../../../lib/audit";
@@ -159,6 +160,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const { id } = await params;
   const tender = await prisma.tender.findFirst({ where: { id, userId }, include: { requirements: true } });
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
+  const company = await prisma.company.findUnique({ where: { userId }, select: { id: true } });
+  if (!company) return NextResponse.json({ error: "Company profile required before generation." }, { status: 422 });
+  const ingestion = await getCompanyIngestionReadiness(company.id);
+  if (!ingestion.ingestionReady) return NextResponse.json({ error: "Generation blocked: company knowledge ingestion is not ready.", code: "INGESTION_NOT_READY", blockers: ingestion.blockers, totals: ingestion.totals, nextAction: "OPEN_COMPANY_REVIEW" }, { status: 422 });
   if (tender.status === "NO_BID") return NextResponse.json({ error: "Generation blocked: this tender is marked NO_BID. Apply a BID or BID_WITH_CONDITIONS decision before generating proposal documents.", code: "NO_BID_BLOCK" }, { status: 409 });
   if (tender.requirements.length === 0) {
     return NextResponse.json({
@@ -167,6 +172,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       nextAction: "RUN_ENGINE",
     }, { status: 422 });
   }
+  const untracedMandatoryRequirements = tender.requirements.filter((req) => req.priority === "MANDATORY" && ((req.sourceConfidence ?? 0) <= 0));
+  if (untracedMandatoryRequirements.length > 0) return NextResponse.json({ error: `Generation blocked: ${untracedMandatoryRequirements.length} mandatory requirement(s) are not source-grounded yet.`, code: "UNTRACED_MANDATORY_REQUIREMENTS", requirements: untracedMandatoryRequirements.slice(0, 20).map((req) => ({ id: req.id, title: req.title })), nextAction: "RUN_ENGINE_AND_REVIEW_SOURCES" }, { status: 422 });
 
   const submissionPlan = buildSubmissionPlan({ id: tender.id, title: tender.title, exactFileNaming: tender.exactFileNaming, exactFileOrder: tender.exactFileOrder, pageLimit: tender.pageLimit, requirements: tender.requirements });
   const explicitSubmissionScope = hasExplicitSubmissionScope(tender);
