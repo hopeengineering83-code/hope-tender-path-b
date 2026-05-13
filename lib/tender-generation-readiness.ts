@@ -18,9 +18,11 @@ export type TenderGenerationReadiness = {
     unresolvedCriticalGaps: number;
     hardBlockers: number;
     expertMatches: number;
+    reviewedExpertMatches: number;
     selectedExperts: number;
     reviewedSelectedExperts: number;
     projectMatches: number;
+    reviewedProjectMatches: number;
     selectedProjects: number;
     reviewedSelectedProjects: number;
   };
@@ -72,21 +74,27 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
   const projectRequirementExists = tender.requirements.some((req) => req.requirementType === "PROJECT_EXPERIENCE");
   const selectedExperts = tender.expertMatches.filter((match) => match.isSelected);
   const selectedProjects = tender.projectMatches.filter((match) => match.isSelected);
+  const reviewedExpertMatches = tender.expertMatches.filter((match) => match.expert.trustLevel === "REVIEWED");
+  const reviewedProjectMatches = tender.projectMatches.filter((match) => match.project.trustLevel === "REVIEWED");
   const reviewedSelectedExperts = selectedExperts.filter((match) => match.expert.trustLevel === "REVIEWED");
   const reviewedSelectedProjects = selectedProjects.filter((match) => match.project.trustLevel === "REVIEWED");
 
   if (expertRequirementExists && tender.expertMatches.length === 0) {
     blockers.push({ code: "NO_EXPERT_MATCHES_FOUND", message: "Tender requires experts but no expert matches exist yet.", nextAction: "RUN_ENGINE" });
-  } else if (expertRequirementExists && selectedExperts.length === 0) {
-    blockers.push({ code: "NO_EXPERT_MATCHES_SELECTED", message: "Tender requires experts but no expert matches are selected.", nextAction: "REVIEW_MATCHES" });
+  } else if (expertRequirementExists && selectedExperts.length === 0 && reviewedExpertMatches.length === 0) {
+    blockers.push({ code: "NO_REVIEWED_EXPERT_MATCHES", message: "Tender requires experts but no reviewed expert matches are available for selection or auto-promotion.", nextAction: "OPEN_KNOWLEDGE_REVIEW" });
+  } else if (expertRequirementExists && selectedExperts.length === 0 && reviewedExpertMatches.length > 0) {
+    warnings.push({ code: "EXPERT_AUTO_PROMOTION_AVAILABLE", message: `${reviewedExpertMatches.length} reviewed expert match(es) are available and can be auto-selected during generation if no manual selection is made.`, nextAction: "REVIEW_MATCHES" });
   } else if (expertRequirementExists && reviewedSelectedExperts.length === 0) {
     blockers.push({ code: "ALL_EXPERTS_UNREVIEWED", message: "Selected expert matches are unreviewed. Review at least one selected expert before generation.", nextAction: "OPEN_KNOWLEDGE_REVIEW" });
   }
 
   if (projectRequirementExists && tender.projectMatches.length === 0) {
     blockers.push({ code: "NO_PROJECT_MATCHES_FOUND", message: "Tender requires project references but no project matches exist yet.", nextAction: "RUN_ENGINE" });
-  } else if (projectRequirementExists && selectedProjects.length === 0) {
-    blockers.push({ code: "NO_PROJECT_MATCHES_SELECTED", message: "Tender requires project references but no project matches are selected.", nextAction: "REVIEW_MATCHES" });
+  } else if (projectRequirementExists && selectedProjects.length === 0 && reviewedProjectMatches.length === 0) {
+    blockers.push({ code: "NO_REVIEWED_PROJECT_MATCHES", message: "Tender requires project references but no reviewed project matches are available for selection or auto-promotion.", nextAction: "OPEN_KNOWLEDGE_REVIEW" });
+  } else if (projectRequirementExists && selectedProjects.length === 0 && reviewedProjectMatches.length > 0) {
+    warnings.push({ code: "PROJECT_AUTO_PROMOTION_AVAILABLE", message: `${reviewedProjectMatches.length} reviewed project match(es) are available and can be auto-selected during generation if no manual selection is made.`, nextAction: "REVIEW_MATCHES" });
   } else if (projectRequirementExists && reviewedSelectedProjects.length === 0) {
     blockers.push({ code: "ALL_PROJECTS_UNREVIEWED", message: "Selected project matches are unreviewed. Review at least one selected project before generation.", nextAction: "OPEN_KNOWLEDGE_REVIEW" });
   }
@@ -101,9 +109,11 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
       unresolvedCriticalGaps: tender.complianceGaps.filter((gap) => gap.severity === "CRITICAL").length,
       hardBlockers: hardBlocks.length,
       expertMatches: tender.expertMatches.length,
+      reviewedExpertMatches: reviewedExpertMatches.length,
       selectedExperts: selectedExperts.length,
       reviewedSelectedExperts: reviewedSelectedExperts.length,
       projectMatches: tender.projectMatches.length,
+      reviewedProjectMatches: reviewedProjectMatches.length,
       selectedProjects: selectedProjects.length,
       reviewedSelectedProjects: reviewedSelectedProjects.length,
     },
