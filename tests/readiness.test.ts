@@ -57,6 +57,12 @@ function fakeClient(options: FakeClientOptions): PrismaClient {
   } as unknown as PrismaClient;
 }
 
+const usefulDocument = {
+  extractedText: "Usable company profile with reviewed experts and projects for proposal generation readiness across engineering assignments.",
+  aiExtractionStatus: "COMPLETED",
+  aiExtractionError: null,
+};
+
 test("company readiness blocks an empty vault", async () => {
   const report = await getCompanyIngestionReadiness("company-1", fakeClient({ company: null }));
 
@@ -89,15 +95,9 @@ test("company readiness allows a useful company profile and reports review warni
   assert.ok(report.warnings.some((warning) => warning.includes("Project completeness gap")));
 });
 
-test("tender generation readiness blocks missing requirements and missing selected evidence", async () => {
+test("tender generation readiness blocks missing requirements", async () => {
   const readiness = await getTenderGenerationReadiness(fakeClient({
-    documents: [
-      {
-        extractedText: "Usable company profile with reviewed staff and reviewed projects for proposal generation readiness.",
-        aiExtractionStatus: "COMPLETED",
-        aiExtractionError: null,
-      },
-    ],
+    documents: [usefulDocument],
     experts: [{ trustLevel: "REVIEWED" }],
     projects: [{ trustLevel: "REVIEWED" }],
     tender: {
@@ -115,15 +115,60 @@ test("tender generation readiness blocks missing requirements and missing select
   assert.ok(readiness.blockers.some((blocker) => blocker.code === "NO_REQUIREMENTS"));
 });
 
+test("tender generation readiness does not over-block when reviewed matches can auto-promote", async () => {
+  const readiness = await getTenderGenerationReadiness(fakeClient({
+    documents: [usefulDocument],
+    experts: [{ trustLevel: "REVIEWED" }],
+    projects: [{ trustLevel: "REVIEWED" }],
+    tender: {
+      id: "tender-1",
+      status: "ANALYZED",
+      requirements: [
+        { requirementType: "EXPERT" },
+        { requirementType: "PROJECT_EXPERIENCE" },
+      ],
+      complianceGaps: [],
+      expertMatches: [{ isSelected: false, expert: { trustLevel: "REVIEWED", fullName: "Senior Engineer" } }],
+      projectMatches: [{ isSelected: false, project: { trustLevel: "REVIEWED", name: "Relevant Project" } }],
+    },
+  }), "user-1", "tender-1");
+
+  assert.ok(readiness);
+  assert.equal(readiness.ready, true);
+  assert.deepEqual(readiness.blockers, []);
+  assert.equal(readiness.counts.reviewedExpertMatches, 1);
+  assert.equal(readiness.counts.reviewedProjectMatches, 1);
+  assert.ok(readiness.warnings.some((warning) => warning.code === "EXPERT_AUTO_PROMOTION_AVAILABLE"));
+  assert.ok(readiness.warnings.some((warning) => warning.code === "PROJECT_AUTO_PROMOTION_AVAILABLE"));
+});
+
+test("tender generation readiness blocks when only unreviewed selected evidence exists", async () => {
+  const readiness = await getTenderGenerationReadiness(fakeClient({
+    documents: [usefulDocument],
+    experts: [{ trustLevel: "DRAFT" }],
+    projects: [{ trustLevel: "DRAFT" }],
+    tender: {
+      id: "tender-1",
+      status: "ANALYZED",
+      requirements: [
+        { requirementType: "EXPERT" },
+        { requirementType: "PROJECT_EXPERIENCE" },
+      ],
+      complianceGaps: [],
+      expertMatches: [{ isSelected: true, expert: { trustLevel: "DRAFT", fullName: "Draft Expert" } }],
+      projectMatches: [{ isSelected: true, project: { trustLevel: "DRAFT", name: "Draft Project" } }],
+    },
+  }), "user-1", "tender-1");
+
+  assert.ok(readiness);
+  assert.equal(readiness.ready, false);
+  assert.ok(readiness.blockers.some((blocker) => blocker.code === "ALL_EXPERTS_UNREVIEWED"));
+  assert.ok(readiness.blockers.some((blocker) => blocker.code === "ALL_PROJECTS_UNREVIEWED"));
+});
+
 test("tender generation readiness passes when company, requirements, and reviewed selected evidence are present", async () => {
   const readiness = await getTenderGenerationReadiness(fakeClient({
-    documents: [
-      {
-        extractedText: "Usable company profile with reviewed experts and projects for proposal generation readiness across engineering assignments.",
-        aiExtractionStatus: "COMPLETED",
-        aiExtractionError: null,
-      },
-    ],
+    documents: [usefulDocument],
     experts: [{ trustLevel: "REVIEWED" }],
     projects: [{ trustLevel: "REVIEWED" }],
     tender: {
