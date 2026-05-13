@@ -7,6 +7,7 @@ import { buildSubmissionPlan, findExtraGeneratedDocuments, findMissingGeneratedD
 import { safeFileBaseName } from "../../../../../lib/engine/proposal-labels";
 import { checkExportReadiness, checkFullExportReadiness, exportReadinessError } from "../../../../../lib/engine/export-readiness";
 import { computeWinProbability } from "../../../../../lib/engine/win-probability";
+import { getTenderGenerationReadiness } from "../../../../../lib/tender-generation-readiness";
 
 function safeParseArr(v: unknown): string[] {
   try {
@@ -148,12 +149,24 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
       complianceGaps: true,
       generatedDocuments: true,
       exportPackages: true,
-      // Needed for win probability report in ZIP
       expertMatches: { where: { isSelected: true }, include: { expert: { select: { disciplines: true, sectors: true, yearsExperience: true } } } },
       projectMatches: { where: { isSelected: true }, include: { project: { select: { sectors: true, contractValue: true } } } },
     },
   });
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
+
+  if (docId || type === "zip") {
+    const generationReadiness = await getTenderGenerationReadiness(prisma, userId, id);
+    if (!generationReadiness) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
+    if (!generationReadiness.ready) {
+      return NextResponse.json({
+        error: "Final export blocked by generation-readiness blockers",
+        blockers: generationReadiness.blockers,
+        warnings: generationReadiness.warnings,
+        nextAction: "OPEN_GENERATION_READINESS",
+      }, { status: 409 });
+    }
+  }
 
   const blockingGaps = tender.complianceGaps.filter((g) => !g.isResolved && g.severity === "CRITICAL");
   if ((docId || type === "zip") && blockingGaps.length > 0) {
@@ -210,10 +223,6 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
       return NextResponse.json({ error: "ZIP export blocked by final validation", failures: validationFailures }, { status: 409 });
     }
 
-    // PR XX-G4 — ZIP export now also enforces tender-level blockers
-    // (HIGH evaluator objections, pricing leakage). Per-doc check
-    // already passed `validateDocsForExport`; the readiness call adds
-    // the tender-level gate.
     const readiness = await checkFullExportReadiness({
       tenderId: tender.id,
       docs: generatedDocs.map((doc) => ({ ...doc, validationStatus: "VALIDATED" })),
@@ -273,11 +282,6 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
       zip.file(filename, buffer);
     }
 
-    // ── H4: Expert CV DOCX files in a CVs/ sub-folder ─────────────────
-    // Expert CV documents (EXPERT_CV_PACKAGE) are supplementary appendices
-    // that evaluators expect alongside the main proposal. They are NOT part
-    // of the submission plan scope check (which only covers the 6-8 main
-    // proposal files), so we add them separately into a CVs/ folder.
     const cvDocs = tender.generatedDocuments.filter(
       (d) => d.generationStatus === "GENERATED" && d.fileContent &&
              (d.documentType === "EXPERT_CV_PACKAGE" || d.name?.startsWith("CV-")),
@@ -288,9 +292,6 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
       zip.file(`CVs/${cvFilename}`, cvBuffer);
     }
 
-    // ── M6: Win-probability report DOCX ───────────────────────────────
-    // A concise internal report showing the 4-axis win-probability breakdown
-    // so bid managers can reference it during proposal review meetings.
     try {
       const pastOutcomes = await prisma.tender.findMany({
         where: { userId, bidOutcome: { in: ["WON", "LOST"] } },
@@ -355,9 +356,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
       });
       const wpBuffer = await Packer.toBuffer(wpDoc);
       zip.file("Win-Probability-Report.docx", wpBuffer);
-    } catch {
-      // Win probability report failure is non-blocking — the ZIP still exports
-    }
+    } catch {}
 
     const zipBuffer = await zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" });
     const zipName = `${safeFileBaseName(tender.title)}-submission-package.zip`;

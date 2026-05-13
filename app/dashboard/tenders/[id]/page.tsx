@@ -10,6 +10,7 @@ import { ExportReadinessPanel } from "../../../../components/export-readiness-pa
 import { EvaluatorObjectionsPanel } from "../../../../components/evaluator-objections-panel";
 import { PricingWorkbookPanel } from "../../../../components/pricing-workbook-panel";
 import { ProposalEvidenceReadinessPanel } from "../../../../components/proposal-evidence-readiness-panel";
+import { GenerationReadinessPanel } from "../../../../components/generation-readiness-panel";
 
 export default async function TenderPage({ params }: { params: Promise<{ id: string }> }) {
   const userId = await getSession();
@@ -49,6 +50,7 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
   return (
     <>
       <ExecutiveSnapshot tender={tender} />
+      <GenerationReadinessPanel tenderId={tender.id} />
       <TenderIntakeDetailPanel tender={tender} />
       <ProposalEvidenceReadinessPanel tenderId={tender.id} />
       <ExportReadinessPanel tenderId={tender.id} />
