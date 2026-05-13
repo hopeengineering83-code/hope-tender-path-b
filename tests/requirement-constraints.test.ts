@@ -42,4 +42,25 @@ describe("deriveRequirementConstraintProfile", () => {
     const profile = deriveRequirementConstraintProfile(requirements);
     assert.equal(profile.expertCount, 3);
   });
+
+  it("does not trigger strictDomain from generic digital submission wording", () => {
+    const requirements: RequirementDraft[] = [
+      {
+        title: "Submission method",
+        description: "Bidders shall submit via the digital procurement platform before the deadline.",
+        requirementType: "ADMINISTRATIVE",
+        priority: "MANDATORY",
+      },
+      {
+        title: "Eligibility",
+        description: "Provide valid tax clearance and company registration documents.",
+        requirementType: "ELIGIBILITY",
+        priority: "MANDATORY",
+      },
+    ];
+
+    const profile = deriveRequirementConstraintProfile(requirements);
+    assert.equal(profile.domainTags.includes("ict"), true);
+    assert.equal(profile.strictDomain, false);
+  });
 });
