@@ -1,3 +1,14 @@
+function shortDetail(message: string): string {
+  const clean = message.replace(/\s+/g, " ").trim();
+  if (!clean) return "";
+  return clean.length > 220 ? `${clean.slice(0, 217)}...` : clean;
+}
+
+function withDetail(summary: string, message: string): string {
+  const detail = shortDetail(message);
+  return detail ? `${summary} Detail: ${detail}` : summary;
+}
+
 export function actionableEngineError(error: unknown) {
   const message = error instanceof Error ? error.message : String(error || "Engine failed");
   const lower = message.toLowerCase();
@@ -6,7 +17,7 @@ export function actionableEngineError(error: unknown) {
     return {
       status: 504,
       body: {
-        error: "Engine run timed out before completion.",
+        error: withDetail("Engine run timed out before completion.", message),
         code: "ENGINE_TIMEOUT",
         detail: message,
         nextAction: "RETRY_OR_REDUCE_INPUT",
@@ -19,7 +30,7 @@ export function actionableEngineError(error: unknown) {
     return {
       status: 503,
       body: {
-        error: "Engine run failed because the database layer was unavailable or rejected the operation.",
+        error: withDetail("Engine run failed because the database layer was unavailable or rejected the operation.", message),
         code: "ENGINE_DATABASE_ERROR",
         detail: message,
         nextAction: "RETRY_AFTER_DATABASE_CHECK",
@@ -32,7 +43,7 @@ export function actionableEngineError(error: unknown) {
     return {
       status: 404,
       body: {
-        error: "Tender could not be loaded for engine execution.",
+        error: withDetail("Tender could not be loaded for engine execution.", message),
         code: "TENDER_NOT_FOUND",
         detail: message,
         nextAction: "OPEN_TENDER_LIST",
@@ -43,7 +54,7 @@ export function actionableEngineError(error: unknown) {
   return {
     status: 500,
     body: {
-      error: "Engine run failed before completion.",
+      error: withDetail("Engine run failed before completion.", message),
       code: "ENGINE_FAILED",
       detail: message,
       nextAction: "OPEN_EXTRACTION_ANALYSIS_MATCHING_QUALITY",
