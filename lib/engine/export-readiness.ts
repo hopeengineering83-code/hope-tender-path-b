@@ -140,7 +140,7 @@ export function checkExportReadiness(docs: ExportReadyDocument[], opts: { requir
   return { ok: failures.length === 0, failures };
 }
 
-async function checkDocxHygieneReadiness(docs: ExportReadyDocument[]): Promise<ExportReadinessFailure[]> {
+export async function checkDocxHygieneReadiness(docs: ExportReadyDocument[]): Promise<ExportReadinessFailure[]> {
   const failures: ExportReadinessFailure[] = [];
   for (const doc of docs) {
     const fileName = documentFileName(doc);
