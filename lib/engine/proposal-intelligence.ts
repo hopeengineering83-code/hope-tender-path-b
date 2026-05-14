@@ -761,7 +761,9 @@ export function buildProposalIntelligence(params: {
     { label: /Hospitality|Tourism/, keywords: /hotel|hospitality|resort|tourism|lodge/i },
     { label: /Industrial|Manufacturing/, keywords: /factory|industrial|manufacturing|plant|warehouse/i },
     { label: /Renovation|Adaptation/, keywords: /renovation|modification|retrofit|existing|adaptation|interior/i },
-    { label: /Social Advisory|Community/, keywords: /social.*advisor|community.*develop|social.*develop|livelihoods|social.*mobiliz|community.*mobiliz|resettlement.*action|poverty|civil.*society|participatory.*develop/i },
+    // Keywords kept in sync with the inferSector() triggers for "Social Development & Advisory":
+    // social.*develop | advisory.*service | institutional.*strength | capacity.*build | community.*develop
+    { label: /Social Advisory|Community/, keywords: /social.*advisor|advisory.*service|institutional.*strength|capacity.*build|community.*develop|social.*develop|livelihoods|social.*mobiliz|community.*mobiliz|resettlement.*action|poverty|civil.*society|participatory.*develop/i },
     // Narrowed to avoid matching any tender that mentions "design" or "construction"
     { label: /Building Design/, keywords: /architectural.*design|building.*design|construction.*supervision|residential.*develop|commercial.*develop|architectural.*supervision/i },
   ];
