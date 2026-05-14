@@ -5,6 +5,7 @@ import { getTenderGenerationReadiness } from "../lib/tender-generation-readiness
 
 function actionHref(tenderId: string, action?: string): string {
   if (action === "OPEN_COMPANY_READINESS") return "/dashboard/company/readiness";
+  if (action === "OPEN_ANALYSIS_QUALITY") return `/dashboard/tenders/${tenderId}`;
   if (action === "RUN_ENGINE") return `/dashboard/tenders/${tenderId}`;
   if (action === "REVIEW_MATCHES") return `/dashboard/tenders/${tenderId}`;
   if (action === "OPEN_KNOWLEDGE_REVIEW") return "/dashboard/company/review-board";
@@ -15,6 +16,7 @@ function actionHref(tenderId: string, action?: string): string {
 
 function buildActionLabel(action?: string): string {
   if (action === "OPEN_COMPANY_READINESS") return "Open company readiness";
+  if (action === "OPEN_ANALYSIS_QUALITY") return "Open analysis quality";
   if (action === "RUN_ENGINE") return "Run engine";
   if (action === "REVIEW_MATCHES") return "Review matches";
   if (action === "OPEN_KNOWLEDGE_REVIEW") return "Open review board";

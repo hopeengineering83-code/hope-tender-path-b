@@ -27,6 +27,15 @@ const defaultCompany = {
   setupCompletedAt: new Date("2026-01-01T00:00:00Z"),
 };
 
+const goodAnalysisFields = {
+  analysisSummary: "Tender analysis extracted mandatory personnel, project experience, submission, and evaluation requirements.",
+  evaluationMethodology: "Technical score 80 points; personnel and similar experience are evaluated criteria.",
+  notes: "Submission must follow exact file naming and deadline instructions.",
+  intakeSummary: "Submit technical proposal through the stated portal before deadline.",
+  exactFileNaming: JSON.stringify(["Technical-Proposal.docx"]),
+  exactFileOrder: JSON.stringify(["Technical-Proposal.docx"]),
+};
+
 function fakeClient(options: FakeClientOptions): PrismaClient {
   const company = Object.prototype.hasOwnProperty.call(options, "company") ? options.company : defaultCompany;
 
@@ -63,6 +72,22 @@ const usefulDocument = {
   extractedText: "Usable company profile with reviewed experts and projects for proposal generation readiness across engineering assignments.",
   aiExtractionStatus: "COMPLETED",
   aiExtractionError: null,
+};
+
+const expertRequirement = {
+  requirementType: "EXPERT",
+  priority: "MANDATORY",
+  title: "Key expert requirement",
+  description: "Bidder shall propose reviewed senior engineering experts.",
+  sectionReference: "Section 4.1",
+};
+
+const projectRequirement = {
+  requirementType: "PROJECT_EXPERIENCE",
+  priority: "MANDATORY",
+  title: "Similar project requirement",
+  description: "Bidder shall provide similar project references.",
+  sectionReference: "Section 4.2",
 };
 
 test("company readiness blocks an empty vault", async () => {
@@ -125,10 +150,8 @@ test("tender generation readiness does not over-block when reviewed matches can 
     tender: {
       id: "tender-1",
       status: "ANALYZED",
-      requirements: [
-        { requirementType: "EXPERT" },
-        { requirementType: "PROJECT_EXPERIENCE" },
-      ],
+      ...goodAnalysisFields,
+      requirements: [expertRequirement, projectRequirement],
       complianceGaps: [],
       expertMatches: [{ isSelected: false, expert: { trustLevel: "REVIEWED", fullName: "Senior Engineer" } }],
       projectMatches: [{ isSelected: false, project: { trustLevel: "REVIEWED", name: "Relevant Project" } }],
@@ -152,10 +175,8 @@ test("tender generation readiness blocks when only unreviewed selected evidence 
     tender: {
       id: "tender-1",
       status: "ANALYZED",
-      requirements: [
-        { requirementType: "EXPERT" },
-        { requirementType: "PROJECT_EXPERIENCE" },
-      ],
+      ...goodAnalysisFields,
+      requirements: [expertRequirement, projectRequirement],
       complianceGaps: [],
       expertMatches: [{ isSelected: true, expert: { trustLevel: "DRAFT", fullName: "Draft Expert" } }],
       projectMatches: [{ isSelected: true, project: { trustLevel: "DRAFT", name: "Draft Project" } }],
@@ -176,10 +197,8 @@ test("tender generation readiness passes when company, requirements, and reviewe
     tender: {
       id: "tender-1",
       status: "ANALYZED",
-      requirements: [
-        { requirementType: "EXPERT" },
-        { requirementType: "PROJECT_EXPERIENCE" },
-      ],
+      ...goodAnalysisFields,
+      requirements: [expertRequirement, projectRequirement],
       complianceGaps: [],
       expertMatches: [{ isSelected: true, expert: { trustLevel: "REVIEWED", fullName: "Senior Engineer" } }],
       projectMatches: [{ isSelected: true, project: { trustLevel: "REVIEWED", name: "Relevant Project" } }],
