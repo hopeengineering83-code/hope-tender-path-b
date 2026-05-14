@@ -364,9 +364,15 @@ export async function generateWithFallback(prompt: string, opts?: { systemPrompt
       return null;
     });
     if (openAiResult) return openAiResult;
-    // Re-throw the real Gemini error when OpenAI is not configured or also failed,
-    // so operators get the actionable cause rather than the generic "no provider" message.
-    if (geminiError && !isOpenAIEnabled()) throw geminiError;
+    // Always surface Gemini error when it was the root cause — even in
+    // mixed deployments where OpenAI is configured but also returned null.
+    if (geminiError) {
+      const geminiMsg = geminiError instanceof Error ? geminiError.message : String(geminiError);
+      const openAiNote = isOpenAIEnabled()
+        ? ` OpenAI (${process.env.OPENAI_PROPOSAL_MODEL ?? "gpt-4o"}) also returned null — check OPENAI_API_KEY.`
+        : "";
+      throw new Error(`Claude returned empty on all models; Gemini also failed: ${geminiMsg}.${openAiNote}`);
+    }
     const providerNote = isOpenAIEnabled()
       ? `OpenAI (${process.env.OPENAI_PROPOSAL_MODEL ?? "gpt-4o"}) also returned null (rate limit or transient error).`
       : "Neither GEMINI_API_KEY nor OPENAI_API_KEY is set.";
@@ -389,6 +395,8 @@ export async function generateWithFallback(prompt: string, opts?: { systemPrompt
       return null;
     });
     if (openAiResult) return openAiResult;
+    // If Gemini was the root cause, surface it rather than blaming OpenAI
+    if (geminiError) throw geminiError;
     throw new Error(`OpenAI (${process.env.OPENAI_PROPOSAL_MODEL ?? "gpt-4o"}) is configured but did not return a result. Check OPENAI_API_KEY and model access on your account.`);
   }
   // Gemini was configured but threw — surface the real error, not "no provider configured"
