@@ -754,13 +754,15 @@ export function buildProposalIntelligence(params: {
     { label: /Water/, keywords: /water|borehole|pump|hydraulic|irrigation|WASH|sanitation|wastewater|sewer|drainage|hydrogeo/i },
     { label: /Road|Bridge|Transport/, keywords: /road|bridge|highway|pavement|transport|drainage|culvert|alignment|corridor/i },
     { label: /Urban|Master Plan/, keywords: /urban|master plan|municipal|spatial.*plan|land.?use|zoning|\bGIS\b|eco.?park|city/i },
-    { label: /Education/, keywords: /school|university|campus|education|classroom|library|lab/i },
+    { label: /Education/, keywords: /school|university|campus|education|classroom|library|\blab\b/i },
     { label: /Environmental|Social.*Impact/, keywords: /ESIA|ESMP|environmental|social.*safeguard|resettlement|biodiversity|impact.*assess/i },
     { label: /ICT|Digital/, keywords: /\bICT\b|software|digital|\bMIS\b|\bERP\b|database|web|\bapp\b|cloud|server|network/i },
     { label: /Geotechnical|Structural/, keywords: /geotechnical|soil|foundation|seismic|borehole|drilling|structural/i },
     { label: /Hospitality|Tourism/, keywords: /hotel|hospitality|resort|tourism|lodge/i },
-    { label: /Industrial|Manufacturing/, keywords: /factory|industrial|manufacturing|plant|warehouse/i },
-    { label: /Renovation|Adaptation/, keywords: /renovation|modification|retrofit|existing|adaptation|interior/i },
+    // "plant" removed — matches "water treatment plant", "pumping plant" in unrelated sectors
+    { label: /Industrial|Manufacturing/, keywords: /factory|industrial|manufacturing|warehouse/i },
+    // "existing" and "interior" narrowed — bare forms match almost every tender
+    { label: /Renovation|Adaptation/, keywords: /renovation|modification|retrofit|existing\s+(?:building|facilit|struct)|adaptation|interior\s+(?:renovati|remodel|refurb)/i },
     // Keywords kept in sync with the inferSector() triggers for "Social Development & Advisory":
     // social.*develop | advisory.*service | institutional.*strength | capacity.*build | community.*develop
     { label: /Social Advisory|Community/, keywords: /social.*advisor|advisory.*service|institutional.*strength|capacity.*build|community.*develop|social.*develop|livelihoods|social.*mobiliz|community.*mobiliz|resettlement.*action|poverty|civil.*society|participatory.*develop/i },
