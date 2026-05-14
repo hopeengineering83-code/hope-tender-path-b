@@ -761,7 +761,9 @@ export function buildProposalIntelligence(params: {
     { label: /Hospitality|Tourism/, keywords: /hotel|hospitality|resort|tourism|lodge/i },
     { label: /Industrial|Manufacturing/, keywords: /factory|industrial|manufacturing|plant|warehouse/i },
     { label: /Renovation|Adaptation/, keywords: /renovation|modification|retrofit|existing|adaptation|interior/i },
-    { label: /Building Design/, keywords: /architecture|building|design|construction|residential|commercial|interior/i },
+    { label: /Social Advisory|Community/, keywords: /social.*advisor|community.*develop|social.*develop|livelihoods|social.*mobiliz|community.*mobiliz|resettlement.*action|poverty|civil.*society|participatory.*develop/i },
+    // Narrowed to avoid matching any tender that mentions "design" or "construction"
+    { label: /Building Design/, keywords: /architectural.*design|building.*design|construction.*supervision|residential.*develop|commercial.*develop|architectural.*supervision/i },
   ];
   const detectedSector = inferSector(tenderText);
   // Multi-sector fix: collect ALL sector keyword sets triggered by the tender

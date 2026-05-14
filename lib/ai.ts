@@ -86,7 +86,7 @@ export function isClaudeEnabled() {
 // (e.g., generate-elite.ts) so the GeneratedDocument.contentSummary can
 // surface which provider was actually used (rather than a generic "AI"
 // label). Reset to null whenever a generation request fails entirely.
-type AIProvider = "claude" | "gemini" | null;
+type AIProvider = "claude" | "gemini" | "openai" | null;
 let lastProposalProvider: AIProvider = null;
 
 export function getLastProposalProvider(): AIProvider {
@@ -349,10 +349,19 @@ export async function generateWithFallback(prompt: string, opts?: { systemPrompt
     if (claudeResult) return claudeResult;
     // Claude returned null (all models failed) — try Gemini if available.
     if (apiKey) return generate(prompt, opts?.geminiModel);
-    throw new Error(`Claude returned empty / 404 / rate-limited on all models in chain (${CLAUDE_PROPOSAL_MODELS.join(", ")}) and GEMINI_API_KEY is not set. If ANTHROPIC_PROPOSAL_MODELS is set, model IDs must be lowercase with dashes (e.g. "claude-sonnet-4-5").`);
+    // Claude + no Gemini — try OpenAI before giving up
+    const openAiResult = await generateWithOpenAI(prompt, opts?.systemPrompt).catch(() => null);
+    if (openAiResult) return openAiResult;
+    throw new Error(`Claude returned empty / 404 / rate-limited on all models in chain (${CLAUDE_PROPOSAL_MODELS.join(", ")}) and neither GEMINI_API_KEY nor OPENAI_API_KEY is set. If ANTHROPIC_PROPOSAL_MODELS is set, model IDs must be lowercase with dashes (e.g. "claude-sonnet-4-5").`);
   }
   if (apiKey) return generate(prompt, opts?.geminiModel);
-  throw new Error("No AI provider configured — set ANTHROPIC_API_KEY (preferred) or GEMINI_API_KEY.");
+  // Neither Claude nor Gemini — try OpenAI as final fallback
+  if (isOpenAIEnabled()) {
+    const openAiResult = await generateWithOpenAI(prompt, opts?.systemPrompt).catch(() => null);
+    if (openAiResult) return openAiResult;
+    throw new Error(`OpenAI (${process.env.OPENAI_PROPOSAL_MODEL ?? "gpt-4o"}) is configured but did not return a result. Check OPENAI_API_KEY and model access on your account.`);
+  }
+  throw new Error("No AI provider configured — set ANTHROPIC_API_KEY (preferred), GEMINI_API_KEY, or OPENAI_API_KEY.");
 }
 
 // ─── OpenAI (GPT-4o) provider ──────────────────────────────────────────────────
@@ -994,18 +1003,26 @@ ${input.currentMarkdown}
       }
     }
     if (apiKey) {
-      const geminiResult = await withRefinementTimeout(generateWithBestModel(prompt));
-      lastProposalProvider = "gemini";
-      return geminiResult;
+      try {
+        const geminiResult = await withRefinementTimeout(generateWithBestModel(prompt));
+        lastProposalProvider = "gemini";
+        return geminiResult;
+      } catch (geminiErr) {
+        console.warn(`[ai] refineProposalWithAI Gemini failed: ${geminiErr instanceof Error ? geminiErr.message : String(geminiErr)} — trying OpenAI.`);
+      }
     }
     // OpenAI as third refinement fallback
     if (isOpenAIEnabled()) {
-      const openAiResult = await withRefinementTimeout(
-        generateWithOpenAI(prompt, REFINEMENT_SYSTEM_PROMPT).then((r) => r ?? Promise.reject(new Error("OpenAI returned null"))),
-      );
-      if (openAiResult) {
-        lastProposalProvider = "gemini";
-        return openAiResult;
+      try {
+        const openAiResult = await withRefinementTimeout(
+          generateWithOpenAI(prompt, REFINEMENT_SYSTEM_PROMPT).then((r) => r ?? Promise.reject(new Error("OpenAI returned null"))),
+        );
+        if (openAiResult) {
+          lastProposalProvider = "openai";
+          return openAiResult;
+        }
+      } catch (openAiErr) {
+        console.warn(`[ai] refineProposalWithAI OpenAI failed: ${openAiErr instanceof Error ? openAiErr.message : String(openAiErr)}`);
       }
     }
   } catch (err) {
@@ -1579,7 +1596,10 @@ Now write the complete technical proposal. Start with the Cover Letter. The eval
   // set seeing the "No AI provider configured" message and assuming the
   // key wasn't loaded — when in fact the model name was wrong.
   if (anthropicApiKey && !apiKey) {
-    throw new Error(`Claude (Anthropic) is configured but did not produce a proposal: ${claudeError ?? "unknown error"}. Set GEMINI_API_KEY as a fallback, OR fix the Claude model chain.`);
+    throw new Error(`Claude (Anthropic) is configured but did not produce a proposal: ${claudeError ?? "unknown error"}. Set GEMINI_API_KEY or OPENAI_API_KEY as a fallback, OR fix the Claude model chain.`);
+  }
+  if (!anthropicApiKey && !apiKey && isOpenAIEnabled()) {
+    throw new Error(`OpenAI (${process.env.OPENAI_PROPOSAL_MODEL ?? "gpt-4o"}) is configured but did not produce a proposal. Check that OPENAI_API_KEY is valid and the model is accessible on your account.`);
   }
   if (!anthropicApiKey && !apiKey) {
     throw new Error("No AI provider configured — set ANTHROPIC_API_KEY (preferred), GEMINI_API_KEY, or OPENAI_API_KEY in environment variables.");

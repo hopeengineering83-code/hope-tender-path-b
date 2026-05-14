@@ -472,7 +472,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     // Minimum content guard: require at least 800 chars and two markdown headings
     // before saving as GENERATED — prevents thin AI responses (apologies, refusals,
     // timeouts that returned partial content) from being recorded as valid drafts.
-    const isSubstantial = proposal.length >= 800 && (proposal.match(/^#{1,3}\s/m) ?? []).length >= 2;
+    const isSubstantial = proposal.length >= 800 && (proposal.match(/^#{1,3}\s/gm) ?? []).length >= 2;
     if (!fallback && isSubstantial && (chunkNum === undefined || chunkNum === 3)) {
       try {
         await prisma.generatedDocument.create({
