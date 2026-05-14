@@ -9,6 +9,60 @@ import { assessExtractionQuality } from "../../../../../lib/extraction-quality";
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
 
+function actionableEngineError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error || "Engine failed");
+  const lower = message.toLowerCase();
+
+  if (/timeout|timed out|abort/i.test(message)) {
+    return {
+      status: 504,
+      body: {
+        error: "Engine run timed out before completion.",
+        code: "ENGINE_TIMEOUT",
+        detail: message,
+        nextAction: "RETRY_OR_REDUCE_INPUT",
+        hint: "Retry after confirming extraction quality. For very large tenders, reduce duplicate uploads or run AI Analyze first, then Run Engine.",
+      },
+    };
+  }
+
+  if (/database|prisma|connection|prepared statement|transaction/i.test(message)) {
+    return {
+      status: 503,
+      body: {
+        error: "Engine run failed because the database layer was unavailable or rejected the operation.",
+        code: "ENGINE_DATABASE_ERROR",
+        detail: message,
+        nextAction: "RETRY_AFTER_DATABASE_CHECK",
+        hint: "Check DATABASE_URL/Vercel database availability, then retry. If this repeats, open the latest server log for the failed request.",
+      },
+    };
+  }
+
+  if (lower.includes("no tender") || lower.includes("tender not found")) {
+    return {
+      status: 404,
+      body: {
+        error: "Tender could not be loaded for engine execution.",
+        code: "TENDER_NOT_FOUND",
+        detail: message,
+        nextAction: "OPEN_TENDER_LIST",
+      },
+    };
+  }
+
+  return {
+    status: 500,
+    body: {
+      error: "Engine run failed before completion.",
+      code: "ENGINE_FAILED",
+      detail: message,
+      nextAction: "OPEN_EXTRACTION_ANALYSIS_MATCHING_QUALITY",
+      hint: "Review Extraction Quality, Analysis Quality, and Matching Quality panels. The original server error is included in detail.",
+    },
+  };
+}
+
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const userId = await getSession();
   if (!userId) {
@@ -24,7 +78,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       where: { id, userId },
       include: { files: { select: { id: true, originalFileName: true, fileName: true, extractedText: true } } },
     });
-    if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
+    if (!tender) return NextResponse.json({ error: "Tender not found", code: "TENDER_NOT_FOUND" }, { status: 404 });
+
+    if (tender.files.length === 0) {
+      return NextResponse.json({
+        error: "Engine run blocked: no tender file is uploaded.",
+        code: "NO_TENDER_FILES",
+        nextAction: "UPLOAD_TENDER_DOCUMENT",
+        hint: "Upload the tender/RFP document first, then run AI Analyze or Run Engine.",
+      }, { status: 422 });
+    }
 
     const extractionReports = tender.files.map((file) => ({
       fileName: file.originalFileName || file.fileName,
@@ -45,6 +108,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     return NextResponse.json({ success: true, tender: result, extractionWarnings: extractionReports.filter((item) => item.quality.severity === "WARNING") });
   } catch (error) {
     console.error("Engine run failed:", error);
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Engine failed" }, { status: 500 });
+    const mapped = actionableEngineError(error);
+    return NextResponse.json(mapped.body, { status: mapped.status });
   }
 }
