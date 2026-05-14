@@ -743,21 +743,40 @@ export function buildProposalIntelligence(params: {
   // contract value wins". The benchmark gap analysis showed exactly
   // this on the Pharo tender — Warehouse & Landscaping was anchoring
   // the cover letter for a hospital bid.
+  //
+  // Multi-sector fix: tenders can trigger multiple sectors simultaneously
+  // (e.g., "hospital water supply" = Healthcare + Water). We now detect
+  // ALL matching sectors and include a project when it matches ANY of
+  // them. Previously inferSector() returned only the first matching
+  // sector, silently excluding multi-sector-relevant projects.
+  const SECTOR_PATTERNS: Array<{ label: RegExp; keywords: RegExp }> = [
+    { label: /Healthcare/, keywords: /health|hospital|medical|clinic|patient|specialty.*cent|pharma|biomedical|MoH|emergency|outpatient|in-?patient|imaging|laboratory/i },
+    { label: /Water/, keywords: /water|borehole|pump|hydraulic|irrigation|WASH|sanitation|wastewater|sewer|drainage|hydrogeo/i },
+    { label: /Road|Bridge|Transport/, keywords: /road|bridge|highway|pavement|transport|drainage|culvert|alignment|corridor/i },
+    { label: /Urban|Master Plan/, keywords: /urban|master plan|municipal|spatial.*plan|land.?use|zoning|GIS|eco.?park|city/i },
+    { label: /Education/, keywords: /school|university|campus|education|classroom|library|lab/i },
+    { label: /Environmental|Social.*Impact/, keywords: /ESIA|ESMP|environmental|social.*safeguard|resettlement|biodiversity|impact.*assess/i },
+    { label: /ICT|Digital/, keywords: /ICT|software|digital|MIS|ERP|database|web|app|cloud|server|network/i },
+    { label: /Geotechnical|Structural/, keywords: /geotechnical|soil|foundation|seismic|borehole|drilling|structural/i },
+    { label: /Hospitality|Tourism/, keywords: /hotel|hospitality|resort|tourism|lodge/i },
+    { label: /Industrial|Manufacturing/, keywords: /factory|industrial|manufacturing|plant|warehouse/i },
+    { label: /Renovation|Adaptation/, keywords: /renovation|modification|retrofit|existing|adaptation|interior/i },
+    { label: /Building Design/, keywords: /architecture|building|design|construction|residential|commercial|interior/i },
+  ];
   const detectedSector = inferSector(tenderText);
+  // Multi-sector fix: collect ALL sector keyword sets triggered by the tender
+  // text. A hospital-water project, for example, triggers both the Healthcare
+  // and Water keyword sets. When the tender also mentions water supply (e.g.,
+  // "hospital with borehole water system"), a water-supply project correctly
+  // passes the filter because it matches the Water set — even though the
+  // PRIMARY sector is Healthcare. Previously inferSector() returned only one
+  // sector, silently excluding cross-sector relevant projects.
+  const activeTenderKeywords = SECTOR_PATTERNS.filter(({ keywords }) => keywords.test(tenderText)).map(({ keywords }) => keywords);
+
   const sectorFilter = (text: string): boolean => {
     if (detectedSector === "General Consultancy / Engineering") return true; // no filter
-    if (/Healthcare/.test(detectedSector)) return /health|hospital|medical|clinic|patient|specialty.*cent|pharma|biomedical|MoH|emergency|outpatient|in-?patient|imaging|laboratory/i.test(text);
-    if (/Water/.test(detectedSector)) return /water|borehole|pump|hydraulic|irrigation|WASH|sanitation|wastewater|sewer|drainage|hydrogeo/i.test(text);
-    if (/Road|Bridge|Transport/.test(detectedSector)) return /road|bridge|highway|pavement|transport|drainage|culvert|alignment|corridor/i.test(text);
-    if (/Urban|Master Plan/.test(detectedSector)) return /urban|master plan|municipal|spatial.*plan|land.?use|zoning|GIS|eco.?park|city/i.test(text);
-    if (/Education/.test(detectedSector)) return /school|university|campus|education|classroom|library|lab/i.test(text);
-    if (/Environmental|Social.*Impact/.test(detectedSector)) return /ESIA|ESMP|environmental|social.*safeguard|resettlement|biodiversity|impact.*assess/i.test(text);
-    if (/ICT|Digital/.test(detectedSector)) return /ICT|software|digital|MIS|ERP|database|web|app|cloud|server|network/i.test(text);
-    if (/Geotechnical|Structural/.test(detectedSector)) return /geotechnical|soil|foundation|seismic|borehole|drilling|structural/i.test(text);
-    if (/Hospitality|Tourism/.test(detectedSector)) return /hotel|hospitality|resort|tourism|lodge/i.test(text);
-    if (/Industrial|Manufacturing/.test(detectedSector)) return /factory|industrial|manufacturing|plant|warehouse/i.test(text);
-    if (/Renovation|Adaptation/.test(detectedSector)) return /renovation|modification|retrofit|existing|adaptation|interior/i.test(text);
-    if (/Building Design/.test(detectedSector)) return /architecture|building|design|construction|residential|commercial|interior/i.test(text);
+    // Multi-sector: pass if the item matches ANY sector keyword set active in the tender
+    if (activeTenderKeywords.length > 0) return activeTenderKeywords.some((kw) => kw.test(text));
     return true;
   };
 

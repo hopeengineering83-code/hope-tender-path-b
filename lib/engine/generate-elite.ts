@@ -941,33 +941,45 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
         trustLevel: p.trustLevel ?? null,
       }));
 
-      const rematchPair = Promise.all([
-        expertCandidates.length > 0 ? aiRematchExperts({
-          tenderTitle: cleanedTenderTitle,
-          tenderRequirementsText,
-          evaluationMethodology: intelligence.evaluationCriteria.join("; ") || "—",
-          candidates: expertCandidates,
-        }) : Promise.resolve(null),
-        projectCandidates.length > 0 ? aiRematchProjects({
-          tenderTitle: cleanedTenderTitle,
-          tenderRequirementsText,
-          tenderCategory: tender.category ?? null,
-          candidates: projectCandidates,
-        }) : Promise.resolve(null),
-      ]);
+      // Race condition fix: track individual batch results as boxed objects so
+      // TypeScript CFA can track the side-effect mutations across await points.
+      // Previously Promise.all([expert, project]) only resolved when BOTH
+      // finished — losing the faster result if the budget guard fired first.
+      const batchHolder = { expert: null as Awaited<ReturnType<typeof aiRematchExperts>>, project: null as Awaited<ReturnType<typeof aiRematchProjects>> };
+
+      const expertRematch = expertCandidates.length > 0
+        ? aiRematchExperts({
+            tenderTitle: cleanedTenderTitle,
+            tenderRequirementsText,
+            evaluationMethodology: intelligence.evaluationCriteria.join("; ") || "—",
+            candidates: expertCandidates,
+          }).then((r) => { batchHolder.expert = r; return r; })
+        : Promise.resolve(null);
+
+      const projectRematch = projectCandidates.length > 0
+        ? aiRematchProjects({
+            tenderTitle: cleanedTenderTitle,
+            tenderRequirementsText,
+            tenderCategory: tender.category ?? null,
+            candidates: projectCandidates,
+          }).then((r) => { batchHolder.project = r; return r; })
+        : Promise.resolve(null);
+
       const budgetGuard = new Promise<null>((resolve) =>
         setTimeout(() => resolve(null), AUTO_REMATCH_BUDGET_MS)
       );
-      // If the budget elapses before either AI call returns, we get
-      // null and skip the re-rank entirely (lexical order kept).
-      const raceResult = await Promise.race([rematchPair, budgetGuard]);
-      if (raceResult === null) {
+      // Wait for both batches OR the budget guard — whichever settles first.
+      // If the budget guard fires, batchHolder still contains any batch that
+      // already resolved via the .then() side effects above.
+      await Promise.race([Promise.all([expertRematch, projectRematch]), budgetGuard]);
+      if (batchHolder.expert === null && batchHolder.project === null) {
         console.warn(`[generate-elite] AI multi-perspective re-rank skipped — exceeded ${AUTO_REMATCH_BUDGET_MS}ms auto-budget. Lexical order kept.`);
       }
-      const [expertBatch, projectBatch] = raceResult ?? [null, null];
 
       // Re-sort experts/projects by AI overall score. Candidates without
       // an assessment fall back to their original lexical position.
+      const expertBatch = batchHolder.expert;
+      const projectBatch = batchHolder.project;
       if (expertBatch?.assessments?.length) {
         const scoreMap = new Map<string, number>();
         for (const a of expertBatch.assessments) scoreMap.set(a.candidateId, a.overallScore);
