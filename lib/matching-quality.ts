@@ -19,6 +19,8 @@ export type MatchingQualityReport = {
   projectRequirementExists: boolean;
   expertMatches: number;
   projectMatches: number;
+  reviewedExpertMatches: number;
+  reviewedProjectMatches: number;
   selectedExperts: number;
   selectedProjects: number;
   reviewedSelectedExperts: number;
@@ -28,6 +30,10 @@ export type MatchingQualityReport = {
   warnings: string[];
   recommendations: string[];
 };
+
+function hasNumericScore(value: number | null | undefined): boolean {
+  return value !== null && value !== undefined && Number.isFinite(Number(value));
+}
 
 function numericScore(value: number | null | undefined): number {
   const n = Number(value ?? 0);
@@ -44,10 +50,14 @@ export function assessMatchingQuality(params: {
   const projectRequirementExists = params.requirements.some((req) => req.requirementType === "PROJECT_EXPERIENCE");
   const selectedExperts = params.expertMatches.filter((match) => Boolean(match.isSelected));
   const selectedProjects = params.projectMatches.filter((match) => Boolean(match.isSelected));
+  const reviewedExpertMatches = params.expertMatches.filter((match) => match.expert?.trustLevel === "REVIEWED");
+  const reviewedProjectMatches = params.projectMatches.filter((match) => match.project?.trustLevel === "REVIEWED");
   const reviewedSelectedExperts = selectedExperts.filter((match) => match.expert?.trustLevel === "REVIEWED");
   const reviewedSelectedProjects = selectedProjects.filter((match) => match.project?.trustLevel === "REVIEWED");
-  const highConfidenceExpertMatches = params.expertMatches.filter((match) => numericScore(match.score) >= 0.7).length;
-  const highConfidenceProjectMatches = params.projectMatches.filter((match) => numericScore(match.score) >= 0.7).length;
+  const scoredExpertMatches = params.expertMatches.filter((match) => hasNumericScore(match.score));
+  const scoredProjectMatches = params.projectMatches.filter((match) => hasNumericScore(match.score));
+  const highConfidenceExpertMatches = scoredExpertMatches.filter((match) => numericScore(match.score) >= 0.7).length;
+  const highConfidenceProjectMatches = scoredProjectMatches.filter((match) => numericScore(match.score) >= 0.7).length;
 
   const warnings: string[] = [];
   const recommendations: string[] = [];
@@ -63,15 +73,23 @@ export function assessMatchingQuality(params: {
     recommendations.push("Run the engine after reviewing/importing project references.");
     score -= 35;
   }
-  if (expertRequirementExists && selectedExperts.length === 0) {
-    warnings.push("Tender requires experts but no expert match is selected.");
-    recommendations.push("Select reviewed expert matches or let generation auto-promote reviewed matches when available.");
+  if (expertRequirementExists && selectedExperts.length === 0 && reviewedExpertMatches.length === 0) {
+    warnings.push("Tender requires experts but no reviewed expert match is selected or available for auto-promotion.");
+    recommendations.push("Review/import expert CV evidence, then run matching again.");
     score -= 20;
+  } else if (expertRequirementExists && selectedExperts.length === 0 && reviewedExpertMatches.length > 0) {
+    warnings.push("No expert match is manually selected, but reviewed expert matches are available for generation auto-promotion.");
+    recommendations.push("Review matches manually for best quality, or allow generation to auto-promote reviewed matches.");
+    score -= 5;
   }
-  if (projectRequirementExists && selectedProjects.length === 0) {
-    warnings.push("Tender requires project references but no project match is selected.");
-    recommendations.push("Select reviewed project matches or let generation auto-promote reviewed matches when available.");
+  if (projectRequirementExists && selectedProjects.length === 0 && reviewedProjectMatches.length === 0) {
+    warnings.push("Tender requires project references but no reviewed project match is selected or available for auto-promotion.");
+    recommendations.push("Review/import project evidence, then run matching again.");
     score -= 20;
+  } else if (projectRequirementExists && selectedProjects.length === 0 && reviewedProjectMatches.length > 0) {
+    warnings.push("No project match is manually selected, but reviewed project matches are available for generation auto-promotion.");
+    recommendations.push("Review matches manually for best quality, or allow generation to auto-promote reviewed matches.");
+    score -= 5;
   }
   if (selectedExperts.length > 0 && reviewedSelectedExperts.length === 0) {
     warnings.push("Selected expert matches are not reviewed.");
@@ -83,12 +101,12 @@ export function assessMatchingQuality(params: {
     recommendations.push("Review selected projects before generation to prevent draft/unverified project evidence from entering proposals.");
     score -= 25;
   }
-  if (expertRequirementExists && highConfidenceExpertMatches === 0 && params.expertMatches.length > 0) {
+  if (expertRequirementExists && scoredExpertMatches.length > 0 && highConfidenceExpertMatches === 0) {
     warnings.push("Expert matches exist, but none are high-confidence (≥70%).");
     recommendations.push("Check whether tender discipline/role requirements were extracted correctly or import stronger CV evidence.");
     score -= 15;
   }
-  if (projectRequirementExists && highConfidenceProjectMatches === 0 && params.projectMatches.length > 0) {
+  if (projectRequirementExists && scoredProjectMatches.length > 0 && highConfidenceProjectMatches === 0) {
     warnings.push("Project matches exist, but none are high-confidence (≥70%).");
     recommendations.push("Check whether tender sector/scope requirements were extracted correctly or import stronger project evidence.");
     score -= 15;
@@ -105,6 +123,8 @@ export function assessMatchingQuality(params: {
     projectRequirementExists,
     expertMatches: params.expertMatches.length,
     projectMatches: params.projectMatches.length,
+    reviewedExpertMatches: reviewedExpertMatches.length,
+    reviewedProjectMatches: reviewedProjectMatches.length,
     selectedExperts: selectedExperts.length,
     selectedProjects: selectedProjects.length,
     reviewedSelectedExperts: reviewedSelectedExperts.length,
