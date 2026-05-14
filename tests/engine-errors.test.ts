@@ -8,6 +8,7 @@ describe("actionableEngineError", () => {
     assert.equal(mapped.status, 504);
     assert.equal(mapped.body.code, "ENGINE_TIMEOUT");
     assert.equal(mapped.body.nextAction, "RETRY_OR_REDUCE_INPUT");
+    assert.ok(mapped.body.error.includes("operation timed out after 60s"));
   });
 
   it("maps database/runtime failures to ENGINE_DATABASE_ERROR", () => {
@@ -15,6 +16,7 @@ describe("actionableEngineError", () => {
     assert.equal(mapped.status, 503);
     assert.equal(mapped.body.code, "ENGINE_DATABASE_ERROR");
     assert.equal(mapped.body.nextAction, "RETRY_AFTER_DATABASE_CHECK");
+    assert.ok(mapped.body.error.includes("Prisma connection failed"));
   });
 
   it("maps missing tender failures to TENDER_NOT_FOUND", () => {
@@ -30,5 +32,14 @@ describe("actionableEngineError", () => {
     assert.equal(mapped.body.code, "ENGINE_FAILED");
     assert.equal(mapped.body.detail, "unexpected parser issue");
     assert.equal(mapped.body.nextAction, "OPEN_EXTRACTION_ANALYSIS_MATCHING_QUALITY");
+    assert.ok(mapped.body.error.includes("unexpected parser issue"));
+  });
+
+  it("truncates very long details in the user-facing error", () => {
+    const longMessage = `unexpected ${"x".repeat(400)}`;
+    const mapped = actionableEngineError(new Error(longMessage));
+    assert.equal(mapped.body.detail, longMessage);
+    assert.ok(mapped.body.error.length < longMessage.length);
+    assert.ok(mapped.body.error.endsWith("..."));
   });
 });
