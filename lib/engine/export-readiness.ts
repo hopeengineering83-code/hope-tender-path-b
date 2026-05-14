@@ -4,6 +4,7 @@ export type ExportReadyDocument = {
   id: string;
   name: string;
   exactFileName: string | null;
+  exactOrder?: number | null;
   generationStatus: string;
   validationStatus: string;
   reviewStatus: string;
@@ -32,6 +33,32 @@ function generatedFileName(name: string): string {
   return `${name.replace(/[^a-zA-Z0-9]/g, "-")}.docx`;
 }
 
+function normalizeFileName(value: string | null | undefined): string {
+  return (value ?? "").trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+function looksLikeRequiredOutputFile(value: string): boolean {
+  const clean = value.trim();
+  if (clean.length < 4 || clean.length > 180) return false;
+  return /\.(docx?|pdf|xlsx?|zip)$/i.test(clean) || /\b(technical|financial|proposal|annex|form|bid|quotation|eoi|rfp|rfq|declaration|rate card|cv|cover letter)\b/i.test(clean);
+}
+
+function parseRequiredFileList(value: string | null | undefined): string[] {
+  if (!value) return [];
+  let raw: string[] = [];
+  try {
+    const parsed = JSON.parse(value);
+    if (Array.isArray(parsed)) raw = parsed.map(String);
+  } catch {
+    raw = value.split(/\n|,/).map((item) => item.trim());
+  }
+  return Array.from(new Set(raw.map((item) => item.trim()).filter(Boolean).filter(looksLikeRequiredOutputFile)));
+}
+
+function documentFileName(doc: ExportReadyDocument): string {
+  return doc.exactFileName ?? generatedFileName(doc.name);
+}
+
 export function isReadyForFinalExport(doc: ExportReadyDocument): boolean {
   return doc.generationStatus === "GENERATED" && doc.validationStatus === "VALIDATED" && doc.reviewStatus === "READY_FOR_EXPORT";
 }
@@ -50,7 +77,7 @@ export function checkExportReadiness(docs: ExportReadyDocument[], opts: { requir
       failures.push({
         documentId: doc.id,
         name: doc.name,
-        fileName: doc.exactFileName ?? generatedFileName(doc.name),
+        fileName: documentFileName(doc),
         reasons,
       });
     }
@@ -89,9 +116,46 @@ export function exportReadinessError(failures: ExportReadinessFailure[], tenderL
   return out.length === 0 ? "" : out.join("\n\n");
 }
 
+function filePlanBlockersFromLists(docs: ExportReadyDocument[], exactFileNaming: string | null | undefined, exactFileOrder: string | null | undefined): NonNullable<ExportReadinessResult["tenderLevelBlockers"]> {
+  const blockers: NonNullable<ExportReadinessResult["tenderLevelBlockers"]> = [];
+  const requiredNames = parseRequiredFileList(exactFileNaming);
+  const requiredOrder = parseRequiredFileList(exactFileOrder);
+  const actualNames = docs.map((doc) => documentFileName(doc)).filter(Boolean);
+  const actualNameSet = new Set(actualNames.map(normalizeFileName));
+
+  const missingNames = requiredNames.filter((name) => !actualNameSet.has(normalizeFileName(name)));
+  if (missingNames.length > 0) {
+    blockers.push({
+      category: "FILE_NAMING",
+      severity: "HIGH",
+      title: `Missing required generated file name(s): ${missingNames.slice(0, 5).join(", ")}${missingNames.length > 5 ? ` and ${missingNames.length - 5} more` : ""}`,
+      recommendedAction: "Generate or rename documents to match the tender's exact required file names before final export.",
+    });
+  }
+
+  if (requiredOrder.length > 0) {
+    const orderedActual = [...docs]
+      .sort((a, b) => (a.exactOrder ?? 9999) - (b.exactOrder ?? 9999))
+      .map((doc) => normalizeFileName(documentFileName(doc)));
+    const mismatches = requiredOrder
+      .map((name, index) => ({ name, expected: normalizeFileName(name), actual: orderedActual[index] ?? "" }))
+      .filter((row) => row.actual && row.expected !== row.actual);
+    if (mismatches.length > 0) {
+      blockers.push({
+        category: "FILE_ORDER",
+        severity: "MEDIUM",
+        title: `Generated file order does not match tender order near: ${mismatches.slice(0, 3).map((m) => m.name).join(", ")}`,
+        recommendedAction: "Reorder the generated documents/export package to match the tender's required attachment order.",
+      });
+    }
+  }
+
+  return blockers;
+}
+
 /**
  * PR XX-G4 — checks tender-level blockers that should prevent final
- * export even when the document set looks ready. Two categories:
+ * export even when the document set looks ready. Three categories:
  *
  *   1. EvaluatorObjection rows where severity="HIGH" AND status="OPEN"
  *      ("rerun evaluator after fixes" workflow expects these to be
@@ -100,8 +164,11 @@ export function exportReadinessError(failures: ExportReadinessFailure[], tenderL
  *   2. PricingWorkbook integrity: workbook exists AND `noPriceLeakage`
  *      is false → leakage flag is on, export is blocked. Workbook with
  *      zero CostLines is a soft warning, not a blocker.
+ *
+ *   3. Tender exact file naming/order controls. If analysis extracted
+ *      required file names or order, final export must match them.
  */
-export async function checkTenderLevelExportBlockers(tenderId: string): Promise<NonNullable<ExportReadinessResult["tenderLevelBlockers"]>> {
+export async function checkTenderLevelExportBlockers(tenderId: string, docs: ExportReadyDocument[] = []): Promise<NonNullable<ExportReadinessResult["tenderLevelBlockers"]>> {
   await prismaReady;
   const blockers: NonNullable<ExportReadinessResult["tenderLevelBlockers"]> = [];
 
@@ -134,6 +201,13 @@ export async function checkTenderLevelExportBlockers(tenderId: string): Promise<
     });
   }
 
+  // ── Tender exact file names / order ─────────────────────────────────
+  const tender = await prisma.tender.findUnique({
+    where: { id: tenderId },
+    select: { exactFileNaming: true, exactFileOrder: true },
+  });
+  blockers.push(...filePlanBlockersFromLists(docs, tender?.exactFileNaming, tender?.exactFileOrder));
+
   return blockers;
 }
 
@@ -143,7 +217,7 @@ export async function checkTenderLevelExportBlockers(tenderId: string): Promise<
  */
 export async function checkFullExportReadiness(opts: { tenderId: string; docs: ExportReadyDocument[]; requireFileContent?: boolean }): Promise<ExportReadinessResult> {
   const perDoc = checkExportReadiness(opts.docs, { requireFileContent: opts.requireFileContent });
-  const tenderLevelBlockers = await checkTenderLevelExportBlockers(opts.tenderId);
+  const tenderLevelBlockers = await checkTenderLevelExportBlockers(opts.tenderId, opts.docs);
   return {
     ok: perDoc.ok && tenderLevelBlockers.length === 0,
     failures: perDoc.failures,
