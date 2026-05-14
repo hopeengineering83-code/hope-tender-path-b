@@ -9,7 +9,7 @@ import { assessExtractionQuality } from "../../../../../lib/extraction-quality";
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
 
-function actionableEngineError(error: unknown) {
+export function actionableEngineError(error: unknown) {
   const message = error instanceof Error ? error.message : String(error || "Engine failed");
   const lower = message.toLowerCase();
 
