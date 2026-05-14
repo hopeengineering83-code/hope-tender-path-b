@@ -3,7 +3,7 @@ import { getSession } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { importCompanyKnowledgeFromDocuments } from "../../../../../lib/company-knowledge-import-safe";
 import { logAction } from "../../../../../lib/audit";
-import { isAIEnabled } from "../../../../../lib/ai";
+import { isCompanyKnowledgeAIEnabled } from "../../../../../lib/company-knowledge-ai";
 
 // Vercel route timeout — knowledge repair runs Claude expert / project
 // extraction across all uploaded documents. 60 = Hobby max.
@@ -85,7 +85,7 @@ async function buildDiagnostics(companyId: string) {
   const gaps: Gap[] = [];
   if (docs.length === 0) gaps.push({ severity: "CRITICAL", title: "No company documents uploaded", detail: "Upload company profile, CVs, project references, legal records, and evidence documents." });
   if (docs.length > 0 && extractedDocuments === 0) gaps.push({ severity: "CRITICAL", title: "No usable extracted text", detail: "Documents exist, but none contain usable extracted text. Re-upload text PDFs or add OCR/document-intelligence support." });
-  if (!isAIEnabled()) gaps.push({ severity: "CRITICAL", title: "AI extraction is not enabled", detail: "An AI provider key is required for reliable extraction from complex CV and project-reference PDFs. Set ANTHROPIC_API_KEY, GEMINI_API_KEY, or OPENAI_API_KEY." });
+  if (!isCompanyKnowledgeAIEnabled()) gaps.push({ severity: "CRITICAL", title: "AI extraction is not enabled", detail: "GEMINI_API_KEY is required for reliable extraction from complex CV and project-reference PDFs. (ANTHROPIC_API_KEY and OPENAI_API_KEY enable proposal generation but do not power knowledge extraction.)" });
   if (expertSourceDocuments === 0) gaps.push({ severity: "HIGH", title: "No expert source documents detected", detail: "Upload or categorize CV/staff documents so expert extraction can run." });
   if (projectSourceDocuments === 0) gaps.push({ severity: "HIGH", title: "No project source documents detected", detail: "Upload or categorize project references, portfolios, contracts, or experience sheets." });
   if (experts.length > 0 && reviewedExperts === 0) gaps.push({ severity: "HIGH", title: "Experts are not reviewed", detail: `${experts.length} expert records exist, but none are marked REVIEWED. Review records before final generation.` });
@@ -116,7 +116,7 @@ async function buildDiagnostics(companyId: string) {
       aiDraftProjects,
       regexDraftExperts,
       regexDraftProjects,
-      aiEnabled: isAIEnabled(),
+      aiEnabled: isCompanyKnowledgeAIEnabled(),
     },
     gaps,
   };

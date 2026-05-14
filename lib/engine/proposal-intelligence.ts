@@ -757,7 +757,8 @@ export function buildProposalIntelligence(params: {
     { label: /Urban|Master Plan/, keywords: /urban|master plan|municipal|spatial.*plan|land.?use|zoning|\bGIS\b|eco.?park|city/i },
     { label: /Education/, keywords: /school|university|campus|education|classroom|library|\blab\b/i },
     { label: /Environmental|Social.*Impact/, keywords: /ESIA|ESMP|environmental|social.*safeguard|resettlement|biodiversity|impact.*assess/i },
-    { label: /ICT|Digital/, keywords: /\bICT\b|software|digital|\bMIS\b|\bERP\b|database|web|\bapp\b|cloud|server|network/i },
+    // Kept in sync with inferSector() triggers: ICT|software.*develop|information.*system|digital.*platform|MIS|ERP|database.*system
+    { label: /ICT|Digital/, keywords: /\bICT\b|software|digital|\bMIS\b|\bERP\b|database|web|\bapp\b|cloud|server|network|information.*system/i },
     { label: /Geotechnical|Structural/, keywords: /geotechnical|soil|foundation|seismic|borehole|drilling|structural/i },
     { label: /Hospitality|Tourism/, keywords: /hotel|hospitality|resort|tourism|lodge/i },
     // "plant" removed — matches "water treatment plant", "pumping plant" in unrelated sectors
