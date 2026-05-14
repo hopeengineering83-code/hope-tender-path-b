@@ -496,10 +496,15 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
       for (let chunk = 1; chunk <= 3; chunk++) {
         setGenerationPhase(CHUNK_PHASES[chunk - 1].label);
         setGenerationProgress(CHUNK_PHASES[chunk - 1].pct);
+        // On the final chunk, send accumulated content from chunks 1+2 so
+        // the server can persist the full merged proposal to the database
+        // (chunk 3 alone only covers the additional-and-declaration section).
+        const body: Record<string, unknown> = { chunk };
+        if (chunk === 3 && chunks.length >= 2) body.accumulatedProposal = chunks.join("\n\n");
         const res = await fetch(`/api/tenders/${tender.id}/ai-proposal`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ chunk }),
+          body: JSON.stringify(body),
         });
         const data = await res.json();
         if (res.status === 429) {

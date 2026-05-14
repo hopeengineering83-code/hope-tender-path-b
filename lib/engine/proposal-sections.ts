@@ -593,8 +593,10 @@ interface TierBudget {
 
 function tierBudget(tier: Tier, deep: boolean): TierBudget {
   if (tier === 1) {
-    // Hard squeeze for 10K/min. Total ~7,200 leaves 2,800 headroom.
-    return { cover: 1700, ab: 2000, c: 2200, d: 1300, drillDown: 0 };
+    // Hard squeeze for 10K/min. Total ~7,800 leaves ~2,200 headroom.
+    // Section C bumped 2200→2800: it's the highest-scored section and
+    // routinely undershoots benchmark depth at the lower budget.
+    return { cover: 1700, ab: 2000, c: 2800, d: 1300, drillDown: 0 };
   }
   if (tier === 2) {
     // Total ~10,400 — fits in 16K/min after prompt overhead.

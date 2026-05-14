@@ -444,7 +444,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       // Rate limit: don't overwrite any existing proposal — ask user to retry
       if (msg.includes("rate limit") || msg.includes("429")) {
         return NextResponse.json({
-          error: "Gemini API rate limit reached. Please wait 30–60 seconds and try again.",
+          error: "AI provider rate limit reached. Please wait 30–60 seconds and try again.",
           rateLimitRetry: true,
         }, { status: 429 });
       }
@@ -474,11 +474,19 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     // chunk (chunk 3) covers only the additional-and-declaration section group,
     // which is legitimately short — use a lighter non-empty check so earlier
     // chunks' substantial content is not lost.
+    //
+    // Chunked-save merge: chunk 3 body may carry accumulatedProposal (chunks
+    // 1+2 stitched client-side) so the DB record holds the full proposal,
+    // not just Section D.
     const isSubstantial =
       chunkNum !== undefined
         ? proposal.length > 100
         : proposal.length >= 800 && (proposal.match(/^#{1,3}\s/gm) ?? []).length >= 2;
     if (!fallback && isSubstantial && (chunkNum === undefined || chunkNum === 3)) {
+      const accumulated = typeof body.accumulatedProposal === "string" && body.accumulatedProposal.length > 200
+        ? body.accumulatedProposal
+        : null;
+      const contentToSave = accumulated ? `${accumulated}\n\n${proposal}` : proposal;
       try {
         await prisma.generatedDocument.create({
           data: {
@@ -489,7 +497,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
             validationStatus: "PENDING",
             reviewStatus: "PENDING",
             contentSummary: `Quick AI draft generated ${new Date().toLocaleString()}. Run Generate Docs for the full submission-ready package.`,
-            fileContent: Buffer.from(proposal).toString("base64"),
+            fileContent: Buffer.from(contentToSave).toString("base64"),
           },
         });
       } catch {

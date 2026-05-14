@@ -134,8 +134,11 @@ function para(text: string, bold = false): Paragraph {
 
 function heading(text: string, level: 1 | 2 | 3 = 1, pageBreak = false): Paragraph {
   const headingLevel = level === 1 ? HeadingLevel.HEADING_1 : level === 2 ? HeadingLevel.HEADING_2 : HeadingLevel.HEADING_3;
+  // Strip ** (heading style already applies bold) but keep *italic* so
+  // parseInlineRuns can render it correctly in the heading TextRuns.
+  const stripped = text.replace(/\*\*/g, "");
   return new Paragraph({
-    text,
+    children: parseInlineRuns(stripped),
     heading: headingLevel,
     pageBreakBefore: level === 1 ? pageBreak : false,
     spacing: { before: level === 1 ? 360 : level === 2 ? 240 : 180, after: level === 1 ? 140 : 100 },
@@ -152,7 +155,9 @@ function bullet(text: string): Paragraph {
 }
 
 function isTableLine(line: string): boolean {
-  return line.startsWith("|") && line.endsWith("|");
+  // Accept rows that start with | even if trailing pipe is absent — AI
+  // occasionally omits the closing pipe on the last cell.
+  return line.startsWith("|");
 }
 
 function isSeparatorRow(line: string): boolean {
@@ -160,12 +165,15 @@ function isSeparatorRow(line: string): boolean {
 }
 
 function splitTableCells(rowLine: string): string[] {
-  // PR FF: cells may contain <br> or \\n soft newlines — collapse to space.
-  return rowLine
-    .replace(/<br\s*\/?>/gi, " ")
-    .replace(/\\n/g, " ")
-    .split("|")
-    .filter((_, i, arr) => i > 0 && i < arr.length - 1)
+  // Normalize soft newlines and split on pipe.
+  const normalized = rowLine.replace(/<br\s*\/?>/gi, " ").replace(/\\n/g, " ");
+  const parts = normalized.split("|");
+  // If row starts with | the first segment is empty — skip it (index > 0).
+  // If row ends with | the last segment is also empty — skip it (index < len-1).
+  // If the trailing pipe is absent the last segment is the final cell — keep it.
+  const endsWithPipe = normalized.trimEnd().endsWith("|");
+  return parts
+    .filter((_, i, arr) => i > 0 && (endsWithPipe ? i < arr.length - 1 : true))
     .map((cell) => cell.trim());
 }
 
@@ -260,9 +268,9 @@ function markdownToDocx(markdown: string): (Paragraph | Table)[] {
       out.push(new Paragraph({ children: [new TextRun("")], spacing: { after: 60 } }));
       continue;
     }
-    if (line.startsWith("### ")) out.push(heading(line.slice(4).replace(/\*\*/g, ""), 3));
-    else if (line.startsWith("## ")) out.push(heading(line.slice(3).replace(/\*\*/g, ""), 2));
-    else if (line.startsWith("# ")) { h1Count++; out.push(heading(line.slice(2).replace(/\*\*/g, ""), 1, h1Count > 1)); }
+    if (line.startsWith("### ")) out.push(heading(line.slice(4), 3));
+    else if (line.startsWith("## ")) out.push(heading(line.slice(3), 2));
+    else if (line.startsWith("# ")) { h1Count++; out.push(heading(line.slice(2), 1, h1Count > 1)); }
     else if (line.startsWith("> ")) out.push(new Paragraph({ children: parseInlineRuns(line.slice(2), { color: "795B00", size: 20 }), indent: { left: 360, right: 360 }, spacing: { after: 80, line: 260 }, border: { left: { color: "F59E0B", style: BorderStyle.SINGLE, size: 12, space: 4 } } }))
     else if (/^[-*•]\s+/.test(line)) out.push(bullet(line.replace(/^[-*•]\s+/, "")));
     else if (/^\d+[.)]\s+/.test(line)) out.push(bullet(line.replace(/^\d+[.)]\s+/, "")));
@@ -1116,7 +1124,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     ...(bidStrategy?.topRisks.map((r) => `BID RISK [${r.severity}] ${r.category}: ${r.title} — ${r.mitigation}`) ?? []),
   ];
 
-  const guardInput = { tenderTitle: cleanedTenderTitle, clientName: intelligence.clientName, companyName: company.name, submissionNotes, expertCount: expertLines.length, projectCount: projectLines.length, complianceLines, primarySector: intelligence.primarySector };
+  const guardInput = { tenderTitle: cleanedTenderTitle, clientName: intelligence.clientName, companyName: company.name, submissionNotes, expertCount: expertLines.length, projectCount: projectLines.length, complianceLines, primarySector: intelligence.primarySector, topProjectNames: intelligence.topProjects.slice(0, 3).map((p) => p.name).filter(Boolean), topExpertName: intelligence.topExperts[0]?.fullName ?? undefined };
   const evaluatorMatrixInput = { tenderTitle: cleanedTenderTitle, clientName: intelligence.clientName, requirements: requirementLines, expertLines, projectLines, companyEvidenceLines, projectEvidenceLines, complianceLines, differentiators: intelligence.differentiators };
 
   let sourceMarkdown: string;

@@ -55,6 +55,7 @@ export function safeParseArr(value: string | null | undefined): string[] {
     const parsed = JSON.parse(value);
     return Array.isArray(parsed) ? parsed.map(String).filter(Boolean) : [];
   } catch {
+    console.warn("[safeParseArr] Non-JSON value split as CSV:", value.slice(0, 80));
     return value.split(/[,;|]/).map((item) => item.trim()).filter(Boolean);
   }
 }
@@ -975,7 +976,10 @@ export function buildCriterionEvidenceMap(
       .split(/\s+/)
       .filter((k) => k.length > 3 && !/^(the|and|for|with|that|this|from|into|have|been|will|shall|must|only|also|when|where|which|their|each|both)$/.test(k));
 
-    if (keywords.length === 0) continue;
+    if (keywords.length === 0) {
+      console.warn(`[criterion-evidence] Skipped criterion with no extractable keywords: "${w.criterion}"`);
+      continue;
+    }
 
     const scoredProjects = topProjects
       .map((p) => {
