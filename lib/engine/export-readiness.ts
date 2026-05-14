@@ -57,8 +57,10 @@ function documentFileName(doc: ExportReadyDocument): string {
 function looksLikePlainText(value: string): boolean {
   if (!value || value.length > 1_000_000) return false;
   const sample = value.slice(0, 2000);
-  const printable = sample.replace(/[\t\n\r\x20-\x7E]/g, "").length;
-  return printable / Math.max(sample.length, 1) < 0.08 && /[a-zA-Z]{20,}/.test(sample);
+  const nonPrintable = sample.replace(/[\t\n\r\x20-\x7E]/g, "").length;
+  const printableRatio = 1 - (nonPrintable / Math.max(sample.length, 1));
+  const alphaCount = (sample.match(/[a-zA-Z]/g) ?? []).length;
+  return printableRatio > 0.92 && alphaCount >= 20;
 }
 
 function documentHygieneIssues(text: string | null | undefined): string[] {
