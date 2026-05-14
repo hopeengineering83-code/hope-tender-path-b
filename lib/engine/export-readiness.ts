@@ -63,6 +63,40 @@ function looksLikePlainText(value: string): boolean {
   return printableRatio > 0.92 && alphaCount >= 20;
 }
 
+function visibleXmlText(xml: string): string {
+  return xml
+    .replace(/<w:tab\/>/g, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function maybeBase64Docx(value: string | null | undefined, filename: string): boolean {
+  if (!value || !filename.toLowerCase().endsWith(".docx")) return false;
+  try {
+    const buffer = Buffer.from(value, "base64");
+    return buffer.length > 4 && buffer[0] === 0x50 && buffer[1] === 0x4b;
+  } catch {
+    return false;
+  }
+}
+
+async function extractDocxVisibleText(value: string | null | undefined, filename: string): Promise<string | null> {
+  if (!maybeBase64Docx(value, filename) || !value) return null;
+  try {
+    const buffer = Buffer.from(value, "base64");
+    const JSZip = (await import("jszip")).default;
+    const zip = await JSZip.loadAsync(buffer);
+    const documentXml = await zip.file("word/document.xml")?.async("string");
+    return documentXml ? visibleXmlText(documentXml) : null;
+  } catch {
+    return null;
+  }
+}
+
 function documentHygieneIssues(text: string | null | undefined): string[] {
   if (!text || !looksLikePlainText(text)) return [];
   const issues: string[] = [];
@@ -104,6 +138,35 @@ export function checkExportReadiness(docs: ExportReadyDocument[], opts: { requir
   }
 
   return { ok: failures.length === 0, failures };
+}
+
+async function checkDocxHygieneReadiness(docs: ExportReadyDocument[]): Promise<ExportReadinessFailure[]> {
+  const failures: ExportReadinessFailure[] = [];
+  for (const doc of docs) {
+    const fileName = documentFileName(doc);
+    const text = await extractDocxVisibleText(doc.fileContent, fileName);
+    const reasons = documentHygieneIssues(text).map((issue) => `${issue} inside DOCX visible text`);
+    if (reasons.length > 0) {
+      failures.push({ documentId: doc.id, name: doc.name, fileName, reasons });
+    }
+  }
+  return failures;
+}
+
+function mergeFailures(...groups: ExportReadinessFailure[][]): ExportReadinessFailure[] {
+  const byDocument = new Map<string, ExportReadinessFailure>();
+  for (const group of groups) {
+    for (const failure of group) {
+      const key = failure.documentId;
+      const existing = byDocument.get(key);
+      if (!existing) {
+        byDocument.set(key, { ...failure, reasons: [...failure.reasons] });
+        continue;
+      }
+      existing.reasons = Array.from(new Set([...existing.reasons, ...failure.reasons]));
+    }
+  }
+  return Array.from(byDocument.values());
 }
 
 export function exportReadinessError(failures: ExportReadinessFailure[], tenderLevelBlockers?: ExportReadinessResult["tenderLevelBlockers"]): string {
@@ -208,10 +271,12 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
 
 export async function checkFullExportReadiness(opts: { tenderId: string; docs: ExportReadyDocument[]; requireFileContent?: boolean }): Promise<ExportReadinessResult> {
   const perDoc = checkExportReadiness(opts.docs, { requireFileContent: opts.requireFileContent });
+  const docxHygieneFailures = await checkDocxHygieneReadiness(opts.docs);
+  const failures = mergeFailures(perDoc.failures, docxHygieneFailures);
   const tenderLevelBlockers = await checkTenderLevelExportBlockers(opts.tenderId, opts.docs);
   return {
-    ok: perDoc.ok && tenderLevelBlockers.length === 0,
-    failures: perDoc.failures,
+    ok: failures.length === 0 && tenderLevelBlockers.length === 0,
+    failures,
     tenderLevelBlockers,
   };
 }
