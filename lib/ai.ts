@@ -360,7 +360,7 @@ export async function generateWithFallback(prompt: string, opts?: { systemPrompt
     // No Gemini or Gemini threw — try OpenAI as final tier
     const openAiResult = await generateWithOpenAI(prompt, opts?.systemPrompt).catch((err) => {
       const msg = err instanceof Error ? err.message : String(err);
-      if (/invalid.*api.*key|authentication/i.test(msg)) throw err; // re-throw auth errors
+      if (/api\s+key\s+invalid|invalid\s+api\s+key|incorrect\s+api\s+key|authentication|unauthorized/i.test(msg)) throw err; // re-throw auth errors
       return null;
     });
     if (openAiResult) return openAiResult;
@@ -385,7 +385,7 @@ export async function generateWithFallback(prompt: string, opts?: { systemPrompt
   if (isOpenAIEnabled()) {
     const openAiResult = await generateWithOpenAI(prompt, opts?.systemPrompt).catch((err) => {
       const msg = err instanceof Error ? err.message : String(err);
-      if (/invalid.*api.*key|authentication/i.test(msg)) throw err; // re-throw auth errors
+      if (/api\s+key\s+invalid|invalid\s+api\s+key|incorrect\s+api\s+key|authentication|unauthorized/i.test(msg)) throw err; // re-throw auth errors
       return null;
     });
     if (openAiResult) return openAiResult;
@@ -459,7 +459,7 @@ async function generateWithOpenAI(
     return text;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    if (/invalid.*api.*key|authentication/i.test(msg)) throw err; // re-throw auth errors
+    if (/api\s+key\s+invalid|invalid\s+api\s+key|incorrect\s+api\s+key|authentication|unauthorized/i.test(msg)) throw err; // re-throw auth errors
     console.warn(`[ai] OpenAI fetch failed: ${msg} — falling through to deterministic.`);
     return null;
   }
