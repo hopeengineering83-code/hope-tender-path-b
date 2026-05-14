@@ -1,11 +1,12 @@
 import { NextResponse } from "next/server";
-import { getSession } from "../../../../../lib/auth";
+import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { Document, HeadingLevel, Packer, Paragraph, Table, TableBorders, TableCell, TableRow, TextRun, WidthType } from "docx";
 import { logAction } from "../../../../../lib/audit";
 import { buildSubmissionPlan, findExtraGeneratedDocuments, findMissingGeneratedDocuments, hasExplicitSubmissionScope, plannedSubmissionTargetFiles } from "../../../../../lib/engine/submission-plan";
 import { safeFileBaseName } from "../../../../../lib/engine/proposal-labels";
 import { checkExportReadiness, checkFullExportReadiness, exportReadinessError } from "../../../../../lib/engine/export-readiness";
+import { getCompanyIngestionReadiness } from "../../../../../lib/company-ingestion-readiness";
 import { computeWinProbability } from "../../../../../lib/engine/win-probability";
 
 function safeParseArr(v: unknown): string[] {
@@ -132,8 +133,9 @@ async function validateDocsForExport(docs: Array<{
 }
 
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
-  const userId = await getSession();
-  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  let actor;
+  try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER", "REVIEWER"); } catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
+  const userId = actor.id;
 
   await prismaReady;
   const { id } = await params;
@@ -155,9 +157,19 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   });
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
 
+  const company = await prisma.company.findUnique({ where: { userId }, select: { id: true } });
+  if (!company) return NextResponse.json({ error: "Company profile required before download." }, { status: 422 });
+  const ingestion = await getCompanyIngestionReadiness(company.id, { requireDocuments: true, requireReviewedExperts: tender.requirements.some((r) => r.requirementType === "EXPERT"), requireReviewedProjects: tender.requirements.some((r) => r.requirementType === "PROJECT_EXPERIENCE") });
+  if (!ingestion.ingestionReady) return NextResponse.json({ error: "Export blocked: company knowledge ingestion is not ready.", code: "INGESTION_NOT_READY", blockers: ingestion.blockers, totals: ingestion.totals }, { status: 422 });
+
   const blockingGaps = tender.complianceGaps.filter((g) => !g.isResolved && g.severity === "CRITICAL");
   if ((docId || type === "zip") && blockingGaps.length > 0) {
     return NextResponse.json({ error: "Final export blocked by unresolved CRITICAL compliance gaps", reasons: blockingGaps.map((g) => g.title) }, { status: 409 });
+  }
+
+  const untracedMandatoryRequirements = tender.requirements.filter((req) => req.priority === "MANDATORY" && ((req.sourceConfidence ?? 0) <= 0));
+  if ((docId || type === "zip") && untracedMandatoryRequirements.length > 0) {
+    return NextResponse.json({ error: `Final export blocked: ${untracedMandatoryRequirements.length} mandatory requirement(s) are not source-grounded yet.`, code: "UNTRACED_MANDATORY_REQUIREMENTS", requirements: untracedMandatoryRequirements.slice(0, 20).map((req) => ({ id: req.id, title: req.title })) }, { status: 422 });
   }
 
   if (type === "proposal" && !docId) {
