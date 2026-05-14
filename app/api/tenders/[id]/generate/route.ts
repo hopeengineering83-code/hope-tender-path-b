@@ -162,7 +162,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
   const company = await prisma.company.findUnique({ where: { userId }, select: { id: true } });
   if (!company) return NextResponse.json({ error: "Company profile required before generation." }, { status: 422 });
-  const ingestion = await getCompanyIngestionReadiness(company.id);
+  const requiresExperts = tender.requirements.some((req) => req.requirementType === "EXPERT");
+  const requiresProjects = tender.requirements.some((req) => req.requirementType === "PROJECT_EXPERIENCE");
+  const ingestion = await getCompanyIngestionReadiness(company.id, { requireDocuments: true, requireReviewedExperts: requiresExperts, requireReviewedProjects: requiresProjects });
   if (!ingestion.ingestionReady) return NextResponse.json({ error: "Generation blocked: company knowledge ingestion is not ready.", code: "INGESTION_NOT_READY", blockers: ingestion.blockers, totals: ingestion.totals, nextAction: "OPEN_COMPANY_REVIEW" }, { status: 422 });
   if (tender.status === "NO_BID") return NextResponse.json({ error: "Generation blocked: this tender is marked NO_BID. Apply a BID or BID_WITH_CONDITIONS decision before generating proposal documents.", code: "NO_BID_BLOCK" }, { status: 409 });
   if (tender.requirements.length === 0) {
