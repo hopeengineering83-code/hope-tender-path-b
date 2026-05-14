@@ -469,10 +469,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     // Persist the quick draft so users don't lose it on navigation.
     // Only save on the final chunk (chunk 3) or non-chunked calls — partial
     // chunk results are intermediate and should not be stored as documents.
-    // Minimum content guard: require at least 800 chars and two markdown headings
-    // before saving as GENERATED — prevents thin AI responses (apologies, refusals,
-    // timeouts that returned partial content) from being recorded as valid drafts.
-    const isSubstantial = proposal.length >= 800 && (proposal.match(/^#{1,3}\s/gm) ?? []).length >= 2;
+    // Minimum content guard: prevents thin AI responses (apologies, refusals,
+    // timeouts) from being stored as valid drafts. For chunked calls the final
+    // chunk (chunk 3) covers only the additional-and-declaration section group,
+    // which is legitimately short — use a lighter non-empty check so earlier
+    // chunks' substantial content is not lost.
+    const isSubstantial =
+      chunkNum !== undefined
+        ? proposal.length > 100
+        : proposal.length >= 800 && (proposal.match(/^#{1,3}\s/gm) ?? []).length >= 2;
     if (!fallback && isSubstantial && (chunkNum === undefined || chunkNum === 3)) {
       try {
         await prisma.generatedDocument.create({

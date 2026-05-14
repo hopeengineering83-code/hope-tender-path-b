@@ -756,7 +756,7 @@ export function buildProposalIntelligence(params: {
     { label: /Urban|Master Plan/, keywords: /urban|master plan|municipal|spatial.*plan|land.?use|zoning|GIS|eco.?park|city/i },
     { label: /Education/, keywords: /school|university|campus|education|classroom|library|lab/i },
     { label: /Environmental|Social.*Impact/, keywords: /ESIA|ESMP|environmental|social.*safeguard|resettlement|biodiversity|impact.*assess/i },
-    { label: /ICT|Digital/, keywords: /ICT|software|digital|MIS|ERP|database|web|app|cloud|server|network/i },
+    { label: /ICT|Digital/, keywords: /\bICT\b|software|digital|MIS|ERP|database|web|app|cloud|server|network/i },
     { label: /Geotechnical|Structural/, keywords: /geotechnical|soil|foundation|seismic|borehole|drilling|structural/i },
     { label: /Hospitality|Tourism/, keywords: /hotel|hospitality|resort|tourism|lodge/i },
     { label: /Industrial|Manufacturing/, keywords: /factory|industrial|manufacturing|plant|warehouse/i },

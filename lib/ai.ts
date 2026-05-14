@@ -347,15 +347,30 @@ export async function generateWithFallback(prompt: string, opts?: { systemPrompt
   if (isClaudeEnabled()) {
     const claudeResult = await generateWithClaude(prompt, opts?.systemPrompt);
     if (claudeResult) return claudeResult;
-    // Claude returned null (all models failed) — try Gemini if available.
-    if (apiKey) return generate(prompt, opts?.geminiModel);
-    // Claude + no Gemini — try OpenAI before giving up
+    // Claude returned null — try Gemini, then OpenAI before giving up.
+    if (apiKey) {
+      try {
+        return await generate(prompt, opts?.geminiModel);
+      } catch (geminiErr) {
+        console.warn(`[ai] generateWithFallback Gemini failed: ${geminiErr instanceof Error ? geminiErr.message : String(geminiErr)} — trying OpenAI.`);
+      }
+    }
+    // No Gemini or Gemini threw — try OpenAI as final tier
     const openAiResult = await generateWithOpenAI(prompt, opts?.systemPrompt).catch(() => null);
     if (openAiResult) return openAiResult;
-    throw new Error(`Claude returned empty / 404 / rate-limited on all models in chain (${CLAUDE_PROPOSAL_MODELS.join(", ")}) and neither GEMINI_API_KEY nor OPENAI_API_KEY is set. If ANTHROPIC_PROPOSAL_MODELS is set, model IDs must be lowercase with dashes (e.g. "claude-sonnet-4-5").`);
+    const providerNote = isOpenAIEnabled()
+      ? `OpenAI (${process.env.OPENAI_PROPOSAL_MODEL ?? "gpt-4o"}) also returned null (rate limit or transient error).`
+      : "Neither GEMINI_API_KEY nor OPENAI_API_KEY is set.";
+    throw new Error(`Claude returned empty on all models in chain (${CLAUDE_PROPOSAL_MODELS.join(", ")}). ${providerNote} If ANTHROPIC_PROPOSAL_MODELS is set, model IDs must be lowercase with dashes (e.g. "claude-sonnet-4-5").`);
   }
-  if (apiKey) return generate(prompt, opts?.geminiModel);
-  // Neither Claude nor Gemini — try OpenAI as final fallback
+  if (apiKey) {
+    try {
+      return await generate(prompt, opts?.geminiModel);
+    } catch (geminiErr) {
+      console.warn(`[ai] generateWithFallback Gemini failed: ${geminiErr instanceof Error ? geminiErr.message : String(geminiErr)} — trying OpenAI.`);
+    }
+  }
+  // Neither Claude nor Gemini (or both failed) — try OpenAI as final fallback
   if (isOpenAIEnabled()) {
     const openAiResult = await generateWithOpenAI(prompt, opts?.systemPrompt).catch(() => null);
     if (openAiResult) return openAiResult;
@@ -1572,7 +1587,7 @@ Now write the complete technical proposal. Start with the Cover Letter. The eval
         return null;
       });
       if (openAiResult) {
-        lastProposalProvider = "gemini"; // reuse label; surface "GPT-4o" via log only
+        lastProposalProvider = "openai";
         return openAiResult;
       }
       // Re-throw original Gemini error so callers surface the root cause
@@ -1584,7 +1599,7 @@ Now write the complete technical proposal. Start with the Cover Letter. The eval
   if (isOpenAIEnabled()) {
     const openAiResult = await generateWithOpenAI(prompt);
     if (openAiResult) {
-      lastProposalProvider = "gemini";
+      lastProposalProvider = "openai";
       return openAiResult;
     }
   }
@@ -1655,7 +1670,7 @@ interface SectionResult {
   id: ProposalSectionId;
   title: string;
   markdown: string;
-  source: "claude" | "gemini" | "fallback";
+  source: "claude" | "gemini" | "openai" | "fallback";
   error?: string;
   durationMs: number;
 }
@@ -1745,7 +1760,7 @@ async function generateOneSection(spec: ProposalSectionSpec): Promise<SectionRes
           id: spec.id,
           title: spec.title,
           markdown: text,
-          source: "gemini", // reuse "gemini" label for any non-Claude AI
+          source: "openai",
           durationMs: Date.now() - t0,
         };
       }
@@ -1882,6 +1897,7 @@ export async function generateProposalSectionsParallel(input: AIBidWriterInput, 
   // failure.
   const usedClaude = sections.some((s) => s.source === "claude");
   const usedGemini = sections.some((s) => s.source === "gemini");
+  const usedOpenAI = sections.some((s) => s.source === "openai");
   const allFell = sections.every((s) => s.source === "fallback");
   if (allFell) {
     lastProposalProvider = null;
@@ -1889,6 +1905,8 @@ export async function generateProposalSectionsParallel(input: AIBidWriterInput, 
     lastProposalProvider = "claude";
   } else if (usedGemini) {
     lastProposalProvider = "gemini";
+  } else if (usedOpenAI) {
+    lastProposalProvider = "openai";
   }
 
   // Diagnostic summary line — surfaces in Vercel runtime logs so
