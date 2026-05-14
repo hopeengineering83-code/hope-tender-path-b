@@ -766,8 +766,8 @@ export function buildProposalIntelligence(params: {
     // Keywords kept in sync with the inferSector() triggers for "Social Development & Advisory":
     // social.*develop | advisory.*service | institutional.*strength | capacity.*build | community.*develop
     { label: /Social Advisory|Community/, keywords: /social.*advisor|advisory.*service|institutional.*strength|capacity.*build|community.*develop|social.*develop|livelihoods|social.*mobiliz|community.*mobiliz|resettlement.*action|poverty|civil.*society|participatory.*develop/i },
-    // Narrowed to avoid matching any tender that mentions "design" or "construction"
-    { label: /Building Design/, keywords: /architectural.*design|building.*design|construction.*supervision|residential.*develop|commercial.*develop|architectural.*supervision/i },
+    // Kept in sync with inferSector() triggers: architecture|building.*design|construction.*supervision|structural.*design
+    { label: /Building Design/, keywords: /architectural.*design|building.*design|construction.*supervision|residential.*develop|commercial.*develop|architectural.*supervision|\barchitecture\b|structural.*design/i },
   ];
   const detectedSector = inferSector(tenderText);
   // Multi-sector fix: collect ALL sector keyword sets triggered by the tender

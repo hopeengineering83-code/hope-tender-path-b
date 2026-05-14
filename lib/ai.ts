@@ -412,7 +412,7 @@ export async function generateWithFallback(prompt: string, opts?: { systemPrompt
 async function generateWithOpenAI(
   prompt: string,
   systemPrompt: string = DEFAULT_PROPOSAL_SYSTEM_PROMPT,
-  maxTokens = 4096,
+  maxTokens = 16000,
 ): Promise<string | null> {
   const openAiKey = process.env.OPENAI_API_KEY;
   if (!openAiKey) return null;
@@ -1929,7 +1929,7 @@ export async function generateProposalSectionsParallel(input: AIBidWriterInput, 
     lastProposalProvider = null;
   } else if (usedClaude) {
     lastProposalProvider = "claude";
-  } else if (usedGemini) {
+  } else if (usedGemini && !usedOpenAI) {
     lastProposalProvider = "gemini";
   } else if (usedOpenAI) {
     lastProposalProvider = "openai";
