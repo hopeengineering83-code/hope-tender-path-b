@@ -366,7 +366,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           `Services: ${safeParseArr(c.serviceLines).join(", ")}\n` +
           `Sectors: ${safeParseArr(c.sectors).join(", ")}\n\n` +
           `Wider company evidence library:\n${evidenceContextLines.join("\n").slice(0, 9_000)}`,
-        experts: expertLines.join("\n"),
+        // Prepend a LEAD EXPERT directive so every section (across all 3 chunks
+        // in chunked mode) consistently names the same lead expert as Team Lead /
+        // Project Manager. Without this, Chunk 1 (cover letter) and Chunk 2
+        // (Section C) may independently choose different "primary" experts.
+        experts: [
+          expertLines.length > 0
+            ? `LEAD EXPERT (name as Team Lead / Project Manager in EVERY section): ${expertLines[0].split("|")[0].trim()}`
+            : "",
+          ...expertLines,
+        ].filter(Boolean).join("\n"),
         projects: [...projectLines, ...projectEvidenceLines].join("\n"),
         compliance: [...BENCHMARK_CONTEXT_LINES, ...complianceLines].join("\n"),
         differentiators: [...BENCHMARK_CONTEXT_LINES, ...intelligence.differentiators, ...companyEvidenceLines.slice(0, 8)].join("\n"),
@@ -460,7 +469,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     // Persist the quick draft so users don't lose it on navigation.
     // Only save on the final chunk (chunk 3) or non-chunked calls — partial
     // chunk results are intermediate and should not be stored as documents.
-    if (!fallback && (chunkNum === undefined || chunkNum === 3)) {
+    // Minimum content guard: require at least 800 chars and two markdown headings
+    // before saving as GENERATED — prevents thin AI responses (apologies, refusals,
+    // timeouts that returned partial content) from being recorded as valid drafts.
+    const isSubstantial = proposal.length >= 800 && (proposal.match(/^#{1,3}\s/m) ?? []).length >= 2;
+    if (!fallback && isSubstantial && (chunkNum === undefined || chunkNum === 3)) {
       try {
         await prisma.generatedDocument.create({
           data: {

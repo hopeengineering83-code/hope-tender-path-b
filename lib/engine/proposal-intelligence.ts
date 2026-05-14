@@ -251,8 +251,10 @@ function projectScore(project: ProjectLite, themes: ProposalTheme[], tenderText:
   if (/school|university|campus|education/i.test(text) && /school|university|campus|education/i.test(tenderText)) score += 10;
   if (/social.*develop|advisory|capacity.*build|community/i.test(text) && /social.*develop|advisory|capacity.*build|community/i.test(tenderText)) score += 8;
   if (/World Bank|UNDP|donor.*fund/i.test(text) && /World Bank|UNDP|donor.*fund/i.test(tenderText)) score += 6;
-  // Contract value bonus (bigger projects = stronger institutional evidence)
-  if (project.contractValue) score += Math.min(6, Math.log10(project.contractValue));
+  // Contract value bonus (bigger projects = stronger institutional evidence).
+  // Guard against contractValue < 1 — log10 returns negative for sub-unit
+  // values, which would penalise projects stored in fractional units.
+  if (project.contractValue && project.contractValue >= 1) score += Math.min(6, Math.log10(project.contractValue));
   // Country match bonus
   if (project.country && tenderText.toLowerCase().includes(project.country.toLowerCase())) score += 3;
   return score;

@@ -139,11 +139,15 @@ export function detectDominantFamily(queryText: string): CapabilityFamily | null
   return best ? best.family : null;
 }
 
+// Two-character tokens that carry significant domain meaning and must NOT be
+// dropped by the general length filter (they become lowercase after split).
+const KEEP_SHORT_TOKENS = new Set(["it", "ai", "pm", "qa", "qc", "hr", "gm", "jv", "ict"]);
+
 function tokenize(value: string | null | undefined): string[] {
   return (value ?? "")
     .toLowerCase()
     .split(/[^a-z0-9]+/)
-    .filter((t) => t.length > 2);
+    .filter((t) => t.length > 2 || KEEP_SHORT_TOKENS.has(t));
 }
 
 function parseArr(v: unknown): string[] {
@@ -666,16 +670,25 @@ function optimizePortfolioSelection<T extends { score: number; isSelected: boole
   // from the winning set, swap in the highest scoring candidate carrying
   // each missing family (while preserving set size).
   if (hardFamilyGate && bestSet.length > 0) {
-    const covered = new Set<CapabilityFamily>();
-    for (const c of bestSet) for (const f of c.capabilityFamilies) covered.add(f);
-    const missing = requiredFamilies.filter((f) => !covered.has(f));
-    for (const family of missing) {
+    // Recompute covered and missing after EACH swap so that:
+    // (a) a candidate covering two missing families only triggers one swap,
+    // (b) the drop-candidate's "helps" check uses the live missing list
+    //     (not a stale snapshot from before prior swaps altered coverage).
+    const currentlyCovered = (): Set<CapabilityFamily> => {
+      const s = new Set<CapabilityFamily>();
+      for (const c of bestSet) for (const f of c.capabilityFamilies) s.add(f);
+      return s;
+    };
+    for (const family of requiredFamilies) {
+      if (currentlyCovered().has(family)) continue; // already covered after a prior swap
       const replacement = eligible
         .filter((c) => c.capabilityFamilies.includes(family) && !bestSet.includes(c))
         .sort((a, b) => b.match.score - a.match.score)[0];
       if (!replacement) continue;
+      // Recompute which families are still missing for the drop decision.
+      const stillMissing = requiredFamilies.filter((f) => !currentlyCovered().has(f));
       const dropIdx = bestSet
-        .map((candidate, idx) => ({ idx, score: candidate.match.score, helps: candidate.capabilityFamilies.some((f) => missing.includes(f)) }))
+        .map((candidate, idx) => ({ idx, score: candidate.match.score, helps: candidate.capabilityFamilies.some((f) => stillMissing.includes(f)) }))
         .filter((item) => !item.helps)
         .sort((a, b) => a.score - b.score)[0]?.idx;
       if (dropIdx === undefined) continue;
@@ -782,6 +795,7 @@ export function buildMatches(
         const queryTokens = cycleQueryTokens(baseQueryTokens, cycle);
         const s = cosineTfidf(queryTokens, docTokens, idf);
         if (s > bestScore) { bestScore = s; bestCycle = cycle; }
+        if (bestScore >= 0.995) break; // near-perfect match — remaining cycles cannot improve meaningfully
       }
       const recordText = expertTexts[idx] ?? "";
       const recordFamilies = capabilityFamilies(recordText);
@@ -836,6 +850,7 @@ export function buildMatches(
         const queryTokens = cycleQueryTokens(baseQueryTokens, cycle);
         const s = cosineTfidf(queryTokens, docTokens, idf);
         if (s > bestScore) { bestScore = s; bestCycle = cycle; }
+        if (bestScore >= 0.995) break;
       }
       const recordText = projectTexts[idx] ?? "";
       const recordFamilies = capabilityFamilies(recordText);
