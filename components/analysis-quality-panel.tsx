@@ -18,7 +18,7 @@ export async function AnalysisQualityPanel({ tenderId }: { tenderId: string }) {
     requirements: tender.requirements,
     analysisSummary: tender.analysisSummary,
     evaluationMethodology: tender.evaluationMethodology,
-    submissionNotes: tender.submissionNotes,
+    submissionNotes: [tender.notes, tender.intakeSummary].filter(Boolean).join("\n\n"),
     exactFileNaming: tender.exactFileNaming,
     exactFileOrder: tender.exactFileOrder,
   });
