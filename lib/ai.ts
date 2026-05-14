@@ -348,34 +348,51 @@ export async function generateWithFallback(prompt: string, opts?: { systemPrompt
     const claudeResult = await generateWithClaude(prompt, opts?.systemPrompt);
     if (claudeResult) return claudeResult;
     // Claude returned null — try Gemini, then OpenAI before giving up.
+    let geminiError: unknown = null;
     if (apiKey) {
       try {
         return await generate(prompt, opts?.geminiModel);
       } catch (geminiErr) {
+        geminiError = geminiErr;
         console.warn(`[ai] generateWithFallback Gemini failed: ${geminiErr instanceof Error ? geminiErr.message : String(geminiErr)} — trying OpenAI.`);
       }
     }
     // No Gemini or Gemini threw — try OpenAI as final tier
-    const openAiResult = await generateWithOpenAI(prompt, opts?.systemPrompt).catch(() => null);
+    const openAiResult = await generateWithOpenAI(prompt, opts?.systemPrompt).catch((err) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (/invalid.*api.*key|authentication/i.test(msg)) throw err; // re-throw auth errors
+      return null;
+    });
     if (openAiResult) return openAiResult;
+    // Re-throw the real Gemini error when OpenAI is not configured or also failed,
+    // so operators get the actionable cause rather than the generic "no provider" message.
+    if (geminiError && !isOpenAIEnabled()) throw geminiError;
     const providerNote = isOpenAIEnabled()
       ? `OpenAI (${process.env.OPENAI_PROPOSAL_MODEL ?? "gpt-4o"}) also returned null (rate limit or transient error).`
       : "Neither GEMINI_API_KEY nor OPENAI_API_KEY is set.";
     throw new Error(`Claude returned empty on all models in chain (${CLAUDE_PROPOSAL_MODELS.join(", ")}). ${providerNote} If ANTHROPIC_PROPOSAL_MODELS is set, model IDs must be lowercase with dashes (e.g. "claude-sonnet-4-5").`);
   }
+  let geminiError: unknown = null;
   if (apiKey) {
     try {
       return await generate(prompt, opts?.geminiModel);
     } catch (geminiErr) {
+      geminiError = geminiErr;
       console.warn(`[ai] generateWithFallback Gemini failed: ${geminiErr instanceof Error ? geminiErr.message : String(geminiErr)} — trying OpenAI.`);
     }
   }
   // Neither Claude nor Gemini (or both failed) — try OpenAI as final fallback
   if (isOpenAIEnabled()) {
-    const openAiResult = await generateWithOpenAI(prompt, opts?.systemPrompt).catch(() => null);
+    const openAiResult = await generateWithOpenAI(prompt, opts?.systemPrompt).catch((err) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (/invalid.*api.*key|authentication/i.test(msg)) throw err; // re-throw auth errors
+      return null;
+    });
     if (openAiResult) return openAiResult;
     throw new Error(`OpenAI (${process.env.OPENAI_PROPOSAL_MODEL ?? "gpt-4o"}) is configured but did not return a result. Check OPENAI_API_KEY and model access on your account.`);
   }
+  // Gemini was configured but threw — surface the real error, not "no provider configured"
+  if (geminiError) throw geminiError;
   throw new Error("No AI provider configured — set ANTHROPIC_API_KEY (preferred), GEMINI_API_KEY, or OPENAI_API_KEY.");
 }
 
@@ -1750,9 +1767,10 @@ async function generateOneSection(spec: ProposalSectionSpec): Promise<SectionRes
   // GPT-4o third-tier fallback — only when Claude and Gemini both failed.
   if (isOpenAIEnabled()) {
     try {
-      const openAiPrompt = `${spec.systemPrompt}\n\n---\n\n${spec.userPrompt}`;
+      // Use spec.systemPrompt as the system message so section-specific constraints
+      // (persona, format, length) take precedence over the generic proposal persona.
       const text = await Promise.race([
-        generateWithOpenAI(openAiPrompt, DEFAULT_PROPOSAL_SYSTEM_PROMPT, spec.maxOutputTokens ?? 4096),
+        generateWithOpenAI(spec.userPrompt, spec.systemPrompt, spec.maxOutputTokens ?? 4096),
         makeSectionTimeout(),
       ]);
       if (text && text.trim().length > 0) {

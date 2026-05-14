@@ -141,7 +141,10 @@ export function detectDominantFamily(queryText: string): CapabilityFamily | null
 
 // Two-character tokens that carry significant domain meaning and must NOT be
 // dropped by the general length filter (they become lowercase after split).
-const KEEP_SHORT_TOKENS = new Set(["it", "ai", "pm", "qa", "qc", "hr", "gm", "jv", "ict"]);
+// "it" removed — it is an extremely common pronoun that cannot be distinguished
+// from the ICT acronym after lowercasing, injecting high-frequency noise into
+// TF-IDF scoring. ICT signal is carried by sector regexes in proposal-intelligence.ts.
+const KEEP_SHORT_TOKENS = new Set(["ai", "pm", "qa", "qc", "hr", "gm", "jv", "ict"]);
 
 function tokenize(value: string | null | undefined): string[] {
   return (value ?? "")
