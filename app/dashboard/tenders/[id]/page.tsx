@@ -2,6 +2,7 @@ import { notFound, redirect } from "next/navigation";
 import { getSession } from "../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../lib/prisma";
 import { isAIEnabled } from "../../../../lib/ai";
+import { getTenderGenerationReadiness } from "../../../../lib/tender-generation-readiness";
 import { TenderDetail } from "./tender-detail";
 import { ExecutiveSnapshot } from "./executive-snapshot";
 import { TenderIntakeDetailPanel } from "./tender-intake-detail-panel";
@@ -11,6 +12,7 @@ import { EvaluatorObjectionsPanel } from "../../../../components/evaluator-objec
 import { PricingWorkbookPanel } from "../../../../components/pricing-workbook-panel";
 import { ProposalEvidenceReadinessPanel } from "../../../../components/proposal-evidence-readiness-panel";
 import { GenerationReadinessPanel } from "../../../../components/generation-readiness-panel";
+import { GenerationActionPanel } from "../../../../components/generation-action-panel";
 import { ExtractionQualityPanel } from "../../../../components/extraction-quality-panel";
 import { AnalysisQualityPanel } from "../../../../components/analysis-quality-panel";
 import { MatchingQualityPanel } from "../../../../components/matching-quality-panel";
@@ -49,6 +51,7 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
   if (!tender) notFound();
 
   const ai = isAIEnabled();
+  const generationReadiness = await getTenderGenerationReadiness(prisma, userId, tender.id);
 
   return (
     <>
@@ -57,6 +60,7 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
       <AnalysisQualityPanel tenderId={tender.id} />
       <MatchingQualityPanel tenderId={tender.id} />
       <GenerationReadinessPanel tenderId={tender.id} />
+      <GenerationActionPanel tenderId={tender.id} readiness={generationReadiness} />
       <TenderIntakeDetailPanel tender={tender} />
       <ProposalEvidenceReadinessPanel tenderId={tender.id} />
       <ExportReadinessPanel tenderId={tender.id} />
