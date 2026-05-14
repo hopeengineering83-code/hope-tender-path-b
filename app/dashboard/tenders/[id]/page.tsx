@@ -12,6 +12,7 @@ import { PricingWorkbookPanel } from "../../../../components/pricing-workbook-pa
 import { ProposalEvidenceReadinessPanel } from "../../../../components/proposal-evidence-readiness-panel";
 import { GenerationReadinessPanel } from "../../../../components/generation-readiness-panel";
 import { ExtractionQualityPanel } from "../../../../components/extraction-quality-panel";
+import { AnalysisQualityPanel } from "../../../../components/analysis-quality-panel";
 
 export default async function TenderPage({ params }: { params: Promise<{ id: string }> }) {
   const userId = await getSession();
@@ -52,6 +53,7 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
     <>
       <ExecutiveSnapshot tender={tender} />
       <ExtractionQualityPanel tenderId={tender.id} />
+      <AnalysisQualityPanel tenderId={tender.id} />
       <GenerationReadinessPanel tenderId={tender.id} />
       <TenderIntakeDetailPanel tender={tender} />
       <ProposalEvidenceReadinessPanel tenderId={tender.id} />
