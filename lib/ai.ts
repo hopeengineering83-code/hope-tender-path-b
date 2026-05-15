@@ -1865,7 +1865,7 @@ export async function generateProposalSectionsParallel(input: AIBidWriterInput, 
   // one of 3 sequential browser-side calls (each its own Vercel function
   // invocation with a fresh 60s window). Use larger per-section token
   // budgets and skip deep-mode drill-down — the extra first-pass tokens
-  // (7,500 vs 3,500 for Section C on Tier 2) compensate for no drill-down.
+  // (7,500 vs 4,500 for Section C on Tier 2) compensate for no drill-down.
   const isChunked = sectionFilter !== undefined && sectionFilter.length > 0;
   const specs = buildProposalSectionSpecs(input, { deep: isChunked ? false : deepMode, chunked: isChunked });
   const filteredSpecs = isChunked ? specs.filter((s) => sectionFilter.includes(s.id)) : specs;

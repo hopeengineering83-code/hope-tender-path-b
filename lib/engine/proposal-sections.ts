@@ -662,8 +662,14 @@ function tierBudget(tier: Tier, deep: boolean): TierBudget {
 // Caps are chosen to keep each individual Claude call under ~45s (leaving a
 // 15s buffer against the 60s Hobby function limit).
 //   Chunk 1: cover + AB in parallel  → max(cover, ab) ≈ 27s
-//   Chunk 2: technical approach only → c ≈ 38s
+//   Chunk 2: technical approach only → c ≈ 38s (large first-pass, no drill-down)
 //   Chunk 3: additional+declaration  → d ≈ 20s
+//
+// Section C does NOT run a drill-down in chunked mode — the larger first-pass
+// budget (7,500 tokens on Tier 2) compensates. Adding a serial drill-down
+// would push total wall time to ~50s — too close to the 50s call timeout.
+// Non-chunked (full-pipeline) mode runs the drill-down after the 4 parallel
+// first-pass calls complete.
 function chunkedTierBudget(tier: Tier): TierBudget {
   if (tier === 1) return { cover: 2800, ab: 3000, c: 4000, d: 2500, drillDown: 0 };
   if (tier === 2) return { cover: 4500, ab: 5500, c: 7500, d: 4000, drillDown: 0 };

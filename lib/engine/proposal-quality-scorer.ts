@@ -199,9 +199,16 @@ export function scoreProposalQuality(opts: {
   // 3. Table coverage (0–10) — score by count of table rows + numbered sections
   const tableMatches = (md.match(/^\|[^\n]+\|$/gm) ?? []).length;
   const tableSections = (md.match(/^#{2,3}\s+(?:A\.\d|B\.\d|C\.\d|D\.\d|E\.\d)/gm) ?? []).length;
+  // Section C sub-section count: minimum 6 C.2.x sub-sections are required.
+  // Fewer than 6 indicates the methodology is incomplete vs. the tender scope.
+  const sectionC2SubSections = (md.match(/^###\s+C\.2\.\d+/gm) ?? []).length;
+  const subSectionBonus = sectionC2SubSections >= 6 ? 1 : 0;
+  if (sectionC2SubSections > 0 && sectionC2SubSections < 6) {
+    notes.push(`Section C.2 has only ${sectionC2SubSections} sub-section(s) — minimum 6 required for benchmark quality.`);
+  }
   // Divisor of 12 rows (was 20) — a well-structured proposal typically has 12+ rows
   // across A.2 corporate table, B.2/B.3 project cards, C.3 work plan, C.4 QA table.
-  const tableCoverage = Math.min(10, Math.round((tableMatches / 12) * 5 + (tableSections / 6) * 5));
+  const tableCoverage = Math.min(10, Math.round((tableMatches / 12) * 5 + (tableSections / 6) * 4) + subSectionBonus);
   if (tableCoverage < 5) {
     weakAxes.push("tableCoverage");
     notes.push(`Limited tabular evidence: ${tableMatches} table rows across ${tableSections} numbered sections.`);
