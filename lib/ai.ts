@@ -222,6 +222,10 @@ async function generateWithClaude(prompt: string, systemPrompt: string = DEFAULT
           .map((c) => c.text ?? "")
           .join("\n")
           .trim();
+        const stopReason = (response as { stop_reason?: string }).stop_reason;
+        if (stopReason === "max_tokens") {
+          console.warn(`[ai:claude] Output truncated at max_tokens (${effectiveMaxTokens}). Consider increasing token budget for this call.`);
+        }
         if (text.length === 0) {
           attemptError = `${modelName}: empty response`;
           break; // empty response is not retryable
@@ -1855,7 +1859,7 @@ export async function generateProposalSectionsParallel(input: AIBidWriterInput, 
   const _tierNumForDeep = _tierForDeep === "1" ? 1 : _tierForDeep === "3" ? 3 : _tierForDeep === "4" ? 4 : 2;
   const deepMode = (process.env.PROPOSAL_DEEP_MODE || "").toLowerCase() === "false"
     ? false
-    : (process.env.PROPOSAL_DEEP_MODE || "").toLowerCase() === "true" || _tierNumForDeep >= 2;
+    : true;
 
   // Chunked mode: when a sectionFilter is provided the caller is making
   // one of 3 sequential browser-side calls (each its own Vercel function
