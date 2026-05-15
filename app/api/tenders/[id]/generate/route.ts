@@ -21,6 +21,12 @@ export const dynamic = "force-dynamic";
 
 type SupportDocKind = "EXPERT_CV" | "PROJECT_REFERENCES" | "METHODOLOGY" | "COMPANY_PROFILE" | "FINANCIAL_PLACEHOLDER" | "LEGAL_PLACEHOLDER" | "FORM_PLACEHOLDER" | "DECLARATION_PLACEHOLDER" | "ANNEX_PLACEHOLDER" | "SUBMISSION_RULES_PLACEHOLDER" | "SECTOR_TECHNICAL_SCOPE" | "GENERIC";
 
+function hasRealClientName(value?: string | null): boolean {
+  const text = (value ?? "").trim();
+  if (text.length < 2) return false;
+  return !/^(the client|client|unknown|n\/a|na|none|-)$/i.test(text);
+}
+
 function criticalGapIsHardBlock(gap: { title: string; description: string; mitigationPlan: string | null }) {
   const text = `${gap.title} ${gap.description} ${gap.mitigationPlan ?? ""}`;
   return /(ineligible|debarred|blacklisted|deadline.*passed|late submission|missing required file name|missing exact file|tender not found|company profile required|no documents? have been generated|signature prohibited|branding prohibited)/i.test(text);
@@ -188,6 +194,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (!company) return NextResponse.json({ error: "Company profile required before generation.", code: "COMPANY_PROFILE_REQUIRED", nextAction: "OPEN_COMPANY_READINESS" }, { status: 422 });
   const readiness = await getCompanyIngestionReadiness(company.id);
   if (!readiness.ingestionReady) return NextResponse.json({ error: "Generation blocked: company knowledge is not ready.", code: "INGESTION_NOT_READY", blockers: readiness.blockers, warnings: readiness.warnings, totals: readiness.totals, nextAction: "OPEN_COMPANY_READINESS" }, { status: 422 });
+  if (!hasRealClientName(tender.clientName)) return NextResponse.json({ error: "Generation blocked: client name is not set. Edit the tender and fill the Client Name field before generating proposal documents.", code: "CLIENT_NAME_REQUIRED", nextAction: "EDIT_TENDER" }, { status: 422 });
   if (tender.status === "NO_BID") return NextResponse.json({ error: "Generation blocked: this tender is marked NO_BID. Apply a BID or BID_WITH_CONDITIONS decision before generating proposal documents.", code: "NO_BID_BLOCK" }, { status: 409 });
   if (tender.requirements.length === 0) {
     return NextResponse.json({

@@ -39,6 +39,12 @@ function criticalGapIsHardBlock(gap: { title: string; description: string; mitig
   return /(ineligible|debarred|blacklisted|deadline.*passed|late submission|missing required file name|missing exact file|tender not found|company profile required|no documents? have been generated|signature prohibited|branding prohibited)/i.test(text);
 }
 
+function hasRealClientName(value?: string | null): boolean {
+  const text = (value ?? "").trim();
+  if (text.length < 2) return false;
+  return !/^(the client|client|unknown|n\/a|na|none|-)$/i.test(text);
+}
+
 function addMatchingQualityReadiness(params: {
   blockers: GenerationReadinessItem[];
   warnings: GenerationReadinessItem[];
@@ -94,6 +100,14 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
 
   const blockers: GenerationReadinessItem[] = companyReadiness.blockers.map((message) => ({ code: "COMPANY_INGESTION_NOT_READY", message, nextAction: "OPEN_COMPANY_READINESS" }));
   const warnings: GenerationReadinessItem[] = companyReadiness.warnings.map((message) => ({ code: "COMPANY_INGESTION_WARNING", message, nextAction: "OPEN_COMPANY_READINESS" }));
+
+  if (!hasRealClientName(tender.clientName)) {
+    blockers.push({
+      code: "CLIENT_NAME_REQUIRED",
+      message: "Client name is not set. Fill the tender Client Name before generating proposal documents so final files do not use \"The Client\" as a placeholder.",
+      nextAction: "EDIT_TENDER",
+    });
+  }
 
   if (analysisQuality.severity === "POOR") {
     blockers.push({ code: "ANALYSIS_QUALITY_POOR", message: `Tender analysis quality is poor (${analysisQuality.score}/100). Re-run AI Analyze / Run Engine and verify evaluation criteria, submission rules, and source references before generation.`, nextAction: "OPEN_ANALYSIS_QUALITY" });
