@@ -1068,49 +1068,61 @@ function buildSectionBFeaturedCards(input: AIBidWriterInput): string[] {
     ];
   }
 
-  // Split on double-newline or "---" separator to isolate project blocks
-  const blocks = projectsText.split(/\n{2,}|^-{3,}$/m).map((b) => b.trim()).filter((b) => b.length > 40);
+  // Parse projectProofLine format: "Name — Client | Country | Sector | Currency Value. Summary."
+  // Each project is on one line. We take the first two non-empty, non-evidence-header lines.
+  const projectLines = projectsText
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l.length > 20 && !/^(Wider company evidence|Company document|Legal evidence|Financial evidence|Compliance evidence)/i.test(l));
 
-  const makeCard = (block: string, num: number): string => {
-    // Extract fields via regex — these match the proof-line format:
-    // "Project: NAME", "Client: X", "Value: Y", "Sector: Z", etc.
-    const field = (label: string) => {
-      const m = block.match(new RegExp(`(?:^|\\n)\\s*${label}\\s*[:\\-]\\s*(.+)`, "i"));
-      return m ? m[1].trim().slice(0, 200) : null;
-    };
-    const name = field("Project|Name|Title") ?? block.split("\n")[0].slice(0, 100).replace(/^#+\s*/, "");
-    const client = field("Client");
-    const value = field("Value|Contract");
-    const sector = field("Sector|Type");
-    const duration = field("Duration|Period|Timeline|Year");
-    const services = field("Services|Scope|Deliverables|Activities");
-    const location = field("Location|Country|Region");
+  const parseProofLine = (line: string) => {
+    // Split on " — " to separate name from rest
+    const dashIdx = line.indexOf(" — ");
+    const name = dashIdx > 0 ? line.slice(0, dashIdx).trim() : line.slice(0, 80).trim();
+    const rest = dashIdx > 0 ? line.slice(dashIdx + 3) : "";
+    // rest is "Client | Country | Sector | ETB 5M. Summary text."
+    const pipeparts = rest.split("|").map((p) => p.trim());
+    const client = pipeparts[0] || null;
+    const country = pipeparts[1] || null;
+    const sector = pipeparts[2] || null;
+    // value is in pipeparts[3] which may be "ETB 5.0M. Summary text."
+    const valueSummary = pipeparts[3] || "";
+    const valueDotIdx = valueSummary.search(/\.\s+[A-Z]/);
+    const value = valueDotIdx > 0 ? valueSummary.slice(0, valueDotIdx).trim() : valueSummary.replace(/\..+$/, "").trim() || null;
+    const summary = valueDotIdx > 0 ? valueSummary.slice(valueDotIdx + 2).trim().slice(0, 300) : null;
+    return { name, client, country, sector, value, summary };
+  };
 
+  const makeCard = (line: string, num: number): string => {
+    const { name, client, country, sector, value, summary } = parseProofLine(line);
+    const cleanName = name.replace(/[*_]/g, "").slice(0, 100);
     const rows: string[] = [
       "| Field | Detail |",
       "|---|---|",
-      `| Project name | ${name} |`,
-      client ? `| Client | ${client} |` : `| Client | Bid-Team Action: confirm client name |`,
-      location ? `| Location/Scale | ${location} |` : "",
-      duration ? `| Duration | ${duration} |` : `| Duration | Bid-Team Action: confirm |`,
-      value ? `| Contract value | ${value} |` : `| Contract value | Bid-Team Action: confirm |`,
-      services ? `| Services provided | ${services.slice(0, 180)} |` : "",
-      sector ? `| Sector | ${sector} |` : "",
-    ].filter(Boolean);
+      `| Project name | **${cleanName}** |`,
+      `| Client | ${client ?? "Bid-Team Action: confirm client name"} |`,
+      `| Location/Country | ${country ?? "Bid-Team Action: confirm"} |`,
+      `| Sector | ${sector ?? "Bid-Team Action: confirm"} |`,
+      `| Contract value | ${value ?? "Bid-Team Action: confirm"} |`,
+      "| Duration | Bid-Team Action: confirm engagement timeline |",
+      "| Reference letter | Available on request |",
+    ];
 
-    const why = `**Why this anchors this tender:** The ${name} engagement demonstrates the firm's capacity for the core scope items required by this tender. The proposed lead team includes the same experts who delivered this assignment. Bid-Team Action: add a 2–3 sentence tailored narrative before submission.`;
+    const whyText = summary
+      ? `**Relevance to this tender:** ${summary} The proposed team delivered this assignment and will apply the same proven methodology.`
+      : `**Why this anchors this tender:** The ${cleanName} engagement demonstrates comparable scope, sector alignment, and delivery capacity. The proposed lead team includes the same professionals who delivered this assignment.`;
 
-    return [`## B.${num} Featured Project ${num - 1}`, rows.join("\n"), why].join("\n\n");
+    return [`## B.${num} Featured Project ${num - 1}`, rows.join("\n"), whyText].join("\n\n");
   };
 
-  const card1 = blocks.length >= 1 ? makeCard(blocks[0], 2) : [
+  const card1 = projectLines.length >= 1 ? makeCard(projectLines[0], 2) : [
     "## B.2 Featured Project 1",
-    "Bid-Team Action: populate with the most directly comparable project.",
+    "Bid-Team Action: populate with the most directly comparable project — client, location/scale, duration, contract value, testimony reference, services provided, and why it demonstrates capacity for this tender.",
   ].join("\n\n");
 
-  const card2 = blocks.length >= 2 ? makeCard(blocks[1], 3) : [
+  const card2 = projectLines.length >= 2 ? makeCard(projectLines[1], 3) : [
     "## B.3 Featured Project 2",
-    "Bid-Team Action: populate with the second most comparable project.",
+    "Bid-Team Action: populate with the second most comparable project using the same format.",
   ].join("\n\n");
 
   return [card1, card2];
