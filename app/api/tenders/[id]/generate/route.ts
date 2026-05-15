@@ -140,8 +140,8 @@ async function fillPlannedSupportDocuments(tenderId: string, plannedFileKeys?: S
   const tender = await prisma.tender.findUnique({ where: { id: tenderId }, include: { requirements: true, expertMatches: { where: { isSelected: true }, include: { expert: true }, orderBy: { score: "desc" } }, projectMatches: { where: { isSelected: true }, include: { project: true }, orderBy: { score: "desc" } } } });
   if (!tender) return 0;
   const requirements = tender.requirements.map((r) => formatRequirementLine(r, 380));
-  const experts = tender.expertMatches.filter((m) => m.expert.trustLevel === "REVIEWED").map((m) => `${m.expert.fullName}${m.expert.title ? ` — ${m.expert.title}` : ""}${m.expert.yearsExperience ? ` | ${m.expert.yearsExperience}+ years` : ""}${m.expert.profile ? ` | ${shortText(m.expert.profile, 260)}` : ""}`);
-  const projects = tender.projectMatches.filter((m) => m.project.trustLevel === "REVIEWED").map((m) => `${m.project.name}${m.project.clientName ? ` — ${m.project.clientName}` : ""}${m.project.country ? ` | ${m.project.country}` : ""}${m.project.summary ? ` | ${shortText(m.project.summary, 300)}` : ""}`);
+  const experts = tender.expertMatches.filter((m) => m.expert && m.expert.trustLevel === "REVIEWED").map((m) => `${m.expert.fullName}${m.expert.title ? ` — ${m.expert.title}` : ""}${m.expert.yearsExperience ? ` | ${m.expert.yearsExperience}+ years` : ""}${m.expert.profile ? ` | ${shortText(m.expert.profile, 260)}` : ""}`);
+  const projects = tender.projectMatches.filter((m) => m.project && m.project.trustLevel === "REVIEWED").map((m) => `${m.project.name}${m.project.clientName ? ` — ${m.project.clientName}` : ""}${m.project.country ? ` | ${m.project.country}` : ""}${m.project.summary ? ` | ${shortText(m.project.summary, 300)}` : ""}`);
   const docs = await prisma.generatedDocument.findMany({ where: { tenderId }, select: { id: true, name: true, exactFileName: true, documentType: true, generationStatus: true, fileContent: true } });
   const incomplete = docs.filter((doc) => !isMainProposalLike(doc) && !(doc.generationStatus === "GENERATED" && doc.fileContent) && (!plannedFileKeys || plannedFileKeys.has(generatedDocumentSubmissionKey(doc))));
   for (const doc of incomplete) {
@@ -202,26 +202,24 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const expertRequirementExists = await prisma.tenderRequirement.count({ where: { tenderId: id, requirementType: "EXPERT" } });
   const projectRequirementExists = await prisma.tenderRequirement.count({ where: { tenderId: id, requirementType: "PROJECT_EXPERIENCE" } });
   if (expertRequirementExists > 0 && selectedExpertMatches.length === 0) {
-    const code = totalExpertMatches === 0 ? "NO_EXPERT_MATCHES_FOUND" : "NO_EXPERT_MATCHES_SELECTED";
-    return NextResponse.json({
-      error: totalExpertMatches === 0
-        ? "Generation blocked: tender requires experts but no expert matches exist yet. Run Engine first to generate matches."
-        : "Generation blocked: tender requires experts but no expert matches are selected. Run Engine and review/select expert matches before generating.",
-      code,
-      totalExpertMatches,
-      nextAction: totalExpertMatches === 0 ? "RUN_ENGINE" : "REVIEW_MATCHES",
-    }, { status: 422 });
+    if (totalExpertMatches > 0) {
+      // Matches exist but none selected — hard block (user action needed)
+      return NextResponse.json({ error: "Generation blocked: tender requires experts but no expert matches are selected. Run Engine and review/select expert matches before generating.", code: "NO_EXPERT_MATCHES_SELECTED", totalExpertMatches, nextAction: "REVIEW_MATCHES" }, { status: 422 });
+    }
+    // No matches found yet — only block if vault is also empty (generate-elite falls back to vault)
+    if (readiness.totals.reviewedExperts === 0) {
+      return NextResponse.json({ error: "Generation blocked: tender requires experts but no expert matches exist and the company vault has no reviewed experts. Run Engine or review expert records first.", code: "NO_EXPERT_MATCHES_FOUND", totalExpertMatches: 0, nextAction: "RUN_ENGINE" }, { status: 422 });
+    }
   }
   if (projectRequirementExists > 0 && selectedProjectMatches.length === 0) {
-    const code = totalProjectMatches === 0 ? "NO_PROJECT_MATCHES_FOUND" : "NO_PROJECT_MATCHES_SELECTED";
-    return NextResponse.json({
-      error: totalProjectMatches === 0
-        ? "Generation blocked: tender requires project references but no project matches exist yet. Run Engine first to generate matches."
-        : "Generation blocked: tender requires project references but no project matches are selected. Run Engine and review/select project matches before generating.",
-      code,
-      totalProjectMatches,
-      nextAction: totalProjectMatches === 0 ? "RUN_ENGINE" : "REVIEW_MATCHES",
-    }, { status: 422 });
+    if (totalProjectMatches > 0) {
+      // Matches exist but none selected — hard block (user action needed)
+      return NextResponse.json({ error: "Generation blocked: tender requires project references but no project matches are selected. Run Engine and review/select project matches before generating.", code: "NO_PROJECT_MATCHES_SELECTED", totalProjectMatches, nextAction: "REVIEW_MATCHES" }, { status: 422 });
+    }
+    // No matches found yet — only block if vault is also empty
+    if (readiness.totals.reviewedProjects === 0) {
+      return NextResponse.json({ error: "Generation blocked: tender requires project references but no project matches exist and the company vault has no reviewed projects. Run Engine or review project records first.", code: "NO_PROJECT_MATCHES_FOUND", totalProjectMatches: 0, nextAction: "RUN_ENGINE" }, { status: 422 });
+    }
   }
   if (selectedExpertMatches.length > 0 && reviewedExpertCount === 0 && expertRequirementExists > 0) return NextResponse.json({ error: `Generation blocked: ${selectedExpertMatches.length} expert(s) are selected but NONE have been reviewed. Go to the Knowledge Review page and review at least one expert before generating.`, code: "ALL_EXPERTS_UNREVIEWED", draftExperts: draftExperts.map((m) => m.expert.fullName) }, { status: 422 });
   if (selectedProjectMatches.length > 0 && reviewedProjectCount === 0 && projectRequirementExists > 0) return NextResponse.json({ error: `Generation blocked: ${selectedProjectMatches.length} project reference(s) are selected but NONE have been reviewed. Go to the Knowledge Review page and review at least one project before generating.`, code: "ALL_PROJECTS_UNREVIEWED", draftProjects: draftProjects.map((m) => m.project.name) }, { status: 422 });

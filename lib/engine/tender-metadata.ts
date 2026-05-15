@@ -95,17 +95,34 @@ function inferTitle(text: string, fallbackFileName: string): string {
 }
 
 function inferReference(text: string): string | null {
-  return firstMatch(text, [
-    /(?:reference\s*(?:no\.?|number)?|ref\.?\s*no\.?|rfp\s*no\.?|tender\s*no\.?|bid\s*no\.?|procurement\s*no\.?)\s*[:\-]?\s*([A-Z0-9\-/_.]{3,80})/i,
-    /\b((?:RFP|EOI|TOR|RFQ|NCB|ICB|BID|RFx)[\-/_. ]?[A-Z0-9\-/_.]{3,80})\b/i,
+  const ref = firstMatch(text, [
+    // Must follow explicit label AND captured text must contain a digit (real ref numbers do)
+    /(?:reference\s*(?:no\.?|number)?|ref\.?\s*no\.?|rfp\s*no\.?|tender\s*no\.?|bid\s*no\.?|procurement\s*no\.?)\s*[:\-]\s*([A-Z0-9\-/_.]{3,80})/i,
+    /\b((?:RFP|EOI|TOR|RFQ|NCB|ICB|BID|RFx)[\-/_. ]?\d[A-Z0-9\-/_.]{1,78})\b/i,
   ]);
+  // Reject if the captured value looks like a common word rather than an ID
+  if (!ref || /^(only|n\/a|tbd|none|refer|see|above|below|this|that|the|a|an)$/i.test(ref.trim())) return null;
+  // A valid reference must contain at least one digit
+  if (!/\d/.test(ref)) return null;
+  return ref;
 }
 
+// Proposal section keywords that must NOT appear in a valid client name.
+// If the regex captures a line containing these, it's matched a TOC or heading, not an entity name.
+const PROPOSAL_SECTION_NOISE = /\b(technical\s+approach|methodology|compliance|appendix|declaration|experience|section\s+[a-d]|cover\s+letter|executive\s+summary|company\s+profile|project\s+reference|financial\s+proposal|submission\s+rules|terms\s+of\s+reference)\b/i;
+
 function inferClient(text: string): string | null {
-  return firstMatch(text, [
-    /(?:client|procuring\s+entity|procurement\s+entity|employer|owner|contracting\s+authority|beneficiary|issuing\s+authority)\s*[:\-]?\s*([^\n\r]{3,160})/i,
-    /(?:issued\s+by|prepared\s+by|invitation\s+by|on\s+behalf\s+of)\s*[:\-]?\s*([^\n\r]{3,160})/i,
+  const raw = firstMatch(text, [
+    /(?:client|procuring\s+entity|procurement\s+entity|employer|owner|contracting\s+authority|beneficiary|issuing\s+authority)\s*[:\-]\s*([^\n\r]{3,120})/i,
+    /(?:issued\s+by|prepared\s+by|invitation\s+by|on\s+behalf\s+of)\s*[:\-]\s*([^\n\r]{3,120})/i,
   ]);
+  // Reject matches that look like proposal section headings or TOC entries
+  if (!raw || PROPOSAL_SECTION_NOISE.test(raw)) return null;
+  // Require the captured text to look like an organisation: must contain at least
+  // one proper word (>=3 chars) and must NOT be a lone common word like "only".
+  const words = raw.split(/\s+/).filter((w) => w.length >= 3);
+  if (words.length === 0 || (words.length === 1 && /^(only|n\/a|tbd|none|refer|see|above|below|this|that)$/i.test(words[0]))) return null;
+  return raw;
 }
 
 function inferClientContactName(text: string): string | null {
@@ -144,11 +161,14 @@ function inferClientAddress(text: string): string | null {
 }
 
 function inferCountry(text: string): string | null {
-  const country = firstMatch(text, [
-    /(?:country|location)\s*[:\-]?\s*([A-Za-z ]{3,80})/i,
-  ]);
-  if (country) return country;
   const known = ["Ethiopia", "Kenya", "Nigeria", "South Sudan", "Uganda", "Tanzania", "Rwanda", "Somalia", "Djibouti", "Sudan", "Ghana", "Zambia", "Mozambique", "Senegal", "Mali", "Burkina Faso", "Niger", "Cameroon", "Congo", "DRC", "Angola", "Zimbabwe", "Malawi", "Madagascar"];
+  const raw = firstMatch(text, [
+    /(?:country|location)\s*[:\-]\s*([A-Za-z ]{3,80})/i,
+  ]);
+  // Validate: the raw match must actually be (or contain) a known country name.
+  // OCR can produce "A ddis Ababa" after "Country:" — reject it if it doesn't
+  // match the known list and fall through to the keyword search below.
+  if (raw && known.some((name) => new RegExp(`\\b${name}\\b`, "i").test(raw))) return raw;
   return known.find((name) => new RegExp(`\\b${name}\\b`, "i").test(text)) ?? null;
 }
 

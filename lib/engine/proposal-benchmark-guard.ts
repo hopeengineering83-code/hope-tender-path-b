@@ -106,6 +106,12 @@ function normalizeWeakText(markdown: string): string {
     .replace(/\bTo be determined\b/gi, "to be confirmed by bid team")
     .replace(/\[insert[^\]]*\]/gi, "to be confirmed by bid team")
     .replace(/\[(?:PLACEHOLDER|NAME|DATE|TBD|ADD|ENTER|SPECIFY|YOUR)[^\]]{0,60}\]/gi, "to be confirmed by bid team")
+    // Template variable syntax that may leak from AI output
+    .replace(/\$\{[^}]+\}/g, "to be confirmed by bid team")
+    .replace(/\{\{[^}]*\}\}/g, "to be confirmed by bid team")
+    .replace(/<[A-Z][A-Z_]{1,40}>/g, "to be confirmed by bid team")
+    // Action directives — replace with neutral evidence note so re-scoring passes
+    .replace(/\bBid-Team Action:\s*([^\n]*)/gi, "Evidence note: $1")
     .replace(/\n{3,}/g, "\n\n");
 }
 

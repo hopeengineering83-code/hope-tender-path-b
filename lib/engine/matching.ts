@@ -934,14 +934,10 @@ export function buildMatches(
     requirementDisciplineSources.map((src) => tokenize(src).filter((t) => t.length >= 5)),
   );
 
-  const expertCandidates: PortfolioCandidate<typeof expertMatches[number]>[] = expertMatches.map((m, idx) => {
-    const expert = knowledge.experts[idx];
-    // Defensive: the .sort() above reorders expertMatches, so index alignment
-    // is broken. Look up the expert by id instead.
+  const expertCandidates: PortfolioCandidate<typeof expertMatches[number]>[] = expertMatches.map((m) => {
     const e = knowledge.experts.find((x) => x.id === m.expertId);
     const recordText = e ? [e.fullName, e.title, e.profile, ...parseArr(e.disciplines), ...parseArr(e.sectors)].join(" ") : "";
     const disciplines = e ? [...parseArr(e.disciplines), ...parseArr(e.sectors)] : [];
-    void expert; // satisfy linter on unused-but-typed variable
     return {
       match: m,
       capabilityFamilies: capabilityFamilies(recordText),
