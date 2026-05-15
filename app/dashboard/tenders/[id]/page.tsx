@@ -14,6 +14,7 @@ import { ProposalEvidenceReadinessPanel } from "../../../../components/proposal-
 import { GenerationReadinessPanel } from "../../../../components/generation-readiness-panel";
 import { GenerationActionPanel } from "../../../../components/generation-action-panel";
 import { SubmissionPlanReconciliationPanel } from "../../../../components/submission-plan-reconciliation-panel";
+import { BidControlVerdictPanel } from "../../../../components/bid-control-verdict-panel";
 import { EngineActionPanel } from "../../../../components/engine-action-panel";
 import { AIHealthPanel } from "../../../../components/ai-health-panel";
 import { ExtractionQualityPanel } from "../../../../components/extraction-quality-panel";
@@ -59,6 +60,7 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
   return (
     <>
       <ExecutiveSnapshot tender={tender} />
+      <BidControlVerdictPanel tenderId={tender.id} />
       <AIHealthPanel />
       <EngineActionPanel tenderId={tender.id} />
       <ExtractionQualityPanel tenderId={tender.id} />
