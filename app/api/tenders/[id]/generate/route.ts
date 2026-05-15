@@ -101,6 +101,10 @@ function classifySupportDoc(docName: string): SupportDocKind {
   return "GENERIC";
 }
 
+function isReplacementOriginalKind(kind: SupportDocKind): boolean {
+  return kind.endsWith("_PLACEHOLDER") || kind === "GENERIC";
+}
+
 function placeholderIntro(): string[] {
   return ["PLACEHOLDER FOR TENDER-ISSUED ORIGINAL.", "This file in the submission package is reserved for the tender-issued original document(s) listed below. Replace this placeholder before final submission with the signed / stamped / certified original(s) — do not submit this generated placeholder file."];
 }
@@ -146,9 +150,24 @@ async function fillPlannedSupportDocuments(tenderId: string, plannedFileKeys?: S
   const incomplete = docs.filter((doc) => !isMainProposalLike(doc) && !(doc.generationStatus === "GENERATED" && doc.fileContent) && (!plannedFileKeys || plannedFileKeys.has(generatedDocumentSubmissionKey(doc))));
   for (const doc of incomplete) {
     const title = clean(doc.exactFileName || doc.name);
+    const kind = classifySupportDoc(title);
+    const replaceWithOriginal = isReplacementOriginalKind(kind);
     const cleanTitle = cleanTenderTitle(tender.title, { clientName: cleanClientName(tender.clientName, tender.description), description: tender.description });
     const fileContent = await makeSupportDocx(cleanTitle, title, supportSections(title, { tenderTitle: cleanTitle, requirements, experts, projects }));
-    await prisma.generatedDocument.update({ where: { id: doc.id }, data: { fileContent, generationStatus: "GENERATED", validationStatus: "PENDING", contentSummary: `Generated supporting package document for ${title} with distinct tender-specific content. Tender-issued attachments/forms remain subject to final submission review.`, updatedAt: new Date() } });
+    await prisma.generatedDocument.update({
+      where: { id: doc.id },
+      data: {
+        fileContent,
+        generationStatus: "GENERATED",
+        validationStatus: "PENDING",
+        reviewStatus: replaceWithOriginal ? "REPLACE_WITH_ORIGINAL" : "PENDING",
+        reviewNotes: replaceWithOriginal ? "DO NOT SUBMIT this generated placeholder. Replace it with the tender-issued original / signed / stamped / certified document before final export." : undefined,
+        contentSummary: replaceWithOriginal
+          ? `Generated replacement-control placeholder for ${title}. DO NOT SUBMIT: replace with the tender-issued original / signed / stamped / certified document before final export.`
+          : `Generated supporting package document for ${title} with distinct tender-specific content. Review before final submission.`,
+        updatedAt: new Date(),
+      },
+    });
   }
   return incomplete.length;
 }
@@ -203,20 +222,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const projectRequirementExists = await prisma.tenderRequirement.count({ where: { tenderId: id, requirementType: "PROJECT_EXPERIENCE" } });
   if (expertRequirementExists > 0 && selectedExpertMatches.length === 0) {
     if (totalExpertMatches > 0) {
-      // Matches exist but none selected — hard block (user action needed)
       return NextResponse.json({ error: "Generation blocked: tender requires experts but no expert matches are selected. Run Engine and review/select expert matches before generating.", code: "NO_EXPERT_MATCHES_SELECTED", totalExpertMatches, nextAction: "REVIEW_MATCHES" }, { status: 422 });
     }
-    // No matches found yet — only block if vault is also empty (generate-elite falls back to vault)
     if (readiness.totals.reviewedExperts === 0) {
       return NextResponse.json({ error: "Generation blocked: tender requires experts but no expert matches exist and the company vault has no reviewed experts. Run Engine or review expert records first.", code: "NO_EXPERT_MATCHES_FOUND", totalExpertMatches: 0, nextAction: "RUN_ENGINE" }, { status: 422 });
     }
   }
   if (projectRequirementExists > 0 && selectedProjectMatches.length === 0) {
     if (totalProjectMatches > 0) {
-      // Matches exist but none selected — hard block (user action needed)
       return NextResponse.json({ error: "Generation blocked: tender requires project references but no project matches are selected. Run Engine and review/select project matches before generating.", code: "NO_PROJECT_MATCHES_SELECTED", totalProjectMatches, nextAction: "REVIEW_MATCHES" }, { status: 422 });
     }
-    // No matches found yet — only block if vault is also empty
     if (readiness.totals.reviewedProjects === 0) {
       return NextResponse.json({ error: "Generation blocked: tender requires project references but no project matches exist and the company vault has no reviewed projects. Run Engine or review project records first.", code: "NO_PROJECT_MATCHES_FOUND", totalProjectMatches: 0, nextAction: "RUN_ENGINE" }, { status: 422 });
     }
@@ -242,7 +257,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     await time("generate.tender_documents", () => generateTenderDocuments(id, userId), { tenderId: id });
     advanceJob(job.id, "SAVE");
     const supportDocumentCount = await time("generate.fill_support_docs", () => fillPlannedSupportDocuments(id, plannedFileKeys), { tenderId: id });
-    if (supportDocumentCount > 0) warnings.push(explicitSubmissionScope ? `${supportDocumentCount} planned package document(s) were generated with distinct tender-specific content for export readiness.` : `${supportDocumentCount} remaining package document(s) were generated with distinct tender-specific content for export readiness.`);
+    if (supportDocumentCount > 0) warnings.push(explicitSubmissionScope ? `${supportDocumentCount} planned package document(s) were generated or marked for original replacement.` : `${supportDocumentCount} remaining package document(s) were generated or marked for original replacement.`);
     advanceJob(job.id, "LETTERHEAD");
     const letterheadAppliedCount = await applyActiveUploadedLetterheadToTenderDocuments(id, userId);
     if (letterheadAppliedCount > 0) warnings.push(`Uploaded Word letterhead applied to ${letterheadAppliedCount} generated DOCX file(s).`);
@@ -255,7 +270,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
     advanceJob(job.id, "VALIDATE");
     if (reviewedExpertCount > 0 || draftExperts.length > 0 || reviewedProjectCount > 0 || draftProjects.length > 0) await prisma.generatedDocument.updateMany({ where: { tenderId: id }, data: { reviewedExpertCount, draftExpertCount: draftExperts.length, reviewedProjectCount, draftProjectCount: draftProjects.length, updatedAt: new Date() } });
-    await logAction({ userId, action: "TENDER_GENERATED", entityType: "Tender", entityId: id, description: `Generated benchmark-quality documents for tender "${tender.title}" — ${reviewedExpertCount} reviewed experts, ${draftExperts.length} draft experts, ${reviewedProjectCount} reviewed projects, ${draftProjects.length} draft projects, ${supportDocumentCount} supporting package documents, ${letterheadAppliedCount} uploaded letterhead overlays, ${seniorReviewCriticals.length} senior-review gaps`, metadata: { tenderId: id, reviewedExpertCount, draftExpertCount: draftExperts.length, reviewedProjectCount, draftProjectCount: draftProjects.length, promotedExpertCount: promotion.promotedExpertCount, promotedProjectCount: promotion.promotedProjectCount, plannedRecordCount, supportDocumentCount, letterheadAppliedCount, seniorReviewGapCount: seniorReviewCriticals.length, explicitSubmissionScope, plannedTargetCount: plannedTargetFiles.length, missingPlanFileCount: missingPlanFiles.length, extraGeneratedFileCount: extraGeneratedDocs.length, readiness: readiness.totals, warnings }, requestId });
+    await logAction({ userId, action: "TENDER_GENERATED", entityType: "Tender", entityId: id, description: `Generated benchmark-quality documents for tender "${tender.title}" — ${reviewedExpertCount} reviewed experts, ${draftExperts.length} draft experts, ${reviewedProjectCount} reviewed projects, ${draftProjects.length} draft projects, ${supportDocumentCount} supporting/replacement-control package documents, ${letterheadAppliedCount} uploaded letterhead overlays, ${seniorReviewCriticals.length} senior-review gaps`, metadata: { tenderId: id, reviewedExpertCount, draftExpertCount: draftExperts.length, reviewedProjectCount, draftProjectCount: draftProjects.length, promotedExpertCount: promotion.promotedExpertCount, promotedProjectCount: promotion.promotedProjectCount, plannedRecordCount, supportDocumentCount, letterheadAppliedCount, seniorReviewGapCount: seniorReviewCriticals.length, explicitSubmissionScope, plannedTargetCount: plannedTargetFiles.length, missingPlanFileCount: missingPlanFiles.length, extraGeneratedFileCount: extraGeneratedDocs.length, readiness: readiness.totals, warnings }, requestId });
     const updatedTender = await prisma.tender.findFirst({ where: { id, userId }, include: { generatedDocuments: { orderBy: { exactOrder: "asc" } } } });
     const jobResult = { warnings, supportDocumentCount, letterheadAppliedCount, promotedExpertCount: promotion.promotedExpertCount, promotedProjectCount: promotion.promotedProjectCount };
     completeJob(job.id, jobResult);
