@@ -55,6 +55,7 @@ export function safeParseArr(value: string | null | undefined): string[] {
     const parsed = JSON.parse(value);
     return Array.isArray(parsed) ? parsed.map(String).filter(Boolean) : [];
   } catch {
+    console.warn("[safeParseArr] Non-JSON value split as CSV:", value.slice(0, 80));
     return value.split(/[,;|]/).map((item) => item.trim()).filter(Boolean);
   }
 }
@@ -251,8 +252,10 @@ function projectScore(project: ProjectLite, themes: ProposalTheme[], tenderText:
   if (/school|university|campus|education/i.test(text) && /school|university|campus|education/i.test(tenderText)) score += 10;
   if (/social.*develop|advisory|capacity.*build|community/i.test(text) && /social.*develop|advisory|capacity.*build|community/i.test(tenderText)) score += 8;
   if (/World Bank|UNDP|donor.*fund/i.test(text) && /World Bank|UNDP|donor.*fund/i.test(tenderText)) score += 6;
-  // Contract value bonus (bigger projects = stronger institutional evidence)
-  if (project.contractValue) score += Math.min(6, Math.log10(project.contractValue));
+  // Contract value bonus (bigger projects = stronger institutional evidence).
+  // Guard against contractValue < 1 — log10 returns negative for sub-unit
+  // values, which would penalise projects stored in fractional units.
+  if (project.contractValue && project.contractValue >= 1) score += Math.min(6, Math.log10(project.contractValue));
   // Country match bonus
   if (project.country && tenderText.toLowerCase().includes(project.country.toLowerCase())) score += 3;
   return score;
@@ -400,7 +403,7 @@ function detectThemes(tenderText: string): ProposalTheme[] {
   return scored.map((s) => s.theme);
 }
 
-function inferSector(tenderText: string): string {
+export function inferSector(tenderText: string): string {
   if (/health|hospital|medical|clinic|specialty.*cent/i.test(tenderText)) return "Healthcare / Medical Facility Design";
   if (/water supply|borehole|pump|hydraulic|irrigation|WASH|sanitation|wastewater/i.test(tenderText)) return "Water & Sanitation Infrastructure";
   if (/road.*design|road.*rehab|bridge.*design|highway|pavement.*design/i.test(tenderText)) return "Road / Bridge / Transport Infrastructure";
@@ -741,21 +744,47 @@ export function buildProposalIntelligence(params: {
   // contract value wins". The benchmark gap analysis showed exactly
   // this on the Pharo tender — Warehouse & Landscaping was anchoring
   // the cover letter for a hospital bid.
+  //
+  // Multi-sector fix: tenders can trigger multiple sectors simultaneously
+  // (e.g., "hospital water supply" = Healthcare + Water). We now detect
+  // ALL matching sectors and include a project when it matches ANY of
+  // them. Previously inferSector() returned only the first matching
+  // sector, silently excluding multi-sector-relevant projects.
+  const SECTOR_PATTERNS: Array<{ label: RegExp; keywords: RegExp }> = [
+    { label: /Healthcare/, keywords: /health|hospital|medical|clinic|patient|specialty.*cent|pharma|biomedical|MoH|emergency|outpatient|in-?patient|imaging|laboratory/i },
+    { label: /Water/, keywords: /water|borehole|pump|hydraulic|irrigation|WASH|sanitation|wastewater|sewer|drainage|hydrogeo/i },
+    { label: /Road|Bridge|Transport/, keywords: /road|bridge|highway|pavement|transport|drainage|culvert|alignment|corridor/i },
+    { label: /Urban|Master Plan/, keywords: /urban|master plan|municipal|spatial.*plan|land.?use|zoning|\bGIS\b|eco.?park|\bcity\b/i },
+    { label: /Education/, keywords: /school|university|campus|education|classroom|library|\blab\b/i },
+    { label: /Environmental|Social.*Impact/, keywords: /ESIA|ESMP|environmental|social.*safeguard|resettlement|biodiversity|impact.*assess/i },
+    // Kept in sync with inferSector() triggers: ICT|software.*develop|information.*system|digital.*platform|MIS|ERP|database.*system
+    { label: /ICT|Digital/, keywords: /\bICT\b|software|digital|\bMIS\b|\bERP\b|database|web|\bapp\b|cloud|server|network|information.*system/i },
+    { label: /Geotechnical|Structural/, keywords: /geotechnical|soil|foundation|seismic|borehole|drilling|structural/i },
+    { label: /Hospitality|Tourism/, keywords: /hotel|hospitality|resort|tourism|lodge/i },
+    // "plant" removed — matches "water treatment plant", "pumping plant" in unrelated sectors
+    { label: /Industrial|Manufacturing/, keywords: /factory|industrial|manufacturing|warehouse/i },
+    // "existing" and "interior" narrowed — bare forms match almost every tender
+    { label: /Renovation|Adaptation/, keywords: /renovation|modification|retrofit|existing\s+(?:building|facilit|struct)|adaptation|interior\s+(?:renovati|remodel|refurb)/i },
+    // Keywords kept in sync with the inferSector() triggers for "Social Development & Advisory":
+    // social.*develop | advisory.*service | institutional.*strength | capacity.*build | community.*develop
+    { label: /Social Advisory|Community/, keywords: /social.*advisor|advisory.*service|institutional.*strength|capacity.*build|community.*develop|social.*develop|livelihoods|social.*mobiliz|community.*mobiliz|resettlement.*action|poverty|civil.*society|participatory.*develop/i },
+    // Kept in sync with inferSector() triggers: architecture|building.*design|construction.*supervision|structural.*design
+    { label: /Building Design/, keywords: /architectural.*design|building.*design|construction.*supervision|residential.*develop|commercial.*develop|architectural.*supervision|\barchitecture\b|structural.*design/i },
+  ];
   const detectedSector = inferSector(tenderText);
+  // Multi-sector fix: collect ALL sector keyword sets triggered by the tender
+  // text. A hospital-water project, for example, triggers both the Healthcare
+  // and Water keyword sets. When the tender also mentions water supply (e.g.,
+  // "hospital with borehole water system"), a water-supply project correctly
+  // passes the filter because it matches the Water set — even though the
+  // PRIMARY sector is Healthcare. Previously inferSector() returned only one
+  // sector, silently excluding cross-sector relevant projects.
+  const activeTenderKeywords = SECTOR_PATTERNS.filter(({ keywords }) => keywords.test(tenderText)).map(({ keywords }) => keywords);
+
   const sectorFilter = (text: string): boolean => {
     if (detectedSector === "General Consultancy / Engineering") return true; // no filter
-    if (/Healthcare/.test(detectedSector)) return /health|hospital|medical|clinic|patient|specialty.*cent|pharma|biomedical|MoH|emergency|outpatient|in-?patient|imaging|laboratory/i.test(text);
-    if (/Water/.test(detectedSector)) return /water|borehole|pump|hydraulic|irrigation|WASH|sanitation|wastewater|sewer|drainage|hydrogeo/i.test(text);
-    if (/Road|Bridge|Transport/.test(detectedSector)) return /road|bridge|highway|pavement|transport|drainage|culvert|alignment|corridor/i.test(text);
-    if (/Urban|Master Plan/.test(detectedSector)) return /urban|master plan|municipal|spatial.*plan|land.?use|zoning|GIS|eco.?park|city/i.test(text);
-    if (/Education/.test(detectedSector)) return /school|university|campus|education|classroom|library|lab/i.test(text);
-    if (/Environmental|Social.*Impact/.test(detectedSector)) return /ESIA|ESMP|environmental|social.*safeguard|resettlement|biodiversity|impact.*assess/i.test(text);
-    if (/ICT|Digital/.test(detectedSector)) return /ICT|software|digital|MIS|ERP|database|web|app|cloud|server|network/i.test(text);
-    if (/Geotechnical|Structural/.test(detectedSector)) return /geotechnical|soil|foundation|seismic|borehole|drilling|structural/i.test(text);
-    if (/Hospitality|Tourism/.test(detectedSector)) return /hotel|hospitality|resort|tourism|lodge/i.test(text);
-    if (/Industrial|Manufacturing/.test(detectedSector)) return /factory|industrial|manufacturing|plant|warehouse/i.test(text);
-    if (/Renovation|Adaptation/.test(detectedSector)) return /renovation|modification|retrofit|existing|adaptation|interior/i.test(text);
-    if (/Building Design/.test(detectedSector)) return /architecture|building|design|construction|residential|commercial|interior/i.test(text);
+    // Multi-sector: pass if the item matches ANY sector keyword set active in the tender
+    if (activeTenderKeywords.length > 0) return activeTenderKeywords.some((kw) => kw.test(text));
     return true;
   };
 
@@ -948,7 +977,10 @@ export function buildCriterionEvidenceMap(
       .split(/\s+/)
       .filter((k) => k.length > 3 && !/^(the|and|for|with|that|this|from|into|have|been|will|shall|must|only|also|when|where|which|their|each|both)$/.test(k));
 
-    if (keywords.length === 0) continue;
+    if (keywords.length === 0) {
+      console.warn(`[criterion-evidence] Skipped criterion with no extractable keywords: "${w.criterion}"`);
+      continue;
+    }
 
     const scoredProjects = topProjects
       .map((p) => {

@@ -24,6 +24,7 @@ const NAV_GROUPS_BASE = [
     roles: ["ADMIN", "PROPOSAL_MANAGER"] as string[] | null,
     links: [
       { href: "/dashboard/company", label: "Knowledge Vault", icon: "🏢" },
+      { href: "/dashboard/company/readiness", label: "Readiness", icon: "🟢" },
       { href: "/dashboard/company/plan-b-import", label: "Plan B Exact Import", icon: "🧾" },
       { href: "/dashboard/company/review-board", label: "Review Board", icon: "✅" },
       { href: "/dashboard/company/review", label: "Knowledge Diagnostics", icon: "🔍" },

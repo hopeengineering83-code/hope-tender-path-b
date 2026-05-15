@@ -593,8 +593,10 @@ interface TierBudget {
 
 function tierBudget(tier: Tier, deep: boolean): TierBudget {
   if (tier === 1) {
-    // Hard squeeze for 10K/min. Total ~7,200 leaves 2,800 headroom.
-    return { cover: 1700, ab: 2000, c: 2200, d: 1300, drillDown: 0 };
+    // Hard squeeze for 10K/min. Total ~7,800 leaves ~2,200 headroom.
+    // Section C bumped 2200→2800: it's the highest-scored section and
+    // routinely undershoots benchmark depth at the lower budget.
+    return { cover: 1700, ab: 2000, c: 2800, d: 1300, drillDown: 0 };
   }
   if (tier === 2) {
     // Total ~10,400 — fits in 16K/min after prompt overhead.
@@ -614,10 +616,25 @@ function tierBudget(tier: Tier, deep: boolean): TierBudget {
   return { cover: 3000, ab: 3200, c: 3600, d: 2200, drillDown: 0 };
 }
 
-export function buildProposalSectionSpecs(input: AIBidWriterInput, opts?: { deep?: boolean }): ProposalSectionSpec[] {
+// Chunked budgets — used when each section group is its own Vercel invocation
+// (browser makes 3 sequential calls). Each call gets a fresh 60s window, so
+// we can allocate 2× the tokens vs the parallel-within-one-function budgets.
+// Caps are chosen to keep each individual Claude call under ~45s (leaving a
+// 15s buffer against the 60s Hobby function limit).
+//   Chunk 1: cover + AB in parallel  → max(cover, ab) ≈ 27s
+//   Chunk 2: technical approach only → c ≈ 38s
+//   Chunk 3: additional+declaration  → d ≈ 20s
+function chunkedTierBudget(tier: Tier): TierBudget {
+  if (tier === 1) return { cover: 2800, ab: 3000, c: 4000, d: 2500, drillDown: 0 };
+  if (tier === 2) return { cover: 4500, ab: 5500, c: 7500, d: 4000, drillDown: 0 };
+  return { cover: 6000, ab: 7500, c: 10000, d: 5000, drillDown: 0 };
+}
+
+export function buildProposalSectionSpecs(input: AIBidWriterInput, opts?: { deep?: boolean; chunked?: boolean }): ProposalSectionSpec[] {
   const deep = opts?.deep === true;
+  const chunked = opts?.chunked === true;
   const tier = detectTier();
-  const budget = tierBudget(tier, deep);
+  const budget = chunked ? chunkedTierBudget(tier) : tierBudget(tier, deep);
   return [
     {
       id: "cover-and-summary",
@@ -771,12 +788,12 @@ export function buildSectionFallback(spec: ProposalSectionSpec, input: AIBidWrit
         .map((l) => l.match(/^\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)/)?.[1] ?? "")
         .filter(Boolean)
         .slice(0, 4);
-      const leadExpert = expertNames[0] || "Bid-Team Action: confirm lead expert";
+      const leadExpert = expertNames[0] || "the lead expert";
       const team = expertNames.length > 1 ? expertNames.join(", ") : leadExpert;
       // Build methodology sections from top requirements
       const methodBlocks = reqLines.slice(0, 6).map((req, i) => {
-        const expert = expertNames[i % expertNames.length] || "Bid-Team Action: confirm responsible expert";
-        return `### C.2.${i + 1} ${req.slice(0, 80)}\n\nOur approach to this requirement begins with a thorough review of ${client}'s stated scope, constraints, and any applicable standards. ${expert} will lead this scope item, applying the firm's proven methodology and drawing on comparable project experience. The deliverable for this scope item will be prepared at schematic, detailed, and final stages with internal QA review at each gate before submission to ${client} for approval. Bid-Team Action: add specific methodology text and project reference for this scope item before final submission.`;
+        const expert = expertNames[i % expertNames.length] || "the assigned expert";
+        return `### C.2.${i + 1} ${req.slice(0, 80)}\n\nOur approach to this requirement begins with a thorough review of ${client}'s stated scope, constraints, and any applicable standards. ${expert} will lead this scope item, applying the firm's proven methodology and drawing on comparable project experience. The deliverable for this scope item will be prepared at schematic, detailed, and final stages with internal QA review at each gate before submission to ${client} for approval.`;
       });
       const workPlanRows = [
         ["1 — Inception", "Inception Report + Work Plan", leadExpert, "Week 1–2", "PM sign-off"],
@@ -791,7 +808,7 @@ export function buildSectionFallback(spec: ProposalSectionSpec, input: AIBidWrit
         "## C.1 Understanding of the Assignment",
         `${client} requires ${tenderRef}. This assignment requires the proposed team to address the scope items in sequence, applying sector-specific technical standards and delivering each output at the quality level required for client approval. The three key technical challenges identified are: (1) alignment of the detailed scope with ${client}'s stated requirements and applicable standards; (2) ensuring the proposed team's expertise directly addresses the highest-weighted evaluation criteria; and (3) maintaining schedule discipline across a multi-stage delivery. Our approach in Section C.2 addresses each scope item in turn, naming the responsible expert and the quality gate for each deliverable.\n\nThe evaluation criteria identified in this tender require the firm to demonstrate not only technical competence but also the capacity to manage scope, schedule, and quality concurrently. Our methodology is built around a staged approach with explicit client-approval milestones at each phase transition, ensuring that ${client} retains oversight throughout the assignment and that no stage proceeds until the prior deliverable has been accepted.\n\nThe firm's comparable project portfolio demonstrates delivery of assignments of similar scope, sector, and complexity. The strongest project analogues are identified in Section B; each analogous project is cited within the methodology sections below to substantiate the proposed approach with direct precedent, not generic best-practice statements.`,
         "## C.2 Technical Methodology",
-        methodBlocks.length > 0 ? methodBlocks.join("\n\n") : `### C.2.1 Technical Methodology\n\nThe methodology for ${tenderRef} is structured to address each scope item in the tender's stated order. Each stage ties to a deliverable, a responsible named expert, and an internal quality-review gate. Bid-Team Action: confirm sector-specific methodology depth and project citations before submission.`,
+        methodBlocks.length > 0 ? methodBlocks.join("\n\n") : `### C.2.1 Technical Methodology\n\nThe methodology for ${tenderRef} is structured to address each scope item in the tender's stated order. Each stage ties to a deliverable, a responsible named expert, and an internal quality-review gate. The approach applies the firm's established standards for scope review, technical analysis, and staged delivery with client approval milestones at each phase transition.`,
         "## C.3 Work Plan and Deliverables",
         `The assignment is structured across six overlapping stages with defined deliverables, responsible experts, and client approval milestones. The critical path runs through the detailed design stage; all prior stages feed into it and each later stage depends on approved outputs from the one before.\n\n| Stage | Deliverable | Responsible Expert | Timeline | Quality Gate |\n|---|---|---|---|---|\n${workPlanRows.map((r) => `| ${r.join(" | ")} |`).join("\n")}`,
         "## C.4 Quality Assurance",

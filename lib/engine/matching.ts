@@ -59,47 +59,98 @@ type CapabilityFamily =
   | "TELECOMS"
   | "INSTITUTIONAL_REFORM";
 
+// PR XX-MATCH-FIX (Fix A) — tightened keyword lists.
+// The pre-fix keywords included generic terms like `building`, `construction`,
+// `facility`, `design`, and `office` that caused warehouse / residential
+// projects to match CIVIL_INFRASTRUCTURE and ARCHITECTURE_BUILDINGS for
+// healthcare tenders. The new lists require SECTOR-DISTINCTIVE evidence,
+// not generic project boilerplate.
+// PR XX-MATCH-FIX MERGE — taking remote's (HEAD) generally-tighter set
+// AND applying my even-stricter ARCHITECTURE_BUILDINGS + CIVIL_INFRASTRUCTURE
+// to remove the residual /building/i + /residential/i triggers that were
+// the headline cause of warehouse projects anchoring healthcare tenders.
 const CAPABILITY_KEYWORDS: Record<CapabilityFamily, RegExp[]> = {
   WATER_SUPPLY: [/water/i, /supply/i, /sanitary/i, /hydraulic/i, /pipeline/i, /pipe/i, /borehole/i, /well/i, /drilling/i, /reservoir/i, /pump/i, /irrigation/i, /woreda/i, /kebele/i, /WASH/i, /sanitation/i],
-  // power/energy/mechanical removed — too generic; belongs in ENERGY_POWER / ELECTRO_MECHANICAL
   SOLAR_PUMPING: [/solar/i, /\bpv\b/i, /photovoltaic/i, /pump/i, /pumping/i, /electromechanical/i, /electro[\s-]mechanical/i],
-  // bare /design/i removed (matches "software design", "warehouse layout design");
-  // /study/i and /survey/i removed (too generic — covered by /feasibility/i for FDD work)
   FEASIBILITY_DESIGN: [/feasibility/i, /\bfsdd\b/i, /detailed[\s-]+design/i, /\bddp\b/i, /assessment/i, /investigation/i, /drawing/i, /specification/i, /bill[\s-]+of[\s-]+quantit/i, /\bboq\b/i],
-  // bare /site/i removed ("website", "off-site storage"); bare /resident/i removed
   SUPERVISION_CONTRACT: [/supervision/i, /construction\s+supervision/i, /contract\s+administration/i, /site\s+(?:engineer|supervisor|supervision|inspector|manager|representative)\b/i, /quality\s+control/i, /resident\s+engineer/i, /inspection/i],
-  // bare /planning/i removed ("event planning", "business planning"); keep /urban[\s-]+planning/i
-  URBAN_MUNICIPAL: [/urban/i, /municipal/i, /town/i, /city/i, /woreda/i, /kebele/i, /master[\s-]+plan/i, /urban[\s-]+planning/i, /settlement/i, /spatial/i, /zoning/i],
-  // /establishment/i removed (too generic — "business establishment")
-  CIVIL_INFRASTRUCTURE: [/civil/i, /infrastructure/i, /road/i, /bridge/i, /drainage/i, /structure/i, /building/i, /rehabilitation/i, /construction/i],
-  // /power/i removed ("manpower", "purchasing power"); /mechanical/i kept for MEP
+  URBAN_MUNICIPAL: [/urban\s+plan/i, /master\s+plan/i, /municipal/i, /spatial\s+plan/i, /land[-\s]?use\s+(?:plan|study)/i, /zoning\s+(?:plan|regulation|code|by-?law)/i, /city\s+plan/i, /town\s+plan/i, /settlement\s+plan/i, /urban\s+design/i],
+  // PR XX-MATCH-FIX MERGE — stricter than remote: drop /building/i, /construction/i,
+  // /structure/i (too generic — warehouse projects matched these for healthcare tenders).
+  CIVIL_INFRASTRUCTURE: [/road\s+(?:design|construction|rehabilitation)/i, /\bbridge\s+(?:design|construction)/i, /highway/i, /pavement/i, /drainage\s+system/i, /culvert/i, /\bRCC\b/i, /civil\s+(?:engineering|works)/i, /infrastructure\s+(?:design|project)/i],
   ELECTRO_MECHANICAL: [/electrical/i, /mechanical/i, /electro/i, /\bmep\b/i, /pump/i, /generator/i, /motor/i, /\bHVAC\b/i, /cooling/i],
   GEOTECH_HYDROGEOLOGY: [/geotech/i, /geological/i, /hydrogeology/i, /soil/i, /foundation/i, /investigation/i, /drilling/i, /groundwater/i, /aquifer/i],
   ENVIRONMENT_SOCIAL: [/environment/i, /social/i, /safeguard/i, /climate/i, /\besmp\b/i, /\besia\b/i, /impact/i, /resettlement/i, /biodiversity/i, /ESS\d/i, /\bESF\b/i],
-  // bare /planning/i and /reporting/i removed (any consultant does these); use /project[\s-]+planning/i
   PROJECT_MANAGEMENT: [/project[\s-]+management/i, /team[\s-]+leader/i, /coordination/i, /schedule/i, /programme/i, /work[\s-]+plan/i, /project[\s-]+planning/i, /\bPMI\b/i, /\bPMP\b/i],
-  // /facility/i removed ("facility management" too generic); /office/i removed;
-  // /hospital/, /school/, /campus/ removed — already in HEALTHCARE_FACILITIES/EDUCATION_FACILITIES
-  ARCHITECTURE_BUILDINGS: [/architecture/i, /architectural/i, /building/i, /housing/i, /residential/i],
+  // PR XX-MATCH-FIX MERGE — stricter: require "architectural design"/"interior design"
+  // signature words. /building/i, /residential/i, /housing/i moved here for residential
+  // projects to match but require a residential-distinctive token, not just "building".
+  ARCHITECTURE_BUILDINGS: [/architectural\s+design/i, /interior\s+design/i, /floor\s+plan/i, /space\s+planning/i, /furniture\s+layout/i, /3D\s+(?:visualization|rendering)/i, /BIM\b/i, /Revit/i, /ArchiCAD/i, /SketchUp/i, /AutoCAD/i, /\bG\+\d/i, /residential\s+(?:design|building)/i, /housing\s+(?:project|design)/i],
   FINANCIAL_LEGAL: [/financial/i, /audit/i, /turnover/i, /registration/i, /license/i, /certificate/i, /tax/i, /legal/i, /\bvat\b/i, /\btin\b/i, /procurement/i],
   // Universal families — added so the portfolio optimizer can match any
   // tender sector, not only the construction / consulting cluster.
-  HEALTHCARE_FACILITIES: [/health/i, /hospital/i, /medical/i, /clinic/i, /OPD/i, /ward/i, /surgical/i, /radiology/i, /pharmacy/i, /laboratory/i, /biomedical/i, /pharma/i, /patient/i, /IPC\b/i],
-  EDUCATION_FACILITIES: [/school/i, /university/i, /college/i, /education/i, /classroom/i, /vocational/i, /training\s+cent/i, /campus/i, /academic/i],
-  ICT_DIGITAL: [/ICT\b/i, /digital/i, /software/i, /platform/i, /database/i, /MIS\b/i, /ERP\b/i, /integration/i, /API\b/i, /cloud/i, /cyber/i, /information\s+system/i, /data\s+management/i, /web/i, /mobile\s+app/i],
-  AGRICULTURE_RURAL: [/agricultur/i, /agronom/i, /irrigation/i, /livestock/i, /horticulture/i, /value\s+chain/i, /smallholder/i, /post-?harvest/i, /agribusiness/i, /food\s+secur/i, /rural\s+development/i],
-  ENERGY_POWER: [/energy/i, /electricity/i, /grid/i, /transmission/i, /distribution/i, /generation/i, /substation/i, /renewable/i, /wind/i, /hydro\s*power/i, /geothermal/i, /off-?grid/i, /mini-?grid/i],
-  TRANSPORT_LOGISTICS: [/transport/i, /logistics/i, /port/i, /airport/i, /railway/i, /aviation/i, /maritime/i, /freight/i, /cargo/i, /supply\s+chain/i, /warehouse/i, /terminal/i],
-  MINING_EXTRACTIVES: [/mining/i, /extractiv/i, /quarry/i, /mineral/i, /ore/i, /tailings/i, /pit/i, /smelter/i, /refining/i, /artisanal/i],
-  TELECOMS: [/telecom/i, /telecommunication/i, /fiber/i, /fibre/i, /broadband/i, /5G\b/i, /4G\b/i, /tower/i, /spectrum/i, /BTS\b/i, /backhaul/i],
-  INSTITUTIONAL_REFORM: [/institutional/i, /governance/i, /policy/i, /reform/i, /capacity\s+build/i, /public\s+sector/i, /civil\s+service/i, /regulator/i, /strateg(?:y|ic)\s+plan/i, /M&E/i, /monitoring\s+and\s+evaluation/i],
+  HEALTHCARE_FACILITIES: [/health(?:care)?\s+(?:facilit|design|infra)/i, /\bhospital/i, /medical\s+(?:facility|center|cent|equipment|gas|imaging)/i, /clinic/i, /specialty\s+(?:medical|cent)/i, /\bOPD\b/i, /\bICU\b/i, /surgical\s+suite/i, /radiology/i, /pharmacy\s+design/i, /clinical\s+(?:lab|workflow)/i, /biomedical/i, /pharma/i, /patient\s+(?:flow|room|safety)/i, /\bIPC\b/i, /infection\s+control/i, /\bMoH\b/i, /ministry\s+of\s+health/i],
+  EDUCATION_FACILITIES: [/school\s+(?:design|construct|rehab)/i, /university\s+(?:design|build|campus)/i, /campus\s+plan/i, /classroom\s+block/i, /vocational\s+(?:training|cent)/i, /academic\s+building/i, /education\s+facility/i, /TVET/i],
+  ICT_DIGITAL: [/\bICT\b/i, /software\s+development/i, /digital\s+platform/i, /database\s+design/i, /\bMIS\b/i, /\bERP\b/i, /system\s+integration/i, /\bAPI\b/i, /cloud\s+infrastructure/i, /cybersecurity/i, /information\s+system/i, /data\s+management/i, /web\s+application/i, /mobile\s+app/i],
+  AGRICULTURE_RURAL: [/agricultur(?:al|e)/i, /agronom/i, /irrigation/i, /livestock/i, /horticulture/i, /value\s+chain/i, /smallholder/i, /post-?harvest/i, /agribusiness/i, /food\s+secur/i, /rural\s+development/i],
+  ENERGY_POWER: [/electricity\s+(?:grid|distribution)/i, /transmission\s+line/i, /substation/i, /power\s+(?:generation|plant|station)/i, /renewable\s+energy/i, /wind\s+farm/i, /hydro\s*power/i, /geothermal/i, /off-?grid/i, /mini-?grid/i],
+  TRANSPORT_LOGISTICS: [/airport\s+(?:design|infrastructure)/i, /railway/i, /port\s+(?:design|infrastructure)/i, /maritime/i, /freight/i, /cargo/i, /supply\s+chain/i, /logistics\s+(?:hub|network)/i, /terminal\s+(?:design|construct)/i, /warehouse\s+(?:design|management)/i],
+  MINING_EXTRACTIVES: [/mining/i, /extractiv/i, /quarry/i, /mineral\s+resourc/i, /tailings/i, /smelter/i, /refining/i, /artisanal/i],
+  TELECOMS: [/telecom/i, /telecommunication/i, /fiber\s+optic/i, /fibre\s+optic/i, /broadband/i, /\b5G\b/i, /\b4G\b/i, /tower\s+infrastructure/i, /spectrum/i, /\bBTS\b/i, /backhaul/i],
+  INSTITUTIONAL_REFORM: [/institutional\s+(?:reform|strengthen)/i, /governance\s+reform/i, /policy\s+(?:design|framework)/i, /capacity\s+building/i, /public\s+sector\s+reform/i, /civil\s+service\s+reform/i, /regulator\s+(?:design|framework)/i, /strategic\s+plan/i, /M&E\s+framework/i, /monitoring\s+and\s+evaluation/i],
 };
+
+// ─── Sector-dominance detection (PR XX-MATCH-FIX Fix B) ──────────────────────
+// Some capability families are sector-DEFINING — when the tender hits them
+// strongly, a project missing that family is almost certainly the wrong
+// project. The penalty applied in capabilityScore() drops such projects
+// below the 0.90 selection threshold so they no longer auto-anchor.
+//
+// Threshold: a family qualifies as "dominant" when its keyword set hits
+// ≥ 3 distinct keywords in the query text. This filters out incidental
+// mentions (e.g., one stray "hospital" in a road tender's site map).
+const SECTOR_DEFINING_FAMILIES: CapabilityFamily[] = [
+  "HEALTHCARE_FACILITIES",
+  "WATER_SUPPLY",
+  "ENERGY_POWER",
+  "ICT_DIGITAL",
+  "EDUCATION_FACILITIES",
+  "AGRICULTURE_RURAL",
+  "MINING_EXTRACTIVES",
+  "TELECOMS",
+  "URBAN_MUNICIPAL",
+  "ENVIRONMENT_SOCIAL",
+];
+
+export function detectDominantFamily(queryText: string): CapabilityFamily | null {
+  let best: { family: CapabilityFamily; hits: number } | null = null;
+  for (const family of SECTOR_DEFINING_FAMILIES) {
+    const patterns = CAPABILITY_KEYWORDS[family];
+    let hits = 0;
+    const seen = new Set<string>();
+    for (const p of patterns) {
+      const m = queryText.match(p);
+      if (m && !seen.has(p.source)) { hits += 1; seen.add(p.source); }
+    }
+    if (hits >= 3 && (!best || hits > best.hits)) {
+      best = { family, hits };
+    }
+  }
+  return best ? best.family : null;
+}
+
+// Two-character tokens that carry significant domain meaning and must NOT be
+// dropped by the general length filter (they become lowercase after split).
+// "it" removed — it is an extremely common pronoun that cannot be distinguished
+// from the ICT acronym after lowercasing, injecting high-frequency noise into
+// TF-IDF scoring. ICT signal is carried by sector regexes in proposal-intelligence.ts.
+const KEEP_SHORT_TOKENS = new Set(["ai", "pm", "qa", "qc", "hr", "gm", "jv", "ict"]);
 
 function tokenize(value: string | null | undefined): string[] {
   return (value ?? "")
     .toLowerCase()
     .split(/[^a-z0-9]+/)
-    .filter((t) => t.length > 2);
+    .filter((t) => t.length > 2 || KEEP_SHORT_TOKENS.has(t));
 }
 
 function parseArr(v: unknown): string[] {
@@ -150,7 +201,7 @@ function cosineTfidf(queryTokens: string[], docTokens: string[], idf: Map<string
   return denom === 0 ? 0 : dot / denom;
 }
 
-function capabilityFamilies(text: string): CapabilityFamily[] {
+export function capabilityFamilies(text: string): CapabilityFamily[] {
   return (Object.keys(CAPABILITY_KEYWORDS) as CapabilityFamily[]).filter((family) =>
     CAPABILITY_KEYWORDS[family].some((pattern) => pattern.test(text)),
   );
@@ -181,9 +232,12 @@ function criticalFamilyMismatchPenalty(queryText: string, recordText: string): n
 
   // Proportional penalty: tender requires ≥ 4 families but record covers < 30%
   // of them. A single generic overlapping family (e.g. FEASIBILITY_DESIGN from a
-  // road firm for a water tender) should not completely suppress the penalty.
+  // road firm for a water tender) must not suppress the penalty entirely.
+  // Raised from -0.10 to -0.18 so that bonus stacking (trust+experience+sector)
+  // cannot push a low-coverage record above the 0.55 selection floor when there
+  // is a genuine sector conflict in play.
   if (requiredFamilies.length >= 4 && sharedFamilies.length / requiredFamilies.length < 0.30) {
-    return -0.10;
+    return -0.18;
   }
 
   return 0;
@@ -231,7 +285,7 @@ function minimumFamilyDiversity(requiredFamilies: CapabilityFamily[]): number {
   return Math.min(2, requiredFamilies.length);
 }
 
-function capabilityScore(queryText: string, recordText: string, type: "expert" | "project"): number {
+export function capabilityScore(queryText: string, recordText: string, type: "expert" | "project"): number {
   const qFamilies = capabilityFamilies(queryText);
   const rFamilies = capabilityFamilies(recordText);
   if (qFamilies.length === 0 || rFamilies.length === 0) return 0;
@@ -247,6 +301,20 @@ function capabilityScore(queryText: string, recordText: string, type: "expert" |
   if (sharedBroadInfra >= 2) score += type === "project" ? 0.18 : 0.14;
   if (qFamilies.includes("SOLAR_PUMPING") && rFamilies.some((f) => ["ELECTRO_MECHANICAL", "WATER_SUPPLY", "SOLAR_PUMPING"].includes(f))) score += 0.16;
   if (qFamilies.includes("GEOTECH_HYDROGEOLOGY") && rFamilies.some((f) => ["GEOTECH_HYDROGEOLOGY", "WATER_SUPPLY", "FEASIBILITY_DESIGN"].includes(f))) score += 0.10;
+
+  // ─── PR XX-MATCH-FIX Fix B — dominant-family penalty ─────────────────────
+  // When the tender has a strong sector signal (e.g., HEALTHCARE_FACILITIES
+  // matched 3+ keywords), a project / expert missing that family is almost
+  // certainly the wrong record. Apply a hard penalty so warehouse projects
+  // don't auto-anchor a healthcare cover letter.
+  //
+  // The penalty multiplies the score by 0.30, which drops a 0.85 raw score
+  // to 0.255 — well below the 0.90 SELECTION_THRESHOLD. Records that DO
+  // carry the dominant family are unaffected.
+  const dominant = detectDominantFamily(queryText);
+  if (dominant && !rFamilies.includes(dominant)) {
+    score *= 0.30;
+  }
 
   return Math.max(0, Math.min(1, score));
 }
@@ -487,9 +555,14 @@ function marginalGainScore<T extends { score: number; isSelected: boolean }>(
   const requiredFamiliesCount = Math.max(requiredFamilies.length, 1);
   const requiredDisciplinesCount = Math.max(requiredDisciplines.size, 1);
 
+  // Family coverage is weighted higher than individual score so that
+  // a high-scoring but domain-mismatched record cannot displace a
+  // lower-scoring in-domain candidate who adds a new required family.
+  // Previous split (0.55 / 0.30) allowed a 0.90-scorer with 0 new
+  // families to edge out a 0.76-scorer who adds a required family.
   return (
-    candidate.match.score * 0.55 +
-    (newFamilies / requiredFamiliesCount) * 0.30 +
+    candidate.match.score * 0.40 +
+    (newFamilies / requiredFamiliesCount) * 0.45 +
     (newDisciplines / requiredDisciplinesCount) * 0.15
   );
 }
@@ -505,21 +578,57 @@ function optimizePortfolioSelection<T extends { score: number; isSelected: boole
     return matches.map((m) => ({ ...m, isSelected: false }));
   }
 
-  // Pre-filter: only candidates above the selection threshold are
-  // eligible. Keeps Stage 2 selecting from the same quality pool as
-  // Stage 1 did.
+  // PR XX-MATCH-FIX MERGE: combine remote's "strict family gate" (only
+  // candidates whose families include a strict-required family qualify
+  // when a strict family is required) with my "below-threshold fallback"
+  // (select top-N below threshold and tag rationale, so the engine never
+  // produces an empty selection set that leaves the cover letter
+  // unanchored).
   const hardFamilyGate = strictFamilyRequired(requiredFamilies);
   const strictEligible = candidates.filter((c) => {
     if (c.match.score < SELECTION_THRESHOLD) return false;
     if (!hardFamilyGate) return true;
     return c.capabilityFamilies.some((family) => requiredFamilies.includes(family));
   });
-  const eligible = strictEligible.length > 0
+  let eligible = strictEligible.length > 0
     ? strictEligible
     : candidates.filter((c) => c.match.score >= SELECTION_THRESHOLD);
-  if (eligible.length === 0) {
-    // No eligible candidates — leave isSelected=false on everything,
-    // matching the Stage 1 behaviour.
+
+  // PR XX-MATCH-FIX Fix D — soft fallback when zero candidates clear
+  // the threshold. Without this, a sector-mismatched vault produces an
+  // empty selection set that leaves the cover letter with nothing to
+  // anchor. Below-threshold rows are tagged so downstream consumers can
+  // shift to transferable-competency framing.
+  //
+  // Respects the same MIN_FLOOR_SCORE=0.55 invariant the Stage 1
+  // selector uses: confirmed off-sector items (warehouse for water,
+  // logistics for healthcare) that score below 0.55 must remain
+  // unselected. The fallback only promotes candidates that are
+  // borderline-relevant (≥ 0.55) but missed the 0.90 auto-select bar.
+  const FALLBACK_MIN_SCORE = 0.55;
+  if (eligible.length === 0 && candidates.length > 0) {
+    const fallbackPool = [...candidates]
+      .filter((c) => c.match.score >= FALLBACK_MIN_SCORE)
+      .sort((a, b) => b.match.score - a.match.score)
+      .slice(0, Math.min(limit, candidates.length));
+    if (fallbackPool.length > 0) {
+      eligible = fallbackPool.map((c) => {
+        const m = c.match as T & { rationale?: string };
+        return {
+          ...c,
+          match: {
+            ...c.match,
+            rationale: `[Below-threshold fallback: no candidate cleared the ${SELECTION_THRESHOLD} sector-fit threshold for this tender — selected by best-available rank (≥ ${FALLBACK_MIN_SCORE}). Bid-team to flag transferable-competency framing in the cover letter and surface "no comparable sector experience in vault" gap to the client.] ${m.rationale ?? ""}`,
+          } as T,
+        };
+      });
+    } else {
+      // No candidates even meet the 0.55 floor — leave selection empty
+      // so the engine surfaces "no comparable sector experience" rather
+      // than promoting confirmed off-sector projects.
+      return matches.map((m) => ({ ...m, isSelected: false }));
+    }
+  } else if (eligible.length === 0) {
     return matches.map((m) => ({ ...m, isSelected: false }));
   }
 
@@ -564,16 +673,25 @@ function optimizePortfolioSelection<T extends { score: number; isSelected: boole
   // from the winning set, swap in the highest scoring candidate carrying
   // each missing family (while preserving set size).
   if (hardFamilyGate && bestSet.length > 0) {
-    const covered = new Set<CapabilityFamily>();
-    for (const c of bestSet) for (const f of c.capabilityFamilies) covered.add(f);
-    const missing = requiredFamilies.filter((f) => !covered.has(f));
-    for (const family of missing) {
+    // Recompute covered and missing after EACH swap so that:
+    // (a) a candidate covering two missing families only triggers one swap,
+    // (b) the drop-candidate's "helps" check uses the live missing list
+    //     (not a stale snapshot from before prior swaps altered coverage).
+    const currentlyCovered = (): Set<CapabilityFamily> => {
+      const s = new Set<CapabilityFamily>();
+      for (const c of bestSet) for (const f of c.capabilityFamilies) s.add(f);
+      return s;
+    };
+    for (const family of requiredFamilies) {
+      if (currentlyCovered().has(family)) continue; // already covered after a prior swap
       const replacement = eligible
         .filter((c) => c.capabilityFamilies.includes(family) && !bestSet.includes(c))
         .sort((a, b) => b.match.score - a.match.score)[0];
       if (!replacement) continue;
+      // Recompute which families are still missing for the drop decision.
+      const stillMissing = requiredFamilies.filter((f) => !currentlyCovered().has(f));
       const dropIdx = bestSet
-        .map((candidate, idx) => ({ idx, score: candidate.match.score, helps: candidate.capabilityFamilies.some((f) => missing.includes(f)) }))
+        .map((candidate, idx) => ({ idx, score: candidate.match.score, helps: candidate.capabilityFamilies.some((f) => stillMissing.includes(f)) }))
         .filter((item) => !item.helps)
         .sort((a, b) => a.score - b.score)[0]?.idx;
       if (dropIdx === undefined) continue;
@@ -632,9 +750,15 @@ function seniorScore(params: {
   valueOrRecency: number;
   hasRealText: boolean;
 }): number {
+  // Cap the combined upside bonuses (trust + experience + recency) at 0.28
+  // so that a REVIEWED senior expert with matching sector cannot rescue a
+  // low-capability record above the 0.55 selection floor.  The sector
+  // component is kept outside the cap because it can be negative (sector
+  // conflict penalty −0.30) and must retain its full suppression effect.
+  const bonusCapped = Math.min(params.trust + params.experience + params.valueOrRecency, 0.28);
   const base = params.capability >= 0.72
-    ? (params.capability * 0.62 + params.cosine * 0.20 + params.sector + params.trust + params.experience + params.valueOrRecency)
-    : (params.capability * 0.42 + params.cosine * 0.35 + params.sector + params.trust + params.experience + params.valueOrRecency);
+    ? (params.capability * 0.62 + params.cosine * 0.20 + params.sector + bonusCapped)
+    : (params.capability * 0.42 + params.cosine * 0.35 + params.sector + bonusCapped);
   const evidenceConfidence = params.hasRealText ? 0.06 : -0.08;
   return Math.max(0, Math.min(1, base + evidenceConfidence));
 }
@@ -674,6 +798,7 @@ export function buildMatches(
         const queryTokens = cycleQueryTokens(baseQueryTokens, cycle);
         const s = cosineTfidf(queryTokens, docTokens, idf);
         if (s > bestScore) { bestScore = s; bestCycle = cycle; }
+        if (bestScore >= 0.995) break; // near-perfect match — remaining cycles cannot improve meaningfully
       }
       const recordText = expertTexts[idx] ?? "";
       const recordFamilies = capabilityFamilies(recordText);
@@ -728,6 +853,7 @@ export function buildMatches(
         const queryTokens = cycleQueryTokens(baseQueryTokens, cycle);
         const s = cosineTfidf(queryTokens, docTokens, idf);
         if (s > bestScore) { bestScore = s; bestCycle = cycle; }
+        if (bestScore >= 0.995) break;
       }
       const recordText = projectTexts[idx] ?? "";
       const recordFamilies = capabilityFamilies(recordText);

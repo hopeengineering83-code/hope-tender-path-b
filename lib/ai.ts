@@ -74,7 +74,7 @@ function getModel(modelName = DEFAULT_GEMINI_MODEL) {
 }
 
 export function isAIEnabled() {
-  return Boolean(apiKey || anthropicApiKey);
+  return Boolean(apiKey || anthropicApiKey || process.env.OPENAI_API_KEY);
 }
 
 export function isClaudeEnabled() {
@@ -86,7 +86,7 @@ export function isClaudeEnabled() {
 // (e.g., generate-elite.ts) so the GeneratedDocument.contentSummary can
 // surface which provider was actually used (rather than a generic "AI"
 // label). Reset to null whenever a generation request fails entirely.
-type AIProvider = "claude" | "gemini" | null;
+type AIProvider = "claude" | "gemini" | "openai" | null;
 let lastProposalProvider: AIProvider = null;
 
 export function getLastProposalProvider(): AIProvider {
@@ -347,12 +347,134 @@ export async function generateWithFallback(prompt: string, opts?: { systemPrompt
   if (isClaudeEnabled()) {
     const claudeResult = await generateWithClaude(prompt, opts?.systemPrompt);
     if (claudeResult) return claudeResult;
-    // Claude returned null (all models failed) — try Gemini if available.
-    if (apiKey) return generate(prompt, opts?.geminiModel);
-    throw new Error(`Claude returned empty / 404 / rate-limited on all models in chain (${CLAUDE_PROPOSAL_MODELS.join(", ")}) and GEMINI_API_KEY is not set. If ANTHROPIC_PROPOSAL_MODELS is set, model IDs must be lowercase with dashes (e.g. "claude-sonnet-4-5").`);
+    // Claude returned null — try Gemini, then OpenAI before giving up.
+    let geminiError: unknown = null;
+    if (apiKey) {
+      try {
+        return await generate(prompt, opts?.geminiModel);
+      } catch (geminiErr) {
+        geminiError = geminiErr;
+        console.warn(`[ai] generateWithFallback Gemini failed: ${geminiErr instanceof Error ? geminiErr.message : String(geminiErr)} — trying OpenAI.`);
+      }
+    }
+    // No Gemini or Gemini threw — try OpenAI as final tier
+    const openAiResult = await generateWithOpenAI(prompt, opts?.systemPrompt).catch((err) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (/api\s+key\s+invalid|invalid\s+api\s+key|incorrect\s+api\s+key|authentication|unauthorized/i.test(msg)) throw err; // re-throw auth errors
+      return null;
+    });
+    if (openAiResult) return openAiResult;
+    // Always surface Gemini error when it was the root cause — even in
+    // mixed deployments where OpenAI is configured but also returned null.
+    if (geminiError) {
+      const geminiMsg = geminiError instanceof Error ? geminiError.message : String(geminiError);
+      const openAiNote = isOpenAIEnabled()
+        ? ` OpenAI (${process.env.OPENAI_PROPOSAL_MODEL ?? "gpt-4o"}) also returned null — check OPENAI_API_KEY.`
+        : "";
+      throw new Error(`Claude returned empty on all models; Gemini also failed: ${geminiMsg}.${openAiNote}`);
+    }
+    const providerNote = isOpenAIEnabled()
+      ? `OpenAI (${process.env.OPENAI_PROPOSAL_MODEL ?? "gpt-4o"}) also returned null (rate limit or transient error).`
+      : "Neither GEMINI_API_KEY nor OPENAI_API_KEY is set.";
+    throw new Error(`Claude returned empty on all models in chain (${CLAUDE_PROPOSAL_MODELS.join(", ")}). ${providerNote} If ANTHROPIC_PROPOSAL_MODELS is set, model IDs must be lowercase with dashes (e.g. "claude-sonnet-4-5").`);
   }
-  if (apiKey) return generate(prompt, opts?.geminiModel);
-  throw new Error("No AI provider configured — set ANTHROPIC_API_KEY (preferred) or GEMINI_API_KEY.");
+  let geminiError: unknown = null;
+  if (apiKey) {
+    try {
+      return await generate(prompt, opts?.geminiModel);
+    } catch (geminiErr) {
+      geminiError = geminiErr;
+      console.warn(`[ai] generateWithFallback Gemini failed: ${geminiErr instanceof Error ? geminiErr.message : String(geminiErr)} — trying OpenAI.`);
+    }
+  }
+  // Neither Claude nor Gemini (or both failed) — try OpenAI as final fallback
+  if (isOpenAIEnabled()) {
+    const openAiResult = await generateWithOpenAI(prompt, opts?.systemPrompt).catch((err) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (/api\s+key\s+invalid|invalid\s+api\s+key|incorrect\s+api\s+key|authentication|unauthorized/i.test(msg)) throw err; // re-throw auth errors
+      return null;
+    });
+    if (openAiResult) return openAiResult;
+    // If Gemini was the root cause, surface it rather than blaming OpenAI
+    if (geminiError) throw geminiError;
+    throw new Error(`OpenAI (${process.env.OPENAI_PROPOSAL_MODEL ?? "gpt-4o"}) is configured but did not return a result. Check OPENAI_API_KEY and model access on your account.`);
+  }
+  // Gemini was configured but threw — surface the real error, not "no provider configured"
+  if (geminiError) throw geminiError;
+  throw new Error("No AI provider configured — set ANTHROPIC_API_KEY (preferred), GEMINI_API_KEY, or OPENAI_API_KEY.");
+}
+
+// ─── OpenAI (GPT-4o) provider ──────────────────────────────────────────────────
+// Third-tier fallback: Claude → Gemini → GPT-4o → deterministic.
+// Uses fetch() directly (no SDK dependency) so it works in any serverless runtime.
+// Returns null when OPENAI_API_KEY is not configured, so callers can proceed to
+// the next tier without throwing.
+async function generateWithOpenAI(
+  prompt: string,
+  systemPrompt: string = DEFAULT_PROPOSAL_SYSTEM_PROMPT,
+  maxTokens = 16000,
+): Promise<string | null> {
+  const openAiKey = process.env.OPENAI_API_KEY;
+  if (!openAiKey) return null;
+
+  const model = process.env.OPENAI_PROPOSAL_MODEL || "gpt-4o";
+
+  try {
+    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${openAiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model,
+        max_tokens: maxTokens,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: prompt },
+        ],
+      }),
+    });
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      if (res.status === 401 || res.status === 403) {
+        throw new Error(`OpenAI API key invalid (${res.status}): ${body.slice(0, 200)}`);
+      }
+      if (res.status === 429) {
+        console.warn(`[ai] OpenAI rate limit (429) on ${model} — skipping to deterministic fallback.`);
+        return null;
+      }
+      console.warn(`[ai] OpenAI error ${res.status} on ${model}: ${body.slice(0, 240)} — skipping.`);
+      return null;
+    }
+
+    const data = await res.json() as {
+      choices?: Array<{ message?: { content?: string } }>;
+      error?: { message?: string };
+    };
+
+    if (data.error?.message) {
+      console.warn(`[ai] OpenAI API error: ${data.error.message}`);
+      return null;
+    }
+
+    const text = data.choices?.[0]?.message?.content?.trim() ?? "";
+    if (text.length === 0) {
+      console.warn(`[ai] OpenAI ${model} returned empty content.`);
+      return null;
+    }
+    return text;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (/api\s+key\s+invalid|invalid\s+api\s+key|incorrect\s+api\s+key|authentication|unauthorized/i.test(msg)) throw err; // re-throw auth errors
+    console.warn(`[ai] OpenAI fetch failed: ${msg} — falling through to deterministic.`);
+    return null;
+  }
+}
+
+export function isOpenAIEnabled() {
+  return Boolean(process.env.OPENAI_API_KEY);
 }
 
 // Try PROPOSAL_MODELS in order until one succeeds — gives the best available model for proposal writing.
@@ -921,9 +1043,27 @@ ${input.currentMarkdown}
       }
     }
     if (apiKey) {
-      const geminiResult = await withRefinementTimeout(generateWithBestModel(prompt));
-      lastProposalProvider = "gemini";
-      return geminiResult;
+      try {
+        const geminiResult = await withRefinementTimeout(generateWithBestModel(prompt));
+        lastProposalProvider = "gemini";
+        return geminiResult;
+      } catch (geminiErr) {
+        console.warn(`[ai] refineProposalWithAI Gemini failed: ${geminiErr instanceof Error ? geminiErr.message : String(geminiErr)} — trying OpenAI.`);
+      }
+    }
+    // OpenAI as third refinement fallback
+    if (isOpenAIEnabled()) {
+      try {
+        const openAiResult = await withRefinementTimeout(
+          generateWithOpenAI(prompt, REFINEMENT_SYSTEM_PROMPT).then((r) => r ?? Promise.reject(new Error("OpenAI returned null"))),
+        );
+        if (openAiResult) {
+          lastProposalProvider = "openai";
+          return openAiResult;
+        }
+      } catch (openAiErr) {
+        console.warn(`[ai] refineProposalWithAI OpenAI failed: ${openAiErr instanceof Error ? openAiErr.message : String(openAiErr)}`);
+      }
     }
   } catch (err) {
     console.warn(`[ai] refineProposalWithAI failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -1459,10 +1599,36 @@ Now write the complete technical proposal. Start with the Cover Letter. The eval
     }
   }
   if (apiKey) {
-    const geminiResult = await generateWithBestModel(prompt);
-    lastProposalProvider = "gemini";
-    return geminiResult;
+    try {
+      const geminiResult = await generateWithBestModel(prompt);
+      lastProposalProvider = "gemini";
+      return geminiResult;
+    } catch (geminiErr) {
+      const geminiMsg = geminiErr instanceof Error ? geminiErr.message : String(geminiErr);
+      console.warn(`[ai] Gemini failed for full proposal: ${geminiMsg} — trying OpenAI GPT-4o.`);
+      // Fall through to OpenAI if available
+      const openAiResult = await generateWithOpenAI(prompt).catch((e) => {
+        console.warn(`[ai] OpenAI also failed: ${e instanceof Error ? e.message : String(e)}`);
+        return null;
+      });
+      if (openAiResult) {
+        lastProposalProvider = "openai";
+        return openAiResult;
+      }
+      // Re-throw original Gemini error so callers surface the root cause
+      throw geminiErr;
+    }
   }
+
+  // Neither Gemini nor Claude configured — try OpenAI as a standalone provider
+  if (isOpenAIEnabled()) {
+    const openAiResult = await generateWithOpenAI(prompt);
+    if (openAiResult) {
+      lastProposalProvider = "openai";
+      return openAiResult;
+    }
+  }
+
   lastProposalProvider = null;
   // Diagnostic error message: distinguishes between (a) no key at all,
   // (b) Anthropic key present but Claude failed, (c) both configured but
@@ -1470,10 +1636,16 @@ Now write the complete technical proposal. Start with the Cover Letter. The eval
   // set seeing the "No AI provider configured" message and assuming the
   // key wasn't loaded — when in fact the model name was wrong.
   if (anthropicApiKey && !apiKey) {
-    throw new Error(`Claude (Anthropic) is configured but did not produce a proposal: ${claudeError ?? "unknown error"}. Set GEMINI_API_KEY as a fallback, OR fix the Claude model chain.`);
+    const openAiNote = isOpenAIEnabled()
+      ? ` OpenAI (${process.env.OPENAI_PROPOSAL_MODEL ?? "gpt-4o"}) was also tried as fallback but returned null — check OPENAI_API_KEY and model access.`
+      : " Set GEMINI_API_KEY or OPENAI_API_KEY as a fallback, OR fix the Claude model chain.";
+    throw new Error(`Claude (Anthropic) is configured but did not produce a proposal: ${claudeError ?? "unknown error"}.${openAiNote}`);
+  }
+  if (!anthropicApiKey && !apiKey && isOpenAIEnabled()) {
+    throw new Error(`OpenAI (${process.env.OPENAI_PROPOSAL_MODEL ?? "gpt-4o"}) is configured but did not produce a proposal. Check that OPENAI_API_KEY is valid and the model is accessible on your account.`);
   }
   if (!anthropicApiKey && !apiKey) {
-    throw new Error("No AI provider configured — set ANTHROPIC_API_KEY (preferred) or GEMINI_API_KEY in environment variables.");
+    throw new Error("No AI provider configured — set ANTHROPIC_API_KEY (preferred), GEMINI_API_KEY, or OPENAI_API_KEY in environment variables.");
   }
   // anthropicApiKey present, apiKey present, both failed
   throw new Error(`Both AI providers failed. Claude: ${claudeError ?? "unknown"}. Gemini also failed (see prior log lines).`);
@@ -1526,7 +1698,7 @@ interface SectionResult {
   id: ProposalSectionId;
   title: string;
   markdown: string;
-  source: "claude" | "gemini" | "fallback";
+  source: "claude" | "gemini" | "openai" | "fallback";
   error?: string;
   durationMs: number;
 }
@@ -1534,15 +1706,18 @@ interface SectionResult {
 async function generateOneSection(spec: ProposalSectionSpec): Promise<SectionResult> {
   const t0 = Date.now();
 
-  // Per-section timeout — independent from the orchestrator's overall
-  // timeout. If THIS section runs long, only THIS section falls back to
-  // deterministic; the other parallel calls keep running.
-  const sectionTimeout = new Promise<null>((_, reject) =>
-    setTimeout(
-      () => reject(new Error(`section "${spec.id}" timed out after ${Math.round(PROPOSAL_SECTION_TIMEOUT_MS / 1000)}s`)),
-      PROPOSAL_SECTION_TIMEOUT_MS,
-    ),
-  );
+  // Per-section timeout factory — creates a FRESH promise each time so
+  // that the Gemini fallback is not immediately rejected by an already-
+  // settled timeout from a prior Claude attempt (a settled-rejected
+  // promise in Promise.race resolves the race instantly).
+  function makeSectionTimeout() {
+    return new Promise<null>((_, reject) =>
+      setTimeout(
+        () => reject(new Error(`section "${spec.id}" timed out after ${Math.round(PROPOSAL_SECTION_TIMEOUT_MS / 1000)}s`)),
+        PROPOSAL_SECTION_TIMEOUT_MS,
+      )
+    );
+  }
 
   // Try Claude first (preferred provider — system prompts in
   // proposal-sections.ts are tuned for Claude personas).
@@ -1550,7 +1725,7 @@ async function generateOneSection(spec: ProposalSectionSpec): Promise<SectionRes
     try {
       const claudeResult = await Promise.race([
         generateWithClaude(spec.userPrompt, spec.systemPrompt, spec.maxOutputTokens),
-        sectionTimeout,
+        makeSectionTimeout(),
       ]);
       if (claudeResult && claudeResult.trim().length > 0) {
         return {
@@ -1583,7 +1758,7 @@ async function generateOneSection(spec: ProposalSectionSpec): Promise<SectionRes
       const geminiPrompt = `${spec.systemPrompt}\n\n---\n\n${spec.userPrompt}`;
       const text = await Promise.race([
         generateWithBestModel(geminiPrompt),
-        sectionTimeout,
+        makeSectionTimeout(),
       ]);
       if (text && text.trim().length > 0) {
         return {
@@ -1600,7 +1775,31 @@ async function generateOneSection(spec: ProposalSectionSpec): Promise<SectionRes
     }
   }
 
-  // Both providers failed (or unavailable). Use the deterministic
+  // GPT-4o third-tier fallback — only when Claude and Gemini both failed.
+  if (isOpenAIEnabled()) {
+    try {
+      // Use spec.systemPrompt as the system message so section-specific constraints
+      // (persona, format, length) take precedence over the generic proposal persona.
+      const text = await Promise.race([
+        generateWithOpenAI(spec.userPrompt, spec.systemPrompt, spec.maxOutputTokens ?? 4096),
+        makeSectionTimeout(),
+      ]);
+      if (text && text.trim().length > 0) {
+        return {
+          id: spec.id,
+          title: spec.title,
+          markdown: text,
+          source: "openai",
+          durationMs: Date.now() - t0,
+        };
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[ai] section "${spec.id}" OpenAI fallback failed (${msg}) — using deterministic fallback.`);
+    }
+  }
+
+  // All providers failed (or unavailable). Use the deterministic
   // per-section fallback. The downstream pipeline's enrichers will
   // populate structured tables (Compliance Matrix, Evaluator Mirror,
   // Win Themes, Self-Score, Project Portfolio, etc.) so the section
@@ -1632,7 +1831,7 @@ async function generateOneSection(spec: ProposalSectionSpec): Promise<SectionRes
  * detect "all sections fell back" can check lastProposalProvider —
  * it will be null in that case.
  */
-export async function generateProposalSectionsParallel(input: AIBidWriterInput): Promise<string> {
+export async function generateProposalSectionsParallel(input: AIBidWriterInput, sectionFilter?: ProposalSectionId[]): Promise<string> {
   const t0 = Date.now();
 
   // PROPOSAL_DEEP_MODE — opt-in "FULL POWER" mode. When enabled:
@@ -1658,11 +1857,19 @@ export async function generateProposalSectionsParallel(input: AIBidWriterInput):
     ? false
     : (process.env.PROPOSAL_DEEP_MODE || "").toLowerCase() === "true" || _tierNumForDeep >= 2;
 
-  const specs = buildProposalSectionSpecs(input, { deep: deepMode });
+  // Chunked mode: when a sectionFilter is provided the caller is making
+  // one of 3 sequential browser-side calls (each its own Vercel function
+  // invocation with a fresh 60s window). Use larger per-section token
+  // budgets and skip deep-mode drill-down — the extra first-pass tokens
+  // (7,500 vs 3,500 for Section C on Tier 2) compensate for no drill-down.
+  const isChunked = sectionFilter !== undefined && sectionFilter.length > 0;
+  const specs = buildProposalSectionSpecs(input, { deep: isChunked ? false : deepMode, chunked: isChunked });
+  const filteredSpecs = isChunked ? specs.filter((s) => sectionFilter.includes(s.id)) : specs;
 
-  // Promise.allSettled — we never reject the whole batch even if every
-  // section fails, because we want a shippable markdown either way.
-  const results = await Promise.all(specs.map(generateOneSection));
+  // generateOneSection never rejects — it catches all errors and returns
+  // a "fallback" SectionResult. Promise.all is therefore safe here; the
+  // comment "Promise.allSettled" in earlier drafts was stale.
+  const results = await Promise.all(filteredSpecs.map(generateOneSection));
 
   // Build per-section markdown, substituting deterministic fallback for
   // any section whose source is "fallback".
@@ -1670,7 +1877,7 @@ export async function generateProposalSectionsParallel(input: AIBidWriterInput):
     if (r.source === "fallback") {
       return {
         ...r,
-        markdown: buildSectionFallback(specs[i], input),
+        markdown: buildSectionFallback(filteredSpecs[i], input),
       };
     }
     return r;
@@ -1692,7 +1899,7 @@ export async function generateProposalSectionsParallel(input: AIBidWriterInput):
   // API error), we keep the first-pass Section C and log a warning.
   // No proposal is shipped with a broken Section C as a result.
   let drillDownInfo: string = "";
-  if (deepMode) {
+  if (deepMode && !isChunked) {
     const sectionCResult = sections.find((s) => s.id === "technical-approach");
     if (sectionCResult && sectionCResult.source !== "fallback") {
       const firstPassSectionC = sectionCResult.markdown;
@@ -1719,13 +1926,16 @@ export async function generateProposalSectionsParallel(input: AIBidWriterInput):
   // failure.
   const usedClaude = sections.some((s) => s.source === "claude");
   const usedGemini = sections.some((s) => s.source === "gemini");
+  const usedOpenAI = sections.some((s) => s.source === "openai");
   const allFell = sections.every((s) => s.source === "fallback");
   if (allFell) {
     lastProposalProvider = null;
   } else if (usedClaude) {
     lastProposalProvider = "claude";
-  } else if (usedGemini) {
+  } else if (usedGemini && !usedOpenAI) {
     lastProposalProvider = "gemini";
+  } else if (usedOpenAI) {
+    lastProposalProvider = "openai";
   }
 
   // Diagnostic summary line — surfaces in Vercel runtime logs so
@@ -1736,7 +1946,7 @@ export async function generateProposalSectionsParallel(input: AIBidWriterInput):
   const summary = sections
     .map((s) => `${s.id}=${s.source}(${Math.round(s.durationMs / 100) / 10}s)`)
     .join(" ");
-  const modeLabel = deepMode ? "deep" : "standard";
+  const modeLabel = isChunked ? `chunked[${sectionFilter!.join(",")}]` : deepMode ? "deep" : "standard";
   console.info(`[ai] section-parallel generation (${modeLabel}) finished in ${Math.round(totalMs / 100) / 10}s — ${summary}${drillDownInfo}`);
 
   // Stitch in canonical order. Cover+Summary first, then A+B, then C,

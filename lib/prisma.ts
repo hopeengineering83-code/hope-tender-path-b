@@ -483,6 +483,24 @@ async function bootstrap(client: PrismaClient): Promise<void> {
   await ensureColumn(client, "Tender", "bidOutcome", "TEXT");
   await ensureColumn(client, "Tender", "bidOutcomeNote", "TEXT");
   await ensureColumn(client, "Tender", "bidOutcomeAt", "TIMESTAMPTZ");
+  // ─── PR XX-METADATA — rich tender detail columns ────────────────────
+  // Populated by inferTenderMetadata() in lib/engine/tender-metadata.ts
+  // on upload-first. Empty when manual intake is used or pattern missed.
+  await ensureColumn(client, "Tender", "clientContactName", "TEXT");
+  await ensureColumn(client, "Tender", "clientContactTitle", "TEXT");
+  await ensureColumn(client, "Tender", "clientContactEmail", "TEXT");
+  await ensureColumn(client, "Tender", "clientContactPhone", "TEXT");
+  await ensureColumn(client, "Tender", "clientAddress", "TEXT");
+  await ensureColumn(client, "Tender", "submissionEmails", "TEXT");
+  await ensureColumn(client, "Tender", "validityDays", "INTEGER");
+  await ensureColumn(client, "Tender", "bidBondAmount", "DOUBLE PRECISION");
+  await ensureColumn(client, "Tender", "bidBondCurrency", "TEXT");
+  await ensureColumn(client, "Tender", "preBidMeetingDate", "TIMESTAMPTZ");
+  await ensureColumn(client, "Tender", "preBidMeetingLocation", "TEXT");
+  await ensureColumn(client, "Tender", "mandatorySiteVisit", "BOOLEAN NOT NULL DEFAULT FALSE");
+  await ensureColumn(client, "Tender", "numberOfCopiesRequired", "INTEGER");
+  await ensureColumn(client, "Tender", "technicalWeight", "INTEGER");
+  await ensureColumn(client, "Tender", "financialWeight", "INTEGER");
   // Soft-delete for Expert + Project
   await ensureColumn(client, "Expert", "deletedAt", "TIMESTAMPTZ");
   await ensureColumn(client, "Expert", "deletedBy", "TEXT");

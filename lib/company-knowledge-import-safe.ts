@@ -10,8 +10,7 @@
  */
 
 import { prisma } from "./prisma";
-import { isAIEnabled } from "./ai";
-import { extractCompanyKnowledgeWithAI } from "./company-knowledge-ai";
+import { isCompanyKnowledgeAIEnabled, extractCompanyKnowledgeWithAI } from "./company-knowledge-ai";
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
@@ -246,7 +245,7 @@ export async function importCompanyKnowledgeFromDocuments(companyId: string): Pr
     select: { id: true, originalFileName: true, category: true, extractedText: true, aiExtractionStatus: true },
   });
 
-  const useAI = isAIEnabled();
+  const useAI = isCompanyKnowledgeAIEnabled();
   let aiFailures = 0;
 
   type ExpertDraft = RegexExpert & { sourceDocumentId: string; trustLevel: string };
@@ -509,7 +508,7 @@ export async function analyzeCompanyKnowledgeGaps(companyId: string) {
     extractedDocuments: docs.filter((d) => (d.extractedText ?? "").length >= 100).length,
     experts: byTrust(experts),
     projects: byTrust(projects),
-    aiEnabled: isAIEnabled(),
+    aiEnabled: isCompanyKnowledgeAIEnabled(),
     pendingReview: experts.filter((e) => e.trustLevel !== "REVIEWED").length + projects.filter((p) => p.trustLevel !== "REVIEWED").length,
   };
 }

@@ -9,6 +9,7 @@ import { buildMatches } from "./matching";
 import { applyMainEngineBestAvailableSelection } from "./main-engine-selection-policy";
 import { applyAIRematchToMainEngine } from "./main-engine-ai-rematch";
 import type { MatchPerspective } from "./ai-multi-perspective-matcher";
+import { inferSector } from "./proposal-intelligence";
 
 function chunks<T>(items: T[], size = 100): T[][] {
   const out: T[][] = [];
@@ -157,7 +158,28 @@ export async function runTenderEngine(tenderId: string, userId: string) {
       hasBlockingProjects: aiDraftProjectCount + regexDraftProjectCount > 0,
     };
 
-    const initialMatching = buildMatches(analysis.requirements, knowledge, tender.category, tender.title);
+    // PR XX-MATCH-FIX MERGE Fix C — pass the INFERRED sector (from tender
+    // body text) to buildMatches() instead of `tender.category` which
+    // defaults to "General". inferSector() reads the same healthcare /
+    // water / road / urban patterns as proposal-intelligence so the
+    // engine matcher's sectorBoost() finally has a meaningful comparison
+    // string. Then the existing main-engine policy + AI rematch run
+    // on top, getting candidates that are already sector-screened.
+    const sectorSignalText = [
+      tender.title ?? "",
+      tender.description ?? "",
+      analysis.summary ?? "",
+      ...analysis.requirements.slice(0, 8).map((r) => `${r.title} ${r.description}`),
+    ].join("\n");
+    const inferredSector = inferSector(sectorSignalText);
+    const sectorForMatching = inferredSector !== "General Consultancy / Engineering"
+      ? inferredSector
+      : (tender.category || null);
+    if (inferredSector !== "General Consultancy / Engineering") {
+      console.info(`[run-tender-engine] Inferred tender sector: "${inferredSector}" (used for matching instead of tender.category="${tender.category}")`);
+    }
+
+    const initialMatching = buildMatches(analysis.requirements, knowledge, sectorForMatching, tender.title);
     let matching = applyMainEngineBestAvailableSelection({
       requirements: analysis.requirements,
       matching: initialMatching,

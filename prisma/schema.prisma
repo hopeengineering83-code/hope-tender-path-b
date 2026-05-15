@@ -306,6 +306,26 @@ model Tender {
   bidOutcome            String?
   bidOutcomeNote        String?
   bidOutcomeAt          DateTime?
+  // ─── PR XX-METADATA — rich tender detail extracted from PDF body ────────
+  // Populated by inferTenderMetadata() on upload-first. Empty when manual
+  // intake is used or when the extractor couldn't find the pattern.
+  clientContactName     String?
+  clientContactTitle    String?
+  clientContactEmail    String?
+  clientContactPhone    String?
+  clientAddress         String?
+  // Pipe-joined list ("a@x.com|b@x.com") of every email found in the
+  // submission section. Kept portable as string for SQLite/Postgres parity.
+  submissionEmails      String?
+  validityDays          Int?
+  bidBondAmount         Float?
+  bidBondCurrency       String?
+  preBidMeetingDate     DateTime?
+  preBidMeetingLocation String?
+  mandatorySiteVisit    Boolean              @default(false)
+  numberOfCopiesRequired Int?
+  technicalWeight       Int?
+  financialWeight       Int?
   createdAt             DateTime             @default(now())
   updatedAt             DateTime             @updatedAt
   userId                String

@@ -7,6 +7,10 @@ export type BenchmarkGuardInput = {
   projectCount: number;
   complianceLines: string[];
   primarySector?: string;
+  // Top project/expert names used to verify the AI actually cited real evidence
+  // rather than just mentioning generic "project" or "expert" keywords.
+  topProjectNames?: string[];
+  topExpertName?: string;
 };
 
 export type BenchmarkScore = {
@@ -169,6 +173,34 @@ export function scoreBenchmarkProposalMarkdown(markdown: string, input: Benchmar
     score += 10;
     strengths.push("Project/reference evidence is represented.");
   } else gaps.push("Project/reference evidence is weak or absent.");
+
+  // Verify specific names are cited — generic keywords aren't enough.
+  // The NARRATIVE THROUGHLINE RULE requires real project names and expert names
+  // to appear in cover, summary, and experience sections, not just keywords.
+  if (input.topProjectNames && input.topProjectNames.length > 0) {
+    const topProjectName = input.topProjectNames[0];
+    const topProjectWords = topProjectName.split(/\s+/).filter((w) => w.length > 4).slice(0, 3);
+    const projectNameCited = topProjectWords.length >= 2
+      ? topProjectWords.filter((w) => markdown.toLowerCase().includes(w.toLowerCase())).length >= Math.ceil(topProjectWords.length * 0.6)
+      : markdown.toLowerCase().includes(topProjectName.toLowerCase().slice(0, 12));
+    if (projectNameCited) {
+      score += 5;
+      strengths.push(`Lead project "${topProjectName.slice(0, 40)}" is cited by name.`);
+    } else {
+      gaps.push(`Lead project "${topProjectName.slice(0, 40)}" is not cited — proposal may be too generic.`);
+    }
+  }
+  if (input.topExpertName) {
+    const expertWords = input.topExpertName.split(/\s+/).filter((w) => w.length > 2).slice(0, 3);
+    const expertNameCited = expertWords.length >= 1
+      && expertWords.some((w) => markdown.toLowerCase().includes(w.toLowerCase()));
+    if (expertNameCited) {
+      score += 5;
+      strengths.push(`Lead expert "${input.topExpertName.slice(0, 40)}" is cited by name.`);
+    } else {
+      gaps.push(`Lead expert "${input.topExpertName.slice(0, 40)}" is not cited — team section may be too generic.`);
+    }
+  }
 
   // Methodology depth scoring: count paragraphs (>150 chars) that contain
   // BOTH a methodology term AND a deliverable/phase term. This rewards depth

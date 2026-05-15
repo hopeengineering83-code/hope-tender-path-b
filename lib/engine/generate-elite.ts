@@ -134,8 +134,11 @@ function para(text: string, bold = false): Paragraph {
 
 function heading(text: string, level: 1 | 2 | 3 = 1, pageBreak = false): Paragraph {
   const headingLevel = level === 1 ? HeadingLevel.HEADING_1 : level === 2 ? HeadingLevel.HEADING_2 : HeadingLevel.HEADING_3;
+  // Strip ** (heading style already applies bold) but keep *italic* so
+  // parseInlineRuns can render it correctly in the heading TextRuns.
+  const stripped = text.replace(/\*\*/g, "");
   return new Paragraph({
-    text,
+    children: parseInlineRuns(stripped),
     heading: headingLevel,
     pageBreakBefore: level === 1 ? pageBreak : false,
     spacing: { before: level === 1 ? 360 : level === 2 ? 240 : 180, after: level === 1 ? 140 : 100 },
@@ -152,20 +155,27 @@ function bullet(text: string): Paragraph {
 }
 
 function isTableLine(line: string): boolean {
-  return line.startsWith("|") && line.endsWith("|");
+  // Accept rows that start with | even if trailing pipe is absent — AI
+  // occasionally omits the closing pipe on the last cell.
+  return line.startsWith("|");
 }
 
 function isSeparatorRow(line: string): boolean {
-  return /^\|[\s:|-]+\|$/.test(line);
+  // Make trailing pipe optional — AI sometimes omits it, consistent with
+  // the isTableLine change that accepts rows without trailing pipe.
+  return /^\|[\s:|-]+\|?$/.test(line.trimEnd());
 }
 
 function splitTableCells(rowLine: string): string[] {
-  // PR FF: cells may contain <br> or \\n soft newlines — collapse to space.
-  return rowLine
-    .replace(/<br\s*\/?>/gi, " ")
-    .replace(/\\n/g, " ")
-    .split("|")
-    .filter((_, i, arr) => i > 0 && i < arr.length - 1)
+  // Normalize soft newlines and split on pipe.
+  const normalized = rowLine.replace(/<br\s*\/?>/gi, " ").replace(/\\n/g, " ");
+  const parts = normalized.split("|");
+  // If row starts with | the first segment is empty — skip it (index > 0).
+  // If row ends with | the last segment is also empty — skip it (index < len-1).
+  // If the trailing pipe is absent the last segment is the final cell — keep it.
+  const endsWithPipe = normalized.trimEnd().endsWith("|");
+  return parts
+    .filter((_, i, arr) => i > 0 && (endsWithPipe ? i < arr.length - 1 : true))
     .map((cell) => cell.trim());
 }
 
@@ -222,6 +232,7 @@ function shortText(text?: string | null, max = 700): string {
 
 function cleanClientLanguage(text: string): string {
   return polishBenchmarkOutput(text
+    .replace(/Bid-Team Action:\s*/gi, "Evidence note: ")
     .replace(/Bid-team confirmation:\s*/gi, "Evidence note: ")
     .replace(/bid-team confirmation item(s)?/gi, "source-evidence confirmation item$1")
     .replace(/bid-team-confirmed/gi, "source-confirmed")
@@ -260,9 +271,9 @@ function markdownToDocx(markdown: string): (Paragraph | Table)[] {
       out.push(new Paragraph({ children: [new TextRun("")], spacing: { after: 60 } }));
       continue;
     }
-    if (line.startsWith("### ")) out.push(heading(line.slice(4).replace(/\*\*/g, ""), 3));
-    else if (line.startsWith("## ")) out.push(heading(line.slice(3).replace(/\*\*/g, ""), 2));
-    else if (line.startsWith("# ")) { h1Count++; out.push(heading(line.slice(2).replace(/\*\*/g, ""), 1, h1Count > 1)); }
+    if (line.startsWith("### ")) out.push(heading(line.slice(4), 3));
+    else if (line.startsWith("## ")) out.push(heading(line.slice(3), 2));
+    else if (line.startsWith("# ")) { h1Count++; out.push(heading(line.slice(2), 1, h1Count > 1)); }
     else if (line.startsWith("> ")) out.push(new Paragraph({ children: parseInlineRuns(line.slice(2), { color: "795B00", size: 20 }), indent: { left: 360, right: 360 }, spacing: { after: 80, line: 260 }, border: { left: { color: "F59E0B", style: BorderStyle.SINGLE, size: 12, space: 4 } } }))
     else if (/^[-*•]\s+/.test(line)) out.push(bullet(line.replace(/^[-*•]\s+/, "")));
     else if (/^\d+[.)]\s+/.test(line)) out.push(bullet(line.replace(/^\d+[.)]\s+/, "")));
@@ -941,33 +952,45 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
         trustLevel: p.trustLevel ?? null,
       }));
 
-      const rematchPair = Promise.all([
-        expertCandidates.length > 0 ? aiRematchExperts({
-          tenderTitle: cleanedTenderTitle,
-          tenderRequirementsText,
-          evaluationMethodology: intelligence.evaluationCriteria.join("; ") || "—",
-          candidates: expertCandidates,
-        }) : Promise.resolve(null),
-        projectCandidates.length > 0 ? aiRematchProjects({
-          tenderTitle: cleanedTenderTitle,
-          tenderRequirementsText,
-          tenderCategory: tender.category ?? null,
-          candidates: projectCandidates,
-        }) : Promise.resolve(null),
-      ]);
+      // Race condition fix: track individual batch results as boxed objects so
+      // TypeScript CFA can track the side-effect mutations across await points.
+      // Previously Promise.all([expert, project]) only resolved when BOTH
+      // finished — losing the faster result if the budget guard fired first.
+      const batchHolder = { expert: null as Awaited<ReturnType<typeof aiRematchExperts>>, project: null as Awaited<ReturnType<typeof aiRematchProjects>> };
+
+      const expertRematch = expertCandidates.length > 0
+        ? aiRematchExperts({
+            tenderTitle: cleanedTenderTitle,
+            tenderRequirementsText,
+            evaluationMethodology: intelligence.evaluationCriteria.join("; ") || "—",
+            candidates: expertCandidates,
+          }).then((r) => { batchHolder.expert = r; return r; })
+        : Promise.resolve(null);
+
+      const projectRematch = projectCandidates.length > 0
+        ? aiRematchProjects({
+            tenderTitle: cleanedTenderTitle,
+            tenderRequirementsText,
+            tenderCategory: tender.category ?? null,
+            candidates: projectCandidates,
+          }).then((r) => { batchHolder.project = r; return r; })
+        : Promise.resolve(null);
+
       const budgetGuard = new Promise<null>((resolve) =>
         setTimeout(() => resolve(null), AUTO_REMATCH_BUDGET_MS)
       );
-      // If the budget elapses before either AI call returns, we get
-      // null and skip the re-rank entirely (lexical order kept).
-      const raceResult = await Promise.race([rematchPair, budgetGuard]);
-      if (raceResult === null) {
+      // Wait for both batches OR the budget guard — whichever settles first.
+      // If the budget guard fires, batchHolder still contains any batch that
+      // already resolved via the .then() side effects above.
+      await Promise.race([Promise.all([expertRematch, projectRematch]), budgetGuard]);
+      if (batchHolder.expert === null && batchHolder.project === null) {
         console.warn(`[generate-elite] AI multi-perspective re-rank skipped — exceeded ${AUTO_REMATCH_BUDGET_MS}ms auto-budget. Lexical order kept.`);
       }
-      const [expertBatch, projectBatch] = raceResult ?? [null, null];
 
       // Re-sort experts/projects by AI overall score. Candidates without
       // an assessment fall back to their original lexical position.
+      const expertBatch = batchHolder.expert;
+      const projectBatch = batchHolder.project;
       if (expertBatch?.assessments?.length) {
         const scoreMap = new Map<string, number>();
         for (const a of expertBatch.assessments) scoreMap.set(a.candidateId, a.overallScore);
@@ -1104,7 +1127,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     ...(bidStrategy?.topRisks.map((r) => `BID RISK [${r.severity}] ${r.category}: ${r.title} — ${r.mitigation}`) ?? []),
   ];
 
-  const guardInput = { tenderTitle: cleanedTenderTitle, clientName: intelligence.clientName, companyName: company.name, submissionNotes, expertCount: expertLines.length, projectCount: projectLines.length, complianceLines, primarySector: intelligence.primarySector };
+  const guardInput = { tenderTitle: cleanedTenderTitle, clientName: intelligence.clientName, companyName: company.name, submissionNotes, expertCount: expertLines.length, projectCount: projectLines.length, complianceLines, primarySector: intelligence.primarySector, topProjectNames: intelligence.topProjects.slice(0, 3).map((p) => p.name).filter(Boolean), topExpertName: intelligence.topExperts[0]?.fullName ?? undefined };
   const evaluatorMatrixInput = { tenderTitle: cleanedTenderTitle, clientName: intelligence.clientName, requirements: requirementLines, expertLines, projectLines, companyEvidenceLines, projectEvidenceLines, complianceLines, differentiators: intelligence.differentiators };
 
   let sourceMarkdown: string;
@@ -1157,7 +1180,12 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
         submissionNotes: [BENCHMARK_CONTEXT_LINES.join("\n"), submissionNotes].filter(Boolean).join("\n"),
         requirements: [...BENCHMARK_CONTEXT_LINES, ...requirementLines].join("\n"),
         companyProfile: `${company.name}\n${company.legalName ?? ""}\n${company.profileSummary ?? company.description ?? ""}\nServices: ${safeParseArr(company.serviceLines).join(", ")}\nSectors: ${safeParseArr(company.sectors).join(", ")}\n\nWider company evidence library:\n${evidenceContextLines.join("\n").slice(0, 9_000)}`,
-        experts: expertLines.join("\n"),
+        experts: [
+          expertLines.length > 0
+            ? `LEAD EXPERT (name as Team Lead / Project Manager in EVERY section): ${expertLines[0].split("|")[0].trim()}`
+            : "",
+          ...expertLines,
+        ].filter(Boolean).join("\n"),
         projects: [...projectLines, ...projectEvidenceLines].join("\n"),
         compliance: [...BENCHMARK_CONTEXT_LINES, ...complianceLines].join("\n"),
         differentiators: [...BENCHMARK_CONTEXT_LINES, ...intelligence.differentiators, ...companyEvidenceLines.slice(0, 8)].join("\n"),
@@ -1210,15 +1238,21 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
             })
             .filter((s) => s.length > 0),
         },
-        // PR W — list of clients from the firm's vault project history
-        // that the AI must NEVER substitute as the client of this
-        // tender (they are the firm's PREVIOUS clients, not the
-        // current one). Pulled from company.projects loaded above.
-        doNotUseAsClient: Array.from(new Set(
-          (company.projects ?? [])
-            .map((p) => (p as { clientName?: string | null }).clientName)
-            .filter((c): c is string => Boolean(c && c.trim().length >= 3))
-        )),
+        // PR W — list of clients from the firm's vault project history AND
+        // selected projects that the AI must NEVER substitute as the client
+        // of this tender (they are the firm's PREVIOUS clients, not the
+        // current one). Excludes the current tender client so repeat-client
+        // tenders don't receive contradictory instructions.
+        doNotUseAsClient: (() => {
+          const tenderClient = intelligence.clientName?.toLowerCase().trim() ?? "";
+          return Array.from(new Set([
+            ...(company.projects ?? []).map((p) => (p as { clientName?: string | null }).clientName),
+            ...projects.map((p) => (p as { clientName?: string | null }).clientName),
+          ].filter((cn): cn is string => {
+            if (!cn || cn.trim().length < 3) return false;
+            return cn.toLowerCase().trim() !== tenderClient;
+          })));
+        })(),
         // Per-criterion evidence map — tells the AI which projects/experts
         // are most relevant to each evaluation criterion, and at what depth
         // (proportional to criterion weight). This eliminates the AI's
@@ -1249,7 +1283,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
       }
       const provider = getLastProposalProvider() ?? "ai";
       const pathLabel = useParallel ? "section-parallel" : "single-call";
-      mode = `${provider === "claude" ? "Claude" : provider === "gemini" ? "Gemini" : "AI"} ${pathLabel} bid-writer + evaluator response matrix + full evidence library + client-ready benchmark finalizer + professional DOCX polish`;
+      mode = `${provider === "claude" ? "Claude" : provider === "gemini" ? "Gemini" : provider === "openai" ? "GPT-4o" : "AI"} ${pathLabel} bid-writer + evaluator response matrix + full evidence library + client-ready benchmark finalizer + professional DOCX polish`;
     } catch (error) {
       aiError = error instanceof Error ? error.message : String(error);
       sourceMarkdown = fallbackProposalMarkdown({ tenderTitle: cleanedTenderTitle, clientName: intelligence.clientName, companyName: company.name, companyLegalName: company.legalName, companyAddress: company.address, companyTIN: company.tin, companyVAT: company.vat, companyGM: company.gmName, companyGMLicense: company.gmLicense, primarySector: intelligence.primarySector, requirements: requirementLines, differentiators: intelligence.differentiators, submissionRules: intelligence.submissionRules, expertLines, projectLines, experts: experts as ExpertRecord[], projects: projects as ProjectRecord[], reviewedExpertCount: experts.length, companyEvidenceLines, projectEvidenceLines, complianceLines, expertRequired, projectRequired, themes: intelligence.themes, evaluationCriteria: intelligence.evaluationCriteria, appendixList: intelligence.appendixList, noFinancialProposal: intelligence.noFinancialProposal, exactEmails: intelligence.exactEmails, exactSubjectLine: intelligence.exactSubjectLine, gapsToAddressInNarrative: intelligence.gapsToAddressInNarrative, requiredSections: intelligence.requiredSections, tenderDeadline: tender.deadline });

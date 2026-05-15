@@ -420,24 +420,8 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
     }
   }, [tender.id]);
 
-  useEffect(() => {
-    let active = true;
-    setDiagnosticsLoading(true);
-    (async () => {
-      try {
-        const res = await fetch(`/api/tenders/${tender.id}/matching-diagnostics`);
-        if (!res.ok) return;
-        const data = await res.json() as MatchingDiagnostics;
-        if (active) setMatchingDiagnostics(data);
-        if (active) setDiagnosticsLoading(false);
-      } catch {
-        // diagnostics are optional; keep UI resilient
-      } finally {
-        if (active) setDiagnosticsLoading(false);
-      }
-    })();
-    return () => { active = false; };
-  }, [tender.id]);
+  // Auto-fetch on mount; loadDiagnostics is also wired to the Refresh button.
+  useEffect(() => { void loadDiagnostics(); }, [loadDiagnostics]);
 
   async function handleSave() {
     await save({
@@ -499,16 +483,43 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
   async function handleAIProposal() {
     setGenerating(true);
     setError("");
+    // 3-call chunked generation — each call generates one section group in its
+    // own 60s Vercel function window, using 2× larger token budgets than the
+    // single-call path. Total output: ~22K tokens vs ~10.4K single-call.
+    const CHUNK_PHASES = [
+      { label: "Generating cover letter and company profile… (1/3)", pct: 20 },
+      { label: "Generating technical approach… (2/3)", pct: 60 },
+      { label: "Finalizing compliance and declaration… (3/3)", pct: 90 },
+    ];
+    const chunks: string[] = [];
     try {
-      const res = await fetch(`/api/tenders/${tender.id}/ai-proposal`, { method: "POST" });
-      const data = await res.json();
-      if (res.status === 429) {
-        setError(data.error || "Gemini rate limit — please wait 30–60 seconds and try again.");
-        return;
+      for (let chunk = 1; chunk <= 3; chunk++) {
+        setGenerationPhase(CHUNK_PHASES[chunk - 1].label);
+        setGenerationProgress(CHUNK_PHASES[chunk - 1].pct);
+        // On the final chunk, send accumulated content from chunks 1+2 so
+        // the server can persist the full merged proposal to the database
+        // (chunk 3 alone only covers the additional-and-declaration section).
+        const body: Record<string, unknown> = { chunk };
+        if (chunk === 3 && chunks.length >= 2) body.accumulatedProposal = chunks.join("\n\n");
+        const res = await fetch(`/api/tenders/${tender.id}/ai-proposal`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const data = await res.json();
+        if (res.status === 429) {
+          setError(data.error || "Rate limit — please wait 30–60 seconds and try again.");
+          return;
+        }
+        if (!res.ok) { setError(data.error || "Generation failed"); return; }
+        chunks.push(data.proposal || "");
+        // Show partial result after each chunk so the user sees progress.
+        setAiProposal(chunks.join("\n\n"));
       }
-      if (!res.ok) { setError(data.error || "Generation failed"); return; }
-      setAiProposal(data.proposal || "");
-      setForm((cur) => ({ ...cur, intakeSummary: data.proposal || cur.intakeSummary }));
+      setGenerationProgress(100);
+      const full = chunks.join("\n\n");
+      setAiProposal(full);
+      setForm((cur) => ({ ...cur, intakeSummary: full || cur.intakeSummary }));
     } catch { setError("Proposal generation failed"); }
     finally { setGenerating(false); }
   }
@@ -527,6 +538,7 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
     { label: "Refining and humanizing…", pct: 88 },
     { label: "Saving documents…", pct: 97 },
   ];
+  const progressCreepRef = useRef<ReturnType<typeof setInterval> | null>(null);
   function startGenerationProgress() {
     const durations = [6000, 14000, 35000, 10000, 5000];
     let cumulative = 0;
@@ -535,11 +547,21 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
       setTimeout(() => {
         setGenerationPhase(phase.label);
         setGenerationProgress(phase.pct);
+        // After the last timed phase, start creeping from 97 → 99 at 0.1%
+        // per second so the bar stays alive during long AI generation calls
+        // instead of freezing at 97% for up to 2 minutes.
+        if (i === GENERATION_PHASES.length - 1) {
+          if (progressCreepRef.current) clearInterval(progressCreepRef.current);
+          progressCreepRef.current = setInterval(() => {
+            setGenerationProgress((prev) => (prev < 99 ? Math.min(99, prev + 0.1) : prev));
+          }, 1000);
+        }
       }, delay);
       cumulative += durations[i];
     });
   }
   function stopGenerationProgress() {
+    if (progressCreepRef.current) { clearInterval(progressCreepRef.current); progressCreepRef.current = null; }
     setGenerationPhase("");
     setGenerationProgress(0);
   }
@@ -924,6 +946,13 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
               style={{ width: `${generationProgress}%` }}
             />
           </div>
+        </div>
+      )}
+
+      {/* Client name missing — proposals will use "The Client" as a placeholder */}
+      {(!tender.clientName || !tender.clientName.trim() || displayClient === "Client") && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          <span className="font-medium">Client name not set.</span> Generated proposals will use &ldquo;The Client&rdquo; as a placeholder. Edit the tender and fill in the Client Name field before generating documents.
         </div>
       )}
 

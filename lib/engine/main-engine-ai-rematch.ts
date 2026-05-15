@@ -216,17 +216,31 @@ export async function applyAIRematchToMainEngine(params: {
     const selectedExpertIds = expertBatch ? selectBestAvailable(expertBatch.assessments, selectionLimit(params.requirements, "EXPERT", expertBatch.assessments.length)) : new Set<string>();
     const selectedProjectIds = projectBatch ? selectBestAvailable(projectBatch.assessments, selectionLimit(params.requirements, "PROJECT_EXPERIENCE", projectBatch.assessments.length)) : new Set<string>();
 
+    // PR XX-AI-REMATCH-FIX — selection authority semantics.
+    //
+    // BEFORE: `selectedExpertIds.has(id) || match.isSelected` meant the AI
+    // rematch could ONLY ADD selections, never unselect. If the deterministic
+    // engine had force-promoted a warehouse over the 0.55 floor for a
+    // healthcare tender, the AI rematch's 12-perspective view that correctly
+    // rejected the warehouse was IGNORED — the warehouse stayed selected.
+    //
+    // NOW: when the AI returns an assessment for a candidate, the AI's
+    // selection decision is AUTHORITATIVE (replace, not union). When the
+    // AI didn't assess a candidate (not in the pre-filter top-N, or AI
+    // failed for that row), the deterministic isSelected is preserved.
+    // This makes the AI the source of truth WHEN AVAILABLE while
+    // preserving deterministic fallback semantics for the rest.
     const matching: MatchingResult = {
       expertMatches: params.matching.expertMatches.map((match) => {
         const assessment = expertAssessmentsById.get(match.expertId);
         if (!assessment) return match;
-        const selected = selectedExpertIds.has(match.expertId) || match.isSelected;
+        const selected = selectedExpertIds.has(match.expertId);
         return { ...match, score: assessment.overallScore, rationale: formatAssessmentRationale({ ...assessment, recommendSelection: selected }), isSelected: selected };
       }).sort((a, b) => b.score - a.score),
       projectMatches: params.matching.projectMatches.map((match) => {
         const assessment = projectAssessmentsById.get(match.projectId);
         if (!assessment) return match;
-        const selected = selectedProjectIds.has(match.projectId) || match.isSelected;
+        const selected = selectedProjectIds.has(match.projectId);
         return { ...match, score: assessment.overallScore, rationale: formatAssessmentRationale({ ...assessment, recommendSelection: selected }), isSelected: selected };
       }).sort((a, b) => b.score - a.score),
     };
