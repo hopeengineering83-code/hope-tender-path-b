@@ -121,6 +121,9 @@ export function checkExportReadiness(docs: ExportReadyDocument[], opts: { requir
 
   for (const doc of docs) {
     const reasons: string[] = [];
+    if (doc.reviewStatus === "REPLACE_WITH_ORIGINAL") {
+      reasons.push("This is a replacement-control record. Replace it with the tender-issued original / signed / stamped / certified document before export.");
+    }
     if (doc.generationStatus !== "GENERATED") reasons.push(`generationStatus is ${doc.generationStatus}, expected GENERATED`);
     if (doc.validationStatus !== "VALIDATED") reasons.push(`validationStatus is ${doc.validationStatus}, expected VALIDATED`);
     if (doc.reviewStatus !== "READY_FOR_EXPORT") reasons.push(`reviewStatus is ${doc.reviewStatus}, expected READY_FOR_EXPORT`);
