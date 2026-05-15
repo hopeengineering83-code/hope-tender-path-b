@@ -28,6 +28,7 @@ const defaultCompany = {
 };
 
 const goodAnalysisFields = {
+  clientName: "Addis Ababa City Administration",
   analysisSummary: "Tender analysis extracted mandatory personnel, project experience, submission, and evaluation requirements.",
   evaluationMethodology: "Technical score 80 points; personnel and similar experience are evaluated criteria.",
   notes: "Submission must follow exact file naming and deadline instructions.",
