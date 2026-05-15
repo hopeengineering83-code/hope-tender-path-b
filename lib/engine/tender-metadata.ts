@@ -96,13 +96,14 @@ function inferTitle(text: string, fallbackFileName: string): string {
 
 function inferReference(text: string): string | null {
   const ref = firstMatch(text, [
-    // Must follow explicit label AND captured text must contain a digit (real ref numbers do)
-    /(?:reference\s*(?:no\.?|number)?|ref\.?\s*no\.?|rfp\s*no\.?|tender\s*no\.?|bid\s*no\.?|procurement\s*no\.?)\s*[:\-]\s*([A-Z0-9\-/_.]{3,80})/i,
+    // Explicit label — colon/dash optional (e.g. "RFP No. 2026-024" has no colon)
+    /(?:reference\s*(?:no\.?|number)?|ref\.?\s*no\.?|rfp\s*no\.?|tender\s*no\.?|bid\s*no\.?|procurement\s*no\.?)\s*[:\-]?\s*([A-Z0-9\-/_.]{3,80})/i,
+    // Standalone acronym + digit combo (must start with a digit to avoid bare acronyms)
     /\b((?:RFP|EOI|TOR|RFQ|NCB|ICB|BID|RFx)[\-/_. ]?\d[A-Z0-9\-/_.]{1,78})\b/i,
   ]);
-  // Reject if the captured value looks like a common word rather than an ID
+  // Reject common words that are NOT reference numbers
   if (!ref || /^(only|n\/a|tbd|none|refer|see|above|below|this|that|the|a|an)$/i.test(ref.trim())) return null;
-  // A valid reference must contain at least one digit
+  // A valid reference number must contain at least one digit
   if (!/\d/.test(ref)) return null;
   return ref;
 }
