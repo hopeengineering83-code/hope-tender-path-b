@@ -1199,10 +1199,15 @@ function buildCompanyAndExperienceFallback(input: AIBidWriterInput): string {
     `| Licence grade | ${vaultField(v.licenseGrade, "licence grade")} |`,
   ].join("\n");
 
-  // ── A.3 Core Service Lines — actual list ─────────────────────────────
+  // ── A.3 Core Service Lines — actual list or inferred from sectors ────
+  const inferredServiceLines = v.sectors && v.sectors.length > 0
+    ? v.sectors.map((s) => `${s} consultancy and technical services`)
+    : null;
   const a3Body = v.serviceLines && v.serviceLines.length > 0
     ? v.serviceLines.map((s) => `- ${s}`).join("\n")
-    : "Bid-Team Action: confirm the firm's core service lines relevant to this tender before submission.";
+    : inferredServiceLines
+      ? inferredServiceLines.map((s) => `- ${s}`).join("\n")
+      : "Bid-Team Action: confirm the firm's core service lines relevant to this tender before submission.";
 
   return [
     "# Section A: Company Profile",
