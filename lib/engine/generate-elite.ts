@@ -401,6 +401,8 @@ function fallbackProposalMarkdown(params: {
     clientName: params.clientName,
     projects: reviewedProjects,
     reviewedExpertCount: params.reviewedExpertCount ?? reviewedExperts.length,
+    topExpertName: reviewedExperts[0]?.fullName ?? null,
+    topExpertTitle: reviewedExperts[0]?.title ?? null,
   }));
   if (reviewedProjects.length === 0) {
     // Fall back to a compact metadata sentence so the section is not empty.

@@ -834,19 +834,25 @@ export function buildExecutiveSummaryOpener(opts: {
   clientName: string;
   projects: ProjectRecord[];
   reviewedExpertCount: number;
+  topExpertName?: string | null;
+  topExpertTitle?: string | null;
 }): string {
   const top = opts.projects.slice(0, 2);
+  const expertClause = opts.topExpertName
+    ? ` **${opts.topExpertName}**${opts.topExpertTitle ? `, ${opts.topExpertTitle},` : ""} who directed that assignment, leads the proposed team for this engagement.`
+    : opts.reviewedExpertCount > 0 ? ` ${opts.reviewedExpertCount} reviewed specialist(s) are confirmed for this assignment.` : "";
+
   if (top.length === 0) {
     return `${opts.companyName} presents this technical proposal anchored in reviewed comparable evidence. _Source-evidence action: insert a delivered-already opening sentence naming the strongest 1–2 comparable projects with contract values before final submission._`;
   }
 
   if (top.length === 1) {
     const p = top[0];
-    return `${opts.companyName} has already delivered this assignment. ${fmtProjectInline(p)} is the directly comparable reference; the same lead team is available for ${opts.clientName}'s engagement today. ${opts.reviewedExpertCount > 0 ? `${opts.reviewedExpertCount} reviewed specialist(s) are confirmed for this assignment.` : ""}`.trim();
+    return `**${opts.companyName} has already delivered this assignment.** ${fmtProjectInline(p)} is the directly comparable reference — same scope, same sector, same delivery standards required by ${opts.clientName}.${expertClause}`.trim();
   }
 
   const [a, b] = top;
-  return `${opts.companyName} has already delivered this assignment twice. Once as ${fmtProjectInline(a)}; and once as ${fmtProjectInline(b)}. The same lead team that delivered both is available for ${opts.clientName}'s engagement today, with zero learning curve. ${opts.reviewedExpertCount > 0 ? `${opts.reviewedExpertCount} reviewed specialist(s) are confirmed for this assignment.` : ""}`.trim();
+  return `**${opts.companyName} has already delivered this assignment twice.** ${fmtProjectInline(a)} and ${fmtProjectInline(b)} are the directly comparable references — both confirm the firm's capacity for ${opts.clientName}'s scope.${expertClause}`.trim();
 }
 
 // ─── D.4 Declaration with GM name + license ──────────────────────────────────
