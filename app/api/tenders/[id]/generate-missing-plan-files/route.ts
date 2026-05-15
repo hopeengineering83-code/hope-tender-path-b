@@ -103,7 +103,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     const data = {
       name: file.exactFileName.replace(/\.[a-z0-9]{2,5}$/i, ""),
       documentType,
-      format: file.format,
+      format: replaceWithOriginal ? "CONTROL" : file.format,
       exactFileName: file.exactFileName,
       exactOrder: file.exactOrder,
       fileContent,
@@ -112,7 +112,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       reviewStatus: replaceWithOriginal ? "REPLACE_WITH_ORIGINAL" : "PENDING",
       reviewNotes: replaceWithOriginal ? "DO NOT SUBMIT this generated placeholder. Replace it with the tender-issued original / signed / stamped / certified document before final export." : "Review this generated support control document before final export.",
       contentSummary: replaceWithOriginal
-        ? `Replacement-control record for tender-required file ${file.exactFileName}. Replace with original before final export.`
+        ? `Replacement-control record for tender-required file ${file.exactFileName}. This internal control record is intentionally non-final and must be replaced with the original before export.`
         : `Generated support-control record for tender-required file ${file.exactFileName}. Review before final export.`,
       updatedAt: new Date(),
     };
