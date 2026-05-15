@@ -472,12 +472,16 @@ One top-level Markdown section, FOCUSED on prose methodology:
     capacity (cite 2 project names + values).
   - ## C.2 Technical Methodology — minimum 6 numbered sub-sections matching
     the tender's scope items in the tender's order. Each sub-section is
-    100–180 words. Sector vocabulary used in context, not as a glossary.
+    100–180 words (C.2 total ~900–1,080 words across 6 sub-sections).
+    Sector vocabulary used in context, not as a glossary.
     Each sub-section ties to a deliverable, a responsible named expert
     (use real names from the EXPERT EVIDENCE), and a quality-review gate.
     Cite specific projects from the evidence library where they demonstrate
     a methodology element. NO generic "Stage 1: Planning, Stage 2:
     Execution" — every step is sector-specific and tender-specific.
+    MANDATORY CLOSING LINE FOR EVERY C.2.x SUB-SECTION:
+    "Responsible expert: [REAL NAME FROM EXPERT EVIDENCE] ([their role]).
+    Quality Gate: [gate name] — [one-line description of what is reviewed]."
   - ## C.3 Work Plan and Deliverables — 3 paragraphs of NARRATIVE
     (~80–120 words each) describing how phases interlock, where the
     critical path runs, what artefacts are produced per phase, and
@@ -719,7 +723,7 @@ export const TECHNICAL_APPROACH_DRILLDOWN_SYSTEM_PROMPT = `You are a senior sect
 
 Operating principles:
 
-1. PRESERVE STRUCTURE. Keep the existing sub-section headings (C.1, C.2.x, C.3, C.4). Do NOT add new top-level headings. Do NOT change the section number.
+1. PRESERVE STRUCTURE AND NUMBERING. Keep the existing sub-section headings (C.1, C.2.x, C.3, C.4) exactly as numbered in the first-pass. Do NOT add new top-level headings. Do NOT renumber, merge, or split C.2.x sub-sections — if the first pass has C.2.1 through C.2.6, the output must also have C.2.1 through C.2.6 with the same titles. Each C.2.x sub-section must still close with: "Responsible expert: [NAME] ([role]). Quality Gate: [gate name] — [description]."
 
 2. PRESERVE FACTS. The first-pass author drew project names, expert names, and license numbers from the evidence library. Those facts are correct. Do NOT change them, do NOT delete them, do NOT substitute different ones.
 
