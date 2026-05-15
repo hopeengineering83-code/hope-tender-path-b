@@ -53,7 +53,7 @@ export async function GET(
           select: {
             score: true,
             isSelected: true,
-            project: { select: { name: true, trustLevel: true, sector: true, serviceAreas: true, contractValue: true, sectors: true } },
+            project: { select: { name: true, trustLevel: true, sector: true, serviceAreas: true, contractValue: true } },
           },
         },
       },
@@ -126,8 +126,8 @@ export async function GET(
     tenderBudget: (tender as { budget?: number | null }).budget ?? null,
     tenderCategory: tender.category ?? null,
     projects: tender.projectMatches.map((m) => ({
-      sectors: (m.project as { sectors?: string | null }).sectors ?? (m.project.sector ? JSON.stringify([m.project.sector]) : null),
-      contractValue: (m.project as { contractValue?: number | null }).contractValue ?? null,
+      sectors: m.project.sector ? JSON.stringify([m.project.sector]) : null,
+      contractValue: m.project.contractValue ?? null,
     })),
     experts: tender.expertMatches.map((m) => ({
       disciplines: (m.expert as { disciplines?: string | null }).disciplines,

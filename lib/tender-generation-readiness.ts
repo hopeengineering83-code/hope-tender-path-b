@@ -110,7 +110,13 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
   const reviewedSelectedProjects = selectedProjects.filter((match) => match.project.trustLevel === "REVIEWED");
 
   if (expertRequirementExists && tender.expertMatches.length === 0) {
-    blockers.push({ code: "NO_EXPERT_MATCHES_FOUND", message: "Tender requires experts but no expert matches exist yet.", nextAction: "RUN_ENGINE" });
+    // No expert matches yet — generation will fall back to the company vault or deterministic
+    // proposal. Only hard-block if the vault is also empty (no reviewed experts at all).
+    if (companyReadiness.totals.reviewedExperts === 0) {
+      blockers.push({ code: "NO_EXPERT_MATCHES_FOUND", message: "Tender requires experts but no expert matches exist and the company vault has no reviewed experts. Run Engine or review expert records first.", nextAction: "RUN_ENGINE" });
+    } else {
+      warnings.push({ code: "NO_EXPERT_MATCHES_FOUND", message: `No expert matches linked to this tender — generation will use ${companyReadiness.totals.reviewedExperts} vault expert(s) as fallback. Run Engine to match experts to this tender.`, nextAction: "RUN_ENGINE" });
+    }
   } else if (expertRequirementExists && selectedExperts.length === 0 && reviewedExpertMatches.length === 0) {
     blockers.push({ code: "NO_REVIEWED_EXPERT_MATCHES", message: "Tender requires experts but no reviewed expert matches are available for selection or auto-promotion.", nextAction: "OPEN_KNOWLEDGE_REVIEW" });
   } else if (expertRequirementExists && selectedExperts.length === 0 && reviewedExpertMatches.length > 0) {
@@ -120,7 +126,13 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
   }
 
   if (projectRequirementExists && tender.projectMatches.length === 0) {
-    blockers.push({ code: "NO_PROJECT_MATCHES_FOUND", message: "Tender requires project references but no project matches exist yet.", nextAction: "RUN_ENGINE" });
+    // No project matches yet — generation will fall back to the company vault or deterministic
+    // proposal. Only hard-block if the vault is also empty (no reviewed projects at all).
+    if (companyReadiness.totals.reviewedProjects === 0) {
+      blockers.push({ code: "NO_PROJECT_MATCHES_FOUND", message: "Tender requires project references but no project matches exist and the company vault has no reviewed projects. Run Engine or review project records first.", nextAction: "RUN_ENGINE" });
+    } else {
+      warnings.push({ code: "NO_PROJECT_MATCHES_FOUND", message: `No project matches linked to this tender — generation will use ${companyReadiness.totals.reviewedProjects} vault project(s) as fallback. Run Engine to match projects to this tender.`, nextAction: "RUN_ENGINE" });
+    }
   } else if (projectRequirementExists && selectedProjects.length === 0 && reviewedProjectMatches.length === 0) {
     blockers.push({ code: "NO_REVIEWED_PROJECT_MATCHES", message: "Tender requires project references but no reviewed project matches are available for selection or auto-promotion.", nextAction: "OPEN_KNOWLEDGE_REVIEW" });
   } else if (projectRequirementExists && selectedProjects.length === 0 && reviewedProjectMatches.length > 0) {

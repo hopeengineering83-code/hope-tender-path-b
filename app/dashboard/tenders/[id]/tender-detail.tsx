@@ -800,15 +800,20 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
   const projectReqExists = tender.requirements.some((req) => req.requirementType === "PROJECT_EXPERIENCE");
   const selectedExpertCount = tender.expertMatches?.filter((m) => m.isSelected).length ?? 0;
   const selectedProjectCount = tender.projectMatches?.filter((m) => m.isSelected).length ?? 0;
+  // If no matches have been found yet, generation is still allowed — generate-elite.ts
+  // will fall back to the company vault and then to the deterministic proposal.
+  // Only block when matches EXIST but none are selected (user forgot to select).
+  const expertMatchesExist = (tender.expertMatches?.length ?? 0) > 0;
+  const projectMatchesExist = (tender.projectMatches?.length ?? 0) > 0;
   const canGenerateDocs = tender.requirements.length > 0
-    && (!expertReqExists || selectedExpertCount > 0)
-    && (!projectReqExists || selectedProjectCount > 0)
+    && (!expertReqExists || selectedExpertCount > 0 || !expertMatchesExist)
+    && (!projectReqExists || selectedProjectCount > 0 || !projectMatchesExist)
     && !criticalHardBlockExists;
   const generateDisabledReason = tender.requirements.length === 0
     ? "Run AI Analyze or Run Engine first to extract requirements"
-    : (expertReqExists && selectedExpertCount === 0)
+    : (expertReqExists && expertMatchesExist && selectedExpertCount === 0)
       ? "Select at least one expert match before generating"
-      : (projectReqExists && selectedProjectCount === 0)
+      : (projectReqExists && projectMatchesExist && selectedProjectCount === 0)
         ? "Select at least one project match before generating"
         : criticalHardBlockExists
           ? "Resolve critical hard blockers before generating"
