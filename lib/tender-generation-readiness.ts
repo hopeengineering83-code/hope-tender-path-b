@@ -39,6 +39,28 @@ function criticalGapIsHardBlock(gap: { title: string; description: string; mitig
   return /(ineligible|debarred|blacklisted|deadline.*passed|late submission|missing required file name|missing exact file|tender not found|company profile required|no documents? have been generated|signature prohibited|branding prohibited)/i.test(text);
 }
 
+function addMatchingQualityReadiness(params: {
+  blockers: GenerationReadinessItem[];
+  warnings: GenerationReadinessItem[];
+  matchingQuality: MatchingQualityReport;
+  reviewedVaultExperts: number;
+  reviewedVaultProjects: number;
+}) {
+  const { blockers, warnings, matchingQuality, reviewedVaultExperts, reviewedVaultProjects } = params;
+  const vaultFallbackAvailable = (!matchingQuality.expertRequirementExists || reviewedVaultExperts > 0) && (!matchingQuality.projectRequirementExists || reviewedVaultProjects > 0);
+
+  if (matchingQuality.severity === "POOR") {
+    const message = `Matching quality is poor (${matchingQuality.score}/100). Review expert/project matches before final proposal generation.`;
+    if (vaultFallbackAvailable) {
+      warnings.push({ code: "MATCHING_QUALITY_POOR_VAULT_FALLBACK", message: `${message} Vault fallback evidence is available, so support-file generation is allowed but senior review is required.`, nextAction: "OPEN_MATCHING_QUALITY" });
+    } else {
+      blockers.push({ code: "MATCHING_QUALITY_POOR", message, nextAction: "OPEN_MATCHING_QUALITY" });
+    }
+  } else if (matchingQuality.severity === "WARNING") {
+    warnings.push({ code: "MATCHING_QUALITY_WARNING", message: `Matching quality has warnings (${matchingQuality.score}/100). Review selected evidence before final generation/export.`, nextAction: "OPEN_MATCHING_QUALITY" });
+  }
+}
+
 export async function getTenderGenerationReadiness(client: PrismaClient, userId: string, tenderId: string): Promise<TenderGenerationReadiness | null> {
   const [company, tender] = await Promise.all([
     ensureCompanyForUser(client, userId),
@@ -79,11 +101,7 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
     warnings.push({ code: "ANALYSIS_QUALITY_WARNING", message: `Tender analysis quality has warnings (${analysisQuality.score}/100). Review before final generation/export.`, nextAction: "OPEN_ANALYSIS_QUALITY" });
   }
 
-  if (matchingQuality.severity === "POOR") {
-    blockers.push({ code: "MATCHING_QUALITY_POOR", message: `Matching quality is poor (${matchingQuality.score}/100). Review expert/project matches before generation.`, nextAction: "OPEN_MATCHING_QUALITY" });
-  } else if (matchingQuality.severity === "WARNING") {
-    warnings.push({ code: "MATCHING_QUALITY_WARNING", message: `Matching quality has warnings (${matchingQuality.score}/100). Review selected evidence before final generation/export.`, nextAction: "OPEN_MATCHING_QUALITY" });
-  }
+  addMatchingQualityReadiness({ blockers, warnings, matchingQuality, reviewedVaultExperts: companyReadiness.totals.reviewedExperts, reviewedVaultProjects: companyReadiness.totals.reviewedProjects });
 
   if (tender.status === "NO_BID") {
     blockers.push({ code: "NO_BID_BLOCK", message: "Tender is marked NO_BID. Apply a BID or BID_WITH_CONDITIONS decision before generation." });
@@ -110,8 +128,6 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
   const reviewedSelectedProjects = selectedProjects.filter((match) => match.project.trustLevel === "REVIEWED");
 
   if (expertRequirementExists && tender.expertMatches.length === 0) {
-    // No expert matches yet — generation will fall back to the company vault or deterministic
-    // proposal. Only hard-block if the vault is also empty (no reviewed experts at all).
     if (companyReadiness.totals.reviewedExperts === 0) {
       blockers.push({ code: "NO_EXPERT_MATCHES_FOUND", message: "Tender requires experts but no expert matches exist and the company vault has no reviewed experts. Run Engine or review expert records first.", nextAction: "RUN_ENGINE" });
     } else {
@@ -126,8 +142,6 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
   }
 
   if (projectRequirementExists && tender.projectMatches.length === 0) {
-    // No project matches yet — generation will fall back to the company vault or deterministic
-    // proposal. Only hard-block if the vault is also empty (no reviewed projects at all).
     if (companyReadiness.totals.reviewedProjects === 0) {
       blockers.push({ code: "NO_PROJECT_MATCHES_FOUND", message: "Tender requires project references but no project matches exist and the company vault has no reviewed projects. Run Engine or review project records first.", nextAction: "RUN_ENGINE" });
     } else {
