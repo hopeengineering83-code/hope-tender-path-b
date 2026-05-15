@@ -4,12 +4,15 @@ import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 
 type GenerateResponse = {
+  success?: boolean;
   error?: string;
   code?: string;
   nextAction?: string;
   hint?: string;
-  warnings?: string[];
-  tender?: unknown;
+  warning?: string;
+  created?: number;
+  updated?: number;
+  files?: { created?: string[]; updated?: string[] };
 };
 
 function nextActionLabel(action?: string) {
@@ -19,6 +22,17 @@ function nextActionLabel(action?: string) {
   if (action === "OPEN_ANALYSIS_QUALITY") return "Review Analysis Quality, then retry.";
   if (action === "OPEN_MATCHING_QUALITY") return "Review Matching Quality, then retry.";
   return null;
+}
+
+async function parseResponse(res: Response): Promise<GenerateResponse> {
+  const contentType = res.headers.get("content-type") ?? "";
+  if (contentType.includes("application/json")) return await res.json() as GenerateResponse;
+  const text = await res.text().catch(() => "");
+  return {
+    error: `Missing-file generation failed: server returned a non-JSON response (${res.status} ${res.statusText || "HTTP error"}).`,
+    code: "NON_JSON_RESPONSE",
+    hint: text.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 240) || "Check Vercel function logs.",
+  };
 }
 
 export function GenerateMissingPlanFilesButton({ tenderId, missingCount }: { tenderId: string; missingCount: number }) {
@@ -33,21 +47,21 @@ export function GenerateMissingPlanFilesButton({ tenderId, missingCount }: { ten
     setMessage(null);
     setOk(null);
     try {
-      const res = await fetch(`/api/tenders/${tenderId}/generate`, { method: "POST" });
-      const data = await res.json().catch(() => ({ error: "Generation failed: server returned a non-JSON response.", code: "NON_JSON_RESPONSE" })) as GenerateResponse;
-      if (!res.ok) {
+      const res = await fetch(`/api/tenders/${tenderId}/generate-missing-plan-files`, { method: "POST" });
+      const data = await parseResponse(res);
+      if (!res.ok || data.error) {
         const action = nextActionLabel(data.nextAction);
         setOk(false);
-        setMessage([data.error || "Generation failed.", action, data.hint].filter(Boolean).join(" "));
+        setMessage([data.error || "Missing-file generation failed.", action, data.hint].filter(Boolean).join(" "));
         return;
       }
-      const warnings = Array.isArray(data.warnings) && data.warnings.length > 0 ? ` Warnings: ${data.warnings.slice(0, 2).join(" ")}` : "";
+      const count = (data.created ?? 0) + (data.updated ?? 0);
       setOk(true);
-      setMessage(`Generation completed. Reconciliation will refresh.${warnings}`.trim());
+      setMessage(`${count} missing planned file record${count === 1 ? "" : "s"} created/updated. ${data.warning ?? "Review replacement-control records before export."}`.trim());
       startTransition(() => router.refresh());
     } catch (error) {
       setOk(false);
-      setMessage(error instanceof Error ? `Generation failed: ${error.message}` : "Generation failed due to a network/runtime error.");
+      setMessage(error instanceof Error ? `Missing-file generation failed: ${error.message}` : "Missing-file generation failed due to a network/runtime error.");
     } finally {
       setRunning(false);
     }
