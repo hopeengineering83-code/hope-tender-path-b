@@ -20,6 +20,7 @@ import { AIHealthPanel } from "../../../../components/ai-health-panel";
 import { ExtractionQualityPanel } from "../../../../components/extraction-quality-panel";
 import { AnalysisQualityPanel } from "../../../../components/analysis-quality-panel";
 import { MatchingQualityPanel } from "../../../../components/matching-quality-panel";
+import { LegacyTenderActionHider } from "../../../../components/legacy-tender-action-hider";
 
 export default async function TenderPage({ params }: { params: Promise<{ id: string }> }) {
   const userId = await getSession();
@@ -76,9 +77,10 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
       <PricingWorkbookPanel tenderId={tender.id} />
       {ai && <TenderAICopilotPanel tenderId={tender.id} />}
       <div className="mb-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
-        <span className="font-semibold">Authoritative actions:</span> use the structured panels above for Run Engine and Generate Docs. The legacy detail header actions are hidden here to avoid duplicate controls and generic errors.
+        <span className="font-semibold">Authoritative actions:</span> use the structured panels above for Run Engine and Generate Docs. Only the duplicate legacy buttons are hidden below; other actions remain available.
       </div>
-      <div className="[&_button.bg-black]:hidden [&_button.bg-emerald-600]:hidden">
+      <div id="legacy-tender-detail-actions">
+        <LegacyTenderActionHider targetId="legacy-tender-detail-actions" />
         <TenderDetail tender={tender} aiEnabled={ai} />
       </div>
     </>
