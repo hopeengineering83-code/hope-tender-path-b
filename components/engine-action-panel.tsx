@@ -37,6 +37,22 @@ function actionLabel(action?: string) {
   return null;
 }
 
+async function parseEngineResponse(res: Response): Promise<EngineResponse> {
+  const contentType = res.headers.get("content-type") ?? "";
+  if (contentType.includes("application/json")) {
+    return await res.json() as EngineResponse;
+  }
+  const text = await res.text().catch(() => "");
+  const clean = text.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 320);
+  return {
+    error: `Engine run failed: server returned a non-JSON response (${res.status} ${res.statusText || "HTTP error"}).`,
+    code: "NON_JSON_RESPONSE",
+    detail: clean || "No response body was returned. Check Vercel function logs for this request.",
+    nextAction: res.status === 401 ? "LOGIN_AGAIN" : "RETRY_AFTER_DATABASE_CHECK",
+    hint: "This usually means the route crashed before returning JSON, authentication redirected, or the deployment is serving an error page.",
+  };
+}
+
 export function EngineActionPanel({ tenderId }: { tenderId: string }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -48,7 +64,7 @@ export function EngineActionPanel({ tenderId }: { tenderId: string }) {
     setResult(null);
     try {
       const res = await fetch(`/api/tenders/${tenderId}/engine${force ? "?force=true" : ""}`, { method: "POST" });
-      const data = await res.json().catch(() => ({ error: "Engine run failed: server returned a non-JSON response.", code: "NON_JSON_RESPONSE" })) as EngineResponse;
+      const data = await parseEngineResponse(res);
       if (!res.ok) {
         setResult(data);
         return;
@@ -77,7 +93,7 @@ export function EngineActionPanel({ tenderId }: { tenderId: string }) {
           <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Run Engine control</p>
           <h2 className="mt-1 text-lg font-bold text-slate-900">Run tender engine with structured diagnostics</h2>
           <p className="mt-1 max-w-3xl text-sm text-slate-600">
-            Use this panel when the old header button shows a generic failure. It displays error code, next action, hint, extraction blockers, and diagnostic ID from the backend.
+            Use this panel for Run Engine. It displays error code, next action, hint, detail, extraction blockers, and diagnostic ID from the backend.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
