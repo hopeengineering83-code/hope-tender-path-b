@@ -161,7 +161,9 @@ function isTableLine(line: string): boolean {
 }
 
 function isSeparatorRow(line: string): boolean {
-  return /^\|[\s:|-]+\|$/.test(line);
+  // Make trailing pipe optional — AI sometimes omits it, consistent with
+  // the isTableLine change that accepts rows without trailing pipe.
+  return /^\|[\s:|-]+\|?$/.test(line.trimEnd());
 }
 
 function splitTableCells(rowLine: string): string[] {

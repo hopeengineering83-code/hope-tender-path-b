@@ -1636,7 +1636,10 @@ Now write the complete technical proposal. Start with the Cover Letter. The eval
   // set seeing the "No AI provider configured" message and assuming the
   // key wasn't loaded — when in fact the model name was wrong.
   if (anthropicApiKey && !apiKey) {
-    throw new Error(`Claude (Anthropic) is configured but did not produce a proposal: ${claudeError ?? "unknown error"}. Set GEMINI_API_KEY or OPENAI_API_KEY as a fallback, OR fix the Claude model chain.`);
+    const openAiNote = isOpenAIEnabled()
+      ? ` OpenAI (${process.env.OPENAI_PROPOSAL_MODEL ?? "gpt-4o"}) was also tried as fallback but returned null — check OPENAI_API_KEY and model access.`
+      : " Set GEMINI_API_KEY or OPENAI_API_KEY as a fallback, OR fix the Claude model chain.";
+    throw new Error(`Claude (Anthropic) is configured but did not produce a proposal: ${claudeError ?? "unknown error"}.${openAiNote}`);
   }
   if (!anthropicApiKey && !apiKey && isOpenAIEnabled()) {
     throw new Error(`OpenAI (${process.env.OPENAI_PROPOSAL_MODEL ?? "gpt-4o"}) is configured but did not produce a proposal. Check that OPENAI_API_KEY is valid and the model is accessible on your account.`);

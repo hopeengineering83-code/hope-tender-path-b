@@ -754,7 +754,7 @@ export function buildProposalIntelligence(params: {
     { label: /Healthcare/, keywords: /health|hospital|medical|clinic|patient|specialty.*cent|pharma|biomedical|MoH|emergency|outpatient|in-?patient|imaging|laboratory/i },
     { label: /Water/, keywords: /water|borehole|pump|hydraulic|irrigation|WASH|sanitation|wastewater|sewer|drainage|hydrogeo/i },
     { label: /Road|Bridge|Transport/, keywords: /road|bridge|highway|pavement|transport|drainage|culvert|alignment|corridor/i },
-    { label: /Urban|Master Plan/, keywords: /urban|master plan|municipal|spatial.*plan|land.?use|zoning|\bGIS\b|eco.?park|city/i },
+    { label: /Urban|Master Plan/, keywords: /urban|master plan|municipal|spatial.*plan|land.?use|zoning|\bGIS\b|eco.?park|\bcity\b/i },
     { label: /Education/, keywords: /school|university|campus|education|classroom|library|\blab\b/i },
     { label: /Environmental|Social.*Impact/, keywords: /ESIA|ESMP|environmental|social.*safeguard|resettlement|biodiversity|impact.*assess/i },
     // Kept in sync with inferSector() triggers: ICT|software.*develop|information.*system|digital.*platform|MIS|ERP|database.*system
