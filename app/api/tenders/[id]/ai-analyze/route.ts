@@ -7,6 +7,7 @@ import { logAction } from "../../../../../lib/audit";
 import { rateLimit, AI_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import { extractRequestId } from "../../../../../lib/request-id";
 import { createNotification } from "../../../../../lib/notifications";
+import { assessExtractionQuality } from "../../../../../lib/extraction-quality";
 
 // Vercel route timeout — Claude tender analysis needs >10s default.
 // 60 = Hobby max; Pro applies its own plan limit when exceeded.
@@ -61,6 +62,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   await prismaReady;
   const { id } = await params;
+  const force = new URL(req.url).searchParams.get("force") === "true";
 
   const [tender, company] = await Promise.all([
     prisma.tender.findFirst({
@@ -80,6 +82,21 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   ]);
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
   const tenderRecord = tender;
+
+  const extractionReports = tenderRecord.files.map((file) => ({
+    fileName: file.originalFileName || file.fileName,
+    quality: assessExtractionQuality(file.extractedText, file.originalFileName || file.fileName),
+  }));
+  const extractionBlockers = extractionReports.filter((item) => item.quality.severity === "FAILED" || item.quality.severity === "POOR");
+  if (!force && extractionBlockers.length > 0) {
+    return NextResponse.json({
+      error: "AI analysis blocked: one or more tender files have poor extraction quality.",
+      code: "EXTRACTION_NOT_READY",
+      nextAction: "OPEN_EXTRACTION_QUALITY",
+      blockers: extractionBlockers,
+      hint: "Re-import/OCR/review the file, or retry with ?force=true only when you intentionally accept degraded analysis quality.",
+    }, { status: 422 });
+  }
 
   async function runRegexFallback(errorMessage?: string) {
     const result = analyzeTender(tenderRecord);
@@ -203,7 +220,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       entityType: "Tender",
       entityId: id,
       description: `Analyzed tender "${tenderRecord.title}" — ${analysisResult.requirementCount} requirements extracted${analysisResult.fallback ? " using fallback" : ""}`,
-      metadata: { ai: analysisResult.ai, fallback: analysisResult.fallback, requirementCount: analysisResult.requirementCount },
+      metadata: { ai: analysisResult.ai, fallback: analysisResult.fallback, requirementCount: analysisResult.requirementCount, forcedPoorExtraction: force, extractionWarnings: extractionReports.filter((item) => item.quality.severity === "WARNING") },
       requestId,
     });
 
@@ -213,7 +230,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     });
 
     void createNotification({ userId, type: "TENDER_ANALYZED", title: `Analysis complete for "${tenderRecord.title}"`, body: `${analysisResult.requirementCount} requirements extracted${analysisResult.fallback ? " (regex fallback)" : " by AI"}.`, entityType: "Tender", entityId: id, link: `/dashboard/tenders/${id}` });
-    return NextResponse.json({ success: true, ...analysisResult, tender: updated });
+    return NextResponse.json({ success: true, ...analysisResult, tender: updated, extractionWarnings: extractionReports.filter((item) => item.quality.severity === "WARNING") });
   } catch (error) {
     console.error("Analysis route error:", error);
     return NextResponse.json({ error: error instanceof Error ? error.message : "Analysis failed" }, { status: 500 });

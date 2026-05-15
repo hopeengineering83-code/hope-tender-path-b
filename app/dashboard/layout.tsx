@@ -51,6 +51,7 @@ const NAV_GROUPS_BASE = [
     roles: ["ADMIN"] as string[] | null,
     links: [
       { href: "/dashboard/users", label: "User Management", icon: "👥" },
+      { href: "/dashboard/admin/ai-readiness", label: "AI Readiness", icon: "🧠" },
     ],
   },
 ];

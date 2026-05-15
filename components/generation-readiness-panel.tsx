@@ -5,6 +5,8 @@ import { getTenderGenerationReadiness } from "../lib/tender-generation-readiness
 
 function actionHref(tenderId: string, action?: string): string {
   if (action === "OPEN_COMPANY_READINESS") return "/dashboard/company/readiness";
+  if (action === "OPEN_ANALYSIS_QUALITY") return `/dashboard/tenders/${tenderId}`;
+  if (action === "OPEN_MATCHING_QUALITY") return `/dashboard/tenders/${tenderId}`;
   if (action === "RUN_ENGINE") return `/dashboard/tenders/${tenderId}`;
   if (action === "REVIEW_MATCHES") return `/dashboard/tenders/${tenderId}`;
   if (action === "OPEN_KNOWLEDGE_REVIEW") return "/dashboard/company/review-board";
@@ -15,6 +17,8 @@ function actionHref(tenderId: string, action?: string): string {
 
 function buildActionLabel(action?: string): string {
   if (action === "OPEN_COMPANY_READINESS") return "Open company readiness";
+  if (action === "OPEN_ANALYSIS_QUALITY") return "Open analysis quality";
+  if (action === "OPEN_MATCHING_QUALITY") return "Open matching quality";
   if (action === "RUN_ENGINE") return "Run engine";
   if (action === "REVIEW_MATCHES") return "Review matches";
   if (action === "OPEN_KNOWLEDGE_REVIEW") return "Open review board";
@@ -38,7 +42,7 @@ export async function GenerationReadinessPanel({ tenderId }: { tenderId: string 
         <div>
           <p className={`text-xs font-semibold uppercase tracking-wide ${ready ? "text-green-700" : "text-red-700"}`}>Generation readiness</p>
           <h2 className="mt-1 text-lg font-bold text-slate-900">{ready ? "Ready to generate" : "Generation blockers found"}</h2>
-          <p className="mt-1 text-sm text-slate-600">Preflight check for company knowledge, tender analysis, compliance blockers, and selected reviewed evidence.</p>
+          <p className="mt-1 text-sm text-slate-600">Preflight check for company knowledge, tender analysis, matching quality, compliance blockers, and selected reviewed evidence.</p>
         </div>
         <Link href={`/api/tenders/${tenderId}/generation-readiness`} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50">
           Open JSON

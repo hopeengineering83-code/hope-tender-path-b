@@ -1,6 +1,8 @@
 import type { PrismaClient } from "@prisma/client";
 import { ensureCompanyForUser } from "./company-workspace";
 import { getCompanyIngestionReadiness, type CompanyIngestionReadiness } from "./company-ingestion-readiness";
+import { assessTenderAnalysisQuality, type AnalysisQualityReport } from "./analysis-quality";
+import { assessMatchingQuality, type MatchingQualityReport } from "./matching-quality";
 
 export type GenerationReadinessItem = {
   code: string;
@@ -27,6 +29,8 @@ export type TenderGenerationReadiness = {
     reviewedSelectedProjects: number;
   };
   companyReadiness: CompanyIngestionReadiness;
+  analysisQuality: AnalysisQualityReport;
+  matchingQuality: MatchingQualityReport;
   generatedAt: string;
 };
 
@@ -52,8 +56,34 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
   if (!tender) return null;
 
   const companyReadiness = await getCompanyIngestionReadiness(company.id, client);
+  const analysisQuality = assessTenderAnalysisQuality({
+    requirements: tender.requirements,
+    analysisSummary: tender.analysisSummary,
+    evaluationMethodology: tender.evaluationMethodology,
+    submissionNotes: [tender.notes, tender.intakeSummary].filter(Boolean).join("\n\n"),
+    exactFileNaming: tender.exactFileNaming,
+    exactFileOrder: tender.exactFileOrder,
+  });
+  const matchingQuality = assessMatchingQuality({
+    requirements: tender.requirements,
+    expertMatches: tender.expertMatches,
+    projectMatches: tender.projectMatches,
+  });
+
   const blockers: GenerationReadinessItem[] = companyReadiness.blockers.map((message) => ({ code: "COMPANY_INGESTION_NOT_READY", message, nextAction: "OPEN_COMPANY_READINESS" }));
   const warnings: GenerationReadinessItem[] = companyReadiness.warnings.map((message) => ({ code: "COMPANY_INGESTION_WARNING", message, nextAction: "OPEN_COMPANY_READINESS" }));
+
+  if (analysisQuality.severity === "POOR") {
+    blockers.push({ code: "ANALYSIS_QUALITY_POOR", message: `Tender analysis quality is poor (${analysisQuality.score}/100). Re-run AI Analyze / Run Engine and verify evaluation criteria, submission rules, and source references before generation.`, nextAction: "OPEN_ANALYSIS_QUALITY" });
+  } else if (analysisQuality.severity === "WARNING") {
+    warnings.push({ code: "ANALYSIS_QUALITY_WARNING", message: `Tender analysis quality has warnings (${analysisQuality.score}/100). Review before final generation/export.`, nextAction: "OPEN_ANALYSIS_QUALITY" });
+  }
+
+  if (matchingQuality.severity === "POOR") {
+    blockers.push({ code: "MATCHING_QUALITY_POOR", message: `Matching quality is poor (${matchingQuality.score}/100). Review expert/project matches before generation.`, nextAction: "OPEN_MATCHING_QUALITY" });
+  } else if (matchingQuality.severity === "WARNING") {
+    warnings.push({ code: "MATCHING_QUALITY_WARNING", message: `Matching quality has warnings (${matchingQuality.score}/100). Review selected evidence before final generation/export.`, nextAction: "OPEN_MATCHING_QUALITY" });
+  }
 
   if (tender.status === "NO_BID") {
     blockers.push({ code: "NO_BID_BLOCK", message: "Tender is marked NO_BID. Apply a BID or BID_WITH_CONDITIONS decision before generation." });
@@ -118,6 +148,8 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
       reviewedSelectedProjects: reviewedSelectedProjects.length,
     },
     companyReadiness,
+    analysisQuality,
+    matchingQuality,
     generatedAt: new Date().toISOString(),
   };
 }
