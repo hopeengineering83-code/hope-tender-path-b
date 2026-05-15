@@ -102,6 +102,13 @@ const FORBIDDEN_PHRASES = [
   /we look forward to the opportunity/i,
   /\[INSERT[^\]]*\]/i,
   /\[(?:PLACEHOLDER|NAME|DATE|TBD|ADD|ENTER|SPECIFY|YOUR)[^\]]{0,60}\]/i,
+  /\bworld[\s-]class\b/i,
+  /\binnovative solutions?\b/i,
+  /\bstreamlined operations?\b/i,
+  /\benhanced efficiency\b/i,
+  /\bbest practices\b/i,
+  /\bstate[\s-]of[\s-]the[\s-]art\b/i,
+  /\bsecond to none\b/i,
 ];
 
 function detectSector(primarySector: string): string {
@@ -176,22 +183,25 @@ export function scoreProposalQuality(opts: {
     .map((p) => p.replace(/\s+/g, " ").trim())
     .filter((p) => p.length > 80 && !p.startsWith("|") && !p.startsWith("#"));
   const withEvidence = paragraphs.filter(paragraphHasEvidence).length;
-  // Floor at 6 when fewer than 6 paragraphs exist — a short but focused
-  // proposal should not be penalised the same as a long evidence-thin one.
+  // Floor at 4 when fewer than 6 paragraphs exist — a short but focused
+  // proposal should not be penalised the same as a long evidence-thin one,
+  // but an evidence-free short proposal should still score below passing.
   const evidenceDensity = paragraphs.length === 0
     ? 5
     : paragraphs.length < 6
-      ? Math.max(6, Math.round((withEvidence / paragraphs.length) * 10))
+      ? Math.max(4, Math.round((withEvidence / paragraphs.length) * 10))
       : Math.round((withEvidence / paragraphs.length) * 10);
   if (evidenceDensity < 4) {
     weakAxes.push("evidenceDensity");
     notes.push(`Only ${withEvidence} of ${paragraphs.length} substantive paragraphs cite specific evidence (projects/values/licenses).`);
   }
 
-  // 3. Table coverage (0–10) — score by count of table heading prefixes
+  // 3. Table coverage (0–10) — score by count of table rows + numbered sections
   const tableMatches = (md.match(/^\|[^\n]+\|$/gm) ?? []).length;
   const tableSections = (md.match(/^#{2,3}\s+(?:A\.\d|B\.\d|C\.\d|D\.\d|E\.\d)/gm) ?? []).length;
-  const tableCoverage = Math.min(10, Math.round((tableMatches / 20) * 5 + (tableSections / 6) * 5));
+  // Divisor of 12 rows (was 20) — a well-structured proposal typically has 12+ rows
+  // across A.2 corporate table, B.2/B.3 project cards, C.3 work plan, C.4 QA table.
+  const tableCoverage = Math.min(10, Math.round((tableMatches / 12) * 5 + (tableSections / 6) * 5));
   if (tableCoverage < 5) {
     weakAxes.push("tableCoverage");
     notes.push(`Limited tabular evidence: ${tableMatches} table rows across ${tableSections} numbered sections.`);
