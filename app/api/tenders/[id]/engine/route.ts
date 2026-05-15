@@ -4,6 +4,7 @@ import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { runTenderEngine } from "../../../../../lib/engine/run-tender-engine";
 import { assessExtractionQuality } from "../../../../../lib/extraction-quality";
 import { actionableEngineError } from "../../../../../lib/engine/actionable-engine-error";
+import { autoFillTenderMetadataFromFiles } from "../../../../../lib/engine/auto-fill-tender-metadata";
 
 // Vercel route timeout — engine runs analyze + extract + match. Default
 // 10s is too short. 60 = Hobby max; Pro uses its own plan limit.
@@ -63,10 +64,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       }, { status: 422 });
     }
 
+    const metadataAutoFill = await autoFillTenderMetadataFromFiles(prisma, userId, id);
     const result = await runTenderEngine(id, userId);
     return NextResponse.json({
       success: true,
       tender: result,
+      metadataAutoFill,
       extractionWarnings: extractionReports.filter((item) => item.quality.severity === "WARNING"),
       diagnosticId,
     });
