@@ -62,12 +62,12 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
       <ExecutiveSnapshot tender={tender} />
       <BidControlVerdictPanel tenderId={tender.id} />
       <AIHealthPanel />
-      <EngineActionPanel tenderId={tender.id} />
+      <div id="run-engine-action"><EngineActionPanel tenderId={tender.id} /></div>
       <ExtractionQualityPanel tenderId={tender.id} />
       <AnalysisQualityPanel tenderId={tender.id} />
       <MatchingQualityPanel tenderId={tender.id} />
       <GenerationReadinessPanel tenderId={tender.id} />
-      <GenerationActionPanel tenderId={tender.id} readiness={generationReadiness} />
+      <div id="generate-docs-action"><GenerationActionPanel tenderId={tender.id} readiness={generationReadiness} /></div>
       <SubmissionPlanReconciliationPanel tenderId={tender.id} />
       <TenderIntakeDetailPanel tender={tender} />
       <ProposalEvidenceReadinessPanel tenderId={tender.id} />
@@ -75,7 +75,12 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
       <EvaluatorObjectionsPanel tenderId={tender.id} />
       <PricingWorkbookPanel tenderId={tender.id} />
       {ai && <TenderAICopilotPanel tenderId={tender.id} />}
-      <TenderDetail tender={tender} aiEnabled={ai} />
+      <div className="mb-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+        <span className="font-semibold">Authoritative actions:</span> use the structured panels above for Run Engine and Generate Docs. The legacy detail header actions are hidden here to avoid duplicate controls and generic errors.
+      </div>
+      <div className="[&_button.bg-black]:hidden [&_button.bg-emerald-600]:hidden">
+        <TenderDetail tender={tender} aiEnabled={ai} />
+      </div>
     </>
   );
 }
