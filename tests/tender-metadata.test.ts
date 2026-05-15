@@ -59,6 +59,36 @@ describe("inferTenderMetadata — rich extraction", () => {
     assert.ok(m.clientName?.toLowerCase().includes("pharo"), `expected Pharo in client, got: ${m.clientName}`);
   });
 
+  it("extracts the client name from employer label", () => {
+    const text = `${FULL_TENDER}\nEmployer: Addis Ababa City Administration Construction Permit and Control Authority`;
+    const m = inferTenderMetadata(text, "rfp.pdf");
+    assert.equal(m.clientName, "Pharo Ventures");
+  });
+
+  it("extracts client name from name-of-procuring-entity label", () => {
+    const text = `
+REQUEST FOR EXPRESSIONS OF INTEREST
+Name of Procuring Entity: Ethiopian Heritage Trust
+Assignment Title: Design Review and Construction Supervision Services
+Country: Ethiopia
+Deadline: 30 June 2026
+Scope: The consultant shall provide architectural and engineering consultancy services, review deliverables, prepare reports, coordinate stakeholders, and support approval processes for a multidisciplinary tourism and heritage development project. The RFP includes technical and financial evaluation criteria, expert requirements, project references, submission forms, and annexes.
+`.repeat(8);
+    const m = inferTenderMetadata(text, "eoi.pdf");
+    assert.equal(m.clientName, "Ethiopian Heritage Trust");
+  });
+
+  it("extracts client-like organization from header when labels are missing", () => {
+    const text = `
+REQUEST FOR PROPOSAL
+ADDIS ABABA WATER AND SEWERAGE AUTHORITY
+Consultancy Services for Water Supply Design and Supervision
+The consultant shall review designs, prepare engineering reports, assign qualified experts, submit technical and financial proposals, and comply with all requirements in the RFP including forms, annexes, deadline, bid validity, project references, expert CVs, and submission instructions.
+`.repeat(8);
+    const m = inferTenderMetadata(text, "water-rfp.pdf");
+    assert.equal(m.clientName, "ADDIS ABABA WATER AND SEWERAGE AUTHORITY");
+  });
+
   it("extracts the client contact name", () => {
     const m = inferTenderMetadata(FULL_TENDER, "rfp.pdf");
     assert.ok(m.clientContactName?.toLowerCase().includes("edessa"), `expected Edessa in contact name, got: ${m.clientContactName}`);
