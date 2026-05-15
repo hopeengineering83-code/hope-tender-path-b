@@ -13,6 +13,7 @@ import { PricingWorkbookPanel } from "../../../../components/pricing-workbook-pa
 import { ProposalEvidenceReadinessPanel } from "../../../../components/proposal-evidence-readiness-panel";
 import { GenerationReadinessPanel } from "../../../../components/generation-readiness-panel";
 import { GenerationActionPanel } from "../../../../components/generation-action-panel";
+import { SubmissionPlanReconciliationPanel } from "../../../../components/submission-plan-reconciliation-panel";
 import { ExtractionQualityPanel } from "../../../../components/extraction-quality-panel";
 import { AnalysisQualityPanel } from "../../../../components/analysis-quality-panel";
 import { MatchingQualityPanel } from "../../../../components/matching-quality-panel";
@@ -61,6 +62,7 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
       <MatchingQualityPanel tenderId={tender.id} />
       <GenerationReadinessPanel tenderId={tender.id} />
       <GenerationActionPanel tenderId={tender.id} readiness={generationReadiness} />
+      <SubmissionPlanReconciliationPanel tenderId={tender.id} />
       <TenderIntakeDetailPanel tender={tender} />
       <ProposalEvidenceReadinessPanel tenderId={tender.id} />
       <ExportReadinessPanel tenderId={tender.id} />

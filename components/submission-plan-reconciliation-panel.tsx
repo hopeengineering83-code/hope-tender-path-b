@@ -1,0 +1,130 @@
+import Link from "next/link";
+import { getSession } from "../lib/auth";
+import { prisma, prismaReady } from "../lib/prisma";
+import { buildSubmissionPlan, findExtraGeneratedDocuments, findMissingGeneratedDocuments, submissionPlanFileCount } from "../lib/engine/submission-plan";
+
+function statusClass(ok: boolean) {
+  return ok ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-amber-200 bg-amber-50 text-amber-800";
+}
+
+function docStatusLabel(status?: string | null) {
+  return (status ?? "PLANNED").replace(/_/g, " ");
+}
+
+export async function SubmissionPlanReconciliationPanel({ tenderId }: { tenderId: string }) {
+  const userId = await getSession();
+  if (!userId) return null;
+
+  await prismaReady;
+  const tender = await prisma.tender.findFirst({
+    where: { id: tenderId, userId },
+    include: {
+      requirements: { orderBy: { createdAt: "asc" } },
+      generatedDocuments: {
+        where: { generationStatus: { not: "SUPERSEDED" } },
+        orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }],
+        select: { id: true, name: true, documentType: true, exactFileName: true, exactOrder: true, generationStatus: true, validationStatus: true, reviewStatus: true, fileContent: true },
+      },
+    },
+  });
+  if (!tender) return null;
+
+  const plan = buildSubmissionPlan({
+    id: tender.id,
+    title: tender.title,
+    exactFileNaming: tender.exactFileNaming,
+    exactFileOrder: tender.exactFileOrder,
+    pageLimit: tender.pageLimit,
+    requirements: tender.requirements,
+  });
+  const missing = findMissingGeneratedDocuments(plan, tender.generatedDocuments);
+  const extra = findExtraGeneratedDocuments(plan, tender.generatedDocuments);
+  const requiredCount = submissionPlanFileCount(plan);
+  const generatedCount = Math.max(0, requiredCount - missing.length);
+  const ok = requiredCount > 0 && missing.length === 0 && extra.length === 0;
+
+  if (requiredCount === 0 && plan.warnings.length === 0) return null;
+
+  return (
+    <section className={`mb-4 rounded-2xl border p-5 shadow-sm ${statusClass(ok)}`}>
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide">Submission plan reconciliation</p>
+          <h2 className="mt-1 text-lg font-bold text-slate-900">{ok ? "Submission file plan is reconciled" : "Submission file plan needs action"}</h2>
+          <p className="mt-1 max-w-3xl text-sm text-slate-600">
+            Compares tender-required file names/order against active generated documents so missing or extra package files are visible before export.
+          </p>
+        </div>
+        <div className="rounded-xl bg-white px-4 py-3 text-right shadow-sm">
+          <p className="text-xs text-slate-500">Required generated files</p>
+          <p className="text-2xl font-bold text-slate-900">{generatedCount}/{requiredCount}</p>
+        </div>
+      </div>
+
+      {plan.warnings.length > 0 && (
+        <ul className="mt-3 list-disc space-y-1 pl-5 text-sm">
+          {plan.warnings.map((warning) => <li key={warning}>{warning}</li>)}
+        </ul>
+      )}
+
+      {requiredCount > 0 && (
+        <div className="mt-4 overflow-x-auto rounded-xl border border-white/70 bg-white">
+          <table className="min-w-full text-left text-sm">
+            <thead className="bg-slate-100 text-xs uppercase tracking-wide text-slate-500">
+              <tr>
+                <th className="px-3 py-2">Order</th>
+                <th className="px-3 py-2">Tender-required file</th>
+                <th className="px-3 py-2">Format</th>
+                <th className="px-3 py-2">Status</th>
+                <th className="px-3 py-2">Review</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 text-slate-700">
+              {plan.files.filter((file) => file.required).map((file) => {
+                const generated = tender.generatedDocuments.find((doc) => (doc.exactFileName ?? doc.name ?? "").toLowerCase().replace(/\.[a-z0-9]+$/i, "").replace(/[^a-z0-9]+/g, " ").trim() === file.exactFileName.toLowerCase().replace(/\.[a-z0-9]+$/i, "").replace(/[^a-z0-9]+/g, " ").trim());
+                return (
+                  <tr key={file.canonicalId}>
+                    <td className="px-3 py-2 font-medium">{file.exactOrder}</td>
+                    <td className="px-3 py-2">
+                      <p className="font-semibold text-slate-900">{file.exactFileName}</p>
+                      <p className="text-xs text-slate-500">{file.documentType}</p>
+                    </td>
+                    <td className="px-3 py-2">{file.format}</td>
+                    <td className="px-3 py-2">{generated ? docStatusLabel(generated.generationStatus) : "MISSING"}</td>
+                    <td className="px-3 py-2">{generated ? docStatusLabel(generated.reviewStatus) : "Not generated"}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {(missing.length > 0 || extra.length > 0) && (
+        <div className="mt-4 grid gap-3 lg:grid-cols-2">
+          {missing.length > 0 && (
+            <div className="rounded-xl border border-amber-200 bg-white p-3 text-sm">
+              <p className="font-semibold text-amber-900">Missing required files</p>
+              <ul className="mt-2 list-disc space-y-1 pl-5 text-amber-800">
+                {missing.slice(0, 8).map((file) => <li key={file.canonicalId}>{file.exactFileName}</li>)}
+              </ul>
+            </div>
+          )}
+          {extra.length > 0 && (
+            <div className="rounded-xl border border-red-200 bg-white p-3 text-sm">
+              <p className="font-semibold text-red-900">Extra generated files outside plan</p>
+              <ul className="mt-2 list-disc space-y-1 pl-5 text-red-800">
+                {extra.slice(0, 8).map((doc) => <li key={doc.id ?? doc.exactFileName ?? doc.name ?? "extra"}>{doc.exactFileName ?? doc.name ?? doc.documentType}</li>)}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
+
+      <div className="mt-4 flex flex-wrap gap-2 text-xs">
+        <Link href={`/api/tenders/${tenderId}/export-readiness`} className="rounded-lg border border-slate-300 bg-white px-3 py-2 font-medium text-slate-700 hover:bg-slate-50">Open export readiness JSON</Link>
+        <span className="rounded-lg bg-white px-3 py-2 text-slate-600">Run Generate Docs to create missing planned package files.</span>
+      </div>
+    </section>
+  );
+}
