@@ -2,6 +2,7 @@ import Link from "next/link";
 import { getSession } from "../lib/auth";
 import { prisma, prismaReady } from "../lib/prisma";
 import { buildSubmissionPlan, findExtraGeneratedDocuments, findMissingGeneratedDocuments, submissionPlanFileCount } from "../lib/engine/submission-plan";
+import { GenerateMissingPlanFilesButton } from "./generate-missing-plan-files-button";
 
 function statusClass(ok: boolean) {
   return ok ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-amber-200 bg-amber-50 text-amber-800";
@@ -55,9 +56,12 @@ export async function SubmissionPlanReconciliationPanel({ tenderId }: { tenderId
             Compares tender-required file names/order against active generated documents so missing or extra package files are visible before export.
           </p>
         </div>
-        <div className="rounded-xl bg-white px-4 py-3 text-right shadow-sm">
-          <p className="text-xs text-slate-500">Required generated files</p>
-          <p className="text-2xl font-bold text-slate-900">{generatedCount}/{requiredCount}</p>
+        <div className="flex flex-col items-stretch gap-2 lg:items-end">
+          <div className="rounded-xl bg-white px-4 py-3 text-right shadow-sm">
+            <p className="text-xs text-slate-500">Required generated files</p>
+            <p className="text-2xl font-bold text-slate-900">{generatedCount}/{requiredCount}</p>
+          </div>
+          {missing.length > 0 && <GenerateMissingPlanFilesButton tenderId={tenderId} missingCount={missing.length} />}
         </div>
       </div>
 
@@ -123,7 +127,7 @@ export async function SubmissionPlanReconciliationPanel({ tenderId }: { tenderId
 
       <div className="mt-4 flex flex-wrap gap-2 text-xs">
         <Link href={`/api/tenders/${tenderId}/export-readiness`} className="rounded-lg border border-slate-300 bg-white px-3 py-2 font-medium text-slate-700 hover:bg-slate-50">Open export readiness JSON</Link>
-        <span className="rounded-lg bg-white px-3 py-2 text-slate-600">Run Generate Docs to create missing planned package files.</span>
+        <span className="rounded-lg bg-white px-3 py-2 text-slate-600">Use the missing-file action above to create planned package files, then review and validate before export.</span>
       </div>
     </section>
   );
