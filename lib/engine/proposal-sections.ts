@@ -831,7 +831,8 @@ export function buildSectionFallback(spec: ProposalSectionSpec, input: AIBidWrit
         .slice(0, 4);
       const leadExpert = expertNames[0] || "the lead expert";
       const team = expertNames.length > 1 ? expertNames.join(", ") : leadExpert;
-      // Generic scope item labels used when tender has fewer than 6 real requirements
+      // Generic scope item labels used when tender has fewer than 6 real requirements.
+      // Extended to 10 so large tenders (up to 10 explicit scope items) are covered.
       const GENERIC_SCOPE_ITEMS = [
         "Scope Review and Inception",
         "Site Investigation and Data Collection",
@@ -839,9 +840,14 @@ export function buildSectionFallback(spec: ProposalSectionSpec, input: AIBidWrit
         "Concept and Schematic Design",
         "Detailed Design, Specifications and BOQ",
         "Final Documentation and Submission",
+        "Quality Assurance and Client Review",
+        "Implementation Support and Handover",
+        "Documentation and Knowledge Transfer",
+        "Post-Completion Advisory Support",
       ];
-      // Build methodology sections — guaranteed minimum 6 C.2.x sub-sections
-      const normalizedReqs = reqLines.slice(0, 6);
+      // Build methodology sections — scale to tender's actual scope item count, minimum 6
+      const maxReqs = Math.max(6, Math.min(reqLines.length, GENERIC_SCOPE_ITEMS.length));
+      const normalizedReqs = reqLines.slice(0, maxReqs);
       while (normalizedReqs.length < 6) {
         normalizedReqs.push(GENERIC_SCOPE_ITEMS[normalizedReqs.length]);
       }
@@ -853,9 +859,9 @@ export function buildSectionFallback(spec: ProposalSectionSpec, input: AIBidWrit
           : `Our approach to this requirement begins with a thorough review of ${client}'s stated scope, constraints, and applicable standards. ${expert} will lead this scope item, applying the firm's proven methodology and drawing on comparable project experience. The deliverable will be prepared at schematic, detailed, and final stages with internal QA review at each gate before submission to ${client} for approval.\n\nResponsible expert: ${expert}. Quality Gate: 30%/60%/100% internal review gates — peer-reviewed at 30%, cross-discipline at 60%, director sign-off at 100%.`;
         return `### C.2.${i + 1} ${req.slice(0, 80)}\n\n${body}`;
       });
-      // Work-plan rows derived from normalised requirement scope items
-      const PHASE_TIMELINES = ["Week 1–2", "Week 2–4", "Week 4–6", "Week 6–8", "Week 8–14", "Week 14–16"];
-      const PHASE_GATES = ["PM sign-off", "Senior Engineer review", "QA peer review", "Client interim review", "30%/60%/100% gates", "Director sign-off"];
+      // Work-plan rows derived from normalised requirement scope items (scales to 10 items)
+      const PHASE_TIMELINES = ["Week 1–2", "Week 2–4", "Week 4–6", "Week 6–8", "Week 8–12", "Week 12–16", "Week 16–18", "Week 18–20", "Week 20–22", "Week 22–24"];
+      const PHASE_GATES = ["PM sign-off", "Senior Engineer review", "QA peer review", "Client interim review", "30% client review", "60%/100% gates", "Director sign-off", "Client acceptance", "Final QA review", "PM close-out"];
       const workPlanRows = normalizedReqs.map((req, i) => {
         const responsible = i % 2 === 0 ? leadExpert : team;
         const deliverable = req.slice(0, 60).replace(/\s*\(.*$/, "").trim();

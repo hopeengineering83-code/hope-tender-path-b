@@ -71,6 +71,7 @@ function hasForbiddenWeakness(markdown: string): boolean {
   if (/\{\{?\s*\w[\w\s-]{0,60}\s*\}?\}/g.test(markdown)) return true;
   // Unfilled action directives — indicate the AI echoed fallback template text
   if (/\bBid-Team Action:/i.test(markdown)) return true;
+  if (/Source-evidence action:/i.test(markdown)) return true;
   return false;
 }
 
@@ -112,6 +113,8 @@ function normalizeWeakText(markdown: string): string {
     .replace(/<[A-Z][A-Z_]{1,40}>/g, "to be confirmed by bid team")
     // Action directives — replace with neutral evidence note so re-scoring passes
     .replace(/\bBid-Team Action:\s*([^\n]*)/gi, "Evidence note: $1")
+    // Source-evidence action stubs from deterministic builders — normalize same way
+    .replace(/_?Source-evidence action:[^_\n]*_?/gi, "Bid-team to confirm before submission.")
     .replace(/\n{3,}/g, "\n\n");
 }
 

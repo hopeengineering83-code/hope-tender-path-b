@@ -146,10 +146,10 @@ function heading(text: string, level: 1 | 2 | 3 = 1, pageBreak = false): Paragra
   });
 }
 
-function bullet(text: string): Paragraph {
+function bullet(text: string, level = 0): Paragraph {
   return new Paragraph({
     children: parseInlineRuns(text),
-    bullet: { level: 0 },
+    bullet: { level },
     spacing: { after: 80, line: 260 },
   });
 }
@@ -257,27 +257,38 @@ function markdownToDocx(markdown: string): (Paragraph | Table)[] {
   };
 
   for (const raw of markdown.replace(/\r/g, "").split("\n")) {
-    const line = raw.trim();
+    const line = raw.trimEnd();
+    const trimmed = line.trim();
 
-    if (isTableLine(line)) {
-      tableBuffer.push(line);
+    if (isTableLine(trimmed)) {
+      tableBuffer.push(trimmed);
       continue;
     }
     if (tableBuffer.length > 0) flushTable();
 
-    if (!line) {
+    if (!trimmed) {
       // Preserve visual paragraph separation: emit a small spacer so
       // consecutive body paragraphs don't collapse into a dense block.
       out.push(new Paragraph({ children: [new TextRun("")], spacing: { after: 60 } }));
       continue;
     }
-    if (line.startsWith("### ")) out.push(heading(line.slice(4), 3));
-    else if (line.startsWith("## ")) out.push(heading(line.slice(3), 2));
-    else if (line.startsWith("# ")) { h1Count++; out.push(heading(line.slice(2), 1, h1Count > 1)); }
-    else if (line.startsWith("> ")) out.push(new Paragraph({ children: parseInlineRuns(line.slice(2), { color: "795B00", size: 20 }), indent: { left: 360, right: 360 }, spacing: { after: 80, line: 260 }, border: { left: { color: "F59E0B", style: BorderStyle.SINGLE, size: 12, space: 4 } } }))
-    else if (/^[-*•]\s+/.test(line)) out.push(bullet(line.replace(/^[-*•]\s+/, "")));
-    else if (/^\d+[.)]\s+/.test(line)) out.push(bullet(line.replace(/^\d+[.)]\s+/, "")));
-    else out.push(para(line));
+    // Horizontal rule — render as a thin bottom-border paragraph spacer
+    if (/^[-*_]{3,}$/.test(trimmed)) {
+      out.push(new Paragraph({ spacing: { before: 120, after: 120 }, border: { bottom: { color: "CCCCCC", style: BorderStyle.SINGLE, size: 6, space: 1 } }, children: [new TextRun("")] }));
+      continue;
+    }
+    if (trimmed.startsWith("### ")) out.push(heading(trimmed.slice(4), 3));
+    else if (trimmed.startsWith("## ")) out.push(heading(trimmed.slice(3), 2));
+    else if (trimmed.startsWith("# ")) { h1Count++; out.push(heading(trimmed.slice(2), 1, h1Count > 1)); }
+    else if (trimmed.startsWith("> ")) out.push(new Paragraph({ children: parseInlineRuns(trimmed.slice(2), { color: "795B00", size: 20 }), indent: { left: 360, right: 360 }, spacing: { after: 80, line: 260 }, border: { left: { color: "F59E0B", style: BorderStyle.SINGLE, size: 12, space: 4 } } }))
+    else if (/^[-*•]\s+/.test(trimmed)) {
+      // Detect nesting by leading whitespace (2 spaces per level)
+      const indent = line.length - line.trimStart().length;
+      const nestLevel = Math.min(Math.floor(indent / 2), 8);
+      out.push(bullet(trimmed.replace(/^[-*•]\s+/, ""), nestLevel));
+    }
+    else if (/^\d+[.)]\s+/.test(trimmed)) out.push(bullet(trimmed.replace(/^\d+[.)]\s+/, "")));
+    else out.push(para(trimmed));
   }
   if (tableBuffer.length > 0) flushTable();
 
