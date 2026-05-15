@@ -232,6 +232,7 @@ function shortText(text?: string | null, max = 700): string {
 
 function cleanClientLanguage(text: string): string {
   return polishBenchmarkOutput(text
+    .replace(/Bid-Team Action:\s*/gi, "Evidence note: ")
     .replace(/Bid-team confirmation:\s*/gi, "Evidence note: ")
     .replace(/bid-team confirmation item(s)?/gi, "source-evidence confirmation item$1")
     .replace(/bid-team-confirmed/gi, "source-confirmed")
@@ -1179,7 +1180,12 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
         submissionNotes: [BENCHMARK_CONTEXT_LINES.join("\n"), submissionNotes].filter(Boolean).join("\n"),
         requirements: [...BENCHMARK_CONTEXT_LINES, ...requirementLines].join("\n"),
         companyProfile: `${company.name}\n${company.legalName ?? ""}\n${company.profileSummary ?? company.description ?? ""}\nServices: ${safeParseArr(company.serviceLines).join(", ")}\nSectors: ${safeParseArr(company.sectors).join(", ")}\n\nWider company evidence library:\n${evidenceContextLines.join("\n").slice(0, 9_000)}`,
-        experts: expertLines.join("\n"),
+        experts: [
+          expertLines.length > 0
+            ? `LEAD EXPERT (name as Team Lead / Project Manager in EVERY section): ${expertLines[0].split("|")[0].trim()}`
+            : "",
+          ...expertLines,
+        ].filter(Boolean).join("\n"),
         projects: [...projectLines, ...projectEvidenceLines].join("\n"),
         compliance: [...BENCHMARK_CONTEXT_LINES, ...complianceLines].join("\n"),
         differentiators: [...BENCHMARK_CONTEXT_LINES, ...intelligence.differentiators, ...companyEvidenceLines.slice(0, 8)].join("\n"),
@@ -1232,15 +1238,21 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
             })
             .filter((s) => s.length > 0),
         },
-        // PR W — list of clients from the firm's vault project history
-        // that the AI must NEVER substitute as the client of this
-        // tender (they are the firm's PREVIOUS clients, not the
-        // current one). Pulled from company.projects loaded above.
-        doNotUseAsClient: Array.from(new Set(
-          (company.projects ?? [])
-            .map((p) => (p as { clientName?: string | null }).clientName)
-            .filter((c): c is string => Boolean(c && c.trim().length >= 3))
-        )),
+        // PR W — list of clients from the firm's vault project history AND
+        // selected projects that the AI must NEVER substitute as the client
+        // of this tender (they are the firm's PREVIOUS clients, not the
+        // current one). Excludes the current tender client so repeat-client
+        // tenders don't receive contradictory instructions.
+        doNotUseAsClient: (() => {
+          const tenderClient = intelligence.clientName?.toLowerCase().trim() ?? "";
+          return Array.from(new Set([
+            ...(company.projects ?? []).map((p) => (p as { clientName?: string | null }).clientName),
+            ...projects.map((p) => (p as { clientName?: string | null }).clientName),
+          ].filter((cn): cn is string => {
+            if (!cn || cn.trim().length < 3) return false;
+            return cn.toLowerCase().trim() !== tenderClient;
+          })));
+        })(),
         // Per-criterion evidence map — tells the AI which projects/experts
         // are most relevant to each evaluation criterion, and at what depth
         // (proportional to criterion weight). This eliminates the AI's
