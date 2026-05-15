@@ -947,8 +947,77 @@ export function buildCriterionEvidenceMap(
   weights: EvaluationWeight[],
   topProjects: ProjectLite[],
   topExperts: ExpertLite[],
+  evaluationCriteriaText?: string,
 ): string {
-  if (weights.length === 0) return "";
+  if (weights.length === 0) {
+    // Tenders without numeric weights still need criterion-evidence guidance.
+    // Infer criteria names from the evaluation methodology text and assign
+    // equal word-count targets (~500 words each, up to 5 criteria).
+    if (!evaluationCriteriaText || evaluationCriteriaText.trim().length < 10) {
+      console.warn("[buildCriterionEvidenceMap] No numeric weights and no evaluation text — Section C will use unweighted methodology.");
+      return "";
+    }
+    const inferredCriteria = evaluationCriteriaText
+      .split(/\n/)
+      .map((l) => l.replace(/^[-*•]\s*/, "").replace(/^\d+[.)]\s*/, "").trim())
+      .filter((l) => l.length >= 8 && l.length < 200 && !/^[A-Z\s]{10,}$/.test(l))
+      .slice(0, 6);
+    if (inferredCriteria.length === 0) return "";
+
+    const equalWords = Math.round(3000 / inferredCriteria.length / 100) * 100;
+    const lines: string[] = [
+      "EVALUATION CRITERION → EVIDENCE & PROSE ALLOCATION MAP (equal-weight inference — no numeric weights detected)",
+      "RULE: Allocate equal prose depth to each criterion. Treat every criterion as equally important unless context implies otherwise.",
+      "",
+    ];
+    for (let i = 0; i < inferredCriteria.length; i++) {
+      const criterion = inferredCriteria[i];
+      const keywords = criterion.toLowerCase()
+        .split(/\s+/)
+        .filter((k) => k.length > 3 && !/^(the|and|for|with|that|this|from|into|have|been|will|shall|must|only|also|when|where|which|their|each|both)$/.test(k));
+
+      const scoredProjects = topProjects
+        .map((p) => {
+          const t = textOf(p.name, p.summary, p.sector, p.clientName, ...safeParseArr(p.serviceAreas)).toLowerCase();
+          const hits = keywords.filter((k) => t.includes(k)).length;
+          return { project: p, hits };
+        })
+        .filter((s) => s.hits > 0)
+        .sort((a, b) => b.hits - a.hits || (b.project.contractValue ?? 0) - (a.project.contractValue ?? 0))
+        .slice(0, 3);
+
+      const scoredExperts = topExperts
+        .map((e) => {
+          const t = textOf(e.fullName, e.title, e.profile, ...safeParseArr(e.disciplines), ...safeParseArr(e.sectors)).toLowerCase();
+          const hits = keywords.filter((k) => t.includes(k)).length;
+          return { expert: e, hits };
+        })
+        .filter((s) => s.hits > 0)
+        .sort((a, b) => b.hits - a.hits)
+        .slice(0, 2);
+
+      if (scoredProjects.length === 0 && scoredExperts.length === 0) continue;
+
+      lines.push(`━━━ [equal] ${criterion} → WRITE ~${equalWords} WORDS ━━━`);
+      if (scoredProjects.length > 0) {
+        lines.push("  CITE THESE PROJECTS:");
+        for (let pi = 0; pi < scoredProjects.length; pi++) {
+          const { project } = scoredProjects[pi];
+          const val = project.contractValue ? ` | ${project.currency ?? "ETB"} ${(project.contractValue / 1_000_000).toFixed(1)}M` : "";
+          lines.push(`    [${pi === 0 ? "PRIMARY" : "SUPPORTING"}] ${project.name}${project.clientName ? ` — ${project.clientName}` : ""}${val}`);
+        }
+      }
+      if (scoredExperts.length > 0) {
+        lines.push("  ASSIGN THESE EXPERTS:");
+        for (let ei = 0; ei < scoredExperts.length; ei++) {
+          const { expert } = scoredExperts[ei];
+          lines.push(`    [${ei === 0 ? "LEAD" : "SUPPORT"}] ${expert.fullName}${expert.title ? ` — ${expert.title}` : ""}`);
+        }
+      }
+      lines.push("");
+    }
+    return lines.length > 3 ? lines.join("\n") : "";
+  }
 
   // Calculate prose allocation from numeric weights.
   // Total is the sum of all parsed weights — used to derive

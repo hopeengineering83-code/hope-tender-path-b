@@ -158,14 +158,12 @@ export function injectEvidenceMarkers(
     return { markdown, injected: 0 };
   }
 
-  // PR Q FIX — Cap total injections at 4 (was 12). The previous cap
-  // bloated the proposal with 10+ "Comparable reference anchor" /
-  // "Consistent with the firm's delivery on X" sentences that the
-  // benchmark gap analysis flagged as "looks like templated AI
-  // output." Real elite proposals make project anchors count by
-  // using them sparingly — a project name appears once, in the
-  // most natural place.
-  const INJECTION_CAP = 4;
+  // Cap at 6 injections: enough to give every major section an evidence
+  // anchor without saturating the prose. Previous cap of 4 left Section C
+  // sub-sections without any project citation when the AI produced a thin
+  // first pass; 6 covers Cover Letter + ES + 3–4 Section C sub-sections
+  // while still avoiding the "templated AI output" look.
+  const INJECTION_CAP = 6;
 
   // PR Q FIX — Identify protected line ranges where we DON'T auto-inject
   // anchor sentences. Those zones are hand-crafted (or vault-built);

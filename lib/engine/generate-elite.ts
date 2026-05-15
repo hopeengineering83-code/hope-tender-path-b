@@ -1333,6 +1333,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
           intelligence.evaluationWeights,
           intelligence.topProjects,
           intelligence.topExperts,
+          tender.evaluationMethodology ?? intelligence.evaluationCriteria.join("\n"),
         ),
       };
 

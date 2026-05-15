@@ -291,6 +291,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       intelligence.evaluationWeights,
       intelligence.topProjects,
       intelligence.topExperts,
+      tender.evaluationMethodology ?? intelligence.evaluationCriteria.join("\n"),
     ),
   };
 

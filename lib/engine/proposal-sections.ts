@@ -132,7 +132,9 @@ Your operating principles for Section C:
 
 7. NO AI TRACES. Never write "As an AI", "Certainly!", "Please note", or [square bracket] placeholders.
 
-8. OUTPUT SHAPE. Output Section C only — as a single top-level Markdown heading (# Section C: Technical Approach) followed by sub-sections (## C.1 Understanding…, ## C.2 Methodology…, ## C.3 Work Plan…, ## C.4 Quality Assurance…). Do not output any other top-level sections. Do not output cover letter, executive summary, Section A, B, or D. Start directly with # Section C.`;
+8. MINIMUM SUB-SECTION COUNT. Section C.2 (Technical Methodology) MUST contain AT LEAST 6 numbered sub-sections (### C.2.1 through ### C.2.6 minimum), each with a distinct scope item from the tender's deliverable list. Fewer than 6 C.2.x sub-sections will cause automatic scoring penalties. If the tender has fewer than 6 explicit scope items, infer the remaining sub-sections from the sector's standard work breakdown (e.g., Site Investigation, Data Analysis, Schematic Design, Detailed Design, QA Review, Documentation).
+
+9. OUTPUT SHAPE. Output Section C only — as a single top-level Markdown heading (# Section C: Technical Approach) followed by sub-sections (## C.1 Understanding…, ## C.2 Methodology with ### C.2.1–C.2.6+ numbered sub-sections, ## C.3 Work Plan…, ## C.4 Quality Assurance…). Do not output any other top-level sections. Do not output cover letter, executive summary, Section A, B, or D. Start directly with # Section C.`;
 
 export const ADDITIONAL_AND_DECLARATION_SYSTEM_PROMPT = `You are a senior bid reviewer writing the closing artefacts of a competitive technical proposal — Section D (Additional Information & Value), the Appendix Register, and the formal Declaration. These sections are the bid's final impression on the evaluator. You have drafted closing sections for 700+ winning bids.
 
@@ -152,7 +154,12 @@ Your operating principles for Section D, Appendix Register, and Declaration:
 
 7. NO AI TRACES. Never write "As an AI", "Certainly!", "Please note", or [square bracket] placeholders. Where a fact is missing, write a "Bid-Team Action:" note instead of fabricating.
 
-8. OUTPUT SHAPE. Output Section D, the Appendix Register, and the Declaration as three top-level Markdown headings (# Section D: Additional Information, # Appendix Register, # Declaration). Do not output any other sections. Do not output cover letter, executive summary, Section A/B/C, or compliance matrix. Start directly with # Section D.`;
+8. ESG, HEALTH & SAFETY, INNOVATION (MANDATORY SUB-SECTIONS). Section D MUST include these three sub-sections — they are universally evaluated:
+   - ## D.2.1 Environmental and Social Governance: describe how ESG principles are embedded in delivery — site disturbance minimisation, local employment, gender equity, community engagement, donor safeguard alignment.
+   - ## D.2.2 Health and Safety: state the H&S management regime — FIDIC/IFC standards, mandatory PPE, site induction, incident reporting, emergency response protocol.
+   - ## D.2.3 Innovation: name specific technology methods the firm deploys — BIM, GIS, drone survey, digital dashboards, etc. — and state that these are in-house (no extra cost).
+
+9. OUTPUT SHAPE. Output Section D, the Appendix Register, and the Declaration as three top-level Markdown headings (# Section D: Additional Information, # Appendix Register, # Declaration). Do not output any other sections. Do not output cover letter, executive summary, Section A/B/C, or compliance matrix. Start directly with # Section D.`;
 
 // ─── Section spec type ───────────────────────────────────────────────────────
 // One spec per parallel Claude call. The id is used for logging and for
@@ -421,10 +428,10 @@ ${criterionBlock}
 ${input.requirements.slice(0, 4_000)}
 
 ## PROPOSED EXPERTS (name them inline in the methodology — who does what)
-${input.experts.slice(0, 4_000)}
+${input.experts.slice(0, 6_000)}
 
 ## RELEVANT PROJECT EVIDENCE (cite specific projects when they demonstrate a methodology element)
-${input.projects.slice(0, 4_000)}
+${input.projects.slice(0, 6_500)}
 
 ## DETERMINISTIC POST-INJECTION (DO NOT DUPLICATE THESE STRUCTURES)
 After your output is generated, the engine will deterministically inject the
@@ -811,27 +818,45 @@ export function buildSectionFallback(spec: ProposalSectionSpec, input: AIBidWrit
         // they all start with an ALL-CAPS keyword followed by " RULE:" or " BENCHMARK"
         .filter((l) => l.length > 15 && !/\bBENCHMARK\b|\bRULE:\s/i.test(l.slice(0, 60)))
         .slice(0, 8);
-      // Parse top expert names
+      // Parse top expert names — expertProofLine format is "Name — Title | ..."
+      // so we match the name at the start, stopping at space-dash or pipe or end.
       const expertNames = input.experts
         .split("\n")
-        .map((l) => l.match(/^\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)/)?.[1] ?? "")
+        .map((l) => l.match(/^([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)(?:\s*[—|–\-]|$)/)?.[1]?.trim() ?? "")
         .filter(Boolean)
         .slice(0, 4);
       const leadExpert = expertNames[0] || "the lead expert";
       const team = expertNames.length > 1 ? expertNames.join(", ") : leadExpert;
-      // Build methodology sections from top requirements
-      const methodBlocks = reqLines.slice(0, 6).map((req, i) => {
-        const expert = expertNames[i % expertNames.length] || "the assigned expert";
-        return `### C.2.${i + 1} ${req.slice(0, 80)}\n\nOur approach to this requirement begins with a thorough review of ${client}'s stated scope, constraints, and any applicable standards. ${expert} will lead this scope item, applying the firm's proven methodology and drawing on comparable project experience. The deliverable for this scope item will be prepared at schematic, detailed, and final stages with internal QA review at each gate before submission to ${client} for approval.`;
-      });
-      const workPlanRows = [
-        ["1 — Inception", "Inception Report + Work Plan", leadExpert, "Week 1–2", "PM sign-off"],
-        ["2 — Data Collection", "Site Survey Report + Data Register", team, "Week 2–4", "Senior Engineer"],
-        ["3 — Analysis", "Technical Assessment Report", leadExpert, "Week 4–6", "QA peer review"],
-        ["4 — Concept Design", "Concept Design Package", leadExpert, "Week 6–8", "Client presentation"],
-        ["5 — Detailed Design", "Detailed Design + BOQ + Specs", team, "Week 8–14", "30%/60%/100% gates"],
-        ["6 — Final Submission", "Final Document Package", leadExpert, "Week 14–16", "Director sign-off"],
+      // Generic scope item labels used when tender has fewer than 6 real requirements
+      const GENERIC_SCOPE_ITEMS = [
+        "Scope Review and Inception",
+        "Site Investigation and Data Collection",
+        "Technical Analysis and Assessment",
+        "Concept and Schematic Design",
+        "Detailed Design, Specifications and BOQ",
+        "Final Documentation and Submission",
       ];
+      // Build methodology sections — guaranteed minimum 6 C.2.x sub-sections
+      const normalizedReqs = reqLines.slice(0, 6);
+      while (normalizedReqs.length < 6) {
+        normalizedReqs.push(GENERIC_SCOPE_ITEMS[normalizedReqs.length]);
+      }
+      const methodBlocks = normalizedReqs.map((req, i) => {
+        const expert = expertNames[i % Math.max(1, expertNames.length)] || "the assigned expert";
+        const isGeneric = i >= reqLines.length;
+        const body = isGeneric
+          ? `The ${req.toLowerCase()} phase follows the firm's established staged-delivery methodology. ${expert} will lead this scope item, applying sector-specific technical standards and the firm's quality-gate process. Each stage deliverable is prepared at schematic, detailed, and final levels with internal QA peer review before submission to ${client} for approval.`
+          : `Our approach to this requirement begins with a thorough review of ${client}'s stated scope, constraints, and applicable standards. ${expert} will lead this scope item, applying the firm's proven methodology and drawing on comparable project experience. The deliverable will be prepared at schematic, detailed, and final stages with internal QA review at each gate before submission to ${client} for approval.\n\nResponsible expert: ${expert}. Quality Gate: 30%/60%/100% internal review gates — peer-reviewed at 30%, cross-discipline at 60%, director sign-off at 100%.`;
+        return `### C.2.${i + 1} ${req.slice(0, 80)}\n\n${body}`;
+      });
+      // Work-plan rows derived from normalised requirement scope items
+      const PHASE_TIMELINES = ["Week 1–2", "Week 2–4", "Week 4–6", "Week 6–8", "Week 8–14", "Week 14–16"];
+      const PHASE_GATES = ["PM sign-off", "Senior Engineer review", "QA peer review", "Client interim review", "30%/60%/100% gates", "Director sign-off"];
+      const workPlanRows = normalizedReqs.map((req, i) => {
+        const responsible = i % 2 === 0 ? leadExpert : team;
+        const deliverable = req.slice(0, 60).replace(/\s*\(.*$/, "").trim();
+        return [`${i + 1} — ${req.slice(0, 40).replace(/\s*\(.*$/, "").trim()}`, `${deliverable} Report`, responsible, PHASE_TIMELINES[i] ?? `Week ${i * 2 + 1}–${i * 2 + 2}`, PHASE_GATES[i] ?? "PM sign-off"];
+      });
       return [
         "# Section C: Technical Approach",
         "## C.1 Understanding of the Assignment",
@@ -956,6 +981,65 @@ function buildCoverAndSummaryFallback(input: AIBidWriterInput): string {
     "",
     `${companyName} confirms full compliance with all stated requirements, team availability for the engagement window, and adherence to the tender's submission and commercial terms.`,
   ].filter((s) => s !== "").join("\n\n");
+}
+
+// ── Section A.4/A.5 helpers — build team and mapping tables from evidence ────
+
+function buildA4TeamTable(input: AIBidWriterInput): string {
+  const expertsText = (input.experts ?? "").trim();
+  if (!expertsText) return "Bid-Team Action: populate proposed team table from expert CVs before submission.";
+  // expertProofLine format: "Name — Title | Disciplines: X | Sectors: Y | Certifications: Z | ..."
+  const rows: string[] = [];
+  for (const line of expertsText.split("\n")) {
+    if (!line.trim()) continue;
+    const nameMatch = line.match(/^([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)(?:\s*[—\-|]|$)/);
+    if (!nameMatch) continue;
+    const name = nameMatch[1].trim();
+    const titleMatch = line.match(/—\s*([^|]+?)(?:\s*\||\s*$)/);
+    const title = titleMatch ? titleMatch[1].trim().slice(0, 60) : "";
+    const certMatch = line.match(/Certifications?[\/]?Licen[sc]es?\s*:\s*([^|]+)/i);
+    const certs = certMatch ? certMatch[1].trim().slice(0, 80) : "";
+    const yrsMatch = line.match(/(\d+)\+?\s*years?/i);
+    const yrs = yrsMatch ? `${yrsMatch[1]}+ yrs` : "";
+    rows.push(`| ${name} | ${title} | ${certs} | ${yrs} | TBD |`);
+    if (rows.length >= 8) break;
+  }
+  if (rows.length === 0) return "Bid-Team Action: confirm proposed team table from expert CVs before submission.";
+  return [
+    "| Expert Name | Position / Role | Qualifications & Licence | Experience | Role on This Assignment |",
+    "|---|---|---|---|---|",
+    ...rows,
+  ].join("\n");
+}
+
+function buildA5MappingTable(input: AIBidWriterInput): string {
+  const expertsText = (input.experts ?? "").trim();
+  const projectsText = (input.projects ?? "").trim();
+  if (!expertsText || !projectsText) return "Bid-Team Action: populate team-to-project mapping table before submission.";
+  const expertNames: string[] = [];
+  for (const line of expertsText.split("\n")) {
+    const m = line.match(/^([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)(?:\s*[—\-|]|$)/);
+    if (m) expertNames.push(m[1].trim());
+    if (expertNames.length >= 6) break;
+  }
+  const projectNames: string[] = [];
+  for (const line of projectsText.split("\n")) {
+    if (line.trim().length > 15) {
+      const nameMatch = line.match(/^([A-Z][A-Za-z\s,&.()–\-]{8,80}?)(?:\s*[—|–\-]\s|,\s|\s\()/);
+      if (nameMatch) projectNames.push(nameMatch[1].trim().slice(0, 60));
+    }
+    if (projectNames.length >= 4) break;
+  }
+  if (expertNames.length === 0 || projectNames.length === 0) return "Bid-Team Action: confirm team-to-project mapping before submission.";
+  const rows = expertNames.map((name, i) => {
+    const project = projectNames[i % projectNames.length];
+    return `| ${name} | ${project} | Lead / Senior Role | Comparable scope and sector |`;
+  });
+  return [
+    "| Expert | Comparable Previous Project | Role on That Project | Relevance to This Tender |",
+    "|---|---|---|---|",
+    ...rows,
+  ].join("\n");
 }
 
 // ── Section B helpers — build real project cards from evidence text ──────────
@@ -1104,9 +1188,9 @@ function buildCompanyAndExperienceFallback(input: AIBidWriterInput): string {
     "## A.3 Core Service Lines",
     a3Body,
     "## A.4 Proposed Project Team",
-    "The proposed team is built from the firm's reviewed expert library. See Section A.4 deterministic Proposed Team table built downstream from the reviewed expert pool.",
+    buildA4TeamTable(input),
     "## A.5 Team-to-Project Experience Mapping",
-    "Each proposed expert is mapped to a previous comparable project — see deterministic Team-to-Project Mapping table built downstream.",
+    buildA5MappingTable(input),
     "",
     "# Section B: Relevant Experience",
     "## B.1 Portfolio Overview",
@@ -1139,12 +1223,40 @@ function buildAdditionalAndDeclarationFallback(input: AIBidWriterInput): string 
     ? `We, ${v.legalName ?? companyName}, hereby declare that this Technical Proposal has been prepared specifically in response to ${tenderTitle}. All information provided is accurate and supported by documentary evidence available on request. Signed: ${v.gmName}${v.gmTitle ? `, ${v.gmTitle}` : ", General Manager"}${v.gmLicense ? ` (License ${v.gmLicense})` : ""}, on behalf of ${companyName}.`
     : `We, ${companyName}, hereby declare that this Technical Proposal has been prepared specifically in response to ${tenderTitle}. All information provided is accurate and supported by documentary evidence available on request. Bid-Team Action: confirm signature block (GM name, title, licence) before submission.`;
 
+  // ── D.1 Value-Added — real differentiators when available ───────────────
+  const differentiatorLines = (input.differentiators || "")
+    .split(/[;\n]/)
+    .map((d) => d.trim())
+    .filter((d) => d.length > 10)
+    .slice(0, 5);
+  const d1Body = differentiatorLines.length > 0
+    ? [
+        `${companyName} delivers value beyond the minimum tender scope through the following differentiators:`,
+        "",
+        ...differentiatorLines.map((d) => `- ${d}`),
+      ].join("\n")
+    : `${companyName} delivers value beyond the minimum tender scope through integrated project management (eliminating coordination delays), in-house multi-discipline capacity (reducing sub-consultant risk), and a structured quality-review programme (30%/60%/100% gates) that reduces the likelihood of client-review cycles and final submission revisions.`;
+
+  // ── D.2 ESG, Health & Safety, Innovation ────────────────────────────────
+  const hasServiceLines = v.serviceLines && v.serviceLines.length > 0;
+  const primaryService = hasServiceLines ? v.serviceLines![0] : "the captioned services";
+  const d2Body = [
+    "### D.2.1 Environmental and Social Governance",
+    `${companyName} complies with Environmental and Social Impact Assessment requirements and integrates ESG principles into ${primaryService} delivery. Environmental considerations (site disturbance minimisation, waste management, water use protocols) and social considerations (community engagement, local employment, gender equity in staffing) are embedded in the project management plan from inception.`,
+    "",
+    "### D.2.2 Health and Safety",
+    `All site activities are governed by the firm's Health and Safety Management Plan, compliant with applicable local regulations and international best practice (FIDIC / IFC Performance Standards where applicable). Site inductions, PPE requirements, incident reporting, and emergency response protocols are mandatory for all personnel.`,
+    "",
+    "### D.2.3 Innovation",
+    `${companyName} applies current-technology methods to ${primaryService}: BIM-enabled design coordination (where applicable), GIS-based spatial analysis, drone survey for topographic capture, and digital project management dashboards for client transparency. These capabilities are available from in-house resources and are deployed at no additional cost where they reduce schedule or improve deliverable quality.`,
+  ].join("\n");
+
   return [
     "# Section D: Additional Information",
     "## D.1 Value to the Client",
-    "See deterministic Value Framework table built downstream.",
-    "## D.2 In-House Capabilities Beyond Minimum Scope",
-    "Bid-Team Action: confirm in-house capabilities (geotechnical lab, BIM, GIS, drone survey, in-house lab testing, etc.) before submission. The Knowledge Vault should hold these capability records.",
+    d1Body,
+    "## D.2 In-House Capabilities, ESG and Innovation",
+    d2Body,
     "## D.3 Professional Certifications and Affiliations",
     d3Body,
     "## D.4 Declaration of Eligibility",

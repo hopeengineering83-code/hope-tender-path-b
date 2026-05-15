@@ -429,6 +429,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           intelligence.evaluationWeights,
           intelligence.topProjects,
           intelligence.topExperts,
+          _clean(tender.evaluationMethodology) || intelligence.evaluationCriteria.join("\n"),
         ),
       };
       // Chunked mode always uses parallel section generation (with a section
