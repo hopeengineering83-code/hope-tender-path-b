@@ -24,7 +24,16 @@ type EngineResponse = {
   blockers?: ExtractionBlocker[];
   extractionWarnings?: ExtractionBlocker[];
   tender?: unknown;
+  // Async-mode fields (?async=true → 202 with jobId)
+  async?: boolean;
+  jobId?: string;
+  message?: string;
 };
+
+// Async polling — escapes the 60s Vercel Hobby cap by enqueuing an
+// ENGINE_RUN AiJob and watching it from the browser.
+const POLL_INTERVAL_MS = 3000;
+const MAX_POLL_DURATION_MS = 5 * 60 * 1000;
 
 function actionLabel(action?: string) {
   if (action === "UPLOAD_TENDER_DOCUMENT") return "Upload the tender/RFP document, then run Engine.";
@@ -58,10 +67,14 @@ export function EngineActionPanel({ tenderId }: { tenderId: string }) {
   const [isPending, startTransition] = useTransition();
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<EngineResponse | null>(null);
+  // Async-mode UX — when null we're in sync mode; otherwise this is the
+  // active jobId being polled and the latest progress message.
+  const [asyncStatus, setAsyncStatus] = useState<{ jobId: string; message: string } | null>(null);
 
   async function runEngine(force = false) {
     setRunning(true);
     setResult(null);
+    setAsyncStatus(null);
     try {
       const res = await fetch(`/api/tenders/${tenderId}/engine${force ? "?force=true" : ""}`, { method: "POST" });
       const data = await parseEngineResponse(res);
@@ -79,6 +92,78 @@ export function EngineActionPanel({ tenderId }: { tenderId: string }) {
       });
     } finally {
       setRunning(false);
+    }
+  }
+
+  // Async mode — enqueue + worker + poll. Escapes the 60s Hobby cap for
+  // large tenders where the synchronous engine pipeline would time out.
+  async function runEngineAsync(force = false) {
+    setRunning(true);
+    setResult(null);
+    setAsyncStatus(null);
+    try {
+      // 1. Enqueue the job — returns 202 with { jobId }
+      const qs = new URLSearchParams({ async: "true" });
+      if (force) qs.set("force", "true");
+      const enqueueRes = await fetch(`/api/tenders/${tenderId}/engine?${qs.toString()}`, { method: "POST" });
+      const enqueueData = await parseEngineResponse(enqueueRes);
+      if (!enqueueRes.ok || !enqueueData.jobId) {
+        setResult(enqueueData);
+        return;
+      }
+      const jobId = enqueueData.jobId;
+      setAsyncStatus({ jobId, message: "Engine queued. Kicking off worker…" });
+
+      // 2. Kick off the worker (fire-and-forget — separate 60s function invocation)
+      fetch("/api/ai-jobs/run-next", { method: "POST" }).catch(() => {
+        // worker may already be running; not fatal — polling will still observe progress
+      });
+
+      // 3. Poll status every 3s until SUCCEEDED / FAILED / timeout
+      const startedAt = Date.now();
+      let finalStatus: "SUCCEEDED" | "FAILED" | null = null;
+      let finalJob: { errorMessage?: string | null; steps?: Array<{ message?: string }> } | null = null;
+      while (Date.now() - startedAt < MAX_POLL_DURATION_MS) {
+        await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+        const pollRes = await fetch(`/api/ai-jobs/${jobId}`, { method: "GET" });
+        if (!pollRes.ok) continue; // transient — keep polling
+        const { job } = await pollRes.json() as { job: { status: string; errorMessage?: string | null; steps?: Array<{ message?: string }> } };
+        const lastStep = job.steps?.[job.steps.length - 1]?.message;
+        setAsyncStatus({ jobId, message: lastStep ?? `Worker status: ${job.status}` });
+        if (job.status === "SUCCEEDED" || job.status === "FAILED") {
+          finalStatus = job.status;
+          finalJob = job;
+          break;
+        }
+      }
+
+      if (finalStatus === "SUCCEEDED") {
+        setResult({ success: true, async: true, jobId, error: "Engine completed successfully (background)." });
+        startTransition(() => router.refresh());
+      } else if (finalStatus === "FAILED") {
+        setResult({
+          error: `Engine background run failed: ${finalJob?.errorMessage ?? "unknown worker error"}`,
+          code: "ASYNC_ENGINE_FAILED",
+          nextAction: "RETRY_OR_REDUCE_INPUT",
+          jobId,
+        });
+      } else {
+        setResult({
+          error: "Engine background run timed out after 5 minutes — the worker may still be running. Refresh the page to see the latest state.",
+          code: "ASYNC_POLL_TIMEOUT",
+          nextAction: "RETRY_AFTER_DATABASE_CHECK",
+          jobId,
+        });
+      }
+    } catch (error) {
+      setResult({
+        error: error instanceof Error ? `Engine async run failed: ${error.message}` : "Engine async run failed due to a network/runtime error.",
+        code: "NETWORK_OR_RUNTIME_ERROR",
+        nextAction: "RETRY_OR_REDUCE_INPUT",
+      });
+    } finally {
+      setRunning(false);
+      setAsyncStatus(null);
     }
   }
 
@@ -110,11 +195,30 @@ export function EngineActionPanel({ tenderId }: { tenderId: string }) {
             onClick={() => runEngine(false)}
             disabled={running || isPending}
             className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+            title="Synchronous — bound to 60s Vercel route cap"
           >
             {running || isPending ? "Running…" : "Run Engine"}
           </button>
+          <button
+            onClick={() => runEngineAsync(false)}
+            disabled={running || isPending}
+            className="rounded-lg border border-indigo-300 bg-indigo-50 px-4 py-2 text-sm font-semibold text-indigo-800 hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-50"
+            title="Queues an AiJob and watches it in the background — escapes the 60s cap for large tenders"
+          >
+            {running && asyncStatus ? "Running in background…" : "⏳ Run in background"}
+          </button>
         </div>
       </div>
+
+      {asyncStatus && (
+        <div className="mt-4 rounded-xl border border-indigo-200 bg-indigo-50 p-4 text-sm text-indigo-800">
+          <p className="font-semibold">Background engine run in progress…</p>
+          <p className="mt-1">{asyncStatus.message}</p>
+          <p className="mt-2 text-xs text-indigo-600">
+            Job ID: <span className="font-mono">{asyncStatus.jobId}</span> · polls every 3s · 5-min ceiling
+          </p>
+        </div>
+      )}
 
       {result && (
         <div className={`mt-4 rounded-xl border p-4 text-sm ${ok ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-red-200 bg-red-50 text-red-800"}`}>

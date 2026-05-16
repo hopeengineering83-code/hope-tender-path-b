@@ -1,9 +1,25 @@
+// POST /api/tenders/[id]/engine
+//
+// Triggers the tender engine: analyze + extract + match + AI rematch.
+//
+// SYNC MODE (default) — runs the full pipeline inside the 60s Vercel
+// Hobby route. Pre-flight extraction-quality blockers + structured error
+// codes + diagnosticId. Works for small/medium tenders.
+//
+// ASYNC MODE (?async=true) — enqueues an ENGINE_RUN AiJob and returns
+// { jobId } with HTTP 202. The frontend then:
+//   1. POSTs /api/ai-jobs/run-next to kick off the worker (separate
+//      function invocation with its own 60s budget)
+//   2. Polls /api/ai-jobs/[jobId] every 3s until status = SUCCEEDED | FAILED
+// This escapes the 60s Hobby cap for large tenders.
+
 import { NextResponse } from "next/server";
 import { getSession } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { runTenderEngine } from "../../../../../lib/engine/run-tender-engine";
 import { assessExtractionQuality } from "../../../../../lib/extraction-quality";
 import { actionableEngineError } from "../../../../../lib/engine/actionable-engine-error";
+import { enqueueJob } from "../../../../../lib/ai-jobs";
 
 // Vercel route timeout — engine runs analyze + extract + match. Default
 // 10s is too short. 60 = Hobby max; Pro uses its own plan limit.
@@ -30,7 +46,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     await prismaReady;
 
     const { id } = await params;
-    const force = new URL(req.url).searchParams.get("force") === "true";
+    const url = new URL(req.url);
+    const force = url.searchParams.get("force") === "true";
+    const isAsync = url.searchParams.get("async") === "true";
     const tender = await prisma.tender.findFirst({
       where: { id, userId },
       include: { files: { select: { id: true, originalFileName: true, fileName: true, extractedText: true } } },
@@ -63,9 +81,33 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       }, { status: 422 });
     }
 
+    // ─── ASYNC MODE — enqueue + return jobId ──────────────────────────────
+    // After all pre-flight checks pass (the queue is NOT a quality-bypass,
+    // it's a 60s-cap-bypass). The frontend then POSTs /api/ai-jobs/run-next
+    // to kick off the worker (separate 60s budget) and polls /api/ai-jobs/[id]
+    // for status.
+    if (isAsync) {
+      const { id: jobId } = await enqueueJob({
+        userId,
+        tenderId: id,
+        jobType: "ENGINE_RUN",
+        input: {},
+      });
+      return NextResponse.json({
+        success: true,
+        async: true,
+        jobId,
+        diagnosticId,
+        extractionWarnings: extractionReports.filter((item) => item.quality.severity === "WARNING"),
+        message: "Engine run queued. Next step: POST /api/ai-jobs/run-next to start the worker, then poll GET /api/ai-jobs/[jobId] for status.",
+      }, { status: 202 });
+    }
+
+    // ─── SYNC MODE (default) — run in-route ───────────────────────────────
     const result = await runTenderEngine(id, userId);
     return NextResponse.json({
       success: true,
+      async: false,
       tender: result,
       extractionWarnings: extractionReports.filter((item) => item.quality.severity === "WARNING"),
       diagnosticId,
