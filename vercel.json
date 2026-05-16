@@ -4,9 +4,9 @@
   "installCommand": "npm install",
   "crons": [
     {
-      "comment": "G10 — drain the AiJob queue every 5 minutes so queued jobs (ENGINE_RUN, PROPOSAL_GENERATION, AI_REMATCH, EVALUATOR_SIM, COPILOT_DEEP_ANALYSIS, PROFILE_FACT_EXTRACTION) run even when the user has closed the browser. The worker uses Vercel's built-in cron auth via the user-agent + AI_JOBS_WORKER_SECRET header set via Vercel env vars. Each tick claims ONE job and exits, so the 60s Vercel function budget is never exceeded.",
+      "comment": "G10 — safety-net drain of the AiJob queue once per day. The PRIMARY drain path is the frontend kick-off (every 'Run in background' click immediately POSTs /api/ai-jobs/run-next as a fire-and-forget). This daily cron is only here to catch orphaned jobs — e.g. a user closed the tab before the kick fired, or the worker crashed mid-job and the job sat in QUEUED. Each tick claims ONE job and exits (60s budget never exceeded). Vercel Hobby plans are limited to ONE cron invocation per day; to get sub-hourly draining either (a) upgrade to Pro and change schedule back to '*/5 * * * *', or (b) point an external cron (cron-job.org, GitHub Actions schedule, etc.) at /api/ai-jobs/run-next with the X-Worker-Secret header.",
       "path": "/api/ai-jobs/run-next?cron=true",
-      "schedule": "*/5 * * * *"
+      "schedule": "0 12 * * *"
     }
   ]
 }
