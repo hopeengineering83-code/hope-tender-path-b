@@ -64,10 +64,23 @@ export async function BidControlVerdictPanel({ tenderId }: { tenderId: string })
   const criticalGaps = tender.complianceGaps.filter((gap) => gap.severity === "CRITICAL");
   const highGaps = tender.complianceGaps.filter((gap) => gap.severity === "HIGH");
 
+  // Gap 15 fix — pull full-proposal blockers in addition to legacy blockers.
+  // This is what makes the verdict text actually consistent: the panel can
+  // no longer say "Generation Ready" while NOT_READY because the same
+  // gate decides both the header and the metric below.
+  const fullProposalReady = generationReadiness.fullProposalReady ?? generationReadiness.ready;
+  const supportPackageReady = generationReadiness.supportPackageReady ?? generationReadiness.ready;
+  const fullProposalBlockers = generationReadiness.fullProposalBlockers ?? [];
+
   const blockers: string[] = [];
   const warnings: string[] = [];
   if (tender.status === "NO_BID") blockers.push("Tender is marked NO_BID.");
-  if (!generationReadiness.ready) blockers.push(...generationReadiness.blockers.map((item) => item.message));
+  // Use the STRICT full-proposal blockers — these include the legacy
+  // support-package blockers PLUS the stricter gates (matching=0,
+  // client-name invalid, no reviewed evidence). Avoids duplicate
+  // listings while ensuring the BID READY verdict requires the strict
+  // gate to pass.
+  if (!fullProposalReady) blockers.push(...fullProposalBlockers.map((item) => item.message));
   if (requiredPlanCount > 0 && missingPlanFiles.length > 0) blockers.push(`${missingPlanFiles.length} required planned file(s) are missing.`);
   if (activeDocs === 0) blockers.push("No active generated documents exist yet.");
   if (ungeneratedDocs.length > 0) blockers.push(`${ungeneratedDocs.length} document(s) are not generated.`);
@@ -103,8 +116,19 @@ export async function BidControlVerdictPanel({ tenderId }: { tenderId: string })
         </div>
       </div>
 
-      <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-        <div className="rounded-xl bg-white p-3"><p className="text-xs text-slate-500">Generation</p><p className="text-lg font-bold text-slate-900">{generationReadiness.ready ? "Ready" : "Blocked"}</p></div>
+      {/* Gap 15 fix — split "Generation" into the two readiness gates so
+          the metric row can never show green while the verdict says
+          NOT_READY. Full proposal is the strict gate; Support pkg is
+          the legacy/vault-fallback gate. */}
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
+        <div className="rounded-xl bg-white p-3" title="Strict gate — full proposal generation. Requires valid client metadata, real tender-specific matches with reviewed selections, non-zero matching score, and analysis quality not POOR.">
+          <p className="text-xs text-slate-500">Full proposal</p>
+          <p className={`text-lg font-bold ${fullProposalReady ? "text-emerald-700" : "text-red-700"}`}>{fullProposalReady ? "Ready" : "Blocked"}</p>
+        </div>
+        <div className="rounded-xl bg-white p-3" title="Lenient gate — support / compliance file generation. Allows vault fallback evidence.">
+          <p className="text-xs text-slate-500">Support pkg</p>
+          <p className={`text-lg font-bold ${supportPackageReady ? "text-emerald-700" : "text-red-700"}`}>{supportPackageReady ? "Ready" : "Blocked"}</p>
+        </div>
         <div className="rounded-xl bg-white p-3"><p className="text-xs text-slate-500">Plan files</p><p className="text-lg font-bold text-slate-900">{Math.max(0, requiredPlanCount - missingPlanFiles.length)}/{requiredPlanCount}</p></div>
         <div className="rounded-xl bg-white p-3"><p className="text-xs text-slate-500">Active docs</p><p className="text-lg font-bold text-slate-900">{activeDocs}</p></div>
         <div className="rounded-xl bg-white p-3"><p className="text-xs text-slate-500">Critical gaps</p><p className="text-lg font-bold text-slate-900">{criticalGaps.length}</p></div>
