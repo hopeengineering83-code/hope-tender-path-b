@@ -3,6 +3,7 @@ import { ensureCompanyForUser } from "./company-workspace";
 import { getCompanyIngestionReadiness, type CompanyIngestionReadiness } from "./company-ingestion-readiness";
 import { assessTenderAnalysisQuality, type AnalysisQualityReport } from "./analysis-quality";
 import { assessMatchingQuality, type MatchingQualityReport } from "./matching-quality";
+import { isValidClientName, getClientNameStatus } from "./engine/metadata-validators";
 
 export type GenerationReadinessItem = {
   code: string;
@@ -11,7 +12,32 @@ export type GenerationReadinessItem = {
 };
 
 export type TenderGenerationReadiness = {
+  /**
+   * Legacy "ready" flag — true when there are no blockers. Equivalent to
+   * supportPackageReady. Kept for backward compatibility with existing
+   * UI panels that haven't migrated to the split gates yet.
+   */
   ready: boolean;
+  /**
+   * Gap 6 fix — SUPPORT-PACKAGE generation may be allowed even when full
+   * proposal generation isn't (e.g. vault fallback evidence exists but
+   * the tender has 0 matches). Use this flag for "Generate Support
+   * Files" / "Generate Compliance Pack" actions.
+   */
+  supportPackageReady: boolean;
+  /**
+   * Gap 6 fix — FULL_PROPOSAL_READY is stricter: requires valid client
+   * metadata, real tender-specific matches with reviewed selections,
+   * non-zero matching score, and analysis quality not POOR. Use this for
+   * the "Generate Full Proposal" button — never use supportPackageReady.
+   */
+  fullProposalReady: boolean;
+  /**
+   * Reasons full-proposal generation is blocked (subset of blockers + warnings).
+   * Surfaced separately so the UI can render a clear "NOT READY because..."
+   * message at the top-level Bid Control Verdict panel.
+   */
+  fullProposalBlockers: GenerationReadinessItem[];
   tenderId: string;
   blockers: GenerationReadinessItem[];
   warnings: GenerationReadinessItem[];
@@ -39,10 +65,14 @@ function criticalGapIsHardBlock(gap: { title: string; description: string; mitig
   return /(ineligible|debarred|blacklisted|deadline.*passed|late submission|missing required file name|missing exact file|tender not found|company profile required|no documents? have been generated|signature prohibited|branding prohibited)/i.test(text);
 }
 
+/**
+ * Backward-compat shim. Delegates to the canonical validator so all
+ * client-name checks across the codebase resolve to the same rules. This
+ * also closes the gap where TOC fragments ("references (where available)
+ * Photos or drawings...") used to pass this check.
+ */
 function hasRealClientName(value?: string | null): boolean {
-  const text = (value ?? "").trim();
-  if (text.length < 2) return false;
-  return !/^(the client|client|unknown|n\/a|na|none|-)$/i.test(text);
+  return isValidClientName(value);
 }
 
 function addMatchingQualityReadiness(params: {
@@ -84,6 +114,13 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
   if (!tender) return null;
 
   const companyReadiness = await getCompanyIngestionReadiness(company.id, client);
+  // Matching quality first so we can feed its score into analysis quality —
+  // that closes the "analysis says 100/100 while matching says 0/100" bug.
+  const matchingQuality = assessMatchingQuality({
+    requirements: tender.requirements,
+    expertMatches: tender.expertMatches,
+    projectMatches: tender.projectMatches,
+  });
   const analysisQuality = assessTenderAnalysisQuality({
     requirements: tender.requirements,
     analysisSummary: tender.analysisSummary,
@@ -91,20 +128,34 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
     submissionNotes: [tender.notes, tender.intakeSummary].filter(Boolean).join("\n\n"),
     exactFileNaming: tender.exactFileNaming,
     exactFileOrder: tender.exactFileOrder,
-  });
-  const matchingQuality = assessMatchingQuality({
-    requirements: tender.requirements,
-    expertMatches: tender.expertMatches,
-    projectMatches: tender.projectMatches,
+    // Gap 4 fix — pass metadata + matching state so the score reflects reality.
+    clientName: tender.clientName,
+    referenceNumber: tender.reference,
+    country: tender.country,
+    clientContactName: tender.clientContactName,
+    matchingScore: matchingQuality.score,
+    selectedReviewedExperts: tender.expertMatches.filter((m) => m.isSelected && m.expert.trustLevel === "REVIEWED").length,
+    selectedReviewedProjects: tender.projectMatches.filter((m) => m.isSelected && m.project.trustLevel === "REVIEWED").length,
   });
 
   const blockers: GenerationReadinessItem[] = companyReadiness.blockers.map((message) => ({ code: "COMPANY_INGESTION_NOT_READY", message, nextAction: "OPEN_COMPANY_READINESS" }));
   const warnings: GenerationReadinessItem[] = companyReadiness.warnings.map((message) => ({ code: "COMPANY_INGESTION_WARNING", message, nextAction: "OPEN_COMPANY_READINESS" }));
 
-  if (!hasRealClientName(tender.clientName)) {
+  // Gap 12/13 fix — distinguish empty vs garbage client name. UI panels
+  // need to render different messages: "Client name not set" is fixable
+  // by EDIT_TENDER; "Invalid client name extracted" usually means OCR
+  // captured a TOC entry and the tender needs re-extraction.
+  const clientNameStatus = getClientNameStatus(tender.clientName);
+  if (clientNameStatus === "EMPTY" || clientNameStatus === "PLACEHOLDER") {
     blockers.push({
       code: "CLIENT_NAME_REQUIRED",
       message: "Client name is not set. Fill the tender Client Name before generating proposal documents so final files do not use \"The Client\" as a placeholder.",
+      nextAction: "EDIT_TENDER",
+    });
+  } else if (clientNameStatus === "GARBAGE") {
+    blockers.push({
+      code: "CLIENT_NAME_INVALID",
+      message: "Client name was extracted but appears to be a TOC/section fragment, not a real entity. Re-run metadata extraction or correct the field manually before generation.",
       nextAction: "EDIT_TENDER",
     });
   }
@@ -169,8 +220,66 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
     blockers.push({ code: "ALL_PROJECTS_UNREVIEWED", message: "Selected project matches are unreviewed. Review at least one selected project before generation.", nextAction: "OPEN_KNOWLEDGE_REVIEW" });
   }
 
+  // ─── Gap 6 fix — split readiness gates ───────────────────────────
+  // supportPackageReady = there are no blockers AT ALL. Identical to the
+  //   legacy `ready` flag for back-compat. Allows generating support /
+  //   compliance / form-template files using vault fallback evidence.
+  // fullProposalReady = additionally requires REAL tender-specific
+  //   matches (not just vault fallback), valid client metadata, non-zero
+  //   matching score, and analysis quality not POOR.
+  // Each block here records the SPECIFIC reason it failed so the UI can
+  // render "NOT READY because…" with actionable detail.
+  const fullProposalBlockers: GenerationReadinessItem[] = [];
+  if (matchingQuality.score === 0) {
+    fullProposalBlockers.push({
+      code: "FULL_PROPOSAL_MATCHING_ZERO",
+      message: "Full proposal generation is blocked: matching score is 0/100 (no tender-specific expert/project matches exist).",
+      nextAction: "RUN_ENGINE",
+    });
+  }
+  if (clientNameStatus !== "VALID") {
+    fullProposalBlockers.push({
+      code: "FULL_PROPOSAL_CLIENT_INVALID",
+      message: clientNameStatus === "GARBAGE"
+        ? "Full proposal generation is blocked: client name is invalid (TOC/section fragment, not a real entity)."
+        : "Full proposal generation is blocked: client name is empty or a placeholder.",
+      nextAction: "EDIT_TENDER",
+    });
+  }
+  if (analysisQuality.severity === "POOR") {
+    fullProposalBlockers.push({
+      code: "FULL_PROPOSAL_ANALYSIS_POOR",
+      message: `Full proposal generation is blocked: analysis quality is poor (${analysisQuality.score}/100).`,
+      nextAction: "OPEN_ANALYSIS_QUALITY",
+    });
+  }
+  // Full proposal also requires reviewed selected evidence when the tender
+  // demands experts/projects — not just vault fallback availability.
+  if (expertRequirementExists && reviewedSelectedExperts.length === 0 && reviewedExpertMatches.length === 0) {
+    fullProposalBlockers.push({
+      code: "FULL_PROPOSAL_NO_REVIEWED_EXPERTS",
+      message: "Full proposal generation is blocked: tender requires experts but no reviewed expert matches exist for this tender.",
+      nextAction: "OPEN_KNOWLEDGE_REVIEW",
+    });
+  }
+  if (projectRequirementExists && reviewedSelectedProjects.length === 0 && reviewedProjectMatches.length === 0) {
+    fullProposalBlockers.push({
+      code: "FULL_PROPOSAL_NO_REVIEWED_PROJECTS",
+      message: "Full proposal generation is blocked: tender requires project references but no reviewed project matches exist for this tender.",
+      nextAction: "OPEN_KNOWLEDGE_REVIEW",
+    });
+  }
+  // Inherit hard blockers from the support-package gate.
+  for (const b of blockers) fullProposalBlockers.push(b);
+
+  const supportPackageReady = blockers.length === 0;
+  const fullProposalReady = fullProposalBlockers.length === 0;
+
   return {
-    ready: blockers.length === 0,
+    ready: supportPackageReady,
+    supportPackageReady,
+    fullProposalReady,
+    fullProposalBlockers,
     tenderId,
     blockers,
     warnings,
