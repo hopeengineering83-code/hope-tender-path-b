@@ -290,18 +290,74 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
       nextAction: "OPEN_KNOWLEDGE_REVIEW",
     });
   }
-  // Inherit hard blockers from the support-package gate — but dedupe
-  // by code. Before the dedupe, the production screenshot showed the
-  // CLIENT_NAME_INVALID message listed TWICE in the "FULL PROPOSAL
-  // BLOCKED BECAUSE" panel: once from the local full-proposal check
-  // (FULL_PROPOSAL_CLIENT_INVALID) and once from the inherited
-  // support-package blocker (CLIENT_NAME_INVALID). Different codes,
-  // same message text. Dedupe on the message string so the UI doesn't
-  // render the same sentence twice.
-  const seenMessages = new Set(fullProposalBlockers.map((item) => item.message));
+  // Inherit hard blockers from the support-package gate — but dedupe by
+  // TOPIC, not by exact message string.
+  //
+  // PRIOR BUG: an earlier dedupe pass compared message strings literally.
+  // That missed the production-screenshot case where the local
+  // full-proposal check pushed:
+  //   "Full proposal generation is blocked: client name is invalid (TOC/section fragment, not a real entity)."
+  // while the inherited support-package blocker said:
+  //   "Client name was extracted but appears to be a TOC/section fragment, not a real entity. Re-run metadata extraction or correct the field manually before generation."
+  // Same root cause, different wording → both rendered, so the user saw
+  // the client-name complaint listed THREE times in the same panel
+  // (matching-quality and analysis-quality had the same problem).
+  //
+  // Topic mapping below treats codes that describe the same underlying
+  // problem as one bucket. When the full-proposal-specific blocker has
+  // already fired for a topic, the inherited support-package version is
+  // dropped — the user sees a single, clearer message per topic.
+  const codeToTopic: Record<string, string> = {
+    // Client name
+    CLIENT_NAME_REQUIRED: "CLIENT_NAME",
+    CLIENT_NAME_INVALID: "CLIENT_NAME",
+    FULL_PROPOSAL_CLIENT_INVALID: "CLIENT_NAME",
+    // Analysis quality
+    ANALYSIS_QUALITY_POOR: "ANALYSIS_QUALITY",
+    ANALYSIS_QUALITY_WARNING: "ANALYSIS_QUALITY",
+    FULL_PROPOSAL_ANALYSIS_POOR: "ANALYSIS_QUALITY",
+    // Matching quality / engine-not-run / no-vault
+    MATCHING_QUALITY_POOR: "MATCHING",
+    MATCHING_QUALITY_POOR_VAULT_FALLBACK: "MATCHING",
+    FULL_PROPOSAL_MATCHES_WEAK: "MATCHING",
+    FULL_PROPOSAL_ENGINE_NOT_RUN: "MATCHING",
+    FULL_PROPOSAL_NO_VAULT: "MATCHING",
+    // Expert match availability
+    NO_EXPERT_MATCHES_FOUND: "EXPERT_MATCHES",
+    NO_REVIEWED_EXPERT_MATCHES: "EXPERT_MATCHES",
+    ALL_EXPERTS_UNREVIEWED: "EXPERT_MATCHES",
+    FULL_PROPOSAL_NO_REVIEWED_EXPERTS: "EXPERT_MATCHES",
+    // Project match availability
+    NO_PROJECT_MATCHES_FOUND: "PROJECT_MATCHES",
+    NO_REVIEWED_PROJECT_MATCHES: "PROJECT_MATCHES",
+    ALL_PROJECTS_UNREVIEWED: "PROJECT_MATCHES",
+    FULL_PROPOSAL_NO_REVIEWED_PROJECTS: "PROJECT_MATCHES",
+  };
+  function topicOf(code: string): string {
+    return codeToTopic[code] ?? code;
+  }
+
+  // First pass: seed seen-topic set with what the full-proposal-specific
+  // checks already covered. Also dedupe within fullProposalBlockers itself
+  // (defensive — handles the case where two local checks happened to fire
+  // for the same topic with slightly different wording).
+  const seenTopics = new Set<string>();
+  const dedupedLocal: GenerationReadinessItem[] = [];
+  for (const item of fullProposalBlockers) {
+    const topic = topicOf(item.code);
+    if (seenTopics.has(topic)) continue;
+    seenTopics.add(topic);
+    dedupedLocal.push(item);
+  }
+  fullProposalBlockers.length = 0;
+  fullProposalBlockers.push(...dedupedLocal);
+
+  // Second pass: inherit support-package blockers by topic only when the
+  // full-proposal section hasn't already covered that topic.
   for (const b of blockers) {
-    if (seenMessages.has(b.message)) continue;
-    seenMessages.add(b.message);
+    const topic = topicOf(b.code);
+    if (seenTopics.has(topic)) continue;
+    seenTopics.add(topic);
     fullProposalBlockers.push(b);
   }
 
