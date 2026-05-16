@@ -2,6 +2,7 @@ import Link from "next/link";
 import { getSession } from "../lib/auth";
 import { prisma, prismaReady } from "../lib/prisma";
 import { assessTenderAnalysisQuality } from "../lib/analysis-quality";
+import { assessMatchingQuality } from "../lib/matching-quality";
 
 function analysisSourceFromNotes(notes?: string | null) {
   const text = notes ?? "";
@@ -17,11 +18,37 @@ export async function AnalysisQualityPanel({ tenderId }: { tenderId: string }) {
   if (!userId) return null;
 
   await prismaReady;
+  // Load full tender shape so we can pass metadata + matching state into
+  // the analysis-quality assessor. Without these the score climbs to
+  // 100/100 even when matching is 0 and clientName is corrupted — the
+  // exact production bug from the May 16 screenshot where this panel
+  // said "Tender analysis appears usable" while the Bid Control Verdict
+  // and Generation Readiness panels both said the analysis was poor.
+  // PR #371 fixed the dedicated API route but missed this server-component
+  // path which calls assessTenderAnalysisQuality directly.
   const tender = await prisma.tender.findFirst({
     where: { id: tenderId, userId },
-    include: { requirements: { orderBy: { createdAt: "asc" } }, files: { select: { extractedText: true, originalFileName: true } } },
+    include: {
+      requirements: { orderBy: { createdAt: "asc" } },
+      files: { select: { extractedText: true, originalFileName: true } },
+      expertMatches: { include: { expert: { select: { trustLevel: true, fullName: true } } } },
+      projectMatches: { include: { project: { select: { trustLevel: true, name: true } } } },
+    },
   });
   if (!tender) return null;
+
+  const extractedChars = tender.files.reduce((sum, file) => sum + (file.extractedText?.length ?? 0), 0);
+
+  // Derive matching score first so the analysis-quality score below
+  // reflects matching state. The matching call here intentionally omits
+  // vault counts — even with vault evidence, analysis quality should
+  // recognise that NO tender-specific matches exist yet (matching=0
+  // means the engine hasn't produced rows tied to this tender).
+  const matchingQuality = assessMatchingQuality({
+    requirements: tender.requirements,
+    expertMatches: tender.expertMatches,
+    projectMatches: tender.projectMatches,
+  });
 
   const quality = assessTenderAnalysisQuality({
     requirements: tender.requirements,
@@ -30,10 +57,19 @@ export async function AnalysisQualityPanel({ tenderId }: { tenderId: string }) {
     submissionNotes: [tender.notes, tender.intakeSummary].filter(Boolean).join("\n\n"),
     exactFileNaming: tender.exactFileNaming,
     exactFileOrder: tender.exactFileOrder,
+    // Gap 4 — metadata + matching state. Now this panel matches the
+    // readiness gate instead of disagreeing with it.
+    clientName: tender.clientName,
+    referenceNumber: tender.reference,
+    country: tender.country,
+    clientContactName: tender.clientContactName,
+    matchingScore: matchingQuality.score,
+    extractedTextLength: extractedChars,
+    selectedReviewedExperts: tender.expertMatches.filter((m) => m.isSelected && m.expert?.trustLevel === "REVIEWED").length,
+    selectedReviewedProjects: tender.projectMatches.filter((m) => m.isSelected && m.project?.trustLevel === "REVIEWED").length,
   });
 
   const analysisSource = analysisSourceFromNotes(tender.notes);
-  const extractedChars = tender.files.reduce((sum, file) => sum + (file.extractedText?.length ?? 0), 0);
   const ready = quality.severity !== "POOR" && analysisSource.risk !== "HIGH";
   const sourceRiskClass = analysisSource.risk === "LOW" ? "bg-emerald-100 text-emerald-700" : analysisSource.risk === "HIGH" ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-700";
 
