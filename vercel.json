@@ -1,5 +1,12 @@
 {
   "framework": "nextjs",
   "buildCommand": "node scripts/check-env.mjs && prisma generate && next build",
-  "installCommand": "npm install"
+  "installCommand": "npm install",
+  "crons": [
+    {
+      "comment": "G10 — drain the AiJob queue every 5 minutes so queued jobs (ENGINE_RUN, PROPOSAL_GENERATION, AI_REMATCH, EVALUATOR_SIM, COPILOT_DEEP_ANALYSIS, PROFILE_FACT_EXTRACTION) run even when the user has closed the browser. The worker uses Vercel's built-in cron auth via the user-agent + AI_JOBS_WORKER_SECRET header set via Vercel env vars. Each tick claims ONE job and exits, so the 60s Vercel function budget is never exceeded.",
+      "path": "/api/ai-jobs/run-next?cron=true",
+      "schedule": "*/5 * * * *"
+    }
+  ]
 }

@@ -28,14 +28,31 @@ import { prismaReady } from "../../../../lib/prisma";
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
 
+// Vercel Cron sends GET requests with `Authorization: Bearer ${CRON_SECRET}`
+// automatically when CRON_SECRET is set as an env var. We accept BOTH POST
+// (frontend) and GET (Vercel Cron) so the same handler drains the queue
+// regardless of trigger source.
+export async function GET(req: Request) {
+  return POST(req);
+}
+
 export async function POST(req: Request) {
-  // Auth — either a logged-in user OR a worker secret (for cron triggers)
-  const secret = req.headers.get("x-worker-secret");
-  const envSecret = process.env.AI_JOBS_WORKER_SECRET;
-  const isWorkerSecret = Boolean(envSecret && secret === envSecret);
+  // Auth — three acceptable callers:
+  //   1. Logged-in user (frontend "Run in background" click)
+  //   2. X-Worker-Secret header matching AI_JOBS_WORKER_SECRET (manual/external cron)
+  //   3. Authorization: Bearer ${CRON_SECRET} (Vercel Cron — see vercel.json)
+  const workerSecret = req.headers.get("x-worker-secret");
+  const aiJobsSecret = process.env.AI_JOBS_WORKER_SECRET;
+  const isWorkerSecret = Boolean(aiJobsSecret && workerSecret === aiJobsSecret);
+
+  const authHeader = req.headers.get("authorization") ?? "";
+  const cronSecret = process.env.CRON_SECRET;
+  const isVercelCron = Boolean(cronSecret && authHeader === `Bearer ${cronSecret}`);
+
+  const isAutomatedCaller = isWorkerSecret || isVercelCron;
 
   let userId: string | null = null;
-  if (!isWorkerSecret) {
+  if (!isAutomatedCaller) {
     try {
       const actor = await requireUser();
       userId = actor.id;
@@ -56,9 +73,9 @@ export async function POST(req: Request) {
     return NextResponse.json({ ran: 0, message: "queue empty" });
   }
 
-  // When not using worker secret, enforce userId match — a user can only
-  // run their own jobs.
-  if (!isWorkerSecret && claimed.userId !== userId) {
+  // When not using an automated caller (worker secret or Vercel cron),
+  // enforce userId match — a user can only run their own jobs.
+  if (!isAutomatedCaller && claimed.userId !== userId) {
     // Release the job back to QUEUED for the correct user's worker to pick up
     // (rare race condition — usually shouldn't happen)
     await failJob(claimed.id, "Job belongs to a different user; released back to queue. Trigger the correct user's worker.");
