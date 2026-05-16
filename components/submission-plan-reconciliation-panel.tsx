@@ -3,6 +3,7 @@ import { getSession } from "../lib/auth";
 import { prisma, prismaReady } from "../lib/prisma";
 import { buildSubmissionPlan, findExtraGeneratedDocuments, findMissingGeneratedDocuments, submissionPlanFileCount } from "../lib/engine/submission-plan";
 import { GenerateMissingPlanFilesButton } from "./generate-missing-plan-files-button";
+import { ReconcileStaleFilesButton } from "./reconcile-stale-files-button";
 
 function statusClass(ok: boolean) {
   return ok ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-amber-200 bg-amber-50 text-amber-800";
@@ -120,6 +121,11 @@ export async function SubmissionPlanReconciliationPanel({ tenderId }: { tenderId
               <ul className="mt-2 list-disc space-y-1 pl-5 text-red-800">
                 {extra.slice(0, 8).map((doc) => <li key={doc.id ?? doc.exactFileName ?? doc.name ?? "extra"}>{doc.exactFileName ?? doc.name ?? doc.documentType}</li>)}
               </ul>
+              {/* One-click reconciliation. POSTs /api/tenders/[id]/reconcile-docs
+                  (built in PR #371). For each stale row, the reconciler decides
+                  KEEP / RELINK / SUPERSEDE / NEEDS_REVALIDATION and writes
+                  the result back. Audit-logged via TENDER_DOCS_RECONCILED. */}
+              <ReconcileStaleFilesButton tenderId={tenderId} staleCount={extra.length} />
             </div>
           )}
         </div>
