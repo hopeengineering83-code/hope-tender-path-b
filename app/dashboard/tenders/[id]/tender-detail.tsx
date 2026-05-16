@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { StatusBadge } from "../../../../components/status-badge";
 import { NEXT_STATUS, formatDate, formatTenderStatus } from "../../../../lib/tender-workflow";
 import { cleanClientName, cleanTenderTitle } from "../../../../lib/engine/proposal-labels";
+import { getClientNameStatus, clientNameDisplayMessage } from "../../../../lib/engine/metadata-validators";
 import { BidStrategyPanel } from "../../../../components/bid-strategy-panel";
 import { EvaluatorSimulatorPanel } from "../../../../components/evaluator-simulator-panel";
 import { AIRematchButton } from "../../../../components/ai-rematch-button";
@@ -837,7 +838,18 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
   // The raw tender.title / tender.clientName are still in the DB and can
   // be edited via the tender Edit page if the user wants to change them.
   const displayTitle = cleanTenderTitle(tender.title, { clientName: tender.clientName, description: tender.description });
-  const displayClient = cleanClientName(tender.clientName, tender.description);
+  // Use the canonical client-name validator FIRST so a TOC-fragment
+  // extraction (production-screenshot scenario where clientName captured
+  // "references (where available) Photos or drawings of completed
+  // projects C. Technical Approach...") never gets displayed as if it
+  // were a real client. cleanClientName-only falls through to raw
+  // tender.clientName when its own heuristic returns "Client", which is
+  // what produced the bug.
+  const clientStatus = getClientNameStatus(tender.clientName);
+  const clientDisplay = clientNameDisplayMessage(tender.clientName);
+  const displayClient = clientStatus === "VALID"
+    ? cleanClientName(tender.clientName, tender.description)
+    : null;
   const displayClientLine = displayClient && displayClient !== "Client" ? ` · ${displayClient}` : "";
 
   return (
@@ -954,10 +966,25 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
         </div>
       )}
 
-      {/* Client name missing — proposals will use "The Client" as a placeholder */}
-      {(!tender.clientName || !tender.clientName.trim() || displayClient === "Client") && (
-        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-          <span className="font-medium">Client name not set.</span> Generated proposals will use &ldquo;The Client&rdquo; as a placeholder. Edit the tender and fill in the Client Name field before generating documents.
+      {/* Client name missing OR garbage — proposals will use "The Client" as a placeholder.
+          Pre-fix: this only said "Client name not set", which was misleading when the
+          extraction had captured TOC/section noise (e.g. "references (where available)
+          Photos or drawings..."). Now the warning text + colour reflect the canonical
+          getClientNameStatus so users know whether to FILL IN the field or RE-EXTRACT
+          / CORRECT what was captured. */}
+      {clientStatus !== "VALID" && (
+        <div className={`rounded-xl border px-4 py-3 text-sm ${clientStatus === "GARBAGE" ? "border-red-200 bg-red-50 text-red-800" : "border-amber-200 bg-amber-50 text-amber-800"}`}>
+          {clientStatus === "GARBAGE" ? (
+            <>
+              <span className="font-medium">Invalid client name extracted.</span>{" "}
+              The extraction captured a section heading or table-of-contents fragment, not a real procuring entity. Re-run metadata extraction or edit the tender and correct the Client Name field before generating documents.
+            </>
+          ) : (
+            <>
+              <span className="font-medium">Client name not set.</span>{" "}
+              Generated proposals will use &ldquo;The Client&rdquo; as a placeholder. Edit the tender and fill in the Client Name field before generating documents.
+            </>
+          )}
         </div>
       )}
 
@@ -1071,7 +1098,13 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
               </div>
             ) : (
               <dl className="mt-5 grid gap-4 md:grid-cols-2">
-                <div><dt className="text-sm text-slate-500">Client</dt><dd className="mt-1 font-medium text-slate-900">{displayClient && displayClient !== "Client" ? displayClient : (tender.clientName || "—")}</dd></div>
+                <div><dt className="text-sm text-slate-500">Client</dt><dd className={`mt-1 font-medium ${clientStatus === "GARBAGE" ? "text-red-700" : "text-slate-900"}`}>{
+                  clientStatus === "VALID" && displayClient && displayClient !== "Client"
+                    ? displayClient
+                    : clientStatus === "GARBAGE"
+                      ? clientDisplay.text
+                      : "—"
+                }</dd></div>
                 <div><dt className="text-sm text-slate-500">Deadline</dt><dd className="mt-1 font-medium text-slate-900">{formatDate(tender.deadline)}</dd></div>
                 <div><dt className="text-sm text-slate-500">Category</dt><dd className="mt-1 font-medium text-slate-900">{tender.category}</dd></div>
                 <div><dt className="text-sm text-slate-500">Submission</dt><dd className="mt-1 font-medium text-slate-900">{tender.submissionMethod || "—"}</dd></div>

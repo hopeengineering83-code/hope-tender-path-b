@@ -40,6 +40,7 @@ function actionLabel(action?: string) {
   if (action === "OPEN_EXTRACTION_QUALITY") return "Open Extraction Quality and fix/OCR weak files.";
   if (action === "RETRY_OR_REDUCE_INPUT") return "Retry, or reduce duplicate/oversized tender inputs.";
   if (action === "RETRY_AFTER_DATABASE_CHECK") return "Check database/Vercel runtime, then retry.";
+  if (action === "RETRY_AS_BACKGROUND_JOB") return "Click \"Run in background\" — escapes the 60s Vercel function cap.";
   if (action === "OPEN_TENDER_LIST") return "Return to tender list and reopen this tender.";
   if (action === "LOGIN_AGAIN") return "Sign in again, then retry.";
   if (action === "OPEN_EXTRACTION_ANALYSIS_MATCHING_QUALITY") return "Review Extraction, Analysis, and Matching Quality panels.";
@@ -53,6 +54,27 @@ async function parseEngineResponse(res: Response): Promise<EngineResponse> {
   }
   const text = await res.text().catch(() => "");
   const clean = text.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 320);
+
+  // Detect Vercel's function-invocation timeout. When the route exceeds
+  // the 60s function budget, Vercel responds at the platform layer with
+  // an HTML error page containing "FUNCTION_INVOCATION_TIMEOUT" — our
+  // route's catch block never runs, so actionableEngineError can't map
+  // it. Recognise the pattern here and surface the correct
+  // RETRY_AS_BACKGROUND_JOB hint instead of the generic
+  // "Check database/Vercel runtime, then retry" that misled users on
+  // the May 16 screenshot.
+  const isVercelTimeout = res.status === 504 || /function_invocation_timeout/i.test(clean) || /function_invocation_timeout/i.test(res.statusText ?? "");
+
+  if (isVercelTimeout) {
+    return {
+      error: "Engine run exceeded the 60s Vercel function budget.",
+      code: "ENGINE_VERCEL_TIMEOUT",
+      detail: clean || `Vercel returned ${res.status} ${res.statusText || "Function Invocation Timeout"} before the route could respond.`,
+      nextAction: "RETRY_AS_BACKGROUND_JOB",
+      hint: "Click \"Run in background\" — the async ENGINE_RUN job has its own 60s function budget per chunk and survives chunked sub-jobs. For very large tenders this is the only reliable path on Vercel Hobby.",
+    };
+  }
+
   return {
     error: `Engine run failed: server returned a non-JSON response (${res.status} ${res.statusText || "HTTP error"}).`,
     code: "NON_JSON_RESPONSE",

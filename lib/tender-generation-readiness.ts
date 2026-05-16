@@ -290,8 +290,20 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
       nextAction: "OPEN_KNOWLEDGE_REVIEW",
     });
   }
-  // Inherit hard blockers from the support-package gate.
-  for (const b of blockers) fullProposalBlockers.push(b);
+  // Inherit hard blockers from the support-package gate — but dedupe
+  // by code. Before the dedupe, the production screenshot showed the
+  // CLIENT_NAME_INVALID message listed TWICE in the "FULL PROPOSAL
+  // BLOCKED BECAUSE" panel: once from the local full-proposal check
+  // (FULL_PROPOSAL_CLIENT_INVALID) and once from the inherited
+  // support-package blocker (CLIENT_NAME_INVALID). Different codes,
+  // same message text. Dedupe on the message string so the UI doesn't
+  // render the same sentence twice.
+  const seenMessages = new Set(fullProposalBlockers.map((item) => item.message));
+  for (const b of blockers) {
+    if (seenMessages.has(b.message)) continue;
+    seenMessages.add(b.message);
+    fullProposalBlockers.push(b);
+  }
 
   const supportPackageReady = blockers.length === 0;
   const fullProposalReady = fullProposalBlockers.length === 0;
