@@ -120,6 +120,11 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
     requirements: tender.requirements,
     expertMatches: tender.expertMatches,
     projectMatches: tender.projectMatches,
+    // Gap 5 fix — pass vault counts so matching-quality can return state
+    // VAULT_AWAITS_ENGINE (not POOR) when engine hasn't run yet but vault
+    // has reviewed evidence ready to be used.
+    vaultReviewedExperts: companyReadiness.totals.reviewedExperts,
+    vaultReviewedProjects: companyReadiness.totals.reviewedProjects,
   });
   const analysisQuality = assessTenderAnalysisQuality({
     requirements: tender.requirements,
@@ -230,11 +235,27 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
   // Each block here records the SPECIFIC reason it failed so the UI can
   // render "NOT READY because…" with actionable detail.
   const fullProposalBlockers: GenerationReadinessItem[] = [];
-  if (matchingQuality.score === 0) {
+  // Use the structural matchingState (Gap 5) so the blocker message
+  // reflects the actual cause — "engine hasn't run yet" vs "matches
+  // exist but all weak" vs "no vault at all" — instead of a generic
+  // "matching is 0/100" line.
+  if (matchingQuality.state === "VAULT_AWAITS_ENGINE") {
     fullProposalBlockers.push({
-      code: "FULL_PROPOSAL_MATCHING_ZERO",
-      message: "Full proposal generation is blocked: matching score is 0/100 (no tender-specific expert/project matches exist).",
+      code: "FULL_PROPOSAL_ENGINE_NOT_RUN",
+      message: `Full proposal generation is blocked: Run Engine has not been triggered for this tender (vault has ${matchingQuality.vaultReviewedExperts} reviewed expert(s) and ${matchingQuality.vaultReviewedProjects} reviewed project(s) ready).`,
       nextAction: "RUN_ENGINE",
+    });
+  } else if (matchingQuality.state === "NO_VAULT" && (expertRequirementExists || projectRequirementExists)) {
+    fullProposalBlockers.push({
+      code: "FULL_PROPOSAL_NO_VAULT",
+      message: "Full proposal generation is blocked: company vault has no reviewed expert/project evidence to back this tender's requirements.",
+      nextAction: "OPEN_COMPANY_READINESS",
+    });
+  } else if (matchingQuality.state === "MATCHES_WEAK" && matchingQuality.score < 50) {
+    fullProposalBlockers.push({
+      code: "FULL_PROPOSAL_MATCHES_WEAK",
+      message: `Full proposal generation is blocked: matching score is ${matchingQuality.score}/100 and no reviewed evidence is linked to this tender. Review/import stronger evidence and re-run matching.`,
+      nextAction: "OPEN_KNOWLEDGE_REVIEW",
     });
   }
   if (clientNameStatus !== "VALID") {

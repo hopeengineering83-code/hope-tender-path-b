@@ -15,6 +15,7 @@ import { createJob, advanceJob, completeJob, failJob } from "../../../../../lib/
 import { createNotification } from "../../../../../lib/notifications";
 import { childLogger, reportError, time } from "../../../../../lib/observability";
 import { getCompanyIngestionReadiness } from "../../../../../lib/company-ingestion-readiness";
+import { mapGenerationError } from "../../../../../lib/engine/structured-generation-error";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -286,6 +287,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   } catch (error) {
     failJob(job.id, error instanceof Error ? error.message : String(error));
     void reportError(error, { tenderId: id, userId, route: "/api/tenders/[id]/generate" });
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Document generation failed" }, { status: 500 });
+    // Gap 7 fix — structured error: { success: false, code, message,
+    // nextAction, diagnosticId, failedStage, blockerSummary } so the UI
+    // never has to display the bare "Generation failed." string.
+    // `error` is kept for backward-compatibility with older clients.
+    const mapped = mapGenerationError(error, { failedStage: "GENERATION_PIPELINE" });
+    return NextResponse.json(
+      { ...mapped.body, error: mapped.body.message, jobId: job.id },
+      { status: mapped.status },
+    );
   }
 }
