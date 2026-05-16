@@ -13,15 +13,19 @@ export function actionableEngineError(error: unknown) {
   const message = error instanceof Error ? error.message : String(error || "Engine failed");
   const lower = message.toLowerCase();
 
-  if (/timeout|timed out|abort/i.test(message)) {
+  if (/timeout|timed out|abort|function_invocation_timeout/i.test(message)) {
     return {
       status: 504,
       body: {
         error: withDetail("Engine run timed out before completion.", message),
         code: "ENGINE_TIMEOUT",
         detail: message,
-        nextAction: "RETRY_OR_REDUCE_INPUT",
-        hint: "Retry after confirming extraction quality. For very large tenders, reduce duplicate uploads or run AI Analyze first, then Run Engine.",
+        // For Vercel Hobby (60s function cap) the right answer for large
+        // tenders is always the async queue, not "retry sync". The
+        // ENGINE_RUN job handler runs in its own 60s budget AND can be
+        // split across multiple worker invocations if needed.
+        nextAction: "RETRY_AS_BACKGROUND_JOB",
+        hint: "Click \"Run in background\" — the async ENGINE_RUN job has its own 60s function budget per chunk and survives chunked sub-jobs. For very large tenders this is the only reliable path on Vercel Hobby.",
       },
     };
   }

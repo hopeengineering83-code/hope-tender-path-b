@@ -3,12 +3,26 @@ import { strict as assert } from "node:assert";
 import { actionableEngineError } from "../lib/engine/actionable-engine-error";
 
 describe("actionableEngineError", () => {
-  it("maps timeout failures to ENGINE_TIMEOUT", () => {
+  it("maps timeout failures to ENGINE_TIMEOUT with background-job retry hint", () => {
     const mapped = actionableEngineError(new Error("operation timed out after 60s"));
     assert.equal(mapped.status, 504);
     assert.equal(mapped.body.code, "ENGINE_TIMEOUT");
-    assert.equal(mapped.body.nextAction, "RETRY_OR_REDUCE_INPUT");
+    // Updated 2026-05: timeouts on Vercel Hobby should always steer
+    // users to the async ENGINE_RUN job (60s budget per chunk), not
+    // synchronous retry which will hit the same 60s cap.
+    assert.equal(mapped.body.nextAction, "RETRY_AS_BACKGROUND_JOB");
     assert.ok(mapped.body.error.includes("operation timed out after 60s"));
+  });
+
+  it("maps Vercel FUNCTION_INVOCATION_TIMEOUT to ENGINE_TIMEOUT", () => {
+    // Production screenshot showed "FUNCTION_INVOCATION_TIMEOUT sfo1::cj4lk-..."
+    // — the engine route crashed at the Vercel function-invocation
+    // layer (not within the route's own catch). Confirm we still map
+    // it cleanly to ENGINE_TIMEOUT so the UI shows the background-job
+    // hint instead of NON_JSON_RESPONSE.
+    const mapped = actionableEngineError(new Error("FUNCTION_INVOCATION_TIMEOUT sfo1::cj4lk-1778959201236-5d95d5e9a2b2"));
+    assert.equal(mapped.body.code, "ENGINE_TIMEOUT");
+    assert.equal(mapped.body.nextAction, "RETRY_AS_BACKGROUND_JOB");
   });
 
   it("maps database/runtime failures to ENGINE_DATABASE_ERROR", () => {
