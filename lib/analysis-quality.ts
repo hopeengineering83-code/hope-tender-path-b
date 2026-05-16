@@ -1,3 +1,10 @@
+import {
+  isValidClientName,
+  isValidReferenceNumber,
+  isValidCountry,
+  isValidClientContact,
+} from "./engine/metadata-validators";
+
 export type AnalysisQualitySeverity = "GOOD" | "WARNING" | "POOR";
 
 export type AnalysisRequirementLike = {
@@ -26,6 +33,19 @@ export type AnalysisQualityReport = {
   hasExactFileOrder: boolean;
   likelyMissingEvaluationCriteria: boolean;
   likelyMissingSubmissionRules: boolean;
+  // Sub-scores (Gap 4 fix) — a 100/100 overall score must reflect ALL
+  // dimensions, not just requirement extraction. If metadata is corrupted
+  // or matching is 0, the overall score reflects that even when
+  // requirement extraction looks fine.
+  subScores: {
+    extractionQuality: number;
+    requirementExtraction: number;
+    metadataQuality: number;
+    submissionPlanQuality: number;
+    matchingReadiness: number;
+    sourceGrounding: number;
+  };
+  metadataIssues: string[];
   warnings: string[];
   recommendations: string[];
 };
@@ -51,6 +71,21 @@ export function assessTenderAnalysisQuality(params: {
   submissionNotes?: string | null;
   exactFileNaming?: string | null;
   exactFileOrder?: string | null;
+  // ─── Gap 4 fix — extra inputs so overall score reflects reality. ──────
+  // All optional for backward compat; older callers get the legacy
+  // "requirements only" score behaviour.
+  clientName?: string | null;
+  referenceNumber?: string | null;
+  country?: string | null;
+  clientContactName?: string | null;
+  extractedTextLength?: number | null;
+  // Engine-emitted matching score (0-100). When 0/null, matchingReadiness
+  // sub-score collapses and overall score drops accordingly.
+  matchingScore?: number | null;
+  // Count of selected reviewed experts/projects — when zero AND a matching
+  // score exists, we still penalise overall analysis quality.
+  selectedReviewedExperts?: number | null;
+  selectedReviewedProjects?: number | null;
 }): AnalysisQualityReport {
   const requirements = params.requirements ?? [];
   const requirementCount = requirements.length;
@@ -112,6 +147,70 @@ export function assessTenderAnalysisQuality(params: {
     score -= 8;
   }
 
+  // ─── Gap 4 fix — metadata validity ─────────────────────────────────
+  // Earlier the score climbed to 100/100 even when client name was a TOC
+  // fragment, reference was "only", country was "A ddis Ababa", and the
+  // contact name was "s Contact Person". Now invalid metadata penalises
+  // the overall score AND surfaces explicit metadataIssues[] for the UI.
+  const metadataIssues: string[] = [];
+  const clientNameProvided = (params.clientName ?? "").trim().length > 0;
+  const referenceProvided = (params.referenceNumber ?? "").trim().length > 0;
+  const countryProvided = (params.country ?? "").trim().length > 0;
+  const contactProvided = (params.clientContactName ?? "").trim().length > 0;
+
+  if (clientNameProvided && !isValidClientName(params.clientName)) {
+    metadataIssues.push("clientName extracted but invalid (TOC/section noise or placeholder)");
+    score -= 25;
+  }
+  if (referenceProvided && !isValidReferenceNumber(params.referenceNumber)) {
+    metadataIssues.push("referenceNumber extracted but invalid (no digit / stop-word)");
+    score -= 15;
+  }
+  if (countryProvided && !isValidCountry(params.country)) {
+    metadataIssues.push("country value is not in the known country whitelist");
+    score -= 8;
+  }
+  if (contactProvided && !isValidClientContact(params.clientContactName)) {
+    metadataIssues.push("clientContactName extracted but appears to be a fragment, not a real name");
+    score -= 6;
+  }
+  if (metadataIssues.length > 0) {
+    warnings.push(`Metadata has ${metadataIssues.length} validation issue(s): ${metadataIssues.join("; ")}`);
+    recommendations.push("Open Tender Detail and re-extract metadata, or correct the fields manually before generation.");
+  }
+
+  // ─── Gap 4 + Gap 5 fix — matching readiness affects analysis score ─
+  // Previously analysis quality could be 100/100 while matching was
+  // 0/100. They are not independent — if no candidates have been matched
+  // to this tender, the analysis cannot be considered "usable for
+  // matching, scoring, and generation".
+  let matchingReadinessSub = 100;
+  if (typeof params.matchingScore === "number") {
+    if (params.matchingScore === 0) {
+      warnings.push("Matching score is 0/100 — no expert/project candidates linked to this tender yet.");
+      recommendations.push("Run Engine again to generate tender-specific matches before relying on this analysis.");
+      score -= 20;
+      matchingReadinessSub = 0;
+    } else if (params.matchingScore < 50) {
+      warnings.push(`Matching score is low (${params.matchingScore}/100). Selected evidence may not be strong enough.`);
+      score -= 10;
+      matchingReadinessSub = params.matchingScore;
+    } else {
+      matchingReadinessSub = params.matchingScore;
+    }
+  }
+
+  // ─── Sub-score breakdown ───────────────────────────────────────────
+  const extractedTextLength = params.extractedTextLength ?? 0;
+  const extractionQualitySub = extractedTextLength >= 5000 ? 100 : extractedTextLength >= 1000 ? 70 : extractedTextLength >= 200 ? 40 : extractedTextLength > 0 ? 20 : 0;
+  const requirementExtractionSub = requirementCount === 0 ? 0 : requirementCount < 5 ? 50 : Math.min(100, 60 + requirementCount * 2);
+  // Metadata sub-score: 100 minus 25 per validation issue, floored at 0.
+  // If metadata wasn't provided at all (legacy callers), default to neutral 70.
+  const metadataProvided = clientNameProvided || referenceProvided || countryProvided || contactProvided;
+  const metadataQualitySub = !metadataProvided ? 70 : Math.max(0, 100 - metadataIssues.length * 25);
+  const submissionPlanQualitySub = likelyMissingSubmissionRules ? 30 : hasExactFileNaming || hasExactFileOrder ? 100 : hasSubmissionNotes ? 75 : 50;
+  const sourceGroundingSub = requirementCount === 0 ? 0 : Math.round((sourceReferencedCount / requirementCount) * 100);
+
   score = Math.max(0, Math.min(100, score));
   const severity: AnalysisQualitySeverity = score < 50 ? "POOR" : score < 75 ? "WARNING" : "GOOD";
   if (severity === "GOOD" && warnings.length === 0) recommendations.push("Tender analysis appears usable for matching, scoring, and generation.");
@@ -130,6 +229,15 @@ export function assessTenderAnalysisQuality(params: {
     hasExactFileOrder,
     likelyMissingEvaluationCriteria,
     likelyMissingSubmissionRules,
+    subScores: {
+      extractionQuality: extractionQualitySub,
+      requirementExtraction: requirementExtractionSub,
+      metadataQuality: metadataQualitySub,
+      submissionPlanQuality: submissionPlanQualitySub,
+      matchingReadiness: matchingReadinessSub,
+      sourceGrounding: sourceGroundingSub,
+    },
+    metadataIssues,
     warnings,
     recommendations,
   };

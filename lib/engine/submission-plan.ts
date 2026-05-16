@@ -1,3 +1,5 @@
+import { classifySubmissionPlanItem } from "./submission-plan-classifier";
+
 export type SubmissionPlanFormat = "DOCX" | "PDF" | "ZIP" | "XLSX" | "OTHER";
 
 export type SubmissionPlanFile = {
@@ -187,6 +189,19 @@ function addFile(files: Map<string, SubmissionPlanFile>, file: SubmissionPlanFil
 function buildFileFromRequirement(requirement: TenderRequirementLike, index: number): SubmissionPlanFile | null {
   const type = requirement.requirementType.toUpperCase();
   if (!requirement.exactFileName && !DOCUMENT_REQUIREMENT_TYPES.has(type)) return null;
+
+  // ─── Gap 8 fix — reject "rule" rows posing as files ─────────────────
+  // The classifier inspects title+description+type and returns whether
+  // this row should become a planned file. Rules (commercial separation,
+  // submission process, internal controls) return false here so they
+  // never produce a fake .docx/.pdf in the submission plan.
+  const classifier = classifySubmissionPlanItem({
+    title: requirement.title,
+    description: requirement.description,
+    requirementType: requirement.requirementType,
+    exactFileName: requirement.exactFileName,
+  });
+  if (!classifier.shouldBePlannedFile) return null;
 
   const baseName = requirement.exactFileName?.trim()
     || requirement.title?.trim()
