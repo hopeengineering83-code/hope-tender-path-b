@@ -1,4 +1,5 @@
 import { prisma, prismaReady } from "../prisma";
+import { deriveDocumentOutputState, exportBlockReason, EXPORT_BLOCKING_STATES, type DocumentOutputState } from "./document-output-state";
 
 export type ExportReadyDocument = {
   id: string;
@@ -121,12 +122,29 @@ export function checkExportReadiness(docs: ExportReadyDocument[], opts: { requir
 
   for (const doc of docs) {
     const reasons: string[] = [];
-    if (doc.reviewStatus === "REPLACE_WITH_ORIGINAL") {
-      reasons.push("This is a replacement-control record. Replace it with the tender-issued original / signed / stamped / certified document before export.");
+
+    // ─── Gap 10 fix — derived output state ───────────────────────────
+    // The state machine looks at (generationStatus, validationStatus,
+    // reviewStatus, format, fileContent) and returns one canonical
+    // state. Any export-blocking state (CONTROL_RECORD_ONLY,
+    // ORIGINAL_REQUIRED, PDF_CONVERSION_REQUIRED, SUPERSEDED,
+    // NEEDS_REVALIDATION) produces an explicit reason — replacing the
+    // older "generationStatus is X, expected GENERATED" string lists
+    // with actionable language ("Convert from DOCX or attach the actual
+    // PDF before export", etc.).
+    const state = deriveDocumentOutputState(doc);
+    if ((EXPORT_BLOCKING_STATES as readonly DocumentOutputState[]).includes(state)) {
+      const blockReason = exportBlockReason(state);
+      if (blockReason) reasons.push(`[${state}] ${blockReason}`);
+    } else if (state !== "READY_FOR_EXPORT") {
+      // VALIDATED / DOCX_GENERATED / PDF_GENERATED — content exists but
+      // hasn't passed the review-status check. Surface the legacy
+      // column-by-column reasons so reviewers know exactly which sign-off
+      // is missing.
+      if (doc.generationStatus !== "GENERATED") reasons.push(`generationStatus is ${doc.generationStatus}, expected GENERATED`);
+      if (doc.validationStatus !== "VALIDATED") reasons.push(`validationStatus is ${doc.validationStatus}, expected VALIDATED`);
+      if (doc.reviewStatus !== "READY_FOR_EXPORT") reasons.push(`reviewStatus is ${doc.reviewStatus}, expected READY_FOR_EXPORT`);
     }
-    if (doc.generationStatus !== "GENERATED") reasons.push(`generationStatus is ${doc.generationStatus}, expected GENERATED`);
-    if (doc.validationStatus !== "VALIDATED") reasons.push(`validationStatus is ${doc.validationStatus}, expected VALIDATED`);
-    if (doc.reviewStatus !== "READY_FOR_EXPORT") reasons.push(`reviewStatus is ${doc.reviewStatus}, expected READY_FOR_EXPORT`);
     if (opts.requireFileContent && !doc.fileContent) reasons.push("fileContent is missing");
     for (const issue of documentHygieneIssues(doc.fileContent)) reasons.push(issue);
 
