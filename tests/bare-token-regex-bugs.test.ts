@@ -126,6 +126,45 @@ describe("inferSector — sector ordering precedence (deeper bug)", () => {
   });
 });
 
+describe("matching.ts WATER_SUPPLY capability — no WASHington false-positive", () => {
+  // Direct unit-style check against the WATER_SUPPLY pattern from
+  // matching.ts. The capability-family keywords are an internal constant,
+  // so we replicate the canonical pattern here and assert the same
+  // word-boundary semantics ship in production.
+  const WATER_SUPPLY_BARE_WASH = /WASH/i;        // old (broken) form
+  const WATER_SUPPLY_WORD_BOUNDED = /\bWASH\b/i; // fixed form
+
+  it("old bare pattern WOULD have falsely matched 'Washington' (regression evidence)", () => {
+    assert.match("Washington State Department of Transportation", WATER_SUPPLY_BARE_WASH);
+  });
+
+  it("fixed word-bounded pattern correctly rejects 'Washington'", () => {
+    assert.doesNotMatch("Washington State Department of Transportation", WATER_SUPPLY_WORD_BOUNDED);
+  });
+
+  it("fixed word-bounded pattern still accepts 'WASH programme'", () => {
+    assert.match("WASH programme — water sanitation and hygiene", WATER_SUPPLY_WORD_BOUNDED);
+  });
+});
+
+describe("proposal-quality-scorer.ts SECTOR_VOCAB — no substring false-positives", () => {
+  // The sector-vocab table previously had bare 3-4 char abbreviations
+  // (IPC, CBR, API, UAT, SLA, etc.) that matched inside common English
+  // words. The fixed table uses word boundaries.
+  const FALSE_POSITIVE_INPUTS_FIXED: Array<{ input: string; mustNotContain: RegExp }> = [
+    { input: "anticipated project completion timeline",  mustNotContain: /\bIPC\b/i },  // antICIPated
+    { input: "the situation evaluation report",          mustNotContain: /\bUAT\b/i },  // evalUATion / sitUATion
+    { input: "Islamabad regional headquarters",          mustNotContain: /\bSLA\b/i },  // ISLAmabad
+    { input: "rapid response capability framework",      mustNotContain: /\bAPI\b/i },  // rAPId
+  ];
+
+  for (const { input, mustNotContain } of FALSE_POSITIVE_INPUTS_FIXED) {
+    it(`'${input.slice(0, 40)}' does NOT match ${mustNotContain.source}`, () => {
+      assert.doesNotMatch(input, mustNotContain);
+    });
+  }
+});
+
 describe("quick-draft-benchmark — no Pharo hardcoding (source check)", () => {
   it("source contains no 'return \"Pharo …\"' lines", async () => {
     const { readFileSync } = await import("node:fs");

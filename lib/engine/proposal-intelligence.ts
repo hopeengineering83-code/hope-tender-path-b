@@ -83,7 +83,8 @@ export const PROPOSAL_THEMES: ProposalTheme[] = [
     code: "HEALTHCARE",
     label: "Healthcare facility design and clinical workflow",
     triggers: [/health/i, /hospital/i, /medical/i, /clinic/i, /pharmacy/i, /radiology/i, /laboratory/i, /in[- ]?patient/i, /out[- ]?patient/i, /emergency/i, /specialty.*cent/i, /medical.*cent/i],
-    proofTerms: [/hospital/i, /health/i, /medical/i, /clinic/i, /radiology/i, /laboratory/i, /pharmacy/i, /patient/i, /clinical/i, /ward/i, /ICU/i, /OPD/i],
+    // Word boundaries on ICU and OPD — 3-letter abbreviations.
+    proofTerms: [/hospital/i, /health/i, /medical/i, /clinic/i, /radiology/i, /laboratory/i, /pharmacy/i, /patient/i, /clinical/i, /ward/i, /\bICU\b/i, /\bOPD\b/i],
     methodologyBullets: [
       "clinical zone segregation: Emergency, OPD, In-patient, Laboratory, Imaging/Radiology, and Pharmacy — with explicit patient/staff/supply flow separation",
       "IPC-compliant layout: clean/dirty flow segregation, airborne infection isolation, hand-hygiene point placement, and surface material specification",
@@ -130,8 +131,9 @@ export const PROPOSAL_THEMES: ProposalTheme[] = [
   {
     code: "WATER_INFRASTRUCTURE",
     label: "Water supply, hydraulics and infrastructure engineering",
-    triggers: [/water supply/i, /pump/i, /borehole/i, /sanitary/i, /hydraulic/i, /irrigation/i, /pipeline/i, /water.*system/i, /WASH/i],
-    proofTerms: [/water/i, /sanitary/i, /hydraulic/i, /borehole/i, /pump/i, /pipeline/i, /reservoir/i, /WASH/i],
+    // Word boundary on WASH — bare /WASH/i matched "Washington".
+    triggers: [/water supply/i, /pump/i, /borehole/i, /sanitary/i, /hydraulic/i, /irrigation/i, /pipeline/i, /water.*system/i, /\bWASH\b/i],
+    proofTerms: [/water/i, /sanitary/i, /hydraulic/i, /borehole/i, /pump/i, /pipeline/i, /reservoir/i, /\bWASH\b/i],
     methodologyBullets: [
       "hydraulic modelling: demand projections, pipe network analysis using WaterCAD/EPANET, and pressure-zone definition",
       "borehole siting, drilling supervision, pump selection, and yield testing",
@@ -164,7 +166,8 @@ export const PROPOSAL_THEMES: ProposalTheme[] = [
     code: "URBAN_MASTER_PLANNING",
     label: "Urban planning, master planning and landscape architecture",
     triggers: [/urban/i, /master plan/i, /city plan/i, /municipal/i, /landscape/i, /park/i, /eco-park/i, /public.*space/i, /mixed.use/i, /spatial.*plan/i],
-    proofTerms: [/urban/i, /master plan/i, /landscape/i, /park/i, /zoning/i, /planning/i, /municipal/i, /GIS/i],
+    // Word boundary on GIS — bare /GIS/i matched "GISt" / "GIStt" etc.
+    proofTerms: [/urban/i, /master plan/i, /landscape/i, /park/i, /zoning/i, /planning/i, /municipal/i, /\bGIS\b/i],
     methodologyBullets: [
       "GIS-based spatial analysis and land-use zoning: site assessment, catchment analysis, demographic projections, and regulatory compliance review",
       "master plan with phasing strategy, infrastructure integration, green space design, stakeholder engagement plan, and investment roadmap",
@@ -545,8 +548,8 @@ function makeDifferentiators(
     items.push("In-house geotechnical capability (drilling rigs, soil testing laboratory) removes sub-contractor coordination from the site-assessment phase and protects acquisition timelines.");
   }
 
-  // MEP in-house — claim.
-  if (/MEP|electrical.*engineer|sanitary.*engineer|mechanical/i.test(allExpertText)) {
+  // MEP in-house — claim. Word boundary on MEP (3-char abbreviation).
+  if (/\bMEP\b|electrical.*engineer|sanitary.*engineer|mechanical/i.test(allExpertText)) {
     items.push("Single-source multidisciplinary MEP team (electrical, sanitary, mechanical) under one firm — coordination is internal, not contractual.");
   }
 

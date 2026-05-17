@@ -47,8 +47,13 @@ function sectorLabel(primarySector: string, title: string): string {
   if (/road|bridge|transport|pavement|traffic|culvert|drainage/i.test(text)) return "transport infrastructure consultancy";
   if (/urban|master plan|land use|municipal|spatial|settlement|GIS/i.test(text)) return "urban planning and municipal consultancy";
   if (/environment|ESIA|ESMP|safeguard|social|resettlement|climate|waste|EHS|ESG/i.test(text)) return "environmental and social safeguards consultancy";
-  if (/ICT|software|system|digital|database|platform|network|cyber|telecom|ERP|MIS/i.test(text)) return "ICT and digital transformation consultancy";
-  if (/building|architecture|structural|MEP|residential|commercial|office|warehouse|school|university|facility|supervision|renovation/i.test(text)) return "building design and supervision consultancy";
+  // Word boundaries on bare abbreviations — bare /ICT/i matched
+  // "distrICT" / "predICT" / "verdICT"; bare /MIS/i matched
+  // "optimISation" / "subMISsion" / "comMISsion"; bare /ERP/i matched
+  // "supERPower". Every tender with "submission" in its body used to
+  // misclassify as ICT.
+  if (/\bICT\b|software|system|digital|database|platform|network|cyber|telecom|\bERP\b|\bMIS\b/i.test(text)) return "ICT and digital transformation consultancy";
+  if (/building|architecture|structural|\bMEP\b|residential|commercial|office|warehouse|school|university|facility|supervision|renovation/i.test(text)) return "building design and supervision consultancy";
   if (/energy|power.*plant|solar.*farm|wind.*farm|grid.*connect|generation|transmission.*line|substation/i.test(text)) return "energy and power infrastructure consultancy";
   if (/agri|irrigation.*scheme|crop|farm.*develop|livestock|rural.*develop/i.test(text)) return "agriculture, irrigation, and rural development consultancy";
   if (/mining|mineral.*extract|quarry.*design|tailings|ore.*body|blast.*design/i.test(text)) return "mining and extractive industries consultancy";
@@ -105,7 +110,7 @@ function methodologyForSector(primarySector: string, title: string): string[] {
       "Prepare final reports, annexes, monitoring tools and implementation controls.",
     ];
   }
-  if (/ICT|software|system|digital|database|platform|network|cyber|telecom|ERP|MIS/i.test(text)) {
+  if (/\bICT\b|software|system|digital|database|platform|network|cyber|telecom|\bERP\b|\bMIS\b/i.test(text)) {
     return [
       "Confirm users, workflows, data requirements, integrations, service levels, security requirements and acceptance criteria.",
       "Design the solution architecture, data model, implementation roadmap, governance model, security controls and support model.",

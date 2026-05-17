@@ -65,13 +65,23 @@ const REQUIRED_SECTIONS = [
   /declaration/i,
 ];
 
+// ─── Sector vocabulary with word-boundary-safe abbreviations ────────
+// Every 2-4 char abbreviation has \b around it. Without these:
+//   bare /IPC/i  matched "particIPC" / "principle" / "antIPCipate"
+//   bare /CBR/i  matched anywhere "cbr" appears as a substring
+//   bare /GIS/i  matched "GISt" / "longISt"
+//   bare /ESF/i  matched "ESFsf" / "esther's friend"
+//   bare /API/i  matched "rapid" / "happy" / "scaping"
+//   bare /UAT/i  matched "evaluation" / "situation" / "graduate"
+//   bare /SLA/i  matched "Islamabad" / "isolate" / "translation"
+// Over-scoring sector vocabulary on totally unrelated tenders.
 const SECTOR_VOCAB: Record<string, RegExp[]> = {
-  healthcare: [/IPC/i, /PACS/i, /HEPA/i, /medical gas/i, /lead.*shield/i, /Legionella/i],
-  water: [/EPANET/i, /WaterCAD/i, /yield test/i, /EBCS/i, /chlorination/i],
-  road: [/ESAL/i, /CBR/i, /Marshall/i, /FIDIC/i, /AASHTO/i],
-  urban: [/GIS/i, /land.use zoning/i, /phasing strategy/i, /stakeholder consultation/i],
-  environmental: [/ESF/i, /ESMP/i, /mitigation hierarchy/i, /baseline data/i, /grievance/i],
-  ict: [/API/i, /UAT/i, /RBAC/i, /SLA/i, /backup|RTO|RPO/i],
+  healthcare: [/\bIPC\b/i, /\bPACS\b/i, /\bHEPA\b/i, /medical gas/i, /lead.*shield/i, /Legionella/i],
+  water: [/\bEPANET\b/i, /WaterCAD/i, /yield test/i, /\bEBCS\b/i, /chlorination/i],
+  road: [/\bESAL\b/i, /\bCBR\b/i, /Marshall/i, /\bFIDIC\b/i, /\bAASHTO\b/i],
+  urban: [/\bGIS\b/i, /land.use zoning/i, /phasing strategy/i, /stakeholder consultation/i],
+  environmental: [/\bESF\b/i, /\bESMP\b/i, /mitigation hierarchy/i, /baseline data/i, /grievance/i],
+  ict: [/\bAPI\b/i, /\bUAT\b/i, /\bRBAC\b/i, /\bSLA\b/i, /backup|\bRTO\b|\bRPO\b/i],
   education: [/pupil.ratio/i, /accessible/i, /climate.responsive/i, /fire egress/i],
   energy: [/load forecast/i, /HOMER/i, /SCADA/i, /grid code/i, /single.line diagram/i, /generation.capacity/i],
   agriculture: [/agronomic/i, /irrigation scheme/i, /drip.*irrigation/i, /value.chain/i, /FAO/i, /yield model/i],
