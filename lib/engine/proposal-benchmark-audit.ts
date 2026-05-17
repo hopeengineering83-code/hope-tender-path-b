@@ -16,13 +16,11 @@ const TRAITS: Array<{ label: string; weight: number; pattern: RegExp }> = [
   { label: "includes Section C technical approach structure", weight: 8, pattern: /SECTION C|Technical Approach|Technical Methodology|Understanding of the Assignment/i },
   { label: "includes Section D additional information", weight: 5, pattern: /SECTION D|Additional Information|Value to the Client|Value-Added|Declaration of Eligibility/i },
   { label: "maps team to project evidence", weight: 8, pattern: /team.to.project|expert.*project|previous role|mapped to|experience mapping/i },
-  // Word-boundary safe forms of OPD / IPC / WASH / ESIA / ESMP / GIS / ICT
-  // / MIS / ERP / MEP / HVAC — bare 2-4 char abbreviations match inside
-  // common words (district / submission / Washington / etc.) and cause
-  // false-positive sector-depth credit on tenders that don't actually
-  // discuss the discipline.
-  { label: "contains sector-specific technical depth", weight: 10, pattern: /Emergency|\bOPD\b|In-patient|Laboratory|Radiology|Imaging|Pharmacy|clinical zoning|patient flow|\bIPC\b|hydraulic.*model|borehole.*design|water.*treatment|\bWASH\b.*scheme|reservoir.*design|pump.*station|road.*design|pavement.*design|bridge.*design|culvert.*design|traffic.*analysis|\bESIA\b|\bESMP\b|environmental.*impact|social.*safeguard|biodiversity.*survey|master.*plan|land.*use.*plan|\bGIS\b.*analysis|zoning.*plan|\bICT\b.*architect|software.*develop|database.*design|\bMIS\b.*develop|\bERP\b.*implement|school.*design|campus.*layout|education.*facilit|biomedical.*integrat|medical.*equipment.*plan/i },
-  { label: "contains technical systems and infrastructure integration", weight: 8, pattern: /biomedical|medical equipment|medical gas|radiation shielding|\bMEP\b|\bHVAC\b|electrical load|telehealth|hydraulic.*system|pipeline.*network|pump.*station|structural.*design|civil.*engineering|geotechnical|foundation.*design|network.*infrastructure|server.*architect|laboratory.*equipment|workshop.*facilit|irrigation.*scheme|wastewater.*treatment/i },
+  // Word-boundary safe forms of short abbreviations (OPD/IPC/WASH/ESIA/ESMP/GIS/ICT/MIS/ERP/MEP/HVAC)
+  // to prevent false-positive matches in common words like "district", "submission", "Washington".
+  // Also extended with all 15 sector vocabulary groups so every sector can score this trait.
+  { label: "contains sector-specific technical depth", weight: 10, pattern: /Emergency|\bOPD\b|In-patient|Laboratory|Radiology|Imaging|Pharmacy|clinical zoning|patient flow|\bIPC\b|hydraulic.*model|borehole.*design|water.*treatment|\bWASH\b.*scheme|reservoir.*design|pump.*station|road.*design|pavement.*design|bridge.*design|culvert.*design|traffic.*analysis|\bESIA\b|\bESMP\b|environmental.*impact|social.*safeguard|biodiversity.*survey|master.*plan|land.*use.*plan|\bGIS\b.*analysis|zoning.*plan|\bICT\b.*architect|software.*develop|database.*design|\bMIS\b.*develop|\bERP\b.*implement|school.*design|campus.*layout|education.*facilit|biomedical.*integrat|medical.*equipment.*plan|load.*forecast|grid.*code|\bSCADA\b.*architect|single.*line.*diagram|generation.*mix|solar.*farm.*design|wind.*farm.*design|\bJORC\b|tailings.*management|slope.*stability|mine.*plan|blast.*design|berth.*design|quay.*design|dredging.*plan|nautical.*simulation|\bISPS\b|\bP&ID\b|\bHAZOP\b|pipeline.*integrity|wellhead.*design|process.*flow.*diagram|\bKYC\b.*\bAML\b|core.*banking|credit.*risk.*model|\bIFRS\b.*implement|Basel.*compliance|spectrum.*plan|RF.*propagation|base.*station.*design|backhaul.*design|last.*mile.*connect|irrigation.*scheme|crop.*water.*requirement|FAO.*Penman/i },
+  { label: "contains technical systems and infrastructure integration", weight: 8, pattern: /biomedical|medical equipment|medical gas|radiation shielding|\bMEP\b|\bHVAC\b|electrical load|telehealth|hydraulic.*system|pipeline.*network|pump.*station|structural.*design|civil.*engineering|geotechnical|foundation.*design|network.*infrastructure|server.*architect|laboratory.*equipment|workshop.*facilit|irrigation.*scheme|wastewater.*treatment|protection.*relay|cathodic.*protection|in-line inspection|\bLDAR\b|spill.*containment|water.*user.*association|O&M.*manual|shore.*power|vessel.*traffic|data.*migration|parallel.*run|change.*management.*plan|RF.*link.*budget|NOC.*dashboard|hypercare/i },
   { label: "contains scope-by-scope delivery methodology", weight: 8, pattern: /Facility Identification|Technical Assessment|Conceptual|Detailed Design|Regulatory Compliance|Renovation|Close-Out/i },
   { label: "contains appendix evidence discipline", weight: 7, pattern: /Appendix Register|CV|certificate|registration|licence|photo|drawing|testimony|completion/i },
   { label: "contains source/evidence control", weight: 7, pattern: /Evidence Control|claim.to.evidence|source traceability|bid-team confirmation|unsupported claims/i },
@@ -34,12 +32,6 @@ const TRAIT_REPAIR_MAP: Record<string, string> = {
   "names client and tender": "client proof",
   "includes Section B relevant experience structure": "project names / project proof",
   "maps team to project evidence": "expert / CV proof",
-  // Sector-agnostic repair labels. Pre-fix these said "healthcare
-  // functional proof" / "biomedical / MEP proof" — exposing the
-  // healthcare benchmark origin and confusing reviewers when a
-  // water/road/ICT/education/supply tender was flagged for missing
-  // "healthcare functional proof". The labels now describe the
-  // GENERIC defect regardless of which sector the tender is in.
   "contains sector-specific technical depth": "sector-specific technical depth",
   "contains technical systems and infrastructure integration": "systems / infrastructure integration proof",
   "contains scope-by-scope delivery methodology": "scope proof",
