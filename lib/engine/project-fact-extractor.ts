@@ -127,7 +127,10 @@ function parseDateRange(text: string): { startDate?: Date; endDate?: Date } {
 
 const SECTOR_KEYWORDS: Array<{ rx: RegExp; sector: string }> = [
   { rx: /hospital|medical center|clinic|healthcare/i, sector: "Healthcare" },
-  { rx: /water supply|borehole|WASH|sanitation|hydraulic/i, sector: "Water & Sanitation" },
+  // Word boundary on WASH — bare /WASH/i matched "Washington",
+  // misclassifying projects in Washington DC / Washington state as
+  // Water & Sanitation.
+  { rx: /water supply|borehole|\bWASH\b|sanitation|hydraulic/i, sector: "Water & Sanitation" },
   { rx: /road|bridge|highway|pavement/i, sector: "Roads & Bridges" },
   { rx: /school|university|campus|education/i, sector: "Education" },
   { rx: /housing|residential|apartment/i, sector: "Residential" },

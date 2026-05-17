@@ -399,8 +399,11 @@ export function buildThreeStageReviewTable(companyName: string, primarySector: s
   const isMiningTender = /mining|mineral|quarry|extracti/.test(s);
   const isPortTender = /\bport\b|harbor|harbour|maritime|quay|berth|shipping terminal/.test(s);
   const isOilGasTender = /oil|gas|petroleum|refinery|pipeline/.test(s);
+  // Word boundary on MEP — bare /MEP/ would match "MEMphis", "hemp",
+  // "stamper", etc. The other tokens here are full English words and
+  // safe.
   const isDesignTender = !isWaterTender && !isRoadTender && !isHealthcareTender && !isICTTender && !isEnergyTender && !isAgricultureTender && !isMiningTender && !isPortTender && !isOilGasTender &&
-    /design|architect|building|construction|MEP|structural|engineer|consultancy|supervision/.test(s);
+    /design|architect|building|construction|\bMEP\b|structural|engineer|consultancy|supervision/.test(s);
 
   const stage1Action = isWaterTender ? "30% Source Investigation & Demand Assessment"
     : isRoadTender ? "30% Survey, Investigation & Preliminary Design"
@@ -639,8 +642,11 @@ function valueFrameworkPillars(primarySector: string, clientName: string): Value
   const isWater = /water|borehole|hydraulic|sanitary/i.test(primarySector);
   const isRoad = /road|bridge|highway|pavement|transport/i.test(primarySector);
   const isUrban = /urban|master plan|municipal/i.test(primarySector);
-  const isEnv = /environmental|ESIA|ESMP|safeguard/i.test(primarySector);
-  const isICT = /ICT|software|digital|MIS|ERP/i.test(primarySector);
+  // Word boundaries on ESIA/ESMP/ICT/MIS/ERP — bare tokens previously
+  // matched inside larger words (see proposal-intelligence.ts for full
+  // rationale on each abbreviation).
+  const isEnv = /environmental|\bESIA\b|\bESMP\b|safeguard/i.test(primarySector);
+  const isICT = /\bICT\b|software|digital|\bMIS\b|\bERP\b/i.test(primarySector);
   const isEducation = /school|university|campus|education/i.test(primarySector);
 
   if (isHealthcare) return [

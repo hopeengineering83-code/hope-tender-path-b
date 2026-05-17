@@ -13,8 +13,12 @@ const SIGNALS: Array<{ label: string; patterns: RegExp[] }> = [
   { label: "value / scale proof", patterns: [/value/i, /contract/i, /ETB|USD|EUR|GBP|AED|SAR/i, /million|billion/i, /m\b/i] },
   { label: "expert / CV proof", patterns: [/expert/i, /CV/i, /team/i, /specialist/i, /qualification/i, /licence|license/i] },
   { label: "appendix proof", patterns: [/appendix/i, /certificate/i, /registration/i, /licence|license/i, /photo/i, /drawing/i] },
-  { label: "sector-specific functional depth", patterns: [/Emergency|OPD|Laboratory|Radiology|Pharmacy|patient flow|hydraulic.*model|borehole|water.*treatment|WASH|road.*design|pavement|bridge.*design|ESIA|ESMP|environmental.*impact|master.*plan|GIS.*analysis|ICT.*architect|software.*develop|MIS.*develop|school.*design|campus|education.*facilit/i] },
-  { label: "technical systems integration", patterns: [/biomedical/i, /medical equipment/i, /medical gas/i, /MEP/i, /HVAC/i, /radiation shielding/i, /hydraulic.*system/i, /pipeline.*network/i, /structural.*design/i, /network.*infrastructure/i, /laboratory.*equipment/i] },
+  // Word boundaries on every bare 2-4 char abbreviation: OPD / WASH /
+  // ESIA / ESMP / GIS / ICT / MIS / MEP / HVAC. These previously matched
+  // inside common words (district / submission / Washington / etc.)
+  // and over-scored proof density on unrelated tenders.
+  { label: "sector-specific functional depth", patterns: [/Emergency|\bOPD\b|Laboratory|Radiology|Pharmacy|patient flow|hydraulic.*model|borehole|water.*treatment|\bWASH\b|road.*design|pavement|bridge.*design|\bESIA\b|\bESMP\b|environmental.*impact|master.*plan|\bGIS\b.*analysis|\bICT\b.*architect|software.*develop|\bMIS\b.*develop|school.*design|campus|education.*facilit/i] },
+  { label: "technical systems integration", patterns: [/biomedical/i, /medical equipment/i, /medical gas/i, /\bMEP\b/i, /\bHVAC\b/i, /radiation shielding/i, /hydraulic.*system/i, /pipeline.*network/i, /structural.*design/i, /network.*infrastructure/i, /laboratory.*equipment/i] },
   { label: "approval / QA proof", patterns: [/approval/i, /regulatory/i, /QA|QC/i, /quality assurance/i, /review gate/i, /document control/i] },
   { label: "bid-review controls", patterns: [/bid-team confirmation/i, /to be confirmed/i, /unsupported claim/i, /evidence control/i, /source traceability/i] },
 ];

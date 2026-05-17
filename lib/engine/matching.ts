@@ -70,7 +70,10 @@ type CapabilityFamily =
 // to remove the residual /building/i + /residential/i triggers that were
 // the headline cause of warehouse projects anchoring healthcare tenders.
 const CAPABILITY_KEYWORDS: Record<CapabilityFamily, RegExp[]> = {
-  WATER_SUPPLY: [/water/i, /supply/i, /sanitary/i, /hydraulic/i, /pipeline/i, /pipe/i, /borehole/i, /well/i, /drilling/i, /reservoir/i, /pump/i, /irrigation/i, /woreda/i, /kebele/i, /WASH/i, /sanitation/i],
+  // Word boundary on WASH — bare /WASH/i matched "Washington" /
+  // "washroom" / "washable", causing matching false-positives on
+  // non-water projects with Washington-state clients.
+  WATER_SUPPLY: [/water/i, /supply/i, /sanitary/i, /hydraulic/i, /pipeline/i, /pipe/i, /borehole/i, /well/i, /drilling/i, /reservoir/i, /pump/i, /irrigation/i, /woreda/i, /kebele/i, /\bWASH\b/i, /sanitation/i],
   SOLAR_PUMPING: [/solar/i, /\bpv\b/i, /photovoltaic/i, /pump/i, /pumping/i, /electromechanical/i, /electro[\s-]mechanical/i],
   FEASIBILITY_DESIGN: [/feasibility/i, /\bfsdd\b/i, /detailed[\s-]+design/i, /\bddp\b/i, /assessment/i, /investigation/i, /drawing/i, /specification/i, /bill[\s-]+of[\s-]+quantit/i, /\bboq\b/i],
   SUPERVISION_CONTRACT: [/supervision/i, /construction\s+supervision/i, /contract\s+administration/i, /site\s+(?:engineer|supervisor|supervision|inspector|manager|representative)\b/i, /quality\s+control/i, /resident\s+engineer/i, /inspection/i],
