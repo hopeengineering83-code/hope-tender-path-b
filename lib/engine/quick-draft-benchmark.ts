@@ -40,16 +40,35 @@ function cleanLabel(value?: string | null, fallback = "Client"): string {
   return cleaned;
 }
 
+// ─── Universal-tender fix ─────────────────────────────────────────────
+// Pre-fix this module hardcoded "Pharo Ventures" / "Pharo Foundation"
+// as fallback client names and a Pharo-specific healthcare title as a
+// fallback tender title. That biased the quick-draft toward the
+// original benchmark tender — every non-Pharo tender that fell through
+// to this fallback rendered with "Pharo" in the client field. Now both
+// inference functions use ONLY generic patterns (explicit-label match
+// + organisation-keyword scan + scope-verb match) so the same engine
+// works for any sector.
+
+const ORGANISATION_KEYWORD = /\b(Ministry|Authority|Agency|Commission|Corporation|Organi[sz]ation|Foundation|University|Institute|Department|Company|Limited|Ltd|Inc|PLC|Group|Consortium|Union|Federation|Bank|Trust|Fund|Ventures?|Council|Bureau)\b/;
+
 function inferClientName(input: QuickDraftInput): string {
   const direct = cleanLabel(input.clientName, "");
   if (direct && !isPollutedLabel(direct)) return direct;
 
   const context = `${input.clientName}\n${input.tenderTitle}\n${input.tenderDescription}\n${input.requirementLines.join("\n")}`;
-  if (/pharo\s+ventures/i.test(context)) return "Pharo Ventures";
-  if (/pharo\s+foundation/i.test(context)) return "Pharo Foundation";
-
-  const explicit = context.match(/(?:Client|Issued by|Issuing Authority|Procuring Entity|Employer)\s*:\s*([^\n|.;]{3,90})/i);
+  const explicit = context.match(/(?:Client|Issued by|Issuing Authority|Procuring Entity|Employer|Contracting Authority|Beneficiary|Implementing Agency|Executing Agency)\s*:\s*([^\n|.;]{3,90})/i);
   if (explicit?.[1] && !isPollutedLabel(explicit[1])) return cleanLabel(explicit[1], "Client");
+
+  // Last-resort: pick the first line that contains an organisation
+  // keyword (Ministry, Authority, Foundation, etc.). Generic enough to
+  // work for any sector or country.
+  const lines = context.split(/\n+/).map((line) => line.trim()).filter(Boolean);
+  for (const line of lines) {
+    if (line.length < 3 || line.length > 120) continue;
+    if (isPollutedLabel(line)) continue;
+    if (ORGANISATION_KEYWORD.test(line)) return cleanLabel(line, "Client");
+  }
 
   return "Client";
 }
@@ -59,10 +78,15 @@ function inferTenderTitle(input: QuickDraftInput): string {
   if (direct && !isPollutedLabel(direct)) return direct;
 
   const context = `${input.tenderTitle}\n${input.tenderDescription}\n${input.requirementLines.join("\n")}`;
-  const explicit = context.match(/(?:Tender Title|Assignment|Project Title|Subject)\s*:\s*([^\n|]{8,160})/i);
+  const explicit = context.match(/(?:Tender Title|Assignment Title|Project Title|Procurement Title|Contract Title|Subject)\s*:\s*([^\n|]{8,160})/i);
   if (explicit?.[1] && !isPollutedLabel(explicit[1])) return cleanLabel(explicit[1], "Technical Proposal");
-  if (/specialty medical center|pharo health|healthcare facility/i.test(context)) return "Architectural Consultancy Services for Pharo Health Ethiopia Specialty Medical Center";
-  if (/facility identification|technical assessment|renovation/i.test(context)) return "Technical Proposal for Facility Assessment, Design and Supervision Services";
+
+  // Scope-verb inference — common across all tender types.
+  const scope = context.match(/(?:Consultancy Services for|Services for|Design (?:of|and) Supervision of|Supply of|Procurement of|Construction of|Rehabilitation of|Feasibility Study for|Capacity Building for|Technical Assistance to|Implementation of|Assessment of|Evaluation of)\s+([^\n|.;]{8,160})/i);
+  if (scope?.[0] && !isPollutedLabel(scope[0])) {
+    return cleanLabel(`Technical Proposal for ${scope[0].trim()}`, "Technical Proposal");
+  }
+
   return "Technical Proposal";
 }
 
