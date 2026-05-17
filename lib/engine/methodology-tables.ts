@@ -183,6 +183,69 @@ function sectorPhasingRows(sector: string): PhasingRow[] {
       { phase: "5. Adoption Support", deliverables: "Public consultation support; council adoption pack; training programme; transition plan", duration: "Weeks 19–22", responsible: "Project Principal" },
     ];
   }
+  if (/energy|power|solar|wind|grid|generation|transmission/.test(s)) {
+    return [
+      { phase: "1. Inception & Load Forecast", deliverables: "Inception report; metered-load data review; load forecast (5-year horizon); system configuration concept", duration: "Weeks 1–4", responsible: "Power Systems Lead" },
+      { phase: "2. Detailed Electrical Design", deliverables: "SLD; protection relay settings; cable schedules; equipment datasheets; grid-code compliance note", duration: "Weeks 5–12", responsible: "Electrical Engineer" },
+      { phase: "3. Environmental Screening & Procurement", deliverables: "Environmental screening report; equipment specification; tender documents (BOQ, drawings, specs)", duration: "Weeks 13–18", responsible: "Environmental Lead" },
+      { phase: "4. Construction Supervision", deliverables: "Commissioning procedures; protection-relay test records; SCADA commissioning checklist; progress reports", duration: "Construction window", responsible: "Resident Engineer" },
+      { phase: "5. Close-out", deliverables: "As-built SLD; O&M manual; operator training records; grid-code compliance certificate; handover dossier", duration: "Weeks N–N+4", responsible: "Project Principal" },
+    ];
+  }
+  if (/agri|irrigation|farm|crop|livestock|rural develop/.test(s)) {
+    return [
+      { phase: "1. Agronomic Baseline", deliverables: "Soil and water survey; crop-water demand calculation (FAO Penman-Monteith); scheme concept options", duration: "Weeks 1–4", responsible: "Agronomist" },
+      { phase: "2. Irrigation Design", deliverables: "Canal/pipe network design; pump station sizing; reservoir design; ESMP; BOQ and specifications", duration: "Weeks 5–12", responsible: "Water Engineer" },
+      { phase: "3. WUA & Value Chain", deliverables: "Water-user association establishment plan; community consultation records; value-chain linkage analysis", duration: "Weeks 9–14", responsible: "Social Development Specialist" },
+      { phase: "4. Construction Supervision", deliverables: "Canal/pipe construction supervision; pressure tests; pump commissioning; progress reports", duration: "Construction window", responsible: "Resident Engineer" },
+      { phase: "5. Close-out", deliverables: "As-built drawings; O&M manual; operator training records; yield monitoring protocol; handover certificate", duration: "Weeks N–N+4", responsible: "Project Principal" },
+    ];
+  }
+  if (/mining|mineral|quarry|extracti/.test(s)) {
+    return [
+      { phase: "1. Geotechnical Investigation", deliverables: "Drill programme design; borehole logs; laboratory test results; geotechnical model", duration: "Weeks 1–8", responsible: "Geotechnical Engineer" },
+      { phase: "2. Resource Estimation", deliverables: "JORC-compliant resource estimation; block model; confidence classification; CP sign-off", duration: "Weeks 9–16", responsible: "Geologist" },
+      { phase: "3. Mine Plan & Feasibility", deliverables: "Open-pit/underground design; slope stability analysis; tailings management plan; feasibility report", duration: "Weeks 17–24", responsible: "Mining Engineer" },
+      { phase: "4. ESIA & Regulatory Submission", deliverables: "Environmental baseline; ESIA; ESMP; regulatory submission package; community engagement records", duration: "Weeks 20–28", responsible: "Environmental Lead" },
+      { phase: "5. Close-out", deliverables: "Final feasibility dossier; regulatory submissions; closure plan; monitoring programme initiation", duration: "Weeks 29–32", responsible: "Project Principal" },
+    ];
+  }
+  if (/\bport\b|harbor|harbour|maritime|quay|berth|shipping terminal/.test(s)) {
+    return [
+      { phase: "1. Hydrographic Survey & Demand Study", deliverables: "Bathymetric survey; vessel-class parameters; traffic demand study; met-ocean data", duration: "Weeks 1–5", responsible: "Marine Engineer" },
+      { phase: "2. Berth & Civil Design", deliverables: "Berth geometry; structural design; dredging scope and specification; marine civil BOQ", duration: "Weeks 6–14", responsible: "Marine Structural Engineer" },
+      { phase: "3. Environmental & Nautical Safety", deliverables: "EIA / ESMP; nautical simulation report; pilotage and VTS plan; ISPS compliance assessment", duration: "Weeks 10–18", responsible: "Environmental Lead" },
+      { phase: "4. Construction Supervision", deliverables: "Dredging monitoring; quay construction hold-points; equipment commissioning; progress reports", duration: "Construction window", responsible: "Resident Engineer" },
+      { phase: "5. Close-out", deliverables: "As-built drawings; dredging completion certificate; port operations manual; handover dossier", duration: "Weeks N–N+4", responsible: "Project Principal" },
+    ];
+  }
+  if (/oil|gas|petroleum|pipeline|refinery|petrochemical/.test(s)) {
+    return [
+      { phase: "1. FEED", deliverables: "PFD; material and energy balance; P&ID rev 0; equipment list; FEED report", duration: "Weeks 1–8", responsible: "Lead Process Engineer" },
+      { phase: "2. Detailed Engineering", deliverables: "P&IDs at IFC status; equipment datasheets; cable schedules; structural drawings; HAZOP study + action register", duration: "Weeks 9–20", responsible: "Lead Engineer" },
+      { phase: "3. Procurement Support", deliverables: "Invitation to tender documents; bid evaluation reports; vendor data requirements; inspection test plans", duration: "Weeks 18–28", responsible: "Procurement Lead" },
+      { phase: "4. Construction Supervision", deliverables: "Construction supervision; ITP compliance; mechanical completion certificate; pre-commissioning punch list", duration: "Construction window", responsible: "Resident Engineer" },
+      { phase: "5. Commissioning & Close-out", deliverables: "Commissioning procedures; PSSR; start-up records; as-built P&IDs; handover dossier", duration: "Weeks N–N+6", responsible: "Project Principal" },
+    ];
+  }
+  if (/finance|bank|micro.?finance|insurance|credit|lending|investment fund/.test(s)) {
+    return [
+      { phase: "1. Diagnostic", deliverables: "Current-state assessment; regulatory gap analysis; KYC/AML risk assessment; scoping memo", duration: "Weeks 1–4", responsible: "Financial Services Lead" },
+      { phase: "2. Framework Design", deliverables: "Policy and procedure manuals; credit-risk model; IFRS reconciliation framework; IT requirements specification", duration: "Weeks 5–12", responsible: "Risk Management Lead" },
+      { phase: "3. System Configuration & Test", deliverables: "Core-banking system configuration; test plans; test reports; data migration specifications", duration: "Weeks 13–20", responsible: "IT Systems Lead" },
+      { phase: "4. Pilot & Go-Live", deliverables: "Parallel-run records; go-live sign-off; data migration reconciliation; staff training records", duration: "Weeks 21–26", responsible: "Implementation Lead" },
+      { phase: "5. Post-Implementation", deliverables: "Post-implementation review report; compliance audit checklist; optimisation recommendations", duration: "Weeks 27–30", responsible: "Project Principal" },
+    ];
+  }
+  if (/telecom|broadband|spectrum|mobile network|isp/.test(s)) {
+    return [
+      { phase: "1. Spectrum & Planning", deliverables: "Spectrum analysis; coverage heat-maps; frequency plan; base-station site list; regulatory submission", duration: "Weeks 1–5", responsible: "RF Planning Lead" },
+      { phase: "2. Network Architecture", deliverables: "Core and backhaul network design; equipment specifications; QoS parameter sheet; network architecture document", duration: "Weeks 6–12", responsible: "Network Architect" },
+      { phase: "3. Rollout", deliverables: "Site-acceptance tests; backhaul link commissioning; core integration test reports; KPI dashboard configuration", duration: "Weeks 13–24", responsible: "Rollout Manager" },
+      { phase: "4. Optimisation", deliverables: "Network KPI baseline; optimisation report; coverage gap remediation plan; SLA compliance report", duration: "Weeks 25–28", responsible: "Optimisation Engineer" },
+      { phase: "5. Handover", deliverables: "Operator training records; network documentation; SLA framework; handover dossier", duration: "Weeks 29–32", responsible: "Project Principal" },
+    ];
+  }
   // Generic
   return [
     { phase: "1. Inception", deliverables: "Inception report; ToR confirmation; data-collection plan; risk register baseline", duration: "Weeks 1–2", responsible: "Project Principal" },
