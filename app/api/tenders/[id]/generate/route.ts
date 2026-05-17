@@ -16,16 +16,22 @@ import { createNotification } from "../../../../../lib/notifications";
 import { childLogger, reportError, time } from "../../../../../lib/observability";
 import { getCompanyIngestionReadiness } from "../../../../../lib/company-ingestion-readiness";
 import { mapGenerationError } from "../../../../../lib/engine/structured-generation-error";
+import { computeStoredMetadataPatch, listInvalidStoredFields } from "../../../../../lib/engine/sanitize-stored-metadata";
+import { isValidClientName } from "../../../../../lib/engine/metadata-validators";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
 
 type SupportDocKind = "EXPERT_CV" | "PROJECT_REFERENCES" | "METHODOLOGY" | "COMPANY_PROFILE" | "FINANCIAL_PLACEHOLDER" | "LEGAL_PLACEHOLDER" | "FORM_PLACEHOLDER" | "DECLARATION_PLACEHOLDER" | "ANNEX_PLACEHOLDER" | "SUBMISSION_RULES_PLACEHOLDER" | "SECTOR_TECHNICAL_SCOPE" | "GENERIC";
 
+// Backward-compat shim — delegates to the canonical validator so the
+// generate route blocks ALL invalid client names (empty, placeholder,
+// AND garbage TOC fragments) instead of just the placeholder list.
+// Before this change, a stored clientName of "references (where
+// available) Photos..." passed this check because the regex only
+// rejected "the client | unknown | n/a | ...".
 function hasRealClientName(value?: string | null): boolean {
-  const text = (value ?? "").trim();
-  if (text.length < 2) return false;
-  return !/^(the client|client|unknown|n\/a|na|none|-)$/i.test(text);
+  return isValidClientName(value);
 }
 
 function criticalGapIsHardBlock(gap: { title: string; description: string; mitigationPlan: string | null }) {
@@ -191,6 +197,23 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const { id } = await params;
   const tender = await prisma.tender.findFirst({ where: { id, userId }, include: { requirements: true } });
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
+
+  // Defensive sanitisation — nullify any stored metadata that fails
+  // the canonical validators before generation reads it (theme detector,
+  // cover-letter renderer, AI prompts all consume tender.clientName /
+  // tender.reference / etc. directly). Without this layer, a tender
+  // whose user hasn't clicked the cleanup banner yet would still
+  // produce a proposal cover letter containing the garbage TOC text.
+  const invalidFields = listInvalidStoredFields(tender);
+  if (invalidFields.length > 0) {
+    const patch = computeStoredMetadataPatch(tender);
+    await prisma.tender.update({ where: { id: tender.id }, data: patch });
+    console.warn(`[generate] tender=${tender.id} sanitised ${invalidFields.length} invalid stored field(s) before generation: ${invalidFields.join(", ")}`);
+    for (const field of invalidFields) {
+      (tender as Record<string, unknown>)[field] = null;
+    }
+  }
+
   const company = await prisma.company.findUnique({ where: { userId }, select: { id: true } });
   if (!company) return NextResponse.json({ error: "Company profile required before generation.", code: "COMPANY_PROFILE_REQUIRED", nextAction: "OPEN_COMPANY_READINESS" }, { status: 422 });
   const readiness = await getCompanyIngestionReadiness(company.id);
