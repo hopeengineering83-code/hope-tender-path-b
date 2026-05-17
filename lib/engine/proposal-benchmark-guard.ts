@@ -72,6 +72,8 @@ function hasForbiddenWeakness(markdown: string): boolean {
   // Unfilled action directives — indicate the AI echoed fallback template text
   if (/\bBid-Team Action:/i.test(markdown)) return true;
   if (/Source-evidence action:/i.test(markdown)) return true;
+  // "Evidence note: confirm" is the artifact of an old normalizeWeakText conversion — catch it too
+  if (/\bEvidence note:\s*(?:confirm|tbd|action required|placeholder)/i.test(markdown)) return true;
   return false;
 }
 
@@ -111,8 +113,8 @@ function normalizeWeakText(markdown: string): string {
     .replace(/\$\{[^}]+\}/g, "to be confirmed by bid team")
     .replace(/\{\{[^}]*\}\}/g, "to be confirmed by bid team")
     .replace(/<[A-Z][A-Z_]{1,40}>/g, "to be confirmed by bid team")
-    // Action directives — replace with neutral evidence note so re-scoring passes
-    .replace(/\bBid-Team Action:\s*([^\n]*)/gi, "Evidence note: $1")
+    // Action directives — strip the line so placeholder text does not reach the client document
+    .replace(/^[^\n]*\bBid-Team Action:[^\n]*/gmi, "")
     // Source-evidence action stubs from deterministic builders — normalize same way
     .replace(/_?Source-evidence action:[^_\n]*_?/gi, "Bid-team to confirm before submission.")
     .replace(/\n{3,}/g, "\n\n");

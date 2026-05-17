@@ -80,6 +80,9 @@ const SECTOR_VOCAB: Record<string, RegExp[]> = {
   building: [/BIM/i, /MEP/i, /fire compartment/i, /HVAC/i, /BOQ/i, /structural.*analysis/i],
   oil_gas: [/P&ID/i, /HAZOP/i, /wellhead/i, /pipeline integrity/i, /API\s+\d/i, /HSE.*plan/i],
   institutional: [/Theory of Change/i, /organisational design/i, /capacity assessment/i, /HMIS/i, /MoU/i, /change management/i],
+  financial: [/KYC/i, /AML/i, /Basel/i, /credit risk/i, /IFRS/i, /prudential/i, /core banking/i, /MFI/i],
+  telecoms: [/spectrum/i, /base station/i, /LTE|5G|4G/i, /backhaul/i, /last.mile/i, /MVNO/i, /core network/i],
+  port: [/berth.*design|quay/i, /draft.*vessel/i, /harbor|harbour/i, /pilotage/i, /port master plan/i, /ship.*manifest/i, /terminal.*handling/i],
 };
 
 // Keep this list aligned with hasForbiddenWeakness() in proposal-benchmark-guard.ts.
@@ -127,6 +130,9 @@ function detectSector(primarySector: string): string {
   if (/building|construct|architect|structure|facility|facilities/.test(s)) return "building";
   if (/oil|gas|petroleum|refinery|pipeline/.test(s)) return "oil_gas";
   if (/institution|reform|governance|capacity|public sector|ministry/.test(s)) return "institutional";
+  if (/finance|bank|micro.?finance|insurance|credit|lending|investment fund/.test(s)) return "financial";
+  if (/telecom|broadband|spectrum|mobile network|isp|telecommunications/.test(s)) return "telecoms";
+  if (/\bport\b|harbor|harbour|maritime|quay|berth|shipping terminal/.test(s)) return "port";
   return "generic";
 }
 
@@ -204,6 +210,7 @@ export function scoreProposalQuality(opts: {
   const sectionC2SubSections = (md.match(/^###\s+C\.2\.\d+/gm) ?? []).length;
   const subSectionBonus = sectionC2SubSections >= 6 ? 1 : 0;
   if (sectionC2SubSections > 0 && sectionC2SubSections < 6) {
+    weakAxes.push("tableCoverage");
     notes.push(`Section C.2 has only ${sectionC2SubSections} sub-section(s) — minimum 6 required for benchmark quality.`);
   }
   // Divisor of 12 rows (was 20) — a well-structured proposal typically has 12+ rows

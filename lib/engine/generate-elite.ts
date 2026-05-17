@@ -137,8 +137,13 @@ function heading(text: string, level: 1 | 2 | 3 = 1, pageBreak = false): Paragra
   // Strip ** (heading style already applies bold) but keep *italic* so
   // parseInlineRuns can render it correctly in the heading TextRuns.
   const stripped = text.replace(/\*\*/g, "");
+  // Explicit font sizes per level so Word's default heading style (which
+  // varies by theme) does not collapse all headings to the same size.
+  // H1 = 16 pt (32 half-points), H2 = 14 pt (28), H3 = 12 pt (24).
+  const fontSize = level === 1 ? 32 : level === 2 ? 28 : 24;
+  const headingColor = level === 3 ? BRAND_GRAY : BRAND_BLUE;
   return new Paragraph({
-    children: parseInlineRuns(stripped),
+    children: parseInlineRuns(stripped, { size: fontSize, color: headingColor }),
     heading: headingLevel,
     pageBreakBefore: level === 1 ? pageBreak : false,
     spacing: { before: level === 1 ? 360 : level === 2 ? 240 : 180, after: level === 1 ? 140 : 100 },
@@ -232,8 +237,8 @@ function shortText(text?: string | null, max = 700): string {
 
 function cleanClientLanguage(text: string): string {
   return polishBenchmarkOutput(text
-    .replace(/Bid-Team Action:\s*/gi, "Evidence note: ")
-    .replace(/Bid-team confirmation:\s*/gi, "Evidence note: ")
+    .replace(/^[^\n]*\bBid-Team Action:[^\n]*/gmi, "")
+    .replace(/^[^\n]*\bBid-team confirmation:[^\n]*/gmi, "")
     .replace(/bid-team confirmation item(s)?/gi, "source-evidence confirmation item$1")
     .replace(/bid-team-confirmed/gi, "source-confirmed")
     .replace(/bid-team verification/gi, "final verification")
@@ -287,7 +292,14 @@ function markdownToDocx(markdown: string): (Paragraph | Table)[] {
       const nestLevel = Math.min(Math.floor(indent / 2), 8);
       out.push(bullet(trimmed.replace(/^[-*•]\s+/, ""), nestLevel));
     }
-    else if (/^\d+[.)]\s+/.test(trimmed)) out.push(bullet(trimmed.replace(/^\d+[.)]\s+/, "")));
+    else if (/^\d+[.)]\s+/.test(trimmed)) {
+      const indent = line.length - line.trimStart().length;
+      out.push(new Paragraph({
+        children: parseInlineRuns(trimmed),
+        indent: { left: 360 + indent * 90 },
+        spacing: { after: 80, line: 260 },
+      }));
+    }
     else out.push(para(trimmed));
   }
   if (tableBuffer.length > 0) flushTable();

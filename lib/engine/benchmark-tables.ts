@@ -139,10 +139,7 @@ export function buildProposedTeamTable(experts: ExpertRecord[], assignmentRoleHi
   if (experts.length === 0) {
     return [
       "## A.4 Proposed Project Team",
-      "Bid-Team Action: populate this table from reviewed expert CVs in the knowledge vault before submission. Each row must include: expert name, position, qualifications and licence number, comparable sector experience, and role on this assignment.",
-      "| # | Expert & Position | Qualifications & Licenses | Comparable Sector Experience | Role on This Assignment |",
-      "|---|---|---|---|---|",
-      "| 1 | Bid-Team Action: confirm | Confirm qualifications + licence | Confirm years + sector | Confirm role |",
+      "Bid-Team Action: Add expert CVs to the knowledge vault and re-generate this proposal to populate this section with verified names, licence numbers, sector experience, and roles. Each expert row requires: full name, position, qualifications with licence number, comparable sector experience, and role on this assignment.",
     ].join("\n\n");
   }
 
@@ -181,10 +178,7 @@ export function buildTeamToProjectMappingTable(experts: ExpertRecord[], projects
   if (experts.length === 0 || projects.length === 0) {
     return [
       "## A.5 Team-to-Project Experience Mapping",
-      "Bid-Team Action: populate this table by pairing each proposed expert with a prior comparable project before submission. Each row must show: expert name, role on this project, role previously performed, prior comparable project name, and key technical contribution.",
-      "| Expert & Role on This Project | Role Previously Performed | Previous Comparable Project | Key Technical Contribution |",
-      "|---|---|---|---|",
-      "| Bid-Team Action: confirm | Confirm role | Confirm project | Confirm contribution |",
+      "Bid-Team Action: Add expert CVs and project references to the knowledge vault and re-generate this proposal. This table maps each proposed expert to a comparable previous project and the technical role they performed — it is required to pass evaluator scrutiny on team depth.",
     ].join("\n\n");
   }
 
@@ -250,16 +244,7 @@ export function buildProjectPortfolioCards(projects: ProjectRecord[], tenderTitl
   if (projects.length === 0) {
     return [
       "## B.2 Project Portfolio",
-      "Bid-Team Action: select and populate reviewed project references from the knowledge vault before submission. Each project card must include: client, location, duration, contract value, testimony reference, services provided, and a one-paragraph relevance statement linking the project's competencies to this tender.",
-      "| Field | Detail |",
-      "|---|---|",
-      "| Project Name | Bid-Team Action: confirm |",
-      "| Client | Bid-Team Action: confirm |",
-      "| Location & Scale | Bid-Team Action: confirm |",
-      "| Contract Value | Bid-Team Action: confirm |",
-      "| Duration | Bid-Team Action: confirm |",
-      "| Services Provided | Bid-Team Action: confirm |",
-      "| Relevance to This Assignment | Bid-Team Action: confirm relevance |",
+      "Bid-Team Action: Add project references to the knowledge vault and re-generate this proposal to populate Section B with detailed project cards. Each card requires: project name, client, location and scale, contract value, duration, testimony reference, services provided, and a relevance statement.",
     ].join("\n\n");
   }
 
