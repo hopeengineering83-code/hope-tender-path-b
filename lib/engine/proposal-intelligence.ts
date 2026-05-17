@@ -118,8 +118,9 @@ export const PROPOSAL_THEMES: ProposalTheme[] = [
   {
     code: "MEP_BIOMEDICAL",
     label: "MEP, biomedical engineering and equipment integration",
-    triggers: [/MEP/i, /biomedical/i, /bio-medical/i, /medical gas/i, /electrical.*load/i, /IT system/i, /telehealth/i, /HVAC/i, /electromechanical/i, /building services/i],
-    proofTerms: [/MEP/i, /electrical/i, /sanitary/i, /mechanical/i, /medical gas/i, /HVAC/i, /power/i, /biomedical/i, /equipment/i],
+    // Word boundaries on MEP / HVAC (3-4 char abbreviations).
+    triggers: [/\bMEP\b/i, /biomedical/i, /bio-medical/i, /medical gas/i, /electrical.*load/i, /\bIT system/i, /telehealth/i, /\bHVAC\b/i, /electromechanical/i, /building services/i],
+    proofTerms: [/\bMEP\b/i, /electrical/i, /sanitary/i, /mechanical/i, /medical gas/i, /\bHVAC\b/i, /power/i, /biomedical/i, /equipment/i],
     methodologyBullets: [
       "medical-grade electrical load schedule: equipment power demands, UPS sizing, generator capacity, and emergency power discrimination",
       "medical gas system: pipe sizing, outlet locations, alarm panels, and pressure testing protocol",
@@ -195,8 +196,15 @@ export const PROPOSAL_THEMES: ProposalTheme[] = [
   {
     code: "ICT_DIGITAL",
     label: "ICT systems, digital platforms and information management",
-    triggers: [/ICT/i, /information.*system/i, /software.*develop/i, /digital.*platform/i, /database/i, /MIS/i, /ERP/i, /network.*design/i, /cyber/i],
-    proofTerms: [/ICT/i, /software/i, /system/i, /database/i, /platform/i, /network/i, /data/i, /MIS/i, /ERP/i, /deployment/i],
+    // Word boundaries on bare abbreviations (\bICT\b, \bMIS\b, \bERP\b)
+    // — otherwise "ICT" matches "ICT" inside "predICT", "verdICT",
+    // "depICT", "distrICT", "conflICT"; "MIS" matches "mis" inside
+    // "optimISation", "subMISsion", "comMISsion", "perMISsion"; "ERP"
+    // matches "erp" inside "supERPower", "tERPene", "hypERPlanet".
+    // Every tender mentioning "submission" or "optimisation" was being
+    // misclassified as ICT before this fix.
+    triggers: [/\bICT\b/i, /information.*system/i, /software.*develop/i, /digital.*platform/i, /database/i, /\bMIS\b/i, /\bERP\b/i, /network.*design/i, /cyber/i],
+    proofTerms: [/\bICT\b/i, /software/i, /system/i, /database/i, /platform/i, /network/i, /data/i, /\bMIS\b/i, /\bERP\b/i, /deployment/i],
     methodologyBullets: [
       "requirements analysis and system architecture: business process review, functional specification, application/database/infrastructure layer design, security controls (access management, encryption, audit trail)",
       "phased implementation: agile/iterative delivery, integration with existing systems (APIs, data migration), acceptance testing (unit/integration/UAT), training programme and change management",
@@ -243,11 +251,15 @@ function projectScore(project: ProjectLite, themes: ProposalTheme[], tenderText:
   // Sector-match bonuses — direct sector overlap is the strongest relevance signal
   if (/hospital|health|medical|clinic/i.test(text) && /hospital|health|medical|clinic/i.test(tenderText)) score += 15;
   if (/renovation|modification|retrofit|existing/i.test(text) && /renovation|premises|existing|assessment/i.test(tenderText)) score += 8;
-  if (/water|borehole|pump|hydraulic|WASH|irrigation/i.test(text) && /water|borehole|pump|hydraulic|WASH|irrigation/i.test(tenderText)) score += 12;
+  // Word boundaries on WASH (4-char abbreviation; matches "Washington" /
+  // "washable" / "wash-up" without \b). Same fix for ICT / MIS / ERP /
+  // MEP / HVAC throughout this file — see PR root-cause-fix comment in
+  // ICT_DIGITAL theme triggers above.
+  if (/water|borehole|pump|hydraulic|\bWASH\b|irrigation/i.test(text) && /water|borehole|pump|hydraulic|\bWASH\b|irrigation/i.test(tenderText)) score += 12;
   if (/road|bridge|highway|pavement|transport.*infra/i.test(text) && /road|bridge|highway|pavement|transport.*infra/i.test(tenderText)) score += 12;
   if (/structural|foundation|geotechnical/i.test(text) && /structural|foundation|geotechnical/i.test(tenderText)) score += 8;
-  if (/ESIA|ESMP|environmental.*impact|social.*safeguard/i.test(text) && /ESIA|ESMP|environmental.*impact|social.*safeguard/i.test(tenderText)) score += 12;
-  if (/ICT|software|information.*system|MIS|ERP|digital.*platform/i.test(text) && /ICT|software|information.*system|MIS|ERP|digital/i.test(tenderText)) score += 12;
+  if (/\bESIA\b|\bESMP\b|environmental.*impact|social.*safeguard/i.test(text) && /\bESIA\b|\bESMP\b|environmental.*impact|social.*safeguard/i.test(tenderText)) score += 12;
+  if (/\bICT\b|software|information.*system|\bMIS\b|\bERP\b|digital.*platform/i.test(text) && /\bICT\b|software|information.*system|\bMIS\b|\bERP\b|digital/i.test(tenderText)) score += 12;
   if (/urban|master plan|municipal|spatial.*plan/i.test(text) && /urban|master plan|municipal|spatial.*plan/i.test(tenderText)) score += 10;
   if (/school|university|campus|education/i.test(text) && /school|university|campus|education/i.test(tenderText)) score += 10;
   if (/social.*develop|advisory|capacity.*build|community/i.test(text) && /social.*develop|advisory|capacity.*build|community/i.test(tenderText)) score += 8;
@@ -267,15 +279,15 @@ function expertScore(expert: ExpertLite, themes: ProposalTheme[], tenderText: st
   for (const t of themes) score += scoreTextAgainstTheme(text, t);
   // Role-match bonuses — discipline relevance to the detected tender scope
   if (/architect/i.test(text) && /architect|design|layout|space|building/i.test(tenderText)) score += 10;
-  if (/MEP|electrical|mechanical|sanitary/i.test(text) && /MEP|electrical|medical gas|equipment|sanitary|building.*service/i.test(tenderText)) score += 8;
+  if (/\bMEP\b|electrical|mechanical|sanitary/i.test(text) && /\bMEP\b|electrical|medical gas|equipment|sanitary|building.*service/i.test(tenderText)) score += 8;
   if (/biomedical|bio-medical/i.test(text) && /biomedical|bio-medical|medical equipment/i.test(tenderText)) score += 12;
   if (/structural/i.test(text) && /structural|adequacy|seismic|building|bridge/i.test(tenderText)) score += 8;
   if (/project manager|team leader|principal|director|programme.*manager/i.test(text)) score += 4;
   if (/geotechnical|hydrogeol|drilling/i.test(text) && /geotechnical|drilling|borehole|soil|foundation/i.test(tenderText)) score += 10;
-  if (/environmental|social|safeguard|ESIA|ESMP/i.test(text) && /environmental|ESIA|ESMP|ESF|World Bank|safeguard/i.test(tenderText)) score += 10;
-  if (/hydraulic|water.*engineer|civil.*engineer.*water|hydrologist/i.test(text) && /water supply|hydraulic|borehole|WASH|irrigation/i.test(tenderText)) score += 10;
+  if (/environmental|social|safeguard|\bESIA\b|\bESMP\b/i.test(text) && /environmental|\bESIA\b|\bESMP\b|\bESF\b|World Bank|safeguard/i.test(tenderText)) score += 10;
+  if (/hydraulic|water.*engineer|civil.*engineer.*water|hydrologist/i.test(text) && /water supply|hydraulic|borehole|\bWASH\b|irrigation/i.test(tenderText)) score += 10;
   if (/road.*engineer|highway|transport.*engineer|pavement/i.test(text) && /road|bridge|highway|pavement|transport/i.test(tenderText)) score += 10;
-  if (/ICT|software|system.*analyst|database|network.*engineer|developer/i.test(text) && /ICT|software|system|MIS|ERP|digital/i.test(tenderText)) score += 10;
+  if (/\bICT\b|software|system.*analyst|database|network.*engineer|developer/i.test(text) && /\bICT\b|software|system|\bMIS\b|\bERP\b|digital/i.test(tenderText)) score += 10;
   if (/urban.*planner|town.*planner|spatial.*planner|GIS/i.test(text) && /urban|master plan|spatial.*plan|GIS/i.test(tenderText)) score += 8;
   if (/social.*specialist|community.*develop|livelihoods/i.test(text) && /social|community|stakeholder|livelihood/i.test(tenderText)) score += 8;
   if (/education.*specialist|school.*designer|campus.*architect/i.test(text) && /school|university|campus|education/i.test(tenderText)) score += 8;
@@ -313,7 +325,7 @@ function detectEvaluationCriteria(tenderText: string): string[] {
   if (/technical understanding|facility design|clinical|healthcare.*design/i.test(evalSection)) criteria.push("Technical understanding of healthcare facility design — demonstrate clinical workflow, IPC, MEP integration knowledge");
 
   // Water/Infrastructure
-  if (/water.*experience|water.*project|hydraulic|WASH|sanitation.*experience/i.test(evalSection)) criteria.push("Relevant water supply / sanitation / hydraulic engineering project experience — lead with named schemes, capacities, and client references");
+  if (/water.*experience|water.*project|hydraulic|\bWASH\b|sanitation.*experience/i.test(evalSection)) criteria.push("Relevant water supply / sanitation / hydraulic engineering project experience — lead with named schemes, capacities, and client references");
   if (/borehole|groundwater|hydrogeol/i.test(evalSection)) criteria.push("Hydrogeological and borehole investigation expertise — show yield, depth, and field supervision evidence");
 
   // Road/Bridge
@@ -325,7 +337,7 @@ function detectEvaluationCriteria(tenderText: string): string[] {
   if (/World Bank|UNDP|donor.*standard|safeguard.*framework/i.test(evalSection)) criteria.push("Donor compliance track record (World Bank ESF, IFC PS, or equivalent) — position as risk reduction advantage");
 
   // ICT
-  if (/ICT.*experience|system.*develop|software.*experience|MIS|ERP/i.test(evalSection)) criteria.push("Relevant ICT / system development experience — show deployed systems, user counts, and client references");
+  if (/\bICT\b.*experience|system.*develop|software.*experience|\bMIS\b|\bERP\b/i.test(evalSection)) criteria.push("Relevant ICT / system development experience — show deployed systems, user counts, and client references");
   if (/data.*security|cyber|network.*design/i.test(evalSection)) criteria.push("Technical depth in data security, network architecture, and system resilience");
 
   // Urban Planning
@@ -405,12 +417,38 @@ function detectThemes(tenderText: string): ProposalTheme[] {
 
 export function inferSector(tenderText: string): string {
   if (/health|hospital|medical|clinic|specialty.*cent/i.test(tenderText)) return "Healthcare / Medical Facility Design";
-  if (/water supply|borehole|pump|hydraulic|irrigation|WASH|sanitation|wastewater/i.test(tenderText)) return "Water & Sanitation Infrastructure";
+  // ─── Agriculture BEFORE water ──────────────────────────────────────
+  // "irrigation scheme" + "crop production" = agriculture; the water
+  // pattern below also has "irrigation" but a pure agriculture tender
+  // should match here first.
+  if (/agricultur|livestock|crop\s+(production|management)|fishery|agribusiness|food\s+security|smallholder|farmer\s+(field|training)|value.chain/i.test(tenderText)) return "Agriculture & Food Security";
+  // Word boundaries on WASH (4 chars) — otherwise "Washington" matches.
+  if (/water supply|borehole|pump|hydraulic|irrigation|\bWASH\b|sanitation|wastewater/i.test(tenderText)) return "Water & Sanitation Infrastructure";
   if (/road.*design|road.*rehab|bridge.*design|highway|pavement.*design/i.test(tenderText)) return "Road / Bridge / Transport Infrastructure";
-  if (/ESIA|ESMP|environmental.*impact|social.*safeguard|resettlement|biodiversity.*assess/i.test(tenderText)) return "Environmental & Social Impact Assessment";
-  if (/ICT|software.*develop|information.*system|digital.*platform|MIS|ERP|database.*system/i.test(tenderText)) return "ICT / Digital Systems";
+  // Word boundaries on ESIA/ESMP — short abbreviations would otherwise
+  // match inside larger words.
+  if (/\bESIA\b|\bESMP\b|environmental.*impact|social.*safeguard|resettlement|biodiversity.*assess/i.test(tenderText)) return "Environmental & Social Impact Assessment";
+  // CRITICAL FIX: word boundaries on ICT / MIS / ERP. Before this:
+  //   • bare "ICT" matched "ICT" inside "predICT", "verdICT", "depICT",
+  //     "distrICT", "conflICT", "evICT", "restrICT" — every tender
+  //     mentioning "district health services" classified as ICT.
+  //   • bare "MIS" matched "mis" inside "optimISation", "subMISsion",
+  //     "comMISsion", "perMISsion" — every tender mentioning
+  //     "submission rules" or "optimisation" misclassified.
+  //   • bare "ERP" matched "erp" inside "supERPower", "tERPene".
+  // The proposal generator was producing ICT-flavored methodology for
+  // tenders that were actually water/education/agriculture/supply.
+  if (/\bICT\b|software.*develop|information.*system|digital.*platform|\bMIS\b|\bERP\b|database.*system/i.test(tenderText)) return "ICT / Digital Systems";
   if (/urban|master plan|municipal.*develop|eco.?park|spatial.*plan/i.test(tenderText)) return "Urban / Master Planning";
   if (/school.*design|university.*design|campus.*develop|education.*facilit/i.test(tenderText)) return "Education Facility Design";
+  // Financial / Audit Advisory BEFORE Social Development / Advisory —
+  // financial advisory IS a form of advisory services; the more specific
+  // pattern must win. Without this ordering "Financial advisory services
+  // for treasury optimisation" misclassified as the generic advisory bucket.
+  if (/financial\s+advisory|economic\s+analysis|due\s+diligence|valuation|audit\s+services|tax\s+consult/i.test(tenderText)) return "Financial / Audit Advisory";
+  if (/supply\s+of|procurement\s+of\s+(goods|equipment|materials)|equipment\s+supply|goods\s+procurement/i.test(tenderText)) return "Supply / Goods Procurement";
+  if (/capacity\s+build|training\s+services|institutional\s+strength|technical\s+assistance|trainer.of.trainers/i.test(tenderText)) return "Capacity Building / Advisory";
+  if (/solar\s+(power|farm|pv)|wind\s+(power|farm)|hydropower|grid\s+(connect|extension)|renewable\s+energy|power\s+(generation|transmission|distribution)/i.test(tenderText)) return "Energy & Power Infrastructure";
   if (/social.*develop|advisory.*service|institutional.*strength|capacity.*build|community.*develop/i.test(tenderText)) return "Social Development & Advisory";
   if (/hotel|hospitality|resort/i.test(tenderText)) return "Hospitality & Tourism";
   if (/factory|industrial|manufacturing/i.test(tenderText)) return "Industrial / Manufacturing";
