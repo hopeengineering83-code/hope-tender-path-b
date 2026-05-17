@@ -40,14 +40,51 @@ export async function MatchingQualityPanel({ tenderId }: { tenderId: string }) {
     vaultReviewedExperts: companyReadiness.totals.reviewedExperts,
     vaultReviewedProjects: companyReadiness.totals.reviewedProjects,
   });
-  const ready = quality.severity !== "POOR";
+
+  // ─── State-aware panel UX ─────────────────────────────────────────
+  // Pre-fix the panel used a binary `ready = severity !== "POOR"`
+  // headline, which conflated 5 meaningfully different matching states.
+  // The screenshot showed "Matches appear usable" for a tender where
+  // matches DIDN'T exist yet (state = VAULT_AWAITS_ENGINE) — misleading.
+  // Now the panel renders the right headline, colour, and action for
+  // each of the 5 states emitted by the matching state machine.
+  type PanelStyle = { color: "green" | "amber" | "red"; title: string };
+  const panelStyle: PanelStyle = (() => {
+    switch (quality.state) {
+      case "MATCHES_REVIEWED":
+        return { color: "green", title: "Matches appear usable" };
+      case "MATCHING_NOT_REQUIRED":
+        return { color: "green", title: "Matching not required by this tender" };
+      case "VAULT_AWAITS_ENGINE":
+        return {
+          color: "amber",
+          title: `Run Engine to create ${quality.vaultReviewedExperts} expert + ${quality.vaultReviewedProjects} project match(es) from the vault`,
+        };
+      case "MATCHES_WEAK":
+        return { color: "red", title: "Matching quality is weak — review/import stronger evidence" };
+      case "NO_VAULT":
+        return { color: "red", title: "No vault evidence to match against — import experts / projects first" };
+      default:
+        return { color: "red", title: "Matching quality is weak" };
+    }
+  })();
+  const sectionCls = panelStyle.color === "green"
+    ? "border-green-200 bg-green-50"
+    : panelStyle.color === "amber"
+      ? "border-amber-200 bg-amber-50"
+      : "border-red-200 bg-red-50";
+  const labelCls = panelStyle.color === "green"
+    ? "text-green-700"
+    : panelStyle.color === "amber"
+      ? "text-amber-700"
+      : "text-red-700";
 
   return (
-    <section className={`mb-4 rounded-2xl border p-5 shadow-sm ${ready ? "border-green-200 bg-green-50" : "border-red-200 bg-red-50"}`}>
+    <section className={`mb-4 rounded-2xl border p-5 shadow-sm ${sectionCls}`}>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <p className={`text-xs font-semibold uppercase tracking-wide ${ready ? "text-green-700" : "text-red-700"}`}>Matching quality</p>
-          <h2 className="mt-1 text-lg font-bold text-slate-900">{ready ? "Matches appear usable" : "Matching quality is weak"}</h2>
+          <p className={`text-xs font-semibold uppercase tracking-wide ${labelCls}`}>Matching quality</p>
+          <h2 className="mt-1 text-lg font-bold text-slate-900">{panelStyle.title}</h2>
           <p className="mt-1 text-sm text-slate-600">Checks selected and reviewed expert/project matches before proposal generation.</p>
         </div>
         <Link href={`/api/tenders/${tenderId}/matching-quality`} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50">
