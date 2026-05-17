@@ -20,6 +20,7 @@ import { runTenderEngine } from "../../../../../lib/engine/run-tender-engine";
 import { assessExtractionQuality } from "../../../../../lib/extraction-quality";
 import { actionableEngineError } from "../../../../../lib/engine/actionable-engine-error";
 import { enqueueJob } from "../../../../../lib/ai-jobs";
+import { computeStoredMetadataPatch, listInvalidStoredFields } from "../../../../../lib/engine/sanitize-stored-metadata";
 
 // Vercel route timeout — engine runs analyze + extract + match. Default
 // 10s is too short. 60 = Hobby max; Pro uses its own plan limit.
@@ -63,6 +64,29 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         hint: "Upload the tender/RFP document first, then run AI Analyze or Run Engine.",
         diagnosticId,
       }, { status: 422 });
+    }
+
+    // ─── Defensive metadata sanitisation ──────────────────────────────
+    // NULL any stored values that fail the canonical validators BEFORE
+    // the engine pipeline reads them. This prevents corrupted strings
+    // (TOC fragments, stop-word references, non-whitelist countries,
+    // contact fragments) from flowing into AI prompts, theme detection,
+    // and generated cover letters. The re-extract route can later
+    // recover real values from the stored PDF text; this layer just
+    // makes sure the engine never operates on garbage.
+    //
+    // Audit logs the nullified fields so we can trace which tenders
+    // came in with legacy corruption that never got cleaned via the
+    // user-facing banner.
+    const invalidFields = listInvalidStoredFields(tender);
+    if (invalidFields.length > 0) {
+      const patch = computeStoredMetadataPatch(tender);
+      await prisma.tender.update({ where: { id: tender.id }, data: patch });
+      console.warn(`[engine] tender=${tender.id} sanitised ${invalidFields.length} invalid stored field(s) before run: ${invalidFields.join(", ")}`);
+      // Reload tender with the patch applied so subsequent code reads clean data.
+      for (const field of invalidFields) {
+        (tender as Record<string, unknown>)[field] = null;
+      }
     }
 
     const extractionReports = tender.files.map((file) => ({
