@@ -67,17 +67,81 @@ const SECTOR_VOCABULARY: Record<string, VocabularyEntry[]> = {
     { term: "climate-responsive", context: "Climate-responsive design (natural ventilation, shading, daylighting) is applied to reduce operating cost and improve learner comfort." },
     { term: "fire egress", context: "Fire egress, emergency lighting, and assembly-point design comply with the applicable life-safety code." },
   ],
+  energy: [
+    { term: "load forecast", context: "Load forecasting uses historical consumption data, growth projections, and coincidence factors to size generation and transmission capacity." },
+    { term: "HOMER", context: "HOMER Pro or equivalent software is used for hybrid off-grid system optimisation (solar, storage, diesel backup)." },
+    { term: "single-line diagram", context: "A single-line diagram (SLD) is produced for each substation and distribution feeder, showing protection coordination and switching sequences." },
+    { term: "grid code", context: "Grid code compliance is verified for all interconnection points, covering frequency regulation, voltage profile, and fault-level contribution." },
+    { term: "SCADA", context: "Supervisory Control and Data Acquisition (SCADA) is included for real-time monitoring, remote control, and performance logging of the generation/distribution system." },
+  ],
+  agriculture: [
+    { term: "agronomic baseline", context: "An agronomic baseline establishes current crop yield, soil fertility, water availability, and pest/disease pressure for the project area." },
+    { term: "irrigation efficiency", context: "Irrigation efficiency targets are set for each scheme, distinguishing conveyance, distribution, and field-application losses." },
+    { term: "value-chain", context: "Value-chain analysis covers input supply, production, post-harvest handling, market linkages, and price formation to identify key constraints." },
+    { term: "FAO", context: "Crop-water requirements are calculated using FAO Penman-Monteith reference evapotranspiration, calibrated against local weather-station data." },
+    { term: "yield model", context: "Yield modelling under current and improved management scenarios provides the economic foundation for cost-benefit analysis." },
+  ],
+  mining: [
+    { term: "geotechnical investigation", context: "A phased geotechnical investigation programme (logging, sampling, laboratory testing, reporting) follows the Q-system or RMR classification." },
+    { term: "slope stability", context: "Slope stability analysis uses Limit Equilibrium (Slice Method) and/or numerical methods for critical pit walls and waste-dump embankments." },
+    { term: "tailings management", context: "Tailings Storage Facility (TSF) design follows MAC/ANCOLD guidelines with stability monitoring, seepage control, and closure provisions." },
+    { term: "blast design", context: "Blast design parameters (burden, spacing, powder factor, timing) are optimised for fragmentation, vibration, and flyrock control." },
+    { term: "JORC", context: "Mineral Resource estimation follows the JORC Code (or equivalent national standard), with documented confidence classification." },
+  ],
+  port: [
+    { term: "berth design", context: "Berth design is based on vessel-class parameters (LOA, beam, DWT, draft) with allowance for tidal range, wave climate, and mooring loads." },
+    { term: "container throughput", context: "Container throughput projections drive equipment selection (quay cranes, RTGs), yard dimensioning, and gate capacity planning." },
+    { term: "port master plan", context: "A port master plan allocates land and water-side zones, phasing capital investment against traffic projections over a 20–30 year horizon." },
+    { term: "dredging", context: "Dredging scope, equipment selection, spoil disposal plan, and environmental monitoring are defined based on navigation-channel maintenance data." },
+    { term: "pilotage", context: "Pilotage procedures, VTS integration, and vessel-traffic simulation are addressed in the nautical safety study." },
+  ],
+  oil_gas: [
+    { term: "P&ID", context: "Piping and Instrumentation Diagrams (P&IDs) are produced at the appropriate level of detail for each process unit, following ISA 5.1 symbology." },
+    { term: "HAZOP", context: "Hazard and Operability Study (HAZOP) is conducted at the defined-design stage, with all action items tracked to close-out." },
+    { term: "pipeline integrity", context: "Pipeline integrity management follows API 570 (in-service inspection) and API 1160 (pipeline management systems), including ILI run planning." },
+    { term: "API", context: "Process and mechanical equipment is specified and inspected in accordance with applicable API standards (API 650 tanks, API 610 pumps, etc.)." },
+    { term: "HSE plan", context: "A project-specific Health, Safety and Environment Plan is prepared covering ALARP demonstration, emergency response, and permit-to-work system." },
+  ],
+  financial: [
+    { term: "KYC", context: "Know-Your-Customer (KYC) procedures are documented with risk-based tiering, data capture requirements, and refresh intervals." },
+    { term: "AML", context: "Anti-Money Laundering (AML) framework design includes transaction monitoring rules, suspicious-transaction reporting, and staff training programme." },
+    { term: "IFRS", context: "Financial statements and management accounts follow IFRS (or applicable national GAAP), with reconciliation to regulatory reporting." },
+    { term: "credit risk", context: "Credit risk assessment methodology covers probability of default, loss given default, exposure at default, and portfolio-level concentration limits." },
+    { term: "Basel", context: "Capital adequacy analysis follows Basel III/IV standards, covering credit, market, and operational risk risk-weighted assets." },
+  ],
+  telecoms: [
+    { term: "spectrum", context: "Spectrum requirements, licensing conditions, and co-existence management are addressed in the radio-frequency planning document." },
+    { term: "base station", context: "Base station (BTS/eNB/gNB) site selection follows coverage analysis, interference mitigation, and civil/structural feasibility screening." },
+    { term: "backhaul", context: "Backhaul connectivity (fibre, microwave, or satellite) is dimensioned for peak throughput, latency budget, and redundancy requirements." },
+    { term: "last-mile", context: "Last-mile access design distinguishes fixed broadband (FTTH, FTTB), wireless (LTE/5G FWA), and mixed-technology coverage scenarios." },
+    { term: "QoS", context: "Quality of Service (QoS) parameters — throughput, latency, jitter, packet loss — are specified for each service class and SLA tier." },
+  ],
+  building: [
+    { term: "BIM", context: "Building Information Modelling (BIM) is used for coordinated multi-discipline design, clash detection, and construction sequencing." },
+    { term: "MEP", context: "Mechanical, Electrical, and Plumbing (MEP) design is fully integrated with the architectural and structural models." },
+    { term: "fire compartmentation", context: "Fire compartmentation strategy, fire doors, smoke control, and emergency lighting are designed to the applicable fire code and insurer requirements." },
+    { term: "HVAC", context: "HVAC system design includes load calculation, system selection, air distribution, and commissioning protocol." },
+    { term: "BOQ", context: "A fully priced Bill of Quantities (BOQ) is prepared per RICS / local measurement standard, serving as the basis for tendering and cost control." },
+  ],
 };
 
 function detectVocabulary(primarySector: string): VocabularyEntry[] {
   const sector = primarySector.toLowerCase();
   if (/health|hospital|medical|clinic/.test(sector)) return SECTOR_VOCABULARY.healthcare;
   if (/water|borehole|hydraulic|sanitary/.test(sector)) return SECTOR_VOCABULARY.water;
-  if (/road|bridge|highway|pavement|transport/.test(sector)) return SECTOR_VOCABULARY.road;
-  if (/urban|master plan|municipal/.test(sector)) return SECTOR_VOCABULARY.urban;
+  if (/road|bridge|highway|pavement/.test(sector)) return SECTOR_VOCABULARY.road;
+  if (/urban|master.?plan|municipal/.test(sector)) return SECTOR_VOCABULARY.urban;
   if (/environmental|esia|esmp|safeguard/.test(sector)) return SECTOR_VOCABULARY.environmental;
   if (/ict|software|digital|mis|erp/.test(sector)) return SECTOR_VOCABULARY.ict;
   if (/school|university|campus|education/.test(sector)) return SECTOR_VOCABULARY.education;
+  if (/energy|power|solar|wind|grid|generation|transmission/.test(sector)) return SECTOR_VOCABULARY.energy;
+  if (/agri|farm|crop|irrigation|livestock|rural develop/.test(sector)) return SECTOR_VOCABULARY.agriculture;
+  if (/mining|mineral|quarry|extracti/.test(sector)) return SECTOR_VOCABULARY.mining;
+  if (/\bport\b|harbor|harbour|maritime|quay|berth|shipping terminal/.test(sector)) return SECTOR_VOCABULARY.port;
+  if (/oil|gas|petroleum|refinery|pipeline/.test(sector)) return SECTOR_VOCABULARY.oil_gas;
+  if (/finance|bank|micro.?finance|insurance|credit|lending|investment fund/.test(sector)) return SECTOR_VOCABULARY.financial;
+  if (/telecom|broadband|spectrum|mobile network|isp/.test(sector)) return SECTOR_VOCABULARY.telecoms;
+  if (/building|construct|architect|structure|facility|facilities/.test(sector)) return SECTOR_VOCABULARY.building;
   return [];
 }
 

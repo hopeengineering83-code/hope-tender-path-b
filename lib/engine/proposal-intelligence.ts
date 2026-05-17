@@ -416,6 +416,15 @@ export function inferSector(tenderText: string): string {
   if (/factory|industrial|manufacturing/i.test(tenderText)) return "Industrial / Manufacturing";
   if (/geotechnical|soil.*investigation|foundation.*design|seismic/i.test(tenderText)) return "Geotechnical & Structural Engineering";
   if (/renovation|modification|retrofit|existing building/i.test(tenderText)) return "Building Renovation & Adaptation";
+  // Extended sector detection — keeps downstream vocabulary enricher, quality scorer, and
+  // three-stage review table all aligned when the tender falls outside the legacy patterns.
+  if (/energy|power.*plant|solar.*farm|wind.*farm|grid.*connect|generation.*capacity|transmission.*line|substation.*design/i.test(tenderText)) return "Energy / Power Infrastructure";
+  if (/agri|irrigation.*scheme|crop.*yield|farm.*develop|value.?chain.*agri|livestock.*develop/i.test(tenderText)) return "Agriculture & Rural Development";
+  if (/mining|mineral.*extract|quarry.*design|pit.*design|tailings|ore.*body|blast.*design/i.test(tenderText)) return "Mining & Extractive Industries";
+  if (/\bport.*design|\bport.*master.*plan|berth.*design|quay.*design|harbour.*develop|dredging.*scheme|container.*terminal/i.test(tenderText)) return "Port / Maritime Infrastructure";
+  if (/pipeline.*design|oil.*facilit|gas.*facilit|upstream.*petroleum|HAZOP|P&ID|refinery|petrochemical/i.test(tenderText)) return "Oil & Gas / Petroleum";
+  if (/KYC|AML.*framework|core.*banking|microfinance.*system|credit.*risk.*model|IFRS.*implement|Basel|prudential.*regul/i.test(tenderText)) return "Financial Services / Banking";
+  if (/spectrum.*licen|base.*station.*design|backhaul.*design|last.?mile.*access|broadband.*network|telecoms.*infra|LTE.*deploy|5G.*rollout/i.test(tenderText)) return "Telecoms / Broadband Infrastructure";
   if (/architecture|building.*design|construction.*supervision|structural.*design/i.test(tenderText)) return "Building Design & Construction Supervision";
   return "General Consultancy / Engineering";
 }

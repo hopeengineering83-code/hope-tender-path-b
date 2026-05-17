@@ -122,8 +122,14 @@ Your operating principles for Section C:
    - Environmental/social → ESIA baseline, impact identification matrices, mitigation hierarchy, ESMP, stakeholder engagement, donor safeguard alignment.
    - ICT/digital → requirements analysis, architecture (app/database/network), data security, integration plan, UAT, training, go-live cutover.
    - Education facilities → space schedule, climate-responsive design, pupil-to-toilet ratio compliance, fire detection.
-   - Energy/power → load forecast, generation/transmission/distribution design, grid integration, environmental compliance.
-   - Agriculture → agronomic baseline, yield modelling, irrigation/drainage, post-harvest handling, value-chain analysis.
+   - Energy/power → load forecast, generation/transmission/distribution design, single-line diagram, SCADA, grid code compliance, environmental screening.
+   - Agriculture → agronomic baseline, crop-water demand (FAO Penman-Monteith), irrigation scheme design, value-chain analysis, post-harvest handling.
+   - Mining/extractives → geotechnical investigation (RMR/Q-system), resource estimation (JORC), pit design, slope stability, tailings management plan.
+   - Port/maritime → hydrographic survey, vessel-class parameters, berth and quay design, dredging scope, container throughput model, ISPS compliance.
+   - Oil & gas → process flow diagrams, P&IDs, HAZOP study, pipeline integrity management (API 570), HSE plan, permit-to-work system.
+   - Financial services → KYC/AML framework, credit risk methodology, IFRS alignment, Basel capital adequacy, digital banking architecture.
+   - Telecoms/broadband → spectrum licensing, base-station siting, backhaul dimensioning, last-mile access design, QoS parameters, MVNO/ISP regulatory compliance.
+   - Institutional/governance → Theory of Change, capacity assessment, HMIS design, organisational restructuring, change management framework.
    - Other sectors not listed above → use the sector's professional conventions as best you can identify them from the tender text. Do NOT default to generic engineering language.
 
 2. DELIVERABLE-DRIVEN WORK PLAN. Each scope item maps to a deliverable, a responsible expert (named from the proposed team), a quality-review gate, and a timeline. Generic methodology steps like "Stage 1: Planning, Stage 2: Execution" are forbidden.

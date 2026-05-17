@@ -77,6 +77,55 @@ function phasesForSector(primarySector: string): Phase[] {
     { phase: "Phase 4: Construction Supervision and Handover", milestones: "Materials testing, fire certificate, functional approval", responsibleRole: "Senior Resident Engineer", deliverables: "Progress reports; completion certificate; O&M manuals", duration: "Construction period + close-out" },
   ];
 
+  if (/energy|power|solar|wind|grid|generation|transmission/.test(sector)) return [
+    { phase: "Phase 1: Load Forecast & System Concept", milestones: "Load data collected; demand projections validated; system concept chosen", responsibleRole: "Power Systems Lead + Electrical Engineer", deliverables: "Load forecast report; generation/distribution concept; SLD draft", duration: "3 to 5 weeks" },
+    { phase: "Phase 2: Detailed Electrical Design", milestones: "SLD approved; equipment specified; grid-code compliance confirmed", responsibleRole: "Power Systems Lead", deliverables: "Detailed SLD; protection relay settings; cable schedules; equipment databook", duration: "6 to 10 weeks" },
+    { phase: "Phase 3: Environmental Screening & Procurement Support", milestones: "ESIA screening complete; tender documents issued", responsibleRole: "Environmental Lead + Procurement Advisor", deliverables: "Environmental screening report; procurement tender package; BOQ", duration: "4 to 6 weeks" },
+    { phase: "Phase 4: Construction Supervision & Commissioning", milestones: "SCADA installed; protection tested; energisation sign-off", responsibleRole: "Senior Resident Engineer + Power Systems Lead", deliverables: "Progress reports; test records; commissioning checklist; handover dossier", duration: "Construction period" },
+  ];
+
+  if (/agri|irrigation|farm|crop|livestock|rural develop/.test(sector)) return [
+    { phase: "Phase 1: Agronomic Baseline", milestones: "Soil and water data collected; crop-water demand calculated (FAO method)", responsibleRole: "Agronomist + Hydraulic Engineer", deliverables: "Baseline report; crop-water demand calculation; scheme concept", duration: "3 to 5 weeks" },
+    { phase: "Phase 2: Irrigation Scheme Design", milestones: "Canal/pipe network sized; pump station designed; BOQ prepared", responsibleRole: "Hydraulic Engineer + Civil Engineer", deliverables: "Design drawings; hydraulic model; BOQ; specifications", duration: "6 to 8 weeks" },
+    { phase: "Phase 3: Value-Chain & Institutional Analysis", milestones: "Market linkages assessed; water-user association design proposed", responsibleRole: "Agronomist + Social Development Specialist", deliverables: "Value-chain report; WUA establishment plan; O&M framework", duration: "4 to 6 weeks" },
+    { phase: "Phase 4: Construction Supervision & Handover", milestones: "Field testing; irrigation delivery verified; farmer training", responsibleRole: "Resident Engineer + Extension Agronomist", deliverables: "Progress reports; commissioning records; O&M manual; training records", duration: "Construction period + close-out" },
+  ];
+
+  if (/mining|mineral|quarry|extracti/.test(sector)) return [
+    { phase: "Phase 1: Geotechnical Investigation", milestones: "Drilling programme complete; samples tested; geotechnical model built", responsibleRole: "Geotechnical Lead + Geologist", deliverables: "Drill logs; laboratory results; geotechnical report", duration: "4 to 8 weeks" },
+    { phase: "Phase 2: Resource Estimation & Mine Plan", milestones: "JORC-compliant resource estimate; open-pit or underground mine plan", responsibleRole: "Mining Engineer + Geologist", deliverables: "Resource estimation report; mine plan; production schedule", duration: "6 to 10 weeks" },
+    { phase: "Phase 3: Feasibility & Risk Studies", milestones: "Slope stability confirmed; tailings plan approved; HAZOP done", responsibleRole: "Geotechnical Lead + Environmental Lead", deliverables: "Slope stability analysis; tailings management plan; feasibility report", duration: "6 to 8 weeks" },
+    { phase: "Phase 4: Regulatory Submission & Implementation", milestones: "Mining licence application submitted; construction / production begins", responsibleRole: "Project Manager + Environmental Lead", deliverables: "Licence application package; monitoring and management plan; implementation report", duration: "Engagement period" },
+  ];
+
+  if (/\bport\b|harbor|harbour|maritime|quay|berth|shipping terminal/.test(sector)) return [
+    { phase: "Phase 1: Hydrographic Survey & Traffic Demand", milestones: "Bathymetric survey complete; vessel-class parameters confirmed; throughput projections validated", responsibleRole: "Marine Engineer + Port Planner", deliverables: "Hydrographic survey; vessel-class sheet; traffic demand report", duration: "3 to 5 weeks" },
+    { phase: "Phase 2: Berth & Infrastructure Design", milestones: "Berth geometry approved; dredging scope defined; civil and marine drawings issued", responsibleRole: "Marine Structural Engineer + Civil Engineer", deliverables: "Detailed berth drawings; dredging specification; civil BOQ; equipment list", duration: "8 to 12 weeks" },
+    { phase: "Phase 3: Environmental & Nautical Safety", milestones: "Environmental baseline complete; nautical simulation done; pilotage procedures confirmed", responsibleRole: "Environmental Lead + Harbour Master Consultant", deliverables: "EIA / ESMP; nautical simulation report; pilotage and VTS plan", duration: "4 to 6 weeks" },
+    { phase: "Phase 4: Construction Supervision & Handover", milestones: "Dredging verified; quay commissioned; port operations trial run", responsibleRole: "Senior Resident Engineer + Marine Engineer", deliverables: "Progress reports; as-built drawings; commissioning records; O&M manual", duration: "Construction period" },
+  ];
+
+  if (/oil|gas|petroleum|pipeline|refinery|petrochemical/.test(sector)) return [
+    { phase: "Phase 1: FEED & Process Simulation", milestones: "Process flow diagram approved; P&ID rev 0 issued; equipment list confirmed", responsibleRole: "Lead Process Engineer", deliverables: "PFD; P&ID rev 0; equipment datasheet list; FEED report", duration: "6 to 10 weeks" },
+    { phase: "Phase 2: Detailed Engineering", milestones: "P&IDs at IFC status; equipment specified; HAZOP completed", responsibleRole: "Lead Process Engineer + Mechanical Lead + HSE Lead", deliverables: "Detailed P&IDs; equipment datasheets; HAZOP report; action close-out register", duration: "8 to 14 weeks" },
+    { phase: "Phase 3: Procurement & HSE Compliance", milestones: "Vendor packages issued; HSE plan approved; permit-to-work system in place", responsibleRole: "Procurement Lead + HSE Lead", deliverables: "Vendor data requirements; inspection test plans; project HSE plan; PTW system", duration: "6 to 10 weeks" },
+    { phase: "Phase 4: Construction Supervision & Commissioning", milestones: "Mechanical completion; pre-commissioning punch list cleared; handover dossier issued", responsibleRole: "Senior Resident Engineer + Commissioning Lead", deliverables: "Completion certificate; as-built P&IDs; commissioning records; handover dossier", duration: "Construction period" },
+  ];
+
+  if (/finance|bank|micro.?finance|insurance|credit|lending|investment fund/.test(sector)) return [
+    { phase: "Phase 1: Diagnostic & Gap Analysis", milestones: "Current-state assessment complete; regulatory gap analysis delivered", responsibleRole: "Financial Services Lead + Regulatory Specialist", deliverables: "Diagnostic report; gap analysis; KYC/AML risk assessment", duration: "3 to 5 weeks" },
+    { phase: "Phase 2: Framework Design", milestones: "KYC/AML framework approved; credit-risk model validated; IFRS alignment confirmed", responsibleRole: "Risk Management Lead + IT Architect", deliverables: "Policy and procedure manuals; risk model documentation; IT requirements specification", duration: "6 to 10 weeks" },
+    { phase: "Phase 3: Implementation & Training", milestones: "Core banking system configured; staff training complete; pilot live", responsibleRole: "Implementation Lead + Training Specialist", deliverables: "Configured system; training records; pilot assessment report", duration: "6 to 12 weeks" },
+    { phase: "Phase 4: Go-Live & Supervision", milestones: "Full go-live; first regulatory reporting cycle completed", responsibleRole: "Project Manager + Regulatory Specialist", deliverables: "Go-live report; regulatory submission; post-implementation review", duration: "4 to 8 weeks" },
+  ];
+
+  if (/telecom|broadband|spectrum|mobile network|isp/.test(sector)) return [
+    { phase: "Phase 1: Spectrum & Coverage Planning", milestones: "Spectrum licensing confirmed; RF planning and base-station siting complete", responsibleRole: "RF Planning Lead + Regulatory Specialist", deliverables: "Coverage heat-maps; spectrum plan; site-siting report; regulatory submission", duration: "4 to 6 weeks" },
+    { phase: "Phase 2: Network Architecture Design", milestones: "Core, backhaul, and last-mile architecture approved; QoS parameters defined", responsibleRole: "Network Architect", deliverables: "Network design document; backhaul dimensioning report; QoS specification", duration: "5 to 8 weeks" },
+    { phase: "Phase 3: Rollout & Integration", milestones: "Base stations installed; backhaul connected; integration with core tested", responsibleRole: "Rollout Manager + Systems Integration Lead", deliverables: "Site acceptance tests; integration test reports; KPI monitoring dashboard", duration: "8 to 16 weeks" },
+    { phase: "Phase 4: Optimisation & Handover", milestones: "Network KPIs within SLA; coverage verified; operator trained", responsibleRole: "Optimisation Engineer + Training Specialist", deliverables: "Network optimisation report; SLA baseline; operator training records; handover documentation", duration: "4 to 6 weeks" },
+  ];
+
   return [
     { phase: "Phase 1: Inception", milestones: "Inception report; scope confirmation; stakeholder map", responsibleRole: "Project Manager", deliverables: "Inception report; work plan; communication plan", duration: "1 to 2 weeks" },
     { phase: "Phase 2: Analysis and Design", milestones: "Substantive deliverable produced; client review", responsibleRole: "Discipline Leads", deliverables: "Draft deliverable; review record; revised deliverable", duration: "4 to 8 weeks" },

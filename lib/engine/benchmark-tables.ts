@@ -394,7 +394,12 @@ export function buildThreeStageReviewTable(companyName: string, primarySector: s
   const isICTTender = /ict|software|digital|database|system|platform|app(?:lication)?/.test(s);
   const isEnvTender = /environment|esia|esmp|safeguard|ecology|climate|biodiversity/.test(s);
   const isUrbanTender = /urban|master plan|land use|spatial|municipal|city/.test(s);
-  const isDesignTender = !isWaterTender && !isRoadTender && !isHealthcareTender && !isICTTender &&
+  const isEnergyTender = /energy|power|solar|wind|grid|generation|transmission|substation/.test(s);
+  const isAgricultureTender = /agri|farm|crop|irrigation|livestock|rural develop/.test(s);
+  const isMiningTender = /mining|mineral|quarry|extracti/.test(s);
+  const isPortTender = /\bport\b|harbor|harbour|maritime|quay|berth|shipping terminal/.test(s);
+  const isOilGasTender = /oil|gas|petroleum|refinery|pipeline/.test(s);
+  const isDesignTender = !isWaterTender && !isRoadTender && !isHealthcareTender && !isICTTender && !isEnergyTender && !isAgricultureTender && !isMiningTender && !isPortTender && !isOilGasTender &&
     /design|architect|building|construction|MEP|structural|engineer|consultancy|supervision/.test(s);
 
   const stage1Action = isWaterTender ? "30% Source Investigation & Demand Assessment"
@@ -403,6 +408,11 @@ export function buildThreeStageReviewTable(companyName: string, primarySector: s
     : isICTTender ? "30% Requirements Analysis & Architecture Review"
     : isEnvTender ? "30% Baseline Assessment & Scoping Report"
     : isUrbanTender ? "30% Land Use Survey & Concept Master Plan"
+    : isEnergyTender ? "30% Load Forecast & Preliminary System Design"
+    : isAgricultureTender ? "30% Agronomic Baseline & Scheme Concept"
+    : isMiningTender ? "30% Geotechnical Investigation & Resource Assessment"
+    : isPortTender ? "30% Hydrographic Survey & Traffic Demand Study"
+    : isOilGasTender ? "30% Front-End Engineering Design (FEED) Scope"
     : isDesignTender ? "30% Schematic Design"
     : "30% Inception / Approach Review";
   const stage1Detail = isWaterTender ? "yield, hydraulic model, pipe network, and pump station sizing confirmed"
@@ -411,6 +421,11 @@ export function buildThreeStageReviewTable(companyName: string, primarySector: s
     : isICTTender ? "functional requirements, system architecture, data model, and integration plan confirmed"
     : isEnvTender ? "baseline data collection, impact identification, and stakeholder map confirmed"
     : isUrbanTender ? "demographic analysis, land use mapping, and infrastructure demand confirmed"
+    : isEnergyTender ? "load forecast, generation/transmission sizing, grid-code review, and SLD confirmed"
+    : isAgricultureTender ? "soil and water baseline, crop-water demand, and irrigation concept confirmed"
+    : isMiningTender ? "drill programme, resource classification, geotechnical model, and mine plan confirmed"
+    : isPortTender ? "vessel-class parameters, berth layout, dredging scope, and throughput model confirmed"
+    : isOilGasTender ? "process simulation, P&ID rev 0, equipment list, and HAZOP scope confirmed"
     : isDesignTender ? "floor plans, zoning, and MEP routing confirmed"
     : "scope, methodology, and stakeholder map confirmed";
   const stage2Action = isWaterTender ? "60% Detailed Design Review"
@@ -419,6 +434,11 @@ export function buildThreeStageReviewTable(companyName: string, primarySector: s
     : isICTTender ? "60% Detailed Design & Development Specification"
     : isEnvTender ? "60% Draft ESIA / ESMP Review"
     : isUrbanTender ? "60% Draft Master Plan & Implementation Framework"
+    : isEnergyTender ? "60% Detailed Electrical Design & Tender Package"
+    : isAgricultureTender ? "60% Detailed Irrigation/Infrastructure Design"
+    : isMiningTender ? "60% Detailed Mining Study & Feasibility Report"
+    : isPortTender ? "60% Detailed Berth & Infrastructure Design"
+    : isOilGasTender ? "60% Detailed Engineering & HAZOP Close-Out"
     : isDesignTender ? "60% Developed Design"
     : "60% Substantive Deliverable Review";
   const stage2Detail = isWaterTender ? "network model, pump station, treatment plant, and BOQ coordinated"
@@ -427,17 +447,29 @@ export function buildThreeStageReviewTable(companyName: string, primarySector: s
     : isICTTender ? "database schema, API contracts, UI prototypes, and security review completed"
     : isEnvTender ? "impact matrices, mitigation measures, and ESMP actions reviewed"
     : isUrbanTender ? "zoning regulations, phasing plan, and infrastructure costing reviewed"
+    : isEnergyTender ? "SLD, protection relay settings, cable schedules, and grid-code compliance reviewed"
+    : isAgricultureTender ? "canal/pipe network, structures, BOQ, and O&M framework reviewed"
+    : isMiningTender ? "pit design, waste-dump stability, tailings plan, and cost model reviewed"
+    : isPortTender ? "civil and marine drawings, dredging specification, and equipment list reviewed"
+    : isOilGasTender ? "detailed P&IDs, equipment databooks, vendor packages, and HAZOP actions reviewed"
     : isDesignTender ? "all disciplines coordinated, specifications drafted"
     : "all work-streams coordinated, draft outputs produced";
   const stage3Action = isWaterTender || isRoadTender ? "100% Pre-Issue Tender Package"
     : isHealthcareTender ? "100% Regulatory Submission Package"
     : isICTTender ? "100% UAT & Go-Live Readiness Package"
+    : isEnergyTender ? "100% Pre-Issue Construction Package"
+    : isAgricultureTender || isMiningTender || isPortTender || isOilGasTender ? "100% Final Report & Deliverable Package"
     : isDesignTender ? "100% Pre-Issue Final Package"
     : "100% Pre-Submission Final Package";
   const stage3Detail = isWaterTender ? "complete hydraulic design, BOQ, specifications, and O&M manual finalised"
     : isRoadTender ? "complete drawings, BOQ, specifications, and road-safety audit finalised"
     : isHealthcareTender ? "complete drawing package, regulatory approval documentation, and commissioning plan finalised"
     : isICTTender ? "complete system, test reports, training materials, and handover documentation finalised"
+    : isEnergyTender ? "complete electrical drawings, protection settings, BOQ, and commissioning checklist finalised"
+    : isAgricultureTender ? "complete design drawings, BOQ, agronomic plan, and O&M manual finalised"
+    : isMiningTender ? "complete feasibility study, mine plan, tailings closure plan, and regulatory submission finalised"
+    : isPortTender ? "complete marine/civil drawings, dredging specification, equipment list, and operation manual finalised"
+    : isOilGasTender ? "complete engineering deliverable list, vendor data, safety case, and handover dossier finalised"
     : isDesignTender ? "complete drawing package, BOQ, and specifications finalised"
     : "complete deliverable package, supporting evidence, and sign-off finalised";
 

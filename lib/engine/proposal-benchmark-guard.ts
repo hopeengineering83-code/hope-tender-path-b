@@ -244,7 +244,7 @@ export function scoreBenchmarkProposalMarkdown(markdown: string, input: Benchmar
     strengths.push("Compliance/bid-review strategy is visible.");
   } else gaps.push("Compliance and bid-review strategy is not visible enough.");
 
-  const depthThreshold = /health|hospital|water|road|bridge|sanit|hydraulic/i.test(input.primarySector ?? "") ? 10000 : 8000;
+  const depthThreshold = /health|hospital|medical|clinic|water|road|bridge|sanit|hydraulic|environmental|esia|esmp|financial|bank|microfinance|telecom|broadband|port|maritime|harbour|harbor|energy|power|solar|wind|mining|mineral|oil|gas|petroleum|pipeline|urban|master.?plan|institutional|governance/i.test(input.primarySector ?? "") ? 10000 : 8000;
   const depthPartial = Math.round(depthThreshold * 0.56);
   if (markdown.length >= depthThreshold) {
     score += 5;
@@ -253,6 +253,18 @@ export function scoreBenchmarkProposalMarkdown(markdown: string, input: Benchmar
     score += 3;
     gaps.push("Proposal has moderate depth but may still be shorter than benchmark quality.");
   } else gaps.push("Proposal is too short for benchmark-quality technical submission.");
+
+  // C.2.x sub-section depth — the quality scorer already checks this but the
+  // benchmark guard needs its own check so it surfaces in the benchmark score too.
+  {
+    const c2Count = (markdown.match(/^###\s+C\.2\.\d+/gm) ?? []).length;
+    if (c2Count > 0 && c2Count < 6) {
+      gaps.push(`Section C.2 has only ${c2Count} sub-section(s) — minimum 6 required for a benchmark-quality methodology.`);
+      score = Math.max(0, score - 5);
+    } else if (c2Count >= 6) {
+      strengths.push(`Section C.2 has ${c2Count} sub-sections — adequate methodology depth.`);
+    }
+  }
 
   if (!hasForbiddenWeakness(markdown)) {
     score += 5;

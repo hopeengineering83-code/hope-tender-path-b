@@ -960,6 +960,14 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     console.warn(`[generate-elite] No projects selected for tender — falling back to ${projects.length} reviewed vault project(s).`);
   }
 
+  // Zero-evidence guard: when both the selected records AND the vault are empty,
+  // log a production warning so it surfaces in Vercel logs. The AI will still
+  // run but its output will be generic — the user should add and review experts
+  // and projects before generating a submission-ready proposal.
+  if (experts.length === 0 && projects.length === 0) {
+    console.warn(`[generate-elite] ZERO-EVIDENCE: No reviewed experts or projects available for tender "${tender.title ?? tender.id}". Proposal will lack specific evidence citations — add and review experts/projects before generating.`);
+  }
+
   // Warn about draft records silently excluded from generation (they are not blocked here —
   // the route gate handles blocking. This provides auditability in the return value.)
   const excludedDraftExperts = allSelectedExperts.filter((e) => e.trustLevel !== "REVIEWED");
@@ -1405,6 +1413,17 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
           : generateBenchmarkProposalWithAI(aiInput),
         PROPOSAL_AI_TIMEOUT_MS,
       );
+      // Retry once when the AI returns a near-empty response (< 500 chars) — the first
+      // call likely hit an apology / refusal / transient error that resolved quickly, so
+      // a second attempt has a good chance of succeeding within the remaining budget.
+      // Only retry on the single-call path; the parallel path has already split the
+      // budget across four independent section calls, so a retry per-section would
+      // risk hitting the Vercel timeout wall.
+      if (!useParallel && (!sourceMarkdown || sourceMarkdown.trim().length < 500)) {
+        console.warn(`[generate-elite] AI returned near-empty output (${sourceMarkdown?.trim().length ?? 0} chars) — retrying once.`);
+        const retryTimeout = Math.min(PROPOSAL_AI_TIMEOUT_MS, 40_000);
+        sourceMarkdown = await withProposalAiTimeout(generateBenchmarkProposalWithAI(aiInput), retryTimeout);
+      }
       // Canonical name normalization — fast post-assembly pass that replaces
       // minor expert-name variations (Dr. X vs X, different middle initials)
       // with the authoritative fullName from the Expert record, and strips
