@@ -18,7 +18,55 @@ import { NextResponse } from "next/server";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { requireUser, unauthorizedResponse, forbiddenResponse } from "../../../../../lib/auth";
 import { inferTenderMetadata } from "../../../../../lib/engine/tender-metadata";
+import {
+  isValidClientName,
+  isValidReferenceNumber,
+  isValidCountry,
+  isValidClientContact,
+} from "../../../../../lib/engine/metadata-validators";
 import { logAction } from "../../../../../lib/audit";
+
+// ─── Root-cause fix for "Re-extract from PDF" doesn't clean corruption ──
+// PRIOR BUG: tryFill used "fill-empty-only" semantics, treating any
+// non-empty stored value as a manual edit to preserve. That correctly
+// protected user edits but ALSO protected corrupted extractions from a
+// previous run. Production showed:
+//   • reference = "only"                  (regex captured a stop-word)
+//   • country = "A ddis Ababa"            (OCR fragment, not a country)
+//   • clientName = "references (where..." (TOC fragment, not an entity)
+//   • clientContactName = "s Contact Person" (apostrophe leak)
+// Re-extract preserved every one of these because they aren't empty.
+// User clicked "Re-extract from PDF" → 0 fields updated → corruption
+// persisted forever.
+//
+// FIX: a stored value is considered "overridable" when EITHER:
+//   (a) it's empty, OR
+//   (b) it fails the canonical validator for that field
+// The new validators are the SAME ones inferTenderMetadata uses on
+// extraction, so this is round-trip consistent — if the validator
+// rejects the extractor output, it ALSO rejects the stored value of the
+// same shape, and re-extract gets to overwrite.
+
+/**
+ * Per-field validator. Returns true when the stored value is a valid
+ * exemplar of that field's expected shape — meaning we should PRESERVE
+ * it (treat as user edit). Returns false when the stored value is empty
+ * or invalid — meaning we should OVERWRITE it from the new extraction.
+ *
+ * Fields not listed here use the legacy isEmpty-only check (no shape
+ * validator available, e.g. budget numbers, dates, free-text addresses).
+ */
+function isValidStoredValue(field: string, value: unknown): boolean {
+  if (value === null || value === undefined) return false;
+  if (typeof value === "string" && value.trim() === "") return false;
+  switch (field) {
+    case "clientName":         return isValidClientName(String(value));
+    case "reference":          return isValidReferenceNumber(String(value));
+    case "country":            return isValidCountry(String(value));
+    case "clientContactName":  return isValidClientContact(String(value));
+    default:                   return true; // No validator → treat non-empty as valid.
+  }
+}
 
 export const maxDuration = 30;
 export const dynamic = "force-dynamic";
@@ -56,24 +104,33 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   const fallbackName = tender.files[0]?.originalFileName ?? "uploaded-tender";
   const metadata = inferTenderMetadata(combinedText, fallbackName);
 
-  // ─── Merge strategy: fill empty columns only ────────────────────────────
-  // Never OVERWRITE a value the user has manually edited. The extractor
-  // may improve over time and return better matches, but the user's
-  // explicit edits are the source of truth.
+  // ─── Merge strategy: fill empty OR overwrite invalid ────────────────────
+  // Pre-fix: pure fill-empty-only. Manual edits were preserved (good) but
+  // corrupted extractions were ALSO preserved (bad — see big comment at
+  // top of file).
+  // Post-fix: a stored value is overridable when it's empty OR fails the
+  // canonical validator for that field. Manual edits that are VALID are
+  // still preserved.
   const isEmpty = (v: unknown) => v === null || v === undefined || (typeof v === "string" && v.trim() === "");
 
   const update: Record<string, unknown> = {};
   const fieldsBefore: Record<string, unknown> = {};
   const fieldsAfter: Record<string, unknown> = {};
+  // Audit-log shape: which fields were OVERWRITTEN because the stored
+  // value failed validation (vs filled-because-empty). Helps the user
+  // see why corrupted DB rows finally got cleaned.
+  const overwrittenInvalid: string[] = [];
 
-  // Helper: set field only if currently empty AND extractor has a value.
   const tryFill = <K extends keyof typeof tender>(key: K, extracted: unknown) => {
     fieldsBefore[key as string] = tender[key];
-    if (isEmpty(tender[key]) && !isEmpty(extracted)) {
+    const stored = tender[key];
+    const storedIsOverridable = isEmpty(stored) || !isValidStoredValue(key as string, stored);
+    if (storedIsOverridable && !isEmpty(extracted)) {
       update[key as string] = extracted;
       fieldsAfter[key as string] = extracted;
+      if (!isEmpty(stored)) overwrittenInvalid.push(key as string);
     } else {
-      fieldsAfter[key as string] = tender[key];
+      fieldsAfter[key as string] = stored;
     }
   };
 
@@ -131,16 +188,20 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     action: "TENDER_UPDATE",
     entityType: "Tender",
     entityId: id,
-    description: `${actor.email} re-extracted metadata on "${tender.title}" — auto-filled ${updatedCount} field(s)`,
-    metadata: { tenderId: id, updatedCount, fields: Object.keys(update) },
+    description: `${actor.email} re-extracted metadata on "${tender.title}" — auto-filled ${updatedCount} field(s)${overwrittenInvalid.length > 0 ? `; OVERWROTE ${overwrittenInvalid.length} invalid value(s): ${overwrittenInvalid.join(", ")}` : ""}`,
+    metadata: { tenderId: id, updatedCount, fields: Object.keys(update), overwrittenInvalid },
   });
 
+  const overwriteSuffix = overwrittenInvalid.length > 0
+    ? ` Cleaned ${overwrittenInvalid.length} previously corrupted field(s): ${overwrittenInvalid.join(", ")}.`
+    : "";
   return NextResponse.json({
     success: true,
     updated: updatedCount,
     fields: Object.keys(update),
+    overwrittenInvalid,
     fieldsBefore,
     fieldsAfter,
-    message: `Auto-filled ${updatedCount} field(s) from the tender body. Refresh the page to see the changes.`,
+    message: `Auto-filled ${updatedCount} field(s) from the tender body.${overwriteSuffix} Refresh the page to see the changes.`,
   });
 }
