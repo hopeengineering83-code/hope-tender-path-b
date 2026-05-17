@@ -33,7 +33,12 @@ type EngineResponse = {
 // Async polling — escapes the 60s Vercel Hobby cap by enqueuing an
 // ENGINE_RUN AiJob and watching it from the browser.
 const POLL_INTERVAL_MS = 3000;
-const MAX_POLL_DURATION_MS = 5 * 60 * 1000;
+// Extended to 10 minutes for large tenders (the prior 5-minute window
+// kept giving up on multi-file analyses while the worker was still
+// running). The user-facing message also clarifies that a poll
+// timeout is NOT a worker failure — the job typically completes in
+// the background and the user just needs to refresh.
+const MAX_POLL_DURATION_MS = 10 * 60 * 1000;
 
 function actionLabel(action?: string) {
   if (action === "UPLOAD_TENDER_DOCUMENT") return "Upload the tender/RFP document, then run Engine.";
@@ -44,6 +49,7 @@ function actionLabel(action?: string) {
   if (action === "OPEN_TENDER_LIST") return "Return to tender list and reopen this tender.";
   if (action === "LOGIN_AGAIN") return "Sign in again, then retry.";
   if (action === "OPEN_EXTRACTION_ANALYSIS_MATCHING_QUALITY") return "Review Extraction, Analysis, and Matching Quality panels.";
+  if (action === "REFRESH_TO_CHECK_STATUS") return "Click \"Check status now\" or refresh — the worker is finishing in the background.";
   return null;
 }
 
@@ -192,10 +198,15 @@ export function EngineActionPanel({ tenderId }: { tenderId: string }) {
           jobId,
         });
       } else {
+        // A poll timeout is NOT a failure — the worker is still running
+        // on Vercel and will complete the job in the background. The
+        // user just needs to refresh (the page will pick up the new
+        // matches + analysis as soon as the worker writes them).
+        // Display a calm, actionable message instead of an error.
         setResult({
-          error: "Engine background run timed out after 5 minutes — the worker may still be running. Refresh the page to see the latest state.",
+          error: "Engine is still running in the background (10 min poll window elapsed). The worker continues — refresh in 1-2 minutes to see the completed engine run.",
           code: "ASYNC_POLL_TIMEOUT",
-          nextAction: "RETRY_AFTER_DATABASE_CHECK",
+          nextAction: "REFRESH_TO_CHECK_STATUS",
           jobId,
         });
       }
@@ -259,7 +270,7 @@ export function EngineActionPanel({ tenderId }: { tenderId: string }) {
           <p className="font-semibold">Background engine run in progress…</p>
           <p className="mt-1">{asyncStatus.message}</p>
           <p className="mt-2 text-xs text-indigo-600">
-            Job ID: <span className="font-mono">{asyncStatus.jobId}</span> · polls every 3s · 5-min ceiling
+            Job ID: <span className="font-mono">{asyncStatus.jobId}</span> · polls every 3s · 10-min poll ceiling (worker continues beyond that)
           </p>
         </div>
       )}
@@ -274,6 +285,46 @@ export function EngineActionPanel({ tenderId }: { tenderId: string }) {
           {action && <p className="mt-2"><strong>Next action:</strong> {action}</p>}
           {result.hint && <p className="mt-1"><strong>Hint:</strong> {result.hint}</p>}
           {result.detail && <p className="mt-1"><strong>Detail:</strong> {result.detail}</p>}
+
+          {/* ASYNC_POLL_TIMEOUT — the worker is still running on Vercel
+              but the browser stopped polling. Give the user a one-click
+              "Check status now" affordance that fetches the job once
+              more and either resolves (showing success/failure) or
+              prompts a page refresh. Avoids the user having to know
+              that "the worker may still be running" means "click
+              refresh to see the result". */}
+          {result.code === "ASYNC_POLL_TIMEOUT" && result.jobId && (
+            <button
+              type="button"
+              onClick={async () => {
+                try {
+                  const r = await fetch(`/api/ai-jobs/${result.jobId}`, { method: "GET" });
+                  const j = await r.json().catch(() => ({}));
+                  if (j?.status === "SUCCEEDED") {
+                    setResult({ success: true, async: true, jobId: result.jobId, error: "Engine completed successfully (background)." });
+                    startTransition(() => router.refresh());
+                  } else if (j?.status === "FAILED") {
+                    setResult({
+                      error: `Engine background run failed: ${j.errorMessage ?? "unknown worker error"}`,
+                      code: "ASYNC_ENGINE_FAILED",
+                      nextAction: "RETRY_OR_REDUCE_INPUT",
+                      jobId: result.jobId,
+                    });
+                  } else {
+                    setResult({
+                      ...result,
+                      error: `Worker status: ${j?.status ?? "RUNNING"} — still working. Try again in 1-2 min.`,
+                    });
+                  }
+                } catch {
+                  // Keep current result on network error — user can click again.
+                }
+              }}
+              className="mt-3 rounded-lg border border-indigo-300 bg-white px-4 py-2 text-sm font-semibold text-indigo-700 hover:bg-indigo-50"
+            >
+              Check status now
+            </button>
+          )}
 
           {Array.isArray(result.blockers) && result.blockers.length > 0 && (
             <div className="mt-3 rounded-lg bg-white p-3">
