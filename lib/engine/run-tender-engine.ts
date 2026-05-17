@@ -38,12 +38,30 @@ type MainEngineAIRematchState = {
   projectScoreBreakdowns: Record<string, Partial<Record<MatchPerspective, number>>>;
 };
 
-export async function runTenderEngine(tenderId: string, userId: string) {
+// ─── Progress callback ────────────────────────────────────────────────
+// Optional callback so callers (notably the ENGINE_RUN job handler) can
+// surface granular step progress to the user. Sync function — does NOT
+// block the engine. Caller is responsible for any async fan-out.
+// Pre-fix the ENGINE_RUN handler only emitted "engine.start" /
+// "engine.complete", so users running in background saw a single
+// "Starting engine run for tender X" message for up to 10 minutes,
+// then a binary success/fail. This callback lets the handler emit
+// real progress through the pipeline.
+export type EngineProgressCallback = (stepName: string, message: string) => void;
+
+export async function runTenderEngine(
+  tenderId: string,
+  userId: string,
+  onProgress?: EngineProgressCallback,
+) {
+  const progress = onProgress ?? (() => {});
+  progress("engine.load", "Loading tender + files");
   const tender = await prisma.tender.findFirst({
     where: { id: tenderId, userId },
     include: { files: { select: { id: true, originalFileName: true, mimeType: true, classification: true, extractedText: true } } },
   });
   if (!tender) throw new Error("Tender not found");
+  progress("engine.company", "Loading company vault (experts + projects + documents)");
 
   const company = await prisma.company.findUnique({
     where: { userId },
@@ -77,6 +95,7 @@ export async function runTenderEngine(tenderId: string, userId: string) {
   });
 
   try {
+    progress("engine.analyze", "Analyzing tender requirements (extracting structured requirements)");
     let analysis: ReturnType<typeof analyzeTender>;
     let analysisMethod: "AI" | "REGEX_FALLBACK_AI_DISABLED" | "REGEX_FALLBACK_NO_TEXT" | "REGEX_FALLBACK_AI_ERROR" = "REGEX_FALLBACK_AI_DISABLED";
     let analysisFallbackReason: string | null = null;
@@ -179,6 +198,7 @@ export async function runTenderEngine(tenderId: string, userId: string) {
       console.info(`[run-tender-engine] Inferred tender sector: "${inferredSector}" (used for matching instead of tender.category="${tender.category}")`);
     }
 
+    progress("engine.match", `Running deterministic matching across ${knowledge.experts.length} expert(s) and ${knowledge.projects.length} project(s)`);
     const initialMatching = buildMatches(analysis.requirements, knowledge, sectorForMatching, tender.title);
     let matching = applyMainEngineBestAvailableSelection({
       requirements: analysis.requirements,
@@ -186,6 +206,7 @@ export async function runTenderEngine(tenderId: string, userId: string) {
       expertTrust: new Map(knowledge.experts.map((expert) => [expert.id, expert.trustLevel])),
       projectTrust: new Map(knowledge.projects.map((project) => [project.id, project.trustLevel])),
     });
+    progress("engine.match.done", `Deterministic matching done: ${matching.expertMatches.length} expert candidates, ${matching.projectMatches.length} project candidates`);
 
     let mainEngineAIRematch: MainEngineAIRematchState = {
       aiApplied: false,
@@ -199,6 +220,7 @@ export async function runTenderEngine(tenderId: string, userId: string) {
     };
 
     if (isAIEnabled()) {
+      progress("engine.ai-rematch", "Running AI 12-perspective rematch (DISCIPLINE_FIT, SCOPE_COVERAGE, EVIDENCE_QUALITY, etc.)");
       const aiRematch = await applyAIRematchToMainEngine({
         tenderTitle: tender.title,
         tenderCategory: tender.category,
@@ -279,6 +301,7 @@ export async function runTenderEngine(tenderId: string, userId: string) {
       sourceConfidence: typeof requirement.sourceConfidence === "number" ? requirement.sourceConfidence : 0,
     }));
 
+    progress("engine.compliance", "Building compliance matrix + gap analysis");
     const compliance = buildCompliance(createdRequirements, knowledge, matching);
     const hasDraftKnowledge = aiDraftExpertCount + regexDraftExpertCount + aiDraftProjectCount + regexDraftProjectCount > 0;
     const documentPlan = buildDocumentPlan(createdRequirements);
@@ -331,6 +354,7 @@ export async function runTenderEngine(tenderId: string, userId: string) {
       await prisma.generatedDocument.updateMany({ where: { tenderId, generationStatus: { not: "SUPERSEDED" } }, data: { generationStatus: "SUPERSEDED", validationStatus: "SUPERSEDED", reviewStatus: "SUPERSEDED", reviewNotes: `Superseded by tender engine run ${engineRunId}. Review/comment history preserved on this historical document record.`, updatedAt: new Date() } });
     }
 
+    progress("engine.persist", `Persisting ${requirementRows.length} requirement(s), ${matching.expertMatches.length} expert match(es), ${matching.projectMatches.length} project match(es) to DB`);
     await prisma.tenderExpertMatch.deleteMany({ where: { tenderId } });
     await prisma.tenderProjectMatch.deleteMany({ where: { tenderId } });
     await prisma.complianceGap.deleteMany({ where: { tenderId } });
