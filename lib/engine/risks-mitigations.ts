@@ -66,6 +66,48 @@ function risksForSector(primarySector: string): SectorRisk[] {
     { risk: "Long-life specification compromised by tight budget", impact: "Medium", likelihood: "Medium", mitigation: "Materials specified for school-life durability; lifecycle cost analysis presented to client during BOQ stage to justify long-life choices." },
     { risk: "Climate-responsive design under-performance", impact: "Medium", likelihood: "Low", mitigation: "Daylighting, ventilation, and thermal comfort modelled at concept stage; verified against Ethiopian Building Code climate zone requirements." },
   ];
+  if (/energy|power|solar|wind|grid|generation|transmission/.test(sector)) return [
+    { risk: "Grid-code non-compliance causing energisation delay", impact: "High", likelihood: "Medium", mitigation: "Grid-code review performed at FEED stage; protection relay settings peer-reviewed by independent power systems specialist before energisation." },
+    { risk: "Equipment long-lead times delaying commissioning", impact: "High", likelihood: "High", mitigation: "Equipment list issued to procurement team at detailed-design completion; early LOI for transformers, switchgear, and inverters where applicable." },
+    { risk: "Demand-projection error causing under/over-sizing", impact: "High", likelihood: "Low", mitigation: "Load forecast uses minimum 5 years of metered consumption data, growth-projection model, and demand-side management assumptions clearly stated." },
+    { risk: "Environmental approval delays for new transmission routes", impact: "Medium", likelihood: "Medium", mitigation: "Environmental screening initiated at concept stage; route alternatives documented; stakeholder consultation records retained for regulatory submission." },
+  ];
+  if (/agri|irrigation|farm|crop|livestock|rural develop/.test(sector)) return [
+    { risk: "Water availability variability below design yield", impact: "High", likelihood: "Medium", mitigation: "Hydrological analysis uses a minimum 20-year flow record; climate-adjusted low-flow scenario included in design; carry-over storage designed accordingly." },
+    { risk: "Beneficiary adoption shortfall (farmers do not use the scheme)", impact: "High", likelihood: "Medium", mitigation: "Community consultation at design stage; willingness-to-pay survey; water-user association established before handover; farmer training delivered." },
+    { risk: "O&M incapacity after handover", impact: "High", likelihood: "Medium", mitigation: "O&M manual prepared in local language; operators trained before handover; spare-parts list and maintenance schedule included in handover package." },
+    { risk: "Soil salinity build-up under irrigation", impact: "Medium", likelihood: "Low", mitigation: "Drainage design includes leaching fraction; salinity monitoring schedule included in ESMP; agronomist reviews crop rotation to reduce risk." },
+  ];
+  if (/mining|mineral|quarry|extracti/.test(sector)) return [
+    { risk: "Geotechnical model error leading to slope instability", impact: "High", likelihood: "Medium", mitigation: "Independent geotechnical review at FEED stage; slope stability analysis uses three methods (LEM, numerical, empirical); monitoring instrumentation specified." },
+    { risk: "Resource estimate downgrade after pre-feasibility", impact: "High", likelihood: "Low", mitigation: "JORC-compliant resource estimation with documented confidence classification; data quality QC programme reviewed by independent competent person." },
+    { risk: "Tailings containment failure", impact: "High", likelihood: "Low", mitigation: "TSF designed to MAC/ANCOLD guidelines; annual dam-safety review; emergency action plan; closure provisions defined at design stage." },
+    { risk: "Community opposition and social licence risk", impact: "High", likelihood: "Medium", mitigation: "ESIA and stakeholder engagement plan prepared before construction; grievance mechanism established; local employment and content plan documented." },
+  ];
+  if (/\bport\b|harbor|harbour|maritime|quay|berth|shipping terminal/.test(sector)) return [
+    { risk: "Under-designed berth for actual vessel class", impact: "High", likelihood: "Low", mitigation: "Vessel-class parameters (LOA, DWT, draft) confirmed with port authority before design; mooring analysis uses design vessel in worst-case met-ocean conditions." },
+    { risk: "Dredging spoil disposal regulatory non-compliance", impact: "High", likelihood: "Medium", mitigation: "Sediment characterisation completed before dredging; spoil disposal plan approved by environmental authority; monitoring plan in place during dredging." },
+    { risk: "Throughput projections overstated — over-specification of infrastructure", impact: "High", likelihood: "Medium", mitigation: "Traffic demand study uses conservative, base, and optimistic scenarios; phased infrastructure investment tied to traffic triggers." },
+    { risk: "Nautical safety incident during construction or initial operations", impact: "High", likelihood: "Low", mitigation: "Nautical simulation performed at design stage; pilotage procedures agreed with harbour master; ISPS compliance verified before handover." },
+  ];
+  if (/oil|gas|petroleum|pipeline|refinery|petrochemical/.test(sector)) return [
+    { risk: "Process safety incident (loss of containment)", impact: "High", likelihood: "Low", mitigation: "HAZOP study at detailed-design stage with all action items tracked to close-out; LockOut-TagOut and PTW systems in place before start-up." },
+    { risk: "P&ID change after HAZOP causing design rework", impact: "Medium", likelihood: "High", mitigation: "P&ID freeze protocol applied after HAZOP; all modifications go through formal management-of-change procedure with risk re-assessment." },
+    { risk: "Vendor data delays cascading to engineering schedule", impact: "High", likelihood: "Medium", mitigation: "Vendor data requirements issued with purchase orders; weekly vendor data tracking; early LOI for long-lead items." },
+    { risk: "Pipeline integrity failure in service", impact: "High", likelihood: "Low", mitigation: "Pipeline designed to API 1104 / ISO 3183; in-line inspection (ILI) programme specified at handover; cathodic protection system designed and commissioned." },
+  ];
+  if (/finance|bank|micro.?finance|insurance|credit|lending|investment fund/.test(sector)) return [
+    { risk: "Regulatory non-compliance causing licence revocation", impact: "High", likelihood: "Low", mitigation: "Regulatory gap analysis at inception; compliance framework design reviewed by licensed local legal counsel; regulatory liaison built into engagement plan." },
+    { risk: "Core-banking system integration failure", impact: "High", likelihood: "Medium", mitigation: "Integration architecture peer-reviewed at design stage; phased go-live with parallel-run period; rollback plan documented before cutover." },
+    { risk: "Data migration errors corrupting client records", impact: "High", likelihood: "Medium", mitigation: "Full data-quality assessment before migration; test migration on extracted sample; reconciliation report signed off before go-live." },
+    { risk: "Staff resistance to process changes (KYC/AML, credit policy)", impact: "Medium", likelihood: "High", mitigation: "Change-management plan integrated into project; train-the-trainer model; management champion identified at each business unit." },
+  ];
+  if (/telecom|broadband|spectrum|mobile network|isp/.test(sector)) return [
+    { risk: "Spectrum licensing delay preventing network launch", impact: "High", likelihood: "Medium", mitigation: "Spectrum application submitted at project inception; regulatory liaison officer named; alternative frequency fallback assessed during planning." },
+    { risk: "Site acquisition failure blocking base-station rollout", impact: "High", likelihood: "Medium", mitigation: "Site-siting report identifies two alternative locations per target site; lease negotiation tracked weekly with escalation to steering committee." },
+    { risk: "Backhaul capacity insufficient for peak demand", impact: "High", likelihood: "Low", mitigation: "Backhaul dimensioned at 120% of peak throughput forecast; upgrade path specified in network design for additional capacity." },
+    { risk: "QoS SLA breach in first operational year", impact: "High", likelihood: "Medium", mitigation: "Network KPI monitoring dashboard configured before go-live; hypercare optimisation period of 4–6 weeks after launch; SLA breach protocol agreed with client." },
+  ];
   return [
     { risk: "Scope misalignment with client expectations", impact: "High", likelihood: "Medium", mitigation: "Documented scope confirmation at inception; named sign-off authority; change-control protocol agreed at contract signature." },
     { risk: "Resource availability shortfall during peak phases", impact: "High", likelihood: "Medium", mitigation: "Permanent-staff team confirmed in this proposal; backup specialists on standby; phased delivery to balance load." },
