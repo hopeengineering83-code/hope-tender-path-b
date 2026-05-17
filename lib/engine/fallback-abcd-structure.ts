@@ -6,6 +6,13 @@ export type FallbackAbcdInput = {
   expertCount: number;
   projectCount: number;
   isHealthcare: boolean;
+  isEnergy?: boolean;
+  isMining?: boolean;
+  isPort?: boolean;
+  isOilGas?: boolean;
+  isFinancial?: boolean;
+  isTelecoms?: boolean;
+  isAgriculture?: boolean;
 };
 
 const BASE_ABCD_SECTIONS = [
@@ -105,6 +112,62 @@ export function fallbackAbcdSections(input: FallbackAbcdInput): string[] {
     lines.push("Support renovation planning with drawings, specifications, BOQ/cost-estimate support where required, supervision controls, progress reporting and quality monitoring.");
     lines.push("### 3.6 Project Close-Out Support");
     lines.push("Support inspection, design-compliance verification, snag tracking, handover documentation and operational-readiness confirmation.");
+  }
+  if (input.isEnergy) {
+    lines.push("### C.2.7 Load-Flow and Grid-Code Analysis");
+    lines.push("Load-flow study using certified power-systems software (PSS/E or equivalent); grid-code compliance verification against the utility's published interconnection requirements; protection relay coordination documented before energisation.");
+    lines.push("### C.2.8 Generation and Renewable Integration");
+    lines.push("Generation-mix analysis including solar, wind, and storage options; HOMER or equivalent modelling; demand forecast using minimum 5 years of metered data; renewable share target and least-cost expansion plan.");
+    lines.push("### C.2.9 SCADA and Control System Design");
+    lines.push("SCADA architecture aligned to IEC 61850 / DNP3; remote monitoring points defined at detailed design; operator interface design reviewed by client operations team before commissioning.");
+  }
+  if (input.isMining) {
+    lines.push("### C.2.7 Resource Estimation and JORC Compliance");
+    lines.push("Block-model resource estimation with JORC 2012 confidence classification (Inferred / Indicated / Measured); independent competent-person review; data quality QC programme documented.");
+    lines.push("### C.2.8 Geotechnical and Slope Stability Analysis");
+    lines.push("Slope stability analysis using LEM (Rocscience Slide), numerical modelling (Phase2), and empirical methods; monitoring instrumentation layout designed before construction; trigger-action-response plan (TARP) documented.");
+    lines.push("### C.2.9 Mine Plan and Tailings Management");
+    lines.push("Open-pit or underground mine plan with production scheduling; tailings storage facility (TSF) designed to MAC/ANCOLD guidelines; closure plan and financial provision estimate at feasibility stage.");
+  }
+  if (input.isPort) {
+    lines.push("### C.2.7 Vessel Simulation and Berth Design");
+    lines.push("Vessel-class parameters confirmed with port authority; fast-time nautical simulation at design stage; mooring analysis for design vessel in worst-case met-ocean conditions; berth structural design to PIANC standards.");
+    lines.push("### C.2.8 Dredging and Environmental Management");
+    lines.push("Sediment characterisation and contamination assessment before dredging; dredge volume and disposal-site selection; turbidity monitoring plan; regulatory approval sequence documented before construction start.");
+    lines.push("### C.2.9 Port Operations and ISPS Compliance");
+    lines.push("Port operations manual template prepared at design stage; ISPS compliance audit checklist; shore-power provision and green-port alignment to ESPO Green Guide; handover package includes O&M and emergency procedures.");
+  }
+  if (input.isOilGas) {
+    lines.push("### C.2.7 HAZOP and Process Safety");
+    lines.push("HAZOP study at detailed-design stage with P&ID freeze protocol; all action items tracked in a shared real-time register; LOPA for high-severity nodes; LockOut-TagOut and permit-to-work systems defined before start-up.");
+    lines.push("### C.2.8 Pipeline Integrity and Stress Analysis");
+    lines.push("Pipeline designed to API 1104 / ISO 3183; stress-isometric analysis; wall-thickness calculation for design pressure and temperature; in-line inspection (ILI) programme specified at handover; cathodic protection system designed and commissioned.");
+    lines.push("### C.2.9 Vendor Data and Procurement Support");
+    lines.push("Vendor data requirements matrix issued with purchase orders; weekly vendor data tracking; early LOI for long-lead items (major vessels, compressors, rotating equipment); databook compilation at mechanical completion.");
+  }
+  if (input.isFinancial) {
+    lines.push("### C.2.7 Regulatory Gap Analysis and Compliance Framework");
+    lines.push("Regulatory gap analysis at inception against current central bank / regulator requirements (KYC/AML, capital adequacy, IFRS 9); compliance framework design reviewed by licensed local legal counsel; regulatory liaison built into project plan.");
+    lines.push("### C.2.8 Data Migration and System Integration");
+    lines.push("Full data-quality assessment before migration; test migration on 10% extracted sample; reconciliation report signed off before cutover; integration architecture peer-reviewed; phased go-live with parallel-run period; rollback plan documented.");
+    lines.push("### C.2.9 User Acceptance Testing and Training");
+    lines.push("UAT protocol covering all critical business processes; defect triage and sign-off before go-live; train-the-trainer programme; user manuals in local language; change-readiness survey at 60% gate and post-go-live.");
+  }
+  if (input.isTelecoms) {
+    lines.push("### C.2.7 RF Propagation and Coverage Design");
+    lines.push("RF propagation modelling using industry-standard tools (Atoll, Planet, or equivalent); coverage targets and signal-strength thresholds defined with client; site-acquisition shortlist with two alternative locations per target site.");
+    lines.push("### C.2.8 Backhaul and Core Network Dimensioning");
+    lines.push("Backhaul dimensioned at 120% of peak throughput forecast; microwave link budget for each hop; core network capacity verified against busy-hour traffic model; upgrade path specified for 3-year growth.");
+    lines.push("### C.2.9 Network Commissioning and KPI Baseline");
+    lines.push("Commissioning test plan per site; RF optimisation drive-test after commissioning; KPI baseline established before commercial launch; NOC monitoring dashboard pre-configured; hypercare period of 4–6 weeks with SLA breach protocol.");
+  }
+  if (input.isAgriculture) {
+    lines.push("### C.2.7 Hydrological and Irrigation Design");
+    lines.push("Hydrological analysis using minimum 20-year flow record; FAO Penman-Monteith evapotranspiration calculation; irrigation scheduling tool prepared for water-user association; canal / pipe network detailed design with pressure calculations.");
+    lines.push("### C.2.8 Agronomy and Soil Management");
+    lines.push("Soil classification and fertility assessment; crop-water-requirement analysis per crop type and growth stage; salinity and drainage management design; agronomist sign-off on cropping calendar and rotation recommendations.");
+    lines.push("### C.2.9 Water-User Association and Handover");
+    lines.push("WUA governance structure designed and registered before handover; farmer training on operation and maintenance; O&M manual prepared in local language; willingness-to-pay survey and tariff model reviewed with client before adoption.");
   }
 
   lines.push("## C.3 Work Plan and Deliverables");

@@ -195,6 +195,125 @@ function defaultRows(sector: string): ThemeRow[] {
       ...generic,
     ];
   }
+  if (/energy|power|solar|wind|grid|generation|transmission/.test(s)) {
+    return [
+      {
+        pain: "Grid-code non-compliance causing energisation delay",
+        strength: "Grid-code review completed at FEED stage with independent power-systems peer review",
+        discriminator: "Protection-relay settings independently peer-reviewed before energisation — compresses approval cycle vs. single-engineer submission",
+        evidenceFallback: "Bid-Team Action: confirm grid-code compliance reference",
+      },
+      {
+        pain: "Equipment long-lead time delaying commissioning date",
+        strength: "Equipment procurement schedule issued at detailed-design completion; early LOI for transformers and switchgear",
+        discriminator: "Procurement-integrated design schedule — equipment delivery tracked weekly from LoI issuance",
+        evidenceFallback: "Bid-Team Action: confirm procurement-schedule track record",
+      },
+      ...generic,
+    ];
+  }
+  if (/agri|irrigation|farm|crop|livestock|rural develop/.test(s)) {
+    return [
+      {
+        pain: "Irrigation scheme unused because farmers won't pay",
+        strength: "Willingness-to-pay survey and WUA governance design at inception; farmer training before handover",
+        discriminator: "WUA formally established and trained before handover — scheme operational on day 1, not months later",
+        evidenceFallback: "Bid-Team Action: confirm irrigation/WUA reference",
+      },
+      {
+        pain: "Borehole or river source yield below design demand in dry season",
+        strength: "Hydrological analysis over minimum 20-year flow record; low-flow scenario designed into storage",
+        discriminator: "Climate-adjusted low-flow storage sizing documented in design calculations — no redesign when season disappoints",
+        evidenceFallback: "Bid-Team Action: confirm hydrological-analysis reference",
+      },
+      ...generic,
+    ];
+  }
+  if (/mining|mineral|quarry|extracti/.test(s)) {
+    return [
+      {
+        pain: "Resource estimate downgraded after pre-feasibility — project economics change",
+        strength: "JORC-compliant resource estimation with independent competent-person review",
+        discriminator: "JORC confidence classification documented before pre-feasibility — client knows the resource uncertainty range before committing capex",
+        evidenceFallback: "Bid-Team Action: confirm JORC resource-estimation reference",
+      },
+      {
+        pain: "Slope instability during early mining — production halt",
+        strength: "Slope stability analysis using three methods (LEM, numerical, empirical) with monitoring instrumentation specified at design stage",
+        discriminator: "Three-method stability analysis eliminates single-model confidence gaps — instrumentation layout procurement-ready at handover",
+        evidenceFallback: "Bid-Team Action: confirm geotechnical reference",
+      },
+      ...generic,
+    ];
+  }
+  if (/\bport\b|harbor|harbour|maritime|quay|berth|shipping terminal/.test(s)) {
+    return [
+      {
+        pain: "Berth under-designed for actual vessel class — costly remedial works",
+        strength: "Vessel-class parameters confirmed with port authority before design; mooring analysis at worst-case met-ocean conditions",
+        discriminator: "Mooring analysis matches design vessel to worst-case conditions — no post-construction reinforcement required",
+        evidenceFallback: "Bid-Team Action: confirm port-design reference",
+      },
+      {
+        pain: "Dredging spoil disposal regulatory refusal blocking construction",
+        strength: "Sediment characterisation completed before dredging; disposal plan approved before construction start",
+        discriminator: "Regulatory pre-approval of disposal plan built into programme — no construction start until environmental clearance in hand",
+        evidenceFallback: "Bid-Team Action: confirm dredging/port-construction reference",
+      },
+      ...generic,
+    ];
+  }
+  if (/oil|gas|petroleum|pipeline|refinery|petrochemical/.test(s)) {
+    return [
+      {
+        pain: "HAZOP action items not fully closed before start-up — safety incident risk",
+        strength: "HAZOP tracker shared in real-time; all action items tracked to close-out with named responsible engineer",
+        discriminator: "Live HAZOP tracker accessible to client and regulator — zero action items open at mechanical completion",
+        evidenceFallback: "Bid-Team Action: confirm HAZOP/process-safety reference",
+      },
+      {
+        pain: "P&ID change after HAZOP causing design rework and schedule delay",
+        strength: "P&ID freeze protocol applied after HAZOP; formal management-of-change with re-assessment for any modification",
+        discriminator: "Management-of-change protocol prevents late P&ID drift — schedule impact of any change quantified before approval",
+        evidenceFallback: "Bid-Team Action: confirm P&ID/MOC reference",
+      },
+      ...generic,
+    ];
+  }
+  if (/finance|bank|micro.?finance|insurance|credit|lending/.test(s)) {
+    return [
+      {
+        pain: "Data migration errors corrupting client records at go-live",
+        strength: "Full data-quality assessment before migration; test migration on extracted sample; reconciliation report signed off before cutover",
+        discriminator: "Signed reconciliation report before cutover — rollback path documented before any production data is touched",
+        evidenceFallback: "Bid-Team Action: confirm data-migration reference",
+      },
+      {
+        pain: "Staff resistance to process changes eroding adoption",
+        strength: "Change-readiness survey at kick-off and 60% gate; change-management plan integrated into project",
+        discriminator: "Resistance hot-spots surfaced at 60% gate — two months to act before go-live rather than post-launch fire-fighting",
+        evidenceFallback: "Bid-Team Action: confirm change-management reference",
+      },
+      ...generic,
+    ];
+  }
+  if (/telecom|broadband|spectrum|mobile network|isp/.test(s)) {
+    return [
+      {
+        pain: "Spectrum licensing delay preventing network launch",
+        strength: "Spectrum application submitted at project inception; alternative frequency fallback assessed during planning",
+        discriminator: "Dual-frequency fallback documented in network design — launch not blocked by a single regulatory path",
+        evidenceFallback: "Bid-Team Action: confirm spectrum/telecoms-regulation reference",
+      },
+      {
+        pain: "QoS SLA breach in first operational year",
+        strength: "Network KPI monitoring dashboard pre-configured before go-live; 4–6 week hypercare optimisation after launch",
+        discriminator: "Hypercare period with documented SLA-breach protocol — client protected in the highest-risk months",
+        evidenceFallback: "Bid-Team Action: confirm network-operations reference",
+      },
+      ...generic,
+    ];
+  }
   return generic;
 }
 

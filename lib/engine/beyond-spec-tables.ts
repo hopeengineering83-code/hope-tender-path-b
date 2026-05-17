@@ -148,6 +148,41 @@ function sustainabilityRows(sector: string): SustainabilityRow[] {
       { pillar: "Green & Blue Infrastructure", commitment: "Green-space ratio + stormwater management integrated into zoning regulations", kpi: "≥ 15% green space coverage; stormwater detention sized for 25-year storm with climate uplift", evidenceMechanism: "Green-space GIS overlay; stormwater calculation memo" },
     ];
   }
+  if (/energy|power|solar|wind|grid|generation|transmission/.test(s)) {
+    return [
+      ...generic,
+      { pillar: "Renewable Energy Integration", commitment: "Maximise renewable-energy share in generation mix; grid-connected solar and wind options assessed before diesel alternatives", kpi: "Renewable share ≥ 40% of generation capacity designed; backup diesel sized as last-resort, not primary", evidenceMechanism: "Energy mix analysis at concept stage; renewable share certificate at commissioning" },
+      { pillar: "Climate-Resilient Grid Design", commitment: "Transmission and distribution infrastructure designed for projected 25-year climate scenarios (temperature, flood, drought)", kpi: "Climate-risk assessment completed at detailed-design stage; flood-protection elevations confirmed", evidenceMechanism: "Climate-resilience memo; flood elevation drawings" },
+    ];
+  }
+  if (/agri|irrigation|farm|crop|livestock|rural develop/.test(s)) {
+    return [
+      ...generic,
+      { pillar: "Climate-Smart Agriculture", commitment: "Drought-tolerant variety recommendations and climate-adjusted planting calendar included in handover package", kpi: "Water-use efficiency target ≥ 70%; drought-resilient varieties recommended for ≥ 50% of scheme area", evidenceMechanism: "FAO Penman-Monteith calculations; agronomist sign-off on crop calendar" },
+      { pillar: "Gender-Inclusive Water Access", commitment: "Water-point siting prioritises minimising women's fetching distance; WUA governance includes minimum 30% women members", kpi: "≥ 30% women in WUA leadership; average fetching distance ≤ 500 m from nearest household", evidenceMechanism: "GPS household survey; WUA membership register" },
+    ];
+  }
+  if (/mining|mineral|quarry|extracti/.test(s)) {
+    return [
+      ...generic,
+      { pillar: "Mine Closure and Rehabilitation", commitment: "Closure and rehabilitation plan prepared and financial provision estimated at feasibility stage, not at end of mine life", kpi: "Rehabilitation bond or equivalent financial provision calculated per IFC PS 6; progressive rehabilitation started with first disturbance", evidenceMechanism: "Closure plan document; progressive rehabilitation schedule" },
+      { pillar: "Biodiversity Offset", commitment: "No-net-loss biodiversity commitment; offset design integrated into ESIA at screening stage", kpi: "Biodiversity management plan approved by competent authority; monitoring at 12, 24, and 36 months", evidenceMechanism: "ESIA baseline; biodiversity offset calculation memo" },
+    ];
+  }
+  if (/\bport\b|harbor|harbour|maritime|quay|berth|shipping terminal/.test(s)) {
+    return [
+      ...generic,
+      { pillar: "Green Port Standards", commitment: "Port design aligns to ESPO Green Guide; emission-free shore power provision for vessels at berth", kpi: "Shore-power provision for ≥ 50% of berths; Green Port index assessment at commissioning", evidenceMechanism: "Shore-power design drawings; ESPO alignment checklist" },
+      { pillar: "Coastal and Marine Habitat Protection", commitment: "Dredging designed to minimise turbidity and avoid coral / seagrass habitats; spoil disposal at authorised site", kpi: "Turbidity monitoring ≤ 100 NTU at 250 m from dredger; zero unauthorised disposal events", evidenceMechanism: "Turbidity monitoring log; disposal records; ESMP compliance report" },
+    ];
+  }
+  if (/oil|gas|petroleum|pipeline|refinery|petrochemical/.test(s)) {
+    return [
+      ...generic,
+      { pillar: "Methane and GHG Management", commitment: "Fugitive emission detection and repair (LDAR) programme designed at FEED stage; venting minimisation targets set", kpi: "Methane emission intensity target ≤ sector benchmark; LDAR survey frequency quarterly", evidenceMechanism: "LDAR plan; emission factor documentation; annual GHG inventory" },
+      { pillar: "Spill Prevention and Response", commitment: "Secondary containment designed for 110% of largest vessel volume; oil-spill response plan approved before first operation", kpi: "Zero uncontained spill events; monthly containment inspection; annual response-plan drill", evidenceMechanism: "Containment design drawings; inspection log; drill records" },
+    ];
+  }
   return generic;
 }
 
@@ -214,6 +249,55 @@ function innovationRows(sector: string): InnovationRow[] {
       ...generic,
       { proposal: "Public-facing online dashboard of plan progress + indicators", clientValue: "Increases transparency; reduces stakeholder consultation churn; demonstrates accountability to funders", effort: "Medium", optInOptOut: "Optional" },
       { proposal: "Implementation cost-and-benefit model handed to client", clientValue: "Client retains capability to test scenarios after handover; supports phased budget defense", effort: "Medium", optInOptOut: "Optional" },
+    ];
+  }
+  if (/energy|power|solar|wind|grid|generation|transmission/.test(s)) {
+    return [
+      ...generic,
+      { proposal: "SCADA-based real-time performance monitoring dashboard handed over with the energy system", clientValue: "Operator monitors generation, load, and fault events in real time; reduces mean-time-to-repair; supports regulatory performance reporting", effort: "Medium", optInOptOut: "Optional" },
+      { proposal: "Renewable-energy feasibility mini-study (solar + wind hybrid) at no extra fee during FEED", clientValue: "Client gets a defensible data-driven comparison before equipment procurement; avoids over-committing to single technology", effort: "Medium", optInOptOut: "Included" },
+    ];
+  }
+  if (/agri|irrigation|farm|crop|livestock|rural develop/.test(s)) {
+    return [
+      ...generic,
+      { proposal: "Irrigation scheduling tool (spreadsheet + user guide) handed to water-user association at scheme close-out", clientValue: "WUA reduces water waste by up to 30%; operator can recalculate schedules as cropping pattern evolves without re-engaging designer", effort: "Low", optInOptOut: "Included" },
+      { proposal: "Drone-based scheme mapping + crop-cover baseline for monitoring & evaluation baseline", clientValue: "Client and funder have a defensible GIS-based baseline for impact evaluation at no additional survey cost", effort: "Medium", optInOptOut: "Optional" },
+    ];
+  }
+  if (/mining|mineral|quarry|extracti/.test(s)) {
+    return [
+      ...generic,
+      { proposal: "3D geological model in open-source format (Leapfrog / ioGAS) handed to client with licence-free viewer", clientValue: "Client retains the geological model and can commission updates without returning to original modeller; reduces future study cost", effort: "Medium", optInOptOut: "Optional" },
+      { proposal: "Geotechnical monitoring instrument layout designed into slope stability study — ready for contractor tender", clientValue: "Monitoring is procurement-ready at project close; reduces instrumentation start-up time and installs the safety net before first production blast", effort: "Medium", optInOptOut: "Included" },
+    ];
+  }
+  if (/\bport\b|harbor|harbour|maritime|quay|berth|shipping terminal/.test(s)) {
+    return [
+      ...generic,
+      { proposal: "Vessel traffic simulation at design stage to validate berth pocket layout and turning basin dimensions", clientValue: "Simulation evidence eliminates the most common cause of post-construction redesign in port projects; defensible against regulator challenge", effort: "Medium", optInOptOut: "Optional" },
+      { proposal: "Port operations manual template (including ISPS, mooring, and emergency procedures) delivered with design package", clientValue: "Client receives a ready-to-customise operations manual at handover; reduces port authority pre-opening review time", effort: "Low", optInOptOut: "Included" },
+    ];
+  }
+  if (/oil|gas|petroleum|pipeline|refinery|petrochemical/.test(s)) {
+    return [
+      ...generic,
+      { proposal: "HAZOP action-item tracker shared workspace — client can see all open/closed actions in real time during design", clientValue: "Client and regulator have full HAZOP traceability at all times; reduces regulatory approval cycle", effort: "Low", optInOptOut: "Included" },
+      { proposal: "Pipeline integrity management plan (IMP) delivered as a ready-to-activate schedule at commissioning", clientValue: "Client does not need to re-engage a specialist to create the IMP after handover; regulatory pre-condition often already satisfied on day 1", effort: "Medium", optInOptOut: "Optional" },
+    ];
+  }
+  if (/finance|bank|micro.?finance|insurance|credit|lending/.test(s)) {
+    return [
+      ...generic,
+      { proposal: "Data quality scorecard delivered before migration — ranked by business impact, not just row count", clientValue: "Client prioritises remediation effort on the data issues that will cause the most harm in the new system; reduces go-live risk", effort: "Medium", optInOptOut: "Included" },
+      { proposal: "Change-readiness survey at project kick-off and at 60% gate — results shared with steering committee", clientValue: "Resistance hot-spots are identified while there is still time to act; reduces post-go-live adoption tail", effort: "Low", optInOptOut: "Included" },
+    ];
+  }
+  if (/telecom|broadband|spectrum|mobile network|isp/.test(s)) {
+    return [
+      ...generic,
+      { proposal: "RF coverage prediction map in open GIS format handed over with as-built documentation", clientValue: "Client can run what-if coverage scenarios for future expansion without re-engaging RF specialist; supports spectrum regulator reporting", effort: "Medium", optInOptOut: "Optional" },
+      { proposal: "Network KPI monitoring dashboard (Grafana or equivalent open-source) pre-configured and handed to NOC team", clientValue: "Operations team has real-time visibility from day 1; reduces SLA breach exposure in the critical first 6 months of operation", effort: "Medium", optInOptOut: "Optional" },
     ];
   }
   return generic;
