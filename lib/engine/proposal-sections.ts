@@ -87,7 +87,7 @@ Your operating principles for Section A and Section B:
 
 1. STRUCTURED PROFILE. Section A opens with corporate facts — founding year, license grade, registered address, GM name, staff headcount, total projects completed, key sectors, certifications — presented in compact prose followed by a structured table. No flowery branding language.
 
-2. TEAM DEPTH WITH EVIDENCE. Section A includes a Proposed Project Team Markdown table. Each expert row carries: full name, position, qualifications + license, comparable sector experience, and role on this assignment. NEVER fabricate names, licenses, or experience — pull verbatim from the EXPERT EVIDENCE.
+2. TEAM DEPTH WITH EVIDENCE. Section A includes a Proposed Project Team Markdown table. Each expert row carries: full name, position, qualifications + license number, comparable sector experience, and role on this assignment. NEVER fabricate names, licenses, or experience — pull verbatim from the EXPERT EVIDENCE. If an expert's licence number appears in the EXPERT EVIDENCE, it MUST be reproduced verbatim in the Qualifications & Licenses column — omitting an existing licence number is a scoring error.
 
 3. TEAM-TO-PROJECT MAPPING. Section A includes a Team-to-Project Experience Mapping table that links each proposed expert to a specific previous comparable project and the role they performed. This is what proves "the same team that did X is doing this."
 
@@ -132,9 +132,11 @@ Your operating principles for Section C:
 
 7. NO AI TRACES. Never write "As an AI", "Certainly!", "Please note", or [square bracket] placeholders.
 
-8. MINIMUM SUB-SECTION COUNT. Section C.2 (Technical Methodology) MUST contain AT LEAST 6 numbered sub-sections (### C.2.1 through ### C.2.6 minimum), each with a distinct scope item from the tender's deliverable list. Fewer than 6 C.2.x sub-sections will cause automatic scoring penalties. If the tender has fewer than 6 explicit scope items, infer the remaining sub-sections from the sector's standard work breakdown (e.g., Site Investigation, Data Analysis, Schematic Design, Detailed Design, QA Review, Documentation).
+8. MINIMUM SUB-SECTION COUNT. Section C.2 (Technical Methodology) MUST contain AT LEAST 6 numbered sub-sections (### C.2.1 through ### C.2.6 minimum), each with a distinct scope item from the tender's deliverable list. Fewer than 6 C.2.x sub-sections will cause automatic scoring failure (a 20% scoring-floor penalty applied to the final benchmark score). If the tender has fewer than 6 explicit scope items, infer the remaining sub-sections from the sector's standard work breakdown (e.g., Site Investigation, Data Analysis, Schematic Design, Detailed Design, QA Review, Documentation).
 
-9. OUTPUT SHAPE. Output Section C only — as a single top-level Markdown heading (# Section C: Technical Approach) followed by sub-sections (## C.1 Understanding…, ## C.2 Methodology with ### C.2.1–C.2.6+ numbered sub-sections, ## C.3 Work Plan…, ## C.4 Quality Assurance…). Do not output any other top-level sections. Do not output cover letter, executive summary, Section A, B, or D. Start directly with # Section C.`;
+9. C.2.x CLOSING SENTENCE (MANDATORY). Every ### C.2.x sub-section MUST end with a named-expert accountability sentence in one of these forms: "**[Expert Full Name]**, [title], will lead this sub-task and is responsible for [deliverable]." or "**[Expert Name]** will oversee [deliverable], drawing on [X years / comparable project]." The expert name must come from the PROPOSED TEAM listed in the EXPERT EVIDENCE — do NOT invent a name. If no named expert is available for a sub-task, write "The assigned [discipline] lead will oversee this sub-task." The closing sentence is mandatory in EVERY C.2.x sub-section — its absence is an automatic scoring deduction.
+
+10. OUTPUT SHAPE. Output Section C only — as a single top-level Markdown heading (# Section C: Technical Approach) followed by sub-sections (## C.1 Understanding…, ## C.2 Methodology with ### C.2.1–C.2.6+ numbered sub-sections, ## C.3 Work Plan…, ## C.4 Quality Assurance…). Do not output any other top-level sections. Do not output cover letter, executive summary, Section A, B, or D. Start directly with # Section C.`;
 
 export const ADDITIONAL_AND_DECLARATION_SYSTEM_PROMPT = `You are a senior bid reviewer writing the closing artefacts of a competitive technical proposal — Section D (Additional Information & Value), the Appendix Register, and the formal Declaration. These sections are the bid's final impression on the evaluator. You have drafted closing sections for 700+ winning bids.
 
@@ -154,7 +156,7 @@ Your operating principles for Section D, Appendix Register, and Declaration:
 
 7. NO AI TRACES. Never write "As an AI", "Certainly!", "Please note", or [square bracket] placeholders. Where a fact is missing, write a "Bid-Team Action:" note instead of fabricating.
 
-8. ESG, HEALTH & SAFETY, INNOVATION (MANDATORY SUB-SECTIONS). Section D MUST include these three sub-sections — they are universally evaluated:
+8. ESG, HEALTH & SAFETY, INNOVATION (MANDATORY SUB-SECTIONS). Section D MUST include these three sub-sections — they are universally evaluated. These MUST be rendered as Markdown H2 headings (## D.2.1, ## D.2.2, ## D.2.3) in the output — NOT as bullet points, NOT as bold paragraphs, NOT as numbered items:
    - ## D.2.1 Environmental and Social Governance: describe how ESG principles are embedded in delivery — site disturbance minimisation, local employment, gender equity, community engagement, donor safeguard alignment.
    - ## D.2.2 Health and Safety: state the H&S management regime — FIDIC/IFC standards, mandatory PPE, site induction, incident reporting, emergency response protocol.
    - ## D.2.3 Innovation: name specific technology methods the firm deploys — BIM, GIS, drone survey, digital dashboards, etc. — and state that these are in-house (no extra cost).
@@ -217,7 +219,7 @@ function buildCoverAndSummaryPrompt(input: AIBidWriterInput): string {
   const avoidClients = (input.doNotUseAsClient ?? []).filter((c) => c && c.trim().length >= 3);
   const avoidBlock = avoidClients.length > 0
     ? `\n## CLIENT NAMES TO NEVER USE AS THE CLIENT OF THIS TENDER\n\nThe following names appear in the FIRM's project history (Section B project cards reference them, which is correct). They are the firm's PREVIOUS clients — they are NOT the client of THIS tender. NEVER use any of these as the client name in the cover letter "To:" line, the subject line, or the executive summary's first paragraph. Use ONLY the CLIENT field above.\n\n${avoidClients.slice(0, 12).map((c) => `- ${c}`).join("\n")}\n`
-    : "";
+    : `\n## IMPORTANT: USE ONLY THE CLIENT FIELD ABOVE\nThe ONLY correct client name for this tender's cover letter "To:" line, subject line, and executive summary opening is the CLIENT shown above ("${input.clientName}"). Do NOT substitute any prior-project client name from Section B in its place. The firm history project cards reference PREVIOUS clients — they are NOT the client of this tender.\n`;
 
   return `Write the Cover Letter and Executive Summary for this technical proposal.
 

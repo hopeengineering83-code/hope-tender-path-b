@@ -204,6 +204,7 @@ export function scoreProposalQuality(opts: {
   const sectionC2SubSections = (md.match(/^###\s+C\.2\.\d+/gm) ?? []).length;
   const subSectionBonus = sectionC2SubSections >= 6 ? 1 : 0;
   if (sectionC2SubSections > 0 && sectionC2SubSections < 6) {
+    weakAxes.push("tableCoverage");
     notes.push(`Section C.2 has only ${sectionC2SubSections} sub-section(s) — minimum 6 required for benchmark quality.`);
   }
   // Divisor of 12 rows (was 20) — a well-structured proposal typically has 12+ rows
