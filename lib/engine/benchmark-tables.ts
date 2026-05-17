@@ -399,10 +399,9 @@ export function buildThreeStageReviewTable(companyName: string, primarySector: s
   const isMiningTender = /mining|mineral|quarry|extracti/.test(s);
   const isPortTender = /\bport\b|harbor|harbour|maritime|quay|berth|shipping terminal/.test(s);
   const isOilGasTender = /oil|gas|petroleum|refinery|pipeline/.test(s);
-  // Word boundary on MEP — bare /MEP/ would match "MEMphis", "hemp",
-  // "stamper", etc. The other tokens here are full English words and
-  // safe.
-  const isDesignTender = !isWaterTender && !isRoadTender && !isHealthcareTender && !isICTTender && !isEnergyTender && !isAgricultureTender && !isMiningTender && !isPortTender && !isOilGasTender &&
+  const isFinancialTender = /finance|bank|micro.?finance|insurance|credit|lending|core.*banking|KYC|AML/.test(s);
+  const isTelecomsTender = /telecom|broadband|spectrum|mobile network|isp|base.*station|backhaul|last.?mile/.test(s);
+  const isDesignTender = !isWaterTender && !isRoadTender && !isHealthcareTender && !isICTTender && !isEnergyTender && !isAgricultureTender && !isMiningTender && !isPortTender && !isOilGasTender && !isFinancialTender && !isTelecomsTender &&
     /design|architect|building|construction|\bMEP\b|structural|engineer|consultancy|supervision/.test(s);
 
   const stage1Action = isWaterTender ? "30% Source Investigation & Demand Assessment"
@@ -416,6 +415,8 @@ export function buildThreeStageReviewTable(companyName: string, primarySector: s
     : isMiningTender ? "30% Geotechnical Investigation & Resource Assessment"
     : isPortTender ? "30% Hydrographic Survey & Traffic Demand Study"
     : isOilGasTender ? "30% Front-End Engineering Design (FEED) Scope"
+    : isFinancialTender ? "30% Regulatory Gap Analysis & Target Operating Model"
+    : isTelecomsTender ? "30% Spectrum Planning & Network Coverage Design"
     : isDesignTender ? "30% Schematic Design"
     : "30% Inception / Approach Review";
   const stage1Detail = isWaterTender ? "yield, hydraulic model, pipe network, and pump station sizing confirmed"
@@ -429,6 +430,8 @@ export function buildThreeStageReviewTable(companyName: string, primarySector: s
     : isMiningTender ? "drill programme, resource classification, geotechnical model, and mine plan confirmed"
     : isPortTender ? "vessel-class parameters, berth layout, dredging scope, and throughput model confirmed"
     : isOilGasTender ? "process simulation, P&ID rev 0, equipment list, and HAZOP scope confirmed"
+    : isFinancialTender ? "regulatory gap matrix, operating model, data-quality assessment, and system architecture confirmed"
+    : isTelecomsTender ? "spectrum licence pathway, RF coverage targets, site shortlist, and backhaul dimensioning confirmed"
     : isDesignTender ? "floor plans, zoning, and MEP routing confirmed"
     : "scope, methodology, and stakeholder map confirmed";
   const stage2Action = isWaterTender ? "60% Detailed Design Review"
@@ -442,6 +445,8 @@ export function buildThreeStageReviewTable(companyName: string, primarySector: s
     : isMiningTender ? "60% Detailed Mining Study & Feasibility Report"
     : isPortTender ? "60% Detailed Berth & Infrastructure Design"
     : isOilGasTender ? "60% Detailed Engineering & HAZOP Close-Out"
+    : isFinancialTender ? "60% Detailed Design & UAT Preparation"
+    : isTelecomsTender ? "60% Detailed Network Design & Site Acquisition"
     : isDesignTender ? "60% Developed Design"
     : "60% Substantive Deliverable Review";
   const stage2Detail = isWaterTender ? "network model, pump station, treatment plant, and BOQ coordinated"
@@ -455,6 +460,8 @@ export function buildThreeStageReviewTable(companyName: string, primarySector: s
     : isMiningTender ? "pit design, waste-dump stability, tailings plan, and cost model reviewed"
     : isPortTender ? "civil and marine drawings, dredging specification, and equipment list reviewed"
     : isOilGasTender ? "detailed P&IDs, equipment databooks, vendor packages, and HAZOP actions reviewed"
+    : isFinancialTender ? "system design, integration specs, data-migration plan, and UAT protocol reviewed"
+    : isTelecomsTender ? "RF link budgets, site designs, backhaul specs, and core network dimensioning reviewed"
     : isDesignTender ? "all disciplines coordinated, specifications drafted"
     : "all work-streams coordinated, draft outputs produced";
   const stage3Action = isWaterTender || isRoadTender ? "100% Pre-Issue Tender Package"
@@ -462,6 +469,8 @@ export function buildThreeStageReviewTable(companyName: string, primarySector: s
     : isICTTender ? "100% UAT & Go-Live Readiness Package"
     : isEnergyTender ? "100% Pre-Issue Construction Package"
     : isAgricultureTender || isMiningTender || isPortTender || isOilGasTender ? "100% Final Report & Deliverable Package"
+    : isFinancialTender ? "100% Go-Live Readiness & Handover Package"
+    : isTelecomsTender ? "100% Commissioning & Network Acceptance Package"
     : isDesignTender ? "100% Pre-Issue Final Package"
     : "100% Pre-Submission Final Package";
   const stage3Detail = isWaterTender ? "complete hydraulic design, BOQ, specifications, and O&M manual finalised"
@@ -473,6 +482,8 @@ export function buildThreeStageReviewTable(companyName: string, primarySector: s
     : isMiningTender ? "complete feasibility study, mine plan, tailings closure plan, and regulatory submission finalised"
     : isPortTender ? "complete marine/civil drawings, dredging specification, equipment list, and operation manual finalised"
     : isOilGasTender ? "complete engineering deliverable list, vendor data, safety case, and handover dossier finalised"
+    : isFinancialTender ? "complete system, UAT sign-off, training materials, regulatory compliance evidence, and handover documentation finalised"
+    : isTelecomsTender ? "complete network as-built, drive-test coverage map, NOC dashboard, and operating procedures finalised"
     : isDesignTender ? "complete drawing package, BOQ, and specifications finalised"
     : "complete deliverable package, supporting evidence, and sign-off finalised";
 
