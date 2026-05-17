@@ -72,6 +72,8 @@ function hasForbiddenWeakness(markdown: string): boolean {
   // Unfilled action directives — indicate the AI echoed fallback template text
   if (/\bBid-Team Action:/i.test(markdown)) return true;
   if (/Source-evidence action:/i.test(markdown)) return true;
+  // "Evidence note: confirm" is the artifact of an old normalizeWeakText conversion — catch it too
+  if (/\bEvidence note:\s*(?:confirm|tbd|action required|placeholder)/i.test(markdown)) return true;
   return false;
 }
 
