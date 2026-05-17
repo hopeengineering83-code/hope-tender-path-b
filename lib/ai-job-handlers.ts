@@ -63,7 +63,22 @@ const handlers: Partial<Record<JobType, JobHandler>> = {
     if (!ctx.tenderId) throw new Error("ENGINE_RUN requires tenderId on the job");
     await recordStep(ctx.jobId, { stepName: "engine.start", message: `Starting engine run for tender ${ctx.tenderId}`, status: "RUNNING" });
     try {
-      const result = await runTenderEngine(ctx.tenderId, ctx.userId);
+      // Surface granular pipeline progress to the user via recordStep.
+      // The engine emits steps at each major milestone (load → company
+      // → analyze → match → ai-rematch → compliance → persist). Fire
+      // each one as its own step so the frontend poll sees the latest
+      // message every 3 seconds. Errors inside recordStep are swallowed
+      // (best-effort UX — they shouldn't fail the actual engine run).
+      const result = await runTenderEngine(
+        ctx.tenderId,
+        ctx.userId,
+        (stepName: string, message: string) => {
+          // Fire and forget — don't await inside the engine hot path.
+          // recordStep is idempotent on stepName so duplicate steps are
+          // safe if the engine retries internally.
+          void recordStep(ctx.jobId, { stepName, message, status: "RUNNING" }).catch(() => {});
+        },
+      );
       await recordStep(ctx.jobId, { stepName: "engine.complete", message: "Engine run finished successfully", status: "SUCCEEDED" });
       return { result: result as unknown as Record<string, unknown> };
     } catch (err) {
