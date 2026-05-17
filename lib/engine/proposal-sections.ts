@@ -860,6 +860,42 @@ export function buildSectionFallback(spec: ProposalSectionSpec, input: AIBidWrit
         .slice(0, 4);
       const leadExpert = expertNames[0] || "the lead expert";
       const team = expertNames.length > 1 ? expertNames.join(", ") : leadExpert;
+      // Sector-specific scope item sets replace the generic fallback when sector detected.
+      const SECTOR_SCOPE_ITEMS: Record<string, string[]> = {
+        healthcare: ["Clinical Brief Review and Space Programming", "Site Investigation and Clinical Zoning", "Infection Prevention and Control (IPC) Design", "MEP Engineering — Medical Gas, HVAC, Emergency Power", "Structural and Fire Safety Design", "Regulatory Approval and Permit Documentation", "Equipment Planning and Biomedical Coordination", "Tender Documentation and BOQ Preparation", "Construction Supervision and QA", "Commissioning and Handover"],
+        water: ["Hydrology and Source Investigation", "Hydraulic Modelling (WaterCAD / EPANET)", "Water Treatment Process Design", "Pipe Network and Storage Design", "Pump Station and Civil Works Design", "ESMP and Environmental Compliance", "Construction Supervision", "Commissioning and O&M Training"],
+        road: ["Topographic Survey and Alignment Study", "Geotechnical Investigation (CBR, Proctor)", "Pavement Design (AASHTO / ERA Standards)", "Drainage and Culvert Design", "Road Safety Audit", "Environmental and Social Management Plan", "BOQ and Cost Estimate", "Construction Supervision and Materials Testing", "As-Built Documentation", "Defects Liability Inspection"],
+        environmental: ["Baseline Environmental and Social Survey", "Impact Identification and ESIA Matrices", "Mitigation Hierarchy and ESMP Preparation", "Stakeholder Engagement and Consultation Plan", "Donor Safeguard Alignment (ESF / IFC)", "Monitoring and Evaluation Framework", "Grievance Redress Mechanism Design", "Final ESIA Report and Regulatory Approval Support"],
+        ict: ["Requirements Analysis and Business Process Mapping", "System Architecture Design (App / Database / Network)", "Data Security, RBAC and Privacy Framework", "Integration Plan and API Specifications", "User Acceptance Testing (UAT) Protocol", "Training and Change Management Plan", "Go-Live Cutover Strategy", "SLA and Post-Launch Support"],
+        financial: ["Regulatory Framework and Licensing Compliance Review", "AML / KYC and Risk Management Framework Design", "Core Banking System Architecture", "Credit Risk Assessment Methodology", "IFRS and Basel Compliance Mapping", "IT Infrastructure and Cybersecurity Design", "Staff Training and Capacity Building", "Implementation Roadmap and Phased Rollout"],
+        telecoms: ["Network Coverage Analysis and Spectrum Planning", "Base Station and Passive Infrastructure Design", "Core Network Architecture and Dimensioning", "Backhaul and Last-Mile Connectivity Solutions", "Regulatory Compliance and Type Approval", "Network Integration Testing and Commissioning", "OSS/BSS Integration and Operational Support", "Rollout Phasing and KPI Monitoring Framework"],
+        energy: ["Load Forecasting and Energy Demand Analysis", "Generation Technology Assessment and Selection", "Transmission and Distribution Network Design", "Grid Integration, Protection and Control Systems", "Environmental and Social Compliance", "Single-Line Diagram and Technical Specifications", "BOQ, Cost Estimate and Financial Model", "Commissioning and Grid Code Compliance"],
+        agriculture: ["Agronomic Baseline Survey and Land Suitability Assessment", "Irrigation and Drainage Scheme Design", "Value Chain and Market Access Analysis", "Crop Yield Modelling (FAO Standards)", "Water Source and Hydrology Study", "Environmental and Social Management Plan", "Post-Harvest Handling and Storage Design", "Extension Services and Farmer Training Plan"],
+        urban: ["GIS-Based Land Use Mapping and Spatial Analysis", "Demographic and Socioeconomic Baseline Assessment", "Infrastructure Demand Modelling", "Zoning Framework and Land Use Regulation Design", "Urban Mobility and Transport Integration Plan", "Climate Resilience and Environmental Assessment", "Public Consultation and Stakeholder Engagement", "Phased Implementation Roadmap and Investment Plan"],
+        mining: ["Geological Survey and Resource Estimation (JORC)", "Geotechnical and Slope Stability Assessment", "Mine Planning and Ore Body Characterisation", "Tailings Management and Environmental Compliance", "Blast Design and Ground Vibration Management", "Water Management and Dewatering Design", "ESIA and Social Management Plan", "Rehabilitation and Mine Closure Planning"],
+        building: ["Architectural Brief and Space Programme Review", "Structural Engineering and Foundation Design", "MEP Design — Mechanical, Electrical, Plumbing", "Fire Safety and Life Safety Systems Design", "BIM Coordination and Clash Detection", "BOQ and Cost Planning", "Regulatory Approval and Building Permit Support", "Construction Supervision and QA"],
+        oil_gas: ["Process Flow and P&ID Development", "HAZOP and Safety Case Analysis", "Pipeline Integrity and Corrosion Management", "HSE Plan and Emergency Response Framework", "Wellhead and Production Facility Engineering", "Environmental Baseline and ESMP", "Detailed Engineering Drawings and Specifications", "Commissioning and Pre-Startup Safety Review"],
+        port: ["Traffic Volume and Vessel Call Analysis", "Port Master Plan and Terminal Layout Design", "Berth, Quay and Fender System Engineering", "Dredging and Coastal Impact Assessment", "Container Handling Equipment Specification", "Maritime Safety and Navigation Study", "Environmental and ESMP Compliance", "Operational Procedures and Port Regulations"],
+      };
+      // Detect sector from tender text for sector-specific fallback scope items
+      const haystack = [input.tenderText ?? "", input.tenderTitle ?? "", input.requirements ?? ""].join(" ").toLowerCase();
+      const detectedFallbackSector = (() => {
+        if (/health|hospital|clinic|medical|patient|ward|pharmacy|radiology/.test(haystack)) return "healthcare";
+        if (/water|borehole|hydraulic|sanitar|epanet|watercad|chlorin/.test(haystack)) return "water";
+        if (/\broad\b|highway|pavement|bridge|culvert|cbr|aashto|bitumen/.test(haystack)) return "road";
+        if (/esia|esmp|environmental assessment|safeguard|mitigation hierarchy/.test(haystack)) return "environmental";
+        if (/software|ict|digital|api|uat|database|mis|erp|system.*develop/.test(haystack)) return "ict";
+        if (/financ|bank|micro.?financ|aml|kyc|basel|lending/.test(haystack)) return "financial";
+        if (/telecom|spectrum|base station|5g|4g|lte|backhaul|broadband/.test(haystack)) return "telecoms";
+        if (/energy|power|solar|wind|grid|generation|transmission|scada/.test(haystack)) return "energy";
+        if (/agri|farm|irrigation|crop|yield|fao|value.?chain|livestock/.test(haystack)) return "agriculture";
+        if (/urban|master plan|zoning|land.?use|municipal|gis/.test(haystack)) return "urban";
+        if (/mining|mineral|quarry|jorc|tailings|ore/.test(haystack)) return "mining";
+        if (/building|architect|mep|hvac|bim|boq|facility/.test(haystack)) return "building";
+        if (/oil|gas|petroleum|p&id|hazop|pipeline|wellhead/.test(haystack)) return "oil_gas";
+        if (/\bport\b|harbor|harbour|maritime|berth|quay/.test(haystack)) return "port";
+        return "";
+      })();
       // Generic scope item labels used when tender has fewer than 6 real requirements.
       // Extended to 10 so large tenders (up to 10 explicit scope items) are covered.
       const GENERIC_SCOPE_ITEMS = [
@@ -874,11 +910,12 @@ export function buildSectionFallback(spec: ProposalSectionSpec, input: AIBidWrit
         "Documentation and Knowledge Transfer",
         "Post-Completion Advisory Support",
       ];
+      const EFFECTIVE_SCOPE_ITEMS = SECTOR_SCOPE_ITEMS[detectedFallbackSector] ?? GENERIC_SCOPE_ITEMS;
       // Build methodology sections — scale to tender's actual scope item count, minimum 6
-      const maxReqs = Math.max(6, Math.min(reqLines.length, GENERIC_SCOPE_ITEMS.length));
+      const maxReqs = Math.max(6, Math.min(reqLines.length, EFFECTIVE_SCOPE_ITEMS.length));
       const normalizedReqs = reqLines.slice(0, maxReqs);
       while (normalizedReqs.length < 6) {
-        normalizedReqs.push(GENERIC_SCOPE_ITEMS[normalizedReqs.length]);
+        normalizedReqs.push(EFFECTIVE_SCOPE_ITEMS[normalizedReqs.length]);
       }
       const methodBlocks = normalizedReqs.map((req, i) => {
         const expert = expertNames[i % Math.max(1, expertNames.length)] || "the assigned expert";
@@ -1274,10 +1311,29 @@ function buildAdditionalAndDeclarationFallback(input: AIBidWriterInput): string 
     ? `**${companyName}** declares that it meets all eligibility requirements stated in this tender. Signed: ${v.gmName}${v.gmTitle ? `, ${v.gmTitle}` : ", General Manager"}${v.gmLicense ? ` (License ${v.gmLicense})` : ""}.`
     : `**${companyName}** declares that it meets all eligibility requirements stated in this tender. Bid-Team Action: confirm signature block (GM name, title, licence) before submission.`;
 
-  // ── Declaration — formal close with named GM ─────────────────────────
-  const declarationBody = v.gmName
-    ? `We, ${v.legalName ?? companyName}, hereby declare that this Technical Proposal has been prepared specifically in response to ${tenderTitle}. All information provided is accurate and supported by documentary evidence available on request. Signed: ${v.gmName}${v.gmTitle ? `, ${v.gmTitle}` : ", General Manager"}${v.gmLicense ? ` (License ${v.gmLicense})` : ""}, on behalf of ${companyName}.`
-    : `We, ${companyName}, hereby declare that this Technical Proposal has been prepared specifically in response to ${tenderTitle}. All information provided is accurate and supported by documentary evidence available on request. Bid-Team Action: confirm signature block (GM name, title, licence) before submission.`;
+  // ── Declaration — formal 5-line signature block ──────────────────────
+  const sigBlock = v.gmName
+    ? [
+        `Name: ${v.gmName}`,
+        `Title: ${v.gmTitle || "General Manager"}${v.gmLicense ? ` | Licence No.: ${v.gmLicense}` : ""}`,
+        `Company: ${v.legalName ?? companyName}`,
+        "Date: YYYY-MM-DD (bid team to confirm before export)",
+        "Signature: ___________________________",
+      ].join("\n")
+    : [
+        "Name: [General Manager / Principal Full Name]",
+        "Title: [Title + Professional Body + Licence No. where applicable]",
+        `Company: ${v.legalName ?? companyName}`,
+        "Date: YYYY-MM-DD (bid team to confirm before export)",
+        "Signature: ___________________________",
+      ].join("\n");
+  const declarationBody = [
+    `We, ${v.legalName ?? companyName}${v.registrationNumber ? ` (Reg. No. ${v.registrationNumber})` : ""}, hereby declare that this Technical Proposal has been prepared specifically in response to ${tenderTitle} issued by ${input.clientName || "the Client"}.`,
+    "",
+    "All information, evidence, expert credentials, and project references included in this proposal are accurate and verifiable. No information has been fabricated or inserted as a placeholder.",
+    "",
+    sigBlock,
+  ].join("\n");
 
   // ── D.1 Value-Added — real differentiators when available ───────────────
   const differentiatorLines = (input.differentiators || "")

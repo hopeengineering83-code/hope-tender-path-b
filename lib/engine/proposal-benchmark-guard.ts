@@ -74,6 +74,10 @@ function hasForbiddenWeakness(markdown: string): boolean {
   if (/Source-evidence action:/i.test(markdown)) return true;
   // "Evidence note: confirm" is the artifact of an old normalizeWeakText conversion — catch it too
   if (/\bEvidence note:\s*(?:confirm|tbd|action required|placeholder)/i.test(markdown)) return true;
+  // "[confirm X]" — AI-style bracket placeholder not caught by the INSERT/PLACEHOLDER set
+  if (/\[confirm\b[^\]]{0,80}\]/i.test(markdown)) return true;
+  // Italic-wrapped bracket stubs: _[something]_ or *[something]*
+  if (/[_*]\[[^\]]{2,80}\][_*]/.test(markdown)) return true;
   return false;
 }
 
