@@ -139,6 +139,82 @@ function rolesForSector(sector: string, expertCount: number): { role: string; pi
       { role: "Quality Assurance Reviewer", pickKeywords: ["quality", "review"], daysShare: 6 },
     ].slice(0, Math.max(4, Math.min(7, expertCount + 3)));
   }
+  if (/energy|power|solar|wind|grid|generation|transmission/.test(s)) {
+    return [
+      { role: "Project Principal", pickKeywords: ["principal", "director"], daysShare: 12 },
+      { role: "Lead Power Systems Engineer", pickKeywords: ["power", "electrical", "energy"], daysShare: 22 },
+      { role: "Grid / Protection Engineer", pickKeywords: ["grid", "protection", "relay"], daysShare: 18 },
+      { role: "Renewable Energy Specialist", pickKeywords: ["solar", "wind", "renewable"], daysShare: 16 },
+      { role: "SCADA / Controls Engineer", pickKeywords: ["scada", "control", "ict"], daysShare: 12 },
+      { role: "Environmental and Permitting Specialist", pickKeywords: ["environment", "esia"], daysShare: 10 },
+      { role: "Quality Assurance Reviewer", pickKeywords: ["quality", "review"], daysShare: 6 },
+    ].slice(0, Math.max(4, Math.min(7, expertCount + 3)));
+  }
+  if (/agri|irrigation|farm|crop|livestock|rural develop/.test(s)) {
+    return [
+      { role: "Project Principal", pickKeywords: ["principal", "director"], daysShare: 12 },
+      { role: "Lead Irrigation / Water Engineer", pickKeywords: ["irrigation", "water", "hydraulic"], daysShare: 22 },
+      { role: "Agronomist", pickKeywords: ["agronomist", "agri", "crop"], daysShare: 18 },
+      { role: "Hydrologist", pickKeywords: ["hydro", "hydrology"], daysShare: 14 },
+      { role: "Sociologist / Community Engagement Specialist", pickKeywords: ["social", "community", "stakeholder"], daysShare: 12 },
+      { role: "Quantity Surveyor", pickKeywords: ["quantity", "qs", "boq"], daysShare: 10 },
+      { role: "Quality Assurance Reviewer", pickKeywords: ["quality", "review"], daysShare: 6 },
+    ].slice(0, Math.max(4, Math.min(7, expertCount + 3)));
+  }
+  if (/mining|mineral|quarry|extracti/.test(s)) {
+    return [
+      { role: "Project Principal", pickKeywords: ["principal", "director"], daysShare: 12 },
+      { role: "Lead Mining Engineer", pickKeywords: ["mining", "mineral", "quarry"], daysShare: 22 },
+      { role: "Geologist / Resource Estimator", pickKeywords: ["geolog", "resource", "mineral"], daysShare: 18 },
+      { role: "Geotechnical Engineer", pickKeywords: ["geotechnical", "geotech", "soil"], daysShare: 16 },
+      { role: "Environmental / Social Specialist", pickKeywords: ["environment", "esia", "social"], daysShare: 12 },
+      { role: "Tailings and Closure Specialist", pickKeywords: ["tailings", "closure", "rehabilitation"], daysShare: 10 },
+      { role: "Quality Assurance Reviewer", pickKeywords: ["quality", "review"], daysShare: 6 },
+    ].slice(0, Math.max(4, Math.min(7, expertCount + 3)));
+  }
+  if (/\bport\b|harbor|harbour|maritime|quay|berth|shipping terminal/.test(s)) {
+    return [
+      { role: "Project Principal", pickKeywords: ["principal", "director"], daysShare: 12 },
+      { role: "Lead Port / Maritime Engineer", pickKeywords: ["port", "maritime", "coastal"], daysShare: 22 },
+      { role: "Structural / Berth Design Engineer", pickKeywords: ["structural", "civil", "berth"], daysShare: 18 },
+      { role: "Dredging and Marine Environment Specialist", pickKeywords: ["dredge", "marine", "environment"], daysShare: 14 },
+      { role: "Nautical Simulator Specialist", pickKeywords: ["nautical", "simulator", "vessel"], daysShare: 10 },
+      { role: "Quantity Surveyor", pickKeywords: ["quantity", "qs", "boq"], daysShare: 12 },
+      { role: "Quality Assurance Reviewer", pickKeywords: ["quality", "review"], daysShare: 6 },
+    ].slice(0, Math.max(4, Math.min(7, expertCount + 3)));
+  }
+  if (/oil|gas|petroleum|pipeline|refinery|petrochemical/.test(s)) {
+    return [
+      { role: "Project Principal", pickKeywords: ["principal", "director"], daysShare: 12 },
+      { role: "Lead Process Engineer", pickKeywords: ["process", "chemical", "oil", "gas"], daysShare: 22 },
+      { role: "Pipeline / Piping Engineer", pickKeywords: ["pipeline", "piping", "stress"], daysShare: 18 },
+      { role: "Process Safety / HAZOP Specialist", pickKeywords: ["hazop", "safety", "process"], daysShare: 16 },
+      { role: "Instrumentation and Controls Engineer", pickKeywords: ["instrument", "control", "scada"], daysShare: 14 },
+      { role: "Environmental / Social Specialist", pickKeywords: ["environment", "esia"], daysShare: 10 },
+      { role: "Quality Assurance Reviewer", pickKeywords: ["quality", "review"], daysShare: 6 },
+    ].slice(0, Math.max(4, Math.min(7, expertCount + 3)));
+  }
+  if (/finance|bank|micro.?finance|insurance|credit|lending/.test(s)) {
+    return [
+      { role: "Project Principal", pickKeywords: ["principal", "director"], daysShare: 12 },
+      { role: "Lead Financial Systems Specialist", pickKeywords: ["finance", "banking", "financial"], daysShare: 22 },
+      { role: "Regulatory Compliance Specialist", pickKeywords: ["compliance", "regulatory", "legal"], daysShare: 16 },
+      { role: "IT / Systems Architect", pickKeywords: ["it", "system", "architect"], daysShare: 16 },
+      { role: "Change Management Specialist", pickKeywords: ["change", "training", "people"], daysShare: 14 },
+      { role: "Data Migration Specialist", pickKeywords: ["data", "migration", "database"], daysShare: 12 },
+      { role: "Quality Assurance Reviewer", pickKeywords: ["quality", "review"], daysShare: 6 },
+    ].slice(0, Math.max(4, Math.min(7, expertCount + 3)));
+  }
+  if (/telecom|broadband|spectrum|mobile network|isp/.test(s)) {
+    return [
+      { role: "Project Principal", pickKeywords: ["principal", "director"], daysShare: 12 },
+      { role: "Lead RF / Network Engineer", pickKeywords: ["rf", "radio", "network", "telecom"], daysShare: 22 },
+      { role: "Backhaul / Transmission Engineer", pickKeywords: ["backhaul", "transmission", "microwave"], daysShare: 18 },
+      { role: "Core Network / IT Architect", pickKeywords: ["core", "architect", "it"], daysShare: 14 },
+      { role: "Regulatory Specialist", pickKeywords: ["regulatory", "spectrum", "licence"], daysShare: 12 },
+      { role: "Quality Assurance Reviewer", pickKeywords: ["quality", "review"], daysShare: 6 },
+    ].slice(0, Math.max(4, Math.min(7, expertCount + 3)));
+  }
   // Generic
   return [
     { role: "Project Principal", pickKeywords: ["principal", "director"], daysShare: 12 },
@@ -351,6 +427,55 @@ function streamsForSector(sector: string): OrganogramStream[] {
       { name: "Planning and GIS Stream", pickKeywords: ["urban", "planner", "gis"], members: 3 },
       { name: "Sector Specialist Stream", pickKeywords: ["transport", "environment"], members: 2 },
       { name: "Stakeholder Engagement Stream", pickKeywords: ["stakeholder", "consultation"], members: 1 },
+    ];
+  }
+  if (/energy|power|solar|wind|grid|generation|transmission/.test(s)) {
+    return [
+      { name: "Power Systems Stream", pickKeywords: ["power", "electrical", "energy"], members: 3 },
+      { name: "Renewable / SCADA Stream", pickKeywords: ["solar", "wind", "scada", "control"], members: 2 },
+      { name: "Environmental & Permitting Stream", pickKeywords: ["environment", "esia"], members: 1 },
+    ];
+  }
+  if (/agri|irrigation|farm|crop|livestock|rural develop/.test(s)) {
+    return [
+      { name: "Irrigation Engineering Stream", pickKeywords: ["irrigation", "water", "hydraulic"], members: 3 },
+      { name: "Agronomy & Hydrology Stream", pickKeywords: ["agronomist", "hydro"], members: 2 },
+      { name: "Community & Social Stream", pickKeywords: ["social", "community", "stakeholder"], members: 1 },
+    ];
+  }
+  if (/mining|mineral|quarry|extracti/.test(s)) {
+    return [
+      { name: "Mining & Geology Stream", pickKeywords: ["mining", "geolog", "resource"], members: 3 },
+      { name: "Geotechnical & Tailings Stream", pickKeywords: ["geotechnical", "tailings"], members: 2 },
+      { name: "Environmental & Social Stream", pickKeywords: ["environment", "social"], members: 1 },
+    ];
+  }
+  if (/\bport\b|harbor|harbour|maritime|quay|berth/.test(s)) {
+    return [
+      { name: "Port / Maritime Engineering Stream", pickKeywords: ["port", "maritime", "coastal"], members: 3 },
+      { name: "Dredging & Marine Environment Stream", pickKeywords: ["dredge", "marine"], members: 2 },
+      { name: "Quantity Surveying Stream", pickKeywords: ["quantity", "qs"], members: 1 },
+    ];
+  }
+  if (/oil|gas|petroleum|pipeline|refinery|petrochemical/.test(s)) {
+    return [
+      { name: "Process Engineering Stream", pickKeywords: ["process", "oil", "gas"], members: 3 },
+      { name: "Process Safety & Integrity Stream", pickKeywords: ["hazop", "safety", "pipeline", "integrity"], members: 2 },
+      { name: "Instrumentation & Controls Stream", pickKeywords: ["instrument", "control"], members: 1 },
+    ];
+  }
+  if (/finance|bank|micro.?finance|insurance|credit|lending/.test(s)) {
+    return [
+      { name: "Financial Systems Stream", pickKeywords: ["finance", "banking", "financial"], members: 3 },
+      { name: "Compliance & IT Architecture Stream", pickKeywords: ["compliance", "it", "system"], members: 2 },
+      { name: "Change Management Stream", pickKeywords: ["change", "training"], members: 1 },
+    ];
+  }
+  if (/telecom|broadband|spectrum|mobile network|isp/.test(s)) {
+    return [
+      { name: "RF & Access Network Stream", pickKeywords: ["rf", "radio", "network"], members: 3 },
+      { name: "Backhaul & Core Stream", pickKeywords: ["backhaul", "core", "transmission"], members: 2 },
+      { name: "Regulatory & Licensing Stream", pickKeywords: ["regulatory", "spectrum"], members: 1 },
     ];
   }
   return [
