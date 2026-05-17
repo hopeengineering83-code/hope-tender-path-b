@@ -21,6 +21,7 @@ import { ExtractionQualityPanel } from "../../../../components/extraction-qualit
 import { AnalysisQualityPanel } from "../../../../components/analysis-quality-panel";
 import { MatchingQualityPanel } from "../../../../components/matching-quality-panel";
 import { LegacyTenderActionHider } from "../../../../components/legacy-tender-action-hider";
+import { CorruptedMetadataBanner } from "../../../../components/corrupted-metadata-banner";
 
 export default async function TenderPage({ params }: { params: Promise<{ id: string }> }) {
   const userId = await getSession();
@@ -60,6 +61,20 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
 
   return (
     <>
+      {/* Corrupted-metadata banner — surfaces stored values that fail the
+          canonical validators (reference, clientName, country,
+          clientContactName). Shows at the very top so users can't miss
+          it. The one-click "Clean now" button calls the re-extract
+          endpoint which now overwrites invalid stored values (see
+          commit 7688111). When all four fields are valid, this returns
+          null and renders nothing. */}
+      <CorruptedMetadataBanner tender={{
+        id: tender.id,
+        reference: tender.reference,
+        clientName: tender.clientName,
+        country: tender.country,
+        clientContactName: tender.clientContactName,
+      }} />
       <ExecutiveSnapshot tender={tender} />
       <BidControlVerdictPanel tenderId={tender.id} />
       <AIHealthPanel />
