@@ -151,6 +151,20 @@ export function GenerationActionPanel({ tenderId, readiness }: { tenderId: strin
         </button>
       </div>
 
+      {/* PRIOR BUG (May 17 screenshots): when both gates were blocked,
+          the panel rendered BOTH fullProposalBlockers AND the raw
+          blockers list. Since fullProposalBlockers already contains the
+          topic-deduped union of full-proposal-specific + inherited
+          support-package blockers, rendering `blockers` again caused
+          duplicate complaints with slightly different wording —
+          notably "Full proposal generation is blocked: client name is
+          empty or a placeholder." appearing alongside "Client name is
+          not set. Fill the tender Client Name before...".
+          FIX: when full proposal is blocked, show ONLY the deduped
+          fullProposalBlockers. Show raw `blockers` only in the
+          "support-only-blocked" state (full proposal ready but
+          something blocks even the support package) — that path uses
+          the original wording without overlap. */}
       {!fullProposalReady && fullProposalBlockers.length > 0 && (
         <div className="mt-3">
           <p className="text-xs font-semibold uppercase tracking-wide text-red-700">Full proposal blocked because:</p>
@@ -159,7 +173,7 @@ export function GenerationActionPanel({ tenderId, readiness }: { tenderId: strin
           </ul>
         </div>
       )}
-      {!supportReady && blockers.length > 0 && (
+      {fullProposalReady && !supportReady && blockers.length > 0 && (
         <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-red-800">
           {blockers.slice(0, 4).map((item, index) => <li key={`b-${item.code}-${index}`}>{item.message}</li>)}
         </ul>

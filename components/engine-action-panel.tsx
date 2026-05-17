@@ -101,6 +101,28 @@ export function EngineActionPanel({ tenderId }: { tenderId: string }) {
       const res = await fetch(`/api/tenders/${tenderId}/engine${force ? "?force=true" : ""}`, { method: "POST" });
       const data = await parseEngineResponse(res);
       if (!res.ok) {
+        // ─── Auto-promote to background on Vercel function timeout ──────
+        // The 60s Hobby cap is the single biggest source of "Run Engine
+        // didn't work" pain. The user-merged production tender showed
+        // FUNCTION_INVOCATION_TIMEOUT three runs in a row before the
+        // user remembered to click "Run in background" manually. When
+        // we detect the timeout signature, transparently retry in async
+        // mode — same click, same expectation, just with the path that
+        // actually works on Hobby for large tenders.
+        const isVercelTimeout = data.code === "ENGINE_VERCEL_TIMEOUT" || data.code === "GENERATION_TIMEOUT" || res.status === 504;
+        if (isVercelTimeout) {
+          setResult({
+            ...data,
+            error: `${data.error ?? "Engine hit the 60s Vercel cap."} Auto-retrying in background mode…`,
+            code: "AUTO_PROMOTING_TO_BACKGROUND",
+            nextAction: "RETRY_AS_BACKGROUND_JOB",
+          });
+          // Fire the async path. The setRunning(false) in the finally
+          // below releases the button; runEngineAsync re-asserts it
+          // and drives its own state machine until the poll completes.
+          await runEngineAsync(force);
+          return;
+        }
         setResult(data);
         return;
       }
