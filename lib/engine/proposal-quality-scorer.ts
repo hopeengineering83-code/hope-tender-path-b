@@ -159,11 +159,20 @@ function detectSector(primarySector: string): string {
 function sectionDepthMultiplier(markdown: string, headingPattern: RegExp): number {
   const headingMatch = markdown.match(headingPattern);
   if (!headingMatch) return 0;
-  const startOffset = (headingMatch.index ?? 0) + headingMatch[0].length;
-  // Find the next heading at the same or higher level — that's the
-  // end of this section's body.
+  // Determine the heading level (# count) immediately preceding the
+  // match. The body of this section runs until the next heading at
+  // the SAME or HIGHER level — sub-headings (deeper #) belong to
+  // this section and must be counted as part of its body.
+  const matchIndex = headingMatch.index ?? 0;
+  const lineStart = markdown.lastIndexOf("\n", matchIndex - 1) + 1;
+  const linePrefix = markdown.slice(lineStart, matchIndex);
+  const headingLevelMatch = linePrefix.match(/^(#{1,6})\s+$/);
+  const headingLevel = headingLevelMatch ? headingLevelMatch[1].length : 1;
+  const startOffset = matchIndex + headingMatch[0].length;
   const rest = markdown.slice(startOffset);
-  const nextHeadingMatch = rest.match(/\n#{1,4}\s+\w/);
+  // Match a heading at level 1..headingLevel — sub-headings (level > headingLevel) are body content.
+  const siblingHeadingPattern = new RegExp(`\\n#{1,${headingLevel}}\\s+\\w`);
+  const nextHeadingMatch = rest.match(siblingHeadingPattern);
   const body = nextHeadingMatch ? rest.slice(0, nextHeadingMatch.index ?? rest.length) : rest;
   const cleaned = body
     .replace(/\|[^\n]*\|/g, " ")     // strip table rows for "prose body" assessment
