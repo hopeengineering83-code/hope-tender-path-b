@@ -3,7 +3,7 @@
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
 
-import { DeepReasoningTelemetry } from "../lib/engine/deep-reasoning-telemetry";
+import { DeepReasoningTelemetry, DeepReasoningBudgetExceededError, readMaxCallsFromEnv } from "../lib/engine/deep-reasoning-telemetry";
 
 describe("DeepReasoningTelemetry", () => {
   it("records nothing by default", () => {
@@ -100,5 +100,90 @@ describe("DeepReasoningTelemetry", () => {
     await t.track("alignment", async () => "a", { recordCount: 12, criteriaCount: 4 });
     const records = t.getRecords();
     assert.deepEqual(records[0].metadata, { recordCount: 12, criteriaCount: 4 });
+  });
+});
+
+describe("DeepReasoningTelemetry — cost guard", () => {
+  it("allows calls up to the cap then throws DeepReasoningBudgetExceededError", async () => {
+    const t = new DeepReasoningTelemetry({ maxCalls: 2 });
+    await t.track("comprehension", async () => "a");
+    await t.track("alignment", async () => "b");
+    await assert.rejects(
+      () => t.track("critique", async () => "c"),
+      DeepReasoningBudgetExceededError,
+    );
+    // The skipped call was recorded with costGuard metadata so the summary surfaces it.
+    const records = t.getRecords();
+    assert.equal(records.length, 3);
+    assert.equal(records[2].step, "critique");
+    assert.equal(records[2].succeeded, false);
+    assert.equal((records[2].metadata as Record<string, unknown>).costGuard, "skipped");
+  });
+
+  it("does NOT invoke the wrapped function when the guard trips", async () => {
+    const t = new DeepReasoningTelemetry({ maxCalls: 1 });
+    await t.track("comprehension", async () => "a");
+    let called = false;
+    await assert.rejects(
+      () => t.track("alignment", async () => {
+        called = true;
+        return "b";
+      }),
+      DeepReasoningBudgetExceededError,
+    );
+    assert.equal(called, false, "wrapped function should not run when the guard trips");
+  });
+
+  it("maxCalls = null disables the guard (default)", async () => {
+    const t = new DeepReasoningTelemetry({ maxCalls: null });
+    for (let i = 0; i < 20; i++) {
+      await t.track("critique", async () => i);
+    }
+    assert.equal(t.summary().totalCalls, 20);
+  });
+
+  it("readMaxCallsFromEnv parses a positive integer", () => {
+    process.env.TENDER_DEEP_REASONING_MAX_CALLS = "10";
+    assert.equal(readMaxCallsFromEnv(), 10);
+    delete process.env.TENDER_DEEP_REASONING_MAX_CALLS;
+    assert.equal(readMaxCallsFromEnv(), null);
+  });
+
+  it("readMaxCallsFromEnv rejects non-positive and non-numeric values", () => {
+    process.env.TENDER_DEEP_REASONING_MAX_CALLS = "0";
+    assert.equal(readMaxCallsFromEnv(), null);
+    process.env.TENDER_DEEP_REASONING_MAX_CALLS = "-5";
+    assert.equal(readMaxCallsFromEnv(), null);
+    process.env.TENDER_DEEP_REASONING_MAX_CALLS = "many";
+    assert.equal(readMaxCallsFromEnv(), null);
+    process.env.TENDER_DEEP_REASONING_MAX_CALLS = "3.7";
+    assert.equal(readMaxCallsFromEnv(), 3); // floor
+    delete process.env.TENDER_DEEP_REASONING_MAX_CALLS;
+  });
+
+  it("constructor with no opts reads from env", async () => {
+    process.env.TENDER_DEEP_REASONING_MAX_CALLS = "1";
+    try {
+      const t = new DeepReasoningTelemetry();
+      assert.equal(t.maxCalls, 1);
+      await t.track("comprehension", async () => "a");
+      await assert.rejects(() => t.track("alignment", async () => "b"), DeepReasoningBudgetExceededError);
+    } finally {
+      delete process.env.TENDER_DEEP_REASONING_MAX_CALLS;
+    }
+  });
+
+  it("DeepReasoningBudgetExceededError carries step/used/cap", async () => {
+    const t = new DeepReasoningTelemetry({ maxCalls: 1 });
+    await t.track("comprehension", async () => "a");
+    try {
+      await t.track("alignment", async () => "b");
+      assert.fail("expected throw");
+    } catch (err) {
+      assert.ok(err instanceof DeepReasoningBudgetExceededError);
+      assert.equal((err as DeepReasoningBudgetExceededError).step, "alignment");
+      assert.equal((err as DeepReasoningBudgetExceededError).used, 1);
+      assert.equal((err as DeepReasoningBudgetExceededError).cap, 1);
+    }
   });
 });
