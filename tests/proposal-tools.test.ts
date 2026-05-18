@@ -67,16 +67,74 @@ function inventory(): ToolEvidenceInventory {
 }
 
 describe("PROPOSAL_TOOL_DEFS", () => {
-  it("declares five tools with valid schemas (round 8 adds company + legal-record lookups)", () => {
-    assert.equal(PROPOSAL_TOOL_DEFS.length, 5);
+  it("declares six tools with valid schemas (round 10 adds tender-requirement lookup)", () => {
+    assert.equal(PROPOSAL_TOOL_DEFS.length, 6);
     const names = PROPOSAL_TOOL_DEFS.map((t) => t.name).sort();
-    assert.deepEqual(names, ["inspect_company_profile", "inspect_expert", "inspect_project", "lookup_legal_record", "search_company_knowledge"]);
+    assert.deepEqual(names, ["inspect_company_profile", "inspect_expert", "inspect_project", "inspect_tender_requirement", "lookup_legal_record", "search_company_knowledge"]);
     for (const def of PROPOSAL_TOOL_DEFS) {
       assert.ok(def.description.length > 30, `tool ${def.name} needs a substantive description`);
       assert.equal(def.input_schema.type, "object");
       // inspect_company_profile takes no arguments — required[] may be empty
       assert.ok(Array.isArray(def.input_schema.required), `tool ${def.name} missing required[] array`);
     }
+  });
+});
+
+describe("executeProposalTool — inspect_tender_requirement", () => {
+  function inventoryWithRequirements(): ToolEvidenceInventory {
+    return {
+      experts: [],
+      projects: [],
+      requirements: [
+        { code: "TR-01", title: "Team Leader CV", description: "Provide a CV for the proposed Team Leader, including ISO 9001 lead-auditor certification.", requirementType: "EXPERT", priority: "MANDATORY", requiredQuantity: 1, pageLimit: 3 },
+        { code: "TR-02", title: "Hydraulic Engineer CV", description: "Provide CV for senior hydraulic engineer with EPANET experience.", requirementType: "EXPERT", priority: "SCORED", requiredQuantity: 1, pageLimit: 3 },
+        { code: "EXP-01", title: "Three comparable projects", description: "Bidder must demonstrate three comparable water-supply projects within the last 5 years.", requirementType: "PROJECT_EXPERIENCE", priority: "MANDATORY", requiredQuantity: 3 },
+        { code: null, title: "Audited financial statements", description: "Submit audited financial statements for the last 3 years.", requirementType: "FINANCIAL", priority: "MANDATORY" },
+      ],
+    };
+  }
+
+  it("matches by requirement code", () => {
+    const result = executeProposalTool("inspect_tender_requirement", { query: "TR-01" }, inventoryWithRequirements()) as { matchCount: number; requirements: Array<{ code: string | null; title: string }> };
+    assert.equal(result.matchCount, 1);
+    assert.equal(result.requirements[0].code, "TR-01");
+    assert.equal(result.requirements[0].title, "Team Leader CV");
+  });
+
+  it("matches by title substring (case-insensitive)", () => {
+    const result = executeProposalTool("inspect_tender_requirement", { query: "audited financial" }, inventoryWithRequirements()) as { matchCount: number; requirements: Array<{ title: string }> };
+    assert.equal(result.matchCount, 1);
+    assert.match(result.requirements[0].title, /Audited financial/i);
+  });
+
+  it("matches against the description text", () => {
+    const result = executeProposalTool("inspect_tender_requirement", { query: "EPANET" }, inventoryWithRequirements()) as { matchCount: number; requirements: Array<{ code: string | null }> };
+    assert.equal(result.matchCount, 1);
+    assert.equal(result.requirements[0].code, "TR-02");
+  });
+
+  it("applies the priorityFilter when supplied", () => {
+    const result = executeProposalTool("inspect_tender_requirement", { query: "CV", priorityFilter: "MANDATORY" }, inventoryWithRequirements()) as { matchCount: number; requirements: Array<{ priority: string }> };
+    // Both TR-01 and TR-02 match "CV" — but only TR-01 is MANDATORY.
+    assert.equal(result.matchCount, 1);
+    assert.equal(result.requirements[0].priority, "MANDATORY");
+  });
+
+  it("returns matchCount=0 with a helpful note when nothing matches", () => {
+    const result = executeProposalTool("inspect_tender_requirement", { query: "nonexistent" }, inventoryWithRequirements()) as { matchCount: number; note: string };
+    assert.equal(result.matchCount, 0);
+    assert.match(result.note, /Try a broader query/);
+  });
+
+  it("returns available=false when no requirements were supplied to the inventory", () => {
+    const result = executeProposalTool("inspect_tender_requirement", { query: "TR-01" }, { experts: [], projects: [] }) as { available: boolean; note: string };
+    assert.equal(result.available, false);
+    assert.match(result.note, /No tender requirements/);
+  });
+
+  it("returns an error when the query is empty", () => {
+    const result = executeProposalTool("inspect_tender_requirement", { query: "" }, inventoryWithRequirements()) as { error: string };
+    assert.match(result.error, /query is required/);
   });
 });
 

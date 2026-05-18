@@ -78,6 +78,20 @@ export type ToolEvidenceLegalRecord = {
   status?: string | null;
 };
 
+export type ToolEvidenceRequirement = {
+  /** Tender requirement code (e.g. "TR-01", "EXP-03"). May be undefined when the tender doesn't number requirements. */
+  code?: string | null;
+  title: string;
+  description: string;
+  requirementType: string;
+  priority: string;
+  sectionReference?: string | null;
+  requiredQuantity?: number | null;
+  pageLimit?: number | null;
+  exactFileName?: string | null;
+  restrictions?: string | null;
+};
+
 export type ToolEvidenceInventory = {
   experts: ToolEvidenceExpert[];
   projects: ToolEvidenceProject[];
@@ -85,6 +99,8 @@ export type ToolEvidenceInventory = {
   company?: ToolEvidenceCompany | null;
   /** Optional legal / regulatory records. Surfaced via lookup_legal_record when present. */
   legalRecords?: ToolEvidenceLegalRecord[];
+  /** Optional tender requirements. Surfaced via inspect_tender_requirement when present. */
+  requirements?: ToolEvidenceRequirement[];
 };
 
 /**
@@ -155,6 +171,18 @@ export const PROPOSAL_TOOL_DEFS: AnthropicToolDef[] = [
         recordType: { type: "string", description: "Optional filter — e.g. 'LICENSE', 'ISO_9001', 'TAX_CLEARANCE', 'REGISTRATION', 'INSURANCE'. Match is case-insensitive substring. Omit to list all records." },
       },
       required: [],
+    },
+  },
+  {
+    name: "inspect_tender_requirement",
+    description: "Retrieve a specific tender requirement by its code (e.g. 'TR-01') or by a title substring (e.g. 'Team Leader CV'). Use this when you need to verify EXACTLY what the tender asks for before drafting a section response — the requirement's priority (MANDATORY vs SCORED), required quantity, page limit, exact-file-name rule, and any restrictions. Helps avoid paraphrasing the tender language and ensures every mandatory requirement is addressed.",
+    input_schema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Either an exact requirement code (e.g. 'TR-01', 'EXP-03') or a substring of the requirement title (e.g. 'Team Leader', 'audited financial')." },
+        priorityFilter: { type: "string", enum: ["MANDATORY", "SCORED", "INFORMATIONAL", "ANY"], description: "Optional priority filter. Default: ANY." },
+      },
+      required: ["query"],
     },
   },
 ];
@@ -341,6 +369,48 @@ export function executeProposalTool(
           sectors: Array.isArray(c.sectors) ? c.sectors.slice(0, 30) : null,
           profileSummary: (c.profileSummary ?? "").slice(0, 2000) || null,
         },
+      };
+    }
+    case "inspect_tender_requirement": {
+      const query = asString(input.query);
+      if (query.length === 0) return { error: "query is required (requirement code or title substring)" };
+      const requirements = Array.isArray(inventory.requirements) ? inventory.requirements : [];
+      if (requirements.length === 0) {
+        return { available: false, note: "No tender requirements were supplied to the engine for this generation. The requirement-extraction step may have produced no rows, or the engine was invoked without requirements pre-loaded." };
+      }
+      const priorityFilter = asString(input.priorityFilter).toUpperCase();
+      const validPriority = ["MANDATORY", "SCORED", "INFORMATIONAL"].includes(priorityFilter) ? priorityFilter : null;
+      const needle = query.toLowerCase();
+      const matches = requirements.filter((r) => {
+        const codeHit = (r.code ?? "").toLowerCase().includes(needle);
+        const titleHit = r.title.toLowerCase().includes(needle);
+        const descHit = r.description.toLowerCase().includes(needle);
+        const priorityOk = validPriority === null || r.priority === validPriority;
+        return (codeHit || titleHit || descHit) && priorityOk;
+      });
+      if (matches.length === 0) {
+        const priorityNote = validPriority ? ` with priority ${validPriority}` : "";
+        return {
+          available: true,
+          matchCount: 0,
+          note: `No tender requirement matches "${query}"${priorityNote}. Try a broader query, or list all requirements by omitting the priority filter.`,
+        };
+      }
+      return {
+        available: true,
+        matchCount: matches.length,
+        requirements: matches.slice(0, 8).map((r) => ({
+          code: r.code ?? null,
+          title: r.title,
+          description: (r.description ?? "").slice(0, 800) || null,
+          requirementType: r.requirementType,
+          priority: r.priority,
+          sectionReference: r.sectionReference ?? null,
+          requiredQuantity: r.requiredQuantity ?? null,
+          pageLimit: r.pageLimit ?? null,
+          exactFileName: r.exactFileName ?? null,
+          restrictions: r.restrictions ?? null,
+        })),
       };
     }
     case "lookup_legal_record": {

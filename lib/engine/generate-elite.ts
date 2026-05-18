@@ -1453,6 +1453,21 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
           expiryDate: r.expiryDate ? String(r.expiryDate).slice(0, 10) : null,
           status: r.status,
         })),
+        // Round 10: tender requirements available via
+        // inspect_tender_requirement. Claude can look up a specific
+        // requirement by code/title before drafting a response.
+        requirements: tender.requirements.map((r) => ({
+          code: (r as { code?: string | null }).code ?? null,
+          title: r.title,
+          description: r.description,
+          requirementType: r.requirementType,
+          priority: r.priority,
+          sectionReference: r.sectionReference ?? null,
+          requiredQuantity: r.requiredQuantity ?? null,
+          pageLimit: r.pageLimit ?? null,
+          exactFileName: r.exactFileName ?? null,
+          restrictions: r.restrictions ?? null,
+        })),
       };
 
       // Tool-use during generation (TENDER_TOOL_USE_GENERATION). Only
