@@ -4,6 +4,8 @@ import { requireUser, unauthorizedResponse, forbiddenResponse } from "../../../.
 import { simulateEvaluatorPanel } from "../../../../../lib/engine/evaluator-simulator";
 import { scoreProposalQuality } from "../../../../../lib/engine/proposal-quality-scorer";
 import { logAction } from "../../../../../lib/audit";
+import { isDeepReasoningEnabled } from "../../../../../lib/engine/feature-flags";
+import { extractDeepTenderComprehension } from "../../../../../lib/engine/evaluation-criteria-extractor";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -70,6 +72,37 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       ? `Quality scorer: ${qualityScore.total}/100 — all axes passing`
       : "";
 
+  // Deep-comprehension cross-persona calibration (TENDER_DEEP_REASONING).
+  // When the flag is ON, extract evaluation criteria from the tender
+  // (or use already-stored evaluationMethodology as input) and pass
+  // them as `sharedCriteria` so every persona scores against the
+  // same canonical criterion names. This is what enables the spread
+  // detection in computeCalibrationNotes — without shared criteria
+  // each persona invents its own names and calibration can't join
+  // them. No-ops silently when AI is unavailable.
+  let sharedCriteria: Array<{ id: string; criterion: string; weight: number | null }> | undefined;
+  if (isDeepReasoningEnabled()) {
+    try {
+      const tenderTextForExtraction = [
+        tender.intakeSummary ?? "",
+        tender.analysisSummary ?? "",
+        tender.evaluationMethodology ?? "",
+        tender.description ?? "",
+      ].filter(Boolean).join("\n\n");
+      const comprehension = await extractDeepTenderComprehension(tenderTextForExtraction);
+      if (comprehension && comprehension.criteria.length > 0) {
+        sharedCriteria = comprehension.criteria.map((c) => ({
+          id: c.id,
+          criterion: c.criterion,
+          weight: c.weight,
+        }));
+        console.info(`[evaluator-simulation:route] Deep-reasoning ON — passing ${sharedCriteria.length} shared criteria to the panel for cross-persona calibration.`);
+      }
+    } catch (err) {
+      console.warn(`[evaluator-simulation:route] Deep-reasoning comprehension threw (non-critical): ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
   const context = {
     requirements: tender.requirements.map((req) => `[${req.priority}] ${req.requirementType}: ${req.title} — ${short(req.description, 360)}`),
     complianceGaps: tender.complianceGaps.map((gap) => `[${gap.severity}] ${gap.title} — ${short(gap.description, 360)}${gap.mitigationPlan ? ` | Mitigation: ${short(gap.mitigationPlan, 220)}` : ""}`),
@@ -83,6 +116,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       `Tender readiness=${Math.round(tender.readinessScore ?? 0)}/100; open gaps=${tender.complianceGaps.length}; selected experts=${tender.expertMatches.length}; selected projects=${tender.projectMatches.length}; documents=${tender.generatedDocuments.length}`,
       weakAxesSummary,
     ].filter(Boolean).join(" | "),
+    sharedCriteria,
   };
 
   await logAction({
