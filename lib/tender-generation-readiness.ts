@@ -197,6 +197,28 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
   const reviewedSelectedExperts = selectedExperts.filter((match) => match.expert.trustLevel === "REVIEWED");
   const reviewedSelectedProjects = selectedProjects.filter((match) => match.project.trustLevel === "REVIEWED");
 
+  // PR #398 follow-up to #394 — BEST-AVAILABLE detection. The
+  // selection policy's second-pass fallback (main-engine-selection-
+  // policy.ts) promotes top-N reviewed records ABOVE 0.20 but BELOW
+  // the 0.55 safe floor when the safe pass produced zero. The
+  // promoted match's rationale is prefixed with
+  // "[BEST-AVAILABLE BELOW THRESHOLD]". Surface this in the
+  // readiness panel so the bid team knows the matches need extra
+  // verification BEFORE submission — the prefix alone (buried in
+  // match.rationale) is too easy to miss.
+  const bestAvailableExperts = selectedExperts.filter((m) => /BEST-AVAILABLE BELOW THRESHOLD/.test(m.rationale ?? ""));
+  const bestAvailableProjects = selectedProjects.filter((m) => /BEST-AVAILABLE BELOW THRESHOLD/.test(m.rationale ?? ""));
+  if (bestAvailableExperts.length > 0 || bestAvailableProjects.length > 0) {
+    const expertNote = bestAvailableExperts.length > 0 ? `${bestAvailableExperts.length} expert match(es)` : "";
+    const projectNote = bestAvailableProjects.length > 0 ? `${bestAvailableProjects.length} project match(es)` : "";
+    const both = [expertNote, projectNote].filter(Boolean).join(" and ");
+    warnings.push({
+      code: "BEST_AVAILABLE_MATCHES_FLAGGED",
+      message: `${both} were promoted under the BEST-AVAILABLE-BELOW-THRESHOLD fallback (typical when the tender's primary sector differs from the firm's vault). Bid team MUST manually verify each of these matches against the tender's actual scope before submission. Consider uploading sector-aligned experts / projects to lift future matching scores.`,
+      nextAction: "REVIEW_MATCHES",
+    });
+  }
+
   if (expertRequirementExists && tender.expertMatches.length === 0) {
     if (companyReadiness.totals.reviewedExperts === 0) {
       blockers.push({ code: "NO_EXPERT_MATCHES_FOUND", message: "Tender requires experts but no expert matches exist and the company vault has no reviewed experts. Run Engine or review expert records first.", nextAction: "RUN_ENGINE" });
