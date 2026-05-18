@@ -89,6 +89,43 @@ const PROHIBITION_PATTERNS: Array<{
     matchesProposal: /(foreign[-\s]?owned|wholly\s+foreign|foreign\s+(?:firm|parent|investor)|registered\s+abroad)/i,
     suggestion: "Remove or rephrase any assertion of foreign ownership; if the firm genuinely is foreign, this is a disqualifier and the bid should not proceed.",
   },
+  {
+    // "No price / cost in the technical envelope" — common two-envelope rule. A proposal mentioning
+    // explicit currency amounts or "our price/fee is …" in a technical-only envelope is disqualifying.
+    matchesRule: /(?:price|cost|financial|commercial)\s+(?:information|figures?|details?|envelope|content|amount)[\s\S]{0,40}?(?:not|forbidden|prohibited|excluded|separated|never)|technical\s+(?:only|envelope|envelope\s+only)|two[-\s]?envelope/i,
+    matchesProposal: /(?:our\s+(?:price|cost|quote|fee|rate)\s+(?:is|will\s+be|of)|total\s+(?:price|cost|fee)\s+(?:is|of|amounts?\s+to|will\s+be)|\bETB\s*[\d,]+\s+(?:per|for|total)|\bUSD\s*[\d,]+\s+(?:per|for|total)|fee\s+schedule\s+attached|price\s+breakdown\s+below)/i,
+    suggestion: "Strip every cost, price, fee, rate, and commercial figure from this technical envelope. The tender separates technical and financial submissions — keeping financial content here is automatically disqualifying.",
+  },
+  {
+    // "No advance payment / mobilisation fee proposals"
+    matchesRule: /(?:advance\s+payment|mobili(?:s|z)ation\s+(?:fee|advance|payment)|payment\s+in\s+advance)[\s\S]{0,40}?(?:not|forbidden|prohibited|excluded|allowed|permitted)/i,
+    matchesProposal: /(?:we\s+(?:propose|request|seek|require)\s+(?:an\s+)?advance\s+payment|advance\s+payment\s+of\s+\d+\s*%|mobili(?:s|z)ation\s+(?:fee|advance)\s+of\s+\d)/i,
+    suggestion: "Remove any proposed advance payment, mobilisation fee, or upfront-payment arrangement. The tender forbids it; offering it disqualifies the bid.",
+  },
+  {
+    // "Independent / standalone delivery only — no alliances, no teaming"
+    matchesRule: /(?:alliance|partnership|collaboration|teaming)\s+(?:with|arrangement|agreement)[\s\S]{0,40}?(?:not|forbidden|prohibited|excluded|allowed|permitted)|sole\s+(?:bidder|firm|prime)[\s\S]{0,30}?(?:required|mandatory)/i,
+    matchesProposal: /(?:strategic|formal)\s+(?:alliance|partnership|teaming)\s+(?:with|agreement)|in\s+(?:strategic\s+)?partnership\s+with\s+[A-Z]/i,
+    suggestion: "Remove every alliance, partnership, or teaming-arrangement reference. The tender requires sole delivery; assert that the firm bids and delivers as sole prime.",
+  },
+  {
+    // "No additional cost-to-client" — flag proposals that require the client to buy / license something
+    matchesRule: /(?:client\s+(?:shall\s+)?(?:not|never)\s+(?:purchase|procure|acquire|buy|pay\s+for|licence|license)|no\s+(?:additional|extra)\s+(?:purchase|cost|fee|charge)\s+(?:to|for|from)\s+(?:the\s+)?client)/i,
+    matchesProposal: /(?:client\s+(?:will|shall|must|to|is\s+required\s+to)\s+(?:purchase|procure|acquire|buy|pay\s+for|license|licence)|the\s+(?:client|customer)\s+is\s+required\s+to\s+(?:purchase|procure|acquire))/i,
+    suggestion: "Remove every claim that the client must purchase, procure, or license anything additional. All required software, licences, and tools must be included in the firm's scope at no extra cost.",
+  },
+  {
+    // "No transfer / assignment of contract"
+    matchesRule: /(?:contract\s+assignment|assignment\s+of\s+(?:the\s+)?contract|transfer\s+of\s+contract|assign\s+(?:the\s+)?contract)[\s\S]{0,40}?(?:not|forbidden|prohibited|excluded|allowed|permitted)/i,
+    matchesProposal: /(?:we\s+(?:may|will|propose\s+to|reserve\s+the\s+right\s+to)\s+(?:assign|transfer|delegate)\s+(?:the\s+)?contract|contract\s+may\s+be\s+(?:assigned|transferred)\s+to\s+(?:another|a\s+third))/i,
+    suggestion: "Remove every reference to contract assignment, transfer, or delegation. The tender prohibits it; assert that the firm will deliver the contract in its entirety.",
+  },
+  {
+    // "Bespoke / no boilerplate" — flag obvious template / boilerplate language
+    matchesRule: /(?:reuse|generic|template|boilerplate|copy[-\s]?paste|verbatim\s+(?:from|of))[\s\S]{0,40}?(?:not|forbidden|prohibited|excluded|allowed|permitted)|bespoke\s+(?:proposal|content|approach)[\s\S]{0,30}?(?:required|mandatory)/i,
+    matchesProposal: /(?:standard\s+template\s+text|generic\s+(?:firm\s+)?profile|leading\s+firm\s+in\s+the\s+region|world[-\s]?class\s+expertise)/i,
+    suggestion: "Replace every generic firm-boilerplate phrase with tender-specific content. The tender requires bespoke proposal text; generic / template / boilerplate language is non-responsive.",
+  },
 ];
 
 const SECTION_HEADING_REGEX = /^#{1,4}\s+(.+)$/;

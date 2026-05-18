@@ -1303,6 +1303,10 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   let sourceMarkdown: string;
   let mode = "deterministic benchmark";
   let aiError: string | null = null;
+  // Hoisted so the deep-reasoning summary block (built much later
+  // alongside `summary`) can see the alignment report regardless of
+  // whether the AI branch ran.
+  let alignmentReport: AlignmentReport | null = null;
 
   if (isAIEnabled()) {
     try {
@@ -1332,7 +1336,6 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
       // Claude reads criterion-anchored rationales BEFORE writing.
       // Falls back silently to legacy lexical match when alignment is
       // unavailable. See lib/engine/semantic-match-aligner.ts.
-      let alignmentReport: AlignmentReport | null = null;
       if (isDeepReasoningEnabled() && deepComprehension && deepComprehension.criteria.length > 0) {
         try {
           const expertCandidates: AlignmentCandidate[] = (experts as ExpertRecord[]).slice(0, 6).map((e, idx) => ({
@@ -2518,6 +2521,11 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   });
   let refinementApplied = false;
   let refinementAttempts = 0;
+  // Track which refinement path (deep / legacy / none) actually ran,
+  // so the summary line surfaces it for diagnostics.
+  let deepRefinementApplied = false;
+  let deepRefinementIterations = 0;
+  let deepRefinementLift = 0;
 
   // Deep-reasoning refinement (TENDER_DEEP_REASONING). When the flag
   // is on AND we have an AI provider AND the proposal is below the
@@ -2588,8 +2596,10 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
         qualityScore = deepResult.finalScore;
         refinementApplied = true;
         refinementAttempts = deepResult.attempts.filter((a) => a.status === "applied").length;
-        const liftTotal = deepResult.finalScore.total - (deepResult.attempts[0]?.scoreBefore ?? deepResult.finalScore.total);
-        console.info(`[generate-elite] Deep-reasoning refinement applied: ${refinementAttempts} critique→rewrite iteration(s), score lift +${liftTotal}, final ${qualityScore.total}.`);
+        deepRefinementApplied = true;
+        deepRefinementIterations = refinementAttempts;
+        deepRefinementLift = deepResult.finalScore.total - (deepResult.attempts[0]?.scoreBefore ?? deepResult.finalScore.total);
+        console.info(`[generate-elite] Deep-reasoning refinement applied: ${refinementAttempts} critique→rewrite iteration(s), score lift +${deepRefinementLift}, final ${qualityScore.total}.`);
       } else {
         console.info("[generate-elite] Deep-reasoning refinement: no iteration improved the score — keeping original output.");
       }
@@ -2746,7 +2756,26 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     complianceGaps: tender.complianceGaps,
     bidOutcomes: (company as { bidOutcomes?: Array<{ won: boolean; primarySector?: string | null }> }).bidOutcomes,
   });
-  const summary = `${mode}${refinementLabel} technical proposal generated. ${finalized.internalSummary}. ${auditSummary}. ${formatQualityScoreSummary(qualityScore)}. ${formatWinProbability(winProb)}. Inputs: ${intelligence.requiredSections.length} section group(s), ${intelligence.themes.length} tender theme(s), ${experts.length} reviewed expert(s), ${projects.length} reviewed project(s), ${companyEvidenceLines.length} company evidence item(s), ${projectEvidenceLines.length} project evidence attachment(s).${aiError ? ` AI fallback reason: ${aiError}` : ""}`;
+  // Deep-reasoning provenance line — surfaces which deep-reasoning
+  // capabilities actually ran for this generation so reviewers can
+  // tell from the GeneratedDocument record alone whether the flag
+  // was on and what it produced. Empty string when the flag was off
+  // and no deep-reasoning capability ran.
+  const deepReasoningSummary = (() => {
+    const parts: string[] = [];
+    if (deepComprehension) {
+      parts.push(`comprehension: ${deepComprehension.criteria.length} criteria${deepComprehension.totalWeightAccountedFor !== null ? ` (${deepComprehension.totalWeightAccountedFor}% weight)` : ""}, ${deepComprehension.disqualifiers.length} disqualifier(s), ${deepComprehension.prohibitions.length} prohibition(s)`);
+    }
+    if (alignmentReport) {
+      parts.push(`alignment: ${alignmentReport.alignments.length} record-criterion pair(s) scored across ${alignmentReport.coverageByCriterion.length} criteria`);
+    }
+    if (deepRefinementApplied) {
+      parts.push(`deep refinement: ${deepRefinementIterations} critique→rewrite iteration(s), lift +${deepRefinementLift}`);
+    }
+    return parts.length > 0 ? ` Deep-reasoning (TENDER_DEEP_REASONING): ${parts.join("; ")}.` : "";
+  })();
+
+  const summary = `${mode}${refinementLabel} technical proposal generated. ${finalized.internalSummary}. ${auditSummary}. ${formatQualityScoreSummary(qualityScore)}. ${formatWinProbability(winProb)}. Inputs: ${intelligence.requiredSections.length} section group(s), ${intelligence.themes.length} tender theme(s), ${experts.length} reviewed expert(s), ${projects.length} reviewed project(s), ${companyEvidenceLines.length} company evidence item(s), ${projectEvidenceLines.length} project evidence attachment(s).${deepReasoningSummary}${aiError ? ` AI fallback reason: ${aiError}` : ""}`;
 
   // ─── Save the main Technical Proposal (PR #256 fix) ─────────────────────
   // BUG (pre-PR #256): the engine looked for a planned slot whose
