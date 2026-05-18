@@ -979,6 +979,256 @@ async function withRefinementTimeout<T>(promise: Promise<T>): Promise<T> {
   }
 }
 
+// ─── Deep-reasoning critic + rewriter (PR #384 / TENDER_DEEP_REASONING) ─────
+// These two helpers split the legacy single-pass refinement into a
+// CRITIQUE step and a REWRITE step. They are consumed by
+// `lib/engine/deep-reasoning-refiner.ts` and gated by the
+// TENDER_DEEP_REASONING feature flag. The legacy `refineProposalWithAI`
+// continues to work unchanged for callers that do not opt in.
+//
+// Why two passes:
+//
+//   The single-pass approach asks Claude to *find and fix* weak axes
+//   in one shot. Real bid reviewers do these as two separate cognitive
+//   acts: read-and-mark first, then rewrite. Splitting the prompt
+//   improves both steps — the critique can focus entirely on what is
+//   wrong (and produces a structured artifact a human can inspect),
+//   and the rewriter has explicit instructions rather than having to
+//   re-discover the problems mid-write.
+
+const CRITIC_SYSTEM_PROMPT = `You are a senior bid REVIEWER (not the author) with 25 years of experience scoring competitive technical proposals for World Bank, UNDP, AfDB, EU, USAID, GIZ, government, and large private-sector clients. Your single job is to read a near-complete proposal and write a precise, evidence-anchored critique that another author will use to rewrite the weak axes.
+
+Operating principles, in priority order:
+
+1. NAMED DEFECTS ONLY. Every critique entry must point to a SPECIFIC defect with a SPECIFIC location ("Section C.2, paragraph 3", "Cover Letter opening", "Compliance Matrix row 7"). Vague critique like "improve evidence density throughout" is forbidden — you must name the offending paragraph or section.
+
+2. EVIDENCE-ANCHORED. Every defect statement must cite either (a) the missing evidence (project name, contract value, license number, expert name, sector term) or (b) the forbidden language present (a quoted AI-trace phrase, a placeholder, a vague promise like "extensive experience").
+
+3. ACTIONABLE FIX SUGGESTIONS. For every defect, propose the SPECIFIC repair: "Replace 'we have extensive water experience' with the 2022 Sebeta WASH project (ETB 18M, World Bank)" — not "add a project reference".
+
+4. NO INVENTION. You may only reference projects, experts, license numbers, sectors, and clients that already appear in the proposal text or the supplied evidence inventory. If the evidence to fix a defect is missing entirely, say so explicitly: "EVIDENCE GAP: Section C.4 requires a JV partner reference but none is named in the firm's evidence inventory."
+
+5. EVALUATION-CRITERIA ALIGNMENT. Where the user message provides extracted evaluation criteria with weights, anchor every critique entry to a criterion ID — "Defect blocks 25% of the Technical Approach score (criterion: technical-methodology)."
+
+6. STRUCTURED OUTPUT. Return the critique as a numbered list of defect entries. Each entry has: (1) location, (2) defect statement, (3) cited evidence/language, (4) proposed fix. End with a one-paragraph priority ranking — which 3 defects matter most.
+
+7. NO REWRITING. You are NOT writing the proposal. Do not produce paragraphs of revised prose. Do not include "Here is the fix:" followed by 200 words of rewritten content. The rewriter is a different author who will take your critique as input — your job is to direct, not to draft.
+
+You start the response with "## Critique" and end with "## Priority ranking". No preamble, no outro.`;
+
+const REWRITER_SYSTEM_PROMPT = `You are a senior bid author with 25 years of experience. A senior reviewer has read your draft proposal and produced a structured critique. Your job is to apply that critique to the draft, returning the COMPLETE revised proposal markdown.
+
+Operating principles, in priority order:
+
+1. CRITIQUE-DRIVEN. Apply EVERY defect listed in the critique that has a proposed fix. Where the critique flags an EVIDENCE GAP (no evidence to repair the defect), insert a single short "Bid-Team Action: confirm X before submission." note in place of the missing fact — do not fabricate.
+
+2. PRESERVE-FIRST. Do NOT delete sections, do NOT remove tables, do NOT change factual claims that the critique did not flag. Names, contract values, license numbers, dates, client names — keep them exactly as they appear in the draft.
+
+3. COMPLETE REPLACEMENT. The output is the full revised proposal markdown — drop-in replacement for the draft. Not a diff. Not a list of changes. Not commentary. Start with the existing first line and end with the existing last line, with the fixes integrated in place.
+
+4. NO COMMENTARY. Do not write "I have made the following changes:" or "Here is the revised proposal:". Output the markdown directly.
+
+5. STRUCTURE-NEUTRAL. Do not introduce new top-level sections unless the critique explicitly directs you to add one. Do not rename existing sections. Do not reorder sections — the canonical orderer runs after you and will undo any reordering.
+
+6. EVIDENCE STAYS GROUNDED. If a critique entry tells you to add a project reference, use one that the draft already mentions elsewhere or one that the user message lists in the "Available evidence" block. Never make up project names, license numbers, or contract values.
+
+7. NO-FINANCIAL RULE. If the user message says the tender is TECHNICAL ONLY: the output must NEVER mention cost, pricing, savings, budget, rates, or commercials — not "cost-effective", "budget-friendly", "value-engineered", or "affordable". Scan the full document and remove any such language before returning.
+
+You are a focused author applying explicit direction. The reviewer told you what is wrong; you fix it without commentary.`;
+
+export type DeepCritiqueInput = {
+  currentMarkdown: string;
+  weakAxes: string[];
+  axisScores: Record<string, number>;
+  tenderTitle: string;
+  clientName: string;
+  primarySector: string;
+  topProjectNames: string[];
+  topExpertNames: string[];
+  /** Optional pre-extracted evaluation criteria. Rendered into the critique prompt when present. */
+  comprehensionBlock?: string | null;
+};
+
+export type DeepRewriteInput = {
+  currentMarkdown: string;
+  critique: string;
+  tenderTitle: string;
+  clientName: string;
+  primarySector: string;
+  topProjectNames: string[];
+  topExpertNames: string[];
+  noFinancial: boolean;
+};
+
+function buildCritiquePrompt(input: DeepCritiqueInput): string {
+  const axisDetail = input.weakAxes.length === 0
+    ? "(no axes flagged — assume the quality scorer was generous; look for evidence density and evaluator-alignment defects regardless)"
+    : input.weakAxes.map((a) => `- ${a} (score: ${input.axisScores[a] ?? "n/a"} / 10)`).join("\n");
+
+  const evidenceBlock = [
+    input.topProjectNames.length > 0 ? `Top projects available: ${input.topProjectNames.join("; ")}` : null,
+    input.topExpertNames.length > 0 ? `Top experts available: ${input.topExpertNames.join("; ")}` : null,
+  ].filter(Boolean).join("\n");
+
+  const comprehension = input.comprehensionBlock && input.comprehensionBlock.trim().length > 0
+    ? `\n## Extracted evaluation criteria (anchor critique entries to these IDs)\n\n${input.comprehensionBlock}\n`
+    : "";
+
+  return `# Critique request
+
+Tender: "${input.tenderTitle}"
+Client: ${input.clientName}
+Sector: ${input.primarySector}
+
+## Weak axes flagged by the deterministic scorer
+
+${axisDetail}
+
+## Available evidence inventory
+
+${evidenceBlock || "(no inventory supplied — work from references that already appear in the proposal)"}
+${comprehension}
+## Draft proposal markdown
+
+${input.currentMarkdown}
+
+## Your task
+
+Read the draft carefully. Produce the structured critique exactly as instructed in your system prompt. Cite location, defect, evidence/language, and proposed fix for every entry. End with the priority ranking.
+
+Return ONLY the critique markdown. Do not produce a revised proposal.
+`;
+}
+
+function buildRewritePrompt(input: DeepRewriteInput): string {
+  const evidenceBlock = [
+    input.topProjectNames.length > 0 ? `Available projects: ${input.topProjectNames.join("; ")}` : null,
+    input.topExpertNames.length > 0 ? `Available experts: ${input.topExpertNames.join("; ")}` : null,
+  ].filter(Boolean).join("\n");
+
+  const financialNote = input.noFinancial
+    ? "TENDER IS TECHNICAL ONLY — strip any cost/budget/pricing language entirely."
+    : "Financial language is permitted where the critique calls for it.";
+
+  return `# Rewrite request
+
+Tender: "${input.tenderTitle}"
+Client: ${input.clientName}
+Sector: ${input.primarySector}
+
+${financialNote}
+
+## Available evidence inventory
+
+${evidenceBlock || "(work from references that already appear in the draft)"}
+
+## Critique from the senior reviewer (apply every entry)
+
+${input.critique}
+
+## Draft proposal markdown (apply fixes in place)
+
+${input.currentMarkdown}
+
+## Your task
+
+Return the COMPLETE revised proposal markdown with every defect repaired. Drop-in replacement, no commentary.
+`;
+}
+
+/**
+ * Run the critique pass. Returns the critique markdown or null on
+ * failure. Reuses the same provider fallback chain and timeout
+ * envelope as `refineProposalWithAI` so the per-call budget is
+ * predictable.
+ */
+export async function critiqueProposalWithAI(input: DeepCritiqueInput): Promise<string | null> {
+  if (!isAIEnabled()) return null;
+  if (input.currentMarkdown.length > REFINEMENT_MAX_INPUT_CHARS) {
+    console.warn(`[ai] critiqueProposalWithAI: skipping critique — proposal is ${input.currentMarkdown.length} chars, exceeds ${REFINEMENT_MAX_INPUT_CHARS}-char budget.`);
+    return null;
+  }
+
+  const prompt = buildCritiquePrompt(input);
+  try {
+    if (isClaudeEnabled()) {
+      const claudeResult = await withRefinementTimeout(generateWithClaude(prompt, CRITIC_SYSTEM_PROMPT));
+      if (claudeResult) return claudeResult;
+    }
+    if (apiKey) {
+      try {
+        return await withRefinementTimeout(generateWithBestModel(prompt));
+      } catch (geminiErr) {
+        console.warn(`[ai] critiqueProposalWithAI Gemini failed: ${geminiErr instanceof Error ? geminiErr.message : String(geminiErr)} — trying OpenAI.`);
+      }
+    }
+    if (isOpenAIEnabled()) {
+      const openAiResult = await withRefinementTimeout(
+        generateWithOpenAI(prompt, CRITIC_SYSTEM_PROMPT).then((r) => r ?? Promise.reject(new Error("OpenAI returned null"))),
+      );
+      if (openAiResult) return openAiResult;
+    }
+  } catch (err) {
+    console.warn(`[ai] critiqueProposalWithAI failed: ${err instanceof Error ? err.message : String(err)}`);
+    return null;
+  }
+  return null;
+}
+
+/**
+ * Run the rewrite pass — takes the critique from the previous step
+ * and applies it. Returns the revised markdown or null on failure.
+ */
+export async function rewriteProposalWithCritique(input: DeepRewriteInput): Promise<string | null> {
+  if (!isAIEnabled()) return null;
+  if (input.currentMarkdown.length > REFINEMENT_MAX_INPUT_CHARS) {
+    console.warn(`[ai] rewriteProposalWithCritique: skipping rewrite — proposal is ${input.currentMarkdown.length} chars, exceeds ${REFINEMENT_MAX_INPUT_CHARS}-char budget.`);
+    return null;
+  }
+
+  const prompt = buildRewritePrompt(input);
+  try {
+    if (isClaudeEnabled()) {
+      const claudeResult = await withRefinementTimeout(generateWithClaude(prompt, REWRITER_SYSTEM_PROMPT));
+      if (claudeResult) {
+        lastProposalProvider = "claude";
+        return claudeResult;
+      }
+    }
+    if (apiKey) {
+      try {
+        const geminiResult = await withRefinementTimeout(generateWithBestModel(prompt));
+        lastProposalProvider = "gemini";
+        return geminiResult;
+      } catch (geminiErr) {
+        console.warn(`[ai] rewriteProposalWithCritique Gemini failed: ${geminiErr instanceof Error ? geminiErr.message : String(geminiErr)} — trying OpenAI.`);
+      }
+    }
+    if (isOpenAIEnabled()) {
+      const openAiResult = await withRefinementTimeout(
+        generateWithOpenAI(prompt, REWRITER_SYSTEM_PROMPT).then((r) => r ?? Promise.reject(new Error("OpenAI returned null"))),
+      );
+      if (openAiResult) {
+        lastProposalProvider = "openai";
+        return openAiResult;
+      }
+    }
+  } catch (err) {
+    console.warn(`[ai] rewriteProposalWithCritique failed: ${err instanceof Error ? err.message : String(err)}`);
+    return null;
+  }
+  return null;
+}
+
+/**
+ * Exposed for unit testing of the prompt-building logic without
+ * making an AI call. Pure functions; safe to call from tests.
+ */
+export const __deepReasoningInternals = {
+  buildCritiquePrompt,
+  buildRewritePrompt,
+};
+
 export async function refineProposalWithAI(input: {
   currentMarkdown: string;
   weakAxes: string[];
