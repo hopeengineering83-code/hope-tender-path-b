@@ -48,6 +48,25 @@ export function isDeepReasoningEnabled(): boolean {
 }
 
 /**
+ * Tool-use during proposal GENERATION (round 5). When ON AND
+ * TENDER_DEEP_REASONING is ON AND the proposal generation mode is
+ * "single", Claude is given access to `search_company_knowledge`,
+ * `inspect_expert`, and `inspect_project` while writing the proposal
+ * (not just during critique). This closes the original audit gap #10
+ * — until round 5 the tools were only wired into the critic loop.
+ *
+ * Wired separately from TENDER_DEEP_REASONING because it adds 1–6
+ * extra mid-write Claude turns per generation (one per tool call,
+ * capped at MAX_TOOL_TURNS=6). Operators on tight budgets can keep
+ * deep reasoning ON but tool-use OFF.
+ *
+ * Default OFF. Requires TENDER_DEEP_REASONING=true to take effect.
+ */
+export function isToolUseGenerationEnabled(): boolean {
+  return isTruthy(process.env.TENDER_TOOL_USE_GENERATION);
+}
+
+/**
  * Exposed for tests and diagnostics — never call directly from product
  * code. Use the named accessor above so feature usage is greppable.
  */
