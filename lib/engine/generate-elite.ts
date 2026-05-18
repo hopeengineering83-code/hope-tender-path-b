@@ -4,6 +4,7 @@ import { generateBenchmarkProposalWithAI, generateProposalSectionsParallel, getL
 import { isDeepReasoningEnabled } from "./feature-flags";
 import { extractDeepTenderComprehension, formatComprehensionForPrompt, type DeepTenderComprehension } from "./evaluation-criteria-extractor";
 import { runDeepRefinement } from "./deep-reasoning-refiner";
+import { alignMatchesToEvaluatorCriteria, formatAlignmentForPrompt, type AlignmentCandidate, type AlignmentReport } from "./semantic-match-aligner";
 import { BENCHMARK_CONTEXT_LINES, buildCriterionEvidenceMap, buildProposalIntelligence, expertProofLine, projectProofLine, safeParseArr } from "./proposal-intelligence";
 import { enforceCanonicalNames } from "./entity-name-normalizer";
 import { exactSelectionLimit, forbidsBranding, forbidsCoverPage, requiresSignatureOrStamp } from "./scope-policy";
@@ -1322,6 +1323,66 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
       const generationMode = (process.env.PROPOSAL_GENERATION_MODE || "parallel").toLowerCase();
       const useParallel = generationMode === "parallel";
 
+      // ─── Semantic match-to-criteria alignment (TENDER_DEEP_REASONING) ────
+      // When deep reasoning is on AND comprehension has criteria, run a
+      // single Claude call that maps each selected expert / project to
+      // each criterion with a 0–10 score + cited rationale. The result
+      // is prepended to the AI prompt's `differentiators` field so
+      // Claude reads criterion-anchored rationales BEFORE writing.
+      // Falls back silently to legacy lexical match when alignment is
+      // unavailable. See lib/engine/semantic-match-aligner.ts.
+      let alignmentReport: AlignmentReport | null = null;
+      if (isDeepReasoningEnabled() && deepComprehension && deepComprehension.criteria.length > 0) {
+        try {
+          const expertCandidates: AlignmentCandidate[] = (experts as ExpertRecord[]).slice(0, 6).map((e, idx) => ({
+            // ExpertRecord (lib/engine/benchmark-tables.ts) has no `id` field;
+            // synthesise an index-based id so the alignment report stays
+            // joinable to the candidate list.
+            id: `expert-${idx + 1}`,
+            name: e.fullName ?? `Expert ${idx + 1}`,
+            profile: e.profile ?? "",
+            extras: {
+              title: e.title ?? null,
+              yearsExperience: e.yearsExperience ?? null,
+              // disciplines/sectors/certifications are stored as JSON-encoded
+              // strings (Prisma JSON columns serialise to string). Pass the
+              // raw string through; the aligner formatter truncates to 120
+              // chars per extra so blobs are safe.
+              disciplines: e.disciplines ?? null,
+              sectors: e.sectors ?? null,
+              certifications: e.certifications ?? null,
+            },
+          }));
+          const projectCandidates: AlignmentCandidate[] = (projects as ProjectRecord[]).slice(0, 6).map((p, idx) => ({
+            id: p.id ?? `project-${idx + 1}`,
+            name: p.name ?? `Project ${idx + 1}`,
+            profile: p.summary ?? "",
+            extras: {
+              clientName: p.clientName ?? null,
+              country: p.country ?? null,
+              sector: p.sector ?? null,
+              contractValue: p.contractValue ?? null,
+              currency: p.currency ?? null,
+            },
+          }));
+          alignmentReport = await alignMatchesToEvaluatorCriteria({
+            tenderTitle: cleanedTenderTitle,
+            clientName: intelligence.clientName,
+            comprehension: deepComprehension,
+            experts: expertCandidates,
+            projects: projectCandidates,
+          });
+          if (alignmentReport) {
+            console.info(`[generate-elite] Semantic alignment: ${alignmentReport.alignments.length} alignment(s), ${alignmentReport.coverageByCriterion.length} criterion coverage record(s).`);
+          } else {
+            console.info("[generate-elite] Semantic alignment: aligner returned null — falling through to legacy lexical match only.");
+          }
+        } catch (alignErr) {
+          console.warn("[generate-elite] Semantic alignment threw (non-critical):", alignErr instanceof Error ? alignErr.message : alignErr);
+        }
+      }
+      const alignmentBlock = alignmentReport ? formatAlignmentForPrompt(alignmentReport) : "";
+
       const aiInput = {
         tenderTitle: cleanedTenderTitle,
         clientName: intelligence.clientName,
@@ -1361,7 +1422,16 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
         ].filter(Boolean).join("\n"),
         projects: [...projectLines, ...projectEvidenceLines].join("\n"),
         compliance: [...BENCHMARK_CONTEXT_LINES, ...complianceLines].join("\n"),
-        differentiators: [...BENCHMARK_CONTEXT_LINES, ...intelligence.differentiators, ...companyEvidenceLines.slice(0, 8)].join("\n"),
+        differentiators: [
+          // Semantic alignment block — present only when
+          // TENDER_DEEP_REASONING is enabled AND comprehension+alignment
+          // both succeeded. Placed FIRST so Claude reads
+          // criterion-anchored rationales before legacy differentiators.
+          ...(alignmentBlock ? [alignmentBlock, ""] : []),
+          ...BENCHMARK_CONTEXT_LINES,
+          ...intelligence.differentiators,
+          ...companyEvidenceLines.slice(0, 8),
+        ].join("\n"),
         // PR #257 — structured company-vault fields. Used by the
         // deterministic section fallback (proposal-sections.ts
         // buildSectionFallback) to emit REAL data instead of
