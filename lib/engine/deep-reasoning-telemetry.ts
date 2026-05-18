@@ -43,16 +43,62 @@ export type TelemetryRecord = {
 };
 
 /**
+ * Cost-guard error type — thrown by `track()` when the per-tender
+ * call cap would be exceeded. Distinct from normal AI failures so
+ * callers can log it specifically (the existing
+ * `try { ... } catch { return null }` blocks treat it the same as
+ * any other error, which is the desired behaviour).
+ */
+export class DeepReasoningBudgetExceededError extends Error {
+  constructor(public readonly step: TelemetryStep, public readonly used: number, public readonly cap: number) {
+    super(`Deep-reasoning cost guard tripped: ${step} skipped because ${used}/${cap} call cap is already reached.`);
+    this.name = "DeepReasoningBudgetExceededError";
+  }
+}
+
+/**
+ * Read the per-tender call cap from the environment.
+ * `TENDER_DEEP_REASONING_MAX_CALLS` should be a positive integer.
+ * Anything missing, non-numeric, zero, or negative disables the
+ * guard. Exported for tests; not used by callers directly.
+ */
+export function readMaxCallsFromEnv(): number | null {
+  const raw = process.env.TENDER_DEEP_REASONING_MAX_CALLS;
+  if (!raw) return null;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  return Math.floor(parsed);
+}
+
+/**
  * Per-tender collector. Not thread-safe — meant to live inside a
  * single async generation pipeline.
+ *
+ * Optional `maxCalls` cap (also configurable via the
+ * TENDER_DEEP_REASONING_MAX_CALLS env var) provides cost protection:
+ * once the cap is reached, every subsequent `track()` throws
+ * DeepReasoningBudgetExceededError without invoking the wrapped
+ * function. Existing deep-reasoning call sites already handle null
+ * fallbacks on any error, so this fails closed safely.
  */
 export class DeepReasoningTelemetry {
   private records: TelemetryRecord[] = [];
   private startedAt = Date.now();
+  /** Maximum number of AI calls allowed per collector lifetime. Null disables the guard. */
+  readonly maxCalls: number | null;
+
+  constructor(opts?: { maxCalls?: number | null }) {
+    if (opts && opts.maxCalls !== undefined) {
+      this.maxCalls = opts.maxCalls;
+    } else {
+      this.maxCalls = readMaxCallsFromEnv();
+    }
+  }
 
   /**
    * Record a completed call. Use `track()` for the common
    * wrap-and-time pattern instead of calling this directly.
+   * Manually-recorded calls also count toward the cost guard.
    */
   record(record: TelemetryRecord): void {
     this.records.push(record);
@@ -61,8 +107,23 @@ export class DeepReasoningTelemetry {
   /**
    * Wrap an async call, time it, and record the result. Errors
    * propagate to the caller after recording a failed entry.
+   *
+   * Throws `DeepReasoningBudgetExceededError` WITHOUT invoking the
+   * wrapped function when the cost guard would be exceeded.
    */
   async track<T>(step: TelemetryStep, fn: () => Promise<T>, metadata?: Record<string, string | number>): Promise<T> {
+    if (this.maxCalls !== null && this.records.length >= this.maxCalls) {
+      const cap = this.maxCalls;
+      const used = this.records.length;
+      this.records.push({
+        step,
+        durationMs: 0,
+        succeeded: false,
+        metadata: { ...metadata, costGuard: "skipped", used, cap },
+      });
+      console.warn(`[deep-reasoning-telemetry] Cost guard: skipping ${step} — ${used}/${cap} call cap already reached. Raise TENDER_DEEP_REASONING_MAX_CALLS to allow more.`);
+      throw new DeepReasoningBudgetExceededError(step, used, cap);
+    }
     const startedAt = Date.now();
     try {
       const result = await fn();

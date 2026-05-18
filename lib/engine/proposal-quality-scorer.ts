@@ -101,24 +101,51 @@ const SECTOR_VOCAB: Record<string, RegExp[]> = {
 
 // Keep this list aligned with hasForbiddenWeakness() in proposal-benchmark-guard.ts.
 // The guard normalises/strips these; the scorer reports them as a quality penalty.
+//
+// Round 4 expansion: added 18 patterns covering common AI-trace
+// preambles ("I have prepared", "Below is", "Please find"),
+// politeness boilerplate ("we are excited to", "we are delighted"),
+// content-thin filler ("at the end of the day", "going forward",
+// "in this day and age"), and unsupported superlatives ("unparalleled",
+// "second to none", "unmatched"). The expanded list makes
+// `aiTraceFreedom` materially harder to game.
 const FORBIDDEN_PHRASES = [
+  // AI / model self-references
   /as an ai/i,
   /\blanguage model\b/i,
   /chatgpt/i,
   /openai/i,
+  /\banthropic\b/i,
+  /claude(?:\.ai)?/i,
+  /\bgemini\b/i,
+  // AI conversational artefacts
+  /\bcertainly[!.]/i,
+  /\bof course[!.]/i,
+  /\bi(?:'d| would) be happy to\b/i,
+  /\bi(?:'m| am) pleased to\b/i,
+  /\bi(?:'ve| have) prepared\b/i,
+  /\bi(?:'ll| will) (?:now\s+)?(?:provide|generate|create|draft|write)\b/i,
+  /\bbelow is (?:a|the|my)\b/i,
+  /\bplease find (?:attached|below|enclosed)\b/i,
+  /\bhere(?:'s| is) (?:a|the|my|your)\b/i,
+  // Placeholders and stubs
   /lorem ipsum/i,
   /\bplaceholder\b/i,
   /sample text/i,
   /\btodo\b/i,
   /\btbd\b/i,
   /to be determined/i,
+  /to be (?:added|filled|completed|provided)\b/i,
   /n\/a \(pending\)/i,
+  /\[INSERT[^\]]*\]/i,
+  /\[(?:PLACEHOLDER|NAME|DATE|TBD|ADD|ENTER|SPECIFY|YOUR)[^\]]{0,60}\]/i,
+  // Generic / boilerplate / unsupported superlatives
   /committed to excellence/i,
   /leading firm in the region/i,
   /team of qualified professionals/i,
   /we look forward to the opportunity/i,
-  /\[INSERT[^\]]*\]/i,
-  /\[(?:PLACEHOLDER|NAME|DATE|TBD|ADD|ENTER|SPECIFY|YOUR)[^\]]{0,60}\]/i,
+  /we (?:are )?(?:excited|delighted|honou?red) to (?:submit|present|offer)/i,
+  /it (?:is|would be) (?:an?\s+)?(?:honou?r|privilege) to/i,
   /\bworld[\s-]class\b/i,
   /\binnovative solutions?\b/i,
   /\bstreamlined operations?\b/i,
@@ -126,6 +153,16 @@ const FORBIDDEN_PHRASES = [
   /\bbest practices\b/i,
   /\bstate[\s-]of[\s-]the[\s-]art\b/i,
   /\bsecond to none\b/i,
+  /\b(?:unparalleled|unmatched|unrivalled|unrivaled)\b/i,
+  /\bproven track record\b/i,
+  /\bcutting[\s-]edge\b/i,
+  /\bsynergi(?:es|stic)\b/i,
+  // Content-thin filler
+  /\bat the end of the day\b/i,
+  /\bin this day and age\b/i,
+  /\bgoing forward,?\s+we\b/i,
+  /\bneedless to say\b/i,
+  /\bthat being said\b/i,
 ];
 
 function detectSector(primarySector: string): string {
