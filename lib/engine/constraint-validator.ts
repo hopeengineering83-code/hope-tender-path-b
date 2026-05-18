@@ -157,7 +157,7 @@ function excerpt(markdown: string, offset: number, length: number): string {
  * dates, calculated tenure) is deferred to the critic.
  */
 function checkDisqualifierThresholds(disqualifier: DisqualifyingCondition, markdown: string): ConstraintViolation | null {
-  // Pattern: "≥ N years" / "minimum N years" / "at least N years" in the rule
+  // Pattern 1: year-tenure threshold ("≥ N years" / "minimum N years")
   const yearMatch = disqualifier.rule.match(/(?:≥|>=|at\s+least|minimum\s+of|minimum)\s*(\d{1,3})\s*years?/i);
   if (yearMatch) {
     const threshold = Number(yearMatch[1]);
@@ -177,14 +177,137 @@ function checkDisqualifierThresholds(disqualifier: DisqualifyingCondition, markd
             evidence: excerpt(markdown, offset, claimMatch[0].length),
             location: locationForOffset(markdown, offset),
             severity: "CRITICAL",
-            suggestion: `Tender requires ≥${threshold} years; firm claims founding year ${foundedYear} (${tenure} years). Reconfirm the founding date OR mark the bid as non-responsive.`,
+            suggestion: `Tender requires ≥${threshold} years of operating history; firm claims founding year ${foundedYear} (${tenure} years). Reconfirm the founding date OR mark the bid as non-responsive.`,
           };
         }
       }
     }
-    // Cannot deterministically verify — defer.
     return null;
   }
+
+  // Pattern 2: minimum project / contract count
+  // "at least N comparable projects" / "minimum N similar contracts"
+  const projectCountMatch = disqualifier.rule.match(/(?:≥|>=|at\s+least|minimum\s+of|minimum)\s*(\d{1,3})\s*(?:comparable|similar|relevant)?\s*(?:project|contract|assignment|engagement)s?/i);
+  if (projectCountMatch) {
+    const threshold = Number(projectCountMatch[1]);
+    if (!Number.isFinite(threshold) || threshold <= 0) return null;
+    // Count B.2 project portfolio cards (each "## B.2.N" or "### B.2.N" heading)
+    // OR row count in a "Project portfolio" / "Project references" table.
+    const portfolioCards = (markdown.match(/^#{2,4}\s+B\.2\.\d+/gm) ?? []).length;
+    const referencesTableRows = (() => {
+      const tableHeadingMatch = markdown.match(/^#{1,4}\s+(?:section\s+b\.?|b\.\d+|client references|project portfolio)/im);
+      if (!tableHeadingMatch) return 0;
+      const after = markdown.slice((tableHeadingMatch.index ?? 0) + tableHeadingMatch[0].length);
+      const nextHeading = after.search(/\n#{1,4}\s+\w/);
+      const slice = nextHeading > 0 ? after.slice(0, nextHeading) : after;
+      // Count substantive table rows (non-separator, content > 5 chars total)
+      const rows = (slice.match(/^\|[^\n]+\|$/gm) ?? []).filter((r) => !/^\|\s*:?-{3,}/.test(r));
+      return rows.length;
+    })();
+    const evidenced = Math.max(portfolioCards, referencesTableRows);
+    if (evidenced > 0 && evidenced < threshold) {
+      return {
+        type: "disqualifier",
+        rule: disqualifier.rule,
+        evidence: `Counted ${evidenced} project reference(s) in the proposal portfolio / Section B`,
+        location: "Section B / Project portfolio",
+        severity: "CRITICAL",
+        suggestion: `Tender requires ≥${threshold} comparable projects but only ${evidenced} are evidenced. Add ${threshold - evidenced} additional project reference(s) from the firm's vault OR mark the bid as non-responsive.`,
+      };
+    }
+    return null;
+  }
+
+  // Pattern 3: minimum financial turnover / annual revenue
+  // Looks for a numeric threshold + currency + turnover/revenue keyword
+  // anywhere in the rule text (the keyword may come BEFORE or AFTER
+  // the number — real tenders write it both ways: "minimum turnover
+  // of ETB 50M" and "ETB 50M minimum turnover").
+  const hasTurnoverKeyword = /(?:turnover|revenue)/i.test(disqualifier.rule);
+  const turnoverMatch = hasTurnoverKeyword
+    ? disqualifier.rule.match(/([A-Z]{3}|\$|€|£)?\s*([\d,]+(?:\.\d+)?)\s*(million|billion|\bm\b|\bbn\b)?/i)
+    : null;
+  if (turnoverMatch) {
+    // Parse threshold to a number in base units (rough; ignores currency).
+    const rawValue = Number(turnoverMatch[2].replace(/,/g, ""));
+    const multiplier = /million|^m$/i.test(turnoverMatch[3] ?? "") ? 1_000_000
+      : /billion|^bn$/i.test(turnoverMatch[3] ?? "") ? 1_000_000_000
+      : 1;
+    const threshold = rawValue * multiplier;
+    if (!Number.isFinite(threshold) || threshold <= 0) return null;
+    // Look for any proposal claim like "annual turnover ETB X" /
+    // "revenue of USD Y" / "turnover is ETB 12 million" — match the
+    // keyword, then look for a numeric value within the next ~50
+    // characters (real wording uses "is", "stands at", "of", etc.
+    // between the keyword and the value).
+    const claimMatch = markdown.match(/(?:turnover|revenue)[\s\S]{0,50}?([A-Z]{3}|\$|€|£)?\s*([\d,]+(?:\.\d+)?)\s*(million|billion|\bm\b|\bbn\b)?/i);
+    if (claimMatch) {
+      const claimRaw = Number(claimMatch[2].replace(/,/g, ""));
+      const claimMult = /million|^m$/i.test(claimMatch[3] ?? "") ? 1_000_000
+        : /billion|^bn$/i.test(claimMatch[3] ?? "") ? 1_000_000_000
+        : 1;
+      const claimValue = claimRaw * claimMult;
+      if (Number.isFinite(claimValue) && claimValue > 0 && claimValue < threshold) {
+        const offset = claimMatch.index ?? 0;
+        return {
+          type: "disqualifier",
+          rule: disqualifier.rule,
+          evidence: excerpt(markdown, offset, claimMatch[0].length),
+          location: locationForOffset(markdown, offset),
+          severity: "CRITICAL",
+          suggestion: `Tender requires turnover ≥ ${turnoverMatch[2]}${turnoverMatch[3] ?? ""}; proposal claims ${claimMatch[2]}${claimMatch[3] ?? ""}. Reconfirm the turnover figure OR mark the bid as non-responsive.`,
+        };
+      }
+    }
+    return null;
+  }
+
+  // Pattern 4: license-grade threshold ("Grade I license required" /
+  // "Class A engineering license") — match Grade/Class/Level + an
+  // identifier (Roman numeral or A-Z letter). Don't require a
+  // license/registration keyword in the rule itself; if the rule
+  // doesn't mention licenses at all, the next regex below will
+  // simply not fire on the proposal either.
+  const licenseMatch = disqualifier.rule.match(/(?:grade|class|level)\s+([IVX]+|[A-Z])(?=[\s,.;:]|$)/i);
+  if (licenseMatch) {
+    const required = licenseMatch[1].toUpperCase();
+    const requiredRank = (() => {
+      // Both numeric (I/II/III) and letter (A/B/C) systems exist; conservatively
+      // rank by string length then ASCII order (Grade I beats II/III; A beats B/C).
+      const romanMap: Record<string, number> = { I: 1, II: 2, III: 3, IV: 4, V: 5 };
+      if (romanMap[required] !== undefined) return romanMap[required];
+      return required.charCodeAt(0);
+    })();
+    // Look for the firm's actual grade claim. Matches "Grade III
+    // license", "Class A engineering license", "Level B registration",
+    // etc. The Roman/letter identifier must be followed by a word
+    // boundary so "Grade I" doesn't match "Grade Important" etc.
+    const claimMatch = markdown.match(/(?:grade|class|level)\s+([IVX]+|[A-Z])(?=[\s,.;:]|$)/i);
+    if (claimMatch) {
+      const claimed = claimMatch[1].toUpperCase();
+      const romanMap: Record<string, number> = { I: 1, II: 2, III: 3, IV: 4, V: 5 };
+      const claimedRank = romanMap[claimed] !== undefined ? romanMap[claimed] : claimed.charCodeAt(0);
+      // Lower rank number = higher grade (Grade I > Grade II). If the
+      // firm's claimed grade is HIGHER NUMBER than required, it's
+      // a violation. Skip the check entirely when rank systems differ
+      // (numeric vs letter) to avoid false positives.
+      const bothNumeric = romanMap[required] !== undefined && romanMap[claimed] !== undefined;
+      const bothLetter = romanMap[required] === undefined && romanMap[claimed] === undefined;
+      if ((bothNumeric || bothLetter) && claimedRank > requiredRank) {
+        const offset = claimMatch.index ?? 0;
+        return {
+          type: "disqualifier",
+          rule: disqualifier.rule,
+          evidence: excerpt(markdown, offset, claimMatch[0].length),
+          location: locationForOffset(markdown, offset),
+          severity: "CRITICAL",
+          suggestion: `Tender requires Grade ${required} license; firm claims Grade ${claimed}. Lower grade does not satisfy the threshold. Reconfirm the license grade OR mark the bid as non-responsive.`,
+        };
+      }
+    }
+    return null;
+  }
+
   return null;
 }
 
