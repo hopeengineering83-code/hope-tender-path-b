@@ -5,6 +5,7 @@ import { isDeepReasoningEnabled } from "./feature-flags";
 import { extractDeepTenderComprehension, formatComprehensionForPrompt, type DeepTenderComprehension } from "./evaluation-criteria-extractor";
 import { runDeepRefinement } from "./deep-reasoning-refiner";
 import { alignMatchesToEvaluatorCriteria, formatAlignmentForPrompt, type AlignmentCandidate, type AlignmentReport } from "./semantic-match-aligner";
+import type { ToolEvidenceInventory } from "./proposal-tools";
 import { BENCHMARK_CONTEXT_LINES, buildCriterionEvidenceMap, buildProposalIntelligence, expertProofLine, projectProofLine, safeParseArr } from "./proposal-intelligence";
 import { enforceCanonicalNames } from "./entity-name-normalizer";
 import { exactSelectionLimit, forbidsBranding, forbidsCoverPage, requiresSignatureOrStamp } from "./scope-policy";
@@ -2533,6 +2534,35 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     isAIEnabled()
   ) {
     try {
+      // Build the tool-use evidence inventory (gap #10). The
+      // critic can call search_company_knowledge / inspect_expert /
+      // inspect_project against this snapshot to verify claims
+      // mid-critique.
+      const toolEvidence: ToolEvidenceInventory = {
+        experts: (experts as ExpertRecord[]).map((e) => ({
+          fullName: e.fullName,
+          title: e.title,
+          yearsExperience: e.yearsExperience,
+          disciplines: e.disciplines,
+          sectors: e.sectors,
+          certifications: e.certifications,
+          profile: e.profile,
+        })),
+        projects: (projects as ProjectRecord[]).map((p) => ({
+          id: p.id,
+          name: p.name,
+          clientName: p.clientName,
+          country: p.country,
+          sector: p.sector,
+          serviceAreas: p.serviceAreas,
+          summary: p.summary,
+          contractValue: p.contractValue,
+          currency: p.currency,
+          startDate: p.startDate,
+          endDate: p.endDate,
+        })),
+      };
+
       const deepResult = await runDeepRefinement({
         initialMarkdown: workingMarkdown,
         initialScore: qualityScore,
@@ -2551,6 +2581,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
         noFinancial: intelligence.noFinancialProposal === true,
         scoreThreshold: QUALITY_REFINEMENT_THRESHOLD,
         maxIterations: Math.max(1, MAX_REFINEMENT_ATTEMPTS || 2),
+        toolEvidence,
       });
       if (deepResult) {
         workingMarkdown = deepResult.markdown;

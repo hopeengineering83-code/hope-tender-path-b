@@ -979,6 +979,152 @@ async function withRefinementTimeout<T>(promise: Promise<T>): Promise<T> {
   }
 }
 
+// ─── Tool-use multi-turn loop (gap #10) ────────────────────────────────────
+// Anthropic's tool_use protocol: Claude returns blocks of type
+// "tool_use", we run the tool, send a "tool_result" block back, and
+// continue until the assistant returns only text (or we hit the
+// per-call iteration cap). Bounded so a misbehaving model can't burn
+// the whole function budget on tool calls.
+//
+// MAX_TOOL_TURNS is intentionally low — a critic that needs more
+// than 6 lookups to write a critique is almost certainly looping. We
+// log + exit early when the cap is reached.
+
+const MAX_TOOL_TURNS = 6;
+
+type AnthropicTextBlock = { type: "text"; text: string };
+type AnthropicToolUseBlock = { type: "tool_use"; id: string; name: string; input: Record<string, unknown> };
+type AnthropicToolResultBlock = { type: "tool_result"; tool_use_id: string; content: string; is_error?: boolean };
+type AnthropicContentBlock = AnthropicTextBlock | AnthropicToolUseBlock;
+type AnthropicMessage = { role: "user" | "assistant"; content: string | Array<AnthropicTextBlock | AnthropicToolResultBlock | AnthropicToolUseBlock> };
+
+/**
+ * Generate with Claude in a tool-use loop. The executor receives the
+ * tool name + input from each tool_use block and returns a JSON-
+ * serialisable result that becomes the tool_result content.
+ *
+ * Returns the FINAL assistant text — the part after the model has
+ * stopped calling tools. Null when Claude is unavailable or every
+ * model in the chain fails.
+ *
+ * Errors thrown by the executor are converted to tool_result blocks
+ * with `is_error: true` so Claude can recover (it'll typically
+ * apologise and proceed without that lookup).
+ */
+export async function generateWithClaudeTools(
+  prompt: string,
+  systemPrompt: string,
+  tools: Array<{ name: string; description: string; input_schema: Record<string, unknown> }>,
+  executor: (toolName: string, input: Record<string, unknown>) => Record<string, unknown> | Promise<Record<string, unknown>>,
+  maxTokensOverride?: number,
+): Promise<string | null> {
+  if (!anthropicApiKey) return null;
+
+  let Anthropic: { new (config: { apiKey: string }): unknown };
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    Anthropic = require("@anthropic-ai/sdk").default ?? require("@anthropic-ai/sdk").Anthropic;
+  } catch {
+    console.warn("[ai:tools] @anthropic-ai/sdk not installed — tool-use unavailable.");
+    return null;
+  }
+
+  const client = new (Anthropic as new (config: { apiKey: string }) => {
+    messages: { create: (input: unknown) => Promise<{ content: AnthropicContentBlock[]; stop_reason?: string }> };
+  })({ apiKey: anthropicApiKey });
+
+  const effectiveMaxTokens = (typeof maxTokensOverride === "number" && Number.isFinite(maxTokensOverride) && maxTokensOverride > 0)
+    ? Math.min(maxTokensOverride, 64000)
+    : CLAUDE_MAX_OUTPUT_TOKENS;
+
+  // Conversation state — grows by one user-or-assistant message per
+  // turn. The initial user message has just the prompt; subsequent
+  // user messages carry the tool_result blocks for the prior turn's
+  // tool_use blocks.
+  const messages: AnthropicMessage[] = [{ role: "user", content: prompt }];
+
+  for (const modelName of CLAUDE_PROPOSAL_MODELS) {
+    let attemptError: string | null = null;
+    let aborted = false;
+
+    for (let turn = 0; turn < MAX_TOOL_TURNS; turn += 1) {
+      let response: { content: AnthropicContentBlock[]; stop_reason?: string };
+      try {
+        response = await client.messages.create({
+          model: modelName,
+          max_tokens: effectiveMaxTokens,
+          system: systemPrompt,
+          tools,
+          messages,
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        attemptError = `${modelName}: ${msg}`;
+        if (/401|403|invalid api key|authentication/i.test(msg)) {
+          throw new Error(`Anthropic API key invalid — check ANTHROPIC_API_KEY. (${msg})`);
+        }
+        if (/429|rate.?limit|over.?capacity|tokens per minute/i.test(msg) && turn < MAX_TOOL_TURNS - 1) {
+          console.warn(`[ai:tools] Claude rate-limit on ${modelName} mid-loop — aborting this model.`);
+        }
+        aborted = true;
+        break;
+      }
+
+      const toolUseBlocks = response.content.filter((b): b is AnthropicToolUseBlock => b.type === "tool_use");
+      const textBlocks = response.content.filter((b): b is AnthropicTextBlock => b.type === "text");
+
+      // Stash the assistant message — Anthropic requires the full
+      // assistant turn (including tool_use blocks) to be replayed in
+      // the conversation when sending tool_result.
+      messages.push({ role: "assistant", content: response.content });
+
+      if (toolUseBlocks.length === 0 || response.stop_reason === "end_turn") {
+        // No more tool calls — return the concatenated text.
+        const finalText = textBlocks.map((b) => b.text).join("\n").trim();
+        if (finalText.length === 0) {
+          attemptError = `${modelName}: empty final response after ${turn} tool turn(s)`;
+          aborted = true;
+          break;
+        }
+        return finalText;
+      }
+
+      // Execute each tool_use block, build tool_result blocks.
+      const toolResults: AnthropicToolResultBlock[] = [];
+      for (const block of toolUseBlocks) {
+        try {
+          const result = await executor(block.name, block.input);
+          toolResults.push({
+            type: "tool_result",
+            tool_use_id: block.id,
+            content: JSON.stringify(result),
+          });
+        } catch (execErr) {
+          const msg = execErr instanceof Error ? execErr.message : String(execErr);
+          console.warn(`[ai:tools] tool ${block.name} threw: ${msg}`);
+          toolResults.push({
+            type: "tool_result",
+            tool_use_id: block.id,
+            content: JSON.stringify({ error: msg }),
+            is_error: true,
+          });
+        }
+      }
+      messages.push({ role: "user", content: toolResults });
+    }
+
+    if (!aborted) {
+      // Loop exhausted without end_turn — log and try the next model with a fresh conversation.
+      console.warn(`[ai:tools] ${modelName} did not finish within ${MAX_TOOL_TURNS} tool turns. Trying next model.`);
+      messages.splice(1); // reset to initial user message
+    }
+    if (attemptError) console.warn(`[ai:tools] ${attemptError}`);
+  }
+
+  console.warn(`[ai:tools] All Claude models exhausted — tool-use returning null.`);
+  return null;
+}
+
 // ─── Deep-reasoning critic + rewriter (PR #384 / TENDER_DEEP_REASONING) ─────
 // These two helpers split the legacy single-pass refinement into a
 // CRITIQUE step and a REWRITE step. They are consumed by
@@ -1134,6 +1280,43 @@ ${input.currentMarkdown}
 
 Return the COMPLETE revised proposal markdown with every defect repaired. Drop-in replacement, no commentary.
 `;
+}
+
+/**
+ * Critique variant that lets Claude call evidence-search tools
+ * mid-critique (gap #10). Same prompt + system prompt as
+ * `critiqueProposalWithAI`, but routes through the tool-use loop
+ * so Claude can verify "does this expert exist?" / "is there
+ * evidence for this claim?" before writing each defect entry.
+ *
+ * Falls back to plain critique (returns null) when:
+ *   – Anthropic SDK is unavailable
+ *   – No tools / executor supplied
+ *   – Tool-loop runs out of turns or every model fails
+ *
+ * The caller (deep-reasoning-refiner) tries this first; on null it
+ * falls back to the tool-less critiqueProposalWithAI.
+ */
+export async function critiqueProposalWithTools(
+  input: DeepCritiqueInput,
+  tools: Array<{ name: string; description: string; input_schema: Record<string, unknown> }>,
+  executor: (toolName: string, toolInput: Record<string, unknown>) => Record<string, unknown> | Promise<Record<string, unknown>>,
+): Promise<string | null> {
+  if (!isClaudeEnabled()) return null;
+  if (tools.length === 0) return null;
+  if (input.currentMarkdown.length > REFINEMENT_MAX_INPUT_CHARS) {
+    console.warn(`[ai] critiqueProposalWithTools: skipping — proposal is ${input.currentMarkdown.length} chars, exceeds ${REFINEMENT_MAX_INPUT_CHARS}-char budget.`);
+    return null;
+  }
+  const prompt = buildCritiquePrompt(input);
+  try {
+    return await withRefinementTimeout(
+      generateWithClaudeTools(prompt, CRITIC_SYSTEM_PROMPT, tools, executor),
+    );
+  } catch (err) {
+    console.warn(`[ai] critiqueProposalWithTools failed: ${err instanceof Error ? err.message : String(err)}`);
+    return null;
+  }
 }
 
 /**

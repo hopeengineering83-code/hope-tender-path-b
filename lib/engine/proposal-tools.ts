@@ -1,0 +1,281 @@
+/**
+ * Proposal tools — closes audit gap #10 (no tool-use during
+ * generation; Claude can't search evidence mid-write).
+ *
+ * Defines Anthropic-compatible tool schemas + pure executors that
+ * search and inspect the company's evidence library (experts +
+ * projects) without hitting the database. The evidence is pre-loaded
+ * by the caller (typically the generation orchestrator) and the
+ * executor operates purely over those in-memory arrays.
+ *
+ * This module is provider-agnostic — the tool definitions follow
+ * Anthropic's `tools` parameter shape but the executors return
+ * plain JavaScript objects, so the same tools can be wired to any
+ * provider that supports function calling.
+ *
+ * Why in-memory rather than DB queries: tool-use loops can iterate
+ * many times. Putting DB round-trips inside the loop would make
+ * generation latency unpredictable and risk Vercel function
+ * timeouts. The caller pays the DB cost once, up front, and the
+ * tools operate on the snapshot.
+ */
+
+export type ToolEvidenceExpert = {
+  id?: string | null;
+  fullName: string;
+  title?: string | null;
+  yearsExperience?: number | null;
+  disciplines?: string[] | string | null;
+  sectors?: string[] | string | null;
+  certifications?: string[] | string | null;
+  profile?: string | null;
+  trustLevel?: string | null;
+};
+
+export type ToolEvidenceProject = {
+  id?: string | null;
+  name: string;
+  clientName?: string | null;
+  country?: string | null;
+  sector?: string | null;
+  serviceAreas?: string | null;
+  summary?: string | null;
+  contractValue?: number | null;
+  currency?: string | null;
+  startDate?: Date | string | null;
+  endDate?: Date | string | null;
+  trustLevel?: string | null;
+};
+
+export type ToolEvidenceInventory = {
+  experts: ToolEvidenceExpert[];
+  projects: ToolEvidenceProject[];
+};
+
+/**
+ * Anthropic tool definition shape. The schema is the JSON Schema
+ * subset Anthropic's API accepts.
+ */
+export type AnthropicToolDef = {
+  name: string;
+  description: string;
+  input_schema: {
+    type: "object";
+    properties: Record<string, unknown>;
+    required?: string[];
+  };
+};
+
+export const PROPOSAL_TOOL_DEFS: AnthropicToolDef[] = [
+  {
+    name: "search_company_knowledge",
+    description: "Search the firm's evidence library (experts + projects) for records that match a free-text query. Use this when you need to verify that the firm has evidence for a specific technical skill, sector, or contract type before making a claim in the proposal.",
+    input_schema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Free-text search query (e.g. 'EPANET hydraulic modelling', 'WASH project World Bank funded', 'team leader with PMP certification')." },
+        type: { type: "string", enum: ["expert", "project", "both"], description: "Restrict search to experts only, projects only, or both. Default: both." },
+        max_results: { type: "number", description: "Maximum results per category. Default 5, max 10." },
+      },
+      required: ["query"],
+    },
+  },
+  {
+    name: "inspect_expert",
+    description: "Retrieve the full profile of a specific expert by name (or partial name). Use this when you want to verify an expert's exact qualifications, years of experience, certifications, or sectors before naming them in a section.",
+    input_schema: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "Expert's full name or a distinctive substring. Match is case-insensitive." },
+      },
+      required: ["name"],
+    },
+  },
+  {
+    name: "inspect_project",
+    description: "Retrieve the full profile of a specific project by name (or partial name). Use this when you want to verify a project's exact client, contract value, sector, or scope before citing it as evidence.",
+    input_schema: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "Project name or a distinctive substring. Match is case-insensitive." },
+      },
+      required: ["name"],
+    },
+  },
+];
+
+type ToolCallInput = Record<string, unknown>;
+
+function asString(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function asNumber(value: unknown, fallback: number): number {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const n = Number(value);
+    if (Number.isFinite(n)) return n;
+  }
+  return fallback;
+}
+
+function joinList(value: string[] | string | null | undefined): string {
+  if (!value) return "";
+  if (Array.isArray(value)) return value.join(", ");
+  // Some records store the list as a JSON string ("[\"a\",\"b\"]").
+  try {
+    const parsed = JSON.parse(value);
+    if (Array.isArray(parsed)) return parsed.join(", ");
+  } catch {
+    // Not JSON — fall through to plain string.
+  }
+  return value;
+}
+
+function tokenize(query: string): string[] {
+  return query
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .map((t) => t.trim())
+    .filter((t) => t.length >= 3);
+}
+
+function expertMatchScore(expert: ToolEvidenceExpert, tokens: string[]): number {
+  if (tokens.length === 0) return 0;
+  const haystack = [
+    expert.fullName,
+    expert.title,
+    String(expert.yearsExperience ?? ""),
+    joinList(expert.disciplines),
+    joinList(expert.sectors),
+    joinList(expert.certifications),
+    expert.profile ?? "",
+  ].filter(Boolean).join(" ").toLowerCase();
+  let hits = 0;
+  for (const token of tokens) {
+    if (haystack.includes(token)) hits += 1;
+  }
+  return hits;
+}
+
+function projectMatchScore(project: ToolEvidenceProject, tokens: string[]): number {
+  if (tokens.length === 0) return 0;
+  const haystack = [
+    project.name,
+    project.clientName,
+    project.country,
+    project.sector,
+    project.serviceAreas,
+    project.summary,
+  ].filter(Boolean).join(" ").toLowerCase();
+  let hits = 0;
+  for (const token of tokens) {
+    if (haystack.includes(token)) hits += 1;
+  }
+  return hits;
+}
+
+function summariseExpert(expert: ToolEvidenceExpert): Record<string, unknown> {
+  return {
+    name: expert.fullName,
+    title: expert.title ?? null,
+    yearsExperience: expert.yearsExperience ?? null,
+    disciplines: joinList(expert.disciplines) || null,
+    sectors: joinList(expert.sectors) || null,
+    certifications: joinList(expert.certifications) || null,
+    profile: (expert.profile ?? "").slice(0, 1200) || null,
+    trustLevel: expert.trustLevel ?? null,
+  };
+}
+
+function summariseProject(project: ToolEvidenceProject): Record<string, unknown> {
+  return {
+    name: project.name,
+    clientName: project.clientName ?? null,
+    country: project.country ?? null,
+    sector: project.sector ?? null,
+    serviceAreas: project.serviceAreas ?? null,
+    contractValue: project.contractValue ?? null,
+    currency: project.currency ?? null,
+    startDate: project.startDate ? String(project.startDate).slice(0, 10) : null,
+    endDate: project.endDate ? String(project.endDate).slice(0, 10) : null,
+    summary: (project.summary ?? "").slice(0, 1200) || null,
+    trustLevel: project.trustLevel ?? null,
+  };
+}
+
+/**
+ * Pure executor for the tool calls. Receives the tool name + input
+ * + the evidence inventory, returns a JSON-serialisable object that
+ * the caller wraps in a tool_result block.
+ *
+ * Throws (never silently fails) for an unknown tool name so the
+ * caller can surface a clear error to the model.
+ */
+export function executeProposalTool(
+  toolName: string,
+  input: ToolCallInput,
+  inventory: ToolEvidenceInventory,
+): Record<string, unknown> {
+  switch (toolName) {
+    case "search_company_knowledge": {
+      const query = asString(input.query);
+      if (query.length === 0) {
+        return { error: "query is required and must be a non-empty string" };
+      }
+      const type = asString(input.type) || "both";
+      const maxResults = Math.min(10, Math.max(1, asNumber(input.max_results, 5)));
+      const tokens = tokenize(query);
+      const result: Record<string, unknown> = { query, tokensSearched: tokens };
+
+      if (type === "expert" || type === "both") {
+        const ranked = inventory.experts
+          .map((e) => ({ score: expertMatchScore(e, tokens), expert: e }))
+          .filter((r) => r.score > 0)
+          .sort((a, b) => b.score - a.score)
+          .slice(0, maxResults);
+        result.experts = ranked.map((r) => ({ matchScore: r.score, ...summariseExpert(r.expert) }));
+      }
+      if (type === "project" || type === "both") {
+        const ranked = inventory.projects
+          .map((p) => ({ score: projectMatchScore(p, tokens), project: p }))
+          .filter((r) => r.score > 0)
+          .sort((a, b) => b.score - a.score)
+          .slice(0, maxResults);
+        result.projects = ranked.map((r) => ({ matchScore: r.score, ...summariseProject(r.project) }));
+      }
+      return result;
+    }
+    case "inspect_expert": {
+      const name = asString(input.name);
+      if (name.length === 0) return { error: "name is required" };
+      const needle = name.toLowerCase();
+      const matches = inventory.experts.filter((e) => e.fullName.toLowerCase().includes(needle));
+      if (matches.length === 0) return { matchCount: 0, note: `No expert found matching "${name}". The firm's evidence library does not include this expert.` };
+      return { matchCount: matches.length, experts: matches.slice(0, 3).map(summariseExpert) };
+    }
+    case "inspect_project": {
+      const name = asString(input.name);
+      if (name.length === 0) return { error: "name is required" };
+      const needle = name.toLowerCase();
+      const matches = inventory.projects.filter((p) => p.name.toLowerCase().includes(needle));
+      if (matches.length === 0) return { matchCount: 0, note: `No project found matching "${name}". The firm's evidence library does not include this project.` };
+      return { matchCount: matches.length, projects: matches.slice(0, 3).map(summariseProject) };
+    }
+    default:
+      return { error: `Unknown tool: ${toolName}. Available tools: ${PROPOSAL_TOOL_DEFS.map((t) => t.name).join(", ")}.` };
+  }
+}
+
+/**
+ * Convenience helper for tests and call sites that don't need the
+ * Anthropic tool_use protocol — directly run a tool with a typed
+ * input object.
+ */
+export function searchCompanyKnowledge(query: string, inventory: ToolEvidenceInventory, opts?: { type?: "expert" | "project" | "both"; maxResults?: number }): Record<string, unknown> {
+  return executeProposalTool("search_company_knowledge", {
+    query,
+    type: opts?.type ?? "both",
+    max_results: opts?.maxResults ?? 5,
+  }, inventory);
+}

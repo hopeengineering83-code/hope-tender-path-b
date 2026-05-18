@@ -33,9 +33,10 @@
  * configured — caller falls back to the original markdown.
  */
 
-import { critiqueProposalWithAI, rewriteProposalWithCritique } from "../ai";
+import { critiqueProposalWithAI, critiqueProposalWithTools, rewriteProposalWithCritique } from "../ai";
 import { formatComprehensionForPrompt, type DeepTenderComprehension } from "./evaluation-criteria-extractor";
 import { formatConstraintsForCritique, formatViolationsForCritique, validateConstraints, violationsAsWeakAxes } from "./constraint-validator";
+import { executeProposalTool, PROPOSAL_TOOL_DEFS, type ToolEvidenceInventory } from "./proposal-tools";
 import type { QualityScore } from "./proposal-quality-scorer";
 
 export type DeepRefinementInput = {
@@ -56,6 +57,15 @@ export type DeepRefinementInput = {
   maxIterations?: number;
   /** Minimum point lift between iterations. Stops early when an iteration lifts by less than this. Default 2. */
   minLiftToContinue?: number;
+  /**
+   * Optional evidence inventory passed through to the tool-using
+   * critic (gap #10). When supplied, the critic gets Anthropic
+   * tool_use access to `search_company_knowledge`, `inspect_expert`,
+   * `inspect_project` so it can verify claims and find missing
+   * evidence mid-critique instead of relying solely on the static
+   * prompt blob. Falls back to the tool-less critic on any error.
+   */
+  toolEvidence?: ToolEvidenceInventory | null;
 };
 
 export type DeepRefinementAttempt = {
@@ -165,19 +175,35 @@ export async function runDeepRefinement(input: DeepRefinementInput): Promise<Dee
     ].filter((b): b is string => Boolean(b && b.trim().length > 0));
     const fullContext = contextBlocks.length > 0 ? contextBlocks.join("\n\n") : null;
 
+    const critiqueInput = {
+      currentMarkdown: workingMarkdown,
+      weakAxes: effectiveWeakAxes,
+      axisScores,
+      tenderTitle: input.tenderTitle,
+      clientName: input.clientName,
+      primarySector: input.primarySector,
+      topProjectNames: input.topProjectNames,
+      topExpertNames: input.topExpertNames,
+      comprehensionBlock: fullContext,
+    };
+
     let critique: string | null = null;
     try {
-      critique = await critiqueProposalWithAI({
-        currentMarkdown: workingMarkdown,
-        weakAxes: effectiveWeakAxes,
-        axisScores,
-        tenderTitle: input.tenderTitle,
-        clientName: input.clientName,
-        primarySector: input.primarySector,
-        topProjectNames: input.topProjectNames,
-        topExpertNames: input.topExpertNames,
-        comprehensionBlock: fullContext,
-      });
+      // Gap #10: when an evidence inventory is supplied, try the
+      // tool-using critic first — it can call search/inspect tools
+      // to verify claims and find missing evidence mid-critique.
+      // Falls through to the tool-less critic on null (Claude
+      // unavailable, tool-loop exhausted, etc.).
+      if (input.toolEvidence) {
+        critique = await critiqueProposalWithTools(
+          critiqueInput,
+          PROPOSAL_TOOL_DEFS,
+          (toolName, toolInput) => executeProposalTool(toolName, toolInput, input.toolEvidence!),
+        );
+      }
+      if (!critique || critique.trim().length < 50) {
+        critique = await critiqueProposalWithAI(critiqueInput);
+      }
     } catch (err) {
       console.warn(`[deep-reasoning-refiner] Critique iteration ${iteration} threw: ${err instanceof Error ? err.message : String(err)}`);
       attempts.push({
