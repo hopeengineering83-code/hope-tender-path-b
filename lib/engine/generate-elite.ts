@@ -2845,6 +2845,61 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   const telemetryLine = deepTelemetry.format();
   if (telemetryLine) console.info(telemetryLine);
 
+  // Round 6 — persist a structured TENDER_DEEP_REASONING_RUN audit
+  // entry so operators can query historical deep-reasoning usage.
+  // Only emitted when at least one capability actually ran (the
+  // flag being ON without any AI provider configured leaves all
+  // capabilities as no-ops, and we don't want a noisy audit row
+  // for those). Best-effort: failures are swallowed by logAction
+  // and never block generation.
+  if (deepComprehension || alignmentReport || deepRefinementApplied || deepTelemetry.getRecords().length > 0) {
+    try {
+      const { logAction } = await import("../audit");
+      const telemetrySummary = deepTelemetry.summary();
+      await logAction({
+        action: "TENDER_DEEP_REASONING_RUN",
+        entityType: "Tender",
+        entityId: tenderId,
+        description: `Deep-reasoning generation for tender "${cleanedTenderTitle}": ${telemetrySummary.totalCalls} AI call(s) over ${(telemetrySummary.totalMs / 1000).toFixed(1)}s.`,
+        metadata: {
+          tenderId,
+          comprehension: deepComprehension ? {
+            criteriaCount: deepComprehension.criteria.length,
+            disqualifierCount: deepComprehension.disqualifiers.length,
+            prohibitionCount: deepComprehension.prohibitions.length,
+            totalWeightAccountedFor: deepComprehension.totalWeightAccountedFor,
+          } : null,
+          alignment: alignmentReport ? {
+            alignmentCount: alignmentReport.alignments.length,
+            criterionCoverageCount: alignmentReport.coverageByCriterion.length,
+          } : null,
+          refinement: {
+            applied: deepRefinementApplied,
+            iterations: deepRefinementIterations,
+            scoreLift: deepRefinementLift,
+          },
+          telemetry: {
+            totalCalls: telemetrySummary.totalCalls,
+            successfulCalls: telemetrySummary.successfulCalls,
+            failedCalls: telemetrySummary.failedCalls,
+            totalMs: telemetrySummary.totalMs,
+            elapsedMs: telemetrySummary.elapsedMs,
+            byStep: Object.fromEntries(
+              Object.entries(telemetrySummary.byStep)
+                .filter(([, v]) => v !== null)
+                .map(([k, v]) => [k, v]),
+            ),
+          },
+          qualityScore: qualityScore.total,
+          weakAxes: qualityScore.weakAxes,
+        },
+      });
+    } catch (auditErr) {
+      // Best-effort audit; never block the proposal save.
+      console.warn(`[generate-elite] TENDER_DEEP_REASONING_RUN audit emission failed: ${auditErr instanceof Error ? auditErr.message : String(auditErr)}`);
+    }
+  }
+
   // ─── Save the main Technical Proposal (PR #256 fix) ─────────────────────
   // BUG (pre-PR #256): the engine looked for a planned slot whose
   // documentType was TECHNICAL_PROPOSAL / PROPOSAL / METHODOLOGY and

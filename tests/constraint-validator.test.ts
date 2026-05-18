@@ -220,6 +220,128 @@ describe("validateConstraints — year-threshold disqualifier", () => {
   });
 });
 
+describe("validateConstraints — project-count disqualifier", () => {
+  const comp = comprehension({
+    disqualifiers: [
+      { id: "proj-count", rule: "At least 3 comparable projects required", triggerLanguage: "non-responsive without 3 references" },
+    ],
+  });
+
+  it("flags when fewer than threshold project cards are present", () => {
+    const md = `## Section B: Relevant Experience
+
+### B.2.1 Sebeta WASH
+
+The 2022 Sebeta WASH project (ETB 18M).
+
+### B.2.2 Adama Master Plan
+
+The 2020 master plan.
+`;
+    const r = validateConstraints(comp, md);
+    assert.ok(r.violations.length >= 1, `expected 2 < 3 to trigger; got ${r.violations.length} violation(s)`);
+    assert.equal(r.violations[0].type, "disqualifier");
+    assert.match(r.violations[0].suggestion, /≥3 comparable projects/);
+  });
+
+  it("clears when project portfolio meets the threshold", () => {
+    const md = `## Section B: Relevant Experience
+
+### B.2.1 Sebeta WASH
+
+Body.
+
+### B.2.2 Adama Master Plan
+
+Body.
+
+### B.2.3 Hawassa Bridge
+
+Body.
+`;
+    const r = validateConstraints(comp, md);
+    assert.equal(r.violations.length, 0);
+  });
+});
+
+describe("validateConstraints — turnover threshold disqualifier", () => {
+  it("flags when claimed turnover is below the required threshold", () => {
+    const comp = comprehension({
+      disqualifiers: [
+        { id: "turnover", rule: "Minimum annual turnover of ETB 50 million required", triggerLanguage: "" },
+      ],
+    });
+    const md = `## Section A: Corporate Information
+
+Our annual turnover is ETB 12 million as audited last year.
+`;
+    const r = validateConstraints(comp, md);
+    assert.equal(r.violations.length, 1);
+    assert.equal(r.violations[0].type, "disqualifier");
+    assert.match(r.violations[0].suggestion, /turnover/);
+  });
+
+  it("clears when claimed turnover exceeds the threshold", () => {
+    const comp = comprehension({
+      disqualifiers: [
+        { id: "turnover", rule: "Minimum annual turnover of ETB 5 million", triggerLanguage: "" },
+      ],
+    });
+    const md = `## Section A
+
+Our annual turnover is ETB 18 million.
+`;
+    const r = validateConstraints(comp, md);
+    assert.equal(r.violations.length, 0);
+  });
+});
+
+describe("validateConstraints — license-grade disqualifier", () => {
+  it("flags Grade III when Grade I is required (numeric)", () => {
+    const comp = comprehension({
+      disqualifiers: [
+        { id: "grade", rule: "Grade I engineering consultancy license required", triggerLanguage: "" },
+      ],
+    });
+    const md = `## Section A
+
+We hold a Grade III engineering license valid through 2027.
+`;
+    const r = validateConstraints(comp, md);
+    assert.equal(r.violations.length, 1);
+    assert.match(r.violations[0].suggestion, /Grade III/);
+    assert.match(r.violations[0].suggestion, /Grade I license/);
+  });
+
+  it("clears Grade I when Grade I is required", () => {
+    const comp = comprehension({
+      disqualifiers: [
+        { id: "grade", rule: "Grade I license required", triggerLanguage: "" },
+      ],
+    });
+    const md = `## Section A
+
+We hold a Grade I engineering license, registration 12345.
+`;
+    const r = validateConstraints(comp, md);
+    assert.equal(r.violations.length, 0);
+  });
+
+  it("flags Class C when Class A is required (letter)", () => {
+    const comp = comprehension({
+      disqualifiers: [
+        { id: "class", rule: "Class A engineering license is required", triggerLanguage: "" },
+      ],
+    });
+    const md = `## Section A
+
+We hold a Class C engineering license.
+`;
+    const r = validateConstraints(comp, md);
+    assert.equal(r.violations.length, 1);
+  });
+});
+
 describe("formatConstraintsForCritique", () => {
   it("renders a checklist of every prohibition and disqualifier", () => {
     const comp = comprehension({
