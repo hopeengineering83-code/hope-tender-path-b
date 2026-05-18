@@ -3,6 +3,7 @@ import { getSession } from "../../../../lib/auth";
 import { isDeepReasoningEnabled, isToolUseGenerationEnabled } from "../../../../lib/engine/feature-flags";
 import { isAIEnabled, isClaudeEnabled, isOpenAIEnabled } from "../../../../lib/ai";
 import { getComprehensionCache } from "../../../../lib/engine/comprehension-cache";
+import { findStuckJobs, AI_JOB_STUCK_AFTER_MS } from "../../../../lib/ai-jobs";
 
 /**
  * Diagnostic endpoint — reports deep-reasoning configuration and
@@ -126,5 +127,28 @@ export async function GET() {
     // invocation gets its own counter — long-lived warm starts
     // will show higher hit rates than cold starts).
     comprehensionCache: getComprehensionCache().getStats(),
+    // Round 12 — stuck-job recovery. Surfaces background jobs that
+    // have been RUNNING longer than the stuck-threshold. Each entry
+    // in `sample` is a candidate for the
+    // POST /api/admin/release-stuck-jobs admin endpoint. The lazy-
+    // recovery hook on /api/ai-jobs/[id] already auto-fails these
+    // on read, but the diagnostic surface lets operators see them
+    // BEFORE the user polls the affected job.
+    stuckJobs: await (async () => {
+      try {
+        const result = await findStuckJobs({ limit: 5 });
+        return {
+          count: result.count,
+          stuckAfterMs: AI_JOB_STUCK_AFTER_MS,
+          sample: result.jobs.map((j) => ({
+            id: j.id,
+            jobType: j.jobType,
+            stuckForMs: j.startedAt ? Date.now() - j.startedAt.getTime() : null,
+          })),
+        };
+      } catch {
+        return { count: 0, stuckAfterMs: AI_JOB_STUCK_AFTER_MS, sample: [], error: "stuck-job query failed" };
+      }
+    })(),
   });
 }
