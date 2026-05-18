@@ -72,6 +72,17 @@ export interface PersonaAssessment {
   durationMs: number;
 }
 
+export interface CalibrationNote {
+  /** Canonical criterion name (lower-cased, trimmed) used as the join key. */
+  criterion: string;
+  /** Scores per persona for this criterion. */
+  scoresByPersona: Array<{ persona: EvaluatorPersona; score: number; rationale: string }>;
+  /** Maximum - minimum across personas. 0 means full agreement; 5+ means a calibration alarm. */
+  spread: number;
+  /** "agreed" | "moderate" | "alarm" — derived from spread for quick display. */
+  level: "agreed" | "moderate" | "alarm";
+}
+
 export interface SimulationResult {
   predictedOverallScore: number;
   verdict: "STRONG_BID" | "NEEDS_WORK" | "WEAK_BID";
@@ -81,6 +92,14 @@ export interface SimulationResult {
   actionPlan: Array<{ persona: EvaluatorPersona; title: string; owner: "TECHNICAL" | "COMPLIANCE" | "COMMERCIAL" | "PROPOSAL" | "MANAGEMENT"; priority: "HIGH" | "MEDIUM" | "LOW"; detail: string }>;
   riskRegister: Array<{ title: string; severity: "HIGH" | "MEDIUM" | "LOW"; detail: string }>;
   rationale: string;
+  /**
+   * Cross-persona calibration notes: lists criteria where personas
+   * disagreed materially (closes gap #9 — no scoring calibration
+   * across personas). Empty when every shared criterion was scored
+   * within 2 points across all personas, or when no shared criteria
+   * were supplied.
+   */
+  calibrationNotes: CalibrationNote[];
   computedAt: string;
 }
 
@@ -91,6 +110,15 @@ export interface EvaluatorContext {
   selectedProjects?: string[];
   matchRationales?: string[];
   readinessSummary?: string;
+  /**
+   * Optional list of canonical criterion names that ALL personas
+   * should score against (closes gap #9 — cross-persona scoring
+   * calibration). When supplied, each persona is instructed to use
+   * THESE exact criterion names, enabling spread-detection across
+   * personas on the same criterion. Typically populated from the
+   * deep-comprehension extractor when TENDER_DEEP_REASONING is on.
+   */
+  sharedCriteria?: Array<{ id: string; criterion: string; weight: number | null }>;
 }
 
 function contextBlock(context?: EvaluatorContext): string {
@@ -112,12 +140,126 @@ function contextBlock(context?: EvaluatorContext): string {
   return lines.join("\n").slice(0, 18_000);
 }
 
+/**
+ * Domain-focused proposal slicing (gap #9). Each persona scores
+ * against different sections of the proposal in real evaluation
+ * panels — TECHNICAL reads the methodology, COMPLIANCE reads the
+ * matrix and requirements, END_USER reads the workplan and
+ * experience, COMMERCIAL reads additional info and financial blocks.
+ *
+ * This function returns a per-persona "focused excerpt" that
+ * concatenates the sections that persona genuinely cares about.
+ * When the persona's domain sections are not findable in the
+ * markdown (e.g., the proposal lacks Section E), the focused
+ * excerpt falls back to the full proposal (truncated).
+ *
+ * Exported for unit tests.
+ */
+export function extractPersonaFocusedSlice(proposalMarkdown: string, persona: EvaluatorPersona): string {
+  // Section patterns each persona focuses on, in priority order. The
+  // patterns allow optional numbering prefixes (A.4, C.2 etc.) and an
+  // optional "Section X:" prefix before the keyword block.
+  const sectionPatterns: Record<EvaluatorPersona, RegExp[]> = {
+    TECHNICAL: [
+      // Top-level Section C or any C.N sub-section, plus methodology-style keywords
+      /^#{1,3}\s+(?:section\s+c\b|c\.\d|.*?(?:technical approach|technical methodology|methodology|work plan|sector-specific))/im,
+      // A.4 Proposed Project Team / Principal Qualifications — allow A.4 anywhere in the heading
+      /^#{1,3}\s+(?:section\s+a\.4|a\.4\b|.*?(?:principal qualifications|team-to-project|proposed (?:project )?team))/im,
+    ],
+    COMPLIANCE: [
+      /^#{1,3}\s+(?:section\s+e\b|e\.\d|.*?(?:compliance matrix|bid compliance|evaluation criteria response|evaluation response mirror))/im,
+      /^#{1,3}\s+(?:section\s+d\.4|d\.4\b|d\.5\b|.*?(?:declaration|no conflict))/im,
+    ],
+    END_USER: [
+      /^#{1,3}\s+(?:section\s+c\.6|c\.6\b|.*?(?:work plan and schedule|work plan|mobilisation|mobilization))/im,
+      /^#{1,3}\s+(?:section\s+b\b|b\.\d|.*?(?:relevant experience|project portfolio))/im,
+      /^#{1,3}\s+(?:section\s+c\.5|c\.5\b|.*?(?:risk register|risks))/im,
+    ],
+    COMMERCIAL: [
+      /^#{1,3}\s+(?:section\s+d\b|d\.\d|.*?(?:value framework|value-added|additional information|certifications|financial|capacity))/im,
+      /^#{1,3}\s+(?:section\s+a\.2|a\.2\b|.*?(?:corporate information|company background))/im,
+    ],
+  };
+
+  const patterns = sectionPatterns[persona];
+  const chunks: string[] = [];
+
+  // Find the cover letter + executive summary opener (every persona benefits from this context).
+  const openingMatch = proposalMarkdown.match(/^#{1,3}\s+(cover letter|executive summary)[\s\S]*?(?=^#{1,3}\s)/im);
+  if (openingMatch) chunks.push(openingMatch[0].trim());
+
+  // Then append each domain-relevant section.
+  for (const pattern of patterns) {
+    const match = proposalMarkdown.match(pattern);
+    if (!match || match.index === undefined) continue;
+    const fromHere = proposalMarkdown.slice(match.index);
+    // Take this section until the next top-level heading of equal or higher level.
+    const sectionHeadingLevel = (match[0].match(/^(#+)/)?.[1].length ?? 2);
+    const nextSiblingPattern = new RegExp(`\\n#{1,${sectionHeadingLevel}}\\s+\\w`);
+    const nextMatch = fromHere.slice(match[0].length).match(nextSiblingPattern);
+    const sectionText = nextMatch
+      ? fromHere.slice(0, match[0].length + (nextMatch.index ?? 0))
+      : fromHere;
+    chunks.push(sectionText.trim());
+  }
+
+  if (chunks.length === 0) {
+    // No domain sections found — fall back to the first 30K chars of the whole proposal.
+    return proposalMarkdown.slice(0, 30_000);
+  }
+
+  // Concatenate and truncate; per-persona budget of 30K chars keeps
+  // each call comfortable on Anthropic Tier 2+ output budgets.
+  return chunks.join("\n\n").slice(0, 30_000);
+}
+
+function sharedCriteriaBlock(context?: EvaluatorContext): string {
+  if (!context?.sharedCriteria || context.sharedCriteria.length === 0) return "";
+  const lines = context.sharedCriteria.map((c, i) => {
+    const weight = c.weight !== null ? ` (${c.weight}%)` : "";
+    return `${i + 1}. ${c.criterion}${weight}`;
+  });
+  return [
+    "## CANONICAL EVALUATION CRITERIA (score against THESE exact criterion names so the panel's scores can be cross-compared)",
+    ...lines,
+    "",
+    "Each entry in your criterionScores[].criterion MUST match one of these names verbatim. Score 0 for criteria you cannot assess given your domain.",
+  ].join("\n");
+}
+
+function buildPersonaPrompt(
+  persona: EvaluatorPersona,
+  proposalMarkdown: string,
+  evaluationCriteria: string,
+  tenderTitle: string,
+  context?: EvaluatorContext,
+): string {
+  const focusedExcerpt = extractPersonaFocusedSlice(proposalMarkdown, persona);
+  const sharedBlock = sharedCriteriaBlock(context);
+  return `Read the proposal sections most relevant to your evaluator role and the structured tender context below for tender: ${tenderTitle}
+
+EVALUATION CRITERIA / METHODOLOGY:
+${evaluationCriteria.slice(0, 5_000) || "No explicit criteria — infer from requirements and score against overall proposal quality and fit-for-purpose."}
+${sharedBlock ? "\n" + sharedBlock + "\n" : ""}
+${contextBlock(context)}
+
+PROPOSAL EXCERPT (sections focused on your evaluator domain — ${persona}, truncated to 30K chars):
+${focusedExcerpt}
+
+Return your JSON assessment as instructed in the system prompt.`;
+}
+
+// Legacy single-prompt helper retained for backward compatibility. It
+// is no longer used by simulateEvaluatorPanel (each persona now gets
+// a domain-focused prompt via buildPersonaPrompt), but other callers
+// may still depend on it.
 function buildUserPrompt(proposalMarkdown: string, evaluationCriteria: string, tenderTitle: string, context?: EvaluatorContext): string {
+  const sharedBlock = sharedCriteriaBlock(context);
   return `Read the proposal and structured tender context below for tender: ${tenderTitle}
 
 EVALUATION CRITERIA / METHODOLOGY:
 ${evaluationCriteria.slice(0, 5_000) || "No explicit criteria — infer from requirements and score against overall proposal quality and fit-for-purpose."}
-
+${sharedBlock ? "\n" + sharedBlock + "\n" : ""}
 ${contextBlock(context)}
 
 PROPOSAL MARKDOWN / PACKAGE TEXT (truncated to first 60K chars if large):
@@ -241,6 +383,39 @@ function synthesizeRiskRegister(objections: SimulationResult["topObjections"]): 
   return objections.slice(0, 8).map((o) => ({ title: o.title, severity: o.severity, detail: `${o.persona}: ${o.detail}` }));
 }
 
+/**
+ * Cross-persona calibration (gap #9). Groups criterion scores by
+ * canonical criterion name and computes the spread (max - min) per
+ * shared criterion. Returns notes for criteria where the spread is
+ * material (>= 3 points). Pure function — exported for tests.
+ */
+export function computeCalibrationNotes(assessments: PersonaAssessment[]): CalibrationNote[] {
+  // Group scores by lower-cased + trimmed criterion name. A criterion
+  // that only one persona scored cannot be calibrated and is dropped.
+  const map = new Map<string, Array<{ persona: EvaluatorPersona; score: number; rationale: string }>>();
+  for (const a of assessments) {
+    for (const c of a.criterionScores) {
+      const key = c.criterion.trim().toLowerCase();
+      if (key.length === 0) continue;
+      const list = map.get(key) ?? [];
+      list.push({ persona: a.persona, score: c.score, rationale: c.rationale });
+      map.set(key, list);
+    }
+  }
+  const notes: CalibrationNote[] = [];
+  for (const [criterion, scoresByPersona] of map.entries()) {
+    if (scoresByPersona.length < 2) continue;
+    const scores = scoresByPersona.map((s) => s.score);
+    const spread = Math.max(...scores) - Math.min(...scores);
+    if (spread < 3) continue; // agreement — no calibration concern
+    const level: CalibrationNote["level"] = spread >= 5 ? "alarm" : "moderate";
+    notes.push({ criterion, scoresByPersona, spread, level });
+  }
+  // Sort highest-spread first.
+  notes.sort((a, b) => b.spread - a.spread);
+  return notes.slice(0, 10);
+}
+
 function synthesizeRationale(score: number, verdict: SimulationResult["verdict"], objectionCount: number, actionCount: number): string {
   if (verdict === "STRONG_BID") {
     return `Predicted overall score ${score}/100 — STRONG BID. The evidence-aware panel sees this as competitive. Resolve the remaining ${actionCount} action(s) to reduce evaluator objections before submission.`;
@@ -268,7 +443,16 @@ export async function simulateEvaluatorPanel(input: {
   evaluationCriteria: string;
   context?: EvaluatorContext;
 }): Promise<SimulationResult | null> {
-  const userPrompt = buildUserPrompt(input.proposalMarkdown, input.evaluationCriteria, input.tenderTitle, input.context);
+  // Domain-focused prompts per persona (gap #9). Each persona reads
+  // only the proposal sections their evaluator role would focus on
+  // in a real panel — TECHNICAL → Section C + Team; COMPLIANCE →
+  // Section E + Declarations; END_USER → Work Plan + Experience;
+  // COMMERCIAL → Section D + Corporate. Falls back to the full
+  // proposal when domain sections aren't found.
+  const technicalPrompt = buildPersonaPrompt("TECHNICAL", input.proposalMarkdown, input.evaluationCriteria, input.tenderTitle, input.context);
+  const compliancePrompt = buildPersonaPrompt("COMPLIANCE", input.proposalMarkdown, input.evaluationCriteria, input.tenderTitle, input.context);
+  const endUserPrompt = buildPersonaPrompt("END_USER", input.proposalMarkdown, input.evaluationCriteria, input.tenderTitle, input.context);
+  const commercialPrompt = buildPersonaPrompt("COMMERCIAL", input.proposalMarkdown, input.evaluationCriteria, input.tenderTitle, input.context);
 
   let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
   const timeoutPromise = new Promise<null>((resolve) => {
@@ -279,10 +463,10 @@ export async function simulateEvaluatorPanel(input: {
   });
 
   const panelPromise = Promise.allSettled([
-    runPersona("TECHNICAL", TECHNICAL_EVALUATOR_PROMPT, userPrompt),
-    runPersona("COMPLIANCE", COMPLIANCE_EVALUATOR_PROMPT, userPrompt),
-    runPersona("END_USER", END_USER_EVALUATOR_PROMPT, userPrompt),
-    runPersona("COMMERCIAL", COMMERCIAL_EVALUATOR_PROMPT, userPrompt),
+    runPersona("TECHNICAL", TECHNICAL_EVALUATOR_PROMPT, technicalPrompt),
+    runPersona("COMPLIANCE", COMPLIANCE_EVALUATOR_PROMPT, compliancePrompt),
+    runPersona("END_USER", END_USER_EVALUATOR_PROMPT, endUserPrompt),
+    runPersona("COMMERCIAL", COMMERCIAL_EVALUATOR_PROMPT, commercialPrompt),
   ]);
 
   const settled = await Promise.race([
@@ -307,10 +491,11 @@ export async function simulateEvaluatorPanel(input: {
   const topCommendations = synthesizeTopCommendations(assessments);
   const actionPlan = synthesizeActionPlan(assessments);
   const riskRegister = synthesizeRiskRegister(topObjections);
+  const calibrationNotes = computeCalibrationNotes(assessments);
   const rationale = synthesizeRationale(predictedOverallScore, verdict, topObjections.length, actionPlan.length);
 
   const totalMs = assessments.reduce((s, a) => Math.max(s, a.durationMs), 0);
-  console.info(`[evaluator-simulator] Evidence-aware panel of ${assessments.length}/4 personas completed in ${Math.round(totalMs / 100) / 10}s — verdict ${verdict} (${predictedOverallScore}/100), ${topObjections.length} objection(s), ${actionPlan.length} action(s).`);
+  console.info(`[evaluator-simulator] Evidence-aware panel of ${assessments.length}/4 personas completed in ${Math.round(totalMs / 100) / 10}s — verdict ${verdict} (${predictedOverallScore}/100), ${topObjections.length} objection(s), ${actionPlan.length} action(s), ${calibrationNotes.length} calibration alarm(s).`);
 
   return {
     predictedOverallScore,
@@ -321,6 +506,7 @@ export async function simulateEvaluatorPanel(input: {
     actionPlan,
     riskRegister,
     rationale,
+    calibrationNotes,
     computedAt: new Date().toISOString(),
   };
 }

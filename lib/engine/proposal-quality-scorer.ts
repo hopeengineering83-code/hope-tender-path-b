@@ -146,6 +146,77 @@ function detectSector(primarySector: string): string {
   return "generic";
 }
 
+/**
+ * Measure the depth of a section identified by its heading pattern.
+ * Returns a 0–1 multiplier: 1.0 when the section has substantive
+ * body content, falling toward 0 when the body is empty, just a
+ * heading, or contains only filler.
+ *
+ * Closes audit gap #7 (structureCompleteness is gameable — counts
+ * section presence, not depth). A section with just "# Section A\n\n
+ * TBD" used to score the same as a fully-developed section.
+ */
+function sectionDepthMultiplier(markdown: string, headingPattern: RegExp): number {
+  const headingMatch = markdown.match(headingPattern);
+  if (!headingMatch) return 0;
+  // Determine the heading level (# count) immediately preceding the
+  // match. The body of this section runs until the next heading at
+  // the SAME or HIGHER level — sub-headings (deeper #) belong to
+  // this section and must be counted as part of its body.
+  const matchIndex = headingMatch.index ?? 0;
+  const lineStart = markdown.lastIndexOf("\n", matchIndex - 1) + 1;
+  const linePrefix = markdown.slice(lineStart, matchIndex);
+  const headingLevelMatch = linePrefix.match(/^(#{1,6})\s+$/);
+  const headingLevel = headingLevelMatch ? headingLevelMatch[1].length : 1;
+  const startOffset = matchIndex + headingMatch[0].length;
+  const rest = markdown.slice(startOffset);
+  // Match a heading at level 1..headingLevel — sub-headings (level > headingLevel) are body content.
+  const siblingHeadingPattern = new RegExp(`\\n#{1,${headingLevel}}\\s+\\w`);
+  const nextHeadingMatch = rest.match(siblingHeadingPattern);
+  const body = nextHeadingMatch ? rest.slice(0, nextHeadingMatch.index ?? rest.length) : rest;
+  const cleaned = body
+    .replace(/\|[^\n]*\|/g, " ")     // strip table rows for "prose body" assessment
+    .replace(/^\s*[-*]\s+/gm, "")    // strip list bullets
+    .replace(/\s+/g, " ")
+    .trim();
+  // Filler-only bodies (TBD, To be confirmed, Bid-Team Action, etc.) don't count.
+  const fillerOnly = /^(?:tbd|to be (?:determined|confirmed|advised|added)|bid[\s-]team action[^.]*\.?|n\/a|none|placeholder|\[insert[^\]]*\])\s*\.?$/i.test(cleaned);
+  if (fillerOnly) return 0;
+  const length = cleaned.length;
+  if (length < 60) return 0;                   // single-sentence-or-less stub
+  if (length < 200) return 0.5;                // shallow body
+  if (length < 600) return 0.85;               // moderate body
+  return 1;                                    // substantive body
+}
+
+/**
+ * Count "substantive" table rows. Closes audit gap #7
+ * (tableCoverage counts tables, not whether they're useful).
+ *
+ * A row is substantive when at least 2 of its cells have >3 chars
+ * of non-filler content. The header row (separator row
+ * `|---|---|`) and rows containing only TBD / N/A / placeholders
+ * don't count toward useful coverage.
+ */
+function substantiveTableRowCount(markdown: string): number {
+  const rows = markdown.match(/^\|[^\n]+\|$/gm) ?? [];
+  let substantive = 0;
+  for (const row of rows) {
+    // Skip Markdown table separator rows (|---|---|).
+    if (/^\|\s*:?-{3,}/.test(row)) continue;
+    const cells = row.slice(1, -1).split("|").map((c) => c.trim());
+    let goodCells = 0;
+    for (const cell of cells) {
+      if (cell.length < 3) continue;
+      if (/^(?:tbd|n\/a|none|to be (?:determined|confirmed|advised)|placeholder|-+|—|–|x{2,})$/i.test(cell)) continue;
+      goodCells += 1;
+      if (goodCells >= 2) break;
+    }
+    if (goodCells >= 2) substantive += 1;
+  }
+  return substantive;
+}
+
 function paragraphHasEvidence(paragraph: string): boolean {
   // Specific evidence markers: ETB amounts, m² scale, license numbers, donor
   // names, dates with context, named assets. The year marker is intentionally
@@ -186,11 +257,18 @@ export function scoreProposalQuality(opts: {
   const weakAxes: string[] = [];
 
   // 1. Structure completeness (0–10)
-  const presentSections = REQUIRED_SECTIONS.filter((re) => re.test(md));
-  const structureCompleteness = Math.round((presentSections.length / REQUIRED_SECTIONS.length) * 10);
+  // Depth-weighted (gap #7): each present section contributes 0–1
+  // based on the actual body content. A section with only a heading
+  // or filler counts as 0; substantive prose counts as 1.
+  const sectionDepthMultipliers = REQUIRED_SECTIONS.map((re) => sectionDepthMultiplier(md, re));
+  const depthSum = sectionDepthMultipliers.reduce((sum, m) => sum + m, 0);
+  const structureCompleteness = Math.round((depthSum / REQUIRED_SECTIONS.length) * 10);
+  const presentSections = sectionDepthMultipliers.filter((m) => m > 0).length;
+  const shallowSections = sectionDepthMultipliers.filter((m) => m > 0 && m < 1).length;
   if (structureCompleteness < 7) {
     weakAxes.push("structureCompleteness");
-    notes.push(`Only ${presentSections.length} of ${REQUIRED_SECTIONS.length} required sections present.`);
+    const shallowNote = shallowSections > 0 ? ` (${shallowSections} present but shallow)` : "";
+    notes.push(`Only ${presentSections} of ${REQUIRED_SECTIONS.length} required sections present with substantive content${shallowNote}.`);
   }
 
   // 2. Evidence density (0–10)
@@ -212,8 +290,12 @@ export function scoreProposalQuality(opts: {
     notes.push(`Only ${withEvidence} of ${paragraphs.length} substantive paragraphs cite specific evidence (projects/values/licenses).`);
   }
 
-  // 3. Table coverage (0–10) — score by count of table rows + numbered sections
-  const tableMatches = (md.match(/^\|[^\n]+\|$/gm) ?? []).length;
+  // 3. Table coverage (0–10) — score by count of SUBSTANTIVE table
+  // rows + numbered sections. Substantive (gap #7): row must have at
+  // least 2 cells with non-filler content >3 chars. Header-only
+  // tables and rows full of TBD/N/A no longer inflate this axis.
+  const rawTableRowCount = (md.match(/^\|[^\n]+\|$/gm) ?? []).length;
+  const substantiveTableRows = substantiveTableRowCount(md);
   const tableSections = (md.match(/^#{2,3}\s+(?:A\.\d|B\.\d|C\.\d|D\.\d|E\.\d)/gm) ?? []).length;
   // Section C sub-section count: minimum 6 C.2.x sub-sections are required.
   // Fewer than 6 indicates the methodology is incomplete vs. the tender scope.
@@ -225,10 +307,13 @@ export function scoreProposalQuality(opts: {
   }
   // Divisor of 12 rows (was 20) — a well-structured proposal typically has 12+ rows
   // across A.2 corporate table, B.2/B.3 project cards, C.3 work plan, C.4 QA table.
-  const tableCoverage = Math.min(10, Math.round((tableMatches / 12) * 5 + (tableSections / 6) * 4) + subSectionBonus);
+  const tableCoverage = Math.min(10, Math.round((substantiveTableRows / 12) * 5 + (tableSections / 6) * 4) + subSectionBonus);
   if (tableCoverage < 5) {
     weakAxes.push("tableCoverage");
-    notes.push(`Limited tabular evidence: ${tableMatches} table rows across ${tableSections} numbered sections.`);
+    const fillerNote = rawTableRowCount > substantiveTableRows
+      ? ` (${rawTableRowCount - substantiveTableRows} additional row(s) ignored as filler/empty)`
+      : "";
+    notes.push(`Limited tabular evidence: ${substantiveTableRows} substantive table rows across ${tableSections} numbered sections${fillerNote}.`);
   }
 
   // 4. Sector vocabulary (0–10)

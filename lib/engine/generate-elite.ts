@@ -1,6 +1,11 @@
 import { AlignmentType, BorderStyle, Document, Footer, Header, HeadingLevel, Packer, PageNumber, Paragraph, Table, TableBorders, TableCell, TableRow, TextRun, WidthType } from "docx";
 import { prisma } from "../prisma";
 import { generateBenchmarkProposalWithAI, generateProposalSectionsParallel, getLastProposalProvider, isAIEnabled, refineProposalWithAI } from "../ai";
+import { isDeepReasoningEnabled } from "./feature-flags";
+import { extractDeepTenderComprehension, formatComprehensionForPrompt, type DeepTenderComprehension } from "./evaluation-criteria-extractor";
+import { runDeepRefinement } from "./deep-reasoning-refiner";
+import { alignMatchesToEvaluatorCriteria, formatAlignmentForPrompt, type AlignmentCandidate, type AlignmentReport } from "./semantic-match-aligner";
+import type { ToolEvidenceInventory } from "./proposal-tools";
 import { BENCHMARK_CONTEXT_LINES, buildCriterionEvidenceMap, buildProposalIntelligence, expertProofLine, projectProofLine, safeParseArr } from "./proposal-intelligence";
 import { enforceCanonicalNames } from "./entity-name-normalizer";
 import { exactSelectionLimit, forbidsBranding, forbidsCoverPage, requiresSignatureOrStamp } from "./scope-policy";
@@ -1017,6 +1022,31 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     console.warn("[generate-elite] tender-title-extractor failed:", tErr instanceof Error ? tErr.message : tErr);
   }
 
+  // ─── Deep tender comprehension (TENDER_DEEP_REASONING) ───────────────────
+  // When the deep-reasoning flag is on, run a Claude-driven semantic
+  // pass that extracts evaluation criteria with weights, mandatory
+  // flags, disqualifying clauses, and structural prohibitions. The
+  // result is rendered into the AI prompt's evaluationMethodology
+  // block AND passed to the critic-rewriter refiner so both stages
+  // share the same comprehension. No-ops silently when the flag is
+  // off, when no AI provider is configured, or when the tender text
+  // is too short to extract anything — the legacy regex analyser
+  // (proposal-intelligence) still runs in all paths and provides the
+  // baseline.
+  let deepComprehension: DeepTenderComprehension | null = null;
+  if (isDeepReasoningEnabled()) {
+    try {
+      deepComprehension = await extractDeepTenderComprehension(tenderText);
+      if (deepComprehension) {
+        console.info(`[generate-elite] Deep comprehension: ${deepComprehension.criteria.length} criteria, ${deepComprehension.disqualifiers.length} disqualifier(s), ${deepComprehension.prohibitions.length} prohibition(s). Total weight accounted for: ${deepComprehension.totalWeightAccountedFor ?? "n/a"}.`);
+      } else {
+        console.info("[generate-elite] Deep comprehension: extractor returned null — falling through to regex analyser.");
+      }
+    } catch (compErr) {
+      console.warn("[generate-elite] Deep comprehension threw (non-critical):", compErr instanceof Error ? compErr.message : compErr);
+    }
+  }
+
   // ─── PR R — Auto multi-perspective AI re-ranking ─────────────────────────
   // The lexical scoring (proposal-intelligence.ts) is single-axis token
   // overlap. The user's gap analysis flagged: "the scoring and weighing
@@ -1294,12 +1324,77 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
       const generationMode = (process.env.PROPOSAL_GENERATION_MODE || "parallel").toLowerCase();
       const useParallel = generationMode === "parallel";
 
+      // ─── Semantic match-to-criteria alignment (TENDER_DEEP_REASONING) ────
+      // When deep reasoning is on AND comprehension has criteria, run a
+      // single Claude call that maps each selected expert / project to
+      // each criterion with a 0–10 score + cited rationale. The result
+      // is prepended to the AI prompt's `differentiators` field so
+      // Claude reads criterion-anchored rationales BEFORE writing.
+      // Falls back silently to legacy lexical match when alignment is
+      // unavailable. See lib/engine/semantic-match-aligner.ts.
+      let alignmentReport: AlignmentReport | null = null;
+      if (isDeepReasoningEnabled() && deepComprehension && deepComprehension.criteria.length > 0) {
+        try {
+          const expertCandidates: AlignmentCandidate[] = (experts as ExpertRecord[]).slice(0, 6).map((e, idx) => ({
+            // ExpertRecord (lib/engine/benchmark-tables.ts) has no `id` field;
+            // synthesise an index-based id so the alignment report stays
+            // joinable to the candidate list.
+            id: `expert-${idx + 1}`,
+            name: e.fullName ?? `Expert ${idx + 1}`,
+            profile: e.profile ?? "",
+            extras: {
+              title: e.title ?? null,
+              yearsExperience: e.yearsExperience ?? null,
+              // disciplines/sectors/certifications are stored as JSON-encoded
+              // strings (Prisma JSON columns serialise to string). Pass the
+              // raw string through; the aligner formatter truncates to 120
+              // chars per extra so blobs are safe.
+              disciplines: e.disciplines ?? null,
+              sectors: e.sectors ?? null,
+              certifications: e.certifications ?? null,
+            },
+          }));
+          const projectCandidates: AlignmentCandidate[] = (projects as ProjectRecord[]).slice(0, 6).map((p, idx) => ({
+            id: p.id ?? `project-${idx + 1}`,
+            name: p.name ?? `Project ${idx + 1}`,
+            profile: p.summary ?? "",
+            extras: {
+              clientName: p.clientName ?? null,
+              country: p.country ?? null,
+              sector: p.sector ?? null,
+              contractValue: p.contractValue ?? null,
+              currency: p.currency ?? null,
+            },
+          }));
+          alignmentReport = await alignMatchesToEvaluatorCriteria({
+            tenderTitle: cleanedTenderTitle,
+            clientName: intelligence.clientName,
+            comprehension: deepComprehension,
+            experts: expertCandidates,
+            projects: projectCandidates,
+          });
+          if (alignmentReport) {
+            console.info(`[generate-elite] Semantic alignment: ${alignmentReport.alignments.length} alignment(s), ${alignmentReport.coverageByCriterion.length} criterion coverage record(s).`);
+          } else {
+            console.info("[generate-elite] Semantic alignment: aligner returned null — falling through to legacy lexical match only.");
+          }
+        } catch (alignErr) {
+          console.warn("[generate-elite] Semantic alignment threw (non-critical):", alignErr instanceof Error ? alignErr.message : alignErr);
+        }
+      }
+      const alignmentBlock = alignmentReport ? formatAlignmentForPrompt(alignmentReport) : "";
+
       const aiInput = {
         tenderTitle: cleanedTenderTitle,
         clientName: intelligence.clientName,
         tenderText: [BENCHMARK_CONTEXT_LINES.join("\n"), tenderText].join("\n\n"),
         analysisSummary: clean(tender.analysisSummary) || intelligence.tenderText.slice(0, 2000),
         evaluationMethodology: [
+          // Semantic comprehension block — present only when
+          // TENDER_DEEP_REASONING is enabled AND extraction succeeded.
+          // Placed FIRST in the methodology block so Claude reads
+          // weights and disqualifiers before the legacy regex output.
+          ...(deepComprehension ? [formatComprehensionForPrompt(deepComprehension), ""] : []),
           clean(tender.evaluationMethodology) || intelligence.evaluationCriteria.join("; "),
           ...(evaluationWeightLines.length > 0 ? ["", "Numeric evaluation weights detected in tender (echo verbatim in the EVALUATION CRITERIA RESPONSE MIRROR table):", ...evaluationWeightLines] : []),
           tenderLanguageEchoBlock,
@@ -1328,7 +1423,16 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
         ].filter(Boolean).join("\n"),
         projects: [...projectLines, ...projectEvidenceLines].join("\n"),
         compliance: [...BENCHMARK_CONTEXT_LINES, ...complianceLines].join("\n"),
-        differentiators: [...BENCHMARK_CONTEXT_LINES, ...intelligence.differentiators, ...companyEvidenceLines.slice(0, 8)].join("\n"),
+        differentiators: [
+          // Semantic alignment block — present only when
+          // TENDER_DEEP_REASONING is enabled AND comprehension+alignment
+          // both succeeded. Placed FIRST so Claude reads
+          // criterion-anchored rationales before legacy differentiators.
+          ...(alignmentBlock ? [alignmentBlock, ""] : []),
+          ...BENCHMARK_CONTEXT_LINES,
+          ...intelligence.differentiators,
+          ...companyEvidenceLines.slice(0, 8),
+        ].join("\n"),
         // PR #257 — structured company-vault fields. Used by the
         // deterministic section fallback (proposal-sections.ts
         // buildSectionFallback) to emit REAL data instead of
@@ -2414,7 +2518,94 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   });
   let refinementApplied = false;
   let refinementAttempts = 0;
+
+  // Deep-reasoning refinement (TENDER_DEEP_REASONING). When the flag
+  // is on AND we have an AI provider AND the proposal is below the
+  // refinement threshold, we run the critic-rewriter loop instead of
+  // the legacy single-pass refiner. The two paths are mutually
+  // exclusive — the legacy `while` loop below runs ONLY when the
+  // deep path didn't apply (flag off, AI unavailable, or deep
+  // refiner returned null).
+  if (
+    isDeepReasoningEnabled() &&
+    !REFINEMENT_DISABLED &&
+    qualityScore.total < QUALITY_REFINEMENT_THRESHOLD &&
+    qualityScore.weakAxes.length > 0 &&
+    isAIEnabled()
+  ) {
+    try {
+      // Build the tool-use evidence inventory (gap #10). The
+      // critic can call search_company_knowledge / inspect_expert /
+      // inspect_project against this snapshot to verify claims
+      // mid-critique.
+      const toolEvidence: ToolEvidenceInventory = {
+        experts: (experts as ExpertRecord[]).map((e) => ({
+          fullName: e.fullName,
+          title: e.title,
+          yearsExperience: e.yearsExperience,
+          disciplines: e.disciplines,
+          sectors: e.sectors,
+          certifications: e.certifications,
+          profile: e.profile,
+        })),
+        projects: (projects as ProjectRecord[]).map((p) => ({
+          id: p.id,
+          name: p.name,
+          clientName: p.clientName,
+          country: p.country,
+          sector: p.sector,
+          serviceAreas: p.serviceAreas,
+          summary: p.summary,
+          contractValue: p.contractValue,
+          currency: p.currency,
+          startDate: p.startDate,
+          endDate: p.endDate,
+        })),
+      };
+
+      const deepResult = await runDeepRefinement({
+        initialMarkdown: workingMarkdown,
+        initialScore: qualityScore,
+        scoreMarkdown: (md) => scoreProposalQuality({
+          markdown: md,
+          primarySector: intelligence.primarySector,
+          topProjects: (projects as ProjectRecord[]).slice(0, 2),
+        }),
+        cleanMarkdown: cleanClientLanguage,
+        tenderTitle: cleanedTenderTitle,
+        clientName: intelligence.clientName,
+        primarySector: intelligence.primarySector,
+        topProjectNames: (projects as ProjectRecord[]).slice(0, 2).map((p) => p.name).filter(Boolean),
+        topExpertNames: (experts as ExpertRecord[]).slice(0, 3).map((e) => e.fullName).filter(Boolean),
+        comprehension: deepComprehension,
+        noFinancial: intelligence.noFinancialProposal === true,
+        scoreThreshold: QUALITY_REFINEMENT_THRESHOLD,
+        maxIterations: Math.max(1, MAX_REFINEMENT_ATTEMPTS || 2),
+        toolEvidence,
+      });
+      if (deepResult) {
+        workingMarkdown = deepResult.markdown;
+        qualityScore = deepResult.finalScore;
+        refinementApplied = true;
+        refinementAttempts = deepResult.attempts.filter((a) => a.status === "applied").length;
+        const liftTotal = deepResult.finalScore.total - (deepResult.attempts[0]?.scoreBefore ?? deepResult.finalScore.total);
+        console.info(`[generate-elite] Deep-reasoning refinement applied: ${refinementAttempts} critique→rewrite iteration(s), score lift +${liftTotal}, final ${qualityScore.total}.`);
+      } else {
+        console.info("[generate-elite] Deep-reasoning refinement: no iteration improved the score — keeping original output.");
+      }
+    } catch (deepErr) {
+      console.warn(`[generate-elite] Deep-reasoning refinement threw (non-critical): ${deepErr instanceof Error ? deepErr.message : String(deepErr)}`);
+    }
+  }
+
+  // Legacy single-pass refinement. Runs when deep-reasoning did not
+  // apply — flag off, or the deep refiner short-circuited (e.g. AI
+  // unavailable for one of the two passes, or no iteration improved
+  // the score). The conditional below mirrors the original loop's
+  // pre-conditions; the inner body is identical to its pre-PR-X
+  // behaviour.
   while (
+    !refinementApplied &&
     !REFINEMENT_DISABLED &&
     refinementAttempts < MAX_REFINEMENT_ATTEMPTS &&
     qualityScore.total < QUALITY_REFINEMENT_THRESHOLD &&
