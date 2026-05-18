@@ -1399,6 +1399,11 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
       // In-memory snapshot of the firm's selected experts + projects;
       // Anthropic tool calls hit this instead of the database so the
       // multi-turn loop stays predictable on latency.
+      //
+      // Round 8: also carries firm metadata (for inspect_company_profile)
+      // and legal records (for lookup_legal_record) so Claude can
+      // verify TIN / VAT / license grade / certificate validity
+      // mid-write.
       const toolEvidence: ToolEvidenceInventory = {
         experts: (experts as ExpertRecord[]).map((e) => ({
           fullName: e.fullName,
@@ -1421,6 +1426,32 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
           currency: p.currency,
           startDate: p.startDate,
           endDate: p.endDate,
+        })),
+        company: {
+          name: company.name,
+          legalName: company.legalName,
+          country: company.country,
+          foundingYear: company.foundingYear,
+          headcount: company.headcount,
+          licenseGrade: company.licenseGrade,
+          registrationNumber: company.registrationNumber,
+          tin: company.tin,
+          vat: company.vat,
+          gmName: company.gmName,
+          gmTitle: company.gmTitle,
+          gmLicense: company.gmLicense,
+          serviceLines: safeParseArr(company.serviceLines),
+          sectors: safeParseArr(company.sectors),
+          profileSummary: company.profileSummary ?? company.description,
+        },
+        legalRecords: (company.legalRecords ?? []).map((r) => ({
+          recordType: r.recordType,
+          title: r.title,
+          authority: r.authority,
+          referenceNumber: r.referenceNumber,
+          issueDate: r.issueDate ? String(r.issueDate).slice(0, 10) : null,
+          expiryDate: r.expiryDate ? String(r.expiryDate).slice(0, 10) : null,
+          status: r.status,
         })),
       };
 
