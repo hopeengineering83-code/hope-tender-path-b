@@ -85,6 +85,87 @@ describe("validateConstraints — subcontracting prohibition", () => {
   });
 });
 
+describe("validateConstraints — financial content in technical envelope", () => {
+  const comp = comprehension({ prohibitions: ["No price or cost information in the technical envelope — two-envelope submission"] });
+
+  it("flags an explicit price quote in the technical envelope", () => {
+    const md = "## Section C\n\nOur price is ETB 1,500,000 total for the assignment.";
+    const r = validateConstraints(comp, md);
+    assert.ok(r.violations.length >= 1, `expected price quote to be flagged; got ${r.violations.length} violations`);
+    assert.match(r.violations[0].suggestion, /technical envelope/i);
+  });
+
+  it("does NOT flag a procurement-cost description that lacks figures", () => {
+    const md = "## Section C\n\nThe firm will reuse equipment, reducing procurement complexity for the client.";
+    const r = validateConstraints(comp, md);
+    assert.equal(r.violations.length, 0);
+  });
+});
+
+describe("validateConstraints — advance-payment prohibition", () => {
+  const comp = comprehension({ prohibitions: ["Advance payment is not permitted under any circumstances"] });
+
+  it("flags a proposed advance payment", () => {
+    const md = "## Payment Terms\n\nWe request an advance payment of 20% on contract signing.";
+    const r = validateConstraints(comp, md);
+    assert.ok(r.violations.length >= 1);
+    assert.match(r.violations[0].suggestion, /advance payment|mobilisation/i);
+  });
+});
+
+describe("validateConstraints — alliance / partnership prohibition", () => {
+  const comp = comprehension({ prohibitions: ["No alliance or teaming arrangement is permitted — sole bidder required"] });
+
+  it("flags an explicit strategic-alliance arrangement", () => {
+    const md = "## Section A\n\nWe deliver this assignment in strategic alliance with Acme Engineering.";
+    const r = validateConstraints(comp, md);
+    assert.ok(r.violations.length >= 1);
+  });
+
+  it("does NOT flag generic 'partnership' language without an alliance counterparty", () => {
+    const md = "## Section A\n\nWe value a close partnership approach with our clients.";
+    const r = validateConstraints(comp, md);
+    assert.equal(r.violations.length, 0);
+  });
+});
+
+describe("validateConstraints — additional-cost-to-client prohibition", () => {
+  const comp = comprehension({ prohibitions: ["No additional purchase or cost shall be incurred by the client — client shall not procure additional software"] });
+
+  it("flags a proposal where the client must purchase third-party software", () => {
+    const md = "## Section C\n\nThe client will purchase Microsoft licences separately to support the deliverables.";
+    const r = validateConstraints(comp, md);
+    assert.ok(r.violations.length >= 1);
+    assert.match(r.violations[0].suggestion, /at no extra cost|included in the firm/i);
+  });
+});
+
+describe("validateConstraints — contract assignment prohibition", () => {
+  const comp = comprehension({ prohibitions: ["Assignment of contract is not permitted"] });
+
+  it("flags an asserted right to assign the contract", () => {
+    const md = "## Section D\n\nWe reserve the right to assign the contract to a subsidiary if required.";
+    const r = validateConstraints(comp, md);
+    assert.ok(r.violations.length >= 1);
+  });
+});
+
+describe("validateConstraints — bespoke / no-boilerplate prohibition", () => {
+  const comp = comprehension({ prohibitions: ["Bespoke proposal required — no generic boilerplate or template language"] });
+
+  it("flags 'leading firm in the region' boilerplate", () => {
+    const md = "## Section A\n\nWe are a leading firm in the region with extensive expertise.";
+    const r = validateConstraints(comp, md);
+    assert.ok(r.violations.length >= 1);
+  });
+
+  it("flags 'world-class expertise' boilerplate", () => {
+    const md = "## Section A\n\nOur team brings world-class expertise to every assignment.";
+    const r = validateConstraints(comp, md);
+    assert.ok(r.violations.length >= 1);
+  });
+});
+
 describe("validateConstraints — unknown prohibition", () => {
   it("defers prohibitions with no matching pattern to the critic", () => {
     const comp = comprehension({ prohibitions: ["The firm shall not propose any innovation not pre-approved by the client"] });
