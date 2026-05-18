@@ -31,6 +31,7 @@
  */
 
 import { generateWithFallback, isAIEnabled } from "../ai";
+import { getComprehensionCache } from "./comprehension-cache";
 
 export type EvaluationCriterion = {
   /** Stable slug derived from the criterion name. Used for prompt cross-references. */
@@ -334,6 +335,15 @@ export async function extractDeepTenderComprehension(tenderText: string): Promis
     return null;
   }
 
+  // In-memory cache: same tender text → same comprehension. Skip the
+  // AI call entirely on a hit. See lib/engine/comprehension-cache.ts.
+  const cache = getComprehensionCache<DeepTenderComprehension>();
+  const cached = cache.get(text);
+  if (cached) {
+    console.info(`[evaluation-criteria-extractor] Comprehension cache HIT — skipping AI call.`);
+    return cached;
+  }
+
   const prompt = buildExtractionPrompt(text);
   let raw: string;
   try {
@@ -349,5 +359,6 @@ export async function extractDeepTenderComprehension(tenderText: string): Promis
     console.warn("[evaluation-criteria-extractor] AI returned malformed JSON — comprehension skipped.");
     return null;
   }
+  cache.set(text, parsed);
   return parsed;
 }
