@@ -621,6 +621,19 @@ export type AIBidWriterInput = {
   // prose depth proportionally to criterion weight rather than
   // distributing content evenly across all sections.
   criterionEvidenceMap?: string;
+  // Round 5 (TENDER_TOOL_USE_GENERATION): when supplied, the Claude
+  // branch of generateBenchmarkProposalWithAI routes through the
+  // tool-use loop (generateWithClaudeTools) instead of the
+  // single-call path. Claude can call the supplied tools mid-write
+  // to verify evidence ("does this expert exist?", "what's the
+  // contract value of project X?") before committing claims. Falls
+  // back to the single-call path automatically when tool-use
+  // returns null. Setting this on AIBidWriterInput is the only
+  // entry point — there is no separate tool-use generator function.
+  toolUse?: {
+    tools: Array<{ name: string; description: string; input_schema: Record<string, unknown> }>;
+    executor: (toolName: string, toolInput: Record<string, unknown>) => Record<string, unknown> | Promise<Record<string, unknown>>;
+  };
 };
 
 // ─── Tender analysis ─────────────────────────────────────────────────────────
@@ -2025,6 +2038,24 @@ Now write the complete technical proposal. Start with the Cover Letter. The eval
   let claudeError: string | null = null;
   if (isClaudeEnabled()) {
     try {
+      // TENDER_TOOL_USE_GENERATION path: when params.toolUse is set,
+      // route through the multi-turn tool-use loop so Claude can call
+      // search_company_knowledge / inspect_expert / inspect_project
+      // mid-write to verify evidence before making claims. Falls
+      // back to the single-call path when tool-use returns null.
+      if (params.toolUse) {
+        const toolResult = await generateWithClaudeTools(
+          prompt,
+          DEFAULT_PROPOSAL_SYSTEM_PROMPT,
+          params.toolUse.tools,
+          params.toolUse.executor,
+        );
+        if (toolResult) {
+          lastProposalProvider = "claude";
+          return toolResult;
+        }
+        console.warn("[ai] tool-use generation returned null — falling back to single-call Claude path.");
+      }
       const claudeResult = await generateWithClaude(prompt);
       if (claudeResult) {
         lastProposalProvider = "claude";

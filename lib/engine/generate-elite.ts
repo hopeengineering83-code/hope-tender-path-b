@@ -1,11 +1,11 @@
 import { AlignmentType, BorderStyle, Document, Footer, Header, HeadingLevel, Packer, PageNumber, Paragraph, Table, TableBorders, TableCell, TableRow, TextRun, WidthType } from "docx";
 import { prisma } from "../prisma";
 import { generateBenchmarkProposalWithAI, generateProposalSectionsParallel, getLastProposalProvider, isAIEnabled, refineProposalWithAI } from "../ai";
-import { isDeepReasoningEnabled } from "./feature-flags";
+import { isDeepReasoningEnabled, isToolUseGenerationEnabled } from "./feature-flags";
 import { extractDeepTenderComprehension, formatComprehensionForPrompt, type DeepTenderComprehension } from "./evaluation-criteria-extractor";
 import { runDeepRefinement } from "./deep-reasoning-refiner";
 import { alignMatchesToEvaluatorCriteria, formatAlignmentForPrompt, type AlignmentCandidate, type AlignmentReport } from "./semantic-match-aligner";
-import type { ToolEvidenceInventory } from "./proposal-tools";
+import { executeProposalTool, PROPOSAL_TOOL_DEFS, type ToolEvidenceInventory } from "./proposal-tools";
 import { DeepReasoningTelemetry } from "./deep-reasoning-telemetry";
 import { BENCHMARK_CONTEXT_LINES, buildCriterionEvidenceMap, buildProposalIntelligence, expertProofLine, projectProofLine, safeParseArr } from "./proposal-intelligence";
 import { enforceCanonicalNames } from "./entity-name-normalizer";
@@ -1393,6 +1393,61 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
       }
       const alignmentBlock = alignmentReport ? formatAlignmentForPrompt(alignmentReport) : "";
 
+      // Tool evidence inventory — built once and reused by both the
+      // tool-use generation path (when TENDER_TOOL_USE_GENERATION is
+      // on) and the deep-reasoning refiner (when the flag is on).
+      // In-memory snapshot of the firm's selected experts + projects;
+      // Anthropic tool calls hit this instead of the database so the
+      // multi-turn loop stays predictable on latency.
+      const toolEvidence: ToolEvidenceInventory = {
+        experts: (experts as ExpertRecord[]).map((e) => ({
+          fullName: e.fullName,
+          title: e.title,
+          yearsExperience: e.yearsExperience,
+          disciplines: e.disciplines,
+          sectors: e.sectors,
+          certifications: e.certifications,
+          profile: e.profile,
+        })),
+        projects: (projects as ProjectRecord[]).map((p) => ({
+          id: p.id,
+          name: p.name,
+          clientName: p.clientName,
+          country: p.country,
+          sector: p.sector,
+          serviceAreas: p.serviceAreas,
+          summary: p.summary,
+          contractValue: p.contractValue,
+          currency: p.currency,
+          startDate: p.startDate,
+          endDate: p.endDate,
+        })),
+      };
+
+      // Tool-use during generation (TENDER_TOOL_USE_GENERATION). Only
+      // applies on the single-call path — the parallel section path
+      // would need per-section tool wiring which is out of scope.
+      // Requires the deep-reasoning flag as a prerequisite because
+      // tool-use without the rest of the deep pipeline yields
+      // marginal value.
+      const enableToolUseGeneration =
+        isDeepReasoningEnabled() &&
+        isToolUseGenerationEnabled() &&
+        !useParallel;
+      const aiToolUse = enableToolUseGeneration
+        ? {
+            tools: PROPOSAL_TOOL_DEFS.map((def) => ({
+              name: def.name,
+              description: def.description,
+              input_schema: def.input_schema as unknown as Record<string, unknown>,
+            })),
+            executor: (toolName: string, toolInput: Record<string, unknown>) => executeProposalTool(toolName, toolInput, toolEvidence),
+          }
+        : undefined;
+      if (enableToolUseGeneration) {
+        console.info("[generate-elite] Tool-use generation enabled — Claude can call evidence-search tools mid-write.");
+      }
+
       const aiInput = {
         tenderTitle: cleanedTenderTitle,
         clientName: intelligence.clientName,
@@ -1518,6 +1573,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
           intelligence.topExperts,
           tender.evaluationMethodology ?? intelligence.evaluationCriteria.join("\n"),
         ),
+        toolUse: aiToolUse,
       };
 
       sourceMarkdown = await withProposalAiTimeout(

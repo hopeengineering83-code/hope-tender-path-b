@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSession } from "../../../../lib/auth";
-import { isDeepReasoningEnabled } from "../../../../lib/engine/feature-flags";
+import { isDeepReasoningEnabled, isToolUseGenerationEnabled } from "../../../../lib/engine/feature-flags";
 import { isAIEnabled, isClaudeEnabled, isOpenAIEnabled } from "../../../../lib/ai";
 
 /**
@@ -47,10 +47,12 @@ export async function GET() {
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const enabled = isDeepReasoningEnabled();
+  const toolUseGenerationFlag = isToolUseGenerationEnabled();
   const aiEnabled = isAIEnabled();
   const claudeConfigured = isClaudeEnabled();
   const geminiConfigured = Boolean(process.env.GEMINI_API_KEY);
   const openaiConfigured = isOpenAIEnabled();
+  const generationMode = (process.env.PROPOSAL_GENERATION_MODE || "parallel").toLowerCase();
 
   let toolUseAvailable = false;
   if (claudeConfigured) {
@@ -101,11 +103,21 @@ export async function GET() {
       semanticAlignment: enabled && aiEnabled,
       criticRewriter: enabled && aiEnabled,
       toolUseInCritique: enabled && claudeConfigured && toolUseAvailable,
+      // Tool-use during generation requires three preconditions:
+      // both feature flags ON, the Anthropic SDK importable + key set,
+      // and the single-call generation mode (the parallel section
+      // path is not yet wired for tools).
+      toolUseInGeneration: enabled && toolUseGenerationFlag && claudeConfigured && toolUseAvailable && generationMode === "single",
       // Constraint validator is pure-code deterministic — works even
       // when AI is unavailable, but only produces violations when the
       // comprehension extractor has populated rules (which requires
       // both the flag and AI to be set).
       constraintValidator: true,
+    },
+    flags: {
+      tenderDeepReasoning: enabled,
+      tenderToolUseGeneration: toolUseGenerationFlag,
+      proposalGenerationMode: generationMode,
     },
   });
 }

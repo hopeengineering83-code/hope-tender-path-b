@@ -12,7 +12,7 @@
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
 
-import { __testing__ as flagInternals, isDeepReasoningEnabled } from "../lib/engine/feature-flags";
+import { __testing__ as flagInternals, isDeepReasoningEnabled, isToolUseGenerationEnabled } from "../lib/engine/feature-flags";
 import {
   parseComprehensionJson,
   formatComprehensionForPrompt,
@@ -45,6 +45,19 @@ describe("feature-flags — isDeepReasoningEnabled", () => {
     delete process.env.TENDER_DEEP_REASONING;
     assert.equal(isDeepReasoningEnabled(), false);
     if (previous !== undefined) process.env.TENDER_DEEP_REASONING = previous;
+  });
+
+  it("reads from TENDER_TOOL_USE_GENERATION when set", () => {
+    const prev = process.env.TENDER_TOOL_USE_GENERATION;
+    process.env.TENDER_TOOL_USE_GENERATION = "true";
+    assert.equal(isToolUseGenerationEnabled(), true);
+    process.env.TENDER_TOOL_USE_GENERATION = "1";
+    assert.equal(isToolUseGenerationEnabled(), true);
+    process.env.TENDER_TOOL_USE_GENERATION = "false";
+    assert.equal(isToolUseGenerationEnabled(), false);
+    delete process.env.TENDER_TOOL_USE_GENERATION;
+    assert.equal(isToolUseGenerationEnabled(), false);
+    if (prev !== undefined) process.env.TENDER_TOOL_USE_GENERATION = prev;
   });
 });
 
