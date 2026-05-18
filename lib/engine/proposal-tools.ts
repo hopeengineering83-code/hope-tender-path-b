@@ -47,9 +47,44 @@ export type ToolEvidenceProject = {
   trustLevel?: string | null;
 };
 
+export type ToolEvidenceCompany = {
+  name?: string | null;
+  legalName?: string | null;
+  country?: string | null;
+  foundingYear?: number | null;
+  headcount?: number | null;
+  licenseGrade?: string | null;
+  registrationNumber?: string | null;
+  tin?: string | null;
+  vat?: string | null;
+  gmName?: string | null;
+  gmTitle?: string | null;
+  gmLicense?: string | null;
+  serviceLines?: string[] | null;
+  sectors?: string[] | null;
+  profileSummary?: string | null;
+};
+
+export type ToolEvidenceLegalRecord = {
+  /** "LICENSE" | "REGISTRATION" | "ISO_9001" | "TAX_CLEARANCE" | "INSURANCE" | etc. */
+  recordType: string;
+  title?: string | null;
+  authority?: string | null;
+  referenceNumber?: string | null;
+  /** ISO date string. */
+  issueDate?: string | null;
+  /** ISO date string. */
+  expiryDate?: string | null;
+  status?: string | null;
+};
+
 export type ToolEvidenceInventory = {
   experts: ToolEvidenceExpert[];
   projects: ToolEvidenceProject[];
+  /** Optional firm-level metadata. Surfaced via inspect_company_profile when present. */
+  company?: ToolEvidenceCompany | null;
+  /** Optional legal / regulatory records. Surfaced via lookup_legal_record when present. */
+  legalRecords?: ToolEvidenceLegalRecord[];
 };
 
 /**
@@ -100,6 +135,26 @@ export const PROPOSAL_TOOL_DEFS: AnthropicToolDef[] = [
         name: { type: "string", description: "Project name or a distinctive substring. Match is case-insensitive." },
       },
       required: ["name"],
+    },
+  },
+  {
+    name: "inspect_company_profile",
+    description: "Retrieve the firm's institutional metadata: legal name, founding year, headcount, license grade, registration number, TIN, VAT, GM name + license, service lines, sectors, and profile summary. Use this BEFORE asserting any corporate fact in Sections A.1 / A.2 / D.4 so the values cited are exactly what the firm has on file. Takes no arguments.",
+    input_schema: {
+      type: "object",
+      properties: {},
+      required: [],
+    },
+  },
+  {
+    name: "lookup_legal_record",
+    description: "Retrieve the firm's legal / regulatory records (licenses, registrations, ISO certifications, tax clearances, insurance, etc.). Use this when the tender requires a specific certificate or license number and you need to verify the firm holds it, what its reference number is, and whether it's currently valid.",
+    input_schema: {
+      type: "object",
+      properties: {
+        recordType: { type: "string", description: "Optional filter — e.g. 'LICENSE', 'ISO_9001', 'TAX_CLEARANCE', 'REGISTRATION', 'INSURANCE'. Match is case-insensitive substring. Omit to list all records." },
+      },
+      required: [],
     },
   },
 ];
@@ -261,6 +316,60 @@ export function executeProposalTool(
       const matches = inventory.projects.filter((p) => p.name.toLowerCase().includes(needle));
       if (matches.length === 0) return { matchCount: 0, note: `No project found matching "${name}". The firm's evidence library does not include this project.` };
       return { matchCount: matches.length, projects: matches.slice(0, 3).map(summariseProject) };
+    }
+    case "inspect_company_profile": {
+      if (!inventory.company) {
+        return { available: false, note: "No company profile was provided to the engine for this generation. Do not cite institutional metadata (TIN, VAT, license grade, founding year, GM name) — fall back to a 'Bid-Team Action: confirm X before submission.' note for any such fields." };
+      }
+      const c = inventory.company;
+      return {
+        available: true,
+        company: {
+          name: c.name ?? null,
+          legalName: c.legalName ?? null,
+          country: c.country ?? null,
+          foundingYear: c.foundingYear ?? null,
+          headcount: c.headcount ?? null,
+          licenseGrade: c.licenseGrade ?? null,
+          registrationNumber: c.registrationNumber ?? null,
+          tin: c.tin ?? null,
+          vat: c.vat ?? null,
+          gmName: c.gmName ?? null,
+          gmTitle: c.gmTitle ?? null,
+          gmLicense: c.gmLicense ?? null,
+          serviceLines: Array.isArray(c.serviceLines) ? c.serviceLines.slice(0, 30) : null,
+          sectors: Array.isArray(c.sectors) ? c.sectors.slice(0, 30) : null,
+          profileSummary: (c.profileSummary ?? "").slice(0, 2000) || null,
+        },
+      };
+    }
+    case "lookup_legal_record": {
+      const records = Array.isArray(inventory.legalRecords) ? inventory.legalRecords : [];
+      if (records.length === 0) {
+        return { available: false, note: "No legal / regulatory records are available in this generation's evidence library. Do not cite specific certificate or license reference numbers — fall back to a 'Bid-Team Action: confirm X before submission.' note." };
+      }
+      const filter = asString(input.recordType).toLowerCase();
+      const filtered = filter.length > 0
+        ? records.filter((r) => (r.recordType ?? "").toLowerCase().includes(filter) || (r.title ?? "").toLowerCase().includes(filter))
+        : records;
+      if (filtered.length === 0) {
+        return { available: true, matchCount: 0, note: `No legal record matches "${input.recordType}". Available record types: ${Array.from(new Set(records.map((r) => r.recordType))).slice(0, 10).join(", ")}.` };
+      }
+      return {
+        available: true,
+        matchCount: filtered.length,
+        records: filtered.slice(0, 12).map((r) => ({
+          recordType: r.recordType,
+          title: r.title ?? null,
+          authority: r.authority ?? null,
+          referenceNumber: r.referenceNumber ?? null,
+          issueDate: r.issueDate ?? null,
+          expiryDate: r.expiryDate ?? null,
+          status: r.status ?? null,
+          // Inline computed: is the record currently valid?
+          valid: r.expiryDate ? new Date(r.expiryDate) > new Date() : null,
+        })),
+      };
     }
     default:
       return { error: `Unknown tool: ${toolName}. Available tools: ${PROPOSAL_TOOL_DEFS.map((t) => t.name).join(", ")}.` };

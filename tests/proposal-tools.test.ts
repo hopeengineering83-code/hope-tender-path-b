@@ -67,15 +67,102 @@ function inventory(): ToolEvidenceInventory {
 }
 
 describe("PROPOSAL_TOOL_DEFS", () => {
-  it("declares three tools with required schemas", () => {
-    assert.equal(PROPOSAL_TOOL_DEFS.length, 3);
+  it("declares five tools with valid schemas (round 8 adds company + legal-record lookups)", () => {
+    assert.equal(PROPOSAL_TOOL_DEFS.length, 5);
     const names = PROPOSAL_TOOL_DEFS.map((t) => t.name).sort();
-    assert.deepEqual(names, ["inspect_expert", "inspect_project", "search_company_knowledge"]);
+    assert.deepEqual(names, ["inspect_company_profile", "inspect_expert", "inspect_project", "lookup_legal_record", "search_company_knowledge"]);
     for (const def of PROPOSAL_TOOL_DEFS) {
-      assert.ok(def.description.length > 30);
+      assert.ok(def.description.length > 30, `tool ${def.name} needs a substantive description`);
       assert.equal(def.input_schema.type, "object");
-      assert.ok(def.input_schema.required && def.input_schema.required.length > 0);
+      // inspect_company_profile takes no arguments — required[] may be empty
+      assert.ok(Array.isArray(def.input_schema.required), `tool ${def.name} missing required[] array`);
     }
+  });
+});
+
+describe("executeProposalTool — inspect_company_profile", () => {
+  it("returns the company profile when supplied in the inventory", () => {
+    const inv: ToolEvidenceInventory = {
+      experts: [],
+      projects: [],
+      company: {
+        name: "ABC Engineering",
+        legalName: "ABC Engineering Consultants Ltd",
+        country: "Ethiopia",
+        foundingYear: 2008,
+        headcount: 42,
+        licenseGrade: "I",
+        registrationNumber: "12345",
+        tin: "0001234567",
+        vat: "0009876543",
+        gmName: "Dr. Hope Mekonnen",
+        gmTitle: "Managing Director",
+        gmLicense: "PE-001",
+        serviceLines: ["water", "WASH"],
+        sectors: ["water", "urban"],
+        profileSummary: "Specialist water consultancy founded in 2008.",
+      },
+    };
+    const result = executeProposalTool("inspect_company_profile", {}, inv) as { available: boolean; company: { name: string; foundingYear: number; tin: string } };
+    assert.equal(result.available, true);
+    assert.equal(result.company.name, "ABC Engineering");
+    assert.equal(result.company.foundingYear, 2008);
+    assert.equal(result.company.tin, "0001234567");
+  });
+
+  it("returns available=false with a bid-team note when no company profile is supplied", () => {
+    const inv: ToolEvidenceInventory = { experts: [], projects: [] };
+    const result = executeProposalTool("inspect_company_profile", {}, inv) as { available: boolean; note: string };
+    assert.equal(result.available, false);
+    assert.match(result.note, /Bid-Team Action/);
+  });
+});
+
+describe("executeProposalTool — lookup_legal_record", () => {
+  function inventoryWithRecords(): ToolEvidenceInventory {
+    return {
+      experts: [],
+      projects: [],
+      legalRecords: [
+        { recordType: "LICENSE", title: "Engineering Consultancy License Grade I", authority: "MoCT", referenceNumber: "ECL-1234", issueDate: "2020-01-15", expiryDate: "2027-12-31", status: "ACTIVE" },
+        { recordType: "ISO_9001", title: "ISO 9001:2015 Quality Management", authority: "BSI", referenceNumber: "ISO-99887", issueDate: "2021-03-10", expiryDate: "2024-03-09", status: "EXPIRED" },
+        { recordType: "TAX_CLEARANCE", title: "Tax clearance certificate", authority: "ERCA", referenceNumber: "TC-2024-9912", issueDate: "2024-06-01", expiryDate: "2025-06-01", status: "ACTIVE" },
+      ],
+    };
+  }
+
+  it("returns all records when no recordType filter is supplied", () => {
+    const result = executeProposalTool("lookup_legal_record", {}, inventoryWithRecords()) as { available: boolean; matchCount: number; records: Array<{ recordType: string }> };
+    assert.equal(result.available, true);
+    assert.equal(result.matchCount, 3);
+  });
+
+  it("filters by recordType substring (case-insensitive)", () => {
+    const result = executeProposalTool("lookup_legal_record", { recordType: "iso" }, inventoryWithRecords()) as { matchCount: number; records: Array<{ recordType: string }> };
+    assert.equal(result.matchCount, 1);
+    assert.equal(result.records[0].recordType, "ISO_9001");
+  });
+
+  it("includes a computed `valid` field based on the expiry date", () => {
+    const result = executeProposalTool("lookup_legal_record", {}, inventoryWithRecords()) as { records: Array<{ recordType: string; valid: boolean | null }> };
+    const license = result.records.find((r) => r.recordType === "LICENSE");
+    const iso = result.records.find((r) => r.recordType === "ISO_9001");
+    // License expires 2027-12-31 — valid (vs current date)
+    assert.equal(license?.valid, true);
+    // ISO expired 2024-03-09 — invalid (vs current date)
+    assert.equal(iso?.valid, false);
+  });
+
+  it("returns available=false with a bid-team note when no legal records exist", () => {
+    const result = executeProposalTool("lookup_legal_record", {}, { experts: [], projects: [] }) as { available: boolean; note: string };
+    assert.equal(result.available, false);
+    assert.match(result.note, /Bid-Team Action/);
+  });
+
+  it("returns matchCount=0 with available record types when filter matches nothing", () => {
+    const result = executeProposalTool("lookup_legal_record", { recordType: "INSURANCE" }, inventoryWithRecords()) as { matchCount: number; note: string };
+    assert.equal(result.matchCount, 0);
+    assert.match(result.note, /LICENSE|ISO_9001|TAX_CLEARANCE/);
   });
 });
 
