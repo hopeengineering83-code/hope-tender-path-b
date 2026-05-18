@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getSession } from "../../../../lib/auth";
 import { isDeepReasoningEnabled, isToolUseGenerationEnabled } from "../../../../lib/engine/feature-flags";
 import { isAIEnabled, isClaudeEnabled, isOpenAIEnabled } from "../../../../lib/ai";
+import { getComprehensionCache } from "../../../../lib/engine/comprehension-cache";
 
 /**
  * Diagnostic endpoint — reports deep-reasoning configuration and
@@ -119,5 +120,11 @@ export async function GET() {
       tenderToolUseGeneration: toolUseGenerationFlag,
       proposalGenerationMode: generationMode,
     },
+    // Round 7 — in-memory comprehension cache stats. Hit rate
+    // surfaces how much AI cost the cache is saving on repeated
+    // extractions. Resets on process restart (each Vercel function
+    // invocation gets its own counter — long-lived warm starts
+    // will show higher hit rates than cold starts).
+    comprehensionCache: getComprehensionCache().getStats(),
   });
 }
