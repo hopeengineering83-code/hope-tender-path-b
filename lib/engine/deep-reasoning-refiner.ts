@@ -35,6 +35,7 @@
 
 import { critiqueProposalWithAI, rewriteProposalWithCritique } from "../ai";
 import { formatComprehensionForPrompt, type DeepTenderComprehension } from "./evaluation-criteria-extractor";
+import { formatConstraintsForCritique, formatViolationsForCritique, validateConstraints, violationsAsWeakAxes } from "./constraint-validator";
 import type { QualityScore } from "./proposal-quality-scorer";
 
 export type DeepRefinementInput = {
@@ -120,6 +121,10 @@ export async function runDeepRefinement(input: DeepRefinementInput): Promise<Dee
   const comprehensionBlock = input.comprehension && input.comprehension.criteria.length > 0
     ? formatComprehensionForPrompt(input.comprehension)
     : null;
+  // Constraint checklist is independent of criteria: present when the
+  // comprehension found any prohibition or disqualifier, even if no
+  // weighted criteria were extracted.
+  const constraintsChecklist = formatConstraintsForCritique(input.comprehension ?? null);
 
   let workingMarkdown = input.initialMarkdown;
   let workingScore = input.initialScore;
@@ -127,36 +132,60 @@ export async function runDeepRefinement(input: DeepRefinementInput): Promise<Dee
   const critiqueChunks: string[] = [];
 
   for (let iteration = 1; iteration <= maxIterations; iteration += 1) {
-    if (workingScore.total >= scoreThreshold) break;
-    if (workingScore.weakAxes.length === 0) break;
+    // Constraint sweep BEFORE the per-iteration threshold check —
+    // violations may justify continued refinement even when the
+    // quality score has already crossed the threshold.
+    const constraintResult = validateConstraints(input.comprehension ?? null, workingMarkdown);
+    const violationsBlock = formatViolationsForCritique(constraintResult);
+    const constraintAxes = violationsAsWeakAxes(constraintResult);
+    // Synthesise an augmented weak-axes list that includes any
+    // constraint violations the deterministic sweep found.
+    const effectiveWeakAxes = Array.from(new Set([...workingScore.weakAxes, ...constraintAxes]));
+
+    if (workingScore.total >= scoreThreshold && constraintResult.violations.length === 0) break;
+    if (effectiveWeakAxes.length === 0) break;
 
     const axisScores: Record<string, number> = {
       ...workingScore.axes,
     };
+    // Surface constraint axes with score 0 so the critic understands
+    // their severity.
+    for (const axis of constraintAxes) {
+      axisScores[axis] = 0;
+    }
+
+    // Compose the full critic context block: history hint + criteria
+    // comprehension + constraint checklist + detected violations. Any
+    // subset may be empty; we join the non-empty parts.
+    const contextBlocks = [
+      comprehensionBlock,
+      constraintsChecklist,
+      violationsBlock,
+      buildHistoryHint(attempts),
+    ].filter((b): b is string => Boolean(b && b.trim().length > 0));
+    const fullContext = contextBlocks.length > 0 ? contextBlocks.join("\n\n") : null;
 
     let critique: string | null = null;
     try {
       critique = await critiqueProposalWithAI({
         currentMarkdown: workingMarkdown,
-        weakAxes: workingScore.weakAxes,
+        weakAxes: effectiveWeakAxes,
         axisScores,
         tenderTitle: input.tenderTitle,
         clientName: input.clientName,
         primarySector: input.primarySector,
         topProjectNames: input.topProjectNames,
         topExpertNames: input.topExpertNames,
-        comprehensionBlock: comprehensionBlock
-          ? `${comprehensionBlock}${buildHistoryHint(attempts)}`
-          : (buildHistoryHint(attempts) || null),
+        comprehensionBlock: fullContext,
       });
     } catch (err) {
       console.warn(`[deep-reasoning-refiner] Critique iteration ${iteration} threw: ${err instanceof Error ? err.message : String(err)}`);
       attempts.push({
         iteration,
         scoreBefore: workingScore.total,
-        weakAxesBefore: workingScore.weakAxes,
+        weakAxesBefore: effectiveWeakAxes,
         scoreAfter: workingScore.total,
-        weakAxesAfter: workingScore.weakAxes,
+        weakAxesAfter: effectiveWeakAxes,
         lift: 0,
         status: "ai-error",
         critiqueLength: 0,
@@ -168,9 +197,9 @@ export async function runDeepRefinement(input: DeepRefinementInput): Promise<Dee
       attempts.push({
         iteration,
         scoreBefore: workingScore.total,
-        weakAxesBefore: workingScore.weakAxes,
+        weakAxesBefore: effectiveWeakAxes,
         scoreAfter: workingScore.total,
-        weakAxesAfter: workingScore.weakAxes,
+        weakAxesAfter: effectiveWeakAxes,
         lift: 0,
         status: "critique-failed",
         critiqueLength: critique?.length ?? 0,
@@ -196,9 +225,9 @@ export async function runDeepRefinement(input: DeepRefinementInput): Promise<Dee
       attempts.push({
         iteration,
         scoreBefore: workingScore.total,
-        weakAxesBefore: workingScore.weakAxes,
+        weakAxesBefore: effectiveWeakAxes,
         scoreAfter: workingScore.total,
-        weakAxesAfter: workingScore.weakAxes,
+        weakAxesAfter: effectiveWeakAxes,
         lift: 0,
         status: "ai-error",
         critiqueLength: critique.length,
@@ -210,9 +239,9 @@ export async function runDeepRefinement(input: DeepRefinementInput): Promise<Dee
       attempts.push({
         iteration,
         scoreBefore: workingScore.total,
-        weakAxesBefore: workingScore.weakAxes,
+        weakAxesBefore: effectiveWeakAxes,
         scoreAfter: workingScore.total,
-        weakAxesAfter: workingScore.weakAxes,
+        weakAxesAfter: effectiveWeakAxes,
         lift: 0,
         status: "rejected-thin-output",
         critiqueLength: critique.length,
@@ -225,13 +254,18 @@ export async function runDeepRefinement(input: DeepRefinementInput): Promise<Dee
     const newScore = input.scoreMarkdown(cleaned);
     const lift = newScore.total - workingScore.total;
 
+    // After the rewrite, recompute the effective weak-axes set
+    // including any residual constraint violations.
+    const postConstraintAxes = violationsAsWeakAxes(validateConstraints(input.comprehension ?? null, cleaned));
+    const effectiveWeakAxesAfter = Array.from(new Set([...newScore.weakAxes, ...postConstraintAxes]));
+
     if (lift <= 0) {
       attempts.push({
         iteration,
         scoreBefore: workingScore.total,
-        weakAxesBefore: workingScore.weakAxes,
+        weakAxesBefore: effectiveWeakAxes,
         scoreAfter: newScore.total,
-        weakAxesAfter: newScore.weakAxes,
+        weakAxesAfter: effectiveWeakAxesAfter,
         lift,
         status: "rejected-low-score",
         critiqueLength: critique.length,
@@ -246,14 +280,14 @@ export async function runDeepRefinement(input: DeepRefinementInput): Promise<Dee
     attempts.push({
       iteration,
       scoreBefore: workingScore.total - lift,
-      weakAxesBefore: attempts[attempts.length - 1]?.weakAxesAfter ?? input.initialScore.weakAxes,
+      weakAxesBefore: effectiveWeakAxes,
       scoreAfter: workingScore.total,
-      weakAxesAfter: workingScore.weakAxes,
+      weakAxesAfter: effectiveWeakAxesAfter,
       lift,
       status: "applied",
       critiqueLength: critique.length,
     });
-    console.info(`[deep-reasoning-refiner] Iteration ${iteration}/${maxIterations}: ${workingScore.total - lift} → ${workingScore.total} (+${lift}). Weak axes remaining: ${workingScore.weakAxes.length}.`);
+    console.info(`[deep-reasoning-refiner] Iteration ${iteration}/${maxIterations}: ${workingScore.total - lift} → ${workingScore.total} (+${lift}). Weak axes remaining: ${effectiveWeakAxesAfter.length} (constraints: ${postConstraintAxes.length}).`);
 
     if (workingScore.total >= scoreThreshold) {
       console.info(`[deep-reasoning-refiner] Iteration ${iteration}: hit score threshold ${scoreThreshold}. Stopping.`);

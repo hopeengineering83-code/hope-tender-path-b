@@ -1,0 +1,274 @@
+/**
+ * Constraint validator — closes audit gap #4 (compliance reasoning
+ * checks presence/absence only; no constraint-satisfaction or
+ * prohibition parsing).
+ *
+ * Two complementary capabilities:
+ *
+ *   1. DETERMINISTIC SWEEP (`validateConstraints`). Pure function
+ *      that scans the generated proposal markdown for canonical
+ *      prohibition signals — JV mentions when no JVs are allowed,
+ *      subcontracting mentions when subcontracting is forbidden,
+ *      etc. Cheap, always-runnable, no AI cost.
+ *
+ *   2. CRITIC-PROMPT FORMATTERS (`formatConstraintsForCritique`,
+ *      `formatViolationsForCritique`). Render the comprehension's
+ *      disqualifiers + prohibitions (and any deterministic
+ *      violations found) as a text block injected into the
+ *      deep-reasoning critic prompt. The critic then verifies each
+ *      rule against the proposal and the rewriter strips violations.
+ *
+ * Together they implement constraint satisfaction over the proposal:
+ * the deterministic sweep catches obvious violations cheaply; the
+ * critic-prompt formatters surface every rule to Claude so subtle
+ * violations are caught semantically.
+ *
+ * The deterministic sweep is intentionally narrow. It only flags
+ * HIGH-CONFIDENCE signals — phrases that are nearly always
+ * disqualifying when prohibited. False positives here trigger
+ * unnecessary refinement passes, which is more costly than missing
+ * a subtle violation that the critic will catch anyway. The
+ * conservative design errs toward letting the critic handle anything
+ * non-obvious.
+ */
+
+import type { DeepTenderComprehension, DisqualifyingCondition } from "./evaluation-criteria-extractor";
+
+export type ConstraintViolation = {
+  /** Categorises the violation source. */
+  type: "prohibition" | "disqualifier";
+  /** The rule text from the comprehension (verbatim where possible). */
+  rule: string;
+  /** Up to ~200 chars of proposal text containing the violation signal. */
+  evidence: string;
+  /** Heading or line context where the evidence appeared. Null when the violation was found outside any heading. */
+  location: string | null;
+  /** Severity. CRITICAL violations should block export when surfaced through the validate pipeline. */
+  severity: "CRITICAL" | "WARNING";
+  /** One-sentence remediation hint for the rewriter / human reviewer. */
+  suggestion: string;
+};
+
+export type ConstraintValidationResult = {
+  violations: ConstraintViolation[];
+  /** Rules that were checked deterministically and found clean. Useful for transparency. */
+  cleared: string[];
+  /** Rules that the deterministic sweep cannot meaningfully check (e.g. "Lead firm must have ≥5 years"); deferred to the critic. */
+  deferredToCritic: string[];
+};
+
+const PROHIBITION_PATTERNS: Array<{
+  /** Regex that matches the prohibition statement itself in the rule text. */
+  matchesRule: RegExp;
+  /** Regex that matches a likely VIOLATION in the proposal markdown. */
+  matchesProposal: RegExp;
+  /** Suggested remediation for the rewriter. */
+  suggestion: string;
+}> = [
+  {
+    // "No joint ventures permitted", "JV not allowed", "consortium prohibited"
+    matchesRule: /(joint\s*ventures?|consorti(?:um|a)|\bjvs?\b)/i,
+    // Triggers on PROPOSAL phrases like "joint venture with", "JV partner", "consortium of"
+    matchesProposal: /(\bjoint\s+venture\b(?:\s+(?:with|partner|arrangement))|\bjv\s+(?:with|partner|arrangement)|consortium\s+of|consortium\s+with|consortium\s+partner|consortium\s+arrangement)/i,
+    suggestion: "Remove every mention of a joint venture, JV partner, or consortium arrangement. State the firm bids as sole prime, in line with the tender's prohibition.",
+  },
+  {
+    matchesRule: /(sub[-\s]?contract(?:ing)?|sub[-\s]?contractor)/i,
+    matchesProposal: /(sub[-\s]?contract(?:ed|ing)?\s+(?:to|with|out|the)|sub[-\s]?contractor\s+(?:will|shall|to|delivering))/i,
+    suggestion: "Remove proposed subcontracting arrangements; state that all scope is delivered by the firm's in-house team, in line with the tender's prohibition.",
+  },
+  {
+    // "No blacklisted firms" — proposals never claim this, so checking is moot, but format included for completeness.
+    matchesRule: /(blacklist|debar|sanction)/i,
+    matchesProposal: /(blacklist(?:ed|ing)?|debar(?:red|ment)?|under\s+sanctions?)/i,
+    suggestion: "Remove any language admitting blacklisting / debarment / sanctions; if applicable, this is a disqualifier and the bid should be withdrawn.",
+  },
+  {
+    // "No foreign firms / nationals" — flag proposal language asserting foreign ownership when prohibited
+    matchesRule: /(foreign\s+(?:firm|consultant|national|company|owned)|non[-\s]?domestic)/i,
+    matchesProposal: /(foreign[-\s]?owned|wholly\s+foreign|foreign\s+(?:firm|parent|investor)|registered\s+abroad)/i,
+    suggestion: "Remove or rephrase any assertion of foreign ownership; if the firm genuinely is foreign, this is a disqualifier and the bid should not proceed.",
+  },
+];
+
+const SECTION_HEADING_REGEX = /^#{1,4}\s+(.+)$/;
+
+function locationForOffset(markdown: string, offset: number): string | null {
+  const before = markdown.slice(0, offset);
+  // Walk backward through lines to find the nearest heading.
+  const lines = before.split("\n");
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    const match = lines[i].match(SECTION_HEADING_REGEX);
+    if (match) return match[1].trim().slice(0, 120);
+  }
+  return null;
+}
+
+function excerpt(markdown: string, offset: number, length: number): string {
+  const start = Math.max(0, offset - 40);
+  const end = Math.min(markdown.length, offset + length + 80);
+  return markdown.slice(start, end).replace(/\s+/g, " ").trim().slice(0, 220);
+}
+
+/**
+ * Heuristic check for disqualifier numeric-claim violations. Looks
+ * at year-thresholds and value-thresholds the tender stated and
+ * tries to find a contradicting claim in the proposal.
+ *
+ * Conservative: only flags claims that explicitly contradict the
+ * stated threshold with a smaller value. Anything subtle (implied
+ * dates, calculated tenure) is deferred to the critic.
+ */
+function checkDisqualifierThresholds(disqualifier: DisqualifyingCondition, markdown: string): ConstraintViolation | null {
+  // Pattern: "≥ N years" / "minimum N years" / "at least N years" in the rule
+  const yearMatch = disqualifier.rule.match(/(?:≥|>=|at\s+least|minimum\s+of|minimum)\s*(\d{1,3})\s*years?/i);
+  if (yearMatch) {
+    const threshold = Number(yearMatch[1]);
+    if (!Number.isFinite(threshold) || threshold <= 0) return null;
+    // Look for proposal claims like "founded in YYYY" or "established in YYYY"
+    const claimMatch = markdown.match(/(?:founded|established|incorporated|registered)\s+in\s+(\d{4})/i);
+    if (claimMatch) {
+      const foundedYear = Number(claimMatch[1]);
+      if (Number.isFinite(foundedYear)) {
+        const currentYear = new Date().getFullYear();
+        const tenure = currentYear - foundedYear;
+        if (tenure < threshold) {
+          const offset = claimMatch.index ?? 0;
+          return {
+            type: "disqualifier",
+            rule: disqualifier.rule,
+            evidence: excerpt(markdown, offset, claimMatch[0].length),
+            location: locationForOffset(markdown, offset),
+            severity: "CRITICAL",
+            suggestion: `Tender requires ≥${threshold} years; firm claims founding year ${foundedYear} (${tenure} years). Reconfirm the founding date OR mark the bid as non-responsive.`,
+          };
+        }
+      }
+    }
+    // Cannot deterministically verify — defer.
+    return null;
+  }
+  return null;
+}
+
+export function validateConstraints(
+  comprehension: DeepTenderComprehension | null,
+  proposalMarkdown: string,
+): ConstraintValidationResult {
+  const violations: ConstraintViolation[] = [];
+  const cleared: string[] = [];
+  const deferredToCritic: string[] = [];
+
+  if (!comprehension) {
+    return { violations, cleared, deferredToCritic };
+  }
+
+  // Prohibitions — match each rule to a pattern, then sweep the proposal.
+  for (const prohibition of comprehension.prohibitions) {
+    let matched = false;
+    for (const pattern of PROHIBITION_PATTERNS) {
+      if (!pattern.matchesRule.test(prohibition)) continue;
+      const violationMatch = pattern.matchesProposal.exec(proposalMarkdown);
+      if (violationMatch) {
+        const offset = violationMatch.index;
+        violations.push({
+          type: "prohibition",
+          rule: prohibition,
+          evidence: excerpt(proposalMarkdown, offset, violationMatch[0].length),
+          location: locationForOffset(proposalMarkdown, offset),
+          severity: "CRITICAL",
+          suggestion: pattern.suggestion,
+        });
+      } else {
+        cleared.push(prohibition);
+      }
+      matched = true;
+      break;
+    }
+    if (!matched) {
+      // No known pattern — defer to the critic (it'll read the rule and check semantically).
+      deferredToCritic.push(prohibition);
+    }
+  }
+
+  // Disqualifiers — only the threshold checker is deterministic; everything else defers.
+  for (const disqualifier of comprehension.disqualifiers) {
+    const threshold = checkDisqualifierThresholds(disqualifier, proposalMarkdown);
+    if (threshold) {
+      violations.push(threshold);
+    } else {
+      deferredToCritic.push(disqualifier.rule);
+    }
+  }
+
+  return { violations, cleared, deferredToCritic };
+}
+
+/**
+ * Render every comprehension rule (prohibitions + disqualifiers) as
+ * a checklist block that the critic prompt can iterate over. The
+ * critic is instructed (via the system prompt + this block) to
+ * verify each rule against the proposal and report any violation as
+ * a defect entry.
+ */
+export function formatConstraintsForCritique(comprehension: DeepTenderComprehension | null): string {
+  if (!comprehension) return "";
+  if (comprehension.prohibitions.length === 0 && comprehension.disqualifiers.length === 0) return "";
+
+  const lines: string[] = [];
+  lines.push("## CONSTRAINT VERIFICATION CHECKLIST (every rule must be checked against the draft)");
+  if (comprehension.prohibitions.length > 0) {
+    lines.push("");
+    lines.push("### Prohibitions (proposal must NOT propose any of these)");
+    comprehension.prohibitions.forEach((p, i) => {
+      lines.push(`P${i + 1}. ${p}`);
+    });
+  }
+  if (comprehension.disqualifiers.length > 0) {
+    lines.push("");
+    lines.push("### Disqualifying conditions (proposal must explicitly satisfy each, or be marked non-responsive)");
+    comprehension.disqualifiers.forEach((d, i) => {
+      lines.push(`D${i + 1}. ${d.rule}`);
+    });
+  }
+  return lines.join("\n");
+}
+
+/**
+ * Render any deterministic violations as a block to inject into the
+ * critique prompt — telling Claude up-front "these violations are
+ * already known; produce a defect entry for each."
+ */
+export function formatViolationsForCritique(result: ConstraintValidationResult): string {
+  if (result.violations.length === 0) return "";
+
+  const lines: string[] = [];
+  lines.push("## CONSTRAINT VIOLATIONS DETECTED (deterministic sweep — confirm and fix each)");
+  result.violations.forEach((v, i) => {
+    const where = v.location ? ` [in: ${v.location}]` : "";
+    lines.push(`V${i + 1}. [${v.severity}] ${v.type.toUpperCase()}: ${v.rule}${where}`);
+    lines.push(`     Evidence: "…${v.evidence}…"`);
+    lines.push(`     Fix: ${v.suggestion}`);
+  });
+  return lines.join("\n");
+}
+
+/**
+ * Convert violations into synthetic weak-axis identifiers so the
+ * refinement loop's threshold check sees them as additional reasons
+ * to refine. Used at the call site where qualityScore.weakAxes is
+ * augmented before the deep refiner runs.
+ */
+export function violationsAsWeakAxes(result: ConstraintValidationResult): string[] {
+  if (result.violations.length === 0) return [];
+  // One synthetic axis per violation type. The refiner doesn't need
+  // distinct axes per rule — the comprehension/violation blocks tell
+  // it which specific rules to fix.
+  const axes = new Set<string>();
+  for (const v of result.violations) {
+    axes.add(v.type === "prohibition" ? "constraintProhibition" : "constraintDisqualifier");
+  }
+  return Array.from(axes);
+}
+
+export const __testing__ = { PROHIBITION_PATTERNS };
