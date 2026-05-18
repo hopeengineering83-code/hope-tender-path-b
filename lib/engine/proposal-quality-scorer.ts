@@ -75,24 +75,28 @@ const REQUIRED_SECTIONS = [
 //   bare /UAT/i  matched "evaluation" / "situation" / "graduate"
 //   bare /SLA/i  matched "Islamabad" / "isolate" / "translation"
 // Over-scoring sector vocabulary on totally unrelated tenders.
+// Sector vocabularies expanded in this PR — more terms per sector
+// means the scorer is harder to game with thin sector veneer. Each
+// list now has 8–12 sector-distinctive terms (was 4–7). Word-boundary
+// guards keep 2–4 char abbreviations from matching substrings.
 const SECTOR_VOCAB: Record<string, RegExp[]> = {
-  healthcare: [/\bIPC\b/i, /\bPACS\b/i, /\bHEPA\b/i, /medical gas/i, /lead.*shield/i, /Legionella/i],
-  water: [/\bEPANET\b/i, /WaterCAD/i, /yield test/i, /\bEBCS\b/i, /chlorination/i],
-  road: [/\bESAL\b/i, /\bCBR\b/i, /Marshall/i, /\bFIDIC\b/i, /\bAASHTO\b/i],
-  urban: [/\bGIS\b/i, /land.use zoning/i, /phasing strategy/i, /stakeholder consultation/i],
-  environmental: [/\bESF\b/i, /\bESMP\b/i, /mitigation hierarchy/i, /baseline data/i, /grievance/i],
-  ict: [/\bAPI\b/i, /\bUAT\b/i, /\bRBAC\b/i, /\bSLA\b/i, /backup|\bRTO\b|\bRPO\b/i],
-  education: [/pupil.ratio/i, /accessible/i, /climate.responsive/i, /fire egress/i],
-  energy: [/load forecast/i, /HOMER/i, /SCADA/i, /grid code/i, /single.line diagram/i, /generation.capacity/i],
-  agriculture: [/agronomic/i, /irrigation scheme/i, /drip.*irrigation/i, /value.chain/i, /FAO/i, /yield model/i],
-  mining: [/geotechnical/i, /slope stability/i, /JORC/i, /tailings/i, /blast design/i, /ore body/i],
-  transport: [/AADT/i, /level of service/i, /PCE/i, /berth/i, /container throughput/i, /AIS/i],
-  building: [/BIM/i, /MEP/i, /fire compartment/i, /HVAC/i, /BOQ/i, /structural.*analysis/i],
-  oil_gas: [/P&ID/i, /HAZOP/i, /wellhead/i, /pipeline integrity/i, /API\s+\d/i, /HSE.*plan/i],
-  institutional: [/Theory of Change/i, /organisational design/i, /capacity assessment/i, /HMIS/i, /MoU/i, /change management/i],
-  financial: [/KYC/i, /AML/i, /Basel/i, /credit risk/i, /IFRS/i, /prudential/i, /core banking/i, /MFI/i],
-  telecoms: [/spectrum/i, /base station/i, /LTE|5G|4G/i, /backhaul/i, /last.mile/i, /MVNO/i, /core network/i],
-  port: [/berth.*design|quay/i, /draft.*vessel/i, /harbor|harbour/i, /pilotage/i, /port master plan/i, /ship.*manifest/i, /terminal.*handling/i],
+  healthcare: [/\bIPC\b/i, /\bPACS\b/i, /\bHEPA\b/i, /medical gas/i, /lead.*shield/i, /Legionella/i, /\bHTM\b/i, /\bWHO\s+guideline/i, /\bbiomedical\s+equipment/i, /infection\s+prevention/i, /clinical\s+workflow/i, /\bnegative\s+pressure\b/i],
+  water: [/\bEPANET\b/i, /WaterCAD/i, /yield test/i, /\bEBCS\b/i, /chlorination/i, /pump\s+head/i, /transmission\s+main/i, /elevated\s+(?:reservoir|tank)/i, /water\s+demand\s+forecast/i, /non.revenue\s+water/i, /\bWHO\s+drinking[-\s]?water/i, /sanitary\s+sewer/i],
+  road: [/\bESAL\b/i, /\bCBR\b/i, /Marshall/i, /\bFIDIC\b/i, /\bAASHTO\b/i, /pavement\s+(?:design|thickness)/i, /sub.?grade/i, /asphalt\s+mix\s+design/i, /horizontal\s+alignment/i, /vertical\s+curve/i, /traffic\s+count/i, /right.of.way/i],
+  urban: [/\bGIS\b/i, /land.use zoning/i, /phasing strategy/i, /stakeholder consultation/i, /master.?plan/i, /density\s+(?:plan|study)/i, /public\s+realm/i, /transit.oriented/i, /participatory\s+planning/i, /informal\s+settlement/i, /\bSDG\s*11\b/i],
+  environmental: [/\bESF\b/i, /\bESMP\b/i, /mitigation hierarchy/i, /baseline data/i, /grievance/i, /\bESIA\b/i, /resettlement\s+action\s+plan/i, /biodiversity\s+offset/i, /cumulative\s+impact/i, /climate\s+(?:risk|resilience)/i, /carbon\s+(?:footprint|inventory)/i],
+  ict: [/\bAPI\b/i, /\bUAT\b/i, /\bRBAC\b/i, /\bSLA\b/i, /backup|\bRTO\b|\bRPO\b/i, /\bSDLC\b/i, /(?:CI|CD)\/(?:CI|CD)|continuous\s+(?:integration|deployment)/i, /micro.?service/i, /\bOWASP\b/i, /role.based\s+access/i, /data\s+model/i, /API\s+contract/i],
+  education: [/pupil.ratio/i, /accessible/i, /climate.responsive/i, /fire egress/i, /child.friendly/i, /universal\s+design/i, /(?:STEM|TVET)\b/i, /curriculum\s+alignment/i, /inclusive\s+education/i, /learning\s+outcome/i, /capitation\s+grant/i],
+  energy: [/load forecast/i, /HOMER/i, /SCADA/i, /grid code/i, /single.line diagram/i, /generation.capacity/i, /power\s+(?:purchase|factor)/i, /spinning\s+reserve/i, /short.circuit/i, /protection\s+coordination/i, /substation\s+layout/i, /renewable\s+integration/i],
+  agriculture: [/agronomic/i, /irrigation scheme/i, /drip.*irrigation/i, /value.chain/i, /\bFAO\b/i, /yield model/i, /soil\s+(?:fertility|sample)/i, /agro.ecological\s+zone/i, /cropping\s+(?:calendar|pattern)/i, /post.harvest/i, /(?:smallholder|outgrower)/i, /seed\s+system/i],
+  mining: [/geotechnical/i, /slope stability/i, /\bJORC\b/i, /tailings/i, /blast design/i, /ore body/i, /pit\s+optimi(?:s|z)ation/i, /heap\s+leach/i, /\bROM\b\s+pile/i, /grade\s+control/i, /resource\s+estimate/i, /closure\s+plan/i],
+  transport: [/\bAADT\b/i, /level of service/i, /\bPCE\b/i, /berth/i, /container throughput/i, /\bAIS\b/i, /modal\s+split/i, /freight\s+corridor/i, /(?:rail|road)\s+(?:loading|gauge)/i, /(?:hub|spoke)\s+network/i, /port\s+productivity/i],
+  building: [/\bBIM\b/i, /\bMEP\b/i, /fire compartment/i, /\bHVAC\b/i, /\bBOQ\b/i, /structural.*analysis/i, /(?:LEED|EDGE|BREEAM)/i, /thermal\s+(?:envelope|comfort)/i, /daylight(?:ing)?/i, /façade\s+system/i, /seismic\s+(?:design|loading)/i, /post.tensioned/i],
+  oil_gas: [/P&ID/i, /HAZOP/i, /wellhead/i, /pipeline integrity/i, /API\s+\d/i, /HSE.*plan/i, /flow\s+assurance/i, /flare\s+(?:stack|study)/i, /reservoir\s+model/i, /(?:upstream|midstream|downstream)/i, /pig\s+(?:run|launcher)/i, /surge\s+analysis/i],
+  institutional: [/Theory of Change/i, /organisational design/i, /capacity assessment/i, /\bHMIS\b/i, /\bMoU\b/i, /change management/i, /performance\s+management/i, /M&E\s+framework/i, /results.based/i, /stakeholder\s+mapping/i, /institutional\s+strengthening/i, /policy\s+coherence/i],
+  financial: [/\bKYC\b/i, /\bAML\b/i, /Basel/i, /credit risk/i, /\bIFRS\b/i, /prudential/i, /core banking/i, /\bMFI\b/i, /(?:digital|mobile)\s+wallet/i, /\bNPL\b\s+ratio/i, /capital\s+adequacy/i, /interchange\s+fee/i],
+  telecoms: [/spectrum/i, /base station/i, /LTE|5G|4G/i, /backhaul/i, /last.mile/i, /\bMVNO\b/i, /core network/i, /\bRAN\b/i, /(?:fibre|fiber)\s+(?:rollout|backbone)/i, /universal\s+service/i, /tower\s+co.?location/i, /spectrum\s+auction/i],
+  port: [/berth.*design|quay/i, /draft.*vessel/i, /harbor|harbour/i, /pilotage/i, /port master plan/i, /ship.*manifest/i, /terminal.*handling/i, /(?:TEU|teu)\s+(?:capacity|throughput)/i, /(?:RTG|STS)\s+crane/i, /yard\s+layout/i, /dredging\s+volume/i, /mooring\s+(?:dolphin|line)/i],
 };
 
 // Keep this list aligned with hasForbiddenWeakness() in proposal-benchmark-guard.ts.

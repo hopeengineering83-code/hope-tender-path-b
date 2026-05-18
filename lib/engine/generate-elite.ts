@@ -6,6 +6,7 @@ import { extractDeepTenderComprehension, formatComprehensionForPrompt, type Deep
 import { runDeepRefinement } from "./deep-reasoning-refiner";
 import { alignMatchesToEvaluatorCriteria, formatAlignmentForPrompt, type AlignmentCandidate, type AlignmentReport } from "./semantic-match-aligner";
 import type { ToolEvidenceInventory } from "./proposal-tools";
+import { DeepReasoningTelemetry } from "./deep-reasoning-telemetry";
 import { BENCHMARK_CONTEXT_LINES, buildCriterionEvidenceMap, buildProposalIntelligence, expertProofLine, projectProofLine, safeParseArr } from "./proposal-intelligence";
 import { enforceCanonicalNames } from "./entity-name-normalizer";
 import { exactSelectionLimit, forbidsBranding, forbidsCoverPage, requiresSignatureOrStamp } from "./scope-policy";
@@ -1033,10 +1034,15 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   // is too short to extract anything — the legacy regex analyser
   // (proposal-intelligence) still runs in all paths and provides the
   // baseline.
+  // Per-generation telemetry collector. Records each deep-reasoning
+  // AI call's duration so the engine can log a structured summary
+  // line at the end of generation. Empty when the flag is off.
+  const deepTelemetry = new DeepReasoningTelemetry();
+
   let deepComprehension: DeepTenderComprehension | null = null;
   if (isDeepReasoningEnabled()) {
     try {
-      deepComprehension = await extractDeepTenderComprehension(tenderText);
+      deepComprehension = await deepTelemetry.track("comprehension", () => extractDeepTenderComprehension(tenderText));
       if (deepComprehension) {
         console.info(`[generate-elite] Deep comprehension: ${deepComprehension.criteria.length} criteria, ${deepComprehension.disqualifiers.length} disqualifier(s), ${deepComprehension.prohibitions.length} prohibition(s). Total weight accounted for: ${deepComprehension.totalWeightAccountedFor ?? "n/a"}.`);
       } else {
@@ -1369,13 +1375,13 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
               currency: p.currency ?? null,
             },
           }));
-          alignmentReport = await alignMatchesToEvaluatorCriteria({
+          alignmentReport = await deepTelemetry.track("alignment", () => alignMatchesToEvaluatorCriteria({
             tenderTitle: cleanedTenderTitle,
             clientName: intelligence.clientName,
             comprehension: deepComprehension,
             experts: expertCandidates,
             projects: projectCandidates,
-          });
+          }));
           if (alignmentReport) {
             console.info(`[generate-elite] Semantic alignment: ${alignmentReport.alignments.length} alignment(s), ${alignmentReport.coverageByCriterion.length} criterion coverage record(s).`);
           } else {
@@ -2776,6 +2782,12 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   })();
 
   const summary = `${mode}${refinementLabel} technical proposal generated. ${finalized.internalSummary}. ${auditSummary}. ${formatQualityScoreSummary(qualityScore)}. ${formatWinProbability(winProb)}. Inputs: ${intelligence.requiredSections.length} section group(s), ${intelligence.themes.length} tender theme(s), ${experts.length} reviewed expert(s), ${projects.length} reviewed project(s), ${companyEvidenceLines.length} company evidence item(s), ${projectEvidenceLines.length} project evidence attachment(s).${deepReasoningSummary}${aiError ? ` AI fallback reason: ${aiError}` : ""}`;
+
+  // Log the structured deep-reasoning telemetry summary — empty
+  // string when nothing was tracked (flag off + no deep-reasoning
+  // AI calls). Console-only; not persisted.
+  const telemetryLine = deepTelemetry.format();
+  if (telemetryLine) console.info(telemetryLine);
 
   // ─── Save the main Technical Proposal (PR #256 fix) ─────────────────────
   // BUG (pre-PR #256): the engine looked for a planned slot whose
