@@ -424,7 +424,7 @@ export function inferSector(tenderText: string): string {
   // "irrigation scheme" + "crop production" = agriculture; the water
   // pattern below also has "irrigation" but a pure agriculture tender
   // should match here first.
-  if (/agricultur|livestock|crop\s+(production|management)|fishery|agribusiness|food\s+security|smallholder|farmer\s+(field|training)|value.chain/i.test(tenderText)) return "Agriculture & Food Security";
+  if (/agricultur|livestock|crop\s+(production|management)|fishery|agribusiness|food\s+security|smallholder|farmer\s+(field|training)|value.chain/i.test(tenderText)) return "Agriculture & Rural Development";
   // Word boundaries on WASH (4 chars) — otherwise "Washington" matches.
   if (/water supply|borehole|pump|hydraulic|irrigation|\bWASH\b|sanitation|wastewater/i.test(tenderText)) return "Water & Sanitation Infrastructure";
   if (/road.*design|road.*rehab|bridge.*design|highway|pavement.*design/i.test(tenderText)) return "Road / Bridge / Transport Infrastructure";
@@ -451,15 +451,12 @@ export function inferSector(tenderText: string): string {
   if (/financial\s+advisory|economic\s+analysis|due\s+diligence|valuation|audit\s+services|tax\s+consult/i.test(tenderText)) return "Financial / Audit Advisory";
   if (/supply\s+of|procurement\s+of\s+(goods|equipment|materials)|equipment\s+supply|goods\s+procurement/i.test(tenderText)) return "Supply / Goods Procurement";
   if (/capacity\s+build|training\s+services|institutional\s+strength|technical\s+assistance|trainer.of.trainers/i.test(tenderText)) return "Capacity Building / Advisory";
-  if (/solar\s+(power|farm|pv)|wind\s+(power|farm)|hydropower|grid\s+(connect|extension)|renewable\s+energy|power\s+(generation|transmission|distribution)/i.test(tenderText)) return "Energy & Power Infrastructure";
+  if (/solar\s+(power|farm|pv)|wind\s+(power|farm)|hydropower|grid\s+(connect|extension)|renewable\s+energy|power\s+(generation|transmission|distribution)|energy|power.*plant|grid.*connect|generation.*capacity|transmission.*line|substation.*design/i.test(tenderText)) return "Energy / Power Infrastructure";
   if (/social.*develop|advisory.*service|institutional.*strength|capacity.*build|community.*develop/i.test(tenderText)) return "Social Development & Advisory";
   if (/hotel|hospitality|resort/i.test(tenderText)) return "Hospitality & Tourism";
   if (/factory|industrial|manufacturing/i.test(tenderText)) return "Industrial / Manufacturing";
   if (/geotechnical|soil.*investigation|foundation.*design|seismic/i.test(tenderText)) return "Geotechnical & Structural Engineering";
   if (/renovation|modification|retrofit|existing building/i.test(tenderText)) return "Building Renovation & Adaptation";
-  // Extended sector detection — keeps downstream vocabulary enricher, quality scorer, and
-  // three-stage review table all aligned when the tender falls outside the legacy patterns.
-  if (/energy|power.*plant|solar.*farm|wind.*farm|grid.*connect|generation.*capacity|transmission.*line|substation.*design/i.test(tenderText)) return "Energy / Power Infrastructure";
   if (/agri|irrigation.*scheme|crop.*yield|farm.*develop|value.?chain.*agri|livestock.*develop/i.test(tenderText)) return "Agriculture & Rural Development";
   if (/mining|mineral.*extract|quarry.*design|pit.*design|tailings|ore.*body|blast.*design/i.test(tenderText)) return "Mining & Extractive Industries";
   if (/\bport.*design|\bport.*master.*plan|berth.*design|quay.*design|harbour.*develop|dredging.*scheme|container.*terminal/i.test(tenderText)) return "Port / Maritime Infrastructure";
