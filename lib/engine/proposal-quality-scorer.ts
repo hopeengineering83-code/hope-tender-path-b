@@ -113,12 +113,15 @@ function detectSector(primarySector: string): string {
   if (/environmental|esia|esmp|safeguard/.test(s)) return "environmental";
   if (/ict|software|digital|mis|erp/.test(s)) return "ict";
   if (/school|university|campus|education/.test(s)) return "education";
-  if (/energy|power|solar|wind|grid|generation|transmission/.test(s)) return "energy";
-  if (/agri|farm|crop|irrigation|livestock|rural develop/.test(s)) return "agriculture";
-  if (/mining|mineral|quarry|extracti/.test(s)) return "mining";
-  if (/transport|port|logistic|shipping|aviation|rail/.test(s)) return "transport";
+  if (/energy|power|solar|wind|grid|generation|transmission|substation|hydropower|electrification/.test(s)) return "energy";
+  if (/agri|farm|crop|irrigation|wua|command.*area|livestock|rural develop/.test(s)) return "agriculture";
+  if (/mining|mineral|quarry|extracti|jorc|tailings|ore.*body/.test(s)) return "mining";
+  if (/\bport\b|berth|quay|maritime|dredging|harbour|nautical|isps/.test(s)) return "port";
+  if (/oil|gas|petroleum|refinery|pipeline|hazop|p&id|petrochemical/.test(s)) return "oil_gas";
+  if (/kyc|aml|core.*banking|microfinance|ifrs|basel|fintech|payment.*system/.test(s)) return "financial";
+  if (/spectrum|broadband|lte|5g|base.*station|backhaul|mobile.*network/.test(s)) return "telecoms";
+  if (/transport|logistic|shipping|aviation|rail/.test(s)) return "transport";
   if (/building|construct|architect|structure|facility|facilities/.test(s)) return "building";
-  if (/oil|gas|petroleum|refinery|pipeline/.test(s)) return "oil_gas";
   if (/institution|reform|governance|capacity|public sector|ministry/.test(s)) return "institutional";
   return "generic";
 }
