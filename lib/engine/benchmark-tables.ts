@@ -621,6 +621,48 @@ function valueFrameworkPillars(primarySector: string, clientName: string): Value
     { pillar: "Regulatory Approvals", clientGains: "Education authority functional approval, fire certificate, and handover documentation prepared as a project deliverable, not separate later activity." },
     { pillar: "Long-Life Specifications", clientGains: "Materials and finishes specified for school-life durability, low maintenance, and easy replacement of high-wear components." },
   ];
+  if (/energy|solar|hydropower|substation|transmission|generation|electrification|scada/i.test(primarySector)) return [
+    { pillar: "Grid-Code Compliance Certainty", clientGains: `${clientName} receives engineering that has been reviewed by an independent power-systems engineer before utility submission — protection relay settings confirmed, load-flow validated, SCADA architecture agreed.` },
+    { pillar: "Yield & Demand Rigour", clientGains: "P50/P90 yield estimates from ≥ 10 years validated resource data with conservative degradation — no surprise shortfall against energy production targets." },
+    { pillar: "FAT/SAT Commissioning Discipline", clientGains: "Factory and site acceptance test protocols issued before equipment delivery; energisation managed through a documented FAT/SAT sequence with no shortcuts." },
+    { pillar: "O&M Lifecycle Handover", clientGains: "HOMER/SAM energy model, SCADA handover, O&M manual, and operator training programme handed to client — ongoing management requires no return to designer." },
+  ];
+  if (/agri|irrigation|wua|command.*area|rural.*develop/i.test(primarySector)) return [
+    { pillar: "Hydrological Source Certainty", clientGains: `${clientName} starts construction with a verified 20-year safe-yield analysis — no redesign when the source under-performs.` },
+    { pillar: "Crop-Water Engineering Rigour", clientGains: "FAO Penman-Monteith calculation validated with local field data; scheme sized for actual crop-water demand, not assumptions." },
+    { pillar: "WUA Governance at Handover", clientGains: "WUA constitution, water-allocation rules, tariff model, and fee-collection template handed over — the scheme operates without consultant dependency from day one." },
+    { pillar: "Agronomy & Livelihood Integration", clientGains: "Agronomy recommendations, post-harvest value-chain advice, and farmer training programme included — maximising the scheme's productivity impact." },
+  ];
+  if (/mining|mineral.*resource|jorc|tailings|ore.*body|mine.*plan/i.test(primarySector)) return [
+    { pillar: "Investor-Ready Resource Reporting", clientGains: `${clientName} receives a JORC-compliant resource statement with independent competent-person sign-off — ready for investor scrutiny from issue.` },
+    { pillar: "Geotechnical & TSF Safety", clientGains: "Slope-stability analysis by three methods and TSF design to MAC/ANCOLD guidelines — safety case documented before construction begins." },
+    { pillar: "Regulatory Submission Package", clientGains: "Environmental permit application and feasibility report prepared as project deliverables — permitting timeline integrated into the project schedule." },
+    { pillar: "Closure Liability Quantified", clientGains: "Closure cost estimate and financial provision methodology in the feasibility report — lender and regulator requirements met from inception." },
+  ];
+  if (/port|berth|quay|maritime|dredging|harbour/i.test(primarySector)) return [
+    { pillar: "Nautical Safety Before Design", clientGains: `${clientName} receives a fast-time nautical simulation confirming berth layout and turning basin safety before structural design is finalised — no redesign after safety review.` },
+    { pillar: "Dredge Compliance Pre-Approved", clientGains: "Sediment characterisation and disposal site approval completed before mobilisation — the most common cause of port-project delay is eliminated." },
+    { pillar: "ISPS Certification at Launch", clientGains: "ISPS compliance documentation, port facility security plan, and security officer training included — international vessel calls can proceed from day one of commercial operations." },
+    { pillar: "Asset Lifecycle Documentation", clientGains: "O&M manual, berth monitoring protocol, and nautical simulation report handed to port authority — future vessel-class upgrades and inspections use the design data directly." },
+  ];
+  if (/pipeline.*design|oil.*facilit|gas.*facilit|hazop|p&id|refinery|petrochemical/i.test(primarySector)) return [
+    { pillar: "Process Safety Completeness", clientGains: `${clientName} receives a fully closed HAZOP action register before any construction release — no outstanding safety items at first spade-in-the-ground.` },
+    { pillar: "Structural & Pipeline Integrity", clientGains: "Pipeline stress analysis (Caesar II), cathodic-protection design to NACE/ISO, and ILI baseline run schedule — pipeline integrity lifecycle begins at handover." },
+    { pillar: "Commissioning Discipline", clientGains: "Pre-commissioning, hydrotest, and ESD system test protocols issued before construction — energisation managed through a documented sequence with no improvisation." },
+    { pillar: "Regulatory & Insurance Readiness", clientGains: "HAZOP report, LOPA, PSI documentation, and as-built package support regulatory permit, insurance placement, and lender technical due diligence." },
+  ];
+  if (/kyc|aml|core.*banking|microfinance|ifrs|basel|prudential|fintech/i.test(primarySector)) return [
+    { pillar: "Regulatory Compliance Certainty", clientGains: `${clientName} launches with legal counsel-reviewed regulatory gap analysis and formal compliance attestation in the handover pack — no post-go-live enforcement risk from oversight in the implementation.` },
+    { pillar: "Data Migration Integrity", clientGains: "Parallel-run cutover with signed-off reconciliation report and tested rollback plan — no surprise data errors discovered after go-live." },
+    { pillar: "Cyber Security Assurance", clientGains: "Pre-go-live penetration test with remediation evidence; RBAC, encryption, and audit-log configuration confirmed — security posture demonstrated before launch." },
+    { pillar: "Staff Capability at Handover", clientGains: "Train-the-trainer programme, compliance knowledge base, and 90-day hypercare — client team is self-sufficient from go-live, not dependent on the implementation partner." },
+  ];
+  if (/spectrum|broadband|lte|5g|base.*station|backhaul|mobile.*network|telecoms/i.test(primarySector)) return [
+    { pillar: "Spectrum Licensed Before Site Works", clientGains: `${clientName} avoids sunk-cost on sites that cannot be activated — no site engineering starts before in-principle spectrum approval is received.` },
+    { pillar: "Coverage Validated by Drive Test", clientGains: "Calibrated propagation model, drive-test acceptance protocol, and coverage KPI report — coverage performance is measured and documented, not assumed." },
+    { pillar: "Backhaul Capacity Headroom Confirmed", clientGains: "Backhaul designed with 1.5× peak busy-hour headroom and path availability ≥ 99.99% — no congestion or link-failure surprises at commercial launch." },
+    { pillar: "Network Operations Ready at Launch", clientGains: "Live KPI dashboard, drive-test baseline archive, EMR certificate registry, and operator training — NOC team has full visibility and all regulatory documentation from day one." },
+  ];
   return [
     { pillar: "Scope Understanding", clientGains: `${clientName} receives an evidence-led response that maps every tender requirement to a deliverable, responsible expert, and quality gate.` },
     { pillar: "Team Continuity", clientGains: "Same proposed experts have performed the same roles on comparable previous projects — zero learning curve, predictable delivery." },

@@ -67,6 +67,56 @@ const SECTOR_VOCABULARY: Record<string, VocabularyEntry[]> = {
     { term: "climate-responsive", context: "Climate-responsive design (natural ventilation, shading, daylighting) is applied to reduce operating cost and improve learner comfort." },
     { term: "fire egress", context: "Fire egress, emergency lighting, and assembly-point design comply with the applicable life-safety code." },
   ],
+  energy: [
+    { term: "load-flow analysis", context: "Load-flow analysis using SKM/ETAP validates voltage profiles, thermal ratings, and fault-level compliance across the network under normal and contingency conditions." },
+    { term: "protection relay coordination", context: "Protection relay coordination study ensures selective isolation of faulted sections while maintaining supply to healthy sections; relay settings are documented in a relay setting schedule." },
+    { term: "P50/P90", context: "P50 (median expected yield) and P90 (90th-percentile yield) estimates are produced from ≥ 10 years of validated irradiance/wind data, using conservative degradation rates." },
+    { term: "SCADA", context: "SCADA architecture covers remote monitoring, supervisory control, data acquisition, alarm management, and historian for energy generation and grid infrastructure." },
+    { term: "grid code", context: "Grid-code compliance review covers voltage regulation, frequency response, power factor, protection settings, and islanding detection per the utility's interconnection requirements." },
+    { term: "FAT/SAT", context: "Factory acceptance test (FAT) and site acceptance test (SAT) protocols are prepared before equipment delivery and commissioning; all tests are witnessed and documented." },
+  ],
+  agriculture: [
+    { term: "FAO Penman-Monteith", context: "Crop water requirement is calculated using the FAO Penman-Monteith method, based on local climatic data (temperature, humidity, radiation, wind speed)." },
+    { term: "command area", context: "The command area (net irrigable area) is mapped using topographic survey and GIS; design capacity is based on the command area and crop water requirement." },
+    { term: "WUA", context: "Water User Association (WUA) governance structure — constitution, water-allocation rules, fee-collection mechanism, and dispute-resolution procedure — is established before scheme commissioning." },
+    { term: "NRW", context: "Non-revenue water (NRW) in the irrigation network is controlled through canal lining specification, gate seating standards, and commissioning seepage tests." },
+    { term: "hydrological analysis", context: "Hydrological analysis uses a minimum 20-year flow record; low-flow frequency analysis confirms the safe yield available for scheme design." },
+  ],
+  mining: [
+    { term: "JORC", context: "Resource estimation is reported in compliance with the JORC Code; an independent qualified competent person reviews the estimate before publication." },
+    { term: "TSF", context: "Tailings storage facility (TSF) design follows MAC/ANCOLD guidelines for dam classification, freeboard, drainage, embankment stability, and emergency spillway capacity." },
+    { term: "slope stability", context: "Slope-stability analysis is completed using deterministic and probabilistic methods (limit equilibrium, numerical modelling); inter-ramp angles are confirmed before pit design is finalised." },
+    { term: "block model", context: "A 3-D geological block model is built from drillhole data using industry-standard software (Leapfrog/Surpac); grade estimation uses kriging or appropriate geostatistical method." },
+    { term: "closure cost", context: "Mine closure cost estimate is prepared at feasibility stage per international guidelines; financial provision is sized and reviewed annually to meet regulatory requirements." },
+  ],
+  port: [
+    { term: "met-ocean", context: "Met-ocean analysis uses a minimum 20-year validated hindcast data set covering wave height, wind speed, current, and tide; design conditions are derived for the return period appropriate to the berth class." },
+    { term: "nautical simulation", context: "Fast-time nautical simulation validates berth layout, turning basin dimensions, and channel width under design vessel and wind/current conditions before structural design is finalised." },
+    { term: "bathymetric survey", context: "Bathymetric survey maps the seabed topography to define dredge volumes, berth pocket dimensions, and approach channel profile." },
+    { term: "ISPS", context: "ISPS Code compliance covers facility security assessment, port facility security plan (PFSP), designated restricted areas, access control, and security officer training." },
+    { term: "dredge disposal", context: "Dredge material characterisation (bulk chemistry, elutriate testing) determines disposal classification; disposal site and method are pre-approved by environmental authority before works commence." },
+  ],
+  oilgas: [
+    { term: "HAZOP", context: "HAZOP study is conducted systematically against all P&IDs using guide words; all deviations, causes, consequences, and actions are recorded; the action register is tracked to full close-out before construction." },
+    { term: "P&ID", context: "Piping and Instrumentation Diagrams (P&IDs) are developed through multiple review cycles; each revision is controlled and all changes are tracked through a formal management-of-change process." },
+    { term: "LOPA", context: "Layer of Protection Analysis (LOPA) is conducted for high-severity HAZOP nodes to verify that the combination of independent protection layers (IPLs) meets the tolerable risk criteria." },
+    { term: "cathodic protection", context: "Cathodic protection design follows NACE/ISO standards; soil resistivity survey is completed before design; close-interval potential survey (CIPS) is specified within 12 months of commissioning." },
+    { term: "pipeline stress analysis", context: "Pipeline stress analysis is conducted using Caesar II or equivalent; compliance with ASME B31.4 (liquid) or B31.8 (gas) is confirmed; analysis reports are peer-reviewed before construction issue." },
+  ],
+  financial: [
+    { term: "KYC", context: "Know-Your-Customer (KYC) programme design covers customer identification, verification, risk classification, ongoing due diligence, and politically exposed persons (PEP) screening." },
+    { term: "AML", context: "Anti-Money Laundering (AML) controls cover transaction monitoring thresholds, suspicious transaction reporting (STR), record-retention periods, and staff training requirements." },
+    { term: "IFRS", context: "IFRS implementation covers standard interpretation, accounting policy mapping, system configuration, parallel-run reconciliation, and first-time adoption disclosure requirements." },
+    { term: "Basel", context: "Basel compliance (Pillar 1 capital adequacy, Pillar 2 ICAAP, Pillar 3 disclosure) is mapped to the institution's current reporting system; gap remediation is prioritised by regulatory deadline." },
+    { term: "RBAC", context: "Role-Based Access Control (RBAC) covers application, database, and infrastructure layers; role matrix is documented and signed off by the data owner before go-live." },
+  ],
+  telecoms: [
+    { term: "spectrum", context: "Spectrum assignment is confirmed through regulatory licensing authority before network design is finalised; spectrum co-existence analysis confirms no harmful interference with existing licensees." },
+    { term: "RF planning", context: "RF planning uses a calibrated propagation model (Okumura-Hata, 3GPP, or ray-tracing) with field-measured correction factors; coverage acceptance is tested by drive-test against agreed KPIs." },
+    { term: "backhaul", context: "Backhaul capacity is sized with minimum 1.5× headroom over peak busy-hour traffic; radio link budget and path availability (Rayleigh / rain) are calculated for each microwave hop." },
+    { term: "LTE", context: "LTE (4G) base-station design covers frequency reuse, handover parameters, power control, and MIMO configuration; 5G-NR migration path is documented in the network architecture." },
+    { term: "SAT", context: "Site acceptance test (SAT) protocol covers RF performance, power system, transmission, alarm verification, and drive-test against coverage KPIs; sign-off is required before commercial launch." },
+  ],
 };
 
 function detectVocabulary(primarySector: string): VocabularyEntry[] {
@@ -78,6 +128,13 @@ function detectVocabulary(primarySector: string): VocabularyEntry[] {
   if (/environmental|esia|esmp|safeguard/.test(sector)) return SECTOR_VOCABULARY.environmental;
   if (/ict|software|digital|mis|erp/.test(sector)) return SECTOR_VOCABULARY.ict;
   if (/school|university|campus|education/.test(sector)) return SECTOR_VOCABULARY.education;
+  if (/energy|solar|hydropower|substation|transmission|generation|electrification|scada/.test(sector)) return SECTOR_VOCABULARY.energy;
+  if (/agri|irrigation|wua|command.*area|rural.*develop/.test(sector)) return SECTOR_VOCABULARY.agriculture;
+  if (/mining|mineral.*resource|jorc|tailings|ore.*body|mine.*plan/.test(sector)) return SECTOR_VOCABULARY.mining;
+  if (/port|berth|quay|maritime|dredging|harbour/.test(sector)) return SECTOR_VOCABULARY.port;
+  if (/pipeline|oil.*facilit|gas.*facilit|hazop|p&id|refinery|petrochemical/.test(sector)) return SECTOR_VOCABULARY.oilgas;
+  if (/kyc|aml|core.*banking|microfinance|ifrs|basel|prudential|fintech/.test(sector)) return SECTOR_VOCABULARY.financial;
+  if (/spectrum|broadband|lte|5g|base.*station|backhaul|mobile.*network|telecoms/.test(sector)) return SECTOR_VOCABULARY.telecoms;
   return [];
 }
 

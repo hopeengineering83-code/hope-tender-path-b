@@ -195,6 +195,125 @@ function defaultRows(sector: string): ThemeRow[] {
       ...generic,
     ];
   }
+  if (/energy|solar|hydropower|substation|transmission|generation|electrification|scada/.test(s)) {
+    return [
+      {
+        pain: "Protection relay settings rejected at utility interconnection review",
+        strength: "Independent power-systems peer review of relay settings before utility submission; relay setting schedule issued with 100% design package",
+        discriminator: "No other bidder includes an independent protection-relay review as a standard deliverable — utility pre-approval secured before construction starts",
+        evidenceFallback: "Bid-Team Action: confirm energy-design reference",
+      },
+      {
+        pain: "Solar/wind yield forecast over-stated — energy target missed",
+        strength: "P50/P90 yield estimates from ≥ 10 years validated resource data; conservative degradation factor; HOMER sensitivity analysis",
+        discriminator: "Yield model and sensitivity analysis handed to client — lender can interrogate assumptions directly without commissioning new study",
+        evidenceFallback: "Bid-Team Action: confirm renewable-energy reference",
+      },
+      ...generic,
+    ];
+  }
+  if (/agri|irrigation|wua|command.*area|rural.*develop/.test(s)) {
+    return [
+      {
+        pain: "Hydrological source flow lower than scheme design — crops under-served",
+        strength: "20-year flow record analysis; conservative safe-yield factor; back-up source identified before design starts",
+        discriminator: "Flow contingency documented BEFORE detailed design — no redesign cost when source under-performs",
+        evidenceFallback: "Bid-Team Action: confirm irrigation-scheme reference",
+      },
+      {
+        pain: "WUA collapses after handover — scheme falls into disuse",
+        strength: "WUA readiness assessment at inception; governance framework and tariff model agreed before construction",
+        discriminator: "WUA governance kit (constitution, water allocation rules, fee collection template) handed over as a project deliverable",
+        evidenceFallback: "Bid-Team Action: confirm WUA establishment reference",
+      },
+      ...generic,
+    ];
+  }
+  if (/mining|mineral.*resource|jorc|tailings|ore.*body|mine.*plan/.test(s)) {
+    return [
+      {
+        pain: "Resource estimate downgraded at independent competent-person review",
+        strength: "JORC-compliant estimate with sensitivity analysis; independent competent-person review before report issue",
+        discriminator: "Competent-person review is a built-in project deliverable, not an afterthought — estimate quality is investor-ready from issue",
+        evidenceFallback: "Bid-Team Action: confirm JORC resource report reference",
+      },
+      {
+        pain: "TSF slope failure — safety incident and environmental liability",
+        strength: "TSF design to MAC/ANCOLD guidelines; slope stability by three methods; instrumentation programme from first raise",
+        discriminator: "TSF instrumentation and monitoring plan handed to mine operator at handover — early warning system operational from day one",
+        evidenceFallback: "Bid-Team Action: confirm TSF design reference",
+      },
+      ...generic,
+    ];
+  }
+  if (/port|berth|quay|maritime|dredging|harbour/.test(s)) {
+    return [
+      {
+        pain: "Berth design fails pre-operations nautical safety review — commercial launch delayed",
+        strength: "Fast-time nautical simulation validates berth layout before structural design is finalised",
+        discriminator: "Simulation report is a handover deliverable — port authority retains safety evidence for future vessel-class upgrades without commissioning new study",
+        evidenceFallback: "Bid-Team Action: confirm port design reference",
+      },
+      {
+        pain: "Dredge material disposal site rejected — project delay and cost overrun",
+        strength: "Sediment characterisation completed before dredge volumes are estimated; disposal site pre-approved by environmental authority before mobilisation",
+        discriminator: "Pre-approved disposal plan eliminates the most common cause of port-project delay — no contingency cost for disposal site re-approval",
+        evidenceFallback: "Bid-Team Action: confirm dredging reference",
+      },
+      ...generic,
+    ];
+  }
+  if (/pipeline|oil.*facilit|gas.*facilit|hazop|p&id|refinery|petrochemical/.test(s)) {
+    return [
+      {
+        pain: "Outstanding HAZOP actions reach construction — safety incident risk",
+        strength: "HAZOP action register tracked to full close-out; LOPA for high-severity nodes; PSI documented before construction release",
+        discriminator: "No construction release until HAZOP action register is formally closed — safety case is complete before ground is broken",
+        evidenceFallback: "Bid-Team Action: confirm HAZOP facilitation reference",
+      },
+      {
+        pain: "Cathodic protection failure — pipeline leak and environmental liability",
+        strength: "CP design to NACE/ISO; soil resistivity survey before design; CIPS baseline within 12 months of commissioning",
+        discriminator: "ILI baseline run schedule handed to client at handover — integrity management lifecycle begins immediately, not when a leak occurs",
+        evidenceFallback: "Bid-Team Action: confirm pipeline engineering reference",
+      },
+      ...generic,
+    ];
+  }
+  if (/kyc|aml|core.*banking|microfinance|ifrs|basel|prudential|fintech/.test(s)) {
+    return [
+      {
+        pain: "System goes live before regulatory compliance is confirmed — enforcement action",
+        strength: "Regulatory gap analysis reviewed by licensed local legal counsel; compliance attestation before go-live",
+        discriminator: "Legal counsel sign-off is a formal go-live gate — no system launch without documented compliance confirmation",
+        evidenceFallback: "Bid-Team Action: confirm regulatory compliance reference",
+      },
+      {
+        pain: "Data migration errors discovered post-cutover — reconciliation failure",
+        strength: "Parallel-run cutover; data reconciliation protocol signed off before live; documented rollback path",
+        discriminator: "Rollback plan is tested before the cutover window — not written after the cutover fails",
+        evidenceFallback: "Bid-Team Action: confirm core banking implementation reference",
+      },
+      ...generic,
+    ];
+  }
+  if (/spectrum|broadband|lte|5g|base.*station|backhaul|mobile.*network|telecoms/.test(s)) {
+    return [
+      {
+        pain: "Coverage underperforms simulation — dead zones in target service area",
+        strength: "Calibrated propagation model with field-measured correction factors; drive-test acceptance against coverage KPIs",
+        discriminator: "Drive-test data archived and handed to NOC team — future comparative measurement campaigns use our baseline, not a new study",
+        evidenceFallback: "Bid-Team Action: confirm broadband network reference",
+      },
+      {
+        pain: "Spectrum not licensed in time — rollout delayed",
+        strength: "Spectrum licensing roadmap prepared at project inception; frequency assignment application submitted with full technical data package",
+        discriminator: "Site engineering does not start until in-principle spectrum approval is received — no sunk cost on sites that cannot be activated",
+        evidenceFallback: "Bid-Team Action: confirm spectrum licensing reference",
+      },
+      ...generic,
+    ];
+  }
   return generic;
 }
 
