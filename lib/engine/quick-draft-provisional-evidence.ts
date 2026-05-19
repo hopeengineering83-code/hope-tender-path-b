@@ -13,34 +13,61 @@ function scoreAgainstTender(text: string, tenderText: string): number {
   const lowerTender = tenderText.toLowerCase();
   let score = 0;
   const signals = [
-    "health",
-    "hospital",
-    "medical",
-    "clinic",
-    "radiology",
-    "laboratory",
-    "pharmacy",
-    "opd",
-    "emergency",
-    "in-patient",
-    "mep",
-    "biomedical",
-    "renovation",
-    "assessment",
-    "design",
-    "supervision",
-    "water",
-    "infrastructure",
-    "urban",
-    "structural",
-    "electrical",
-    "mechanical",
+    // Healthcare
+    "health", "hospital", "medical", "clinic", "radiology", "laboratory",
+    "pharmacy", "opd", "emergency", "in-patient", "biomedical", "ipc",
+    // Building / MEP
+    "mep", "hvac", "renovation", "bim", "structural", "electrical", "mechanical",
+    // General
+    "assessment", "design", "supervision", "infrastructure",
+    // Water / hydraulic
+    "water", "borehole", "hydraulic", "sanitary", "epanet", "waterworks",
+    // Roads / transport
+    "road", "bridge", "pavement", "highway", "traffic", "aashto",
+    // Urban / planning
+    "urban", "master plan", "municipal", "gis", "zoning",
+    // Environmental / safeguards
+    "esia", "esmp", "safeguard", "baseline", "environmental",
+    // ICT / digital
+    "ict", "software", "digital", "database", "erp", "mis", "api", "uat",
+    // Energy / power
+    "energy", "power", "solar", "grid", "scada", "generation", "substation",
+    // Agriculture / irrigation
+    "irrigation", "agriculture", "crop", "agronomic", "fao", "farm",
+    // Mining
+    "mining", "mineral", "jorc", "tailings", "slope stability", "geotechnical",
+    // Port / maritime
+    "port", "berth", "dredging", "maritime", "quay", "harbour",
+    // Oil & gas
+    "pipeline", "hazop", "p&id", "refinery", "petrochemical", "wellhead",
+    // Financial services
+    "kyc", "aml", "banking", "basel", "ifrs", "credit risk",
+    // Telecoms
+    "spectrum", "backhaul", "base station", "lte", "broadband", "telecom",
   ];
   for (const signal of signals) {
     if (lowerText.includes(signal) && lowerTender.includes(signal)) score += 4;
     else if (lowerText.includes(signal)) score += 1;
   }
-  if (/hospital|medical|health|clinic/i.test(`${text}\n${tenderText}`)) score += 3;
+  // Sector-match bonus: when the item's text and the tender share a sector signal, boost relevance.
+  const sectorBonusPatterns: RegExp[] = [
+    /hospital|medical|health|clinic/,
+    /\bwater\b|borehole|hydraulic/,
+    /\broad\b|bridge|pavement|highway/,
+    /urban|master.?plan|municipal/,
+    /esia|esmp|safeguard|environmental.*impact/,
+    /\bict\b|software|digital.*system|erp|mis\b/,
+    /energy|power.*plant|solar.*farm|grid.*connect/,
+    /irrigation.*scheme|agri|crop.*water|fao.*penman/,
+    /mining|mineral.*extract|jorc|tailings/,
+    /\bport\b|berth|dredging|maritime/,
+    /pipeline|hazop|p&id|refinery/,
+    /kyc|aml|core.*banking|basel/,
+    /spectrum|base.*station|backhaul|telecom/,
+  ];
+  for (const pattern of sectorBonusPatterns) {
+    if (pattern.test(lowerText) && pattern.test(lowerTender)) { score += 3; break; }
+  }
   return score;
 }
 
