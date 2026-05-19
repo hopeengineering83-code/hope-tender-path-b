@@ -148,6 +148,55 @@ function sustainabilityRows(sector: string): SustainabilityRow[] {
       { pillar: "Green & Blue Infrastructure", commitment: "Green-space ratio + stormwater management integrated into zoning regulations", kpi: "≥ 15% green space coverage; stormwater detention sized for 25-year storm with climate uplift", evidenceMechanism: "Green-space GIS overlay; stormwater calculation memo" },
     ];
   }
+  if (/energy|solar|hydropower|substation|transmission|generation|electrification|scada/.test(s)) {
+    return [
+      ...generic,
+      { pillar: "Renewable Energy Integration", commitment: "Design maximises renewable fraction; P50/P90 yield estimates use ≥ 10 years of validated resource data with conservative degradation factors", kpi: "Renewable fraction ≥ target in design basis; P90 yield estimate confirmed by independent review before financial close", evidenceMechanism: "Yield estimation report; independent review memo at 60% gate" },
+      { pillar: "Grid Code Compliance", commitment: "Protection relay settings reviewed by independent power-systems engineer before utility submission; relay setting schedule issued with 100% design package", kpi: "Zero non-compliance findings at utility interconnection review; all relay settings documented", evidenceMechanism: "Protection coordination study; utility submission acknowledgement; relay setting schedule" },
+    ];
+  }
+  if (/agri|irrigation|wua|command.*area|rural.*develop/.test(s)) {
+    return [
+      ...generic,
+      { pillar: "Water-Use Efficiency", commitment: "Irrigation design incorporates water-use efficiency targets per FAO guidelines; WUA trained in demand management", kpi: "Design NRW in irrigation network ≤ 25%; water productivity target set and monitored post-handover", evidenceMechanism: "Hydraulic efficiency memo; WUA training attendance register; post-handover monitoring report" },
+      { pillar: "Agri-Biodiversity and Soil Health", commitment: "Agronomic recommendations include cover-cropping, crop-rotation, and soil-conservation practices to protect long-term land productivity", kpi: "Soil-health baseline recorded before scheme commissioning; crop-rotation plan issued with O&M manual", evidenceMechanism: "Soil-health baseline report; agronomy recommendations in O&M manual" },
+    ];
+  }
+  if (/mining|mineral.*resource|jorc|tailings|ore.*body|mine.*plan/.test(s)) {
+    return [
+      ...generic,
+      { pillar: "Tailings and Waste Management", commitment: "TSF design per MAC/ANCOLD guidelines; tailings characterisation completed before disposal; closure cost estimate with financial provision", kpi: "MAC/ANCOLD classification confirmed before TSF design proceeds; closure cost estimate peer-reviewed by independent engineer", evidenceMechanism: "Tailings characterisation report; TSF design; closure cost estimate review memo" },
+      { pillar: "Mine Closure and Land Rehabilitation", commitment: "Progressive rehabilitation plan integrated from feasibility stage; land-use objectives agreed with community and regulator", kpi: "Closure and rehabilitation plan approved by regulator; financial provision adequacy confirmed annually", evidenceMechanism: "Closure plan; regulator approval letter; annual financial provision review" },
+    ];
+  }
+  if (/port|berth|quay|maritime|dredging|harbour/.test(s)) {
+    return [
+      ...generic,
+      { pillar: "Dredge Material and Sediment Management", commitment: "Dredge material characterised before works; disposal plan meets national and IMO guidelines", kpi: "Dredge material characterisation report issued before mobilisation; disposal site approved by environmental authority", evidenceMechanism: "Sediment characterisation report; environmental authority approval; disposal monitoring records" },
+      { pillar: "Marine Ecology Protection", commitment: "Marine impact assessment including coral reef, seagrass, and mangrove surveys; mitigation hierarchy applied", kpi: "No dredging during spawning seasons for ecologically sensitive areas; turbidity monitoring compliant with trigger levels", evidenceMechanism: "Marine ecology survey report; turbidity monitoring log; compliance records" },
+    ];
+  }
+  if (/pipeline|oil.*facilit|gas.*facilit|hazop|p&id|refinery|petrochemical/.test(s)) {
+    return [
+      ...generic,
+      { pillar: "Process Safety and Major Hazard Management", commitment: "HAZOP study with all action items tracked to close-out; LOPA for high-severity nodes; process safety information (PSI) documented", kpi: "Zero outstanding critical HAZOP actions at detailed design completion; LOPA risk tolerance criteria confirmed in design basis", evidenceMechanism: "HAZOP action register; LOPA report; design basis memorandum" },
+      { pillar: "Pipeline Integrity and Spill Prevention", commitment: "Cathodic-protection design to NACE/ISO standards; ILI programme specification issued with handover; emergency spill response plan included", kpi: "Cathodic-protection design peer-reviewed before installation; ILI baseline run within 12 months of commissioning", evidenceMechanism: "Cathodic-protection design review memo; ILI programme spec; emergency response plan" },
+    ];
+  }
+  if (/kyc|aml|core.*banking|microfinance|ifrs|basel|prudential|fintech/.test(s)) {
+    return [
+      ...generic,
+      { pillar: "Data Privacy and Cyber Security", commitment: "System architecture includes data encryption at rest and in transit; RBAC controls; audit log; penetration test before go-live", kpi: "Zero critical findings at pre-go-live security review; RBAC roles documented and signed off by data owner", evidenceMechanism: "Penetration test report; RBAC role matrix sign-off; security review memo" },
+      { pillar: "Regulatory Compliance Assurance", commitment: "Regulatory-gap analysis reviewed by licensed local legal counsel; compliance attestation included in handover documentation", kpi: "Zero post-go-live regulatory enforcement actions attributable to system design; legal counsel sign-off on gap analysis", evidenceMechanism: "Legal counsel review memo; compliance attestation in handover pack" },
+    ];
+  }
+  if (/spectrum|broadband|lte|5g|base.*station|backhaul|mobile.*network|telecoms/.test(s)) {
+    return [
+      ...generic,
+      { pillar: "Digital Inclusion and Last-Mile Access", commitment: "Coverage design prioritises underserved areas; last-mile technology selection accounts for affordability and device accessibility", kpi: "Coverage targets for rural and low-income areas met at SAT; affordability analysis documented in design report", evidenceMechanism: "Coverage simulation report; rural-coverage KPI at SAT; affordability analysis memo" },
+      { pillar: "Electromagnetic Radiation (EMR) Compliance", commitment: "Base-station antenna heights and power levels comply with ICNIRP or national EMR standard; EMR exclusion zones documented", kpi: "100% of base stations certified compliant before commissioning; EMR exclusion zones marked on site drawings", evidenceMechanism: "EMR compliance certificates; site drawings with exclusion zones; regulator filing" },
+    ];
+  }
   return generic;
 }
 
@@ -214,6 +263,55 @@ function innovationRows(sector: string): InnovationRow[] {
       ...generic,
       { proposal: "Public-facing online dashboard of plan progress + indicators", clientValue: "Increases transparency; reduces stakeholder consultation churn; demonstrates accountability to funders", effort: "Medium", optInOptOut: "Optional" },
       { proposal: "Implementation cost-and-benefit model handed to client", clientValue: "Client retains capability to test scenarios after handover; supports phased budget defense", effort: "Medium", optInOptOut: "Optional" },
+    ];
+  }
+  if (/energy|solar|hydropower|substation|transmission|generation|electrification|scada/.test(s)) {
+    return [
+      ...generic,
+      { proposal: "HOMER / SAM energy-yield model handed to client with O&M pack", clientValue: "Client can re-run yield scenarios as tariff or load conditions change without re-engaging designer; extends investment value of engineering study", effort: "Medium", optInOptOut: "Optional" },
+      { proposal: "Remote SCADA diagnostics dashboard accessible to client during defects-liability period", clientValue: "Fault detection without site visit; reduces operator call-out cost; early identification of degradation trends", effort: "Medium", optInOptOut: "Subject to client agreement" },
+    ];
+  }
+  if (/agri|irrigation|wua|command.*area|rural.*develop/.test(s)) {
+    return [
+      ...generic,
+      { proposal: "Digital soil-moisture monitoring network (low-cost IoT) handed to WUA", clientValue: "WUA can optimise irrigation scheduling in real time; reduces water waste; extends system capacity", effort: "Medium", optInOptOut: "Subject to client agreement" },
+      { proposal: "Agronomy productivity baseline survey included in handover", clientValue: "Client and WUA retain a before-after productivity baseline for grant reporting and Phase 2 justification", effort: "Low", optInOptOut: "Included" },
+    ];
+  }
+  if (/mining|mineral.*resource|jorc|tailings|ore.*body|mine.*plan/.test(s)) {
+    return [
+      ...generic,
+      { proposal: "3-D geological block model handed to client in open-source format (Leapfrog / QGIS)", clientValue: "Client retains full resource model for future exploration or mine-plan updates without re-engaging geologist", effort: "Medium", optInOptOut: "Optional" },
+      { proposal: "Geotechnical monitoring dashboarded and handed to mine operator", clientValue: "Slope and TSF stability monitored in near-real-time; early warning of movement reduces safety and liability risk", effort: "Medium", optInOptOut: "Subject to client agreement" },
+    ];
+  }
+  if (/port|berth|quay|maritime|dredging|harbour/.test(s)) {
+    return [
+      ...generic,
+      { proposal: "Fast-time nautical simulation report included in handover documentation", clientValue: "Port authority retains safety evidence for future vessel-class upgrades without commissioning new study", effort: "Low", optInOptOut: "Included" },
+      { proposal: "Digital twinning of berth structure for predictive maintenance planning", clientValue: "Reduces inspection intervals; extends berth life; supports insurance and lender technical due diligence", effort: "High", optInOptOut: "Subject to client agreement" },
+    ];
+  }
+  if (/pipeline|oil.*facilit|gas.*facilit|hazop|p&id|refinery|petrochemical/.test(s)) {
+    return [
+      ...generic,
+      { proposal: "Digital P&ID (smartPlant / AVEVA E3D) database handed to client with as-built documentation", clientValue: "Client retains intelligent P&ID for future HAZOP revalidation, MOC, and maintenance planning without re-drawing from paper", effort: "Medium", optInOptOut: "Optional" },
+      { proposal: "Pipeline integrity management plan (PIMP) pre-populated with ILI baseline run schedule", clientValue: "Client asset team can enter the integrity lifecycle immediately at handover; reduces first-interval inspection planning cost", effort: "Low", optInOptOut: "Included" },
+    ];
+  }
+  if (/kyc|aml|core.*banking|microfinance|ifrs|basel|prudential|fintech/.test(s)) {
+    return [
+      ...generic,
+      { proposal: "Automated regulatory reporting module (Basel / IFRS returns) pre-validated against regulator's published template", clientValue: "Reduces manual reporting effort by 60-70%; eliminates transcription errors that trigger regulatory queries", effort: "Medium", optInOptOut: "Optional" },
+      { proposal: "Compliance knowledge-base wiki handed over as part of staff training package", clientValue: "Client compliance team retains searchable regulatory guidance without ongoing consultant dependency", effort: "Low", optInOptOut: "Included" },
+    ];
+  }
+  if (/spectrum|broadband|lte|5g|base.*station|backhaul|mobile.*network|telecoms/.test(s)) {
+    return [
+      ...generic,
+      { proposal: "Live network KPI dashboard integrated with client NOC from commissioning day", clientValue: "Client operations team gets real-time visibility of coverage, capacity, and fault status from Day 1 without additional integration cost", effort: "Medium", optInOptOut: "Optional" },
+      { proposal: "Automated frequency-planning and interference-management tool handed to spectrum team", clientValue: "Reduces spectrum re-planning cycle from weeks to hours; supports future technology upgrade (e.g., LTE → 5G NR) without re-engaging frequency planner", effort: "Medium", optInOptOut: "Subject to client agreement" },
     ];
   }
   return generic;
