@@ -42,7 +42,12 @@ export type SectorDomain =
   | "PUBLIC_ADMINISTRATION"
   | "ICT_DIGITAL"
   | "LOGISTICS_WAREHOUSING"
-  | "GENERAL_BUILDINGS";
+  | "GENERAL_BUILDINGS"
+  | "MINING_EXTRACTIVE"
+  | "PORT_MARITIME"
+  | "OIL_GAS"
+  | "FINANCIAL_SERVICES"
+  | "TELECOMS_BROADBAND";
 
 export type UniversalTenderProfile = {
   serviceCapabilities: ServiceCapability[];
@@ -100,6 +105,11 @@ const SECTOR_PATTERNS: PatternMap<SectorDomain> = {
   ICT_DIGITAL: [/ict/i, /digital/i, /software/i, /platform/i, /database/i, /erp/i, /mis/i, /information\s+system/i],
   LOGISTICS_WAREHOUSING: [/warehouse/i, /logistics/i, /cargo/i, /freight/i, /terminal/i, /supply\s+chain/i, /storage/i],
   GENERAL_BUILDINGS: [/building/i, /facility/i, /office/i, /complex/i, /centre/i, /center/i],
+  MINING_EXTRACTIVE: [/mining/i, /mineral\s+extract/i, /quarry/i, /\bjorc\b/i, /tailings/i, /ore\s+body/i, /blast\s+design/i, /mine\s+plan/i],
+  PORT_MARITIME: [/\bport\b/i, /harbour/i, /harbor/i, /maritime/i, /quay/i, /berth/i, /shipping\s+terminal/i, /dredging/i, /\bisps\b/i],
+  OIL_GAS: [/pipeline\s+design/i, /oil\s+facilit/i, /gas\s+facilit/i, /upstream\s+petroleum/i, /\bhazop\b/i, /\bp&id\b/i, /refinery/i, /petrochemical/i, /wellhead/i],
+  FINANCIAL_SERVICES: [/\bkyc\b/i, /\baml\b/i, /core\s+banking/i, /microfinance\s+system/i, /credit\s+risk\s+model/i, /\bifrs\b/i, /\bbasel\b/i, /prudential\s+regul/i],
+  TELECOMS_BROADBAND: [/spectrum\s+licen/i, /base\s+station\s+design/i, /backhaul\s+design/i, /last.?mile\s+access/i, /broadband\s+network/i, /\blte\b/i, /\b5g\b/i, /mobile\s+network\s+rollout/i],
 };
 
 function unique<T extends string>(items: T[]): T[] {
