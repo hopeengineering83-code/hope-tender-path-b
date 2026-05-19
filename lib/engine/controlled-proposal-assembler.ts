@@ -43,12 +43,23 @@ function bullets(lines: string[], fallback: string, limit: number, maxLen = 360)
 function sectorLabel(primarySector: string, title: string): string {
   const text = `${primarySector} ${title}`;
   if (/health|hospital|medical|clinic|radiology|laboratory|pharmacy|patient|specialty|OPD|emergency/i.test(text)) return "healthcare / medical facility consultancy";
-  if (/water|borehole|pump|sanitary|hydraulic|irrigation|pipeline|reservoir|solar/i.test(text)) return "water, hydraulic and infrastructure consultancy";
+  if (/water|borehole|pump|sanitary|hydraulic|irrigation|pipeline|reservoir/i.test(text)) return "water, hydraulic and infrastructure consultancy";
   if (/road|bridge|transport|pavement|traffic|culvert|drainage/i.test(text)) return "transport infrastructure consultancy";
   if (/urban|master plan|land use|municipal|spatial|settlement|GIS/i.test(text)) return "urban planning and municipal consultancy";
   if (/environment|ESIA|ESMP|safeguard|social|resettlement|climate|waste|EHS|ESG/i.test(text)) return "environmental and social safeguards consultancy";
-  if (/ICT|software|system|digital|database|platform|network|cyber|telecom|ERP|MIS/i.test(text)) return "ICT and digital transformation consultancy";
-  if (/building|architecture|structural|MEP|residential|commercial|office|warehouse|school|university|facility|supervision|renovation/i.test(text)) return "building design and supervision consultancy";
+  // Word boundaries on bare abbreviations — bare /ICT/i matched
+  // "distrICT" / "predICT" / "verdICT"; bare /MIS/i matched
+  // "optimISation" / "subMISsion" / "comMISsion"; bare /ERP/i matched
+  // "supERPower". Every tender with "submission" in its body used to
+  // misclassify as ICT.
+  if (/\bICT\b|software|system|digital|database|platform|network|cyber|telecom|\bERP\b|\bMIS\b/i.test(text)) return "ICT and digital transformation consultancy";
+  if (/building|architecture|structural|\bMEP\b|residential|commercial|office|warehouse|school|university|facility|supervision|renovation/i.test(text)) return "building design and supervision consultancy";
+  if (/energy|power.*plant|\bsolar\b|wind.*farm|grid.*connect|generation|transmission.*line|substation|\bhydropower\b|\belectrification\b|\brenewable.*energy\b/i.test(text)) return "energy and power infrastructure consultancy";
+  if (/agri|irrigation.*scheme|crop|farm.*develop|livestock|rural.*develop/i.test(text)) return "agriculture, irrigation, and rural development consultancy";
+  if (/mining|mineral.*extract|quarry.*design|tailings|ore.*body|blast.*design/i.test(text)) return "mining and extractive industries consultancy";
+  if (/\bport.*design|\bport.*master.*plan|berth.*design|quay.*design|harbour.*develop|dredging|container.*terminal|maritime/i.test(text)) return "port and maritime infrastructure consultancy";
+  if (/pipeline.*design|oil.*facilit|gas.*facilit|HAZOP|P&ID|refinery|petrochemical|upstream.*petroleum/i.test(text)) return "oil and gas / petroleum engineering consultancy";
+  if (/KYC|AML|core.*banking|microfinance.*system|credit.*risk.*model|IFRS.*implement|Basel|prudential.*regul|capital.*adequacy/i.test(text)) return "financial services and banking consultancy";
   return primarySector || "technical consultancy";
 }
 
@@ -63,7 +74,7 @@ function methodologyForSector(primarySector: string, title: string): string[] {
       "Prepare staged deliverables, design review gates, authority submission support, renovation/supervision controls, commissioning support and close-out documentation.",
     ];
   }
-  if (/water|borehole|pump|sanitary|hydraulic|irrigation|pipeline|reservoir|solar/i.test(text)) {
+  if (/water|borehole|pump|sanitary|hydraulic|irrigation|pipeline|reservoir/i.test(text)) {
     return [
       "Confirm demand, service area, source conditions, hydraulic basis, power/solar assumptions, utility constraints, existing assets and stakeholder requirements.",
       "Undertake field assessment, survey, source verification, flow/head verification, water-quality considerations and design-basis confirmation before final sizing.",
@@ -106,6 +117,60 @@ function methodologyForSector(primarySector: string, title: string): string[] {
       "Configure/build, test and validate the solution using staged acceptance gates, issue tracking and user feedback loops.",
       "Train users, provide documentation, transition support, service continuity controls and handover materials.",
       "Report progress, risks, changes and acceptance evidence throughout delivery.",
+    ];
+  }
+  if (/energy|power.*plant|\bsolar\b|wind.*farm|grid.*connect|generation|transmission.*line|substation|\bhydropower\b|\belectrification\b|\brenewable.*energy\b/i.test(text)) {
+    return [
+      "Confirm energy demand, load-growth scenario, grid interconnection requirements, grid-code obligations, and stakeholder and environmental constraints before design commencement.",
+      "Complete load-flow analysis, generation-mix options (including renewable feasibility), equipment sizing, and demand-forecast modelling using a minimum 5-year consumption data set.",
+      "Develop single-line diagram, protection and relay coordination, SCADA architecture, civil and structural design, and environmental and social management plan.",
+      "Prepare tender BOQ, equipment specifications with procurement schedule, grid-code compliance documentation, and independent peer review by power-systems specialist.",
+      "Support commissioning, energisation, protection-relay testing, SCADA commissioning, and handover with O&M manual and operator training.",
+    ];
+  }
+  if (/agri|irrigation.*scheme|crop|farm.*develop|livestock|rural.*develop/i.test(text)) {
+    return [
+      "Confirm command area, beneficiary needs, source availability, cropping calendar, water-user association status, and donor/client requirements before design.",
+      "Complete hydrological analysis (minimum 20-year flow record), soil classification, FAO Penman-Monteith crop-water-requirement calculation, and willingness-to-pay survey.",
+      "Develop irrigation network (canal or pressurised pipe) design, structure drawings, drainage management, water-use efficiency targets, and agronomy recommendations.",
+      "Prepare BOQ, O&M manual, WUA governance structure, and farmer training programme; confirm local-language clarity of handover materials.",
+      "Support construction supervision, commissioning, WUA establishment, operator training, and project close-out with lessons-learned memo.",
+    ];
+  }
+  if (/mining|mineral.*extract|quarry.*design|tailings|ore.*body|blast.*design/i.test(text)) {
+    return [
+      "Confirm resource model confidence, regulatory context, JORC reporting obligations, environmental baseline, and community engagement requirements before study commencement.",
+      "Complete geological mapping, block-model resource estimation with independent competent-person review, geotechnical investigation, and infrastructure siting assessment.",
+      "Develop mine plan (pit design or underground), production schedule, tailings storage facility (TSF) design per MAC/ANCOLD guidelines, slope-stability analysis using three methods, and environmental and social management plan.",
+      "Prepare JORC-compliant resource report, mine-plan drawings, BOQ, regulatory submission package, and closure plan with financial provision estimate.",
+      "Support pre-feasibility or feasibility gate review, permit lodgement, and handover with monitoring and instrumentation programme.",
+    ];
+  }
+  if (/\bport.*design|\bport.*master.*plan|berth.*design|quay.*design|harbour.*develop|dredging|container.*terminal|maritime/i.test(text)) {
+    return [
+      "Confirm vessel-class parameters with port authority, met-ocean data set, throughput projections, ISPS compliance requirements, and environmental baseline before design.",
+      "Complete bathymetric and geotechnical survey, sediment characterisation, vessel-traffic survey, and fast-time nautical simulation to validate berth layout and turning basin.",
+      "Develop berth structural design, dredge volume and disposal plan, shore-power and utilities layout, port operations manual, and environmental and social management plan.",
+      "Prepare BOQ, equipment specifications (fenders, bollards, crane rails), ISPS compliance documentation, and regulatory submission package.",
+      "Support construction supervision, commissioning, nautical-safety pre-opening review, ISPS certification, and handover with O&M and emergency procedures.",
+    ];
+  }
+  if (/pipeline.*design|oil.*facilit|gas.*facilit|HAZOP|P&ID|refinery|petrochemical|upstream.*petroleum/i.test(text)) {
+    return [
+      "Confirm design basis, applicable codes (API, ASME, ISO), process data, grid-code or pipeline-code obligations, and HAZOP preparation requirements before detailed engineering.",
+      "Complete process flow diagram, P&ID development, HAZOP study with all action items tracked to close-out, and LOPA for high-severity nodes.",
+      "Develop detailed P&ID, pipeline stress analysis (Caesar II or equivalent), equipment layout, structural and civil design, and environmental and social management plan.",
+      "Prepare vendor data requirements matrix, procurement support documents, BOQ, cathodic-protection design, and in-line inspection (ILI) programme specification.",
+      "Support pre-commissioning, commissioning, safety system testing, handover with as-built documentation, and pipeline integrity management plan.",
+    ];
+  }
+  if (/KYC|AML|core.*banking|microfinance.*system|credit.*risk.*model|IFRS.*implement|Basel|prudential.*regul|capital.*adequacy/i.test(text)) {
+    return [
+      "Confirm regulatory framework, gap analysis priorities, system architecture constraints, stakeholder change-readiness, and project governance before design.",
+      "Complete business process mapping, data-quality assessment, regulatory-gap analysis reviewed by licensed local legal counsel, and target operating model design.",
+      "Develop system architecture, integration design, data-migration plan, UAT protocol, and change-management plan with train-the-trainer model.",
+      "Execute parallel-run cutover, data reconciliation (signed off before go-live), rollback plan documentation, and staff training; confirm RBAC, encryption, and audit-log configuration.",
+      "Deliver post-go-live hypercare, SLA monitoring, and handover with source code, data, and documentation under exit-clause provisions.",
     ];
   }
   return [

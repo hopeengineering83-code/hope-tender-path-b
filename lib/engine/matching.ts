@@ -331,6 +331,11 @@ const SECTOR_CONFLICT_GROUPS: RegExp[] = [
   /road|bridge|highway|pavement|transport(?!ation.?planning)/,
   /school|university|campus|education|classroom/,
   /industrial|manufacturing|factory/,
+  // New high-distinction sectors: items from these domains never belong in
+  // a competing sector's shortlist regardless of lexical overlap.
+  /\bport\b.*\b(design|master.*plan|infrastructure|facilit|terminal|study)\b|\b(berth|quay.*wall|dredging.*scheme|maritime.*infrastructure|harbour.*develop|ISPS.*audit)\b/,
+  /\b(HAZOP|P&ID|upstream.*petroleum|petrochemical.*plant|refinery.*design|wellhead.*design|pipeline.*design|oil.*facilit|gas.*facilit)\b/,
+  /\b(KYC|AML|core.*banking|microfinance.*platform|credit.*risk.*model|prudential.*regul|capital.*adequacy|Basel.*compliance)\b/,
 ];
 
 function sectorBoost(tenderSector: string | null | undefined, items: string[]): number {
