@@ -106,4 +106,25 @@ describe("deriveRequirementConstraintProfile", () => {
     assert.equal(profile.strictDomain, false);
   });
 
+  it("still detects ICT domain in non-administrative requirement types", () => {
+    const requirements: RequirementDraft[] = [
+      {
+        title: "Personnel profile",
+        description: "Provide ICT systems architect with ERP and database integration experience.",
+        requirementType: "PERSONNEL",
+        priority: "MANDATORY",
+      },
+      {
+        title: "Project references",
+        description: "At least 2 similar enterprise system projects.",
+        requirementType: "PROJECT_EXPERIENCE",
+        priority: "MANDATORY",
+      },
+    ];
+
+    const profile = deriveRequirementConstraintProfile(requirements);
+    assert.equal(profile.domainTags.includes("ict"), true);
+    assert.equal(profile.strictDomain, true);
+  });
+
 });
