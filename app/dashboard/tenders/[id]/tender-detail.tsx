@@ -780,11 +780,17 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
   const selectedProjectCount = tender.projectMatches?.filter((m) => m.isSelected).length ?? 0;
   const totalExpertMatches = tender.expertMatches?.length ?? 0;
   const totalProjectMatches = tender.projectMatches?.length ?? 0;
+  const reviewedExpertMatches = tender.expertMatches?.filter((m) => m.expert?.trustLevel === "REVIEWED").length ?? 0;
+  const reviewedProjectMatches = tender.projectMatches?.filter((m) => m.project?.trustLevel === "REVIEWED").length ?? 0;
   const hasExpertSelectionOrRecovery = !expertReqExists || selectedExpertCount > 0 || totalExpertMatches > 0;
   const hasProjectSelectionOrRecovery = !projectReqExists || selectedProjectCount > 0 || totalProjectMatches > 0;
+  const hasReviewedExpertPath = !expertReqExists || selectedExpertCount === 0 || reviewedExpertMatches > 0;
+  const hasReviewedProjectPath = !projectReqExists || selectedProjectCount === 0 || reviewedProjectMatches > 0;
   const canGenerateDocs = tender.requirements.length > 0
     && hasExpertSelectionOrRecovery
     && hasProjectSelectionOrRecovery
+    && hasReviewedExpertPath
+    && hasReviewedProjectPath
     && !criticalHardBlockExists;
   const generateDisabledReason = tender.requirements.length === 0
     ? "Run AI Analyze or Run Engine first to extract requirements"
@@ -792,9 +798,13 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
       ? "Run Engine first to generate expert matches"
       : (projectReqExists && selectedProjectCount === 0 && totalProjectMatches === 0)
         ? "Run Engine first to generate project matches"
-        : criticalHardBlockExists
-          ? "Resolve critical hard blockers before generating"
-        : "Generate proposal documents";
+        : (expertReqExists && selectedExpertCount > 0 && reviewedExpertMatches === 0)
+          ? "Review at least one selected expert before generating"
+          : (projectReqExists && selectedProjectCount > 0 && reviewedProjectMatches === 0)
+            ? "Review at least one selected project before generating"
+            : criticalHardBlockExists
+              ? "Resolve critical hard blockers before generating"
+              : "Generate proposal documents";
   const readinessScore = tender.readinessScore ??
     (tender.requirements.length === 0 ? 0
       : Math.max(0, Math.round(((tender.requirements.length - criticalGaps) / tender.requirements.length) * 100)));
