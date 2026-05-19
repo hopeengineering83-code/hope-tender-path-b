@@ -236,6 +236,83 @@ export const PROPOSAL_THEMES: ProposalTheme[] = [
       "implementation: community mobilisation, capacity building workshops, institutional partnerships, progress reporting, adaptive management, and final evaluation methodology",
     ],
   },
+  {
+    code: "ENERGY_POWER",
+    label: "Energy, power infrastructure and grid-connected systems",
+    triggers: [/solar.*farm/i, /wind.*farm/i, /hydropower/i, /grid.*connect/i, /renewable.*energy/i, /power.*generation/i, /power.*transmission/i, /substation.*design/i, /grid.*code/i, /\bSCADA\b/i, /load.*forecast/i, /electrification/i],
+    proofTerms: [/energy/i, /power.*plant/i, /solar/i, /wind/i, /grid/i, /substation/i, /transmission/i, /generation/i, /\bSCADA\b/i, /grid.*code/i, /load.*forecast/i],
+    methodologyBullets: [
+      "load forecast and system configuration: minimum 5-year metered data review, demand growth model, generation/transmission technology selection (renewable vs. diesel vs. hybrid), and single-line diagram development",
+      "electrical design and grid-code compliance: protection relay coordination, equipment specifications (transformers, switchgear, inverters), cable schedules, and grid-code compliance documentation before energisation",
+      "construction supervision and commissioning: SCADA installation, protection relay testing, energisation sign-off, as-built SLD, O&M manual, and operator training with documented handover",
+    ],
+  },
+  {
+    code: "AGRICULTURE_IRRIGATION",
+    label: "Agriculture, irrigation schemes and rural development",
+    triggers: [/irrigation.*scheme/i, /agricultur/i, /crop.*water/i, /smallholder.*farm/i, /water.*user.*assoc/i, /\bFAO\b/i, /agri.*project/i, /value.chain.*agri/i, /livestock.*develop/i, /farm.*develop/i],
+    proofTerms: [/irrigation/i, /agricultur/i, /crop/i, /\bFAO\b/i, /agronomic/i, /farm/i, /livestock/i, /WUA/i, /water.*user/i, /scheme.*design/i],
+    methodologyBullets: [
+      "agronomic baseline and hydrological analysis: soil survey, crop-water demand calculation (FAO Penman-Monteith), 20-year flow record review, water availability assessment, and scheme concept development",
+      "irrigation scheme design: canal/pipe network sizing, pump station design, reservoir sizing, drainage for salinity control, BOQ and specifications — linked to agronomic demand, not assumed",
+      "water-user association governance and handover: WUA establishment plan, operator training, O&M manual in local language, willingness-to-pay survey, and value-chain linkage for market access",
+    ],
+  },
+  {
+    code: "MINING_EXTRACTIVE",
+    label: "Mining, mineral extraction and geotechnical feasibility",
+    triggers: [/mining.*project/i, /mineral.*extract/i, /quarry.*design/i, /pit.*design/i, /tailings.*facility/i, /ore.*body/i, /blast.*design/i, /mine.*plan/i, /\bJORC\b/i, /slope.*stability/i],
+    proofTerms: [/mining/i, /mineral/i, /\bJORC\b/i, /tailings/i, /slope.*stability/i, /geotechnical/i, /ore.*body/i, /mine.*plan/i, /resource.*estimate/i, /pit.*design/i],
+    methodologyBullets: [
+      "geotechnical investigation and JORC resource estimation: phased drilling programme, borehole logging, laboratory testing, block model, geostatistical analysis, and independent competent-person review to JORC Code confidence classification",
+      "mine plan and slope stability: open-pit or underground design optimisation, slope stability analysis (LEM + numerical methods), tailings storage facility design (MAC/ANCOLD guidelines), blast design, and regulatory compliance pathway",
+      "environmental and closure planning: ESIA baseline, community engagement, monitoring programme, closure cost estimate, financial provision mechanism, and regulatory licence submission package",
+    ],
+  },
+  {
+    code: "PORT_MARITIME",
+    label: "Port design, maritime infrastructure and dredging",
+    triggers: [/berth.*design/i, /quay.*design/i, /harbour.*develop/i, /dredging.*scheme/i, /container.*terminal/i, /port.*design/i, /port.*master.*plan/i, /nautical.*simulat/i, /\bISPS\b/i, /maritime.*infra/i],
+    proofTerms: [/berth/i, /quay/i, /dredging/i, /harbour/i, /port/i, /vessel/i, /maritime/i, /\bISPS\b/i, /pilotage/i, /throughput/i],
+    methodologyBullets: [
+      "vessel-class confirmation and hydrographic survey: vessel parameters (LOA, beam, DWT, draft) confirmed with port authority, bathymetric survey, met-ocean data, and traffic demand study before design",
+      "berth and infrastructure design: structural berth design (PIANC standards), dredging scope and specification, equipment selection, port master plan phasing, and nautical safety study (mooring analysis, VTS, ISPS compliance)",
+      "construction supervision and handover: dredging monitoring, quay construction hold-points, equipment commissioning, port operations manual, and handover with as-built drawings and O&M documentation",
+    ],
+  },
+  {
+    code: "OIL_GAS",
+    label: "Oil & gas, pipeline engineering and process safety",
+    triggers: [/pipeline.*design/i, /oil.*facilit/i, /gas.*facilit/i, /upstream.*petroleum/i, /\bHAZOP\b/i, /\bP&ID\b/i, /refinery.*design/i, /petrochemical.*plant/i, /wellhead.*design/i, /process.*safety/i],
+    proofTerms: [/\bP&ID\b/i, /\bHAZOP\b/i, /pipeline/i, /oil/i, /gas/i, /refinery/i, /petrochemical/i, /\bFEED\b/i, /commissioning/i, /process.*safety/i],
+    methodologyBullets: [
+      "FEED and detailed engineering: process flow diagram, material and energy balance, P&ID development (ISA 5.1 symbology), equipment datasheets, pipeline stress analysis, and API/ASME code compliance verification",
+      "HAZOP study and process safety management: formal HAZOP with all action items tracked to close-out, P&ID freeze protocol, LOPA for high-severity nodes, and permit-to-work system before any construction activity",
+      "construction supervision and commissioning: inspection test plans, mechanical completion certificate, pre-commissioning punch list, PSSR, energisation records, as-built P&IDs, and handover dossier",
+    ],
+  },
+  {
+    code: "FINANCIAL_SERVICES",
+    label: "Financial services, banking systems and regulatory compliance",
+    triggers: [/\bKYC\b/i, /\bAML\b/i, /core.*banking/i, /microfinance.*system/i, /credit.*risk.*model/i, /\bIFRS\b/i, /\bBasel\b/i, /prudential.*regul/i, /capital.*adequacy/i],
+    proofTerms: [/\bKYC\b/i, /\bAML\b/i, /Basel/i, /\bIFRS\b/i, /core.*banking/i, /credit.*risk/i, /regulatory/i, /compliance/i, /data.*migration/i],
+    methodologyBullets: [
+      "regulatory gap analysis and framework design: KYC/AML policy and procedure review, Basel/IFRS reconciliation, prudential reporting framework, and compliance gap analysis reviewed by licensed local legal counsel",
+      "system configuration and testing: core banking configuration specification, credit-risk model documentation, UAT protocol, data migration plan (test migration + reconciliation sign-off), and change-management programme",
+      "go-live and post-implementation: parallel-run cutover, full data reconciliation, regulatory submission support, first-cycle reporting verification, and post-implementation compliance audit",
+    ],
+  },
+  {
+    code: "TELECOMS_BROADBAND",
+    label: "Telecoms infrastructure, spectrum planning and broadband rollout",
+    triggers: [/spectrum.*licen/i, /base.*station.*design/i, /backhaul.*design/i, /last.?mile.*access/i, /broadband.*network/i, /telecoms.*infra/i, /\bLTE\b/i, /\b5G\b/i, /mobile.*network.*rollout/i, /RF.*propagat/i],
+    proofTerms: [/spectrum/i, /base.*station/i, /backhaul/i, /last.?mile/i, /broadband/i, /\bLTE\b/i, /RF.*plan/i, /coverage/i, /\bQoS\b/i, /network.*rollout/i],
+    methodologyBullets: [
+      "spectrum licensing and RF planning: spectrum application pathway, alternative frequency fallback, RF propagation modelling (Atoll or equivalent), coverage heat-maps, frequency plan, and regulatory co-existence management",
+      "network architecture and rollout: base-station site selection (two alternatives per target), backhaul link budget, core network dimensioning, last-mile access design (LTE/5G FWA or FTTH), equipment specifications, and site acceptance tests",
+      "optimisation and handover: network KPI baseline, hypercare optimisation period, SLA-defined support model, NOC KPI dashboard, operator training records, and handover with full network documentation",
+    ],
+  },
 ];
 
 // ─── Scoring ──────────────────────────────────────────────────────────────────
@@ -563,6 +640,48 @@ function makeDifferentiators(
     items.push("Team includes PhD-qualified specialists — deep technical capability supported by international academic credentials.");
   }
 
+  // Energy / power — claim.
+  if (themes.some((t) => t.code === "ENERGY_POWER")) {
+    if (/energy|power|solar|grid/i.test(allProjectText)) items.push("Demonstrated power-systems delivery: prior energy projects in the reviewed portfolio confirm capability from load forecast through energisation — same team, same technical standards.");
+    items.push("Grid-code compliance discipline: protection relay settings independently peer-reviewed before energisation, single-line diagram audited to grid authority standards, and SCADA commissioning records issued at handover.");
+  }
+
+  // Agriculture / irrigation — claim.
+  if (themes.some((t) => t.code === "AGRICULTURE_IRRIGATION")) {
+    if (/agri|irrigation|farm|crop/i.test(allProjectText)) items.push("Proven irrigation delivery: prior scheme delivery confirms the firm integrates agronomic, hydraulic, and community-development expertise in one coordinated assignment.");
+    items.push("FAO Penman-Monteith crop-water calculation methodology: irrigation demand is sized on verified agronomic baseline, not assumed — preventing over/under-design and soil-salinity build-up.");
+  }
+
+  // Mining / extractive — claim.
+  if (themes.some((t) => t.code === "MINING_EXTRACTIVE")) {
+    if (/mining|mineral|tailings|jorc/i.test(allProjectText)) items.push("JORC-compliant resource estimation track record: prior mining studies include independent competent-person review, slope-stability analysis, and TSF design to MAC/ANCOLD guidelines.");
+    items.push("Geotechnical rigour: slope stability analysed by three methods (LEM, numerical, empirical) — not a single-method estimate — reducing likelihood of downgrade between pre-feasibility and bankable feasibility stages.");
+  }
+
+  // Port / maritime — claim.
+  if (themes.some((t) => t.code === "PORT_MARITIME")) {
+    if (/port|berth|dredging|maritime/i.test(allProjectText)) items.push("Port infrastructure delivery track record: berth design, dredging specification, and nautical safety studies completed in prior engagements — PIANC-standard approach with regulator pre-approval built into the programme.");
+    items.push("Vessel-class parameter confirmation with port authority is a project inception deliverable, not a design assumption — preventing under-designed berths and costly post-construction dredge rectification.");
+  }
+
+  // Oil & gas — claim.
+  if (themes.some((t) => t.code === "OIL_GAS")) {
+    if (/pipeline|oil|gas|hazop|p&id/i.test(allProjectText)) items.push("Process safety engineering experience: HAZOP studies completed with all action items tracked to close-out, P&ID freeze discipline applied, and pipeline integrity management specified from design stage.");
+    items.push("API/ASME code compliance by design, not by check: P&ID development, HAZOP, and pipeline stress analysis are scoped at FEED stage — not retrofitted after detailed engineering is complete.");
+  }
+
+  // Financial services — claim.
+  if (themes.some((t) => t.code === "FINANCIAL_SERVICES")) {
+    if (/banking|kyc|aml|ifrs|basel/i.test(allProjectText)) items.push("Financial services delivery track record: prior core banking, KYC/AML framework, and regulatory compliance engagements confirm the firm integrates policy, system, and supervisory-authority requirements in one programme.");
+    items.push("Data migration validated before go-live: test migration on extracted sample + reconciliation sign-off — not a theoretical plan — protects client records and regulatory compliance from day one of live operations.");
+  }
+
+  // Telecoms / broadband — claim.
+  if (themes.some((t) => t.code === "TELECOMS_BROADBAND")) {
+    if (/telecom|spectrum|backhaul|base.*station/i.test(allProjectText)) items.push("Telecoms infrastructure delivery track record: prior rollout engagements cover spectrum licensing, RF planning, site acquisition, backhaul dimensioning, and QoS SLA compliance — end-to-end, not piecemeal.");
+    items.push("Spectrum regulatory liaison built into the programme from inception: alternative frequency fallback assessed during planning, not only after primary spectrum is denied — managing the highest-likelihood delay risk upfront.");
+  }
+
   // Pharo-specific — claim, not instruction.
   if (/pharo/i.test(tenderText)) {
     items.push("Engagement model tuned to private-sector investor expectations: schedule certainty, audit-ready documentation, and institutional delivery discipline alongside technical depth.");
@@ -594,6 +713,34 @@ function detectGaps(themes: ProposalTheme[], topProjects: ProjectLite[], topExpe
 
   if (/client reference|reference letter|testimony/i.test(tenderText) && !topProjects.some((p) => p.clientName)) {
     gaps.push("Tender asks for client references. Ensure selected projects have client names and reference letters available for appendix inclusion.");
+  }
+
+  if (themes.some((t) => t.code === "ENERGY_POWER") && !topProjects.some((p) => /energy|power|solar|wind|grid|generation|substation/i.test(textOf(p.name, p.summary, p.sector, p.clientName)))) {
+    gaps.push("Energy / power tender detected but no energy-specific reviewed project is selected. Use the closest electromechanical or infrastructure project and flag the sector gap as a senior bid-review action.");
+  }
+
+  if (themes.some((t) => t.code === "AGRICULTURE_IRRIGATION") && !topProjects.some((p) => /agri|irrigation|farm|crop|WUA/i.test(textOf(p.name, p.summary, p.sector, p.clientName)))) {
+    gaps.push("Agriculture / irrigation tender detected but no sector-matching project is in the portfolio. Select the closest water or rural-infrastructure project and note the gap for the bid team.");
+  }
+
+  if (themes.some((t) => t.code === "MINING_EXTRACTIVE") && !topProjects.some((p) => /mining|mineral|tailings|jorc|quarry/i.test(textOf(p.name, p.summary, p.sector, p.clientName)))) {
+    gaps.push("Mining tender detected but no mining or extractive-industry project is selected. Flag this as a critical evidence gap — JORC / geotechnical experience is typically a mandatory eligibility criterion.");
+  }
+
+  if (themes.some((t) => t.code === "PORT_MARITIME") && !topProjects.some((p) => /port|berth|dredging|maritime|harbour|quay/i.test(textOf(p.name, p.summary, p.sector, p.clientName)))) {
+    gaps.push("Port / maritime tender detected but no port-specific project is selected. Use the closest coastal civil or infrastructure project and flag the sector gap as a senior bid-review action.");
+  }
+
+  if (themes.some((t) => t.code === "OIL_GAS") && !topProjects.some((p) => /oil|gas|pipeline|hazop|p&id|refinery|petrochemical/i.test(textOf(p.name, p.summary, p.sector, p.clientName)))) {
+    gaps.push("Oil & gas tender detected but no process-engineering or pipeline project is selected. HAZOP experience is typically a mandatory criterion — flag this gap for senior review before submission.");
+  }
+
+  if (themes.some((t) => t.code === "FINANCIAL_SERVICES") && !topExperts.some((e) => /banking|finance|kyc|aml|ifrs|basel|risk.*model/i.test(textOf(e.title, e.profile, ...safeParseArr(e.disciplines))))) {
+    gaps.push("Financial services tender detected but no financial-sector expert is selected. Propose a named financial-systems or regulatory specialist and describe their integration role in the proposal.");
+  }
+
+  if (themes.some((t) => t.code === "TELECOMS_BROADBAND") && !topExperts.some((e) => /telecom|RF.*plan|spectrum|backhaul|network.*architect|LTE|5G/i.test(textOf(e.title, e.profile, ...safeParseArr(e.disciplines))))) {
+    gaps.push("Telecoms / broadband tender detected but no RF planning or telecoms network expert is selected. Name a qualified RF / network specialist and include their role in the proposal.");
   }
 
   return gaps;
