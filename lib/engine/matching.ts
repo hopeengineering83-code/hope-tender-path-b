@@ -57,6 +57,7 @@ type CapabilityFamily =
   | "TRANSPORT_LOGISTICS"
   | "MINING_EXTRACTIVES"
   | "TELECOMS"
+  | "OIL_GAS_PETROLEUM"
   | "INSTITUTIONAL_REFORM";
 
 // PR XX-MATCH-FIX (Fix A) — tightened keyword lists.
@@ -89,17 +90,18 @@ const CAPABILITY_KEYWORDS: Record<CapabilityFamily, RegExp[]> = {
   // signature words. /building/i, /residential/i, /housing/i moved here for residential
   // projects to match but require a residential-distinctive token, not just "building".
   ARCHITECTURE_BUILDINGS: [/architectural\s+design/i, /interior\s+design/i, /floor\s+plan/i, /space\s+planning/i, /furniture\s+layout/i, /3D\s+(?:visualization|rendering)/i, /BIM\b/i, /Revit/i, /ArchiCAD/i, /SketchUp/i, /AutoCAD/i, /\bG\+\d/i, /residential\s+(?:design|building)/i, /housing\s+(?:project|design)/i],
-  FINANCIAL_LEGAL: [/financial/i, /audit/i, /turnover/i, /registration/i, /license/i, /certificate/i, /tax/i, /legal/i, /\bvat\b/i, /\btin\b/i, /procurement/i],
+  FINANCIAL_LEGAL: [/financial/i, /audit/i, /turnover/i, /registration/i, /license/i, /certificate/i, /tax/i, /legal/i, /\bvat\b/i, /\btin\b/i, /procurement/i, /\bKYC\b/i, /\bAML\b/i, /\bBasel\b/i, /\bIFRS\b/i, /core\s+banking/i, /credit\s+risk/i, /microfinance/i, /prudential/i],
   // Universal families — added so the portfolio optimizer can match any
   // tender sector, not only the construction / consulting cluster.
   HEALTHCARE_FACILITIES: [/health(?:care)?\s+(?:facilit|design|infra)/i, /\bhospital/i, /medical\s+(?:facility|center|cent|equipment|gas|imaging)/i, /clinic/i, /specialty\s+(?:medical|cent)/i, /\bOPD\b/i, /\bICU\b/i, /surgical\s+suite/i, /radiology/i, /pharmacy\s+design/i, /clinical\s+(?:lab|workflow)/i, /biomedical/i, /pharma/i, /patient\s+(?:flow|room|safety)/i, /\bIPC\b/i, /infection\s+control/i, /\bMoH\b/i, /ministry\s+of\s+health/i],
   EDUCATION_FACILITIES: [/school\s+(?:design|construct|rehab)/i, /university\s+(?:design|build|campus)/i, /campus\s+plan/i, /classroom\s+block/i, /vocational\s+(?:training|cent)/i, /academic\s+building/i, /education\s+facility/i, /TVET/i],
   ICT_DIGITAL: [/\bICT\b/i, /software\s+development/i, /digital\s+platform/i, /database\s+design/i, /\bMIS\b/i, /\bERP\b/i, /system\s+integration/i, /\bAPI\b/i, /cloud\s+infrastructure/i, /cybersecurity/i, /information\s+system/i, /data\s+management/i, /web\s+application/i, /mobile\s+app/i],
   AGRICULTURE_RURAL: [/agricultur(?:al|e)/i, /agronom/i, /irrigation/i, /livestock/i, /horticulture/i, /value\s+chain/i, /smallholder/i, /post-?harvest/i, /agribusiness/i, /food\s+secur/i, /rural\s+development/i],
-  ENERGY_POWER: [/electricity\s+(?:grid|distribution)/i, /transmission\s+line/i, /substation/i, /power\s+(?:generation|plant|station)/i, /renewable\s+energy/i, /wind\s+farm/i, /hydro\s*power/i, /geothermal/i, /off-?grid/i, /mini-?grid/i],
+  ENERGY_POWER: [/electricity\s+(?:grid|distribution)/i, /transmission\s+line/i, /substation/i, /power\s+(?:generation|plant|station)/i, /renewable\s+energy/i, /wind\s+farm/i, /hydro\s*power/i, /geothermal/i, /off-?grid/i, /mini-?grid/i, /solar\s+farm/i, /grid.?code/i, /\bSCADA\b/i, /load\s+forecast/i, /electrification\s+scheme/i],
   TRANSPORT_LOGISTICS: [/airport\s+(?:design|infrastructure)/i, /railway/i, /port\s+(?:design|infrastructure)/i, /maritime/i, /freight/i, /cargo/i, /supply\s+chain/i, /logistics\s+(?:hub|network)/i, /terminal\s+(?:design|construct)/i, /warehouse\s+(?:design|management)/i],
-  MINING_EXTRACTIVES: [/mining/i, /extractiv/i, /quarry/i, /mineral\s+resourc/i, /tailings/i, /smelter/i, /refining/i, /artisanal/i],
+  MINING_EXTRACTIVES: [/mining/i, /extractiv/i, /quarry/i, /mineral\s+resourc/i, /tailings/i, /smelter/i, /refining/i, /artisanal/i, /\bJORC\b/i, /slope\s+stability/i, /mine\s+plan/i],
   TELECOMS: [/telecom/i, /telecommunication/i, /fiber\s+optic/i, /fibre\s+optic/i, /broadband/i, /\b5G\b/i, /\b4G\b/i, /tower\s+infrastructure/i, /spectrum/i, /\bBTS\b/i, /backhaul/i],
+  OIL_GAS_PETROLEUM: [/\bHAZOP\b/i, /\bP&ID\b/i, /pipeline\s+(?:design|integrit|engineer)/i, /refinery/i, /petrochemical/i, /wellhead/i, /upstream\s+petroleum/i, /oil\s+facilit/i, /gas\s+facilit/i, /\bFEED\b.*process/i, /process\s+safety/i, /\bPSSR\b/i],
   INSTITUTIONAL_REFORM: [/institutional\s+(?:reform|strengthen)/i, /governance\s+reform/i, /policy\s+(?:design|framework)/i, /capacity\s+building/i, /public\s+sector\s+reform/i, /civil\s+service\s+reform/i, /regulator\s+(?:design|framework)/i, /strategic\s+plan/i, /M&E\s+framework/i, /monitoring\s+and\s+evaluation/i],
 };
 
@@ -123,6 +125,7 @@ const SECTOR_DEFINING_FAMILIES: CapabilityFamily[] = [
   "TELECOMS",
   "URBAN_MUNICIPAL",
   "ENVIRONMENT_SOCIAL",
+  "OIL_GAS_PETROLEUM",
 ];
 
 export function detectDominantFamily(queryText: string): CapabilityFamily | null {
@@ -265,7 +268,7 @@ function weightedRequiredFamilies(requirements: RequirementDraft[], tenderTitle?
 }
 
 function strictFamilyRequired(requiredFamilies: CapabilityFamily[]): boolean {
-  const strictFamilies: CapabilityFamily[] = ["HEALTHCARE_FACILITIES", "EDUCATION_FACILITIES", "ICT_DIGITAL", "MINING_EXTRACTIVES", "TELECOMS"];
+  const strictFamilies: CapabilityFamily[] = ["HEALTHCARE_FACILITIES", "EDUCATION_FACILITIES", "ICT_DIGITAL", "MINING_EXTRACTIVES", "TELECOMS", "OIL_GAS_PETROLEUM"];
   return requiredFamilies.some((family) => strictFamilies.includes(family));
 }
 
@@ -278,6 +281,10 @@ function domainTagMatchScore(domainTags: string[], recordText: string): number {
     ict: /ict|digital|software|platform|information\s+system|database|api|cloud/i,
     mining: /mining|extractive|quarry|mineral|ore|tailings/i,
     education: /school|education|university|college|campus|classroom/i,
+    oil_gas: /hazop|p&id|pipeline.*design|refinery|petrochemical|wellhead|upstream.*petroleum/i,
+    energy: /power.*plant|solar.*farm|wind.*farm|grid.*code|substation|generation.*capacity/i,
+    port: /berth.*design|dredging|harbour|maritime.*infra|isps|nautical/i,
+    financial: /kyc|aml|core.*banking|microfinance|ifrs|basel|prudential/i,
   };
   const matches = domainTags.filter((tag) => checks[tag]?.test(text));
   return matches.length / domainTags.length;
