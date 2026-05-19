@@ -41,8 +41,9 @@ function parseCount(text: string, type: "EXPERT" | "PROJECT_EXPERIENCE"): number
 
 export function deriveRequirementConstraintProfile(requirements: RequirementDraft[]): RequirementConstraintProfile {
   const text = requirements.map((r) => `${r.title} ${r.description}`).join("\n");
+  const domainBearingRequirementTypes = new Set(["EXPERT", "PROJECT_EXPERIENCE", "TECHNICAL", "SCOPE", "METHODOLOGY", "DELIVERABLE", "SECTOR"]);
   const domainScopedText = requirements
-    .filter((r) => r.requirementType !== "GENERAL" && r.requirementType !== "COMPLIANCE")
+    .filter((r) => domainBearingRequirementTypes.has(String(r.requirementType ?? "").toUpperCase()))
     .map((r) => `${r.title} ${r.description}`)
     .join("\n");
   const domainText = domainScopedText.trim().length > 0 ? domainScopedText : text;

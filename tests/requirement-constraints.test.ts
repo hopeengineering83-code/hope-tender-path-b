@@ -85,4 +85,25 @@ describe("deriveRequirementConstraintProfile", () => {
     assert.equal(profile.strictDomain, false);
   });
 
+  it("ignores ICT tokens in submission/form requirement types", () => {
+    const requirements: RequirementDraft[] = [
+      {
+        title: "Submission",
+        description: "Submit all files using the digital platform information system before deadline.",
+        requirementType: "FORM",
+        priority: "MANDATORY",
+      },
+      {
+        title: "Experience",
+        description: "At least 2 similar water projects.",
+        requirementType: "PROJECT_EXPERIENCE",
+        priority: "MANDATORY",
+      },
+    ];
+
+    const profile = deriveRequirementConstraintProfile(requirements);
+    assert.equal(profile.domainTags.includes("ict"), false);
+    assert.equal(profile.strictDomain, false);
+  });
+
 });
