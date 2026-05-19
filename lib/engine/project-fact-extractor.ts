@@ -135,6 +135,13 @@ const SECTOR_KEYWORDS: Array<{ rx: RegExp; sector: string }> = [
   { rx: /hotel|hospitality|resort/i, sector: "Hospitality" },
   { rx: /factory|industrial|manufacturing|warehouse/i, sector: "Industrial" },
   { rx: /master plan|urban|city planning/i, sector: "Urban Planning" },
+  { rx: /energy|power plant|\bsolar\b|wind farm|substation|hydropower|electrification|grid.*connect/i, sector: "Energy & Power" },
+  { rx: /irrigation|WUA|command area|FAO.*Penman|crop water|agri/i, sector: "Agriculture & Irrigation" },
+  { rx: /mining|\bJORC\b|tailings|ore body|mine plan|mineral resource/i, sector: "Mining & Extractive" },
+  { rx: /\bport\b|berth|quay|maritime|dredging|harbour|nautical/i, sector: "Port & Maritime" },
+  { rx: /HAZOP|P&ID|pipeline design|oil facilit|gas facilit|petrochemical|upstream petroleum/i, sector: "Oil & Gas" },
+  { rx: /\bKYC\b|\bAML\b|core banking|microfinance|\bIFRS\b|\bBasel\b|fintech|payment system/i, sector: "Financial Services" },
+  { rx: /spectrum|broadband|\bLTE\b|\b5G\b|base station|backhaul|mobile network/i, sector: "Telecoms & Broadband" },
 ];
 
 export function extractProjectFacts(summary: string, name?: string): ProjectFactExtraction {
