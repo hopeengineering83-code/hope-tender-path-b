@@ -964,6 +964,14 @@ export function buildProposalIntelligence(params: {
     { label: /Social Advisory|Community/, keywords: /social.*advisor|advisory.*service|institutional.*strength|capacity.*build|community.*develop|social.*develop|livelihoods|social.*mobiliz|community.*mobiliz|resettlement.*action|poverty|civil.*society|participatory.*develop/i },
     // Kept in sync with inferSector() triggers: architecture|building.*design|construction.*supervision|structural.*design
     { label: /Building Design/, keywords: /architectural.*design|building.*design|construction.*supervision|residential.*develop|commercial.*develop|architectural.*supervision|\barchitecture\b|structural.*design/i },
+    // Extended sector patterns — kept in sync with inferSector() extended detection blocks
+    { label: /Energy|Power/, keywords: /energy|power.*plant|solar.*farm|wind.*farm|grid.*connect|generation.*capacity|transmission.*line|substation|hydropower|renewable.*energy|grid.*code|\bSCADA\b|load.*forecast/i },
+    { label: /Agriculture|Irrigation/, keywords: /agricultur|irrigation.*scheme|crop|agri|livestock|farm.*develop|smallholder|water.*user.*assoc|\bFAO\b|agronomi/i },
+    { label: /Mining|Extractive/, keywords: /mining|mineral.*extract|quarry|tailings|\bJORC\b|ore.*body|blast.*design|mine.*plan|slope.*stability|geotechnical.*mine/i },
+    { label: /Port|Maritime/, keywords: /\bport\b|berth.*design|quay.*design|harbour.*develop|dredging|container.*terminal|maritime.*infra|\bISPS\b|nautical|pilotage/i },
+    { label: /Oil.*Gas|Petroleum/, keywords: /pipeline.*design|oil.*facilit|gas.*facilit|upstream.*petroleum|\bHAZOP\b|\bP&ID\b|refinery|petrochemical|wellhead.*design/i },
+    { label: /Financial.*Services|Banking/, keywords: /\bKYC\b|\bAML\b|core.*banking|microfinance.*system|credit.*risk.*model|\bIFRS\b|\bBasel\b|prudential.*regul|capital.*adequacy/i },
+    { label: /Telecoms|Broadband/, keywords: /spectrum.*licen|base.*station.*design|backhaul.*design|last.?mile.*access|broadband.*network|telecoms.*infra|\bLTE\b|\b5G\b|mobile.*network.*rollout/i },
   ];
   const detectedSector = inferSector(tenderText);
   // Multi-sector fix: collect ALL sector keyword sets triggered by the tender
