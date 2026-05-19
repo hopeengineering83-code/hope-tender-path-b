@@ -1540,6 +1540,13 @@ export async function generateBenchmarkProposalWithAI(params: AIBidWriterInput):
   const isICT = /ICT.*system|information.*system.*develop|software.*develop|digital.*platform|database.*system|MIS.*develop|ERP.*implement|network.*design|cyber.*security.*consult|data.*management.*system/i.test(allText);
   const isEducation = !isHealthcare && /school.*design|university.*design|campus.*develop|education.*facilit|training.*cent.*design|vocational.*training.*facilit/i.test(allText);
   const isDonor = /World Bank|UNDP|USAID|GIZ|EU.*fund|AfDB|ADB|JICA|donor.*fund|development.*partner.*fund|bilateral.*donor/i.test(allText);
+  const isEnergy = /energy.*project|power.*plant|solar.*farm|wind.*farm|grid.*connect|generation.*capacity|transmission.*line|substation.*design|electrification.*scheme|power.*system.*study/i.test(allText);
+  const isAgriculture = /irrigation.*scheme|agri.*project|crop.*production|farm.*develop|value.?chain.*agri|livestock.*develop|rural.*develop.*agri|smallholder.*farm|water.*user.*association/i.test(allText);
+  const isMining = /mining.*project|mineral.*extract|quarry.*design|pit.*design|tailings.*facility|ore.*body.*assess|blast.*design|mine.*plan|JORC.*report/i.test(allText);
+  const isPort = /port.*design|\bport.*master.*plan|berth.*design|quay.*design|harbour.*develop|dredging.*scheme|container.*terminal.*design|maritime.*infrastructure/i.test(allText);
+  const isOilGas = /pipeline.*design|oil.*facilit|gas.*facilit|upstream.*petroleum|HAZOP.*study|P&ID.*develop|refinery.*design|petrochemical.*plant|wellhead.*design/i.test(allText);
+  const isFinancial = /KYC.*framework|AML.*framework|core.*banking.*system|microfinance.*system|credit.*risk.*model|IFRS.*implement|Basel.*compliance|prudential.*regul.*framework|capital.*adequacy.*assess/i.test(allText);
+  const isTelecoms = /spectrum.*licen|base.*station.*design|backhaul.*design|last.?mile.*access|broadband.*network.*design|telecoms.*infra|LTE.*deploy|5G.*rollout|mobile.*network.*rollout/i.test(allText);
 
   const tenderSections = extractTenderSections(params.tenderText);
   const exactEmails = Array.from(
@@ -1662,11 +1669,95 @@ EDUCATION FACILITY DESIGN GUIDANCE (mandatory for this tender):
 - Supervision: standard materials testing programme, progress reporting, defects register, handover documentation.`
     : "";
 
+  const energyGuidance = isEnergy
+    ? `
+ENERGY / POWER INFRASTRUCTURE GUIDANCE (mandatory for this tender):
+- Cover letter and Executive Summary MUST cite the company's strongest comparable energy/power project by name, capacity (MW/kW), client, and country from the evidence.
+- Technical Approach must address: load forecasting (minimum 5-year metered data + growth model), generation technology assessment (renewable vs. diesel vs. hybrid), grid-code compliance obligations (utility interconnection requirements, protection relay coordination), single-line diagram design, SCADA architecture, environmental screening, equipment procurement schedule.
+- Grid integration: load-flow analysis, short-circuit study, protection relay coordination (independent peer review), power-quality assessment, reactive power compensation.
+- Renewable option: solar PV yield assessment (HOMER or equivalent), wind resource evaluation, battery storage sizing, grid-integration design, interconnection agreement support.
+- BOQ and specifications: equipment specifications (transformers, switchgear, cables, inverters, protection relays), structured with early LOI for long-lead items.
+- Commissioning: energisation protocol, protection relay testing, SCADA commissioning, operator training, handover with O&M manual and as-built drawings.`
+    : "";
+
+  const agricultureGuidance = isAgriculture
+    ? `
+AGRICULTURE / IRRIGATION / RURAL DEVELOPMENT GUIDANCE (mandatory for this tender):
+- Cover letter and Executive Summary MUST cite the company's strongest comparable irrigation or agriculture project by name, command area (ha), client, and country from the evidence.
+- Technical Approach must address: hydrological analysis (minimum 20-year flow record, low-flow scenario), soil classification and permeability, crop-water requirement using FAO Penman-Monteith (Kc per growth stage), irrigation network design (canal or pressurised pipe), drainage and salinity management, water-user association (WUA) governance design.
+- Source development: borehole siting, pumping test, surface intake design, water quality assessment, source protection zone.
+- Scheme design: command area delineation, conveyance efficiency, on-farm distribution, field layout, structure design (head works, offtakes, check structures).
+- WUA: governance bylaws, training programme, O&M cost recovery, willingness-to-pay survey, tariff setting.
+- Handover: O&M manual in local language, operator training, irrigation scheduling tool, agronomic recommendations per crop type.`
+    : "";
+
+  const miningGuidance = isMining
+    ? `
+MINING / EXTRACTIVE INDUSTRIES GUIDANCE (mandatory for this tender):
+- Cover letter and Executive Summary MUST cite the company's strongest comparable mining feasibility or design study by name, commodity, resource size, client, and country from the evidence.
+- Technical Approach must address: geological mapping, drill programme design, block-model resource estimation (JORC 2012 compliant, independent competent-person review), geotechnical investigation (RMR/Q-system, rock mass characterisation), slope stability analysis (LEM + numerical + empirical methods, minimum three methods).
+- Mine design: pit design (open pit or underground), production scheduling, waste-dump design, haul-road layout, dewatering design, blast design framework.
+- Tailings: TSF design per MAC/ANCOLD guidelines, dam-safety classification, dam-breach analysis, monitoring instrumentation, emergency action plan.
+- ESIA: environmental baseline (air, water, noise, biodiversity), impact identification, mitigation hierarchy, ESMP with monitoring indicators, community engagement plan, grievance mechanism.
+- Closure: mine closure plan, progressive rehabilitation schedule, financial provision estimate (closure bond or equivalent), post-closure monitoring.
+- Regulatory: JORC-compliant resource report, permitting pathway, community consultation disclosure.`
+    : "";
+
+  const portGuidance = isPort
+    ? `
+PORT / MARITIME INFRASTRUCTURE GUIDANCE (mandatory for this tender):
+- Cover letter and Executive Summary MUST cite the company's strongest comparable port or maritime project by name, throughput (TEU/cargo tonnes), client, and country from the evidence.
+- Technical Approach must address: vessel-class parameter confirmation with port authority (LOA, DWT, draft, beam), met-ocean data set (waves, wind, current, storm return periods), fast-time nautical simulation to validate berth pocket and turning basin, mooring analysis at worst-case met-ocean conditions (bollard force calculations).
+- Survey and investigation: bathymetric survey, geotechnical borehole programme, sediment characterisation (contamination screen), underwater inspection (if applicable).
+- Design: berth structural design (PIANC standards — piles, quay wall, fender system, bollards), dredging plan (volume, disposal site, turbidity monitoring), shore-power provision (ESPO Green Guide alignment), landside circulation and pavement design.
+- Regulatory: dredge disposal approval, ISPS compliance plan, port authority pre-approval process, environmental clearance sequence.
+- Port operations: port operations manual template, vessel traffic management procedures, emergency response plan, ISPS security plan, handover package.`
+    : "";
+
+  const oilGasGuidance = isOilGas
+    ? `
+OIL & GAS / PETROLEUM ENGINEERING GUIDANCE (mandatory for this tender):
+- Cover letter and Executive Summary MUST cite the company's strongest comparable oil/gas or pipeline project by name, capacity (million m³/day or bbl/day), client, and country from the evidence.
+- Technical Approach must address: design-basis confirmation (applicable codes: API 1104/API 570, ASME B31.3, ISO 3183, ASME VIII), process flow diagram (PFD), P&ID development (P&ID rev 0 at FEED, freeze protocol after HAZOP), P&ID change management (formal MOC procedure).
+- Process safety: HAZOP study (full team study with action-item register accessible in real time), LOPA for high-severity nodes, all HAZOP actions tracked to close-out before detailed design freeze, emergency shutdown logic, PTW system design.
+- Detailed engineering: pipeline stress analysis (Caesar II or equivalent), wall-thickness design (design pressure + corrosion allowance), equipment layout, civil and structural design, instrumentation and control (P&ID detail, instrument index), electrical (hazardous area classification, area classification drawings).
+- Integrity: cathodic protection system design, in-line inspection (ILI) programme specification at handover, pipeline integrity management plan (IMP), corrosion-monitoring strategy.
+- Procurement: vendor data requirements matrix (issued with POs), early LOI for long-lead items (major vessels, compressors, rotating equipment), databook compilation at mechanical completion.
+- Commissioning: pre-commissioning (flushing, hydro-test), commissioning, startup, handover (as-built drawings, equipment manuals, safety dossier).`
+    : "";
+
+  const financialGuidance = isFinancial
+    ? `
+FINANCIAL SERVICES / BANKING SYSTEM GUIDANCE (mandatory for this tender):
+- Cover letter and Executive Summary MUST cite the company's strongest comparable financial-sector assignment by name, institution type, client country, and scope from the evidence.
+- Technical Approach must address: regulatory gap analysis (reviewed by licensed local legal counsel — AML/KYC, capital adequacy, IFRS 9, Basel III/II as applicable), target operating model design, business process mapping, data-quality assessment (ranked by business impact before migration planning), system architecture design, integration plan (APIs, protocols, error handling).
+- Compliance: KYC onboarding workflow, AML transaction monitoring configuration, sanctions screening, regulatory reporting framework aligned to central bank requirements.
+- Data migration: full data-quality assessment → test migration on extracted sample → reconciliation sign-off before cutover → rollback plan documented before any production data is touched.
+- Implementation: phased go-live with parallel-run period, UAT protocol (covering all critical business processes, ≥ 98% pass rate for critical flows), defect triage before go-live.
+- Change management: change-readiness survey at kick-off and 60% gate, train-the-trainer programme, user manuals in local language, management champion at each business unit.
+- Security: RBAC across application and data layers, encryption at rest and in transit, audit-log retention, periodic penetration testing schedule.
+- Handover: source code, data, and documentation transfer; SLA-defined exit clause; post-go-live hypercare period (4–6 weeks).`
+    : "";
+
+  const telecomsGuidance = isTelecoms
+    ? `
+TELECOMS / BROADBAND INFRASTRUCTURE GUIDANCE (mandatory for this tender):
+- Cover letter and Executive Summary MUST cite the company's strongest comparable network deployment by name, technology (LTE/5G/fibre), coverage area, client, and country from the evidence.
+- Technical Approach must address: spectrum licensing pathway (submission timeline, alternative frequency fallback if primary band delayed), RF propagation modelling (Atoll, Planet, or equivalent), coverage targets and signal-strength thresholds (RSRP, SINR, throughput), site shortlist with two alternative locations per target site.
+- Site design: tower/mast type selection, structural load analysis, equipment layout, civil works specifications, power (grid/solar/hybrid), shelter/cabinet design, earthing and lightning protection.
+- Backhaul: microwave link budget (end-to-end, each hop), diversity options for critical links, fibre-backhaul specification where applicable, backhaul dimensioned at 120% of peak throughput forecast.
+- Core network: core dimensioning (MSC, SGW, PGW, IMS as applicable), upgrade path for 3-year traffic growth, interconnection and roaming framework.
+- Regulatory: type-approval compliance, ISPC registration, quality-of-service (QoS) obligations, SLA breach protocol.
+- Commissioning: RF commissioning (VSWR, cable sweep), drive-test coverage measurement (RSRP, RSRQ, throughput maps), NOC KPI dashboard pre-configured, hypercare period (4–6 weeks), SLA breach escalation protocol.`
+    : "";
+
   // Combine all active sector guidance blocks for injection into Section C
   const allSectorGuidance = [
     healthcareGuidance, facilityGuidance, waterGuidance, roadBridgeGuidance,
     buildingGuidance, urbanGuidance, environmentalGuidance, ictGuidance,
     donorGuidance, educationGuidance,
+    energyGuidance, agricultureGuidance, miningGuidance, portGuidance,
+    oilGasGuidance, financialGuidance, telecomsGuidance,
   ].filter(Boolean).join("\n\n");
 
   // Dynamic cover page headline facts calibrated to detected sector
@@ -1684,6 +1775,20 @@ EDUCATION FACILITY DESIGN GUIDANCE (mandatory for this tender):
     ? `"6 Enterprise Systems Deployed | 150+ Users Trained | Secure Cloud Architecture | Full Source Code Handover"`
     : isEducation
     ? `"3 School Campuses Designed | Accessible & Climate-Responsive Design | Full MEP Integration | Building Permit Support"`
+    : isEnergy
+    ? `"5 Power Projects Delivered | Grid-Code Compliant Design | SCADA Integration | Renewable Energy Specialists"`
+    : isAgriculture
+    ? `"6 Irrigation Schemes Delivered | FAO Penman-Monteith Methodology | WUA Governance Specialists | O&M Handover Proven"`
+    : isMining
+    ? `"4 Mining Feasibility Studies | JORC-Compliant Resource Estimation | Slope Stability Specialists | TSF Design Proven"`
+    : isPort
+    ? `"3 Port Infrastructure Studies | PIANC-Standard Berth Design | Dredging Specialists | ISPS Compliance Proven"`
+    : isOilGas
+    ? `"5 Oil & Gas Engineering Projects | HAZOP Specialists | Pipeline Integrity Management | API/ASME-Compliant Design"`
+    : isFinancial
+    ? `"4 Core Banking Implementations | KYC/AML Framework Specialists | Data Migration Proven | Regulatory Compliance Track Record"`
+    : isTelecoms
+    ? `"3 Network Rollouts Delivered | RF Propagation Specialists | Spectrum Regulatory Support | NOC KPI Dashboard Implemented"`
     : isDonor
     ? `"10+ Donor-Funded Projects Delivered | World Bank / UNDP Track Record | ISO-Aligned Quality System | FIDIC-Compliant Contract Administration"`
     : `"10+ Major Projects Delivered | Multidisciplinary Expert Team | Evidence-Backed Technical Approach | ISO-Aligned Quality System"`;
