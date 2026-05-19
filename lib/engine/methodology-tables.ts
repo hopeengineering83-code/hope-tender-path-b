@@ -303,6 +303,55 @@ function sectorRiskRows(sector: string): RiskRow[] {
       { category: "Data", risk: "GIS / cadastral data gaps invalidate baseline analysis", likelihood: "Medium", impact: "Medium", mitigation: "Data-completeness assessment at inception; supplementary field survey budgeted; alternative data-source list", owner: "Urban Planner" },
     ];
   }
+  if (/energy|power|solar|wind|grid|generation|transmission|substation|electrification/.test(s)) {
+    return [
+      ...generic,
+      { category: "Grid Code", risk: "Protection relay settings fail utility interconnection review", likelihood: "Medium", impact: "High", mitigation: "Protection coordination study peer-reviewed by independent power systems engineer before submission to utility; all relay settings documented in a relay setting schedule", owner: "Electrical Engineer" },
+      { category: "Renewable Yield", risk: "Solar/wind yield lower than forecast — energy production target missed", likelihood: "Medium", impact: "High", mitigation: "P50/P90 yield estimates using ≥10 years of validated irradiance/wind data; conservative degradation factor applied; HOMER sensitivity analysis documented", owner: "Power Systems Lead" },
+    ];
+  }
+  if (/agri|irrigation|farm|crop|livestock|rural develop/.test(s)) {
+    return [
+      ...generic,
+      { category: "Hydrological", risk: "Low-flow season reduces source yield below design demand", likelihood: "Medium", impact: "High", mitigation: "Hydrological analysis using minimum 20-year flow record; conservative safe yield; supplementary source identified as contingency", owner: "Water Engineer" },
+      { category: "Social", risk: "Water-user association fails to collect fees — O&M funding gap", likelihood: "Medium", impact: "Medium", mitigation: "Willingness-to-pay survey at inception; tariff design based on survey results; WUA capacity-building plan with 12-month post-commissioning support", owner: "Social Development Specialist" },
+    ];
+  }
+  if (/mining|mineral|quarry|extracti/.test(s)) {
+    return [
+      ...generic,
+      { category: "Geotechnical", risk: "Slope-failure risk higher than modelled — mine plan revision required", likelihood: "Medium", impact: "High", mitigation: "Minimum three slope stability methods (LEM, numerical, empirical); conservative phreatic surface assumptions; real-time slope monitoring programme specified", owner: "Geotechnical Engineer" },
+      { category: "JORC Compliance", risk: "Competent Person review identifies insufficient confidence classification", likelihood: "Medium", impact: "High", mitigation: "CP sign-off engaged at scoping stage; confidence classification protocol agreed with CP before drilling; back-up CP identified", owner: "Geologist" },
+    ];
+  }
+  if (/\bport\b|harbor|harbour|maritime|quay|berth|shipping terminal/.test(s)) {
+    return [
+      ...generic,
+      { category: "Nautical Safety", risk: "Vessel-manoeuvring simulation reveals inadequate turning basin", likelihood: "Low", impact: "High", mitigation: "Fast-time simulation at concept stage (before civil design commences); turning basin geometry sized for design vessel with 10% safety margin", owner: "Marine Engineer" },
+      { category: "Dredging", risk: "Contaminated sediment discovered — disposal plan and timeline disrupted", likelihood: "Medium", impact: "High", mitigation: "Sediment characterisation (chemical screen) at geotechnical investigation stage; disposal-site options assessed and pre-approved before dredging commences", owner: "Environmental Lead" },
+    ];
+  }
+  if (/oil|gas|petroleum|pipeline|refinery|petrochemical/.test(s)) {
+    return [
+      ...generic,
+      { category: "Process Safety", risk: "HAZOP identifies critical P&ID changes after detailed-design freeze", likelihood: "Medium", impact: "High", mitigation: "HAZOP conducted at P&ID rev 0 (FEED stage) before detailed design commences; all HAZOP actions tracked to close-out in a live register; design freeze protocol documented", owner: "Lead Process Engineer" },
+      { category: "Integrity", risk: "Pipeline corrosion assessment reveals wall-thickness below minimum", likelihood: "Low", impact: "High", mitigation: "Cathodic protection system designed to API 570; ILI programme specification included at handover; corrosion monitoring strategy documented for operator", owner: "Lead Engineer" },
+    ];
+  }
+  if (/finance|bank|micro.?finance|insurance|credit|lending|investment fund/.test(s)) {
+    return [
+      ...generic,
+      { category: "Data Migration", risk: "Balance reconciliation failure at go-live — system cutover delayed", likelihood: "Medium", impact: "High", mitigation: "Test migration on extracted sample ≥30 days before go-live; full reconciliation sign-off before production data touched; rollback plan documented and drilled", owner: "IT Systems Lead" },
+      { category: "Regulatory", risk: "Central bank rejects KYC/AML framework design — implementation delayed", likelihood: "Low", impact: "High", mitigation: "Regulatory gap analysis reviewed by licensed local counsel; supervisory authority pre-consultation at framework design stage; iterative validation built into schedule", owner: "Financial Services Lead" },
+    ];
+  }
+  if (/telecom|broadband|spectrum|mobile network|isp/.test(s)) {
+    return [
+      ...generic,
+      { category: "Spectrum", risk: "Spectrum licensing delayed — rollout schedule slips", likelihood: "Medium", impact: "High", mitigation: "Spectrum application submitted at project inception; alternative frequency-band fallback plan in the RF design; regulatory milestone tracked at weekly project meeting", owner: "RF Planning Lead" },
+      { category: "Coverage", risk: "Coverage targets not met after rollout — rework required", likelihood: "Medium", impact: "Medium", mitigation: "Drive-test coverage measurement at each site cluster; NOC KPI dashboard active from day 1; optimisation roadmap with identified gap-fill options embedded in handover package", owner: "Optimisation Engineer" },
+    ];
+  }
   return generic;
 }
 
@@ -345,6 +394,56 @@ function sectorQARows(sector: string): QAItpRow[] {
       { checkpoint: "Subgrade Acceptance", criterion: "CBR ≥ design value; compaction ≥ 95% MDD", method: "In-situ CBR + sand-cone density tests", frequency: "Every 200 m", responsible: "Geotechnical Engineer", type: "Hold" },
       { checkpoint: "Asphalt Mix Design", criterion: "Marshall stability, flow, void content within ERA spec", method: "Marshall mix design + JMF approval", frequency: "Per mix change", responsible: "Highway Engineer", type: "Hold" },
       { checkpoint: "Drainage Construction", criterion: "Culvert invert levels, longitudinal slopes match design", method: "Survey check before backfill", frequency: "Each structure", responsible: "Resident Engineer", type: "Witness" },
+    ];
+  }
+  if (/energy|power|solar|wind|grid|generation|transmission|substation|electrification/.test(s)) {
+    return [
+      ...generic,
+      { checkpoint: "Load Forecast Validation", criterion: "Load forecast peer-reviewed; growth rate, coincidence factor, diversity factor documented", method: "Independent power systems engineer review; comparison with utility historical data", frequency: "Once before SLD design commences", responsible: "Power Systems Lead", type: "Hold" },
+      { checkpoint: "Protection Relay Coordination", criterion: "Protection relay settings ensure graded isolation; no mal-trip or fail-to-trip scenario", method: "Protection coordination study using SKM/ETAP or equivalent; utility pre-approval", frequency: "Once at 80% design", responsible: "Electrical Engineer", type: "Hold" },
+      { checkpoint: "SCADA Commissioning", criterion: "All points commissioned in SCADA; alarms, interlocks, and control logic verified", method: "Factory acceptance test (FAT) + site acceptance test (SAT) protocol", frequency: "Pre-energisation", responsible: "Resident Engineer", type: "Witness" },
+    ];
+  }
+  if (/agri|irrigation|farm|crop|livestock|rural develop/.test(s)) {
+    return [
+      ...generic,
+      { checkpoint: "Crop-Water Demand Verification", criterion: "Kc values and ET₀ source data validated; demand matches supply balance", method: "CROPWAT / FAO Penman-Monteith calculation review by agronomist", frequency: "Once at design basis confirmation", responsible: "Agronomist", type: "Hold" },
+      { checkpoint: "Canal/Pipe Pressure Test", criterion: "No leakage under test pressure (1.5 × working) for 2 hours", method: "Hydrostatic pressure test on each section before backfill", frequency: "Each test section", responsible: "Resident Engineer", type: "Witness" },
+    ];
+  }
+  if (/mining|mineral|quarry|extracti/.test(s)) {
+    return [
+      ...generic,
+      { checkpoint: "JORC Resource Classification", criterion: "Block model, confidence classification, and CP sign-off completed before feasibility report issuance", method: "Independent Competent Person review per JORC 2012", frequency: "Once before feasibility report issuance", responsible: "Geologist", type: "Hold" },
+      { checkpoint: "Slope Stability Sign-off", criterion: "Factor of safety ≥ design minimum under all scenario conditions", method: "Minimum three methods (LEM, numerical, empirical); peer-reviewed before mine-plan freeze", frequency: "Once before mine-plan freeze", responsible: "Geotechnical Engineer", type: "Hold" },
+    ];
+  }
+  if (/\bport\b|harbor|harbour|maritime|quay|berth|shipping terminal/.test(s)) {
+    return [
+      ...generic,
+      { checkpoint: "Nautical Simulation Approval", criterion: "Fast-time simulation confirms safe vessel approach, berthing, and departure for design vessel class", method: "Fast-time nautical simulation with documented scenario matrix; findings reviewed with port authority", frequency: "Once before berth geometry freeze", responsible: "Marine Engineer", type: "Hold" },
+      { checkpoint: "Dredging Acceptance", criterion: "Post-dredge hydrographic survey confirms design depth across full berth pocket", method: "Post-dredge bathymetric survey to ± 0.1m accuracy", frequency: "On completion of dredging", responsible: "Resident Engineer", type: "Witness" },
+    ];
+  }
+  if (/oil|gas|petroleum|pipeline|refinery|petrochemical/.test(s)) {
+    return [
+      ...generic,
+      { checkpoint: "HAZOP Action Close-out", criterion: "All HAZOP actions closed or formally deferred with risk justification before detailed-design freeze", method: "HAZOP action register reviewed by HAZOP chair; P&ID updated to IFC status after close-out", frequency: "Before detailed-design freeze", responsible: "Lead Process Engineer", type: "Hold" },
+      { checkpoint: "Hydrostatic Test", criterion: "Pipeline/vessel test pressure held for duration specified in design; no pressure drop", method: "Hydrostatic test per ASME B31.3 / API 1104 as applicable", frequency: "Each test section", responsible: "Resident Engineer", type: "Witness" },
+    ];
+  }
+  if (/finance|bank|micro.?finance|insurance|credit|lending|investment fund/.test(s)) {
+    return [
+      ...generic,
+      { checkpoint: "UAT Sign-off", criterion: "≥ 98% of critical business process test cases pass; all severity-1 defects resolved", method: "Structured UAT protocol with named business-process owners; triage log maintained", frequency: "Before go-live", responsible: "IT Systems Lead", type: "Hold" },
+      { checkpoint: "Data Migration Reconciliation", criterion: "Migrated balances reconcile to source-system control totals within ± 0%", method: "Three-way reconciliation (source → staging → target); signed off by Finance Director", frequency: "Before production cutover", responsible: "Implementation Lead", type: "Hold" },
+    ];
+  }
+  if (/telecom|broadband|spectrum|mobile network|isp/.test(s)) {
+    return [
+      ...generic,
+      { checkpoint: "RF Commissioning", criterion: "VSWR and cable sweep pass on all antennas; drive-test RSRP/RSRQ meets design threshold", method: "Site acceptance test (SAT) per OEM specification; drive-test with NOC KPI comparison", frequency: "Each base-station cluster", responsible: "Rollout Manager", type: "Witness" },
+      { checkpoint: "Core Network Integration Test", criterion: "All traffic types (voice, data, SMS) functional; QoS parameters within SLA", method: "End-to-end integration test report; load test at 80% of design capacity", frequency: "Before commercial launch", responsible: "Network Architect", type: "Hold" },
     ];
   }
   return generic;
