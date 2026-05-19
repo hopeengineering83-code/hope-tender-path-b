@@ -42,4 +42,47 @@ describe("deriveRequirementConstraintProfile", () => {
     const profile = deriveRequirementConstraintProfile(requirements);
     assert.equal(profile.expertCount, 3);
   });
+
+  it("does not trigger strict ICT domain from generic digital submission wording", () => {
+    const requirements: RequirementDraft[] = [
+      {
+        title: "Submission",
+        description: "Bidders must submit through the digital platform and include a signed form.",
+        requirementType: "GENERAL",
+        priority: "MANDATORY",
+      },
+      {
+        title: "Project references",
+        description: "Provide two similar building projects.",
+        requirementType: "PROJECT_EXPERIENCE",
+        priority: "MANDATORY",
+      },
+    ];
+
+    const profile = deriveRequirementConstraintProfile(requirements);
+    assert.equal(profile.domainTags.includes("ict"), false);
+    assert.equal(profile.strictDomain, false);
+  });
+
+  it("ignores ICT tokens that appear only in GENERAL/compliance wording", () => {
+    const requirements: RequirementDraft[] = [
+      {
+        title: "Submission instruction",
+        description: "Upload to the information system portal and confirm the digital platform receipt.",
+        requirementType: "GENERAL",
+        priority: "MANDATORY",
+      },
+      {
+        title: "Project references",
+        description: "At least 2 similar road construction projects.",
+        requirementType: "PROJECT_EXPERIENCE",
+        priority: "MANDATORY",
+      },
+    ];
+
+    const profile = deriveRequirementConstraintProfile(requirements);
+    assert.equal(profile.domainTags.includes("ict"), false);
+    assert.equal(profile.strictDomain, false);
+  });
+
 });

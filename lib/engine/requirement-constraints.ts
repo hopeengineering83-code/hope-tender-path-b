@@ -41,6 +41,11 @@ function parseCount(text: string, type: "EXPERT" | "PROJECT_EXPERIENCE"): number
 
 export function deriveRequirementConstraintProfile(requirements: RequirementDraft[]): RequirementConstraintProfile {
   const text = requirements.map((r) => `${r.title} ${r.description}`).join("\n");
+  const domainScopedText = requirements
+    .filter((r) => r.requirementType !== "GENERAL" && r.requirementType !== "COMPLIANCE")
+    .map((r) => `${r.title} ${r.description}`)
+    .join("\n");
+  const domainText = domainScopedText.trim().length > 0 ? domainScopedText : text;
   const roleSignals = ROLE_PATTERNS.filter((entry) => entry.pattern.test(text)).map((entry) => entry.role);
 
   const expertFromQty = requirements
@@ -58,13 +63,17 @@ export function deriveRequirementConstraintProfile(requirements: RequirementDraf
   const expertCount = Math.max(expertFromText, expertFromQty.length > 0 ? Math.max(...expertFromQty) : 0, roleSignals.length > 0 ? roleSignals.length : 0);
   const projectCount = Math.max(projectFromText, projectFromQty.length > 0 ? Math.max(...projectFromQty) : 0);
 
-  const domainTags = [
-    /hospital|healthcare|medical|clinic/i.test(text) ? "healthcare" : null,
-    /telecom|telecommunication|fiber|broadband|5g|4g/i.test(text) ? "telecom" : null,
-    /ict|digital|software|platform|information\s+system/i.test(text) ? "ict" : null,
-    /mining|extractive|quarry|mineral|ore/i.test(text) ? "mining" : null,
-    /school|education|university|college/i.test(text) ? "education" : null,
-  ].filter((v): v is string => Boolean(v));
+  const domainSignals = {
+    healthcare: /hospital|healthcare|medical|clinic/i,
+    telecom: /telecom|telecommunication|fiber|broadband|5g|4g/i,
+    ict: /\bict\b|software|information\s+system|information\s+technology|it\s+system|erp|crm|database|cybersecurity|network\s+infrastructure|data\s+center|cloud\s+platform/i,
+    mining: /mining|extractive|quarry|mineral|ore/i,
+    education: /school|education|university|college/i,
+  } as const;
+
+  const domainTags = Object.entries(domainSignals)
+    .filter(([, pattern]) => pattern.test(domainText))
+    .map(([tag]) => tag);
   const strictDomain = domainTags.length > 0;
 
   return {
