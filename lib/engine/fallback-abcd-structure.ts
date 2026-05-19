@@ -91,6 +91,69 @@ export function fallbackAbcdSections(input: FallbackAbcdInput): string[] {
     lines.push("Support renovation planning with drawings, specifications, BOQ/cost-estimate support where required, supervision controls, progress reporting and quality monitoring.");
     lines.push("### 3.6 Project Close-Out Support");
     lines.push("Support inspection, design-compliance verification, snag tracking, handover documentation and operational-readiness confirmation.");
+  } else if (/energy|power.*plant|\bsolar\b|wind.*farm|substation|hydropower|electrification|generation|transmission/i.test(input.primarySector)) {
+    lines.push("### C.2.1 Load Forecast and Demand Analysis");
+    lines.push("Develop load-forecast memo and P50/P90 yield estimate using minimum 10 years of validated resource data; confirm grid-code obligations before design commences.");
+    lines.push("### C.2.2 Power Systems Engineering");
+    lines.push("Perform load-flow and short-circuit analysis using SKM/ETAP; prepare single-line diagram, protection relay coordination study, and SCADA architecture before detailed civil/structural design.");
+    lines.push("### C.2.3 Procurement and Construction Supervision");
+    lines.push("Supervise equipment procurement (FAT hold-point), civil installation, and energisation sequence; execute SAT protocol and confirm SCADA acceptance before grid connection.");
+    lines.push("### C.2.4 Commissioning and Handover");
+    lines.push("Execute commissioning procedures, produce O&M manual, complete operator training, and obtain regulatory commissioning certificate before handover.");
+  } else if (/agri|irrigation|WUA|command.*area|FAO.*Penman|crop.*water/i.test(input.primarySector)) {
+    lines.push("### C.2.1 Hydrological and Agronomic Baseline");
+    lines.push("Analyse minimum 20-year flow record; calculate FAO Penman-Monteith crop-water requirement; map command-area boundaries with land-use classification.");
+    lines.push("### C.2.2 Irrigation Network Design");
+    lines.push("Design canal or pressurised pipe network with diversion/weir structures; prepare preliminary BOQ and WUA governance draft framework.");
+    lines.push("### C.2.3 Construction Supervision and Commissioning");
+    lines.push("Supervise construction with hydraulic commissioning tests, canal seepage tests, and distribution efficiency measurement before handover.");
+    lines.push("### C.2.4 WUA Establishment and O&M Handover");
+    lines.push("Establish WUA with agreed governance structure; issue O&M manual with operator training records and agronomic follow-up memo.");
+  } else if (/mining|JORC|tailings|ore.*body|mine.*plan|mineral.*resource/i.test(input.primarySector)) {
+    lines.push("### C.2.1 Resource Assessment");
+    lines.push("Prepare JORC-compliant resource estimate with independent competent-person review; develop block model and scope geotechnical investigation.");
+    lines.push("### C.2.2 Mine Plan and Feasibility");
+    lines.push("Design pit or underground workings; conduct slope-stability analysis (three methods); design TSF per MAC/ANCOLD; prepare preliminary BOQ and environmental and social management plan.");
+    lines.push("### C.2.3 Detailed Engineering and Permitting");
+    lines.push("Prepare regulatory submission package, ESIA, and detailed design drawings; obtain environmental permit as a formal schedule gate.");
+    lines.push("### C.2.4 Closure Planning");
+    lines.push("Integrate progressive rehabilitation plan from feasibility stage; confirm closure cost estimate with financial provision before construction release.");
+  } else if (/port|berth|quay|maritime|dredging|harbour|nautical/i.test(input.primarySector)) {
+    lines.push("### C.2.1 Met-Ocean and Site Investigation");
+    lines.push("Complete minimum 20-year met-ocean analysis, bathymetric survey and geotechnical investigation (seabed borings) before any structural design commences.");
+    lines.push("### C.2.2 Design Development");
+    lines.push("Confirm berth layout through fast-time nautical simulation before structural design freeze; prepare dredge volume and disposal plan with sediment characterisation.");
+    lines.push("### C.2.3 ISPS Compliance and Environmental Management");
+    lines.push("Prepare ISPS compliance documentation and environmental and social management plan; obtain disposal site approval from environmental authority before dredging.");
+    lines.push("### C.2.4 Commissioning and Handover");
+    lines.push("Execute commissioning tests, support ISPS certification, issue O&M manual, and complete nautical acceptance trial before handover.");
+  } else if (/HAZOP|P&ID|pipeline.*design|oil.*facilit|gas.*facilit|petrochemical|upstream.*petroleum/i.test(input.primarySector)) {
+    lines.push("### C.2.1 Design Basis and HAZOP");
+    lines.push("Prepare design basis memorandum and P&ID; conduct HAZOP study with full action register; complete LOPA for high-severity nodes before detailed engineering.");
+    lines.push("### C.2.2 Detailed Engineering");
+    lines.push("Execute pipeline stress analysis (Caesar II or equivalent), cathodic-protection design, civil/structural drawings, and equipment layout; close HAZOP action register before construction release.");
+    lines.push("### C.2.3 Construction Supervision and Integrity Testing");
+    lines.push("Supervise construction with NDE hold-points at each weld; witness and record hydrotest per ASME B31 before commissioning.");
+    lines.push("### C.2.4 Commissioning and ILI Programme");
+    lines.push("Execute commissioning procedures; document process safety information (PSI); specify ILI programme; issue O&M manual with operator training before handover.");
+  } else if (/KYC|AML|core.*banking|microfinance|IFRS|Basel|fintech|payment.*system/i.test(input.primarySector)) {
+    lines.push("### C.2.1 Regulatory Gap Analysis");
+    lines.push("Complete regulatory gap analysis reviewed by licensed local legal counsel; design target operating model; assess data quality before system architecture commences.");
+    lines.push("### C.2.2 System Architecture and Build");
+    lines.push("Design system architecture with RBAC, encryption, and audit-log controls; prepare integration plan and UAT protocol.");
+    lines.push("### C.2.3 Data Migration and UAT");
+    lines.push("Execute UAT with formal sign-off; complete data migration with three-way reconciliation; obtain legal counsel regulatory compliance confirmation before go-live.");
+    lines.push("### C.2.4 Parallel-Run and Hypercare");
+    lines.push("Execute parallel-run with data reconciliation signed off before cutover; conduct post-go-live hypercare; hand over knowledge-base wiki and support documentation.");
+  } else if (/spectrum|broadband|LTE|5G|base.*station|backhaul|mobile.*network/i.test(input.primarySector)) {
+    lines.push("### C.2.1 Traffic Demand and Coverage Modelling");
+    lines.push("Develop traffic demand model; run calibrated RF coverage simulation with field-measured correction factors; prepare spectrum licensing roadmap before site engineering commences.");
+    lines.push("### C.2.2 Network Design");
+    lines.push("Plan base-station siting; design backhaul with path availability calculations (microwave/fibre); prepare site acquisition list and EMR compliance dossier.");
+    lines.push("### C.2.3 Procurement and Site Works");
+    lines.push("Confirm in-principle spectrum approval before site engineering; supervise installation; complete drive-test acceptance against coverage KPIs.");
+    lines.push("### C.2.4 Commissioning and O&M Handover");
+    lines.push("Execute SAT protocol; complete EMR compliance measurements; issue O&M manual with operator training and live network monitoring dashboard.");
   }
 
   lines.push("## C.3 Quality Assurance and Design Review");

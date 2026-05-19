@@ -183,6 +183,69 @@ function sectorPhasingRows(sector: string): PhasingRow[] {
       { phase: "5. Adoption Support", deliverables: "Public consultation support; council adoption pack; training programme; transition plan", duration: "Weeks 19–22", responsible: "Project Principal" },
     ];
   }
+  if (/energy|power.*plant|\bsolar\b|wind.*farm|substation|hydropower|electrification|generation|transmission.*line/i.test(s)) {
+    return [
+      { phase: "1. Inception & Demand Analysis", deliverables: "Inception report; load-forecast memo; P50/P90 yield model (renewables); site-reconnaissance report; grid-connection pre-application", duration: "Weeks 1–3", responsible: "Project Principal" },
+      { phase: "2. Conceptual & Preliminary Design", deliverables: "Single-line diagram; technology-selection report; SKM/ETAP load-flow model; protection relay coordination study; civil layout; preliminary BOQ", duration: "Weeks 4–8", responsible: "Power Systems Lead" },
+      { phase: "3. Detailed Engineering", deliverables: "Full engineering design package (civil/structural, electrical, SCADA); specifications; procurement BOQ; grid-code compliance dossier", duration: "Weeks 9–16", responsible: "Lead Engineer" },
+      { phase: "4. Procurement & Construction Supervision", deliverables: "Tender evaluation report; construction supervision with FAT hold-point; monthly progress reports; payment certificates", duration: "Construction window + 4 weeks", responsible: "Resident Engineer" },
+      { phase: "5. Commissioning & Handover", deliverables: "SAT protocol results; SCADA acceptance test; O&M manual; operator training records; regulatory commissioning certificate; handover pack", duration: "Weeks N–N+6", responsible: "Project Principal" },
+    ];
+  }
+  if (/agri|irrigation|WUA|command.*area|FAO.*Penman|crop.*water/i.test(s)) {
+    return [
+      { phase: "1. Inception & Hydrological Baseline", deliverables: "Inception report; minimum 20-year flow record review; FAO Penman-Monteith crop-water-requirement calculation; command-area boundary mapping", duration: "Weeks 1–4", responsible: "Project Principal" },
+      { phase: "2. Scheme Design", deliverables: "Irrigation network design (canal or pressurised pipe); diversion/weir structure design; WUA governance draft framework; preliminary BOQ", duration: "Weeks 5–10", responsible: "Lead Hydraulic/Irrigation Engineer" },
+      { phase: "3. Tender Documents", deliverables: "Full tender package (drawings, specifications, BOQ); environmental screening memo; construction supervision plan", duration: "Weeks 11–14", responsible: "Lead Engineer" },
+      { phase: "4. Construction Supervision & Commissioning", deliverables: "Construction supervision; hydraulic commissioning tests; canal seepage tests; distribution efficiency measurement", duration: "Construction window + 3 weeks", responsible: "Resident Engineer" },
+      { phase: "5. WUA Handover & O&M", deliverables: "WUA establishment certificate; O&M manual; operator training records; season-performance report; agronomic follow-up memo", duration: "Weeks N–N+6", responsible: "Project Principal" },
+    ];
+  }
+  if (/mining|JORC|tailings|ore.*body|mine.*plan|mineral.*resource|blast.*design/i.test(s)) {
+    return [
+      { phase: "1. Resource Assessment", deliverables: "JORC-compliant resource estimate with independent competent-person review; block-model documentation; geotechnical investigation scope", duration: "Weeks 1–6", responsible: "Resource Geologist" },
+      { phase: "2. Mine Plan & Feasibility", deliverables: "Pit or underground design; slope-stability analysis (three methods); TSF design per MAC/ANCOLD; preliminary BOQ; environmental and social management plan", duration: "Weeks 7–16", responsible: "Mining Engineer" },
+      { phase: "3. Permitting & Detailed Engineering", deliverables: "Regulatory submission package; ESIA; detailed design drawings and specifications; procurement BOQ", duration: "Weeks 17–24", responsible: "Lead Engineer" },
+      { phase: "4. Construction Supervision", deliverables: "Construction supervision with geotechnical hold-points; quality-control testing programme; monthly progress reports", duration: "Construction window + 4 weeks", responsible: "Resident Engineer" },
+      { phase: "5. Close-out & Closure Plan", deliverables: "As-built drawings; closure plan with financial provision; O&M manual; environmental monitoring baseline; handover pack", duration: "Weeks N–N+6", responsible: "Project Principal" },
+    ];
+  }
+  if (/port|berth|quay|maritime|dredging|harbour|nautical/i.test(s)) {
+    return [
+      { phase: "1. Met-Ocean & Site Investigation", deliverables: "Met-ocean analysis (≥20-year data); bathymetric survey; geotechnical investigation (seabed borings); nautical simulation brief", duration: "Weeks 1–5", responsible: "Lead Port/Marine Engineer" },
+      { phase: "2. Design Development", deliverables: "Berth structural design; dredge volume and disposal plan with sediment characterisation; fast-time nautical simulation report; shore-power layout", duration: "Weeks 6–14", responsible: "Lead Engineer" },
+      { phase: "3. Tender Documents & ISPS", deliverables: "Full tender package (drawings, specifications, BOQ); ISPS compliance documentation; environmental and social management plan", duration: "Weeks 15–18", responsible: "Lead Engineer" },
+      { phase: "4. Construction Supervision", deliverables: "Construction supervision with structural hold-points; dredge disposal monitoring; monthly progress reports; payment certificates", duration: "Construction window + 4 weeks", responsible: "Resident Engineer" },
+      { phase: "5. Commissioning & Handover", deliverables: "Commissioning test results; ISPS certification support; O&M manual; nautical acceptance trial; handover pack", duration: "Weeks N–N+6", responsible: "Project Principal" },
+    ];
+  }
+  if (/HAZOP|P&ID|pipeline.*design|oil.*facilit|gas.*facilit|petrochemical|upstream.*petroleum/i.test(s)) {
+    return [
+      { phase: "1. Design Basis & HAZOP", deliverables: "Design basis memorandum; P&ID development; HAZOP study with full action register; LOPA for high-severity nodes", duration: "Weeks 1–5", responsible: "Lead Process Engineer" },
+      { phase: "2. Detailed Engineering", deliverables: "Pipeline stress analysis (Caesar II); equipment layout; cathodic-protection design; civil/structural drawings; vendor data requirements matrix", duration: "Weeks 6–16", responsible: "Lead Engineer" },
+      { phase: "3. Procurement & Pre-construction", deliverables: "Tender documents (BOQ, specs, drawings); HAZOP action register closure certificate; environmental and social management plan; construction safety plan", duration: "Weeks 17–20", responsible: "Lead Engineer" },
+      { phase: "4. Construction Supervision", deliverables: "Construction supervision with welding NDE hold-points; pigging and hydrotest supervision; monthly progress reports", duration: "Construction window + 4 weeks", responsible: "Resident Engineer" },
+      { phase: "5. Commissioning & ILI", deliverables: "Commissioning procedures executed; PSI documentation; ILI programme specification; O&M manual; operator training; handover pack", duration: "Weeks N–N+6", responsible: "Project Principal" },
+    ];
+  }
+  if (/KYC|AML|core.*banking|microfinance|IFRS|Basel|fintech|payment.*system/i.test(s)) {
+    return [
+      { phase: "1. Regulatory Gap Analysis", deliverables: "Regulatory gap analysis reviewed by licensed local legal counsel; target operating model design; data-quality assessment", duration: "Weeks 1–4", responsible: "Lead Regulatory Compliance Specialist" },
+      { phase: "2. System Architecture & Build", deliverables: "System architecture document; integration plan; RBAC/encryption/audit-log configuration; UAT protocol", duration: "Weeks 5–12", responsible: "Solution Architect" },
+      { phase: "3. UAT & Data Migration", deliverables: "UAT execution and sign-off; data migration with reconciliation; legal counsel regulatory compliance confirmation", duration: "Weeks 13–18", responsible: "Lead Engineer" },
+      { phase: "4. Parallel-Run & Go-Live", deliverables: "Parallel-run execution (data reconciliation signed off before go-live); cutover plan; staff training completion certificate", duration: "Weeks 19–22", responsible: "Project Principal" },
+      { phase: "5. Hypercare & Handover", deliverables: "Post-go-live hypercare plan; support documentation; lessons-learned report; knowledge-base wiki; handover pack", duration: "Weeks 23–26", responsible: "Project Principal" },
+    ];
+  }
+  if (/spectrum|broadband|LTE|5G|base.*station|backhaul|mobile.*network/i.test(s)) {
+    return [
+      { phase: "1. Demand & Coverage Modelling", deliverables: "Traffic demand model; calibrated RF coverage simulation with field-measured correction factors; spectrum licensing roadmap", duration: "Weeks 1–4", responsible: "Lead RF/Network Engineer" },
+      { phase: "2. Network Design", deliverables: "Base-station siting plan; backhaul design (fibre/microwave) with path availability calculations; site acquisition list; EMR compliance dossier", duration: "Weeks 5–10", responsible: "Lead Engineer" },
+      { phase: "3. Procurement & Site Works", deliverables: "Tender documents (BOQ, specs); in-principle spectrum approval confirmation; site acquisition agreements; installation supervision", duration: "Weeks 11–18", responsible: "Site Acquisition Coordinator" },
+      { phase: "4. Drive-Test & Commissioning", deliverables: "Drive-test results against coverage KPIs; SAT protocol completion; EMR compliance measurements; operator training records", duration: "Weeks 19–22", responsible: "Commissioning/Test Engineer" },
+      { phase: "5. O&M Handover", deliverables: "O&M manual; network monitoring dashboard; performance KPI report; spectrum licence confirmation; handover pack", duration: "Weeks 23–26", responsible: "Project Principal" },
+    ];
+  }
   // Generic
   return [
     { phase: "1. Inception", deliverables: "Inception report; ToR confirmation; data-collection plan; risk register baseline", duration: "Weeks 1–2", responsible: "Project Principal" },
@@ -240,6 +303,55 @@ function sectorRiskRows(sector: string): RiskRow[] {
       { category: "Data", risk: "GIS / cadastral data gaps invalidate baseline analysis", likelihood: "Medium", impact: "Medium", mitigation: "Data-completeness assessment at inception; supplementary field survey budgeted; alternative data-source list", owner: "Urban Planner" },
     ];
   }
+  if (/energy|power.*plant|\bsolar\b|wind.*farm|substation|hydropower|electrification|generation|transmission.*line/i.test(s)) {
+    return [
+      ...generic,
+      { category: "Grid Code", risk: "Protection relay settings rejected by utility at submission", likelihood: "Medium", impact: "High", mitigation: "Independent power-systems peer review of relay settings before utility submission; pre-submission coordination meeting with utility engineer", owner: "Power Systems Lead" },
+      { category: "Yield", risk: "P50 energy yield shortfall due to resource uncertainty", likelihood: "Medium", impact: "High", mitigation: "P90 sensitivity analysis completed; conservative yield factor applied in financial model; bankable resource assessment commissioned", owner: "Lead Engineer" },
+    ];
+  }
+  if (/agri|irrigation|WUA|command.*area|FAO.*Penman|crop.*water/i.test(s)) {
+    return [
+      ...generic,
+      { category: "Hydrological", risk: "Source flow falls below minimum design demand in dry year", likelihood: "Medium", impact: "High", mitigation: "Minimum 20-year flow record analysis; conservative safe-yield factor; back-up source siting memo", owner: "Hydrologist" },
+      { category: "Institutional", risk: "WUA governance collapse after scheme handover", likelihood: "Medium", impact: "High", mitigation: "WUA establishment agreed with community before commissioning; O&M fund mechanism designed into scheme; post-handover advisory support for 6 months", owner: "Community/WUA Specialist" },
+    ];
+  }
+  if (/mining|JORC|tailings|ore.*body|mine.*plan|mineral.*resource/i.test(s)) {
+    return [
+      ...generic,
+      { category: "Resource", risk: "Resource estimate downgrade at competent-person review", likelihood: "Medium", impact: "High", mitigation: "Competent-person review built into workflow at resource estimation stage; conservative classification applied; sensitivity analysis on cut-off grade", owner: "Resource Geologist" },
+      { category: "Environmental", risk: "Environmental permit delay blocks construction start", likelihood: "Medium", impact: "High", mitigation: "ESIA commenced at feasibility stage; regulator pre-engagement meeting; permit critical-path flagged in programme baseline", owner: "Environmental Specialist" },
+    ];
+  }
+  if (/port|berth|quay|maritime|dredging|harbour|nautical/i.test(s)) {
+    return [
+      ...generic,
+      { category: "Met-Ocean", risk: "Design wave height exceeded during construction window", likelihood: "Medium", impact: "High", mitigation: "20-year met-ocean analysis; construction window selected for calm season; contingency day allowance in programme", owner: "Lead Port/Marine Engineer" },
+      { category: "Dredge Disposal", risk: "Sediment characterisation triggers Category II disposal — disposal site change required", likelihood: "Medium", impact: "High", mitigation: "Pre-dredge sediment sampling at feasibility stage; disposal options shortlist with regulatory pre-consultation", owner: "Environmental Specialist" },
+    ];
+  }
+  if (/HAZOP|P&ID|pipeline.*design|oil.*facilit|gas.*facilit|petrochemical|upstream.*petroleum/i.test(s)) {
+    return [
+      ...generic,
+      { category: "Process Safety", risk: "HAZOP action register not fully closed before construction release", likelihood: "Low", impact: "High", mitigation: "HAZOP action register formal closure is a gated milestone; no construction release without PSI documentation sign-off", owner: "HAZOP Facilitator" },
+      { category: "Integrity", risk: "Pipeline hydrotest failure due to weld or fitting defect", likelihood: "Low", impact: "High", mitigation: "NDE hold-points (RT/UT) at each weld before backfill; hydrotest witnessed and recorded per ASME B31.4/B31.8", owner: "Resident Engineer" },
+    ];
+  }
+  if (/KYC|AML|core.*banking|microfinance|IFRS|Basel|fintech|payment.*system/i.test(s)) {
+    return [
+      ...generic,
+      { category: "Regulatory", risk: "Regulatory gap analysis incomplete — system fails central bank audit", likelihood: "Low", impact: "High", mitigation: "Licensed local legal counsel sign-off is a formal gate condition before system go-live; gap register tracked weekly", owner: "Lead Regulatory Compliance Specialist" },
+      { category: "Data Migration", risk: "Ledger data migration error causes reconciliation failure at go-live", likelihood: "Medium", impact: "High", mitigation: "Three parallel-run cycles with independent reconciliation sign-off before cutover; rollback plan documented and tested", owner: "Data Migration Lead" },
+    ];
+  }
+  if (/spectrum|broadband|LTE|5G|base.*station|backhaul|mobile.*network/i.test(s)) {
+    return [
+      ...generic,
+      { category: "Spectrum", risk: "Spectrum approval delayed — site engineering cannot start", likelihood: "Medium", impact: "High", mitigation: "In-principle spectrum approval confirmed before any site engineering commences; alternative band contingency assessed", owner: "Spectrum Planning Specialist" },
+      { category: "Coverage", risk: "Modelled coverage not achieved after deployment", likelihood: "Medium", impact: "High", mitigation: "Calibrated RF model using field-measured correction factors; drive-test acceptance against coverage KPIs before handover", owner: "Lead RF/Network Engineer" },
+    ];
+  }
   return generic;
 }
 
@@ -282,6 +394,56 @@ function sectorQARows(sector: string): QAItpRow[] {
       { checkpoint: "Subgrade Acceptance", criterion: "CBR ≥ design value; compaction ≥ 95% MDD", method: "In-situ CBR + sand-cone density tests", frequency: "Every 200 m", responsible: "Geotechnical Engineer", type: "Hold" },
       { checkpoint: "Asphalt Mix Design", criterion: "Marshall stability, flow, void content within ERA spec", method: "Marshall mix design + JMF approval", frequency: "Per mix change", responsible: "Highway Engineer", type: "Hold" },
       { checkpoint: "Drainage Construction", criterion: "Culvert invert levels, longitudinal slopes match design", method: "Survey check before backfill", frequency: "Each structure", responsible: "Resident Engineer", type: "Witness" },
+    ];
+  }
+  if (/energy|power.*plant|\bsolar\b|wind.*farm|substation|hydropower|electrification|generation|transmission.*line/i.test(s)) {
+    return [
+      ...generic,
+      { checkpoint: "Load-Flow & Protection Review", criterion: "Load-flow, short-circuit, and protection relay coordination results within grid-code limits", method: "SKM/ETAP model output review; independent peer review of relay settings", frequency: "Once at 60% and pre-submission", responsible: "Power Systems Lead", type: "Hold" },
+      { checkpoint: "Factory Acceptance Test (FAT)", criterion: "Equipment performance matches specification; no outstanding non-conformances", method: "Witnessed FAT per IEC/IEEE test protocol", frequency: "Each major equipment item", responsible: "Resident Engineer", type: "Witness" },
+      { checkpoint: "Site Acceptance Test (SAT)", criterion: "SCADA comms, protection relay trips, metering accuracy verified on site", method: "SAT protocol executed against checklist", frequency: "Per substation / plant area", responsible: "Commissioning Engineer", type: "Hold" },
+    ];
+  }
+  if (/agri|irrigation|WUA|command.*area|FAO.*Penman|crop.*water/i.test(s)) {
+    return [
+      ...generic,
+      { checkpoint: "Crop-Water Requirement Verification", criterion: "FAO Penman-Monteith calculation verified against field climate data", method: "Independent agronomist review of CWR calculation memo", frequency: "Once at 30%", responsible: "Agronomist", type: "Hold" },
+      { checkpoint: "Canal Hydraulic Acceptance", criterion: "Discharge at design flow; seepage rate ≤ allowable loss", method: "Gauging at head works and tail of reach; seepage test", frequency: "Each canal reach", responsible: "Resident Engineer", type: "Witness" },
+    ];
+  }
+  if (/mining|JORC|tailings|ore.*body|mine.*plan|mineral.*resource/i.test(s)) {
+    return [
+      ...generic,
+      { checkpoint: "Competent-Person Review", criterion: "JORC resource estimate complies with JORC Code; all modifying factors documented", method: "Independent competent-person review and sign-off", frequency: "Once at resource classification stage", responsible: "Resource Geologist", type: "Hold" },
+      { checkpoint: "Slope-Stability Acceptance", criterion: "Factor of Safety ≥ minimum per MAC/ANCOLD guidelines for all failure modes", method: "Slope-stability analysis (three methods); peer review", frequency: "Pit or underground design freeze", responsible: "Geotechnical Engineer", type: "Hold" },
+    ];
+  }
+  if (/port|berth|quay|maritime|dredging|harbour|nautical/i.test(s)) {
+    return [
+      ...generic,
+      { checkpoint: "Nautical Simulation Acceptance", criterion: "Berth layout confirmed safe for design vessel in design met-ocean condition", method: "Fast-time nautical simulation witnessed by harbour master", frequency: "Before structural design freeze", responsible: "Nautical Safety Specialist", type: "Hold" },
+      { checkpoint: "Dredge Volume Acceptance", criterion: "Dredge volume and disposal characterisation confirmed; disposal site approved by regulator", method: "Sediment sampling lab results; regulator pre-consultation record", frequency: "Before dredge contract award", responsible: "Environmental Specialist", type: "Hold" },
+    ];
+  }
+  if (/HAZOP|P&ID|pipeline.*design|oil.*facilit|gas.*facilit|petrochemical|upstream.*petroleum/i.test(s)) {
+    return [
+      ...generic,
+      { checkpoint: "HAZOP Action Register Closure", criterion: "All HAZOP actions closed or formally deferred with risk owner and date", method: "HAZOP action register audit by Lead Process Engineer", frequency: "Before construction release", responsible: "HAZOP Facilitator", type: "Hold" },
+      { checkpoint: "NDE & Hydrotest", criterion: "Weld NDE pass rate 100%; hydrotest held at 1.25× MAOP for 4 hours", method: "RT/UT NDE per ASME B31; hydrotest per procedure", frequency: "Each weld / each test section", responsible: "Resident Engineer", type: "Witness" },
+    ];
+  }
+  if (/KYC|AML|core.*banking|microfinance|IFRS|Basel|fintech|payment.*system/i.test(s)) {
+    return [
+      ...generic,
+      { checkpoint: "Regulatory Compliance Gate", criterion: "Licensed legal counsel confirms no outstanding regulatory non-conformances", method: "Legal counsel sign-off memo issued before go-live", frequency: "Before go-live", responsible: "Lead Regulatory Compliance Specialist", type: "Hold" },
+      { checkpoint: "Data Migration Reconciliation", criterion: "Reconciliation report shows zero unresolved discrepancies between source and target systems", method: "Three-way reconciliation (source, migration log, target)", frequency: "End of each parallel-run cycle", responsible: "Data Migration Lead", type: "Hold" },
+    ];
+  }
+  if (/spectrum|broadband|LTE|5G|base.*station|backhaul|mobile.*network/i.test(s)) {
+    return [
+      ...generic,
+      { checkpoint: "RF Coverage Drive-Test", criterion: "Coverage KPIs (RSRP, SINR, throughput) met across ≥ 95% of service area", method: "Drive-test with calibrated measurement equipment; map overlay against model", frequency: "After cluster commissioning", responsible: "Commissioning/Test Engineer", type: "Hold" },
+      { checkpoint: "Backhaul Path Availability", criterion: "Microwave path availability ≥ 99.99% per ITU-R P.530 calculation", method: "Path availability calculation review; link-budget audit", frequency: "Each microwave hop", responsible: "Backhaul/Transmission Engineer", type: "Hold" },
     ];
   }
   return generic;

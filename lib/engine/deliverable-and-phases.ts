@@ -205,7 +205,21 @@ function phaseSpecsForSector(sector: string, totalDays: number): PhaseSpec[] {
             ? "topographic survey, geotechnical investigation, traffic count, drainage condition assessment"
             : /urban/.test(s.toLowerCase())
               ? "GIS land-use mapping, demographic data collection, infrastructure inventory, demand assessment"
-              : "baseline data collection, technical-condition logging, gap mapping",
+              : /energy|power.*plant|\bsolar\b|wind.*farm|substation|hydropower|electrification/i.test(s)
+                ? "load-forecast memo, P50/P90 yield modelling, site reconnaissance, grid-connection pre-application"
+                : /agri|irrigation|WUA|command.*area/i.test(s)
+                  ? "FAO Penman-Monteith crop-water requirement, 20-year flow record review, command-area mapping"
+                  : /mining|JORC|tailings|ore.*body|mine.*plan/i.test(s)
+                    ? "resource estimation, block-model development, geotechnical investigation scoping"
+                    : /port|berth|quay|maritime|dredging|harbour/i.test(s)
+                      ? "met-ocean analysis, bathymetric survey, geotechnical investigation, nautical simulation brief"
+                      : /HAZOP|P&ID|pipeline.*design|oil.*facilit|gas.*facilit/i.test(s)
+                        ? "design basis memorandum, P&ID development, HAZOP study, LOPA analysis"
+                        : /KYC|AML|core.*banking|microfinance|IFRS|Basel/i.test(s)
+                          ? "regulatory gap analysis, target operating model design, data-quality assessment"
+                          : /spectrum|broadband|LTE|5G|base.*station|backhaul/i.test(s)
+                            ? "traffic demand modelling, RF coverage simulation, spectrum licensing roadmap"
+                            : "baseline data collection, technical-condition logging, gap mapping",
     },
     {
       title: "Phase 3: Concept and Schematic Design / Scenario Development",
@@ -218,7 +232,21 @@ function phaseSpecsForSector(sector: string, totalDays: number): PhaseSpec[] {
           ? "demand-projection memo, hydraulic-network sketch, source-yield interpretation, treatment-process selection"
           : /road/.test(s.toLowerCase())
             ? "alignment options, pavement-design alternatives, drainage strategy, road-safety framework"
-            : "concept layouts, scenario evaluation matrix, preferred-option memo, stakeholder consultation log",
+            : /energy|power.*plant|\bsolar\b|wind.*farm|substation|hydropower|electrification/i.test(s)
+              ? "single-line diagram, technology-selection report, SKM/ETAP load-flow model, protection relay coordination study"
+              : /agri|irrigation|WUA|command.*area/i.test(s)
+                ? "irrigation network layout options, diversion/weir structure concept, WUA governance draft framework"
+                : /mining|JORC|tailings|ore.*body|mine.*plan/i.test(s)
+                  ? "pit or underground design options, slope-stability analysis (three methods), TSF concept design"
+                  : /port|berth|quay|maritime|dredging|harbour/i.test(s)
+                    ? "berth layout options, fast-time nautical simulation brief, dredge volume estimate, ISPS compliance outline"
+                    : /HAZOP|P&ID|pipeline.*design|oil.*facilit|gas.*facilit/i.test(s)
+                      ? "P&ID development, HAZOP study with action register, LOPA for high-severity nodes"
+                      : /KYC|AML|core.*banking|microfinance|IFRS|Basel/i.test(s)
+                        ? "system architecture document, integration plan, RBAC/encryption design, UAT protocol"
+                        : /spectrum|broadband|LTE|5G|base.*station|backhaul/i.test(s)
+                          ? "base-station siting plan, backhaul design with path availability calculations, site acquisition list"
+                          : "concept layouts, scenario evaluation matrix, preferred-option memo, stakeholder consultation log",
     },
     {
       title: "Phase 4: Detailed Design / Methodology Execution",
@@ -231,7 +259,21 @@ function phaseSpecsForSector(sector: string, totalDays: number): PhaseSpec[] {
           ? "EPANET-verified network, pump-station detail design, treatment-plant process drawings, structural calculations"
           : /road/.test(s.toLowerCase())
             ? "AASHTO/ERA pavement design, drainage detail design, structural design (culverts/bridges), tender BOQ"
-            : "detailed scenario, implementation roadmap, regulatory-alignment memo, capacity-building plan",
+            : /energy|power.*plant|\bsolar\b|wind.*farm|substation|hydropower|electrification/i.test(s)
+              ? "full engineering design package (civil/structural, electrical, SCADA), grid-code compliance dossier, procurement BOQ"
+              : /agri|irrigation|WUA|command.*area/i.test(s)
+                ? "irrigation network detail design, diversion/weir structural calculations, WUA governance framework, tender BOQ"
+                : /mining|JORC|tailings|ore.*body|mine.*plan/i.test(s)
+                  ? "mine plan, TSF detailed design, regulatory submission package, procurement BOQ"
+                  : /port|berth|quay|maritime|dredging|harbour/i.test(s)
+                    ? "berth structural design, dredge disposal plan, shore-power layout, ISPS compliance documentation, BOQ"
+                    : /HAZOP|P&ID|pipeline.*design|oil.*facilit|gas.*facilit/i.test(s)
+                      ? "pipeline stress analysis, cathodic-protection design, civil/structural drawings, vendor data requirements matrix"
+                      : /KYC|AML|core.*banking|microfinance|IFRS|Basel/i.test(s)
+                        ? "UAT execution, data migration with reconciliation, legal counsel regulatory compliance confirmation"
+                        : /spectrum|broadband|LTE|5G|base.*station|backhaul/i.test(s)
+                          ? "network design package, EMR compliance dossier, installation supervision procedures, drive-test protocol"
+                          : "detailed scenario, implementation roadmap, regulatory-alignment memo, capacity-building plan",
     },
     {
       title: "Phase 5: Internal QA, Independent Peer Review, and Client Comments",
