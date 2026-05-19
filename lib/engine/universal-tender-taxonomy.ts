@@ -16,7 +16,13 @@ export type ServiceCapability =
   | "TRANSPORT_INFRASTRUCTURE"
   | "BUILDING_FACILITIES"
   | "PROCUREMENT_ADVISORY"
-  | "TRAINING_CAPACITY_BUILDING";
+  | "TRAINING_CAPACITY_BUILDING"
+  | "POWER_SYSTEMS_ENGINEERING"
+  | "RESOURCE_GEOLOGY"
+  | "MARITIME_ENGINEERING"
+  | "PROCESS_ENGINEERING"
+  | "REGULATORY_COMPLIANCE_ADVISORY"
+  | "TELECOMS_PLANNING";
 
 export type TenderForm =
   | "EOI"
@@ -42,7 +48,12 @@ export type SectorDomain =
   | "PUBLIC_ADMINISTRATION"
   | "ICT_DIGITAL"
   | "LOGISTICS_WAREHOUSING"
-  | "GENERAL_BUILDINGS";
+  | "GENERAL_BUILDINGS"
+  | "MINING_EXTRACTIVE"
+  | "PORT_MARITIME"
+  | "OIL_GAS"
+  | "FINANCIAL_SERVICES"
+  | "TELECOMS_BROADBAND";
 
 export type UniversalTenderProfile = {
   serviceCapabilities: ServiceCapability[];
@@ -72,6 +83,12 @@ const SERVICE_PATTERNS: PatternMap<ServiceCapability> = {
   BUILDING_FACILITIES: [/building/i, /facility/i, /office/i, /hospital/i, /school/i, /warehouse/i, /campus/i, /complex/i, /center/i, /centre/i],
   PROCUREMENT_ADVISORY: [/procurement/i, /bid\s+evaluation/i, /tender\s+document/i, /employer'?s\s+requirements/i, /evaluation\s+criteria/i],
   TRAINING_CAPACITY_BUILDING: [/training/i, /capacity\s+building/i, /workshop/i, /knowledge\s+transfer/i, /institutional\s+strengthening/i],
+  POWER_SYSTEMS_ENGINEERING: [/load[-\s]?flow/i, /protection\s+relay/i, /single[-\s]?line\s+diagram/i, /\bscada\b/i, /grid[-\s]?code/i, /p50/i, /p90/i, /\bfat\b.*\bsat\b|\bsat\b.*\bfat\b/i],
+  RESOURCE_GEOLOGY: [/\bjorc\b/i, /resource\s+estim/i, /block\s+model/i, /competent\s+person/i, /tailings\s+facilit/i, /slope\s+stability/i, /tsf\b/i],
+  MARITIME_ENGINEERING: [/met[-\s]?ocean/i, /bathymetric/i, /nautical\s+simul/i, /dredge\s+volume/i, /berth\s+design/i, /shore[-\s]?power/i],
+  PROCESS_ENGINEERING: [/hazop/i, /p&id/i, /lopa/i, /pipeline\s+stress/i, /cathodic\s+protect/i, /caesar\s+ii/i, /\bpsi\b/i, /ili\s+programme/i],
+  REGULATORY_COMPLIANCE_ADVISORY: [/\bkyc\b/i, /\baml\b/i, /\brbac\b/i, /data\s+migrat/i, /parallel[-\s]?run/i, /\bifrs\b/i, /\bbasel\b/i, /regulatory\s+gap/i],
+  TELECOMS_PLANNING: [/spectrum\s+licens/i, /rf\s+coverage/i, /drive[-\s]?test/i, /\brsrp\b/i, /backhaul\s+design/i, /path\s+availab/i, /\bsar\b.*emr|\bemr\b/i],
 };
 
 const TENDER_FORM_PATTERNS: PatternMap<TenderForm> = {
@@ -98,8 +115,13 @@ const SECTOR_PATTERNS: PatternMap<SectorDomain> = {
   AGRICULTURE_RURAL: [/agricultur/i, /rural/i, /irrigation/i, /livestock/i, /agribusiness/i, /food\s+security/i],
   PUBLIC_ADMINISTRATION: [/government/i, /public\s+sector/i, /institutional/i, /ministry/i, /authority/i, /administration/i],
   ICT_DIGITAL: [/ict/i, /digital/i, /software/i, /platform/i, /database/i, /erp/i, /mis/i, /information\s+system/i],
-  LOGISTICS_WAREHOUSING: [/warehouse/i, /logistics/i, /cargo/i, /freight/i, /terminal/i, /supply\s+chain/i, /storage/i],
+  LOGISTICS_WAREHOUSING: [/warehouse/i, /logistics/i, /cargo/i, /freight/i, /supply\s+chain/i, /storage/i],
   GENERAL_BUILDINGS: [/building/i, /facility/i, /office/i, /complex/i, /centre/i, /center/i],
+  MINING_EXTRACTIVE: [/mining/i, /\bjorc\b/i, /tailings/i, /ore\s+body/i, /mine\s+plan/i, /mineral\s+resource/i, /quarry/i, /extractive/i],
+  PORT_MARITIME: [/\bport\b/i, /berth/i, /quay/i, /maritime/i, /dredging/i, /harbour/i, /\bisps\b/i, /nautical/i],
+  OIL_GAS: [/\bhazop\b/i, /p&id/i, /pipeline\s+design/i, /oil\s+facilit/i, /gas\s+facilit/i, /petrochemical/i, /upstream\s+petroleum/i, /refinery/i],
+  FINANCIAL_SERVICES: [/\bkyc\b/i, /\baml\b/i, /core\s+banking/i, /microfinance/i, /\bifrs\b/i, /\bbasel\b/i, /fintech/i, /payment\s+system/i, /prudential/i],
+  TELECOMS_BROADBAND: [/spectrum/i, /broadband/i, /\blte\b/i, /\b5g\b/i, /base\s+station/i, /backhaul/i, /mobile\s+network/i, /telecoms\b/i, /\brf\b\s+plan/i],
 };
 
 function unique<T extends string>(items: T[]): T[] {
