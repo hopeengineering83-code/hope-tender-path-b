@@ -347,7 +347,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       };
       const c = company as typeof company & _CompanyFields;
 
-      const aiInput = {
+      const criterionEvidenceMap = buildCriterionEvidenceMap(intelligence.evaluationWeights, projects, experts);
+
+      const aiInputBase = {
         tenderTitle: tender.title,
         clientName: intelligence.clientName,
         tenderText: [BENCHMARK_CONTEXT_LINES.join("\n"), tenderText].join("\n\n"),

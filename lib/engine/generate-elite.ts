@@ -76,6 +76,8 @@ import { injectJvDisclosure } from "./jv-disclosure";
 import { deduplicateTables, injectQaThresholds, injectAppendixReadinessRegister } from "./advanced-quality-passes";
 import { generateExpertCvDocx, expertCvFileName } from "./expert-cv-docx";
 import { computeBidStrategy } from "./bid-strategy";
+import { applyAIWriterContractPrompt } from "./ai-writer-contract-prompt";
+import type { TenderSourceDocument } from "./source-grounded-requirement-map";
 
 const BRAND_BLUE = "1F4E79";
 const BRAND_GRAY = "595959";
@@ -1621,6 +1623,34 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
         ),
         toolUse: aiToolUse,
       };
+
+      const contractInput = {
+        tenderTitle: cleanedTenderTitle,
+        clientName: intelligence.clientName,
+        requirements: requirementLines,
+        expertLines,
+        projectLines,
+        companyEvidenceLines,
+        projectEvidenceLines,
+        complianceLines,
+        differentiators: intelligence.differentiators,
+        evaluationCriteria: intelligence.evaluationCriteria,
+        submissionRules: intelligence.submissionRules,
+        selectedExpertCount: tender.expertMatches.length,
+        selectedProjectCount: tender.projectMatches.length,
+        reviewedExpertCount: experts.length,
+        reviewedProjectCount: projects.length,
+        tenderSources: tender.files.map((file, index) => ({
+          id: `tender-file-${index + 1}`,
+          name: file.originalFileName || `Tender File ${index + 1}`,
+          text: file.extractedText || "",
+        })) as TenderSourceDocument[],
+      };
+
+      const aiInput = applyAIWriterContractPrompt({
+        aiInput: aiInputBase,
+        contractInput,
+      });
 
       sourceMarkdown = await withProposalAiTimeout(
         useParallel
