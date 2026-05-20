@@ -1552,6 +1552,8 @@ export async function generateBenchmarkProposalWithAI(params: AIBidWriterInput):
   const isHighRise = /high.rise.*build|multi.stor.*build|tower.*build.*design|\bG\+\d{2,}\b|basement.*podium|tall.*build.*design|supertall|skyscraper/i.test(allText);
   const isHospitality = /hotel.*design|resort.*design|lodge.*design|hospitality.*facilit|guesthouse.*design|five.star.*hotel|luxury.*hotel.*develop/i.test(allText);
   const isQCBS = /\bQCBS\b|quality.*cost.*based.*selection|quality.?based.*selection|\bQBS\b|technical.*score.*threshold|technical.*pass.*mark|financial.*envelope|financial.*proposal.*not.*open/i.test(allText);
+  const isSupervision = /construction.*supervision|resident.*engineer|contract.*administration|site.*supervision|supervision.*consultant|engineer.*representative|contract.*manager/i.test(allText);
+  const isGeotechnical = /geotechnical.*investigation|soil.*investigation|site.*investigation|ground.*investigation|borehole.*programme|subsoil.*investigation|geotechnical.*study|foundation.*investigation/i.test(allText);
 
   const tenderSections = extractTenderSections(params.tenderText);
   const exactEmails = Array.from(
@@ -1805,6 +1807,27 @@ HOSPITALITY & HOTEL DESIGN GUIDANCE (mandatory for this tender):
 - Sustainability: water consumption target ≤200 L/guest-night; GSTC criteria alignment; local sourcing ≥40% of F&B spend.`
     : "";
 
+  const supervisionGuidance = isSupervision
+    ? `
+CONSTRUCTION SUPERVISION & CONTRACT ADMINISTRATION GUIDANCE (mandatory for this tender):
+- Cover letter and Executive Summary MUST cite the company's strongest comparable supervision/contract administration assignment by name, contract value supervised, duration, procurement standard (FIDIC/MoW), and client from the evidence.
+- Technical Approach must address: Inspection and Test Plan (ITP) issuance on day one; daily/weekly site inspection regime; material/shop-drawing approval workflow; non-conformance report (NCR) protocol; variation-order assessment and certification timeline (target ≤10 days); interim payment certificate preparation and submission schedule; S-curve and cash-flow tracking in monthly progress reports; defects notification and close-out register.
+- Quality system: ISO 9001-aligned QA plan submitted to client within 14 days of mobilisation; independent audit of high-risk structural elements at defined hold points.
+- FIDIC compliance: Clause 3.1 Engineer's Representative authority; Clause 13 Variations management; Clause 14 Payment certification; Clause 20 Claims and dispute avoidance board.
+- Staffing: Resident Engineer with FIDIC accreditation; structural, MEP, and QA inspectors proportionate to contract scope; dedicated document controller.
+- Handover: punch-list protocol, substantial completion certificate, defects liability inspection schedule, final account preparation, and completion report with photographic record.`
+    : "";
+
+  const geotechnicalGuidance = isGeotechnical
+    ? `
+GEOTECHNICAL INVESTIGATION GUIDANCE (mandatory for this tender):
+- Cover letter and Executive Summary MUST cite the company's strongest comparable geotechnical investigation assignment by name, number of boreholes, founding depth, soil conditions encountered, client, and ETB/contract value from the evidence.
+- Technical Approach must address: desk study (geological maps, hydrogeological records, previous investigation reports), borehole/trial-pit programme design (depth, spacing, sampling intervals calibrated to structure footprint and anticipated loading), SPT at 1.5 m intervals, undisturbed sampling for laboratory testing, permeability/falling-head tests where groundwater is encountered.
+- Laboratory programme: grain-size distribution, Atterberg limits, natural moisture content, compaction characteristics, unconfined compressive strength, triaxial shear strength, CBR (for road/pavement elements). Accredited laboratory must be confirmed before testing commences.
+- Analysis: bearing-capacity calculation (Terzaghi/Meyerhof/EC7), settlement analysis (immediate and long-term), liquefaction susceptibility index (for seismic zone), slope-stability check (Bishop simplified) where terrain requires, pile capacity recommendation with factors of safety.
+- Deliverable: geotechnical investigation report with executive summary, borehole logs, laboratory results, interpreted soil profile, and foundation type recommendation; independent peer review before issue.`
+    : "";
+
   const eoiGuidance = isEOI
     ? `
 NOTE: This tender is an EXPRESSION OF INTEREST (EOI). Structure accordingly: Company Profile → Relevant Experience (3–5 named projects) → Team Qualifications (key experts, qualifications, years of experience) → Company Capacity statement. EOI proposals should be concise (typically 5–15 pages), qualification-heavy, and should NOT include detailed methodology or financial data unless explicitly requested.`
@@ -1863,6 +1886,7 @@ AfDB / AFD PROCUREMENT GUIDANCE (mandatory for this tender):
     energyGuidance, agricultureGuidance, miningGuidance, portGuidance,
     oilGasGuidance, financialGuidance, telecomsGuidance,
     heritageGuidance, industrialGuidance, highRiseGuidance, hospitalityGuidance,
+    supervisionGuidance, geotechnicalGuidance,
     eoiGuidance, qcbsGuidance, worldBankGuidance, undpGuidance, afdbGuidance,
   ].filter(Boolean).join("\n\n");
 
@@ -1895,6 +1919,18 @@ AfDB / AFD PROCUREMENT GUIDANCE (mandatory for this tender):
     ? `"4 Core Banking Implementations | KYC/AML Framework Specialists | Data Migration Proven | Regulatory Compliance Track Record"`
     : isTelecoms
     ? `"3 Network Rollouts Delivered | RF Propagation Specialists | Spectrum Regulatory Support | NOC KPI Dashboard Implemented"`
+    : isHeritage
+    ? `"5 Heritage Conservation Projects | Conservation Management Plan Specialists | Minimal-Intervention Design | Photogrammetric Survey Capability"`
+    : isIndustrial
+    ? `"6 Industrial Facilities Designed | Process Engineering In-house | HAZOP-Reviewed Design | Commissioning Protocol Proven"`
+    : isHighRise
+    ? `"4 High-Rise Buildings Designed | Dynamic Wind & Seismic Analysis | BIM Coordination In-house | Curtain-Wall Specification Proven"`
+    : isHospitality
+    ? `"5 Hospitality Projects Delivered | Brand-Standard Compliance | FF&E Coordination | Pre-Opening Commissioning Proven"`
+    : isSupervision
+    ? `"12 Contracts Supervised | FIDIC-Accredited Resident Engineers | ITP & NCR System | ETB 1B+ Contract Value Under Supervision"`
+    : isGeotechnical
+    ? `"50+ Boreholes Completed | Accredited Geotechnical Laboratory | Bearing Capacity & Settlement Analysis | Site Investigation Report Delivery Proven"`
     : isDonor
     ? `"10+ Donor-Funded Projects Delivered | World Bank / UNDP Track Record | ISO-Aligned Quality System | FIDIC-Compliant Contract Administration"`
     : `"10+ Major Projects Delivered | Multidisciplinary Expert Team | Evidence-Backed Technical Approach | ISO-Aligned Quality System"`;

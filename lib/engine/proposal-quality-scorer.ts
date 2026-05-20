@@ -97,6 +97,13 @@ const SECTOR_VOCAB: Record<string, RegExp[]> = {
   financial: [/\bKYC\b/i, /\bAML\b/i, /Basel/i, /credit risk/i, /\bIFRS\b/i, /prudential/i, /core banking/i, /\bMFI\b/i, /(?:digital|mobile)\s+wallet/i, /\bNPL\b\s+ratio/i, /capital\s+adequacy/i, /interchange\s+fee/i],
   telecoms: [/spectrum/i, /base station/i, /LTE|5G|4G/i, /backhaul/i, /last.mile/i, /\bMVNO\b/i, /core network/i, /\bRAN\b/i, /(?:fibre|fiber)\s+(?:rollout|backbone)/i, /universal\s+service/i, /tower\s+co.?location/i, /spectrum\s+auction/i],
   port: [/berth.*design|quay/i, /draft.*vessel/i, /harbor|harbour/i, /pilotage/i, /port master plan/i, /ship.*manifest/i, /terminal.*handling/i, /(?:TEU|teu)\s+(?:capacity|throughput)/i, /(?:RTG|STS)\s+crane/i, /yard\s+layout/i, /dredging\s+volume/i, /mooring\s+(?:dolphin|line)/i],
+  heritage: [/Conservation Management Plan/i, /material\s+(?:analysis|compatibility|investigation)/i, /minimal\s+intervention/i, /reversib(?:le|ility)/i, /photogramm(?:etric|etry)/i, /condition\s+(?:survey|mapping)/i, /heritage\s+(?:significance|authority|register)/i, /historic\s+(?:fabric|structure)/i, /authenticity/i, /lime\s+mortar/i, /(?:ICOMOS|UNESCO)/i],
+  industrial: [/process\s+(?:flow|brief|design)/i, /equipment\s+layout/i, /material.handling/i, /utility\s+(?:demand|schedule)/i, /commissioning\s+protocol/i, /effluent\s+(?:treatment|discharge)/i, /explosion\s+risk/i, /structural\s+loading\s+schedule/i, /maintenance\s+access/i, /fire.*explosion/i, /industrial\s+(?:standard|code)/i],
+  high_rise: [/structural\s+system\s+(?:selection|study)/i, /wind\s+(?:analysis|loading|pressure)/i, /seismic\s+(?:analysis|design|loading)/i, /curtain.?wall/i, /post.tension/i, /core.and.frame/i, /vertical\s+transport/i, /lift\s+traffic\s+analysis/i, /fire.life.safety/i, /BIM.*clash/i, /geotechnical\s+investigation/i, /pile\s+design/i],
+  hospitality: [/brand\s+(?:standard|operator|guidelines)/i, /FF&E/i, /guest\s+(?:experience|flow|room)/i, /pre.opening/i, /back.of.house/i, /Food\s+(?:and|&)\s+Beverage/i, /domestic.hot.water/i, /intelligent\s+(?:lighting|building)/i, /soft.opening/i, /spa|wellness/i, /room\s+(?:mix|count|key)/i],
+  architecture: [/\bBIM\b/i, /design\s+(?:development|intent|brief)/i, /schematic\s+design/i, /construction\s+documentation/i, /specifications?\s+(?:and|&)\s+BOQ/i, /material\s+palette/i, /space\s+programming/i, /adjacency\s+(?:diagram|matrix)/i, /daylighting/i, /façade/i, /interior\s+(?:design|specification|finish)/i, /FF&E|furniture/i],
+  supervision: [/FIDIC/i, /inspection\s+(?:and|&)\s+test\s+plan|ITP/i, /non.conformance/i, /variation\s+order/i, /payment\s+certif/i, /progress\s+(?:report|monitoring)/i, /S.curve/i, /defects?\s+(?:liability|notification|register)/i, /contract\s+admin/i, /snag(?:ging)?/i, /substantial\s+completion/i, /punch\s+list/i],
+  geotechnical: [/borehole/i, /\bSPT\b/i, /bearing\s+capacity/i, /settlement\s+(?:analysis|calculation)/i, /Atterberg/i, /triaxial/i, /\bCBR\b/i, /liquefaction/i, /soil\s+classification/i, /groundwater/i, /shear\s+strength/i, /pile\s+(?:capacity|design|type)/i],
 };
 
 // Keep this list aligned with hasForbiddenWeakness() in proposal-benchmark-guard.ts.
@@ -182,6 +189,13 @@ function detectSector(primarySector: string): string {
   if (/kyc|aml|core.*banking|microfinance|ifrs|basel|fintech|payment.*system/.test(s)) return "financial";
   if (/spectrum|broadband|lte|5g|base.*station|backhaul|mobile.*network/.test(s)) return "telecoms";
   if (/transport|logistic|shipping|aviation|rail/.test(s)) return "transport";
+  if (/heritage|conservation|historic.*build|monument|preservation|restore.*build/.test(s)) return "heritage";
+  if (/industrial|manufactur|factory|process.*facilit|warehouse.*facilit/.test(s)) return "industrial";
+  if (/high.?rise|tall.*build|tower.*build|multi.?stor.*build/.test(s)) return "high_rise";
+  if (/hospitality|hotel|resort|tourism.*facilit|lodge|serviced.*apart/.test(s)) return "hospitality";
+  if (/supervis|contract.*admin|resident.*engineer|site.*supervis/.test(s)) return "supervision";
+  if (/geotech|soil.*invest|borehole|ground.*invest|site.*invest|subsoil/.test(s)) return "geotechnical";
+  if (/interior.*design|fit.?out|interior.*architect/.test(s)) return "architecture";
   if (/building|construct|architect|structure|facility|facilities/.test(s)) return "building";
   if (/institution|reform|governance|capacity|public sector|ministry/.test(s)) return "institutional";
   if (/finance|bank|micro.?finance|insurance|credit|lending|investment fund/.test(s)) return "financial";
