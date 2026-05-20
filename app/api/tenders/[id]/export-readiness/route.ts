@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
-import { checkFullExportReadiness, exportReadinessError } from "../../../../../lib/engine/export-readiness";
+import { checkFullExportReadiness, deriveTenderLevelExportHardBlockers, exportReadinessError } from "../../../../../lib/engine/export-readiness";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 10;
@@ -63,13 +63,22 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     severity: severityForReasons(failure.reasons),
     nextActions: failure.reasons.map(nextActionForReason),
   }));
-  const tenderLevelBlockers = readiness.tenderLevelBlockers ?? [];
+  const tenderLevelBlockers = [
+    ...(readiness.tenderLevelBlockers ?? []),
+    ...deriveTenderLevelExportHardBlockers({
+      activeDocuments: tender.generatedDocuments.length,
+      tenderStatus: tender.status,
+      tenderStage: tender.stage,
+      readinessScore: tender.readinessScore,
+    }),
+  ];
+  const exportOk = readiness.ok && tenderLevelBlockers.length === 0;
   const totalBlockers = documentBlockers.length + tenderLevelBlockers.length;
 
   return NextResponse.json({
     success: true,
     exportReadiness: {
-      ok: readiness.ok,
+      ok: exportOk,
       tender: {
         id: tender.id,
         title: tender.title,
@@ -85,7 +94,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       },
       documentBlockers,
       tenderLevelBlockers,
-      message: readiness.ok ? "Export gate passed. All active generated documents and tender-level controls are ready." : exportReadinessError(readiness.failures, tenderLevelBlockers),
+      message: exportOk ? "Export gate passed. All active generated documents and tender-level controls are ready." : exportReadinessError(readiness.failures, tenderLevelBlockers),
     },
   });
 }

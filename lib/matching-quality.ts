@@ -60,6 +60,11 @@ export type MatchingQualityReport = {
   recommendations: string[];
 };
 
+export function isReadyForGenerationFromMatchingQuality(report: MatchingQualityReport): boolean {
+  if (report.state === "VAULT_AWAITS_ENGINE") return false;
+  return report.severity !== "POOR";
+}
+
 function hasNumericScore(value: number | null | undefined): boolean {
   return value !== null && value !== undefined && Number.isFinite(Number(value));
 }

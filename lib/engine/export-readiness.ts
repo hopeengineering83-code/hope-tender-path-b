@@ -25,6 +25,40 @@ export type ExportReadinessResult = {
   tenderLevelBlockers?: Array<{ category: string; severity: string; title: string; recommendedAction?: string | null }>;
 };
 
+export function deriveTenderLevelExportHardBlockers(input: {
+  activeDocuments: number;
+  tenderStatus?: string | null;
+  tenderStage?: string | null;
+  readinessScore?: number | null;
+}): NonNullable<ExportReadinessResult["tenderLevelBlockers"]> {
+  const blockers: NonNullable<ExportReadinessResult["tenderLevelBlockers"]> = [];
+  if (input.activeDocuments === 0) {
+    blockers.push({
+      category: "EXPORT_BASELINE",
+      severity: "HIGH",
+      title: "NO_ACTIVE_GENERATED_DOCUMENTS",
+      recommendedAction: "Generate required tender documents before attempting export.",
+    });
+  }
+  if ((input.tenderStage ?? "").toUpperCase() === "ANALYSIS" || (input.tenderStatus ?? "").toUpperCase() === "ANALYZED") {
+    blockers.push({
+      category: "EXPORT_BASELINE",
+      severity: "HIGH",
+      title: "FULL_PROPOSAL_NOT_READY",
+      recommendedAction: "Run Engine and generate/review proposal documents before final export.",
+    });
+  }
+  if ((input.readinessScore ?? 0) <= 0) {
+    blockers.push({
+      category: "EXPORT_BASELINE",
+      severity: "MEDIUM",
+      title: "READINESS_SCORE_ZERO",
+      recommendedAction: "Resolve readiness blockers before final export.",
+    });
+  }
+  return blockers;
+}
+
 function generatedFileName(name: string): string {
   return `${name.replace(/[^a-zA-Z0-9]/g, "-")}.docx`;
 }

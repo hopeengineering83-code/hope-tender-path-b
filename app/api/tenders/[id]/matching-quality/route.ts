@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSession } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
-import { assessMatchingQuality } from "../../../../../lib/matching-quality";
+import { assessMatchingQuality, isReadyForGenerationFromMatchingQuality } from "../../../../../lib/matching-quality";
 import { ensureCompanyForUser } from "../../../../../lib/company-workspace";
 import { getCompanyIngestionReadiness } from "../../../../../lib/company-ingestion-readiness";
 
@@ -44,5 +44,10 @@ export async function GET(
     vaultReviewedProjects: companyReadiness.totals.reviewedProjects,
   });
 
-  return NextResponse.json({ tenderId: id, readyForGeneration: quality.severity !== "POOR", quality });
+  return NextResponse.json({
+    tenderId: id,
+    readyForMatchingAttempt: true,
+    readyForGeneration: isReadyForGenerationFromMatchingQuality(quality),
+    quality,
+  });
 }
