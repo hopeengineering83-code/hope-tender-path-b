@@ -456,8 +456,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         submissionRules: intelligence.submissionRules,
         selectedExpertCount: tender.expertMatches.length,
         selectedProjectCount: tender.projectMatches.length,
-        reviewedExpertCount: experts.length,
-        reviewedProjectCount: projects.length,
+        reviewedExpertCount: experts.filter((expert) => expert.trustLevel === "REVIEWED").length,
+        reviewedProjectCount: projects.filter((project) => project.trustLevel === "REVIEWED").length,
         tenderSources,
       };
       const aiInput = applyAIWriterContractPrompt({
