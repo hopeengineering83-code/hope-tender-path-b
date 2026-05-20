@@ -298,19 +298,24 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
   }
   // Full proposal also requires reviewed selected evidence when the tender
   // demands experts/projects — not just vault fallback availability.
-  if (expertRequirementExists && reviewedSelectedExperts.length === 0 && reviewedExpertMatches.length === 0) {
-    fullProposalBlockers.push({
-      code: "FULL_PROPOSAL_NO_REVIEWED_EXPERTS",
-      message: "Full proposal generation is blocked: tender requires experts but no reviewed expert matches exist for this tender.",
-      nextAction: "OPEN_KNOWLEDGE_REVIEW",
-    });
-  }
-  if (projectRequirementExists && reviewedSelectedProjects.length === 0 && reviewedProjectMatches.length === 0) {
-    fullProposalBlockers.push({
-      code: "FULL_PROPOSAL_NO_REVIEWED_PROJECTS",
-      message: "Full proposal generation is blocked: tender requires project references but no reviewed project matches exist for this tender.",
-      nextAction: "OPEN_KNOWLEDGE_REVIEW",
-    });
+  // Skip these when the engine hasn't run yet (VAULT_AWAITS_ENGINE) — the
+  // FULL_PROPOSAL_ENGINE_NOT_RUN blocker already covers that root cause and
+  // these would only repeat the same underlying problem with different wording.
+  if (matchingQuality.state !== "VAULT_AWAITS_ENGINE") {
+    if (expertRequirementExists && reviewedSelectedExperts.length === 0 && reviewedExpertMatches.length === 0) {
+      fullProposalBlockers.push({
+        code: "FULL_PROPOSAL_NO_REVIEWED_EXPERTS",
+        message: "Full proposal generation is blocked: tender requires experts but no reviewed expert matches exist for this tender.",
+        nextAction: "OPEN_KNOWLEDGE_REVIEW",
+      });
+    }
+    if (projectRequirementExists && reviewedSelectedProjects.length === 0 && reviewedProjectMatches.length === 0) {
+      fullProposalBlockers.push({
+        code: "FULL_PROPOSAL_NO_REVIEWED_PROJECTS",
+        message: "Full proposal generation is blocked: tender requires project references but no reviewed project matches exist for this tender.",
+        nextAction: "OPEN_KNOWLEDGE_REVIEW",
+      });
+    }
   }
   // Inherit hard blockers from the support-package gate — but dedupe by
   // TOPIC, not by exact message string.
