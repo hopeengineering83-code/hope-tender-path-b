@@ -50,6 +50,7 @@ export async function getCanonicalTenderReadiness(client: PrismaClient, userId: 
 
   const blockers = [
     ...readiness.fullProposalBlockers.map((b) => b.code),
+    ...(matching.state === "VAULT_AWAITS_ENGINE" ? ["ENGINE_NOT_COMPLETED"] : []),
     ...(expertRequirementExists && tender.expertMatches.length === 0 ? ["NO_TENDER_SPECIFIC_EXPERT_MATCHES"] : []),
     ...(projectRequirementExists && tender.projectMatches.length === 0 ? ["NO_TENDER_SPECIFIC_PROJECT_MATCHES"] : []),
     ...(expertRequirementExists && reviewedSelectedExperts === 0 ? ["NO_SELECTED_REVIEWED_EXPERTS"] : []),
