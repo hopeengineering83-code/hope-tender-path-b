@@ -868,7 +868,7 @@ Return ONLY a valid JSON array — no explanation, no markdown. Each element:
   "title": "job title or null",
   "yearsExperience": integer_or_null,
   "disciplines": ["e.g. Structural Engineering, Urban Planning"],
-  "sectors": ["e.g. Healthcare, Government, Infrastructure"],
+  "sectors": ["e.g. Healthcare, Infrastructure, Education, Energy & Power, Water & Sanitation, Mining & Extractive, Port & Maritime, Oil & Gas, Financial Services, Telecoms & Broadband, Agriculture & Irrigation, Urban Planning, Environmental & Social, Industrial"],
   "certifications": ["professional certifications and memberships"],
   "profile": "1-3 sentence professional summary from CV content",
   "sourceSnippet": "verbatim extract ≤500 chars proving this person exists"
@@ -910,7 +910,7 @@ Return ONLY a valid JSON array — no explanation, no markdown. Each element:
   "name": "project name (required — omit if unclear)",
   "clientName": "client name or null",
   "country": "country or null",
-  "sector": "primary sector (Healthcare/Infrastructure/Government/Education/Industrial/Commercial) or null",
+  "sector": "primary sector (Healthcare/Infrastructure/Education/Energy & Power/Water & Sanitation/Mining & Extractive/Port & Maritime/Oil & Gas/Financial Services/Telecoms & Broadband/Agriculture & Irrigation/Urban Planning/Environmental & Social/Industrial/Commercial/Government) or null",
   "serviceAreas": ["services provided e.g. Structural Engineering, Urban Planning"],
   "summary": "1-2 sentence description of project and firm's role",
   "contractValue": number_or_null (plain number, no symbols),
