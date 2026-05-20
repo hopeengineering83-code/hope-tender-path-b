@@ -145,6 +145,9 @@ const SECTOR_KEYWORDS: Array<{ rx: RegExp; sector: string }> = [
   { rx: /\bHAZOP\b|\bP&ID\b|pipeline design|oil facilit|gas facilit|petrochemical|upstream petroleum/i, sector: "Oil & Gas" },
   { rx: /\bKYC\b|\bAML\b|core banking|microfinance|\bIFRS\b|\bBasel\b|fintech|payment system/i, sector: "Financial Services" },
   { rx: /spectrum|broadband|\bLTE\b|\b5G\b|base station|backhaul|mobile network/i, sector: "Telecoms & Broadband" },
+  { rx: /interior design|fit[-\s]?out|space planning|joinery|ceiling.*design|flooring.*spec|finishes.*schedule|furniture.*layout|partition.*design/i, sector: "Architecture & Design" },
+  { rx: /construction supervision|resident engineer|site supervision|quality.*inspector|hold[- ]?point|defect.*liability|site.*inspector/i, sector: "Supervision" },
+  { rx: /contract administration|variation order|interim payment|payment certificate|\bFIDIC\b|claims management|cost control.*contract|quantity survey/i, sector: "Contract Administration" },
 ];
 
 export function extractProjectFacts(summary: string, name?: string): ProjectFactExtraction {

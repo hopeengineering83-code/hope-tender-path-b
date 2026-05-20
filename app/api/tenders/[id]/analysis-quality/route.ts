@@ -3,6 +3,8 @@ import { getSession } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { assessTenderAnalysisQuality } from "../../../../../lib/analysis-quality";
 import { assessMatchingQuality } from "../../../../../lib/matching-quality";
+import { ensureCompanyForUser } from "../../../../../lib/company-workspace";
+import { getCompanyIngestionReadiness } from "../../../../../lib/company-ingestion-readiness";
 
 export const dynamic = "force-dynamic";
 
@@ -21,22 +23,31 @@ export async function GET(
   // exact production bug from the May 16 screenshot where this panel
   // said "Tender analysis appears usable" while the Bid Control Verdict
   // and Generation Readiness panels both said the analysis was poor.
-  const tender = await prisma.tender.findFirst({
-    where: { id, userId },
-    include: {
-      requirements: { orderBy: { createdAt: "asc" } },
-      expertMatches: { include: { expert: { select: { trustLevel: true, fullName: true } } } },
-      projectMatches: { include: { project: { select: { trustLevel: true, name: true } } } },
-      files: { select: { extractedText: true } },
-    },
-  });
+  const [company, tender] = await Promise.all([
+    ensureCompanyForUser(prisma, userId),
+    prisma.tender.findFirst({
+      where: { id, userId },
+      include: {
+        requirements: { orderBy: { createdAt: "asc" } },
+        expertMatches: { include: { expert: { select: { trustLevel: true, fullName: true } } } },
+        projectMatches: { include: { project: { select: { trustLevel: true, name: true } } } },
+        files: { select: { extractedText: true } },
+      },
+    }),
+  ]);
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
 
-  // Derive matching score so analysis-quality reflects matching state.
+  // Pass vault counts so matching-readiness sub-score correctly shows
+  // VAULT_AWAITS_ENGINE state (−18 per type) rather than NO_VAULT
+  // state (−35 per type) when reviewed evidence exists but engine
+  // hasn't been run on this tender yet.
+  const companyReadiness = await getCompanyIngestionReadiness(company.id, {}, prisma);
   const matchingQuality = assessMatchingQuality({
     requirements: tender.requirements,
     expertMatches: tender.expertMatches,
     projectMatches: tender.projectMatches,
+    vaultReviewedExperts: companyReadiness.totals.reviewedExperts,
+    vaultReviewedProjects: companyReadiness.totals.reviewedProjects,
   });
   const extractedTextLength = tender.files.reduce((sum, f) => sum + (f.extractedText?.length ?? 0), 0);
 

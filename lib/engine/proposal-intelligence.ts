@@ -238,79 +238,173 @@ export const PROPOSAL_THEMES: ProposalTheme[] = [
   },
   {
     code: "ENERGY_POWER",
-    label: "Energy, power infrastructure and grid-connected systems",
-    triggers: [/solar.*farm/i, /wind.*farm/i, /hydropower/i, /grid.*connect/i, /renewable.*energy/i, /power.*generation/i, /power.*transmission/i, /substation.*design/i, /grid.*code/i, /\bSCADA\b/i, /load.*forecast/i, /electrification/i],
-    proofTerms: [/energy/i, /power.*plant/i, /solar/i, /wind/i, /grid/i, /substation/i, /transmission/i, /generation/i, /\bSCADA\b/i, /grid.*code/i, /load.*forecast/i],
+    label: "Energy, power generation and grid infrastructure",
+    triggers: [/\benergy\b/i, /power.*plant/i, /\bsolar\b/i, /wind.*farm/i, /grid.*connect/i, /generation/i, /transmission.*line/i, /substation/i, /\bhydropower\b/i, /\belectrification\b/i, /renewable.*energy/i, /power.*system/i, /\bSCADA\b/i, /off.?grid/i],
+    proofTerms: [/energy/i, /solar/i, /wind/i, /hydropower/i, /substation/i, /transmission/i, /grid/i, /generation/i, /SCADA/i, /electrification/i, /renewable/i, /load.*flow/i, /ETAP/i, /SKM/i],
     methodologyBullets: [
-      "load forecast and system configuration: minimum 5-year metered data review, demand growth model, generation/transmission technology selection (renewable vs. diesel vs. hybrid), and single-line diagram development",
-      "electrical design and grid-code compliance: protection relay coordination, equipment specifications (transformers, switchgear, inverters), cable schedules, and grid-code compliance documentation before energisation",
-      "construction supervision and commissioning: SCADA installation, protection relay testing, energisation sign-off, as-built SLD, O&M manual, and operator training with documented handover",
+      "load forecast and demand analysis: load-growth scenario modelling using minimum 5-year consumption data set, P50/P90 yield estimates (solar/wind), and grid-code compliance review",
+      "engineering design: single-line diagram, load-flow and short-circuit analysis (SKM/ETAP), protection relay coordination study, SCADA architecture, civil/structural integration, and environmental management plan",
+      "procurement and commissioning: vendor data requirements matrix, factory acceptance test (FAT) + site acceptance test (SAT) protocols, energisation plan, protection-relay testing, SCADA commissioning, and O&M manual with operator training",
     ],
   },
   {
     code: "AGRICULTURE_IRRIGATION",
-    label: "Agriculture, irrigation schemes and rural development",
-    triggers: [/irrigation.*scheme/i, /agricultur/i, /crop.*water/i, /smallholder.*farm/i, /water.*user.*assoc/i, /\bFAO\b/i, /agri.*project/i, /value.chain.*agri/i, /livestock.*develop/i, /farm.*develop/i],
-    proofTerms: [/irrigation/i, /agricultur/i, /crop/i, /\bFAO\b/i, /agronomic/i, /farm/i, /livestock/i, /WUA/i, /water.*user/i, /scheme.*design/i],
+    label: "Agriculture, irrigation scheme design and rural development",
+    triggers: [/\birrigation\b/i, /agronomic/i, /crop.*water/i, /water.*user.*assoc/i, /\bWUA\b/i, /command.*area/i, /farm.*scheme/i, /agri.*develop/i, /\bagricultural\b/i, /rural.*develop/i, /livestock/i, /food.*security/i],
+    proofTerms: [/irrigation/i, /canal/i, /agronomy/i, /crop/i, /WUA/i, /command.*area/i, /FAO/i, /Penman/i, /hydrological/i, /scheme/i, /agricultural/i, /rural/i],
     methodologyBullets: [
-      "agronomic baseline and hydrological analysis: soil survey, crop-water demand calculation (FAO Penman-Monteith), 20-year flow record review, water availability assessment, and scheme concept development",
-      "irrigation scheme design: canal/pipe network sizing, pump station design, reservoir sizing, drainage for salinity control, BOQ and specifications — linked to agronomic demand, not assumed",
-      "water-user association governance and handover: WUA establishment plan, operator training, O&M manual in local language, willingness-to-pay survey, and value-chain linkage for market access",
+      "hydrological and agronomic baseline: minimum 20-year flow record analysis, FAO Penman-Monteith crop water requirement calculation, soil classification (USDA/FAO), and WUA readiness assessment",
+      "irrigation scheme design: canal or pressurised pipe network design, structure drawings, drainage management plan, water-use efficiency targets, and agronomy recommendations with post-harvest value chain analysis",
+      "construction, commissioning, and institutional support: construction supervision, WUA governance structure, farmer training programme, O&M manual, and project close-out with lessons-learned memo",
     ],
   },
   {
     code: "MINING_EXTRACTIVE",
-    label: "Mining, mineral extraction and geotechnical feasibility",
-    triggers: [/mining.*project/i, /mineral.*extract/i, /quarry.*design/i, /pit.*design/i, /tailings.*facility/i, /ore.*body/i, /blast.*design/i, /mine.*plan/i, /\bJORC\b/i, /slope.*stability/i],
-    proofTerms: [/mining/i, /mineral/i, /\bJORC\b/i, /tailings/i, /slope.*stability/i, /geotechnical/i, /ore.*body/i, /mine.*plan/i, /resource.*estimate/i, /pit.*design/i],
+    label: "Mining, mineral resource assessment and extractive industries",
+    triggers: [/mining/i, /mineral.*resource/i, /\bJORC\b/i, /tailings/i, /ore.*body/i, /pit.*design/i, /slope.*stability/i, /mine.*plan/i, /quarry.*design/i, /blast.*design/i, /geotechnical.*mine/i, /mine.*feasibility/i],
+    proofTerms: [/mining/i, /JORC/i, /tailings/i, /ore/i, /mineral/i, /pit/i, /geotechnical/i, /resource.*estimate/i, /slope/i, /TSF/i, /ANCOLD/i, /MAC/i, /closure/i],
     methodologyBullets: [
-      "geotechnical investigation and JORC resource estimation: phased drilling programme, borehole logging, laboratory testing, block model, geostatistical analysis, and independent competent-person review to JORC Code confidence classification",
-      "mine plan and slope stability: open-pit or underground design optimisation, slope stability analysis (LEM + numerical methods), tailings storage facility design (MAC/ANCOLD guidelines), blast design, and regulatory compliance pathway",
-      "environmental and closure planning: ESIA baseline, community engagement, monitoring programme, closure cost estimate, financial provision mechanism, and regulatory licence submission package",
+      "resource assessment and regulatory setup: geological mapping, block-model resource estimation with independent competent-person review (JORC compliant), geotechnical investigation, environmental baseline, and community engagement plan",
+      "mine plan and infrastructure design: pit design or underground plan, production schedule, tailings storage facility (TSF) per MAC/ANCOLD guidelines, slope-stability analysis (three methods), and environmental and social management plan",
+      "feasibility, permitting, and handover: JORC-compliant resource report, mine-plan drawings, regulatory submission package, financial provision estimate for closure, and monitoring and instrumentation programme",
     ],
   },
   {
     code: "PORT_MARITIME",
-    label: "Port design, maritime infrastructure and dredging",
-    triggers: [/berth.*design/i, /quay.*design/i, /harbour.*develop/i, /dredging.*scheme/i, /container.*terminal/i, /port.*design/i, /port.*master.*plan/i, /nautical.*simulat/i, /\bISPS\b/i, /maritime.*infra/i],
-    proofTerms: [/berth/i, /quay/i, /dredging/i, /harbour/i, /port/i, /vessel/i, /maritime/i, /\bISPS\b/i, /pilotage/i, /throughput/i],
+    label: "Port design, maritime infrastructure and logistics terminals",
+    triggers: [/\bport\b/i, /maritime/i, /berth.*design/i, /quay.*design/i, /harbour.*develop/i, /dredging/i, /container.*terminal/i, /\bISPS\b/i, /\bnautical\b/i, /shipping.*terminal/i, /met.?ocean/i],
+    proofTerms: [/port/i, /berth/i, /quay/i, /dredging/i, /maritime/i, /ISPS/i, /nautical/i, /harbour/i, /fender/i, /bollard/i, /bathymetric/i, /vessel/i],
     methodologyBullets: [
-      "vessel-class confirmation and hydrographic survey: vessel parameters (LOA, beam, DWT, draft) confirmed with port authority, bathymetric survey, met-ocean data, and traffic demand study before design",
-      "berth and infrastructure design: structural berth design (PIANC standards), dredging scope and specification, equipment selection, port master plan phasing, and nautical safety study (mooring analysis, VTS, ISPS compliance)",
-      "construction supervision and handover: dredging monitoring, quay construction hold-points, equipment commissioning, port operations manual, and handover with as-built drawings and O&M documentation",
+      "met-ocean and site characterisation: bathymetric and geotechnical survey, sediment characterisation, vessel-traffic survey, fast-time nautical simulation to validate berth layout and turning basin",
+      "engineering design: berth structural design, dredge volume and disposal plan, shore-power and utilities layout, ISPS compliance documentation, and environmental and social management plan",
+      "procurement, commissioning, and handover: BOQ and equipment specifications (fenders, bollards, crane rails), pre-opening nautical-safety review, ISPS certification process, and O&M manual with emergency procedures",
     ],
   },
   {
     code: "OIL_GAS",
-    label: "Oil & gas, pipeline engineering and process safety",
-    triggers: [/pipeline.*design/i, /oil.*facilit/i, /gas.*facilit/i, /upstream.*petroleum/i, /\bHAZOP\b/i, /\bP&ID\b/i, /refinery.*design/i, /petrochemical.*plant/i, /wellhead.*design/i, /process.*safety/i],
-    proofTerms: [/\bP&ID\b/i, /\bHAZOP\b/i, /pipeline/i, /oil/i, /gas/i, /refinery/i, /petrochemical/i, /\bFEED\b/i, /commissioning/i, /process.*safety/i],
+    label: "Oil and gas, pipeline engineering and process facilities",
+    triggers: [/\bHAZOP\b/i, /\bP&ID\b/i, /pipeline.*design/i, /upstream.*petroleum/i, /oil.*facilit/i, /gas.*facilit/i, /refinery/i, /petrochemical/i, /wellhead/i, /\bLNG\b/i, /\bFEED\b/i, /process.*safety/i, /pipeline.*integrity/i],
+    proofTerms: [/HAZOP/i, /P&ID/i, /pipeline/i, /oil/i, /gas/i, /refinery/i, /API/i, /ASME/i, /LOPA/i, /cathodic/i, /ILI/i, /wellhead/i, /petrochemical/i, /FEED/i],
     methodologyBullets: [
-      "FEED and detailed engineering: process flow diagram, material and energy balance, P&ID development (ISA 5.1 symbology), equipment datasheets, pipeline stress analysis, and API/ASME code compliance verification",
-      "HAZOP study and process safety management: formal HAZOP with all action items tracked to close-out, P&ID freeze protocol, LOPA for high-severity nodes, and permit-to-work system before any construction activity",
-      "construction supervision and commissioning: inspection test plans, mechanical completion certificate, pre-commissioning punch list, PSSR, energisation records, as-built P&IDs, and handover dossier",
+      "design basis and HAZOP: process flow diagram, P&ID development, HAZOP study (all action items tracked to close-out), LOPA for high-severity nodes, and applicable code selection (API, ASME, ISO)",
+      "detailed engineering: pipeline stress analysis (Caesar II or equivalent), equipment layout, structural and civil design, cathodic-protection design, and environmental and social management plan",
+      "commissioning and integrity: pre-commissioning and commissioning procedures, safety system testing (PSV, ESD), handover with as-built documentation, in-line inspection (ILI) programme specification, and pipeline integrity management plan",
     ],
   },
   {
     code: "FINANCIAL_SERVICES",
-    label: "Financial services, banking systems and regulatory compliance",
-    triggers: [/\bKYC\b/i, /\bAML\b/i, /core.*banking/i, /microfinance.*system/i, /credit.*risk.*model/i, /\bIFRS\b/i, /\bBasel\b/i, /prudential.*regul/i, /capital.*adequacy/i],
-    proofTerms: [/\bKYC\b/i, /\bAML\b/i, /Basel/i, /\bIFRS\b/i, /core.*banking/i, /credit.*risk/i, /regulatory/i, /compliance/i, /data.*migration/i],
+    label: "Financial services regulation, core banking and fintech systems",
+    triggers: [/\bKYC\b/i, /\bAML\b/i, /core.*banking/i, /microfinance.*(?:system|platform)/i, /credit.*risk.*model/i, /\bIFRS\b/i, /\bBasel\b/i, /prudential.*regul/i, /capital.*adequacy/i, /\bfintech\b/i, /payment.*system/i],
+    proofTerms: [/KYC/i, /AML/i, /Basel/i, /IFRS/i, /core.*banking/i, /microfinance/i, /credit.*risk/i, /prudential/i, /capital.*adequacy/i, /regulatory.*compliance/i, /fintech/i],
     methodologyBullets: [
-      "regulatory gap analysis and framework design: KYC/AML policy and procedure review, Basel/IFRS reconciliation, prudential reporting framework, and compliance gap analysis reviewed by licensed local legal counsel",
-      "system configuration and testing: core banking configuration specification, credit-risk model documentation, UAT protocol, data migration plan (test migration + reconciliation sign-off), and change-management programme",
-      "go-live and post-implementation: parallel-run cutover, full data reconciliation, regulatory submission support, first-cycle reporting verification, and post-implementation compliance audit",
+      "regulatory gap analysis and design: business process mapping, regulatory-gap analysis reviewed by licensed local legal counsel, target operating model design, and data-quality assessment",
+      "system implementation: architecture design, integration plan (APIs, data migration), UAT protocol, parallel-run cutover with data reconciliation signed off before go-live, RBAC/encryption/audit-log configuration",
+      "post-implementation: hypercare and SLA monitoring, staff training with train-the-trainer model, and handover with source code, data, and documentation under exit-clause provisions",
     ],
   },
   {
     code: "TELECOMS_BROADBAND",
-    label: "Telecoms infrastructure, spectrum planning and broadband rollout",
-    triggers: [/spectrum.*licen/i, /base.*station.*design/i, /backhaul.*design/i, /last.?mile.*access/i, /broadband.*network/i, /telecoms.*infra/i, /\bLTE\b/i, /\b5G\b/i, /mobile.*network.*rollout/i, /RF.*propagat/i],
-    proofTerms: [/spectrum/i, /base.*station/i, /backhaul/i, /last.?mile/i, /broadband/i, /\bLTE\b/i, /RF.*plan/i, /coverage/i, /\bQoS\b/i, /network.*rollout/i],
+    label: "Telecommunications, broadband networks and spectrum planning",
+    triggers: [/spectrum.*licen/i, /spectrum.*plan/i, /broadband.*infrastruc/i, /base.*station/i, /\bLTE\b/i, /\b5G\b/i, /mobile.*network/i, /broadband.*rollout/i, /backhaul.*network/i, /\bISP\b.*develop/i, /last.?mile/i, /telecoms.*develop/i],
+    proofTerms: [/spectrum/i, /broadband/i, /base.*station/i, /LTE/i, /5G/i, /backhaul/i, /fibre/i, /fiber/i, /antenna/i, /telecom/i, /network.*rollout/i, /coverage/i],
     methodologyBullets: [
-      "spectrum licensing and RF planning: spectrum application pathway, alternative frequency fallback, RF propagation modelling (Atoll or equivalent), coverage heat-maps, frequency plan, and regulatory co-existence management",
-      "network architecture and rollout: base-station site selection (two alternatives per target), backhaul link budget, core network dimensioning, last-mile access design (LTE/5G FWA or FTTH), equipment specifications, and site acceptance tests",
-      "optimisation and handover: network KPI baseline, hypercare optimisation period, SLA-defined support model, NOC KPI dashboard, operator training records, and handover with full network documentation",
+      "demand and coverage analysis: traffic demand modelling, coverage simulation, spectrum allocation review, and regulatory licensing pathway confirmation",
+      "network design: base station siting (LTE/5G), backhaul design (fibre/microwave), last-mile access technology selection, network architecture, and security controls",
+      "rollout and commissioning: site acquisition support, equipment procurement specifications, installation supervision, drive-test and acceptance protocol, SLA definition, and O&M handover with operator training",
+    ],
+  },
+  {
+    code: "INTERIOR_DESIGN",
+    label: "Interior design, fit-out and space planning",
+    triggers: [/interior design/i, /fit[-\s]?out/i, /space planning/i, /joinery/i, /ceiling.*design/i, /flooring/i, /finishes/i, /furniture.*layout/i, /partition/i, /workplace design/i, /interior.*architect/i, /FF&E/i, /MEP.*interior/i],
+    proofTerms: [/interior/i, /fit[- ]?out/i, /space planning/i, /finishes/i, /joinery/i, /partition/i, /ceiling/i, /flooring/i, /furniture/i, /FF&E/i, /lighting.*design/i, /\bCAD\b/i, /Revit/i, /SketchUp/i],
+    methodologyBullets: [
+      "space programming and functional brief: occupant count, activity zones, adjacency matrix, and area schedule before any design begins",
+      "concept design with mood boards, material palette, and lighting concept — client approval before schematic development",
+      "schematic design: space layout plans, reflected ceiling plans, partition and flooring schedules, joinery elevations",
+      "detailed design and FF&E specification: full furniture, fixture, and equipment schedule with supplier options and lead times",
+      "construction documentation: detailed drawings, specifications, BOQ, and room data sheets for contractor tender",
+      "construction administration: shop drawing review, material sample approval, site inspections, and defects-liability management",
+    ],
+  },
+  {
+    code: "SUPERVISION_CONSULTANCY",
+    label: "Construction supervision and resident engineer services",
+    triggers: [/construction supervision/i, /resident engineer/i, /site supervision/i, /supervision.*contract/i, /site.*management/i, /quality.*contractor/i, /engineer.*supervision/i, /supervision.*consultancy/i, /oversight.*construction/i],
+    proofTerms: [/supervision/i, /resident engineer/i, /site inspection/i, /quality control/i, /hold[- ]?point/i, /payment certificate/i, /variation/i, /progress report/i, /defects/i, /DLP/i, /commissioning/i, /punch list/i, /snag/i],
+    methodologyBullets: [
+      "pre-construction review: check contractor's programme, method statements, ITP, HSMP, and resource mobilisation plan before site start",
+      "hold-point inspection regime: mandatory W (Witness) and H (Hold) points for critical activities — foundations, pre-pour, structural welds, pressure tests",
+      "quality assurance: third-party lab testing, test certification review, non-conformance report (NCR) issuance and closeout tracking",
+      "payment certification: monthly interim payment certificates (IPC) based on measured quantities and approved rates",
+      "variation order management: evaluate contractor claims, issue Variation Order (VO) instructions, and maintain cost register",
+      "defects-liability period (DLP) inspection: systematic snag list, contractor response tracking, and performance bond release recommendation",
+    ],
+  },
+  {
+    code: "CONTRACT_ADMINISTRATION",
+    label: "Contract administration, cost control and claims management",
+    triggers: [/contract administration/i, /contract.*admin/i, /FIDIC/i, /variation order/i, /payment certificate/i, /claims management/i, /cost control/i, /quantity survey/i, /procurement.*advisory/i, /bid.*management/i, /tender.*management/i],
+    proofTerms: [/FIDIC/i, /variation/i, /claim/i, /payment certificate/i, /BOQ/i, /quantity/i, /cost.*report/i, /cash.*flow/i, /extension.*time/i, /EOT/i, /final.*account/i, /contract.*sum/i, /retention/i, /bond/i],
+    methodologyBullets: [
+      "contract document review at award: identify ambiguities, prepare contract administration manual, and issue Employer's notification of contract start",
+      "cost-control reporting: monthly cost report against contract sum, forecast final cost, cash-flow projection, and contingency drawdown register",
+      "variation order administration: evaluate contractor VO submissions, negotiate quantum, issue Engineer's Instructions, and update contract sum",
+      "claim evaluation: time-impact analysis for extension-of-time (EOT) claims, disruption cost assessment, and formal determinations under the contract",
+      "final account preparation: measurement reconciliation, agreed final BOQ, settlement of outstanding claims, and certificate of substantial completion",
+      "contract closeout: release of retention, performance bond discharge recommendation, and lessons-learned report",
+    ],
+  },
+  {
+    code: "HERITAGE_CONSERVATION",
+    label: "Heritage Conservation & Adaptive Reuse",
+    triggers: [/heritage/i, /conservation/i, /museum/i, /historic building/i, /adaptive reuse/i, /restoration/i, /historic fabric/i],
+    proofTerms: [/ICOMOS/i, /lime mortar/i, /conservation plan/i, /significance/i, /heritage authority/i, /photogrammetry/i, /reversible/i, /listed building/i],
+    methodologyBullets: [
+      "Condition survey & significance assessment using ICOMOS principles — structural, fabric, and services condition rated and mapped",
+      "Conservation philosophy statement aligning proposed interventions with reversibility and minimum-intervention doctrine",
+      "Material-compatibility testing (XRF / petrographic) before specification of repair mortars and consolidants",
+      "Three-gate design review with heritage authority: conservation plan → tender documents → construction phase supervision",
+      "Post-conservation documentation: photogrammetric 3D archive, updated condition report, maintenance manual, handover to cultural authority",
+    ],
+  },
+  {
+    code: "INDUSTRIAL_MANUFACTURING",
+    label: "Industrial & Manufacturing Facilities",
+    triggers: [/industrial/i, /manufactur/i, /factory/i, /abattoir/i, /processing plant/i, /production facilit/i, /warehouse.*industrial/i],
+    proofTerms: [/process flow/i, /FAT/i, /effluent/i, /EHS/i, /OHSAS/i, /lean/i, /VSM/i, /commissioning/i, /cleaner production/i],
+    methodologyBullets: [
+      "Process brief and production-flow analysis (value-stream mapping) before layout design — lean principles embedded in material-flow corridors",
+      "Integrated design package: industrial structural design, HVAC/exhaust ventilation, industrial flooring, fire suppression, effluent treatment",
+      "Regulatory and environmental approvals: EIA/ESIA, effluent treatment design to Ethiopian EPA/WHO standards, occupational safety assessment",
+      "Factory acceptance test (FAT) protocol for all production equipment; commissioning sequencing plan; operator training programme",
+      "Digital 3D plant model for clash detection and installation sequencing; as-built drawings for O&M manual",
+    ],
+  },
+  {
+    code: "HIGH_RISE_BUILDINGS",
+    label: "High-Rise & Multi-Storey Buildings",
+    triggers: [/high.rise/i, /high_rise/i, /multi.stor/i, /tower.*building/i, /mixed.use.*tower/i, /G\+\d{2,}/i, /basement.*podium/i, /tall building/i],
+    proofTerms: [/ETABS/i, /SAP2000/i, /shear wall/i, /seismic/i, /curtain wall/i, /post.tension/i, /BIM/i, /LOD 300/i, /pile foundation/i, /mat foundation/i],
+    methodologyBullets: [
+      "Structural system selection (shear wall / core-frame / hybrid) with ETABS/SAP2000 analysis incorporating Ethiopian seismic zone and wind loads per EBCS/ES EN 1998",
+      "BIM-coordinated design at LOD 300+: architecture, structure, and MEP clash detection eliminates field RFIs for riser routing and structural penetrations",
+      "Independent structural peer review before construction documents; structural calculation package formatted to AA City Authority checklist",
+      "Specialist systems integration: aluminium curtain wall specification, lift/car-lift design, BMS, fire alarm and suppression, generator/UPS sizing",
+      "Construction supervision with hold-point inspections at foundation, shear walls, and curtain wall installation; concrete cube tests and rebar pull-out at every pour",
+    ],
+  },
+  {
+    code: "HOSPITALITY_TOURISM",
+    label: "Hospitality & Tourism Facilities",
+    triggers: [/hotel/i, /hospitality/i, /resort/i, /lodge/i, /guesthouse/i, /five.star/i, /luxury.*accommodat/i, /tourism.*facilit/i],
+    proofTerms: [/FF&E/i, /brand standard/i, /RevPAR/i, /guestroom/i, /back.of.house/i, /BOH/i, /mock.*room/i, /pre.opening/i, /GSTC/i, /Green Globe/i],
+    methodologyBullets: [
+      "Feasibility and development programme: room mix, F&B concept, BOH efficiency analysis, RevPAR market benchmarking, preliminary BOQ",
+      "Brand-standard compliance matrix embedded from concept design; mock guestroom constructed and approved before full roll-out of room finishes",
+      "Interior design and FF&E specification: finishes schedule, lighting design, furniture layouts, brand procurement schedule with lead-time tracking",
+      "MEP specialist systems: VRF/fan-coil guestroom HVAC, kitchen ventilation, pool/spa mechanical, AV and guest-technology design, access control",
+      "Pre-opening supervision: room-by-room snagging protocol, MEP commissioning tests, brand-operator punch list clearance, handover pack",
     ],
   },
 ];
@@ -344,6 +438,20 @@ function projectScore(project: ProjectLite, themes: ProposalTheme[], tenderText:
   if (/school|university|campus|education/i.test(text) && /school|university|campus|education/i.test(tenderText)) score += 10;
   if (/social.*develop|advisory|capacity.*build|community/i.test(text) && /social.*develop|advisory|capacity.*build|community/i.test(tenderText)) score += 8;
   if (/World Bank|UNDP|donor.*fund/i.test(text) && /World Bank|UNDP|donor.*fund/i.test(tenderText)) score += 6;
+  if (/energy|solar|hydropower|substation|transmission|generation|electrification|SCADA/i.test(text) && /energy|solar|hydropower|substation|transmission|generation|electrification|SCADA/i.test(tenderText)) score += 12;
+  if (/irrigation.*scheme|agri|WUA|command.*area|crop.*water|rural.*develop.*agri/i.test(text) && /irrigation|agri|WUA|command.*area|rural.*develop/i.test(tenderText)) score += 12;
+  if (/mining|mineral.*resource|JORC|tailings|ore|mine.*plan|pit.*design/i.test(text) && /mining|mineral.*resource|JORC|tailings|ore/i.test(tenderText)) score += 12;
+  if (/port|berth|quay|dredging|maritime|ISPS|harbour/i.test(text) && /port|berth|quay|dredging|maritime|ISPS|harbour/i.test(tenderText)) score += 12;
+  if (/HAZOP|P&ID|pipeline.*design|oil.*facilit|gas.*facilit|refinery|petrochemical/i.test(text) && /HAZOP|P&ID|pipeline.*design|oil.*facilit|gas.*facilit|refinery|petrochemical/i.test(tenderText)) score += 12;
+  if (/KYC|AML|core.*banking|microfinance|IFRS|Basel|prudential.*regul|fintech/i.test(text) && /KYC|AML|core.*banking|microfinance|IFRS|Basel|prudential.*regul|fintech/i.test(tenderText)) score += 12;
+  if (/spectrum|broadband|LTE|5G|base.*station|backhaul|mobile.*network/i.test(text) && /spectrum|broadband|LTE|5G|base.*station|backhaul|mobile.*network/i.test(tenderText)) score += 12;
+  if (/interior design|fit[- ]?out|space planning|finishes|joinery/i.test(text) && /interior design|fit[- ]?out|space planning|finishes|joinery/i.test(tenderText)) score += 10;
+  if (/construction supervision|resident engineer|site supervision/i.test(text) && /supervision|resident engineer|site.*management/i.test(tenderText)) score += 10;
+  if (/contract administration|FIDIC|variation order|payment certificate/i.test(text) && /contract administration|FIDIC|variation/i.test(tenderText)) score += 10;
+  if (/heritage|conservation|museum|historic|adaptive.*reuse/i.test(text) && /heritage|conservation|museum|historic|adaptive.*reuse/i.test(tenderText)) score += 15;
+  if (/industrial|manufactur|factory|abattoir|processing.*plant/i.test(text) && /industrial|manufactur|factory|abattoir|processing.*plant/i.test(tenderText)) score += 15;
+  if (/high.rise|multi.stor|tower.*building|basement.*podium/i.test(text) && /high.rise|multi.stor|tower.*building|basement.*podium/i.test(tenderText)) score += 15;
+  if (/hotel|hospitality|resort|lodge|guesthouse|five.star/i.test(text) && /hotel|hospitality|resort|lodge|guesthouse/i.test(tenderText)) score += 15;
   // Contract value bonus (bigger projects = stronger institutional evidence).
   // Guard against contractValue < 1 — log10 returns negative for sub-unit
   // values, which would penalise projects stored in fractional units.
@@ -371,6 +479,20 @@ function expertScore(expert: ExpertLite, themes: ProposalTheme[], tenderText: st
   if (/urban.*planner|town.*planner|spatial.*planner|GIS/i.test(text) && /urban|master plan|spatial.*plan|GIS/i.test(tenderText)) score += 8;
   if (/social.*specialist|community.*develop|livelihoods/i.test(text) && /social|community|stakeholder|livelihood/i.test(tenderText)) score += 8;
   if (/education.*specialist|school.*designer|campus.*architect/i.test(text) && /school|university|campus|education/i.test(tenderText)) score += 8;
+  if (/power.*engineer|electrical.*engineer|energy.*engineer|renewable.*engineer|SCADA.*engineer|substation.*engineer/i.test(text) && /energy|solar|hydropower|substation|transmission|generation|electrification/i.test(tenderText)) score += 10;
+  if (/irrigation.*engineer|agri.*specialist|agronomi|WUA.*specialist|rural.*develop.*specialist/i.test(text) && /irrigation|agri|WUA|command.*area|rural.*develop/i.test(tenderText)) score += 10;
+  if (/mining.*engineer|geological.*engineer|geolog|mine.*design|resource.*geolog/i.test(text) && /mining|mineral.*resource|JORC|tailings|ore/i.test(tenderText)) score += 10;
+  if (/port.*engineer|maritime.*engineer|coastal.*engineer|harbour.*engineer|marine.*engineer/i.test(text) && /port|berth|quay|dredging|maritime/i.test(tenderText)) score += 10;
+  if (/process.*engineer|pipeline.*engineer|HAZOP.*facilitator|oil.*gas.*engineer|petroleum.*engineer/i.test(text) && /HAZOP|P&ID|pipeline.*design|oil.*facilit|gas.*facilit|refinery/i.test(tenderText)) score += 10;
+  if (/compliance.*officer|risk.*analyst|financial.*specialist|banking.*specialist|fintech.*specialist/i.test(text) && /KYC|AML|core.*banking|microfinance|IFRS|Basel|prudential/i.test(tenderText)) score += 10;
+  if (/telecom.*engineer|network.*engineer|RF.*engineer|spectrum.*specialist|broadband.*specialist/i.test(text) && /spectrum|broadband|LTE|5G|base.*station|backhaul|mobile.*network/i.test(tenderText)) score += 10;
+  if (/interior designer|interior architect|space planner|fit[- ]?out.*lead/i.test(text) && /interior design|fit[- ]?out|space planning/i.test(tenderText)) score += 10;
+  if (/resident engineer|supervising engineer|site engineer|quality inspector/i.test(text) && /supervision|resident engineer|site.*management/i.test(tenderText)) score += 10;
+  if (/contract administrator|FIDIC.*engineer|claims.*manager|quantity surveyor/i.test(text) && /contract administration|FIDIC|variation|claim/i.test(tenderText)) score += 10;
+  if (/heritage.*specialist|conservation.*specialist|historic.*buildings|restoration.*architect/i.test(text) && /heritage|conservation|museum|historic/i.test(tenderText)) score += 15;
+  if (/industrial.*engineer|process.*engineer|factory.*engineer|manufacturing.*engineer/i.test(text) && /industrial|manufactur|factory|abattoir|processing/i.test(tenderText)) score += 15;
+  if (/high.rise|structural.*tower|tall.*building|seismic.*design/i.test(text) && /high.rise|multi.stor|tower.*building/i.test(tenderText)) score += 15;
+  if (/hotel.*design|hospitality.*design|interior.*hotel|resort.*architect/i.test(text) && /hotel|hospitality|resort|lodge/i.test(tenderText)) score += 15;
   if (expert.yearsExperience) score += Math.min(6, expert.yearsExperience / 4);
   return score;
 }
@@ -425,6 +547,55 @@ function detectEvaluationCriteria(tenderText: string): string[] {
 
   // Education
   if (/school.*design|university.*design|education.*facility.*experience/i.test(evalSection)) criteria.push("Education facility design experience — show comparable school/campus projects with functional approval outcomes");
+
+  // Energy / Power
+  if (/energy.*experience|power.*experience|renewable.*experience|solar.*experience|grid.*experience|electrification.*experience/i.test(evalSection)) criteria.push("Relevant energy / power infrastructure experience — lead with named schemes, installed capacity (MW), and grid-code compliance outcomes");
+  if (/load.*forecast|generation.*design|protection.*relay|SCADA|grid.*integration/i.test(evalSection)) criteria.push("Technical depth in power systems design — demonstrate load-flow analysis, protection coordination, and SCADA integration capability");
+
+  // Agriculture / Irrigation
+  if (/irrigation.*experience|agri.*experience|rural.*develop.*experience|WUA.*experience/i.test(evalSection)) criteria.push("Irrigation / agricultural development experience — lead with named schemes, command area (ha), and WUA establishment outcomes");
+  if (/crop.*water|agronomy|hydrological.*analysis|Penman/i.test(evalSection)) criteria.push("Technical depth in irrigation design — demonstrate FAO Penman-Monteith crop water calculations and hydraulic network design capability");
+
+  // Mining / Extractive
+  if (/mining.*experience|mineral.*experience|JORC.*experience|resource.*assess.*experience/i.test(evalSection)) criteria.push("Mining / mineral resource assessment experience — lead with JORC-compliant reports delivered and competent-person credentials");
+  if (/slope.*stability|tailings|mine.*plan|geotechnical.*mining/i.test(evalSection)) criteria.push("Technical depth in mine geotechnics and TSF design — demonstrate slope-stability analyses and MAC/ANCOLD-compliant designs");
+
+  // Port / Maritime
+  if (/port.*experience|maritime.*experience|harbour.*experience|berth.*design.*experience/i.test(evalSection)) criteria.push("Port / maritime infrastructure experience — lead with named terminals, berth length, and ISPS certification outcomes");
+  if (/dredging|nautical.*simulation|met.?ocean|bathymetric/i.test(evalSection)) criteria.push("Technical depth in port engineering — demonstrate met-ocean analysis, fast-time simulation, and dredge design capability");
+
+  // Oil & Gas
+  if (/oil.*gas.*experience|pipeline.*experience|HAZOP.*experience|process.*safety.*experience/i.test(evalSection)) criteria.push("Oil & gas / pipeline engineering experience — lead with named projects, pipeline diameter/length, and HAZOP study completions");
+  if (/P&ID|LOPA|cathodic.*protection|pipeline.*integrity|commissioning.*procedure/i.test(evalSection)) criteria.push("Technical depth in process safety and pipeline design — demonstrate HAZOP facilitation, P&ID development, and integrity management capability");
+
+  // Financial Services
+  if (/financial.*experience|banking.*experience|compliance.*experience|regulatory.*experience/i.test(evalSection)) criteria.push("Financial services / regulatory compliance experience — lead with named institutions, regulatory standard met (Basel/IFRS), and go-live outcomes");
+  if (/KYC|AML|core.*banking|IFRS|Basel.*compliance|prudential/i.test(evalSection)) criteria.push("Technical depth in banking regulation — demonstrate KYC/AML programme design, IFRS implementation, and prudential regulatory advisory");
+
+  // Telecoms / Broadband
+  if (/telecom.*experience|broadband.*experience|spectrum.*experience|network.*rollout.*experience/i.test(evalSection)) criteria.push("Telecoms / broadband network experience — lead with named projects, network reach (km), and spectrum licensing outcomes");
+  if (/LTE|5G|base.*station.*design|backhaul.*design|broadband.*rollout/i.test(evalSection)) criteria.push("Technical depth in mobile and broadband network design — demonstrate RF planning, backhaul design, and commissioning protocol capability");
+
+  // Interior Design / Fit-Out / Construction Supervision / Contract Administration
+  if (/interior.*experience|fit[- ]?out.*experience|space.*planning.*experience/i.test(evalSection)) criteria.push("Interior design / fit-out experience — lead with named projects, area (m²), and client references");
+  if (/supervision.*experience|resident engineer.*experience|site.*management.*experience/i.test(evalSection)) criteria.push("Construction supervision experience — show named contracts supervised, contract value, and IPC/hold-point outcomes");
+  if (/contract.*admin.*experience|FIDIC.*experience|claims.*experience|quantity.*survey.*experience/i.test(evalSection)) criteria.push("Contract administration / FIDIC experience — show named contracts, final account settlements, and EOT determinations");
+
+  // Heritage Conservation
+  if (/heritage.*experience|conservation.*experience|historic.*building.*experience|restoration.*experience/i.test(evalSection)) criteria.push("Heritage conservation / restoration experience — lead with named historic buildings conserved, heritage authority approvals obtained, and conservation methods applied");
+  if (/ICOMOS|lime mortar|conservation.*plan|significance.*assessment|reversib/i.test(evalSection)) criteria.push("Technical depth in heritage conservation — demonstrate ICOMOS-aligned methodology, material-compatibility testing, and conservation plan preparation");
+
+  // Industrial & Manufacturing
+  if (/industrial.*experience|manufactur.*experience|factory.*experience|abattoir.*experience|processing.*plant.*experience/i.test(evalSection)) criteria.push("Industrial / manufacturing facility experience — lead with named facilities delivered, production capacity, and commissioning outcomes");
+  if (/process.*flow|effluent.*treatment|EHS|FAT|cleaner.*production|lean.*design/i.test(evalSection)) criteria.push("Technical depth in industrial design — demonstrate process-flow analysis, effluent treatment design, and FAT commissioning protocol capability");
+
+  // High-Rise Buildings
+  if (/high.rise.*experience|multi.stor.*experience|tower.*building.*experience|tall.*building.*experience/i.test(evalSection)) criteria.push("High-rise / multi-storey building experience — lead with named towers designed, height/storeys, structural system, and authority approval outcomes");
+  if (/ETABS|SAP2000|shear.*wall|seismic.*design|curtain.*wall|post.tension/i.test(evalSection)) criteria.push("Technical depth in high-rise structural design — demonstrate ETABS/SAP2000 analysis, seismic compliance, and independent peer review protocol");
+
+  // Hospitality & Tourism
+  if (/hotel.*experience|hospitality.*experience|resort.*experience|lodge.*experience/i.test(evalSection)) criteria.push("Hospitality / hotel design experience — lead with named hotels or resorts designed, star rating, room count, and brand operator sign-off outcomes");
+  if (/FF&E|brand.*standard|RevPAR|guestroom.*HVAC|mock.*room|pre.opening/i.test(evalSection)) criteria.push("Technical depth in hospitality design — demonstrate brand-standard compliance methodology, FF&E procurement schedule, and pre-opening punch list capability");
 
   // Universal criteria
   if (/portfolio|quality.*portfolio|relevance.*portfolio/i.test(evalSection)) criteria.push("Quality and relevance of project portfolio — include photos, drawings, and project outcome evidence");
@@ -541,6 +712,13 @@ export function inferSector(tenderText: string): string {
   if (/KYC|AML.*framework|core.*banking|microfinance.*system|credit.*risk.*model|IFRS.*implement|Basel|prudential.*regul/i.test(tenderText)) return "Financial Services / Banking";
   if (/spectrum.*licen|base.*station.*design|backhaul.*design|last.?mile.*access|broadband.*network|telecoms.*infra|LTE.*deploy|5G.*rollout/i.test(tenderText)) return "Telecoms / Broadband Infrastructure";
   if (/architecture|building.*design|construction.*supervision|structural.*design/i.test(tenderText)) return "Building Design & Construction Supervision";
+  if (/\benergy\b|power.*plant|\bsolar\b|wind.*farm|grid.*connect|generation|transmission.*line|substation|\bhydropower\b|\belectrification\b|renewable.*energy|power.*system|\bSCADA\b/i.test(tenderText)) return "Energy & Power Infrastructure";
+  if (/irrigation.*scheme|command.*area|\bWUA\b|agri.*develop|\bagricultural\b|crop.*water|rural.*develop.*agri|livestock.*develop/i.test(tenderText)) return "Agriculture, Irrigation & Rural Development";
+  if (/\bJORC\b|mine.*plan|pit.*design|tailings|ore.*body|blast.*design|geotechnical.*mine|mine.*feasibility|mining.*project/i.test(tenderText)) return "Mining & Extractive Industries";
+  if (/\bport\b.*\b(design|master.*plan|infrastructure|facilit|terminal|study)\b|berth.*design|quay.*design|harbour.*develop|dredging|container.*terminal|\bISPS\b/i.test(tenderText)) return "Port & Maritime Infrastructure";
+  if (/pipeline.*design|oil.*facilit|gas.*facilit|\bHAZOP\b|\bP&ID\b|refinery|petrochemical|upstream.*petroleum|\bLNG\b|\bFEED\b.*\b(oil|gas|process)\b/i.test(tenderText)) return "Oil & Gas / Petroleum Engineering";
+  if (/\bKYC\b|\bAML\b|core.*banking|microfinance.*(?:system|platform)|credit.*risk.*model|\bIFRS\b.*implement|\bBasel\b|prudential.*regul|capital.*adequacy/i.test(tenderText)) return "Financial Services & Banking";
+  if (/spectrum.*licen|spectrum.*plan|broadband.*infrastruc|base.*station.*design|\bLTE\b|\b5G\b|mobile.*network.*rollout|broadband.*rollout|backhaul.*network/i.test(tenderText)) return "Telecoms & Broadband";
   return "General Consultancy / Engineering";
 }
 
@@ -640,46 +818,60 @@ function makeDifferentiators(
     items.push("Team includes PhD-qualified specialists — deep technical capability supported by international academic credentials.");
   }
 
-  // Energy / power — claim.
+  // Energy / Power
   if (themes.some((t) => t.code === "ENERGY_POWER")) {
-    if (/energy|power|solar|grid/i.test(allProjectText)) items.push("Demonstrated power-systems delivery: prior energy projects in the reviewed portfolio confirm capability from load forecast through energisation — same team, same technical standards.");
-    items.push("Grid-code compliance discipline: protection relay settings independently peer-reviewed before energisation, single-line diagram audited to grid authority standards, and SCADA commissioning records issued at handover.");
+    if (/energy|solar|hydropower|substation|transmission|generation|electrification/i.test(allProjectText)) {
+      items.push("Energy infrastructure delivery track record: prior power generation, transmission, or electrification projects give this engagement design-standard and grid-code continuity advantage.");
+    }
+    items.push("Integrated power-systems design capability: load-flow analysis, protection relay coordination, SCADA architecture, and environmental compliance delivered under one technical team — reducing coordination risk.");
   }
 
-  // Agriculture / irrigation — claim.
+  // Agriculture / Irrigation
   if (themes.some((t) => t.code === "AGRICULTURE_IRRIGATION")) {
-    if (/agri|irrigation|farm|crop/i.test(allProjectText)) items.push("Proven irrigation delivery: prior scheme delivery confirms the firm integrates agronomic, hydraulic, and community-development expertise in one coordinated assignment.");
-    items.push("FAO Penman-Monteith crop-water calculation methodology: irrigation demand is sized on verified agronomic baseline, not assumed — preventing over/under-design and soil-salinity build-up.");
+    if (/irrigation|agri|WUA|command.*area/i.test(allProjectText)) {
+      items.push("Irrigation scheme delivery track record: prior command-area development and WUA establishment projects provide beneficiary-engagement and hydraulic-design continuity.");
+    }
+    items.push("FAO Penman-Monteith crop-water-requirement rigour combined with in-house hydrological analysis capability — design basis confirmed from primary field data, not desktop estimates.");
   }
 
-  // Mining / extractive — claim.
+  // Mining / Extractive
   if (themes.some((t) => t.code === "MINING_EXTRACTIVE")) {
-    if (/mining|mineral|tailings|jorc/i.test(allProjectText)) items.push("JORC-compliant resource estimation track record: prior mining studies include independent competent-person review, slope-stability analysis, and TSF design to MAC/ANCOLD guidelines.");
-    items.push("Geotechnical rigour: slope stability analysed by three methods (LEM, numerical, empirical) — not a single-method estimate — reducing likelihood of downgrade between pre-feasibility and bankable feasibility stages.");
+    if (/mining|JORC|tailings|ore|mine.*plan/i.test(allProjectText)) {
+      items.push("JORC-compliant resource reporting experience with competent-person credentials: independent peer review and regulatory submission capability built into the project workflow.");
+    }
+    items.push("Integrated geotechnical and mine-design capability: slope-stability analysis, TSF design per MAC/ANCOLD guidelines, and closure-cost estimation under one technical team.");
   }
 
-  // Port / maritime — claim.
+  // Port / Maritime
   if (themes.some((t) => t.code === "PORT_MARITIME")) {
-    if (/port|berth|dredging|maritime/i.test(allProjectText)) items.push("Port infrastructure delivery track record: berth design, dredging specification, and nautical safety studies completed in prior engagements — PIANC-standard approach with regulator pre-approval built into the programme.");
-    items.push("Vessel-class parameter confirmation with port authority is a project inception deliverable, not a design assumption — preventing under-designed berths and costly post-construction dredge rectification.");
+    if (/port|berth|quay|dredging|maritime/i.test(allProjectText)) {
+      items.push("Port infrastructure delivery track record: prior berth design, dredging, and ISPS certification projects provide met-ocean and regulatory continuity for this engagement.");
+    }
+    items.push("Integrated port engineering capability: fast-time nautical simulation, bathymetric survey, structural berth design, and ISPS compliance documentation in a single delivery workflow.");
   }
 
-  // Oil & gas — claim.
+  // Oil & Gas
   if (themes.some((t) => t.code === "OIL_GAS")) {
-    if (/pipeline|oil|gas|hazop|p&id/i.test(allProjectText)) items.push("Process safety engineering experience: HAZOP studies completed with all action items tracked to close-out, P&ID freeze discipline applied, and pipeline integrity management specified from design stage.");
-    items.push("API/ASME code compliance by design, not by check: P&ID development, HAZOP, and pipeline stress analysis are scoped at FEED stage — not retrofitted after detailed engineering is complete.");
+    if (/HAZOP|P&ID|pipeline|oil.*facilit|gas.*facilit|refinery/i.test(allProjectText)) {
+      items.push("Oil & gas process-safety track record: HAZOP studies with fully tracked close-out, LOPA for high-severity nodes, and pipeline integrity management plans from completed projects.");
+    }
+    items.push("Integrated process engineering capability: P&ID development, pipeline stress analysis (Caesar II), cathodic-protection design, and pre-commissioning procedures under one technical team.");
   }
 
-  // Financial services — claim.
+  // Financial Services
   if (themes.some((t) => t.code === "FINANCIAL_SERVICES")) {
-    if (/banking|kyc|aml|ifrs|basel/i.test(allProjectText)) items.push("Financial services delivery track record: prior core banking, KYC/AML framework, and regulatory compliance engagements confirm the firm integrates policy, system, and supervisory-authority requirements in one programme.");
-    items.push("Data migration validated before go-live: test migration on extracted sample + reconciliation sign-off — not a theoretical plan — protects client records and regulatory compliance from day one of live operations.");
+    if (/KYC|AML|core.*banking|microfinance|IFRS|Basel/i.test(allProjectText)) {
+      items.push("Regulatory compliance delivery track record: prior KYC/AML programme design, IFRS implementation, or Basel compliance projects demonstrate working knowledge of the regulatory environment.");
+    }
+    items.push("Gap-analysis-first approach: regulatory-gap analysis reviewed by licensed legal counsel before system design commences — avoids costly redesign after regulatory review.");
   }
 
-  // Telecoms / broadband — claim.
+  // Telecoms / Broadband
   if (themes.some((t) => t.code === "TELECOMS_BROADBAND")) {
-    if (/telecom|spectrum|backhaul|base.*station/i.test(allProjectText)) items.push("Telecoms infrastructure delivery track record: prior rollout engagements cover spectrum licensing, RF planning, site acquisition, backhaul dimensioning, and QoS SLA compliance — end-to-end, not piecemeal.");
-    items.push("Spectrum regulatory liaison built into the programme from inception: alternative frequency fallback assessed during planning, not only after primary spectrum is denied — managing the highest-likelihood delay risk upfront.");
+    if (/spectrum|broadband|LTE|5G|base.*station|backhaul|mobile.*network/i.test(allProjectText)) {
+      items.push("Broadband and mobile network delivery track record: prior LTE/5G base-station or fibre-backhaul projects provide RF-planning and commissioning-protocol continuity.");
+    }
+    items.push("End-to-end network design capability: coverage simulation, backhaul design, base-station siting, and site-acceptance test (SAT) protocol managed under one technical team.");
   }
 
   // Pharo-specific — claim, not instruction.
@@ -964,14 +1156,14 @@ export function buildProposalIntelligence(params: {
     { label: /Social Advisory|Community/, keywords: /social.*advisor|advisory.*service|institutional.*strength|capacity.*build|community.*develop|social.*develop|livelihoods|social.*mobiliz|community.*mobiliz|resettlement.*action|poverty|civil.*society|participatory.*develop/i },
     // Kept in sync with inferSector() triggers: architecture|building.*design|construction.*supervision|structural.*design
     { label: /Building Design/, keywords: /architectural.*design|building.*design|construction.*supervision|residential.*develop|commercial.*develop|architectural.*supervision|\barchitecture\b|structural.*design/i },
-    // Extended sector patterns — kept in sync with inferSector() extended detection blocks
-    { label: /Energy|Power/, keywords: /energy|power.*plant|solar.*farm|wind.*farm|grid.*connect|generation.*capacity|transmission.*line|substation|hydropower|renewable.*energy|grid.*code|\bSCADA\b|load.*forecast/i },
-    { label: /Agriculture|Irrigation/, keywords: /agricultur|irrigation.*scheme|crop|agri|livestock|farm.*develop|smallholder|water.*user.*assoc|\bFAO\b|agronomi/i },
-    { label: /Mining|Extractive/, keywords: /mining|mineral.*extract|quarry|tailings|\bJORC\b|ore.*body|blast.*design|mine.*plan|slope.*stability|geotechnical.*mine/i },
-    { label: /Port|Maritime/, keywords: /\bport\b|berth.*design|quay.*design|harbour.*develop|dredging|container.*terminal|maritime.*infra|\bISPS\b|nautical|pilotage/i },
-    { label: /Oil.*Gas|Petroleum/, keywords: /pipeline.*design|oil.*facilit|gas.*facilit|upstream.*petroleum|\bHAZOP\b|\bP&ID\b|refinery|petrochemical|wellhead.*design/i },
-    { label: /Financial.*Services|Banking/, keywords: /\bKYC\b|\bAML\b|core.*banking|microfinance.*system|credit.*risk.*model|\bIFRS\b|\bBasel\b|prudential.*regul|capital.*adequacy/i },
-    { label: /Telecoms|Broadband/, keywords: /spectrum.*licen|base.*station.*design|backhaul.*design|last.?mile.*access|broadband.*network|telecoms.*infra|\bLTE\b|\b5G\b|mobile.*network.*rollout/i },
+    // New 7 sectors — kept in sync with inferSector() additions above
+    { label: /Energy|Power/, keywords: /\benergy\b|power.*plant|\bsolar\b|wind.*farm|grid.*connect|generation|transmission.*line|substation|\bhydropower\b|\belectrification\b|renewable.*energy|\bSCADA\b/i },
+    { label: /Agriculture|Irrigation/, keywords: /irrigation.*scheme|command.*area|\bWUA\b|agri.*develop|\bagricultural\b|crop.*water|rural.*develop.*agri|livestock.*develop|\bagronomic\b/i },
+    { label: /Mining|Extractive/, keywords: /\bJORC\b|mine.*plan|pit.*design|tailings|ore.*body|blast.*design|geotechnical.*mine|mine.*feasibility|mining.*project|\bquarry\b/i },
+    { label: /Port|Maritime/, keywords: /\bport\b.*\b(design|master.*plan|infrastructure|facilit|terminal|study)\b|berth.*design|quay.*design|harbour.*develop|dredging|container.*terminal|\bISPS\b/i },
+    { label: /Oil|Gas|Petroleum/, keywords: /pipeline.*design|oil.*facilit|gas.*facilit|\bHAZOP\b|\bP&ID\b|refinery|petrochemical|upstream.*petroleum|\bLNG\b|\bFEED\b.*\b(oil|gas|process)\b/i },
+    { label: /Financial|Banking/, keywords: /\bKYC\b|\bAML\b|core.*banking|microfinance.*(?:system|platform)|credit.*risk.*model|\bIFRS\b|\bBasel\b|prudential.*regul|capital.*adequacy|\bfintech\b/i },
+    { label: /Telecoms|Broadband/, keywords: /spectrum.*licen|spectrum.*plan|broadband.*infrastruc|base.*station.*design|\bLTE\b|\b5G\b|mobile.*network|broadband.*rollout|backhaul.*network/i },
   ];
   const detectedSector = inferSector(tenderText);
   // Multi-sector fix: collect ALL sector keyword sets triggered by the tender
@@ -1012,6 +1204,11 @@ export function buildProposalIntelligence(params: {
     { tender: /Road|Bridge|Transport/, exclude: /warehouse|logistics|cargo|freight|storage|industrial|manufacturing|factory/i },
     { tender: /Education/, exclude: /warehouse|logistics|cargo|freight|storage|industrial|manufacturing|factory/i },
     { tender: /ICT|Digital/, exclude: /warehouse|logistics|cargo|freight|storage|industrial|manufacturing|factory/i },
+    { tender: /Port|Maritime/, exclude: /warehouse.*inland|dry.*store|inland.*logistics|distribution.?cent|manufacturing|factory/i },
+    { tender: /Oil|Gas|Petroleum/, exclude: /school|university|campus|education|social.*develop|community.*develop/i },
+    { tender: /Financial|Banking/, exclude: /warehouse|logistics|cargo|road|bridge|highway|mining|port|maritime/i },
+    { tender: /Mining|Extractive/, exclude: /school|university|campus|education|social.*develop|financial.*service|banking/i },
+    { tender: /Energy|Power/, exclude: /school|university|campus|education|financial.*service|banking|port|maritime/i },
   ];
   const isHardConflict = (text: string): boolean => {
     if (detectedSector === "General Consultancy / Engineering") return false;

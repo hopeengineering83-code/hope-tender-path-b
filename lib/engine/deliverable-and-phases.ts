@@ -197,61 +197,83 @@ function phaseSpecsForSector(sector: string, totalDays: number): PhaseSpec[] {
       durationLabel: fmt(split(0.10) + 1, split(0.30)),
       picksKeyword: ["lead", "senior", "specialist"],
       artefacts: "Baseline data report, gap-analysis memo, technical-conditions log, data-completeness assessment",
-      sectorVocab: (s) => {
-        const sl = s.toLowerCase();
-        if (/health/.test(sl)) return "site survey, clinical-flow observation, biomedical equipment audit, IPC compliance baseline";
-        if (/water/.test(sl)) return "borehole siting, geophysical survey, hydrogeological assessment, water-quality analysis";
-        if (/road/.test(sl)) return "topographic survey, geotechnical investigation, traffic count, drainage condition assessment";
-        if (/urban/.test(sl)) return "GIS land-use mapping, demographic data collection, infrastructure inventory, demand assessment";
-        if (/energy|power|solar|wind|grid|generation|transmission/.test(sl)) return "site reconnaissance, load-flow baseline survey, grid interconnection assessment, metered consumption data collection";
-        if (/agri|irrigation|farm|crop|livestock|rural develop/.test(sl)) return "hydrological survey, soil classification, crop-water-requirement assessment, farmer needs assessment";
-        if (/mining|mineral|quarry|extracti/.test(sl)) return "geological mapping, rock-mass characterisation, resource-block model validation, geotechnical investigation";
-        if (/\bport\b|harbor|harbour|maritime|quay|berth/.test(sl)) return "bathymetric survey, sediment characterisation, vessel-traffic survey, met-ocean data collection";
-        if (/oil|gas|petroleum|pipeline|refinery|petrochemical/.test(sl)) return "process-data collection, P&ID mark-up review, hazard identification (HAZID), existing-facility condition survey";
-        if (/finance|bank|micro.?finance|insurance|credit/.test(sl)) return "business process mapping, data-quality assessment, regulatory-gap analysis, current-system architecture review";
-        if (/telecom|broadband|spectrum|mobile network|isp/.test(sl)) return "RF site survey, propagation modelling, existing-network audit, backhaul capacity assessment";
-        return "baseline data collection, technical-condition logging, gap mapping";
-      },
+      sectorVocab: (s) => /health/.test(s.toLowerCase())
+        ? "site survey, clinical-flow observation, biomedical equipment audit, IPC compliance baseline"
+        : /water/.test(s.toLowerCase())
+          ? "borehole siting, geophysical survey, hydrogeological assessment, water-quality analysis"
+          : /road/.test(s.toLowerCase())
+            ? "topographic survey, geotechnical investigation, traffic count, drainage condition assessment"
+            : /urban/.test(s.toLowerCase())
+              ? "GIS land-use mapping, demographic data collection, infrastructure inventory, demand assessment"
+              : /energy|power.*plant|\bsolar\b|wind.*farm|substation|hydropower|electrification/i.test(s)
+                ? "load-forecast memo, P50/P90 yield modelling, site reconnaissance, grid-connection pre-application"
+                : /agri|irrigation|WUA|command.*area/i.test(s)
+                  ? "FAO Penman-Monteith crop-water requirement, 20-year flow record review, command-area mapping"
+                  : /mining|JORC|tailings|ore.*body|mine.*plan/i.test(s)
+                    ? "resource estimation, block-model development, geotechnical investigation scoping"
+                    : /port|berth|quay|maritime|dredging|harbour/i.test(s)
+                      ? "met-ocean analysis, bathymetric survey, geotechnical investigation, nautical simulation brief"
+                      : /HAZOP|P&ID|pipeline.*design|oil.*facilit|gas.*facilit/i.test(s)
+                        ? "design basis memorandum, P&ID development, HAZOP study, LOPA analysis"
+                        : /KYC|AML|core.*banking|microfinance|IFRS|Basel/i.test(s)
+                          ? "regulatory gap analysis, target operating model design, data-quality assessment"
+                          : /spectrum|broadband|LTE|5G|base.*station|backhaul/i.test(s)
+                            ? "traffic demand modelling, RF coverage simulation, spectrum licensing roadmap"
+                            : "baseline data collection, technical-condition logging, gap mapping",
     },
     {
       title: "Phase 3: Concept and Schematic Design / Scenario Development",
       durationLabel: fmt(split(0.30) + 1, split(0.50)),
       picksKeyword: ["architect", "engineer", "planner", "lead"],
       artefacts: "Concept design report, schematic drawings, preliminary cost estimate, design rationale memo, 30% gate sign-off pack",
-      sectorVocab: (s) => {
-        const sl = s.toLowerCase();
-        if (/health/.test(sl)) return "clinical zoning matrix, IPC flow diagram, conceptual MEP layout, equipment provisional schedule";
-        if (/water/.test(sl)) return "demand-projection memo, hydraulic-network sketch, source-yield interpretation, treatment-process selection";
-        if (/road/.test(sl)) return "alignment options, pavement-design alternatives, drainage strategy, road-safety framework";
-        if (/energy|power|solar|wind|grid|generation|transmission/.test(sl)) return "single-line diagram concept, generation-mix options, renewable-integration scenarios, demand-forecast model";
-        if (/agri|irrigation|farm|crop|livestock|rural develop/.test(sl)) return "scheme layout options, irrigation method selection, water-source yield model, command-area delineation";
-        if (/mining|mineral|quarry|extracti/.test(sl)) return "pit-design options, mining-method alternatives, processing route selection, tailings-management concept";
-        if (/\bport\b|harbor|harbour|maritime|quay|berth/.test(sl)) return "berth layout options, vessel-simulation concept, land-side circulation alternatives, phase-development scenarios";
-        if (/oil|gas|petroleum|pipeline|refinery|petrochemical/.test(sl)) return "process flow diagram, block-P&ID concept, plot-plan alternatives, HAZOP preparation";
-        if (/finance|bank|micro.?finance|insurance|credit/.test(sl)) return "target operating model, system architecture options, regulatory-alignment framework, change-management approach";
-        if (/telecom|broadband|spectrum|mobile network|isp/.test(sl)) return "network topology options, spectrum band selection, coverage-target definition, technology comparison";
-        return "concept layouts, scenario evaluation matrix, preferred-option memo, stakeholder consultation log";
-      },
+      sectorVocab: (s) => /health/.test(s.toLowerCase())
+        ? "clinical zoning matrix, IPC flow diagram, conceptual MEP layout, equipment provisional schedule"
+        : /water/.test(s.toLowerCase())
+          ? "demand-projection memo, hydraulic-network sketch, source-yield interpretation, treatment-process selection"
+          : /road/.test(s.toLowerCase())
+            ? "alignment options, pavement-design alternatives, drainage strategy, road-safety framework"
+            : /energy|power.*plant|\bsolar\b|wind.*farm|substation|hydropower|electrification/i.test(s)
+              ? "single-line diagram, technology-selection report, SKM/ETAP load-flow model, protection relay coordination study"
+              : /agri|irrigation|WUA|command.*area/i.test(s)
+                ? "irrigation network layout options, diversion/weir structure concept, WUA governance draft framework"
+                : /mining|JORC|tailings|ore.*body|mine.*plan/i.test(s)
+                  ? "pit or underground design options, slope-stability analysis (three methods), TSF concept design"
+                  : /port|berth|quay|maritime|dredging|harbour/i.test(s)
+                    ? "berth layout options, fast-time nautical simulation brief, dredge volume estimate, ISPS compliance outline"
+                    : /HAZOP|P&ID|pipeline.*design|oil.*facilit|gas.*facilit/i.test(s)
+                      ? "P&ID development, HAZOP study with action register, LOPA for high-severity nodes"
+                      : /KYC|AML|core.*banking|microfinance|IFRS|Basel/i.test(s)
+                        ? "system architecture document, integration plan, RBAC/encryption design, UAT protocol"
+                        : /spectrum|broadband|LTE|5G|base.*station|backhaul/i.test(s)
+                          ? "base-station siting plan, backhaul design with path availability calculations, site acquisition list"
+                          : "concept layouts, scenario evaluation matrix, preferred-option memo, stakeholder consultation log",
     },
     {
       title: "Phase 4: Detailed Design / Methodology Execution",
       durationLabel: fmt(split(0.50) + 1, split(0.80)),
       picksKeyword: ["lead", "senior", "engineer", "specialist"],
       artefacts: "Detailed design drawings (architectural / structural / MEP / civil as applicable), specifications, BOQ, design report, 60% gate sign-off pack",
-      sectorVocab: (s) => {
-        const sl = s.toLowerCase();
-        if (/health/.test(sl)) return "fully coordinated MEP + medical-gas drawings, structural sizing, IPC-compliant detail design, clinical-equipment integration";
-        if (/water/.test(sl)) return "EPANET-verified network, pump-station detail design, treatment-plant process drawings, structural calculations";
-        if (/road/.test(sl)) return "AASHTO/ERA pavement design, drainage detail design, structural design (culverts/bridges), tender BOQ";
-        if (/energy|power|solar|wind|grid|generation|transmission/.test(sl)) return "protection relay settings, SCADA architecture, cable sizing calculations, grid-code compliance documentation, BOQ";
-        if (/agri|irrigation|farm|crop|livestock|rural develop/.test(sl)) return "FAO Penman-Monteith irrigation scheduling, canal/pipe detailed design, structure drawings, O&M manual, BOQ";
-        if (/mining|mineral|quarry|extracti/.test(sl)) return "JORC-compliant resource report, slope-stability analysis (LEM + numerical), mine-plan drawings, TSF design, BOQ";
-        if (/\bport\b|harbor|harbour|maritime|quay|berth/.test(sl)) return "berth structural design, dredging plan, shore-power layout, ISPS compliance documentation, BOQ";
-        if (/oil|gas|petroleum|pipeline|refinery|petrochemical/.test(sl)) return "P&ID detailed design, HAZOP action-item register, pipeline stress analysis, vendor-data compilation, BOQ";
-        if (/finance|bank|micro.?finance|insurance|credit/.test(sl)) return "functional specification, data-migration plan, integration architecture, UAT protocol, training plan";
-        if (/telecom|broadband|spectrum|mobile network|isp/.test(sl)) return "RF link budget, site-equipment specification, backhaul dimensioning, ISPS compliance checklist, BOQ";
-        return "detailed scenario, implementation roadmap, regulatory-alignment memo, capacity-building plan";
-      },
+      sectorVocab: (s) => /health/.test(s.toLowerCase())
+        ? "fully coordinated MEP + medical-gas drawings, structural sizing, IPC-compliant detail design, clinical-equipment integration"
+        : /water/.test(s.toLowerCase())
+          ? "EPANET-verified network, pump-station detail design, treatment-plant process drawings, structural calculations"
+          : /road/.test(s.toLowerCase())
+            ? "AASHTO/ERA pavement design, drainage detail design, structural design (culverts/bridges), tender BOQ"
+            : /energy|power.*plant|\bsolar\b|wind.*farm|substation|hydropower|electrification/i.test(s)
+              ? "full engineering design package (civil/structural, electrical, SCADA), grid-code compliance dossier, procurement BOQ"
+              : /agri|irrigation|WUA|command.*area/i.test(s)
+                ? "irrigation network detail design, diversion/weir structural calculations, WUA governance framework, tender BOQ"
+                : /mining|JORC|tailings|ore.*body|mine.*plan/i.test(s)
+                  ? "mine plan, TSF detailed design, regulatory submission package, procurement BOQ"
+                  : /port|berth|quay|maritime|dredging|harbour/i.test(s)
+                    ? "berth structural design, dredge disposal plan, shore-power layout, ISPS compliance documentation, BOQ"
+                    : /HAZOP|P&ID|pipeline.*design|oil.*facilit|gas.*facilit/i.test(s)
+                      ? "pipeline stress analysis, cathodic-protection design, civil/structural drawings, vendor data requirements matrix"
+                      : /KYC|AML|core.*banking|microfinance|IFRS|Basel/i.test(s)
+                        ? "UAT execution, data migration with reconciliation, legal counsel regulatory compliance confirmation"
+                        : /spectrum|broadband|LTE|5G|base.*station|backhaul/i.test(s)
+                          ? "network design package, EMR compliance dossier, installation supervision procedures, drive-test protocol"
+                          : "detailed scenario, implementation roadmap, regulatory-alignment memo, capacity-building plan",
     },
     {
       title: "Phase 5: Internal QA, Independent Peer Review, and Client Comments",

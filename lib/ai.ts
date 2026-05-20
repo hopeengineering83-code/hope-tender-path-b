@@ -1547,6 +1547,13 @@ export async function generateBenchmarkProposalWithAI(params: AIBidWriterInput):
   const isOilGas = /pipeline.*design|oil.*facilit|gas.*facilit|upstream.*petroleum|HAZOP.*study|P&ID.*develop|refinery.*design|petrochemical.*plant|wellhead.*design|\bHAZOP\b|\bP&ID\b|\bpipeline.*integrity\b|\bprocess.*safety\b|\bpipeline.*engineer\b|\bupstream.*oil\b|\bupstream.*gas\b|\bLNG\b|\bFEED\b.*\b(oil|gas|process)\b|\brefinery\b|\bpetrochemical\b/i.test(allText);
   const isFinancial = /KYC.*framework|AML.*framework|core.*banking.*system|microfinance.*system|credit.*risk.*model|IFRS.*implement|Basel.*compliance|prudential.*regul.*framework|capital.*adequacy.*assess|\bKYC\b|\bAML\b|\bBasel\b.*\b(III|IV|compliance|standard)\b|\bIFRS\b.*\b(9|17|implement|adopt)\b|\bcore.*banking\b|\bmicrofinance.*platform\b|\bcredit.*risk.*assess\b|\bprudential.*regulation\b/i.test(allText);
   const isTelecoms = /spectrum.*licen|base.*station.*design|backhaul.*design|last.?mile.*access|broadband.*network.*design|telecoms.*infra|LTE.*deploy|5G.*rollout|mobile.*network.*rollout|\bspectrum.*plan\b|\bspectrum.*manage\b|\bbroadband.*infrastruc\b|\btelecoms.*develop\b|\bbase.*station\b|\bLTE\b|\b5G\b|\bmobile.*network\b|\bbroadband.*rollout\b|\bISP.*develop\b|\bbackhaul.*network\b/i.test(allText);
+  const isHeritage = /heritage.*conserv|conserv.*heritage|historic.*building|adaptive.*reuse|listed.*building|monument.*restor|museum.*design|heritage.*restor/i.test(allText);
+  const isIndustrial = /industrial.*facilit|manufactur.*plant|factory.*design|abattoir.*design|processing.*plant.*design|production.*facilit|industrial.*build/i.test(allText);
+  const isHighRise = /high.rise.*build|multi.stor.*build|tower.*build.*design|\bG\+\d{2,}\b|basement.*podium|tall.*build.*design|supertall|skyscraper/i.test(allText);
+  const isHospitality = /hotel.*design|resort.*design|lodge.*design|hospitality.*facilit|guesthouse.*design|five.star.*hotel|luxury.*hotel.*develop/i.test(allText);
+  const isQCBS = /\bQCBS\b|quality.*cost.*based.*selection|quality.?based.*selection|\bQBS\b|technical.*score.*threshold|technical.*pass.*mark|financial.*envelope|financial.*proposal.*not.*open/i.test(allText);
+  const isSupervision = /construction.*supervision|resident.*engineer|contract.*administration|site.*supervision|supervision.*consultant|engineer.*representative|contract.*manager/i.test(allText);
+  const isGeotechnical = /geotechnical.*investigation|soil.*investigation|site.*investigation|ground.*investigation|borehole.*programme|subsoil.*investigation|geotechnical.*study|foundation.*investigation/i.test(allText);
 
   const tenderSections = extractTenderSections(params.tenderText);
   const exactEmails = Array.from(
@@ -1751,6 +1758,126 @@ TELECOMS / BROADBAND INFRASTRUCTURE GUIDANCE (mandatory for this tender):
 - Commissioning: RF commissioning (VSWR, cable sweep), drive-test coverage measurement (RSRP, RSRQ, throughput maps), NOC KPI dashboard pre-configured, hypercare period (4–6 weeks), SLA breach escalation protocol.`
     : "";
 
+  const isEOI = /\bEOI\b|expression of interest/i.test(params.tenderText ?? "");
+  // isQCBS already declared above (uses allText for broader detection)
+  const isQBS = /\bQBS\b|quality.?based.*selection/i.test(allText);
+  const isWorldBankTender = /World Bank|IBRD|IDA|WB.*procurement/i.test(allText);
+  const isUNDPTender = /\bUNDP\b|United Nations Development Programme/i.test(allText);
+  const isAfDBTender = /\bAfDB\b|African Development Bank|Agence Française de Développement|\bAFD\b/i.test(allText);
+
+  const heritageGuidance = isHeritage
+    ? `
+HERITAGE CONSERVATION & ADAPTIVE REUSE GUIDANCE (mandatory for this tender):
+- Cover letter and Executive Summary MUST cite the company's strongest comparable heritage conservation or restoration project by name, building type, client, and ETB/contract value from the evidence.
+- Technical Approach must address: condition survey and significance assessment (ICOMOS principles — minimum intervention, reversibility, compatibility), material-compatibility testing (XRF/petrographic) before specifying repair mortars, structural stabilisation design, MEP upgrade using reversible/compatible materials.
+- Heritage authority engagement: pre-application meeting at conservation-plan stage; conservation philosophy approved before design freeze; three-gate review (conservation plan → tender documents → construction phase).
+- Supervision: specialist contractor supervision with material-sample approval protocol; NCR register for every non-conforming intervention; photographic record at each phase.
+- Documentation: photogrammetric 3D scan/point-cloud model at inception; as-built conservation drawings; before/after photographic archive; updated condition report; maintenance manual; handover to cultural authority.`
+    : "";
+
+  const industrialGuidance = isIndustrial
+    ? `
+INDUSTRIAL & MANUFACTURING FACILITY GUIDANCE (mandatory for this tender):
+- Cover letter and Executive Summary MUST cite the company's strongest comparable industrial/factory project by name, production type, client, and ETB/contract value from the evidence.
+- Technical Approach must address: process brief and production-flow analysis (value-stream mapping, lean principles), utility demand assessment (power, water, compressed air, waste streams), industrial structural design (heavy loading), HVAC/exhaust ventilation system, industrial flooring specification, fire suppression system, effluent treatment design to Ethiopian EPA/WHO standards.
+- Environmental approvals: EIA/ESIA scope, effluent treatment design, waste management plan, occupational safety assessment.
+- Equipment integration: factory acceptance test (FAT) protocol; commissioning sequencing plan; operator training programme.
+- Digital 3D plant model for clash detection and installation sequencing; as-built drawings for O&M manual.`
+    : "";
+
+  const highRiseGuidance = isHighRise
+    ? `
+HIGH-RISE / MULTI-STOREY BUILDING GUIDANCE (mandatory for this tender):
+- Cover letter and Executive Summary MUST cite the company's strongest comparable high-rise or multi-storey project by name, floor count (G+N), structural system, client, and ETB/contract value from the evidence.
+- Technical Approach must address: structural system selection (shear wall/core-frame/hybrid) with ETABS/SAP2000 analysis incorporating Ethiopian seismic zone (EBCS-8/ES EN 1998) and wind loads, shear wall and core layout, transfer beam/slab design, foundation design (mat/pile), independent structural peer review.
+- BIM coordination: LOD 300+ full architectural/structural/MEP coordination; clash detection for MEP riser routing and structural penetrations.
+- Specialist systems: aluminium curtain wall specification, lift/car-lift design, BMS, fire alarm and suppression, generator/UPS sizing.
+- Regulatory: structural calculation submission to AA City/regional authority formatted to authority checklist.
+- Construction supervision: hold-point inspections at foundation, shear wall pours, curtain wall installation, and lift acceptance test.`
+    : "";
+
+  const hospitalityGuidance = isHospitality
+    ? `
+HOSPITALITY & HOTEL DESIGN GUIDANCE (mandatory for this tender):
+- Cover letter and Executive Summary MUST cite the company's strongest comparable hotel/resort project by name, star rating, room count, client, and ETB/contract value from the evidence.
+- Technical Approach must address: feasibility and development programme (room mix, F&B concept, BOH efficiency), RevPAR market benchmarking, brand-standard compliance matrix embedded from concept stage, mock guestroom constructed and approved before full fit-out.
+- Interior design: finishes schedule, FF&E specification and procurement schedule with lead-time tracking, lighting design, brand-standard compliance checklist.
+- MEP specialist systems: VRF/fan-coil guestroom HVAC, kitchen ventilation, pool/spa mechanical, AV and guest-technology design, access-control system.
+- Pre-opening: room-by-room snagging protocol; MEP commissioning tests; brand-operator final punch list clearance; handover pack.
+- Sustainability: water consumption target ≤200 L/guest-night; GSTC criteria alignment; local sourcing ≥40% of F&B spend.`
+    : "";
+
+  const supervisionGuidance = isSupervision
+    ? `
+CONSTRUCTION SUPERVISION & CONTRACT ADMINISTRATION GUIDANCE (mandatory for this tender):
+- Cover letter and Executive Summary MUST cite the company's strongest comparable supervision/contract administration assignment by name, contract value supervised, duration, procurement standard (FIDIC/MoW), and client from the evidence.
+- Technical Approach must address: Inspection and Test Plan (ITP) issuance on day one; daily/weekly site inspection regime; material/shop-drawing approval workflow; non-conformance report (NCR) protocol; variation-order assessment and certification timeline (target ≤10 days); interim payment certificate preparation and submission schedule; S-curve and cash-flow tracking in monthly progress reports; defects notification and close-out register.
+- Quality system: ISO 9001-aligned QA plan submitted to client within 14 days of mobilisation; independent audit of high-risk structural elements at defined hold points.
+- FIDIC compliance: Clause 3.1 Engineer's Representative authority; Clause 13 Variations management; Clause 14 Payment certification; Clause 20 Claims and dispute avoidance board.
+- Staffing: Resident Engineer with FIDIC accreditation; structural, MEP, and QA inspectors proportionate to contract scope; dedicated document controller.
+- Handover: punch-list protocol, substantial completion certificate, defects liability inspection schedule, final account preparation, and completion report with photographic record.`
+    : "";
+
+  const geotechnicalGuidance = isGeotechnical
+    ? `
+GEOTECHNICAL INVESTIGATION GUIDANCE (mandatory for this tender):
+- Cover letter and Executive Summary MUST cite the company's strongest comparable geotechnical investigation assignment by name, number of boreholes, founding depth, soil conditions encountered, client, and ETB/contract value from the evidence.
+- Technical Approach must address: desk study (geological maps, hydrogeological records, previous investigation reports), borehole/trial-pit programme design (depth, spacing, sampling intervals calibrated to structure footprint and anticipated loading), SPT at 1.5 m intervals, undisturbed sampling for laboratory testing, permeability/falling-head tests where groundwater is encountered.
+- Laboratory programme: grain-size distribution, Atterberg limits, natural moisture content, compaction characteristics, unconfined compressive strength, triaxial shear strength, CBR (for road/pavement elements). Accredited laboratory must be confirmed before testing commences.
+- Analysis: bearing-capacity calculation (Terzaghi/Meyerhof/EC7), settlement analysis (immediate and long-term), liquefaction susceptibility index (for seismic zone), slope-stability check (Bishop simplified) where terrain requires, pile capacity recommendation with factors of safety.
+- Deliverable: geotechnical investigation report with executive summary, borehole logs, laboratory results, interpreted soil profile, and foundation type recommendation; independent peer review before issue.`
+    : "";
+
+  const eoiGuidance = isEOI
+    ? `
+NOTE: This tender is an EXPRESSION OF INTEREST (EOI). Structure accordingly: Company Profile → Relevant Experience (3–5 named projects) → Team Qualifications (key experts, qualifications, years of experience) → Company Capacity statement. EOI proposals should be concise (typically 5–15 pages), qualification-heavy, and should NOT include detailed methodology or financial data unless explicitly requested.`
+    : "";
+
+  const qcbsGuidance = (isQCBS || isQBS)
+    ? `
+QCBS / QBS SELECTION GUIDANCE (mandatory for this tender):
+- This tender uses Quality and Cost Based Selection (QCBS) or Quality Based Selection (QBS). The technical proposal is evaluated INDEPENDENTLY before the financial envelope is opened.
+- Technical threshold to pass: typically ≥75 points out of 100 before financial envelope is opened. A proposal below the threshold is disqualified regardless of price.
+- Scoring structure (typical weights — check tender for exact allocation):
+  • Staffing / CVs: 30–40 points — each proposed expert must be named, with CV demonstrating specific comparable project experience and licences
+  • Methodology / Work Plan: 20–30 points — detailed, deliverable-linked work plan required; generic methodology templates score near zero
+  • Relevant Experience: 10–20 points — firm's comparable projects with verifiable client references and contract values
+  • Firm Profile / Capacity: 10–15 points — legal status, key certifications, staff count, sector registrations
+- For QBS (Quality Only): the financial envelope is NOT opened — only the quality score determines selection. Emphasis shifts entirely to methodology depth, team calibre, and firm profile. Do NOT reference price competitiveness in any section.
+- For QCBS: once technical threshold is passed, financial weight (typically 20–30%) is combined with technical weight. The combined score determines ranking.
+- Proposal structure must map explicitly to each evaluation criterion — use sub-headings that mirror the evaluation matrix in the tender document.`
+    : "";
+
+  const worldBankGuidance = isWorldBankTender
+    ? `
+WORLD BANK PROCUREMENT GUIDANCE (mandatory for this tender):
+- This tender is financed or administered under World Bank Consultant Guidelines 2011 or Procurement Regulations 2020. Compliance is a mandatory eligibility condition.
+- Anti-corruption declaration: include a signed statement that the firm has not been debarred by the World Bank, is not subject to sanctions, and has not offered or received improper advantages.
+- Conflict of interest: disclose any relationship with the client, government entities, or other bidders that could constitute a conflict of interest. Any undisclosed conflict is grounds for disqualification.
+- Eligibility: firm and all proposed experts must be from eligible countries (confirm World Bank negative list). Disclose any nationality or country-of-origin eligibility issues.
+- Environmental and Social Framework (ESF): proposals must reference applicable ESF/ESS (ESS1–ESS10) in the technical approach and ESMP methodology.
+- Reporting and M&E: progress reports must include output/outcome indicators against baseline, and financial accountability summary per World Bank fiduciary requirements.`
+    : "";
+
+  const undpGuidance = isUNDPTender
+    ? `
+UNDP PROCUREMENT GUIDANCE (mandatory for this tender):
+- This tender follows the UNDP Procurement Manual and Supplier Code of Conduct. Compliance with UNDP's procurement standards is mandatory.
+- Proposal structure: Part 1 — Firm/Organization Profile and Experience; Part 2 — Technical Methodology and Work Plan. Financial proposal submitted separately in sealed envelope — do NOT include pricing in the technical proposal.
+- UNDP Sustainable Procurement: address gender equality, environmental sustainability, and local economic development explicitly in the methodology.
+- Anti-corruption and ethics: all team members must sign UNDP's ethics and anti-corruption declaration. Include declaration template reference in the appendix register.
+- SDG alignment: where applicable, link the project methodology to specific SDG targets and explain how delivery contributes to measurable progress.`
+    : "";
+
+  const afdbGuidance = isAfDBTender
+    ? `
+AfDB / AFD PROCUREMENT GUIDANCE (mandatory for this tender):
+- This tender is financed under African Development Bank (AfDB) or Agence Française de Développement (AFD) standards. Apply the relevant funder's procurement rules throughout.
+- AfDB: follow the AfDB Procurement Policy for Bank Group-Financed Operations. Environmental and Social Policy (ESAP/ESPS) governs safeguards. Anti-corruption and debarment declaration required.
+- AFD: follow AFD's Aide-Mémoire for consultants. If the tender is in French, the proposal must be submitted in French (technical acronyms may be bilingual). AFD ESPS and ESSS safeguard standards apply.
+- Both funders require: debarment and sanctions check declaration; proof of legal status and eligibility; anti-corruption certification; named quality assurance officer.`
+    : "";
+
   // Combine all active sector guidance blocks for injection into Section C
   const allSectorGuidance = [
     healthcareGuidance, facilityGuidance, waterGuidance, roadBridgeGuidance,
@@ -1758,6 +1885,9 @@ TELECOMS / BROADBAND INFRASTRUCTURE GUIDANCE (mandatory for this tender):
     donorGuidance, educationGuidance,
     energyGuidance, agricultureGuidance, miningGuidance, portGuidance,
     oilGasGuidance, financialGuidance, telecomsGuidance,
+    heritageGuidance, industrialGuidance, highRiseGuidance, hospitalityGuidance,
+    supervisionGuidance, geotechnicalGuidance,
+    eoiGuidance, qcbsGuidance, worldBankGuidance, undpGuidance, afdbGuidance,
   ].filter(Boolean).join("\n\n");
 
   // Dynamic cover page headline facts calibrated to detected sector
@@ -1789,6 +1919,18 @@ TELECOMS / BROADBAND INFRASTRUCTURE GUIDANCE (mandatory for this tender):
     ? `"4 Core Banking Implementations | KYC/AML Framework Specialists | Data Migration Proven | Regulatory Compliance Track Record"`
     : isTelecoms
     ? `"3 Network Rollouts Delivered | RF Propagation Specialists | Spectrum Regulatory Support | NOC KPI Dashboard Implemented"`
+    : isHeritage
+    ? `"5 Heritage Conservation Projects | Conservation Management Plan Specialists | Minimal-Intervention Design | Photogrammetric Survey Capability"`
+    : isIndustrial
+    ? `"6 Industrial Facilities Designed | Process Engineering In-house | HAZOP-Reviewed Design | Commissioning Protocol Proven"`
+    : isHighRise
+    ? `"4 High-Rise Buildings Designed | Dynamic Wind & Seismic Analysis | BIM Coordination In-house | Curtain-Wall Specification Proven"`
+    : isHospitality
+    ? `"5 Hospitality Projects Delivered | Brand-Standard Compliance | FF&E Coordination | Pre-Opening Commissioning Proven"`
+    : isSupervision
+    ? `"12 Contracts Supervised | FIDIC-Accredited Resident Engineers | ITP & NCR System | ETB 1B+ Contract Value Under Supervision"`
+    : isGeotechnical
+    ? `"50+ Boreholes Completed | Accredited Geotechnical Laboratory | Bearing Capacity & Settlement Analysis | Site Investigation Report Delivery Proven"`
     : isDonor
     ? `"10+ Donor-Funded Projects Delivered | World Bank / UNDP Track Record | ISO-Aligned Quality System | FIDIC-Compliant Contract Administration"`
     : `"10+ Major Projects Delivered | Multidisciplinary Expert Team | Evidence-Backed Technical Approach | ISO-Aligned Quality System"`;

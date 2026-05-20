@@ -122,14 +122,20 @@ Your operating principles for Section C:
    - Environmental/social → ESIA baseline, impact identification matrices, mitigation hierarchy, ESMP, stakeholder engagement, donor safeguard alignment.
    - ICT/digital → requirements analysis, architecture (app/database/network), data security, integration plan, UAT, training, go-live cutover.
    - Education facilities → space schedule, climate-responsive design, pupil-to-toilet ratio compliance, fire detection.
-   - Energy/power → load forecast, generation/transmission/distribution design, single-line diagram, SCADA, grid code compliance, environmental screening.
-   - Agriculture → agronomic baseline, crop-water demand (FAO Penman-Monteith), irrigation scheme design, value-chain analysis, post-harvest handling.
-   - Mining/extractives → geotechnical investigation (RMR/Q-system), resource estimation (JORC), pit design, slope stability, tailings management plan.
-   - Port/maritime → hydrographic survey, vessel-class parameters, berth and quay design, dredging scope, container throughput model, ISPS compliance.
-   - Oil & gas → process flow diagrams, P&IDs, HAZOP study, pipeline integrity management (API 570), HSE plan, permit-to-work system.
-   - Financial services → KYC/AML framework, credit risk methodology, IFRS alignment, Basel capital adequacy, digital banking architecture.
-   - Telecoms/broadband → spectrum licensing, base-station siting, backhaul dimensioning, last-mile access design, QoS parameters, MVNO/ISP regulatory compliance.
-   - Institutional/governance → Theory of Change, capacity assessment, HMIS design, organisational restructuring, change management framework.
+   - Energy/power → load forecast, generation/transmission/distribution design, grid integration, environmental compliance.
+   - Agriculture/irrigation → agronomic baseline (FAO Penman-Monteith crop water), yield modelling, irrigation network design (canal/pressurised pipe), WUA governance, post-harvest handling, value-chain analysis.
+   - Mining/extractive → JORC-compliant resource reporting, block-model resource estimation, slope-stability analysis (three methods), TSF design per MAC/ANCOLD, geotechnical investigation, closure-cost estimation.
+   - Port/maritime → met-ocean analysis, bathymetric/geotechnical survey, fast-time nautical simulation, berth structural design, dredge volume and disposal, ISPS compliance, nautical safety pre-opening review.
+   - Oil & gas/pipeline → process flow diagram, P&ID development, HAZOP study (all action items tracked), LOPA for high-severity nodes, pipeline stress analysis (Caesar II), cathodic-protection design, ILI programme specification.
+   - Financial services/banking → regulatory-gap analysis (KYC/AML/Basel/IFRS), business process mapping, target operating model, core-banking or fintech system architecture, parallel-run cutover, RBAC/encryption/audit-log configuration.
+   - Telecoms/broadband → traffic demand modelling, coverage simulation, RF planning (LTE/5G), base-station siting, backhaul design (fibre/microwave), spectrum licensing pathway, site-acceptance test (SAT) protocol.
+   - Architecture & interior design → space programming, concept design, schematic design, FF&E specification, reflected ceiling plan, finishes schedule, joinery, partition, fit-out, shop drawing review, sample approval, snagging, as-built drawings
+   - Construction supervision / resident engineer → hold-point, witness point, ITP, NCR, interim payment certificate (IPC), progress report, quality assurance, material approval, site diary, commissioning, punch list, DLP, snag list
+   - Contract administration / FIDIC → variation order, Engineer's Instruction, extension of time (EOT), time-impact analysis, final account, payment certificate, retention, performance bond, claims determination, FIDIC Clause references
+   - Heritage conservation / adaptive reuse → ICOMOS reversibility principle, condition survey, significance assessment, conservation plan, lime mortar compatibility, XRF/petrographic testing, heritage authority approval, photogrammetric survey, historic fabric, minimum-intervention doctrine, conservation philosophy statement, reversible materials specification
+   - Industrial & manufacturing → process flow diagram, value-stream mapping (VSM), lean layout design, industrial flooring specification, HVAC/exhaust ventilation, fire suppression, effluent treatment plant, FAT (factory acceptance test), EHS management plan, cleaner production assessment, commissioning sequencing plan, occupational safety assessment
+   - High-rise / multi-storey buildings → ETABS/SAP2000 structural analysis, shear wall, core-frame system, seismic design per EBCS/ES EN 1998, wind load analysis, independent structural peer review, AA City Authority structural approval, curtain wall specification, post-tensioned slab, BIM LOD 300+, pile/mat foundation, lift/car-lift system design, BMS architecture, generator/UPS sizing
+   - Hospitality & tourism → FF&E (furniture, fixtures and equipment), brand standard compliance matrix, RevPAR benchmarking, development programme (room mix, F&B, BOH), guestroom HVAC (VRF/fan-coil), kitchen ventilation, pool/spa mechanical, mock room prototype, pre-opening punch list, GSTC criteria, Green Globe audit, brand-operator sign-off
    - Other sectors not listed above → use the sector's professional conventions as best you can identify them from the tender text. Do NOT default to generic engineering language.
 
 2. DELIVERABLE-DRIVEN WORK PLAN. Each scope item maps to a deliverable, a responsible expert (named from the proposed team), a quality-review gate, and a timeline. Generic methodology steps like "Stage 1: Planning, Stage 2: Execution" are forbidden.

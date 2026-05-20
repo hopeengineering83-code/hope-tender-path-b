@@ -32,7 +32,7 @@ export async function MatchingQualityPanel({ tenderId }: { tenderId: string }) {
   // the dedicated API route but missed this server-component path which
   // calls assessMatchingQuality directly — that's why the May 16
   // screenshot still showed 30/100 in the panel even after the route fix.
-  const companyReadiness = await getCompanyIngestionReadiness(company.id, prisma);
+  const companyReadiness = await getCompanyIngestionReadiness(company.id, {}, prisma);
   const quality = assessMatchingQuality({
     requirements: tender.requirements,
     expertMatches: tender.expertMatches,

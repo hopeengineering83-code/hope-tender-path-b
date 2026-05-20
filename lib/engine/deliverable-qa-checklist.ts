@@ -105,68 +105,74 @@ function sectorChecklistRows(sector: string, experts: ExpertRecord[], dCodes: st
       { check: "BOQ verified against drawing takeoff", responsibleRole: rolesByKeyword(experts, ["quantity", "qs"]), deliverables: sub([4]), acceptance: "Cross-check accuracy ≥ 98%" },
     ];
   }
-  if (/energy|power|solar|wind|grid|generation|transmission/.test(s)) {
+  if (/energy|solar|hydropower|substation|transmission|generation|electrification|scada/.test(s)) {
     return [
-      { check: "Load-flow model verified at design capacity and peak demand scenario", responsibleRole: rolesByKeyword(experts, ["power", "electrical", "energy"]), deliverables: sub([2, 3]), acceptance: "Voltage within ±5% at all buses; fault level within switchgear ratings" },
-      { check: "Grid-code compliance documentation complete and reviewed", responsibleRole: rolesByKeyword(experts, ["power", "protection"]), deliverables: sub([3, 4]), acceptance: "All grid-code requirements checked; non-compliance findings resolved" },
-      { check: "Protection relay coordination verified by independent power-systems specialist", responsibleRole: rolesByKeyword(experts, ["protection", "relay", "electrical"]), deliverables: sub([4]), acceptance: "Relay-settings memo peer-reviewed and signed; selectivity confirmed" },
-      { check: "SCADA tag list and HMI screen layout reviewed by client operations team", responsibleRole: rolesByKeyword(experts, ["scada", "control", "ict"]), deliverables: sub([5]), acceptance: "Operations team sign-off on tag list; HMI comment-response register closed" },
-      { check: "BOQ quantities verified against drawing takeoff", responsibleRole: rolesByKeyword(experts, ["quantity", "qs"]), deliverables: sub([6]), acceptance: "Cross-check accuracy ≥ 98%; discrepancies flagged" },
-      { check: "All deliverables peer-reviewed at 30 / 60 / 100% gates", responsibleRole: rolesByKeyword(experts, ["principal", "director"]), deliverables: all, acceptance: "Sign-off memo on file from Project Principal at each gate" },
+      { check: "Load forecast confirmed against utility historical data and grid-code obligations", responsibleRole: rolesByKeyword(experts, ["power", "electrical", "energy"]), deliverables: sub([1, 2]), acceptance: "Forecast reviewed by independent power-systems engineer; design basis memorandum signed off" },
+      { check: "Load-flow and short-circuit analysis completed (SKM/ETAP or equivalent)", responsibleRole: rolesByKeyword(experts, ["electrical", "power"]), deliverables: sub([2, 3]), acceptance: "Voltage profiles within code limits; fault levels below equipment ratings; report peer-reviewed" },
+      { check: "Protection relay coordination study reviewed before utility submission", responsibleRole: rolesByKeyword(experts, ["electrical", "protection"]), deliverables: sub([3]), acceptance: "Relay setting schedule issued; utility pre-approval acknowledgement on file" },
+      { check: "SCADA architecture and FAT/SAT protocols issued before equipment delivery", responsibleRole: rolesByKeyword(experts, ["electrical", "scada", "power"]), deliverables: sub([3, 4]), acceptance: "FAT protocol signed by client and vendor; SAT checklist covers all end-devices" },
+      { check: "BOQ verified against drawing takeoff", responsibleRole: rolesByKeyword(experts, ["quantity", "qs"]), deliverables: sub([4]), acceptance: "Cross-check accuracy ≥ 98%" },
+      { check: "Environmental management plan issued before construction mobilisation", responsibleRole: rolesByKeyword(experts, ["environment", "social"]), deliverables: sub([3, 5]), acceptance: "EMP reviewed and signed off by client; clearing and earthworks hold-point documented" },
     ];
   }
-  if (/agri|irrigation|farm|crop|livestock|rural develop/.test(s)) {
+  if (/agri|irrigation|wua|command.*area|rural.*develop/.test(s)) {
     return [
-      { check: "Hydrological analysis uses ≥ 20-year flow record; low-flow scenario verified", responsibleRole: rolesByKeyword(experts, ["hydro", "water"]), deliverables: sub([1, 2]), acceptance: "Data source and period documented; low-flow yield ≥ design demand" },
-      { check: "FAO Penman-Monteith irrigation demand calculation reviewed and signed", responsibleRole: rolesByKeyword(experts, ["agronomist", "irrigation"]), deliverables: sub([2, 3]), acceptance: "Crop coefficient (Kc) values match FAO 56; calculation reviewed by lead engineer" },
-      { check: "Irrigation network hydraulic model verified at design and peak demand", responsibleRole: rolesByKeyword(experts, ["irrigation", "hydraulic", "water"]), deliverables: sub([3]), acceptance: "Pressure within design envelope at all outlets; pump-head matches" },
-      { check: "WUA governance structure reviewed by sociologist and legal adviser", responsibleRole: rolesByKeyword(experts, ["social", "community"]), deliverables: sub([5]), acceptance: "WUA bylaws reviewed; registration requirements confirmed with local authority" },
-      { check: "O&M manual reviewed for local language clarity and completeness", responsibleRole: rolesByKeyword(experts, ["principal", "director"]), deliverables: sub([6]), acceptance: "Manual spot-checked by farmer representative; feedback incorporated" },
+      { check: "Hydrological analysis uses ≥ 20-year flow record; safe-yield factor documented", responsibleRole: rolesByKeyword(experts, ["hydro", "hydraulic", "water"]), deliverables: sub([1, 2]), acceptance: "Flow record verified; safe yield ≥ design demand; peer-reviewed memo on file" },
+      { check: "FAO Penman-Monteith crop-water calculation validated with local agronomy data", responsibleRole: rolesByKeyword(experts, ["agro", "irrigation"]), deliverables: sub([2]), acceptance: "Calculation inputs (temperature, humidity, wind, radiation) from local station data; reviewed by agronomist" },
+      { check: "Irrigation network hydraulic model verified (canal or pressurised pipe)", responsibleRole: rolesByKeyword(experts, ["hydraulic", "irrigation"]), deliverables: sub([3]), acceptance: "Pressure residuals within operating limits; flow velocities within non-erosion limits" },
+      { check: "WUA governance framework agreed and training plan issued before commissioning", responsibleRole: rolesByKeyword(experts, ["community", "social", "wua"]), deliverables: sub([4, 5]), acceptance: "WUA constitution signed; tariff model agreed; training plan issued with O&M manual" },
+      { check: "Commissioning seepage test completed per canal section before backfill", responsibleRole: rolesByKeyword(experts, ["hydraulic", "irrigation", "supervisor"]), deliverables: sub([5]), acceptance: "Seepage loss ≤ specified allowance; test records signed by Resident Engineer" },
+      { check: "O&M manual covers operation, maintenance, and repair for all components", responsibleRole: rolesByKeyword(experts, ["principal", "director"]), deliverables: sub([5, 6]), acceptance: "Manual reviewed by WUA representative; all components addressed" },
     ];
   }
-  if (/mining|mineral|quarry|extracti/.test(s)) {
+  if (/mining|mineral.*resource|jorc|tailings|ore.*body|mine.*plan/.test(s)) {
     return [
-      { check: "Resource estimate JORC compliance reviewed by independent competent person", responsibleRole: rolesByKeyword(experts, ["geolog", "resource", "mining"]), deliverables: sub([1, 2]), acceptance: "Competent person sign-off memo on file; confidence classification documented" },
-      { check: "Slope stability analysis uses ≥ 3 methods (LEM, numerical, empirical)", responsibleRole: rolesByKeyword(experts, ["geotechnical", "geotech"]), deliverables: sub([3]), acceptance: "All three methods documented; Factor of Safety ≥ 1.3 (static)" },
-      { check: "TSF design reviewed against MAC/ANCOLD guidelines", responsibleRole: rolesByKeyword(experts, ["tailings", "geotechnical"]), deliverables: sub([4]), acceptance: "Dam-safety review memo; closure and financial provision calculated" },
-      { check: "Environmental baseline and closure plan peer-reviewed by ESIA specialist", responsibleRole: rolesByKeyword(experts, ["environment", "esia", "social"]), deliverables: sub([5]), acceptance: "ESIA compliance checklist signed; no-net-loss biodiversity commitment documented" },
-      { check: "Mine plan checked for consistency with resource model and production schedule", responsibleRole: rolesByKeyword(experts, ["mining", "mineral"]), deliverables: sub([2, 3]), acceptance: "Mine plan tonnage reconciled with resource model ± 5%" },
+      { check: "Drillhole database validated before block-model estimation begins", responsibleRole: rolesByKeyword(experts, ["geolog", "mining"]), deliverables: sub([1, 2]), acceptance: "Database validation report on file; collar, survey, and assay data verified" },
+      { check: "Block-model resource estimate reviewed by independent competent person (JORC)", responsibleRole: rolesByKeyword(experts, ["geolog", "resource"]), deliverables: sub([2, 3]), acceptance: "Competent-person sign-off letter on file; JORC code table complete" },
+      { check: "Slope-stability analysis completed using three independent methods", responsibleRole: rolesByKeyword(experts, ["geotech", "geotechnical"]), deliverables: sub([3]), acceptance: "Three analyses documented; inter-ramp angles confirmed; geotechnical peer review on file" },
+      { check: "TSF design reviewed against MAC/ANCOLD guidelines before construction", responsibleRole: rolesByKeyword(experts, ["geotechnical", "mining"]), deliverables: sub([3, 4]), acceptance: "MAC/ANCOLD classification confirmed; freeboard and drainage adequacy documented" },
+      { check: "Closure plan with financial provision estimate included in feasibility report", responsibleRole: rolesByKeyword(experts, ["environment", "mining"]), deliverables: sub([4, 5]), acceptance: "Closure cost estimate peer-reviewed; financial provision methodology documented" },
+      { check: "Regulatory submission package reviewed before lodgement", responsibleRole: rolesByKeyword(experts, ["principal", "director"]), deliverables: sub([5]), acceptance: "Package checklist signed off; legal counsel review memo on file" },
     ];
   }
-  if (/\bport\b|harbor|harbour|maritime|quay|berth|shipping terminal/.test(s)) {
+  if (/port|berth|quay|maritime|dredging|harbour/.test(s)) {
     return [
-      { check: "Vessel-class parameters confirmed with port authority before design", responsibleRole: rolesByKeyword(experts, ["port", "maritime", "coastal"]), deliverables: sub([1]), acceptance: "Port authority written confirmation on file; LOA, DWT, draft documented" },
-      { check: "Mooring analysis verified at design vessel in worst-case met-ocean conditions", responsibleRole: rolesByKeyword(experts, ["port", "maritime"]), deliverables: sub([2, 3]), acceptance: "Met-ocean data source documented; mooring forces within bollard/cleat ratings" },
-      { check: "Dredge volume and disposal site confirmed; sediment characterisation completed", responsibleRole: rolesByKeyword(experts, ["dredge", "marine", "environment"]), deliverables: sub([2, 4]), acceptance: "Sediment characterisation report on file; disposal approval path confirmed" },
-      { check: "ISPS compliance checklist completed and reviewed", responsibleRole: rolesByKeyword(experts, ["port", "maritime"]), deliverables: sub([5]), acceptance: "ISPS checklist 100% complete; port security plan template ready" },
-      { check: "BOQ quantities verified against drawing takeoff", responsibleRole: rolesByKeyword(experts, ["quantity", "qs"]), deliverables: sub([6]), acceptance: "Cross-check accuracy ≥ 98%" },
+      { check: "Met-ocean data set validated (≥ 20 years) before berth layout is finalised", responsibleRole: rolesByKeyword(experts, ["port", "marine", "coastal"]), deliverables: sub([1, 2]), acceptance: "Data source documented; extreme value analysis confirmed; design conditions peer-reviewed" },
+      { check: "Nautical simulation validates berth layout and turning basin before structural design", responsibleRole: rolesByKeyword(experts, ["nautical", "port", "marine"]), deliverables: sub([2]), acceptance: "Fast-time simulation report on file; layout confirmed safe for design vessel class under design wind/current" },
+      { check: "Dredge material characterisation completed before disposal site is selected", responsibleRole: rolesByKeyword(experts, ["environment", "marine"]), deliverables: sub([2, 3]), acceptance: "Bulk chemistry and elutriate test results documented; disposal site pre-approved by environmental authority" },
+      { check: "Berth structural design peer-reviewed before construction issue", responsibleRole: rolesByKeyword(experts, ["structural", "port"]), deliverables: sub([3, 4]), acceptance: "Structural peer review memo on file; foundation design confirmed against geotechnical data" },
+      { check: "ISPS compliance documentation issued before commissioning", responsibleRole: rolesByKeyword(experts, ["port", "security"]), deliverables: sub([4, 5]), acceptance: "PFSP completed; restricted area designations documented; security officer training plan issued" },
+      { check: "Pre-operations nautical safety review completed before first vessel call", responsibleRole: rolesByKeyword(experts, ["nautical", "port"]), deliverables: sub([5]), acceptance: "Safety review report on file; recommendations closed or formally accepted" },
     ];
   }
-  if (/oil|gas|petroleum|pipeline|refinery|petrochemical/.test(s)) {
+  if (/pipeline|oil.*facilit|gas.*facilit|hazop|p&id|refinery|petrochemical/.test(s)) {
     return [
-      { check: "All HAZOP action items tracked to close-out before detailed design freeze", responsibleRole: rolesByKeyword(experts, ["hazop", "safety", "process"]), deliverables: sub([3, 4]), acceptance: "Zero open HAZOP actions at design freeze; close-out register signed" },
-      { check: "P&ID freeze confirmed; all post-HAZOP changes processed through MOC", responsibleRole: rolesByKeyword(experts, ["process", "piping"]), deliverables: sub([3]), acceptance: "MOC log shows all P&ID changes have risk re-assessment; P&ID revision history documented" },
-      { check: "Pipeline stress analysis completed and peer-reviewed", responsibleRole: rolesByKeyword(experts, ["pipeline", "stress", "piping"]), deliverables: sub([4]), acceptance: "Stress isometrics reviewed; Caesar II or equivalent output reviewed by independent engineer" },
-      { check: "Vendor data requirements issued with all purchase orders; tracking log current", responsibleRole: rolesByKeyword(experts, ["process", "procurement"]), deliverables: sub([5]), acceptance: "VDR issued per PO; weekly tracking shows no overdue items" },
-      { check: "Cathodic protection and ILI programme specified at handover package", responsibleRole: rolesByKeyword(experts, ["pipeline", "integrity"]), deliverables: sub([6]), acceptance: "CP design calculations signed; ILI schedule specified per pipeline class" },
+      { check: "HAZOP action register formally closed before construction release", responsibleRole: rolesByKeyword(experts, ["process", "safety", "hazop"]), deliverables: sub([2, 3]), acceptance: "All HAZOP actions closed or formally deferred with written client acceptance; no construction release without formal sign-off" },
+      { check: "P&ID interdisciplinary check completed before detailed engineering", responsibleRole: rolesByKeyword(experts, ["process", "mechanical"]), deliverables: sub([2]), acceptance: "IDC sign-off memo on file; all pipe classes and instrument tags consistent with process data" },
+      { check: "Pipeline stress analysis (Caesar II or equivalent) peer-reviewed", responsibleRole: rolesByKeyword(experts, ["pipeline", "mechanical", "process"]), deliverables: sub([3]), acceptance: "Stress analysis report peer-reviewed; ASME B31.4/B31.8 compliance confirmed" },
+      { check: "Cathodic protection design reviewed before installation", responsibleRole: rolesByKeyword(experts, ["electrical", "pipeline"]), deliverables: sub([3, 4]), acceptance: "CP design review memo on file; soil resistivity survey data used in design" },
+      { check: "Pre-commissioning hydrotest and ESD testing completed before handover", responsibleRole: rolesByKeyword(experts, ["commissioning", "process"]), deliverables: sub([5]), acceptance: "Hydrotest records signed by Resident Engineer and client; ESD functional test records on file" },
+      { check: "As-built package and integrity management plan issued with handover", responsibleRole: rolesByKeyword(experts, ["principal", "director"]), deliverables: sub([5, 6]), acceptance: "As-built drawings match construction; ILI baseline run schedule confirmed" },
     ];
   }
-  if (/finance|bank|micro.?finance|insurance|credit|lending/.test(s)) {
+  if (/kyc|aml|core.*banking|microfinance|ifrs|basel|prudential|fintech/.test(s)) {
     return [
-      { check: "Regulatory gap analysis reviewed by licensed local legal counsel", responsibleRole: rolesByKeyword(experts, ["compliance", "regulatory", "legal"]), deliverables: sub([1, 2]), acceptance: "Counsel sign-off on gap matrix; all high-risk gaps have remediation plans" },
-      { check: "Data quality assessment completed before migration planning starts", responsibleRole: rolesByKeyword(experts, ["data", "migration"]), deliverables: sub([2]), acceptance: "Data quality scorecard ranked by business impact; critical issues remediated" },
-      { check: "Integration architecture peer-reviewed by independent IT architect", responsibleRole: rolesByKeyword(experts, ["it", "system", "architect"]), deliverables: sub([3]), acceptance: "Architecture reviewed; all interfaces documented with protocols and error handling" },
-      { check: "UAT protocol covers all critical business processes; defect triage completed", responsibleRole: rolesByKeyword(experts, ["finance", "banking"]), deliverables: sub([4]), acceptance: "UAT pass rate ≥ 98% for critical processes; zero P1 defects open at go-live" },
-      { check: "Change-readiness survey completed at 60% gate; resistance hot-spots addressed", responsibleRole: rolesByKeyword(experts, ["change", "training"]), deliverables: sub([5]), acceptance: "Survey results reviewed by steering committee; action plan for red-zone units" },
+      { check: "Regulatory gap analysis reviewed by licensed local legal counsel before design", responsibleRole: rolesByKeyword(experts, ["compliance", "regulatory", "legal"]), deliverables: sub([1, 2]), acceptance: "Legal counsel review memo on file; gap analysis sign-off completed before system design begins" },
+      { check: "RBAC role matrix documented and signed off by data owner before go-live", responsibleRole: rolesByKeyword(experts, ["security", "compliance", "architect"]), deliverables: sub([3, 4]), acceptance: "RBAC matrix on file; data owner sign-off; encryption at rest and in transit confirmed" },
+      { check: "UAT completed with documented acceptance criteria and named sign-off authority", responsibleRole: rolesByKeyword(experts, ["analyst", "test", "business"]), deliverables: sub([4]), acceptance: "UAT sign-off on file; all critical defects closed before parallel-run" },
+      { check: "Data reconciliation validated and signed off before go-live cutover", responsibleRole: rolesByKeyword(experts, ["data", "migration", "analyst"]), deliverables: sub([4, 5]), acceptance: "Reconciliation report on file; named data owner sign-off; rollback plan tested" },
+      { check: "Pre-go-live penetration test completed and remediation confirmed", responsibleRole: rolesByKeyword(experts, ["security", "cyber"]), deliverables: sub([4, 5]), acceptance: "Penetration test report on file; all critical findings remediated before go-live" },
+      { check: "Regulatory compliance attestation included in handover documentation", responsibleRole: rolesByKeyword(experts, ["compliance", "principal"]), deliverables: sub([5, 6]), acceptance: "Attestation signed by legal counsel; handover pack includes source code, data, and documentation" },
     ];
   }
-  if (/telecom|broadband|spectrum|mobile network|isp/.test(s)) {
+  if (/spectrum|broadband|lte|5g|base.*station|backhaul|mobile.*network|telecoms/.test(s)) {
     return [
-      { check: "RF propagation model verified against field-measurement pilot sites", responsibleRole: rolesByKeyword(experts, ["rf", "radio", "network"]), deliverables: sub([1, 2]), acceptance: "Model vs. measurement RMSE ≤ 8 dB at pilot sites; coverage predictions credible" },
-      { check: "Spectrum licence path confirmed with national regulator before network design freeze", responsibleRole: rolesByKeyword(experts, ["regulatory", "spectrum"]), deliverables: sub([1]), acceptance: "Written regulator confirmation on file; fallback band documented" },
-      { check: "Backhaul link budget reviewed and site-to-site capacity verified", responsibleRole: rolesByKeyword(experts, ["backhaul", "transmission"]), deliverables: sub([3]), acceptance: "Each link meets availability target (≥ 99.9% at design rain rate)" },
-      { check: "NOC KPI dashboard pre-configured and tested before commercial launch", responsibleRole: rolesByKeyword(experts, ["network", "ict"]), deliverables: sub([5]), acceptance: "All critical KPIs monitored; alert thresholds set; dashboard accepted by NOC team" },
-      { check: "RF optimisation drive-test completed after commissioning; coverage map issued", responsibleRole: rolesByKeyword(experts, ["rf", "radio"]), deliverables: sub([6]), acceptance: "Drive-test coverage map meets agreed targets; gaps documented and resolved" },
+      { check: "In-principle spectrum approval received before site engineering starts", responsibleRole: rolesByKeyword(experts, ["spectrum", "regulatory", "rf"]), deliverables: sub([1]), acceptance: "Regulatory authority acknowledgement on file; no site civil works before spectrum in-principle approval" },
+      { check: "Coverage simulation uses calibrated propagation model (field-measured correction factors)", responsibleRole: rolesByKeyword(experts, ["rf", "network", "radio"]), deliverables: sub([2, 3]), acceptance: "Calibration drive-test data on file; correction factors documented; simulation meets coverage KPIs" },
+      { check: "Backhaul path availability calculated (Rayleigh + rain) for each microwave hop", responsibleRole: rolesByKeyword(experts, ["backhaul", "transmission", "network"]), deliverables: sub([3]), acceptance: "Path availability ≥ 99.99% for each hop; Vigants-Barnett + Crane rain model applied" },
+      { check: "SAT protocol issued and completed per site before commercial launch", responsibleRole: rolesByKeyword(experts, ["commissioning", "test", "rf"]), deliverables: sub([4, 5]), acceptance: "SAT checklist on file per site; all RF, power, transmission, and alarm items signed off" },
+      { check: "Drive-test acceptance completed against coverage KPIs before commercial launch", responsibleRole: rolesByKeyword(experts, ["rf", "test", "network"]), deliverables: sub([5]), acceptance: "Drive-test report on file; coverage KPIs met; dead zones documented and resolved" },
+      { check: "EMR compliance certificates filed for all base stations before commercial operation", responsibleRole: rolesByKeyword(experts, ["rf", "regulatory"]), deliverables: sub([5, 6]), acceptance: "EMR certificate per site on file; exclusion zones marked on site drawings" },
     ];
   }
   // Generic fallback

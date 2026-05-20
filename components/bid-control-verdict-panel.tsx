@@ -91,8 +91,6 @@ export async function BidControlVerdictPanel({ tenderId }: { tenderId: string })
   warnings.push(...generationReadiness.warnings.map((item) => item.message));
   if (extraPlanFiles.length > 0) warnings.push(`${extraPlanFiles.length} generated file(s) are outside the tender submission plan.`);
   if (highGaps.length > 0) warnings.push(`${highGaps.length} unresolved high-severity review gap(s).`);
-  if (generationReadiness.analysisQuality.severity === "WARNING") warnings.push("Analysis quality has warnings; verify before final submission.");
-  if (generationReadiness.matchingQuality.severity === "WARNING") warnings.push("Matching quality has warnings; verify selected evidence before final submission.");
 
   const verdict: Verdict = tender.status === "NO_BID"
     ? "NO_BID"

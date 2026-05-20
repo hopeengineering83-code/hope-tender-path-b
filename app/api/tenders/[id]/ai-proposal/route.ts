@@ -347,8 +347,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       };
       const c = company as typeof company & _CompanyFields;
 
-      const criterionEvidenceMap = buildCriterionEvidenceMap(intelligence.evaluationWeights, projects, experts);
-
       const aiInputBase = {
         tenderTitle: tender.title,
         clientName: intelligence.clientName,
@@ -437,8 +435,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       // Chunked mode always uses parallel section generation (with a section
       // filter) so the correct per-chunk budgets in proposal-sections.ts apply.
       const generateFn = (useParallel || sectionFilter)
-        ? generateProposalSectionsParallel(aiInput, sectionFilter)
-        : generateBenchmarkProposalWithAI(aiInput);
+        ? generateProposalSectionsParallel(aiInputBase, sectionFilter)
+        : generateBenchmarkProposalWithAI(aiInputBase);
       proposal = await withProposalTimeout(generateFn, AI_PROPOSAL_TIMEOUT_MS);
     } catch (aiError) {
       const msg = aiError instanceof Error ? aiError.message : String(aiError);

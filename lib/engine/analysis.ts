@@ -99,8 +99,16 @@ function inferPageLimit(text: string) {
 }
 
 function sectionReference(text: string): string | null {
-  const match = text.match(/(?:section|clause|article|item|para(?:graph)?|annex|appendix)\s+([A-Z0-9_.-]+)/i);
-  return match ? match[0] : null;
+  // Named keyword pattern: "Section 4.1", "Clause 2.3", "Annex A"
+  const named = text.match(/(?:section|clause|article|item|para(?:graph)?|annex|appendix|chapter|part|schedule|tor|ref(?:erence)?)\s+([A-Z0-9_.-]+(?:\.[A-Z0-9]+)*)/i);
+  if (named) return named[0];
+  // Leading numeric section: "4.1", "5.2.3" at line start (not page numbers)
+  const leading = text.match(/^(\d{1,2}\.\d{1,2}(?:\.\d{1,2})*)\s+[A-Z]/);
+  if (leading) return leading[1];
+  // Parenthetical reference: "(ref 5.2)", "(see Clause 3)"
+  const paren = text.match(/\((?:ref|see|per|cf\.?)\s+([^\)]{3,30})\)/i);
+  if (paren) return paren[0];
+  return null;
 }
 
 function extractMeaningfulTitle(text: string, type: string): string {

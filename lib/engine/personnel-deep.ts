@@ -139,82 +139,147 @@ function rolesForSector(sector: string, expertCount: number): { role: string; pi
       { role: "Quality Assurance Reviewer", pickKeywords: ["quality", "review"], daysShare: 6 },
     ].slice(0, Math.max(4, Math.min(7, expertCount + 3)));
   }
-  if (/energy|power|solar|wind|grid|generation|transmission/.test(s)) {
+  if (/energy|solar|hydropower|substation|transmission|generation|electrification|scada/.test(s)) {
     return [
-      { role: "Project Principal", pickKeywords: ["principal", "director"], daysShare: 12 },
-      { role: "Lead Power Systems Engineer", pickKeywords: ["power", "electrical", "energy"], daysShare: 22 },
-      { role: "Grid / Protection Engineer", pickKeywords: ["grid", "protection", "relay"], daysShare: 18 },
-      { role: "Renewable Energy Specialist", pickKeywords: ["solar", "wind", "renewable"], daysShare: 16 },
-      { role: "SCADA / Controls Engineer", pickKeywords: ["scada", "control", "ict"], daysShare: 12 },
-      { role: "Environmental and Permitting Specialist", pickKeywords: ["environment", "esia"], daysShare: 10 },
+      { role: "Project Principal", pickKeywords: ["principal", "director", "manager"], daysShare: 10 },
+      { role: "Power Systems Lead", pickKeywords: ["power", "electrical", "energy"], daysShare: 22 },
+      { role: "Protection and SCADA Engineer", pickKeywords: ["protection", "scada", "relay"], daysShare: 18 },
+      { role: "Civil / Structural Engineer", pickKeywords: ["civil", "structural"], daysShare: 14 },
+      { role: "Environmental and Social Specialist", pickKeywords: ["environment", "social"], daysShare: 12 },
+      { role: "Quantity Surveyor / BOQ", pickKeywords: ["quantity", "qs", "boq"], daysShare: 10 },
       { role: "Quality Assurance Reviewer", pickKeywords: ["quality", "review"], daysShare: 6 },
     ].slice(0, Math.max(4, Math.min(7, expertCount + 3)));
   }
-  if (/agri|irrigation|farm|crop|livestock|rural develop/.test(s)) {
+  if (/agri|irrigation|wua|command.*area|rural.*develop/.test(s)) {
     return [
-      { role: "Project Principal", pickKeywords: ["principal", "director"], daysShare: 12 },
-      { role: "Lead Irrigation / Water Engineer", pickKeywords: ["irrigation", "water", "hydraulic"], daysShare: 22 },
-      { role: "Agronomist", pickKeywords: ["agronomist", "agri", "crop"], daysShare: 18 },
+      { role: "Project Principal", pickKeywords: ["principal", "director", "manager"], daysShare: 10 },
+      { role: "Lead Hydraulic / Irrigation Engineer", pickKeywords: ["hydraulic", "irrigation", "water"], daysShare: 22 },
+      { role: "Agronomist", pickKeywords: ["agro", "agri", "crop"], daysShare: 18 },
       { role: "Hydrologist", pickKeywords: ["hydro", "hydrology"], daysShare: 14 },
-      { role: "Sociologist / Community Engagement Specialist", pickKeywords: ["social", "community", "stakeholder"], daysShare: 12 },
-      { role: "Quantity Surveyor", pickKeywords: ["quantity", "qs", "boq"], daysShare: 10 },
+      { role: "Structural / Civil Engineer", pickKeywords: ["structural", "civil"], daysShare: 12 },
+      { role: "Community / WUA Development Specialist", pickKeywords: ["community", "social", "wua"], daysShare: 14 },
       { role: "Quality Assurance Reviewer", pickKeywords: ["quality", "review"], daysShare: 6 },
     ].slice(0, Math.max(4, Math.min(7, expertCount + 3)));
   }
-  if (/mining|mineral|quarry|extracti/.test(s)) {
+  if (/mining|mineral.*resource|jorc|tailings|ore.*body|mine.*plan/.test(s)) {
     return [
-      { role: "Project Principal", pickKeywords: ["principal", "director"], daysShare: 12 },
-      { role: "Lead Mining Engineer", pickKeywords: ["mining", "mineral", "quarry"], daysShare: 22 },
-      { role: "Geologist / Resource Estimator", pickKeywords: ["geolog", "resource", "mineral"], daysShare: 18 },
-      { role: "Geotechnical Engineer", pickKeywords: ["geotechnical", "geotech", "soil"], daysShare: 16 },
-      { role: "Environmental / Social Specialist", pickKeywords: ["environment", "esia", "social"], daysShare: 12 },
-      { role: "Tailings and Closure Specialist", pickKeywords: ["tailings", "closure", "rehabilitation"], daysShare: 10 },
+      { role: "Project Principal", pickKeywords: ["principal", "director", "manager"], daysShare: 10 },
+      { role: "Resource Geologist (Competent Person)", pickKeywords: ["geolog", "resource", "mineral"], daysShare: 22 },
+      { role: "Mining Engineer", pickKeywords: ["mining", "mine", "engineer"], daysShare: 20 },
+      { role: "Geotechnical Engineer", pickKeywords: ["geotech", "soil", "slope"], daysShare: 16 },
+      { role: "Environmental and Social Specialist", pickKeywords: ["environment", "social", "esia"], daysShare: 12 },
+      { role: "Quantity Surveyor / Cost Estimator", pickKeywords: ["quantity", "qs", "cost"], daysShare: 10 },
       { role: "Quality Assurance Reviewer", pickKeywords: ["quality", "review"], daysShare: 6 },
     ].slice(0, Math.max(4, Math.min(7, expertCount + 3)));
   }
-  if (/\bport\b|harbor|harbour|maritime|quay|berth|shipping terminal/.test(s)) {
+  if (/port|berth|quay|maritime|dredging|harbour/.test(s)) {
     return [
-      { role: "Project Principal", pickKeywords: ["principal", "director"], daysShare: 12 },
-      { role: "Lead Port / Maritime Engineer", pickKeywords: ["port", "maritime", "coastal"], daysShare: 22 },
-      { role: "Structural / Berth Design Engineer", pickKeywords: ["structural", "civil", "berth"], daysShare: 18 },
-      { role: "Dredging and Marine Environment Specialist", pickKeywords: ["dredge", "marine", "environment"], daysShare: 14 },
-      { role: "Nautical Simulator Specialist", pickKeywords: ["nautical", "simulator", "vessel"], daysShare: 10 },
-      { role: "Quantity Surveyor", pickKeywords: ["quantity", "qs", "boq"], daysShare: 12 },
+      { role: "Project Principal", pickKeywords: ["principal", "director", "manager"], daysShare: 10 },
+      { role: "Lead Port / Marine Engineer", pickKeywords: ["port", "marine", "coastal", "harbour"], daysShare: 22 },
+      { role: "Structural Engineer (Berth)", pickKeywords: ["structural", "civil"], daysShare: 18 },
+      { role: "Geotechnical Engineer", pickKeywords: ["geotech", "soil"], daysShare: 14 },
+      { role: "Environmental Specialist (Marine)", pickKeywords: ["environment", "marine", "esia"], daysShare: 12 },
+      { role: "Nautical Safety Specialist", pickKeywords: ["nautical", "navigation", "safety"], daysShare: 10 },
       { role: "Quality Assurance Reviewer", pickKeywords: ["quality", "review"], daysShare: 6 },
     ].slice(0, Math.max(4, Math.min(7, expertCount + 3)));
   }
-  if (/oil|gas|petroleum|pipeline|refinery|petrochemical/.test(s)) {
+  if (/pipeline|oil.*facilit|gas.*facilit|hazop|p&id|refinery|petrochemical/.test(s)) {
     return [
-      { role: "Project Principal", pickKeywords: ["principal", "director"], daysShare: 12 },
+      { role: "Project Principal", pickKeywords: ["principal", "director", "manager"], daysShare: 10 },
       { role: "Lead Process Engineer", pickKeywords: ["process", "chemical", "oil", "gas"], daysShare: 22 },
-      { role: "Pipeline / Piping Engineer", pickKeywords: ["pipeline", "piping", "stress"], daysShare: 18 },
-      { role: "Process Safety / HAZOP Specialist", pickKeywords: ["hazop", "safety", "process"], daysShare: 16 },
-      { role: "Instrumentation and Controls Engineer", pickKeywords: ["instrument", "control", "scada"], daysShare: 14 },
-      { role: "Environmental / Social Specialist", pickKeywords: ["environment", "esia"], daysShare: 10 },
+      { role: "HAZOP Facilitator / Safety Engineer", pickKeywords: ["safety", "hazop", "process"], daysShare: 16 },
+      { role: "Pipeline / Mechanical Engineer", pickKeywords: ["pipeline", "mechanical", "piping"], daysShare: 18 },
+      { role: "Civil / Structural Engineer", pickKeywords: ["civil", "structural"], daysShare: 12 },
+      { role: "Commissioning Engineer", pickKeywords: ["commissioning", "startup"], daysShare: 12 },
       { role: "Quality Assurance Reviewer", pickKeywords: ["quality", "review"], daysShare: 6 },
     ].slice(0, Math.max(4, Math.min(7, expertCount + 3)));
   }
-  if (/finance|bank|micro.?finance|insurance|credit|lending/.test(s)) {
+  if (/kyc|aml|core.*banking|microfinance|ifrs|basel|prudential|fintech/.test(s)) {
     return [
-      { role: "Project Principal", pickKeywords: ["principal", "director"], daysShare: 12 },
-      { role: "Lead Financial Systems Specialist", pickKeywords: ["finance", "banking", "financial"], daysShare: 22 },
-      { role: "Regulatory Compliance Specialist", pickKeywords: ["compliance", "regulatory", "legal"], daysShare: 16 },
-      { role: "IT / Systems Architect", pickKeywords: ["it", "system", "architect"], daysShare: 16 },
-      { role: "Change Management Specialist", pickKeywords: ["change", "training", "people"], daysShare: 14 },
-      { role: "Data Migration Specialist", pickKeywords: ["data", "migration", "database"], daysShare: 12 },
+      { role: "Project Principal", pickKeywords: ["principal", "director", "manager"], daysShare: 10 },
+      { role: "Lead Regulatory Compliance Specialist", pickKeywords: ["compliance", "regulatory", "banking"], daysShare: 22 },
+      { role: "Solution Architect", pickKeywords: ["architect", "system", "ict"], daysShare: 18 },
+      { role: "Business Analyst", pickKeywords: ["analyst", "business", "process"], daysShare: 16 },
+      { role: "Data Migration and Integration Lead", pickKeywords: ["data", "migration", "integration"], daysShare: 14 },
+      { role: "Cybersecurity Specialist", pickKeywords: ["security", "cyber", "rbac"], daysShare: 10 },
       { role: "Quality Assurance Reviewer", pickKeywords: ["quality", "review"], daysShare: 6 },
     ].slice(0, Math.max(4, Math.min(7, expertCount + 3)));
   }
-  if (/telecom|broadband|spectrum|mobile network|isp/.test(s)) {
+  if (/spectrum|broadband|lte|5g|base.*station|backhaul|mobile.*network|telecoms/.test(s)) {
     return [
-      { role: "Project Principal", pickKeywords: ["principal", "director"], daysShare: 12 },
-      { role: "Lead RF / Network Engineer", pickKeywords: ["rf", "radio", "network", "telecom"], daysShare: 22 },
-      { role: "Backhaul / Transmission Engineer", pickKeywords: ["backhaul", "transmission", "microwave"], daysShare: 18 },
-      { role: "Core Network / IT Architect", pickKeywords: ["core", "architect", "it"], daysShare: 14 },
-      { role: "Regulatory Specialist", pickKeywords: ["regulatory", "spectrum", "licence"], daysShare: 12 },
+      { role: "Project Principal", pickKeywords: ["principal", "director", "manager"], daysShare: 10 },
+      { role: "Lead RF / Network Design Engineer", pickKeywords: ["rf", "radio", "network", "telecom"], daysShare: 22 },
+      { role: "Spectrum Planning Specialist", pickKeywords: ["spectrum", "frequency", "regulatory"], daysShare: 16 },
+      { role: "Backhaul / Transmission Engineer", pickKeywords: ["backhaul", "transmission", "fibre", "microwave"], daysShare: 16 },
+      { role: "Commissioning and Test Engineer", pickKeywords: ["commissioning", "test", "sat"], daysShare: 14 },
+      { role: "Site Acquisition and Regulatory Coordinator", pickKeywords: ["site", "acquisition", "permit"], daysShare: 10 },
       { role: "Quality Assurance Reviewer", pickKeywords: ["quality", "review"], daysShare: 6 },
     ].slice(0, Math.max(4, Math.min(7, expertCount + 3)));
   }
+  if (/interior design|fit[-\s]?out|space planning|finishes|joinery/i.test(s)) {
+    const base = [
+      { role: "Lead Interior Architect / Design Lead", pickKeywords: ["interior", "architect", "design", "fit-out", "space"], daysShare: 22 },
+      { role: "Interior Designer", pickKeywords: ["interior designer", "designer", "fit-out", "finishes"], daysShare: 18 },
+      { role: "MEP Coordinator (Interior)", pickKeywords: ["mep", "mechanical", "electrical", "coordination"], daysShare: 14 },
+      { role: "Quantity Surveyor (Interior BOQ)", pickKeywords: ["quantity surveyor", "qs", "boq", "cost"], daysShare: 14 },
+      { role: "Quality Assurance / Site Inspector", pickKeywords: ["quality", "inspector", "site", "supervision"], daysShare: 12 },
+    ];
+    return base.slice(0, Math.min(expertCount || base.length, base.length));
+  }
+  if (/construction supervision|resident engineer|site supervision|quality.*inspector/i.test(s)) {
+    const base = [
+      { role: "Resident Engineer (Team Leader)", pickKeywords: ["resident engineer", "site engineer", "team leader"], daysShare: 24 },
+      { role: "Site Inspector", pickKeywords: ["inspector", "quality control", "site"], daysShare: 18 },
+      { role: "Structural Inspector", pickKeywords: ["structural", "civil", "concrete", "reinforcement"], daysShare: 14 },
+      { role: "Quantity Surveyor (Measurement)", pickKeywords: ["quantity surveyor", "qs", "measurement", "ipc"], daysShare: 14 },
+      { role: "Health, Safety & Environment Officer", pickKeywords: ["hse", "safety", "health", "environment"], daysShare: 12 },
+    ];
+    return base.slice(0, Math.min(expertCount || base.length, base.length));
+  }
+  if (/contract administration|fidic|variation order|claims management|quantity survey/i.test(s)) {
+    const base = [
+      { role: "Contract Administrator / Engineer", pickKeywords: ["contract administrator", "fidic", "engineer", "contract management"], daysShare: 24 },
+      { role: "Senior Quantity Surveyor", pickKeywords: ["quantity surveyor", "qs", "cost", "boq", "final account"], daysShare: 18 },
+      { role: "Claims & Variation Specialist", pickKeywords: ["claims", "variation", "eot", "extension of time"], daysShare: 16 },
+      { role: "Programmer / Scheduler", pickKeywords: ["programme", "scheduler", "primavera", "ms project"], daysShare: 14 },
+    ];
+    return base.slice(0, Math.min(expertCount || base.length, base.length));
+  }
+  if (/heritage|conservation|museum|historic|adaptive.*reuse/i.test(s)) return [
+    { role: "Heritage Conservation Specialist / Project Principal", pickKeywords: ["heritage", "conservation", "restoration", "historic", "museum", "adaptive reuse"], daysShare: 0.30 },
+    { role: "Lead Heritage Architect", pickKeywords: ["heritage architect", "architect", "restoration architect", "historic buildings", "conservation architect"], daysShare: 0.25 },
+    { role: "Structural Engineer (Heritage)", pickKeywords: ["structural", "masonry", "stabilisation", "foundation", "structural engineer"], daysShare: 0.20 },
+    { role: "MEP Engineer (Heritage Retrofit)", pickKeywords: ["mep", "mechanical", "electrical", "plumbing", "services", "retrofit"], daysShare: 0.15 },
+    { role: "QS / Cost Planner", pickKeywords: ["quantity surveyor", "cost", "qs", "estimating", "boq"], daysShare: 0.10 },
+  ];
+  if (/industrial|manufactur|factory|abattoir|processing.*plant|warehouse.*industrial/i.test(s)) return [
+    { role: "Lead Structural Engineer (Industrial)", pickKeywords: ["structural", "industrial", "factory", "steel", "reinforced concrete", "structural engineer"], daysShare: 0.30 },
+    { role: "Process / Mechanical Engineer", pickKeywords: ["process engineer", "mechanical", "process design", "production", "manufacturing"], daysShare: 0.25 },
+    { role: "MEP / HVAC Engineer", pickKeywords: ["mep", "hvac", "ventilation", "fire suppression", "electrical", "mechanical"], daysShare: 0.20 },
+    { role: "Environmental / EHS Specialist", pickKeywords: ["environmental", "ehs", "health safety", "eia", "esia", "waste management", "effluent"], daysShare: 0.15 },
+    { role: "Resident Engineer / QA Inspector", pickKeywords: ["resident engineer", "site supervision", "quality", "inspection", "commissioning"], daysShare: 0.10 },
+  ];
+  if (/high.rise|high_rise|multi.stor|tower.*building|mixed.use.*tower|basement.*podium/i.test(s)) return [
+    { role: "Lead Structural Engineer (High-Rise)", pickKeywords: ["structural", "high-rise", "tower", "etabs", "sap2000", "seismic", "shear wall", "structural engineer"], daysShare: 0.30 },
+    { role: "Lead Architect", pickKeywords: ["architect", "architecture", "building design", "facade", "floor plan"], daysShare: 0.25 },
+    { role: "MEP Lead Engineer", pickKeywords: ["mep", "mechanical", "electrical", "plumbing", "hvac", "fire protection", "bms"], daysShare: 0.20 },
+    { role: "Geotechnical Engineer", pickKeywords: ["geotechnical", "foundation", "soil", "pile", "mat foundation", "bearing capacity"], daysShare: 0.15 },
+    { role: "QS / Cost Manager", pickKeywords: ["quantity surveyor", "cost", "qs", "estimating", "boq", "cost manager"], daysShare: 0.10 },
+  ];
+  if (/hotel|hospitality|resort|lodge|guesthouse|five.star|luxury.*accommodat/i.test(s)) return [
+    { role: "Lead Architect (Hospitality)", pickKeywords: ["architect", "hospitality", "hotel design", "resort", "interior", "architecture"], daysShare: 0.25 },
+    { role: "Interior Designer / Interior Architect", pickKeywords: ["interior designer", "interior architect", "interior design", "ff&e", "finishes", "lighting design"], daysShare: 0.20 },
+    { role: "Lead Structural Engineer", pickKeywords: ["structural", "structural engineer", "building structure", "reinforced concrete", "steel"], daysShare: 0.20 },
+    { role: "MEP Engineer", pickKeywords: ["mep", "mechanical", "electrical", "hvac", "plumbing", "fire protection", "kitchen ventilation"], daysShare: 0.20 },
+    { role: "QS / Cost Planner", pickKeywords: ["quantity surveyor", "cost", "qs", "ff&e procurement", "boq"], daysShare: 0.15 },
+  ];
+  if (/geotech|soil.*invest|borehole.*programme|site.*invest.*geotech|subsoil.*invest|ground.*invest/i.test(s)) return [
+    { role: "Principal Geotechnical Engineer", pickKeywords: ["geotechnical", "principal geotechnical", "geotech lead", "soil investigation", "foundation engineering"], daysShare: 0.30 },
+    { role: "Senior Geotechnical Engineer / Field Lead", pickKeywords: ["geotechnical engineer", "field geotechnical", "site investigation", "borehole", "soil"], daysShare: 0.30 },
+    { role: "Geotechnical Laboratory Specialist", pickKeywords: ["laboratory", "lab technician", "materials testing", "soil testing", "geotechnical lab"], daysShare: 0.20 },
+    { role: "Structural Engineer (Foundation Design)", pickKeywords: ["structural", "foundation", "pile", "mat", "structural engineer"], daysShare: 0.15 },
+    { role: "QA / Report Peer Reviewer", pickKeywords: ["quality assurance", "peer review", "reviewer", "senior", "quality"], daysShare: 0.05 },
+  ];
   // Generic
   return [
     { role: "Project Principal", pickKeywords: ["principal", "director"], daysShare: 12 },

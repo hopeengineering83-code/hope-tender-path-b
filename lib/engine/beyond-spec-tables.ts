@@ -148,41 +148,115 @@ function sustainabilityRows(sector: string): SustainabilityRow[] {
       { pillar: "Green & Blue Infrastructure", commitment: "Green-space ratio + stormwater management integrated into zoning regulations", kpi: "≥ 15% green space coverage; stormwater detention sized for 25-year storm with climate uplift", evidenceMechanism: "Green-space GIS overlay; stormwater calculation memo" },
     ];
   }
-  if (/energy|power|solar|wind|grid|generation|transmission/.test(s)) {
+  if (/energy|solar|hydropower|substation|transmission|generation|electrification|scada/.test(s)) {
     return [
       ...generic,
-      { pillar: "Renewable Energy Integration", commitment: "Maximise renewable-energy share in generation mix; grid-connected solar and wind options assessed before diesel alternatives", kpi: "Renewable share ≥ 40% of generation capacity designed; backup diesel sized as last-resort, not primary", evidenceMechanism: "Energy mix analysis at concept stage; renewable share certificate at commissioning" },
-      { pillar: "Climate-Resilient Grid Design", commitment: "Transmission and distribution infrastructure designed for projected 25-year climate scenarios (temperature, flood, drought)", kpi: "Climate-risk assessment completed at detailed-design stage; flood-protection elevations confirmed", evidenceMechanism: "Climate-resilience memo; flood elevation drawings" },
+      { pillar: "Renewable Energy Integration", commitment: "Design maximises renewable fraction; P50/P90 yield estimates use ≥ 10 years of validated resource data with conservative degradation factors", kpi: "Renewable fraction ≥ target in design basis; P90 yield estimate confirmed by independent review before financial close", evidenceMechanism: "Yield estimation report; independent review memo at 60% gate" },
+      { pillar: "Grid Code Compliance", commitment: "Protection relay settings reviewed by independent power-systems engineer before utility submission; relay setting schedule issued with 100% design package", kpi: "Zero non-compliance findings at utility interconnection review; all relay settings documented", evidenceMechanism: "Protection coordination study; utility submission acknowledgement; relay setting schedule" },
     ];
   }
-  if (/agri|irrigation|farm|crop|livestock|rural develop/.test(s)) {
+  if (/agri|irrigation|wua|command.*area|rural.*develop/.test(s)) {
     return [
       ...generic,
-      { pillar: "Climate-Smart Agriculture", commitment: "Drought-tolerant variety recommendations and climate-adjusted planting calendar included in handover package", kpi: "Water-use efficiency target ≥ 70%; drought-resilient varieties recommended for ≥ 50% of scheme area", evidenceMechanism: "FAO Penman-Monteith calculations; agronomist sign-off on crop calendar" },
-      { pillar: "Gender-Inclusive Water Access", commitment: "Water-point siting prioritises minimising women's fetching distance; WUA governance includes minimum 30% women members", kpi: "≥ 30% women in WUA leadership; average fetching distance ≤ 500 m from nearest household", evidenceMechanism: "GPS household survey; WUA membership register" },
+      { pillar: "Water-Use Efficiency", commitment: "Irrigation design incorporates water-use efficiency targets per FAO guidelines; WUA trained in demand management", kpi: "Design NRW in irrigation network ≤ 25%; water productivity target set and monitored post-handover", evidenceMechanism: "Hydraulic efficiency memo; WUA training attendance register; post-handover monitoring report" },
+      { pillar: "Agri-Biodiversity and Soil Health", commitment: "Agronomic recommendations include cover-cropping, crop-rotation, and soil-conservation practices to protect long-term land productivity", kpi: "Soil-health baseline recorded before scheme commissioning; crop-rotation plan issued with O&M manual", evidenceMechanism: "Soil-health baseline report; agronomy recommendations in O&M manual" },
     ];
   }
-  if (/mining|mineral|quarry|extracti/.test(s)) {
+  if (/mining|mineral.*resource|jorc|tailings|ore.*body|mine.*plan/.test(s)) {
     return [
       ...generic,
-      { pillar: "Mine Closure and Rehabilitation", commitment: "Closure and rehabilitation plan prepared and financial provision estimated at feasibility stage, not at end of mine life", kpi: "Rehabilitation bond or equivalent financial provision calculated per IFC PS 6; progressive rehabilitation started with first disturbance", evidenceMechanism: "Closure plan document; progressive rehabilitation schedule" },
-      { pillar: "Biodiversity Offset", commitment: "No-net-loss biodiversity commitment; offset design integrated into ESIA at screening stage", kpi: "Biodiversity management plan approved by competent authority; monitoring at 12, 24, and 36 months", evidenceMechanism: "ESIA baseline; biodiversity offset calculation memo" },
+      { pillar: "Tailings and Waste Management", commitment: "TSF design per MAC/ANCOLD guidelines; tailings characterisation completed before disposal; closure cost estimate with financial provision", kpi: "MAC/ANCOLD classification confirmed before TSF design proceeds; closure cost estimate peer-reviewed by independent engineer", evidenceMechanism: "Tailings characterisation report; TSF design; closure cost estimate review memo" },
+      { pillar: "Mine Closure and Land Rehabilitation", commitment: "Progressive rehabilitation plan integrated from feasibility stage; land-use objectives agreed with community and regulator", kpi: "Closure and rehabilitation plan approved by regulator; financial provision adequacy confirmed annually", evidenceMechanism: "Closure plan; regulator approval letter; annual financial provision review" },
     ];
   }
-  if (/\bport\b|harbor|harbour|maritime|quay|berth|shipping terminal/.test(s)) {
+  if (/port|berth|quay|maritime|dredging|harbour/.test(s)) {
     return [
       ...generic,
-      { pillar: "Green Port Standards", commitment: "Port design aligns to ESPO Green Guide; emission-free shore power provision for vessels at berth", kpi: "Shore-power provision for ≥ 50% of berths; Green Port index assessment at commissioning", evidenceMechanism: "Shore-power design drawings; ESPO alignment checklist" },
-      { pillar: "Coastal and Marine Habitat Protection", commitment: "Dredging designed to minimise turbidity and avoid coral / seagrass habitats; spoil disposal at authorised site", kpi: "Turbidity monitoring ≤ 100 NTU at 250 m from dredger; zero unauthorised disposal events", evidenceMechanism: "Turbidity monitoring log; disposal records; ESMP compliance report" },
+      { pillar: "Dredge Material and Sediment Management", commitment: "Dredge material characterised before works; disposal plan meets national and IMO guidelines", kpi: "Dredge material characterisation report issued before mobilisation; disposal site approved by environmental authority", evidenceMechanism: "Sediment characterisation report; environmental authority approval; disposal monitoring records" },
+      { pillar: "Marine Ecology Protection", commitment: "Marine impact assessment including coral reef, seagrass, and mangrove surveys; mitigation hierarchy applied", kpi: "No dredging during spawning seasons for ecologically sensitive areas; turbidity monitoring compliant with trigger levels", evidenceMechanism: "Marine ecology survey report; turbidity monitoring log; compliance records" },
     ];
   }
-  if (/oil|gas|petroleum|pipeline|refinery|petrochemical/.test(s)) {
+  if (/pipeline|oil.*facilit|gas.*facilit|hazop|p&id|refinery|petrochemical/.test(s)) {
     return [
       ...generic,
-      { pillar: "Methane and GHG Management", commitment: "Fugitive emission detection and repair (LDAR) programme designed at FEED stage; venting minimisation targets set", kpi: "Methane emission intensity target ≤ sector benchmark; LDAR survey frequency quarterly", evidenceMechanism: "LDAR plan; emission factor documentation; annual GHG inventory" },
-      { pillar: "Spill Prevention and Response", commitment: "Secondary containment designed for 110% of largest vessel volume; oil-spill response plan approved before first operation", kpi: "Zero uncontained spill events; monthly containment inspection; annual response-plan drill", evidenceMechanism: "Containment design drawings; inspection log; drill records" },
+      { pillar: "Process Safety and Major Hazard Management", commitment: "HAZOP study with all action items tracked to close-out; LOPA for high-severity nodes; process safety information (PSI) documented", kpi: "Zero outstanding critical HAZOP actions at detailed design completion; LOPA risk tolerance criteria confirmed in design basis", evidenceMechanism: "HAZOP action register; LOPA report; design basis memorandum" },
+      { pillar: "Pipeline Integrity and Spill Prevention", commitment: "Cathodic-protection design to NACE/ISO standards; ILI programme specification issued with handover; emergency spill response plan included", kpi: "Cathodic-protection design peer-reviewed before installation; ILI baseline run within 12 months of commissioning", evidenceMechanism: "Cathodic-protection design review memo; ILI programme spec; emergency response plan" },
     ];
   }
+  if (/kyc|aml|core.*banking|microfinance|ifrs|basel|prudential|fintech/.test(s)) {
+    return [
+      ...generic,
+      { pillar: "Data Privacy and Cyber Security", commitment: "System architecture includes data encryption at rest and in transit; RBAC controls; audit log; penetration test before go-live", kpi: "Zero critical findings at pre-go-live security review; RBAC roles documented and signed off by data owner", evidenceMechanism: "Penetration test report; RBAC role matrix sign-off; security review memo" },
+      { pillar: "Regulatory Compliance Assurance", commitment: "Regulatory-gap analysis reviewed by licensed local legal counsel; compliance attestation included in handover documentation", kpi: "Zero post-go-live regulatory enforcement actions attributable to system design; legal counsel sign-off on gap analysis", evidenceMechanism: "Legal counsel review memo; compliance attestation in handover pack" },
+    ];
+  }
+  if (/spectrum|broadband|lte|5g|base.*station|backhaul|mobile.*network|telecoms/.test(s)) {
+    return [
+      ...generic,
+      { pillar: "Digital Inclusion and Last-Mile Access", commitment: "Coverage design prioritises underserved areas; last-mile technology selection accounts for affordability and device accessibility", kpi: "Coverage targets for rural and low-income areas met at SAT; affordability analysis documented in design report", evidenceMechanism: "Coverage simulation report; rural-coverage KPI at SAT; affordability analysis memo" },
+      { pillar: "Electromagnetic Radiation (EMR) Compliance", commitment: "Base-station antenna heights and power levels comply with ICNIRP or national EMR standard; EMR exclusion zones documented", kpi: "100% of base stations certified compliant before commissioning; EMR exclusion zones marked on site drawings", evidenceMechanism: "EMR compliance certificates; site drawings with exclusion zones; regulator filing" },
+    ];
+  }
+  if (/interior design|fit[-\s]?out|space planning|finishes|joinery/i.test(s)) {
+    return [
+      ...generic,
+      { pillar: "Biophilic Design Integration", commitment: "Living walls, natural materials, and daylighting maximisation to improve occupant wellbeing and productivity", kpi: "Biophilic design elements incorporated in ≥ 80% of occupied zones; daylighting target ≥ 300 lux at workplane", evidenceMechanism: "WELL/biophilic design checklist at 60% gate; daylighting simulation results" },
+      { pillar: "Low-VOC and Sustainably Sourced Materials", commitment: "Specification of low-VOC paints, adhesives, and sustainably-certified timber/finishes to protect indoor air quality", kpi: "100% of specified paints and adhesives GREENGUARD GOLD or equivalent certified; timber products FSC certified", evidenceMechanism: "Material specification schedule with certification references; sample approval register" },
+      { pillar: "Circular-Economy Fit-Out", commitment: "Modular partition and furniture systems designed for demountability and re-use, reducing landfill waste at end of life", kpi: "≥ 60% of partition and furniture systems modular/demountable; waste diversion plan issued with construction package", evidenceMechanism: "FF&E demountability schedule; waste diversion plan" },
+    ];
+  }
+  if (/construction supervision|resident engineer|site supervision/i.test(s)) {
+    return [
+      ...generic,
+      { pillar: "Construction Environmental Management Plan (CEMP)", commitment: "Enforce CEMP compliance on site: dust suppression, noise monitoring, waste segregation, and contamination prevention", kpi: "Zero environmental non-conformances at monthly site audit; CEMP compliance rate ≥ 95%", evidenceMechanism: "Monthly CEMP compliance report; site audit log; non-conformance register" },
+      { pillar: "Waste Tracking and Diversion Reporting", commitment: "Monthly C&D waste tracking with diversion rate target ≥70% from landfill, reported in monthly supervision report", kpi: "C&D waste diversion rate ≥ 70%; waste tracking register maintained weekly", evidenceMechanism: "Monthly waste tracking report; waste disposal manifests; diversion rate dashboard" },
+      { pillar: "Health & Safety Hold-Point Regime", commitment: "Mandatory HSE hold-points at high-risk activities (excavation, lifting, electrical energisation) with recorded sign-off", kpi: "100% of defined H&S hold-points completed with sign-off before proceeding; zero LTIs attributable to hold-point bypass", evidenceMechanism: "HSE hold-point register; incident log; monthly H&S dashboard" },
+    ];
+  }
+  if (/contract administration|fidic|variation order|claims management/i.test(s)) {
+    return [
+      ...generic,
+      { pillar: "Fair and Transparent Contract Administration", commitment: "Timely determinations, fair VO assessments, and transparent final account settlement reduce disputes and rework", kpi: "100% of VO determinations issued within 28 days of submission; zero successful contractor arbitration awards against Employer", evidenceMechanism: "VO log with response dates; determination letters; final account statement" },
+      { pillar: "Local-Content and Social Procurement Reporting", commitment: "Track and report local contractor spend, local labour percentage, and community-benefit outcomes", kpi: "Local labour ≥ 30% of total project workforce; local subcontractor spend ≥ 20% of contract value", evidenceMechanism: "Monthly local-content report; payroll records; subcontractor spend log" },
+      { pillar: "Digital Contract Management Platform", commitment: "Use cloud-based contract management tool for document control, audit trail, and real-time cost dashboard", kpi: "100% of contract correspondence on platform within 48 hours; real-time cost dashboard available to Employer", evidenceMechanism: "Platform access log; document register; Employer access confirmation" },
+    ];
+  }
+  if (/heritage|conservation|museum|historic|adaptive.*reuse/i.test(s)) return [
+    ...generic,
+    { pillar: "Cultural Heritage Preservation", commitment: "Apply ICOMOS reversibility principle: all interventions documented, reversible, and compatible with original fabric; hazardous-materials survey and safe removal plan", kpi: "Zero original fabric lost to repair errors; 100% material-compatibility test results documented", evidenceMechanism: "Pre/post photographic record; material-compatibility test certificates; heritage authority sign-off at each phase gate" },
+    { pillar: "Adaptive Reuse & Embodied Carbon", commitment: "Maximise adaptive reuse: structural intervention minimises embodied carbon versus demolish-and-rebuild; whole-life carbon assessment produced", kpi: "Embodied carbon ≤50% of equivalent new-build baseline per RICS Whole Life Carbon Assessment", evidenceMechanism: "Whole-life carbon calculation at design stage; peer-reviewed by independent assessor" },
+    { pillar: "Community & Cultural Benefit", commitment: "Engage local communities, cultural bodies, and diaspora at every project stage; public heritage interpretation plan produced; local skilled tradespeople employed for craft repairs", kpi: "Three minimum public consultation events; ≥30% of specialist craft labour sourced locally", evidenceMechanism: "Consultation event records; labour-origin tracking register" },
+  ];
+  if (/industrial|manufactur|factory|abattoir|processing.*plant|warehouse.*industrial/i.test(s)) return [
+    ...generic,
+    { pillar: "Cleaner Production", commitment: "Apply UNIDO cleaner-production assessment methodology: waste minimisation at source, water-loop closure, energy-efficiency targets before end-of-pipe treatment", kpi: "Specific water consumption ≤60% of sector baseline; waste-to-landfill ≤15% of total solid waste generated", evidenceMechanism: "Monthly resource-consumption log; waste manifest; third-party cleaner-production audit at commissioning" },
+    { pillar: "Effluent & Emissions Control", commitment: "Design effluent treatment plant to meet Ethiopian EPA/WHO standards with 25% safety margin; air-emissions management plan for dust, VOC, and process gases; real-time monitoring sensors", kpi: "Effluent BOD ≤50 mg/L; suspended solids ≤100 mg/L; air emissions within permit limits at all times", evidenceMechanism: "Quarterly third-party effluent analysis; continuous air-quality sensor data; EPA compliance inspection pass" },
+    { pillar: "Worker Health & Safety", commitment: "OHSAS 18001/ISO 45001-aligned OHS plan; chemical-risk register; PPE supply and training; emergency-response procedures; LTI-free target", kpi: "Zero LTI (Lost Time Injuries) during construction and first year of operations; 100% PPE compliance on site", evidenceMechanism: "Weekly toolbox talks; PPE audit records; incident register; LTI-frequency rate monthly reporting" },
+  ];
+  if (/high.rise|high_rise|multi.stor|tower.*building|mixed.use.*tower|basement.*podium/i.test(s)) return [
+    ...generic,
+    { pillar: "Structural Resilience", commitment: "Design to Ethiopian seismic zone requirements (ES EN 1998) with Ethiopian climatic wind loads; independent structural peer review before construction documents", kpi: "Pass Ethiopian Building Code (EBCS) seismic + wind compliance review; independent peer-review approval certificate", evidenceMechanism: "ETABS/SAP2000 analysis report; peer-review certificate; AA City Authority structural approval" },
+    { pillar: "Energy Efficiency", commitment: "Passive design principles (orientation, shading, insulation) to reduce HVAC load; high-performance aluminium curtain wall with low-e glass; LED and BMS-controlled lighting throughout", kpi: "Building energy intensity ≤120 kWh/m²/year; HVAC energy ≤45% of total energy budget", evidenceMechanism: "Energy modelling report (IES VE or equivalent); BMS energy consumption data at 12 months post-handover" },
+    { pillar: "Construction Waste & Materials", commitment: "Concrete mix design minimises OPC content via supplementary cementitious materials (fly ash, GGBS); construction waste sorted and recycled; MEP coordination via BIM to reduce rework waste", kpi: "OPC replacement ≥15% by supplementary materials; construction waste recycling rate ≥50%", evidenceMechanism: "Mix design certificate; waste manifest; BIM coordination clash-detection reports" },
+  ];
+  if (/hotel|hospitality|resort|lodge|guesthouse|five.star|luxury.*accommodat/i.test(s)) return [
+    ...generic,
+    { pillar: "Water Conservation", commitment: "Low-flow fixtures throughout guestrooms; greywater recycling for landscape irrigation; pool backwash water recovery; water-consumption targets per occupied room", kpi: "Water consumption ≤200 L/guest-night (industry benchmark 300 L); pool backwash recovery ≥80%", evidenceMechanism: "Monthly water-meter readings by department; BMS sub-metering; annual Green Globe audit" },
+    { pillar: "Energy & Carbon", commitment: "Solar-assisted water heating for guestrooms; LED lighting with occupancy sensors in all guest and public areas; BMS for HVAC zoning; renewable energy procurement plan", kpi: "Energy intensity ≤150 kWh/m²/year; carbon footprint per guest-night ≤10 kg CO₂e", evidenceMechanism: "Energy model at design stage; BMS monthly energy reports; annual sustainability audit against GSTC criteria" },
+    { pillar: "Responsible Sourcing & Community", commitment: "≥40% of food & beverage sourced locally; fair-trade procurement policy; community employment target ≥60% local workforce; heritage and cultural interpretation programme for guests", kpi: "Local sourcing ≥40% of F&B spend; ≥60% of operational staff from local community", evidenceMechanism: "Supplier origin register; payroll nationality data; annual community-impact report" },
+  ];
+  if (/geotech|soil.*invest|borehole.*programme|subsoil.*invest|ground.*invest|site.*invest.*geotech/i.test(s)) return [
+    ...generic,
+    { pillar: "Low-Impact Field Investigation", commitment: "Minimise ground disturbance: trial pits backfilled and compacted to original grade within 24 hours; borehole casings removed and grouted on completion; reinstatement monitored and signed-off by site supervisor", kpi: "100% of boreholes grouted within 24 hours of completion; 100% of trial pits reinstated; zero contamination incidents from drilling fluids", evidenceMechanism: "Borehole completion log with grouting record; site reinstatement photographic register; field supervisor sign-off sheet" },
+    { pillar: "Responsible Chemical & Sample Handling", commitment: "Drilling fluids (bentonite, polymer) contained and disposed of per EPA/WHO guidelines; contaminated samples labelled, segregated, and disposed of through licensed waste contractor; chain-of-custody maintained throughout", kpi: "Zero field spills of drilling fluids; 100% of soil and rock samples tracked on chain-of-custody; hazardous samples (TPH, heavy metals) disposed of via licensed contractor", evidenceMechanism: "Drilling fluid disposal records; chain-of-custody sample tracking sheets; waste disposal manifests" },
+    { pillar: "Data Quality & Traceability", commitment: "All borehole logs, laboratory results, and field observations referenced to unique borehole/test-pit IDs; raw data archived in GIS-compatible format and handed to client; laboratory accreditation certificates included in report appendices", kpi: "100% of test results traceable to accredited laboratory; raw field logs archived in industry-standard format (AGS 4.0 or equivalent); zero data gaps at report stage", evidenceMechanism: "AGS 4.0 data file delivered with report; laboratory accreditation certificate copies in appendix; field log archive on project server" },
+  ];
+  if (/architect|building.*design|residential.*design|commercial.*design|civic.*build|office.*build|school.*design|community.*centre|government.*build|new.*build.*design/i.test(s)) return [
+    ...generic,
+    { pillar: "Climate-Responsive Passive Design", commitment: "Building orientation, massing, and envelope optimised for local climate: natural ventilation, shading, and daylighting analysis completed at concept stage before HVAC sizing; thermal performance targets set in design brief", kpi: "Window-to-wall ratio and shading geometry achieve ≥ 30% reduction in peak cooling load vs unshaded baseline; daylighting autonomy ≥ 50% of occupied floor area per LEED/BREEAM daylight credit", evidenceMechanism: "Climate-responsive design memo at concept gate; energy/daylighting simulation report at schematic design; peer-reviewed by independent assessor" },
+    { pillar: "Sustainable Materials and Circular Design", commitment: "Material palette prioritises locally sourced, recycled-content, and low-embodied-carbon alternatives; structural system evaluated for end-of-life disassembly; RICS whole-life carbon assessment produced at 60% gate", kpi: "≥ 20% of structural material (by mass) with recycled content or low-carbon cement substitute; whole-life carbon ≤ 70% of equivalent conventional-build baseline", evidenceMechanism: "Materials passport (product data sheets + EPD certificates); RICS whole-life carbon calculation memo; structural disassembly note in specification" },
+    { pillar: "Universal Access and Inclusive Design", commitment: "Full compliance with national accessibility standard across all areas open to the public; CPTED principles applied to site layout; inclusive consultation — disability groups and elderly users involved in design review at schematic stage", kpi: "100% of public-facing areas fully accessible per national code; CPTED safety audit score ≥ 80%; ≥ 1 formal consultation session with disability and elderly stakeholders documented", evidenceMechanism: "Accessibility audit checklist signed off at 100% gate; CPTED audit report; consultation attendance register and minutes" },
+  ];
   return generic;
 }
 
@@ -251,53 +325,121 @@ function innovationRows(sector: string): InnovationRow[] {
       { proposal: "Implementation cost-and-benefit model handed to client", clientValue: "Client retains capability to test scenarios after handover; supports phased budget defense", effort: "Medium", optInOptOut: "Optional" },
     ];
   }
-  if (/energy|power|solar|wind|grid|generation|transmission/.test(s)) {
+  if (/energy|solar|hydropower|substation|transmission|generation|electrification|scada/.test(s)) {
     return [
       ...generic,
-      { proposal: "SCADA-based real-time performance monitoring dashboard handed over with the energy system", clientValue: "Operator monitors generation, load, and fault events in real time; reduces mean-time-to-repair; supports regulatory performance reporting", effort: "Medium", optInOptOut: "Optional" },
-      { proposal: "Renewable-energy feasibility mini-study (solar + wind hybrid) at no extra fee during FEED", clientValue: "Client gets a defensible data-driven comparison before equipment procurement; avoids over-committing to single technology", effort: "Medium", optInOptOut: "Included" },
+      { proposal: "HOMER / SAM energy-yield model handed to client with O&M pack", clientValue: "Client can re-run yield scenarios as tariff or load conditions change without re-engaging designer; extends investment value of engineering study", effort: "Medium", optInOptOut: "Optional" },
+      { proposal: "Remote SCADA diagnostics dashboard accessible to client during defects-liability period", clientValue: "Fault detection without site visit; reduces operator call-out cost; early identification of degradation trends", effort: "Medium", optInOptOut: "Subject to client agreement" },
     ];
   }
-  if (/agri|irrigation|farm|crop|livestock|rural develop/.test(s)) {
+  if (/agri|irrigation|wua|command.*area|rural.*develop/.test(s)) {
     return [
       ...generic,
-      { proposal: "Irrigation scheduling tool (spreadsheet + user guide) handed to water-user association at scheme close-out", clientValue: "WUA reduces water waste by up to 30%; operator can recalculate schedules as cropping pattern evolves without re-engaging designer", effort: "Low", optInOptOut: "Included" },
-      { proposal: "Drone-based scheme mapping + crop-cover baseline for monitoring & evaluation baseline", clientValue: "Client and funder have a defensible GIS-based baseline for impact evaluation at no additional survey cost", effort: "Medium", optInOptOut: "Optional" },
+      { proposal: "Digital soil-moisture monitoring network (low-cost IoT) handed to WUA", clientValue: "WUA can optimise irrigation scheduling in real time; reduces water waste; extends system capacity", effort: "Medium", optInOptOut: "Subject to client agreement" },
+      { proposal: "Agronomy productivity baseline survey included in handover", clientValue: "Client and WUA retain a before-after productivity baseline for grant reporting and Phase 2 justification", effort: "Low", optInOptOut: "Included" },
     ];
   }
-  if (/mining|mineral|quarry|extracti/.test(s)) {
+  if (/mining|mineral.*resource|jorc|tailings|ore.*body|mine.*plan/.test(s)) {
     return [
       ...generic,
-      { proposal: "3D geological model in open-source format (Leapfrog / ioGAS) handed to client with licence-free viewer", clientValue: "Client retains the geological model and can commission updates without returning to original modeller; reduces future study cost", effort: "Medium", optInOptOut: "Optional" },
-      { proposal: "Geotechnical monitoring instrument layout designed into slope stability study — ready for contractor tender", clientValue: "Monitoring is procurement-ready at project close; reduces instrumentation start-up time and installs the safety net before first production blast", effort: "Medium", optInOptOut: "Included" },
+      { proposal: "3-D geological block model handed to client in open-source format (Leapfrog / QGIS)", clientValue: "Client retains full resource model for future exploration or mine-plan updates without re-engaging geologist", effort: "Medium", optInOptOut: "Optional" },
+      { proposal: "Geotechnical monitoring dashboarded and handed to mine operator", clientValue: "Slope and TSF stability monitored in near-real-time; early warning of movement reduces safety and liability risk", effort: "Medium", optInOptOut: "Subject to client agreement" },
     ];
   }
-  if (/\bport\b|harbor|harbour|maritime|quay|berth|shipping terminal/.test(s)) {
+  if (/port|berth|quay|maritime|dredging|harbour/.test(s)) {
     return [
       ...generic,
-      { proposal: "Vessel traffic simulation at design stage to validate berth pocket layout and turning basin dimensions", clientValue: "Simulation evidence eliminates the most common cause of post-construction redesign in port projects; defensible against regulator challenge", effort: "Medium", optInOptOut: "Optional" },
-      { proposal: "Port operations manual template (including ISPS, mooring, and emergency procedures) delivered with design package", clientValue: "Client receives a ready-to-customise operations manual at handover; reduces port authority pre-opening review time", effort: "Low", optInOptOut: "Included" },
+      { proposal: "Fast-time nautical simulation report included in handover documentation", clientValue: "Port authority retains safety evidence for future vessel-class upgrades without commissioning new study", effort: "Low", optInOptOut: "Included" },
+      { proposal: "Digital twinning of berth structure for predictive maintenance planning", clientValue: "Reduces inspection intervals; extends berth life; supports insurance and lender technical due diligence", effort: "High", optInOptOut: "Subject to client agreement" },
     ];
   }
-  if (/oil|gas|petroleum|pipeline|refinery|petrochemical/.test(s)) {
+  if (/pipeline|oil.*facilit|gas.*facilit|hazop|p&id|refinery|petrochemical/.test(s)) {
     return [
       ...generic,
-      { proposal: "HAZOP action-item tracker shared workspace — client can see all open/closed actions in real time during design", clientValue: "Client and regulator have full HAZOP traceability at all times; reduces regulatory approval cycle", effort: "Low", optInOptOut: "Included" },
-      { proposal: "Pipeline integrity management plan (IMP) delivered as a ready-to-activate schedule at commissioning", clientValue: "Client does not need to re-engage a specialist to create the IMP after handover; regulatory pre-condition often already satisfied on day 1", effort: "Medium", optInOptOut: "Optional" },
+      { proposal: "Digital P&ID (smartPlant / AVEVA E3D) database handed to client with as-built documentation", clientValue: "Client retains intelligent P&ID for future HAZOP revalidation, MOC, and maintenance planning without re-drawing from paper", effort: "Medium", optInOptOut: "Optional" },
+      { proposal: "Pipeline integrity management plan (PIMP) pre-populated with ILI baseline run schedule", clientValue: "Client asset team can enter the integrity lifecycle immediately at handover; reduces first-interval inspection planning cost", effort: "Low", optInOptOut: "Included" },
     ];
   }
-  if (/finance|bank|micro.?finance|insurance|credit|lending/.test(s)) {
+  if (/kyc|aml|core.*banking|microfinance|ifrs|basel|prudential|fintech/.test(s)) {
     return [
       ...generic,
-      { proposal: "Data quality scorecard delivered before migration — ranked by business impact, not just row count", clientValue: "Client prioritises remediation effort on the data issues that will cause the most harm in the new system; reduces go-live risk", effort: "Medium", optInOptOut: "Included" },
-      { proposal: "Change-readiness survey at project kick-off and at 60% gate — results shared with steering committee", clientValue: "Resistance hot-spots are identified while there is still time to act; reduces post-go-live adoption tail", effort: "Low", optInOptOut: "Included" },
+      { proposal: "Automated regulatory reporting module (Basel / IFRS returns) pre-validated against regulator's published template", clientValue: "Reduces manual reporting effort by 60-70%; eliminates transcription errors that trigger regulatory queries", effort: "Medium", optInOptOut: "Optional" },
+      { proposal: "Compliance knowledge-base wiki handed over as part of staff training package", clientValue: "Client compliance team retains searchable regulatory guidance without ongoing consultant dependency", effort: "Low", optInOptOut: "Included" },
     ];
   }
-  if (/telecom|broadband|spectrum|mobile network|isp/.test(s)) {
+  if (/spectrum|broadband|lte|5g|base.*station|backhaul|mobile.*network|telecoms/.test(s)) {
     return [
       ...generic,
-      { proposal: "RF coverage prediction map in open GIS format handed over with as-built documentation", clientValue: "Client can run what-if coverage scenarios for future expansion without re-engaging RF specialist; supports spectrum regulator reporting", effort: "Medium", optInOptOut: "Optional" },
-      { proposal: "Network KPI monitoring dashboard (Grafana or equivalent open-source) pre-configured and handed to NOC team", clientValue: "Operations team has real-time visibility from day 1; reduces SLA breach exposure in the critical first 6 months of operation", effort: "Medium", optInOptOut: "Optional" },
+      { proposal: "Live network KPI dashboard integrated with client NOC from commissioning day", clientValue: "Client operations team gets real-time visibility of coverage, capacity, and fault status from Day 1 without additional integration cost", effort: "Medium", optInOptOut: "Optional" },
+      { proposal: "Automated frequency-planning and interference-management tool handed to spectrum team", clientValue: "Reduces spectrum re-planning cycle from weeks to hours; supports future technology upgrade (e.g., LTE → 5G NR) without re-engaging frequency planner", effort: "Medium", optInOptOut: "Subject to client agreement" },
+    ];
+  }
+  if (/interior design|fit[-\s]?out|space planning|finishes|joinery/i.test(s)) {
+    return [
+      ...generic,
+      { proposal: "BIM-integrated interior design (LOD 400) with clash detection and quantity takeoff", clientValue: "Reduces site RFIs by ~40% and material waste by ~15% — coordination issues resolved before site start", effort: "Medium", optInOptOut: "Optional" },
+      { proposal: "Virtual reality (VR) client walkthrough at schematic stage", clientValue: "Client can experience the completed space before construction begins, enabling informed decisions and reducing late design changes", effort: "Medium", optInOptOut: "Subject to client agreement" },
+      { proposal: "Cloud-based sample and material tracking board with lead-time dashboard", clientValue: "Prevents supply-chain delays by surfacing long-lead items 8–12 weeks ahead; photo log and supplier contacts in one place", effort: "Low", optInOptOut: "Included" },
+    ];
+  }
+  if (/construction supervision|resident engineer|site supervision/i.test(s)) {
+    return [
+      ...generic,
+      { proposal: "Digital hold-point inspection app (mobile ITP) with GPS, photo evidence, and automatic NCR generation", clientValue: "Reduces quality documentation effort by 60% and improves traceability; real-time NCR status visible to Employer", effort: "Medium", optInOptOut: "Optional" },
+      { proposal: "Weekly drone surveys producing ortho-photo and 3D point cloud for progress measurement", clientValue: "Enables accurate remote progress assessment without daily physical site presence; supports dispute resolution with photographic record", effort: "Medium", optInOptOut: "Subject to client agreement" },
+      { proposal: "Real-time project dashboard for Employer (progress %, NCR status, IPC amounts, programme vs actual)", clientValue: "Increases Employer confidence and reduces ad-hoc reporting requests; accessible online at any time", effort: "Low", optInOptOut: "Included" },
+    ];
+  }
+  if (/contract administration|fidic|variation order|claims management/i.test(s)) {
+    return [
+      ...generic,
+      { proposal: "AI-assisted contract risk scan at award — flags non-standard FIDIC clauses and hidden risk", clientValue: "Reduces surprises that lead to costly claims later; briefing memo issued at contract mobilisation", effort: "Low", optInOptOut: "Included" },
+      { proposal: "Integrated Earned Value Management (EVM) dashboard linking programme baseline, actual cost, and forecast final cost", clientValue: "Provides 4–6 week early warning of cost overrun, enabling proactive corrective action before budget is breached", effort: "Medium", optInOptOut: "Optional" },
+      { proposal: "Cloud-based claims register auto-populating from site diaries, weather logs, and delay notices", clientValue: "Strengthens Employer's position in dispute proceedings with FIDIC-timestamped, auditable contemporaneous records", effort: "Medium", optInOptOut: "Subject to client agreement" },
+    ];
+  }
+  if (/heritage|conservation|museum|historic|adaptive.*reuse/i.test(s)) {
+    return [
+      ...generic,
+      { proposal: "Photogrammetric 3D scan and point-cloud model (E57 format) of existing structure at inception — used for design coordination, area measurement, and post-construction comparison", clientValue: "Eliminates measurement errors; provides baseline for as-built comparison; creates heritage archive quality record; extends reuse value of survey data beyond the project", effort: "Medium", optInOptOut: "Optional" },
+      { proposal: "Hydraulic lime mortars and natural hydraulic lime (NHL 2/3.5/5) matched to original masonry by XRF and petrographic testing — specification issued before contractor tender", clientValue: "Prevents irreversible damage to original fabric from OPC-induced salt crystallisation; extends conservation life by 30+ years versus standard OPC repairs", effort: "Low", optInOptOut: "Included" },
+    ];
+  }
+  if (/industrial|manufactur|factory|abattoir|processing.*plant|warehouse.*industrial/i.test(s)) {
+    return [
+      ...generic,
+      { proposal: "AutoCAD Plant 3D / Revit MEP coordinated 3D plant model with clash detection — used for equipment installation sequencing and commissioning planning", clientValue: "Reduces construction rework by estimated 25%; accelerates commissioning sequencing planning; as-built 3D model handed to client for facility management", effort: "Medium", optInOptOut: "Optional" },
+      { proposal: "Value-stream mapping (VSM) applied to production process flow before layout design — 5S and lean principles embedded in material-flow corridors, storage zones, and logistics docks", clientValue: "Estimated 15–20% reduction in material-handling distance versus conventional layout; operational efficiency gain from Day 1 without additional capital cost", effort: "Low", optInOptOut: "Included" },
+    ];
+  }
+  if (/high.rise|high_rise|multi.stor|tower.*building|mixed.use.*tower|basement.*podium/i.test(s)) {
+    return [
+      ...generic,
+      { proposal: "Full BIM coordination across architecture, structure, and MEP at LOD 300+ — automated clash detection eliminates field coordination conflicts for MEP riser routing and structural penetrations", clientValue: "Estimated 20% reduction in site RFIs; faster authority submission with model-based coordination reports; LOD 300 model deliverable handed to client", effort: "Medium", optInOptOut: "Optional" },
+      { proposal: "Post-tensioned flat slab system evaluated against conventional RC slab for floor plates >600 m² — reduces storey height by 150–200 mm per floor enabling additional floor within same building height", clientValue: "Potential one additional floor per 8–10 floors versus conventional RC; 8–12% concrete volume saving — structural system comparison report issued at design development stage", effort: "Medium", optInOptOut: "Subject to client agreement" },
+    ];
+  }
+  if (/hotel|hospitality|resort|lodge|guesthouse|five.star|luxury.*accommodat/i.test(s)) {
+    return [
+      ...generic,
+      { proposal: "All FF&E tracked via shared online procurement schedule with delivery milestone alerts — reduces lead-time surprises that delay pre-opening", clientValue: "Eliminates pre-opening delays caused by late FF&E delivery; real-time delivery status visible to client, contractor, and operator from a single live dashboard", effort: "Low", optInOptOut: "Included" },
+      { proposal: "Mock guest room constructed and approved by client and brand operator before bulk room-finishing works commence — reduces rework cost from late design corrections", clientValue: "Estimated 10–15% reduction in rework cost; brand compliance confirmed at prototype stage rather than at snagging; before/after comparison record in handover pack", effort: "Medium", optInOptOut: "Subject to client agreement" },
+    ];
+  }
+  if (/geotech|soil.*invest|borehole.*programme|subsoil.*invest|ground.*invest|site.*invest.*geotech/i.test(s)) {
+    return [
+      ...generic,
+      { proposal: "Continuous borehole core photographed (macro + detail), catalogued in labelled core boxes, and handed to client as high-resolution digital archive (PDF + JPEG) alongside the geotechnical report", clientValue: "Client retains a permanent visual record of subsurface conditions for future phases — avoiding repeat borehole costs if foundation design changes or disputes arise during construction", effort: "Low", optInOptOut: "Included" },
+      { proposal: "AGS 4.0 digital data file of all borehole logs, in-situ tests, and laboratory results handed to client — enabling direct import into any geotechnical software (Gint, dGeo, GeoStudio) without re-keying", clientValue: "Eliminates data re-entry cost for follow-on foundation design or monitoring phases; ensures long-term usability of investigation data beyond this engagement", effort: "Low", optInOptOut: "Included" },
+      { proposal: "Bore-hole location and interpreted strata surfaces (top-of-rock, groundwater table, weak layer elevation) modelled as 3D GIS layers (Shapefile + GeoJSON) — handed to client for overlay on project drawings or BIM model", clientValue: "Enables structural designer to extract site-specific bearing-layer depths at any point within the site without additional interpretive work; reduces foundation design man-hours by an estimated 20–30%", effort: "Medium", optInOptOut: "Optional" },
+    ];
+  }
+  if (/architect|building.*design|residential.*design|commercial.*design|civic.*build|office.*build|school.*design|community.*centre|government.*build|new.*build.*design/i.test(s)) {
+    return [
+      ...generic,
+      { proposal: "Energy performance modelling (IES VE or EnergyPlus) at schematic stage to inform envelope, HVAC sizing, and glazing specifications before expensive detailed design commits the design direction", clientValue: "Decisions made at schematic stage cost ~1/10th to change vs decisions made at construction documents; energy model prevents oversized HVAC plant (typical 15–20% cost saving on M&E); model handed to client for post-occupancy benchmarking", effort: "Medium", optInOptOut: "Optional" },
+      { proposal: "Federated BIM model (LOD 300) with architecture, structure, MEP, and specialist systems coordinated in one model — clash-detection report issued at 60% and 90% gate before drawings are issued for construction", clientValue: "Eliminates the most common source of site RFIs (estimated 25–35% reduction); authority submissions faster with model-based documentation; LOD 300 model handed to client for FM use", effort: "Medium", optInOptOut: "Optional" },
+      { proposal: "Client design review conducted in an annotated PDF or live BIM viewer (Revit Live / BIM 360) at schematic and design-development stages — replacing traditional flat-PDF pin-up with an interactive walkthrough", clientValue: "Clients understand spatial outcomes earlier and make fewer late-stage change requests; review sessions shortened by an estimated 30%; decision record auto-generated from annotated model", effort: "Low", optInOptOut: "Included" },
     ];
   }
   return generic;

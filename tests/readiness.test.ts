@@ -92,7 +92,7 @@ const projectRequirement = {
 };
 
 test("company readiness blocks an empty vault", async () => {
-  const report = await getCompanyIngestionReadiness("company-1", fakeClient({ company: null }));
+  const report = await getCompanyIngestionReadiness("company-1", {}, fakeClient({ company: null }));
 
   assert.equal(report.ingestionReady, false);
   assert.match(report.blockers.join("\n"), /Company profile has not been created/);
@@ -100,7 +100,7 @@ test("company readiness blocks an empty vault", async () => {
 });
 
 test("company readiness allows a useful company profile and reports review warnings", async () => {
-  const report = await getCompanyIngestionReadiness("company-1", fakeClient({
+  const report = await getCompanyIngestionReadiness("company-1", {}, fakeClient({
     documents: [
       {
         extractedText: "Company profile states 12 experts and 24 selected projects across building, road, water, planning, design and supervision assignments.",

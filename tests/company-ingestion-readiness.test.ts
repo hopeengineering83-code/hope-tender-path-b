@@ -4,7 +4,7 @@ import { assessCompanyIngestionReadiness } from "../lib/company-ingestion-readin
 
 describe("assessCompanyIngestionReadiness", () => {
   it("does not block expert/project review when tender does not require them", () => {
-    const readiness = assessCompanyIngestionReadiness({ docs: [{ extractedText: "General company profile" }], experts: [], projects: [] }, {
+    const readiness = assessCompanyIngestionReadiness({ docs: [{ extractedText: "General company profile with detailed service lines covering engineering, design, project management, construction supervision, and advisory services." }], experts: [], projects: [] }, {
       requireDocuments: true,
       requireReviewedExperts: false,
       requireReviewedProjects: false,

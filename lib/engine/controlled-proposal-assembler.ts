@@ -43,7 +43,7 @@ function bullets(lines: string[], fallback: string, limit: number, maxLen = 360)
 function sectorLabel(primarySector: string, title: string): string {
   const text = `${primarySector} ${title}`;
   if (/health|hospital|medical|clinic|radiology|laboratory|pharmacy|patient|specialty|OPD|emergency/i.test(text)) return "healthcare / medical facility consultancy";
-  if (/water|borehole|pump|sanitary|hydraulic|irrigation|pipeline|reservoir|solar/i.test(text)) return "water, hydraulic and infrastructure consultancy";
+  if (/water|borehole|pump|sanitary|hydraulic|irrigation|pipeline|reservoir/i.test(text)) return "water, hydraulic and infrastructure consultancy";
   if (/road|bridge|transport|pavement|traffic|culvert|drainage/i.test(text)) return "transport infrastructure consultancy";
   if (/urban|master plan|land use|municipal|spatial|settlement|GIS/i.test(text)) return "urban planning and municipal consultancy";
   if (/environment|ESIA|ESMP|safeguard|social|resettlement|climate|waste|EHS|ESG/i.test(text)) return "environmental and social safeguards consultancy";
@@ -54,7 +54,7 @@ function sectorLabel(primarySector: string, title: string): string {
   // misclassify as ICT.
   if (/\bICT\b|software|system|digital|database|platform|network|cyber|telecom|\bERP\b|\bMIS\b/i.test(text)) return "ICT and digital transformation consultancy";
   if (/building|architecture|structural|\bMEP\b|residential|commercial|office|warehouse|school|university|facility|supervision|renovation/i.test(text)) return "building design and supervision consultancy";
-  if (/energy|power.*plant|solar.*farm|wind.*farm|grid.*connect|generation|transmission.*line|substation/i.test(text)) return "energy and power infrastructure consultancy";
+  if (/energy|power.*plant|\bsolar\b|wind.*farm|grid.*connect|generation|transmission.*line|substation|\bhydropower\b|\belectrification\b|\brenewable.*energy\b/i.test(text)) return "energy and power infrastructure consultancy";
   if (/agri|irrigation.*scheme|crop|farm.*develop|livestock|rural.*develop/i.test(text)) return "agriculture, irrigation, and rural development consultancy";
   if (/mining|mineral.*extract|quarry.*design|tailings|ore.*body|blast.*design/i.test(text)) return "mining and extractive industries consultancy";
   if (/\bport.*design|\bport.*master.*plan|berth.*design|quay.*design|harbour.*develop|dredging|container.*terminal|maritime/i.test(text)) return "port and maritime infrastructure consultancy";
@@ -74,7 +74,7 @@ function methodologyForSector(primarySector: string, title: string): string[] {
       "Prepare staged deliverables, design review gates, authority submission support, renovation/supervision controls, commissioning support and close-out documentation.",
     ];
   }
-  if (/water|borehole|pump|sanitary|hydraulic|irrigation|pipeline|reservoir|solar/i.test(text)) {
+  if (/water|borehole|pump|sanitary|hydraulic|irrigation|pipeline|reservoir/i.test(text)) {
     return [
       "Confirm demand, service area, source conditions, hydraulic basis, power/solar assumptions, utility constraints, existing assets and stakeholder requirements.",
       "Undertake field assessment, survey, source verification, flow/head verification, water-quality considerations and design-basis confirmation before final sizing.",
@@ -119,7 +119,7 @@ function methodologyForSector(primarySector: string, title: string): string[] {
       "Report progress, risks, changes and acceptance evidence throughout delivery.",
     ];
   }
-  if (/energy|power.*plant|solar.*farm|wind.*farm|grid.*connect|generation|transmission.*line|substation/i.test(text)) {
+  if (/energy|power.*plant|\bsolar\b|wind.*farm|grid.*connect|generation|transmission.*line|substation|\bhydropower\b|\belectrification\b|\brenewable.*energy\b/i.test(text)) {
     return [
       "Confirm energy demand, load-growth scenario, grid interconnection requirements, grid-code obligations, and stakeholder and environmental constraints before design commencement.",
       "Complete load-flow analysis, generation-mix options (including renewable feasibility), equipment sizing, and demand-forecast modelling using a minimum 5-year consumption data set.",

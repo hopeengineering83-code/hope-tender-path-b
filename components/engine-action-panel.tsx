@@ -44,6 +44,7 @@ function actionLabel(action?: string) {
   if (action === "UPLOAD_TENDER_DOCUMENT") return "Upload the tender/RFP document, then run Engine.";
   if (action === "OPEN_EXTRACTION_QUALITY") return "Open Extraction Quality and fix/OCR weak files.";
   if (action === "RETRY_OR_REDUCE_INPUT") return "Retry, or reduce duplicate/oversized tender inputs.";
+  if (action === "RETRY_BACKGROUND_JOB") return "Click 'Run in background' again — this was a temporary network failure.";
   if (action === "RETRY_AFTER_DATABASE_CHECK") return "Check database/Vercel runtime, then retry.";
   if (action === "RETRY_AS_BACKGROUND_JOB") return "Click \"Run in background\" — escapes the 60s Vercel function cap.";
   if (action === "OPEN_TENDER_LIST") return "Return to tender list and reopen this tender.";
@@ -211,10 +212,14 @@ export function EngineActionPanel({ tenderId }: { tenderId: string }) {
         });
       }
     } catch (error) {
+      const msg = error instanceof Error ? error.message : "";
+      const isNetworkFailure = msg === "Failed to fetch" || msg.toLowerCase().includes("network") || msg.toLowerCase().includes("connection");
       setResult({
-        error: error instanceof Error ? `Engine async run failed: ${error.message}` : "Engine async run failed due to a network/runtime error.",
+        error: isNetworkFailure
+          ? "Connection failed — the server could not be reached. This is usually a temporary network issue."
+          : `Engine async run failed: ${msg || "unknown error"}`,
         code: "NETWORK_OR_RUNTIME_ERROR",
-        nextAction: "RETRY_OR_REDUCE_INPUT",
+        nextAction: isNetworkFailure ? "RETRY_BACKGROUND_JOB" : "RETRY_OR_REDUCE_INPUT",
       });
     } finally {
       setRunning(false);
@@ -276,7 +281,7 @@ export function EngineActionPanel({ tenderId }: { tenderId: string }) {
       )}
 
       {result && (
-        <div className={`mt-4 rounded-xl border p-4 text-sm ${ok ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-red-200 bg-red-50 text-red-800"}`}>
+        <div className={`mt-4 rounded-xl border p-4 text-sm ${ok ? "border-emerald-200 bg-emerald-50 text-emerald-800" : result?.code === "ASYNC_POLL_TIMEOUT" ? "border-amber-200 bg-amber-50 text-amber-800" : "border-red-200 bg-red-50 text-red-800"}`}>
           <div className="flex flex-wrap items-center gap-2">
             <p className="font-semibold">{result.error ?? (ok ? "Engine completed." : "Engine failed.")}</p>
             {result.code && <span className="rounded-full bg-white px-2 py-0.5 text-xs font-bold">{result.code}</span>}
@@ -323,6 +328,16 @@ export function EngineActionPanel({ tenderId }: { tenderId: string }) {
               className="mt-3 rounded-lg border border-indigo-300 bg-white px-4 py-2 text-sm font-semibold text-indigo-700 hover:bg-indigo-50"
             >
               Check status now
+            </button>
+          )}
+
+          {result.code === "NETWORK_OR_RUNTIME_ERROR" && result.nextAction === "RETRY_BACKGROUND_JOB" && (
+            <button
+              type="button"
+              onClick={() => { setResult(null); runEngineAsync(); }}
+              className="mt-3 rounded-lg border border-amber-300 bg-white px-4 py-2 text-sm font-semibold text-amber-700 hover:bg-amber-50"
+            >
+              Retry background run
             </button>
           )}
 

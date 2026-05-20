@@ -61,27 +61,27 @@ export function buildUnderstandingSection(opts: {
   } else if (/school|university|campus|education/.test(sector)) {
     sectorParagraph =
       `${opts.clientName} requires a design partner who can balance pupil-ratio compliance, accessibility, climate-responsive design, life-safety, and long-life material specification — within budget. Generic building design without education-specific space programming and pupil-ratio audits creates future operational and regulatory risk.`;
-  } else if (/energy|power|solar|wind|grid|generation|transmission/.test(sector)) {
+  } else if (/energy|solar|hydropower|substation|transmission|generation|electrification|scada/.test(sector)) {
     sectorParagraph =
-      `${opts.clientName} requires a power-systems partner who can validate the load forecast, select the optimal generation/transmission configuration, design to grid-code, and supervise construction through to energisation. Under-designed or grid-code non-compliant infrastructure cannot be connected to the national grid without costly retrofit — getting the single-line diagram and protection coordination right at design stage is the critical delivery discipline.`;
-  } else if (/agri|irrigation|farm|crop|livestock|rural develop/.test(sector)) {
+      `${opts.clientName} requires a power-systems partner who brings load-flow analytical rigour, grid-code compliance depth, protection relay coordination expertise, and SCADA integration capability — not only civil and structural design. Yield estimates must use validated multi-year resource data; protection settings must survive utility interconnection review; and commissioning must be managed through FAT/SAT protocols to get the facility energised on time.`;
+  } else if (/agri|irrigation|wua|command.*area|rural.*develop/.test(sector)) {
     sectorParagraph =
-      `${opts.clientName} requires a partner who integrates agronomic, hydrological, civil, and community-development expertise into one coherent scheme. Irrigation without an agronomic baseline risks over-application and soil salinity; schemes without water-user association support fail to achieve their productivity potential. Technical design and community capacity-building must be delivered in parallel, not sequentially.`;
-  } else if (/mining|mineral|quarry|extracti/.test(sector)) {
+      `${opts.clientName} requires an irrigation and rural development partner who combines hydrological rigour, agronomic field knowledge, community mobilisation capability, and water-user association (WUA) governance expertise. A scheme designed without primary hydrological data or without a viable WUA governance model risks under-use or failure after handover — regardless of civil engineering quality.`;
+  } else if (/mining|mineral.*resource|jorc|tailings|ore.*body|mine.*plan/.test(sector)) {
     sectorParagraph =
-      `${opts.clientName} requires a mining-study partner who can deliver JORC-compliant resource estimation, rigorous geotechnical investigation, and a bankable feasibility study that withstands independent competent-person review. The most common failure mode in mining studies is insufficient geotechnical confidence at pre-feasibility stage, which cascades into slope-instability events and tailings failures at construction — the geotechnical programme must be scoped for the required confidence level from the outset.`;
-  } else if (/\bport\b|harbor|harbour|maritime|quay|berth|shipping terminal/.test(sector)) {
+      `${opts.clientName} requires a mining consultancy partner who brings JORC-compliant resource reporting, geotechnical rigour for pit and underground design, TSF engineering to MAC/ANCOLD standards, and a closure plan with financial provision. Resource estimates that fail independent competent-person review, or TSF designs that don't meet dam safety criteria, expose the project to regulatory delay, investor withdrawal, and safety risk.`;
+  } else if (/port|berth|quay|maritime|dredging|harbour/.test(sector)) {
     sectorParagraph =
-      `${opts.clientName} requires a port-design partner who integrates vessel-simulation, structural engineering, dredging, environmental assessment, and ISPS compliance into a single coordinated deliverable. Port infrastructure designed without proper nautical simulation and met-ocean analysis generates costly post-construction dredging, suboptimal throughput, and vessel incident liability — these risks are designed out at the concept stage, not the construction stage.`;
-  } else if (/oil|gas|petroleum|pipeline|refinery|petrochemical/.test(sector)) {
+      `${opts.clientName} requires a port engineering partner who can integrate met-ocean analysis, nautical simulation, geotechnical investigation, berth structural design, dredge management, and ISPS compliance into a single coherent delivery. A berth designed without validated met-ocean data or without a nautical simulation confirming safe vessel manoeuvring will fail at the pre-operations safety review — delaying commercial operations and triggering redesign costs.`;
+  } else if (/pipeline|oil.*facilit|gas.*facilit|hazop|p&id|refinery|petrochemical/.test(sector)) {
     sectorParagraph =
-      `${opts.clientName} requires an engineering partner who applies rigorous process-safety methodology from FEED through commissioning. HAZOP must precede detailed engineering, not follow it; P&ID freeze discipline is essential to avoid engineering rework; and pipeline integrity management starts at the design specification stage, not after first oil or gas. Regulatory compliance (API, local petroleum authority) must be designed in, not checked at the end.`;
-  } else if (/finance|bank|micro.?finance|insurance|credit|lending|investment fund/.test(sector)) {
+      `${opts.clientName} requires a process engineering partner who brings HAZOP facilitation capability, P&ID development rigour, pipeline stress analysis, and pipeline integrity management planning — not only civil and structural design. Outstanding HAZOP actions, undocumented P&IDs, and under-specified cathodic protection are the three most common causes of late-stage safety incidents and regulatory enforcement actions in this sector.`;
+  } else if (/kyc|aml|core.*banking|microfinance|ifrs|basel|prudential|fintech/.test(sector)) {
     sectorParagraph =
-      `${opts.clientName} requires a financial-systems partner who can translate regulatory requirements (KYC/AML, Basel, IFRS) into operational frameworks and technology specifications that the supervisory authority will approve. The most common failure is designing policies without corresponding system controls — or configuring systems without aligned policies. Both domains must be developed in lockstep with regulatory validation at each stage.`;
-  } else if (/telecom|broadband|spectrum|mobile network|isp/.test(sector)) {
+      `${opts.clientName} requires a financial-services advisory partner who combines regulatory gap analysis reviewed by licensed local legal counsel, system architecture aligned to applicable standards (KYC/AML, Basel, IFRS), and a disciplined parallel-run cutover methodology. Systems that go live before regulatory compliance is confirmed, or without a validated rollback plan, create audit findings, regulatory enforcement risk, and reputational damage that outweigh the cost of the implementation itself.`;
+  } else if (/spectrum|broadband|lte|5g|base.*station|backhaul|mobile.*network|telecoms/.test(sector)) {
     sectorParagraph =
-      `${opts.clientName} requires a telecoms-infrastructure partner who integrates spectrum licensing, RF planning, site acquisition, backhaul dimensioning, and quality-of-service management into a coherent rollout plan. Networks that are licensed but under-designed for backhaul, or that meet coverage targets but fail QoS SLAs, generate regulatory penalty risk and subscriber churn — the engineering must be end-to-end, not piecemeal.`;
+      `${opts.clientName} requires a telecoms engineering partner who brings spectrum licensing expertise, calibrated RF coverage simulation, backhaul design rigour, and a site-acceptance test protocol that gives commercial confidence before launch. Coverage that underperforms against simulation, backhaul that saturates at peak load, or spectrum not licensed in time to support the rollout date are the three most common value-destroying outcomes in broadband network programmes.`;
   } else {
     sectorParagraph =
       `${opts.clientName} requires a disciplined consultancy partner who maps each scope item to a deliverable, a responsible expert, and a quality gate. The winning proposal must demonstrate scope understanding through evidence, not generic capability statements.`;
@@ -156,54 +156,54 @@ export function buildValueAddedServices(opts: { primarySector: string; companyNa
     `**Accessibility audit** — independent accessibility audit at design and at handover stage.`,
     `**Lifecycle cost analysis** — long-life-versus-low-cost alternative comparison.`,
   ];
-  else if (/energy|power|solar|wind|grid|generation|transmission/.test(sector)) bullets = [
-    `**Grid-code compliance pre-check** — in-house protection-coordination review against the national grid code before energisation, at no extra cost.`,
-    `**SCADA configuration support** — commissioning of the SCADA monitoring dashboard and KPI baseline measurement at handover.`,
-    `**Energy audit** — post-commissioning energy-audit of generation and distribution efficiency included, identifying losses for operational improvement.`,
-    `**Lifecycle cost analysis** — present-value comparison of technology options (e.g., diesel vs. solar-hybrid vs. grid extension) to support the most cost-effective decision.`,
-    `**O&M manual and operator training** — structured operator training programme and O&M manual in the operating language of the client's technical staff.`,
+  else if (/energy|solar|hydropower|substation|transmission|generation|electrification|scada/.test(sector)) bullets = [
+    `**HOMER / SAM energy-yield model handed to client** — client retains the validated yield model for future tariff negotiations, extension planning, and lender reporting without re-engaging the designer.`,
+    `**Grid-code compliance pre-check** — review of protection relay settings against utility interconnection requirements before submission, reducing rejection risk.`,
+    `**Operator training programme** — structured training for client operators covering SCADA operation, protection relay maintenance, and emergency shutdown procedures, included at handover.`,
+    `**Remote SCADA commissioning support** — remote diagnostics available during the defects-liability period to resolve operational faults without on-site mobilisation.`,
+    `**Climate-resilience yield sensitivity analysis** — yield estimates tested against 30-year climate-scenario projections to confirm design-life performance.`,
   ];
-  else if (/agri|irrigation|farm|crop|livestock|rural develop/.test(sector)) bullets = [
-    `**Agronomic monitoring plan** — crop-yield and soil-quality monitoring schedule for two growing seasons post-commissioning, included in handover package.`,
-    `**Water-user association handbook** — WUA constitution, governance procedures, fee-collection guide, and maintenance responsibility matrix.`,
-    `**Value-chain linkage support** — market-linkage identification for priority crops; buyers and off-take agreement templates included.`,
-    `**Climate-adaptive crop calendar** — adjusted planting calendar with drought-resilient variety recommendations based on local climate projections.`,
-    `**Photo-monitoring protocol** — standardised photo-monitoring schedule for evidence of scheme performance; supports donor reporting.`,
+  else if (/agri|irrigation|wua|command.*area|rural.*develop/.test(sector)) bullets = [
+    `**WUA governance toolkit** — constitution template, water-allocation rule book, and fee-collection record system handed to the water-user association at commissioning.`,
+    `**Farmer training programme** — structured on-farm training covering irrigation scheduling, field application efficiency, and crop-calendar alignment, included as a handover deliverable.`,
+    `**Agronomy productivity baseline** — pre-scheme baseline recorded for lender and grant-reporting purposes; post-handover monitoring framework included.`,
+    `**Operation and maintenance cost model** — annual O&M cost estimate handed to WUA to support fee-setting and maintenance planning without returning to designer.`,
+    `**Digital soil-moisture advisory** — low-cost IoT soil-moisture monitoring option proposed for WUA to support evidence-based irrigation scheduling.`,
   ];
-  else if (/mining|mineral|quarry|extracti/.test(sector)) bullets = [
-    `**Independent competent-person review** — JORC CP sign-off on the resource estimate included as part of the feasibility package.`,
-    `**Geotechnical monitoring programme** — slope-monitoring instrument specification and threshold-alert protocol for ongoing operations.`,
-    `**Community liaison framework** — community engagement plan, local-employment strategy, and grievance mechanism design included.`,
-    `**Closure liability estimate** — indicative financial provisioning for mine closure and rehabilitation, prepared to ANCOLD / IFC standards.`,
-    `**Regulatory-submission-ready package** — licence application documents formatted for the national mining authority's submission template.`,
+  else if (/mining|mineral.*resource|jorc|tailings|ore.*body|mine.*plan/.test(sector)) bullets = [
+    `**3-D geological block model in open-source format** — client retains the full resource model (Leapfrog / QGIS) for future exploration cycles without re-engaging the geologist.`,
+    `**Geotechnical instrumentation programme** — slope and TSF monitoring instruments specified and installed with data-management handover to mine operator.`,
+    `**Closure plan with financial provision estimate** — prepared at feasibility stage, not deferred; supports environmental permitting and lender due diligence from the outset.`,
+    `**JORC competent-person peer review** — independent competent-person review of resource estimate included before report issue; reduces investor scrutiny risk.`,
+    `**Environmental permit application package** — regulatory submission package prepared as a project deliverable, reducing permitting timeline.`,
   ];
-  else if (/\bport\b|harbor|harbour|maritime|quay|berth|shipping terminal/.test(sector)) bullets = [
-    `**Nautical simulation report** — vessel-manoeuvring simulation at design stage; findings fed into berth geometry and pilotage procedures.`,
-    `**Environmental monitoring plan** — dredging turbidity monitoring and spill-response protocol, included as construction-phase deliverable.`,
-    `**Port operations manual** — vessel scheduling, gate procedures, and emergency-response plan prepared and handed over at commissioning.`,
-    `**ISPS compliance audit** — pre-opening International Ship and Port Facility Security Code audit, with action register.`,
-    `**Throughput sensitivity analysis** — three-scenario throughput model (base, optimistic, stressed) to test infrastructure adequacy.`,
+  else if (/port|berth|quay|maritime|dredging|harbour/.test(sector)) bullets = [
+    `**Fast-time nautical simulation report included in handover** — port authority retains safety evidence for future vessel-class upgrades without commissioning a new study.`,
+    `**ISPS certification support** — ISPS compliance documentation prepared and pre-certification audit conducted, with port security officer training included.`,
+    `**O&M and emergency procedures manual** — berth O&M, fender-maintenance schedule, and emergency response plan handed over at commissioning.`,
+    `**Marine ecology monitoring protocol** — turbidity and benthic monitoring protocol handed to the environmental team, meeting permit requirements without re-engaging consultants.`,
+    `**Dredge material characterisation database** — sediment characterisation records retained by client for future dredge campaigns without re-testing.`,
   ];
-  else if (/oil|gas|petroleum|pipeline|refinery|petrochemical/.test(sector)) bullets = [
-    `**HAZOP action register** — all HAZOP actions tracked to close-out and included in the safety case handed over at commissioning.`,
-    `**Pipeline integrity management plan** — ILI run planning, cathodic protection monitoring, and anomaly-response protocol included at handover.`,
-    `**HSE statistics baseline** — pre-commissioning safety-performance baseline established, with KPI monitoring protocol for the operator.`,
-    `**Commissioning and start-up procedure** — step-by-step commissioning procedures, pre-start-up safety review (PSSR) checklist, and emergency shutdown drill protocol.`,
-    `**As-built P&ID set** — fully updated P&IDs at IFC-as-built status handed over with material certificates and inspection data books.`,
+  else if (/pipeline|oil.*facilit|gas.*facilit|hazop|p&id|refinery|petrochemical/.test(sector)) bullets = [
+    `**Digital P&ID database handed to client** — intelligent P&ID (SmartPlant / AVEVA or equivalent) for future HAZOP revalidation, management of change, and maintenance planning.`,
+    `**Pipeline integrity management plan pre-populated** — ILI baseline run schedule and inspection intervals calculated; client asset team enters the integrity lifecycle immediately at handover.`,
+    `**HAZOP action register with full close-out evidence** — all HAZOP actions tracked to documented close-out; client retains the risk-reduction evidence for regulator and insurer reviews.`,
+    `**Cathodic protection commissioning data pack** — close-interval potential survey (CIPS) baseline records retained by client for future corrosion risk assessments.`,
+    `**Emergency shutdown system (ESD) test protocol** — pre-commissioning ESD test records handed over as part of the safety-case documentation.`,
   ];
-  else if (/finance|bank|micro.?finance|insurance|credit|lending|investment fund/.test(sector)) bullets = [
-    `**Regulatory sandbox engagement** — facilitated engagement with the supervisory authority during the pilot phase to resolve ambiguities before full deployment.`,
-    `**AML transaction-monitoring tuning** — rule-set calibration workshop post-go-live to reduce false-positive rates and maintain detection effectiveness.`,
-    `**Data migration reconciliation report** — signed reconciliation between source-system balances and migrated data, provided before go-live.`,
-    `**Staff e-learning modules** — digital compliance training modules (KYC, AML, credit policy) hosted on the client's LMS at no extra cost.`,
-    `**Post-implementation compliance audit** — 90-day post-go-live audit against the supervisory authority's examination checklist.`,
+  else if (/kyc|aml|core.*banking|microfinance|ifrs|basel|prudential|fintech/.test(sector)) bullets = [
+    `**Regulatory compliance knowledge base** — searchable wiki of applicable regulations, mapped to system controls, handed over as part of the training package.`,
+    `**Automated regulatory reporting templates** — Basel, IFRS, or AML return templates pre-validated against regulator's published format; reduces manual reporting effort.`,
+    `**Source code escrow** — third-party source code escrow available during warranty period; protects client from vendor lock-in at no additional cost.`,
+    `**Penetration test report and remediation evidence** — pre-go-live security review with full remediation evidence; supports regulatory and audit submission.`,
+    `**90-day post-go-live hypercare** — named support contact with SLA-defined response times for 90 days after go-live; included in the engagement scope.`,
   ];
-  else if (/telecom|broadband|spectrum|mobile network|isp/.test(sector)) bullets = [
-    `**Coverage and capacity dashboard** — live coverage heat-map and KPI dashboard handed over at go-live for ongoing network management.`,
-    `**Frequency coordination report** — documented interference analysis and mitigation plan submitted to the regulator as part of the licence application.`,
-    `**Network-sharing feasibility note** — assessment of infrastructure-sharing opportunities (tower, backhaul, spectrum) that could reduce capital costs.`,
-    `**QoS SLA baseline measurement** — independent KPI baseline measurement at go-live, establishing the benchmark for SLA compliance monitoring.`,
-    `**Optimisation roadmap** — post-launch 12-month network-optimisation roadmap covering coverage gaps, capacity hot-spots, and handover parameter tuning.`,
+  else if (/spectrum|broadband|lte|5g|base.*station|backhaul|mobile.*network|telecoms/.test(sector)) bullets = [
+    `**Frequency planning tool handed to spectrum team** — reduces spectrum re-planning cycle from weeks to hours; supports future technology upgrade (LTE → 5G NR) without re-engaging the frequency planner.`,
+    `**Drive-test data archive** — post-commissioning drive-test data handed to the network operations team as a coverage baseline for future comparative measurement campaigns.`,
+    `**Site acquisition checklist and permit tracker** — town-planning, landlord, and environmental permit tracker handed to client's rollout team to manage the remaining site acquisition pipeline.`,
+    `**Live network KPI dashboard** — operational dashboard covering coverage, capacity, and fault KPIs, integrated with client NOC from commissioning day.`,
+    `**EMR certificate registry** — all site EMR certificates filed in a structured registry; supports regulator and public-interest queries without re-measurement.`,
   ];
   else bullets = [
     `**Three-stage internal review** — schematic, developed, pre-issue review by named senior reviewers, beyond the contractual deliverable scope.`,
