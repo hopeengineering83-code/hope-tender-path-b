@@ -1496,7 +1496,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
         console.info("[generate-elite] Tool-use generation enabled — Claude can call evidence-search tools mid-write.");
       }
 
-      const aiInput = {
+      const aiInputBase = {
         tenderTitle: cleanedTenderTitle,
         clientName: intelligence.clientName,
         tenderText: [BENCHMARK_CONTEXT_LINES.join("\n"), tenderText].join("\n\n"),

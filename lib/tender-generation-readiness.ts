@@ -113,7 +113,7 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
 
   if (!tender) return null;
 
-  const companyReadiness = await getCompanyIngestionReadiness(company.id, client);
+  const companyReadiness = await getCompanyIngestionReadiness(company.id, {}, client);
   // Matching quality first so we can feed its score into analysis quality —
   // that closes the "analysis says 100/100 while matching says 0/100" bug.
   const matchingQuality = assessMatchingQuality({
