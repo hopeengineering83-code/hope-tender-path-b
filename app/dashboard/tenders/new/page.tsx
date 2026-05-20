@@ -24,9 +24,10 @@ export default function NewTenderPage() {
       const form = new FormData();
       for (const file of files) form.append("file", file);
       const res = await fetch("/api/tenders/upload-first", { method: "POST", body: form });
-      const data = await res.json().catch(() => ({}));
+      const data = await res.json().catch(() => ({})) as { error?: string; errors?: string[]; tenderId?: string };
       if (!res.ok) {
-        setUploadError(data.error || "Upload-first tender intake failed");
+        const details = Array.isArray(data.errors) && data.errors.length > 0 ? ` Details: ${data.errors.join("; ")}` : "";
+        setUploadError(`${data.error || "Upload-first tender intake failed"}${details}`.trim());
         return;
       }
       router.push(`/dashboard/tenders/${data.tenderId}`);

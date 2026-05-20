@@ -7,6 +7,7 @@ import { promoteBestAvailableReviewedMatchesForGeneration } from "../../../../..
 import { applyActiveUploadedLetterheadToTenderDocuments } from "../../../../../lib/engine/apply-active-letterhead";
 import { rateLimit, AI_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import { buildSubmissionPlan, findExtraGeneratedDocuments, findMissingGeneratedDocuments, generatedDocumentSubmissionKey, hasExplicitSubmissionScope, plannedSubmissionTargetFiles, plannedSubmissionTargetKeys, type SubmissionPlanFile } from "../../../../../lib/engine/submission-plan";
+import { getCompanyIngestionReadiness } from "../../../../../lib/company-ingestion-readiness";
 import { polishBenchmarkOutput } from "../../../../../lib/engine/benchmark-output-polisher";
 import { cleanTenderTitle, cleanClientName, formatRequirementLine } from "../../../../../lib/engine/proposal-labels";
 import { logAction } from "../../../../../lib/audit";
@@ -14,7 +15,6 @@ import { extractRequestId } from "../../../../../lib/request-id";
 import { createJob, advanceJob, completeJob, failJob } from "../../../../../lib/job-store";
 import { createNotification } from "../../../../../lib/notifications";
 import { childLogger, reportError, time } from "../../../../../lib/observability";
-import { getCompanyIngestionReadiness } from "../../../../../lib/company-ingestion-readiness";
 import { mapGenerationError } from "../../../../../lib/engine/structured-generation-error";
 import { computeStoredMetadataPatch, listInvalidStoredFields } from "../../../../../lib/engine/sanitize-stored-metadata";
 import { isValidClientName } from "../../../../../lib/engine/metadata-validators";
@@ -216,7 +216,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   const company = await prisma.company.findUnique({ where: { userId }, select: { id: true } });
   if (!company) return NextResponse.json({ error: "Company profile required before generation.", code: "COMPANY_PROFILE_REQUIRED", nextAction: "OPEN_COMPANY_READINESS" }, { status: 422 });
-  const readiness = await getCompanyIngestionReadiness(company.id);
+  const requiresExperts = tender.requirements.some((req) => req.requirementType === "EXPERT");
+  const requiresProjects = tender.requirements.some((req) => req.requirementType === "PROJECT_EXPERIENCE");
+  const readiness = await getCompanyIngestionReadiness(company.id, { requireDocuments: true, requireReviewedExperts: requiresExperts, requireReviewedProjects: requiresProjects });
   if (!readiness.ingestionReady) return NextResponse.json({ error: "Generation blocked: company knowledge is not ready.", code: "INGESTION_NOT_READY", blockers: readiness.blockers, warnings: readiness.warnings, totals: readiness.totals, nextAction: "OPEN_COMPANY_READINESS" }, { status: 422 });
   if (!hasRealClientName(tender.clientName)) return NextResponse.json({ error: "Generation blocked: client name is not set. Edit the tender and fill the Client Name field before generating proposal documents.", code: "CLIENT_NAME_REQUIRED", nextAction: "EDIT_TENDER" }, { status: 422 });
   if (tender.status === "NO_BID") return NextResponse.json({ error: "Generation blocked: this tender is marked NO_BID. Apply a BID or BID_WITH_CONDITIONS decision before generating proposal documents.", code: "NO_BID_BLOCK" }, { status: 409 });
@@ -227,6 +229,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       nextAction: "RUN_ENGINE",
     }, { status: 422 });
   }
+  const untracedMandatoryRequirements = tender.requirements.filter((req) => req.priority === "MANDATORY" && ((req.sourceConfidence ?? 0) <= 0));
+  if (untracedMandatoryRequirements.length > 0) return NextResponse.json({ error: `Generation blocked: ${untracedMandatoryRequirements.length} mandatory requirement(s) are not source-grounded yet.`, code: "UNTRACED_MANDATORY_REQUIREMENTS", requirements: untracedMandatoryRequirements.slice(0, 20).map((req) => ({ id: req.id, title: req.title })), nextAction: "RUN_ENGINE_AND_REVIEW_SOURCES" }, { status: 422 });
 
   const submissionPlan = buildSubmissionPlan({ id: tender.id, title: tender.title, exactFileNaming: tender.exactFileNaming, exactFileOrder: tender.exactFileOrder, pageLimit: tender.pageLimit, requirements: tender.requirements });
   const explicitSubmissionScope = hasExplicitSubmissionScope(tender);

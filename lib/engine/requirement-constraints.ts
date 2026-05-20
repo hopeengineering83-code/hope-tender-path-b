@@ -65,7 +65,28 @@ export function deriveRequirementConstraintProfile(requirements: RequirementDraf
     /mining|extractive|quarry|mineral|ore/i.test(text) ? "mining" : null,
     /school|education|university|college/i.test(text) ? "education" : null,
   ].filter((v): v is string => Boolean(v));
-  const strictDomain = domainTags.length > 0;
+  const strictDomainTags = [
+    /(?:hospital|healthcare|medical|clinic).{0,48}(?:design|construction|planning|engineering|services?|consult(?:ancy|ing)|specialist)/i.test(text)
+      || /(?:design|construction|planning|engineering|services?|consult(?:ancy|ing)|specialist).{0,48}(?:hospital|healthcare|medical|clinic)/i.test(text)
+      ? "healthcare"
+      : null,
+    /(?:telecom|telecommunication|fiber|broadband|5g|4g).{0,48}(?:network|infrastructure|deployment|implementation|design|engineering|services?)/i.test(text)
+      || /(?:network|infrastructure|deployment|implementation|design|engineering|services?).{0,48}(?:telecom|telecommunication|fiber|broadband|5g|4g)/i.test(text)
+      ? "telecom"
+      : null,
+    /\bict\b|information\s+system|software\s+(?:development|implementation|integration|engineering|architecture)|digital\s+(?:transformation|solution|system|infrastructure)|platform\s+(?:development|implementation|integration|architecture|engineering)/i.test(text)
+      ? "ict"
+      : null,
+    /(?:mining|extractive|quarry|mineral|ore).{0,48}(?:operations?|engineering|planning|processing|infrastructure|services?)/i.test(text)
+      || /(?:operations?|engineering|planning|processing|infrastructure|services?).{0,48}(?:mining|extractive|quarry|mineral|ore)/i.test(text)
+      ? "mining"
+      : null,
+    /(?:school|education|university|college).{0,48}(?:design|construction|planning|engineering|services?|program|infrastructure)/i.test(text)
+      || /(?:design|construction|planning|engineering|services?|program|infrastructure).{0,48}(?:school|education|university|college)/i.test(text)
+      ? "education"
+      : null,
+  ].filter((v): v is string => Boolean(v));
+  const strictDomain = strictDomainTags.length > 0;
 
   return {
     expertCount,

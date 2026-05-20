@@ -79,7 +79,9 @@ export async function POST(req: Request) {
     // The metadata extractor's own < 500-char fallback handles this
     // gracefully, so we just pass the best text we have (even if
     // nothing was extracted) and continue.
-    const bestForMetadata = usable.length > 0 ? usable : extracted;
+    const weaklyUsable = extracted.filter((x) => !x.meaningful && (x.extractedText ?? "").trim().length >= 80);
+    const effectiveUsable = usable.length > 0 ? usable : weaklyUsable;
+    const bestForMetadata = effectiveUsable.length > 0 ? effectiveUsable : extracted;
     const combinedText = bestForMetadata.map((x) => `FILE: ${x.file.name}\n${x.extractedText}`).join("\n\n--- NEXT TENDER FILE ---\n\n");
     const fallbackName = bestForMetadata[0]?.file?.name ?? "uploaded-tender";
     const metadata = inferTenderMetadata(combinedText, fallbackName);
@@ -123,7 +125,7 @@ export async function POST(req: Request) {
         numberOfCopiesRequired: metadata.numberOfCopiesRequired,
         technicalWeight: metadata.technicalWeight,
         financialWeight: metadata.financialWeight,
-        notes: `Created by upload-first tender intake from ${usable.length} extracted file(s). ${usable.length === 0 ? "No usable text was extracted — review and edit tender details manually." : "Rich detail auto-extracted — review the Tender Detail panel before final submission."}`,
+        notes: `Created by upload-first tender intake from ${effectiveUsable.length} extracted file(s). ${effectiveUsable.length === 0 ? "No usable text was extracted — review and edit tender details manually." : "Rich detail auto-extracted — review the Tender Detail panel before final submission."}`,
         status: "DRAFT",
         stage: "TENDER_INTAKE",
         userId,
@@ -154,6 +156,12 @@ export async function POST(req: Request) {
       });
     }
 
+    await prisma.company.upsert({
+      where: { userId },
+      update: {},
+      create: { name: "Company Profile", userId },
+    });
+
     // ─── Engine run is DECOUPLED from intake (PR XX-INTAKE-FIX) ──────────
     // BEFORE: runTenderEngine() ran synchronously inside the 60s Vercel
     // Hobby route. On a typical 0.5MB tender with healthy company vault,
@@ -181,7 +189,7 @@ export async function POST(req: Request) {
           entityType: "Tender",
           entityId: tender.id,
           description: `Upload-first tender intake auto-ran engine for "${tender.title}"`,
-          metadata: { files: usable.length },
+          metadata: { files: effectiveUsable.length },
         });
       } catch (err) {
         engineError = err instanceof Error ? err.message : String(err);
@@ -193,8 +201,8 @@ export async function POST(req: Request) {
       success: true,
       tenderId: tender.id,
       tender: engineResult ?? tender,
-      extractedFiles: usable.length,
-      skippedFiles: extracted.length - usable.length,
+      extractedFiles: effectiveUsable.length,
+      skippedFiles: extracted.length - effectiveUsable.length,
       metadata,
       errors,
       engineError,

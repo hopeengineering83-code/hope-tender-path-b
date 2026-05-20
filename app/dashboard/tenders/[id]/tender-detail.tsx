@@ -806,16 +806,18 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
   // Only block when matches EXIST but none are selected (user forgot to select).
   const expertMatchesExist = (tender.expertMatches?.length ?? 0) > 0;
   const projectMatchesExist = (tender.projectMatches?.length ?? 0) > 0;
+  const hasRecoverableExpertSelection = (tender.expertMatches ?? []).some((m) => m.expert?.trustLevel === "REVIEWED");
+  const hasRecoverableProjectSelection = (tender.projectMatches ?? []).some((m) => m.project?.trustLevel === "REVIEWED");
   const canGenerateDocs = tender.requirements.length > 0
-    && (!expertReqExists || selectedExpertCount > 0 || !expertMatchesExist)
-    && (!projectReqExists || selectedProjectCount > 0 || !projectMatchesExist)
+    && (!expertReqExists || selectedExpertCount > 0 || !expertMatchesExist || hasRecoverableExpertSelection)
+    && (!projectReqExists || selectedProjectCount > 0 || !projectMatchesExist || hasRecoverableProjectSelection)
     && !criticalHardBlockExists;
   const generateDisabledReason = tender.requirements.length === 0
     ? "Run AI Analyze or Run Engine first to extract requirements"
-    : (expertReqExists && expertMatchesExist && selectedExpertCount === 0)
-      ? "Select at least one expert match before generating"
-      : (projectReqExists && projectMatchesExist && selectedProjectCount === 0)
-        ? "Select at least one project match before generating"
+    : (expertReqExists && expertMatchesExist && selectedExpertCount === 0 && !hasRecoverableExpertSelection)
+      ? "Select at least one reviewed expert match before generating"
+      : (projectReqExists && projectMatchesExist && selectedProjectCount === 0 && !hasRecoverableProjectSelection)
+        ? "Select at least one reviewed project match before generating"
         : criticalHardBlockExists
           ? "Resolve critical hard blockers before generating"
         : "Generate proposal documents";
