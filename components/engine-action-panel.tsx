@@ -276,7 +276,7 @@ export function EngineActionPanel({ tenderId }: { tenderId: string }) {
       )}
 
       {result && (
-        <div className={`mt-4 rounded-xl border p-4 text-sm ${ok ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-red-200 bg-red-50 text-red-800"}`}>
+        <div className={`mt-4 rounded-xl border p-4 text-sm ${ok ? "border-emerald-200 bg-emerald-50 text-emerald-800" : result?.code === "ASYNC_POLL_TIMEOUT" ? "border-amber-200 bg-amber-50 text-amber-800" : "border-red-200 bg-red-50 text-red-800"}`}>
           <div className="flex flex-wrap items-center gap-2">
             <p className="font-semibold">{result.error ?? (ok ? "Engine completed." : "Engine failed.")}</p>
             {result.code && <span className="rounded-full bg-white px-2 py-0.5 text-xs font-bold">{result.code}</span>}
