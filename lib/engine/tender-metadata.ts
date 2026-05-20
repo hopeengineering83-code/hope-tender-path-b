@@ -188,6 +188,13 @@ function inferCategory(text: string): string {
   if (/school|education|university|campus|classroom/i.test(text)) return "Education";
   if (/environment|esia|esmp|biodiversity/i.test(text)) return "Environmental";
   if (/water\s+supply|borehole|hydraulic|WASH/i.test(text)) return "Water";
+  if (/energy|solar|wind\s+farm|substation|grid|power\s+plant|hydropower|electrification/i.test(text)) return "Energy";
+  if (/agri|irrigation|\bWUA\b|command\s*area|crop\s+water/i.test(text)) return "Agriculture";
+  if (/mining|\bJORC\b|tailings|ore\s+body|mine\s+plan|mineral\s+resource/i.test(text)) return "Mining";
+  if (/\bport\b|berth|quay|maritime|dredging|harbour|nautical/i.test(text)) return "Port & Maritime";
+  if (/\bHAZOP\b|\bP&ID\b|pipeline\s+design|oil\s+facilit|gas\s+facilit|petrochemical|upstream\s+petroleum/i.test(text)) return "Oil & Gas";
+  if (/\bKYC\b|\bAML\b|core\s+banking|microfinance|\bIFRS\b|\bBasel\b|fintech|payment\s+system/i.test(text)) return "Financial Services";
+  if (/spectrum|broadband|\bLTE\b|\b5G\b|base\s+station|backhaul|mobile\s+network/i.test(text)) return "Telecoms";
   if (/architectural|interior|floor\s*plan/i.test(text)) return "Consulting";
   if (/construction|supervision|design|engineering|consultancy|consultant/i.test(text)) return "Consulting";
   if (/supply|goods|equipment|procurement\s+of\s+goods/i.test(text)) return "Supply";
