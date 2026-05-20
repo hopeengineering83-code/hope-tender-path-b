@@ -50,11 +50,11 @@ export function deriveRequirementConstraintProfile(requirements: RequirementDraf
   const roleSignals = ROLE_PATTERNS.filter((entry) => entry.pattern.test(text)).map((entry) => entry.role);
 
   const expertFromQty = requirements
-    .filter((r) => r.requirementType === "EXPERT")
+    .filter((r) => String(r.requirementType ?? "").toUpperCase() === "EXPERT")
     .map((r) => r.requiredQuantity ?? 0)
     .filter((n) => n > 0);
   const projectFromQty = requirements
-    .filter((r) => r.requirementType === "PROJECT_EXPERIENCE")
+    .filter((r) => String(r.requirementType ?? "").toUpperCase() === "PROJECT_EXPERIENCE")
     .map((r) => r.requiredQuantity ?? 0)
     .filter((n) => n > 0);
 

@@ -774,8 +774,8 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
   );
   const highGaps = tender.complianceGaps.filter((gap) => !gap.isResolved && gap.severity === "HIGH").length;
   const mandatoryRequirements = tender.requirements.filter((req) => req.priority === "MANDATORY").length;
-  const expertReqExists = tender.requirements.some((req) => req.requirementType === "EXPERT");
-  const projectReqExists = tender.requirements.some((req) => req.requirementType === "PROJECT_EXPERIENCE");
+  const expertReqExists = tender.requirements.some((req) => String(req.requirementType ?? "").toUpperCase() === "EXPERT");
+  const projectReqExists = tender.requirements.some((req) => String(req.requirementType ?? "").toUpperCase() === "PROJECT_EXPERIENCE");
   const selectedExpertCount = tender.expertMatches?.filter((m) => m.isSelected).length ?? 0;
   const selectedProjectCount = tender.projectMatches?.filter((m) => m.isSelected).length ?? 0;
   const totalExpertMatches = tender.expertMatches?.length ?? 0;
