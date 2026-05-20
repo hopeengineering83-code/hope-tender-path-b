@@ -245,6 +245,12 @@ function sustainabilityRows(sector: string): SustainabilityRow[] {
     { pillar: "Energy & Carbon", commitment: "Solar-assisted water heating for guestrooms; LED lighting with occupancy sensors in all guest and public areas; BMS for HVAC zoning; renewable energy procurement plan", kpi: "Energy intensity ≤150 kWh/m²/year; carbon footprint per guest-night ≤10 kg CO₂e", evidenceMechanism: "Energy model at design stage; BMS monthly energy reports; annual sustainability audit against GSTC criteria" },
     { pillar: "Responsible Sourcing & Community", commitment: "≥40% of food & beverage sourced locally; fair-trade procurement policy; community employment target ≥60% local workforce; heritage and cultural interpretation programme for guests", kpi: "Local sourcing ≥40% of F&B spend; ≥60% of operational staff from local community", evidenceMechanism: "Supplier origin register; payroll nationality data; annual community-impact report" },
   ];
+  if (/geotech|soil.*invest|borehole.*programme|subsoil.*invest|ground.*invest|site.*invest.*geotech/i.test(s)) return [
+    ...generic,
+    { pillar: "Low-Impact Field Investigation", commitment: "Minimise ground disturbance: trial pits backfilled and compacted to original grade within 24 hours; borehole casings removed and grouted on completion; reinstatement monitored and signed-off by site supervisor", kpi: "100% of boreholes grouted within 24 hours of completion; 100% of trial pits reinstated; zero contamination incidents from drilling fluids", evidenceMechanism: "Borehole completion log with grouting record; site reinstatement photographic register; field supervisor sign-off sheet" },
+    { pillar: "Responsible Chemical & Sample Handling", commitment: "Drilling fluids (bentonite, polymer) contained and disposed of per EPA/WHO guidelines; contaminated samples labelled, segregated, and disposed of through licensed waste contractor; chain-of-custody maintained throughout", kpi: "Zero field spills of drilling fluids; 100% of soil and rock samples tracked on chain-of-custody; hazardous samples (TPH, heavy metals) disposed of via licensed contractor", evidenceMechanism: "Drilling fluid disposal records; chain-of-custody sample tracking sheets; waste disposal manifests" },
+    { pillar: "Data Quality & Traceability", commitment: "All borehole logs, laboratory results, and field observations referenced to unique borehole/test-pit IDs; raw data archived in GIS-compatible format and handed to client; laboratory accreditation certificates included in report appendices", kpi: "100% of test results traceable to accredited laboratory; raw field logs archived in industry-standard format (AGS 4.0 or equivalent); zero data gaps at report stage", evidenceMechanism: "AGS 4.0 data file delivered with report; laboratory accreditation certificate copies in appendix; field log archive on project server" },
+  ];
   return generic;
 }
 
@@ -412,6 +418,14 @@ function innovationRows(sector: string): InnovationRow[] {
       ...generic,
       { proposal: "All FF&E tracked via shared online procurement schedule with delivery milestone alerts — reduces lead-time surprises that delay pre-opening", clientValue: "Eliminates pre-opening delays caused by late FF&E delivery; real-time delivery status visible to client, contractor, and operator from a single live dashboard", effort: "Low", optInOptOut: "Included" },
       { proposal: "Mock guest room constructed and approved by client and brand operator before bulk room-finishing works commence — reduces rework cost from late design corrections", clientValue: "Estimated 10–15% reduction in rework cost; brand compliance confirmed at prototype stage rather than at snagging; before/after comparison record in handover pack", effort: "Medium", optInOptOut: "Subject to client agreement" },
+    ];
+  }
+  if (/geotech|soil.*invest|borehole.*programme|subsoil.*invest|ground.*invest|site.*invest.*geotech/i.test(s)) {
+    return [
+      ...generic,
+      { proposal: "Continuous borehole core photographed (macro + detail), catalogued in labelled core boxes, and handed to client as high-resolution digital archive (PDF + JPEG) alongside the geotechnical report", clientValue: "Client retains a permanent visual record of subsurface conditions for future phases — avoiding repeat borehole costs if foundation design changes or disputes arise during construction", effort: "Low", optInOptOut: "Included" },
+      { proposal: "AGS 4.0 digital data file of all borehole logs, in-situ tests, and laboratory results handed to client — enabling direct import into any geotechnical software (Gint, dGeo, GeoStudio) without re-keying", clientValue: "Eliminates data re-entry cost for follow-on foundation design or monitoring phases; ensures long-term usability of investigation data beyond this engagement", effort: "Low", optInOptOut: "Included" },
+      { proposal: "Bore-hole location and interpreted strata surfaces (top-of-rock, groundwater table, weak layer elevation) modelled as 3D GIS layers (Shapefile + GeoJSON) — handed to client for overlay on project drawings or BIM model", clientValue: "Enables structural designer to extract site-specific bearing-layer depths at any point within the site without additional interpretive work; reduces foundation design man-hours by an estimated 20–30%", effort: "Medium", optInOptOut: "Optional" },
     ];
   }
   return generic;
