@@ -311,6 +311,11 @@ function formatBytes(bytes: number) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+
+function normalizeRequirementType(value: string | null | undefined): string {
+  return String(value ?? "").toUpperCase();
+}
+
 export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; aiEnabled?: boolean }) {
   const router = useRouter();
   const [tender, setTender] = useState(initial);
@@ -797,8 +802,8 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
   );
   const highGaps = tender.complianceGaps.filter((gap) => !gap.isResolved && gap.severity === "HIGH").length;
   const mandatoryRequirements = tender.requirements.filter((req) => req.priority === "MANDATORY").length;
-  const expertReqExists = tender.requirements.some((req) => req.requirementType === "EXPERT");
-  const projectReqExists = tender.requirements.some((req) => req.requirementType === "PROJECT_EXPERIENCE");
+  const expertReqExists = tender.requirements.some((req) => normalizeRequirementType(req.requirementType) === "EXPERT");
+  const projectReqExists = tender.requirements.some((req) => normalizeRequirementType(req.requirementType) === "PROJECT_EXPERIENCE");
   const selectedExpertCount = tender.expertMatches?.filter((m) => m.isSelected).length ?? 0;
   const selectedProjectCount = tender.projectMatches?.filter((m) => m.isSelected).length ?? 0;
   // If no matches have been found yet, generation is still allowed — generate-elite.ts
@@ -806,21 +811,37 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
   // Only block when matches EXIST but none are selected (user forgot to select).
   const expertMatchesExist = (tender.expertMatches?.length ?? 0) > 0;
   const projectMatchesExist = (tender.projectMatches?.length ?? 0) > 0;
-  const hasRecoverableExpertSelection = (tender.expertMatches ?? []).some((m) => m.expert?.trustLevel === "REVIEWED");
-  const hasRecoverableProjectSelection = (tender.projectMatches ?? []).some((m) => m.project?.trustLevel === "REVIEWED");
+  const totalExpertMatches = tender.expertMatches?.length ?? 0;
+  const totalProjectMatches = tender.projectMatches?.length ?? 0;
+  const reviewedExpertMatches = tender.expertMatches?.filter((m) => m.expert?.trustLevel === "REVIEWED").length ?? 0;
+  const reviewedProjectMatches = tender.projectMatches?.filter((m) => m.project?.trustLevel === "REVIEWED").length ?? 0;
+  const hasRecoverableExpertSelection = reviewedExpertMatches > 0;
+  const hasRecoverableProjectSelection = reviewedProjectMatches > 0;
+  const hasReviewedExpertPath = !expertReqExists || selectedExpertCount === 0 || reviewedExpertMatches > 0;
+  const hasReviewedProjectPath = !projectReqExists || selectedProjectCount === 0 || reviewedProjectMatches > 0;
   const canGenerateDocs = tender.requirements.length > 0
     && (!expertReqExists || selectedExpertCount > 0 || !expertMatchesExist || hasRecoverableExpertSelection)
     && (!projectReqExists || selectedProjectCount > 0 || !projectMatchesExist || hasRecoverableProjectSelection)
+    && hasReviewedExpertPath
+    && hasReviewedProjectPath
     && !criticalHardBlockExists;
   const generateDisabledReason = tender.requirements.length === 0
     ? "Run AI Analyze or Run Engine first to extract requirements"
-    : (expertReqExists && expertMatchesExist && selectedExpertCount === 0 && !hasRecoverableExpertSelection)
-      ? "Select at least one reviewed expert match before generating"
-      : (projectReqExists && projectMatchesExist && selectedProjectCount === 0 && !hasRecoverableProjectSelection)
-        ? "Select at least one reviewed project match before generating"
-        : criticalHardBlockExists
-          ? "Resolve critical hard blockers before generating"
-        : "Generate proposal documents";
+    : (expertReqExists && selectedExpertCount === 0 && totalExpertMatches === 0)
+      ? "Run Engine first to generate expert matches"
+      : (projectReqExists && selectedProjectCount === 0 && totalProjectMatches === 0)
+        ? "Run Engine first to generate project matches"
+        : (expertReqExists && expertMatchesExist && selectedExpertCount === 0 && !hasRecoverableExpertSelection)
+          ? "Select at least one reviewed expert match before generating"
+          : (projectReqExists && projectMatchesExist && selectedProjectCount === 0 && !hasRecoverableProjectSelection)
+            ? "Select at least one reviewed project match before generating"
+            : (expertReqExists && selectedExpertCount > 0 && reviewedExpertMatches === 0)
+              ? "Review at least one selected expert before generating"
+              : (projectReqExists && selectedProjectCount > 0 && reviewedProjectMatches === 0)
+                ? "Review at least one selected project before generating"
+                : criticalHardBlockExists
+                  ? "Resolve critical hard blockers before generating"
+                  : "Generate proposal documents";
   const readinessScore = tender.readinessScore ??
     (tender.requirements.length === 0 ? 0
       : Math.max(0, Math.round(((tender.requirements.length - criticalGaps) / tender.requirements.length) * 100)));

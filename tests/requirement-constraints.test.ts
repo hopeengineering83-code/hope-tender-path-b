@@ -43,24 +43,111 @@ describe("deriveRequirementConstraintProfile", () => {
     assert.equal(profile.expertCount, 3);
   });
 
-  it("does not trigger strictDomain from generic digital submission wording", () => {
+  it("does not trigger strict ICT domain from generic digital submission wording", () => {
     const requirements: RequirementDraft[] = [
       {
-        title: "Submission method",
-        description: "Bidders shall submit via the digital procurement platform before the deadline.",
-        requirementType: "ADMINISTRATIVE",
+        title: "Submission",
+        description: "Bidders must submit through the digital platform and include a signed form.",
+        requirementType: "GENERAL",
         priority: "MANDATORY",
       },
       {
-        title: "Eligibility",
-        description: "Provide valid tax clearance and company registration documents.",
-        requirementType: "ELIGIBILITY",
+        title: "Project references",
+        description: "Provide two similar building projects.",
+        requirementType: "PROJECT_EXPERIENCE",
+        priority: "MANDATORY",
+      },
+    ];
+
+    const profile = deriveRequirementConstraintProfile(requirements);
+    assert.equal(profile.domainTags.includes("ict"), false);
+    assert.equal(profile.strictDomain, false);
+  });
+
+  it("ignores ICT tokens that appear only in GENERAL/compliance wording", () => {
+    const requirements: RequirementDraft[] = [
+      {
+        title: "Submission instruction",
+        description: "Upload to the information system portal and confirm the digital platform receipt.",
+        requirementType: "GENERAL",
+        priority: "MANDATORY",
+      },
+      {
+        title: "Project references",
+        description: "At least 2 similar road construction projects.",
+        requirementType: "PROJECT_EXPERIENCE",
+        priority: "MANDATORY",
+      },
+    ];
+
+    const profile = deriveRequirementConstraintProfile(requirements);
+    assert.equal(profile.domainTags.includes("ict"), false);
+    assert.equal(profile.strictDomain, false);
+  });
+
+  it("ignores ICT tokens in submission/form requirement types", () => {
+    const requirements: RequirementDraft[] = [
+      {
+        title: "Submission",
+        description: "Submit all files using the digital platform information system before deadline.",
+        requirementType: "FORM",
+        priority: "MANDATORY",
+      },
+      {
+        title: "Experience",
+        description: "At least 2 similar water projects.",
+        requirementType: "PROJECT_EXPERIENCE",
+        priority: "MANDATORY",
+      },
+    ];
+
+    const profile = deriveRequirementConstraintProfile(requirements);
+    assert.equal(profile.domainTags.includes("ict"), false);
+    assert.equal(profile.strictDomain, false);
+  });
+
+  it("still detects ICT domain in non-administrative requirement types", () => {
+    const requirements: RequirementDraft[] = [
+      {
+        title: "Personnel profile",
+        description: "Provide ICT systems architect with ERP and database integration experience.",
+        requirementType: "PERSONNEL",
+        priority: "MANDATORY",
+      },
+      {
+        title: "Project references",
+        description: "At least 2 similar enterprise system projects.",
+        requirementType: "PROJECT_EXPERIENCE",
         priority: "MANDATORY",
       },
     ];
 
     const profile = deriveRequirementConstraintProfile(requirements);
     assert.equal(profile.domainTags.includes("ict"), true);
-    assert.equal(profile.strictDomain, false);
+    assert.equal(profile.strictDomain, true);
   });
+
+  it("handles lowercase requirementType values for quantity extraction", () => {
+    const requirements: RequirementDraft[] = [
+      {
+        title: "Experts",
+        description: "Provide key staff.",
+        requirementType: "expert",
+        priority: "MANDATORY",
+        requiredQuantity: 2,
+      },
+      {
+        title: "References",
+        description: "Provide project references.",
+        requirementType: "project_experience",
+        priority: "MANDATORY",
+        requiredQuantity: 3,
+      },
+    ];
+
+    const profile = deriveRequirementConstraintProfile(requirements);
+    assert.equal(profile.expertCount, 2);
+    assert.equal(profile.projectCount, 3);
+  });
+
 });
