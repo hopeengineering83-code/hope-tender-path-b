@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { StatusBadge } from "../../../../components/status-badge";
 import { NEXT_STATUS, formatDate, formatTenderStatus } from "../../../../lib/tender-workflow";
 import { cleanClientName, cleanTenderTitle } from "../../../../lib/engine/proposal-labels";
+import { getClientNameStatus, clientNameDisplayMessage } from "../../../../lib/engine/metadata-validators";
 import { BidStrategyPanel } from "../../../../components/bid-strategy-panel";
 import { EvaluatorSimulatorPanel } from "../../../../components/evaluator-simulator-panel";
 import { AIRematchButton } from "../../../../components/ai-rematch-button";
@@ -308,6 +309,11 @@ function formatBytes(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+
+function normalizeRequirementType(value: string | null | undefined): string {
+  return String(value ?? "").toUpperCase();
 }
 
 export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; aiEnabled?: boolean }) {
@@ -796,23 +802,46 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
   );
   const highGaps = tender.complianceGaps.filter((gap) => !gap.isResolved && gap.severity === "HIGH").length;
   const mandatoryRequirements = tender.requirements.filter((req) => req.priority === "MANDATORY").length;
-  const expertReqExists = tender.requirements.some((req) => req.requirementType === "EXPERT");
-  const projectReqExists = tender.requirements.some((req) => req.requirementType === "PROJECT_EXPERIENCE");
+  const expertReqExists = tender.requirements.some((req) => normalizeRequirementType(req.requirementType) === "EXPERT");
+  const projectReqExists = tender.requirements.some((req) => normalizeRequirementType(req.requirementType) === "PROJECT_EXPERIENCE");
   const selectedExpertCount = tender.expertMatches?.filter((m) => m.isSelected).length ?? 0;
   const selectedProjectCount = tender.projectMatches?.filter((m) => m.isSelected).length ?? 0;
+  // If no matches have been found yet, generation is still allowed — generate-elite.ts
+  // will fall back to the company vault and then to the deterministic proposal.
+  // Only block when matches EXIST but none are selected (user forgot to select).
+  const expertMatchesExist = (tender.expertMatches?.length ?? 0) > 0;
+  const projectMatchesExist = (tender.projectMatches?.length ?? 0) > 0;
+  const totalExpertMatches = tender.expertMatches?.length ?? 0;
+  const totalProjectMatches = tender.projectMatches?.length ?? 0;
+  const reviewedExpertMatches = tender.expertMatches?.filter((m) => m.expert?.trustLevel === "REVIEWED").length ?? 0;
+  const reviewedProjectMatches = tender.projectMatches?.filter((m) => m.project?.trustLevel === "REVIEWED").length ?? 0;
+  const hasRecoverableExpertSelection = reviewedExpertMatches > 0;
+  const hasRecoverableProjectSelection = reviewedProjectMatches > 0;
+  const hasReviewedExpertPath = !expertReqExists || selectedExpertCount === 0 || reviewedExpertMatches > 0;
+  const hasReviewedProjectPath = !projectReqExists || selectedProjectCount === 0 || reviewedProjectMatches > 0;
   const canGenerateDocs = tender.requirements.length > 0
-    && (!expertReqExists || selectedExpertCount > 0)
-    && (!projectReqExists || selectedProjectCount > 0)
+    && (!expertReqExists || selectedExpertCount > 0 || !expertMatchesExist || hasRecoverableExpertSelection)
+    && (!projectReqExists || selectedProjectCount > 0 || !projectMatchesExist || hasRecoverableProjectSelection)
+    && hasReviewedExpertPath
+    && hasReviewedProjectPath
     && !criticalHardBlockExists;
   const generateDisabledReason = tender.requirements.length === 0
     ? "Run AI Analyze or Run Engine first to extract requirements"
-    : (expertReqExists && selectedExpertCount === 0)
-      ? "Select at least one expert match before generating"
-      : (projectReqExists && selectedProjectCount === 0)
-        ? "Select at least one project match before generating"
-        : criticalHardBlockExists
-          ? "Resolve critical hard blockers before generating"
-        : "Generate proposal documents";
+    : (expertReqExists && selectedExpertCount === 0 && totalExpertMatches === 0)
+      ? "Run Engine first to generate expert matches"
+      : (projectReqExists && selectedProjectCount === 0 && totalProjectMatches === 0)
+        ? "Run Engine first to generate project matches"
+        : (expertReqExists && expertMatchesExist && selectedExpertCount === 0 && !hasRecoverableExpertSelection)
+          ? "Select at least one reviewed expert match before generating"
+          : (projectReqExists && projectMatchesExist && selectedProjectCount === 0 && !hasRecoverableProjectSelection)
+            ? "Select at least one reviewed project match before generating"
+            : (expertReqExists && selectedExpertCount > 0 && reviewedExpertMatches === 0)
+              ? "Review at least one selected expert before generating"
+              : (projectReqExists && selectedProjectCount > 0 && reviewedProjectMatches === 0)
+                ? "Review at least one selected project before generating"
+                : criticalHardBlockExists
+                  ? "Resolve critical hard blockers before generating"
+                  : "Generate proposal documents";
   const readinessScore = tender.readinessScore ??
     (tender.requirements.length === 0 ? 0
       : Math.max(0, Math.round(((tender.requirements.length - criticalGaps) / tender.requirements.length) * 100)));
@@ -832,7 +861,18 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
   // The raw tender.title / tender.clientName are still in the DB and can
   // be edited via the tender Edit page if the user wants to change them.
   const displayTitle = cleanTenderTitle(tender.title, { clientName: tender.clientName, description: tender.description });
-  const displayClient = cleanClientName(tender.clientName, tender.description);
+  // Use the canonical client-name validator FIRST so a TOC-fragment
+  // extraction (production-screenshot scenario where clientName captured
+  // "references (where available) Photos or drawings of completed
+  // projects C. Technical Approach...") never gets displayed as if it
+  // were a real client. cleanClientName-only falls through to raw
+  // tender.clientName when its own heuristic returns "Client", which is
+  // what produced the bug.
+  const clientStatus = getClientNameStatus(tender.clientName);
+  const clientDisplay = clientNameDisplayMessage(tender.clientName);
+  const displayClient = clientStatus === "VALID"
+    ? cleanClientName(tender.clientName, tender.description)
+    : null;
   const displayClientLine = displayClient && displayClient !== "Client" ? ` · ${displayClient}` : "";
 
   return (
@@ -949,10 +989,25 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
         </div>
       )}
 
-      {/* Client name missing — proposals will use "The Client" as a placeholder */}
-      {(!tender.clientName || !tender.clientName.trim() || displayClient === "Client") && (
-        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-          <span className="font-medium">Client name not set.</span> Generated proposals will use &ldquo;The Client&rdquo; as a placeholder. Edit the tender and fill in the Client Name field before generating documents.
+      {/* Client name missing OR garbage — proposals will use "The Client" as a placeholder.
+          Pre-fix: this only said "Client name not set", which was misleading when the
+          extraction had captured TOC/section noise (e.g. "references (where available)
+          Photos or drawings..."). Now the warning text + colour reflect the canonical
+          getClientNameStatus so users know whether to FILL IN the field or RE-EXTRACT
+          / CORRECT what was captured. */}
+      {clientStatus !== "VALID" && (
+        <div className={`rounded-xl border px-4 py-3 text-sm ${clientStatus === "GARBAGE" ? "border-red-200 bg-red-50 text-red-800" : "border-amber-200 bg-amber-50 text-amber-800"}`}>
+          {clientStatus === "GARBAGE" ? (
+            <>
+              <span className="font-medium">Invalid client name extracted.</span>{" "}
+              The extraction captured a section heading or table-of-contents fragment, not a real procuring entity. Re-run metadata extraction or edit the tender and correct the Client Name field before generating documents.
+            </>
+          ) : (
+            <>
+              <span className="font-medium">Client name not set.</span>{" "}
+              Generated proposals will use &ldquo;The Client&rdquo; as a placeholder. Edit the tender and fill in the Client Name field before generating documents.
+            </>
+          )}
         </div>
       )}
 
@@ -1066,7 +1121,13 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
               </div>
             ) : (
               <dl className="mt-5 grid gap-4 md:grid-cols-2">
-                <div><dt className="text-sm text-slate-500">Client</dt><dd className="mt-1 font-medium text-slate-900">{displayClient && displayClient !== "Client" ? displayClient : (tender.clientName || "—")}</dd></div>
+                <div><dt className="text-sm text-slate-500">Client</dt><dd className={`mt-1 font-medium ${clientStatus === "GARBAGE" ? "text-red-700" : "text-slate-900"}`}>{
+                  clientStatus === "VALID" && displayClient && displayClient !== "Client"
+                    ? displayClient
+                    : clientStatus === "GARBAGE"
+                      ? clientDisplay.text
+                      : "—"
+                }</dd></div>
                 <div><dt className="text-sm text-slate-500">Deadline</dt><dd className="mt-1 font-medium text-slate-900">{formatDate(tender.deadline)}</dd></div>
                 <div><dt className="text-sm text-slate-500">Category</dt><dd className="mt-1 font-medium text-slate-900">{tender.category}</dd></div>
                 <div><dt className="text-sm text-slate-500">Submission</dt><dd className="mt-1 font-medium text-slate-900">{tender.submissionMethod || "—"}</dd></div>

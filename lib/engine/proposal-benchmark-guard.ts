@@ -71,6 +71,13 @@ function hasForbiddenWeakness(markdown: string): boolean {
   if (/\{\{?\s*\w[\w\s-]{0,60}\s*\}?\}/g.test(markdown)) return true;
   // Unfilled action directives — indicate the AI echoed fallback template text
   if (/\bBid-Team Action:/i.test(markdown)) return true;
+  if (/Source-evidence action:/i.test(markdown)) return true;
+  // "Evidence note: confirm" is the artifact of an old normalizeWeakText conversion — catch it too
+  if (/\bEvidence note:\s*(?:confirm|tbd|action required|placeholder)/i.test(markdown)) return true;
+  // "[confirm X]" — AI-style bracket placeholder not caught by the INSERT/PLACEHOLDER set
+  if (/\[confirm\b[^\]]{0,80}\]/i.test(markdown)) return true;
+  // Italic-wrapped bracket stubs: _[something]_ or *[something]*
+  if (/[_*]\[[^\]]{2,80}\][_*]/.test(markdown)) return true;
   return false;
 }
 
@@ -106,6 +113,14 @@ function normalizeWeakText(markdown: string): string {
     .replace(/\bTo be determined\b/gi, "to be confirmed by bid team")
     .replace(/\[insert[^\]]*\]/gi, "to be confirmed by bid team")
     .replace(/\[(?:PLACEHOLDER|NAME|DATE|TBD|ADD|ENTER|SPECIFY|YOUR)[^\]]{0,60}\]/gi, "to be confirmed by bid team")
+    // Template variable syntax that may leak from AI output
+    .replace(/\$\{[^}]+\}/g, "to be confirmed by bid team")
+    .replace(/\{\{[^}]*\}\}/g, "to be confirmed by bid team")
+    .replace(/<[A-Z][A-Z_]{1,40}>/g, "to be confirmed by bid team")
+    // Action directives — strip the line so placeholder text does not reach the client document
+    .replace(/^[^\n]*\bBid-Team Action:[^\n]*/gmi, "")
+    // Source-evidence action stubs from deterministic builders — normalize same way
+    .replace(/_?Source-evidence action:[^_\n]*_?/gi, "Bid-team to confirm before submission.")
     .replace(/\n{3,}/g, "\n\n");
 }
 
@@ -229,7 +244,7 @@ export function scoreBenchmarkProposalMarkdown(markdown: string, input: Benchmar
     strengths.push("Compliance/bid-review strategy is visible.");
   } else gaps.push("Compliance and bid-review strategy is not visible enough.");
 
-  const depthThreshold = /health|hospital|water|road|bridge|sanit|hydraulic/i.test(input.primarySector ?? "") ? 10000 : 8000;
+  const depthThreshold = /health|hospital|medical|clinic|water|road|bridge|sanit|hydraulic|environmental|esia|esmp|financial|bank|microfinance|telecom|broadband|port|maritime|harbour|harbor|energy|power|solar|wind|mining|mineral|oil|gas|petroleum|pipeline|urban|master.?plan|institutional|governance/i.test(input.primarySector ?? "") ? 10000 : 8000;
   const depthPartial = Math.round(depthThreshold * 0.56);
   if (markdown.length >= depthThreshold) {
     score += 5;
@@ -238,6 +253,18 @@ export function scoreBenchmarkProposalMarkdown(markdown: string, input: Benchmar
     score += 3;
     gaps.push("Proposal has moderate depth but may still be shorter than benchmark quality.");
   } else gaps.push("Proposal is too short for benchmark-quality technical submission.");
+
+  // C.2.x sub-section depth — the quality scorer already checks this but the
+  // benchmark guard needs its own check so it surfaces in the benchmark score too.
+  {
+    const c2Count = (markdown.match(/^###\s+C\.2\.\d+/gm) ?? []).length;
+    if (c2Count > 0 && c2Count < 6) {
+      gaps.push(`Section C.2 has only ${c2Count} sub-section(s) — minimum 6 required for a benchmark-quality methodology.`);
+      score = Math.max(0, score - 5);
+    } else if (c2Count >= 6) {
+      strengths.push(`Section C.2 has ${c2Count} sub-sections — adequate methodology depth.`);
+    }
+  }
 
   if (!hasForbiddenWeakness(markdown)) {
     score += 5;

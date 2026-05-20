@@ -27,6 +27,16 @@ const defaultCompany = {
   setupCompletedAt: new Date("2026-01-01T00:00:00Z"),
 };
 
+const goodAnalysisFields = {
+  clientName: "Addis Ababa City Administration",
+  analysisSummary: "Tender analysis extracted mandatory personnel, project experience, submission, and evaluation requirements.",
+  evaluationMethodology: "Technical score 80 points; personnel and similar experience are evaluated criteria.",
+  notes: "Submission must follow exact file naming and deadline instructions.",
+  intakeSummary: "Submit technical proposal through the stated portal before deadline.",
+  exactFileNaming: JSON.stringify(["Technical-Proposal.docx"]),
+  exactFileOrder: JSON.stringify(["Technical-Proposal.docx"]),
+};
+
 function fakeClient(options: FakeClientOptions): PrismaClient {
   const company = Object.prototype.hasOwnProperty.call(options, "company") ? options.company : defaultCompany;
 
@@ -65,8 +75,24 @@ const usefulDocument = {
   aiExtractionError: null,
 };
 
+const expertRequirement = {
+  requirementType: "EXPERT",
+  priority: "MANDATORY",
+  title: "Key expert requirement",
+  description: "Bidder shall propose reviewed senior engineering experts.",
+  sectionReference: "Section 4.1",
+};
+
+const projectRequirement = {
+  requirementType: "PROJECT_EXPERIENCE",
+  priority: "MANDATORY",
+  title: "Similar project requirement",
+  description: "Bidder shall provide similar project references.",
+  sectionReference: "Section 4.2",
+};
+
 test("company readiness blocks an empty vault", async () => {
-  const report = await getCompanyIngestionReadiness("company-1", fakeClient({ company: null }));
+  const report = await getCompanyIngestionReadiness("company-1", {}, fakeClient({ company: null }));
 
   assert.equal(report.ingestionReady, false);
   assert.match(report.blockers.join("\n"), /Company profile has not been created/);
@@ -74,7 +100,7 @@ test("company readiness blocks an empty vault", async () => {
 });
 
 test("company readiness allows a useful company profile and reports review warnings", async () => {
-  const report = await getCompanyIngestionReadiness("company-1", fakeClient({
+  const report = await getCompanyIngestionReadiness("company-1", {}, fakeClient({
     documents: [
       {
         extractedText: "Company profile states 12 experts and 24 selected projects across building, road, water, planning, design and supervision assignments.",
@@ -125,10 +151,8 @@ test("tender generation readiness does not over-block when reviewed matches can 
     tender: {
       id: "tender-1",
       status: "ANALYZED",
-      requirements: [
-        { requirementType: "EXPERT" },
-        { requirementType: "PROJECT_EXPERIENCE" },
-      ],
+      ...goodAnalysisFields,
+      requirements: [expertRequirement, projectRequirement],
       complianceGaps: [],
       expertMatches: [{ isSelected: false, expert: { trustLevel: "REVIEWED", fullName: "Senior Engineer" } }],
       projectMatches: [{ isSelected: false, project: { trustLevel: "REVIEWED", name: "Relevant Project" } }],
@@ -152,10 +176,8 @@ test("tender generation readiness blocks when only unreviewed selected evidence 
     tender: {
       id: "tender-1",
       status: "ANALYZED",
-      requirements: [
-        { requirementType: "EXPERT" },
-        { requirementType: "PROJECT_EXPERIENCE" },
-      ],
+      ...goodAnalysisFields,
+      requirements: [expertRequirement, projectRequirement],
       complianceGaps: [],
       expertMatches: [{ isSelected: true, expert: { trustLevel: "DRAFT", fullName: "Draft Expert" } }],
       projectMatches: [{ isSelected: true, project: { trustLevel: "DRAFT", name: "Draft Project" } }],
@@ -176,10 +198,8 @@ test("tender generation readiness passes when company, requirements, and reviewe
     tender: {
       id: "tender-1",
       status: "ANALYZED",
-      requirements: [
-        { requirementType: "EXPERT" },
-        { requirementType: "PROJECT_EXPERIENCE" },
-      ],
+      ...goodAnalysisFields,
+      requirements: [expertRequirement, projectRequirement],
       complianceGaps: [],
       expertMatches: [{ isSelected: true, expert: { trustLevel: "REVIEWED", fullName: "Senior Engineer" } }],
       projectMatches: [{ isSelected: true, project: { trustLevel: "REVIEWED", name: "Relevant Project" } }],
@@ -191,4 +211,73 @@ test("tender generation readiness passes when company, requirements, and reviewe
   assert.deepEqual(readiness.blockers, []);
   assert.equal(readiness.counts.reviewedSelectedExperts, 1);
   assert.equal(readiness.counts.reviewedSelectedProjects, 1);
+});
+
+test("tender generation readiness surfaces BEST-AVAILABLE warning when selection-policy promoted matches below the safe floor", async () => {
+  // Round 18: when main-engine-selection-policy.ts's second-pass
+  // fallback promotes top-N reviewed records ABOVE 0.20 but BELOW
+  // 0.55 (the safe floor), each promoted match carries a
+  // "[BEST-AVAILABLE BELOW THRESHOLD]" prefix in its rationale.
+  // The readiness panel must surface this so the bid team knows
+  // matches need human verification before submission.
+  const readiness = await getTenderGenerationReadiness(fakeClient({
+    documents: [usefulDocument],
+    experts: [{ trustLevel: "REVIEWED" }],
+    projects: [{ trustLevel: "REVIEWED" }],
+    tender: {
+      id: "tender-1",
+      status: "ANALYZED",
+      ...goodAnalysisFields,
+      requirements: [expertRequirement, projectRequirement],
+      complianceGaps: [],
+      expertMatches: [{
+        isSelected: true,
+        expert: { trustLevel: "REVIEWED", fullName: "Senior Engineer" },
+        rationale: "[Reviewed] Some lexical match. [BEST-AVAILABLE BELOW THRESHOLD] Auto-selected reviewed evidence at 35% — every reviewed record scored below the 55% safe floor.",
+      }],
+      projectMatches: [{
+        isSelected: true,
+        project: { trustLevel: "REVIEWED", name: "Relevant Project" },
+        rationale: "[Reviewed] Some match. [BEST-AVAILABLE BELOW THRESHOLD] Auto-selected reviewed evidence at 30%.",
+      }],
+    },
+  }), "user-1", "tender-1");
+
+  assert.ok(readiness);
+  assert.equal(readiness.ready, true, "Generation is unblocked (the fix's whole point) but with a warning attached");
+  const warning = readiness.warnings.find((w) => w.code === "BEST_AVAILABLE_MATCHES_FLAGGED");
+  assert.ok(warning, "expected BEST_AVAILABLE_MATCHES_FLAGGED warning when both experts and projects were promoted below the safe floor");
+  assert.match(warning!.message, /1 expert match\(es\)/);
+  assert.match(warning!.message, /1 project match\(es\)/);
+  assert.match(warning!.message, /verify each of these matches/i);
+  assert.equal(warning!.nextAction, "REVIEW_MATCHES");
+});
+
+test("tender generation readiness does NOT emit BEST-AVAILABLE warning when matches were promoted via the standard safe-floor path", async () => {
+  const readiness = await getTenderGenerationReadiness(fakeClient({
+    documents: [usefulDocument],
+    experts: [{ trustLevel: "REVIEWED" }],
+    projects: [{ trustLevel: "REVIEWED" }],
+    tender: {
+      id: "tender-1",
+      status: "ANALYZED",
+      ...goodAnalysisFields,
+      requirements: [expertRequirement, projectRequirement],
+      complianceGaps: [],
+      expertMatches: [{
+        isSelected: true,
+        expert: { trustLevel: "REVIEWED", fullName: "Senior Engineer" },
+        rationale: "[Reviewed] Strong match. [Main Engine Best-Available Selection] Auto-selected reviewed evidence at 78% because no safe selected evidence existed.",
+      }],
+      projectMatches: [{
+        isSelected: true,
+        project: { trustLevel: "REVIEWED", name: "Relevant Project" },
+        rationale: "[Reviewed] Auto-selected ≥75%.",
+      }],
+    },
+  }), "user-1", "tender-1");
+
+  assert.ok(readiness);
+  const warning = readiness.warnings.find((w) => w.code === "BEST_AVAILABLE_MATCHES_FLAGGED");
+  assert.equal(warning, undefined, "BEST_AVAILABLE_MATCHES_FLAGGED should not fire when scores were above the safe floor");
 });

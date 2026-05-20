@@ -1,4 +1,5 @@
 import { buildSubmissionPlan, findExtraGeneratedDocuments, findMissingGeneratedDocuments, submissionPlanFileCount } from "@/lib/engine/submission-plan";
+import { computeEvidenceCoverage } from "@/lib/engine/requirement-evidence-profile";
 
 type GeneratedDocLike = {
   id?: string;
@@ -39,7 +40,7 @@ type TenderLike = {
   generatedDocuments?: GeneratedDocLike[];
   expertMatches?: Array<{ isSelected: boolean; score: number; expert?: { trustLevel?: string | null } }>;
   projectMatches?: Array<{ isSelected: boolean; score: number; project?: { trustLevel?: string | null } }>;
-  complianceMatrix?: Array<{ supportLevel: string }>;
+  complianceMatrix?: Array<{ id: string; requirementId?: string | null; supportLevel: string }>;
   files?: Array<{ extractedText?: string | null }>;
 };
 
@@ -115,8 +116,36 @@ export function ExecutiveSnapshot({ tender }: { tender: TenderLike }) {
   const validatedCount = generatedDocs.filter((d) => ["PASSED", "VALIDATED", "APPROVED"].includes(statusValue(d.validationStatus))).length;
   const approvedCount = generatedDocs.filter((d) => ["APPROVED", "ACCEPTED", "SIGNED_OFF", "SIGNED OFF"].includes(statusValue(d.reviewStatus))).length;
   const extractedFiles = files.filter((f) => (f.extractedText ?? "").length > 80).length;
+
+  // Legacy evidence score — lenient counting (PARTIAL counts), kept for
+  // backward-compat with the readiness score the engine writes to
+  // tender.readinessScore.
   const supportedEvidence = matrix.filter((m) => ["SUPPORTED", "EVIDENCE_PENDING_REVIEW", "PARTIAL"].includes(m.supportLevel)).length;
-  const evidenceScore = pct(supportedEvidence, matrix.length);
+  const evidenceScoreLegacy = pct(supportedEvidence, matrix.length);
+
+  // Canonical evidence coverage (Gap 14 helper) — only requirements
+  // linked to FULL or SUBSTANTIAL evidence count toward "strong" coverage.
+  // Group matrix rows by requirementId and feed into the canonical helper.
+  const matrixByRequirement = new Map<string, Array<{ id: string; supportLevel?: string | null }>>();
+  for (const row of matrix) {
+    if (!row.requirementId) continue;
+    const arr = matrixByRequirement.get(row.requirementId) ?? [];
+    arr.push({ id: row.id, supportLevel: row.supportLevel });
+    matrixByRequirement.set(row.requirementId, arr);
+  }
+  const evidenceCoverage = computeEvidenceCoverage(
+    requirements.map((req) => ({
+      id: req.id,
+      title: req.title,
+      description: req.description ?? "",
+      requirementType: req.requirementType,
+      priority: req.priority,
+      restrictions: req.restrictions,
+      sectionReference: req.sectionReference,
+      complianceMatrixRows: matrixByRequirement.get(req.id) ?? [],
+    })),
+  );
+  const evidenceScore = evidenceCoverage.strongCoveragePercent;
   const readiness = tender.readinessScore ?? evidenceScore;
 
   const hasPlanMismatch = missingPlannedDocs.length > 0 || extraGeneratedDocs.length > 0;
@@ -155,7 +184,7 @@ export function ExecutiveSnapshot({ tender }: { tender: TenderLike }) {
 
       <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-6">
         <div className="rounded-xl bg-slate-50 p-4"><p className="text-xs text-slate-400">Readiness</p><p className="mt-1 text-2xl font-bold text-slate-900">{readiness}%</p></div>
-        <div className="rounded-xl bg-slate-50 p-4"><p className="text-xs text-slate-400">Evidence coverage</p><p className="mt-1 text-2xl font-bold text-slate-900">{evidenceScore}%</p></div>
+        <div className="rounded-xl bg-slate-50 p-4" title={`Strong evidence coverage: ${evidenceCoverage.requirementsWithStrongEvidence}/${evidenceCoverage.totalRequirements} requirement(s) linked to FULL or SUBSTANTIAL evidence. Lenient (any link, including PARTIAL): ${evidenceScoreLegacy}%.`}><p className="text-xs text-slate-400">Evidence coverage</p><p className="mt-1 text-2xl font-bold text-slate-900">{evidenceScore}%</p><p className="text-xs text-slate-500">{evidenceCoverage.requirementsWithStrongEvidence}/{evidenceCoverage.totalRequirements} strong</p></div>
         <div className="rounded-xl bg-slate-50 p-4"><p className="text-xs text-slate-400">Critical / High</p><p className="mt-1 text-2xl font-bold text-slate-900">{unresolvedCritical}/{unresolvedHigh}</p></div>
         <div className="rounded-xl bg-slate-50 p-4"><p className="text-xs text-slate-400">Experts ≥90%</p><p className="mt-1 text-2xl font-bold text-slate-900">{strongExperts}</p><p className="text-xs text-slate-500">{reviewedExperts}/{selectedExperts.length} reviewed selected</p></div>
         <div className="rounded-xl bg-slate-50 p-4"><p className="text-xs text-slate-400">Projects ≥90%</p><p className="mt-1 text-2xl font-bold text-slate-900">{strongProjects}</p><p className="text-xs text-slate-500">{reviewedProjects}/{selectedProjects.length} reviewed selected</p></div>

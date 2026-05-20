@@ -64,6 +64,15 @@ function inferSectors(text: string): string[] {
   if (/road|infrastructure/i.test(text)) s.push("Infrastructure");
   if (/education|university|school/i.test(text)) s.push("Education");
   if (/energy|power|solar/i.test(text)) s.push("Energy");
+  if (/water\s+supply|borehole|hydraulic|\bWASH\b|sanitation|wastewater/i.test(text)) s.push("Water & Sanitation");
+  if (/irrigation|\bWUA\b|command\s*area|crop\s+water|agri/i.test(text)) s.push("Agriculture & Irrigation");
+  if (/mining|\bJORC\b|tailings|ore\s+body|mine\s+plan|mineral\s+resource/i.test(text)) s.push("Mining & Extractive");
+  if (/\bport\b|berth|quay|maritime|dredging|harbour|nautical/i.test(text)) s.push("Port & Maritime");
+  if (/\bHAZOP\b|\bP&ID\b|pipeline\s+design|oil\s+facilit|gas\s+facilit|petrochemical|upstream\s+petroleum/i.test(text)) s.push("Oil & Gas");
+  if (/\bKYC\b|\bAML\b|core\s+banking|microfinance|\bIFRS\b|\bBasel\b|fintech/i.test(text)) s.push("Financial Services");
+  if (/spectrum|broadband|\bLTE\b|\b5G\b|base\s+station|backhaul|mobile\s+network/i.test(text)) s.push("Telecoms & Broadband");
+  if (/urban|master\s*plan|city\s+planning/i.test(text)) s.push("Urban Planning");
+  if (/environment|esia|esmp|safeguard|biodiversity/i.test(text)) s.push("Environmental & Social");
   return uniq(s);
 }
 

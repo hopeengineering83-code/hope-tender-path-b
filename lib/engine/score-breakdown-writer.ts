@@ -189,7 +189,7 @@ export function deterministicScoreBreakdown(opts: {
     DISCIPLINE_FIT: Math.min(100, hits(t, tt, "architect", "structural", "civil", "electrical", "mechanical", "sanitary", "interior", "geotechnical", "MEP") * 25),
     SCOPE_COVERAGE: Math.min(100, hits(t, tt, "design", "supervision", "feasibility", "BOQ", "concept", "construction", "permit") * 18),
     SENIORITY_OR_SCALE: has(t, "senior", "lead", "principal", "head", "manager", "director") ? 70 : has(t, "junior", "intern", "trainee") ? 25 : 50,
-    SECTOR_FIT: Math.min(100, hits(t, tt, "healthcare", "hospital", "school", "water", "road", "bridge", "ESIA", "urban", "industrial", "commercial") * 30),
+    SECTOR_FIT: Math.min(100, hits(t, tt, "healthcare", "hospital", "school", "water", "road", "bridge", "ESIA", "urban", "industrial", "commercial", "energy", "mining", "port", "pipeline", "banking", "telecom", "irrigation", "agriculture") * 15),
     ROLE_RECENCY: /20(2[2-6])/.test(t) ? 80 : /20(1[5-9]|2[01])/.test(t) ? 50 : 30,
     EVIDENCE_QUALITY: (has(t, "ref:", "ref ", "pf/", "ppa/", "pe/", "license") ? 30 : 0) + (has(t, "etb", "$", "usd", "gbp", "eur") ? 30 : 0) + (t.length > 400 ? 20 : 10),
     COMPLIANCE_CRITICALITY: has(ee || tt, "mandatory", "minimum", "must have", "required") && t.length > 200 ? 70 : 50,

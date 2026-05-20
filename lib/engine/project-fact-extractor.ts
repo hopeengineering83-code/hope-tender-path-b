@@ -127,7 +127,10 @@ function parseDateRange(text: string): { startDate?: Date; endDate?: Date } {
 
 const SECTOR_KEYWORDS: Array<{ rx: RegExp; sector: string }> = [
   { rx: /hospital|medical center|clinic|healthcare/i, sector: "Healthcare" },
-  { rx: /water supply|borehole|WASH|sanitation|hydraulic/i, sector: "Water & Sanitation" },
+  // Word boundary on WASH — bare /WASH/i matched "Washington",
+  // misclassifying projects in Washington DC / Washington state as
+  // Water & Sanitation.
+  { rx: /water supply|borehole|\bWASH\b|sanitation|hydraulic/i, sector: "Water & Sanitation" },
   { rx: /road|bridge|highway|pavement/i, sector: "Roads & Bridges" },
   { rx: /school|university|campus|education/i, sector: "Education" },
   { rx: /housing|residential|apartment/i, sector: "Residential" },
@@ -136,10 +139,10 @@ const SECTOR_KEYWORDS: Array<{ rx: RegExp; sector: string }> = [
   { rx: /factory|industrial|manufacturing|warehouse/i, sector: "Industrial" },
   { rx: /master plan|urban|city planning/i, sector: "Urban Planning" },
   { rx: /energy|power plant|\bsolar\b|wind farm|substation|hydropower|electrification|grid.*connect/i, sector: "Energy & Power" },
-  { rx: /irrigation|WUA|command area|FAO.*Penman|crop water|agri/i, sector: "Agriculture & Irrigation" },
+  { rx: /irrigation|\bWUA\b|command area|FAO.*Penman|crop water|agri/i, sector: "Agriculture & Irrigation" },
   { rx: /mining|\bJORC\b|tailings|ore body|mine plan|mineral resource/i, sector: "Mining & Extractive" },
   { rx: /\bport\b|berth|quay|maritime|dredging|harbour|nautical/i, sector: "Port & Maritime" },
-  { rx: /HAZOP|P&ID|pipeline design|oil facilit|gas facilit|petrochemical|upstream petroleum/i, sector: "Oil & Gas" },
+  { rx: /\bHAZOP\b|\bP&ID\b|pipeline design|oil facilit|gas facilit|petrochemical|upstream petroleum/i, sector: "Oil & Gas" },
   { rx: /\bKYC\b|\bAML\b|core banking|microfinance|\bIFRS\b|\bBasel\b|fintech|payment system/i, sector: "Financial Services" },
   { rx: /spectrum|broadband|\bLTE\b|\b5G\b|base station|backhaul|mobile network/i, sector: "Telecoms & Broadband" },
 ];

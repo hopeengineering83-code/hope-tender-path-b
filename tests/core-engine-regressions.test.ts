@@ -68,6 +68,75 @@ describe("main engine best-available selection regression", () => {
     assert.equal(result.projectMatches.find((m) => m.projectId === "project-draft-95")?.isSelected, false);
   });
 
+  it("promotes BEST-AVAILABLE below-threshold reviewed records when the safe-floor path produces zero", () => {
+    // Healthcare-tender / water-vault scenario: every record scored
+    // below 0.55 due to the dominant-family penalty. Engine must
+    // still unblock generation by promoting the top reviewed records
+    // with the explicit "below threshold" rationale prefix.
+    const lowScoreMatching: MatchingResult = {
+      expertMatches: [
+        { expertId: "expert-reviewed-42", score: 0.42, rationale: "Sector-mismatched but best available reviewed expert", evidenceSummary: "Reviewed civil engineer", isSelected: false },
+        { expertId: "expert-reviewed-35", score: 0.35, rationale: "Second-best reviewed expert", evidenceSummary: "Reviewed water engineer", isSelected: false },
+        { expertId: "expert-draft-50", score: 0.50, rationale: "Draft record higher score but never promoted", evidenceSummary: "Draft CV", isSelected: false },
+      ],
+      projectMatches: [
+        { projectId: "project-reviewed-38", score: 0.38, rationale: "Best-available reviewed project", evidenceSummary: "Water supply project", isSelected: false },
+        { projectId: "project-reviewed-25", score: 0.25, rationale: "Marginal reviewed project", evidenceSummary: "Urban master plan", isSelected: false },
+      ],
+    };
+
+    const result = applyMainEngineBestAvailableSelection({
+      requirements: [expertRequirement(2), projectRequirement(2)],
+      matching: lowScoreMatching,
+      expertTrust: new Map([
+        ["expert-reviewed-42", "REVIEWED"],
+        ["expert-reviewed-35", "REVIEWED"],
+        ["expert-draft-50", "AI_DRAFT"],
+      ]),
+      projectTrust: new Map([
+        ["project-reviewed-38", "REVIEWED"],
+        ["project-reviewed-25", "REVIEWED"],
+      ]),
+    });
+
+    // Top reviewed records are promoted despite being below 0.55.
+    const selectedExperts = result.expertMatches.filter((m) => m.isSelected).map((m) => m.expertId);
+    const selectedProjects = result.projectMatches.filter((m) => m.isSelected).map((m) => m.projectId);
+    assert.ok(selectedExperts.length >= 1, "expected at least one expert promoted under below-threshold fallback");
+    assert.ok(selectedProjects.length >= 1, "expected at least one project promoted under below-threshold fallback");
+
+    // Draft records remain unselected even though they have higher scores.
+    assert.equal(result.expertMatches.find((m) => m.expertId === "expert-draft-50")?.isSelected, false);
+
+    // Promoted rationale carries the explicit "BEST-AVAILABLE BELOW THRESHOLD" prefix
+    // so reviewers know human verification is required.
+    const promotedExpert = result.expertMatches.find((m) => m.isSelected);
+    assert.match(promotedExpert?.rationale ?? "", /BEST-AVAILABLE BELOW THRESHOLD/);
+    assert.match(promotedExpert?.rationale ?? "", /verify this record's relevance/);
+  });
+
+  it("never promotes records below the BEST-AVAILABLE 0.20 floor", () => {
+    const minimalScoreMatching: MatchingResult = {
+      expertMatches: [
+        { expertId: "expert-reviewed-10", score: 0.10, rationale: "Way below floor", evidenceSummary: "x", isSelected: false },
+      ],
+      projectMatches: [
+        { projectId: "project-reviewed-05", score: 0.05, rationale: "Way below floor", evidenceSummary: "x", isSelected: false },
+      ],
+    };
+
+    const result = applyMainEngineBestAvailableSelection({
+      requirements: [expertRequirement(2), projectRequirement(2)],
+      matching: minimalScoreMatching,
+      expertTrust: new Map([["expert-reviewed-10", "REVIEWED"]]),
+      projectTrust: new Map([["project-reviewed-05", "REVIEWED"]]),
+    });
+
+    // Even with no other candidates, scores under 0.20 stay unselected.
+    assert.equal(result.expertMatches[0].isSelected, false);
+    assert.equal(result.projectMatches[0].isSelected, false);
+  });
+
   it("does not override an existing manual/engine selection", () => {
     const existing = matchingFixture();
     existing.expertMatches[0].isSelected = true;

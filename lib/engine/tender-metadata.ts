@@ -21,6 +21,14 @@
 // extraction across 15+ tender fields, no AI call, no network. Patterns
 // are tuned for World Bank / UNDP / AfDB / govt RFP templates.
 
+import {
+  isValidClientName,
+  isValidReferenceNumber,
+  isValidCountry,
+  canonicalizeCountry,
+  isValidClientContact,
+} from "./metadata-validators";
+
 export type TenderMetadataDraft = {
   title: string;
   reference: string | null;
@@ -95,24 +103,38 @@ function inferTitle(text: string, fallbackFileName: string): string {
 }
 
 function inferReference(text: string): string | null {
-  return firstMatch(text, [
+  const ref = firstMatch(text, [
+    // Explicit label — colon/dash optional (e.g. "RFP No. 2026-024" has no colon)
     /(?:reference\s*(?:no\.?|number)?|ref\.?\s*no\.?|rfp\s*no\.?|tender\s*no\.?|bid\s*no\.?|procurement\s*no\.?)\s*[:\-]?\s*([A-Z0-9\-/_.]{3,80})/i,
-    /\b((?:RFP|EOI|TOR|RFQ|NCB|ICB|BID|RFx)[\-/_. ]?[A-Z0-9\-/_.]{3,80})\b/i,
+    // Standalone acronym + digit combo (must start with a digit to avoid bare acronyms)
+    /\b((?:RFP|EOI|TOR|RFQ|NCB|ICB|BID|RFx)[\-/_. ]?\d[A-Z0-9\-/_.]{1,78})\b/i,
   ]);
+  if (!ref) return null;
+  // Canonical validator handles stop-words ("only", "n/a", etc.) and the
+  // digit requirement — keeping this delegate keeps validation rules in one place.
+  return isValidReferenceNumber(ref) ? ref : null;
 }
 
 function inferClient(text: string): string | null {
-  return firstMatch(text, [
-    /(?:client|procuring\s+entity|procurement\s+entity|employer|owner|contracting\s+authority|beneficiary|issuing\s+authority)\s*[:\-]?\s*([^\n\r]{3,160})/i,
-    /(?:issued\s+by|prepared\s+by|invitation\s+by|on\s+behalf\s+of)\s*[:\-]?\s*([^\n\r]{3,160})/i,
+  const raw = firstMatch(text, [
+    /(?:client|procuring\s+entity|procurement\s+entity|employer|owner|contracting\s+authority|beneficiary|issuing\s+authority)\s*[:\-]\s*([^\n\r]{3,120})/i,
+    /(?:issued\s+by|prepared\s+by|invitation\s+by|on\s+behalf\s+of)\s*[:\-]\s*([^\n\r]{3,120})/i,
   ]);
+  if (!raw) return null;
+  // Canonical validator handles TOC/section noise, placeholders, and length
+  // sanity. If a regex captured a proposal section heading or a fragment
+  // like "references (where available) Photos...", isValidClientName
+  // returns false and we drop it.
+  return isValidClientName(raw) ? raw : null;
 }
 
 function inferClientContactName(text: string): string | null {
-  return firstMatch(text, [
+  const raw = firstMatch(text, [
     /(?:contact\s+person|focal\s+person|tender\s+contact|attn(?:ention)?|to\s+the\s+attention\s+of)\s*[:\-]?\s*([A-Z][A-Za-z.\- ']{4,80})/i,
     /(?:procurement\s+(?:officer|manager|focal))\s*[:\-]?\s*([A-Z][A-Za-z.\- ']{4,80})/i,
   ]);
+  if (!raw) return null;
+  return isValidClientContact(raw) ? raw : null;
 }
 
 function inferClientContactTitle(text: string): string | null {
@@ -144,12 +166,19 @@ function inferClientAddress(text: string): string | null {
 }
 
 function inferCountry(text: string): string | null {
-  const country = firstMatch(text, [
-    /(?:country|location)\s*[:\-]?\s*([A-Za-z ]{3,80})/i,
+  const raw = firstMatch(text, [
+    /(?:country|location)\s*[:\-]\s*([A-Za-z ]{3,80})/i,
   ]);
-  if (country) return country;
-  const known = ["Ethiopia", "Kenya", "Nigeria", "South Sudan", "Uganda", "Tanzania", "Rwanda", "Somalia", "Djibouti", "Sudan", "Ghana", "Zambia", "Mozambique", "Senegal", "Mali", "Burkina Faso", "Niger", "Cameroon", "Congo", "DRC", "Angola", "Zimbabwe", "Malawi", "Madagascar"];
-  return known.find((name) => new RegExp(`\\b${name}\\b`, "i").test(text)) ?? null;
+  // If the labelled value contains a known country (e.g. "Ethiopia (Addis
+  // Ababa)"), prefer the canonical country name from that capture so we
+  // store "Ethiopia" not "Ethiopia (Addis Ababa)" in the country column.
+  // OCR fragments like "A ddis Ababa" fail isValidCountry and fall through
+  // to the body-wide search.
+  if (raw && isValidCountry(raw)) {
+    return canonicalizeCountry(raw);
+  }
+  // Body-wide search for the first known country name.
+  return canonicalizeCountry(text);
 }
 
 function inferCategory(text: string): string {
@@ -159,13 +188,13 @@ function inferCategory(text: string): string {
   if (/school|education|university|campus|classroom/i.test(text)) return "Education";
   if (/environment|esia|esmp|biodiversity/i.test(text)) return "Environmental";
   if (/water\s+supply|borehole|hydraulic|WASH/i.test(text)) return "Water";
-  if (/energy|solar|wind|substation|grid|power\s+plant|hydropower|electrification/i.test(text)) return "Energy";
-  if (/agri|irrigation|WUA|command\s*area|crop\s+water/i.test(text)) return "Agriculture";
-  if (/mining|JORC|tailings|ore\s+body|mine\s+plan|mineral\s+resource/i.test(text)) return "Mining";
+  if (/energy|solar|wind\s+farm|substation|grid|power\s+plant|hydropower|electrification/i.test(text)) return "Energy";
+  if (/agri|irrigation|\bWUA\b|command\s*area|crop\s+water/i.test(text)) return "Agriculture";
+  if (/mining|\bJORC\b|tailings|ore\s+body|mine\s+plan|mineral\s+resource/i.test(text)) return "Mining";
   if (/\bport\b|berth|quay|maritime|dredging|harbour|nautical/i.test(text)) return "Port & Maritime";
-  if (/HAZOP|P&ID|pipeline\s+design|oil\s+facilit|gas\s+facilit|petrochemical|upstream\s+petroleum/i.test(text)) return "Oil & Gas";
-  if (/KYC|AML|core\s+banking|microfinance|IFRS|Basel|fintech|payment\s+system/i.test(text)) return "Financial Services";
-  if (/spectrum|broadband|LTE|5G|base\s+station|backhaul|mobile\s+network/i.test(text)) return "Telecoms";
+  if (/\bHAZOP\b|\bP&ID\b|pipeline\s+design|oil\s+facilit|gas\s+facilit|petrochemical|upstream\s+petroleum/i.test(text)) return "Oil & Gas";
+  if (/\bKYC\b|\bAML\b|core\s+banking|microfinance|\bIFRS\b|\bBasel\b|fintech|payment\s+system/i.test(text)) return "Financial Services";
+  if (/spectrum|broadband|\bLTE\b|\b5G\b|base\s+station|backhaul|mobile\s+network/i.test(text)) return "Telecoms";
   if (/architectural|interior|floor\s*plan/i.test(text)) return "Consulting";
   if (/construction|supervision|design|engineering|consultancy|consultant/i.test(text)) return "Consulting";
   if (/supply|goods|equipment|procurement\s+of\s+goods/i.test(text)) return "Supply";

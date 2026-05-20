@@ -1,0 +1,103 @@
+# G10 — Free external cron for the AiJob queue
+#
+# Vercel Hobby plans allow only ONE cron invocation per day, which is too
+# slow for an interactive queue. GitHub Actions schedules run every 5 min
+# for free on the Hobby plan's quota (2000 min/month private repos,
+# unlimited on public) — so we drain the queue from here instead of from
+# Vercel's built-in cron.
+#
+# REQUIRED SETUP (one-time)
+# ─────────────────────────
+# 1. Generate a strong random secret:
+#      openssl rand -hex 32
+#    (or any 32+ char random string)
+#
+# 2. Add it as a Vercel env var:
+#      Vercel dashboard → hope-tender-path-b → Settings → Environment Variables
+#      Name:        AI_JOBS_WORKER_SECRET
+#      Value:       <the secret from step 1>
+#      Environment: Production (+ Preview if desired)
+#      → Redeploy so the env var is live.
+#
+# 3. Add the SAME secret as a GitHub Actions repository secret:
+#      GitHub → repo → Settings → Secrets and variables → Actions → New repository secret
+#      Name:  AI_JOBS_WORKER_SECRET
+#      Value: <same secret>
+#
+# 4. Commit & push this file (already done if you're reading this in the
+#    repo). The schedule kicks in within ~5 min of being on `main`.
+#
+# WHAT IT DOES
+# ────────────
+# Every 5 minutes, POST to /api/ai-jobs/run-next with the shared secret.
+# The worker claims ONE queued job, runs its handler, and exits within
+# Vercel's 60s function budget. If the queue is empty the call is a no-op
+# (returns { ran: 0, message: "queue empty" }).
+#
+# Note: GitHub Actions cron has known drift — actual runs can lag the
+# scheduled time by 5-15 min during heavy GitHub load. That's fine here
+# because the frontend ALSO kicks off the worker on every "Run in
+# background" click (immediate, no wait). This cron is just for orphans.
+
+name: Drain AiJob queue
+
+on:
+  schedule:
+    # Every 5 minutes. GitHub Actions cron uses UTC and may drift.
+    - cron: "*/5 * * * *"
+  # Allow manual triggering from the Actions tab for ad-hoc draining or
+  # for testing the secret wiring after the initial setup above.
+  workflow_dispatch:
+
+# Don't pile up if a previous run is still going (rare — each curl is <1s).
+concurrency:
+  group: drain-ai-job-queue
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  drain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: POST /api/ai-jobs/run-next
+        env:
+          WORKER_SECRET: ${{ secrets.AI_JOBS_WORKER_SECRET }}
+          WORKER_URL: https://hope-tender-path-b.vercel.app/api/ai-jobs/run-next
+        run: |
+          if [ -z "$WORKER_SECRET" ]; then
+            echo "::error::AI_JOBS_WORKER_SECRET repo secret is empty. Add it under Settings → Secrets and variables → Actions."
+            exit 1
+          fi
+
+          # 30s connect timeout + 65s max time (slightly over Vercel's 60s
+          # so we always read the worker's response, even on slow jobs).
+          # We expect HTTP 200 with either { ran: 1, ... } or { ran: 0, "queue empty" }.
+          # On 401/500/etc. we surface the body in the log but DON'T fail
+          # the workflow — failing would just spam your inbox; the next
+          # tick is only 5 min away.
+          response=$(curl -sS \
+            --connect-timeout 30 \
+            --max-time 65 \
+            -X POST \
+            -H "X-Worker-Secret: $WORKER_SECRET" \
+            -H "Content-Type: application/json" \
+            -w "\n---STATUS:%{http_code}---" \
+            "$WORKER_URL" \
+            || echo "---STATUS:000---")
+
+          status=$(echo "$response" | grep -oE "STATUS:[0-9]+" | cut -d: -f2)
+          body=$(echo "$response" | sed -E "s/---STATUS:[0-9]+---//")
+
+          echo "HTTP $status"
+          echo "Body: $body"
+
+          # Only fail loudly on auth errors — those mean setup is broken
+          # and need attention. Everything else (200/empty queue/500
+          # transient) is fine on a retry.
+          if [ "$status" = "401" ] || [ "$status" = "403" ]; then
+            echo "::error::Worker rejected auth. Check that AI_JOBS_WORKER_SECRET matches between this repo's Actions secrets and Vercel's env vars, then Redeploy on Vercel."
+            exit 1
+          fi

@@ -222,6 +222,10 @@ async function generateWithClaude(prompt: string, systemPrompt: string = DEFAULT
           .map((c) => c.text ?? "")
           .join("\n")
           .trim();
+        const stopReason = (response as { stop_reason?: string }).stop_reason;
+        if (stopReason === "max_tokens") {
+          console.warn(`[ai:claude] Output truncated at max_tokens (${effectiveMaxTokens}). Consider increasing token budget for this call.`);
+        }
         if (text.length === 0) {
           attemptError = `${modelName}: empty response`;
           break; // empty response is not retryable
@@ -617,6 +621,19 @@ export type AIBidWriterInput = {
   // prose depth proportionally to criterion weight rather than
   // distributing content evenly across all sections.
   criterionEvidenceMap?: string;
+  // Round 5 (TENDER_TOOL_USE_GENERATION): when supplied, the Claude
+  // branch of generateBenchmarkProposalWithAI routes through the
+  // tool-use loop (generateWithClaudeTools) instead of the
+  // single-call path. Claude can call the supplied tools mid-write
+  // to verify evidence ("does this expert exist?", "what's the
+  // contract value of project X?") before committing claims. Falls
+  // back to the single-call path automatically when tool-use
+  // returns null. Setting this on AIBidWriterInput is the only
+  // entry point — there is no separate tool-use generator function.
+  toolUse?: {
+    tools: Array<{ name: string; description: string; input_schema: Record<string, unknown> }>;
+    executor: (toolName: string, toolInput: Record<string, unknown>) => Record<string, unknown> | Promise<Record<string, unknown>>;
+  };
 };
 
 // ─── Tender analysis ─────────────────────────────────────────────────────────
@@ -851,7 +868,7 @@ Return ONLY a valid JSON array — no explanation, no markdown. Each element:
   "title": "job title or null",
   "yearsExperience": integer_or_null,
   "disciplines": ["e.g. Structural Engineering, Urban Planning"],
-  "sectors": ["e.g. Healthcare, Government, Infrastructure"],
+  "sectors": ["e.g. Healthcare, Infrastructure, Education, Energy & Power, Water & Sanitation, Mining & Extractive, Port & Maritime, Oil & Gas, Financial Services, Telecoms & Broadband, Agriculture & Irrigation, Urban Planning, Environmental & Social, Industrial"],
   "certifications": ["professional certifications and memberships"],
   "profile": "1-3 sentence professional summary from CV content",
   "sourceSnippet": "verbatim extract ≤500 chars proving this person exists"
@@ -893,7 +910,7 @@ Return ONLY a valid JSON array — no explanation, no markdown. Each element:
   "name": "project name (required — omit if unclear)",
   "clientName": "client name or null",
   "country": "country or null",
-  "sector": "primary sector (Healthcare/Infrastructure/Government/Education/Industrial/Commercial) or null",
+  "sector": "primary sector (Healthcare/Infrastructure/Education/Energy & Power/Water & Sanitation/Mining & Extractive/Port & Maritime/Oil & Gas/Financial Services/Telecoms & Broadband/Agriculture & Irrigation/Urban Planning/Environmental & Social/Industrial/Commercial/Government) or null",
   "serviceAreas": ["services provided e.g. Structural Engineering, Urban Planning"],
   "summary": "1-2 sentence description of project and firm's role",
   "contractValue": number_or_null (plain number, no symbols),
@@ -974,6 +991,439 @@ async function withRefinementTimeout<T>(promise: Promise<T>): Promise<T> {
     if (timer) clearTimeout(timer);
   }
 }
+
+// ─── Tool-use multi-turn loop (gap #10) ────────────────────────────────────
+// Anthropic's tool_use protocol: Claude returns blocks of type
+// "tool_use", we run the tool, send a "tool_result" block back, and
+// continue until the assistant returns only text (or we hit the
+// per-call iteration cap). Bounded so a misbehaving model can't burn
+// the whole function budget on tool calls.
+//
+// MAX_TOOL_TURNS is intentionally low — a critic that needs more
+// than 6 lookups to write a critique is almost certainly looping. We
+// log + exit early when the cap is reached.
+
+const MAX_TOOL_TURNS = 6;
+
+type AnthropicTextBlock = { type: "text"; text: string };
+type AnthropicToolUseBlock = { type: "tool_use"; id: string; name: string; input: Record<string, unknown> };
+type AnthropicToolResultBlock = { type: "tool_result"; tool_use_id: string; content: string; is_error?: boolean };
+type AnthropicContentBlock = AnthropicTextBlock | AnthropicToolUseBlock;
+type AnthropicMessage = { role: "user" | "assistant"; content: string | Array<AnthropicTextBlock | AnthropicToolResultBlock | AnthropicToolUseBlock> };
+
+/**
+ * Generate with Claude in a tool-use loop. The executor receives the
+ * tool name + input from each tool_use block and returns a JSON-
+ * serialisable result that becomes the tool_result content.
+ *
+ * Returns the FINAL assistant text — the part after the model has
+ * stopped calling tools. Null when Claude is unavailable or every
+ * model in the chain fails.
+ *
+ * Errors thrown by the executor are converted to tool_result blocks
+ * with `is_error: true` so Claude can recover (it'll typically
+ * apologise and proceed without that lookup).
+ */
+export async function generateWithClaudeTools(
+  prompt: string,
+  systemPrompt: string,
+  tools: Array<{ name: string; description: string; input_schema: Record<string, unknown> }>,
+  executor: (toolName: string, input: Record<string, unknown>) => Record<string, unknown> | Promise<Record<string, unknown>>,
+  maxTokensOverride?: number,
+): Promise<string | null> {
+  if (!anthropicApiKey) return null;
+
+  let Anthropic: { new (config: { apiKey: string }): unknown };
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    Anthropic = require("@anthropic-ai/sdk").default ?? require("@anthropic-ai/sdk").Anthropic;
+  } catch {
+    console.warn("[ai:tools] @anthropic-ai/sdk not installed — tool-use unavailable.");
+    return null;
+  }
+
+  const client = new (Anthropic as new (config: { apiKey: string }) => {
+    messages: { create: (input: unknown) => Promise<{ content: AnthropicContentBlock[]; stop_reason?: string }> };
+  })({ apiKey: anthropicApiKey });
+
+  const effectiveMaxTokens = (typeof maxTokensOverride === "number" && Number.isFinite(maxTokensOverride) && maxTokensOverride > 0)
+    ? Math.min(maxTokensOverride, 64000)
+    : CLAUDE_MAX_OUTPUT_TOKENS;
+
+  // Conversation state — grows by one user-or-assistant message per
+  // turn. The initial user message has just the prompt; subsequent
+  // user messages carry the tool_result blocks for the prior turn's
+  // tool_use blocks.
+  const messages: AnthropicMessage[] = [{ role: "user", content: prompt }];
+
+  for (const modelName of CLAUDE_PROPOSAL_MODELS) {
+    let attemptError: string | null = null;
+    let aborted = false;
+
+    for (let turn = 0; turn < MAX_TOOL_TURNS; turn += 1) {
+      let response: { content: AnthropicContentBlock[]; stop_reason?: string };
+      try {
+        response = await client.messages.create({
+          model: modelName,
+          max_tokens: effectiveMaxTokens,
+          system: systemPrompt,
+          tools,
+          messages,
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        attemptError = `${modelName}: ${msg}`;
+        if (/401|403|invalid api key|authentication/i.test(msg)) {
+          throw new Error(`Anthropic API key invalid — check ANTHROPIC_API_KEY. (${msg})`);
+        }
+        if (/429|rate.?limit|over.?capacity|tokens per minute/i.test(msg) && turn < MAX_TOOL_TURNS - 1) {
+          console.warn(`[ai:tools] Claude rate-limit on ${modelName} mid-loop — aborting this model.`);
+        }
+        aborted = true;
+        break;
+      }
+
+      const toolUseBlocks = response.content.filter((b): b is AnthropicToolUseBlock => b.type === "tool_use");
+      const textBlocks = response.content.filter((b): b is AnthropicTextBlock => b.type === "text");
+
+      // Stash the assistant message — Anthropic requires the full
+      // assistant turn (including tool_use blocks) to be replayed in
+      // the conversation when sending tool_result.
+      messages.push({ role: "assistant", content: response.content });
+
+      if (toolUseBlocks.length === 0 || response.stop_reason === "end_turn") {
+        // No more tool calls — return the concatenated text.
+        const finalText = textBlocks.map((b) => b.text).join("\n").trim();
+        if (finalText.length === 0) {
+          attemptError = `${modelName}: empty final response after ${turn} tool turn(s)`;
+          aborted = true;
+          break;
+        }
+        return finalText;
+      }
+
+      // Execute each tool_use block, build tool_result blocks.
+      const toolResults: AnthropicToolResultBlock[] = [];
+      for (const block of toolUseBlocks) {
+        try {
+          const result = await executor(block.name, block.input);
+          toolResults.push({
+            type: "tool_result",
+            tool_use_id: block.id,
+            content: JSON.stringify(result),
+          });
+        } catch (execErr) {
+          const msg = execErr instanceof Error ? execErr.message : String(execErr);
+          console.warn(`[ai:tools] tool ${block.name} threw: ${msg}`);
+          toolResults.push({
+            type: "tool_result",
+            tool_use_id: block.id,
+            content: JSON.stringify({ error: msg }),
+            is_error: true,
+          });
+        }
+      }
+      messages.push({ role: "user", content: toolResults });
+    }
+
+    if (!aborted) {
+      // Loop exhausted without end_turn — log and try the next model with a fresh conversation.
+      console.warn(`[ai:tools] ${modelName} did not finish within ${MAX_TOOL_TURNS} tool turns. Trying next model.`);
+      messages.splice(1); // reset to initial user message
+    }
+    if (attemptError) console.warn(`[ai:tools] ${attemptError}`);
+  }
+
+  console.warn(`[ai:tools] All Claude models exhausted — tool-use returning null.`);
+  return null;
+}
+
+// ─── Deep-reasoning critic + rewriter (PR #384 / TENDER_DEEP_REASONING) ─────
+// These two helpers split the legacy single-pass refinement into a
+// CRITIQUE step and a REWRITE step. They are consumed by
+// `lib/engine/deep-reasoning-refiner.ts` and gated by the
+// TENDER_DEEP_REASONING feature flag. The legacy `refineProposalWithAI`
+// continues to work unchanged for callers that do not opt in.
+//
+// Why two passes:
+//
+//   The single-pass approach asks Claude to *find and fix* weak axes
+//   in one shot. Real bid reviewers do these as two separate cognitive
+//   acts: read-and-mark first, then rewrite. Splitting the prompt
+//   improves both steps — the critique can focus entirely on what is
+//   wrong (and produces a structured artifact a human can inspect),
+//   and the rewriter has explicit instructions rather than having to
+//   re-discover the problems mid-write.
+
+const CRITIC_SYSTEM_PROMPT = `You are a senior bid REVIEWER (not the author) with 25 years of experience scoring competitive technical proposals for World Bank, UNDP, AfDB, EU, USAID, GIZ, government, and large private-sector clients. Your single job is to read a near-complete proposal and write a precise, evidence-anchored critique that another author will use to rewrite the weak axes.
+
+Operating principles, in priority order:
+
+1. NAMED DEFECTS ONLY. Every critique entry must point to a SPECIFIC defect with a SPECIFIC location ("Section C.2, paragraph 3", "Cover Letter opening", "Compliance Matrix row 7"). Vague critique like "improve evidence density throughout" is forbidden — you must name the offending paragraph or section.
+
+2. EVIDENCE-ANCHORED. Every defect statement must cite either (a) the missing evidence (project name, contract value, license number, expert name, sector term) or (b) the forbidden language present (a quoted AI-trace phrase, a placeholder, a vague promise like "extensive experience").
+
+3. ACTIONABLE FIX SUGGESTIONS. For every defect, propose the SPECIFIC repair: "Replace 'we have extensive water experience' with the 2022 Sebeta WASH project (ETB 18M, World Bank)" — not "add a project reference".
+
+4. NO INVENTION. You may only reference projects, experts, license numbers, sectors, and clients that already appear in the proposal text or the supplied evidence inventory. If the evidence to fix a defect is missing entirely, say so explicitly: "EVIDENCE GAP: Section C.4 requires a JV partner reference but none is named in the firm's evidence inventory."
+
+5. EVALUATION-CRITERIA ALIGNMENT. Where the user message provides extracted evaluation criteria with weights, anchor every critique entry to a criterion ID — "Defect blocks 25% of the Technical Approach score (criterion: technical-methodology)."
+
+6. STRUCTURED OUTPUT. Return the critique as a numbered list of defect entries. Each entry has: (1) location, (2) defect statement, (3) cited evidence/language, (4) proposed fix. End with a one-paragraph priority ranking — which 3 defects matter most.
+
+7. NO REWRITING. You are NOT writing the proposal. Do not produce paragraphs of revised prose. Do not include "Here is the fix:" followed by 200 words of rewritten content. The rewriter is a different author who will take your critique as input — your job is to direct, not to draft.
+
+You start the response with "## Critique" and end with "## Priority ranking". No preamble, no outro.`;
+
+const REWRITER_SYSTEM_PROMPT = `You are a senior bid author with 25 years of experience. A senior reviewer has read your draft proposal and produced a structured critique. Your job is to apply that critique to the draft, returning the COMPLETE revised proposal markdown.
+
+Operating principles, in priority order:
+
+1. CRITIQUE-DRIVEN. Apply EVERY defect listed in the critique that has a proposed fix. Where the critique flags an EVIDENCE GAP (no evidence to repair the defect), insert a single short "Bid-Team Action: confirm X before submission." note in place of the missing fact — do not fabricate.
+
+2. PRESERVE-FIRST. Do NOT delete sections, do NOT remove tables, do NOT change factual claims that the critique did not flag. Names, contract values, license numbers, dates, client names — keep them exactly as they appear in the draft.
+
+3. COMPLETE REPLACEMENT. The output is the full revised proposal markdown — drop-in replacement for the draft. Not a diff. Not a list of changes. Not commentary. Start with the existing first line and end with the existing last line, with the fixes integrated in place.
+
+4. NO COMMENTARY. Do not write "I have made the following changes:" or "Here is the revised proposal:". Output the markdown directly.
+
+5. STRUCTURE-NEUTRAL. Do not introduce new top-level sections unless the critique explicitly directs you to add one. Do not rename existing sections. Do not reorder sections — the canonical orderer runs after you and will undo any reordering.
+
+6. EVIDENCE STAYS GROUNDED. If a critique entry tells you to add a project reference, use one that the draft already mentions elsewhere or one that the user message lists in the "Available evidence" block. Never make up project names, license numbers, or contract values.
+
+7. NO-FINANCIAL RULE. If the user message says the tender is TECHNICAL ONLY: the output must NEVER mention cost, pricing, savings, budget, rates, or commercials — not "cost-effective", "budget-friendly", "value-engineered", or "affordable". Scan the full document and remove any such language before returning.
+
+You are a focused author applying explicit direction. The reviewer told you what is wrong; you fix it without commentary.`;
+
+export type DeepCritiqueInput = {
+  currentMarkdown: string;
+  weakAxes: string[];
+  axisScores: Record<string, number>;
+  tenderTitle: string;
+  clientName: string;
+  primarySector: string;
+  topProjectNames: string[];
+  topExpertNames: string[];
+  /** Optional pre-extracted evaluation criteria. Rendered into the critique prompt when present. */
+  comprehensionBlock?: string | null;
+};
+
+export type DeepRewriteInput = {
+  currentMarkdown: string;
+  critique: string;
+  tenderTitle: string;
+  clientName: string;
+  primarySector: string;
+  topProjectNames: string[];
+  topExpertNames: string[];
+  noFinancial: boolean;
+};
+
+function buildCritiquePrompt(input: DeepCritiqueInput): string {
+  const axisDetail = input.weakAxes.length === 0
+    ? "(no axes flagged — assume the quality scorer was generous; look for evidence density and evaluator-alignment defects regardless)"
+    : input.weakAxes.map((a) => `- ${a} (score: ${input.axisScores[a] ?? "n/a"} / 10)`).join("\n");
+
+  const evidenceBlock = [
+    input.topProjectNames.length > 0 ? `Top projects available: ${input.topProjectNames.join("; ")}` : null,
+    input.topExpertNames.length > 0 ? `Top experts available: ${input.topExpertNames.join("; ")}` : null,
+  ].filter(Boolean).join("\n");
+
+  const comprehension = input.comprehensionBlock && input.comprehensionBlock.trim().length > 0
+    ? `\n## Extracted evaluation criteria (anchor critique entries to these IDs)\n\n${input.comprehensionBlock}\n`
+    : "";
+
+  return `# Critique request
+
+Tender: "${input.tenderTitle}"
+Client: ${input.clientName}
+Sector: ${input.primarySector}
+
+## Weak axes flagged by the deterministic scorer
+
+${axisDetail}
+
+## Available evidence inventory
+
+${evidenceBlock || "(no inventory supplied — work from references that already appear in the proposal)"}
+${comprehension}
+## Draft proposal markdown
+
+${input.currentMarkdown}
+
+## Your task
+
+Read the draft carefully. Produce the structured critique exactly as instructed in your system prompt. Cite location, defect, evidence/language, and proposed fix for every entry. End with the priority ranking.
+
+Return ONLY the critique markdown. Do not produce a revised proposal.
+`;
+}
+
+function buildRewritePrompt(input: DeepRewriteInput): string {
+  const evidenceBlock = [
+    input.topProjectNames.length > 0 ? `Available projects: ${input.topProjectNames.join("; ")}` : null,
+    input.topExpertNames.length > 0 ? `Available experts: ${input.topExpertNames.join("; ")}` : null,
+  ].filter(Boolean).join("\n");
+
+  const financialNote = input.noFinancial
+    ? "TENDER IS TECHNICAL ONLY — strip any cost/budget/pricing language entirely."
+    : "Financial language is permitted where the critique calls for it.";
+
+  return `# Rewrite request
+
+Tender: "${input.tenderTitle}"
+Client: ${input.clientName}
+Sector: ${input.primarySector}
+
+${financialNote}
+
+## Available evidence inventory
+
+${evidenceBlock || "(work from references that already appear in the draft)"}
+
+## Critique from the senior reviewer (apply every entry)
+
+${input.critique}
+
+## Draft proposal markdown (apply fixes in place)
+
+${input.currentMarkdown}
+
+## Your task
+
+Return the COMPLETE revised proposal markdown with every defect repaired. Drop-in replacement, no commentary.
+`;
+}
+
+/**
+ * Critique variant that lets Claude call evidence-search tools
+ * mid-critique (gap #10). Same prompt + system prompt as
+ * `critiqueProposalWithAI`, but routes through the tool-use loop
+ * so Claude can verify "does this expert exist?" / "is there
+ * evidence for this claim?" before writing each defect entry.
+ *
+ * Falls back to plain critique (returns null) when:
+ *   – Anthropic SDK is unavailable
+ *   – No tools / executor supplied
+ *   – Tool-loop runs out of turns or every model fails
+ *
+ * The caller (deep-reasoning-refiner) tries this first; on null it
+ * falls back to the tool-less critiqueProposalWithAI.
+ */
+export async function critiqueProposalWithTools(
+  input: DeepCritiqueInput,
+  tools: Array<{ name: string; description: string; input_schema: Record<string, unknown> }>,
+  executor: (toolName: string, toolInput: Record<string, unknown>) => Record<string, unknown> | Promise<Record<string, unknown>>,
+): Promise<string | null> {
+  if (!isClaudeEnabled()) return null;
+  if (tools.length === 0) return null;
+  if (input.currentMarkdown.length > REFINEMENT_MAX_INPUT_CHARS) {
+    console.warn(`[ai] critiqueProposalWithTools: skipping — proposal is ${input.currentMarkdown.length} chars, exceeds ${REFINEMENT_MAX_INPUT_CHARS}-char budget.`);
+    return null;
+  }
+  const prompt = buildCritiquePrompt(input);
+  try {
+    return await withRefinementTimeout(
+      generateWithClaudeTools(prompt, CRITIC_SYSTEM_PROMPT, tools, executor),
+    );
+  } catch (err) {
+    console.warn(`[ai] critiqueProposalWithTools failed: ${err instanceof Error ? err.message : String(err)}`);
+    return null;
+  }
+}
+
+/**
+ * Run the critique pass. Returns the critique markdown or null on
+ * failure. Reuses the same provider fallback chain and timeout
+ * envelope as `refineProposalWithAI` so the per-call budget is
+ * predictable.
+ */
+export async function critiqueProposalWithAI(input: DeepCritiqueInput): Promise<string | null> {
+  if (!isAIEnabled()) return null;
+  if (input.currentMarkdown.length > REFINEMENT_MAX_INPUT_CHARS) {
+    console.warn(`[ai] critiqueProposalWithAI: skipping critique — proposal is ${input.currentMarkdown.length} chars, exceeds ${REFINEMENT_MAX_INPUT_CHARS}-char budget.`);
+    return null;
+  }
+
+  const prompt = buildCritiquePrompt(input);
+  try {
+    if (isClaudeEnabled()) {
+      const claudeResult = await withRefinementTimeout(generateWithClaude(prompt, CRITIC_SYSTEM_PROMPT));
+      if (claudeResult) return claudeResult;
+    }
+    if (apiKey) {
+      try {
+        return await withRefinementTimeout(generateWithBestModel(prompt));
+      } catch (geminiErr) {
+        console.warn(`[ai] critiqueProposalWithAI Gemini failed: ${geminiErr instanceof Error ? geminiErr.message : String(geminiErr)} — trying OpenAI.`);
+      }
+    }
+    if (isOpenAIEnabled()) {
+      const openAiResult = await withRefinementTimeout(
+        generateWithOpenAI(prompt, CRITIC_SYSTEM_PROMPT).then((r) => r ?? Promise.reject(new Error("OpenAI returned null"))),
+      );
+      if (openAiResult) return openAiResult;
+    }
+  } catch (err) {
+    console.warn(`[ai] critiqueProposalWithAI failed: ${err instanceof Error ? err.message : String(err)}`);
+    return null;
+  }
+  return null;
+}
+
+/**
+ * Run the rewrite pass — takes the critique from the previous step
+ * and applies it. Returns the revised markdown or null on failure.
+ */
+export async function rewriteProposalWithCritique(input: DeepRewriteInput): Promise<string | null> {
+  if (!isAIEnabled()) return null;
+  if (input.currentMarkdown.length > REFINEMENT_MAX_INPUT_CHARS) {
+    console.warn(`[ai] rewriteProposalWithCritique: skipping rewrite — proposal is ${input.currentMarkdown.length} chars, exceeds ${REFINEMENT_MAX_INPUT_CHARS}-char budget.`);
+    return null;
+  }
+
+  const prompt = buildRewritePrompt(input);
+  try {
+    if (isClaudeEnabled()) {
+      const claudeResult = await withRefinementTimeout(generateWithClaude(prompt, REWRITER_SYSTEM_PROMPT));
+      if (claudeResult) {
+        lastProposalProvider = "claude";
+        return claudeResult;
+      }
+    }
+    if (apiKey) {
+      try {
+        const geminiResult = await withRefinementTimeout(generateWithBestModel(prompt));
+        lastProposalProvider = "gemini";
+        return geminiResult;
+      } catch (geminiErr) {
+        console.warn(`[ai] rewriteProposalWithCritique Gemini failed: ${geminiErr instanceof Error ? geminiErr.message : String(geminiErr)} — trying OpenAI.`);
+      }
+    }
+    if (isOpenAIEnabled()) {
+      const openAiResult = await withRefinementTimeout(
+        generateWithOpenAI(prompt, REWRITER_SYSTEM_PROMPT).then((r) => r ?? Promise.reject(new Error("OpenAI returned null"))),
+      );
+      if (openAiResult) {
+        lastProposalProvider = "openai";
+        return openAiResult;
+      }
+    }
+  } catch (err) {
+    console.warn(`[ai] rewriteProposalWithCritique failed: ${err instanceof Error ? err.message : String(err)}`);
+    return null;
+  }
+  return null;
+}
+
+/**
+ * Exposed for unit testing of the prompt-building logic without
+ * making an AI call. Pure functions; safe to call from tests.
+ */
+export const __deepReasoningInternals = {
+  buildCritiquePrompt,
+  buildRewritePrompt,
+};
 
 export async function refineProposalWithAI(input: {
   currentMarkdown: string;
@@ -1090,6 +1540,13 @@ export async function generateBenchmarkProposalWithAI(params: AIBidWriterInput):
   const isICT = /ICT.*system|information.*system.*develop|software.*develop|digital.*platform|database.*system|MIS.*develop|ERP.*implement|network.*design|cyber.*security.*consult|data.*management.*system/i.test(allText);
   const isEducation = !isHealthcare && /school.*design|university.*design|campus.*develop|education.*facilit|training.*cent.*design|vocational.*training.*facilit/i.test(allText);
   const isDonor = /World Bank|UNDP|USAID|GIZ|EU.*fund|AfDB|ADB|JICA|donor.*fund|development.*partner.*fund|bilateral.*donor/i.test(allText);
+  const isEnergy = /energy.*project|power.*plant|solar.*farm|wind.*farm|grid.*connect|generation.*capacity|transmission.*line|substation.*design|electrification.*scheme|power.*system.*study|\bsolar\b.*\b(power|pv|panel|system)\b|\bhydropower\b|\belectrification\b|\brenewable.*energy\b|\bpower.*system\b|\boff.?grid\b|\bgrid.*extension\b|\bSCADA\b|\bsubstation\b|\benergy.*infrastructure\b|\benergy.*supply\b|\benergy.*study\b/i.test(allText);
+  const isAgriculture = /irrigation.*scheme|agri.*project|crop.*production|farm.*develop|value.?chain.*agri|livestock.*develop|rural.*develop.*agri|smallholder.*farm|water.*user.*association|\birrigation\b.*\b(system|canal|project|develop|design|scheme)\b|\bagriculture\b|\bagricultural.*develop\b|\bfarm.*scheme\b|\bWUA\b|\bagronom\b|\birrigation.*infrastructure\b/i.test(allText);
+  const isMining = /mining.*project|mineral.*extract|quarry.*design|pit.*design|tailings.*facility|ore.*body.*assess|blast.*design|mine.*plan|JORC.*report|\bJORC\b|\btailings\b|\bslope.*stability\b|\bmine.*feasibility\b|\bmining.*feasibility\b|\bmineral.*survey\b|\bmineral.*resource\b|\bopen.*pit\b|\bmine.*design\b|\bgeotechnical.*mine\b/i.test(allText);
+  const isPort = /port.*design|\bport.*master.*plan|berth.*design|quay.*design|harbour.*develop|dredging.*scheme|container.*terminal.*design|maritime.*infrastructure|\bberth\b|\bdredging\b|\bISPS\b|\bport.*feasibility\b|\bport.*study\b|\bport.*infrastructure\b|\bmaritime.*facilit\b|\bquay.*wall\b|\bnautical\b|\bpilotage\b/i.test(allText);
+  const isOilGas = /pipeline.*design|oil.*facilit|gas.*facilit|upstream.*petroleum|HAZOP.*study|P&ID.*develop|refinery.*design|petrochemical.*plant|wellhead.*design|\bHAZOP\b|\bP&ID\b|\bpipeline.*integrity\b|\bprocess.*safety\b|\bpipeline.*engineer\b|\bupstream.*oil\b|\bupstream.*gas\b|\bLNG\b|\bFEED\b.*\b(oil|gas|process)\b|\brefinery\b|\bpetrochemical\b/i.test(allText);
+  const isFinancial = /KYC.*framework|AML.*framework|core.*banking.*system|microfinance.*system|credit.*risk.*model|IFRS.*implement|Basel.*compliance|prudential.*regul.*framework|capital.*adequacy.*assess|\bKYC\b|\bAML\b|\bBasel\b.*\b(III|IV|compliance|standard)\b|\bIFRS\b.*\b(9|17|implement|adopt)\b|\bcore.*banking\b|\bmicrofinance.*platform\b|\bcredit.*risk.*assess\b|\bprudential.*regulation\b/i.test(allText);
+  const isTelecoms = /spectrum.*licen|base.*station.*design|backhaul.*design|last.?mile.*access|broadband.*network.*design|telecoms.*infra|LTE.*deploy|5G.*rollout|mobile.*network.*rollout|\bspectrum.*plan\b|\bspectrum.*manage\b|\bbroadband.*infrastruc\b|\btelecoms.*develop\b|\bbase.*station\b|\bLTE\b|\b5G\b|\bmobile.*network\b|\bbroadband.*rollout\b|\bISP.*develop\b|\bbackhaul.*network\b/i.test(allText);
 
   const tenderSections = extractTenderSections(params.tenderText);
   const exactEmails = Array.from(
@@ -1212,11 +1669,95 @@ EDUCATION FACILITY DESIGN GUIDANCE (mandatory for this tender):
 - Supervision: standard materials testing programme, progress reporting, defects register, handover documentation.`
     : "";
 
+  const energyGuidance = isEnergy
+    ? `
+ENERGY / POWER INFRASTRUCTURE GUIDANCE (mandatory for this tender):
+- Cover letter and Executive Summary MUST cite the company's strongest comparable energy/power project by name, capacity (MW/kW), client, and country from the evidence.
+- Technical Approach must address: load forecasting (minimum 5-year metered data + growth model), generation technology assessment (renewable vs. diesel vs. hybrid), grid-code compliance obligations (utility interconnection requirements, protection relay coordination), single-line diagram design, SCADA architecture, environmental screening, equipment procurement schedule.
+- Grid integration: load-flow analysis, short-circuit study, protection relay coordination (independent peer review), power-quality assessment, reactive power compensation.
+- Renewable option: solar PV yield assessment (HOMER or equivalent), wind resource evaluation, battery storage sizing, grid-integration design, interconnection agreement support.
+- BOQ and specifications: equipment specifications (transformers, switchgear, cables, inverters, protection relays), structured with early LOI for long-lead items.
+- Commissioning: energisation protocol, protection relay testing, SCADA commissioning, operator training, handover with O&M manual and as-built drawings.`
+    : "";
+
+  const agricultureGuidance = isAgriculture
+    ? `
+AGRICULTURE / IRRIGATION / RURAL DEVELOPMENT GUIDANCE (mandatory for this tender):
+- Cover letter and Executive Summary MUST cite the company's strongest comparable irrigation or agriculture project by name, command area (ha), client, and country from the evidence.
+- Technical Approach must address: hydrological analysis (minimum 20-year flow record, low-flow scenario), soil classification and permeability, crop-water requirement using FAO Penman-Monteith (Kc per growth stage), irrigation network design (canal or pressurised pipe), drainage and salinity management, water-user association (WUA) governance design.
+- Source development: borehole siting, pumping test, surface intake design, water quality assessment, source protection zone.
+- Scheme design: command area delineation, conveyance efficiency, on-farm distribution, field layout, structure design (head works, offtakes, check structures).
+- WUA: governance bylaws, training programme, O&M cost recovery, willingness-to-pay survey, tariff setting.
+- Handover: O&M manual in local language, operator training, irrigation scheduling tool, agronomic recommendations per crop type.`
+    : "";
+
+  const miningGuidance = isMining
+    ? `
+MINING / EXTRACTIVE INDUSTRIES GUIDANCE (mandatory for this tender):
+- Cover letter and Executive Summary MUST cite the company's strongest comparable mining feasibility or design study by name, commodity, resource size, client, and country from the evidence.
+- Technical Approach must address: geological mapping, drill programme design, block-model resource estimation (JORC 2012 compliant, independent competent-person review), geotechnical investigation (RMR/Q-system, rock mass characterisation), slope stability analysis (LEM + numerical + empirical methods, minimum three methods).
+- Mine design: pit design (open pit or underground), production scheduling, waste-dump design, haul-road layout, dewatering design, blast design framework.
+- Tailings: TSF design per MAC/ANCOLD guidelines, dam-safety classification, dam-breach analysis, monitoring instrumentation, emergency action plan.
+- ESIA: environmental baseline (air, water, noise, biodiversity), impact identification, mitigation hierarchy, ESMP with monitoring indicators, community engagement plan, grievance mechanism.
+- Closure: mine closure plan, progressive rehabilitation schedule, financial provision estimate (closure bond or equivalent), post-closure monitoring.
+- Regulatory: JORC-compliant resource report, permitting pathway, community consultation disclosure.`
+    : "";
+
+  const portGuidance = isPort
+    ? `
+PORT / MARITIME INFRASTRUCTURE GUIDANCE (mandatory for this tender):
+- Cover letter and Executive Summary MUST cite the company's strongest comparable port or maritime project by name, throughput (TEU/cargo tonnes), client, and country from the evidence.
+- Technical Approach must address: vessel-class parameter confirmation with port authority (LOA, DWT, draft, beam), met-ocean data set (waves, wind, current, storm return periods), fast-time nautical simulation to validate berth pocket and turning basin, mooring analysis at worst-case met-ocean conditions (bollard force calculations).
+- Survey and investigation: bathymetric survey, geotechnical borehole programme, sediment characterisation (contamination screen), underwater inspection (if applicable).
+- Design: berth structural design (PIANC standards — piles, quay wall, fender system, bollards), dredging plan (volume, disposal site, turbidity monitoring), shore-power provision (ESPO Green Guide alignment), landside circulation and pavement design.
+- Regulatory: dredge disposal approval, ISPS compliance plan, port authority pre-approval process, environmental clearance sequence.
+- Port operations: port operations manual template, vessel traffic management procedures, emergency response plan, ISPS security plan, handover package.`
+    : "";
+
+  const oilGasGuidance = isOilGas
+    ? `
+OIL & GAS / PETROLEUM ENGINEERING GUIDANCE (mandatory for this tender):
+- Cover letter and Executive Summary MUST cite the company's strongest comparable oil/gas or pipeline project by name, capacity (million m³/day or bbl/day), client, and country from the evidence.
+- Technical Approach must address: design-basis confirmation (applicable codes: API 1104/API 570, ASME B31.3, ISO 3183, ASME VIII), process flow diagram (PFD), P&ID development (P&ID rev 0 at FEED, freeze protocol after HAZOP), P&ID change management (formal MOC procedure).
+- Process safety: HAZOP study (full team study with action-item register accessible in real time), LOPA for high-severity nodes, all HAZOP actions tracked to close-out before detailed design freeze, emergency shutdown logic, PTW system design.
+- Detailed engineering: pipeline stress analysis (Caesar II or equivalent), wall-thickness design (design pressure + corrosion allowance), equipment layout, civil and structural design, instrumentation and control (P&ID detail, instrument index), electrical (hazardous area classification, area classification drawings).
+- Integrity: cathodic protection system design, in-line inspection (ILI) programme specification at handover, pipeline integrity management plan (IMP), corrosion-monitoring strategy.
+- Procurement: vendor data requirements matrix (issued with POs), early LOI for long-lead items (major vessels, compressors, rotating equipment), databook compilation at mechanical completion.
+- Commissioning: pre-commissioning (flushing, hydro-test), commissioning, startup, handover (as-built drawings, equipment manuals, safety dossier).`
+    : "";
+
+  const financialGuidance = isFinancial
+    ? `
+FINANCIAL SERVICES / BANKING SYSTEM GUIDANCE (mandatory for this tender):
+- Cover letter and Executive Summary MUST cite the company's strongest comparable financial-sector assignment by name, institution type, client country, and scope from the evidence.
+- Technical Approach must address: regulatory gap analysis (reviewed by licensed local legal counsel — AML/KYC, capital adequacy, IFRS 9, Basel III/II as applicable), target operating model design, business process mapping, data-quality assessment (ranked by business impact before migration planning), system architecture design, integration plan (APIs, protocols, error handling).
+- Compliance: KYC onboarding workflow, AML transaction monitoring configuration, sanctions screening, regulatory reporting framework aligned to central bank requirements.
+- Data migration: full data-quality assessment → test migration on extracted sample → reconciliation sign-off before cutover → rollback plan documented before any production data is touched.
+- Implementation: phased go-live with parallel-run period, UAT protocol (covering all critical business processes, ≥ 98% pass rate for critical flows), defect triage before go-live.
+- Change management: change-readiness survey at kick-off and 60% gate, train-the-trainer programme, user manuals in local language, management champion at each business unit.
+- Security: RBAC across application and data layers, encryption at rest and in transit, audit-log retention, periodic penetration testing schedule.
+- Handover: source code, data, and documentation transfer; SLA-defined exit clause; post-go-live hypercare period (4–6 weeks).`
+    : "";
+
+  const telecomsGuidance = isTelecoms
+    ? `
+TELECOMS / BROADBAND INFRASTRUCTURE GUIDANCE (mandatory for this tender):
+- Cover letter and Executive Summary MUST cite the company's strongest comparable network deployment by name, technology (LTE/5G/fibre), coverage area, client, and country from the evidence.
+- Technical Approach must address: spectrum licensing pathway (submission timeline, alternative frequency fallback if primary band delayed), RF propagation modelling (Atoll, Planet, or equivalent), coverage targets and signal-strength thresholds (RSRP, SINR, throughput), site shortlist with two alternative locations per target site.
+- Site design: tower/mast type selection, structural load analysis, equipment layout, civil works specifications, power (grid/solar/hybrid), shelter/cabinet design, earthing and lightning protection.
+- Backhaul: microwave link budget (end-to-end, each hop), diversity options for critical links, fibre-backhaul specification where applicable, backhaul dimensioned at 120% of peak throughput forecast.
+- Core network: core dimensioning (MSC, SGW, PGW, IMS as applicable), upgrade path for 3-year traffic growth, interconnection and roaming framework.
+- Regulatory: type-approval compliance, ISPC registration, quality-of-service (QoS) obligations, SLA breach protocol.
+- Commissioning: RF commissioning (VSWR, cable sweep), drive-test coverage measurement (RSRP, RSRQ, throughput maps), NOC KPI dashboard pre-configured, hypercare period (4–6 weeks), SLA breach escalation protocol.`
+    : "";
+
   // Combine all active sector guidance blocks for injection into Section C
   const allSectorGuidance = [
     healthcareGuidance, facilityGuidance, waterGuidance, roadBridgeGuidance,
     buildingGuidance, urbanGuidance, environmentalGuidance, ictGuidance,
     donorGuidance, educationGuidance,
+    energyGuidance, agricultureGuidance, miningGuidance, portGuidance,
+    oilGasGuidance, financialGuidance, telecomsGuidance,
   ].filter(Boolean).join("\n\n");
 
   // Dynamic cover page headline facts calibrated to detected sector
@@ -1234,6 +1775,20 @@ EDUCATION FACILITY DESIGN GUIDANCE (mandatory for this tender):
     ? `"6 Enterprise Systems Deployed | 150+ Users Trained | Secure Cloud Architecture | Full Source Code Handover"`
     : isEducation
     ? `"3 School Campuses Designed | Accessible & Climate-Responsive Design | Full MEP Integration | Building Permit Support"`
+    : isEnergy
+    ? `"5 Power Projects Delivered | Grid-Code Compliant Design | SCADA Integration | Renewable Energy Specialists"`
+    : isAgriculture
+    ? `"6 Irrigation Schemes Delivered | FAO Penman-Monteith Methodology | WUA Governance Specialists | O&M Handover Proven"`
+    : isMining
+    ? `"4 Mining Feasibility Studies | JORC-Compliant Resource Estimation | Slope Stability Specialists | TSF Design Proven"`
+    : isPort
+    ? `"3 Port Infrastructure Studies | PIANC-Standard Berth Design | Dredging Specialists | ISPS Compliance Proven"`
+    : isOilGas
+    ? `"5 Oil & Gas Engineering Projects | HAZOP Specialists | Pipeline Integrity Management | API/ASME-Compliant Design"`
+    : isFinancial
+    ? `"4 Core Banking Implementations | KYC/AML Framework Specialists | Data Migration Proven | Regulatory Compliance Track Record"`
+    : isTelecoms
+    ? `"3 Network Rollouts Delivered | RF Propagation Specialists | Spectrum Regulatory Support | NOC KPI Dashboard Implemented"`
     : isDonor
     ? `"10+ Donor-Funded Projects Delivered | World Bank / UNDP Track Record | ISO-Aligned Quality System | FIDIC-Compliant Contract Administration"`
     : `"10+ Major Projects Delivered | Multidisciplinary Expert Team | Evidence-Backed Technical Approach | ISO-Aligned Quality System"`;
@@ -1588,6 +2143,24 @@ Now write the complete technical proposal. Start with the Cover Letter. The eval
   let claudeError: string | null = null;
   if (isClaudeEnabled()) {
     try {
+      // TENDER_TOOL_USE_GENERATION path: when params.toolUse is set,
+      // route through the multi-turn tool-use loop so Claude can call
+      // search_company_knowledge / inspect_expert / inspect_project
+      // mid-write to verify evidence before making claims. Falls
+      // back to the single-call path when tool-use returns null.
+      if (params.toolUse) {
+        const toolResult = await generateWithClaudeTools(
+          prompt,
+          DEFAULT_PROPOSAL_SYSTEM_PROMPT,
+          params.toolUse.tools,
+          params.toolUse.executor,
+        );
+        if (toolResult) {
+          lastProposalProvider = "claude";
+          return toolResult;
+        }
+        console.warn("[ai] tool-use generation returned null — falling back to single-call Claude path.");
+      }
       const claudeResult = await generateWithClaude(prompt);
       if (claudeResult) {
         lastProposalProvider = "claude";
@@ -1855,13 +2428,13 @@ export async function generateProposalSectionsParallel(input: AIBidWriterInput, 
   const _tierNumForDeep = _tierForDeep === "1" ? 1 : _tierForDeep === "3" ? 3 : _tierForDeep === "4" ? 4 : 2;
   const deepMode = (process.env.PROPOSAL_DEEP_MODE || "").toLowerCase() === "false"
     ? false
-    : (process.env.PROPOSAL_DEEP_MODE || "").toLowerCase() === "true" || _tierNumForDeep >= 2;
+    : true;
 
   // Chunked mode: when a sectionFilter is provided the caller is making
   // one of 3 sequential browser-side calls (each its own Vercel function
   // invocation with a fresh 60s window). Use larger per-section token
   // budgets and skip deep-mode drill-down — the extra first-pass tokens
-  // (7,500 vs 3,500 for Section C on Tier 2) compensate for no drill-down.
+  // (7,500 vs 4,500 for Section C on Tier 2) compensate for no drill-down.
   const isChunked = sectionFilter !== undefined && sectionFilter.length > 0;
   const specs = buildProposalSectionSpecs(input, { deep: isChunked ? false : deepMode, chunked: isChunked });
   const filteredSpecs = isChunked ? specs.filter((s) => sectionFilter.includes(s.id)) : specs;

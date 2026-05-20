@@ -8,7 +8,7 @@
 
 import { NextResponse } from "next/server";
 import { requireUser, unauthorizedResponse, forbiddenResponse } from "../../../../lib/auth";
-import { getJob } from "../../../../lib/ai-jobs";
+import { getJob, recoverIfStuck } from "../../../../lib/ai-jobs";
 import { prisma, prismaReady } from "../../../../lib/prisma";
 
 export const dynamic = "force-dynamic";
@@ -19,6 +19,17 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 
   await prismaReady;
   const { id } = await params;
+  // Lazy stuck-job recovery: if this job has been RUNNING for longer
+  // than AI_JOB_STUCK_AFTER_MS (default 15 min), auto-fail it before
+  // returning. Stops the UI's polling loop from indefinitely showing
+  // "Worker status: RUNNING" / ASYNC_POLL_TIMEOUT when the worker
+  // crashed silently. The recovery is idempotent — a worker that
+  // finished between this read and the recovery update is not
+  // clobbered (status='RUNNING' guard in the WHERE clause).
+  await recoverIfStuck(id).catch(() => {
+    // Never let recovery errors block status reads; the UI continues
+    // to poll either way.
+  });
   const job = await getJob(id);
   if (!job) return NextResponse.json({ error: "Job not found" }, { status: 404 });
 

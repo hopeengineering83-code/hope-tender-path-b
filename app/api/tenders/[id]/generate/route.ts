@@ -7,6 +7,7 @@ import { promoteBestAvailableReviewedMatchesForGeneration } from "../../../../..
 import { applyActiveUploadedLetterheadToTenderDocuments } from "../../../../../lib/engine/apply-active-letterhead";
 import { rateLimit, AI_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import { buildSubmissionPlan, findExtraGeneratedDocuments, findMissingGeneratedDocuments, generatedDocumentSubmissionKey, hasExplicitSubmissionScope, plannedSubmissionTargetFiles, plannedSubmissionTargetKeys, type SubmissionPlanFile } from "../../../../../lib/engine/submission-plan";
+import { getCompanyIngestionReadiness } from "../../../../../lib/company-ingestion-readiness";
 import { polishBenchmarkOutput } from "../../../../../lib/engine/benchmark-output-polisher";
 import { cleanTenderTitle, cleanClientName, formatRequirementLine } from "../../../../../lib/engine/proposal-labels";
 import { logAction } from "../../../../../lib/audit";
@@ -14,12 +15,24 @@ import { extractRequestId } from "../../../../../lib/request-id";
 import { createJob, advanceJob, completeJob, failJob } from "../../../../../lib/job-store";
 import { createNotification } from "../../../../../lib/notifications";
 import { childLogger, reportError, time } from "../../../../../lib/observability";
-import { getCompanyIngestionReadiness } from "../../../../../lib/company-ingestion-readiness";
+import { mapGenerationError } from "../../../../../lib/engine/structured-generation-error";
+import { computeStoredMetadataPatch, listInvalidStoredFields } from "../../../../../lib/engine/sanitize-stored-metadata";
+import { isValidClientName } from "../../../../../lib/engine/metadata-validators";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
 
 type SupportDocKind = "EXPERT_CV" | "PROJECT_REFERENCES" | "METHODOLOGY" | "COMPANY_PROFILE" | "FINANCIAL_PLACEHOLDER" | "LEGAL_PLACEHOLDER" | "FORM_PLACEHOLDER" | "DECLARATION_PLACEHOLDER" | "ANNEX_PLACEHOLDER" | "SUBMISSION_RULES_PLACEHOLDER" | "SECTOR_TECHNICAL_SCOPE" | "GENERIC";
+
+// Backward-compat shim — delegates to the canonical validator so the
+// generate route blocks ALL invalid client names (empty, placeholder,
+// AND garbage TOC fragments) instead of just the placeholder list.
+// Before this change, a stored clientName of "references (where
+// available) Photos..." passed this check because the regex only
+// rejected "the client | unknown | n/a | ...".
+function hasRealClientName(value?: string | null): boolean {
+  return isValidClientName(value);
+}
 
 function criticalGapIsHardBlock(gap: { title: string; description: string; mitigationPlan: string | null }) {
   const text = `${gap.title} ${gap.description} ${gap.mitigationPlan ?? ""}`;
@@ -101,6 +114,10 @@ function classifySupportDoc(docName: string): SupportDocKind {
   return "GENERIC";
 }
 
+function isReplacementOriginalKind(kind: SupportDocKind): boolean {
+  return kind.endsWith("_PLACEHOLDER") || kind === "GENERIC";
+}
+
 function placeholderIntro(): string[] {
   return ["PLACEHOLDER FOR TENDER-ISSUED ORIGINAL.", "This file in the submission package is reserved for the tender-issued original document(s) listed below. Replace this placeholder before final submission with the signed / stamped / certified original(s) — do not submit this generated placeholder file."];
 }
@@ -140,15 +157,30 @@ async function fillPlannedSupportDocuments(tenderId: string, plannedFileKeys?: S
   const tender = await prisma.tender.findUnique({ where: { id: tenderId }, include: { requirements: true, expertMatches: { where: { isSelected: true }, include: { expert: true }, orderBy: { score: "desc" } }, projectMatches: { where: { isSelected: true }, include: { project: true }, orderBy: { score: "desc" } } } });
   if (!tender) return 0;
   const requirements = tender.requirements.map((r) => formatRequirementLine(r, 380));
-  const experts = tender.expertMatches.filter((m) => m.expert.trustLevel === "REVIEWED").map((m) => `${m.expert.fullName}${m.expert.title ? ` — ${m.expert.title}` : ""}${m.expert.yearsExperience ? ` | ${m.expert.yearsExperience}+ years` : ""}${m.expert.profile ? ` | ${shortText(m.expert.profile, 260)}` : ""}`);
-  const projects = tender.projectMatches.filter((m) => m.project.trustLevel === "REVIEWED").map((m) => `${m.project.name}${m.project.clientName ? ` — ${m.project.clientName}` : ""}${m.project.country ? ` | ${m.project.country}` : ""}${m.project.summary ? ` | ${shortText(m.project.summary, 300)}` : ""}`);
+  const experts = tender.expertMatches.filter((m) => m.expert && m.expert.trustLevel === "REVIEWED").map((m) => `${m.expert.fullName}${m.expert.title ? ` — ${m.expert.title}` : ""}${m.expert.yearsExperience ? ` | ${m.expert.yearsExperience}+ years` : ""}${m.expert.profile ? ` | ${shortText(m.expert.profile, 260)}` : ""}`);
+  const projects = tender.projectMatches.filter((m) => m.project && m.project.trustLevel === "REVIEWED").map((m) => `${m.project.name}${m.project.clientName ? ` — ${m.project.clientName}` : ""}${m.project.country ? ` | ${m.project.country}` : ""}${m.project.summary ? ` | ${shortText(m.project.summary, 300)}` : ""}`);
   const docs = await prisma.generatedDocument.findMany({ where: { tenderId }, select: { id: true, name: true, exactFileName: true, documentType: true, generationStatus: true, fileContent: true } });
   const incomplete = docs.filter((doc) => !isMainProposalLike(doc) && !(doc.generationStatus === "GENERATED" && doc.fileContent) && (!plannedFileKeys || plannedFileKeys.has(generatedDocumentSubmissionKey(doc))));
   for (const doc of incomplete) {
     const title = clean(doc.exactFileName || doc.name);
+    const kind = classifySupportDoc(title);
+    const replaceWithOriginal = isReplacementOriginalKind(kind);
     const cleanTitle = cleanTenderTitle(tender.title, { clientName: cleanClientName(tender.clientName, tender.description), description: tender.description });
     const fileContent = await makeSupportDocx(cleanTitle, title, supportSections(title, { tenderTitle: cleanTitle, requirements, experts, projects }));
-    await prisma.generatedDocument.update({ where: { id: doc.id }, data: { fileContent, generationStatus: "GENERATED", validationStatus: "PENDING", contentSummary: `Generated supporting package document for ${title} with distinct tender-specific content. Tender-issued attachments/forms remain subject to final submission review.`, updatedAt: new Date() } });
+    await prisma.generatedDocument.update({
+      where: { id: doc.id },
+      data: {
+        fileContent,
+        generationStatus: "GENERATED",
+        validationStatus: "PENDING",
+        reviewStatus: replaceWithOriginal ? "REPLACE_WITH_ORIGINAL" : "PENDING",
+        reviewNotes: replaceWithOriginal ? "DO NOT SUBMIT this generated placeholder. Replace it with the tender-issued original / signed / stamped / certified document before final export." : undefined,
+        contentSummary: replaceWithOriginal
+          ? `Generated replacement-control placeholder for ${title}. DO NOT SUBMIT: replace with the tender-issued original / signed / stamped / certified document before final export.`
+          : `Generated supporting package document for ${title} with distinct tender-specific content. Review before final submission.`,
+        updatedAt: new Date(),
+      },
+    });
   }
   return incomplete.length;
 }
@@ -165,10 +197,30 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const { id } = await params;
   const tender = await prisma.tender.findFirst({ where: { id, userId }, include: { requirements: true } });
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
+
+  // Defensive sanitisation — nullify any stored metadata that fails
+  // the canonical validators before generation reads it (theme detector,
+  // cover-letter renderer, AI prompts all consume tender.clientName /
+  // tender.reference / etc. directly). Without this layer, a tender
+  // whose user hasn't clicked the cleanup banner yet would still
+  // produce a proposal cover letter containing the garbage TOC text.
+  const invalidFields = listInvalidStoredFields(tender);
+  if (invalidFields.length > 0) {
+    const patch = computeStoredMetadataPatch(tender);
+    await prisma.tender.update({ where: { id: tender.id }, data: patch });
+    console.warn(`[generate] tender=${tender.id} sanitised ${invalidFields.length} invalid stored field(s) before generation: ${invalidFields.join(", ")}`);
+    for (const field of invalidFields) {
+      (tender as Record<string, unknown>)[field] = null;
+    }
+  }
+
   const company = await prisma.company.findUnique({ where: { userId }, select: { id: true } });
   if (!company) return NextResponse.json({ error: "Company profile required before generation.", code: "COMPANY_PROFILE_REQUIRED", nextAction: "OPEN_COMPANY_READINESS" }, { status: 422 });
-  const readiness = await getCompanyIngestionReadiness(company.id);
+  const requiresExperts = tender.requirements.some((req) => req.requirementType === "EXPERT");
+  const requiresProjects = tender.requirements.some((req) => req.requirementType === "PROJECT_EXPERIENCE");
+  const readiness = await getCompanyIngestionReadiness(company.id, { requireDocuments: true, requireReviewedExperts: requiresExperts, requireReviewedProjects: requiresProjects });
   if (!readiness.ingestionReady) return NextResponse.json({ error: "Generation blocked: company knowledge is not ready.", code: "INGESTION_NOT_READY", blockers: readiness.blockers, warnings: readiness.warnings, totals: readiness.totals, nextAction: "OPEN_COMPANY_READINESS" }, { status: 422 });
+  if (!hasRealClientName(tender.clientName)) return NextResponse.json({ error: "Generation blocked: client name is not set. Edit the tender and fill the Client Name field before generating proposal documents.", code: "CLIENT_NAME_REQUIRED", nextAction: "EDIT_TENDER" }, { status: 422 });
   if (tender.status === "NO_BID") return NextResponse.json({ error: "Generation blocked: this tender is marked NO_BID. Apply a BID or BID_WITH_CONDITIONS decision before generating proposal documents.", code: "NO_BID_BLOCK" }, { status: 409 });
   if (tender.requirements.length === 0) {
     return NextResponse.json({
@@ -177,6 +229,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       nextAction: "RUN_ENGINE",
     }, { status: 422 });
   }
+  const untracedMandatoryRequirements = tender.requirements.filter((req) => req.priority === "MANDATORY" && ((req.sourceConfidence ?? 0) <= 0));
+  if (untracedMandatoryRequirements.length > 0) return NextResponse.json({ error: `Generation blocked: ${untracedMandatoryRequirements.length} mandatory requirement(s) are not source-grounded yet.`, code: "UNTRACED_MANDATORY_REQUIREMENTS", requirements: untracedMandatoryRequirements.slice(0, 20).map((req) => ({ id: req.id, title: req.title })), nextAction: "RUN_ENGINE_AND_REVIEW_SOURCES" }, { status: 422 });
 
   const submissionPlan = buildSubmissionPlan({ id: tender.id, title: tender.title, exactFileNaming: tender.exactFileNaming, exactFileOrder: tender.exactFileOrder, pageLimit: tender.pageLimit, requirements: tender.requirements });
   const explicitSubmissionScope = hasExplicitSubmissionScope(tender);
@@ -202,26 +256,20 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const expertRequirementExists = await prisma.tenderRequirement.count({ where: { tenderId: id, requirementType: "EXPERT" } });
   const projectRequirementExists = await prisma.tenderRequirement.count({ where: { tenderId: id, requirementType: "PROJECT_EXPERIENCE" } });
   if (expertRequirementExists > 0 && selectedExpertMatches.length === 0) {
-    const code = totalExpertMatches === 0 ? "NO_EXPERT_MATCHES_FOUND" : "NO_EXPERT_MATCHES_SELECTED";
-    return NextResponse.json({
-      error: totalExpertMatches === 0
-        ? "Generation blocked: tender requires experts but no expert matches exist yet. Run Engine first to generate matches."
-        : "Generation blocked: tender requires experts but no expert matches are selected. Run Engine and review/select expert matches before generating.",
-      code,
-      totalExpertMatches,
-      nextAction: totalExpertMatches === 0 ? "RUN_ENGINE" : "REVIEW_MATCHES",
-    }, { status: 422 });
+    if (totalExpertMatches > 0) {
+      return NextResponse.json({ error: "Generation blocked: tender requires experts but no expert matches are selected. Run Engine and review/select expert matches before generating.", code: "NO_EXPERT_MATCHES_SELECTED", totalExpertMatches, nextAction: "REVIEW_MATCHES" }, { status: 422 });
+    }
+    if (readiness.totals.reviewedExperts === 0) {
+      return NextResponse.json({ error: "Generation blocked: tender requires experts but no expert matches exist and the company vault has no reviewed experts. Run Engine or review expert records first.", code: "NO_EXPERT_MATCHES_FOUND", totalExpertMatches: 0, nextAction: "RUN_ENGINE" }, { status: 422 });
+    }
   }
   if (projectRequirementExists > 0 && selectedProjectMatches.length === 0) {
-    const code = totalProjectMatches === 0 ? "NO_PROJECT_MATCHES_FOUND" : "NO_PROJECT_MATCHES_SELECTED";
-    return NextResponse.json({
-      error: totalProjectMatches === 0
-        ? "Generation blocked: tender requires project references but no project matches exist yet. Run Engine first to generate matches."
-        : "Generation blocked: tender requires project references but no project matches are selected. Run Engine and review/select project matches before generating.",
-      code,
-      totalProjectMatches,
-      nextAction: totalProjectMatches === 0 ? "RUN_ENGINE" : "REVIEW_MATCHES",
-    }, { status: 422 });
+    if (totalProjectMatches > 0) {
+      return NextResponse.json({ error: "Generation blocked: tender requires project references but no project matches are selected. Run Engine and review/select project matches before generating.", code: "NO_PROJECT_MATCHES_SELECTED", totalProjectMatches, nextAction: "REVIEW_MATCHES" }, { status: 422 });
+    }
+    if (readiness.totals.reviewedProjects === 0) {
+      return NextResponse.json({ error: "Generation blocked: tender requires project references but no project matches exist and the company vault has no reviewed projects. Run Engine or review project records first.", code: "NO_PROJECT_MATCHES_FOUND", totalProjectMatches: 0, nextAction: "RUN_ENGINE" }, { status: 422 });
+    }
   }
   if (selectedExpertMatches.length > 0 && reviewedExpertCount === 0 && expertRequirementExists > 0) return NextResponse.json({ error: `Generation blocked: ${selectedExpertMatches.length} expert(s) are selected but NONE have been reviewed. Go to the Knowledge Review page and review at least one expert before generating.`, code: "ALL_EXPERTS_UNREVIEWED", draftExperts: draftExperts.map((m) => m.expert.fullName) }, { status: 422 });
   if (selectedProjectMatches.length > 0 && reviewedProjectCount === 0 && projectRequirementExists > 0) return NextResponse.json({ error: `Generation blocked: ${selectedProjectMatches.length} project reference(s) are selected but NONE have been reviewed. Go to the Knowledge Review page and review at least one project before generating.`, code: "ALL_PROJECTS_UNREVIEWED", draftProjects: draftProjects.map((m) => m.project.name) }, { status: 422 });
@@ -244,7 +292,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     await time("generate.tender_documents", () => generateTenderDocuments(id, userId), { tenderId: id });
     advanceJob(job.id, "SAVE");
     const supportDocumentCount = await time("generate.fill_support_docs", () => fillPlannedSupportDocuments(id, plannedFileKeys), { tenderId: id });
-    if (supportDocumentCount > 0) warnings.push(explicitSubmissionScope ? `${supportDocumentCount} planned package document(s) were generated with distinct tender-specific content for export readiness.` : `${supportDocumentCount} remaining package document(s) were generated with distinct tender-specific content for export readiness.`);
+    if (supportDocumentCount > 0) warnings.push(explicitSubmissionScope ? `${supportDocumentCount} planned package document(s) were generated or marked for original replacement.` : `${supportDocumentCount} remaining package document(s) were generated or marked for original replacement.`);
     advanceJob(job.id, "LETTERHEAD");
     const letterheadAppliedCount = await applyActiveUploadedLetterheadToTenderDocuments(id, userId);
     if (letterheadAppliedCount > 0) warnings.push(`Uploaded Word letterhead applied to ${letterheadAppliedCount} generated DOCX file(s).`);
@@ -257,7 +305,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
     advanceJob(job.id, "VALIDATE");
     if (reviewedExpertCount > 0 || draftExperts.length > 0 || reviewedProjectCount > 0 || draftProjects.length > 0) await prisma.generatedDocument.updateMany({ where: { tenderId: id }, data: { reviewedExpertCount, draftExpertCount: draftExperts.length, reviewedProjectCount, draftProjectCount: draftProjects.length, updatedAt: new Date() } });
-    await logAction({ userId, action: "TENDER_GENERATED", entityType: "Tender", entityId: id, description: `Generated benchmark-quality documents for tender "${tender.title}" — ${reviewedExpertCount} reviewed experts, ${draftExperts.length} draft experts, ${reviewedProjectCount} reviewed projects, ${draftProjects.length} draft projects, ${supportDocumentCount} supporting package documents, ${letterheadAppliedCount} uploaded letterhead overlays, ${seniorReviewCriticals.length} senior-review gaps`, metadata: { tenderId: id, reviewedExpertCount, draftExpertCount: draftExperts.length, reviewedProjectCount, draftProjectCount: draftProjects.length, promotedExpertCount: promotion.promotedExpertCount, promotedProjectCount: promotion.promotedProjectCount, plannedRecordCount, supportDocumentCount, letterheadAppliedCount, seniorReviewGapCount: seniorReviewCriticals.length, explicitSubmissionScope, plannedTargetCount: plannedTargetFiles.length, missingPlanFileCount: missingPlanFiles.length, extraGeneratedFileCount: extraGeneratedDocs.length, readiness: readiness.totals, warnings }, requestId });
+    await logAction({ userId, action: "TENDER_GENERATED", entityType: "Tender", entityId: id, description: `Generated benchmark-quality documents for tender "${tender.title}" — ${reviewedExpertCount} reviewed experts, ${draftExperts.length} draft experts, ${reviewedProjectCount} reviewed projects, ${draftProjects.length} draft projects, ${supportDocumentCount} supporting/replacement-control package documents, ${letterheadAppliedCount} uploaded letterhead overlays, ${seniorReviewCriticals.length} senior-review gaps`, metadata: { tenderId: id, reviewedExpertCount, draftExpertCount: draftExperts.length, reviewedProjectCount, draftProjectCount: draftProjects.length, promotedExpertCount: promotion.promotedExpertCount, promotedProjectCount: promotion.promotedProjectCount, plannedRecordCount, supportDocumentCount, letterheadAppliedCount, seniorReviewGapCount: seniorReviewCriticals.length, explicitSubmissionScope, plannedTargetCount: plannedTargetFiles.length, missingPlanFileCount: missingPlanFiles.length, extraGeneratedFileCount: extraGeneratedDocs.length, readiness: readiness.totals, warnings }, requestId });
     const updatedTender = await prisma.tender.findFirst({ where: { id, userId }, include: { generatedDocuments: { orderBy: { exactOrder: "asc" } } } });
     const jobResult = { warnings, supportDocumentCount, letterheadAppliedCount, promotedExpertCount: promotion.promotedExpertCount, promotedProjectCount: promotion.promotedProjectCount };
     completeJob(job.id, jobResult);
@@ -266,6 +314,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   } catch (error) {
     failJob(job.id, error instanceof Error ? error.message : String(error));
     void reportError(error, { tenderId: id, userId, route: "/api/tenders/[id]/generate" });
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Document generation failed" }, { status: 500 });
+    // Gap 7 fix — structured error: { success: false, code, message,
+    // nextAction, diagnosticId, failedStage, blockerSummary } so the UI
+    // never has to display the bare "Generation failed." string.
+    // `error` is kept for backward-compatibility with older clients.
+    const mapped = mapGenerationError(error, { failedStage: "GENERATION_PIPELINE" });
+    return NextResponse.json(
+      { ...mapped.body, error: mapped.body.message, jobId: job.id },
+      { status: mapped.status },
+    );
   }
 }

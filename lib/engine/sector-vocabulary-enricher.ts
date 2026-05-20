@@ -123,8 +123,8 @@ function detectVocabulary(primarySector: string): VocabularyEntry[] {
   const sector = primarySector.toLowerCase();
   if (/health|hospital|medical|clinic/.test(sector)) return SECTOR_VOCABULARY.healthcare;
   if (/water|borehole|hydraulic|sanitary/.test(sector)) return SECTOR_VOCABULARY.water;
-  if (/road|bridge|highway|pavement|transport/.test(sector)) return SECTOR_VOCABULARY.road;
-  if (/urban|master plan|municipal/.test(sector)) return SECTOR_VOCABULARY.urban;
+  if (/road|bridge|highway|pavement/.test(sector)) return SECTOR_VOCABULARY.road;
+  if (/urban|master.?plan|municipal/.test(sector)) return SECTOR_VOCABULARY.urban;
   if (/environmental|esia|esmp|safeguard/.test(sector)) return SECTOR_VOCABULARY.environmental;
   if (/ict|software|digital|mis|erp/.test(sector)) return SECTOR_VOCABULARY.ict;
   if (/school|university|campus|education/.test(sector)) return SECTOR_VOCABULARY.education;

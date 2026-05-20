@@ -110,7 +110,7 @@ function methodologyForSector(primarySector: string, title: string): string[] {
       "Prepare final reports, annexes, monitoring tools and implementation controls.",
     ];
   }
-  if (/ICT|software|system|digital|database|platform|network|cyber|telecom|ERP|MIS/i.test(text)) {
+  if (/\bICT\b|software|system|digital|database|platform|network|cyber|telecom|\bERP\b|\bMIS\b/i.test(text)) {
     return [
       "Confirm users, workflows, data requirements, integrations, service levels, security requirements and acceptance criteria.",
       "Design the solution architecture, data model, implementation roadmap, governance model, security controls and support model.",

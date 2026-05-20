@@ -65,43 +65,104 @@ const REQUIRED_SECTIONS = [
   /declaration/i,
 ];
 
+// ─── Sector vocabulary with word-boundary-safe abbreviations ────────
+// Every 2-4 char abbreviation has \b around it. Without these:
+//   bare /IPC/i  matched "particIPC" / "principle" / "antIPCipate"
+//   bare /CBR/i  matched anywhere "cbr" appears as a substring
+//   bare /GIS/i  matched "GISt" / "longISt"
+//   bare /ESF/i  matched "ESFsf" / "esther's friend"
+//   bare /API/i  matched "rapid" / "happy" / "scaping"
+//   bare /UAT/i  matched "evaluation" / "situation" / "graduate"
+//   bare /SLA/i  matched "Islamabad" / "isolate" / "translation"
+// Over-scoring sector vocabulary on totally unrelated tenders.
+// Sector vocabularies expanded in this PR — more terms per sector
+// means the scorer is harder to game with thin sector veneer. Each
+// list now has 8–12 sector-distinctive terms (was 4–7). Word-boundary
+// guards keep 2–4 char abbreviations from matching substrings.
 const SECTOR_VOCAB: Record<string, RegExp[]> = {
-  healthcare: [/IPC/i, /PACS/i, /HEPA/i, /medical gas/i, /lead.*shield/i, /Legionella/i],
-  water: [/EPANET/i, /WaterCAD/i, /yield test/i, /EBCS/i, /chlorination/i],
-  road: [/ESAL/i, /CBR/i, /Marshall/i, /FIDIC/i, /AASHTO/i],
-  urban: [/GIS/i, /land.use zoning/i, /phasing strategy/i, /stakeholder consultation/i],
-  environmental: [/ESF/i, /ESMP/i, /mitigation hierarchy/i, /baseline data/i, /grievance/i],
-  ict: [/API/i, /UAT/i, /RBAC/i, /SLA/i, /backup|RTO|RPO/i],
-  education: [/pupil.ratio/i, /accessible/i, /climate.responsive/i, /fire egress/i],
-  energy: [/load forecast/i, /HOMER/i, /SCADA/i, /grid code/i, /single.line diagram/i, /generation.capacity/i],
-  agriculture: [/agronomic/i, /irrigation scheme/i, /drip.*irrigation/i, /value.chain/i, /FAO/i, /yield model/i],
-  mining: [/geotechnical/i, /slope stability/i, /JORC/i, /tailings/i, /blast design/i, /ore body/i],
-  transport: [/AADT/i, /level of service/i, /PCE/i, /berth/i, /container throughput/i, /AIS/i],
-  building: [/BIM/i, /MEP/i, /fire compartment/i, /HVAC/i, /BOQ/i, /structural.*analysis/i],
-  oil_gas: [/P&ID/i, /HAZOP/i, /wellhead/i, /pipeline integrity/i, /API\s+\d/i, /HSE.*plan/i],
-  institutional: [/Theory of Change/i, /organisational design/i, /capacity assessment/i, /HMIS/i, /MoU/i, /change management/i],
+  healthcare: [/\bIPC\b/i, /\bPACS\b/i, /\bHEPA\b/i, /medical gas/i, /lead.*shield/i, /Legionella/i, /\bHTM\b/i, /\bWHO\s+guideline/i, /\bbiomedical\s+equipment/i, /infection\s+prevention/i, /clinical\s+workflow/i, /\bnegative\s+pressure\b/i],
+  water: [/\bEPANET\b/i, /WaterCAD/i, /yield test/i, /\bEBCS\b/i, /chlorination/i, /pump\s+head/i, /transmission\s+main/i, /elevated\s+(?:reservoir|tank)/i, /water\s+demand\s+forecast/i, /non.revenue\s+water/i, /\bWHO\s+drinking[-\s]?water/i, /sanitary\s+sewer/i],
+  road: [/\bESAL\b/i, /\bCBR\b/i, /Marshall/i, /\bFIDIC\b/i, /\bAASHTO\b/i, /pavement\s+(?:design|thickness)/i, /sub.?grade/i, /asphalt\s+mix\s+design/i, /horizontal\s+alignment/i, /vertical\s+curve/i, /traffic\s+count/i, /right.of.way/i],
+  urban: [/\bGIS\b/i, /land.use zoning/i, /phasing strategy/i, /stakeholder consultation/i, /master.?plan/i, /density\s+(?:plan|study)/i, /public\s+realm/i, /transit.oriented/i, /participatory\s+planning/i, /informal\s+settlement/i, /\bSDG\s*11\b/i],
+  environmental: [/\bESF\b/i, /\bESMP\b/i, /mitigation hierarchy/i, /baseline data/i, /grievance/i, /\bESIA\b/i, /resettlement\s+action\s+plan/i, /biodiversity\s+offset/i, /cumulative\s+impact/i, /climate\s+(?:risk|resilience)/i, /carbon\s+(?:footprint|inventory)/i],
+  ict: [/\bAPI\b/i, /\bUAT\b/i, /\bRBAC\b/i, /\bSLA\b/i, /backup|\bRTO\b|\bRPO\b/i, /\bSDLC\b/i, /(?:CI|CD)\/(?:CI|CD)|continuous\s+(?:integration|deployment)/i, /micro.?service/i, /\bOWASP\b/i, /role.based\s+access/i, /data\s+model/i, /API\s+contract/i],
+  education: [/pupil.ratio/i, /accessible/i, /climate.responsive/i, /fire egress/i, /child.friendly/i, /universal\s+design/i, /(?:STEM|TVET)\b/i, /curriculum\s+alignment/i, /inclusive\s+education/i, /learning\s+outcome/i, /capitation\s+grant/i],
+  energy: [/load forecast/i, /HOMER/i, /SCADA/i, /grid code/i, /single.line diagram/i, /generation.capacity/i, /power\s+(?:purchase|factor)/i, /spinning\s+reserve/i, /short.circuit/i, /protection\s+coordination/i, /substation\s+layout/i, /renewable\s+integration/i],
+  agriculture: [/agronomic/i, /irrigation scheme/i, /drip.*irrigation/i, /value.chain/i, /\bFAO\b/i, /yield model/i, /soil\s+(?:fertility|sample)/i, /agro.ecological\s+zone/i, /cropping\s+(?:calendar|pattern)/i, /post.harvest/i, /(?:smallholder|outgrower)/i, /seed\s+system/i],
+  mining: [/geotechnical/i, /slope stability/i, /\bJORC\b/i, /tailings/i, /blast design/i, /ore body/i, /pit\s+optimi(?:s|z)ation/i, /heap\s+leach/i, /\bROM\b\s+pile/i, /grade\s+control/i, /resource\s+estimate/i, /closure\s+plan/i],
+  transport: [/\bAADT\b/i, /level of service/i, /\bPCE\b/i, /berth/i, /container throughput/i, /\bAIS\b/i, /modal\s+split/i, /freight\s+corridor/i, /(?:rail|road)\s+(?:loading|gauge)/i, /(?:hub|spoke)\s+network/i, /port\s+productivity/i],
+  building: [/\bBIM\b/i, /\bMEP\b/i, /fire compartment/i, /\bHVAC\b/i, /\bBOQ\b/i, /structural.*analysis/i, /(?:LEED|EDGE|BREEAM)/i, /thermal\s+(?:envelope|comfort)/i, /daylight(?:ing)?/i, /façade\s+system/i, /seismic\s+(?:design|loading)/i, /post.tensioned/i],
+  oil_gas: [/P&ID/i, /HAZOP/i, /wellhead/i, /pipeline integrity/i, /API\s+\d/i, /HSE.*plan/i, /flow\s+assurance/i, /flare\s+(?:stack|study)/i, /reservoir\s+model/i, /(?:upstream|midstream|downstream)/i, /pig\s+(?:run|launcher)/i, /surge\s+analysis/i],
+  institutional: [/Theory of Change/i, /organisational design/i, /capacity assessment/i, /\bHMIS\b/i, /\bMoU\b/i, /change management/i, /performance\s+management/i, /M&E\s+framework/i, /results.based/i, /stakeholder\s+mapping/i, /institutional\s+strengthening/i, /policy\s+coherence/i],
+  financial: [/\bKYC\b/i, /\bAML\b/i, /Basel/i, /credit risk/i, /\bIFRS\b/i, /prudential/i, /core banking/i, /\bMFI\b/i, /(?:digital|mobile)\s+wallet/i, /\bNPL\b\s+ratio/i, /capital\s+adequacy/i, /interchange\s+fee/i],
+  telecoms: [/spectrum/i, /base station/i, /LTE|5G|4G/i, /backhaul/i, /last.mile/i, /\bMVNO\b/i, /core network/i, /\bRAN\b/i, /(?:fibre|fiber)\s+(?:rollout|backbone)/i, /universal\s+service/i, /tower\s+co.?location/i, /spectrum\s+auction/i],
+  port: [/berth.*design|quay/i, /draft.*vessel/i, /harbor|harbour/i, /pilotage/i, /port master plan/i, /ship.*manifest/i, /terminal.*handling/i, /(?:TEU|teu)\s+(?:capacity|throughput)/i, /(?:RTG|STS)\s+crane/i, /yard\s+layout/i, /dredging\s+volume/i, /mooring\s+(?:dolphin|line)/i],
 };
 
 // Keep this list aligned with hasForbiddenWeakness() in proposal-benchmark-guard.ts.
 // The guard normalises/strips these; the scorer reports them as a quality penalty.
+//
+// Round 4 expansion: added 18 patterns covering common AI-trace
+// preambles ("I have prepared", "Below is", "Please find"),
+// politeness boilerplate ("we are excited to", "we are delighted"),
+// content-thin filler ("at the end of the day", "going forward",
+// "in this day and age"), and unsupported superlatives ("unparalleled",
+// "second to none", "unmatched"). The expanded list makes
+// `aiTraceFreedom` materially harder to game.
 const FORBIDDEN_PHRASES = [
+  // AI / model self-references
   /as an ai/i,
   /\blanguage model\b/i,
   /chatgpt/i,
   /openai/i,
+  /\banthropic\b/i,
+  /claude(?:\.ai)?/i,
+  /\bgemini\b/i,
+  // AI conversational artefacts
+  /\bcertainly[!.]/i,
+  /\bof course[!.]/i,
+  /\bi(?:'d| would) be happy to\b/i,
+  /\bi(?:'m| am) pleased to\b/i,
+  /\bi(?:'ve| have) prepared\b/i,
+  /\bi(?:'ll| will) (?:now\s+)?(?:provide|generate|create|draft|write)\b/i,
+  /\bbelow is (?:a|the|my)\b/i,
+  /\bplease find (?:attached|below|enclosed)\b/i,
+  /\bhere(?:'s| is) (?:a|the|my|your)\b/i,
+  // Placeholders and stubs
   /lorem ipsum/i,
   /\bplaceholder\b/i,
   /sample text/i,
   /\btodo\b/i,
   /\btbd\b/i,
   /to be determined/i,
+  /to be (?:added|filled|completed|provided)\b/i,
   /n\/a \(pending\)/i,
+  /\[INSERT[^\]]*\]/i,
+  /\[(?:PLACEHOLDER|NAME|DATE|TBD|ADD|ENTER|SPECIFY|YOUR)[^\]]{0,60}\]/i,
+  // Generic / boilerplate / unsupported superlatives
   /committed to excellence/i,
   /leading firm in the region/i,
   /team of qualified professionals/i,
   /we look forward to the opportunity/i,
-  /\[INSERT[^\]]*\]/i,
-  /\[(?:PLACEHOLDER|NAME|DATE|TBD|ADD|ENTER|SPECIFY|YOUR)[^\]]{0,60}\]/i,
+  /we (?:are )?(?:excited|delighted|honou?red) to (?:submit|present|offer)/i,
+  /it (?:is|would be) (?:an?\s+)?(?:honou?r|privilege) to/i,
+  /\bworld[\s-]class\b/i,
+  /\binnovative solutions?\b/i,
+  /\bstreamlined operations?\b/i,
+  /\benhanced efficiency\b/i,
+  /\bbest practices\b/i,
+  /\bstate[\s-]of[\s-]the[\s-]art\b/i,
+  /\bsecond to none\b/i,
+  /\b(?:unparalleled|unmatched|unrivalled|unrivaled)\b/i,
+  /\bproven track record\b/i,
+  /\bcutting[\s-]edge\b/i,
+  /\bsynergi(?:es|stic)\b/i,
+  // Content-thin filler
+  /\bat the end of the day\b/i,
+  /\bin this day and age\b/i,
+  /\bgoing forward,?\s+we\b/i,
+  /\bneedless to say\b/i,
+  /\bthat being said\b/i,
 ];
 
 function detectSector(primarySector: string): string {
@@ -123,7 +184,81 @@ function detectSector(primarySector: string): string {
   if (/transport|logistic|shipping|aviation|rail/.test(s)) return "transport";
   if (/building|construct|architect|structure|facility|facilities/.test(s)) return "building";
   if (/institution|reform|governance|capacity|public sector|ministry/.test(s)) return "institutional";
+  if (/finance|bank|micro.?finance|insurance|credit|lending|investment fund/.test(s)) return "financial";
+  if (/telecom|broadband|spectrum|mobile network|isp|telecommunications/.test(s)) return "telecoms";
+  if (/\bport\b|harbor|harbour|maritime|quay|berth|shipping terminal/.test(s)) return "port";
   return "generic";
+}
+
+/**
+ * Measure the depth of a section identified by its heading pattern.
+ * Returns a 0–1 multiplier: 1.0 when the section has substantive
+ * body content, falling toward 0 when the body is empty, just a
+ * heading, or contains only filler.
+ *
+ * Closes audit gap #7 (structureCompleteness is gameable — counts
+ * section presence, not depth). A section with just "# Section A\n\n
+ * TBD" used to score the same as a fully-developed section.
+ */
+function sectionDepthMultiplier(markdown: string, headingPattern: RegExp): number {
+  const headingMatch = markdown.match(headingPattern);
+  if (!headingMatch) return 0;
+  // Determine the heading level (# count) immediately preceding the
+  // match. The body of this section runs until the next heading at
+  // the SAME or HIGHER level — sub-headings (deeper #) belong to
+  // this section and must be counted as part of its body.
+  const matchIndex = headingMatch.index ?? 0;
+  const lineStart = markdown.lastIndexOf("\n", matchIndex - 1) + 1;
+  const linePrefix = markdown.slice(lineStart, matchIndex);
+  const headingLevelMatch = linePrefix.match(/^(#{1,6})\s+$/);
+  const headingLevel = headingLevelMatch ? headingLevelMatch[1].length : 1;
+  const startOffset = matchIndex + headingMatch[0].length;
+  const rest = markdown.slice(startOffset);
+  // Match a heading at level 1..headingLevel — sub-headings (level > headingLevel) are body content.
+  const siblingHeadingPattern = new RegExp(`\\n#{1,${headingLevel}}\\s+\\w`);
+  const nextHeadingMatch = rest.match(siblingHeadingPattern);
+  const body = nextHeadingMatch ? rest.slice(0, nextHeadingMatch.index ?? rest.length) : rest;
+  const cleaned = body
+    .replace(/\|[^\n]*\|/g, " ")     // strip table rows for "prose body" assessment
+    .replace(/^\s*[-*]\s+/gm, "")    // strip list bullets
+    .replace(/\s+/g, " ")
+    .trim();
+  // Filler-only bodies (TBD, To be confirmed, Bid-Team Action, etc.) don't count.
+  const fillerOnly = /^(?:tbd|to be (?:determined|confirmed|advised|added)|bid[\s-]team action[^.]*\.?|n\/a|none|placeholder|\[insert[^\]]*\])\s*\.?$/i.test(cleaned);
+  if (fillerOnly) return 0;
+  const length = cleaned.length;
+  if (length < 60) return 0;                   // single-sentence-or-less stub
+  if (length < 200) return 0.5;                // shallow body
+  if (length < 600) return 0.85;               // moderate body
+  return 1;                                    // substantive body
+}
+
+/**
+ * Count "substantive" table rows. Closes audit gap #7
+ * (tableCoverage counts tables, not whether they're useful).
+ *
+ * A row is substantive when at least 2 of its cells have >3 chars
+ * of non-filler content. The header row (separator row
+ * `|---|---|`) and rows containing only TBD / N/A / placeholders
+ * don't count toward useful coverage.
+ */
+function substantiveTableRowCount(markdown: string): number {
+  const rows = markdown.match(/^\|[^\n]+\|$/gm) ?? [];
+  let substantive = 0;
+  for (const row of rows) {
+    // Skip Markdown table separator rows (|---|---|).
+    if (/^\|\s*:?-{3,}/.test(row)) continue;
+    const cells = row.slice(1, -1).split("|").map((c) => c.trim());
+    let goodCells = 0;
+    for (const cell of cells) {
+      if (cell.length < 3) continue;
+      if (/^(?:tbd|n\/a|none|to be (?:determined|confirmed|advised)|placeholder|-+|—|–|x{2,})$/i.test(cell)) continue;
+      goodCells += 1;
+      if (goodCells >= 2) break;
+    }
+    if (goodCells >= 2) substantive += 1;
+  }
+  return substantive;
 }
 
 function paragraphHasEvidence(paragraph: string): boolean {
@@ -166,11 +301,18 @@ export function scoreProposalQuality(opts: {
   const weakAxes: string[] = [];
 
   // 1. Structure completeness (0–10)
-  const presentSections = REQUIRED_SECTIONS.filter((re) => re.test(md));
-  const structureCompleteness = Math.round((presentSections.length / REQUIRED_SECTIONS.length) * 10);
+  // Depth-weighted (gap #7): each present section contributes 0–1
+  // based on the actual body content. A section with only a heading
+  // or filler counts as 0; substantive prose counts as 1.
+  const sectionDepthMultipliers = REQUIRED_SECTIONS.map((re) => sectionDepthMultiplier(md, re));
+  const depthSum = sectionDepthMultipliers.reduce((sum, m) => sum + m, 0);
+  const structureCompleteness = Math.round((depthSum / REQUIRED_SECTIONS.length) * 10);
+  const presentSections = sectionDepthMultipliers.filter((m) => m > 0).length;
+  const shallowSections = sectionDepthMultipliers.filter((m) => m > 0 && m < 1).length;
   if (structureCompleteness < 7) {
     weakAxes.push("structureCompleteness");
-    notes.push(`Only ${presentSections.length} of ${REQUIRED_SECTIONS.length} required sections present.`);
+    const shallowNote = shallowSections > 0 ? ` (${shallowSections} present but shallow)` : "";
+    notes.push(`Only ${presentSections} of ${REQUIRED_SECTIONS.length} required sections present with substantive content${shallowNote}.`);
   }
 
   // 2. Evidence density (0–10)
@@ -179,25 +321,43 @@ export function scoreProposalQuality(opts: {
     .map((p) => p.replace(/\s+/g, " ").trim())
     .filter((p) => p.length > 80 && !p.startsWith("|") && !p.startsWith("#"));
   const withEvidence = paragraphs.filter(paragraphHasEvidence).length;
-  // Floor at 6 when fewer than 6 paragraphs exist — a short but focused
-  // proposal should not be penalised the same as a long evidence-thin one.
+  // Floor at 4 when fewer than 6 paragraphs exist — a short but focused
+  // proposal should not be penalised the same as a long evidence-thin one,
+  // but an evidence-free short proposal should still score below passing.
   const evidenceDensity = paragraphs.length === 0
     ? 5
     : paragraphs.length < 6
-      ? Math.max(6, Math.round((withEvidence / paragraphs.length) * 10))
+      ? Math.max(4, Math.round((withEvidence / paragraphs.length) * 10))
       : Math.round((withEvidence / paragraphs.length) * 10);
   if (evidenceDensity < 4) {
     weakAxes.push("evidenceDensity");
     notes.push(`Only ${withEvidence} of ${paragraphs.length} substantive paragraphs cite specific evidence (projects/values/licenses).`);
   }
 
-  // 3. Table coverage (0–10) — score by count of table heading prefixes
-  const tableMatches = (md.match(/^\|[^\n]+\|$/gm) ?? []).length;
+  // 3. Table coverage (0–10) — score by count of SUBSTANTIVE table
+  // rows + numbered sections. Substantive (gap #7): row must have at
+  // least 2 cells with non-filler content >3 chars. Header-only
+  // tables and rows full of TBD/N/A no longer inflate this axis.
+  const rawTableRowCount = (md.match(/^\|[^\n]+\|$/gm) ?? []).length;
+  const substantiveTableRows = substantiveTableRowCount(md);
   const tableSections = (md.match(/^#{2,3}\s+(?:A\.\d|B\.\d|C\.\d|D\.\d|E\.\d)/gm) ?? []).length;
-  const tableCoverage = Math.min(10, Math.round((tableMatches / 20) * 5 + (tableSections / 6) * 5));
+  // Section C sub-section count: minimum 6 C.2.x sub-sections are required.
+  // Fewer than 6 indicates the methodology is incomplete vs. the tender scope.
+  const sectionC2SubSections = (md.match(/^###\s+C\.2\.\d+/gm) ?? []).length;
+  const subSectionBonus = sectionC2SubSections >= 6 ? 1 : 0;
+  if (sectionC2SubSections > 0 && sectionC2SubSections < 6) {
+    weakAxes.push("tableCoverage");
+    notes.push(`Section C.2 has only ${sectionC2SubSections} sub-section(s) — minimum 6 required for benchmark quality.`);
+  }
+  // Divisor of 12 rows (was 20) — a well-structured proposal typically has 12+ rows
+  // across A.2 corporate table, B.2/B.3 project cards, C.3 work plan, C.4 QA table.
+  const tableCoverage = Math.min(10, Math.round((substantiveTableRows / 12) * 5 + (tableSections / 6) * 4) + subSectionBonus);
   if (tableCoverage < 5) {
     weakAxes.push("tableCoverage");
-    notes.push(`Limited tabular evidence: ${tableMatches} table rows across ${tableSections} numbered sections.`);
+    const fillerNote = rawTableRowCount > substantiveTableRows
+      ? ` (${rawTableRowCount - substantiveTableRows} additional row(s) ignored as filler/empty)`
+      : "";
+    notes.push(`Limited tabular evidence: ${substantiveTableRows} substantive table rows across ${tableSections} numbered sections${fillerNote}.`);
   }
 
   // 4. Sector vocabulary (0–10)

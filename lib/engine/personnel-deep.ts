@@ -430,6 +430,55 @@ function streamsForSector(sector: string): OrganogramStream[] {
       { name: "Stakeholder Engagement Stream", pickKeywords: ["stakeholder", "consultation"], members: 1 },
     ];
   }
+  if (/energy|power|solar|wind|grid|generation|transmission/.test(s)) {
+    return [
+      { name: "Power Systems Stream", pickKeywords: ["power", "electrical", "energy"], members: 3 },
+      { name: "Renewable / SCADA Stream", pickKeywords: ["solar", "wind", "scada", "control"], members: 2 },
+      { name: "Environmental & Permitting Stream", pickKeywords: ["environment", "esia"], members: 1 },
+    ];
+  }
+  if (/agri|irrigation|farm|crop|livestock|rural develop/.test(s)) {
+    return [
+      { name: "Irrigation Engineering Stream", pickKeywords: ["irrigation", "water", "hydraulic"], members: 3 },
+      { name: "Agronomy & Hydrology Stream", pickKeywords: ["agronomist", "hydro"], members: 2 },
+      { name: "Community & Social Stream", pickKeywords: ["social", "community", "stakeholder"], members: 1 },
+    ];
+  }
+  if (/mining|mineral|quarry|extracti/.test(s)) {
+    return [
+      { name: "Mining & Geology Stream", pickKeywords: ["mining", "geolog", "resource"], members: 3 },
+      { name: "Geotechnical & Tailings Stream", pickKeywords: ["geotechnical", "tailings"], members: 2 },
+      { name: "Environmental & Social Stream", pickKeywords: ["environment", "social"], members: 1 },
+    ];
+  }
+  if (/\bport\b|harbor|harbour|maritime|quay|berth/.test(s)) {
+    return [
+      { name: "Port / Maritime Engineering Stream", pickKeywords: ["port", "maritime", "coastal"], members: 3 },
+      { name: "Dredging & Marine Environment Stream", pickKeywords: ["dredge", "marine"], members: 2 },
+      { name: "Quantity Surveying Stream", pickKeywords: ["quantity", "qs"], members: 1 },
+    ];
+  }
+  if (/oil|gas|petroleum|pipeline|refinery|petrochemical/.test(s)) {
+    return [
+      { name: "Process Engineering Stream", pickKeywords: ["process", "oil", "gas"], members: 3 },
+      { name: "Process Safety & Integrity Stream", pickKeywords: ["hazop", "safety", "pipeline", "integrity"], members: 2 },
+      { name: "Instrumentation & Controls Stream", pickKeywords: ["instrument", "control"], members: 1 },
+    ];
+  }
+  if (/finance|bank|micro.?finance|insurance|credit|lending/.test(s)) {
+    return [
+      { name: "Financial Systems Stream", pickKeywords: ["finance", "banking", "financial"], members: 3 },
+      { name: "Compliance & IT Architecture Stream", pickKeywords: ["compliance", "it", "system"], members: 2 },
+      { name: "Change Management Stream", pickKeywords: ["change", "training"], members: 1 },
+    ];
+  }
+  if (/telecom|broadband|spectrum|mobile network|isp/.test(s)) {
+    return [
+      { name: "RF & Access Network Stream", pickKeywords: ["rf", "radio", "network"], members: 3 },
+      { name: "Backhaul & Core Stream", pickKeywords: ["backhaul", "core", "transmission"], members: 2 },
+      { name: "Regulatory & Licensing Stream", pickKeywords: ["regulatory", "spectrum"], members: 1 },
+    ];
+  }
   return [
     { name: "Lead Specialist Stream", pickKeywords: ["lead", "senior"], members: 3 },
     { name: "Technical Stream", pickKeywords: ["engineer", "specialist"], members: 2 },

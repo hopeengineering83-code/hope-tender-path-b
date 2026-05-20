@@ -47,7 +47,21 @@ export type AuditAction =
   | "TENDER_BID_OUTCOME_SET"
   // Maintenance: regenerate Expert CV DOCX files after the trace-stripper
   // fix landed in expert-cv-docx.ts. Triggered via /regenerate-cvs.
-  | "EXPERT_CV_REGENERATE";
+  | "EXPERT_CV_REGENERATE"
+  // Manual reconciliation of GeneratedDocument rows against the current
+  // submission plan (POST /api/tenders/[id]/reconcile-docs).
+  | "TENDER_DOCS_RECONCILED"
+  // Round 6 — deep-reasoning generation telemetry. Emitted once per
+  // proposal generation when TENDER_DEEP_REASONING is on and at least
+  // one deep-reasoning capability ran. Metadata carries:
+  //   - tenderId, generatedDocumentId (when known)
+  //   - comprehension: { criteriaCount, disqualifierCount, prohibitionCount, totalWeight }
+  //   - alignment: { alignmentCount, criterionCoverageCount }
+  //   - refinement: { applied, iterations, scoreLift }
+  //   - telemetry: { totalCalls, totalMs, byStep }
+  // Allows operators to query historical deep-reasoning runs without
+  // parsing console logs.
+  | "TENDER_DEEP_REASONING_RUN";
 
 export async function logAction(opts: {
   userId?: string;

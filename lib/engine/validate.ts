@@ -1,5 +1,7 @@
 import { prisma } from "../prisma";
 import { exactSelectionLimit } from "./scope-policy";
+import { buildDeterministicComprehension } from "./deterministic-prohibition-extractor";
+import { validateConstraints } from "./constraint-validator";
 
 export interface ValidationIssue {
   code: string;
@@ -99,6 +101,43 @@ export async function validateTender(tenderId: string): Promise<ValidationReport
   for (const doc of generatedDocs) {
     const textToCheck = [doc.contentSummary ?? "", doc.name, doc.exactFileName ?? ""].join(" ");
     if (hasPlaceholder(textToCheck)) issues.push({ code: "PLACEHOLDER_IN_DOCUMENT", severity: "BLOCK", message: `Document "${doc.name}" contains placeholder text that must be replaced.` });
+  }
+
+  // ─── Deterministic prohibition check (PR #397) ─────────────────────
+  // Scan the tender text for explicit prohibition language ("no JV",
+  // "no subcontracting", "no advance payment", etc.) and then verify
+  // the generated proposal markdown does not violate any. Runs WITHOUT
+  // AI — pure regex on both sides — so every user gets prohibition
+  // checking regardless of TENDER_DEEP_REASONING / Claude availability.
+  // The semantic comprehension extractor catches subtler cases when
+  // the flag is on; this deterministic path is the always-on baseline.
+  try {
+    const tenderText = [
+      tender.intakeSummary ?? "",
+      tender.description ?? "",
+      tender.analysisSummary ?? "",
+      tender.evaluationMethodology ?? "",
+    ].filter(Boolean).join("\n\n");
+    if (tenderText.trim().length > 0) {
+      const comprehension = buildDeterministicComprehension(tenderText);
+      if (comprehension && comprehension.prohibitions.length > 0) {
+        const proposalText = generatedDocs.map((d) => d.contentSummary ?? "").filter(Boolean).join("\n\n");
+        if (proposalText.trim().length > 0) {
+          const constraintResult = validateConstraints(comprehension, proposalText);
+          for (const violation of constraintResult.violations) {
+            issues.push({
+              code: violation.type === "prohibition" ? "PROHIBITION_VIOLATION" : "DISQUALIFIER_VIOLATION",
+              severity: violation.severity === "CRITICAL" ? "BLOCK" : "WARN",
+              message: `${violation.rule}. Evidence in proposal: "…${violation.evidence}…"${violation.location ? ` [in: ${violation.location}]` : ""}. Fix: ${violation.suggestion}`,
+            });
+          }
+        }
+      }
+    }
+  } catch (err) {
+    // Never let the prohibition check block validation; it's a
+    // best-effort safety net.
+    console.warn("[validate] Deterministic prohibition check failed (non-critical):", err instanceof Error ? err.message : err);
   }
 
   const requiredNames = safeParseArr(tender.exactFileNaming);
