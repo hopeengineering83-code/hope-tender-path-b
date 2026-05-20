@@ -3,6 +3,8 @@ import { getSession } from "../lib/auth";
 import { prisma, prismaReady } from "../lib/prisma";
 import { assessTenderAnalysisQuality } from "../lib/analysis-quality";
 import { assessMatchingQuality } from "../lib/matching-quality";
+import { ensureCompanyForUser } from "../lib/company-workspace";
+import { getCompanyIngestionReadiness } from "../lib/company-ingestion-readiness";
 
 function analysisSourceFromNotes(notes?: string | null) {
   const text = notes ?? "";
@@ -18,36 +20,33 @@ export async function AnalysisQualityPanel({ tenderId }: { tenderId: string }) {
   if (!userId) return null;
 
   await prismaReady;
-  // Load full tender shape so we can pass metadata + matching state into
-  // the analysis-quality assessor. Without these the score climbs to
-  // 100/100 even when matching is 0 and clientName is corrupted — the
-  // exact production bug from the May 16 screenshot where this panel
-  // said "Tender analysis appears usable" while the Bid Control Verdict
-  // and Generation Readiness panels both said the analysis was poor.
-  // PR #371 fixed the dedicated API route but missed this server-component
-  // path which calls assessTenderAnalysisQuality directly.
-  const tender = await prisma.tender.findFirst({
-    where: { id: tenderId, userId },
-    include: {
-      requirements: { orderBy: { createdAt: "asc" } },
-      files: { select: { extractedText: true, originalFileName: true } },
-      expertMatches: { include: { expert: { select: { trustLevel: true, fullName: true } } } },
-      projectMatches: { include: { project: { select: { trustLevel: true, name: true } } } },
-    },
-  });
+  const [company, tender] = await Promise.all([
+    ensureCompanyForUser(prisma, userId),
+    prisma.tender.findFirst({
+      where: { id: tenderId, userId },
+      include: {
+        requirements: { orderBy: { createdAt: "asc" } },
+        files: { select: { extractedText: true, originalFileName: true } },
+        expertMatches: { include: { expert: { select: { trustLevel: true, fullName: true } } } },
+        projectMatches: { include: { project: { select: { trustLevel: true, name: true } } } },
+      },
+    }),
+  ]);
   if (!tender) return null;
 
   const extractedChars = tender.files.reduce((sum, file) => sum + (file.extractedText?.length ?? 0), 0);
 
-  // Derive matching score first so the analysis-quality score below
-  // reflects matching state. The matching call here intentionally omits
-  // vault counts — even with vault evidence, analysis quality should
-  // recognise that NO tender-specific matches exist yet (matching=0
-  // means the engine hasn't produced rows tied to this tender).
+  // Pass vault counts so analysis-quality matching sub-score matches the
+  // matching-quality panel — both should show VAULT_AWAITS_ENGINE (−18)
+  // not NO_VAULT (−35) when reviewed vault evidence is ready but the
+  // engine hasn't been run on this tender yet.
+  const companyReadiness = await getCompanyIngestionReadiness(company.id, {}, prisma);
   const matchingQuality = assessMatchingQuality({
     requirements: tender.requirements,
     expertMatches: tender.expertMatches,
     projectMatches: tender.projectMatches,
+    vaultReviewedExperts: companyReadiness.totals.reviewedExperts,
+    vaultReviewedProjects: companyReadiness.totals.reviewedProjects,
   });
 
   const quality = assessTenderAnalysisQuality({
