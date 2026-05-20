@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSession } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
-import { assessMatchingQuality } from "../../../../../lib/matching-quality";
+import { assessMatchingQuality, isReadyForGenerationFromMatchingQuality } from "../../../../../lib/matching-quality";
 import { ensureCompanyForUser } from "../../../../../lib/company-workspace";
 import { getCompanyIngestionReadiness } from "../../../../../lib/company-ingestion-readiness";
 
@@ -35,7 +35,7 @@ export async function GET(
   // the production screenshot scenario. Without these counts the panel
   // hard-deducted -35-35 and produced 30/100 POOR while the Bid Control
   // Verdict (which DID pass vault counts) showed 64/100 WARNING.
-  const companyReadiness = await getCompanyIngestionReadiness(company.id, prisma);
+  const companyReadiness = await getCompanyIngestionReadiness(company.id, {}, prisma);
   const quality = assessMatchingQuality({
     requirements: tender.requirements,
     expertMatches: tender.expertMatches,
@@ -44,5 +44,10 @@ export async function GET(
     vaultReviewedProjects: companyReadiness.totals.reviewedProjects,
   });
 
-  return NextResponse.json({ tenderId: id, readyForGeneration: quality.severity !== "POOR", quality });
+  return NextResponse.json({
+    tenderId: id,
+    readyForMatchingAttempt: true,
+    readyForGeneration: isReadyForGenerationFromMatchingQuality(quality),
+    quality,
+  });
 }

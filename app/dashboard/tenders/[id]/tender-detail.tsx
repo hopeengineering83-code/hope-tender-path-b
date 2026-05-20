@@ -813,12 +813,12 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
   const projectMatchesExist = (tender.projectMatches?.length ?? 0) > 0;
   const totalExpertMatches = tender.expertMatches?.length ?? 0;
   const totalProjectMatches = tender.projectMatches?.length ?? 0;
-  const reviewedExpertMatches = tender.expertMatches?.filter((m) => m.expert?.trustLevel === "REVIEWED").length ?? 0;
-  const reviewedProjectMatches = tender.projectMatches?.filter((m) => m.project?.trustLevel === "REVIEWED").length ?? 0;
-  const hasRecoverableExpertSelection = reviewedExpertMatches > 0;
-  const hasRecoverableProjectSelection = reviewedProjectMatches > 0;
-  const hasReviewedExpertPath = !expertReqExists || selectedExpertCount === 0 || reviewedExpertMatches > 0;
-  const hasReviewedProjectPath = !projectReqExists || selectedProjectCount === 0 || reviewedProjectMatches > 0;
+  const selectedReviewedExpertMatches = tender.expertMatches?.filter((m) => m.isSelected && m.expert?.trustLevel === "REVIEWED").length ?? 0;
+  const selectedReviewedProjectMatches = tender.projectMatches?.filter((m) => m.isSelected && m.project?.trustLevel === "REVIEWED").length ?? 0;
+  const hasRecoverableExpertSelection = selectedReviewedExpertMatches > 0;
+  const hasRecoverableProjectSelection = selectedReviewedProjectMatches > 0;
+  const hasReviewedExpertPath = !expertReqExists || selectedExpertCount === 0 || selectedReviewedExpertMatches > 0;
+  const hasReviewedProjectPath = !projectReqExists || selectedProjectCount === 0 || selectedReviewedProjectMatches > 0;
   const canGenerateDocs = tender.requirements.length > 0
     && (!expertReqExists || selectedExpertCount > 0 || !expertMatchesExist || hasRecoverableExpertSelection)
     && (!projectReqExists || selectedProjectCount > 0 || !projectMatchesExist || hasRecoverableProjectSelection)
@@ -835,9 +835,9 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
           ? "Select at least one reviewed expert match before generating"
           : (projectReqExists && projectMatchesExist && selectedProjectCount === 0 && !hasRecoverableProjectSelection)
             ? "Select at least one reviewed project match before generating"
-            : (expertReqExists && selectedExpertCount > 0 && reviewedExpertMatches === 0)
+            : (expertReqExists && selectedExpertCount > 0 && selectedReviewedExpertMatches === 0)
               ? "Review at least one selected expert before generating"
-              : (projectReqExists && selectedProjectCount > 0 && reviewedProjectMatches === 0)
+              : (projectReqExists && selectedProjectCount > 0 && selectedReviewedProjectMatches === 0)
                 ? "Review at least one selected project before generating"
                 : criticalHardBlockExists
                   ? "Resolve critical hard blockers before generating"

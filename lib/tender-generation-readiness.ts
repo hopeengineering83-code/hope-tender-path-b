@@ -4,6 +4,7 @@ import { getCompanyIngestionReadiness, type CompanyIngestionReadiness } from "./
 import { assessTenderAnalysisQuality, type AnalysisQualityReport } from "./analysis-quality";
 import { assessMatchingQuality, type MatchingQualityReport } from "./matching-quality";
 import { isValidClientName, getClientNameStatus } from "./engine/metadata-validators";
+import { buildSubmissionPlan, findExtraGeneratedDocuments, findMissingGeneratedDocuments } from "./engine/submission-plan";
 
 export type GenerationReadinessItem = {
   code: string;
@@ -32,6 +33,9 @@ export type TenderGenerationReadiness = {
    * the "Generate Full Proposal" button — never use supportPackageReady.
    */
   fullProposalReady: boolean;
+  readyForAnySafeGeneration: boolean;
+  readyForFinalExport: boolean;
+  matchingComplete: boolean;
   /**
    * Reasons full-proposal generation is blocked (subset of blockers + warnings).
    * Surfaced separately so the UI can render a clear "NOT READY because..."
@@ -53,6 +57,10 @@ export type TenderGenerationReadiness = {
     reviewedProjectMatches: number;
     selectedProjects: number;
     reviewedSelectedProjects: number;
+    activeGeneratedDocuments: number;
+    requiredPlannedFiles: number;
+    missingPlannedFiles: number;
+    extraGeneratedFiles: number;
   };
   companyReadiness: CompanyIngestionReadiness;
   analysisQuality: AnalysisQualityReport;
@@ -104,6 +112,19 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
       where: { id: tenderId, userId },
       include: {
         requirements: true,
+        generatedDocuments: {
+          where: { generationStatus: { not: "SUPERSEDED" } },
+          select: {
+            id: true,
+            name: true,
+            documentType: true,
+            exactFileName: true,
+            exactOrder: true,
+            format: true,
+            generationStatus: true,
+            fileContent: true,
+          },
+        },
         complianceGaps: { where: { isResolved: false }, select: { title: true, description: true, mitigationPlan: true, severity: true } },
         expertMatches: { include: { expert: { select: { trustLevel: true, fullName: true } } } },
         projectMatches: { include: { project: { select: { trustLevel: true, name: true } } } },
@@ -113,7 +134,11 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
 
   if (!tender) return null;
 
-  const companyReadiness = await getCompanyIngestionReadiness(company.id, client);
+  const companyReadiness = await getCompanyIngestionReadiness(company.id, {}, client);
+  const generatedDocuments = tender.generatedDocuments ?? [];
+  const submissionPlan = buildSubmissionPlan(tender);
+  const missingPlanFiles = findMissingGeneratedDocuments(submissionPlan, generatedDocuments);
+  const extraGeneratedFiles = findExtraGeneratedDocuments(submissionPlan, generatedDocuments);
   // Matching quality first so we can feed its score into analysis quality —
   // that closes the "analysis says 100/100 while matching says 0/100" bug.
   const matchingQuality = assessMatchingQuality({
@@ -178,6 +203,12 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
   }
   if (tender.requirements.length === 0) {
     blockers.push({ code: "NO_REQUIREMENTS", message: "No tender requirements are extracted. Run AI Analyze / Run Engine first, or add requirements manually.", nextAction: "RUN_ENGINE" });
+  }
+  if (missingPlanFiles.length > 0) {
+    blockers.push({ code: "MISSING_PLANNED_FILES", message: `${missingPlanFiles.length} planned submission file(s) are missing. Generate missing planned files before final readiness.`, nextAction: "GENERATE_MISSING_PLANNED_FILES" });
+  }
+  if (extraGeneratedFiles.length > 0) {
+    warnings.push({ code: "EXTRA_GENERATED_FILES", message: `${extraGeneratedFiles.length} generated file(s) are outside the current submission plan and should be reconciled.`, nextAction: "RECONCILE_DOCUMENTS" });
   }
 
   const hardBlocks = tender.complianceGaps.filter((gap) => gap.severity === "CRITICAL" && criticalGapIsHardBlock(gap));
@@ -385,11 +416,19 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
 
   const supportPackageReady = blockers.length === 0;
   const fullProposalReady = fullProposalBlockers.length === 0;
+  const readyForAnySafeGeneration = supportPackageReady || fullProposalReady;
+  const matchingComplete = matchingQuality.state === "MATCHES_REVIEWED";
+  const readyForFinalExport = fullProposalReady;
 
   return {
-    ready: supportPackageReady,
+    // Legacy flag retained for compatibility; mapped to full-proposal gate
+    // to avoid false-green interpretations in callers.
+    ready: fullProposalReady,
     supportPackageReady,
     fullProposalReady,
+    readyForAnySafeGeneration,
+    readyForFinalExport,
+    matchingComplete,
     fullProposalBlockers,
     tenderId,
     blockers,
@@ -406,6 +445,10 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
       reviewedProjectMatches: reviewedProjectMatches.length,
       selectedProjects: selectedProjects.length,
       reviewedSelectedProjects: reviewedSelectedProjects.length,
+      activeGeneratedDocuments: generatedDocuments.length,
+      requiredPlannedFiles: submissionPlan.files.filter((f) => f.required).length,
+      missingPlannedFiles: missingPlanFiles.length,
+      extraGeneratedFiles: extraGeneratedFiles.length,
     },
     companyReadiness,
     analysisQuality,
