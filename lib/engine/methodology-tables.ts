@@ -273,6 +273,42 @@ function sectorPhasingRows(sector: string): PhasingRow[] {
       { phase: "5. Final Account & Closeout", deliverables: "Final BOQ reconciliation; agreed final account statement; outstanding claims settlement; certificate of substantial completion; lessons-learned report", duration: "Weeks N to N+8", responsible: "Contract Administrator" },
     ];
   }
+  if (/heritage|conservation|museum|historic|adaptive.*reuse|heritage.*renovation/i.test(s)) {
+    return [
+      { phase: "1. Condition Survey & Conservation Assessment", deliverables: "Measured survey of existing structure; condition assessment report (structural, fabric, services); significance assessment; conservation philosophy statement; hazardous materials survey", duration: "Weeks 1–4", responsible: "Heritage Conservation Specialist + Structural Engineer" },
+      { phase: "2. Conservation Plan & Design", deliverables: "Conservation plan; structural stabilisation design; architectural restoration drawings; MEP upgrade design; material specification using reversible/compatible materials; planning/heritage authority pre-submission", duration: "Weeks 5–12", responsible: "Lead Heritage Architect" },
+      { phase: "3. Tender Documents & Approvals", deliverables: "Full tender package (drawings, specs, BOQ, conservation method statements); planning/heritage authority approval certificate; stakeholder consultation records", duration: "Weeks 13–16", responsible: "Lead Heritage Architect" },
+      { phase: "4. Conservation Works Supervision", deliverables: "Specialist contractor supervision with material sample approval; conservation works monitoring log; NCR register; progress reports; photographic record", duration: "Construction window", responsible: "Resident Heritage Architect + Structural Inspector" },
+      { phase: "5. Completion & Documentation", deliverables: "As-built conservation drawings; photographic archive (before/after); updated condition report; maintenance manual; completion certificate; handover to cultural authority", duration: "Weeks N to N+6", responsible: "Heritage Conservation Specialist" },
+    ];
+  }
+  if (/industrial|manufactur|factory|abattoir|processing.*plant|production.*facilit|warehouse.*industrial/i.test(s)) {
+    return [
+      { phase: "1. Feasibility & Process Brief", deliverables: "Feasibility study; production process flow diagram; utility demand assessment (power, water, compressed air, waste); site suitability report; preliminary layout", duration: "Weeks 1–3", responsible: "Project Principal + Process Specialist" },
+      { phase: "2. Detailed Design", deliverables: "Architectural/structural/MEP design package; industrial flooring specification; loading dock design; HVAC/exhaust ventilation system; fire suppression layout; hazardous materials management plan", duration: "Weeks 4–12", responsible: "Lead Structural Engineer + MEP Engineers" },
+      { phase: "3. Regulatory & Environmental Approvals", deliverables: "Environmental permit application package; effluent treatment design; waste management plan; occupational safety assessment; EIA/ESIA if required", duration: "Weeks 10–16", responsible: "Environmental Lead" },
+      { phase: "4. Tender Documents & Procurement", deliverables: "Full tender package (BOQ, drawings, specs); equipment procurement list; factory acceptance test (FAT) requirements", duration: "Weeks 17–20", responsible: "Lead Engineer" },
+      { phase: "5. Construction Supervision & Commissioning", deliverables: "Structural hold-point inspections; equipment installation supervision; process commissioning tests; occupational health and safety audit; training of operators; as-built drawings", duration: "Construction window + 4 weeks", responsible: "Resident Engineer" },
+    ];
+  }
+  if (/high.rise|high_rise|multi.stor|tower.*building|mixed.use.*tower|\bG\+\d{2,}\b|basement.*podium/i.test(s)) {
+    return [
+      { phase: "1. Feasibility & Concept Design", deliverables: "Massing study; floor plate efficiency analysis; vertical transport (lift/car lift) concept; structural system selection (shear wall/core/frame); MEP riser strategy; preliminary BOQ (order of magnitude)", duration: "Weeks 1–4", responsible: "Lead Architect + Structural Lead" },
+      { phase: "2. Detailed Structural & Architectural Design", deliverables: "Full architectural design (all floors, facades, roof); structural analysis (ETABS/SAP2000, seismic/wind load); shear wall and core layout; transfer beam/slab design; foundation design (mat/pile)", duration: "Weeks 5–16", responsible: "Lead Structural Engineer + Architect" },
+      { phase: "3. MEP & Specialist Systems Design", deliverables: "MEP design package; fire alarm and suppression; BMS; car lift system design; aluminium curtain wall specification; generator/UPS sizing; plumbing riser diagram", duration: "Weeks 12–18", responsible: "MEP Engineers + Lift Specialist" },
+      { phase: "4. Regulatory Approvals & Tender Documents", deliverables: "Structural calculation submission to AA City/regional authority; full tender package (drawings, BOQ, specs); bid evaluation report", duration: "Weeks 19–24", responsible: "Lead Engineer + QS" },
+      { phase: "5. Construction Supervision", deliverables: "Foundation and shear wall hold-point inspections; structural concrete testing (cube test, rebar pull-out); curtain wall installation inspection; lift installation acceptance test; progress reports; as-built drawings", duration: "Construction period", responsible: "Resident Engineer + Structural Inspector" },
+    ];
+  }
+  if (/hotel|hospitality|resort|lodge|guesthouse|five.star|luxury.*accommodat/i.test(s)) {
+    return [
+      { phase: "1. Concept & Feasibility", deliverables: "Feasibility study (market demand, RevPAR analysis, development program); concept design (room mix, F&B, BOH layout); landscape/pool/spa concept; preliminary BOQ", duration: "Weeks 1–4", responsible: "Lead Architect + Project Principal" },
+      { phase: "2. Design Development", deliverables: "Full architectural design (all rooms, public areas, back-of-house); structural system; interior design concept (finishes, FF&E schedule, lighting); brand-standard compliance checklist", duration: "Weeks 5–14", responsible: "Lead Architect + Interior Designer" },
+      { phase: "3. MEP & Specialist Systems", deliverables: "MEP package; HVAC for guestrooms (fan coil/VRF); kitchen ventilation; pool/spa mechanical; audiovisual and guest technology design; access control and security systems", duration: "Weeks 12–18", responsible: "MEP Engineers" },
+      { phase: "4. Tender Documents & Procurement", deliverables: "Full tender package (drawings, BOQ, specs); FF&E procurement schedule; brand operator sign-off; construction supervision plan", duration: "Weeks 19–22", responsible: "Lead Architect + QS" },
+      { phase: "5. Construction Supervision & Pre-Opening", deliverables: "Construction supervision with room-by-room snagging protocol; FF&E delivery inspection; MEP commissioning tests; mock room inspection; pre-opening punch list clearance; handover pack", duration: "Construction period + 6 weeks", responsible: "Resident Engineer + Interior Architect" },
+    ];
+  }
   // Generic
   return [
     { phase: "1. Inception", deliverables: "Inception report; ToR confirmation; data-collection plan; risk register baseline", duration: "Weeks 1–2", responsible: "Project Principal" },
@@ -404,6 +440,34 @@ function sectorRiskRows(sector: string): RiskRow[] {
       { category: "Commercial", risk: "Variation scope disputed by contractor", likelihood: "Medium", impact: "High", mitigation: "Issue Engineer's Instructions before work starts; agree quantum before next IPC", owner: "Contract Administrator" },
       { category: "Commercial", risk: "Final account settlement delayed by unresolved claims", likelihood: "Medium", impact: "Medium", mitigation: "Claims resolution schedule agreed at practical completion; FIDIC dispute board as backstop", owner: "Contract Administrator" },
       { category: "Budget", risk: "Cost overrun breaches approved project budget", likelihood: "Medium", impact: "High", mitigation: "Monthly forecast-final-cost report to Employer; early-warning system per FIDIC Clause 8.3", owner: "Contract Administrator" },
+    ];
+  }
+  if (/heritage|conservation|museum|historic|adaptive.*reuse/i.test(s)) {
+    return [
+      ...generic,
+      { category: "Material Compatibility", risk: "Inappropriate repair mortar carbonates original masonry causing irreversible damage", likelihood: "Medium", impact: "High", mitigation: "Material compatibility testing (XRF/petrographic) at inception; conservation-grade lime mortar specified as default; no OPC in contact with historic fabric", owner: "Heritage Conservation Specialist" },
+      { category: "Regulatory", risk: "Heritage authority rejects proposed intervention — rework required", likelihood: "Low", impact: "High", mitigation: "Pre-application meeting with heritage authority at conservation-plan stage; conservation philosophy statement approved before design freeze", owner: "Lead Heritage Architect" },
+    ];
+  }
+  if (/industrial|manufactur|factory|abattoir|processing.*plant|warehouse.*industrial/i.test(s)) {
+    return [
+      ...generic,
+      { category: "Process Safety", risk: "Industrial occupancy classification change triggers mandatory fire-suppression upgrade", likelihood: "Medium", impact: "High", mitigation: "Occupancy and hazardous materials assessment at inception; fire-safety engineer in design team from Phase 1; regulation compliance checklist updated at every design gate", owner: "MEP/Fire-Safety Lead" },
+      { category: "Commissioning", risk: "Equipment installation sequence error delays production start", likelihood: "Medium", impact: "High", mitigation: "Detailed commissioning sequencing plan; factory acceptance test (FAT) held before delivery; start-up engineer on site for first production run", owner: "Resident Engineer" },
+    ];
+  }
+  if (/high.rise|high_rise|multi.stor|tower.*building|mixed.use.*tower|\bG\+\d{2,}\b|basement.*podium/i.test(s)) {
+    return [
+      ...generic,
+      { category: "Structural", risk: "Seismic or wind load exceedance detected after structural analysis — re-design required", likelihood: "Low", impact: "High", mitigation: "ETABS/SAP2000 analysis includes Ethiopian seismic zone and topographic wind factor; peer review by independent structural engineer before construction documents", owner: "Lead Structural Engineer" },
+      { category: "Authority Approval", risk: "Structural calculations rejected by AA City Authority — re-submission delay", likelihood: "Medium", impact: "High", mitigation: "Pre-submission coordination meeting with reviewing authority; calculations package formatted to authority checklist; 3-week re-submission buffer in programme", owner: "Lead Structural Engineer" },
+    ];
+  }
+  if (/hotel|hospitality|resort|lodge|guesthouse|five.star|luxury.*accommodat/i.test(s)) {
+    return [
+      ...generic,
+      { category: "Brand Standard", risk: "Design fails brand operator technical standards review — costly redesign", likelihood: "Medium", impact: "High", mitigation: "Brand technical standards review at concept stage and 60% design stage; compliance matrix tracked against brand checklist throughout", owner: "Lead Architect" },
+      { category: "FF&E", risk: "Long-lead furniture/fixture/equipment items not ordered early enough — delay pre-opening", likelihood: "Medium", impact: "High", mitigation: "FF&E schedule agreed at design development stage; procurement lead times flagged in programme; provisional sum provisions for critical items", owner: "Interior Architect + Project Manager" },
     ];
   }
   return generic;

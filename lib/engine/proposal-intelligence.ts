@@ -355,6 +355,58 @@ export const PROPOSAL_THEMES: ProposalTheme[] = [
       "contract closeout: release of retention, performance bond discharge recommendation, and lessons-learned report",
     ],
   },
+  {
+    code: "HERITAGE_CONSERVATION",
+    label: "Heritage Conservation & Adaptive Reuse",
+    triggers: [/heritage/i, /conservation/i, /museum/i, /historic building/i, /adaptive reuse/i, /restoration/i, /historic fabric/i],
+    proofTerms: [/ICOMOS/i, /lime mortar/i, /conservation plan/i, /significance/i, /heritage authority/i, /photogrammetry/i, /reversible/i, /listed building/i],
+    methodologyBullets: [
+      "Condition survey & significance assessment using ICOMOS principles — structural, fabric, and services condition rated and mapped",
+      "Conservation philosophy statement aligning proposed interventions with reversibility and minimum-intervention doctrine",
+      "Material-compatibility testing (XRF / petrographic) before specification of repair mortars and consolidants",
+      "Three-gate design review with heritage authority: conservation plan → tender documents → construction phase supervision",
+      "Post-conservation documentation: photogrammetric 3D archive, updated condition report, maintenance manual, handover to cultural authority",
+    ],
+  },
+  {
+    code: "INDUSTRIAL_MANUFACTURING",
+    label: "Industrial & Manufacturing Facilities",
+    triggers: [/industrial/i, /manufactur/i, /factory/i, /abattoir/i, /processing plant/i, /production facilit/i, /warehouse.*industrial/i],
+    proofTerms: [/process flow/i, /FAT/i, /effluent/i, /EHS/i, /OHSAS/i, /lean/i, /VSM/i, /commissioning/i, /cleaner production/i],
+    methodologyBullets: [
+      "Process brief and production-flow analysis (value-stream mapping) before layout design — lean principles embedded in material-flow corridors",
+      "Integrated design package: industrial structural design, HVAC/exhaust ventilation, industrial flooring, fire suppression, effluent treatment",
+      "Regulatory and environmental approvals: EIA/ESIA, effluent treatment design to Ethiopian EPA/WHO standards, occupational safety assessment",
+      "Factory acceptance test (FAT) protocol for all production equipment; commissioning sequencing plan; operator training programme",
+      "Digital 3D plant model for clash detection and installation sequencing; as-built drawings for O&M manual",
+    ],
+  },
+  {
+    code: "HIGH_RISE_BUILDINGS",
+    label: "High-Rise & Multi-Storey Buildings",
+    triggers: [/high.rise/i, /high_rise/i, /multi.stor/i, /tower.*building/i, /mixed.use.*tower/i, /G\+\d{2,}/i, /basement.*podium/i, /tall building/i],
+    proofTerms: [/ETABS/i, /SAP2000/i, /shear wall/i, /seismic/i, /curtain wall/i, /post.tension/i, /BIM/i, /LOD 300/i, /pile foundation/i, /mat foundation/i],
+    methodologyBullets: [
+      "Structural system selection (shear wall / core-frame / hybrid) with ETABS/SAP2000 analysis incorporating Ethiopian seismic zone and wind loads per EBCS/ES EN 1998",
+      "BIM-coordinated design at LOD 300+: architecture, structure, and MEP clash detection eliminates field RFIs for riser routing and structural penetrations",
+      "Independent structural peer review before construction documents; structural calculation package formatted to AA City Authority checklist",
+      "Specialist systems integration: aluminium curtain wall specification, lift/car-lift design, BMS, fire alarm and suppression, generator/UPS sizing",
+      "Construction supervision with hold-point inspections at foundation, shear walls, and curtain wall installation; concrete cube tests and rebar pull-out at every pour",
+    ],
+  },
+  {
+    code: "HOSPITALITY_TOURISM",
+    label: "Hospitality & Tourism Facilities",
+    triggers: [/hotel/i, /hospitality/i, /resort/i, /lodge/i, /guesthouse/i, /five.star/i, /luxury.*accommodat/i, /tourism.*facilit/i],
+    proofTerms: [/FF&E/i, /brand standard/i, /RevPAR/i, /guestroom/i, /back.of.house/i, /BOH/i, /mock.*room/i, /pre.opening/i, /GSTC/i, /Green Globe/i],
+    methodologyBullets: [
+      "Feasibility and development programme: room mix, F&B concept, BOH efficiency analysis, RevPAR market benchmarking, preliminary BOQ",
+      "Brand-standard compliance matrix embedded from concept design; mock guestroom constructed and approved before full roll-out of room finishes",
+      "Interior design and FF&E specification: finishes schedule, lighting design, furniture layouts, brand procurement schedule with lead-time tracking",
+      "MEP specialist systems: VRF/fan-coil guestroom HVAC, kitchen ventilation, pool/spa mechanical, AV and guest-technology design, access control",
+      "Pre-opening supervision: room-by-room snagging protocol, MEP commissioning tests, brand-operator punch list clearance, handover pack",
+    ],
+  },
 ];
 
 // ─── Scoring ──────────────────────────────────────────────────────────────────
@@ -396,6 +448,10 @@ function projectScore(project: ProjectLite, themes: ProposalTheme[], tenderText:
   if (/interior design|fit[- ]?out|space planning|finishes|joinery/i.test(text) && /interior design|fit[- ]?out|space planning|finishes|joinery/i.test(tenderText)) score += 10;
   if (/construction supervision|resident engineer|site supervision/i.test(text) && /supervision|resident engineer|site.*management/i.test(tenderText)) score += 10;
   if (/contract administration|FIDIC|variation order|payment certificate/i.test(text) && /contract administration|FIDIC|variation/i.test(tenderText)) score += 10;
+  if (/heritage|conservation|museum|historic|adaptive.*reuse/i.test(text) && /heritage|conservation|museum|historic|adaptive.*reuse/i.test(tenderText)) score += 15;
+  if (/industrial|manufactur|factory|abattoir|processing.*plant/i.test(text) && /industrial|manufactur|factory|abattoir|processing.*plant/i.test(tenderText)) score += 15;
+  if (/high.rise|multi.stor|tower.*building|basement.*podium/i.test(text) && /high.rise|multi.stor|tower.*building|basement.*podium/i.test(tenderText)) score += 15;
+  if (/hotel|hospitality|resort|lodge|guesthouse|five.star/i.test(text) && /hotel|hospitality|resort|lodge|guesthouse/i.test(tenderText)) score += 15;
   // Contract value bonus (bigger projects = stronger institutional evidence).
   // Guard against contractValue < 1 — log10 returns negative for sub-unit
   // values, which would penalise projects stored in fractional units.
@@ -433,6 +489,10 @@ function expertScore(expert: ExpertLite, themes: ProposalTheme[], tenderText: st
   if (/interior designer|interior architect|space planner|fit[- ]?out.*lead/i.test(text) && /interior design|fit[- ]?out|space planning/i.test(tenderText)) score += 10;
   if (/resident engineer|supervising engineer|site engineer|quality inspector/i.test(text) && /supervision|resident engineer|site.*management/i.test(tenderText)) score += 10;
   if (/contract administrator|FIDIC.*engineer|claims.*manager|quantity surveyor/i.test(text) && /contract administration|FIDIC|variation|claim/i.test(tenderText)) score += 10;
+  if (/heritage.*specialist|conservation.*specialist|historic.*buildings|restoration.*architect/i.test(text) && /heritage|conservation|museum|historic/i.test(tenderText)) score += 15;
+  if (/industrial.*engineer|process.*engineer|factory.*engineer|manufacturing.*engineer/i.test(text) && /industrial|manufactur|factory|abattoir|processing/i.test(tenderText)) score += 15;
+  if (/high.rise|structural.*tower|tall.*building|seismic.*design/i.test(text) && /high.rise|multi.stor|tower.*building/i.test(tenderText)) score += 15;
+  if (/hotel.*design|hospitality.*design|interior.*hotel|resort.*architect/i.test(text) && /hotel|hospitality|resort|lodge/i.test(tenderText)) score += 15;
   if (expert.yearsExperience) score += Math.min(6, expert.yearsExperience / 4);
   return score;
 }
@@ -520,6 +580,22 @@ function detectEvaluationCriteria(tenderText: string): string[] {
   if (/interior.*experience|fit[- ]?out.*experience|space.*planning.*experience/i.test(evalSection)) criteria.push("Interior design / fit-out experience — lead with named projects, area (m²), and client references");
   if (/supervision.*experience|resident engineer.*experience|site.*management.*experience/i.test(evalSection)) criteria.push("Construction supervision experience — show named contracts supervised, contract value, and IPC/hold-point outcomes");
   if (/contract.*admin.*experience|FIDIC.*experience|claims.*experience|quantity.*survey.*experience/i.test(evalSection)) criteria.push("Contract administration / FIDIC experience — show named contracts, final account settlements, and EOT determinations");
+
+  // Heritage Conservation
+  if (/heritage.*experience|conservation.*experience|historic.*building.*experience|restoration.*experience/i.test(evalSection)) criteria.push("Heritage conservation / restoration experience — lead with named historic buildings conserved, heritage authority approvals obtained, and conservation methods applied");
+  if (/ICOMOS|lime mortar|conservation.*plan|significance.*assessment|reversib/i.test(evalSection)) criteria.push("Technical depth in heritage conservation — demonstrate ICOMOS-aligned methodology, material-compatibility testing, and conservation plan preparation");
+
+  // Industrial & Manufacturing
+  if (/industrial.*experience|manufactur.*experience|factory.*experience|abattoir.*experience|processing.*plant.*experience/i.test(evalSection)) criteria.push("Industrial / manufacturing facility experience — lead with named facilities delivered, production capacity, and commissioning outcomes");
+  if (/process.*flow|effluent.*treatment|EHS|FAT|cleaner.*production|lean.*design/i.test(evalSection)) criteria.push("Technical depth in industrial design — demonstrate process-flow analysis, effluent treatment design, and FAT commissioning protocol capability");
+
+  // High-Rise Buildings
+  if (/high.rise.*experience|multi.stor.*experience|tower.*building.*experience|tall.*building.*experience/i.test(evalSection)) criteria.push("High-rise / multi-storey building experience — lead with named towers designed, height/storeys, structural system, and authority approval outcomes");
+  if (/ETABS|SAP2000|shear.*wall|seismic.*design|curtain.*wall|post.tension/i.test(evalSection)) criteria.push("Technical depth in high-rise structural design — demonstrate ETABS/SAP2000 analysis, seismic compliance, and independent peer review protocol");
+
+  // Hospitality & Tourism
+  if (/hotel.*experience|hospitality.*experience|resort.*experience|lodge.*experience/i.test(evalSection)) criteria.push("Hospitality / hotel design experience — lead with named hotels or resorts designed, star rating, room count, and brand operator sign-off outcomes");
+  if (/FF&E|brand.*standard|RevPAR|guestroom.*HVAC|mock.*room|pre.opening/i.test(evalSection)) criteria.push("Technical depth in hospitality design — demonstrate brand-standard compliance methodology, FF&E procurement schedule, and pre-opening punch list capability");
 
   // Universal criteria
   if (/portfolio|quality.*portfolio|relevance.*portfolio/i.test(evalSection)) criteria.push("Quality and relevance of project portfolio — include photos, drawings, and project outcome evidence");

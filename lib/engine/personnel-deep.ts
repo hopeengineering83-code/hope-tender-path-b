@@ -245,6 +245,34 @@ function rolesForSector(sector: string, expertCount: number): { role: string; pi
     ];
     return base.slice(0, Math.min(expertCount || base.length, base.length));
   }
+  if (/heritage|conservation|museum|historic|adaptive.*reuse/i.test(s)) return [
+    { role: "Heritage Conservation Specialist / Project Principal", pickKeywords: ["heritage", "conservation", "restoration", "historic", "museum", "adaptive reuse"], daysShare: 0.30 },
+    { role: "Lead Heritage Architect", pickKeywords: ["heritage architect", "architect", "restoration architect", "historic buildings", "conservation architect"], daysShare: 0.25 },
+    { role: "Structural Engineer (Heritage)", pickKeywords: ["structural", "masonry", "stabilisation", "foundation", "structural engineer"], daysShare: 0.20 },
+    { role: "MEP Engineer (Heritage Retrofit)", pickKeywords: ["mep", "mechanical", "electrical", "plumbing", "services", "retrofit"], daysShare: 0.15 },
+    { role: "QS / Cost Planner", pickKeywords: ["quantity surveyor", "cost", "qs", "estimating", "boq"], daysShare: 0.10 },
+  ];
+  if (/industrial|manufactur|factory|abattoir|processing.*plant|warehouse.*industrial/i.test(s)) return [
+    { role: "Lead Structural Engineer (Industrial)", pickKeywords: ["structural", "industrial", "factory", "steel", "reinforced concrete", "structural engineer"], daysShare: 0.30 },
+    { role: "Process / Mechanical Engineer", pickKeywords: ["process engineer", "mechanical", "process design", "production", "manufacturing"], daysShare: 0.25 },
+    { role: "MEP / HVAC Engineer", pickKeywords: ["mep", "hvac", "ventilation", "fire suppression", "electrical", "mechanical"], daysShare: 0.20 },
+    { role: "Environmental / EHS Specialist", pickKeywords: ["environmental", "ehs", "health safety", "eia", "esia", "waste management", "effluent"], daysShare: 0.15 },
+    { role: "Resident Engineer / QA Inspector", pickKeywords: ["resident engineer", "site supervision", "quality", "inspection", "commissioning"], daysShare: 0.10 },
+  ];
+  if (/high.rise|high_rise|multi.stor|tower.*building|mixed.use.*tower|basement.*podium/i.test(s)) return [
+    { role: "Lead Structural Engineer (High-Rise)", pickKeywords: ["structural", "high-rise", "tower", "etabs", "sap2000", "seismic", "shear wall", "structural engineer"], daysShare: 0.30 },
+    { role: "Lead Architect", pickKeywords: ["architect", "architecture", "building design", "facade", "floor plan"], daysShare: 0.25 },
+    { role: "MEP Lead Engineer", pickKeywords: ["mep", "mechanical", "electrical", "plumbing", "hvac", "fire protection", "bms"], daysShare: 0.20 },
+    { role: "Geotechnical Engineer", pickKeywords: ["geotechnical", "foundation", "soil", "pile", "mat foundation", "bearing capacity"], daysShare: 0.15 },
+    { role: "QS / Cost Manager", pickKeywords: ["quantity surveyor", "cost", "qs", "estimating", "boq", "cost manager"], daysShare: 0.10 },
+  ];
+  if (/hotel|hospitality|resort|lodge|guesthouse|five.star|luxury.*accommodat/i.test(s)) return [
+    { role: "Lead Architect (Hospitality)", pickKeywords: ["architect", "hospitality", "hotel design", "resort", "interior", "architecture"], daysShare: 0.25 },
+    { role: "Interior Designer / Interior Architect", pickKeywords: ["interior designer", "interior architect", "interior design", "ff&e", "finishes", "lighting design"], daysShare: 0.20 },
+    { role: "Lead Structural Engineer", pickKeywords: ["structural", "structural engineer", "building structure", "reinforced concrete", "steel"], daysShare: 0.20 },
+    { role: "MEP Engineer", pickKeywords: ["mep", "mechanical", "electrical", "hvac", "plumbing", "fire protection", "kitchen ventilation"], daysShare: 0.20 },
+    { role: "QS / Cost Planner", pickKeywords: ["quantity surveyor", "cost", "qs", "ff&e procurement", "boq"], daysShare: 0.15 },
+  ];
   // Generic
   return [
     { role: "Project Principal", pickKeywords: ["principal", "director"], daysShare: 12 },

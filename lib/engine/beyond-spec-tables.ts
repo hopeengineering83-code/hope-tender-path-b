@@ -221,6 +221,30 @@ function sustainabilityRows(sector: string): SustainabilityRow[] {
       { pillar: "Digital Contract Management Platform", commitment: "Use cloud-based contract management tool for document control, audit trail, and real-time cost dashboard", kpi: "100% of contract correspondence on platform within 48 hours; real-time cost dashboard available to Employer", evidenceMechanism: "Platform access log; document register; Employer access confirmation" },
     ];
   }
+  if (/heritage|conservation|museum|historic|adaptive.*reuse/i.test(s)) return [
+    ...generic,
+    { pillar: "Cultural Heritage Preservation", commitment: "Apply ICOMOS reversibility principle: all interventions documented, reversible, and compatible with original fabric; hazardous-materials survey and safe removal plan", kpi: "Zero original fabric lost to repair errors; 100% material-compatibility test results documented", evidenceMechanism: "Pre/post photographic record; material-compatibility test certificates; heritage authority sign-off at each phase gate" },
+    { pillar: "Adaptive Reuse & Embodied Carbon", commitment: "Maximise adaptive reuse: structural intervention minimises embodied carbon versus demolish-and-rebuild; whole-life carbon assessment produced", kpi: "Embodied carbon ≤50% of equivalent new-build baseline per RICS Whole Life Carbon Assessment", evidenceMechanism: "Whole-life carbon calculation at design stage; peer-reviewed by independent assessor" },
+    { pillar: "Community & Cultural Benefit", commitment: "Engage local communities, cultural bodies, and diaspora at every project stage; public heritage interpretation plan produced; local skilled tradespeople employed for craft repairs", kpi: "Three minimum public consultation events; ≥30% of specialist craft labour sourced locally", evidenceMechanism: "Consultation event records; labour-origin tracking register" },
+  ];
+  if (/industrial|manufactur|factory|abattoir|processing.*plant|warehouse.*industrial/i.test(s)) return [
+    ...generic,
+    { pillar: "Cleaner Production", commitment: "Apply UNIDO cleaner-production assessment methodology: waste minimisation at source, water-loop closure, energy-efficiency targets before end-of-pipe treatment", kpi: "Specific water consumption ≤60% of sector baseline; waste-to-landfill ≤15% of total solid waste generated", evidenceMechanism: "Monthly resource-consumption log; waste manifest; third-party cleaner-production audit at commissioning" },
+    { pillar: "Effluent & Emissions Control", commitment: "Design effluent treatment plant to meet Ethiopian EPA/WHO standards with 25% safety margin; air-emissions management plan for dust, VOC, and process gases; real-time monitoring sensors", kpi: "Effluent BOD ≤50 mg/L; suspended solids ≤100 mg/L; air emissions within permit limits at all times", evidenceMechanism: "Quarterly third-party effluent analysis; continuous air-quality sensor data; EPA compliance inspection pass" },
+    { pillar: "Worker Health & Safety", commitment: "OHSAS 18001/ISO 45001-aligned OHS plan; chemical-risk register; PPE supply and training; emergency-response procedures; LTI-free target", kpi: "Zero LTI (Lost Time Injuries) during construction and first year of operations; 100% PPE compliance on site", evidenceMechanism: "Weekly toolbox talks; PPE audit records; incident register; LTI-frequency rate monthly reporting" },
+  ];
+  if (/high.rise|high_rise|multi.stor|tower.*building|mixed.use.*tower|basement.*podium/i.test(s)) return [
+    ...generic,
+    { pillar: "Structural Resilience", commitment: "Design to Ethiopian seismic zone requirements (ES EN 1998) with Ethiopian climatic wind loads; independent structural peer review before construction documents", kpi: "Pass Ethiopian Building Code (EBCS) seismic + wind compliance review; independent peer-review approval certificate", evidenceMechanism: "ETABS/SAP2000 analysis report; peer-review certificate; AA City Authority structural approval" },
+    { pillar: "Energy Efficiency", commitment: "Passive design principles (orientation, shading, insulation) to reduce HVAC load; high-performance aluminium curtain wall with low-e glass; LED and BMS-controlled lighting throughout", kpi: "Building energy intensity ≤120 kWh/m²/year; HVAC energy ≤45% of total energy budget", evidenceMechanism: "Energy modelling report (IES VE or equivalent); BMS energy consumption data at 12 months post-handover" },
+    { pillar: "Construction Waste & Materials", commitment: "Concrete mix design minimises OPC content via supplementary cementitious materials (fly ash, GGBS); construction waste sorted and recycled; MEP coordination via BIM to reduce rework waste", kpi: "OPC replacement ≥15% by supplementary materials; construction waste recycling rate ≥50%", evidenceMechanism: "Mix design certificate; waste manifest; BIM coordination clash-detection reports" },
+  ];
+  if (/hotel|hospitality|resort|lodge|guesthouse|five.star|luxury.*accommodat/i.test(s)) return [
+    ...generic,
+    { pillar: "Water Conservation", commitment: "Low-flow fixtures throughout guestrooms; greywater recycling for landscape irrigation; pool backwash water recovery; water-consumption targets per occupied room", kpi: "Water consumption ≤200 L/guest-night (industry benchmark 300 L); pool backwash recovery ≥80%", evidenceMechanism: "Monthly water-meter readings by department; BMS sub-metering; annual Green Globe audit" },
+    { pillar: "Energy & Carbon", commitment: "Solar-assisted water heating for guestrooms; LED lighting with occupancy sensors in all guest and public areas; BMS for HVAC zoning; renewable energy procurement plan", kpi: "Energy intensity ≤150 kWh/m²/year; carbon footprint per guest-night ≤10 kg CO₂e", evidenceMechanism: "Energy model at design stage; BMS monthly energy reports; annual sustainability audit against GSTC criteria" },
+    { pillar: "Responsible Sourcing & Community", commitment: "≥40% of food & beverage sourced locally; fair-trade procurement policy; community employment target ≥60% local workforce; heritage and cultural interpretation programme for guests", kpi: "Local sourcing ≥40% of F&B spend; ≥60% of operational staff from local community", evidenceMechanism: "Supplier origin register; payroll nationality data; annual community-impact report" },
+  ];
   return generic;
 }
 
@@ -360,6 +384,34 @@ function innovationRows(sector: string): InnovationRow[] {
       { proposal: "AI-assisted contract risk scan at award — flags non-standard FIDIC clauses and hidden risk", clientValue: "Reduces surprises that lead to costly claims later; briefing memo issued at contract mobilisation", effort: "Low", optInOptOut: "Included" },
       { proposal: "Integrated Earned Value Management (EVM) dashboard linking programme baseline, actual cost, and forecast final cost", clientValue: "Provides 4–6 week early warning of cost overrun, enabling proactive corrective action before budget is breached", effort: "Medium", optInOptOut: "Optional" },
       { proposal: "Cloud-based claims register auto-populating from site diaries, weather logs, and delay notices", clientValue: "Strengthens Employer's position in dispute proceedings with FIDIC-timestamped, auditable contemporaneous records", effort: "Medium", optInOptOut: "Subject to client agreement" },
+    ];
+  }
+  if (/heritage|conservation|museum|historic|adaptive.*reuse/i.test(s)) {
+    return [
+      ...generic,
+      { proposal: "Photogrammetric 3D scan and point-cloud model (E57 format) of existing structure at inception — used for design coordination, area measurement, and post-construction comparison", clientValue: "Eliminates measurement errors; provides baseline for as-built comparison; creates heritage archive quality record; extends reuse value of survey data beyond the project", effort: "Medium", optInOptOut: "Optional" },
+      { proposal: "Hydraulic lime mortars and natural hydraulic lime (NHL 2/3.5/5) matched to original masonry by XRF and petrographic testing — specification issued before contractor tender", clientValue: "Prevents irreversible damage to original fabric from OPC-induced salt crystallisation; extends conservation life by 30+ years versus standard OPC repairs", effort: "Low", optInOptOut: "Included" },
+    ];
+  }
+  if (/industrial|manufactur|factory|abattoir|processing.*plant|warehouse.*industrial/i.test(s)) {
+    return [
+      ...generic,
+      { proposal: "AutoCAD Plant 3D / Revit MEP coordinated 3D plant model with clash detection — used for equipment installation sequencing and commissioning planning", clientValue: "Reduces construction rework by estimated 25%; accelerates commissioning sequencing planning; as-built 3D model handed to client for facility management", effort: "Medium", optInOptOut: "Optional" },
+      { proposal: "Value-stream mapping (VSM) applied to production process flow before layout design — 5S and lean principles embedded in material-flow corridors, storage zones, and logistics docks", clientValue: "Estimated 15–20% reduction in material-handling distance versus conventional layout; operational efficiency gain from Day 1 without additional capital cost", effort: "Low", optInOptOut: "Included" },
+    ];
+  }
+  if (/high.rise|high_rise|multi.stor|tower.*building|mixed.use.*tower|basement.*podium/i.test(s)) {
+    return [
+      ...generic,
+      { proposal: "Full BIM coordination across architecture, structure, and MEP at LOD 300+ — automated clash detection eliminates field coordination conflicts for MEP riser routing and structural penetrations", clientValue: "Estimated 20% reduction in site RFIs; faster authority submission with model-based coordination reports; LOD 300 model deliverable handed to client", effort: "Medium", optInOptOut: "Optional" },
+      { proposal: "Post-tensioned flat slab system evaluated against conventional RC slab for floor plates >600 m² — reduces storey height by 150–200 mm per floor enabling additional floor within same building height", clientValue: "Potential one additional floor per 8–10 floors versus conventional RC; 8–12% concrete volume saving — structural system comparison report issued at design development stage", effort: "Medium", optInOptOut: "Subject to client agreement" },
+    ];
+  }
+  if (/hotel|hospitality|resort|lodge|guesthouse|five.star|luxury.*accommodat/i.test(s)) {
+    return [
+      ...generic,
+      { proposal: "All FF&E tracked via shared online procurement schedule with delivery milestone alerts — reduces lead-time surprises that delay pre-opening", clientValue: "Eliminates pre-opening delays caused by late FF&E delivery; real-time delivery status visible to client, contractor, and operator from a single live dashboard", effort: "Low", optInOptOut: "Included" },
+      { proposal: "Mock guest room constructed and approved by client and brand operator before bulk room-finishing works commence — reduces rework cost from late design corrections", clientValue: "Estimated 10–15% reduction in rework cost; brand compliance confirmed at prototype stage rather than at snagging; before/after comparison record in handover pack", effort: "Medium", optInOptOut: "Subject to client agreement" },
     ];
   }
   return generic;
