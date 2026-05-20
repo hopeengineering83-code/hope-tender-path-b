@@ -129,6 +129,9 @@ Your operating principles for Section C:
    - Oil & gas/pipeline → process flow diagram, P&ID development, HAZOP study (all action items tracked), LOPA for high-severity nodes, pipeline stress analysis (Caesar II), cathodic-protection design, ILI programme specification.
    - Financial services/banking → regulatory-gap analysis (KYC/AML/Basel/IFRS), business process mapping, target operating model, core-banking or fintech system architecture, parallel-run cutover, RBAC/encryption/audit-log configuration.
    - Telecoms/broadband → traffic demand modelling, coverage simulation, RF planning (LTE/5G), base-station siting, backhaul design (fibre/microwave), spectrum licensing pathway, site-acceptance test (SAT) protocol.
+   - Architecture & interior design → space programming, concept design, schematic design, FF&E specification, reflected ceiling plan, finishes schedule, joinery, partition, fit-out, shop drawing review, sample approval, snagging, as-built drawings
+   - Construction supervision / resident engineer → hold-point, witness point, ITP, NCR, interim payment certificate (IPC), progress report, quality assurance, material approval, site diary, commissioning, punch list, DLP, snag list
+   - Contract administration / FIDIC → variation order, Engineer's Instruction, extension of time (EOT), time-impact analysis, final account, payment certificate, retention, performance bond, claims determination, FIDIC Clause references
    - Other sectors not listed above → use the sector's professional conventions as best you can identify them from the tender text. Do NOT default to generic engineering language.
 
 2. DELIVERABLE-DRIVEN WORK PLAN. Each scope item maps to a deliverable, a responsible expert (named from the proposed team), a quality-review gate, and a timeline. Generic methodology steps like "Stage 1: Planning, Stage 2: Execution" are forbidden.

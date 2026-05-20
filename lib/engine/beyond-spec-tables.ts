@@ -197,6 +197,30 @@ function sustainabilityRows(sector: string): SustainabilityRow[] {
       { pillar: "Electromagnetic Radiation (EMR) Compliance", commitment: "Base-station antenna heights and power levels comply with ICNIRP or national EMR standard; EMR exclusion zones documented", kpi: "100% of base stations certified compliant before commissioning; EMR exclusion zones marked on site drawings", evidenceMechanism: "EMR compliance certificates; site drawings with exclusion zones; regulator filing" },
     ];
   }
+  if (/interior design|fit[-\s]?out|space planning|finishes|joinery/i.test(s)) {
+    return [
+      ...generic,
+      { pillar: "Biophilic Design Integration", commitment: "Living walls, natural materials, and daylighting maximisation to improve occupant wellbeing and productivity", kpi: "Biophilic design elements incorporated in ≥ 80% of occupied zones; daylighting target ≥ 300 lux at workplane", evidenceMechanism: "WELL/biophilic design checklist at 60% gate; daylighting simulation results" },
+      { pillar: "Low-VOC and Sustainably Sourced Materials", commitment: "Specification of low-VOC paints, adhesives, and sustainably-certified timber/finishes to protect indoor air quality", kpi: "100% of specified paints and adhesives GREENGUARD GOLD or equivalent certified; timber products FSC certified", evidenceMechanism: "Material specification schedule with certification references; sample approval register" },
+      { pillar: "Circular-Economy Fit-Out", commitment: "Modular partition and furniture systems designed for demountability and re-use, reducing landfill waste at end of life", kpi: "≥ 60% of partition and furniture systems modular/demountable; waste diversion plan issued with construction package", evidenceMechanism: "FF&E demountability schedule; waste diversion plan" },
+    ];
+  }
+  if (/construction supervision|resident engineer|site supervision/i.test(s)) {
+    return [
+      ...generic,
+      { pillar: "Construction Environmental Management Plan (CEMP)", commitment: "Enforce CEMP compliance on site: dust suppression, noise monitoring, waste segregation, and contamination prevention", kpi: "Zero environmental non-conformances at monthly site audit; CEMP compliance rate ≥ 95%", evidenceMechanism: "Monthly CEMP compliance report; site audit log; non-conformance register" },
+      { pillar: "Waste Tracking and Diversion Reporting", commitment: "Monthly C&D waste tracking with diversion rate target ≥70% from landfill, reported in monthly supervision report", kpi: "C&D waste diversion rate ≥ 70%; waste tracking register maintained weekly", evidenceMechanism: "Monthly waste tracking report; waste disposal manifests; diversion rate dashboard" },
+      { pillar: "Health & Safety Hold-Point Regime", commitment: "Mandatory HSE hold-points at high-risk activities (excavation, lifting, electrical energisation) with recorded sign-off", kpi: "100% of defined H&S hold-points completed with sign-off before proceeding; zero LTIs attributable to hold-point bypass", evidenceMechanism: "HSE hold-point register; incident log; monthly H&S dashboard" },
+    ];
+  }
+  if (/contract administration|fidic|variation order|claims management/i.test(s)) {
+    return [
+      ...generic,
+      { pillar: "Fair and Transparent Contract Administration", commitment: "Timely determinations, fair VO assessments, and transparent final account settlement reduce disputes and rework", kpi: "100% of VO determinations issued within 28 days of submission; zero successful contractor arbitration awards against Employer", evidenceMechanism: "VO log with response dates; determination letters; final account statement" },
+      { pillar: "Local-Content and Social Procurement Reporting", commitment: "Track and report local contractor spend, local labour percentage, and community-benefit outcomes", kpi: "Local labour ≥ 30% of total project workforce; local subcontractor spend ≥ 20% of contract value", evidenceMechanism: "Monthly local-content report; payroll records; subcontractor spend log" },
+      { pillar: "Digital Contract Management Platform", commitment: "Use cloud-based contract management tool for document control, audit trail, and real-time cost dashboard", kpi: "100% of contract correspondence on platform within 48 hours; real-time cost dashboard available to Employer", evidenceMechanism: "Platform access log; document register; Employer access confirmation" },
+    ];
+  }
   return generic;
 }
 
@@ -312,6 +336,30 @@ function innovationRows(sector: string): InnovationRow[] {
       ...generic,
       { proposal: "Live network KPI dashboard integrated with client NOC from commissioning day", clientValue: "Client operations team gets real-time visibility of coverage, capacity, and fault status from Day 1 without additional integration cost", effort: "Medium", optInOptOut: "Optional" },
       { proposal: "Automated frequency-planning and interference-management tool handed to spectrum team", clientValue: "Reduces spectrum re-planning cycle from weeks to hours; supports future technology upgrade (e.g., LTE → 5G NR) without re-engaging frequency planner", effort: "Medium", optInOptOut: "Subject to client agreement" },
+    ];
+  }
+  if (/interior design|fit[-\s]?out|space planning|finishes|joinery/i.test(s)) {
+    return [
+      ...generic,
+      { proposal: "BIM-integrated interior design (LOD 400) with clash detection and quantity takeoff", clientValue: "Reduces site RFIs by ~40% and material waste by ~15% — coordination issues resolved before site start", effort: "Medium", optInOptOut: "Optional" },
+      { proposal: "Virtual reality (VR) client walkthrough at schematic stage", clientValue: "Client can experience the completed space before construction begins, enabling informed decisions and reducing late design changes", effort: "Medium", optInOptOut: "Subject to client agreement" },
+      { proposal: "Cloud-based sample and material tracking board with lead-time dashboard", clientValue: "Prevents supply-chain delays by surfacing long-lead items 8–12 weeks ahead; photo log and supplier contacts in one place", effort: "Low", optInOptOut: "Included" },
+    ];
+  }
+  if (/construction supervision|resident engineer|site supervision/i.test(s)) {
+    return [
+      ...generic,
+      { proposal: "Digital hold-point inspection app (mobile ITP) with GPS, photo evidence, and automatic NCR generation", clientValue: "Reduces quality documentation effort by 60% and improves traceability; real-time NCR status visible to Employer", effort: "Medium", optInOptOut: "Optional" },
+      { proposal: "Weekly drone surveys producing ortho-photo and 3D point cloud for progress measurement", clientValue: "Enables accurate remote progress assessment without daily physical site presence; supports dispute resolution with photographic record", effort: "Medium", optInOptOut: "Subject to client agreement" },
+      { proposal: "Real-time project dashboard for Employer (progress %, NCR status, IPC amounts, programme vs actual)", clientValue: "Increases Employer confidence and reduces ad-hoc reporting requests; accessible online at any time", effort: "Low", optInOptOut: "Included" },
+    ];
+  }
+  if (/contract administration|fidic|variation order|claims management/i.test(s)) {
+    return [
+      ...generic,
+      { proposal: "AI-assisted contract risk scan at award — flags non-standard FIDIC clauses and hidden risk", clientValue: "Reduces surprises that lead to costly claims later; briefing memo issued at contract mobilisation", effort: "Low", optInOptOut: "Included" },
+      { proposal: "Integrated Earned Value Management (EVM) dashboard linking programme baseline, actual cost, and forecast final cost", clientValue: "Provides 4–6 week early warning of cost overrun, enabling proactive corrective action before budget is breached", effort: "Medium", optInOptOut: "Optional" },
+      { proposal: "Cloud-based claims register auto-populating from site diaries, weather logs, and delay notices", clientValue: "Strengthens Employer's position in dispute proceedings with FIDIC-timestamped, auditable contemporaneous records", effort: "Medium", optInOptOut: "Subject to client agreement" },
     ];
   }
   return generic;

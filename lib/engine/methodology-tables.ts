@@ -246,6 +246,33 @@ function sectorPhasingRows(sector: string): PhasingRow[] {
       { phase: "5. O&M Handover", deliverables: "O&M manual; network monitoring dashboard; performance KPI report; spectrum licence confirmation; handover pack", duration: "Weeks 23–26", responsible: "Project Principal" },
     ];
   }
+  if (/interior design|fit[-\s]?out|space planning|finishes.*schedule|furniture.*layout|joinery/i.test(s)) {
+    return [
+      { phase: "1. Space Programming & Brief", deliverables: "Functional brief; occupant schedule; adjacency matrix; net-to-gross area schedule; stakeholder workshop record", duration: "Weeks 1–2", responsible: "Lead Interior Architect" },
+      { phase: "2. Concept Design", deliverables: "Concept boards (mood, material palette, lighting concept); furniture concept layouts; preliminary BOQ (indicative)", duration: "Weeks 3–5", responsible: "Interior Designer" },
+      { phase: "3. Schematic Design", deliverables: "Floor plans with furniture layout; reflected ceiling plans; partition and floor finishes schedules; joinery elevations; client-sign-off record", duration: "Weeks 6–9", responsible: "Interior Designer" },
+      { phase: "4. Detailed Design & FF&E Specification", deliverables: "Full FF&E schedule with supplier options and lead times; room data sheets; MEP coordination drawings; construction documentation package (drawings, specs, BOQ)", duration: "Weeks 10–15", responsible: "Lead Interior Architect" },
+      { phase: "5. Construction Administration & Close-out", deliverables: "Shop drawing review log; sample approval register; site inspection reports; snagging list; defects clearance certificate; as-built drawings", duration: "Construction window + 4 weeks", responsible: "Lead Interior Architect" },
+    ];
+  }
+  if (/construction supervision|resident engineer|site supervision|quality.*inspector|site.*management.*contract/i.test(s)) {
+    return [
+      { phase: "1. Pre-Construction Mobilisation", deliverables: "Review of contractor's programme, method statements, ITP, HSMP; mobilisation inspection; baseline photographic survey", duration: "Weeks 1–3 (prior to site start)", responsible: "Resident Engineer" },
+      { phase: "2. Construction Phase — Quality & Progress", deliverables: "Weekly and monthly site supervision reports; hold-point and witness-point inspection certificates; NCR log; laboratory test certificates; material approval register", duration: "Construction period", responsible: "Resident Engineer + Site Inspector" },
+      { phase: "3. Payment Certification", deliverables: "Monthly IPC (Interim Payment Certificate) based on measured quantities; cost register update; cash-flow projection", duration: "Monthly throughout construction", responsible: "Resident Engineer + QS" },
+      { phase: "4. Variation Order Management", deliverables: "VO register; cost assessment of contractor claims; Engineer's Instructions; updated contract sum statement", duration: "Ongoing during construction", responsible: "Resident Engineer" },
+      { phase: "5. Completion & DLP", deliverables: "Practical completion certificate; punch list / snag list; DLP inspection report; performance bond release recommendation; final account summary", duration: "Weeks N to N+6 + DLP", responsible: "Resident Engineer" },
+    ];
+  }
+  if (/contract administration|FIDIC|variation order|payment certificate|claims management|quantity survey/i.test(s)) {
+    return [
+      { phase: "1. Contract Mobilisation & Setup", deliverables: "Contract administration manual; delegated authority register; key-date schedule; contractor mobilisation assessment", duration: "Weeks 1–2", responsible: "Contract Administrator" },
+      { phase: "2. Cost Control & Reporting", deliverables: "Monthly cost report (actual vs contract sum); forecast final cost; contingency drawdown register; cash-flow projection", duration: "Monthly throughout contract", responsible: "Contract Administrator + QS" },
+      { phase: "3. Variation & Change Management", deliverables: "VO log; quantum assessment per each variation; Engineer's Instructions; contract sum adjustment register", duration: "Ongoing", responsible: "Contract Administrator" },
+      { phase: "4. Claims Evaluation", deliverables: "EOT claim analysis (time-impact method); disruption cost assessment; formal written determination; updated programme baseline", duration: "As claims arise", responsible: "Contract Administrator" },
+      { phase: "5. Final Account & Closeout", deliverables: "Final BOQ reconciliation; agreed final account statement; outstanding claims settlement; certificate of substantial completion; lessons-learned report", duration: "Weeks N to N+8", responsible: "Contract Administrator" },
+    ];
+  }
   // Generic
   return [
     { phase: "1. Inception", deliverables: "Inception report; ToR confirmation; data-collection plan; risk register baseline", duration: "Weeks 1–2", responsible: "Project Principal" },
@@ -350,6 +377,33 @@ function sectorRiskRows(sector: string): RiskRow[] {
       ...generic,
       { category: "Spectrum", risk: "Spectrum approval delayed — site engineering cannot start", likelihood: "Medium", impact: "High", mitigation: "In-principle spectrum approval confirmed before any site engineering commences; alternative band contingency assessed", owner: "Spectrum Planning Specialist" },
       { category: "Coverage", risk: "Modelled coverage not achieved after deployment", likelihood: "Medium", impact: "High", mitigation: "Calibrated RF model using field-measured correction factors; drive-test acceptance against coverage KPIs before handover", owner: "Lead RF/Network Engineer" },
+    ];
+  }
+  if (/interior design|fit[-\s]?out|space planning|finishes|joinery/i.test(s)) {
+    return [
+      ...generic,
+      { category: "Procurement", risk: "FF&E lead times exceed programme", likelihood: "Medium", impact: "High", mitigation: "Place orders at end of schematic phase; track supplier lead times weekly", owner: "Lead Interior Architect" },
+      { category: "Scope", risk: "Scope creep from client change requests during construction", likelihood: "High", impact: "Medium", mitigation: "Change-control process at each design gate; signed change orders before executing changes", owner: "Lead Interior Architect" },
+      { category: "Coordination", risk: "MEP coordination clashes discovered on site", likelihood: "Medium", impact: "Medium", mitigation: "BIM clash detection at DD stage; 2D overlay checks before issuing construction drawings", owner: "MEP Coordinator" },
+      { category: "Materials", risk: "Material sample approval delays contractor programme", likelihood: "Medium", impact: "Medium", mitigation: "Submit samples minimum 3 weeks before installation; maintain parallel approval register", owner: "Lead Interior Architect" },
+    ];
+  }
+  if (/construction supervision|resident engineer|site supervision/i.test(s)) {
+    return [
+      ...generic,
+      { category: "Quality", risk: "Contractor fails to meet quality hold-points", likelihood: "Medium", impact: "High", mitigation: "Mandatory H-point sign-off before proceeding; NCR issuance with defined closeout timeline", owner: "Resident Engineer" },
+      { category: "Commercial", risk: "Contractor submits inflated interim payment claims", likelihood: "High", impact: "High", mitigation: "Measured remeasurement at each IPC; back-up documentation required before certification", owner: "Resident Engineer + QS" },
+      { category: "Access", risk: "Site access restrictions delay supervision", likelihood: "Medium", impact: "Medium", mitigation: "Access protocol agreed with Employer before mobilisation; site access log maintained", owner: "Resident Engineer" },
+      { category: "Programme", risk: "Contractor programme slippage leads to EOT claims", likelihood: "High", impact: "Medium", mitigation: "Weekly progress meeting minutes; contemporaneous record keeping; time-impact analysis on request", owner: "Resident Engineer" },
+    ];
+  }
+  if (/contract administration|FIDIC|variation order|claims management/i.test(s)) {
+    return [
+      ...generic,
+      { category: "Claims", risk: "Contractor submits unsubstantiated EOT claims", likelihood: "High", impact: "High", mitigation: "Programme baselines locked at award; contemporaneous delay records maintained throughout", owner: "Contract Administrator" },
+      { category: "Commercial", risk: "Variation scope disputed by contractor", likelihood: "Medium", impact: "High", mitigation: "Issue Engineer's Instructions before work starts; agree quantum before next IPC", owner: "Contract Administrator" },
+      { category: "Commercial", risk: "Final account settlement delayed by unresolved claims", likelihood: "Medium", impact: "Medium", mitigation: "Claims resolution schedule agreed at practical completion; FIDIC dispute board as backstop", owner: "Contract Administrator" },
+      { category: "Budget", risk: "Cost overrun breaches approved project budget", likelihood: "Medium", impact: "High", mitigation: "Monthly forecast-final-cost report to Employer; early-warning system per FIDIC Clause 8.3", owner: "Contract Administrator" },
     ];
   }
   return generic;

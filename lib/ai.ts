@@ -1751,13 +1751,20 @@ TELECOMS / BROADBAND INFRASTRUCTURE GUIDANCE (mandatory for this tender):
 - Commissioning: RF commissioning (VSWR, cable sweep), drive-test coverage measurement (RSRP, RSRQ, throughput maps), NOC KPI dashboard pre-configured, hypercare period (4–6 weeks), SLA breach escalation protocol.`
     : "";
 
+  const isEOI = /\bEOI\b|expression of interest/i.test(params.tenderText ?? "");
+
+  const eoiGuidance = isEOI
+    ? `
+NOTE: This tender is an EXPRESSION OF INTEREST (EOI). Structure accordingly: Company Profile → Relevant Experience (3–5 named projects) → Team Qualifications (key experts, qualifications, years of experience) → Company Capacity statement. EOI proposals should be concise (typically 5–15 pages), qualification-heavy, and should NOT include detailed methodology or financial data unless explicitly requested.`
+    : "";
+
   // Combine all active sector guidance blocks for injection into Section C
   const allSectorGuidance = [
     healthcareGuidance, facilityGuidance, waterGuidance, roadBridgeGuidance,
     buildingGuidance, urbanGuidance, environmentalGuidance, ictGuidance,
     donorGuidance, educationGuidance,
     energyGuidance, agricultureGuidance, miningGuidance, portGuidance,
-    oilGasGuidance, financialGuidance, telecomsGuidance,
+    oilGasGuidance, financialGuidance, telecomsGuidance, eoiGuidance,
   ].filter(Boolean).join("\n\n");
 
   // Dynamic cover page headline facts calibrated to detected sector

@@ -216,6 +216,35 @@ function rolesForSector(sector: string, expertCount: number): { role: string; pi
       { role: "Quality Assurance Reviewer", pickKeywords: ["quality", "review"], daysShare: 6 },
     ].slice(0, Math.max(4, Math.min(7, expertCount + 3)));
   }
+  if (/interior design|fit[-\s]?out|space planning|finishes|joinery/i.test(s)) {
+    const base = [
+      { role: "Lead Interior Architect / Design Lead", pickKeywords: ["interior", "architect", "design", "fit-out", "space"], daysShare: 22 },
+      { role: "Interior Designer", pickKeywords: ["interior designer", "designer", "fit-out", "finishes"], daysShare: 18 },
+      { role: "MEP Coordinator (Interior)", pickKeywords: ["mep", "mechanical", "electrical", "coordination"], daysShare: 14 },
+      { role: "Quantity Surveyor (Interior BOQ)", pickKeywords: ["quantity surveyor", "qs", "boq", "cost"], daysShare: 14 },
+      { role: "Quality Assurance / Site Inspector", pickKeywords: ["quality", "inspector", "site", "supervision"], daysShare: 12 },
+    ];
+    return base.slice(0, Math.min(expertCount || base.length, base.length));
+  }
+  if (/construction supervision|resident engineer|site supervision|quality.*inspector/i.test(s)) {
+    const base = [
+      { role: "Resident Engineer (Team Leader)", pickKeywords: ["resident engineer", "site engineer", "team leader"], daysShare: 24 },
+      { role: "Site Inspector", pickKeywords: ["inspector", "quality control", "site"], daysShare: 18 },
+      { role: "Structural Inspector", pickKeywords: ["structural", "civil", "concrete", "reinforcement"], daysShare: 14 },
+      { role: "Quantity Surveyor (Measurement)", pickKeywords: ["quantity surveyor", "qs", "measurement", "ipc"], daysShare: 14 },
+      { role: "Health, Safety & Environment Officer", pickKeywords: ["hse", "safety", "health", "environment"], daysShare: 12 },
+    ];
+    return base.slice(0, Math.min(expertCount || base.length, base.length));
+  }
+  if (/contract administration|fidic|variation order|claims management|quantity survey/i.test(s)) {
+    const base = [
+      { role: "Contract Administrator / Engineer", pickKeywords: ["contract administrator", "fidic", "engineer", "contract management"], daysShare: 24 },
+      { role: "Senior Quantity Surveyor", pickKeywords: ["quantity surveyor", "qs", "cost", "boq", "final account"], daysShare: 18 },
+      { role: "Claims & Variation Specialist", pickKeywords: ["claims", "variation", "eot", "extension of time"], daysShare: 16 },
+      { role: "Programmer / Scheduler", pickKeywords: ["programme", "scheduler", "primavera", "ms project"], daysShare: 14 },
+    ];
+    return base.slice(0, Math.min(expertCount || base.length, base.length));
+  }
   // Generic
   return [
     { role: "Project Principal", pickKeywords: ["principal", "director"], daysShare: 12 },

@@ -131,6 +131,25 @@ function phasesForSector(primarySector: string): Phase[] {
     { phase: "Phase 5: O&M Handover", milestones: "Operator trained; O&M documentation issued", responsibleRole: "Project Principal + Support Lead", deliverables: "O&M manual; operator training records; network-management platform handover", duration: "2 to 3 weeks" },
   ];
 
+  if (/interior design|fit[-\s]?out|space planning|finishes|joinery/i.test(sector)) return [
+    { phase: "Phase 1: Brief & Programming", milestones: "Space programme and adjacency matrix signed off", responsibleRole: "Lead Interior Architect", deliverables: "Functional brief; area schedule; stakeholder workshop record", duration: "1 to 2 weeks" },
+    { phase: "Phase 2: Concept & Schematic Design", milestones: "Client approval of concept boards and schematic layouts", responsibleRole: "Interior Designer", deliverables: "Concept boards; floor plans; reflected ceiling plans; partition schedules", duration: "3 to 5 weeks" },
+    { phase: "Phase 3: Detailed Design & FF&E Specification", milestones: "Construction documentation issued for contractor tender", responsibleRole: "Lead Interior Architect", deliverables: "Full drawings package; FF&E schedule; BOQ; room data sheets", duration: "4 to 6 weeks" },
+    { phase: "Phase 4: Construction Administration", milestones: "Shop drawings approved; materials samples signed off", responsibleRole: "Resident Interior Architect", deliverables: "Shop drawing review log; sample approval register; site inspection reports", duration: "Construction period" },
+    { phase: "Phase 5: Close-out", milestones: "Snag list cleared; as-built drawings issued", responsibleRole: "Lead Interior Architect", deliverables: "Snagging clearance certificate; as-built drawings; O&M manuals for installed items", duration: "Weeks N to N+4" },
+  ];
+  if (/construction supervision|resident engineer|site supervision|quality.*inspector/i.test(sector)) return [
+    { phase: "Phase 1: Pre-Construction Review", milestones: "Contractor's programme, method statements, ITP and HSMP approved", responsibleRole: "Resident Engineer", deliverables: "Pre-construction review report; baseline photographic survey; mobilisation inspection certificate", duration: "2 to 3 weeks before site start" },
+    { phase: "Phase 2: Construction Supervision", milestones: "Hold-point inspections completed at defined stages; NCRs closed within SLA", responsibleRole: "Resident Engineer + Site Inspector", deliverables: "Weekly site reports; hold-point certificates; NCR log; laboratory test certificates", duration: "Construction period" },
+    { phase: "Phase 3: Payment Certification", milestones: "Monthly IPCs issued within 14 days of contractor submission", responsibleRole: "Resident Engineer + QS", deliverables: "Interim Payment Certificates; measurement records; cost register", duration: "Monthly during construction" },
+    { phase: "Phase 4: Practical Completion & Defects", milestones: "Punch list cleared; DLP inspections completed", responsibleRole: "Resident Engineer", deliverables: "Practical completion certificate; punch list; DLP inspection report; performance bond release recommendation", duration: "Weeks N to N+6 + DLP" },
+  ];
+  if (/contract administration|FIDIC|variation order|claims management|quantity survey/i.test(sector)) return [
+    { phase: "Phase 1: Contract Mobilisation", milestones: "Contract administration manual issued; delegated authority register in place", responsibleRole: "Contract Administrator", deliverables: "CA manual; key-date schedule; contractor mobilisation assessment", duration: "1 to 2 weeks" },
+    { phase: "Phase 2: Cost Control & Variation Management", milestones: "Monthly cost reports issued; all VOs agreed before next IPC", responsibleRole: "Contract Administrator + QS", deliverables: "Monthly cost reports; VO log; Engineer's Instructions; contract sum adjustments", duration: "Duration of contract" },
+    { phase: "Phase 3: Claims Management", milestones: "EOT determinations issued within 28 days of submission", responsibleRole: "Contract Administrator", deliverables: "EOT analysis; disruption cost assessments; written determinations", duration: "As claims arise" },
+    { phase: "Phase 4: Final Account & Closeout", milestones: "Final account agreed; all bonds released", responsibleRole: "Contract Administrator", deliverables: "Final BOQ reconciliation; agreed final account; lessons-learned report", duration: "Weeks N to N+8" },
+  ];
   return [
     { phase: "Phase 1: Inception", milestones: "Inception report; scope confirmation; stakeholder map", responsibleRole: "Project Manager", deliverables: "Inception report; work plan; communication plan", duration: "1 to 2 weeks" },
     { phase: "Phase 2: Analysis and Design", milestones: "Substantive deliverable produced; client review", responsibleRole: "Discipline Leads", deliverables: "Draft deliverable; review record; revised deliverable", duration: "4 to 8 weeks" },
