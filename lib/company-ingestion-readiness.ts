@@ -78,8 +78,6 @@ export function assessCompanyIngestionReadiness(snapshot: IngestionReadinessSnap
   if (pendingDocuments > 0 && usefulDocuments === 0 && reviewedExperts === 0 && reviewedProjects === 0) blockers.push("Company knowledge extraction is still pending. Re-import/review the company documents before generation.");
   if (requireReviewedExperts && reviewedExperts === 0) blockers.push("No REVIEWED experts available.");
   if (requireReviewedProjects && reviewedProjects === 0) blockers.push("No REVIEWED projects available.");
-  if (missingExperts > 0) blockers.push(`Expert completeness gap: missing ${missingExperts} record(s) against expected count.`);
-  if (missingProjects > 0) blockers.push(`Project completeness gap: missing ${missingProjects} record(s) against expected count.`);
 
   if (reviewedExperts === 0) warnings.push("No REVIEWED experts are available. Expert-required tenders will be blocked until at least one relevant expert is reviewed.");
   if (reviewedProjects === 0) warnings.push("No REVIEWED projects are available. Project-experience tenders will be blocked until at least one relevant project is reviewed.");
