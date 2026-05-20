@@ -273,6 +273,13 @@ function rolesForSector(sector: string, expertCount: number): { role: string; pi
     { role: "MEP Engineer", pickKeywords: ["mep", "mechanical", "electrical", "hvac", "plumbing", "fire protection", "kitchen ventilation"], daysShare: 0.20 },
     { role: "QS / Cost Planner", pickKeywords: ["quantity surveyor", "cost", "qs", "ff&e procurement", "boq"], daysShare: 0.15 },
   ];
+  if (/geotech|soil.*invest|borehole.*programme|site.*invest.*geotech|subsoil.*invest|ground.*invest/i.test(s)) return [
+    { role: "Principal Geotechnical Engineer", pickKeywords: ["geotechnical", "principal geotechnical", "geotech lead", "soil investigation", "foundation engineering"], daysShare: 0.30 },
+    { role: "Senior Geotechnical Engineer / Field Lead", pickKeywords: ["geotechnical engineer", "field geotechnical", "site investigation", "borehole", "soil"], daysShare: 0.30 },
+    { role: "Geotechnical Laboratory Specialist", pickKeywords: ["laboratory", "lab technician", "materials testing", "soil testing", "geotechnical lab"], daysShare: 0.20 },
+    { role: "Structural Engineer (Foundation Design)", pickKeywords: ["structural", "foundation", "pile", "mat", "structural engineer"], daysShare: 0.15 },
+    { role: "QA / Report Peer Reviewer", pickKeywords: ["quality assurance", "peer review", "reviewer", "senior", "quality"], daysShare: 0.05 },
+  ];
   // Generic
   return [
     { role: "Project Principal", pickKeywords: ["principal", "director"], daysShare: 12 },
