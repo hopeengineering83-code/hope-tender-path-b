@@ -4,6 +4,7 @@ import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { assessMatchingQuality, isReadyForGenerationFromMatchingQuality } from "../../../../../lib/matching-quality";
 import { ensureCompanyForUser } from "../../../../../lib/company-workspace";
 import { getCompanyIngestionReadiness } from "../../../../../lib/company-ingestion-readiness";
+import { getCanonicalTenderReadiness } from "../../../../../lib/canonical-tender-readiness";
 
 export const dynamic = "force-dynamic";
 
@@ -43,11 +44,15 @@ export async function GET(
     vaultReviewedExperts: companyReadiness.totals.reviewedExperts,
     vaultReviewedProjects: companyReadiness.totals.reviewedProjects,
   });
+  const canonical = await getCanonicalTenderReadiness(prisma, userId, id);
 
   return NextResponse.json({
     tenderId: id,
     readyForMatchingAttempt: true,
     readyForGeneration: isReadyForGenerationFromMatchingQuality(quality),
+    matchingState: quality.state,
+    nextAction: quality.state === "VAULT_AWAITS_ENGINE" ? "RUN_ENGINE" : null,
+    canonical,
     quality,
   });
 }
