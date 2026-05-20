@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getSession } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { getTenderGenerationReadiness } from "../../../../../lib/tender-generation-readiness";
+import { getCanonicalTenderReadiness } from "../../../../../lib/canonical-tender-readiness";
 
 export const dynamic = "force-dynamic";
 
@@ -15,7 +16,8 @@ export async function GET(
   await prismaReady;
   const { id: tenderId } = await params;
   const readiness = await getTenderGenerationReadiness(prisma, userId, tenderId);
+  const canonical = await getCanonicalTenderReadiness(prisma, userId, tenderId);
   if (!readiness) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
 
-  return NextResponse.json(readiness);
+  return NextResponse.json({ ...readiness, canonical });
 }

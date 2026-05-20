@@ -1,7 +1,10 @@
 import { NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
-import { checkFullExportReadiness, exportReadinessError } from "../../../../../lib/engine/export-readiness";
+import { checkFullExportReadiness, deriveTenderLevelExportHardBlockers, exportReadinessError } from "../../../../../lib/engine/export-readiness";
+import { getTenderGenerationReadiness } from "../../../../../lib/tender-generation-readiness";
+import { buildSubmissionPlan, findExtraGeneratedDocuments, findMissingGeneratedDocuments } from "../../../../../lib/engine/submission-plan";
+import { getCanonicalTenderReadiness } from "../../../../../lib/canonical-tender-readiness";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 10;
@@ -39,6 +42,23 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       status: true,
       stage: true,
       readinessScore: true,
+      exactFileNaming: true,
+      exactFileOrder: true,
+      requirements: {
+        select: {
+          id: true,
+          title: true,
+          description: true,
+          requirementType: true,
+          priority: true,
+          exactFileName: true,
+          exactOrder: true,
+          requiredQuantity: true,
+          pageLimit: true,
+          restrictions: true,
+          sectionReference: true,
+        },
+      },
       generatedDocuments: {
         where: { generationStatus: { not: "SUPERSEDED" } },
         orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }],
@@ -50,26 +70,73 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
           validationStatus: true,
           reviewStatus: true,
           fileContent: true,
+          format: true,
         },
       },
     },
   });
 
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
+  const generationReadiness = await getTenderGenerationReadiness(prisma, actor.id, id);
+  const canonical = await getCanonicalTenderReadiness(prisma, actor.id, id);
 
   const readiness = await checkFullExportReadiness({ tenderId: id, docs: tender.generatedDocuments, requireFileContent: true });
+  const submissionPlan = buildSubmissionPlan(tender);
+  const missingPlanFiles = findMissingGeneratedDocuments(submissionPlan, tender.generatedDocuments);
+  const extraPlanFiles = findExtraGeneratedDocuments(submissionPlan, tender.generatedDocuments);
   const documentBlockers = readiness.failures.map((failure) => ({
     ...failure,
     severity: severityForReasons(failure.reasons),
     nextActions: failure.reasons.map(nextActionForReason),
   }));
-  const tenderLevelBlockers = readiness.tenderLevelBlockers ?? [];
+  const tenderLevelBlockers = [
+    ...(readiness.tenderLevelBlockers ?? []),
+    ...deriveTenderLevelExportHardBlockers({
+      activeDocuments: tender.generatedDocuments.length,
+      tenderStatus: tender.status,
+      tenderStage: tender.stage,
+      readinessScore: tender.readinessScore,
+    }),
+    ...(generationReadiness && !generationReadiness.fullProposalReady
+      ? [{
+          category: "READINESS_GATE",
+          severity: "HIGH" as const,
+          title: "FULL_PROPOSAL_NOT_READY",
+          recommendedAction: generationReadiness.fullProposalBlockers[0]?.nextAction ?? "Resolve generation-readiness blockers before final export.",
+        }]
+      : []),
+    ...(canonical && !canonical.readyForFinalExport
+      ? [{
+          category: "READINESS_GATE",
+          severity: "HIGH" as const,
+          title: "CANONICAL_READINESS_NOT_MET",
+          recommendedAction: canonical.nextActions[0] ?? "Resolve canonical readiness blockers.",
+        }]
+      : []),
+    ...(missingPlanFiles.length > 0
+      ? [{
+          category: "SUBMISSION_PLAN",
+          severity: "HIGH" as const,
+          title: "MISSING_PLANNED_FILES",
+          recommendedAction: `Generate ${missingPlanFiles.length} missing planned submission file(s) before export.`,
+        }]
+      : []),
+    ...(extraPlanFiles.length > 0
+      ? [{
+          category: "SUBMISSION_PLAN",
+          severity: "MEDIUM" as const,
+          title: "EXTRA_GENERATED_FILES",
+          recommendedAction: `Reconcile ${extraPlanFiles.length} extra generated file(s) against the submission plan.`,
+        }]
+      : []),
+  ];
+  const exportOk = readiness.ok && tenderLevelBlockers.length === 0;
   const totalBlockers = documentBlockers.length + tenderLevelBlockers.length;
 
   return NextResponse.json({
     success: true,
     exportReadiness: {
-      ok: readiness.ok,
+      ok: exportOk,
       tender: {
         id: tender.id,
         title: tender.title,
@@ -85,7 +152,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       },
       documentBlockers,
       tenderLevelBlockers,
-      message: readiness.ok ? "Export gate passed. All active generated documents and tender-level controls are ready." : exportReadinessError(readiness.failures, tenderLevelBlockers),
+      message: exportOk ? "Export gate passed. All active generated documents and tender-level controls are ready." : exportReadinessError(readiness.failures, tenderLevelBlockers),
     },
   });
 }

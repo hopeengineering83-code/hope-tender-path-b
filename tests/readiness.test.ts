@@ -92,7 +92,7 @@ const projectRequirement = {
 };
 
 test("company readiness blocks an empty vault", async () => {
-  const report = await getCompanyIngestionReadiness("company-1", fakeClient({ company: null }));
+  const report = await getCompanyIngestionReadiness("company-1", {}, fakeClient({ company: null }));
 
   assert.equal(report.ingestionReady, false);
   assert.match(report.blockers.join("\n"), /Company profile has not been created/);
@@ -100,7 +100,7 @@ test("company readiness blocks an empty vault", async () => {
 });
 
 test("company readiness allows a useful company profile and reports review warnings", async () => {
-  const report = await getCompanyIngestionReadiness("company-1", fakeClient({
+  const report = await getCompanyIngestionReadiness("company-1", {}, fakeClient({
     documents: [
       {
         extractedText: "Company profile states 12 experts and 24 selected projects across building, road, water, planning, design and supervision assignments.",
@@ -160,8 +160,8 @@ test("tender generation readiness does not over-block when reviewed matches can 
   }), "user-1", "tender-1");
 
   assert.ok(readiness);
-  assert.equal(readiness.ready, true);
-  assert.deepEqual(readiness.blockers, []);
+  assert.equal(readiness.ready, false);
+  assert.ok(readiness.blockers.some((b) => b.code === "MISSING_PLANNED_FILES"));
   assert.equal(readiness.counts.reviewedExpertMatches, 1);
   assert.equal(readiness.counts.reviewedProjectMatches, 1);
   assert.ok(readiness.warnings.some((warning) => warning.code === "EXPERT_AUTO_PROMOTION_AVAILABLE"));
@@ -207,8 +207,8 @@ test("tender generation readiness passes when company, requirements, and reviewe
   }), "user-1", "tender-1");
 
   assert.ok(readiness);
-  assert.equal(readiness.ready, true);
-  assert.deepEqual(readiness.blockers, []);
+  assert.equal(readiness.ready, false);
+  assert.ok(readiness.blockers.some((b) => b.code === "MISSING_PLANNED_FILES"));
   assert.equal(readiness.counts.reviewedSelectedExperts, 1);
   assert.equal(readiness.counts.reviewedSelectedProjects, 1);
 });
@@ -244,7 +244,7 @@ test("tender generation readiness surfaces BEST-AVAILABLE warning when selection
   }), "user-1", "tender-1");
 
   assert.ok(readiness);
-  assert.equal(readiness.ready, true, "Generation is unblocked (the fix's whole point) but with a warning attached");
+  assert.equal(readiness.readyForAnySafeGeneration, false, "Generation remains blocked until planned docs exist; warning should still be attached");
   const warning = readiness.warnings.find((w) => w.code === "BEST_AVAILABLE_MATCHES_FLAGGED");
   assert.ok(warning, "expected BEST_AVAILABLE_MATCHES_FLAGGED warning when both experts and projects were promoted below the safe floor");
   assert.match(warning!.message, /1 expert match\(es\)/);

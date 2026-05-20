@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
 import { getSession } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
-import { assessMatchingQuality } from "../../../../../lib/matching-quality";
+import { assessMatchingQuality, isReadyForGenerationFromMatchingQuality } from "../../../../../lib/matching-quality";
 import { ensureCompanyForUser } from "../../../../../lib/company-workspace";
 import { getCompanyIngestionReadiness } from "../../../../../lib/company-ingestion-readiness";
+import { getCanonicalTenderReadiness } from "../../../../../lib/canonical-tender-readiness";
 
 export const dynamic = "force-dynamic";
 
@@ -35,7 +36,7 @@ export async function GET(
   // the production screenshot scenario. Without these counts the panel
   // hard-deducted -35-35 and produced 30/100 POOR while the Bid Control
   // Verdict (which DID pass vault counts) showed 64/100 WARNING.
-  const companyReadiness = await getCompanyIngestionReadiness(company.id, prisma);
+  const companyReadiness = await getCompanyIngestionReadiness(company.id, {}, prisma);
   const quality = assessMatchingQuality({
     requirements: tender.requirements,
     expertMatches: tender.expertMatches,
@@ -43,6 +44,15 @@ export async function GET(
     vaultReviewedExperts: companyReadiness.totals.reviewedExperts,
     vaultReviewedProjects: companyReadiness.totals.reviewedProjects,
   });
+  const canonical = await getCanonicalTenderReadiness(prisma, userId, id);
 
-  return NextResponse.json({ tenderId: id, readyForGeneration: quality.severity !== "POOR", quality });
+  return NextResponse.json({
+    tenderId: id,
+    readyForMatchingAttempt: true,
+    readyForGeneration: isReadyForGenerationFromMatchingQuality(quality),
+    matchingState: quality.state,
+    nextAction: quality.state === "VAULT_AWAITS_ENGINE" ? "RUN_ENGINE" : null,
+    canonical,
+    quality,
+  });
 }

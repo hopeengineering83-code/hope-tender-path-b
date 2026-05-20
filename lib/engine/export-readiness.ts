@@ -25,6 +25,40 @@ export type ExportReadinessResult = {
   tenderLevelBlockers?: Array<{ category: string; severity: string; title: string; recommendedAction?: string | null }>;
 };
 
+export function deriveTenderLevelExportHardBlockers(input: {
+  activeDocuments: number;
+  tenderStatus?: string | null;
+  tenderStage?: string | null;
+  readinessScore?: number | null;
+}): NonNullable<ExportReadinessResult["tenderLevelBlockers"]> {
+  const blockers: NonNullable<ExportReadinessResult["tenderLevelBlockers"]> = [];
+  if (input.activeDocuments === 0) {
+    blockers.push({
+      category: "EXPORT_BASELINE",
+      severity: "HIGH",
+      title: "NO_ACTIVE_GENERATED_DOCUMENTS",
+      recommendedAction: "Generate required tender documents before attempting export.",
+    });
+  }
+  if ((input.tenderStage ?? "").toUpperCase() === "ANALYSIS" || (input.tenderStatus ?? "").toUpperCase() === "ANALYZED") {
+    blockers.push({
+      category: "EXPORT_BASELINE",
+      severity: "HIGH",
+      title: "FULL_PROPOSAL_NOT_READY",
+      recommendedAction: "Run Engine and generate/review proposal documents before final export.",
+    });
+  }
+  if ((input.readinessScore ?? 0) <= 0) {
+    blockers.push({
+      category: "EXPORT_BASELINE",
+      severity: "MEDIUM",
+      title: "READINESS_SCORE_ZERO",
+      recommendedAction: "Resolve readiness blockers before final export.",
+    });
+  }
+  return blockers;
+}
+
 function generatedFileName(name: string): string {
   return `${name.replace(/[^a-zA-Z0-9]/g, "-")}.docx`;
 }
@@ -83,6 +117,33 @@ function maybeBase64Docx(value: string | null | undefined, filename: string): bo
   } catch {
     return false;
   }
+}
+
+function maybeBase64Pdf(value: string | null | undefined): boolean {
+  if (!value) return false;
+  try {
+    const head = Buffer.from(value.slice(0, 12), "base64").toString("utf8", 0, 5);
+    return head === "%PDF-";
+  } catch {
+    return false;
+  }
+}
+
+function maybeBase64Zip(value: string | null | undefined): boolean {
+  if (!value) return false;
+  try {
+    const head = Buffer.from(value.slice(0, 12), "base64");
+    return head.length >= 2 && head[0] === 0x50 && head[1] === 0x4b;
+  } catch {
+    return false;
+  }
+}
+
+function looksLikeBase64Payload(value: string | null | undefined): boolean {
+  if (!value) return false;
+  const compact = value.replace(/\s+/g, "");
+  if (compact.length < 8 || compact.length % 4 !== 0) return false;
+  return /^[A-Za-z0-9+/]+={0,2}$/.test(compact);
 }
 
 async function extractDocxVisibleText(value: string | null | undefined, filename: string): Promise<string | null> {
@@ -146,6 +207,12 @@ export function checkExportReadiness(docs: ExportReadyDocument[], opts: { requir
       if (doc.reviewStatus !== "READY_FOR_EXPORT") reasons.push(`reviewStatus is ${doc.reviewStatus}, expected READY_FOR_EXPORT`);
     }
     if (opts.requireFileContent && !doc.fileContent) reasons.push("fileContent is missing");
+    const fileName = documentFileName(doc).toLowerCase();
+    if (doc.fileContent && looksLikeBase64Payload(doc.fileContent) && (doc.reviewStatus === "READY_FOR_EXPORT" || doc.validationStatus === "VALIDATED")) {
+      if (fileName.endsWith(".pdf") && !maybeBase64Pdf(doc.fileContent)) reasons.push("fileContent does not match required PDF binary format");
+      if ((fileName.endsWith(".docx") || fileName.endsWith(".doc")) && !maybeBase64Docx(doc.fileContent, fileName)) reasons.push("fileContent does not match required DOCX binary format");
+      if ((fileName.endsWith(".xlsx") || fileName.endsWith(".xls") || fileName.endsWith(".zip")) && !maybeBase64Zip(doc.fileContent)) reasons.push("fileContent does not match required ZIP/XLSX binary format");
+    }
     for (const issue of documentHygieneIssues(doc.fileContent)) reasons.push(issue);
 
     if (reasons.length > 0) {
