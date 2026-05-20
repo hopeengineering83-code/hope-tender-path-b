@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { checkFullExportReadiness, deriveTenderLevelExportHardBlockers, exportReadinessError } from "../../../../../lib/engine/export-readiness";
+import { getTenderGenerationReadiness } from "../../../../../lib/tender-generation-readiness";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 10;
@@ -56,6 +57,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   });
 
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
+  const generationReadiness = await getTenderGenerationReadiness(prisma, actor.id, id);
 
   const readiness = await checkFullExportReadiness({ tenderId: id, docs: tender.generatedDocuments, requireFileContent: true });
   const documentBlockers = readiness.failures.map((failure) => ({
@@ -71,6 +73,14 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       tenderStage: tender.stage,
       readinessScore: tender.readinessScore,
     }),
+    ...(generationReadiness && !generationReadiness.fullProposalReady
+      ? [{
+          category: "READINESS_GATE",
+          severity: "HIGH" as const,
+          title: "FULL_PROPOSAL_NOT_READY",
+          recommendedAction: generationReadiness.fullProposalBlockers[0]?.nextAction ?? "Resolve generation-readiness blockers before final export.",
+        }]
+      : []),
   ];
   const exportOk = readiness.ok && tenderLevelBlockers.length === 0;
   const totalBlockers = documentBlockers.length + tenderLevelBlockers.length;

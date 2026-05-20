@@ -32,6 +32,9 @@ export type TenderGenerationReadiness = {
    * the "Generate Full Proposal" button — never use supportPackageReady.
    */
   fullProposalReady: boolean;
+  readyForAnySafeGeneration: boolean;
+  readyForFinalExport: boolean;
+  matchingComplete: boolean;
   /**
    * Reasons full-proposal generation is blocked (subset of blockers + warnings).
    * Surfaced separately so the UI can render a clear "NOT READY because..."
@@ -385,11 +388,19 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
 
   const supportPackageReady = blockers.length === 0;
   const fullProposalReady = fullProposalBlockers.length === 0;
+  const readyForAnySafeGeneration = supportPackageReady || fullProposalReady;
+  const matchingComplete = matchingQuality.state === "MATCHES_REVIEWED";
+  const readyForFinalExport = fullProposalReady;
 
   return {
-    ready: supportPackageReady,
+    // Legacy flag retained for compatibility; mapped to full-proposal gate
+    // to avoid false-green interpretations in callers.
+    ready: fullProposalReady,
     supportPackageReady,
     fullProposalReady,
+    readyForAnySafeGeneration,
+    readyForFinalExport,
+    matchingComplete,
     fullProposalBlockers,
     tenderId,
     blockers,
