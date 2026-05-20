@@ -2317,11 +2317,11 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   // sub-section heading the evaluator can score against directly.
   // The AI has been prompted to emit these (via the prompt directive
   // injected into evaluationMethodology); this post-pass injects
-  // stubs for any criterion the AI missed, with a Bid-Team Action
-  // note pointing the user at the gap.
+  // substantive content for any criterion the AI missed, sector-matched
+  // so the evaluator can score against the heading immediately.
   //
   // Does nothing when intelligence.evaluationWeights is empty.
-  const rubricResult = ensureRubricHeadings(humanizedMarkdown, intelligence.evaluationWeights);
+  const rubricResult = ensureRubricHeadings(humanizedMarkdown, intelligence.evaluationWeights, intelligence.primarySector);
   if (rubricResult.missingCriteria.length > 0) {
     console.info(`[generate-elite] Rubric post-pass: injected ${rubricResult.missingCriteria.length} missing rubric sub-section stub(s) for criteria: ${rubricResult.missingCriteria.join("; ")}`);
   }

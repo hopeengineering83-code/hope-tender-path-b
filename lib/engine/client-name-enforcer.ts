@@ -127,7 +127,7 @@ export function enforceClientName(
     if (!namesToReplace.includes(s)) namesToReplace.push(s);
   }
 
-  // Apply substitutions ONLY within the cover-letter / exec-summary zone
+  // Apply substitutions within the cover-letter / exec-summary zone.
   for (let i = zoneStart; i < zoneEnd && i < lines.length; i += 1) {
     let line = lines[i];
     for (const wrongName of namesToReplace) {
@@ -139,6 +139,44 @@ export function enforceClientName(
       if (line !== before) substitutionsMade += 1;
     }
     lines[i] = line;
+  }
+
+  // Extended pass — catch firm-history client names that leaked into
+  // Section C (Technical Approach) and Section D (Additional Information)
+  // narrative prose. Section B project cards legitimately reference those
+  // clients and are left untouched (bounded between Section B heading and
+  // the next top-level Section heading).
+  //
+  // Only catches leakage patterns likely caused by AI hallucination:
+  //   "… approach mirrors our work for <WrongClient> on …"
+  //   "… as delivered for <WrongClient> in …"
+  //   "… similar to <WrongClient>'s …"
+  // Not a full blanket replace — keeps false-positive risk low.
+  const LEAKAGE_PATTERNS = [
+    /(?:mirrors?|delivered?\s+for|similar\s+to|completed?\s+for|provided?\s+for|undertaken?\s+for|managed?\s+by|executed?\s+for)\s+/i,
+    /(?:To:|Subject:|Dear\s+(?:Sir|Madam|Team|Hiring|Sir\/Madam))/i,
+  ];
+  let sectionBStart = -1;
+  let sectionBEnd = -1;
+  for (let i = 0; i < lines.length; i += 1) {
+    if (sectionBStart < 0 && /^#\s+Section\s+B\b/i.test(lines[i])) { sectionBStart = i; continue; }
+    if (sectionBStart >= 0 && sectionBEnd < 0 && /^#\s+(?!Section\s+B\b)/.test(lines[i])) { sectionBEnd = i; break; }
+  }
+  if (sectionBEnd < 0) sectionBEnd = sectionBStart >= 0 ? sectionBStart + 1 : 0;
+
+  for (let i = zoneEnd; i < lines.length; i += 1) {
+    // Skip Section B project cards
+    if (i >= sectionBStart && i < sectionBEnd) continue;
+    const line = lines[i];
+    if (!LEAKAGE_PATTERNS.some((p) => p.test(line))) continue;
+    let fixed = line;
+    for (const wrongName of namesToReplace) {
+      const re = new RegExp(`(?<![A-Za-z0-9])${escapeRegex(wrongName)}(?![A-Za-z0-9])`, "g");
+      const before = fixed;
+      fixed = fixed.replace(re, isPlaceholderClient(canonical) ? "[CLIENT TO BE CONFIRMED]" : canonical);
+      if (fixed !== before) substitutionsMade += 1;
+    }
+    lines[i] = fixed;
   }
 
   result = lines.join("\n");
