@@ -309,6 +309,15 @@ function sectorPhasingRows(sector: string): PhasingRow[] {
       { phase: "5. Construction Supervision & Pre-Opening", deliverables: "Construction supervision with room-by-room snagging protocol; FF&E delivery inspection; MEP commissioning tests; mock room inspection; pre-opening punch list clearance; handover pack", duration: "Construction period + 6 weeks", responsible: "Resident Engineer + Interior Architect" },
     ];
   }
+  if (/geotech|soil.*invest|borehole.*programme|site.*invest.*geotech|subsoil.*invest|ground.*invest/i.test(s)) {
+    return [
+      { phase: "1. Desk Study & Mobilisation", deliverables: "Desk study (geological maps, hydrogeological records, previous investigations); borehole location plan; drilling programme; laboratory accreditation confirmation; site reconnaissance photographs", duration: "Weeks 1–2", responsible: "Principal Geotechnical Engineer" },
+      { phase: "2. Field Investigation", deliverables: "Borehole logs; trial-pit logs; SPT records and blowcounts; undisturbed sample dispatch records; standpipe piezometer readings; field groundwater levels; soil profile sketch", duration: "Weeks 2–6", responsible: "Senior Geotechnical Engineer + Driller" },
+      { phase: "3. Laboratory Testing", deliverables: "Test certificates (grain-size distribution, Atterberg limits, natural moisture content, UCS/triaxial shear strength, CBR, compaction — where applicable); groundwater chemistry analysis if required", duration: "Weeks 4–8", responsible: "Geotechnical Laboratory Manager" },
+      { phase: "4. Analysis & Peer Review", deliverables: "Bearing capacity calculation (Terzaghi/Meyerhof/EC7); settlement analysis; liquefaction assessment; slope-stability report (if applicable); pile capacity recommendation; independent peer-review certificate", duration: "Weeks 8–10", responsible: "Principal Geotechnical Engineer" },
+      { phase: "5. Report Issue", deliverables: "Geotechnical investigation report (executive summary, borehole logs, laboratory results, interpreted soil profile, foundation recommendations); peer-review sign-off certificate; drawing set (borehole location plan, soil profile sections)", duration: "Weeks 10–12", responsible: "Principal Geotechnical Engineer" },
+    ];
+  }
   // Generic
   return [
     { phase: "1. Inception", deliverables: "Inception report; ToR confirmation; data-collection plan; risk register baseline", duration: "Weeks 1–2", responsible: "Project Principal" },
@@ -468,6 +477,13 @@ function sectorRiskRows(sector: string): RiskRow[] {
       ...generic,
       { category: "Brand Standard", risk: "Design fails brand operator technical standards review — costly redesign", likelihood: "Medium", impact: "High", mitigation: "Brand technical standards review at concept stage and 60% design stage; compliance matrix tracked against brand checklist throughout", owner: "Lead Architect" },
       { category: "FF&E", risk: "Long-lead furniture/fixture/equipment items not ordered early enough — delay pre-opening", likelihood: "Medium", impact: "High", mitigation: "FF&E schedule agreed at design development stage; procurement lead times flagged in programme; provisional sum provisions for critical items", owner: "Interior Architect + Project Manager" },
+    ];
+  }
+  if (/geotech|soil.*invest|borehole.*programme|site.*invest.*geotech|subsoil.*invest|ground.*invest/i.test(s)) {
+    return [
+      ...generic,
+      { category: "Field", risk: "Borehole obstruction by boulders or cobbles delays programme", likelihood: "Medium", impact: "High", mitigation: "Rotary percussion drilling rig on standby; alternative borehole locations pre-agreed; programme float built in for obstructions", owner: "Senior Geotechnical Engineer" },
+      { category: "Laboratory", risk: "Sample disturbance renders shear-strength test results unreliable", likelihood: "Low", impact: "High", mitigation: "Samples sealed, labelled, and dispatched to accredited laboratory within 48 hours; index tests reviewed before advanced shear-strength tests commissioned", owner: "Geotechnical Laboratory Manager" },
     ];
   }
   return generic;
