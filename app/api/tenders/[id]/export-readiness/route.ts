@@ -3,6 +3,7 @@ import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../.
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { checkFullExportReadiness, deriveTenderLevelExportHardBlockers, exportReadinessError } from "../../../../../lib/engine/export-readiness";
 import { getTenderGenerationReadiness } from "../../../../../lib/tender-generation-readiness";
+import { buildSubmissionPlan, findExtraGeneratedDocuments, findMissingGeneratedDocuments } from "../../../../../lib/engine/submission-plan";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 10;
@@ -40,6 +41,23 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       status: true,
       stage: true,
       readinessScore: true,
+      exactFileNaming: true,
+      exactFileOrder: true,
+      requirements: {
+        select: {
+          id: true,
+          title: true,
+          description: true,
+          requirementType: true,
+          priority: true,
+          exactFileName: true,
+          exactOrder: true,
+          requiredQuantity: true,
+          pageLimit: true,
+          restrictions: true,
+          sectionReference: true,
+        },
+      },
       generatedDocuments: {
         where: { generationStatus: { not: "SUPERSEDED" } },
         orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }],
@@ -51,6 +69,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
           validationStatus: true,
           reviewStatus: true,
           fileContent: true,
+          format: true,
         },
       },
     },
@@ -60,6 +79,9 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   const generationReadiness = await getTenderGenerationReadiness(prisma, actor.id, id);
 
   const readiness = await checkFullExportReadiness({ tenderId: id, docs: tender.generatedDocuments, requireFileContent: true });
+  const submissionPlan = buildSubmissionPlan(tender);
+  const missingPlanFiles = findMissingGeneratedDocuments(submissionPlan, tender.generatedDocuments);
+  const extraPlanFiles = findExtraGeneratedDocuments(submissionPlan, tender.generatedDocuments);
   const documentBlockers = readiness.failures.map((failure) => ({
     ...failure,
     severity: severityForReasons(failure.reasons),
@@ -79,6 +101,22 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
           severity: "HIGH" as const,
           title: "FULL_PROPOSAL_NOT_READY",
           recommendedAction: generationReadiness.fullProposalBlockers[0]?.nextAction ?? "Resolve generation-readiness blockers before final export.",
+        }]
+      : []),
+    ...(missingPlanFiles.length > 0
+      ? [{
+          category: "SUBMISSION_PLAN",
+          severity: "HIGH" as const,
+          title: "MISSING_PLANNED_FILES",
+          recommendedAction: `Generate ${missingPlanFiles.length} missing planned submission file(s) before export.`,
+        }]
+      : []),
+    ...(extraPlanFiles.length > 0
+      ? [{
+          category: "SUBMISSION_PLAN",
+          severity: "MEDIUM" as const,
+          title: "EXTRA_GENERATED_FILES",
+          recommendedAction: `Reconcile ${extraPlanFiles.length} extra generated file(s) against the submission plan.`,
         }]
       : []),
   ];
