@@ -195,6 +195,9 @@ function inferCategory(text: string): string {
   if (/\bHAZOP\b|\bP&ID\b|pipeline\s+design|oil\s+facilit|gas\s+facilit|petrochemical|upstream\s+petroleum/i.test(text)) return "Oil & Gas";
   if (/\bKYC\b|\bAML\b|core\s+banking|microfinance|\bIFRS\b|\bBasel\b|fintech|payment\s+system/i.test(text)) return "Financial Services";
   if (/spectrum|broadband|\bLTE\b|\b5G\b|base\s+station|backhaul|mobile\s+network/i.test(text)) return "Telecoms";
+  if (/interior design|fit[-\s]?out|space planning|joinery|finishes.*schedule|furniture.*layout|workplace.*design/i.test(text)) return "Architecture & Design";
+  if (/construction supervision|resident engineer|site supervision|quality.*inspector|hold[- ]?point|defect.*liability/i.test(text)) return "Supervision";
+  if (/contract administration|variation order|payment certificate|\bFIDIC\b|claims management|quantity survey/i.test(text)) return "Contract Administration";
   if (/architectural|interior|floor\s*plan/i.test(text)) return "Consulting";
   if (/construction|supervision|design|engineering|consultancy|consultant/i.test(text)) return "Consulting";
   if (/supply|goods|equipment|procurement\s+of\s+goods/i.test(text)) return "Supply";

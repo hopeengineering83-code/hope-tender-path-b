@@ -313,6 +313,48 @@ export const PROPOSAL_THEMES: ProposalTheme[] = [
       "rollout and commissioning: site acquisition support, equipment procurement specifications, installation supervision, drive-test and acceptance protocol, SLA definition, and O&M handover with operator training",
     ],
   },
+  {
+    code: "INTERIOR_DESIGN",
+    label: "Interior design, fit-out and space planning",
+    triggers: [/interior design/i, /fit[-\s]?out/i, /space planning/i, /joinery/i, /ceiling.*design/i, /flooring/i, /finishes/i, /furniture.*layout/i, /partition/i, /workplace design/i, /interior.*architect/i, /FF&E/i, /MEP.*interior/i],
+    proofTerms: [/interior/i, /fit[- ]?out/i, /space planning/i, /finishes/i, /joinery/i, /partition/i, /ceiling/i, /flooring/i, /furniture/i, /FF&E/i, /lighting.*design/i, /\bCAD\b/i, /Revit/i, /SketchUp/i],
+    methodologyBullets: [
+      "space programming and functional brief: occupant count, activity zones, adjacency matrix, and area schedule before any design begins",
+      "concept design with mood boards, material palette, and lighting concept — client approval before schematic development",
+      "schematic design: space layout plans, reflected ceiling plans, partition and flooring schedules, joinery elevations",
+      "detailed design and FF&E specification: full furniture, fixture, and equipment schedule with supplier options and lead times",
+      "construction documentation: detailed drawings, specifications, BOQ, and room data sheets for contractor tender",
+      "construction administration: shop drawing review, material sample approval, site inspections, and defects-liability management",
+    ],
+  },
+  {
+    code: "SUPERVISION_CONSULTANCY",
+    label: "Construction supervision and resident engineer services",
+    triggers: [/construction supervision/i, /resident engineer/i, /site supervision/i, /supervision.*contract/i, /site.*management/i, /quality.*contractor/i, /engineer.*supervision/i, /supervision.*consultancy/i, /oversight.*construction/i],
+    proofTerms: [/supervision/i, /resident engineer/i, /site inspection/i, /quality control/i, /hold[- ]?point/i, /payment certificate/i, /variation/i, /progress report/i, /defects/i, /DLP/i, /commissioning/i, /punch list/i, /snag/i],
+    methodologyBullets: [
+      "pre-construction review: check contractor's programme, method statements, ITP, HSMP, and resource mobilisation plan before site start",
+      "hold-point inspection regime: mandatory W (Witness) and H (Hold) points for critical activities — foundations, pre-pour, structural welds, pressure tests",
+      "quality assurance: third-party lab testing, test certification review, non-conformance report (NCR) issuance and closeout tracking",
+      "payment certification: monthly interim payment certificates (IPC) based on measured quantities and approved rates",
+      "variation order management: evaluate contractor claims, issue Variation Order (VO) instructions, and maintain cost register",
+      "defects-liability period (DLP) inspection: systematic snag list, contractor response tracking, and performance bond release recommendation",
+    ],
+  },
+  {
+    code: "CONTRACT_ADMINISTRATION",
+    label: "Contract administration, cost control and claims management",
+    triggers: [/contract administration/i, /contract.*admin/i, /FIDIC/i, /variation order/i, /payment certificate/i, /claims management/i, /cost control/i, /quantity survey/i, /procurement.*advisory/i, /bid.*management/i, /tender.*management/i],
+    proofTerms: [/FIDIC/i, /variation/i, /claim/i, /payment certificate/i, /BOQ/i, /quantity/i, /cost.*report/i, /cash.*flow/i, /extension.*time/i, /EOT/i, /final.*account/i, /contract.*sum/i, /retention/i, /bond/i],
+    methodologyBullets: [
+      "contract document review at award: identify ambiguities, prepare contract administration manual, and issue Employer's notification of contract start",
+      "cost-control reporting: monthly cost report against contract sum, forecast final cost, cash-flow projection, and contingency drawdown register",
+      "variation order administration: evaluate contractor VO submissions, negotiate quantum, issue Engineer's Instructions, and update contract sum",
+      "claim evaluation: time-impact analysis for extension-of-time (EOT) claims, disruption cost assessment, and formal determinations under the contract",
+      "final account preparation: measurement reconciliation, agreed final BOQ, settlement of outstanding claims, and certificate of substantial completion",
+      "contract closeout: release of retention, performance bond discharge recommendation, and lessons-learned report",
+    ],
+  },
 ];
 
 // ─── Scoring ──────────────────────────────────────────────────────────────────
@@ -351,6 +393,9 @@ function projectScore(project: ProjectLite, themes: ProposalTheme[], tenderText:
   if (/HAZOP|P&ID|pipeline.*design|oil.*facilit|gas.*facilit|refinery|petrochemical/i.test(text) && /HAZOP|P&ID|pipeline.*design|oil.*facilit|gas.*facilit|refinery|petrochemical/i.test(tenderText)) score += 12;
   if (/KYC|AML|core.*banking|microfinance|IFRS|Basel|prudential.*regul|fintech/i.test(text) && /KYC|AML|core.*banking|microfinance|IFRS|Basel|prudential.*regul|fintech/i.test(tenderText)) score += 12;
   if (/spectrum|broadband|LTE|5G|base.*station|backhaul|mobile.*network/i.test(text) && /spectrum|broadband|LTE|5G|base.*station|backhaul|mobile.*network/i.test(tenderText)) score += 12;
+  if (/interior design|fit[- ]?out|space planning|finishes|joinery/i.test(text) && /interior design|fit[- ]?out|space planning|finishes|joinery/i.test(tenderText)) score += 10;
+  if (/construction supervision|resident engineer|site supervision/i.test(text) && /supervision|resident engineer|site.*management/i.test(tenderText)) score += 10;
+  if (/contract administration|FIDIC|variation order|payment certificate/i.test(text) && /contract administration|FIDIC|variation/i.test(tenderText)) score += 10;
   // Contract value bonus (bigger projects = stronger institutional evidence).
   // Guard against contractValue < 1 — log10 returns negative for sub-unit
   // values, which would penalise projects stored in fractional units.
@@ -385,6 +430,9 @@ function expertScore(expert: ExpertLite, themes: ProposalTheme[], tenderText: st
   if (/process.*engineer|pipeline.*engineer|HAZOP.*facilitator|oil.*gas.*engineer|petroleum.*engineer/i.test(text) && /HAZOP|P&ID|pipeline.*design|oil.*facilit|gas.*facilit|refinery/i.test(tenderText)) score += 10;
   if (/compliance.*officer|risk.*analyst|financial.*specialist|banking.*specialist|fintech.*specialist/i.test(text) && /KYC|AML|core.*banking|microfinance|IFRS|Basel|prudential/i.test(tenderText)) score += 10;
   if (/telecom.*engineer|network.*engineer|RF.*engineer|spectrum.*specialist|broadband.*specialist/i.test(text) && /spectrum|broadband|LTE|5G|base.*station|backhaul|mobile.*network/i.test(tenderText)) score += 10;
+  if (/interior designer|interior architect|space planner|fit[- ]?out.*lead/i.test(text) && /interior design|fit[- ]?out|space planning/i.test(tenderText)) score += 10;
+  if (/resident engineer|supervising engineer|site engineer|quality inspector/i.test(text) && /supervision|resident engineer|site.*management/i.test(tenderText)) score += 10;
+  if (/contract administrator|FIDIC.*engineer|claims.*manager|quantity surveyor/i.test(text) && /contract administration|FIDIC|variation|claim/i.test(tenderText)) score += 10;
   if (expert.yearsExperience) score += Math.min(6, expert.yearsExperience / 4);
   return score;
 }
@@ -467,6 +515,11 @@ function detectEvaluationCriteria(tenderText: string): string[] {
   // Telecoms / Broadband
   if (/telecom.*experience|broadband.*experience|spectrum.*experience|network.*rollout.*experience/i.test(evalSection)) criteria.push("Telecoms / broadband network experience — lead with named projects, network reach (km), and spectrum licensing outcomes");
   if (/LTE|5G|base.*station.*design|backhaul.*design|broadband.*rollout/i.test(evalSection)) criteria.push("Technical depth in mobile and broadband network design — demonstrate RF planning, backhaul design, and commissioning protocol capability");
+
+  // Interior Design / Fit-Out / Construction Supervision / Contract Administration
+  if (/interior.*experience|fit[- ]?out.*experience|space.*planning.*experience/i.test(evalSection)) criteria.push("Interior design / fit-out experience — lead with named projects, area (m²), and client references");
+  if (/supervision.*experience|resident engineer.*experience|site.*management.*experience/i.test(evalSection)) criteria.push("Construction supervision experience — show named contracts supervised, contract value, and IPC/hold-point outcomes");
+  if (/contract.*admin.*experience|FIDIC.*experience|claims.*experience|quantity.*survey.*experience/i.test(evalSection)) criteria.push("Contract administration / FIDIC experience — show named contracts, final account settlements, and EOT determinations");
 
   // Universal criteria
   if (/portfolio|quality.*portfolio|relevance.*portfolio/i.test(evalSection)) criteria.push("Quality and relevance of project portfolio — include photos, drawings, and project outcome evidence");
