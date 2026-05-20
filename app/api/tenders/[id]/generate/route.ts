@@ -259,17 +259,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     if (totalExpertMatches > 0) {
       return NextResponse.json({ error: "Generation blocked: tender requires experts but no expert matches are selected. Run Engine and review/select expert matches before generating.", code: "NO_EXPERT_MATCHES_SELECTED", totalExpertMatches, nextAction: "REVIEW_MATCHES" }, { status: 422 });
     }
-    if (readiness.totals.reviewedExperts === 0) {
-      return NextResponse.json({ error: "Generation blocked: tender requires experts but no expert matches exist and the company vault has no reviewed experts. Run Engine or review expert records first.", code: "NO_EXPERT_MATCHES_FOUND", totalExpertMatches: 0, nextAction: "RUN_ENGINE" }, { status: 422 });
-    }
+    return NextResponse.json({ error: "Generation blocked: tender requires experts but no tender-specific expert match rows exist yet. Run Engine first to create tender expert match rows, then review/select expert matches.", code: "ENGINE_NOT_RUN_OR_NO_EXPERT_MATCH_ROWS", totalExpertMatches: 0, nextAction: "RUN_ENGINE" }, { status: 422 });
   }
   if (projectRequirementExists > 0 && selectedProjectMatches.length === 0) {
     if (totalProjectMatches > 0) {
       return NextResponse.json({ error: "Generation blocked: tender requires project references but no project matches are selected. Run Engine and review/select project matches before generating.", code: "NO_PROJECT_MATCHES_SELECTED", totalProjectMatches, nextAction: "REVIEW_MATCHES" }, { status: 422 });
     }
-    if (readiness.totals.reviewedProjects === 0) {
-      return NextResponse.json({ error: "Generation blocked: tender requires project references but no project matches exist and the company vault has no reviewed projects. Run Engine or review project records first.", code: "NO_PROJECT_MATCHES_FOUND", totalProjectMatches: 0, nextAction: "RUN_ENGINE" }, { status: 422 });
-    }
+    return NextResponse.json({ error: "Generation blocked: tender requires project references but no tender-specific project match rows exist yet. Run Engine first to create tender project match rows, then review/select project matches.", code: "ENGINE_NOT_RUN_OR_NO_PROJECT_MATCH_ROWS", totalProjectMatches: 0, nextAction: "RUN_ENGINE" }, { status: 422 });
   }
   if (selectedExpertMatches.length > 0 && reviewedExpertCount === 0 && expertRequirementExists > 0) return NextResponse.json({ error: `Generation blocked: ${selectedExpertMatches.length} expert(s) are selected but NONE have been reviewed. Go to the Knowledge Review page and review at least one expert before generating.`, code: "ALL_EXPERTS_UNREVIEWED", draftExperts: draftExperts.map((m) => m.expert.fullName) }, { status: 422 });
   if (selectedProjectMatches.length > 0 && reviewedProjectCount === 0 && projectRequirementExists > 0) return NextResponse.json({ error: `Generation blocked: ${selectedProjectMatches.length} project reference(s) are selected but NONE have been reviewed. Go to the Knowledge Review page and review at least one project before generating.`, code: "ALL_PROJECTS_UNREVIEWED", draftProjects: draftProjects.map((m) => m.project.name) }, { status: 422 });
