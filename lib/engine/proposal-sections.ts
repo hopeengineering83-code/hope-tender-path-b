@@ -828,6 +828,17 @@ Operating principles:
 function buildTechnicalApproachDrillDownPrompt(input: AIBidWriterInput, firstPassSectionC: string): string {
   return `Deepen Section C — Technical Approach — for this technical proposal. The first-pass version is below; rewrite it with substantially more methodology depth and evidence integration.
 
+## BEFORE YOU DEEPEN — ANALYSIS (mandatory)
+Before rewriting, scan the FIRST-PASS SECTION C and identify:
+1. Which C.2.x sub-sections are currently weakest (single paragraph, no project citation, generic language)? List them — these get the deepest rewrite.
+2. Which 2 projects are most directly cited in the first pass? Their names + exact methodology elements must be preserved AND deepened.
+3. Which 2 experts are named? Their names + roles must appear in MORE sub-sections than the first pass, not fewer.
+4. What sector-specific technical vocabulary from the TENDER TEXT is underused in the first pass? Weave it into the deepened sub-sections.
+
+The deepening MUST improve the weakest sub-sections most — not rewrite the strong ones generically.
+
+---
+
 ## TENDER
 TITLE: ${input.tenderTitle}
 CLIENT: ${input.clientName}

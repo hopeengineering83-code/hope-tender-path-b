@@ -2566,11 +2566,7 @@ export async function generateProposalSectionsParallel(input: AIBidWriterInput, 
   // drill-down add-on call (~10–12s serial) is well within the 220s
   // Tier 2 timeout and produces the biggest single quality lift.
   // Override: set PROPOSAL_DEEP_MODE=false to force off on any tier.
-  const _tierForDeep = (process.env.ANTHROPIC_TIER || "").trim();
-  const _tierNumForDeep = _tierForDeep === "1" ? 1 : _tierForDeep === "3" ? 3 : _tierForDeep === "4" ? 4 : 2;
-  const deepMode = (process.env.PROPOSAL_DEEP_MODE || "").toLowerCase() === "false"
-    ? false
-    : true;
+  const deepMode = (process.env.PROPOSAL_DEEP_MODE || "").toLowerCase() !== "false";
 
   // Chunked mode: when a sectionFilter is provided the caller is making
   // one of 3 sequential browser-side calls (each its own Vercel function
