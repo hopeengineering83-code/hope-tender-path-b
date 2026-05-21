@@ -131,7 +131,7 @@ export async function BidControlVerdictPanel({ tenderId }: { tenderId: string })
           NOT_READY. Full proposal is the strict gate; Support pkg is
           the legacy/vault-fallback gate. */}
       <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
-        <div className="rounded-xl bg-white p-3" title="Strict gate — full proposal generation. Requires valid client metadata, real tender-specific matches with reviewed selections, non-zero matching score, and analysis quality not POOR.">
+        <div className="rounded-xl bg-white p-3" title="Full proposal generation gate. Requires valid client metadata and analysis quality not POOR. Vault-reviewed experts/projects work as fallback when the engine hasn't been run for this tender — running the engine improves match quality but is not a prerequisite.">
           <p className="text-xs text-slate-500">Full proposal</p>
           <p className={`text-lg font-bold ${fullProposalReady ? "text-emerald-700" : "text-red-700"}`}>{fullProposalReady ? "Ready" : "Blocked"}</p>
         </div>
