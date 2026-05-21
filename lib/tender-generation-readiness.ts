@@ -235,10 +235,16 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
     });
   }
 
+  // Skip the per-type "no expert/project matches" vault-fallback warnings when
+  // VAULT_AWAITS_ENGINE is already reported — the consolidated engine-not-run
+  // warning above already covers both types together. Avoids triple warnings
+  // (engine + expert + project) for one root cause.
+  const engineNotRunCovered = matchingQuality.state === "VAULT_AWAITS_ENGINE";
+
   if (expertRequirementExists && tender.expertMatches.length === 0) {
     if (companyReadiness.totals.reviewedExperts === 0) {
       blockers.push({ code: "NO_EXPERT_MATCHES_FOUND", message: "Tender requires experts but no expert matches exist and the company vault has no reviewed experts. Run Engine or review expert records first.", nextAction: "RUN_ENGINE" });
-    } else {
+    } else if (!engineNotRunCovered) {
       warnings.push({ code: "NO_EXPERT_MATCHES_FOUND", message: `No expert matches linked to this tender — generation will use ${companyReadiness.totals.reviewedExperts} vault expert(s) as fallback. Run Engine to match experts to this tender.`, nextAction: "RUN_ENGINE" });
     }
   } else if (expertRequirementExists && selectedExperts.length === 0 && reviewedExpertMatches.length === 0) {
@@ -252,7 +258,7 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
   if (projectRequirementExists && tender.projectMatches.length === 0) {
     if (companyReadiness.totals.reviewedProjects === 0) {
       blockers.push({ code: "NO_PROJECT_MATCHES_FOUND", message: "Tender requires project references but no project matches exist and the company vault has no reviewed projects. Run Engine or review project records first.", nextAction: "RUN_ENGINE" });
-    } else {
+    } else if (!engineNotRunCovered) {
       warnings.push({ code: "NO_PROJECT_MATCHES_FOUND", message: `No project matches linked to this tender — generation will use ${companyReadiness.totals.reviewedProjects} vault project(s) as fallback. Run Engine to match projects to this tender.`, nextAction: "RUN_ENGINE" });
     }
   } else if (projectRequirementExists && selectedProjects.length === 0 && reviewedProjectMatches.length === 0) {
