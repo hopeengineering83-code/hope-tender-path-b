@@ -25,7 +25,7 @@ export async function SubmissionPlanReconciliationPanel({ tenderId }: { tenderId
       generatedDocuments: {
         where: { generationStatus: { not: "SUPERSEDED" } },
         orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }],
-        select: { id: true, name: true, documentType: true, exactFileName: true, exactOrder: true, generationStatus: true, validationStatus: true, reviewStatus: true, fileContent: true },
+        select: { id: true, name: true, documentType: true, exactFileName: true, exactOrder: true, generationStatus: true, validationStatus: true, reviewStatus: true },
       },
     },
   });

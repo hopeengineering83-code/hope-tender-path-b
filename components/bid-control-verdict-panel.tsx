@@ -54,13 +54,16 @@ export async function BidControlVerdictPanel({ tenderId }: { tenderId: string })
     pageLimit: tender.pageLimit,
     requirements: tender.requirements,
   });
-  const missingPlanFiles = findMissingGeneratedDocuments(plan, tender.generatedDocuments);
-  const extraPlanFiles = findExtraGeneratedDocuments(plan, tender.generatedDocuments);
+  // Exclude NOT_EXPORTABLE (quick drafts, markdown previews) from all export/plan checks.
+  // These are saved for user convenience but are intentionally not part of the final package.
+  const exportableDocs = tender.generatedDocuments.filter((doc) => doc.reviewStatus !== "NOT_EXPORTABLE");
+  const missingPlanFiles = findMissingGeneratedDocuments(plan, exportableDocs);
+  const extraPlanFiles = findExtraGeneratedDocuments(plan, exportableDocs);
   const requiredPlanCount = submissionPlanFileCount(plan);
-  const activeDocs = tender.generatedDocuments.length;
-  const ungeneratedDocs = tender.generatedDocuments.filter((doc) => doc.generationStatus !== "GENERATED");
-  const unvalidatedDocs = tender.generatedDocuments.filter((doc) => doc.validationStatus !== "VALIDATED");
-  const unreviewedDocs = tender.generatedDocuments.filter((doc) => doc.reviewStatus !== "READY_FOR_EXPORT");
+  const activeDocs = exportableDocs.length;
+  const ungeneratedDocs = exportableDocs.filter((doc) => doc.generationStatus !== "GENERATED");
+  const unvalidatedDocs = exportableDocs.filter((doc) => doc.validationStatus !== "VALIDATED");
+  const unreviewedDocs = exportableDocs.filter((doc) => doc.reviewStatus !== "READY_FOR_EXPORT");
   const criticalGaps = tender.complianceGaps.filter((gap) => gap.severity === "CRITICAL");
   const highGaps = tender.complianceGaps.filter((gap) => gap.severity === "HIGH");
 
