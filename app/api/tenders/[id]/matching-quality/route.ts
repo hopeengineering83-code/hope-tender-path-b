@@ -48,10 +48,18 @@ export async function GET(
 
   return NextResponse.json({
     tenderId: id,
-    readyForMatchingAttempt: true,
+    readyForMatchingAttempt:
+      quality.state === "VAULT_AWAITS_ENGINE" ||
+      quality.state === "MATCHES_REVIEWED" ||
+      quality.state === "MATCHES_WEAK" ||
+      quality.state === "MATCHING_NOT_REQUIRED",
     readyForGeneration: isReadyForGenerationFromMatchingQuality(quality),
     matchingState: quality.state,
-    nextAction: quality.state === "VAULT_AWAITS_ENGINE" ? "RUN_ENGINE" : null,
+    nextAction: isReadyForGenerationFromMatchingQuality(quality)
+      ? "GENERATE"
+      : quality.state === "VAULT_AWAITS_ENGINE"
+        ? "RUN_ENGINE"
+        : "REVIEW_MATCHING_QUALITY",
     canonical,
     quality,
   });
