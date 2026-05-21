@@ -61,7 +61,10 @@ export type MatchingQualityReport = {
 };
 
 export function isReadyForGenerationFromMatchingQuality(report: MatchingQualityReport): boolean {
-  if (report.state === "VAULT_AWAITS_ENGINE") return false;
+  if (report.state === "VAULT_AWAITS_ENGINE" || report.state === "NO_VAULT") return false;
+  if (report.state === "MATCHING_NOT_REQUIRED") return true;
+  if (report.expertRequirementExists && report.reviewedSelectedExperts <= 0) return false;
+  if (report.projectRequirementExists && report.reviewedSelectedProjects <= 0) return false;
   return report.severity !== "POOR";
 }
 
