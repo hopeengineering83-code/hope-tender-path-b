@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
 import { getSession } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
-import { assessMatchingQuality } from "../../../../../lib/matching-quality";
+import { assessMatchingQuality, isReadyForGenerationFromMatchingQuality } from "../../../../../lib/matching-quality";
 import { ensureCompanyForUser } from "../../../../../lib/company-workspace";
 import { getCompanyIngestionReadiness } from "../../../../../lib/company-ingestion-readiness";
+import { getCanonicalTenderReadiness } from "../../../../../lib/canonical-tender-readiness";
 
 export const dynamic = "force-dynamic";
 
@@ -29,12 +30,6 @@ export async function GET(
   ]);
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
 
-  // Gap 5 — pass vault counts so this panel correctly returns
-  // VAULT_AWAITS_ENGINE state (softer score) when engine hasn't run yet
-  // but vault has 28 reviewed experts + 112 reviewed projects ready —
-  // the production screenshot scenario. Without these counts the panel
-  // hard-deducted -35-35 and produced 30/100 POOR while the Bid Control
-  // Verdict (which DID pass vault counts) showed 64/100 WARNING.
   const companyReadiness = await getCompanyIngestionReadiness(company.id, {}, prisma);
   const quality = assessMatchingQuality({
     requirements: tender.requirements,
@@ -43,6 +38,26 @@ export async function GET(
     vaultReviewedExperts: companyReadiness.totals.reviewedExperts,
     vaultReviewedProjects: companyReadiness.totals.reviewedProjects,
   });
+  const canonical = await getCanonicalTenderReadiness(prisma, userId, id);
 
-  return NextResponse.json({ tenderId: id, readyForGeneration: quality.severity !== "POOR", quality });
+  const readyForGeneration = isReadyForGenerationFromMatchingQuality(quality);
+  const readyForMatchingAttempt =
+    quality.state === "VAULT_AWAITS_ENGINE" ||
+    quality.state === "MATCHES_REVIEWED" ||
+    quality.state === "MATCHES_WEAK" ||
+    quality.state === "MATCHING_NOT_REQUIRED";
+
+  return NextResponse.json({
+    tenderId: id,
+    readyForMatchingAttempt,
+    readyForGeneration,
+    matchingState: quality.state,
+    nextAction: readyForGeneration
+      ? "GENERATE"
+      : quality.state === "VAULT_AWAITS_ENGINE"
+        ? "RUN_ENGINE"
+        : "REVIEW_MATCHING_QUALITY",
+    canonical,
+    quality,
+  });
 }

@@ -8,6 +8,8 @@ import { buildRubricPromptDirective } from "../../../../../lib/engine/rubric-dri
 import { extractTenderLanguageEchoes, formatEchoesForPrompt } from "../../../../../lib/engine/tender-language-echoes";
 import { extractTenderFacts, formatFactsForPrompt } from "../../../../../lib/engine/tender-facts-extractor";
 import { buildProposalCacheKey, getCachedProposal, setCachedProposal } from "../../../../../lib/proposal-cache";
+import { applyAIWriterContractPrompt } from "../../../../../lib/engine/ai-writer-contract-prompt";
+import type { TenderSourceDocument } from "../../../../../lib/engine/source-grounded-requirement-map";
 
 // Vercel route timeout — Claude proposal generation needs >10s default.
 // 60 = Hobby max; Pro applies its own plan limit when this is exceeded.
@@ -347,6 +349,19 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       };
       const c = company as typeof company & _CompanyFields;
 
+      const tenderSources: TenderSourceDocument[] = tender.files.map((file, index) => ({
+        id: `tender-file-${index + 1}`,
+        name: file.originalFileName || `Tender source ${index + 1}`,
+        text: file.extractedText ?? "",
+      }));
+
+      const criterionEvidenceMap = buildCriterionEvidenceMap(
+        intelligence.evaluationWeights,
+        intelligence.topProjects,
+        intelligence.topExperts,
+        _clean(tender.evaluationMethodology) || intelligence.evaluationCriteria.join("\n"),
+      );
+
       const aiInputBase = {
         tenderTitle: tender.title,
         clientName: intelligence.clientName,
@@ -425,18 +440,35 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
             return cn.toLowerCase().trim() !== tenderClient;
           })));
         })(),
-        criterionEvidenceMap: buildCriterionEvidenceMap(
-          intelligence.evaluationWeights,
-          intelligence.topProjects,
-          intelligence.topExperts,
-          _clean(tender.evaluationMethodology) || intelligence.evaluationCriteria.join("\n"),
-        ),
+        criterionEvidenceMap,
       };
+      const contractInput = {
+        tenderTitle: tender.title,
+        clientName: intelligence.clientName,
+        requirements: requirementLines,
+        expertLines,
+        projectLines,
+        companyEvidenceLines,
+        projectEvidenceLines,
+        complianceLines,
+        differentiators: intelligence.differentiators,
+        evaluationCriteria: intelligence.evaluationCriteria,
+        submissionRules: intelligence.submissionRules,
+        selectedExpertCount: tender.expertMatches.filter((match) => match.isSelected && match.expert.trustLevel === "REVIEWED").length,
+        selectedProjectCount: tender.projectMatches.filter((match) => match.isSelected && match.project.trustLevel === "REVIEWED").length,
+        reviewedExpertCount: tender.expertMatches.filter((match) => match.isSelected && match.expert.trustLevel === "REVIEWED").length,
+        reviewedProjectCount: tender.projectMatches.filter((match) => match.isSelected && match.project.trustLevel === "REVIEWED").length,
+        tenderSources,
+      };
+      const aiInput = applyAIWriterContractPrompt({
+        aiInput: { ...aiInputBase, criterionEvidenceMap },
+        contractInput,
+      });
       // Chunked mode always uses parallel section generation (with a section
       // filter) so the correct per-chunk budgets in proposal-sections.ts apply.
       const generateFn = (useParallel || sectionFilter)
-        ? generateProposalSectionsParallel(aiInputBase, sectionFilter)
-        : generateBenchmarkProposalWithAI(aiInputBase);
+        ? generateProposalSectionsParallel(aiInput, sectionFilter)
+        : generateBenchmarkProposalWithAI(aiInput);
       proposal = await withProposalTimeout(generateFn, AI_PROPOSAL_TIMEOUT_MS);
     } catch (aiError) {
       const msg = aiError instanceof Error ? aiError.message : String(aiError);
@@ -493,11 +525,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           data: {
             tenderId: id,
             name: "AI Proposal (Quick Draft)",
-            documentType: "PROPOSAL",
+            documentType: "QUICK_DRAFT",
+            format: "MARKDOWN",
             generationStatus: "GENERATED",
             validationStatus: "PENDING",
-            reviewStatus: "PENDING",
-            contentSummary: `Quick AI draft generated ${new Date().toLocaleString()}. Run Generate Docs for the full submission-ready package.`,
+            reviewStatus: "NOT_EXPORTABLE",
+            contentSummary: "Quick draft only. Not part of final export package.",
             fileContent: Buffer.from(contentToSave).toString("base64"),
           },
         });

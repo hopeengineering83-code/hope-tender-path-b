@@ -74,8 +74,9 @@ export function assessCompanyIngestionReadiness(snapshot: IngestionReadinessSnap
   const blockers: string[] = [];
   const warnings: string[] = [];
 
-  if (snapshot.docs.length > 0 && usefulDocuments === 0 && reviewedExperts === 0 && reviewedProjects === 0) blockers.push("Company documents are uploaded but no usable extracted knowledge or reviewed expert/project records are available yet.");
-  if (pendingDocuments > 0 && usefulDocuments === 0 && reviewedExperts === 0 && reviewedProjects === 0) blockers.push("Company knowledge extraction is still pending. Re-import/review the company documents before generation.");
+  const requiresReviewedEvidence = requireReviewedExperts || requireReviewedProjects;
+  if (requiresReviewedEvidence && snapshot.docs.length > 0 && usefulDocuments === 0 && reviewedExperts === 0 && reviewedProjects === 0) blockers.push("Company documents are uploaded but no usable extracted knowledge or reviewed expert/project records are available yet.");
+  if (requiresReviewedEvidence && pendingDocuments > 0 && usefulDocuments === 0 && reviewedExperts === 0 && reviewedProjects === 0) blockers.push("Company knowledge extraction is still pending. Re-import/review the company documents before generation.");
   if (requireReviewedExperts && reviewedExperts === 0) blockers.push("No REVIEWED experts available.");
   if (requireReviewedProjects && reviewedProjects === 0) blockers.push("No REVIEWED projects available.");
 
