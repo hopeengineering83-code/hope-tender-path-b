@@ -256,6 +256,17 @@ function buildCoverAndSummaryPrompt(input: AIBidWriterInput): string {
 
   return `Write the Cover Letter and Executive Summary for this technical proposal.
 
+## BEFORE YOU WRITE — PRE-WRITING ANALYSIS (mandatory)
+From the STRONGEST PROJECTS and STRONGEST EXPERTS sections below, identify:
+1. Top 2 comparable projects (name, contract value, client, why directly comparable to THIS tender)
+2. Top 2 lead experts (name, title/licence, and which project they led that is most comparable)
+3. Top evaluation driver: which single criterion, if answered with concrete evidence, wins this bid?
+4. One key differentiator: what one fact makes this firm clearly better than a generic competitor?
+
+These four anchors MUST appear — by name, value, and role — in BOTH the Cover Letter and Executive Summary. This is non-negotiable: the "we have done this exact project before" narrative wins competitive tenders.
+
+---
+
 ## TENDER
 TITLE: ${input.tenderTitle}
 CLIENT: ${input.clientName}
@@ -368,6 +379,17 @@ function buildCompanyAndExperiencePrompt(input: AIBidWriterInput): string {
 
   return `Write Section A (Company Profile) and Section B (Relevant Experience) for this technical proposal.
 
+## BEFORE YOU WRITE — PRE-WRITING ANALYSIS (mandatory)
+Scan the RELEVANT PROJECT EVIDENCE and PROPOSED EXPERT EVIDENCE sections below. Identify:
+1. Top 2 projects most directly comparable to this tender (name, value, client, sector overlap)
+2. Top 2 experts most relevant for the experience criteria (name, title, comparable previous role)
+3. Which experience criterion carries the highest weight? Anchor Section B to that criterion.
+4. What portfolio fact most differentiates this firm? (e.g., longest comparable delivery, most senior team, only licensed firm in sector)
+
+Lead with your two strongest projects in B.2 and B.3. Name the experts who delivered them. These same names must match what appears in the Cover Letter and Section C.
+
+---
+
 ## TENDER
 TITLE: ${input.tenderTitle}
 CLIENT: ${input.clientName}
@@ -430,6 +452,17 @@ function buildTechnicalApproachPrompt(input: AIBidWriterInput): string {
     : "";
 
   return `Write Section C — the Technical Approach — for this technical proposal.
+
+## BEFORE YOU WRITE — PRE-WRITING ANALYSIS (mandatory)
+Before writing a single word of methodology, identify from the TENDER TEXT and CRITERION-TO-EVIDENCE ALLOCATION sections below:
+1. Top evaluation criterion for Technical Approach (the one with the highest weight or the most specific scope item)
+2. Which 2 experts deliver the core technical work? (name, discipline, comparable project they led)
+3. Which 2 projects best prove this firm's methodology capacity for THIS scope? (name, value, specific deliverable that matches)
+4. What sector-specific technical challenge does this tender face that generic bidders will miss? (cite from tender text)
+
+Every C.2.x sub-section must open with that criterion's exact language echoed back, cite at least one named project + value, name at least one expert by name + role, and close with the mandatory "Responsible expert: ... Quality Gate: ..." line.
+
+---
 
 ## TENDER
 TITLE: ${input.tenderTitle}
@@ -547,6 +580,17 @@ other top-level sections.`;
 function buildAdditionalAndDeclarationPrompt(input: AIBidWriterInput): string {
   const avoidD = (input.doNotUseAsClient ?? []).filter((c) => c && c.trim().length >= 3);
   return `Write Section D (Additional Information & Value), the Appendix Register, and the formal Declaration for this technical proposal.
+
+## BEFORE YOU WRITE — PRE-WRITING ANALYSIS (mandatory)
+From the COMPLIANCE/EVIDENCE/GAPS and COMPANY EVIDENCE sections below, identify:
+1. Which sustainability or ESG commitment is most relevant to this tender's sector and client type?
+2. Which in-house capabilities (beyond the minimum scope) give this firm a competitive advantage?
+3. Which certifications or professional body memberships are most relevant to the evaluation criteria?
+4. Are there any compliance gaps? If yes, note them in D.4 as "Bid-Team Action:" items — do NOT fabricate compliance.
+
+Section D must be evidence-anchored and client-value-oriented — not a generic catalogue. Each D.1 table row must tie a firm capability to a benefit the CLIENT receives on THIS specific engagement.
+
+---
 
 ## TENDER
 TITLE: ${input.tenderTitle}
