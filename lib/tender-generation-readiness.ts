@@ -93,14 +93,22 @@ function addMatchingQualityReadiness(params: {
   const { blockers, warnings, matchingQuality, reviewedVaultExperts, reviewedVaultProjects } = params;
   const vaultFallbackAvailable = (!matchingQuality.expertRequirementExists || reviewedVaultExperts > 0) && (!matchingQuality.projectRequirementExists || reviewedVaultProjects > 0);
 
+  // When VAULT_AWAITS_ENGINE, the score is depressed purely because the engine
+  // hasn't created tender-specific match rows yet (−18/−18). The separate
+  // engine-not-run warning already covers that — suppress the score-derived
+  // warning to avoid restating the same root cause.
+  const skipScoreWarning = matchingQuality.state === "VAULT_AWAITS_ENGINE";
+
   if (matchingQuality.severity === "POOR") {
     const message = `Matching quality is poor (${matchingQuality.score}/100). Review expert/project matches before final proposal generation.`;
     if (vaultFallbackAvailable) {
-      warnings.push({ code: "MATCHING_QUALITY_POOR_VAULT_FALLBACK", message: `${message} Vault fallback evidence is available, so support-file generation is allowed but senior review is required.`, nextAction: "OPEN_MATCHING_QUALITY" });
+      if (!skipScoreWarning) {
+        warnings.push({ code: "MATCHING_QUALITY_POOR_VAULT_FALLBACK", message: `${message} Vault fallback evidence is available, so support-file generation is allowed but senior review is required.`, nextAction: "OPEN_MATCHING_QUALITY" });
+      }
     } else {
       blockers.push({ code: "MATCHING_QUALITY_POOR", message, nextAction: "OPEN_MATCHING_QUALITY" });
     }
-  } else if (matchingQuality.severity === "WARNING") {
+  } else if (matchingQuality.severity === "WARNING" && !skipScoreWarning) {
     warnings.push({ code: "MATCHING_QUALITY_WARNING", message: `Matching quality has warnings (${matchingQuality.score}/100). Review selected evidence before final generation/export.`, nextAction: "OPEN_MATCHING_QUALITY" });
   }
 }
