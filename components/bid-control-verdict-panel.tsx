@@ -2,6 +2,7 @@ import { getSession } from "../lib/auth";
 import { prisma, prismaReady } from "../lib/prisma";
 import { getTenderGenerationReadiness } from "../lib/tender-generation-readiness";
 import { buildSubmissionPlan, findExtraGeneratedDocuments, findMissingGeneratedDocuments, submissionPlanFileCount } from "../lib/engine/submission-plan";
+import { ValidateAndApproveButton } from "./validate-and-approve-button";
 
 type Verdict = "BID_READY" | "BID_READY_WITH_WARNINGS" | "NOT_READY" | "NO_BID";
 
@@ -140,6 +141,13 @@ export async function BidControlVerdictPanel({ tenderId }: { tenderId: string })
         <div className="mt-4 rounded-xl border border-red-200 bg-white p-3 text-sm text-red-800">
           <p className="font-semibold">Blockers to fix before submission</p>
           <ul className="mt-2 list-disc space-y-1 pl-5">{blockers.slice(0, 8).map((item) => <li key={item}>{item}</li>)}</ul>
+          {(unvalidatedDocs.length > 0 || unreviewedDocs.length > 0) && (
+            <ValidateAndApproveButton
+              tenderId={tenderId}
+              unvalidatedCount={unvalidatedDocs.length}
+              unreviewedCount={unreviewedDocs.length}
+            />
+          )}
         </div>
       )}
       {warnings.length > 0 && (

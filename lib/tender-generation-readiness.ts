@@ -278,9 +278,13 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
   // exist but all weak" vs "no vault at all" — instead of a generic
   // "matching is 0/100" line.
   if (matchingQuality.state === "VAULT_AWAITS_ENGINE") {
-    fullProposalBlockers.push({
+    // Vault has reviewed evidence — generation works via fallback even without
+    // tender-specific matching. Downgrade to a warning so the bid control verdict
+    // is not blocked solely because the user hasn't run the engine yet. Running
+    // the engine will improve match quality but is not a prerequisite for generation.
+    warnings.push({
       code: "FULL_PROPOSAL_ENGINE_NOT_RUN",
-      message: `Full proposal generation is blocked: Run Engine has not been triggered for this tender (vault has ${matchingQuality.vaultReviewedExperts} reviewed expert(s) and ${matchingQuality.vaultReviewedProjects} reviewed project(s) ready).`,
+      message: `Run Engine has not been triggered for this tender. Generation will use vault fallback (${matchingQuality.vaultReviewedExperts} reviewed expert(s) and ${matchingQuality.vaultReviewedProjects} reviewed project(s)). Run Engine first for higher-quality tender-specific matching.`,
       nextAction: "RUN_ENGINE",
     });
   } else if (matchingQuality.state === "NO_VAULT" && (expertRequirementExists || projectRequirementExists)) {
