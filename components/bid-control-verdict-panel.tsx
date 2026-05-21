@@ -88,8 +88,16 @@ export async function BidControlVerdictPanel({ tenderId }: { tenderId: string })
   if (requiredPlanCount > 0 && missingPlanFiles.length > 0) blockers.push(`${missingPlanFiles.length} required planned file(s) are missing.`);
   if (activeDocs === 0) blockers.push("No active generated documents exist yet.");
   if (ungeneratedDocs.length > 0) blockers.push(`${ungeneratedDocs.length} document(s) are not generated.`);
-  if (unvalidatedDocs.length > 0) blockers.push(`${unvalidatedDocs.length} document(s) are not validated.`);
-  if (unreviewedDocs.length > 0) blockers.push(`${unreviewedDocs.length} document(s) are not marked READY_FOR_EXPORT.`);
+  // When the same documents need both validation and review, collapse into one
+  // message so the panel doesn't repeat itself. The one-click button below handles both.
+  const sameDocsNeedBoth = unvalidatedDocs.length > 0 && unvalidatedDocs.length === unreviewedDocs.length
+    && unvalidatedDocs.every((d) => unreviewedDocs.some((r) => r.id === d.id));
+  if (sameDocsNeedBoth) {
+    blockers.push(`${unvalidatedDocs.length} document(s) need validation and review before export.`);
+  } else {
+    if (unvalidatedDocs.length > 0) blockers.push(`${unvalidatedDocs.length} document(s) are not validated.`);
+    if (unreviewedDocs.length > 0) blockers.push(`${unreviewedDocs.length} document(s) are not marked READY_FOR_EXPORT.`);
+  }
   if (criticalGaps.length > 0) blockers.push(`${criticalGaps.length} unresolved critical compliance gap(s).`);
 
   warnings.push(...generationReadiness.warnings.map((item) => item.message));
