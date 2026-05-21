@@ -778,7 +778,12 @@ function makeDifferentiators(
 
   // Healthcare positioning — claim, not instruction.
   if (themes.some((t) => t.code === "HEALTHCARE")) {
-    if (/hospital|health.*facilit|medical.*cent/i.test(allProjectText)) {
+    const healthProj = projects.find((p) => /hospital|health.*facilit|medical.*cent/i.test(textOf(p.name, p.summary, p.sector)));
+    if (healthProj) {
+      const val = money(healthProj.contractValue, healthProj.currency);
+      const client = healthProj.clientName ? `, ${healthProj.clientName}` : "";
+      items.push(`Direct healthcare facility delivery experience: ${healthProj.name}${val ? ` (${val}${client})` : client} gives this engagement a same-team continuity advantage — the firm has already solved this problem at comparable scale.`);
+    } else if (/hospital|health.*facilit|medical.*cent/i.test(allProjectText)) {
       items.push("Direct healthcare facility delivery experience: prior hospital and medical-centre projects in the firm's reviewed portfolio give this engagement a same-team continuity advantage.");
     }
     items.push("Healthcare-specific design depth: IPC compliance, clinical zone segregation, radiation shielding for imaging, medical gas coordination, and Health Authority licensing are core deliverables, not afterthoughts.");
@@ -790,9 +795,13 @@ function makeDifferentiators(
     items.push("Structured property assessment methodology covering structural adequacy, spatial feasibility, utility availability, accessibility, and expansion potential, backed by in-house geotechnical capability for due-diligence speed.");
   }
 
-  // Donor compliance — claim, not instruction.
-  if (/World Bank|ESF|UNDP|British Council/i.test(companyText + allProjectText)) {
-    items.push("Donor-grade documentation track record (World Bank ESF, British Council, equivalent): documentation discipline exceeds typical regulatory requirements, reducing approval risk.");
+  // Donor compliance — cite the most relevant donor-funded project if available.
+  const donorProj = projects.find((p) => /World Bank|ESF|UNDP|British Council|AfDB|USAID|EU.*fund|IFC|GEF/i.test(textOf(p.name, p.summary, p.clientName)));
+  if (donorProj || /World Bank|ESF|UNDP|British Council/i.test(companyText + allProjectText)) {
+    const donorRef = donorProj
+      ? `${donorProj.name}${donorProj.clientName ? ` (${donorProj.clientName})` : ""}`
+      : "prior donor-funded projects";
+    items.push(`Donor-grade documentation track record: ${donorRef} demonstrates documentation discipline that exceeds typical regulatory requirements, reducing approval risk.`);
   }
 
   // In-house geotechnical — claim.
@@ -820,7 +829,11 @@ function makeDifferentiators(
 
   // Energy / Power
   if (themes.some((t) => t.code === "ENERGY_POWER")) {
-    if (/energy|solar|hydropower|substation|transmission|generation|electrification/i.test(allProjectText)) {
+    const energyProj = projects.find((p) => /energy|solar|hydropower|substation|transmission|generation|electrification/i.test(textOf(p.name, p.summary, p.sector)));
+    if (energyProj) {
+      const val = money(energyProj.contractValue, energyProj.currency);
+      items.push(`Energy infrastructure delivery track record: ${energyProj.name}${val ? ` (${val})` : ""} gives this engagement design-standard and grid-code continuity advantage.`);
+    } else if (/energy|solar|hydropower|substation|transmission|generation|electrification/i.test(allProjectText)) {
       items.push("Energy infrastructure delivery track record: prior power generation, transmission, or electrification projects give this engagement design-standard and grid-code continuity advantage.");
     }
     items.push("Integrated power-systems design capability: load-flow analysis, protection relay coordination, SCADA architecture, and environmental compliance delivered under one technical team — reducing coordination risk.");
@@ -828,7 +841,11 @@ function makeDifferentiators(
 
   // Agriculture / Irrigation
   if (themes.some((t) => t.code === "AGRICULTURE_IRRIGATION")) {
-    if (/irrigation|agri|WUA|command.*area/i.test(allProjectText)) {
+    const agriProj = projects.find((p) => /irrigation|agri|WUA|command.*area/i.test(textOf(p.name, p.summary, p.sector)));
+    if (agriProj) {
+      const val = money(agriProj.contractValue, agriProj.currency);
+      items.push(`Irrigation scheme delivery track record: ${agriProj.name}${val ? ` (${val})` : ""} provides beneficiary-engagement and hydraulic-design continuity for this engagement.`);
+    } else if (/irrigation|agri|WUA|command.*area/i.test(allProjectText)) {
       items.push("Irrigation scheme delivery track record: prior command-area development and WUA establishment projects provide beneficiary-engagement and hydraulic-design continuity.");
     }
     items.push("FAO Penman-Monteith crop-water-requirement rigour combined with in-house hydrological analysis capability — design basis confirmed from primary field data, not desktop estimates.");
@@ -836,7 +853,10 @@ function makeDifferentiators(
 
   // Mining / Extractive
   if (themes.some((t) => t.code === "MINING_EXTRACTIVE")) {
-    if (/mining|JORC|tailings|ore|mine.*plan/i.test(allProjectText)) {
+    const miningProj = projects.find((p) => /mining|JORC|tailings|ore|mine.*plan/i.test(textOf(p.name, p.summary, p.sector)));
+    if (miningProj) {
+      items.push(`JORC-compliant resource reporting experience: ${miningProj.name} demonstrates competent-person credentials and regulatory submission capability built into the project workflow.`);
+    } else if (/mining|JORC|tailings|ore|mine.*plan/i.test(allProjectText)) {
       items.push("JORC-compliant resource reporting experience with competent-person credentials: independent peer review and regulatory submission capability built into the project workflow.");
     }
     items.push("Integrated geotechnical and mine-design capability: slope-stability analysis, TSF design per MAC/ANCOLD guidelines, and closure-cost estimation under one technical team.");
@@ -844,7 +864,11 @@ function makeDifferentiators(
 
   // Port / Maritime
   if (themes.some((t) => t.code === "PORT_MARITIME")) {
-    if (/port|berth|quay|dredging|maritime/i.test(allProjectText)) {
+    const portProj = projects.find((p) => /port|berth|quay|dredging|maritime/i.test(textOf(p.name, p.summary, p.sector)));
+    if (portProj) {
+      const val = money(portProj.contractValue, portProj.currency);
+      items.push(`Port infrastructure delivery track record: ${portProj.name}${val ? ` (${val})` : ""} provides met-ocean analysis and ISPS regulatory continuity for this engagement.`);
+    } else if (/port|berth|quay|dredging|maritime/i.test(allProjectText)) {
       items.push("Port infrastructure delivery track record: prior berth design, dredging, and ISPS certification projects provide met-ocean and regulatory continuity for this engagement.");
     }
     items.push("Integrated port engineering capability: fast-time nautical simulation, bathymetric survey, structural berth design, and ISPS compliance documentation in a single delivery workflow.");
@@ -852,7 +876,10 @@ function makeDifferentiators(
 
   // Oil & Gas
   if (themes.some((t) => t.code === "OIL_GAS")) {
-    if (/HAZOP|P&ID|pipeline|oil.*facilit|gas.*facilit|refinery/i.test(allProjectText)) {
+    const oilProj = projects.find((p) => /HAZOP|P&ID|pipeline|oil.*facilit|gas.*facilit|refinery/i.test(textOf(p.name, p.summary, p.sector)));
+    if (oilProj) {
+      items.push(`Oil & gas process-safety track record: ${oilProj.name} demonstrates HAZOP close-out discipline, LOPA for high-severity nodes, and pipeline integrity management.`);
+    } else if (/HAZOP|P&ID|pipeline|oil.*facilit|gas.*facilit|refinery/i.test(allProjectText)) {
       items.push("Oil & gas process-safety track record: HAZOP studies with fully tracked close-out, LOPA for high-severity nodes, and pipeline integrity management plans from completed projects.");
     }
     items.push("Integrated process engineering capability: P&ID development, pipeline stress analysis (Caesar II), cathodic-protection design, and pre-commissioning procedures under one technical team.");
@@ -860,7 +887,10 @@ function makeDifferentiators(
 
   // Financial Services
   if (themes.some((t) => t.code === "FINANCIAL_SERVICES")) {
-    if (/KYC|AML|core.*banking|microfinance|IFRS|Basel/i.test(allProjectText)) {
+    const finProj = projects.find((p) => /KYC|AML|core.*banking|microfinance|IFRS|Basel/i.test(textOf(p.name, p.summary, p.sector)));
+    if (finProj) {
+      items.push(`Regulatory compliance delivery track record: ${finProj.name} demonstrates working knowledge of KYC/AML, IFRS, or Basel compliance — reducing first-project learning costs.`);
+    } else if (/KYC|AML|core.*banking|microfinance|IFRS|Basel/i.test(allProjectText)) {
       items.push("Regulatory compliance delivery track record: prior KYC/AML programme design, IFRS implementation, or Basel compliance projects demonstrate working knowledge of the regulatory environment.");
     }
     items.push("Gap-analysis-first approach: regulatory-gap analysis reviewed by licensed legal counsel before system design commences — avoids costly redesign after regulatory review.");
@@ -868,7 +898,11 @@ function makeDifferentiators(
 
   // Telecoms / Broadband
   if (themes.some((t) => t.code === "TELECOMS_BROADBAND")) {
-    if (/spectrum|broadband|LTE|5G|base.*station|backhaul|mobile.*network/i.test(allProjectText)) {
+    const telecomProj = projects.find((p) => /spectrum|broadband|LTE|5G|base.*station|backhaul|mobile.*network/i.test(textOf(p.name, p.summary, p.sector)));
+    if (telecomProj) {
+      const val = money(telecomProj.contractValue, telecomProj.currency);
+      items.push(`Broadband and mobile network delivery track record: ${telecomProj.name}${val ? ` (${val})` : ""} provides RF-planning and commissioning-protocol continuity for this engagement.`);
+    } else if (/spectrum|broadband|LTE|5G|base.*station|backhaul|mobile.*network/i.test(allProjectText)) {
       items.push("Broadband and mobile network delivery track record: prior LTE/5G base-station or fibre-backhaul projects provide RF-planning and commissioning-protocol continuity.");
     }
     items.push("End-to-end network design capability: coverage simulation, backhaul design, base-station siting, and site-acceptance test (SAT) protocol managed under one technical team.");
