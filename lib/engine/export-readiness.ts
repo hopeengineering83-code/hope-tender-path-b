@@ -1,4 +1,5 @@
 import { prisma, prismaReady } from "../prisma";
+import { isValidClientName } from "./metadata-validators";
 import { deriveDocumentOutputState, exportBlockReason, EXPORT_BLOCKING_STATES, type DocumentOutputState } from "./document-output-state";
 
 export type ExportReadyDocument = {
@@ -6,6 +7,8 @@ export type ExportReadyDocument = {
   name: string;
   exactFileName: string | null;
   exactOrder?: number | null;
+  documentType?: string | null;
+  format?: string | null;
   generationStatus: string;
   validationStatus: string;
   reviewStatus: string;
@@ -114,48 +117,40 @@ function documentHygieneIssues(text: string | null | undefined): string[] {
 }
 
 export function isReadyForFinalExport(doc: ExportReadyDocument): boolean {
-  return doc.generationStatus === "GENERATED" && doc.validationStatus === "VALIDATED" && doc.reviewStatus === "READY_FOR_EXPORT";
+  return doc.generationStatus === "GENERATED" && doc.validationStatus === "VALIDATED" && doc.reviewStatus === "READY_FOR_EXPORT" && deriveDocumentOutputState(doc) === "READY_FOR_EXPORT";
 }
 
 export function checkExportReadiness(docs: ExportReadyDocument[], opts: { requireFileContent?: boolean } = {}): ExportReadinessResult {
   const failures: ExportReadinessFailure[] = [];
 
+  if (docs.length === 0) {
+    failures.push({
+      documentId: "__tender__",
+      name: "No active generated documents",
+      fileName: "NO_ACTIVE_GENERATED_DOCUMENTS",
+      reasons: ["NO_ACTIVE_GENERATED_DOCUMENTS: final export requires at least one active generated document."],
+    });
+    return { ok: false, failures };
+  }
+
   for (const doc of docs) {
     const reasons: string[] = [];
-
-    // ─── Gap 10 fix — derived output state ───────────────────────────
-    // The state machine looks at (generationStatus, validationStatus,
-    // reviewStatus, format, fileContent) and returns one canonical
-    // state. Any export-blocking state (CONTROL_RECORD_ONLY,
-    // ORIGINAL_REQUIRED, PDF_CONVERSION_REQUIRED, SUPERSEDED,
-    // NEEDS_REVALIDATION) produces an explicit reason — replacing the
-    // older "generationStatus is X, expected GENERATED" string lists
-    // with actionable language ("Convert from DOCX or attach the actual
-    // PDF before export", etc.).
     const state = deriveDocumentOutputState(doc);
     if ((EXPORT_BLOCKING_STATES as readonly DocumentOutputState[]).includes(state)) {
       const blockReason = exportBlockReason(state);
       if (blockReason) reasons.push(`[${state}] ${blockReason}`);
     } else if (state !== "READY_FOR_EXPORT") {
-      // VALIDATED / DOCX_GENERATED / PDF_GENERATED — content exists but
-      // hasn't passed the review-status check. Surface the legacy
-      // column-by-column reasons so reviewers know exactly which sign-off
-      // is missing.
       if (doc.generationStatus !== "GENERATED") reasons.push(`generationStatus is ${doc.generationStatus}, expected GENERATED`);
       if (doc.validationStatus !== "VALIDATED") reasons.push(`validationStatus is ${doc.validationStatus}, expected VALIDATED`);
       if (doc.reviewStatus !== "READY_FOR_EXPORT") reasons.push(`reviewStatus is ${doc.reviewStatus}, expected READY_FOR_EXPORT`);
     }
+    if (/MARKDOWN|QUICK_DRAFT|DRAFT_ONLY|CONTROL|NOT_EXPORTABLE|REPLACE_WITH_ORIGINAL|PLANNED/i.test(`${doc.format ?? ""} ${doc.documentType ?? ""} ${doc.reviewStatus ?? ""} ${doc.generationStatus ?? ""}`)) {
+      reasons.push(`Document format/status (${doc.format ?? "UNKNOWN"}/${doc.documentType ?? "UNKNOWN"}/${doc.reviewStatus}) is not a final export package file.`);
+    }
     if (opts.requireFileContent && !doc.fileContent) reasons.push("fileContent is missing");
     for (const issue of documentHygieneIssues(doc.fileContent)) reasons.push(issue);
 
-    if (reasons.length > 0) {
-      failures.push({
-        documentId: doc.id,
-        name: doc.name,
-        fileName: documentFileName(doc),
-        reasons,
-      });
-    }
+    if (reasons.length > 0) failures.push({ documentId: doc.id, name: doc.name, fileName: documentFileName(doc), reasons });
   }
 
   return { ok: failures.length === 0, failures };
@@ -167,9 +162,7 @@ export async function checkDocxHygieneReadiness(docs: ExportReadyDocument[]): Pr
     const fileName = documentFileName(doc);
     const text = await extractDocxVisibleText(doc.fileContent, fileName);
     const reasons = documentHygieneIssues(text).map((issue) => `${issue} inside DOCX visible text`);
-    if (reasons.length > 0) {
-      failures.push({ documentId: doc.id, name: doc.name, fileName, reasons });
-    }
+    if (reasons.length > 0) failures.push({ documentId: doc.id, name: doc.name, fileName, reasons });
   }
   return failures;
 }
@@ -178,10 +171,9 @@ function mergeFailures(...groups: ExportReadinessFailure[][]): ExportReadinessFa
   const byDocument = new Map<string, ExportReadinessFailure>();
   for (const group of groups) {
     for (const failure of group) {
-      const key = failure.documentId;
-      const existing = byDocument.get(key);
+      const existing = byDocument.get(failure.documentId);
       if (!existing) {
-        byDocument.set(key, { ...failure, reasons: [...failure.reasons] });
+        byDocument.set(failure.documentId, { ...failure, reasons: [...failure.reasons] });
         continue;
       }
       existing.reasons = Array.from(new Set([...existing.reasons, ...failure.reasons]));
@@ -193,13 +185,8 @@ function mergeFailures(...groups: ExportReadinessFailure[][]): ExportReadinessFa
 export function exportReadinessError(failures: ExportReadinessFailure[], tenderLevelBlockers?: ExportReadinessResult["tenderLevelBlockers"]): string {
   const out: string[] = [];
   if (failures.length > 0) {
-    const summary = failures.length === 1
-      ? "Final export blocked: 1 document is not ready for export."
-      : `Final export blocked: ${failures.length} documents are not ready for export.`;
-    const details = failures
-      .slice(0, 6)
-      .map((f) => `• ${f.fileName} — ${f.reasons.join("; ")}`)
-      .join("\n");
+    const summary = failures.length === 1 ? "Final export blocked: 1 document is not ready for export." : `Final export blocked: ${failures.length} documents are not ready for export.`;
+    const details = failures.slice(0, 6).map((f) => `• ${f.fileName} — ${f.reasons.join("; ")}`).join("\n");
     const truncationNote = failures.length > 6 ? `\n• … and ${failures.length - 6} more` : "";
     out.push(`${summary}\n${details}${truncationNote}`);
   }
@@ -221,71 +208,76 @@ function filePlanBlockersFromLists(docs: ExportReadyDocument[], exactFileNaming:
   const actualNameSet = new Set(actualNames.map(normalizeFileName));
 
   const missingNames = requiredNames.filter((name) => !actualNameSet.has(normalizeFileName(name)));
-  if (missingNames.length > 0) {
-    blockers.push({
-      category: "FILE_NAMING",
-      severity: "HIGH",
-      title: `Missing required generated file name(s): ${missingNames.slice(0, 5).join(", ")}${missingNames.length > 5 ? ` and ${missingNames.length - 5} more` : ""}`,
-      recommendedAction: "Generate or rename documents to match the tender's exact required file names before final export.",
-    });
-  }
+  if (missingNames.length > 0) blockers.push({ category: "FILE_NAMING", severity: "HIGH", title: `Missing required generated file name(s): ${missingNames.slice(0, 5).join(", ")}${missingNames.length > 5 ? ` and ${missingNames.length - 5} more` : ""}`, recommendedAction: "Generate or rename documents to match the tender's exact required file names before final export." });
 
   if (requiredOrder.length > 0) {
-    const orderedActual = [...docs]
-      .sort((a, b) => (a.exactOrder ?? 9999) - (b.exactOrder ?? 9999))
-      .map((doc) => normalizeFileName(documentFileName(doc)));
-    const mismatches = requiredOrder
-      .map((name, index) => ({ name, expected: normalizeFileName(name), actual: orderedActual[index] ?? "" }))
-      .filter((row) => row.actual && row.expected !== row.actual);
-    if (mismatches.length > 0) {
-      blockers.push({
-        category: "FILE_ORDER",
-        severity: "MEDIUM",
-        title: `Generated file order does not match tender order near: ${mismatches.slice(0, 3).map((m) => m.name).join(", ")}`,
-        recommendedAction: "Reorder the generated documents/export package to match the tender's required attachment order.",
-      });
-    }
+    const orderedActual = [...docs].sort((a, b) => (a.exactOrder ?? 9999) - (b.exactOrder ?? 9999)).map((doc) => normalizeFileName(documentFileName(doc)));
+    const mismatches = requiredOrder.map((name, index) => ({ name, expected: normalizeFileName(name), actual: orderedActual[index] ?? "" })).filter((row) => row.actual && row.expected !== row.actual);
+    if (mismatches.length > 0) blockers.push({ category: "FILE_ORDER", severity: "MEDIUM", title: `Generated file order does not match tender order near: ${mismatches.slice(0, 3).map((m) => m.name).join(", ")}`, recommendedAction: "Reorder the generated documents/export package to match the tender's required attachment order." });
   }
 
   return blockers;
+}
+
+function tenderBlocker(category: string, title: string, recommendedAction: string, severity: "HIGH" | "MEDIUM" | "LOW" = "HIGH") {
+  return { category, severity, title, recommendedAction };
+}
+
+function hasStrategyOnlySignals(files: Array<{ originalFileName: string; extractedText?: string | null; classification?: string | null }>): boolean {
+  if (files.length === 0) return false;
+  const combined = files.map((f) => `${f.originalFileName}\n${f.classification ?? ""}\n${f.extractedText ?? ""}`).join("\n\n").toLowerCase();
+  const strategyHits = /(compiled from|all information should be verified|master file|market intelligence|consultant interpretation|data current as of|directenders|2merkato|reporter newspaper|ethiopian herald)/i.test(combined);
+  const officialHits = /(request for proposal|\brfp\b|terms of reference|instructions to bidders|bid data sheet|form of tender|addendum|procuring entity|official tender)/i.test(combined);
+  return strategyHits && !officialHits;
 }
 
 export async function checkTenderLevelExportBlockers(tenderId: string, docs: ExportReadyDocument[] = []): Promise<NonNullable<ExportReadinessResult["tenderLevelBlockers"]>> {
   await prismaReady;
   const blockers: NonNullable<ExportReadinessResult["tenderLevelBlockers"]> = [];
 
-  const highOpen = await prisma.evaluatorObjection.findMany({
-    where: { tenderId, status: "OPEN", severity: "HIGH" },
-    select: { id: true, title: true, severity: true, category: true, recommendedAction: true },
-    take: 20,
-  });
-  for (const o of highOpen) {
-    blockers.push({
-      category: `EVALUATOR_${o.category}`,
-      severity: o.severity,
-      title: o.title,
-      recommendedAction: o.recommendedAction,
-    });
-  }
-
-  const workbook = await prisma.pricingWorkbook.findUnique({
-    where: { tenderId },
-    select: { id: true, noPriceLeakage: true },
-  });
-  if (workbook && workbook.noPriceLeakage === false) {
-    blockers.push({
-      category: "PRICING_LEAKAGE",
-      severity: "HIGH",
-      title: "Pricing leakage flag is set on the pricing workbook",
-      recommendedAction: "Confirm no prices, rates, or fees appear in the technical proposal envelope. Toggle noPriceLeakage=true once verified.",
-    });
-  }
-
   const tender = await prisma.tender.findUnique({
     where: { id: tenderId },
-    select: { exactFileNaming: true, exactFileOrder: true },
+    include: {
+      files: { select: { originalFileName: true, extractedText: true, classification: true } },
+      requirements: true,
+      expertMatches: { where: { isSelected: true }, include: { expert: { select: { trustLevel: true } } } },
+      projectMatches: { where: { isSelected: true }, include: { project: { select: { trustLevel: true } } } },
+    },
   });
-  blockers.push(...filePlanBlockersFromLists(docs, tender?.exactFileNaming, tender?.exactFileOrder));
+
+  if (!tender) return [tenderBlocker("TENDER_NOT_FOUND", "Tender not found for export readiness check.", "Reload the tender and run export readiness again.")];
+
+  if (docs.length === 0) blockers.push(tenderBlocker("NO_ACTIVE_GENERATED_DOCUMENTS", "No active generated documents exist for export.", "Generate, validate and review the required documents before final export."));
+  if (!isValidClientName(tender.clientName)) blockers.push(tenderBlocker("CLIENT_NAME_REQUIRED", "Client/procuring entity name is missing or invalid.", "Edit Tender Detail and enter the exact official procuring entity name."));
+  if ((tender.readinessScore ?? 0) <= 0 || /^(ANALYZED|DRAFT)$/i.test(tender.status) || /^(ANALYSIS|TENDER_INTAKE)$/i.test(tender.stage)) blockers.push(tenderBlocker("FULL_PROPOSAL_NOT_READY", `Tender is still at ${tender.status}/${tender.stage} with readiness score ${tender.readinessScore ?? 0}.`, "Run Engine, resolve readiness blockers, generate documents, then rerun export readiness."));
+  if (hasStrategyOnlySignals(tender.files)) blockers.push(tenderBlocker("OFFICIAL_SOURCE_REQUIRED", "Uploaded source appears to be strategy/market-intelligence only, not an official RFP/ToR/forms package.", "Upload the official tender source package before final export."));
+
+  const requiresExperts = tender.requirements.some((r) => r.requirementType === "EXPERT");
+  const requiresProjects = tender.requirements.some((r) => r.requirementType === "PROJECT_EXPERIENCE");
+  const reviewedSelectedExperts = tender.expertMatches.filter((m) => m.expert.trustLevel === "REVIEWED").length;
+  const reviewedSelectedProjects = tender.projectMatches.filter((m) => m.project.trustLevel === "REVIEWED").length;
+  if (requiresExperts && reviewedSelectedExperts === 0) blockers.push(tenderBlocker("NO_SELECTED_REVIEWED_EXPERTS", "Tender requires experts but no selected reviewed expert matches exist.", "Run Engine and select/review expert matches before export."));
+  if (requiresProjects && reviewedSelectedProjects === 0) blockers.push(tenderBlocker("NO_SELECTED_REVIEWED_PROJECTS", "Tender requires project references but no selected reviewed project matches exist.", "Run Engine and select/review project matches before export."));
+
+  const [complianceRows, totalExpertMatches, totalProjectMatches] = await Promise.all([
+    prisma.complianceMatrix.count({ where: { tenderId } }),
+    prisma.tenderExpertMatch.count({ where: { tenderId } }),
+    prisma.tenderProjectMatch.count({ where: { tenderId } }),
+  ]);
+  if (tender.requirements.length > 0 && complianceRows === 0) blockers.push(tenderBlocker("EVIDENCE_NOT_ASSESSED", "Compliance/evidence matrix is empty.", "Run Engine successfully so requirement-linked evidence rows are created."));
+  if (requiresExperts && totalExpertMatches === 0) blockers.push(tenderBlocker("NO_TENDER_SPECIFIC_EXPERT_MATCHES", "No tender-specific expert match rows exist.", "Run Engine to create expert matches from the reviewed vault."));
+  if (requiresProjects && totalProjectMatches === 0) blockers.push(tenderBlocker("NO_TENDER_SPECIFIC_PROJECT_MATCHES", "No tender-specific project match rows exist.", "Run Engine to create project matches from the reviewed vault."));
+
+  const ungroundedMandatory = tender.requirements.filter((req) => req.priority === "MANDATORY" && !req.sectionReference && !req.sourceTenderFileId && !req.sourcePageNumber && !req.sourceExactQuote && (req.sourceConfidence ?? 0) <= 0);
+  if (ungroundedMandatory.length > 0) blockers.push(tenderBlocker("SOURCE_REFERENCES_MISSING", `${ungroundedMandatory.length} mandatory requirement(s) lack source/page/quote traceability.`, "Run source extraction and review mandatory requirement references before export.", "MEDIUM"));
+
+  blockers.push(...filePlanBlockersFromLists(docs, tender.exactFileNaming, tender.exactFileOrder));
+
+  const highOpen = await prisma.evaluatorObjection.findMany({ where: { tenderId, status: "OPEN", severity: "HIGH" }, select: { id: true, title: true, severity: true, category: true, recommendedAction: true }, take: 20 });
+  for (const o of highOpen) blockers.push({ category: `EVALUATOR_${o.category}`, severity: o.severity, title: o.title, recommendedAction: o.recommendedAction });
+
+  const workbook = await prisma.pricingWorkbook.findUnique({ where: { tenderId }, select: { id: true, noPriceLeakage: true } });
+  if (workbook && workbook.noPriceLeakage === false) blockers.push(tenderBlocker("PRICING_LEAKAGE", "Pricing leakage flag is set on the pricing workbook.", "Confirm no prices, rates, or fees appear in the technical proposal envelope."));
 
   return blockers;
 }
@@ -295,9 +287,5 @@ export async function checkFullExportReadiness(opts: { tenderId: string; docs: E
   const docxHygieneFailures = await checkDocxHygieneReadiness(opts.docs);
   const failures = mergeFailures(perDoc.failures, docxHygieneFailures);
   const tenderLevelBlockers = await checkTenderLevelExportBlockers(opts.tenderId, opts.docs);
-  return {
-    ok: failures.length === 0 && tenderLevelBlockers.length === 0,
-    failures,
-    tenderLevelBlockers,
-  };
+  return { ok: failures.length === 0 && tenderLevelBlockers.length === 0, failures, tenderLevelBlockers };
 }
