@@ -71,6 +71,8 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
           reviewStatus: true,
           fileContent: true,
           format: true,
+          documentType: true,
+          exactOrder: true,
         },
       },
     },

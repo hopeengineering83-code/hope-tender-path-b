@@ -2,6 +2,8 @@ import { prisma, prismaReady } from "../prisma";
 import { deriveDocumentOutputState, exportBlockReason, EXPORT_BLOCKING_STATES, type DocumentOutputState } from "./document-output-state";
 
 export type ExportReadyDocument = {
+  documentType?: string | null;
+  format?: string | null;
   id: string;
   name: string;
   exactFileName: string | null;
@@ -181,6 +183,18 @@ export function isReadyForFinalExport(doc: ExportReadyDocument): boolean {
 export function checkExportReadiness(docs: ExportReadyDocument[], opts: { requireFileContent?: boolean } = {}): ExportReadinessResult {
   const failures: ExportReadinessFailure[] = [];
 
+  if (docs.length === 0) {
+    failures.push({
+      documentId: "__tender__",
+      name: "No active generated documents",
+      fileName: "NO_ACTIVE_GENERATED_DOCUMENTS",
+      reasons: [
+        "NO_ACTIVE_GENERATED_DOCUMENTS: final export requires at least one active generated document.",
+      ],
+    });
+    return { ok: false, failures };
+  }
+
   for (const doc of docs) {
     const reasons: string[] = [];
 
@@ -212,6 +226,9 @@ export function checkExportReadiness(docs: ExportReadyDocument[], opts: { requir
       if (fileName.endsWith(".pdf") && !maybeBase64Pdf(doc.fileContent)) reasons.push("fileContent does not match required PDF binary format");
       if ((fileName.endsWith(".docx") || fileName.endsWith(".doc")) && !maybeBase64Docx(doc.fileContent, fileName)) reasons.push("fileContent does not match required DOCX binary format");
       if ((fileName.endsWith(".xlsx") || fileName.endsWith(".xls") || fileName.endsWith(".zip")) && !maybeBase64Zip(doc.fileContent)) reasons.push("fileContent does not match required ZIP/XLSX binary format");
+    }
+    if (/MARKDOWN|QUICK_DRAFT|DRAFT_ONLY|CONTROL|PLANNED/i.test(`${doc.format ?? ""} ${doc.documentType ?? ""}`)) {
+      reasons.push(`Document format/type (${doc.format ?? "UNKNOWN"}/${doc.documentType ?? "UNKNOWN"}) is not a final export package format.`);
     }
     for (const issue of documentHygieneIssues(doc.fileContent)) reasons.push(issue);
 

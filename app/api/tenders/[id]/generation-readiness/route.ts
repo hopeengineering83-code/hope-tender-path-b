@@ -19,5 +19,22 @@ export async function GET(
   const canonical = await getCanonicalTenderReadiness(prisma, userId, tenderId);
   if (!readiness) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
 
-  return NextResponse.json({ ...readiness, canonical });
+  const readyForSupportPackage = Boolean(readiness.supportPackageReady);
+  const readyForFullProposal = Boolean(readiness.fullProposalReady);
+
+  return NextResponse.json({
+    ...readiness,
+    canonical,
+    ready: readyForFullProposal,
+    readyForSupportPackage,
+    readyForFullProposal,
+    readyForAnySafeGeneration: readyForSupportPackage || readyForFullProposal,
+    finalExportReady: false,
+    gateSemantics: {
+      ready: "full proposal readiness only",
+      supportPackageReady: "support/admin package readiness only; not final proposal/export readiness",
+      fullProposalReady: "main proposal generation readiness",
+      finalExportReady: "must be checked through export-readiness endpoint",
+    },
+  });
 }

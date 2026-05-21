@@ -454,10 +454,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         differentiators: intelligence.differentiators,
         evaluationCriteria: intelligence.evaluationCriteria,
         submissionRules: intelligence.submissionRules,
-        selectedExpertCount: tender.expertMatches.length,
-        selectedProjectCount: tender.projectMatches.length,
-        reviewedExpertCount: experts.filter((expert) => expert.trustLevel === "REVIEWED").length,
-        reviewedProjectCount: projects.filter((project) => project.trustLevel === "REVIEWED").length,
+        selectedExpertCount: tender.expertMatches.filter((match) => match.isSelected && match.expert.trustLevel === "REVIEWED").length,
+        selectedProjectCount: tender.projectMatches.filter((match) => match.isSelected && match.project.trustLevel === "REVIEWED").length,
+        reviewedExpertCount: tender.expertMatches.filter((match) => match.isSelected && match.expert.trustLevel === "REVIEWED").length,
+        reviewedProjectCount: tender.projectMatches.filter((match) => match.isSelected && match.project.trustLevel === "REVIEWED").length,
         tenderSources,
       };
       const aiInput = applyAIWriterContractPrompt({
@@ -525,11 +525,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           data: {
             tenderId: id,
             name: "AI Proposal (Quick Draft)",
-            documentType: "PROPOSAL",
+            documentType: "QUICK_DRAFT",
+            format: "MARKDOWN",
             generationStatus: "GENERATED",
             validationStatus: "PENDING",
-            reviewStatus: "PENDING",
-            contentSummary: `Quick AI draft generated ${new Date().toLocaleString()}. Run Generate Docs for the full submission-ready package.`,
+            reviewStatus: "NOT_EXPORTABLE",
+            contentSummary: "Quick draft only. Not part of final export package.",
             fileContent: Buffer.from(contentToSave).toString("base64"),
           },
         });
