@@ -71,7 +71,7 @@ export async function getCanonicalTenderReadiness(client: PrismaClient, userId: 
     matchingState: matching.state,
     readyForSupportPackage: readiness.supportPackageReady,
     readyForFullProposal: readiness.fullProposalReady,
-    readyForFinalExport: readiness.fullProposalReady && tender.generatedDocuments.length > 0 && missing.length === 0,
+    readyForFinalExport: readiness.readyForFinalExport,
     blockers,
     warnings: readiness.warnings.map((w) => w.code),
     nextActions,
