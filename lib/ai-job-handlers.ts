@@ -63,6 +63,13 @@ const handlers: Partial<Record<JobType, JobHandler>> = {
   ENGINE_RUN: async (ctx) => {
     if (!ctx.tenderId) throw new Error("ENGINE_RUN requires tenderId on the job");
     await recordStep(ctx.jobId, { stepName: "engine.start", message: `Starting engine run for tender ${ctx.tenderId}`, status: "RUNNING" });
+    // Heartbeat every 25 s so the stuck-job checker (90 s threshold) never
+    // fires on a legitimately slow but progressing AI call (e.g. analyzeWithAI
+    // on a large tender). If Vercel kills the function at 60 s, the last
+    // heartbeat is at most 25 s old → recovery fires at ~115 s, not 90 s.
+    const heartbeat = setInterval(() => {
+      void recordStep(ctx.jobId, { stepName: "engine.heartbeat", message: "Engine running — waiting for AI response", status: "RUNNING" }).catch(() => {});
+    }, 25_000);
     try {
       // Surface granular pipeline progress to the user via recordStep.
       // The engine emits steps at each major milestone (load → company
@@ -79,12 +86,11 @@ const handlers: Partial<Record<JobType, JobHandler>> = {
         ctx.userId,
         (stepName: string, message: string) => {
           // Fire and forget — don't await inside the engine hot path.
-          // recordStep is idempotent on stepName so duplicate steps are
-          // safe if the engine retries internally.
           void recordStep(ctx.jobId, { stepName, message, status: "RUNNING" }).catch(() => {});
         },
         { safe: safeMode, skipAiRematch, maxChars },
       );
+      clearInterval(heartbeat);
       const postconditions = await checkEnginePostconditions(ctx.tenderId);
       if (!postconditions.ok) {
         await recordStep(ctx.jobId, { stepName: "POSTCONDITION_VALIDATE", message: `Postcondition check failed: ${postconditions.blockers.join(", ")}`, status: "FAILED" });
@@ -93,6 +99,7 @@ const handlers: Partial<Record<JobType, JobHandler>> = {
       await recordStep(ctx.jobId, { stepName: "engine.complete", message: "Engine run finished successfully", status: "SUCCEEDED" });
       return { result: result as unknown as Record<string, unknown> };
     } catch (err) {
+      clearInterval(heartbeat);
       await recordStep(ctx.jobId, { stepName: "engine.failed", message: err instanceof Error ? err.message : String(err), status: "FAILED" });
       throw err;
     }
