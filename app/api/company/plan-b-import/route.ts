@@ -290,7 +290,7 @@ function sourceLine(item: { sourceDocument?: string; sourcePages?: { start?: num
   return `Source: ${item.sourceDocument ?? "uploaded extraction"}${pages}${no}.`;
 }
 
-function deriveExpectedCounts(payload: PlanBPayload, sourceDocuments: PlanBSourceDocument[]) {
+export function deriveExpectedCounts(payload: PlanBPayload, sourceDocuments: PlanBSourceDocument[]) {
   const explicitExperts = Number(payload.expectedCounts?.experts ?? 0);
   const explicitProjects = Number(payload.expectedCounts?.projects ?? 0);
   const docExperts = sourceDocuments.reduce((sum, doc) => sum + Number(doc.parsedExperts ?? 0), 0);
@@ -301,12 +301,12 @@ function deriveExpectedCounts(payload: PlanBPayload, sourceDocuments: PlanBSourc
   };
 }
 
-function hasUsableText(value: string | null, requireRawText: boolean): boolean {
+export function hasUsableText(value: string | null, requireRawText: boolean): boolean {
   if (!requireRawText) return true;
   return Boolean(value && value.length >= 50);
 }
 
-function completenessStats(expected: number | null, imported: number) {
+export function completenessStats(expected: number | null, imported: number) {
   if (!expected) return null;
   const missing = Math.max(expected - imported, 0);
   const excess = Math.max(imported - expected, 0);
