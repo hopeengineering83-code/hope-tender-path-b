@@ -113,6 +113,9 @@ type PlanBPayload = {
     experts?: number;
     projects?: number;
   };
+  completenessPolicy?: {
+    enforceExpectedCounts?: boolean;
+  };
 };
 
 function clean(value: unknown): string {
@@ -277,6 +280,7 @@ export async function POST(req: Request) {
     const complianceRecords = Array.isArray(payload.complianceRecords) ? payload.complianceRecords : [];
     const importTrust = requestedTrust(payload);
     const requireRawText = payload.importPolicy?.requireRawText !== false;
+    const enforceExpectedCounts = payload.completenessPolicy?.enforceExpectedCounts === true;
     const notes = reviewNotes(payload);
     const now = new Date();
 
@@ -440,6 +444,15 @@ export async function POST(req: Request) {
     if (expectedCounts.projects && importedProjects !== expectedCounts.projects) {
       warnings.push(`Project completeness mismatch: expected ${expectedCounts.projects}, imported ${importedProjects}, missing ${missingProjects}.`);
     }
+    if (enforceExpectedCounts && ((expectedCounts.experts && importedExperts !== expectedCounts.experts) || (expectedCounts.projects && importedProjects !== expectedCounts.projects))) {
+      return NextResponse.json({
+        error: "Plan B completeness enforcement failed. Imported counts do not match expected counts.",
+        expectedCounts,
+        importedCounts: { experts: importedExperts, projects: importedProjects },
+        missingCounts: { experts: missingExperts, projects: missingProjects },
+        warnings: warnings.slice(0, 50),
+      }, { status: 422 });
+    }
 
     const result = {
       success: true,
@@ -447,6 +460,7 @@ export async function POST(req: Request) {
       sourceDocuments: sourceDocuments.map((d) => ({ fileName: d.fileName, type: d.type, category: normalizeDocumentCategory(d) })),
       trustLevel: importTrust,
       requireRawText,
+      enforceExpectedCounts,
       companyProfileUpdated,
       documents: { received: sourceDocuments.length, created: documentsCreated, updated: documentsUpdated, skipped: documentsSkipped },
       experts: { received: experts.length, created: expertsCreated, updated: expertsUpdated, skipped: expertsSkipped },

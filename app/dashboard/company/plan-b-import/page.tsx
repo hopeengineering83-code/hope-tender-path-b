@@ -25,6 +25,7 @@ const exampleJson = `{
     "requireRawText": true,
     "reviewNotes": "Exact Plan B import from uploaded PDF source text."
   },
+  "completenessPolicy": { "enforceExpectedCounts": true },
   "sourceDocuments": [
     { "fileName": "Expert CVS.pdf", "type": "Expert CV library", "parsedExperts": 25 },
     { "fileName": "Projects Reference.pdf", "type": "Project portfolio", "parsedProjects": 114 }
@@ -117,6 +118,7 @@ export default function PlanBImportPage() {
           <li>Each project must include the full raw project record text in <code>rawText</code>.</li>
           <li>The import rejects records without enough raw text unless <code>requireRawText</code> is set to false.</li>
           <li>Imported records can be marked REVIEWED only because the exact raw source text is preserved in the record.</li>
+          <li>Set <code>completenessPolicy.enforceExpectedCounts=true</code> to block imports when expected and imported counts do not match.</li>
         </ul>
       </section>
 
