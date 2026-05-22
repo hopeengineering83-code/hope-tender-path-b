@@ -423,7 +423,7 @@ export async function POST(req: Request) {
       };
       await logAction({
         userId,
-        action: "COMPANY_KNOWLEDGE_REPAIR",
+        action: "COMPANY_KNOWLEDGE_REPAIR_BLOCKED",
         entityType: "Company",
         entityId: company.id,
         description: "Plan-B exact JSON import blocked: strict completeness enabled without expected counts.",
@@ -444,7 +444,7 @@ export async function POST(req: Request) {
         completeness: { experts: preflightExpertCompleteness, projects: preflightProjectCompleteness },
         warnings: warnings.slice(0, 50),
       };
-      await logAction({ userId, action: "COMPANY_KNOWLEDGE_REPAIR", entityType: "Company", entityId: company.id, description: "Plan-B exact JSON import blocked by strict completeness policy before writes.", metadata: { ...failure, blocked: true, enforceExpectedCounts, requireRawText } });
+      await logAction({ userId, action: "COMPANY_KNOWLEDGE_REPAIR_BLOCKED", entityType: "Company", entityId: company.id, description: "Plan-B exact JSON import blocked by strict completeness policy before writes.", metadata: { ...failure, blocked: true, enforceExpectedCounts, requireRawText } });
       return NextResponse.json(failure, { status: 422 });
     }
 
@@ -632,7 +632,7 @@ export async function POST(req: Request) {
 
     await logAction({
       userId,
-      action: "COMPANY_KNOWLEDGE_REPAIR",
+      action: "COMPANY_KNOWLEDGE_REPAIR_SUCCESS",
       entityType: "Company",
       entityId: company.id,
       description: `Plan-B exact JSON import: companyProfile=${companyProfileUpdated}, documents ${documentsCreated}/${documentsUpdated}, experts ${expertsCreated}/${expertsUpdated}, projects ${projectsCreated}/${projectsUpdated}, legal ${legal.created}/${legal.updated}, financial ${financial.created}/${financial.updated}, compliance ${compliance.created}/${compliance.updated}`,
