@@ -29,6 +29,17 @@ type ExportReadiness = {
   message: string;
 };
 
+type RepairResult = {
+  success?: boolean;
+  error?: string;
+  repaired?: number;
+  skipped?: number;
+  plannedCreated?: number;
+  letterheadAppliedCount?: number;
+  finalExportReady?: boolean;
+  remaining?: { documentBlockers?: number; tenderLevelBlockers?: number };
+};
+
 const SEVERITY_BADGE: Record<Severity, string> = {
   HIGH: "bg-red-100 text-red-700",
   MEDIUM: "bg-amber-100 text-amber-700",
@@ -44,7 +55,9 @@ function severityClass(severity: string): string {
 export function ExportReadinessPanel({ tenderId }: { tenderId: string }) {
   const [readiness, setReadiness] = useState<ExportReadiness | null>(null);
   const [loading, setLoading] = useState(false);
+  const [repairing, setRepairing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [repairMessage, setRepairMessage] = useState<string | null>(null);
 
   async function refresh() {
     setLoading(true);
@@ -61,25 +74,56 @@ export function ExportReadinessPanel({ tenderId }: { tenderId: string }) {
     }
   }
 
+  async function repair() {
+    setRepairing(true);
+    setError(null);
+    setRepairMessage(null);
+    try {
+      const res = await fetch(`/api/tenders/${tenderId}/repair-export-gaps`, { method: "POST" });
+      const data = await res.json().catch(() => ({} as RepairResult));
+      if (!res.ok || data.error) throw new Error(data.error ?? `Export repair failed (${res.status})`);
+      const remainingDocs = data.remaining?.documentBlockers ?? 0;
+      const remainingTender = data.remaining?.tenderLevelBlockers ?? 0;
+      setRepairMessage(`Repair completed: ${data.repaired ?? 0} document(s) repaired, ${data.skipped ?? 0} skipped, ${data.plannedCreated ?? 0} planned record(s) created. Remaining blockers: ${remainingDocs + remainingTender}.`);
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Export repair failed");
+    } finally {
+      setRepairing(false);
+    }
+  }
+
   const ok = readiness?.ok;
+  const hasDocumentBlockers = (readiness?.summary.documentBlockers ?? 0) > 0;
 
   return (
-    <div className="rounded-2xl border bg-white p-5 shadow-sm">
+    <div className="rounded-2xl border bg-white p-5 shadow-sm" id="export-readiness">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h3 className="text-sm font-semibold text-slate-900">Export Readiness Gate</h3>
           <p className="mt-0.5 text-xs text-slate-500">Shows exactly why final ZIP/export is blocked and what to fix next.</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {readiness && (
             <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${ok ? "bg-emerald-100 text-emerald-700" : "bg-red-100 text-red-700"}`}>
               {ok ? "READY" : `${readiness.summary.totalBlockers} blocker(s)`}
             </span>
           )}
+          {readiness && !ok && hasDocumentBlockers && (
+            <button
+              type="button"
+              onClick={() => void repair()}
+              disabled={repairing || loading}
+              className="rounded-lg bg-emerald-700 px-3 py-2 text-xs font-medium text-white hover:bg-emerald-800 disabled:opacity-50"
+              title="Generate missing final DOCX content, validate generated package files, and mark repaired documents READY_FOR_EXPORT. Tender-level blockers still require manual resolution."
+            >
+              {repairing ? "Repairing…" : "Repair document gaps"}
+            </button>
+          )}
           <button
             type="button"
             onClick={() => void refresh()}
-            disabled={loading}
+            disabled={loading || repairing}
             className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-medium text-white hover:bg-slate-800 disabled:opacity-50"
           >
             {loading ? "Checking…" : readiness ? "Re-check" : "Check export gate"}
@@ -88,6 +132,7 @@ export function ExportReadinessPanel({ tenderId }: { tenderId: string }) {
       </div>
 
       {error && <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700">{error}</div>}
+      {repairMessage && <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-700">{repairMessage}</div>}
 
       {!readiness && !loading && (
         <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4 text-xs text-slate-600">
