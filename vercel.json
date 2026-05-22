@@ -1,5 +1,11 @@
 {
   "framework": "nextjs",
   "buildCommand": "node scripts/check-env.mjs && prisma generate && next build",
-  "installCommand": "npm install"
+  "installCommand": "npm install",
+  "crons": [
+    {
+      "path": "/api/ai-jobs/run-next",
+      "schedule": "0 0 * * *"
+    }
+  ]
 }
