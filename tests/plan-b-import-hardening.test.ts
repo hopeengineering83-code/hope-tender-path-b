@@ -30,3 +30,11 @@ test("completenessStats reports missing and excess correctly", () => {
   assert.deepEqual(completenessStats(10, 10), { expected: 10, imported: 10, missing: 0, excess: 0, matched: true });
 });
 
+test("deriveExpectedCounts returns null counts when no explicit or parsed counts are present", () => {
+  const result = deriveExpectedCounts({}, [{ fileName: "experts.pdf" }, { title: "projects.pdf" }]);
+  assert.deepEqual(result, { experts: null, projects: null });
+});
+
+test("completenessStats returns null when expected count is null", () => {
+  assert.equal(completenessStats(null, 100), null);
+});
