@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { z, ZodError } from "zod";
 import { getSession } from "../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../lib/prisma";
 import { ensureCompanyForUser } from "../../../../lib/company-workspace";
@@ -109,7 +110,117 @@ type PlanBPayload = {
   legalRecords?: PlanBLegalRecord[];
   financialRecords?: PlanBFinancialRecord[];
   complianceRecords?: PlanBComplianceRecord[];
+  expectedCounts?: {
+    experts?: number;
+    projects?: number;
+  };
+  completenessPolicy?: {
+    enforceExpectedCounts?: boolean;
+  };
 };
+
+type PlanBDb = Pick<typeof prisma, "legalRecord" | "financialRecord" | "companyComplianceRecord">;
+
+const planBExpertSchema = z.object({
+  fullName: z.string().optional(),
+  title: z.string().nullable().optional(),
+  email: z.string().nullable().optional(),
+  phone: z.string().nullable().optional(),
+  yearsExperience: z.number().nullable().optional(),
+  disciplines: z.array(z.string()).optional(),
+  sectors: z.array(z.string()).optional(),
+  certifications: z.array(z.string()).optional(),
+  profile: z.string().nullable().optional(),
+  rawText: z.string().nullable().optional(),
+  sourceDocument: z.string().optional(),
+  sourcePages: z.object({ start: z.number().optional(), end: z.number().optional() }).optional(),
+}).passthrough();
+
+const planBProjectSchema = z.object({
+  name: z.string().optional(),
+  clientName: z.string().nullable().optional(),
+  country: z.string().nullable().optional(),
+  sector: z.string().nullable().optional(),
+  sectors: z.array(z.string()).optional(),
+  serviceAreas: z.array(z.string()).optional(),
+  contractValueSummary: z.string().nullable().optional(),
+  duration: z.string().nullable().optional(),
+  summary: z.string().nullable().optional(),
+  rawText: z.string().nullable().optional(),
+  sourceDocument: z.string().optional(),
+  sourceNo: z.union([z.number(), z.string()]).optional(),
+  sourceEvidence: z.string().nullable().optional(),
+}).passthrough();
+
+const planBPayloadSchema = z.object({
+  schemaVersion: z.string().optional(),
+  sourceDocuments: z.array(z.object({
+    fileName: z.string().optional(),
+    title: z.string().optional(),
+    type: z.string().optional(),
+    category: z.string().optional(),
+    pages: z.number().optional(),
+    parsedExperts: z.number().optional(),
+    parsedProjects: z.number().optional(),
+    sha256: z.string().optional(),
+    rawText: z.string().nullable().optional(),
+  }).passthrough()).max(2000).optional(),
+  companyProfile: z.object({
+    name: z.string().optional(),
+    legalName: z.string().nullable().optional(),
+    description: z.string().nullable().optional(),
+    website: z.string().nullable().optional(),
+    address: z.string().nullable().optional(),
+    phone: z.string().nullable().optional(),
+    email: z.string().nullable().optional(),
+    country: z.string().nullable().optional(),
+    serviceLines: z.array(z.string()).optional(),
+    sectors: z.array(z.string()).optional(),
+    profileSummary: z.string().nullable().optional(),
+    knowledgeMode: z.string().nullable().optional(),
+  }).passthrough().optional(),
+  importPolicy: z.object({
+    trustLevel: z.enum(["REVIEWED", "AI_DRAFT", "REGEX_DRAFT"]).optional(),
+    reviewNotes: z.string().optional(),
+    requireRawText: z.boolean().optional(),
+  }).optional(),
+  experts: z.array(planBExpertSchema).max(5000).optional(),
+  projects: z.array(planBProjectSchema).max(10000).optional(),
+  legalRecords: z.array(z.object({
+    recordType: z.string().optional(),
+    title: z.string().optional(),
+    authority: z.string().nullable().optional(),
+    referenceNumber: z.string().nullable().optional(),
+    issueDate: z.string().nullable().optional(),
+    expiryDate: z.string().nullable().optional(),
+    status: z.string().optional(),
+    metadata: z.record(z.string(), z.unknown()).optional(),
+  }).passthrough()).max(5000).optional(),
+  financialRecords: z.array(z.object({
+    fiscalYear: z.number().optional(),
+    recordType: z.string().optional(),
+    currency: z.string().nullable().optional(),
+    amount: z.number().nullable().optional(),
+    notes: z.string().nullable().optional(),
+    metadata: z.record(z.string(), z.unknown()).optional(),
+  }).passthrough()).max(5000).optional(),
+  complianceRecords: z.array(z.object({
+    complianceType: z.string().optional(),
+    title: z.string().optional(),
+    status: z.string().optional(),
+    evidenceSummary: z.string().nullable().optional(),
+    referenceNumber: z.string().nullable().optional(),
+    expiryDate: z.string().nullable().optional(),
+    metadata: z.record(z.string(), z.unknown()).optional(),
+  }).passthrough()).max(5000).optional(),
+  expectedCounts: z.object({
+    experts: z.number().int().min(0).optional(),
+    projects: z.number().int().min(0).optional(),
+  }).optional(),
+  completenessPolicy: z.object({
+    enforceExpectedCounts: z.boolean().optional(),
+  }).optional(),
+}).passthrough();
 
 function clean(value: unknown): string {
   return String(value ?? "").replace(/\s+/g, " ").trim();
@@ -167,9 +278,9 @@ async function readPayload(req: Request): Promise<PlanBPayload> {
     const file = form.get("file");
     if (!(file instanceof File)) throw new Error("No JSON file provided.");
     const text = await file.text();
-    return JSON.parse(text) as PlanBPayload;
+    return planBPayloadSchema.parse(JSON.parse(text)) as PlanBPayload;
   }
-  return await req.json() as PlanBPayload;
+  return planBPayloadSchema.parse(await req.json()) as PlanBPayload;
 }
 
 function sourceLine(item: { sourceDocument?: string; sourcePages?: { start?: number; end?: number }; sourceNo?: number | string }) {
@@ -179,11 +290,34 @@ function sourceLine(item: { sourceDocument?: string; sourcePages?: { start?: num
   return `Source: ${item.sourceDocument ?? "uploaded extraction"}${pages}${no}.`;
 }
 
-async function upsertLegalRecord(companyId: string, record: PlanBLegalRecord) {
+function deriveExpectedCounts(payload: PlanBPayload, sourceDocuments: PlanBSourceDocument[]) {
+  const explicitExperts = Number(payload.expectedCounts?.experts ?? 0);
+  const explicitProjects = Number(payload.expectedCounts?.projects ?? 0);
+  const docExperts = sourceDocuments.reduce((sum, doc) => sum + Number(doc.parsedExperts ?? 0), 0);
+  const docProjects = sourceDocuments.reduce((sum, doc) => sum + Number(doc.parsedProjects ?? 0), 0);
+  return {
+    experts: explicitExperts > 0 ? explicitExperts : docExperts > 0 ? docExperts : null,
+    projects: explicitProjects > 0 ? explicitProjects : docProjects > 0 ? docProjects : null,
+  };
+}
+
+function hasUsableText(value: string | null, requireRawText: boolean): boolean {
+  if (!requireRawText) return true;
+  return Boolean(value && value.length >= 50);
+}
+
+function completenessStats(expected: number | null, imported: number) {
+  if (!expected) return null;
+  const missing = Math.max(expected - imported, 0);
+  const excess = Math.max(imported - expected, 0);
+  return { expected, imported, missing, excess, matched: missing === 0 && excess === 0 };
+}
+
+async function upsertLegalRecord(db: PlanBDb, companyId: string, record: PlanBLegalRecord) {
   const title = clean(record.title);
   if (!title) return { created: 0, updated: 0, skipped: 1 };
   const recordType = clean(record.recordType) || "LEGAL";
-  const existing = await prisma.legalRecord.findFirst({ where: { companyId, title, recordType }, select: { id: true } });
+  const existing = await db.legalRecord.findFirst({ where: { companyId, title, recordType }, select: { id: true } });
   const data = {
     recordType,
     title,
@@ -195,18 +329,18 @@ async function upsertLegalRecord(companyId: string, record: PlanBLegalRecord) {
     metadata: JSON.stringify(record.metadata ?? {}),
   };
   if (existing) {
-    await prisma.legalRecord.update({ where: { id: existing.id }, data });
+    await db.legalRecord.update({ where: { id: existing.id }, data });
     return { created: 0, updated: 1, skipped: 0 };
   }
-  await prisma.legalRecord.create({ data: { companyId, ...data } });
+  await db.legalRecord.create({ data: { companyId, ...data } });
   return { created: 1, updated: 0, skipped: 0 };
 }
 
-async function upsertFinancialRecord(companyId: string, record: PlanBFinancialRecord) {
+async function upsertFinancialRecord(db: PlanBDb, companyId: string, record: PlanBFinancialRecord) {
   const recordType = clean(record.recordType) || "FINANCIAL";
   const fiscalYear = Number(record.fiscalYear || 0);
   if (!fiscalYear) return { created: 0, updated: 0, skipped: 1 };
-  const existing = await prisma.financialRecord.findFirst({ where: { companyId, recordType, fiscalYear }, select: { id: true } });
+  const existing = await db.financialRecord.findFirst({ where: { companyId, recordType, fiscalYear }, select: { id: true } });
   const data = {
     fiscalYear,
     recordType,
@@ -216,18 +350,18 @@ async function upsertFinancialRecord(companyId: string, record: PlanBFinancialRe
     metadata: JSON.stringify(record.metadata ?? {}),
   };
   if (existing) {
-    await prisma.financialRecord.update({ where: { id: existing.id }, data });
+    await db.financialRecord.update({ where: { id: existing.id }, data });
     return { created: 0, updated: 1, skipped: 0 };
   }
-  await prisma.financialRecord.create({ data: { companyId, ...data } });
+  await db.financialRecord.create({ data: { companyId, ...data } });
   return { created: 1, updated: 0, skipped: 0 };
 }
 
-async function upsertComplianceRecord(companyId: string, record: PlanBComplianceRecord) {
+async function upsertComplianceRecord(db: PlanBDb, companyId: string, record: PlanBComplianceRecord) {
   const title = clean(record.title);
   if (!title) return { created: 0, updated: 0, skipped: 1 };
   const complianceType = clean(record.complianceType) || "COMPLIANCE";
-  const existing = await prisma.companyComplianceRecord.findFirst({ where: { companyId, title, complianceType }, select: { id: true } });
+  const existing = await db.companyComplianceRecord.findFirst({ where: { companyId, title, complianceType }, select: { id: true } });
   const data = {
     complianceType,
     title,
@@ -238,10 +372,10 @@ async function upsertComplianceRecord(companyId: string, record: PlanBCompliance
     metadata: JSON.stringify(record.metadata ?? {}),
   };
   if (existing) {
-    await prisma.companyComplianceRecord.update({ where: { id: existing.id }, data });
+    await db.companyComplianceRecord.update({ where: { id: existing.id }, data });
     return { created: 0, updated: 1, skipped: 0 };
   }
-  await prisma.companyComplianceRecord.create({ data: { companyId, ...data } });
+  await db.companyComplianceRecord.create({ data: { companyId, ...data } });
   return { created: 1, updated: 0, skipped: 0 };
 }
 
@@ -262,13 +396,70 @@ export async function POST(req: Request) {
     const complianceRecords = Array.isArray(payload.complianceRecords) ? payload.complianceRecords : [];
     const importTrust = requestedTrust(payload);
     const requireRawText = payload.importPolicy?.requireRawText !== false;
+    const enforceExpectedCounts = payload.completenessPolicy?.enforceExpectedCounts === true;
     const notes = reviewNotes(payload);
     const now = new Date();
 
+    const warnings: string[] = [];
+    // Preflight completeness audit before any write operations (hard enforcement-safe).
+    const uniqueExpertKeys = new Set<string>();
+    const uniqueProjectKeys = new Set<string>();
+    let invalidExperts = 0;
+    let invalidProjects = 0;
+    for (const expert of experts) {
+      const fullName = clean(expert.fullName);
+      const expertKey = key(fullName);
+      const exactRawText = sourceText(expert.rawText ?? expert.profile);
+      if (!fullName || fullName.length < 3 || !hasUsableText(exactRawText, requireRawText)) { invalidExperts += 1; continue; }
+      if (uniqueExpertKeys.has(expertKey)) warnings.push(`Duplicate expert in payload (by normalized name): ${fullName}. Last record will be applied.`);
+      uniqueExpertKeys.add(expertKey);
+    }
+    for (const project of projects) {
+      const name = clean(project.name);
+      const projectKey = key(name);
+      const exactRawText = sourceText(project.rawText ?? project.summary ?? project.sourceEvidence);
+      if (!name || name.length < 3 || !hasUsableText(exactRawText, requireRawText)) { invalidProjects += 1; continue; }
+      if (uniqueProjectKeys.has(projectKey)) warnings.push(`Duplicate project in payload (by normalized name): ${name}. Last record will be applied.`);
+      uniqueProjectKeys.add(projectKey);
+    }
+    const expectedCounts = deriveExpectedCounts(payload, sourceDocuments);
+    const preflightImportedExperts = uniqueExpertKeys.size;
+    const preflightImportedProjects = uniqueProjectKeys.size;
+    const preflightExpertCompleteness = completenessStats(expectedCounts.experts ?? null, preflightImportedExperts);
+    const preflightProjectCompleteness = completenessStats(expectedCounts.projects ?? null, preflightImportedProjects);
+    if (preflightExpertCompleteness && !preflightExpertCompleteness.matched) warnings.push(`Expert completeness mismatch: expected ${preflightExpertCompleteness.expected}, importable ${preflightExpertCompleteness.imported}, missing ${preflightExpertCompleteness.missing}, excess ${preflightExpertCompleteness.excess}.`);
+    if (preflightProjectCompleteness && !preflightProjectCompleteness.matched) warnings.push(`Project completeness mismatch: expected ${preflightProjectCompleteness.expected}, importable ${preflightProjectCompleteness.imported}, missing ${preflightProjectCompleteness.missing}, excess ${preflightProjectCompleteness.excess}.`);
+    if (enforceExpectedCounts && ((expectedCounts.experts && preflightImportedExperts !== expectedCounts.experts) || (expectedCounts.projects && preflightImportedProjects !== expectedCounts.projects))) {
+      const failure = {
+        error: "Plan B completeness enforcement failed. Importable counts do not match expected counts.",
+        expectedCounts,
+        importedCounts: { experts: preflightImportedExperts, projects: preflightImportedProjects },
+        preflightInvalid: { experts: invalidExperts, projects: invalidProjects },
+        completeness: { experts: preflightExpertCompleteness, projects: preflightProjectCompleteness },
+        warnings: warnings.slice(0, 50),
+      };
+      await logAction({ userId, action: "COMPANY_KNOWLEDGE_REPAIR", entityType: "Company", entityId: company.id, description: "Plan-B exact JSON import blocked by strict completeness policy before writes.", metadata: { ...failure, blocked: true, enforceExpectedCounts, requireRawText } });
+      return NextResponse.json(failure, { status: 422 });
+    }
+
     let companyProfileUpdated = false;
+    let documentsCreated = 0;
+    let documentsUpdated = 0;
+    let documentsSkipped = 0;
+    let expertsCreated = 0;
+    let expertsUpdated = 0;
+    let expertsSkipped = 0;
+    let projectsCreated = 0;
+    let projectsUpdated = 0;
+    let projectsSkipped = 0;
+    const legal = { created: 0, updated: 0, skipped: 0 };
+    const financial = { created: 0, updated: 0, skipped: 0 };
+    const compliance = { created: 0, updated: 0, skipped: 0 };
+
+    await prisma.$transaction(async (tx) => {
     if (payload.companyProfile) {
       const profile = payload.companyProfile;
-      await prisma.company.update({
+      await tx.company.update({
         where: { id: company.id },
         data: {
           name: clean(profile.name) || company.name,
@@ -288,16 +479,13 @@ export async function POST(req: Request) {
       companyProfileUpdated = true;
     }
 
-    let documentsCreated = 0;
-    let documentsUpdated = 0;
-    let documentsSkipped = 0;
     for (const doc of sourceDocuments) {
       const fileName = clean(doc.fileName || doc.title);
       const exactText = sourceText(doc.rawText);
       if (!fileName) { documentsSkipped += 1; continue; }
       if (requireRawText && (!exactText || exactText.length < 50)) { documentsSkipped += 1; continue; }
       const category = normalizeDocumentCategory(doc);
-      const existing = await prisma.companyDocument.findFirst({ where: { companyId: company.id, originalFileName: fileName }, select: { id: true } });
+      const existing = await tx.companyDocument.findFirst({ where: { companyId: company.id, originalFileName: fileName }, select: { id: true } });
       const data = {
         fileName,
         originalFileName: fileName,
@@ -311,26 +499,18 @@ export async function POST(req: Request) {
         metadata: JSON.stringify({ planB: true, sourceType: doc.type, sourceCategory: doc.category, normalizedCategory: category, parsedExperts: doc.parsedExperts, parsedProjects: doc.parsedProjects, sha256: doc.sha256, reviewNotes: notes }),
       };
       if (existing) {
-        await prisma.companyDocument.update({ where: { id: existing.id }, data });
+        await tx.companyDocument.update({ where: { id: existing.id }, data });
         documentsUpdated += 1;
       } else {
-        await prisma.companyDocument.create({ data: { companyId: company.id, storagePath: "", ...data } });
+        await tx.companyDocument.create({ data: { companyId: company.id, storagePath: "", ...data } });
         documentsCreated += 1;
       }
     }
 
-    const existingExperts = await prisma.expert.findMany({ where: { companyId: company.id }, select: { id: true, fullName: true } });
-    const existingProjects = await prisma.project.findMany({ where: { companyId: company.id }, select: { id: true, name: true } });
+    const existingExperts = await tx.expert.findMany({ where: { companyId: company.id }, select: { id: true, fullName: true } });
+    const existingProjects = await tx.project.findMany({ where: { companyId: company.id }, select: { id: true, name: true } });
     const expertMap = new Map(existingExperts.map((e) => [key(e.fullName), e]));
     const projectMap = new Map(existingProjects.map((p) => [key(p.name), p]));
-
-    let expertsCreated = 0;
-    let expertsUpdated = 0;
-    let expertsSkipped = 0;
-    let projectsCreated = 0;
-    let projectsUpdated = 0;
-    let projectsSkipped = 0;
-    const warnings: string[] = [];
 
     for (const expert of experts) {
       const fullName = clean(expert.fullName);
@@ -356,10 +536,10 @@ export async function POST(req: Request) {
       };
       const existing = expertMap.get(key(fullName));
       if (existing) {
-        await prisma.expert.update({ where: { id: existing.id }, data });
+        await tx.expert.update({ where: { id: existing.id }, data });
         expertsUpdated += 1;
       } else {
-        const created = await prisma.expert.create({ data: { companyId: company.id, ...data } });
+        const created = await tx.expert.create({ data: { companyId: company.id, ...data } });
         expertMap.set(key(fullName), { id: created.id, fullName: created.fullName });
         expertsCreated += 1;
       }
@@ -387,32 +567,35 @@ export async function POST(req: Request) {
       };
       const existing = projectMap.get(key(name));
       if (existing) {
-        await prisma.project.update({ where: { id: existing.id }, data });
+        await tx.project.update({ where: { id: existing.id }, data });
         projectsUpdated += 1;
       } else {
-        const created = await prisma.project.create({ data: { companyId: company.id, ...data } });
+        const created = await tx.project.create({ data: { companyId: company.id, ...data } });
         projectMap.set(key(name), { id: created.id, name: created.name });
         projectsCreated += 1;
       }
     }
 
-    const legal = { created: 0, updated: 0, skipped: 0 };
     for (const record of legalRecords) {
-      const r = await upsertLegalRecord(company.id, record);
+      const r = await upsertLegalRecord(tx, company.id, record);
       legal.created += r.created; legal.updated += r.updated; legal.skipped += r.skipped;
     }
 
-    const financial = { created: 0, updated: 0, skipped: 0 };
     for (const record of financialRecords) {
-      const r = await upsertFinancialRecord(company.id, record);
+      const r = await upsertFinancialRecord(tx, company.id, record);
       financial.created += r.created; financial.updated += r.updated; financial.skipped += r.skipped;
     }
 
-    const compliance = { created: 0, updated: 0, skipped: 0 };
     for (const record of complianceRecords) {
-      const r = await upsertComplianceRecord(company.id, record);
+      const r = await upsertComplianceRecord(tx, company.id, record);
       compliance.created += r.created; compliance.updated += r.updated; compliance.skipped += r.skipped;
     }
+    });
+
+    const importedExperts = expertsCreated + expertsUpdated;
+    const importedProjects = projectsCreated + projectsUpdated;
+    const expertCompleteness = completenessStats(expectedCounts.experts ?? null, importedExperts);
+    const projectCompleteness = completenessStats(expectedCounts.projects ?? null, importedProjects);
 
     const result = {
       success: true,
@@ -420,10 +603,17 @@ export async function POST(req: Request) {
       sourceDocuments: sourceDocuments.map((d) => ({ fileName: d.fileName, type: d.type, category: normalizeDocumentCategory(d) })),
       trustLevel: importTrust,
       requireRawText,
+      enforceExpectedCounts,
       companyProfileUpdated,
       documents: { received: sourceDocuments.length, created: documentsCreated, updated: documentsUpdated, skipped: documentsSkipped },
       experts: { received: experts.length, created: expertsCreated, updated: expertsUpdated, skipped: expertsSkipped },
       projects: { received: projects.length, created: projectsCreated, updated: projectsUpdated, skipped: projectsSkipped },
+      expectedCounts,
+      preflightInvalid: { experts: invalidExperts, projects: invalidProjects },
+      completeness: {
+        experts: expertCompleteness,
+        projects: projectCompleteness,
+      },
       legalRecords: { received: legalRecords.length, ...legal },
       financialRecords: { received: financialRecords.length, ...financial },
       complianceRecords: { received: complianceRecords.length, ...compliance },
@@ -442,6 +632,16 @@ export async function POST(req: Request) {
     return NextResponse.json(result);
   } catch (error) {
     console.error("[plan-b-import] failed:", error);
+    if (error instanceof ZodError) {
+      return NextResponse.json({
+        error: "Invalid Plan-B payload. Please correct the JSON schema and retry.",
+        validationIssues: error.issues.slice(0, 100).map((issue) => ({
+          path: issue.path.join("."),
+          message: issue.message,
+          code: issue.code,
+        })),
+      }, { status: 400 });
+    }
     return NextResponse.json({ error: error instanceof Error ? error.message : "Plan-B import failed" }, { status: 400 });
   }
 }

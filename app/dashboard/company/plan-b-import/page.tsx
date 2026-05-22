@@ -10,7 +10,15 @@ type ImportResult = {
   requireRawText?: boolean;
   experts?: { received: number; created: number; updated: number; skipped: number };
   projects?: { received: number; created: number; updated: number; skipped: number };
+  expectedCounts?: { experts?: number | null; projects?: number | null };
+  completeness?: {
+    experts?: { expected: number; imported: number; missing: number; excess: number; matched: boolean } | null;
+    projects?: { expected: number; imported: number; missing: number; excess: number; matched: boolean } | null;
+  };
   warnings?: string[];
+  importedCounts?: { experts?: number; projects?: number };
+  preflightInvalid?: { experts?: number; projects?: number };
+  validationIssues?: Array<{ path?: string; message?: string; code?: string }>;
 };
 
 const exampleJson = `{
@@ -20,10 +28,12 @@ const exampleJson = `{
     "requireRawText": true,
     "reviewNotes": "Exact Plan B import from uploaded PDF source text."
   },
+  "completenessPolicy": { "enforceExpectedCounts": true },
   "sourceDocuments": [
     { "fileName": "Expert CVS.pdf", "type": "Expert CV library", "parsedExperts": 25 },
     { "fileName": "Projects Reference.pdf", "type": "Project portfolio", "parsedProjects": 114 }
   ],
+  "expectedCounts": { "experts": 25, "projects": 114 },
   "experts": [
     {
       "fullName": "Exact expert name from PDF",
@@ -56,11 +66,13 @@ export default function PlanBImportPage() {
   const [text, setText] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [errorDetails, setErrorDetails] = useState<ImportResult | null>(null);
   const [result, setResult] = useState<ImportResult | null>(null);
 
   async function submit() {
     setLoading(true);
     setError("");
+    setErrorDetails(null);
     setResult(null);
     try {
       let res: Response;
@@ -78,7 +90,10 @@ export default function PlanBImportPage() {
         });
       }
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || "Plan B import failed");
+      if (!res.ok) {
+        setErrorDetails(data);
+        throw new Error(data.error || "Plan B import failed");
+      }
       setResult(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Plan B import failed");
@@ -111,6 +126,7 @@ export default function PlanBImportPage() {
           <li>Each project must include the full raw project record text in <code>rawText</code>.</li>
           <li>The import rejects records without enough raw text unless <code>requireRawText</code> is set to false.</li>
           <li>Imported records can be marked REVIEWED only because the exact raw source text is preserved in the record.</li>
+          <li>Set <code>completenessPolicy.enforceExpectedCounts=true</code> to block imports when expected and imported counts do not match.</li>
         </ul>
       </section>
 
@@ -144,12 +160,44 @@ export default function PlanBImportPage() {
         >
           {loading ? "Importing exact knowledge…" : "Import Plan B Knowledge"}
         </button>
-        {error && <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
+        {error && (
+          <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            <p className="font-semibold">{error}</p>
+            {errorDetails?.expectedCounts ? (
+              <p className="mt-2">
+                Expected — experts: {errorDetails.expectedCounts.experts ?? "n/a"}, projects: {errorDetails.expectedCounts.projects ?? "n/a"}.
+                Imported — experts: {errorDetails.importedCounts?.experts ?? "n/a"}, projects: {errorDetails.importedCounts?.projects ?? "n/a"}.
+                Invalid preflight records — experts: {errorDetails.preflightInvalid?.experts ?? "n/a"}, projects: {errorDetails.preflightInvalid?.projects ?? "n/a"}.
+              </p>
+            ) : null}
+            {errorDetails?.validationIssues?.length ? (
+              <ul className="mt-2 list-disc space-y-1 pl-5 text-xs">
+                {errorDetails.validationIssues.slice(0, 8).map((issue, idx) => (
+                  <li key={`${issue.path ?? "root"}-${idx}`}>
+                    <span className="font-semibold">{issue.path || "payload"}:</span> {issue.message || issue.code || "Invalid value"}
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </div>
+        )}
         {result && (
           <div className="mt-4 rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800">
             <p className="font-semibold">Import completed</p>
             <p className="mt-1">Experts: {result.experts?.created ?? 0} created, {result.experts?.updated ?? 0} updated, {result.experts?.skipped ?? 0} skipped.</p>
             <p>Projects: {result.projects?.created ?? 0} created, {result.projects?.updated ?? 0} updated, {result.projects?.skipped ?? 0} skipped.</p>
+            {result.completeness?.experts ? (
+              <p className={result.completeness.experts.matched ? "text-green-800" : "text-amber-800"}>
+                Expert completeness: expected {result.completeness.experts.expected}, imported {result.completeness.experts.imported}, missing {result.completeness.experts.missing}.
+                {" "}excess {result.completeness.experts.excess}.
+              </p>
+            ) : null}
+            {result.completeness?.projects ? (
+              <p className={result.completeness.projects.matched ? "text-green-800" : "text-amber-800"}>
+                Project completeness: expected {result.completeness.projects.expected}, imported {result.completeness.projects.imported}, missing {result.completeness.projects.missing}.
+                {" "}excess {result.completeness.projects.excess}.
+              </p>
+            ) : null}
             {result.warnings?.length ? <p className="mt-2 text-amber-800">Warnings: {result.warnings.join(" | ")}</p> : null}
           </div>
         )}
