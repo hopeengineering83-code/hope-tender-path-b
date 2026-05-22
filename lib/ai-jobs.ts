@@ -194,15 +194,18 @@ export const AI_JOB_STUCK_AFTER_MS = (() => {
 
 /**
  * Maximum time since the last AiJobStep before a RUNNING job is
- * considered to have made no recent progress. Default 5 minutes.
- * A job that is genuinely running will emit at least one step every
- * few minutes; a job that is stuck (crashed worker, hung AI call)
- * will have no new steps. Override via AI_JOB_PROGRESS_STUCK_AFTER_MS.
+ * considered to have made no recent progress. Default 90 seconds.
+ *
+ * 90 s is chosen because Vercel's Hobby function cap is 60 s — a worker
+ * that is killed by Vercel will have recorded its last step at T+0 and
+ * won't produce any more. With a 90 s threshold the stuck-recovery loop
+ * marks the job FAILED within ~90 s of the kill, instead of leaving it
+ * orphaned for 5 minutes. Override via AI_JOB_PROGRESS_STUCK_AFTER_MS.
  */
 export const AI_JOB_PROGRESS_STUCK_AFTER_MS = (() => {
   const raw = Number(process.env.AI_JOB_PROGRESS_STUCK_AFTER_MS);
   if (Number.isFinite(raw) && raw >= 30_000 && raw <= 1_800_000) return raw;
-  return 5 * 60 * 1000;
+  return 90_000; // 90 s — just above Vercel's 60 s hard kill
 })();
 
 /**
