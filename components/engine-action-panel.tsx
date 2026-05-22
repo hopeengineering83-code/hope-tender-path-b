@@ -98,7 +98,19 @@ async function parseEngineResponse(res: Response): Promise<EngineResponse> {
   };
 }
 
-export function EngineActionPanel({ tenderId }: { tenderId: string }) {
+// Vaults with more than this many total reviewed records typically exceed
+// Vercel's 60 s function cap during matching — safe mode is recommended.
+const LARGE_VAULT_THRESHOLD = 30;
+
+export function EngineActionPanel({
+  tenderId,
+  vaultReviewedExperts = 0,
+  vaultReviewedProjects = 0,
+}: {
+  tenderId: string;
+  vaultReviewedExperts?: number;
+  vaultReviewedProjects?: number;
+}) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [running, setRunning] = useState(false);
@@ -106,6 +118,7 @@ export function EngineActionPanel({ tenderId }: { tenderId: string }) {
   // Async-mode UX — when null we're in sync mode; otherwise this is the
   // active jobId being polled and the latest progress message.
   const [asyncStatus, setAsyncStatus] = useState<{ jobId: string; message: string } | null>(null);
+  const isLargeVault = (vaultReviewedExperts + vaultReviewedProjects) > LARGE_VAULT_THRESHOLD;
 
   async function runEngine(force = false) {
     setRunning(true);
@@ -294,6 +307,34 @@ export function EngineActionPanel({ tenderId }: { tenderId: string }) {
           </button>
         </div>
       </div>
+
+      {isLargeVault && !result && !running && (
+        <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+          <p className="font-semibold">Large vault detected — use Safe Mode for reliable matching</p>
+          <p className="mt-1">
+            Your vault has <strong>{vaultReviewedExperts}</strong> reviewed expert(s) and <strong>{vaultReviewedProjects}</strong> reviewed project(s).
+            Matching this many records can exceed Vercel&apos;s 60-second function limit.
+            Use <strong>Run Safe Mode</strong> (skips AI rematch, uses deterministic scoring) for a reliable first run.
+            You can follow up with a full AI rematch once matches exist.
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button
+              onClick={() => runEngineAsync(false, { safe: "true", skipAiRematch: "true" })}
+              disabled={running || isPending}
+              className="rounded-lg bg-amber-700 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-800 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Run Safe Mode (recommended)
+            </button>
+            <button
+              onClick={() => runEngineAsync(false)}
+              disabled={running || isPending}
+              className="rounded-lg border border-amber-300 bg-white px-4 py-2 text-sm font-semibold text-amber-800 hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Run full mode anyway
+            </button>
+          </div>
+        </div>
+      )}
 
       {asyncStatus && (
         <div className="mt-4 rounded-xl border border-indigo-200 bg-indigo-50 p-4 text-sm text-indigo-800">
