@@ -429,6 +429,25 @@ export async function POST(req: Request) {
     const preflightProjectCompleteness = completenessStats(expectedCounts.projects ?? null, preflightImportedProjects);
     if (preflightExpertCompleteness && !preflightExpertCompleteness.matched) warnings.push(`Expert completeness mismatch: expected ${preflightExpertCompleteness.expected}, importable ${preflightExpertCompleteness.imported}, missing ${preflightExpertCompleteness.missing}, excess ${preflightExpertCompleteness.excess}.`);
     if (preflightProjectCompleteness && !preflightProjectCompleteness.matched) warnings.push(`Project completeness mismatch: expected ${preflightProjectCompleteness.expected}, importable ${preflightProjectCompleteness.imported}, missing ${preflightProjectCompleteness.missing}, excess ${preflightProjectCompleteness.excess}.`);
+    if (enforceExpectedCounts && !expectedCounts.experts && !expectedCounts.projects) {
+      const failure = {
+        error: "Plan B completeness enforcement requires expectedCounts.experts and/or expectedCounts.projects.",
+        expectedCounts,
+        importedCounts: { experts: preflightImportedExperts, projects: preflightImportedProjects },
+        preflightInvalid: { experts: invalidExperts, projects: invalidProjects },
+        completeness: { experts: preflightExpertCompleteness, projects: preflightProjectCompleteness },
+        warnings: warnings.slice(0, 50),
+      };
+      await logAction({
+        userId,
+        action: "COMPANY_KNOWLEDGE_REPAIR",
+        entityType: "Company",
+        entityId: company.id,
+        description: "Plan-B exact JSON import blocked: strict completeness enabled without expected counts.",
+        metadata: { ...failure, blocked: true, enforceExpectedCounts, requireRawText },
+      });
+      return NextResponse.json(failure, { status: 422 });
+    }
     if (enforceExpectedCounts && ((expectedCounts.experts && preflightImportedExperts !== expectedCounts.experts) || (expectedCounts.projects && preflightImportedProjects !== expectedCounts.projects))) {
       const failure = {
         error: "Plan B completeness enforcement failed. Importable counts do not match expected counts.",

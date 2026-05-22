@@ -127,6 +127,7 @@ export default function PlanBImportPage() {
           <li>The import rejects records without enough raw text unless <code>requireRawText</code> is set to false.</li>
           <li>Imported records can be marked REVIEWED only because the exact raw source text is preserved in the record.</li>
           <li>Set <code>completenessPolicy.enforceExpectedCounts=true</code> to block imports when expected and imported counts do not match.</li>
+          <li>When strict enforcement is enabled, provide <code>expectedCounts.experts</code> and/or <code>expectedCounts.projects</code>.</li>
         </ul>
       </section>
 
