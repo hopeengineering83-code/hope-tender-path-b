@@ -28,6 +28,11 @@ type EngineResponse = {
   async?: boolean;
   jobId?: string;
   message?: string;
+  // Structured failure info from job.output or engine postconditions
+  failedStage?: string;
+  safeModeAvailable?: boolean;
+  reused?: boolean;
+  inputStats?: { fileCount?: number; totalChars?: number; safeModeAvailable?: boolean };
 };
 
 // Async polling — escapes the 60s Vercel Hobby cap by enqueuing an
@@ -51,6 +56,8 @@ function actionLabel(action?: string) {
   if (action === "LOGIN_AGAIN") return "Sign in again, then retry.";
   if (action === "OPEN_EXTRACTION_ANALYSIS_MATCHING_QUALITY") return "Review Extraction, Analysis, and Matching Quality panels.";
   if (action === "REFRESH_TO_CHECK_STATUS") return "Click \"Check status now\" or refresh — the worker is finishing in the background.";
+  if (action === "RUN_ENGINE_SAFE_MODE") return "Re-run in Safe Mode — reduces text, skips AI rematch, uses deterministic matching only.";
+  if (action === "REVIEW_MATCHING_INPUTS") return "Review vault experts/projects and re-run Engine to generate match rows.";
   return null;
 }
 
@@ -148,13 +155,14 @@ export function EngineActionPanel({ tenderId }: { tenderId: string }) {
 
   // Async mode — enqueue + worker + poll. Escapes the 60s Hobby cap for
   // large tenders where the synchronous engine pipeline would time out.
-  async function runEngineAsync(force = false) {
+  // extraParams allows callers to pass ?safe=true or ?skipAiRematch=true.
+  async function runEngineAsync(force = false, extraParams: Record<string, string> = {}) {
     setRunning(true);
     setResult(null);
     setAsyncStatus(null);
     try {
       // 1. Enqueue the job — returns 202 with { jobId }
-      const qs = new URLSearchParams({ async: "true" });
+      const qs = new URLSearchParams({ async: "true", ...extraParams });
       if (force) qs.set("force", "true");
       const enqueueRes = await fetch(`/api/tenders/${tenderId}/engine?${qs.toString()}`, { method: "POST" });
       const enqueueData = await parseEngineResponse(enqueueRes);
@@ -173,14 +181,25 @@ export function EngineActionPanel({ tenderId }: { tenderId: string }) {
       // 3. Poll status every 3s until SUCCEEDED / FAILED / timeout
       const startedAt = Date.now();
       let finalStatus: "SUCCEEDED" | "FAILED" | null = null;
-      let finalJob: { errorMessage?: string | null; steps?: Array<{ message?: string }> } | null = null;
+      let finalJob: {
+        errorMessage?: string | null;
+        output?: Record<string, unknown> | null;
+        steps?: Array<{ stepName?: string; message?: string }>;
+      } | null = null;
       while (Date.now() - startedAt < MAX_POLL_DURATION_MS) {
         await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
         const pollRes = await fetch(`/api/ai-jobs/${jobId}`, { method: "GET" });
         if (!pollRes.ok) continue; // transient — keep polling
-        const { job } = await pollRes.json() as { job: { status: string; errorMessage?: string | null; steps?: Array<{ message?: string }> } };
-        const lastStep = job.steps?.[job.steps.length - 1]?.message;
-        setAsyncStatus({ jobId, message: lastStep ?? `Worker status: ${job.status}` });
+        const { job } = await pollRes.json() as {
+          job: {
+            status: string;
+            errorMessage?: string | null;
+            output?: Record<string, unknown> | null;
+            steps?: Array<{ stepName?: string; message?: string }>;
+          };
+        };
+        const lastStep = job.steps?.[job.steps.length - 1];
+        setAsyncStatus({ jobId, message: lastStep?.message ?? `Worker status: ${job.status}` });
         if (job.status === "SUCCEEDED" || job.status === "FAILED") {
           finalStatus = job.status;
           finalJob = job;
@@ -192,10 +211,16 @@ export function EngineActionPanel({ tenderId }: { tenderId: string }) {
         setResult({ success: true, async: true, jobId, error: "Engine completed successfully (background)." });
         startTransition(() => router.refresh());
       } else if (finalStatus === "FAILED") {
+        const jobOutput = finalJob?.output as Record<string, unknown> | null | undefined;
+        const engineCode = typeof jobOutput?.code === "string" ? jobOutput.code : "ASYNC_ENGINE_FAILED";
+        const failedStage = typeof jobOutput?.failedStage === "string" ? jobOutput.failedStage : undefined;
+        const engineNextAction = typeof jobOutput?.nextAction === "string" ? jobOutput.nextAction : "RETRY_OR_REDUCE_INPUT";
         setResult({
           error: `Engine background run failed: ${finalJob?.errorMessage ?? "unknown worker error"}`,
-          code: "ASYNC_ENGINE_FAILED",
-          nextAction: "RETRY_OR_REDUCE_INPUT",
+          code: engineCode,
+          nextAction: engineNextAction,
+          failedStage,
+          safeModeAvailable: jobOutput?.safeModeAvailable === true,
           jobId,
         });
       } else {
@@ -305,12 +330,14 @@ export function EngineActionPanel({ tenderId }: { tenderId: string }) {
                 try {
                   const r = await fetch(`/api/ai-jobs/${result.jobId}`, { method: "GET" });
                   const j = await r.json().catch(() => ({}));
-                  if (j?.status === "SUCCEEDED") {
+                  const jobStatus = j?.job?.status ?? j?.status;
+                  const jobError = j?.job?.errorMessage ?? j?.errorMessage;
+                  if (jobStatus === "SUCCEEDED") {
                     setResult({ success: true, async: true, jobId: result.jobId, error: "Engine completed successfully (background)." });
                     startTransition(() => router.refresh());
-                  } else if (j?.status === "FAILED") {
+                  } else if (jobStatus === "FAILED") {
                     setResult({
-                      error: `Engine background run failed: ${j.errorMessage ?? "unknown worker error"}`,
+                      error: `Engine background run failed: ${jobError ?? "unknown worker error"}`,
                       code: "ASYNC_ENGINE_FAILED",
                       nextAction: "RETRY_OR_REDUCE_INPUT",
                       jobId: result.jobId,
@@ -318,7 +345,7 @@ export function EngineActionPanel({ tenderId }: { tenderId: string }) {
                   } else {
                     setResult({
                       ...result,
-                      error: `Worker status: ${j?.status ?? "RUNNING"} — still working. Try again in 1-2 min.`,
+                      error: `Worker status: ${jobStatus ?? "RUNNING"} — still working. Try again in 1-2 min.`,
                     });
                   }
                 } catch {
@@ -339,6 +366,39 @@ export function EngineActionPanel({ tenderId }: { tenderId: string }) {
             >
               Retry background run
             </button>
+          )}
+
+          {(result.code === "ASYNC_ENGINE_FAILED" || result.code === "ASYNC_ENGINE_TIMEOUT") && (
+            <div className="mt-3 flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => runEngineAsync(false)}
+                className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                Retry from start
+              </button>
+              <button
+                type="button"
+                onClick={() => runEngineAsync(false, { safe: "true" })}
+                className="rounded-lg border border-indigo-300 bg-indigo-50 px-4 py-2 text-sm font-semibold text-indigo-700 hover:bg-indigo-100"
+                title="Deduplicates text and skips AI rematch — more reliable for large tenders"
+              >
+                Run Safe Mode
+              </button>
+              <button
+                type="button"
+                onClick={() => runEngineAsync(false, { skipAiRematch: "true" })}
+                className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-semibold text-amber-700 hover:bg-amber-100"
+                title="Skips the 12-perspective AI rematch — faster but no AI score refinement"
+              >
+                Skip AI Rematch
+              </button>
+              {result.failedStage && (
+                <span className="rounded-full border border-red-200 bg-red-50 px-3 py-1 text-xs text-red-700">
+                  Failed at: {result.failedStage}
+                </span>
+              )}
+            </div>
           )}
 
           {Array.isArray(result.blockers) && result.blockers.length > 0 && (

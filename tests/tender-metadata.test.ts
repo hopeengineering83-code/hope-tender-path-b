@@ -143,3 +143,77 @@ describe("inferTenderMetadata — rich extraction", () => {
     assert.equal(m.deadline, null);
   });
 });
+
+describe("inferTenderMetadata — alternative client labels", () => {
+  const NAME_OF_PROCURING_ENTITY_TENDER = `
+REQUEST FOR PROPOSALS
+
+RFP Reference: WB-2026-ETH-001
+
+Name of Procuring Entity: Ministry of Health Ethiopia
+
+Country: Ethiopia
+Category: Healthcare
+
+Deadline: 30 April 2026, 12:00 noon
+
+The Ministry of Health Ethiopia invites qualified consultants to submit
+proposals for health system strengthening services. Consultants must
+demonstrate experience in public health, health information systems,
+and capacity building programs for government agencies.
+
+This tender is open to firms with at least 5 years of experience working
+with Ministries of Health or similar public sector health authorities.
+Key requirements include provision of at least 3 senior health experts
+and documentation of at least 5 relevant projects completed within the
+last 7 years.
+  `.repeat(3);
+
+  it("extracts client name from 'Name of Procuring Entity' label", () => {
+    const m = inferTenderMetadata(NAME_OF_PROCURING_ENTITY_TENDER, "rfp.pdf");
+    assert.ok(
+      m.clientName?.toLowerCase().includes("ministry of health"),
+      `expected Ministry of Health in clientName, got: ${m.clientName}`,
+    );
+  });
+
+  it("extracts reference from 'RFP Reference' label", () => {
+    const m = inferTenderMetadata(NAME_OF_PROCURING_ENTITY_TENDER, "rfp.pdf");
+    assert.ok(m.reference, `expected a reference number, got: ${m.reference}`);
+  });
+});
+
+describe("inferTenderMetadata — organization-name header fallback", () => {
+  const ORG_HEADER_TENDER = `
+Federal Ministry of Water and Energy
+
+Invitation for Bids
+
+IFB No. FMWE-2026-015
+Project: Rural Water Supply Infrastructure Development
+
+Country: Ethiopia
+Category: Water & Infrastructure
+
+Deadline: 15 May 2026
+
+Bidders are invited to submit sealed bids for construction and installation
+of rural water supply systems across three regions. The project involves
+drilling boreholes, installing pumping systems, and constructing water
+distribution networks serving approximately 50,000 beneficiaries.
+
+Minimum Requirements:
+- Company registration certificate
+- 3 similar completed projects in the last 5 years
+- Lead Engineer with 10 years minimum experience
+- Financial statement for last 3 years
+  `.repeat(3);
+
+  it("extracts client name from a standalone organization-name header when explicit labels are absent", () => {
+    const m = inferTenderMetadata(ORG_HEADER_TENDER, "ifb.pdf");
+    assert.ok(
+      m.clientName?.toLowerCase().includes("ministry of water"),
+      `expected Ministry of Water in clientName, got: ${m.clientName}`,
+    );
+  });
+});

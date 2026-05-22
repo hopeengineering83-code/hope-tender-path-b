@@ -24,12 +24,6 @@ export const dynamic = "force-dynamic";
 
 type SupportDocKind = "EXPERT_CV" | "PROJECT_REFERENCES" | "METHODOLOGY" | "COMPANY_PROFILE" | "FINANCIAL_PLACEHOLDER" | "LEGAL_PLACEHOLDER" | "FORM_PLACEHOLDER" | "DECLARATION_PLACEHOLDER" | "ANNEX_PLACEHOLDER" | "SUBMISSION_RULES_PLACEHOLDER" | "SECTOR_TECHNICAL_SCOPE" | "GENERIC";
 
-// Backward-compat shim — delegates to the canonical validator so the
-// generate route blocks ALL invalid client names (empty, placeholder,
-// AND garbage TOC fragments) instead of just the placeholder list.
-// Before this change, a stored clientName of "references (where
-// available) Photos..." passed this check because the regex only
-// rejected "the client | unknown | n/a | ...".
 function hasRealClientName(value?: string | null): boolean {
   return isValidClientName(value);
 }
@@ -198,12 +192,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const tender = await prisma.tender.findFirst({ where: { id, userId }, include: { requirements: true } });
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
 
-  // Defensive sanitisation — nullify any stored metadata that fails
-  // the canonical validators before generation reads it (theme detector,
-  // cover-letter renderer, AI prompts all consume tender.clientName /
-  // tender.reference / etc. directly). Without this layer, a tender
-  // whose user hasn't clicked the cleanup banner yet would still
-  // produce a proposal cover letter containing the garbage TOC text.
   const invalidFields = listInvalidStoredFields(tender);
   if (invalidFields.length > 0) {
     const patch = computeStoredMetadataPatch(tender);
@@ -259,17 +247,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     if (totalExpertMatches > 0) {
       return NextResponse.json({ error: "Generation blocked: tender requires experts but no expert matches are selected. Run Engine and review/select expert matches before generating.", code: "NO_EXPERT_MATCHES_SELECTED", totalExpertMatches, nextAction: "REVIEW_MATCHES" }, { status: 422 });
     }
-    if (readiness.totals.reviewedExperts === 0) {
-      return NextResponse.json({ error: "Generation blocked: tender requires experts but no expert matches exist and the company vault has no reviewed experts. Run Engine or review expert records first.", code: "NO_EXPERT_MATCHES_FOUND", totalExpertMatches: 0, nextAction: "RUN_ENGINE" }, { status: 422 });
-    }
+    return NextResponse.json({ error: "Generation blocked: tender requires experts but no tender-specific expert match rows exist yet. Run Engine first to create tender expert match rows, then review/select expert matches.", code: "ENGINE_NOT_RUN_OR_NO_EXPERT_MATCH_ROWS", totalExpertMatches: 0, nextAction: "RUN_ENGINE" }, { status: 422 });
   }
   if (projectRequirementExists > 0 && selectedProjectMatches.length === 0) {
     if (totalProjectMatches > 0) {
       return NextResponse.json({ error: "Generation blocked: tender requires project references but no project matches are selected. Run Engine and review/select project matches before generating.", code: "NO_PROJECT_MATCHES_SELECTED", totalProjectMatches, nextAction: "REVIEW_MATCHES" }, { status: 422 });
     }
-    if (readiness.totals.reviewedProjects === 0) {
-      return NextResponse.json({ error: "Generation blocked: tender requires project references but no project matches exist and the company vault has no reviewed projects. Run Engine or review project records first.", code: "NO_PROJECT_MATCHES_FOUND", totalProjectMatches: 0, nextAction: "RUN_ENGINE" }, { status: 422 });
-    }
+    return NextResponse.json({ error: "Generation blocked: tender requires project references but no tender-specific project match rows exist yet. Run Engine first to create tender project match rows, then review/select project matches.", code: "ENGINE_NOT_RUN_OR_NO_PROJECT_MATCH_ROWS", totalProjectMatches: 0, nextAction: "RUN_ENGINE" }, { status: 422 });
   }
   if (selectedExpertMatches.length > 0 && reviewedExpertCount === 0 && expertRequirementExists > 0) return NextResponse.json({ error: `Generation blocked: ${selectedExpertMatches.length} expert(s) are selected but NONE have been reviewed. Go to the Knowledge Review page and review at least one expert before generating.`, code: "ALL_EXPERTS_UNREVIEWED", draftExperts: draftExperts.map((m) => m.expert.fullName) }, { status: 422 });
   if (selectedProjectMatches.length > 0 && reviewedProjectCount === 0 && projectRequirementExists > 0) return NextResponse.json({ error: `Generation blocked: ${selectedProjectMatches.length} project reference(s) are selected but NONE have been reviewed. Go to the Knowledge Review page and review at least one project before generating.`, code: "ALL_PROJECTS_UNREVIEWED", draftProjects: draftProjects.map((m) => m.project.name) }, { status: 422 });
@@ -314,10 +298,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   } catch (error) {
     failJob(job.id, error instanceof Error ? error.message : String(error));
     void reportError(error, { tenderId: id, userId, route: "/api/tenders/[id]/generate" });
-    // Gap 7 fix — structured error: { success: false, code, message,
-    // nextAction, diagnosticId, failedStage, blockerSummary } so the UI
-    // never has to display the bare "Generation failed." string.
-    // `error` is kept for backward-compatibility with older clients.
     const mapped = mapGenerationError(error, { failedStage: "GENERATION_PIPELINE" });
     return NextResponse.json(
       { ...mapped.body, error: mapped.body.message, jobId: job.id },

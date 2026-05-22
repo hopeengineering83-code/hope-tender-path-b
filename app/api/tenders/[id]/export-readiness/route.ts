@@ -7,16 +7,18 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 10;
 
 function nextActionForReason(reason: string): string {
+  if (/NO_ACTIVE_GENERATED_DOCUMENTS/i.test(reason)) return "Generate the required documents before exporting.";
   if (/generationStatus/i.test(reason)) return "Regenerate this document or reconcile the submission plan.";
   if (/validationStatus/i.test(reason)) return "Run validation and fix reported document validation issues.";
   if (/reviewStatus/i.test(reason)) return "Complete human review and mark the document READY_FOR_EXPORT.";
   if (/fileContent/i.test(reason)) return "Regenerate or upload the missing DOCX/PDF file content.";
+  if (/MARKDOWN|QUICK_DRAFT|DRAFT_ONLY|CONTROL|NOT_EXPORTABLE|REPLACE_WITH_ORIGINAL|PLANNED|not a final export/i.test(reason)) return "Use Generate Docs or attach the tender-issued original; quick drafts, placeholders and control rows cannot be exported.";
   return "Review and resolve this blocker before final export.";
 }
 
 function severityForReasons(reasons: string[]): "HIGH" | "MEDIUM" | "LOW" {
-  if (reasons.some((r) => /fileContent|generationStatus/i.test(r))) return "HIGH";
-  if (reasons.some((r) => /validationStatus|reviewStatus/i.test(r))) return "MEDIUM";
+  if (reasons.some((r) => /NO_ACTIVE_GENERATED_DOCUMENTS|fileContent|generationStatus|CONTROL|ORIGINAL_REQUIRED|PDF_CONVERSION_REQUIRED|NOT_EXPORTABLE|REPLACE_WITH_ORIGINAL|PLANNED/i.test(r))) return "HIGH";
+  if (reasons.some((r) => /validationStatus|reviewStatus|MARKDOWN|QUICK_DRAFT|DRAFT_ONLY/i.test(r))) return "MEDIUM";
   return "LOW";
 }
 
@@ -46,6 +48,9 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
           id: true,
           name: true,
           exactFileName: true,
+          exactOrder: true,
+          documentType: true,
+          format: true,
           generationStatus: true,
           validationStatus: true,
           reviewStatus: true,

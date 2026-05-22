@@ -117,15 +117,22 @@ function inferReference(text: string): string | null {
 
 function inferClient(text: string): string | null {
   const raw = firstMatch(text, [
-    /(?:client|procuring\s+entity|procurement\s+entity|employer|owner|contracting\s+authority|beneficiary|issuing\s+authority)\s*[:\-]\s*([^\n\r]{3,120})/i,
+    /(?:name\s+of\s+procuring\s+entity|client|procuring\s+entity|procurement\s+entity|employer|owner|contracting\s+authority|beneficiary|issuing\s+authority)\s*[:\-]\s*([^\n\r]{3,120})/i,
     /(?:issued\s+by|prepared\s+by|invitation\s+by|on\s+behalf\s+of)\s*[:\-]\s*([^\n\r]{3,120})/i,
   ]);
-  if (!raw) return null;
-  // Canonical validator handles TOC/section noise, placeholders, and length
-  // sanity. If a regex captured a proposal section heading or a fragment
-  // like "references (where available) Photos...", isValidClientName
-  // returns false and we drop it.
-  return isValidClientName(raw) ? raw : null;
+  if (raw && isValidClientName(raw)) return raw;
+
+  // Fallback: look for a standalone organization-name header near the top
+  // of the document (e.g. a letterhead line like "Federal Ministry of Water\n").
+  // The org keyword may appear anywhere in the line (prefix, middle, or suffix).
+  // Only inspect the first 3 000 characters to avoid body-text false positives.
+  const top = text.slice(0, 3000);
+  const orgHeader = firstMatch(top, [
+    /^([A-Z][^\n\r]{5,100}(?:ministry|authority|agency|council|commission|department|institute|corporation|limited|ltd\.?|plc\.?|llc\.?|gmbh|s\.a\.|inc\.?)[^\n\r]{0,60})\s*$/im,
+  ]);
+  if (orgHeader && isValidClientName(orgHeader)) return orgHeader;
+
+  return null;
 }
 
 function inferClientContactName(text: string): string | null {

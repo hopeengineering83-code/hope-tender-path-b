@@ -8,7 +8,9 @@ import { strict as assert } from "node:assert";
 import JSZip from "jszip";
 import { checkDocxHygieneReadiness, checkExportReadiness, exportReadinessError, isReadyForFinalExport } from "../lib/engine/export-readiness";
 
-const READY = { id: "doc-1", name: "Cover Letter", exactFileName: "Cover-Letter.docx", generationStatus: "GENERATED", validationStatus: "VALIDATED", reviewStatus: "READY_FOR_EXPORT", fileContent: "AA==" };
+// Minimal base64 with ZIP/PK magic bytes (0x50 0x4B) — passes looksLikeBase64Docx check.
+const MINIMAL_DOCX_B64 = "UEsDBA==";
+const READY = { id: "doc-1", name: "Cover Letter", exactFileName: "Cover-Letter.docx", generationStatus: "GENERATED", validationStatus: "VALIDATED", reviewStatus: "READY_FOR_EXPORT", fileContent: MINIMAL_DOCX_B64 };
 const READY_TEXT = { ...READY, name: "Technical Proposal", exactFileName: "Technical-Proposal.docx", fileContent: "Technical Proposal\nThis document addresses the tender requirements with reviewed company evidence and approved submission content." };
 
 async function fakeDocxBase64(visibleText: string): Promise<string> {
@@ -35,8 +37,9 @@ describe("checkExportReadiness", () => {
     assert.equal(res.failures.length, 0);
   });
 
-  it("returns ok=true for clean inspectable generated text", () => {
-    const res = checkExportReadiness([READY_TEXT], { requireFileContent: true });
+  it("returns ok=true for clean inspectable generated text in a real DOCX", async () => {
+    const fileContent = await fakeDocxBase64("Technical Proposal This submission text is clean and contains reviewed company evidence only approved content.");
+    const res = checkExportReadiness([{ ...READY, name: "Technical Proposal", exactFileName: "Technical-Proposal.docx", fileContent }], { requireFileContent: true });
     assert.equal(res.ok, true);
     assert.equal(res.failures.length, 0);
   });
