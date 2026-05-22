@@ -493,10 +493,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           data: {
             tenderId: id,
             name: "AI Proposal (Quick Draft)",
-            documentType: "PROPOSAL",
+            documentType: "QUICK_DRAFT",
+            format: "MARKDOWN",
             generationStatus: "GENERATED",
             validationStatus: "PENDING",
-            reviewStatus: "PENDING",
+            reviewStatus: "NOT_EXPORTABLE",
             contentSummary: `Quick AI draft generated ${new Date().toLocaleString()}. Run Generate Docs for the full submission-ready package.`,
             fileContent: Buffer.from(contentToSave).toString("base64"),
           },

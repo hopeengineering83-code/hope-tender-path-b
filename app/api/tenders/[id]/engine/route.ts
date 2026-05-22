@@ -4,36 +4,16 @@ import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { runTenderEngine, type EngineRunOptions } from "../../../../../lib/engine/run-tender-engine";
 import { assessExtractionQuality } from "../../../../../lib/extraction-quality";
 import { actionableEngineError } from "../../../../../lib/engine/actionable-engine-error";
-import { enqueueJob } from "../../../../../lib/ai-jobs";
+import { enqueueJob, findActiveEngineRunForTender } from "../../../../../lib/ai-jobs";
 import { computeStoredMetadataPatch, listInvalidStoredFields } from "../../../../../lib/engine/sanitize-stored-metadata";
 import { autoFillTenderMetadata } from "../../../../../lib/engine/auto-fill-tender-metadata";
+import { checkEnginePostconditions } from "../../../../../lib/engine/engine-postconditions";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
 
 function requestDiagnosticId() {
   return `eng_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
-}
-
-async function enginePostconditions(tenderId: string) {
-  const [expertRequirementExists, projectRequirementExists, requirementCount, expertMatches, projectMatches, selectedReviewedExperts, selectedReviewedProjects, complianceRows] = await Promise.all([
-    prisma.tenderRequirement.count({ where: { tenderId, requirementType: "EXPERT" } }),
-    prisma.tenderRequirement.count({ where: { tenderId, requirementType: "PROJECT_EXPERIENCE" } }),
-    prisma.tenderRequirement.count({ where: { tenderId } }),
-    prisma.tenderExpertMatch.count({ where: { tenderId } }),
-    prisma.tenderProjectMatch.count({ where: { tenderId } }),
-    prisma.tenderExpertMatch.count({ where: { tenderId, isSelected: true, expert: { trustLevel: "REVIEWED" } } }),
-    prisma.tenderProjectMatch.count({ where: { tenderId, isSelected: true, project: { trustLevel: "REVIEWED" } } }),
-    prisma.complianceMatrix.count({ where: { tenderId } }),
-  ]);
-  const blockers: string[] = [];
-  if (requirementCount === 0) blockers.push("NO_REQUIREMENTS_PERSISTED");
-  if (expertRequirementExists > 0 && expertMatches === 0) blockers.push("ENGINE_RAN_ZERO_EXPERT_MATCHES");
-  if (projectRequirementExists > 0 && projectMatches === 0) blockers.push("ENGINE_RAN_ZERO_PROJECT_MATCHES");
-  if (expertRequirementExists > 0 && selectedReviewedExperts === 0) blockers.push("NO_SELECTED_REVIEWED_EXPERTS_AFTER_ENGINE");
-  if (projectRequirementExists > 0 && selectedReviewedProjects === 0) blockers.push("NO_SELECTED_REVIEWED_PROJECTS_AFTER_ENGINE");
-  if (requirementCount > 0 && complianceRows === 0) blockers.push("ENGINE_RAN_ZERO_EVIDENCE_ROWS");
-  return { blockers, counts: { expertRequirementExists, projectRequirementExists, requirementCount, expertMatches, projectMatches, selectedReviewedExperts, selectedReviewedProjects, complianceRows } };
 }
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -88,9 +68,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       return NextResponse.json({ success: true, async: true, jobId, diagnosticId, inputStats, metadataAutoFill, extractionWarnings: extractionReports.filter((item) => item.quality.severity === "WARNING"), message: "Engine run queued. Next step: POST /api/ai-jobs/run-next to start the worker, then poll GET /api/ai-jobs/[jobId] for status." }, { status: 202 });
     }
 
+    const activeSyncJob = await findActiveEngineRunForTender(id, userId);
+    if (activeSyncJob) return NextResponse.json({ success: true, async: false, reusedExistingJob: true, jobId: activeSyncJob.id, diagnosticId, message: "An engine run is already queued or running for this tender." }, { status: 202 });
+
     const engineOptions: EngineRunOptions = { safe: isSafe, skipAiRematch, maxChars };
     const result = await runTenderEngine(id, userId, undefined, engineOptions);
-    const postconditions = await enginePostconditions(id);
+    const postconditions = await checkEnginePostconditions(id);
     if (postconditions.blockers.length > 0) {
       return NextResponse.json({
         success: false,

@@ -330,12 +330,14 @@ export function EngineActionPanel({ tenderId }: { tenderId: string }) {
                 try {
                   const r = await fetch(`/api/ai-jobs/${result.jobId}`, { method: "GET" });
                   const j = await r.json().catch(() => ({}));
-                  if (j?.status === "SUCCEEDED") {
+                  const jobStatus = j?.job?.status ?? j?.status;
+                  const jobError = j?.job?.errorMessage ?? j?.errorMessage;
+                  if (jobStatus === "SUCCEEDED") {
                     setResult({ success: true, async: true, jobId: result.jobId, error: "Engine completed successfully (background)." });
                     startTransition(() => router.refresh());
-                  } else if (j?.status === "FAILED") {
+                  } else if (jobStatus === "FAILED") {
                     setResult({
-                      error: `Engine background run failed: ${j.errorMessage ?? "unknown worker error"}`,
+                      error: `Engine background run failed: ${jobError ?? "unknown worker error"}`,
                       code: "ASYNC_ENGINE_FAILED",
                       nextAction: "RETRY_OR_REDUCE_INPUT",
                       jobId: result.jobId,
@@ -343,7 +345,7 @@ export function EngineActionPanel({ tenderId }: { tenderId: string }) {
                   } else {
                     setResult({
                       ...result,
-                      error: `Worker status: ${j?.status ?? "RUNNING"} — still working. Try again in 1-2 min.`,
+                      error: `Worker status: ${jobStatus ?? "RUNNING"} — still working. Try again in 1-2 min.`,
                     });
                   }
                 } catch {

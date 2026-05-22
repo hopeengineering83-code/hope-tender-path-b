@@ -19,6 +19,7 @@
 //   PROFILE_FACT_EXTRACTION — async pure-regex fact harvest from company/project/tender prose
 
 import { recordStep, type JobType } from "./ai-jobs";
+import { checkEnginePostconditions } from "./engine/engine-postconditions";
 import { runTenderEngine } from "./engine/run-tender-engine";
 import { prisma } from "./prisma";
 import {
@@ -84,6 +85,11 @@ const handlers: Partial<Record<JobType, JobHandler>> = {
         },
         { safe: safeMode, skipAiRematch, maxChars },
       );
+      const postconditions = await checkEnginePostconditions(ctx.tenderId);
+      if (!postconditions.ok) {
+        await recordStep(ctx.jobId, { stepName: "POSTCONDITION_VALIDATE", message: `Postcondition check failed: ${postconditions.blockers.join(", ")}`, status: "FAILED" });
+        return { code: "ENGINE_COMPLETED_WITH_BLOCKERS", blockers: postconditions.blockers, counts: postconditions.counts, failedStage: "POSTCONDITION_VALIDATE", nextAction: "REVIEW_MATCHING_INPUTS" };
+      }
       await recordStep(ctx.jobId, { stepName: "engine.complete", message: "Engine run finished successfully", status: "SUCCEEDED" });
       return { result: result as unknown as Record<string, unknown> };
     } catch (err) {
