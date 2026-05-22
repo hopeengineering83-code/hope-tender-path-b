@@ -6,6 +6,7 @@ import { assessExtractionQuality } from "../../../../../lib/extraction-quality";
 import { actionableEngineError } from "../../../../../lib/engine/actionable-engine-error";
 import { enqueueJob } from "../../../../../lib/ai-jobs";
 import { computeStoredMetadataPatch, listInvalidStoredFields } from "../../../../../lib/engine/sanitize-stored-metadata";
+import { autoFillTenderMetadata } from "../../../../../lib/engine/auto-fill-tender-metadata";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -66,6 +67,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       for (const field of invalidFields) (tender as Record<string, unknown>)[field] = null;
     }
 
+    // ─── Auto-fill missing tender metadata from extracted text ────────────
+    // Runs before extraction-quality gating so client name, country, etc.
+    // are populated even when the user hasn't filled them manually. Only
+    // writes fields that are currently empty or placeholder-only — never
+    // overwrites real existing values.
+    const metadataAutoFill = await autoFillTenderMetadata(tender, prisma);
+    if (metadataAutoFill.filled.length > 0) {
+      console.info(`[engine] tender=${tender.id} auto-filled ${metadataAutoFill.filled.length} metadata field(s): ${metadataAutoFill.filled.join(", ")}`);
+    }
+
     const extractionReports = tender.files.map((file) => ({ fileName: file.originalFileName || file.fileName, quality: assessExtractionQuality(file.extractedText, file.originalFileName || file.fileName) }));
     const blockers = extractionReports.filter((item) => item.quality.severity === "FAILED" || item.quality.severity === "POOR");
     if (!force && blockers.length > 0) return NextResponse.json({ error: "Engine run blocked: one or more tender files have poor extraction quality.", code: "EXTRACTION_NOT_READY", nextAction: "OPEN_EXTRACTION_QUALITY", blockers, hint: "Re-import/OCR/review the file, or retry with ?force=true only when you intentionally accept degraded analysis quality.", diagnosticId }, { status: 422 });
@@ -74,7 +85,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       const activeJob = await prisma.aiJob.findFirst({ where: { userId, tenderId: id, jobType: "ENGINE_RUN", status: { in: ["QUEUED", "RUNNING"] } }, orderBy: { createdAt: "desc" }, select: { id: true, status: true } });
       if (activeJob) return NextResponse.json({ success: true, async: true, reusedExistingJob: true, jobId: activeJob.id, jobStatus: activeJob.status, diagnosticId, message: "An engine run is already queued or running for this tender. Reusing the existing job." }, { status: 202 });
       const { id: jobId } = await enqueueJob({ userId, tenderId: id, jobType: "ENGINE_RUN", input: { safe: isSafe, skipAiRematch, ...(maxChars ? { maxChars } : {}) } });
-      return NextResponse.json({ success: true, async: true, jobId, diagnosticId, inputStats, extractionWarnings: extractionReports.filter((item) => item.quality.severity === "WARNING"), message: "Engine run queued. Next step: POST /api/ai-jobs/run-next to start the worker, then poll GET /api/ai-jobs/[jobId] for status." }, { status: 202 });
+      return NextResponse.json({ success: true, async: true, jobId, diagnosticId, inputStats, metadataAutoFill, extractionWarnings: extractionReports.filter((item) => item.quality.severity === "WARNING"), message: "Engine run queued. Next step: POST /api/ai-jobs/run-next to start the worker, then poll GET /api/ai-jobs/[jobId] for status." }, { status: 202 });
     }
 
     const engineOptions: EngineRunOptions = { safe: isSafe, skipAiRematch, maxChars };
@@ -90,11 +101,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         nextAction: "REVIEW_MATCHING_INPUTS",
         blockers: postconditions.blockers,
         counts: postconditions.counts,
+        metadataAutoFill,
         extractionWarnings: extractionReports.filter((item) => item.quality.severity === "WARNING"),
         diagnosticId,
       }, { status: 422 });
     }
-    return NextResponse.json({ success: true, async: false, tender: result, extractionWarnings: extractionReports.filter((item) => item.quality.severity === "WARNING"), inputStats, diagnosticId });
+    return NextResponse.json({ success: true, async: false, tender: result, extractionWarnings: extractionReports.filter((item) => item.quality.severity === "WARNING"), inputStats, metadataAutoFill, diagnosticId });
   } catch (error) {
     console.error("Engine run failed:", { diagnosticId, error });
     const mapped = actionableEngineError(error);
