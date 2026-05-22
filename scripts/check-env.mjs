@@ -38,11 +38,11 @@ const ALWAYS_REQUIRED = [
   },
 ];
 
-// Optional — app builds and runs without these, but with reduced capability.
-// At least one of ANTHROPIC_API_KEY or GEMINI_API_KEY should be set for AI
-// generation; the proposal pipeline prefers Claude when available, and falls
-// back to Gemini for both proposal generation and CV/project extraction.
-const OPTIONAL = [
+// AI provider keys — at least one is required in PRODUCTION. The runtime
+// env-check (lib/env-check.ts) throws when both are missing, so the build
+// and runtime policies must agree. Preview deployments still warn unless
+// STRICT_PREVIEW_ENV_CHECK=true.
+const AI_PROVIDER_KEYS = [
   {
     name: "ANTHROPIC_API_KEY",
     description:
@@ -62,6 +62,19 @@ const OPTIONAL = [
       if (v.length < 35) return `Gemini API key is too short (${v.length} chars). A real key is 39 characters.`;
       return null;
     },
+  },
+];
+
+// Operational readiness — important for full functionality but never a build
+// blocker. Missing values surface as warnings only.
+const OPERATIONAL_WARNINGS = [
+  {
+    name: "AI_JOBS_WORKER_SECRET",
+    description: "Shared secret the AI job worker uses to authenticate to the cron drainer. Without it, the worker queue cannot be drained by Vercel Cron in production.",
+  },
+  {
+    name: "CRON_SECRET",
+    description: "Vercel-managed Cron secret. Required when Vercel Cron is wired to /api/cron/* endpoints. Set in the Vercel dashboard, not here.",
   },
 ];
 
@@ -119,7 +132,10 @@ function validateAiProposalRuntime() {
   else warnings.push(`  ⚠  AI_PROPOSAL_RUNTIME: ${message}`);
 }
 
-for (const spec of OPTIONAL) {
+// AI provider key validation per-key (warns on shape problems, never blocks
+// production build on a present-but-malformed key — the runtime check fires
+// when the SDK is actually invoked).
+for (const spec of AI_PROVIDER_KEYS) {
   const value = process.env[spec.name];
   if (!value) {
     warnings.push(`  ⚠  ${spec.name}: Not set. ${spec.description}`);
@@ -145,6 +161,29 @@ for (const spec of ALWAYS_REQUIRED) {
       if (previewRelaxed) warnings.push(`  ⚠  ${spec.name}: ${err} (preview build allowed; runtime may fail)`);
       else errors.push(`  ✗ ${spec.name}: ${err}`);
     }
+  }
+}
+
+// Gap 5 — match lib/env-check.ts: at least one AI provider key is required in
+// production. Preview deployments warn unless STRICT_PREVIEW_ENV_CHECK=true.
+// Development is unaffected (warn-only).
+const hasAnyAIKey = AI_PROVIDER_KEYS.some(({ name }) => Boolean(process.env[name]));
+if (!hasAnyAIKey) {
+  const message =
+    "At least one AI provider key is required: ANTHROPIC_API_KEY (preferred) OR GEMINI_API_KEY. " +
+    "Without either, every imported expert/project is REGEX_DRAFT and BLOCKED from final proposal generation.";
+  if (isProd) {
+    errors.push(`  ✗ AI_PROVIDER_KEYS: ${message}`);
+  } else if (isVercelPreview && strictPreviewEnvCheck) {
+    errors.push(`  ✗ AI_PROVIDER_KEYS: ${message}`);
+  } else {
+    warnings.push(`  ⚠  AI_PROVIDER_KEYS: ${message}`);
+  }
+}
+
+for (const spec of OPERATIONAL_WARNINGS) {
+  if (!process.env[spec.name]) {
+    warnings.push(`  ⚠  ${spec.name}: Not set. ${spec.description}`);
   }
 }
 

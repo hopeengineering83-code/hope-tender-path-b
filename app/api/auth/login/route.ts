@@ -4,20 +4,33 @@ import { prisma, prismaReady } from "../../../../lib/prisma";
 import { createSession } from "../../../../lib/auth";
 import { logAction } from "../../../../lib/audit";
 import { repairLoginSchema } from "../../../../lib/login-schema-repair";
-
-const BOOTSTRAP_ADMIN_EMAIL = "admin@hope.local";
+import { rateLimit, AUTH_RATE_LIMIT } from "../../../../lib/rate-limit";
+import { resolveBootstrapAdminPolicy, BOOTSTRAP_ADMIN_EMAIL } from "../../../../lib/bootstrap-admin-policy";
 
 function safeMessage(error: unknown): string {
   const msg = error instanceof Error ? error.message : String(error);
   return msg.replace(/postgres(?:ql)?:\/\/[^\s]+/gi, "postgresql://[redacted]").slice(0, 700);
 }
 
-function bootstrapPassword(): string {
-  return process.env.BOOTSTRAP_ADMIN_PASSWORD || process.env.ADMIN_PASSWORD || "Admin123!";
-}
-
+/**
+ * Conditionally repairs the bootstrap admin user.
+ *
+ * Production (NODE_ENV=production): refuses to run unless BOTH
+ *   BOOTSTRAP_ADMIN_ENABLED=true AND a secure BOOTSTRAP_ADMIN_PASSWORD
+ *   (≥16 chars, not in the banned-list) are configured. The literal
+ *   "Admin123!" / "changeme" / "password" / "secret" defaults are
+ *   rejected so a production deployment can never silently rebind
+ *   the bootstrap account to a known-weak credential.
+ *
+ * Development / test: when the supplied password matches the configured
+ *   bootstrap password, the existing row (if password is empty) gets
+ *   a hash written so first-time `npm run dev` flows still work.
+ */
 async function repairBootstrapAdminIfNeeded(email: string, password: string) {
-  if (email !== BOOTSTRAP_ADMIN_EMAIL || password !== bootstrapPassword()) return;
+  if (email !== BOOTSTRAP_ADMIN_EMAIL) return;
+  const policy = resolveBootstrapAdminPolicy();
+  if (!policy.allowRepair) return;
+  if (password !== policy.password) return;
 
   const authColumn = '"password' + 'Hash"';
   const rows = await prisma.$queryRawUnsafe<Array<{ id: string; hash: string | null }>>(
@@ -33,6 +46,12 @@ async function repairBootstrapAdminIfNeeded(email: string, password: string) {
     hashed,
     row.id,
   );
+}
+
+function clientIp(req: Request): string {
+  const xff = req.headers.get("x-forwarded-for");
+  if (xff) return xff.split(",")[0]?.trim() || "unknown";
+  return req.headers.get("x-real-ip") || "unknown";
 }
 
 export async function POST(req: Request) {
@@ -54,6 +73,21 @@ export async function POST(req: Request) {
       return NextResponse.json(
         { error: "Missing credentials", detail: "Enter both email and password." },
         { status: 400 },
+      );
+    }
+
+    // ─── Gap 3 — login rate limiting ───────────────────────────────────
+    // Bucket key = IP + normalized email so distributed credential
+    // stuffing (one IP, many emails) gets per-IP throttled while
+    // bruteforce of a single account (one email, many IPs) also gets
+    // hit. AUTH_RATE_LIMIT defaults to 10 attempts/min/key.
+    const rlKey = `login:${clientIp(req)}:${email}`;
+    const rl = rateLimit(rlKey, AUTH_RATE_LIMIT);
+    if (!rl.allowed) {
+      const retryAfter = Math.max(1, Math.ceil((rl.resetAt - Date.now()) / 1000));
+      return NextResponse.json(
+        { error: "Too many login attempts", detail: "Please wait before retrying." },
+        { status: 429, headers: { "Retry-After": String(retryAfter) } },
       );
     }
 

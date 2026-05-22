@@ -222,6 +222,28 @@ export async function findActiveEngineRunForTender(tenderId: string, userId: str
 }
 
 /**
+ * Returns true when the job type should be considered stuck purely on a
+ * progress-stalled basis (no AiJobStep within
+ * AI_JOB_PROGRESS_STUCK_AFTER_MS), regardless of total wall-clock runtime.
+ *
+ * WHY ENGINE_RUN IS SPECIAL
+ * ─────────────────────────
+ * A Vercel function killed at 60s can leave an ENGINE_RUN job RUNNING
+ * with no further steps. With only the wall-clock threshold (15 min) the
+ * job stays RUNNING for 15 minutes before being marked FAILED — the UI
+ * keeps spinning the whole time. Tying ENGINE_RUN recovery solely to
+ * "no recent step" surfaces the failure within ~90s instead of 15 min.
+ *
+ * Other job types still require BOTH thresholds: those workflows can
+ * legitimately spend many minutes inside a single Claude call without
+ * recording a step in between, and a 90s progress threshold would
+ * trigger spurious recoveries.
+ */
+function isProgressStuckOnlyType(jobType: string): boolean {
+  return jobType === "ENGINE_RUN";
+}
+
+/**
  * Detect jobs that have been RUNNING for longer than the
  * stuck-threshold. These are typically the residue of:
  *   - a crashed Vercel function (worker process died mid-call)
@@ -231,6 +253,17 @@ export async function findActiveEngineRunForTender(tenderId: string, userId: str
  * Returns the count + the job IDs (capped at `limit`) so callers
  * can either surface them in diagnostics or hand them to
  * `failStuckJobs` for recovery.
+ *
+ * Threshold policy:
+ *   - ENGINE_RUN jobs: recoverable as soon as no AiJobStep has been
+ *     written within `progressStuckAfterMs` (default 90 s). Wall-clock
+ *     runtime is NOT checked — a Vercel-killed engine run at 60s is
+ *     surfaced after ~90s instead of 15 min.
+ *   - All other job types: require BOTH that the job has been RUNNING
+ *     for at least `stuckAfterMs` (default 15 min) AND that no step has
+ *     been recorded within `progressStuckAfterMs`. This prevents a long
+ *     legitimate Claude call (which can run several minutes between
+ *     steps) from being killed by the recovery sweep.
  */
 export async function findStuckJobs(opts?: { stuckAfterMs?: number; progressStuckAfterMs?: number; limit?: number }): Promise<{
   count: number;
@@ -240,8 +273,21 @@ export async function findStuckJobs(opts?: { stuckAfterMs?: number; progressStuc
   const totalThreshold = new Date(Date.now() - (opts?.stuckAfterMs ?? AI_JOB_STUCK_AFTER_MS));
   const progressThreshold = new Date(Date.now() - (opts?.progressStuckAfterMs ?? AI_JOB_PROGRESS_STUCK_AFTER_MS));
 
+  // We query a wide candidate set covering BOTH branches:
+  //   - jobs started before totalThreshold (covers the legacy wall-clock branch
+  //     for non-ENGINE_RUN types)
+  //   - jobs started before progressThreshold AND of an ENGINE_RUN-style type
+  //     (covers the progress-only branch even when wall-clock < 15 min)
+  // The Prisma where uses an OR with the appropriate predicates so we never
+  // miss a 60-second-killed ENGINE_RUN.
   const candidates = await prisma.aiJob.findMany({
-    where: { status: "RUNNING", startedAt: { lt: totalThreshold } },
+    where: {
+      status: "RUNNING",
+      OR: [
+        { startedAt: { lt: totalThreshold } },
+        { jobType: "ENGINE_RUN", startedAt: { lt: progressThreshold } },
+      ],
+    },
     select: {
       id: true, jobType: true, userId: true, tenderId: true, startedAt: true,
       steps: { orderBy: { createdAt: "desc" }, take: 1, select: { stepName: true, createdAt: true } },
@@ -252,7 +298,17 @@ export async function findStuckJobs(opts?: { stuckAfterMs?: number; progressStuc
 
   const stuck = candidates.filter((j) => {
     const latestStepAt = j.steps[0]?.createdAt ?? null;
-    return !latestStepAt || latestStepAt < progressThreshold;
+    const progressStalled = !latestStepAt || latestStepAt < progressThreshold;
+    if (!progressStalled) return false;
+    if (isProgressStuckOnlyType(j.jobType)) {
+      // ENGINE_RUN: progress-stall alone is sufficient. We still require
+      // that the job has been running long enough for the progress
+      // threshold to have meaning (startedAt < progressThreshold); the
+      // Prisma WHERE already enforced that branch.
+      return true;
+    }
+    // Other types: require wall-clock threshold AS WELL.
+    return j.startedAt !== null && j.startedAt < totalThreshold;
   }).slice(0, opts?.limit ?? 50);
 
   return {
@@ -285,12 +341,16 @@ export async function failStuckJobs(opts?: { stuckAfterMs?: number; progressStuc
   const recovered: string[] = [];
   for (const job of jobs) {
     const failedStage = job.latestStepName ?? "UNKNOWN";
-    const errorMessage = (opts?.reason ?? `Worker did not finish within ${Math.round((opts?.stuckAfterMs ?? AI_JOB_STUCK_AFTER_MS) / 60_000)} min — auto-failed by stuck-job recovery. Re-run the engine.`).slice(0, 2000);
+    const progressOnly = isProgressStuckOnlyType(job.jobType);
+    const defaultMessage = progressOnly
+      ? `Engine worker stopped making progress for more than ${Math.round((opts?.progressStuckAfterMs ?? AI_JOB_PROGRESS_STUCK_AFTER_MS) / 1000)}s — auto-failed by stuck-job recovery. Re-run the engine in Safe Mode.`
+      : `Worker did not finish within ${Math.round((opts?.stuckAfterMs ?? AI_JOB_STUCK_AFTER_MS) / 60_000)} min — auto-failed by stuck-job recovery. Re-run the engine.`;
+    const errorMessage = (opts?.reason ?? defaultMessage).slice(0, 2000);
     const structuredOutput = JSON.stringify({
       code: "ASYNC_ENGINE_TIMEOUT",
-      failedStage,
       nextAction: "RUN_ENGINE_SAFE_MODE",
       safeModeAvailable: true,
+      failedStage,
       lastProgressAt: job.latestStepAt?.toISOString() ?? null,
     });
     const updated = await prisma.aiJob.updateMany({
@@ -308,6 +368,12 @@ export async function failStuckJobs(opts?: { stuckAfterMs?: number; progressStuc
  * job if it has been stuck. Returns true when a recovery happened
  * so the caller can refetch the row and surface the new FAILED
  * state to the UI immediately.
+ *
+ * Threshold policy mirrors `findStuckJobs`:
+ *   - ENGINE_RUN: fail when no AiJobStep has been recorded within
+ *     `progressStuckAfterMs` (default 90 s), regardless of wall-clock.
+ *   - All other job types: require BOTH wall-clock (default 15 min) and
+ *     progress-stalled (default 90 s) to be true.
  */
 export async function recoverIfStuck(jobId: string, opts?: { stuckAfterMs?: number; progressStuckAfterMs?: number }): Promise<boolean> {
   await prismaReady;
@@ -315,26 +381,45 @@ export async function recoverIfStuck(jobId: string, opts?: { stuckAfterMs?: numb
   const progressThreshold = new Date(Date.now() - (opts?.progressStuckAfterMs ?? AI_JOB_PROGRESS_STUCK_AFTER_MS));
 
   const job = await prisma.aiJob.findFirst({
-    where: { id: jobId, status: "RUNNING", startedAt: { lt: totalThreshold } },
-    select: { id: true, steps: { orderBy: { createdAt: "desc" }, take: 1, select: { stepName: true, createdAt: true } } },
+    where: { id: jobId, status: "RUNNING" },
+    select: {
+      id: true, jobType: true, startedAt: true,
+      steps: { orderBy: { createdAt: "desc" }, take: 1, select: { stepName: true, createdAt: true } },
+    },
   });
   if (!job) return false;
 
   const latestStepAt = job.steps[0]?.createdAt ?? null;
-  if (latestStepAt && latestStepAt >= progressThreshold) return false;
+  const progressStalled = !latestStepAt || latestStepAt < progressThreshold;
+  if (!progressStalled) return false;
+
+  const progressOnly = isProgressStuckOnlyType(job.jobType);
+  if (!progressOnly) {
+    // Other job types: also require wall-clock threshold passed.
+    if (!job.startedAt || job.startedAt >= totalThreshold) return false;
+  } else {
+    // ENGINE_RUN: require the job has been running at least the
+    // progressThreshold (otherwise it's just a fresh job with no steps
+    // yet — not stuck).
+    if (!job.startedAt || job.startedAt >= progressThreshold) return false;
+  }
 
   const failedStage = job.steps[0]?.stepName ?? "UNKNOWN";
   const structuredOutput = JSON.stringify({
     code: "ASYNC_ENGINE_TIMEOUT",
-    failedStage,
     nextAction: "RUN_ENGINE_SAFE_MODE",
     safeModeAvailable: true,
+    failedStage,
+    lastProgressAt: latestStepAt ? latestStepAt.toISOString() : null,
   });
+  const errorMessage = progressOnly
+    ? `Engine worker stopped making progress for more than ${Math.round((opts?.progressStuckAfterMs ?? AI_JOB_PROGRESS_STUCK_AFTER_MS) / 1000)}s — auto-failed by stuck-job recovery. Re-run the engine in Safe Mode.`
+    : `Worker did not finish within ${Math.round((opts?.stuckAfterMs ?? AI_JOB_STUCK_AFTER_MS) / 60_000)} min — auto-failed by stuck-job recovery. Re-run the engine.`;
   const updated = await prisma.aiJob.updateMany({
     where: { id: jobId, status: "RUNNING" },
     data: {
       status: "FAILED",
-      errorMessage: `Worker did not finish within ${Math.round((opts?.stuckAfterMs ?? AI_JOB_STUCK_AFTER_MS) / 60_000)} min — auto-failed by stuck-job recovery. Re-run the engine.`,
+      errorMessage,
       output: structuredOutput,
       finishedAt: new Date(),
     },

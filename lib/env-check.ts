@@ -4,7 +4,7 @@
  * Fails LOUDLY — throws at module load time so the process crashes with
  * a clear message rather than silently degrading.
  *
- * ARCHITECTURE: at least one AI provider key is required in ALL environments:
+ * ARCHITECTURE: at least one AI provider key is required in production:
  *   - ANTHROPIC_API_KEY (preferred — Claude provider, what the prompt is tuned for)
  *   - GEMINI_API_KEY    (fallback — used for proposal generation when Claude is
  *                        not configured, and as the primary engine for CV /
@@ -14,6 +14,9 @@
  *   - Every imported expert/project is classified as REGEX_DRAFT
  *   - REGEX_DRAFT records are BLOCKED from use in final proposal generation
  *   - A deployment with no AI key can never complete the proposal workflow
+ *
+ * Gap 5 — preview deployments warn (relaxed) unless STRICT_PREVIEW_ENV_CHECK=true;
+ * development never throws on AI-key absence, it warns. Production always throws.
  */
 
 const REQUIRED_VARS: Array<{ name: string; description: string }> = [
@@ -34,47 +37,107 @@ const AI_PROVIDER_KEYS: Array<{ name: string; description: string }> = [
   },
 ];
 
-const PRODUCTION_REQUIRED: Array<{ name: string; description: string }> = [];
-
 const INSECURE_DEFAULTS: Record<string, string> = {
   SESSION_SECRET: "hope-tender-path-built-in-secret-v1",
 };
 
-export function checkEnv(): void {
-  const missing: string[] = [];
-  const insecure: string[] = [];
-  const isProd = process.env.NODE_ENV === "production";
+/**
+ * Banned SESSION_SECRET defaults — must match scripts/check-env.mjs so build
+ * and runtime fail together rather than letting a built deployment crash on
+ * its first request.
+ */
+const BANNED_SESSION_SECRETS = new Set<string>([
+  "hope-tender-path-built-in-secret-v1",
+  "replace-this-with-a-64-character-random-hex-string",
+  "changeme",
+  "secret",
+]);
 
+export type EnvCheckResult = {
+  ok: boolean;
+  errors: string[];
+  warnings: string[];
+};
+
+function envFlag(value: string | undefined): boolean {
+  if (!value) return false;
+  return ["1", "true", "yes", "on"].includes(value.trim().toLowerCase());
+}
+
+/**
+ * Pure variant of checkEnv() that reads from an explicit env map. Used by the
+ * env-policy tests so we can validate every combination without mutating
+ * process.env. The default callsite (no argument) reads from process.env.
+ */
+export function evaluateEnv(env: Record<string, string | undefined> = process.env as Record<string, string | undefined>): EnvCheckResult {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+
+  const nodeEnv = env.NODE_ENV ?? "";
+  const vercelEnv = env.VERCEL_ENV ?? "";
+  const isVercel = env.VERCEL === "1";
+  const isVercelPreview = isVercel && vercelEnv === "preview";
+  const strictPreview = envFlag(env.STRICT_PREVIEW_ENV_CHECK);
+  const isProd = nodeEnv === "production" && (!isVercel || vercelEnv === "production");
+
+  // Always-required: DATABASE_URL + SESSION_SECRET.
   for (const { name, description } of REQUIRED_VARS) {
-    const value = process.env[name];
+    const value = env[name];
     if (!value) {
-      missing.push(`  ✗ ${name}: ${description}`);
+      if (isProd) errors.push(`${name}: ${description}`);
+      else if (isVercelPreview && !strictPreview) warnings.push(`${name}: missing (preview relaxed mode).`);
+      else if (isVercelPreview) errors.push(`${name}: ${description}`);
+      else warnings.push(`${name}: missing (development).`);
     } else if (INSECURE_DEFAULTS[name] && value === INSECURE_DEFAULTS[name]) {
-      insecure.push(`  ⚠ ${name} is using the insecure default value. Set a real secret.`);
+      warnings.push(`${name}: insecure default value detected. Set a real secret.`);
     }
   }
 
-  if (isProd) {
-    for (const { name, description } of PRODUCTION_REQUIRED) {
-      if (!process.env[name]) {
-        missing.push(`  ✗ ${name}: ${description}`);
-      }
+  // DATABASE_URL format check (always applies when present).
+  const dbUrl = env.DATABASE_URL ?? "";
+  if (dbUrl && !dbUrl.startsWith("postgresql://") && !dbUrl.startsWith("postgres://")) {
+    errors.push(
+      `DATABASE_URL must start with postgresql:// or postgres://. Got: "${dbUrl.slice(0, 30)}...". SQLite is not supported.`,
+    );
+  }
+
+  // SESSION_SECRET strength check.
+  const secret = env.SESSION_SECRET ?? "";
+  if (secret) {
+    if (secret.length < 32) {
+      if (isProd) errors.push(`SESSION_SECRET must be at least 32 characters in production. Got ${secret.length}.`);
+      else warnings.push(`SESSION_SECRET is only ${secret.length} characters. Use at least 32 random characters.`);
+    }
+    if (BANNED_SESSION_SECRETS.has(secret)) {
+      if (isProd) errors.push("SESSION_SECRET is a banned placeholder value. Generate a real secret: openssl rand -hex 32");
+      else warnings.push("SESSION_SECRET is a banned placeholder value (allowed in dev only).");
     }
   }
 
-  // At least one of the AI provider keys must be set. The check is
-  // satisfied by EITHER key, so we add to `missing` only when both are
-  // absent — and we present both as alternatives so operators see the
-  // full set of options.
-  const hasAnyAIKey = AI_PROVIDER_KEYS.some(({ name }) => Boolean(process.env[name]));
+  // At least one AI provider key.
+  const hasAnyAIKey = AI_PROVIDER_KEYS.some(({ name }) => Boolean(env[name]));
   if (!hasAnyAIKey) {
-    missing.push("  ✗ Set at least one AI provider key:");
-    for (const { name, description } of AI_PROVIDER_KEYS) {
-      missing.push(`      • ${name}: ${description}`);
-    }
+    const message =
+      "At least one AI provider key is required (ANTHROPIC_API_KEY preferred, or GEMINI_API_KEY). " +
+      "Without either key, all imported records are REGEX_DRAFT and BLOCKED from final proposal generation.";
+    if (isProd) errors.push(message);
+    else if (isVercelPreview && strictPreview) errors.push(message);
+    else warnings.push(message);
   }
 
-  if (missing.length > 0) {
+  return { ok: errors.length === 0, errors, warnings };
+}
+
+export function checkEnv(): void {
+  const { errors, warnings } = evaluateEnv();
+
+  if (warnings.length > 0) {
+    console.warn("\n⚠  ENVIRONMENT WARNINGS:");
+    for (const w of warnings) console.warn(`  ⚠ ${w}`);
+    console.warn("");
+  }
+
+  if (errors.length > 0) {
     const lines = [
       "",
       "═══════════════════════════════════════════════════════════",
@@ -82,8 +145,8 @@ export function checkEnv(): void {
       "  The application cannot start without these variables.",
       "═══════════════════════════════════════════════════════════",
       "",
-      "Missing variables:",
-      ...missing,
+      "Missing / invalid variables:",
+      ...errors.map((e) => `  ✗ ${e}`),
       "",
       "Set these in your .env.local (development) or Vercel dashboard (production).",
       "See .env.example for the expected format.",
@@ -91,30 +154,7 @@ export function checkEnv(): void {
       "",
     ];
     console.error(lines.join("\n"));
-    throw new Error(
-      `Missing required environment variables: ${missing.map((l) => l.trim().split(":")[0]).join(", ")}`,
-    );
-  }
-
-  if (insecure.length > 0) {
-    console.warn("\n⚠  SECURITY WARNING — insecure defaults detected:\n" + insecure.join("\n") + "\n");
-  }
-
-  // Validate DATABASE_URL format — SQLite is never acceptable
-  const dbUrl = process.env.DATABASE_URL ?? "";
-  if (!dbUrl.startsWith("postgresql://") && !dbUrl.startsWith("postgres://")) {
-    throw new Error(
-      `DATABASE_URL must be a PostgreSQL connection string starting with postgresql:// or postgres://. ` +
-      `Got: "${dbUrl.slice(0, 30)}...". SQLite is not supported.`,
-    );
-  }
-
-  // Warn if SESSION_SECRET is too short
-  const secret = process.env.SESSION_SECRET ?? "";
-  if (secret.length < 32) {
-    console.warn(
-      `⚠  SESSION_SECRET is only ${secret.length} characters. Use at least 32 random characters.`,
-    );
+    throw new Error(`Environment validation failed: ${errors.join("; ")}`);
   }
 }
 

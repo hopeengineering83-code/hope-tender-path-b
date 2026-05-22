@@ -289,21 +289,40 @@ export function EngineActionPanel({
               Force run once
             </button>
           )}
+          {/* Sync run — only show for small vaults; large vaults should
+              always go async+safe to avoid the 60s Vercel cap */}
+          {!isLargeVault && (
+            <button
+              onClick={() => runEngine(false)}
+              disabled={running || isPending}
+              className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+              title="Synchronous — bound to 60s Vercel route cap"
+            >
+              {running || isPending ? "Running…" : "Run Engine"}
+            </button>
+          )}
+          {/* For large vaults, the primary CTA automatically uses safe
+              mode (skips AI rematch). This is the only path that reliably
+              completes within Vercel's 60s function budget. */}
           <button
-            onClick={() => runEngine(false)}
+            onClick={() => isLargeVault
+              ? runEngineAsync(false, { safe: "true", skipAiRematch: "true" })
+              : runEngineAsync(false)}
             disabled={running || isPending}
-            className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
-            title="Synchronous — bound to 60s Vercel route cap"
+            className={`rounded-lg border px-4 py-2 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50 ${
+              isLargeVault
+                ? "border-amber-500 bg-amber-600 text-white hover:bg-amber-700"
+                : "border-indigo-300 bg-indigo-50 text-indigo-800 hover:bg-indigo-100"
+            }`}
+            title={isLargeVault
+              ? "Large vault: auto-uses Safe Mode (skips AI rematch) to fit within 60s budget"
+              : "Queues an AiJob and watches it in the background — escapes the 60s cap for large tenders"}
           >
-            {running || isPending ? "Running…" : "Run Engine"}
-          </button>
-          <button
-            onClick={() => runEngineAsync(false)}
-            disabled={running || isPending}
-            className="rounded-lg border border-indigo-300 bg-indigo-50 px-4 py-2 text-sm font-semibold text-indigo-800 hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-50"
-            title="Queues an AiJob and watches it in the background — escapes the 60s cap for large tenders"
-          >
-            {running && asyncStatus ? "Running in background…" : "⏳ Run in background"}
+            {running && asyncStatus
+              ? "Running in background…"
+              : isLargeVault
+                ? "⚡ Run Engine (Safe Mode)"
+                : "⏳ Run in background"}
           </button>
         </div>
       </div>

@@ -5,6 +5,19 @@ import { extractTextFromBuffer, getFileTypeLabel, isMeaningfulExtraction } from 
 import { logAction } from "../../../../lib/audit";
 import { inferTenderMetadata } from "../../../../lib/engine/tender-metadata";
 import { runTenderEngine } from "../../../../lib/engine/run-tender-engine";
+import { extractRequestId } from "../../../../lib/request-id";
+import { getStorageAdapter } from "../../../../lib/storage";
+
+/**
+ * Redact DATABASE_URL-style connection strings from any error message
+ * fragment before it's returned to the client. Keeps stack traces and
+ * verbose Postgres errors from leaking credentials.
+ */
+function sanitizeErrorDetail(input: string): string {
+  return input
+    .replace(/postgres(?:ql)?:\/\/[^\s"]+/gi, "postgresql://[redacted]")
+    .replace(/(mongodb(?:\+srv)?|mysql|redis):\/\/[^\s"]+/gi, "$1://[redacted]");
+}
 
 // Vercel route timeout — full intake pipeline (PDF extraction + tender
 // engine analysis). 60 = Hobby max; Pro applies its own plan limit.
@@ -23,6 +36,7 @@ const ALLOWED_MIME = new Set([
 ]);
 
 export async function POST(req: Request) {
+  const requestId = extractRequestId(req);
   const userId = await getSession();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
@@ -35,7 +49,8 @@ export async function POST(req: Request) {
 
     const extracted: Array<{
       file: File;
-      base64Content: string;
+      base64Content: string | undefined;
+      storagePath: string;
       mimeType: string;
       fileTypeLabel: string;
       extractedText: string;
@@ -54,6 +69,28 @@ export async function POST(req: Request) {
         continue;
       }
       const buffer = Buffer.from(await file.arrayBuffer());
+
+      // Gap 7 — persist the bytes via the storage adapter BEFORE
+      // attempting text extraction. If storage refuses (large file
+      // without blob backend in production) skip extraction entirely
+      // and record the error against this file so the others still
+      // process.
+      let storagePath = "";
+      let base64Content: string | undefined;
+      try {
+        const stored = await getStorageAdapter().putFile(buffer, {
+          fileName: file.name,
+          mimeType,
+        });
+        storagePath = stored.storagePath;
+        base64Content = stored.fileContent;
+      } catch (storageErr) {
+        const msg = storageErr instanceof Error ? storageErr.message : String(storageErr);
+        errors.push(`${file.name}: storage rejected upload — ${msg}`);
+        console.error(`[upload-first tender] storage failed for ${file.name}:`, storageErr);
+        continue;
+      }
+
       // PR XX-INTAKE-FIX — wrap extractTextFromBuffer in try/catch so a
       // single corrupt or unsupported file doesn't break the whole upload.
       // Pre-fix behaviour: any pdf-parse / mammoth error threw out of the
@@ -68,7 +105,7 @@ export async function POST(req: Request) {
         console.error(`[upload-first tender] extract failed for ${file.name}:`, extractErr);
       }
       const meaningful = isMeaningfulExtraction(extractedText);
-      extracted.push({ file, base64Content: buffer.toString("base64"), mimeType, fileTypeLabel: getFileTypeLabel(mimeType, file.name), extractedText, meaningful });
+      extracted.push({ file, base64Content, storagePath, mimeType, fileTypeLabel: getFileTypeLabel(mimeType, file.name), extractedText, meaningful });
     }
 
     const usable = extracted.filter((x) => x.meaningful);
@@ -140,8 +177,8 @@ export async function POST(req: Request) {
           originalFileName: item.file.name,
           mimeType: item.mimeType,
           size: item.file.size,
-          storagePath: "",
-          fileContent: item.base64Content,
+          storagePath: item.storagePath,
+          fileContent: item.base64Content ?? null,
           classification: "Tender Document",
           extractedText: item.extractedText || null,
         },
@@ -212,24 +249,35 @@ export async function POST(req: Request) {
         : "Tender created. Open the tender detail page and click 'Run Analysis' to extract requirements + match experts/projects.",
     }, { status: 201 });
   } catch (error) {
-    // Surface a verbose error message + stage so the user can self-diagnose.
-    // The pre-fix behaviour returned a generic "Upload-first tender intake
-    // failed" which gave the user no way to tell whether PDF extraction,
-    // DB write, or engine run was the culprit.
-    const msg = error instanceof Error ? error.message : String(error);
-    const stack = error instanceof Error ? error.stack?.slice(0, 800) : undefined;
-    console.error("[upload-first tender] failed:", error);
-    return NextResponse.json({
+    // Gap 4 — production deployments must never include a stack trace
+    // in the response body. Stacks can reveal file paths, library
+    // versions, and (when Postgres throws) connection strings. We log
+    // the full stack server-side and return only sanitised text to the
+    // client. Development keeps the stack to ease local debugging.
+    const rawMsg = error instanceof Error ? error.message : String(error);
+    const msg = sanitizeErrorDetail(rawMsg);
+    const stackRaw = error instanceof Error ? error.stack?.slice(0, 800) : undefined;
+    const isProduction = process.env.NODE_ENV === "production";
+    console.error(`[upload-first tender] failed (requestId=${requestId}):`, error);
+
+    const lowered = msg.toLowerCase();
+    const hint = msg.includes("text")
+      ? "PDF text extraction may have failed. Try a different file or set PDF_OCR_ENABLED=true."
+      : lowered.includes("prisma") || lowered.includes("database")
+      ? "Database write failed. The schema may be missing a column or a migration hasn't run."
+      : lowered.includes("timeout")
+      ? "Route hit the 60s Vercel Hobby cap. Use Pro or split intake from engine run."
+      : "Check the server logs for the full stack.";
+
+    const body: Record<string, unknown> = {
       error: `Upload-first tender intake failed: ${msg}`,
       detail: msg,
-      stack,
-      hint: msg.includes("text")
-        ? "PDF text extraction may have failed. Try a different file or set PDF_OCR_ENABLED=true."
-        : msg.toLowerCase().includes("prisma") || msg.toLowerCase().includes("database")
-        ? "Database write failed. The schema may be missing a column or a migration hasn't run."
-        : msg.toLowerCase().includes("timeout")
-        ? "Route hit the 60s Vercel Hobby cap. Use Pro or split intake from engine run."
-        : "Check the server logs for the full stack.",
-    }, { status: 500 });
+      hint,
+      requestId,
+    };
+    if (!isProduction && stackRaw) {
+      body.stack = sanitizeErrorDetail(stackRaw);
+    }
+    return NextResponse.json(body, { status: 500 });
   }
 }

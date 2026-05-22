@@ -1,5 +1,6 @@
 import { PrismaClient } from "@prisma/client";
 import { checkEnv } from "./env-check";
+import { resolveBootstrapAdminPolicy, BOOTSTRAP_ADMIN_EMAIL } from "./bootstrap-admin-policy";
 
 // Validate env vars before anything else. Crashes loudly on bad config.
 checkEnv();
@@ -13,6 +14,27 @@ export const prisma = g.prisma ?? new PrismaClient();
 
 if (process.env.NODE_ENV !== "production") {
   g.prisma = prisma;
+}
+
+// ─── runtime schema bootstrap policy ─────────────────────────────────────────
+//
+// Gap 6 — production deployments should NOT execute CREATE TABLE / ALTER TABLE
+// / CREATE INDEX statements at request-handling time. Schema is owned by the
+// migration toolchain in production. Set ENABLE_RUNTIME_SCHEMA_BOOTSTRAP=true
+// to explicitly opt in (useful for an initial onboarding before migrations are
+// wired up).
+//
+// In development the runtime bootstrap stays available so first-time
+// `npm run dev` flows still work without a migration step.
+function envFlag(name: string): boolean {
+  const raw = process.env[name];
+  if (!raw) return false;
+  return ["1", "true", "yes", "on"].includes(raw.trim().toLowerCase());
+}
+
+function isRuntimeSchemaBootstrapEnabled(): boolean {
+  if (process.env.NODE_ENV !== "production") return true;
+  return envFlag("ENABLE_RUNTIME_SCHEMA_BOOTSTRAP");
 }
 
 // ─── column existence helper (PostgreSQL) ────────────────────────────────────
@@ -34,7 +56,37 @@ async function ensureColumn(client: PrismaClient, table: string, column: string,
 
 // ─── bootstrap ───────────────────────────────────────────────────────────────
 
+async function verifyConnectivity(client: PrismaClient): Promise<void> {
+  // Lightweight probe: a SELECT 1 round-trip. Throws with the underlying
+  // Postgres error when the connection is dead or auth is wrong, so the
+  // first request after a cold start fails clearly instead of timing out.
+  await client.$queryRawUnsafe(`SELECT 1`);
+}
+
+async function verifySchemaPresent(client: PrismaClient): Promise<void> {
+  // Confirms the core tables exist. When the schema is missing this throws
+  // with a message that tells the operator to run their migration tool.
+  const rows = await client.$queryRawUnsafe<Array<{ table_name: string }>>(
+    `SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'User' LIMIT 1`,
+  );
+  if (rows.length === 0) {
+    throw new Error(
+      'Database schema is missing the "User" table. Run "prisma migrate deploy" (or set ENABLE_RUNTIME_SCHEMA_BOOTSTRAP=true to allow runtime schema bootstrap, which is NOT recommended for production).',
+    );
+  }
+}
+
 async function bootstrap(client: PrismaClient): Promise<void> {
+  if (!isRuntimeSchemaBootstrapEnabled()) {
+    // Gap 6 — production path: never mutate schema or seed bootstrap users.
+    // We only verify connectivity and that the schema exists so the first
+    // request after a cold start fails fast with a clear message instead
+    // of timing out on a missing-table SQL error.
+    await verifyConnectivity(client);
+    await verifySchemaPresent(client);
+    return;
+  }
+
   await client.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "User" (
     "id" TEXT NOT NULL PRIMARY KEY,
     "name" TEXT,
@@ -735,15 +787,31 @@ async function bootstrap(client: PrismaClient): Promise<void> {
   }
 
   // ── seed admin user ───────────────────────────────────────────────────────
-  const adminCount = await client.user.count({ where: { email: "admin@hope.local" } });
+  //
+  // Gap 2 — never seed admin@hope.local with the built-in "Admin123!" default
+  // in production. The runtime seed is gated by the same policy the login
+  // route uses to repair a missing password hash. In development the seed
+  // still runs with the legacy password so `npm run dev` continues to work
+  // without ceremony.
+  const policy = resolveBootstrapAdminPolicy();
+  if (!policy.allowRepair) {
+    if (process.env.NODE_ENV === "production") {
+      console.warn(
+        "[bootstrap] Skipping bootstrap admin seed in production. Set BOOTSTRAP_ADMIN_ENABLED=true with a secure BOOTSTRAP_ADMIN_PASSWORD to enable.",
+      );
+    }
+    return;
+  }
+
+  const adminCount = await client.user.count({ where: { email: BOOTSTRAP_ADMIN_EMAIL } });
   if (adminCount === 0) {
     const { default: bcrypt } = await import("bcryptjs");
-    const passwordHash = await bcrypt.hash("Admin123!", 10);
+    const passwordHash = await bcrypt.hash(policy.password, 10);
     const ADMIN_ID = "00000000-0000-0000-0000-000000000001";
     const COMPANY_ID = "00000000-0000-0000-0000-000000000002";
 
     await client.user.create({
-      data: { id: ADMIN_ID, email: "admin@hope.local", name: "Admin", passwordHash, role: "ADMIN" },
+      data: { id: ADMIN_ID, email: BOOTSTRAP_ADMIN_EMAIL, name: "Admin", passwordHash, role: "ADMIN" },
     });
     await client.company.create({
       data: {
@@ -753,6 +821,10 @@ async function bootstrap(client: PrismaClient): Promise<void> {
         userId: ADMIN_ID,
       },
     });
+    // Never echo the actual password — only confirm an admin was created.
+    if (process.env.NODE_ENV !== "production") {
+      console.log(`[bootstrap] Seeded ${BOOTSTRAP_ADMIN_EMAIL} (development).`);
+    }
   }
 }
 
