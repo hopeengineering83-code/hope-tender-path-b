@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { z } from "zod";
+import { z, ZodError } from "zod";
 import { getSession } from "../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../lib/prisma";
 import { ensureCompanyForUser } from "../../../../lib/company-workspace";
@@ -162,7 +162,7 @@ const planBPayloadSchema = z.object({
     parsedProjects: z.number().optional(),
     sha256: z.string().optional(),
     rawText: z.string().nullable().optional(),
-  }).passthrough()).optional(),
+  }).passthrough()).max(2000).optional(),
   companyProfile: z.object({
     name: z.string().optional(),
     legalName: z.string().nullable().optional(),
@@ -193,7 +193,7 @@ const planBPayloadSchema = z.object({
     expiryDate: z.string().nullable().optional(),
     status: z.string().optional(),
     metadata: z.record(z.string(), z.unknown()).optional(),
-  }).passthrough()).optional(),
+  }).passthrough()).max(5000).optional(),
   financialRecords: z.array(z.object({
     fiscalYear: z.number().optional(),
     recordType: z.string().optional(),
@@ -201,7 +201,7 @@ const planBPayloadSchema = z.object({
     amount: z.number().nullable().optional(),
     notes: z.string().nullable().optional(),
     metadata: z.record(z.string(), z.unknown()).optional(),
-  }).passthrough()).optional(),
+  }).passthrough()).max(5000).optional(),
   complianceRecords: z.array(z.object({
     complianceType: z.string().optional(),
     title: z.string().optional(),
@@ -210,7 +210,7 @@ const planBPayloadSchema = z.object({
     referenceNumber: z.string().nullable().optional(),
     expiryDate: z.string().nullable().optional(),
     metadata: z.record(z.string(), z.unknown()).optional(),
-  }).passthrough()).optional(),
+  }).passthrough()).max(5000).optional(),
   expectedCounts: z.object({
     experts: z.number().int().min(0).optional(),
     projects: z.number().int().min(0).optional(),
@@ -630,6 +630,16 @@ export async function POST(req: Request) {
     return NextResponse.json(result);
   } catch (error) {
     console.error("[plan-b-import] failed:", error);
+    if (error instanceof ZodError) {
+      return NextResponse.json({
+        error: "Invalid Plan-B payload. Please correct the JSON schema and retry.",
+        validationIssues: error.issues.slice(0, 100).map((issue) => ({
+          path: issue.path.join("."),
+          message: issue.message,
+          code: issue.code,
+        })),
+      }, { status: 400 });
+    }
     return NextResponse.json({ error: error instanceof Error ? error.message : "Plan-B import failed" }, { status: 400 });
   }
 }
