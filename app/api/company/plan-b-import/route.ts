@@ -109,6 +109,10 @@ type PlanBPayload = {
   legalRecords?: PlanBLegalRecord[];
   financialRecords?: PlanBFinancialRecord[];
   complianceRecords?: PlanBComplianceRecord[];
+  expectedCounts?: {
+    experts?: number;
+    projects?: number;
+  };
 };
 
 function clean(value: unknown): string {
@@ -177,6 +181,17 @@ function sourceLine(item: { sourceDocument?: string; sourcePages?: { start?: num
   const pages = item.sourcePages?.start ? ` pages ${item.sourcePages.start}-${item.sourcePages.end ?? item.sourcePages.start}` : "";
   const no = item.sourceNo ? ` record ${item.sourceNo}` : "";
   return `Source: ${item.sourceDocument ?? "uploaded extraction"}${pages}${no}.`;
+}
+
+function deriveExpectedCounts(payload: PlanBPayload, sourceDocuments: PlanBSourceDocument[]) {
+  const explicitExperts = Number(payload.expectedCounts?.experts ?? 0);
+  const explicitProjects = Number(payload.expectedCounts?.projects ?? 0);
+  const docExperts = sourceDocuments.reduce((sum, doc) => sum + Number(doc.parsedExperts ?? 0), 0);
+  const docProjects = sourceDocuments.reduce((sum, doc) => sum + Number(doc.parsedProjects ?? 0), 0);
+  return {
+    experts: explicitExperts > 0 ? explicitExperts : docExperts > 0 ? docExperts : null,
+    projects: explicitProjects > 0 ? explicitProjects : docProjects > 0 ? docProjects : null,
+  };
 }
 
 async function upsertLegalRecord(companyId: string, record: PlanBLegalRecord) {
@@ -414,6 +429,18 @@ export async function POST(req: Request) {
       compliance.created += r.created; compliance.updated += r.updated; compliance.skipped += r.skipped;
     }
 
+    const expectedCounts = deriveExpectedCounts(payload, sourceDocuments);
+    const importedExperts = expertsCreated + expertsUpdated;
+    const importedProjects = projectsCreated + projectsUpdated;
+    const missingExperts = expectedCounts.experts ? Math.max(expectedCounts.experts - importedExperts, 0) : 0;
+    const missingProjects = expectedCounts.projects ? Math.max(expectedCounts.projects - importedProjects, 0) : 0;
+    if (expectedCounts.experts && importedExperts !== expectedCounts.experts) {
+      warnings.push(`Expert completeness mismatch: expected ${expectedCounts.experts}, imported ${importedExperts}, missing ${missingExperts}.`);
+    }
+    if (expectedCounts.projects && importedProjects !== expectedCounts.projects) {
+      warnings.push(`Project completeness mismatch: expected ${expectedCounts.projects}, imported ${importedProjects}, missing ${missingProjects}.`);
+    }
+
     const result = {
       success: true,
       schemaVersion: payload.schemaVersion ?? null,
@@ -424,6 +451,21 @@ export async function POST(req: Request) {
       documents: { received: sourceDocuments.length, created: documentsCreated, updated: documentsUpdated, skipped: documentsSkipped },
       experts: { received: experts.length, created: expertsCreated, updated: expertsUpdated, skipped: expertsSkipped },
       projects: { received: projects.length, created: projectsCreated, updated: projectsUpdated, skipped: projectsSkipped },
+      expectedCounts,
+      completeness: {
+        experts: expectedCounts.experts ? {
+          expected: expectedCounts.experts,
+          imported: importedExperts,
+          missing: missingExperts,
+          matched: missingExperts === 0 && importedExperts === expectedCounts.experts,
+        } : null,
+        projects: expectedCounts.projects ? {
+          expected: expectedCounts.projects,
+          imported: importedProjects,
+          missing: missingProjects,
+          matched: missingProjects === 0 && importedProjects === expectedCounts.projects,
+        } : null,
+      },
       legalRecords: { received: legalRecords.length, ...legal },
       financialRecords: { received: financialRecords.length, ...financial },
       complianceRecords: { received: complianceRecords.length, ...compliance },

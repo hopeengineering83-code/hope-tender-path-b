@@ -10,6 +10,11 @@ type ImportResult = {
   requireRawText?: boolean;
   experts?: { received: number; created: number; updated: number; skipped: number };
   projects?: { received: number; created: number; updated: number; skipped: number };
+  expectedCounts?: { experts?: number | null; projects?: number | null };
+  completeness?: {
+    experts?: { expected: number; imported: number; missing: number; matched: boolean } | null;
+    projects?: { expected: number; imported: number; missing: number; matched: boolean } | null;
+  };
   warnings?: string[];
 };
 
@@ -24,6 +29,7 @@ const exampleJson = `{
     { "fileName": "Expert CVS.pdf", "type": "Expert CV library", "parsedExperts": 25 },
     { "fileName": "Projects Reference.pdf", "type": "Project portfolio", "parsedProjects": 114 }
   ],
+  "expectedCounts": { "experts": 25, "projects": 114 },
   "experts": [
     {
       "fullName": "Exact expert name from PDF",
@@ -150,6 +156,16 @@ export default function PlanBImportPage() {
             <p className="font-semibold">Import completed</p>
             <p className="mt-1">Experts: {result.experts?.created ?? 0} created, {result.experts?.updated ?? 0} updated, {result.experts?.skipped ?? 0} skipped.</p>
             <p>Projects: {result.projects?.created ?? 0} created, {result.projects?.updated ?? 0} updated, {result.projects?.skipped ?? 0} skipped.</p>
+            {result.completeness?.experts ? (
+              <p className={result.completeness.experts.matched ? "text-green-800" : "text-amber-800"}>
+                Expert completeness: expected {result.completeness.experts.expected}, imported {result.completeness.experts.imported}, missing {result.completeness.experts.missing}.
+              </p>
+            ) : null}
+            {result.completeness?.projects ? (
+              <p className={result.completeness.projects.matched ? "text-green-800" : "text-amber-800"}>
+                Project completeness: expected {result.completeness.projects.expected}, imported {result.completeness.projects.imported}, missing {result.completeness.projects.missing}.
+              </p>
+            ) : null}
             {result.warnings?.length ? <p className="mt-2 text-amber-800">Warnings: {result.warnings.join(" | ")}</p> : null}
           </div>
         )}
