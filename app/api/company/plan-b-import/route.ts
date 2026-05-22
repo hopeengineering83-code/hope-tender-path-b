@@ -197,6 +197,11 @@ function deriveExpectedCounts(payload: PlanBPayload, sourceDocuments: PlanBSourc
   };
 }
 
+function hasUsableText(value: string | null, requireRawText: boolean): boolean {
+  if (!requireRawText) return true;
+  return Boolean(value && value.length >= 50);
+}
+
 async function upsertLegalRecord(companyId: string, record: PlanBLegalRecord) {
   const title = clean(record.title);
   if (!title) return { created: 0, updated: 0, skipped: 1 };
@@ -351,6 +356,60 @@ export async function POST(req: Request) {
     let projectsSkipped = 0;
     const warnings: string[] = [];
 
+    // Preflight completeness audit before any write operations (hard enforcement-safe).
+    const uniqueExpertKeys = new Set<string>();
+    const uniqueProjectKeys = new Set<string>();
+    for (const expert of experts) {
+      const fullName = clean(expert.fullName);
+      const expertKey = key(fullName);
+      const exactRawText = sourceText(expert.rawText ?? expert.profile);
+      if (!fullName || fullName.length < 3 || !hasUsableText(exactRawText, requireRawText)) continue;
+      if (uniqueExpertKeys.has(expertKey)) {
+        warnings.push(`Duplicate expert in payload (by normalized name): ${fullName}. Last record will be applied.`);
+      }
+      uniqueExpertKeys.add(expertKey);
+    }
+    for (const project of projects) {
+      const name = clean(project.name);
+      const projectKey = key(name);
+      const exactRawText = sourceText(project.rawText ?? project.summary ?? project.sourceEvidence);
+      if (!name || name.length < 3 || !hasUsableText(exactRawText, requireRawText)) continue;
+      if (uniqueProjectKeys.has(projectKey)) {
+        warnings.push(`Duplicate project in payload (by normalized name): ${name}. Last record will be applied.`);
+      }
+      uniqueProjectKeys.add(projectKey);
+    }
+
+    const expectedCounts = deriveExpectedCounts(payload, sourceDocuments);
+    const preflightImportedExperts = uniqueExpertKeys.size;
+    const preflightImportedProjects = uniqueProjectKeys.size;
+    const preflightMissingExperts = expectedCounts.experts ? Math.max(expectedCounts.experts - preflightImportedExperts, 0) : 0;
+    const preflightMissingProjects = expectedCounts.projects ? Math.max(expectedCounts.projects - preflightImportedProjects, 0) : 0;
+    if (expectedCounts.experts && preflightImportedExperts !== expectedCounts.experts) {
+      warnings.push(`Expert completeness mismatch: expected ${expectedCounts.experts}, importable ${preflightImportedExperts}, missing ${preflightMissingExperts}.`);
+    }
+    if (expectedCounts.projects && preflightImportedProjects !== expectedCounts.projects) {
+      warnings.push(`Project completeness mismatch: expected ${expectedCounts.projects}, importable ${preflightImportedProjects}, missing ${preflightMissingProjects}.`);
+    }
+    if (enforceExpectedCounts && ((expectedCounts.experts && preflightImportedExperts !== expectedCounts.experts) || (expectedCounts.projects && preflightImportedProjects !== expectedCounts.projects))) {
+      const failure = {
+        error: "Plan B completeness enforcement failed. Importable counts do not match expected counts.",
+        expectedCounts,
+        importedCounts: { experts: preflightImportedExperts, projects: preflightImportedProjects },
+        missingCounts: { experts: preflightMissingExperts, projects: preflightMissingProjects },
+        warnings: warnings.slice(0, 50),
+      };
+      await logAction({
+        userId,
+        action: "COMPANY_KNOWLEDGE_REPAIR",
+        entityType: "Company",
+        entityId: company.id,
+        description: "Plan-B exact JSON import blocked by strict completeness policy before writes.",
+        metadata: { ...failure, blocked: true, enforceExpectedCounts, requireRawText },
+      });
+      return NextResponse.json(failure, { status: 422 });
+    }
+
     for (const expert of experts) {
       const fullName = clean(expert.fullName);
       const exactRawText = sourceText(expert.rawText ?? expert.profile);
@@ -433,26 +492,10 @@ export async function POST(req: Request) {
       compliance.created += r.created; compliance.updated += r.updated; compliance.skipped += r.skipped;
     }
 
-    const expectedCounts = deriveExpectedCounts(payload, sourceDocuments);
     const importedExperts = expertsCreated + expertsUpdated;
     const importedProjects = projectsCreated + projectsUpdated;
     const missingExperts = expectedCounts.experts ? Math.max(expectedCounts.experts - importedExperts, 0) : 0;
     const missingProjects = expectedCounts.projects ? Math.max(expectedCounts.projects - importedProjects, 0) : 0;
-    if (expectedCounts.experts && importedExperts !== expectedCounts.experts) {
-      warnings.push(`Expert completeness mismatch: expected ${expectedCounts.experts}, imported ${importedExperts}, missing ${missingExperts}.`);
-    }
-    if (expectedCounts.projects && importedProjects !== expectedCounts.projects) {
-      warnings.push(`Project completeness mismatch: expected ${expectedCounts.projects}, imported ${importedProjects}, missing ${missingProjects}.`);
-    }
-    if (enforceExpectedCounts && ((expectedCounts.experts && importedExperts !== expectedCounts.experts) || (expectedCounts.projects && importedProjects !== expectedCounts.projects))) {
-      return NextResponse.json({
-        error: "Plan B completeness enforcement failed. Imported counts do not match expected counts.",
-        expectedCounts,
-        importedCounts: { experts: importedExperts, projects: importedProjects },
-        missingCounts: { experts: missingExperts, projects: missingProjects },
-        warnings: warnings.slice(0, 50),
-      }, { status: 422 });
-    }
 
     const result = {
       success: true,
