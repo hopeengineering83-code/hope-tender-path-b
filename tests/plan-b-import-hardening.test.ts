@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { completenessStats, deriveExpectedCounts, hasUsableText } from "../app/api/company/plan-b-import/route";
+import { completenessStats, deriveExpectedCounts, hasUsableText } from "../app/api/company/plan-b-import/helpers";
 
 test("deriveExpectedCounts prefers explicit expectedCounts over sourceDocuments parsed counts", () => {
   const result = deriveExpectedCounts(
