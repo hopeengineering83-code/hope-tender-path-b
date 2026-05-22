@@ -12,12 +12,12 @@ type ImportResult = {
   projects?: { received: number; created: number; updated: number; skipped: number };
   expectedCounts?: { experts?: number | null; projects?: number | null };
   completeness?: {
-    experts?: { expected: number; imported: number; missing: number; matched: boolean } | null;
-    projects?: { expected: number; imported: number; missing: number; matched: boolean } | null;
+    experts?: { expected: number; imported: number; missing: number; excess: number; matched: boolean } | null;
+    projects?: { expected: number; imported: number; missing: number; excess: number; matched: boolean } | null;
   };
   warnings?: string[];
   importedCounts?: { experts?: number; projects?: number };
-  missingCounts?: { experts?: number; projects?: number };
+  preflightInvalid?: { experts?: number; projects?: number };
 };
 
 const exampleJson = `{
@@ -166,7 +166,7 @@ export default function PlanBImportPage() {
               <p className="mt-2">
                 Expected — experts: {errorDetails.expectedCounts.experts ?? "n/a"}, projects: {errorDetails.expectedCounts.projects ?? "n/a"}.
                 Imported — experts: {errorDetails.importedCounts?.experts ?? "n/a"}, projects: {errorDetails.importedCounts?.projects ?? "n/a"}.
-                Missing — experts: {errorDetails.missingCounts?.experts ?? "n/a"}, projects: {errorDetails.missingCounts?.projects ?? "n/a"}.
+                Invalid preflight records — experts: {errorDetails.preflightInvalid?.experts ?? "n/a"}, projects: {errorDetails.preflightInvalid?.projects ?? "n/a"}.
               </p>
             ) : null}
           </div>
@@ -179,11 +179,13 @@ export default function PlanBImportPage() {
             {result.completeness?.experts ? (
               <p className={result.completeness.experts.matched ? "text-green-800" : "text-amber-800"}>
                 Expert completeness: expected {result.completeness.experts.expected}, imported {result.completeness.experts.imported}, missing {result.completeness.experts.missing}.
+                {" "}excess {result.completeness.experts.excess}.
               </p>
             ) : null}
             {result.completeness?.projects ? (
               <p className={result.completeness.projects.matched ? "text-green-800" : "text-amber-800"}>
                 Project completeness: expected {result.completeness.projects.expected}, imported {result.completeness.projects.imported}, missing {result.completeness.projects.missing}.
+                {" "}excess {result.completeness.projects.excess}.
               </p>
             ) : null}
             {result.warnings?.length ? <p className="mt-2 text-amber-800">Warnings: {result.warnings.join(" | ")}</p> : null}
