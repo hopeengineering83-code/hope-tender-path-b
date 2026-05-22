@@ -19,7 +19,6 @@ function structuralReadyForGeneration(quality: MatchingQuality): boolean {
 
 function structuralReadyForMatchingAttempt(quality: MatchingQuality): boolean {
   return quality.state === "VAULT_AWAITS_ENGINE" ||
-    quality.state === "MATCHES_CREATED" ||
     quality.state === "MATCHES_REVIEWED" ||
     quality.state === "MATCHES_WEAK" ||
     quality.state === "MATCHING_NOT_REQUIRED";

@@ -11,6 +11,26 @@ import { applyAIRematchToMainEngine } from "./main-engine-ai-rematch";
 import type { MatchPerspective } from "./ai-multi-perspective-matcher";
 import { inferSector } from "./proposal-intelligence";
 
+export type EngineRunOptions = {
+  safe?: boolean;
+  skipAiRematch?: boolean;
+  maxChars?: number;
+};
+
+export function deduplicatePageText(text: string): string {
+  const chunks = text.split(/---\s*NEXT DOCUMENT\s*---/i);
+  const seen = new Set<string>();
+  const deduped: string[] = [];
+  for (const chunk of chunks) {
+    const normalised = chunk.replace(/\s+/g, " ").trim().slice(0, 500);
+    if (normalised.length < 50 || !seen.has(normalised)) {
+      seen.add(normalised);
+      deduped.push(chunk);
+    }
+  }
+  return deduped.join("\n\n--- NEXT DOCUMENT ---\n\n");
+}
+
 function chunks<T>(items: T[], size = 100): T[][] {
   const out: T[][] = [];
   for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
@@ -53,6 +73,7 @@ export async function runTenderEngine(
   tenderId: string,
   userId: string,
   onProgress?: EngineProgressCallback,
+  options?: EngineRunOptions,
 ) {
   const progress = onProgress ?? (() => {});
   progress("engine.load", "Loading tender + files");
@@ -101,11 +122,18 @@ export async function runTenderEngine(
     let analysisFallbackReason: string | null = null;
 
     if (isAIEnabled()) {
-      const tenderText = tender.files
+      let tenderText = tender.files
         .map((f) => (f.extractedText ?? "").trim())
         .map((t) => t.replace(/^\[(?:PDF text|OCR text)[^\]]*\]\s*\n+/i, ""))
         .filter((t) => t.length > 100 && !/^\[(?:Scanned PDF|Extraction failed|Image:|Legacy \.doc)/i.test(t))
         .join("\n\n--- NEXT DOCUMENT ---\n\n");
+
+      if (options?.safe || options?.maxChars) {
+        tenderText = deduplicatePageText(tenderText);
+      }
+      if (options?.maxChars && tenderText.length > options.maxChars) {
+        tenderText = tenderText.slice(0, options.maxChars);
+      }
 
       if (tenderText.length > 500) {
         try {
@@ -219,7 +247,7 @@ export async function runTenderEngine(
       projectScoreBreakdowns: {},
     };
 
-    if (isAIEnabled()) {
+    if (!options?.skipAiRematch && !options?.safe && isAIEnabled()) {
       progress("engine.ai-rematch", "Running AI 12-perspective rematch (DISCIPLINE_FIT, SCOPE_COVERAGE, EVIDENCE_QUALITY, etc.)");
       const aiRematch = await applyAIRematchToMainEngine({
         tenderTitle: tender.title,

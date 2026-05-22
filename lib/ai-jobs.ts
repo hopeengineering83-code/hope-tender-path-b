@@ -193,6 +193,32 @@ export const AI_JOB_STUCK_AFTER_MS = (() => {
 })();
 
 /**
+ * Maximum time since the last AiJobStep before a RUNNING job is
+ * considered to have made no recent progress. Default 5 minutes.
+ * A job that is genuinely running will emit at least one step every
+ * few minutes; a job that is stuck (crashed worker, hung AI call)
+ * will have no new steps. Override via AI_JOB_PROGRESS_STUCK_AFTER_MS.
+ */
+export const AI_JOB_PROGRESS_STUCK_AFTER_MS = (() => {
+  const raw = Number(process.env.AI_JOB_PROGRESS_STUCK_AFTER_MS);
+  if (Number.isFinite(raw) && raw >= 30_000 && raw <= 1_800_000) return raw;
+  return 5 * 60 * 1000;
+})();
+
+/**
+ * Returns the most recent QUEUED or RUNNING ENGINE_RUN job for the
+ * given tender + user, or null when no active job exists.
+ */
+export async function findActiveEngineRunForTender(tenderId: string, userId: string): Promise<{ id: string } | null> {
+  await prismaReady;
+  return prisma.aiJob.findFirst({
+    where: { tenderId, userId, jobType: "ENGINE_RUN", status: { in: ["QUEUED", "RUNNING"] } },
+    orderBy: { createdAt: "desc" },
+    select: { id: true },
+  });
+}
+
+/**
  * Detect jobs that have been RUNNING for longer than the
  * stuck-threshold. These are typically the residue of:
  *   - a crashed Vercel function (worker process died mid-call)
@@ -203,34 +229,39 @@ export const AI_JOB_STUCK_AFTER_MS = (() => {
  * can either surface them in diagnostics or hand them to
  * `failStuckJobs` for recovery.
  */
-export async function findStuckJobs(opts?: { stuckAfterMs?: number; limit?: number }): Promise<{ count: number; jobs: Array<{ id: string; jobType: JobType; userId: string; tenderId: string | null; startedAt: Date | null }> }> {
+export async function findStuckJobs(opts?: { stuckAfterMs?: number; progressStuckAfterMs?: number; limit?: number }): Promise<{
+  count: number;
+  jobs: Array<{ id: string; jobType: JobType; userId: string; tenderId: string | null; startedAt: Date | null; latestStepName: string | null; latestStepAt: Date | null }>;
+}> {
   await prismaReady;
-  const threshold = new Date(Date.now() - (opts?.stuckAfterMs ?? AI_JOB_STUCK_AFTER_MS));
-  const jobs = await prisma.aiJob.findMany({
-    where: {
-      status: "RUNNING",
-      startedAt: { lt: threshold },
+  const totalThreshold = new Date(Date.now() - (opts?.stuckAfterMs ?? AI_JOB_STUCK_AFTER_MS));
+  const progressThreshold = new Date(Date.now() - (opts?.progressStuckAfterMs ?? AI_JOB_PROGRESS_STUCK_AFTER_MS));
+
+  const candidates = await prisma.aiJob.findMany({
+    where: { status: "RUNNING", startedAt: { lt: totalThreshold } },
+    select: {
+      id: true, jobType: true, userId: true, tenderId: true, startedAt: true,
+      steps: { orderBy: { createdAt: "desc" }, take: 1, select: { stepName: true, createdAt: true } },
     },
-    select: { id: true, jobType: true, userId: true, tenderId: true, startedAt: true },
     orderBy: { startedAt: "asc" },
-    take: opts?.limit ?? 50,
+    take: (opts?.limit ?? 50) * 3,
   });
-  // Use a separate count() to avoid limiting visibility — diagnostics
-  // should surface the full count even when only a sample is returned.
-  const count = await prisma.aiJob.count({
-    where: {
-      status: "RUNNING",
-      startedAt: { lt: threshold },
-    },
-  });
+
+  const stuck = candidates.filter((j) => {
+    const latestStepAt = j.steps[0]?.createdAt ?? null;
+    return !latestStepAt || latestStepAt < progressThreshold;
+  }).slice(0, opts?.limit ?? 50);
+
   return {
-    count,
-    jobs: jobs.map((j) => ({
+    count: stuck.length,
+    jobs: stuck.map((j) => ({
       id: j.id,
       jobType: j.jobType as JobType,
       userId: j.userId,
       tenderId: j.tenderId,
       startedAt: j.startedAt,
+      latestStepName: j.steps[0]?.stepName ?? null,
+      latestStepAt: j.steps[0]?.createdAt ?? null,
     })),
   };
 }
@@ -244,20 +275,24 @@ export async function findStuckJobs(opts?: { stuckAfterMs?: number; limit?: numb
  * that finished between `findStuckJobs` and `failStuckJobs` will
  * not be clobbered — the WHERE clause requires status='RUNNING').
  */
-export async function failStuckJobs(opts?: { stuckAfterMs?: number; reason?: string; limit?: number }): Promise<{ recovered: number; ids: string[] }> {
+export async function failStuckJobs(opts?: { stuckAfterMs?: number; progressStuckAfterMs?: number; reason?: string; limit?: number }): Promise<{ recovered: number; ids: string[] }> {
   await prismaReady;
-  const { jobs } = await findStuckJobs({ stuckAfterMs: opts?.stuckAfterMs, limit: opts?.limit ?? 50 });
+  const { jobs } = await findStuckJobs({ stuckAfterMs: opts?.stuckAfterMs, progressStuckAfterMs: opts?.progressStuckAfterMs, limit: opts?.limit ?? 50 });
   if (jobs.length === 0) return { recovered: 0, ids: [] };
-  const reason = (opts?.reason ?? `Worker did not finish within ${Math.round((opts?.stuckAfterMs ?? AI_JOB_STUCK_AFTER_MS) / 60_000)} min — auto-failed by stuck-job recovery. Re-run the engine.`).slice(0, 2000);
   const recovered: string[] = [];
   for (const job of jobs) {
+    const failedStage = job.latestStepName ?? "UNKNOWN";
+    const errorMessage = (opts?.reason ?? `Worker did not finish within ${Math.round((opts?.stuckAfterMs ?? AI_JOB_STUCK_AFTER_MS) / 60_000)} min — auto-failed by stuck-job recovery. Re-run the engine.`).slice(0, 2000);
+    const structuredOutput = JSON.stringify({
+      code: "ASYNC_ENGINE_TIMEOUT",
+      failedStage,
+      nextAction: "RUN_ENGINE_SAFE_MODE",
+      safeModeAvailable: true,
+      lastProgressAt: job.latestStepAt?.toISOString() ?? null,
+    });
     const updated = await prisma.aiJob.updateMany({
       where: { id: job.id, status: "RUNNING" },
-      data: {
-        status: "FAILED",
-        errorMessage: reason,
-        finishedAt: new Date(),
-      },
+      data: { status: "FAILED", errorMessage, output: structuredOutput, finishedAt: new Date() },
     });
     if (updated.count > 0) recovered.push(job.id);
   }
@@ -271,18 +306,33 @@ export async function failStuckJobs(opts?: { stuckAfterMs?: number; reason?: str
  * so the caller can refetch the row and surface the new FAILED
  * state to the UI immediately.
  */
-export async function recoverIfStuck(jobId: string, opts?: { stuckAfterMs?: number }): Promise<boolean> {
+export async function recoverIfStuck(jobId: string, opts?: { stuckAfterMs?: number; progressStuckAfterMs?: number }): Promise<boolean> {
   await prismaReady;
-  const threshold = new Date(Date.now() - (opts?.stuckAfterMs ?? AI_JOB_STUCK_AFTER_MS));
+  const totalThreshold = new Date(Date.now() - (opts?.stuckAfterMs ?? AI_JOB_STUCK_AFTER_MS));
+  const progressThreshold = new Date(Date.now() - (opts?.progressStuckAfterMs ?? AI_JOB_PROGRESS_STUCK_AFTER_MS));
+
+  const job = await prisma.aiJob.findFirst({
+    where: { id: jobId, status: "RUNNING", startedAt: { lt: totalThreshold } },
+    select: { id: true, steps: { orderBy: { createdAt: "desc" }, take: 1, select: { stepName: true, createdAt: true } } },
+  });
+  if (!job) return false;
+
+  const latestStepAt = job.steps[0]?.createdAt ?? null;
+  if (latestStepAt && latestStepAt >= progressThreshold) return false;
+
+  const failedStage = job.steps[0]?.stepName ?? "UNKNOWN";
+  const structuredOutput = JSON.stringify({
+    code: "ASYNC_ENGINE_TIMEOUT",
+    failedStage,
+    nextAction: "RUN_ENGINE_SAFE_MODE",
+    safeModeAvailable: true,
+  });
   const updated = await prisma.aiJob.updateMany({
-    where: {
-      id: jobId,
-      status: "RUNNING",
-      startedAt: { lt: threshold },
-    },
+    where: { id: jobId, status: "RUNNING" },
     data: {
       status: "FAILED",
       errorMessage: `Worker did not finish within ${Math.round((opts?.stuckAfterMs ?? AI_JOB_STUCK_AFTER_MS) / 60_000)} min — auto-failed by stuck-job recovery. Re-run the engine.`,
+      output: structuredOutput,
       finishedAt: new Date(),
     },
   });

@@ -69,6 +69,10 @@ const handlers: Partial<Record<JobType, JobHandler>> = {
       // each one as its own step so the frontend poll sees the latest
       // message every 3 seconds. Errors inside recordStep are swallowed
       // (best-effort UX — they shouldn't fail the actual engine run).
+      const safeMode = ctx.input?.safe === true;
+      const skipAiRematch = ctx.input?.skipAiRematch === true;
+      const maxChars = typeof ctx.input?.maxChars === "number" ? ctx.input.maxChars : undefined;
+
       const result = await runTenderEngine(
         ctx.tenderId,
         ctx.userId,
@@ -78,6 +82,7 @@ const handlers: Partial<Record<JobType, JobHandler>> = {
           // safe if the engine retries internally.
           void recordStep(ctx.jobId, { stepName, message, status: "RUNNING" }).catch(() => {});
         },
+        { safe: safeMode, skipAiRematch, maxChars },
       );
       await recordStep(ctx.jobId, { stepName: "engine.complete", message: "Engine run finished successfully", status: "SUCCEEDED" });
       return { result: result as unknown as Record<string, unknown> };
@@ -223,10 +228,12 @@ const handlers: Partial<Record<JobType, JobHandler>> = {
       data: {
         tenderId: ctx.tenderId,
         name: `Technical Proposal (background) ${new Date().toISOString().slice(0, 19).replace("T", " ")}`,
-        documentType: "TECHNICAL_PROPOSAL",
+        documentType: "QUICK_DRAFT",
         format: "MARKDOWN",
         fileContent: markdown,
         generationStatus: "GENERATED",
+        validationStatus: "PENDING",
+        reviewStatus: "NOT_EXPORTABLE",
       },
     });
 

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSession } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
-import { runTenderEngine } from "../../../../../lib/engine/run-tender-engine";
+import { runTenderEngine, type EngineRunOptions } from "../../../../../lib/engine/run-tender-engine";
 import { assessExtractionQuality } from "../../../../../lib/extraction-quality";
 import { actionableEngineError } from "../../../../../lib/engine/actionable-engine-error";
 import { enqueueJob } from "../../../../../lib/ai-jobs";
@@ -46,10 +46,17 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const url = new URL(req.url);
     const force = url.searchParams.get("force") === "true";
     const isAsync = url.searchParams.get("async") === "true";
+    const isSafe = url.searchParams.get("safe") === "true";
+    const skipAiRematch = url.searchParams.get("skipAiRematch") === "true";
+    const maxCharsRaw = Number(url.searchParams.get("maxChars"));
+    const maxChars = Number.isFinite(maxCharsRaw) && maxCharsRaw >= 1000 ? maxCharsRaw : undefined;
     const tender = await prisma.tender.findFirst({ where: { id, userId }, include: { files: { select: { id: true, originalFileName: true, fileName: true, extractedText: true } } } });
     if (!tender) return NextResponse.json({ error: "Tender not found", code: "TENDER_NOT_FOUND", diagnosticId }, { status: 404 });
 
-    if (tender.files.length === 0) return NextResponse.json({ error: "Engine run blocked: no tender file is uploaded.", code: "NO_TENDER_FILES", nextAction: "UPLOAD_TENDER_DOCUMENT", hint: "Upload the tender/RFP document first, then run AI Analyze or Run Engine.", diagnosticId }, { status: 422 });
+    const totalChars = tender.files.reduce((s, f) => s + (f.extractedText?.length ?? 0), 0);
+    const inputStats = { fileCount: tender.files.length, totalChars, safeModeAvailable: true };
+
+    if (tender.files.length === 0) return NextResponse.json({ error: "Engine run blocked: no tender file is uploaded.", code: "NO_TENDER_FILES", nextAction: "UPLOAD_TENDER_DOCUMENT", hint: "Upload the tender/RFP document first, then run AI Analyze or Run Engine.", diagnosticId, inputStats }, { status: 422 });
 
     const invalidFields = listInvalidStoredFields(tender);
     if (invalidFields.length > 0) {
@@ -66,11 +73,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     if (isAsync) {
       const activeJob = await prisma.aiJob.findFirst({ where: { userId, tenderId: id, jobType: "ENGINE_RUN", status: { in: ["QUEUED", "RUNNING"] } }, orderBy: { createdAt: "desc" }, select: { id: true, status: true } });
       if (activeJob) return NextResponse.json({ success: true, async: true, reusedExistingJob: true, jobId: activeJob.id, jobStatus: activeJob.status, diagnosticId, message: "An engine run is already queued or running for this tender. Reusing the existing job." }, { status: 202 });
-      const { id: jobId } = await enqueueJob({ userId, tenderId: id, jobType: "ENGINE_RUN", input: {} });
-      return NextResponse.json({ success: true, async: true, jobId, diagnosticId, extractionWarnings: extractionReports.filter((item) => item.quality.severity === "WARNING"), message: "Engine run queued. Next step: POST /api/ai-jobs/run-next to start the worker, then poll GET /api/ai-jobs/[jobId] for status." }, { status: 202 });
+      const { id: jobId } = await enqueueJob({ userId, tenderId: id, jobType: "ENGINE_RUN", input: { safe: isSafe, skipAiRematch, ...(maxChars ? { maxChars } : {}) } });
+      return NextResponse.json({ success: true, async: true, jobId, diagnosticId, inputStats, extractionWarnings: extractionReports.filter((item) => item.quality.severity === "WARNING"), message: "Engine run queued. Next step: POST /api/ai-jobs/run-next to start the worker, then poll GET /api/ai-jobs/[jobId] for status." }, { status: 202 });
     }
 
-    const result = await runTenderEngine(id, userId);
+    const engineOptions: EngineRunOptions = { safe: isSafe, skipAiRematch, maxChars };
+    const result = await runTenderEngine(id, userId, undefined, engineOptions);
     const postconditions = await enginePostconditions(id);
     if (postconditions.blockers.length > 0) {
       return NextResponse.json({
@@ -86,7 +94,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         diagnosticId,
       }, { status: 422 });
     }
-    return NextResponse.json({ success: true, async: false, tender: result, extractionWarnings: extractionReports.filter((item) => item.quality.severity === "WARNING"), diagnosticId });
+    return NextResponse.json({ success: true, async: false, tender: result, extractionWarnings: extractionReports.filter((item) => item.quality.severity === "WARNING"), inputStats, diagnosticId });
   } catch (error) {
     console.error("Engine run failed:", { diagnosticId, error });
     const mapped = actionableEngineError(error);
