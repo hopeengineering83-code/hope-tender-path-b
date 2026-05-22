@@ -18,6 +18,7 @@ type ImportResult = {
   warnings?: string[];
   importedCounts?: { experts?: number; projects?: number };
   preflightInvalid?: { experts?: number; projects?: number };
+  validationIssues?: Array<{ path?: string; message?: string; code?: string }>;
 };
 
 const exampleJson = `{
@@ -168,6 +169,15 @@ export default function PlanBImportPage() {
                 Imported — experts: {errorDetails.importedCounts?.experts ?? "n/a"}, projects: {errorDetails.importedCounts?.projects ?? "n/a"}.
                 Invalid preflight records — experts: {errorDetails.preflightInvalid?.experts ?? "n/a"}, projects: {errorDetails.preflightInvalid?.projects ?? "n/a"}.
               </p>
+            ) : null}
+            {errorDetails?.validationIssues?.length ? (
+              <ul className="mt-2 list-disc space-y-1 pl-5 text-xs">
+                {errorDetails.validationIssues.slice(0, 8).map((issue, idx) => (
+                  <li key={`${issue.path ?? "root"}-${idx}`}>
+                    <span className="font-semibold">{issue.path || "payload"}:</span> {issue.message || issue.code || "Invalid value"}
+                  </li>
+                ))}
+              </ul>
             ) : null}
           </div>
         )}
