@@ -8,6 +8,7 @@ import { importCompanyKnowledgeFromDocuments } from "../../../lib/company-knowle
 import { rateLimit, UPLOAD_RATE_LIMIT } from "../../../lib/rate-limit";
 import { extractRequestId } from "../../../lib/request-id";
 import { createNotification } from "../../../lib/notifications";
+import { getStorageAdapter } from "../../../lib/storage";
 
 // Vercel route timeout — file ingestion calls Claude for expert/project
 // extraction during knowledge import. 60 = Hobby max.
@@ -87,11 +88,32 @@ export async function POST(req: Request) {
       }
 
       const buffer = Buffer.from(await file.arrayBuffer());
-      const base64Content = buffer.toString("base64");
       const mimeType = file.type || "application/octet-stream";
       const fileTypeLabel = getFileTypeLabel(mimeType, file.name);
       const extractedText = await extractTextFromBuffer(buffer, mimeType, file.name);
       const extraction = extractionMetadata(fileTypeLabel, extractedText);
+
+      // Gap 7 — route the persisted bytes through the storage adapter
+      // so production deployments without blob storage refuse large
+      // uploads cleanly. Small files in production fall back to
+      // db-base64 (storagePath="", fileContent populated) to preserve
+      // existing behaviour. Wrap putFile in a per-file try/catch so a
+      // single oversize file doesn't break the whole batch.
+      let storagePath = "";
+      let base64Content: string | undefined;
+      try {
+        const stored = await getStorageAdapter().putFile(buffer, {
+          fileName: file.name,
+          mimeType,
+          tenderId: tenderId ?? undefined,
+        });
+        storagePath = stored.storagePath;
+        base64Content = stored.fileContent;
+      } catch (storageErr) {
+        const msg = storageErr instanceof Error ? storageErr.message : String(storageErr);
+        results.push({ error: `${file.name}: storage rejected upload — ${msg}`, fileName: file.name });
+        continue;
+      }
 
       if (tenderId) {
         const tender = await prisma.tender.findFirst({ where: { id: tenderId, userId } });
@@ -107,8 +129,8 @@ export async function POST(req: Request) {
             originalFileName: file.name,
             mimeType,
             size: file.size,
-            storagePath: "",
-            fileContent: base64Content,
+            storagePath,
+            fileContent: base64Content ?? null,
             classification,
             extractedText: extractedText || null,
           },
@@ -147,8 +169,8 @@ export async function POST(req: Request) {
             originalFileName: file.name,
             mimeType,
             size: file.size,
-            storagePath: "",
-            fileContent: base64Content,
+            storagePath,
+            fileContent: base64Content ?? null,
             category,
             extractedText: extractedText || null,
             metadata: JSON.stringify({ category, autoDetected: !providedCategory || providedCategory === "AUTO", ...extraction }),

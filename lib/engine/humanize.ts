@@ -1,4 +1,7 @@
 import { generateWithFallback, isAIEnabled } from "../ai";
+import { sanitizeClientFacingText } from "./client-text-sanitizer";
+
+export { sanitizeClientFacingText } from "./client-text-sanitizer";
 
 // Patterns that signal AI-generated or template text
 const AI_PATTERNS = [
@@ -24,15 +27,21 @@ const AI_PATTERNS = [
 ];
 
 function basicCleanup(text: string): string {
+  // Gap 8 — the canonical client-facing sanitiser handles the full
+  // list of forbidden AI/provider/internal traces. We still apply the
+  // legacy AI_PATTERNS pass first because it covers a few patterns
+  // (the `{...}` blob, [TBD]/[NAME]/[DATE] tokens) that the
+  // centralised list does NOT touch — those are intentionally narrow
+  // to avoid eating tender-quoted bracketed text.
   let out = text;
 
-  // Remove AI traces
+  // Remove AI traces (legacy patterns).
   for (const pattern of AI_PATTERNS) {
     out = out.replace(pattern, "");
   }
 
-  // Remove long em-dashes (AI writing habit)
-  out = out.replace(/\s*—\s*/g, " — ");
+  // Centralised exportable-text sanitiser (Gap 8).
+  out = sanitizeClientFacingText(out, { preserveTenderQuotes: true });
 
   // Normalize multiple blank lines
   out = out.replace(/\n{3,}/g, "\n\n");

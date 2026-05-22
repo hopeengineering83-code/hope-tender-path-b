@@ -11,3 +11,6 @@ node_modules
 # Contains sensitive tender PDFs and generated proposals; never
 # commit to git.
 benchmark-samples/
+
+# Local dev file storage (storage adapter writes here in non-Vercel environments)
+.storage/

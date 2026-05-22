@@ -43,14 +43,19 @@ export function rateLimit(key: string, cfg: RateLimitConfig): RateLimitResult {
 }
 
 // Periodically purge expired buckets to prevent memory growth.
-// Only runs in non-edge (Node) environments.
+// Only runs in non-edge (Node) environments. We .unref() the timer so it
+// does not keep the Node event loop alive (which would prevent the test
+// runner / cron worker from exiting cleanly).
 if (typeof setInterval !== "undefined") {
-  setInterval(() => {
+  const handle = setInterval(() => {
     const now = Date.now();
     for (const [key, bucket] of buckets) {
       if (now >= bucket.resetAt) buckets.delete(key);
     }
   }, 60_000);
+  if (typeof (handle as { unref?: () => void }).unref === "function") {
+    (handle as { unref: () => void }).unref();
+  }
 }
 
 // ─── Preset configs ───────────────────────────────────────────────────────────

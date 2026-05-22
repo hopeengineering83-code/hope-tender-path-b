@@ -61,17 +61,36 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const blockers = extractionReports.filter((item) => item.quality.severity === "FAILED" || item.quality.severity === "POOR");
     if (!force && blockers.length > 0) return NextResponse.json({ error: "Engine run blocked: one or more tender files have poor extraction quality.", code: "EXTRACTION_NOT_READY", nextAction: "OPEN_EXTRACTION_QUALITY", blockers, hint: "Re-import/OCR/review the file, or retry with ?force=true only when you intentionally accept degraded analysis quality.", diagnosticId }, { status: 422 });
 
+    // ─── Server-side large-vault guard ───────────────────────────────────
+    // Vaults with >30 reviewed records typically exceed Vercel's 60s cap
+    // during the AI-rematch phase (12 perspectives × N records).  Auto-apply
+    // skipAiRematch for sync runs so callers that don't set the flag
+    // explicitly (API scripts, future integrations) don't silently timeout.
+    // Async runs are not gated here because the worker has its own budget.
+    const LARGE_VAULT_SYNC_THRESHOLD = 30;
+    let effectiveSkipAiRematch = skipAiRematch;
+    if (!isAsync && !skipAiRematch) {
+      const [reviewedExpertsCount, reviewedProjectsCount] = await Promise.all([
+        prisma.expert.count({ where: { userId, trustLevel: "REVIEWED" } }),
+        prisma.project.count({ where: { userId, trustLevel: "REVIEWED" } }),
+      ]);
+      if (reviewedExpertsCount + reviewedProjectsCount > LARGE_VAULT_SYNC_THRESHOLD) {
+        effectiveSkipAiRematch = true;
+        console.info(`[engine] tender=${id} large vault (${reviewedExpertsCount} experts + ${reviewedProjectsCount} projects) — auto-applying skipAiRematch to prevent 60s timeout`);
+      }
+    }
+
     if (isAsync) {
       const activeJob = await prisma.aiJob.findFirst({ where: { userId, tenderId: id, jobType: "ENGINE_RUN", status: { in: ["QUEUED", "RUNNING"] } }, orderBy: { createdAt: "desc" }, select: { id: true, status: true } });
       if (activeJob) return NextResponse.json({ success: true, async: true, reusedExistingJob: true, jobId: activeJob.id, jobStatus: activeJob.status, diagnosticId, message: "An engine run is already queued or running for this tender. Reusing the existing job." }, { status: 202 });
-      const { id: jobId } = await enqueueJob({ userId, tenderId: id, jobType: "ENGINE_RUN", input: { safe: isSafe, skipAiRematch, ...(maxChars ? { maxChars } : {}) } });
+      const { id: jobId } = await enqueueJob({ userId, tenderId: id, jobType: "ENGINE_RUN", input: { safe: isSafe, skipAiRematch: effectiveSkipAiRematch, ...(maxChars ? { maxChars } : {}) } });
       return NextResponse.json({ success: true, async: true, jobId, diagnosticId, inputStats, metadataAutoFill, extractionWarnings: extractionReports.filter((item) => item.quality.severity === "WARNING"), message: "Engine run queued. Next step: POST /api/ai-jobs/run-next to start the worker, then poll GET /api/ai-jobs/[jobId] for status." }, { status: 202 });
     }
 
     const activeSyncJob = await findActiveEngineRunForTender(id, userId);
     if (activeSyncJob) return NextResponse.json({ success: true, async: false, reusedExistingJob: true, jobId: activeSyncJob.id, diagnosticId, message: "An engine run is already queued or running for this tender." }, { status: 202 });
 
-    const engineOptions: EngineRunOptions = { safe: isSafe, skipAiRematch, maxChars };
+    const engineOptions: EngineRunOptions = { safe: isSafe, skipAiRematch: effectiveSkipAiRematch, maxChars };
     const result = await runTenderEngine(id, userId, undefined, engineOptions);
     const postconditions = await checkEnginePostconditions(id);
     if (postconditions.blockers.length > 0) {

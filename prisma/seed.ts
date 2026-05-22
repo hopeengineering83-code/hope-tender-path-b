@@ -1,9 +1,31 @@
 import bcrypt from "bcryptjs";
 import { prisma } from "../lib/prisma";
+import {
+  resolveBootstrapAdminPolicy,
+  BOOTSTRAP_ADMIN_EMAIL,
+} from "../lib/bootstrap-admin-policy";
 
+/**
+ * Dev/CI seed for the bootstrap admin user.
+ *
+ * Production guard: when NODE_ENV=production the seed refuses to set the
+ * built-in "Admin123!" default. The shared bootstrap-admin policy resolves
+ * the safe password and exits cleanly if production has not opted in via
+ * BOOTSTRAP_ADMIN_ENABLED=true + a secure BOOTSTRAP_ADMIN_PASSWORD.
+ *
+ * Never logs the actual password.
+ */
 async function main() {
-  const email = "admin@hope.local";
-  const password = "Admin123!";
+  const policy = resolveBootstrapAdminPolicy();
+  if (!policy.allowRepair) {
+    console.warn(
+      "[seed] Skipping bootstrap admin seed because the policy refused to allow it (production without BOOTSTRAP_ADMIN_ENABLED=true, or insecure BOOTSTRAP_ADMIN_PASSWORD).",
+    );
+    return;
+  }
+
+  const email = BOOTSTRAP_ADMIN_EMAIL;
+  const password = policy.password;
 
   const existing = await prisma.user.findUnique({ where: { email } });
   if (existing) {
@@ -23,13 +45,16 @@ async function main() {
         create: {
           name: "Hope Urban Planning Architectural and Engineering Consultancy",
           description: "AI-powered tender proposal generation workspace",
-        }
-      }
-    }
+        },
+      },
+    },
   });
 
   console.log("Created seed user:", user.email);
-  console.log("Password:", password);
+  if (process.env.NODE_ENV !== "production") {
+    // Dev convenience: surface the password only in non-production runs.
+    console.log("Password:", password);
+  }
 }
 
 main()
