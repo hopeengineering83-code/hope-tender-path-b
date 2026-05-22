@@ -21,6 +21,7 @@ import { assessExtractionQuality } from "../../../../../lib/extraction-quality";
 import { actionableEngineError } from "../../../../../lib/engine/actionable-engine-error";
 import { enqueueJob } from "../../../../../lib/ai-jobs";
 import { computeStoredMetadataPatch, listInvalidStoredFields } from "../../../../../lib/engine/sanitize-stored-metadata";
+import { autoFillTenderMetadata } from "../../../../../lib/engine/auto-fill-tender-metadata";
 
 // Vercel route timeout — engine runs analyze + extract + match. Default
 // 10s is too short. 60 = Hobby max; Pro uses its own plan limit.
@@ -89,6 +90,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       }
     }
 
+    // ─── Auto-fill missing tender metadata from extracted text ────────────
+    // Runs before extraction-quality gating so client name, country, etc.
+    // are populated even when the user hasn't filled them manually. Only
+    // writes fields that are currently empty or placeholder-only — never
+    // overwrites real existing values.
+    const metadataAutoFill = await autoFillTenderMetadata(tender, prisma);
+    if (metadataAutoFill.filled.length > 0) {
+      console.info(`[engine] tender=${tender.id} auto-filled ${metadataAutoFill.filled.length} metadata field(s): ${metadataAutoFill.filled.join(", ")}`);
+    }
+
     const extractionReports = tender.files.map((file) => ({
       fileName: file.originalFileName || file.fileName,
       quality: assessExtractionQuality(file.extractedText, file.originalFileName || file.fileName),
@@ -121,6 +132,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         success: true,
         async: true,
         jobId,
+        metadataAutoFill,
         diagnosticId,
         extractionWarnings: extractionReports.filter((item) => item.quality.severity === "WARNING"),
         message: "Engine run queued. Next step: POST /api/ai-jobs/run-next to start the worker, then poll GET /api/ai-jobs/[jobId] for status.",
@@ -133,6 +145,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       success: true,
       async: false,
       tender: result,
+      metadataAutoFill,
       extractionWarnings: extractionReports.filter((item) => item.quality.severity === "WARNING"),
       diagnosticId,
     });
