@@ -73,6 +73,12 @@ describe("checkExportReadiness", () => {
     assert.ok(res.failures[0].reasons.some((r) => /Placeholder/i.test(r)));
   });
 
+  it("does not block no-price-control language in technical documents", () => {
+    const res = checkExportReadiness([{ ...READY_TEXT, fileContent: "Technical Proposal\nThis technical package item does not include fee amounts, rates, unit prices, total price, or financial offer values." }], { requireFileContent: true });
+    assert.equal(res.ok, true);
+    assert.equal(res.failures.length, 0);
+  });
+
   it("blocks likely pricing leakage inside technical content", () => {
     const res = checkExportReadiness([{ ...READY_TEXT, fileContent: "Technical Proposal\nThe technical methodology includes a total price of USD 25,000 for the technical proposal envelope." }], { requireFileContent: true });
     assert.equal(res.ok, false);
@@ -83,6 +89,12 @@ describe("checkExportReadiness", () => {
 describe("checkDocxHygieneReadiness", () => {
   it("passes clean DOCX visible text", async () => {
     const fileContent = await fakeDocxBase64("Technical Proposal This submission text is clean and contains reviewed company evidence only.");
+    const failures = await checkDocxHygieneReadiness([{ ...READY, name: "Technical Proposal", exactFileName: "Technical-Proposal.docx", fileContent }]);
+    assert.deepEqual(failures, []);
+  });
+
+  it("does not block no-price-control language inside DOCX visible text", async () => {
+    const fileContent = await fakeDocxBase64("Technical Proposal This technical package item does not include fee amounts, rates, unit prices, total price, or financial offer values.");
     const failures = await checkDocxHygieneReadiness([{ ...READY, name: "Technical Proposal", exactFileName: "Technical-Proposal.docx", fileContent }]);
     assert.deepEqual(failures, []);
   });
