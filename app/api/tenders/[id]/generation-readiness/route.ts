@@ -28,12 +28,21 @@ export async function GET(
     readyForSupportPackage,
     readyForFullProposal,
     readyForAnySafeGeneration: readyForSupportPackage || readyForFullProposal,
+    // This endpoint is only a generation preflight. Keep the legacy boolean
+    // false, but state clearly that final export has not been evaluated here.
+    // Use /export-readiness for the authoritative final-submission gate.
     finalExportReady: false,
+    finalExportReadyEvaluated: false,
+    links: {
+      tenderDashboard: `/dashboard/tenders/${tenderId}`,
+      exportReadiness: `/api/tenders/${tenderId}/export-readiness`,
+      exportReadinessPanel: `/dashboard/tenders/${tenderId}#export-readiness`,
+    },
     gateSemantics: {
       ready: "full proposal readiness only",
       supportPackageReady: "support/admin package readiness only; not final proposal/export readiness",
       fullProposalReady: "main proposal generation readiness",
-      finalExportReady: "must be checked through export-readiness endpoint",
+      finalExportReady: "not evaluated by generation-readiness; check links.exportReadiness or the dashboard export-readiness panel",
     },
   });
 }
