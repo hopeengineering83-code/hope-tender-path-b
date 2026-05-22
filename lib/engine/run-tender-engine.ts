@@ -131,12 +131,18 @@ export async function runTenderEngine(
       if (options?.safe || options?.maxChars) {
         tenderText = deduplicatePageText(tenderText);
       }
-      if (options?.maxChars && tenderText.length > options.maxChars) {
-        tenderText = tenderText.slice(0, options.maxChars);
+      // In safe mode, cap text at 50 000 chars if no explicit limit is set.
+      // analyzeWithAI on an unbounded large tender can take 60-90 s, hitting
+      // Vercel's 60 s function kill. 50 k chars completes in ~20-30 s and
+      // still covers enough context for solid requirement extraction.
+      const effectiveMaxChars = options?.maxChars ?? (options?.safe ? 50_000 : undefined);
+      if (effectiveMaxChars && tenderText.length > effectiveMaxChars) {
+        tenderText = tenderText.slice(0, effectiveMaxChars);
       }
 
       if (tenderText.length > 500) {
         try {
+          progress("engine.analyze", `Analyzing ${Math.round(tenderText.length / 1000)}k chars of tender text with AI (structured requirement extraction)`);
           const aiResult = await analyzeWithAI(tenderText);
           const rawRequirements = aiResult.requirements.map((req, idx) => ({
             title: req.title,
