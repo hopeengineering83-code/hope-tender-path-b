@@ -182,8 +182,8 @@ const planBPayloadSchema = z.object({
     reviewNotes: z.string().optional(),
     requireRawText: z.boolean().optional(),
   }).optional(),
-  experts: z.array(planBExpertSchema).optional(),
-  projects: z.array(planBProjectSchema).optional(),
+  experts: z.array(planBExpertSchema).max(5000).optional(),
+  projects: z.array(planBProjectSchema).max(10000).optional(),
   legalRecords: z.array(z.object({
     recordType: z.string().optional(),
     title: z.string().optional(),
@@ -304,6 +304,13 @@ function hasUsableText(value: string | null, requireRawText: boolean): boolean {
   return Boolean(value && value.length >= 50);
 }
 
+function completenessStats(expected: number | null, imported: number) {
+  if (!expected) return null;
+  const missing = Math.max(expected - imported, 0);
+  const excess = Math.max(imported - expected, 0);
+  return { expected, imported, missing, excess, matched: missing === 0 && excess === 0 };
+}
+
 async function upsertLegalRecord(db: typeof prisma, companyId: string, record: PlanBLegalRecord) {
   const title = clean(record.title);
   if (!title) return { created: 0, updated: 0, skipped: 1 };
@@ -395,11 +402,13 @@ export async function POST(req: Request) {
     // Preflight completeness audit before any write operations (hard enforcement-safe).
     const uniqueExpertKeys = new Set<string>();
     const uniqueProjectKeys = new Set<string>();
+    let invalidExperts = 0;
+    let invalidProjects = 0;
     for (const expert of experts) {
       const fullName = clean(expert.fullName);
       const expertKey = key(fullName);
       const exactRawText = sourceText(expert.rawText ?? expert.profile);
-      if (!fullName || fullName.length < 3 || !hasUsableText(exactRawText, requireRawText)) continue;
+      if (!fullName || fullName.length < 3 || !hasUsableText(exactRawText, requireRawText)) { invalidExperts += 1; continue; }
       if (uniqueExpertKeys.has(expertKey)) warnings.push(`Duplicate expert in payload (by normalized name): ${fullName}. Last record will be applied.`);
       uniqueExpertKeys.add(expertKey);
     }
@@ -407,19 +416,26 @@ export async function POST(req: Request) {
       const name = clean(project.name);
       const projectKey = key(name);
       const exactRawText = sourceText(project.rawText ?? project.summary ?? project.sourceEvidence);
-      if (!name || name.length < 3 || !hasUsableText(exactRawText, requireRawText)) continue;
+      if (!name || name.length < 3 || !hasUsableText(exactRawText, requireRawText)) { invalidProjects += 1; continue; }
       if (uniqueProjectKeys.has(projectKey)) warnings.push(`Duplicate project in payload (by normalized name): ${name}. Last record will be applied.`);
       uniqueProjectKeys.add(projectKey);
     }
     const expectedCounts = deriveExpectedCounts(payload, sourceDocuments);
     const preflightImportedExperts = uniqueExpertKeys.size;
     const preflightImportedProjects = uniqueProjectKeys.size;
-    const preflightMissingExperts = expectedCounts.experts ? Math.max(expectedCounts.experts - preflightImportedExperts, 0) : 0;
-    const preflightMissingProjects = expectedCounts.projects ? Math.max(expectedCounts.projects - preflightImportedProjects, 0) : 0;
-    if (expectedCounts.experts && preflightImportedExperts !== expectedCounts.experts) warnings.push(`Expert completeness mismatch: expected ${expectedCounts.experts}, importable ${preflightImportedExperts}, missing ${preflightMissingExperts}.`);
-    if (expectedCounts.projects && preflightImportedProjects !== expectedCounts.projects) warnings.push(`Project completeness mismatch: expected ${expectedCounts.projects}, importable ${preflightImportedProjects}, missing ${preflightMissingProjects}.`);
+    const preflightExpertCompleteness = completenessStats(expectedCounts.experts ?? null, preflightImportedExperts);
+    const preflightProjectCompleteness = completenessStats(expectedCounts.projects ?? null, preflightImportedProjects);
+    if (preflightExpertCompleteness && !preflightExpertCompleteness.matched) warnings.push(`Expert completeness mismatch: expected ${preflightExpertCompleteness.expected}, importable ${preflightExpertCompleteness.imported}, missing ${preflightExpertCompleteness.missing}, excess ${preflightExpertCompleteness.excess}.`);
+    if (preflightProjectCompleteness && !preflightProjectCompleteness.matched) warnings.push(`Project completeness mismatch: expected ${preflightProjectCompleteness.expected}, importable ${preflightProjectCompleteness.imported}, missing ${preflightProjectCompleteness.missing}, excess ${preflightProjectCompleteness.excess}.`);
     if (enforceExpectedCounts && ((expectedCounts.experts && preflightImportedExperts !== expectedCounts.experts) || (expectedCounts.projects && preflightImportedProjects !== expectedCounts.projects))) {
-      const failure = { error: "Plan B completeness enforcement failed. Importable counts do not match expected counts.", expectedCounts, importedCounts: { experts: preflightImportedExperts, projects: preflightImportedProjects }, missingCounts: { experts: preflightMissingExperts, projects: preflightMissingProjects }, warnings: warnings.slice(0, 50) };
+      const failure = {
+        error: "Plan B completeness enforcement failed. Importable counts do not match expected counts.",
+        expectedCounts,
+        importedCounts: { experts: preflightImportedExperts, projects: preflightImportedProjects },
+        preflightInvalid: { experts: invalidExperts, projects: invalidProjects },
+        completeness: { experts: preflightExpertCompleteness, projects: preflightProjectCompleteness },
+        warnings: warnings.slice(0, 50),
+      };
       await logAction({ userId, action: "COMPANY_KNOWLEDGE_REPAIR", entityType: "Company", entityId: company.id, description: "Plan-B exact JSON import blocked by strict completeness policy before writes.", metadata: { ...failure, blocked: true, enforceExpectedCounts, requireRawText } });
       return NextResponse.json(failure, { status: 422 });
     }
@@ -576,8 +592,8 @@ export async function POST(req: Request) {
 
     const importedExperts = expertsCreated + expertsUpdated;
     const importedProjects = projectsCreated + projectsUpdated;
-    const missingExperts = expectedCounts.experts ? Math.max(expectedCounts.experts - importedExperts, 0) : 0;
-    const missingProjects = expectedCounts.projects ? Math.max(expectedCounts.projects - importedProjects, 0) : 0;
+    const expertCompleteness = completenessStats(expectedCounts.experts ?? null, importedExperts);
+    const projectCompleteness = completenessStats(expectedCounts.projects ?? null, importedProjects);
 
     const result = {
       success: true,
@@ -591,19 +607,10 @@ export async function POST(req: Request) {
       experts: { received: experts.length, created: expertsCreated, updated: expertsUpdated, skipped: expertsSkipped },
       projects: { received: projects.length, created: projectsCreated, updated: projectsUpdated, skipped: projectsSkipped },
       expectedCounts,
+      preflightInvalid: { experts: invalidExperts, projects: invalidProjects },
       completeness: {
-        experts: expectedCounts.experts ? {
-          expected: expectedCounts.experts,
-          imported: importedExperts,
-          missing: missingExperts,
-          matched: missingExperts === 0 && importedExperts === expectedCounts.experts,
-        } : null,
-        projects: expectedCounts.projects ? {
-          expected: expectedCounts.projects,
-          imported: importedProjects,
-          missing: missingProjects,
-          matched: missingProjects === 0 && importedProjects === expectedCounts.projects,
-        } : null,
+        experts: expertCompleteness,
+        projects: projectCompleteness,
       },
       legalRecords: { received: legalRecords.length, ...legal },
       financialRecords: { received: financialRecords.length, ...financial },
