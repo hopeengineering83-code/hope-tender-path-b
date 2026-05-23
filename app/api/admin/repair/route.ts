@@ -4,6 +4,7 @@ import { prisma, prismaReady } from "../../../../lib/prisma";
 import { extractTextFromBuffer, getFileTypeLabel, isMeaningfulExtraction } from "../../../../lib/extract-text";
 import { importCompanyKnowledgeFromDocuments } from "../../../../lib/company-knowledge-import-safe";
 import { cleanTenderTitle, cleanClientName } from "../../../../lib/engine/proposal-labels";
+import { getStorageAdapter } from "../../../../lib/storage";
 
 /**
  * POST /api/admin/repair
@@ -48,17 +49,22 @@ export async function POST(req: Request) {
   // ── Step 1: Re-extract text from all documents ────────────────────────────
   if (step === "extract" || step === "all") {
     const docs = await prisma.companyDocument.findMany({
-      where: { companyId: company.id, fileContent: { not: null } },
-      select: { id: true, originalFileName: true, mimeType: true, fileContent: true, metadata: true },
+      where: { companyId: company.id, OR: [{ fileContent: { not: null } }, { storagePath: { not: "" } }] },
+      select: { id: true, originalFileName: true, mimeType: true, fileContent: true, storagePath: true, metadata: true },
     });
 
     let success = 0, failed = 0, skipped = 0;
     const details: Array<{ name: string; chars: number; status: string; error?: string }> = [];
 
     for (const doc of docs) {
-      if (!doc.fileContent) { skipped++; continue; }
+      if (!doc.fileContent && !doc.storagePath) { skipped++; continue; }
       try {
-        const buffer = Buffer.from(doc.fileContent, "base64");
+        let buffer: Buffer;
+        if (doc.fileContent) {
+          buffer = Buffer.from(doc.fileContent, "base64");
+        } else {
+          buffer = await getStorageAdapter().getFile({ storagePath: doc.storagePath, fileContent: null, fileName: doc.originalFileName });
+        }
         const extractedText = await extractTextFromBuffer(buffer, doc.mimeType, doc.originalFileName);
         const fileType = getFileTypeLabel(doc.mimeType, doc.originalFileName);
         const meaningful = isMeaningfulExtraction(extractedText);

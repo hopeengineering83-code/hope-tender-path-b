@@ -13,6 +13,7 @@ import { cleanTenderTitle, cleanClientName, formatRequirementLine } from "../../
 import { logAction } from "../../../../../lib/audit";
 import { extractRequestId } from "../../../../../lib/request-id";
 import { createJob, advanceJob, completeJob, failJob } from "../../../../../lib/job-store";
+import { generatedDocumentHasContent } from "../../../../../lib/generated-document-content";
 import { createNotification } from "../../../../../lib/notifications";
 import { childLogger, reportError, time } from "../../../../../lib/observability";
 import { mapGenerationError } from "../../../../../lib/engine/structured-generation-error";
@@ -68,15 +69,15 @@ async function ensurePlannedGeneratedDocumentRecords(tenderId: string, plannedFi
     const summary = `Planned tender-required file from submission plan. Source requirements: ${file.sourceRequirementIds.join(", ") || "exact file naming/order instruction"}.`;
     const current = await prisma.generatedDocument.findFirst({
       where: { tenderId, exactFileName: file.exactFileName ?? undefined },
-      select: { id: true, name: true, exactFileName: true, documentType: true, exactOrder: true, format: true, generationStatus: true, fileContent: true },
+      select: { id: true, name: true, exactFileName: true, documentType: true, exactOrder: true, format: true, generationStatus: true, fileContent: true, storagePath: true },
     });
     if (!current) {
       try {
         await prisma.generatedDocument.create({ data: { tenderId, name: file.exactFileName.replace(/\.[a-z0-9]{2,5}$/i, ""), documentType, format: file.format, exactFileName: file.exactFileName, exactOrder: file.exactOrder, generationStatus: "PLANNED", validationStatus: "PENDING", reviewStatus: "PENDING", contentSummary: summary } });
         created += 1;
-      } catch {}
+      } catch { /* race-condition guard: if a concurrent request created the row first, skip silently */ }
     } else if (current.generationStatus !== "GENERATED") {
-      await prisma.generatedDocument.update({ where: { id: current.id }, data: { name: current.name || file.exactFileName.replace(/\.[a-z0-9]{2,5}$/i, ""), documentType, format: file.format, exactFileName: file.exactFileName, exactOrder: file.exactOrder, contentSummary: current.fileContent ? current.generationStatus : summary, updatedAt: new Date() } });
+      await prisma.generatedDocument.update({ where: { id: current.id }, data: { name: current.name || file.exactFileName.replace(/\.[a-z0-9]{2,5}$/i, ""), documentType, format: file.format, exactFileName: file.exactFileName, exactOrder: file.exactOrder, contentSummary: generatedDocumentHasContent(current) ? current.generationStatus : summary, updatedAt: new Date() } });
     }
     void key;
   }

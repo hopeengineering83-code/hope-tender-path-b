@@ -5,6 +5,7 @@ import { importCompanyKnowledgeFromDocuments } from "../../../../lib/company-kno
 import { runCompanyKnowledgeSafetyImport } from "../../../../lib/company-knowledge-safety-import";
 import { extractTextFromBuffer, getFileTypeLabel, isMeaningfulExtraction } from "../../../../lib/extract-text";
 import { ensureCompanyForUser } from "../../../../lib/company-workspace";
+import { getStorageAdapter } from "../../../../lib/storage";
 
 // Vercel route timeout — full reimport runs Claude across every document.
 // 60 = Hobby max; Pro applies its own plan limit when exceeded.
@@ -58,15 +59,20 @@ export async function POST() {
   const company = await ensureCompanyForUser(prisma, userId);
 
   const docs = await prisma.companyDocument.findMany({
-    where: { companyId: company.id, fileContent: { not: null } },
-    select: { id: true, originalFileName: true, mimeType: true, fileContent: true, metadata: true },
+    where: { companyId: company.id, OR: [{ fileContent: { not: null } }, { storagePath: { not: "" } }] },
+    select: { id: true, originalFileName: true, mimeType: true, fileContent: true, storagePath: true, metadata: true },
   });
 
   let reextracted = 0;
   for (const doc of docs) {
-    if (!doc.fileContent) continue;
+    if (!doc.fileContent && !doc.storagePath) continue;
     try {
-      const buffer = Buffer.from(doc.fileContent, "base64");
+      let buffer: Buffer;
+      if (doc.fileContent) {
+        buffer = Buffer.from(doc.fileContent, "base64");
+      } else {
+        buffer = await getStorageAdapter().getFile({ storagePath: doc.storagePath, fileContent: null, fileName: doc.originalFileName });
+      }
       const extractedText = await extractTextFromBuffer(buffer, doc.mimeType, doc.originalFileName);
       const fileType = getFileTypeLabel(doc.mimeType, doc.originalFileName);
       const meaningful = isMeaningfulExtraction(extractedText);
