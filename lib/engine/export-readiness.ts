@@ -107,22 +107,33 @@ function documentLabel(doc?: Pick<ExportReadyDocument, "name" | "exactFileName" 
 
 function isFinancialEvidenceDocument(doc?: Pick<ExportReadyDocument, "name" | "exactFileName" | "documentType" | "format">): boolean {
   const label = documentLabel(doc);
-  return /\b(financial[_\s-]*(proposal|evidence)|commercial|pricing|price[_\s-]*schedule|fee[_\s-]*schedule|rate[_\s-]*card|bank|audited|turnover)\b/i.test(label);
+  // "commercial" alone is too broad — "commercial registration" is a legal doc, not a financial envelope.
+  // Require explicit financial-evidence phrases instead.
+  return /\b(financial[_\s-]*(proposal|evidence|offer|envelope)|commercial\s+(offer|proposal|envelope)|pricing|price[_\s-]*schedule|fee[_\s-]*schedule|rate[_\s-]*card|bank|audited|turnover)\b/i.test(label);
 }
 
 function pricingScanSentences(text: string): string[] {
+  // Split on sentence boundaries and newlines FIRST, then normalise whitespace
+  // inside each sentence. Collapsing whitespace first removes newlines before
+  // the \n+ branch of the split ever fires, which collapses multi-line content
+  // into one sentence and causes false negatives.
   return text
-    .replace(/\s+/g, " ")
     .split(/(?:[.!?]\s+|\n+)/)
-    .map((sentence) => sentence.trim())
+    .map((sentence) => sentence.replace(/\s+/g, " ").trim())
     .filter(Boolean);
 }
 
 function isNoPriceControlSentence(sentence: string): boolean {
-  return /\b(no|not|never|without|exclude|excludes|excluded|separate|separately)\b.{0,120}\b(financial|commercial|price|pricing|fee|fees|rate|rates|cost|amount|offer)\b/i.test(sentence)
-    || /\b(does not|do not|must not|shall not|should not|will not)\b.{0,120}\b(include|contain|show|disclose|insert|submit)\b.{0,120}\b(financial|commercial|price|pricing|fee|fees|rate|rates|cost|amount|offer)\b/i.test(sentence)
-    || /\b(financial|commercial|price|pricing|fee|fees|rate|rates|cost|amount|offer)\b.{0,120}\b(does not|do not|must not|shall not|should not|will not|excluded|separate|separately)\b/i.test(sentence)
-    || /\b(no price leakage|no financial offer included|pricing leakage control)\b/i.test(sentence);
+  // Only treat a sentence as a pricing-control statement when the negation is
+  // structurally tied to a pricing-exclusion verb or a specific phrase.
+  // The former broad pattern (\b(no|not|...)\b.{0,120}\bpricing-word\b) was
+  // too wide: "No later than 5 days, total price is USD 25,000" was classified
+  // as a control sentence, hiding a real leak.
+  return /\b(does not|do not|must not|shall not|should not|will not|cannot|can not)\b.{0,120}\b(include|contain|show|disclose|insert|submit|incorporate|reflect|list)\b.{0,120}\b(financial|commercial|price|pricing|fee|fees|rate|rates|cost|amount|offer)\b/i.test(sentence)
+    || /\b(financial|commercial|price|pricing|fee|fees|rate|rates|cost|amount|offer)\b.{0,120}\b(does not|do not|must not|shall not|should not|will not|excluded|not included|not applicable|separate|separately)\b/i.test(sentence)
+    || /\b(no price leakage|no financial offer included|pricing leakage control|no financial amounts?|no fees? included|no rates? (provided|included|applicable))\b/i.test(sentence)
+    || /\bexcludes?\b.{0,60}\b(price|fee|rate|financial|amount|cost)\b/i.test(sentence)
+    || /\bwithout\s+(?:any\s+)?\b(price|fee|rate|financial|amount|cost)\b/i.test(sentence);
 }
 
 function containsSubstantivePricingLeak(text: string, doc?: Pick<ExportReadyDocument, "name" | "exactFileName" | "documentType" | "format">): boolean {
@@ -151,7 +162,12 @@ function documentHygieneIssues(text: string | null | undefined, doc?: Pick<Expor
   if (/\[(insert|add|fill|placeholder|todo|tbd|name of|date here|signature here|stamp here)[^\]]*\]/i.test(text) || /\b(TODO|TBD|FIXME|PLACEHOLDER)\b/i.test(text)) {
     issues.push("Placeholder or unresolved drafting instruction is present");
   }
-  if (containsSubstantivePricingLeak(text, doc)) {
+  // Only scan for pricing leakage in documents that appear to be technical
+  // (either the document name/type or the text content says "technical").
+  // Without this gate, cover letters and declarations containing required
+  // currency values are wrongly blocked with "appears in a technical document".
+  const technicalScope = /\btechnical\b/i.test(`${text} ${documentLabel(doc)}`);
+  if (technicalScope && containsSubstantivePricingLeak(text, doc)) {
     issues.push("Possible financial/pricing language appears in a technical document");
   }
   return issues;
