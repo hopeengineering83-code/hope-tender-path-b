@@ -35,6 +35,14 @@ const AI_PROVIDER_KEYS: Array<{ name: string; description: string }> = [
       "Google Gemini API key (AIza...). Fallback for proposal generation; primary engine for CV/project extraction. " +
       "Without an AI key, all imported records are REGEX_DRAFT and BLOCKED from final proposal generation.",
   },
+  {
+    name: "OPENAI_API_KEY",
+    description: "OpenAI API key (sk-...). Third-tier fallback for proposal generation.",
+  },
+  {
+    name: "DEEPSEEK_API_KEY",
+    description: "DeepSeek API key. Fourth-tier fallback for proposal generation via OpenAI-compatible endpoint.",
+  },
 ];
 
 const INSECURE_DEFAULTS: Record<string, string> = {
@@ -159,7 +167,12 @@ export function checkEnv(): void {
 }
 
 export function isAIConfigured(): boolean {
-  return Boolean(process.env.ANTHROPIC_API_KEY || process.env.GEMINI_API_KEY);
+  return Boolean(
+    process.env.ANTHROPIC_API_KEY ||
+    process.env.GEMINI_API_KEY ||
+    process.env.OPENAI_API_KEY ||
+    process.env.DEEPSEEK_API_KEY,
+  );
 }
 
 // Alias used in diagnostics and other routes

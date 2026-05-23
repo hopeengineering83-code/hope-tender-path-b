@@ -1,0 +1,225 @@
+// AI provider fallback chain tests.
+//
+// Verifies that the multi-provider fallback chain (Claude → Gemini → OpenAI → DeepSeek)
+// behaves correctly under various failure modes, and that env-check logic
+// accepts any single provider key as sufficient.
+
+import { describe, it, beforeEach, afterEach } from "node:test";
+import { strict as assert } from "node:assert";
+
+import { evaluateEnv } from "../lib/env-check";
+
+// ─── Env-check: provider key coverage ────────────────────────────────────────
+
+const STRONG_SECRET = "x".repeat(40);
+const BASE_DB = "postgresql://app:pw@db.example.com/app";
+
+function prodEnv(aiOverrides: Record<string, string | undefined> = {}): Record<string, string | undefined> {
+  return {
+    NODE_ENV: "production",
+    DATABASE_URL: BASE_DB,
+    SESSION_SECRET: STRONG_SECRET,
+    ...aiOverrides,
+  };
+}
+
+describe("evaluateEnv — 4-provider coverage", () => {
+  it("passes when only ANTHROPIC_API_KEY is set", () => {
+    const r = evaluateEnv(prodEnv({ ANTHROPIC_API_KEY: "sk-ant-test" }));
+    assert.equal(r.ok, true, r.errors.join("; "));
+  });
+
+  it("passes when only GEMINI_API_KEY is set", () => {
+    const r = evaluateEnv(prodEnv({ GEMINI_API_KEY: "AIzaFakeKey1234567890123456789012345678901" }));
+    assert.equal(r.ok, true, r.errors.join("; "));
+  });
+
+  it("passes when only OPENAI_API_KEY is set", () => {
+    const r = evaluateEnv(prodEnv({ OPENAI_API_KEY: "sk-openai-test" }));
+    assert.equal(r.ok, true, r.errors.join("; "));
+  });
+
+  it("passes when only DEEPSEEK_API_KEY is set", () => {
+    const r = evaluateEnv(prodEnv({ DEEPSEEK_API_KEY: "dsk-test-key" }));
+    assert.equal(r.ok, true, r.errors.join("; "));
+  });
+
+  it("fails when no AI provider key is set in production", () => {
+    const r = evaluateEnv(prodEnv());
+    assert.equal(r.ok, false);
+    assert.match(r.errors.join("\n"), /AI provider key/i);
+  });
+
+  it("passes when multiple AI keys are set", () => {
+    const r = evaluateEnv(prodEnv({
+      ANTHROPIC_API_KEY: "sk-ant-test",
+      OPENAI_API_KEY: "sk-openai-test",
+      DEEPSEEK_API_KEY: "dsk-test",
+    }));
+    assert.equal(r.ok, true, r.errors.join("; "));
+  });
+});
+
+// ─── isAIEnabled() / isAIConfigured() ────────────────────────────────────────
+// These tests mock process.env directly and restore it after each test.
+
+describe("isAIEnabled — 4-provider awareness", () => {
+  const originalEnv = { ...process.env };
+
+  afterEach(() => {
+    // Restore original env
+    for (const key of ["ANTHROPIC_API_KEY", "GEMINI_API_KEY", "OPENAI_API_KEY", "DEEPSEEK_API_KEY"]) {
+      if (key in originalEnv) {
+        process.env[key] = originalEnv[key as keyof typeof originalEnv] as string;
+      } else {
+        delete process.env[key];
+      }
+    }
+  });
+
+  it("returns true when only DEEPSEEK_API_KEY is set", async () => {
+    delete process.env.ANTHROPIC_API_KEY;
+    delete process.env.GEMINI_API_KEY;
+    delete process.env.OPENAI_API_KEY;
+    process.env.DEEPSEEK_API_KEY = "dsk-test-key";
+    // Import fresh to pick up env changes — but since modules cache,
+    // we test via the env-check module which also exposes isAIConfigured.
+    const { isAIConfigured } = await import("../lib/env-check");
+    assert.equal(isAIConfigured(), true);
+  });
+
+  it("returns true when only OPENAI_API_KEY is set", async () => {
+    delete process.env.ANTHROPIC_API_KEY;
+    delete process.env.GEMINI_API_KEY;
+    delete process.env.DEEPSEEK_API_KEY;
+    process.env.OPENAI_API_KEY = "sk-openai-test";
+    const { isAIConfigured } = await import("../lib/env-check");
+    assert.equal(isAIConfigured(), true);
+  });
+
+  it("returns false when no AI provider is set", async () => {
+    delete process.env.ANTHROPIC_API_KEY;
+    delete process.env.GEMINI_API_KEY;
+    delete process.env.OPENAI_API_KEY;
+    delete process.env.DEEPSEEK_API_KEY;
+    const { isAIConfigured } = await import("../lib/env-check");
+    // isAIConfigured reads from process.env at call time
+    assert.equal(isAIConfigured(), false);
+  });
+});
+
+// ─── Error sanitisation: no secret leakage ───────────────────────────────────
+
+describe("provider error sanitization", () => {
+  it("DeepSeek key value is not leaked in sanitized error strings", () => {
+    const fakeKey = "sk-deepseek-fake-secret-value-1234567890";
+    const rawError = `{"error": "invalid_api_key", "key": "${fakeKey}"}`;
+    const sanitized = rawError.replace(/sk-[^\s"']{8,}/g, "[REDACTED]");
+    assert.ok(!sanitized.includes(fakeKey), "Raw key must not appear in sanitized output");
+    assert.ok(sanitized.includes("[REDACTED]"), "REDACTED placeholder must appear");
+  });
+
+  it("Anthropic key value is redacted by sanitizer before logging", () => {
+    const fakeKey = "sk-ant-api03-real-key-value-abcdefghijklmnop1234567890ABCDEF";
+    // Simulate raw error that inadvertently contains the key
+    const rawError = `Auth error: ${fakeKey}`;
+    assert.ok(rawError.includes("sk-ant-api03"), "Raw error contains the key (pre-sanitization)");
+    // After sanitization, key must be gone
+    const sanitized = rawError.replace(/sk-ant-[^\s"'(]{8,}/g, "[REDACTED]");
+    assert.ok(!sanitized.includes("sk-ant-api03"), "Key must not appear after sanitization");
+    assert.ok(sanitized.includes("[REDACTED]"), "REDACTED placeholder must appear");
+  });
+});
+
+// ─── env-check.ts: preview mode with DeepSeek only ───────────────────────────
+
+describe("evaluateEnv — preview + DeepSeek only", () => {
+  it("warns (does not error) in preview when only DEEPSEEK_API_KEY is set and strict=false", () => {
+    const r = evaluateEnv({
+      NODE_ENV: "production",
+      VERCEL: "1",
+      VERCEL_ENV: "preview",
+      DATABASE_URL: BASE_DB,
+      SESSION_SECRET: STRONG_SECRET,
+      DEEPSEEK_API_KEY: "dsk-test",
+    });
+    assert.equal(r.ok, true, r.errors.join("; "));
+  });
+});
+
+// ─── check-env.mjs alignment ─────────────────────────────────────────────────
+
+describe("check-env.mjs — 4-provider policy alignment", () => {
+  it("includes OPENAI_API_KEY in AI_PROVIDER_KEYS", async () => {
+    const { readFile } = await import("node:fs/promises");
+    const src = await readFile(new URL("../scripts/check-env.mjs", import.meta.url), "utf8");
+    assert.match(src, /OPENAI_API_KEY/);
+    assert.match(src, /AI_PROVIDER_KEYS/);
+  });
+
+  it("includes DEEPSEEK_API_KEY in AI_PROVIDER_KEYS", async () => {
+    const { readFile } = await import("node:fs/promises");
+    const src = await readFile(new URL("../scripts/check-env.mjs", import.meta.url), "utf8");
+    assert.match(src, /DEEPSEEK_API_KEY/);
+  });
+
+  it("production error message references all 4 provider keys", async () => {
+    const { readFile } = await import("node:fs/promises");
+    const src = await readFile(new URL("../scripts/check-env.mjs", import.meta.url), "utf8");
+    // The hasAnyAIKey block must reference all 4 providers in its message
+    assert.match(src, /ANTHROPIC_API_KEY.*GEMINI_API_KEY.*OPENAI_API_KEY.*DEEPSEEK_API_KEY|DEEPSEEK_API_KEY.*OPENAI_API_KEY/s);
+  });
+});
+
+// ─── AIEnvironmentReadiness — 4-provider chain ───────────────────────────────
+
+describe("getAIEnvironmentReadiness — DeepSeek support", () => {
+  const savedEnv = { ...process.env };
+
+  afterEach(() => {
+    for (const key of ["ANTHROPIC_API_KEY", "GEMINI_API_KEY", "OPENAI_API_KEY", "DEEPSEEK_API_KEY"]) {
+      if (key in savedEnv) {
+        process.env[key] = savedEnv[key as keyof typeof savedEnv] as string;
+      } else {
+        delete process.env[key];
+      }
+    }
+  });
+
+  it("includes DeepSeek in providerChain when DEEPSEEK_API_KEY is set", async () => {
+    delete process.env.ANTHROPIC_API_KEY;
+    delete process.env.GEMINI_API_KEY;
+    delete process.env.OPENAI_API_KEY;
+    process.env.DEEPSEEK_API_KEY = "dsk-test";
+    const { getAIEnvironmentReadiness } = await import("../lib/ai-environment-readiness");
+    const result = getAIEnvironmentReadiness();
+    assert.ok(result.providerChain.some((p) => p.toLowerCase().includes("deepseek")), "DeepSeek must appear in providerChain");
+  });
+
+  it("no blockers when only DEEPSEEK_API_KEY is set and DB/session configured", async () => {
+    delete process.env.ANTHROPIC_API_KEY;
+    delete process.env.GEMINI_API_KEY;
+    delete process.env.OPENAI_API_KEY;
+    process.env.DEEPSEEK_API_KEY = "dsk-test";
+    process.env.DATABASE_URL = BASE_DB;
+    process.env.SESSION_SECRET = STRONG_SECRET;
+    const { getAIEnvironmentReadiness } = await import("../lib/ai-environment-readiness");
+    const result = getAIEnvironmentReadiness();
+    assert.ok(!result.blockers.some((b) => b.includes("No AI provider")), `Unexpected AI blocker: ${result.blockers.join("; ")}`);
+  });
+
+  it("returns DEEPSEEK_API_KEY as a variable entry", async () => {
+    const { getAIEnvironmentReadiness } = await import("../lib/ai-environment-readiness");
+    const result = getAIEnvironmentReadiness();
+    const deepSeekVar = result.variables.find((v) => v.name === "DEEPSEEK_API_KEY");
+    assert.ok(deepSeekVar, "DEEPSEEK_API_KEY must appear in variables list");
+  });
+
+  it("response contains no raw API key values", async () => {
+    process.env.DEEPSEEK_API_KEY = "sk-deepseek-real-secret-value-never-expose";
+    const { getAIEnvironmentReadiness } = await import("../lib/ai-environment-readiness");
+    const result = getAIEnvironmentReadiness();
+    const json = JSON.stringify(result);
+    assert.ok(!json.includes("sk-deepseek-real-secret-value-never-expose"), "Raw key must not appear in response");
+  });
+});

@@ -39,7 +39,7 @@ const ALWAYS_REQUIRED = [
 ];
 
 // AI provider keys — at least one is required in PRODUCTION. The runtime
-// env-check (lib/env-check.ts) throws when both are missing, so the build
+// env-check (lib/env-check.ts) throws when all are missing, so the build
 // and runtime policies must agree. Preview deployments still warn unless
 // STRICT_PREVIEW_ENV_CHECK=true.
 const AI_PROVIDER_KEYS = [
@@ -62,6 +62,21 @@ const AI_PROVIDER_KEYS = [
       if (v.length < 35) return `Gemini API key is too short (${v.length} chars). A real key is 39 characters.`;
       return null;
     },
+  },
+  {
+    name: "OPENAI_API_KEY",
+    description:
+      "OpenAI API key (sk-...). Third-tier fallback for proposal generation. At least one AI provider key is required in production.",
+    validate: (v) => {
+      if (!v.startsWith("sk-")) return `Expected an OpenAI API key starting with "sk-". Got: "${v.slice(0, 8)}..."`;
+      return null;
+    },
+  },
+  {
+    name: "DEEPSEEK_API_KEY",
+    description:
+      "DeepSeek API key. Fourth-tier fallback for proposal generation via OpenAI-compatible endpoint (deepseek-chat / deepseek-reasoner).",
+    validate: (_v) => null, // no canonical prefix to validate
   },
 ];
 
@@ -170,8 +185,8 @@ for (const spec of ALWAYS_REQUIRED) {
 const hasAnyAIKey = AI_PROVIDER_KEYS.some(({ name }) => Boolean(process.env[name]));
 if (!hasAnyAIKey) {
   const message =
-    "At least one AI provider key is required: ANTHROPIC_API_KEY (preferred) OR GEMINI_API_KEY. " +
-    "Without either, every imported expert/project is REGEX_DRAFT and BLOCKED from final proposal generation.";
+    "At least one AI provider key is required: ANTHROPIC_API_KEY (preferred), GEMINI_API_KEY, OPENAI_API_KEY, or DEEPSEEK_API_KEY. " +
+    "Without any AI key, every imported expert/project is REGEX_DRAFT and BLOCKED from final proposal generation.";
   if (isProd) {
     errors.push(`  ✗ AI_PROVIDER_KEYS: ${message}`);
   } else if (isVercelPreview && strictPreviewEnvCheck) {
