@@ -1473,7 +1473,7 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
               <button onClick={() => downloadDoc("compliance")} className="text-xs text-blue-600 hover:underline">↓ Compliance Report</button>
             </div>
             {tender.generatedDocuments.length === 0 ? (
-              <p className="text-sm text-slate-400">Run the engine then click "Generate Docs" to create submission-ready files.</p>
+              <p className="text-sm text-slate-400">Run the engine then click &quot;Generate Docs&quot; to create submission-ready files.</p>
             ) : (
               <ul className="space-y-2">
                 {tender.generatedDocuments.map((doc) => (

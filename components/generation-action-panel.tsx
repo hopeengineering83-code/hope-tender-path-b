@@ -124,7 +124,7 @@ export function GenerationActionPanel({ tenderId, readiness }: { tenderId: strin
           <p className={`text-xs font-semibold uppercase tracking-wide ${labelClass}`}>Generation action</p>
           <h2 className="mt-1 text-lg font-bold text-slate-900">{headlineText}</h2>
           <p className="mt-1 max-w-3xl text-sm text-slate-600">
-            This action follows the server-side generation-readiness gate, including reviewed-match auto-promotion. The "Generate Docs" button is gated by the strict full-proposal readiness — vault fallback alone does not unlock it.
+            This action follows the server-side generation-readiness gate, including reviewed-match auto-promotion. The &quot;Generate Docs&quot; button is gated by the strict full-proposal readiness — vault fallback alone does not unlock it.
           </p>
           {autoPromotionAvailable && (
             <p className="mt-2 text-xs font-medium text-emerald-700">Reviewed matches are available for automatic promotion if no manual selection has been made.</p>
