@@ -136,7 +136,7 @@ function containsSubstantivePricingLeak(text: string, doc?: Pick<ExportReadyDocu
   const currencyAmount = /(?:\b(?:EUR|USD|ETB|GBP|Birr)\s*[0-9][0-9,]*(?:\.\d+)?\b|\b[0-9][0-9,]*(?:\.\d+)?\s*(?:EUR|USD|ETB|GBP|Birr)\b|[$€£]\s*[0-9][0-9,]*(?:\.\d+)?\b)/i;
   const pricedTermWithNumber = /\b(total price|unit price|price schedule|fee schedule|commercial offer|financial proposal|daily rate|monthly rate|hourly rate|consultancy fee|professional fee|lump sum|contract amount|contract value)\b.{0,80}\b[0-9][0-9,]*(?:\.\d+)?\b/i;
   const numberWithPricedTerm = /\b[0-9][0-9,]*(?:\.\d+)?\b.{0,80}\b(total price|unit price|price schedule|fee schedule|commercial offer|financial proposal|daily rate|monthly rate|hourly rate|consultancy fee|professional fee|lump sum|contract amount|contract value)\b/i;
-  const explicitPricedSchedule = /\b(financial proposal|price schedule|fee schedule|commercial offer|priced bill of quantities|priced boq|rate card)\b/i
+  const explicitPricedSchedule = /\b(financial proposal|price schedule|fee schedule|commercial offer|priced bill of quantities|priced boq|rate card)\b/i.test(candidateText)
     && /\b(rate|fee|amount|price|cost|total|currency)\b.{0,80}(?:[$€£]|\b(?:EUR|USD|ETB|GBP|Birr)\b|\b[0-9][0-9,]*(?:\.\d+)?\b)/i.test(candidateText);
 
   return currencyAmount.test(candidateText) || pricedTermWithNumber.test(candidateText) || numberWithPricedTerm.test(candidateText) || explicitPricedSchedule;
