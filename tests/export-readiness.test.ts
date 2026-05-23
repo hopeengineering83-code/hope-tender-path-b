@@ -73,8 +73,9 @@ describe("checkExportReadiness", () => {
     assert.ok(res.failures[0].reasons.some((r) => /Placeholder/i.test(r)));
   });
 
-  it("does not block no-price-control language in technical documents", () => {
-    const res = checkExportReadiness([{ ...READY_TEXT, fileContent: "Technical Proposal\nThis technical package item does not include fee amounts, rates, unit prices, total price, or financial offer values." }], { requireFileContent: true });
+  it("does not block no-price-control language in technical documents", async () => {
+    const fileContent = await fakeDocxBase64("Technical Proposal This technical package item does not include fee amounts, rates, unit prices, total price, or financial offer values.");
+    const res = checkExportReadiness([{ ...READY, name: "Technical Proposal", exactFileName: "Technical-Proposal.docx", fileContent }], { requireFileContent: true });
     assert.equal(res.ok, true);
     assert.equal(res.failures.length, 0);
   });
