@@ -74,7 +74,7 @@ function getModel(modelName = DEFAULT_GEMINI_MODEL) {
 }
 
 export function isAIEnabled() {
-  return Boolean(apiKey || anthropicApiKey || process.env.OPENAI_API_KEY);
+  return Boolean(apiKey || anthropicApiKey || process.env.OPENAI_API_KEY || process.env.DEEPSEEK_API_KEY);
 }
 
 export function isClaudeEnabled() {
@@ -86,7 +86,7 @@ export function isClaudeEnabled() {
 // (e.g., generate-elite.ts) so the GeneratedDocument.contentSummary can
 // surface which provider was actually used (rather than a generic "AI"
 // label). Reset to null whenever a generation request fails entirely.
-type AIProvider = "claude" | "gemini" | "openai" | null;
+type AIProvider = "claude" | "gemini" | "openai" | "deepseek" | null;
 let lastProposalProvider: AIProvider = null;
 
 export function getLastProposalProvider(): AIProvider {
@@ -361,25 +361,31 @@ export async function generateWithFallback(prompt: string, opts?: { systemPrompt
         console.warn(`[ai] generateWithFallback Gemini failed: ${geminiErr instanceof Error ? geminiErr.message : String(geminiErr)} — trying OpenAI.`);
       }
     }
-    // No Gemini or Gemini threw — try OpenAI as final tier
+    // No Gemini or Gemini threw — try OpenAI, then DeepSeek as final tiers
     const openAiResult = await generateWithOpenAI(prompt, opts?.systemPrompt).catch((err) => {
       const msg = err instanceof Error ? err.message : String(err);
       if (/api\s+key\s+invalid|invalid\s+api\s+key|incorrect\s+api\s+key|authentication|unauthorized/i.test(msg)) throw err; // re-throw auth errors
       return null;
     });
     if (openAiResult) return openAiResult;
+    const deepSeekResult = await generateWithDeepSeek(prompt, opts?.systemPrompt).catch((err) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (/api\s+key\s+invalid|authentication|unauthorized/i.test(msg)) throw err;
+      return null;
+    });
+    if (deepSeekResult) return deepSeekResult;
     // Always surface Gemini error when it was the root cause — even in
-    // mixed deployments where OpenAI is configured but also returned null.
+    // mixed deployments where OpenAI/DeepSeek is configured but also returned null.
     if (geminiError) {
       const geminiMsg = geminiError instanceof Error ? geminiError.message : String(geminiError);
-      const openAiNote = isOpenAIEnabled()
-        ? ` OpenAI (${process.env.OPENAI_PROPOSAL_MODEL ?? "gpt-4o"}) also returned null — check OPENAI_API_KEY.`
+      const fallbackNote = isOpenAIEnabled() || isDeepSeekEnabled()
+        ? ` OpenAI/DeepSeek fallbacks also returned null — check those API keys.`
         : "";
-      throw new Error(`Claude returned empty on all models; Gemini also failed: ${geminiMsg}.${openAiNote}`);
+      throw new Error(`Claude returned empty on all models; Gemini also failed: ${geminiMsg}.${fallbackNote}`);
     }
-    const providerNote = isOpenAIEnabled()
-      ? `OpenAI (${process.env.OPENAI_PROPOSAL_MODEL ?? "gpt-4o"}) also returned null (rate limit or transient error).`
-      : "Neither GEMINI_API_KEY nor OPENAI_API_KEY is set.";
+    const providerNote = isOpenAIEnabled() || isDeepSeekEnabled()
+      ? `OpenAI/DeepSeek fallbacks also returned null (rate limit or transient error).`
+      : "No fallback keys set (GEMINI_API_KEY, OPENAI_API_KEY, DEEPSEEK_API_KEY).";
     throw new Error(`Claude returned empty on all models in chain (${CLAUDE_PROPOSAL_MODELS.join(", ")}). ${providerNote} If ANTHROPIC_PROPOSAL_MODELS is set, model IDs must be lowercase with dashes (e.g. "claude-sonnet-4-5").`);
   }
   let geminiError: unknown = null;
@@ -388,10 +394,10 @@ export async function generateWithFallback(prompt: string, opts?: { systemPrompt
       return await generate(prompt, opts?.geminiModel);
     } catch (geminiErr) {
       geminiError = geminiErr;
-      console.warn(`[ai] generateWithFallback Gemini failed: ${geminiErr instanceof Error ? geminiErr.message : String(geminiErr)} — trying OpenAI.`);
+      console.warn(`[ai] generateWithFallback Gemini failed: ${geminiErr instanceof Error ? geminiErr.message : String(geminiErr)} — trying OpenAI then DeepSeek.`);
     }
   }
-  // Neither Claude nor Gemini (or both failed) — try OpenAI as final fallback
+  // Neither Claude nor Gemini (or both failed) — try OpenAI then DeepSeek
   if (isOpenAIEnabled()) {
     const openAiResult = await generateWithOpenAI(prompt, opts?.systemPrompt).catch((err) => {
       const msg = err instanceof Error ? err.message : String(err);
@@ -399,13 +405,17 @@ export async function generateWithFallback(prompt: string, opts?: { systemPrompt
       return null;
     });
     if (openAiResult) return openAiResult;
-    // If Gemini was the root cause, surface it rather than blaming OpenAI
-    if (geminiError) throw geminiError;
-    throw new Error(`OpenAI (${process.env.OPENAI_PROPOSAL_MODEL ?? "gpt-4o"}) is configured but did not return a result. Check OPENAI_API_KEY and model access on your account.`);
   }
-  // Gemini was configured but threw — surface the real error, not "no provider configured"
+  if (isDeepSeekEnabled()) {
+    const deepSeekResult = await generateWithDeepSeek(prompt, opts?.systemPrompt).catch((err) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (/api\s+key\s+invalid|authentication|unauthorized/i.test(msg)) throw err;
+      return null;
+    });
+    if (deepSeekResult) return deepSeekResult;
+  }
   if (geminiError) throw geminiError;
-  throw new Error("No AI provider configured — set ANTHROPIC_API_KEY (preferred), GEMINI_API_KEY, or OPENAI_API_KEY.");
+  throw new Error("No AI provider configured — set ANTHROPIC_API_KEY (preferred), GEMINI_API_KEY, OPENAI_API_KEY, or DEEPSEEK_API_KEY.");
 }
 
 // ─── OpenAI (GPT-4o) provider ──────────────────────────────────────────────────
@@ -479,6 +489,79 @@ async function generateWithOpenAI(
 
 export function isOpenAIEnabled() {
   return Boolean(process.env.OPENAI_API_KEY);
+}
+
+// ─── DeepSeek provider ────────────────────────────────────────────────────────
+// Fourth-tier fallback: Claude → Gemini → OpenAI → DeepSeek → deterministic.
+// DeepSeek's API is OpenAI-compatible (same HTTP shape, same response format).
+// Uses fetch() directly — no SDK dependency.
+// Returns null when DEEPSEEK_API_KEY is not configured.
+async function generateWithDeepSeek(
+  prompt: string,
+  systemPrompt: string = DEFAULT_PROPOSAL_SYSTEM_PROMPT,
+  maxTokens = 8000,
+): Promise<string | null> {
+  const deepSeekKey = process.env.DEEPSEEK_API_KEY;
+  if (!deepSeekKey) return null;
+
+  const model = process.env.DEEPSEEK_PROPOSAL_MODEL || "deepseek-chat";
+
+  try {
+    const res = await fetch("https://api.deepseek.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${deepSeekKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model,
+        max_tokens: maxTokens,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: prompt },
+        ],
+      }),
+    });
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      if (res.status === 401 || res.status === 403) {
+        throw new Error(`DeepSeek API key invalid (${res.status}): ${body.slice(0, 200)}`);
+      }
+      if (res.status === 429) {
+        console.warn(`[ai] DeepSeek rate limit (429) on ${model} — skipping to deterministic fallback.`);
+        return null;
+      }
+      console.warn(`[ai] DeepSeek error ${res.status} on ${model}: ${body.slice(0, 240)} — skipping.`);
+      return null;
+    }
+
+    const data = await res.json() as {
+      choices?: Array<{ message?: { content?: string } }>;
+      error?: { message?: string };
+    };
+
+    if (data.error?.message) {
+      console.warn(`[ai] DeepSeek API error: ${data.error.message}`);
+      return null;
+    }
+
+    const text = data.choices?.[0]?.message?.content?.trim() ?? "";
+    if (text.length === 0) {
+      console.warn(`[ai] DeepSeek ${model} returned empty content.`);
+      return null;
+    }
+    return text;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (/api\s+key\s+invalid|invalid\s+api\s+key|authentication|unauthorized/i.test(msg)) throw err;
+    console.warn(`[ai] DeepSeek fetch failed: ${msg} — falling through to deterministic.`);
+    return null;
+  }
+}
+
+export function isDeepSeekEnabled() {
+  return Boolean(process.env.DEEPSEEK_API_KEY);
 }
 
 // Try PROPOSAL_MODELS in order until one succeeds — gives the best available model for proposal writing.
@@ -1409,6 +1492,13 @@ export async function rewriteProposalWithCritique(input: DeepRewriteInput): Prom
         return openAiResult;
       }
     }
+    if (isDeepSeekEnabled()) {
+      const deepSeekResult = await generateWithDeepSeek(prompt, REWRITER_SYSTEM_PROMPT).catch(() => null);
+      if (deepSeekResult) {
+        lastProposalProvider = "deepseek";
+        return deepSeekResult;
+      }
+    }
   } catch (err) {
     console.warn(`[ai] rewriteProposalWithCritique failed: ${err instanceof Error ? err.message : String(err)}`);
     return null;
@@ -1513,6 +1603,14 @@ ${input.currentMarkdown}
         }
       } catch (openAiErr) {
         console.warn(`[ai] refineProposalWithAI OpenAI failed: ${openAiErr instanceof Error ? openAiErr.message : String(openAiErr)}`);
+      }
+    }
+    // DeepSeek as fourth refinement fallback
+    if (isDeepSeekEnabled()) {
+      const deepSeekResult = await generateWithDeepSeek(prompt, REFINEMENT_SYSTEM_PROMPT).catch(() => null);
+      if (deepSeekResult) {
+        lastProposalProvider = "deepseek";
+        return deepSeekResult;
       }
     }
   } catch (err) {
@@ -2320,8 +2418,7 @@ Now write the complete technical proposal. Start with the Cover Letter. The eval
       return geminiResult;
     } catch (geminiErr) {
       const geminiMsg = geminiErr instanceof Error ? geminiErr.message : String(geminiErr);
-      console.warn(`[ai] Gemini failed for full proposal: ${geminiMsg} — trying OpenAI GPT-4o.`);
-      // Fall through to OpenAI if available
+      console.warn(`[ai] Gemini failed for full proposal: ${geminiMsg} — trying OpenAI then DeepSeek.`);
       const openAiResult = await generateWithOpenAI(prompt).catch((e) => {
         console.warn(`[ai] OpenAI also failed: ${e instanceof Error ? e.message : String(e)}`);
         return null;
@@ -2330,12 +2427,20 @@ Now write the complete technical proposal. Start with the Cover Letter. The eval
         lastProposalProvider = "openai";
         return openAiResult;
       }
+      const deepSeekResult = await generateWithDeepSeek(prompt).catch((e) => {
+        console.warn(`[ai] DeepSeek also failed: ${e instanceof Error ? e.message : String(e)}`);
+        return null;
+      });
+      if (deepSeekResult) {
+        lastProposalProvider = "deepseek";
+        return deepSeekResult;
+      }
       // Re-throw original Gemini error so callers surface the root cause
       throw geminiErr;
     }
   }
 
-  // Neither Gemini nor Claude configured — try OpenAI as a standalone provider
+  // Neither Gemini nor Claude configured — try OpenAI then DeepSeek as standalone providers
   if (isOpenAIEnabled()) {
     const openAiResult = await generateWithOpenAI(prompt);
     if (openAiResult) {
@@ -2343,24 +2448,29 @@ Now write the complete technical proposal. Start with the Cover Letter. The eval
       return openAiResult;
     }
   }
+  if (isDeepSeekEnabled()) {
+    const deepSeekResult = await generateWithDeepSeek(prompt);
+    if (deepSeekResult) {
+      lastProposalProvider = "deepseek";
+      return deepSeekResult;
+    }
+  }
 
   lastProposalProvider = null;
   // Diagnostic error message: distinguishes between (a) no key at all,
   // (b) Anthropic key present but Claude failed, (c) both configured but
-  // both failed. Real-world deploy logs showed users with ANTHROPIC_API_KEY
-  // set seeing the "No AI provider configured" message and assuming the
-  // key wasn't loaded — when in fact the model name was wrong.
+  // both failed.
   if (anthropicApiKey && !apiKey) {
-    const openAiNote = isOpenAIEnabled()
-      ? ` OpenAI (${process.env.OPENAI_PROPOSAL_MODEL ?? "gpt-4o"}) was also tried as fallback but returned null — check OPENAI_API_KEY and model access.`
-      : " Set GEMINI_API_KEY or OPENAI_API_KEY as a fallback, OR fix the Claude model chain.";
-    throw new Error(`Claude (Anthropic) is configured but did not produce a proposal: ${claudeError ?? "unknown error"}.${openAiNote}`);
+    const fallbackNote = isOpenAIEnabled() || isDeepSeekEnabled()
+      ? ` OpenAI/DeepSeek fallbacks were also tried but returned null — check those API keys and model access.`
+      : " Set GEMINI_API_KEY, OPENAI_API_KEY, or DEEPSEEK_API_KEY as a fallback, OR fix the Claude model chain.";
+    throw new Error(`Claude (Anthropic) is configured but did not produce a proposal: ${claudeError ?? "unknown error"}.${fallbackNote}`);
   }
-  if (!anthropicApiKey && !apiKey && isOpenAIEnabled()) {
-    throw new Error(`OpenAI (${process.env.OPENAI_PROPOSAL_MODEL ?? "gpt-4o"}) is configured but did not produce a proposal. Check that OPENAI_API_KEY is valid and the model is accessible on your account.`);
+  if (!anthropicApiKey && !apiKey && (isOpenAIEnabled() || isDeepSeekEnabled())) {
+    throw new Error(`OpenAI/DeepSeek is configured but did not produce a proposal. Check that OPENAI_API_KEY / DEEPSEEK_API_KEY is valid and the model is accessible on your account.`);
   }
   if (!anthropicApiKey && !apiKey) {
-    throw new Error("No AI provider configured — set ANTHROPIC_API_KEY (preferred), GEMINI_API_KEY, or OPENAI_API_KEY in environment variables.");
+    throw new Error("No AI provider configured — set ANTHROPIC_API_KEY (preferred), GEMINI_API_KEY, OPENAI_API_KEY, or DEEPSEEK_API_KEY in environment variables.");
   }
   // anthropicApiKey present, apiKey present, both failed
   throw new Error(`Both AI providers failed. Claude: ${claudeError ?? "unknown"}. Gemini also failed (see prior log lines).`);

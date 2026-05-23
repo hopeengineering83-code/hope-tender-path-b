@@ -56,10 +56,29 @@ const AI_PROVIDER_KEYS = [
   {
     name: "GEMINI_API_KEY",
     description:
-      "Google Gemini API key (AIza..., 39 chars). Used as a fallback for proposal generation and as the primary engine for CV/project extraction. Without this AND ANTHROPIC_API_KEY, all imported records are REGEX_DRAFT only.",
+      "Google Gemini API key (AIza..., 39 chars). Secondary fallback for proposal generation and primary engine for CV/project extraction. Without this AND ANTHROPIC_API_KEY, all imported records are REGEX_DRAFT only.",
     validate: (v) => {
       if (!v.startsWith("AIza")) return `Expected a Gemini API key starting with "AIza". Got: "${v.slice(0, 8)}..." — check you have not set an Anthropic or OpenAI key here.`;
       if (v.length < 35) return `Gemini API key is too short (${v.length} chars). A real key is 39 characters.`;
+      return null;
+    },
+  },
+  {
+    name: "OPENAI_API_KEY",
+    description:
+      "OpenAI API key (sk-...). Third-tier fallback for proposal generation (Claude → Gemini → OpenAI → DeepSeek). Optional but recommended for resilience. Get from https://platform.openai.com/api-keys.",
+    validate: (v) => {
+      if (!v.startsWith("sk-")) return `Expected an OpenAI API key starting with "sk-". Got: "${v.slice(0, 8)}...".`;
+      if (v.length < 30) return `OpenAI API key looks too short (${v.length} chars).`;
+      return null;
+    },
+  },
+  {
+    name: "DEEPSEEK_API_KEY",
+    description:
+      "DeepSeek API key. Fourth-tier fallback for proposal generation (Claude → Gemini → OpenAI → DeepSeek). Optional. Get from https://platform.deepseek.com/api_keys.",
+    validate: (v) => {
+      if (v.length < 10) return `DeepSeek API key looks too short (${v.length} chars).`;
       return null;
     },
   },
@@ -170,8 +189,8 @@ for (const spec of ALWAYS_REQUIRED) {
 const hasAnyAIKey = AI_PROVIDER_KEYS.some(({ name }) => Boolean(process.env[name]));
 if (!hasAnyAIKey) {
   const message =
-    "At least one AI provider key is required: ANTHROPIC_API_KEY (preferred) OR GEMINI_API_KEY. " +
-    "Without either, every imported expert/project is REGEX_DRAFT and BLOCKED from final proposal generation.";
+    "At least one AI provider key is required: ANTHROPIC_API_KEY (preferred), GEMINI_API_KEY, OPENAI_API_KEY, or DEEPSEEK_API_KEY. " +
+    "Without any of these, every imported expert/project is REGEX_DRAFT and BLOCKED from final proposal generation.";
   if (isProd) {
     errors.push(`  ✗ AI_PROVIDER_KEYS: ${message}`);
   } else if (isVercelPreview && strictPreviewEnvCheck) {
