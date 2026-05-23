@@ -8,7 +8,7 @@ import { safeFileBaseName } from "../../../../../lib/engine/proposal-labels";
 import { checkExportReadiness, checkFullExportReadiness, exportReadinessError } from "../../../../../lib/engine/export-readiness";
 import { getCompanyIngestionReadiness } from "../../../../../lib/company-ingestion-readiness";
 import { getTenderGenerationReadiness } from "../../../../../lib/tender-generation-readiness";
-import { readGeneratedDocumentContent } from "../../../../../lib/generated-document-content";
+import { readGeneratedDocumentContent, generatedDocumentHasContent } from "../../../../../lib/generated-document-content";
 // Strict final-ZIP scope resolver — single source of truth for what
 // enters the final submission ZIP. See lib/engine/final-zip-scope.ts.
 import { buildFinalZipEntries } from "../../../../../lib/engine/final-zip-scope";
@@ -243,12 +243,16 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
       return NextResponse.json({ error: "Document not found or not yet generated" }, { status: 404 });
     }
 
+    if (!generatedDocumentHasContent(doc)) {
+      return NextResponse.json({ error: "Document content is unavailable — neither storage path nor inline content is present.", code: "MISSING_CONTENT" }, { status: 409 });
+    }
+
     const validation = await validateGeneratedFileForExport(doc);
     if (!validation.ok) {
       return NextResponse.json({ error: "Document export blocked by final validation", reasons: validation.errors }, { status: 409 });
     }
 
-    const readiness = checkExportReadiness([{ ...doc, validationStatus: "VALIDATED" }], { requireFileContent: true });
+    const readiness = checkExportReadiness([{ ...doc, validationStatus: "VALIDATED" }], { requireFileContent: false });
     if (!readiness.ok) {
       return NextResponse.json({ error: exportReadinessError(readiness.failures), failures: readiness.failures }, { status: 409 });
     }
@@ -284,7 +288,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     const readiness = await checkFullExportReadiness({
       tenderId: tender.id,
       docs: generatedDocs.map((doc) => ({ ...doc, validationStatus: "VALIDATED" })),
-      requireFileContent: true,
+      requireFileContent: false,
     });
     if (!readiness.ok) {
       return NextResponse.json({ error: exportReadinessError(readiness.failures, readiness.tenderLevelBlockers), failures: readiness.failures, tenderLevelBlockers: readiness.tenderLevelBlockers ?? [] }, { status: 409 });

@@ -30,13 +30,17 @@ export async function readGeneratedDocumentContent(
   const mimeType = inferMimeType(filename);
 
   if (doc.storagePath) {
-    const adapter = getStorageAdapter();
-    const buffer = await adapter.getFile({
-      storagePath: doc.storagePath,
-      fileContent: doc.fileContent ?? null,
-      fileName: filename,
-    });
-    return { buffer, base64: buffer.toString("base64"), filename, mimeType, source: "storage" };
+    try {
+      const adapter = getStorageAdapter();
+      const buffer = await adapter.getFile({
+        storagePath: doc.storagePath,
+        fileContent: doc.fileContent ?? null,
+        fileName: filename,
+      });
+      return { buffer, base64: buffer.toString("base64"), filename, mimeType, source: "storage" };
+    } catch {
+      // Storage read failed — fall through to legacy fileContent if available
+    }
   }
 
   if (doc.fileContent) {
