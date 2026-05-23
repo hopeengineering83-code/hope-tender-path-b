@@ -6,7 +6,7 @@
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
 import JSZip from "jszip";
-import { checkDocxHygieneReadiness, checkExportReadiness, exportReadinessError, isReadyForFinalExport } from "../lib/engine/export-readiness";
+import { checkDocxHygieneReadiness, checkExportReadiness, documentHygieneIssues, exportReadinessError, isReadyForFinalExport } from "../lib/engine/export-readiness";
 
 // Minimal base64 with ZIP/PK magic bytes (0x50 0x4B) — passes looksLikeBase64Docx check.
 const MINIMAL_DOCX_B64 = "UEsDBA==";
@@ -77,6 +77,17 @@ describe("checkExportReadiness", () => {
     const res = checkExportReadiness([{ ...READY_TEXT, fileContent: "Technical Proposal\nThe technical methodology includes a total price of USD 25,000 for the technical proposal envelope." }], { requireFileContent: true });
     assert.equal(res.ok, false);
     assert.ok(res.failures[0].reasons.some((r) => /pricing language/i.test(r)));
+  });
+
+  it("does not block safe no-price-control wording in technical content", () => {
+    const issues = documentHygieneIssues("Technical Proposal\nThis technical proposal does not include any fee, rate, unit price, total price, or financial offer values.", READY_TEXT);
+    assert.equal(issues.some((r) => /pricing language/i.test(r)), false);
+  });
+
+  it("does not treat financial/commercial documents as technical for pricing hygiene", () => {
+    const financialDoc = { ...READY_TEXT, name: "Financial Proposal", exactFileName: "Financial-Proposal.docx", fileContent: "Financial Proposal\nThe total price is USD 25,000." };
+    const issues = documentHygieneIssues(financialDoc.fileContent, financialDoc);
+    assert.equal(issues.some((r) => /pricing language/i.test(r)), false);
   });
 });
 
