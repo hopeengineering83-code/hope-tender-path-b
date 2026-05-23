@@ -19,9 +19,15 @@ process.env.GEMINI_API_KEY ??= "AIzaTestKeyNotUsedAtRuntime12345678901234567890"
 process.env.NODE_ENV ??= "test";
 
 const testDir = resolve(process.cwd(), "tests");
+// IMPORTANT: keep paths RELATIVE to cwd. Windows has an ~8 KB command-line
+// limit; with 70+ test files at long absolute paths (~110 chars each) the
+// spawnSync invocation hits "The command line is too long" and the entire
+// test suite refuses to start. Relative paths (~25 chars each) keep us
+// well under the limit even at 200+ test files. Verified: 71 files × 25
+// chars + flags ≈ 1.8 KB.
 const files = readdirSync(testDir)
   .filter((f) => f.endsWith(".test.ts"))
-  .map((f) => join(testDir, f));
+  .map((f) => join("tests", f));
 
 if (files.length === 0) {
   console.error("No tests found in tests/*.test.ts");
