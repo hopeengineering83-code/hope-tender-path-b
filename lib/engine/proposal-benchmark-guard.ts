@@ -65,8 +65,15 @@ function headingExists(markdown: string, label: string): boolean {
 
 function hasForbiddenWeakness(markdown: string): boolean {
   if (/\b(as an ai|i am an ai|language model|placeholder|tbd|todo|insert name|insert date|n\/a \(pending\)|to be determined|i apologize but)\b/i.test(markdown)) return true;
+  if (/\bI cannot\b|\bI'm unable\b|\bI am unable\b/i.test(markdown)) return true;
   // Square-bracket stubs — extended to 200 chars to catch verbose placeholders
   if (/\[(?:INSERT|PLACEHOLDER|NAME|DATE|TBD|TBA|ADD|ENTER|SPECIFY|YOUR|FILL)[^\]]{0,200}\]/i.test(markdown)) return true;
+  // Curly brace placeholder style: {INSERT_NAME}, {COMPANY}, etc.
+  if (/\{(?:INSERT|PLACEHOLDER|NAME|DATE|TBD|ADD|ENTER|COMPANY|FIRM|CLIENT)[^}]{0,60}\}/i.test(markdown)) return true;
+  // Angle bracket style: <<INSERT>>, <<NAME>>, etc.
+  if (/<<(?:INSERT|NAME|DATE|COMPANY|PLACEHOLDER|YOUR)[^>]{0,60}>>/i.test(markdown)) return true;
+  // Underscore style: __INSERT_NAME__, __COMPANY__, etc.
+  if (/__(?:INSERT|NAME|DATE|COMPANY|PLACEHOLDER|YOUR)[A-Z_]{0,40}__/.test(markdown)) return true;
   // Mustache / double-mustache template variables: {{variable}} or {variable}
   if (/\{\{?\s*\w[\w\s-]{0,60}\s*\}?\}/g.test(markdown)) return true;
   // Unfilled action directives — indicate the AI echoed fallback template text

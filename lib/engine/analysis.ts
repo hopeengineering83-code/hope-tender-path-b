@@ -42,18 +42,20 @@ function inferPriority(text: string): string {
 }
 
 function inferType(text: string): string {
-  if (/expert|key personnel|team leader|specialist|cv|curriculum vitae|staff|personnel/i.test(text)) return "EXPERT";
-  if (/project reference|similar experience|completed project|experience|portfolio|past performance|assignment reference/i.test(text)) return "PROJECT_EXPERIENCE";
-  if (/declaration|undertaking|statement|sworn|notari|conflict of interest|anti\s*-?corruption/i.test(text)) return "DECLARATION";
-  if (/annex|appendix/i.test(text)) return "ANNEX";
-  if (/schedule/i.test(text)) return "SCHEDULE";
-  if (/form|template|fill|complete the|bid form|submission form/i.test(text)) return "FORM";
-  if (/financial|turnover|audit|audited|balance sheet|revenue|tax clearance|bank statement/i.test(text)) return "FINANCIAL";
-  if (/eligib|registration|certificate|license|licence|accreditation|permit|legal|business registration/i.test(text)) return "ELIGIBILITY";
-  if (/company profile|firm profile|about us|organization profile/i.test(text)) return "COMPANY_PROFILE";
-  if (/page limit|font|format|pdf|docx|naming|file name|order|size|margin|separate file|combined file|zip/i.test(text)) return "FORMAT";
-  if (/submission|upload|portal|deadline|sealed|deliver|electronic submission|hard copy|envelope/i.test(text)) return "SUBMISSION_RULE";
-  if (/methodology|approach|work plan|execution plan|technical approach|understanding of tor|work programme/i.test(text)) return "METHODOLOGY";
+  if (/\bexpert\b|key personnel|team leader|specialist|curriculum vitae|\bcv\b|key staff|lead expert|senior expert/i.test(text)) return "EXPERT";
+  if (/\bstaff\b|\bpersonnel\b/i.test(text) && !/technical\s+staff|support\s+staff|office\s+staff/i.test(text)) return "EXPERT";
+  if (/project reference|similar\s+(?:project|assignment|work|experience)|completed\s+project|comparable\s+(?:project|assignment)|portfolio|past\s+performance|assignment\s+reference|reference\s+(?:project|sheet|letter)|prior\s+(?:project|assignment)|track\s+record/i.test(text)) return "PROJECT_EXPERIENCE";
+  if (/declaration|undertaking|sworn|notari|conflict\s+of\s+interest|anti\s*-?corruption/i.test(text)) return "DECLARATION";
+  if (/statement\s+of\s+(work|intent|compliance|availability|non-debarment|no-objection)/i.test(text)) return "DECLARATION";
+  if (/\bannex\b|\bappendix\b/i.test(text)) return "ANNEX";
+  if (/\bschedule\b/i.test(text)) return "SCHEDULE";
+  if (/\bform\b|\btemplate\b|fill\s+(?:in|out)|complete\s+the|bid\s+form|submission\s+form/i.test(text)) return "FORM";
+  if (/financial|turnover|audit(?:ed)?|balance\s+sheet|revenue|tax\s+clearance|bank\s+statement/i.test(text)) return "FINANCIAL";
+  if (/eligib|registration|certificate|licen[sc]e|accreditation|permit|business\s+registration/i.test(text)) return "ELIGIBILITY";
+  if (/company\s+profile|firm\s+profile|about\s+us|organization\s+profile/i.test(text)) return "COMPANY_PROFILE";
+  if (/page\s+limit|font\s+size|file\s+format|pdf|docx|file\s+name|file\s+naming|margin|separate\s+file|combined\s+file|zip\s+file/i.test(text)) return "FORMAT";
+  if (/submission|upload|portal|deadline|sealed|hard\s+copy|electronic\s+submission|envelope/i.test(text)) return "SUBMISSION_RULE";
+  if (/methodology|technical\s+approach|work\s+plan|execution\s+plan|understanding\s+of\s+(?:the\s+)?tor|work\s+programme/i.test(text)) return "METHODOLOGY";
   return "TECHNICAL";
 }
 
@@ -65,17 +67,37 @@ function numberFromText(value: string): number | null {
 }
 
 function inferQuantity(text: string): number | null {
-  const numeric = text.match(/\b(\d{1,3}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|twenty-five|thirty)\s+(?:key\s+)?(experts?|specialists?|personnel|staff|projects?|references?|assignments?|forms?|annexes?|appendices|copies|sets|files|documents)\b/i);
+  const QUANTITY_NOUNS = /experts?|specialists?|personnel|staff|projects?|references?|assignments?|forms?|annexes?|appendices|copies|sets|files|documents/i;
+  const numeric = text.match(new RegExp(
+    `\\b(\\d{1,3}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty)\\s+(?:key\\s+)?(${QUANTITY_NOUNS.source})\\b`,
+    "i"
+  ));
   if (numeric) {
-    // Reject if the number looks like a section/clause/page/appendix reference
-    // e.g. "Section 29 Expert Requirements" or "Annex 5 Forms"
     const idx = text.indexOf(numeric[0]);
-    const before = text.slice(Math.max(0, idx - 50), idx);
-    if (/\b(?:section|clause|article|page|appendix|annex|item|part|chapter|schedule|no\.?|number|ref|figure|table)\s*[:\.\-]?\s*\d*\s*$/i.test(before)) return null;
+    const before = text.slice(Math.max(0, idx - 60), idx);
+    const after = text.slice(idx + numeric[0].length, idx + numeric[0].length + 30);
+    // Reject section/clause/page references immediately before the number
+    if (/\b(?:section|clause|article|page|appendix|annex|item|part|chapter|schedule|no\.?|number|ref(?:erence)?|figure|table)\s*[:\.\-]?\s*\d*\s*$/i.test(before)) return null;
+    // Reject if followed by duration words ("3 years experience")
+    if (/^\s*(?:year|month|week|day)s?\b/i.test(after)) return null;
     return numberFromText(numeric[1]);
   }
-  const atLeast = text.match(/(?:at\s+least|minimum\s+of|not\s+less\s+than)\s+(\d{1,3}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|twenty-five|thirty)/i);
-  if (atLeast) return numberFromText(atLeast[1]);
+  // "at least 3 experts" — requires a countable noun immediately after the number
+  const atLeastWithNoun = text.match(
+    new RegExp(
+      `(?:at\\s+least|minimum\\s+of|not\\s+less\\s+than)\\s+(\\d{1,3}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty)\\s+(?:key\\s+)?(${QUANTITY_NOUNS.source})\\b`,
+      "i"
+    )
+  );
+  if (atLeastWithNoun) return numberFromText(atLeastWithNoun[1]);
+  // Fallback: bare "minimum X" — only if not followed by duration/percentage
+  const atLeastBare = text.match(/(?:at\s+least|minimum\s+of|not\s+less\s+than)\s+(\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten)/i);
+  if (atLeastBare) {
+    const matchIdx = text.indexOf(atLeastBare[0]);
+    const afterBare = text.slice(matchIdx + atLeastBare[0].length, matchIdx + atLeastBare[0].length + 30);
+    if (/^\s*(?:year|month|week|day|%|percent)/i.test(afterBare)) return null;
+    return numberFromText(atLeastBare[1]);
+  }
   return null;
 }
 
