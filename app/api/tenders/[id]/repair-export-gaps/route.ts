@@ -5,7 +5,7 @@ import { logAction } from "../../../../../lib/audit";
 import { buildSubmissionPlan, findMissingGeneratedDocuments, hasExplicitSubmissionScope, plannedSubmissionTargetFiles, type SubmissionPlanFile } from "../../../../../lib/engine/submission-plan";
 import { applyActiveUploadedLetterheadToTenderDocuments } from "../../../../../lib/engine/apply-active-letterhead";
 import { deriveDocumentOutputState } from "../../../../../lib/engine/document-output-state";
-import { checkFullExportReadiness } from "../../../../../lib/engine/export-readiness";
+import { checkFullExportReadiness, documentHygieneIssues, extractDocxVisibleText } from "../../../../../lib/engine/export-readiness";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 
 export const dynamic = "force-dynamic";
@@ -107,7 +107,7 @@ function buildSections(title: string, type: string, context: EvidenceContext): A
   if (/financial|audited|bank|turnover|capacity/.test(label)) {
     return [
       { title: "Financial evidence", lines: context.financialRecords.length ? context.financialRecords : ["Financial records available in the company knowledge vault are referenced for this tender package item."] },
-      { title: "No price leakage", lines: ["This technical package item does not include fee amounts, rates, unit prices, or financial offer values unless the tender explicitly requires a combined submission."] },
+      { title: "Submission envelope compliance", lines: ["This submission package is prepared in accordance with the tender's envelope separation requirements. Financial information is presented only in designated financial submission components."] },
     ];
   }
   if (/expert|cv|personnel|staff/.test(label)) {
@@ -278,6 +278,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
 
   const repaired: string[] = [];
   const skipped: string[] = [];
+  const blockedByHygiene: Array<{ name: string; issues: string[] }> = [];
   await prisma.$transaction(async (tx) => {
     for (const doc of docs) {
       if (!needsRepair(doc)) {
@@ -287,6 +288,13 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       const title = docTitle(doc);
       const documentType = documentTypeFor(title, doc.documentType);
       const content = doc.fileContent && doc.generationStatus === "GENERATED" ? doc.fileContent : await makeDocx(title, documentType, context);
+      const fileName = doc.exactFileName || `${title.replace(/[^a-zA-Z0-9]+/g, "-").replace(/^-|-$/g, "")}.docx`;
+      const visibleText = await extractDocxVisibleText(content, fileName);
+      const hygieneIssues = documentHygieneIssues(visibleText ?? content);
+      if (hygieneIssues.length > 0) {
+        blockedByHygiene.push({ name: title, issues: hygieneIssues });
+        continue;
+      }
       const priorStatus = doc.reviewStatus;
       await tx.generatedDocument.update({
         where: { id: doc.id },
@@ -294,7 +302,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
           name: clean(doc.name) || title.replace(/\.[a-z0-9]{2,5}$/i, ""),
           documentType,
           format: "DOCX",
-          exactFileName: doc.exactFileName || `${title.replace(/[^a-zA-Z0-9]+/g, "-").replace(/^-|-$/g, "")}.docx`,
+          exactFileName: fileName,
           fileContent: content,
           generationStatus: "GENERATED",
           validationStatus: "VALIDATED",
@@ -328,13 +336,14 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     entityType: "Tender",
     entityId: tenderId,
     description: `${actor.email} repaired ${repaired.length} export package document(s) for "${context.tenderTitle}".`,
-    metadata: { tenderId, repairedCount: repaired.length, skippedCount: skipped.length, plannedCreated, letterheadAppliedCount, finalExportReady: readiness.ok, remainingDocumentBlockers: readiness.failures.length, remainingTenderLevelBlockers: readiness.tenderLevelBlockers?.length ?? 0 },
+    metadata: { tenderId, repairedCount: repaired.length, skippedCount: skipped.length, blockedByHygieneCount: blockedByHygiene.length, plannedCreated, letterheadAppliedCount, finalExportReady: readiness.ok, remainingDocumentBlockers: readiness.failures.length, remainingTenderLevelBlockers: readiness.tenderLevelBlockers?.length ?? 0 },
   });
 
   return NextResponse.json({
     success: true,
     repaired: repaired.length,
     skipped: skipped.length,
+    blockedByHygiene: blockedByHygiene.length,
     plannedCreated,
     letterheadAppliedCount,
     finalExportReady: readiness.ok,
@@ -342,6 +351,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       documentBlockers: readiness.failures.length,
       tenderLevelBlockers: readiness.tenderLevelBlockers?.length ?? 0,
     },
-    files: { repaired, skipped },
+    files: { repaired, skipped, blockedByHygiene: blockedByHygiene.map((b) => b.name) },
+    hygieneBlockers: blockedByHygiene,
   });
 }

@@ -33,8 +33,10 @@ export function getAIEnvironmentReadiness(): AIEnvironmentReadiness {
     status("GEMINI_ANALYSIS_MODEL", "ai", "recommended", "Gemini model for tender analysis when configured."),
     status("GEMINI_EXTRACTION_MODEL", "ai", "recommended", "Gemini model for company knowledge extraction when configured."),
     status("GEMINI_FALLBACK_MODELS", "ai", "recommended", "Fallback Gemini model chain."),
-    status("OPENAI_API_KEY", "ai", "optional", "Available third provider. Current main code can use it only after OpenAI fallback integration is merged."),
-    status("OPENAI_PROPOSAL_MODEL", "ai", "optional", "OpenAI proposal model selector, used after OpenAI fallback integration."),
+    status("OPENAI_API_KEY", "ai", "recommended", "Third-tier fallback provider for proposal generation across all proposal paths."),
+    status("OPENAI_PROPOSAL_MODEL", "ai", "optional", "OpenAI proposal model (default: gpt-4o)."),
+    status("DEEPSEEK_API_KEY", "ai", "optional", "Fourth-tier fallback provider via OpenAI-compatible DeepSeek endpoint."),
+    status("DEEPSEEK_PROPOSAL_MODEL", "ai", "optional", "DeepSeek proposal model (default: deepseek-chat; deepseek-reasoner for deeper reasoning)."),
     status("PDF_OCR_ENABLED", "ocr", "recommended", "Enables OCR path for scanned/image-heavy PDFs."),
     status("PDF_OCR_MODEL", "ocr", "recommended", "OCR reasoning model selector."),
     status("PDF_OCR_MAX_PAGES", "ocr", "recommended", "Caps OCR pages to avoid serverless timeout/cost overrun."),
@@ -49,19 +51,19 @@ export function getAIEnvironmentReadiness(): AIEnvironmentReadiness {
   const providerChain: string[] = [];
   if (present("ANTHROPIC_API_KEY")) providerChain.push("Claude");
   if (present("GEMINI_API_KEY")) providerChain.push("Gemini");
-  if (present("OPENAI_API_KEY")) providerChain.push("OpenAI (configured; requires OpenAI fallback code path for full use)");
+  if (present("OPENAI_API_KEY")) providerChain.push("OpenAI");
+  if (present("DEEPSEEK_API_KEY")) providerChain.push(`DeepSeek (${process.env.DEEPSEEK_PROPOSAL_MODEL || "deepseek-chat"})`);
 
   const blockers: string[] = [];
   const warnings: string[] = [];
 
-  if (!present("ANTHROPIC_API_KEY") && !present("GEMINI_API_KEY")) {
-    blockers.push("No primary AI provider is configured. Set ANTHROPIC_API_KEY or GEMINI_API_KEY.");
+  if (!present("ANTHROPIC_API_KEY") && !present("GEMINI_API_KEY") && !present("OPENAI_API_KEY") && !present("DEEPSEEK_API_KEY")) {
+    blockers.push("No AI provider is configured. Set at least one of: ANTHROPIC_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, or DEEPSEEK_API_KEY.");
   }
   if (!present("DATABASE_URL")) blockers.push("DATABASE_URL is missing.");
   if (!present("SESSION_SECRET")) blockers.push("SESSION_SECRET is missing.");
-  if (present("OPENAI_API_KEY")) warnings.push("OPENAI_API_KEY is present, but current main branch needs OpenAI fallback integration before it is used across all proposal paths.");
   if (!present("PDF_OCR_ENABLED")) warnings.push("PDF_OCR_ENABLED is not set. Scanned PDFs may extract poorly unless OCR defaults are enabled elsewhere.");
-  if (!present("ANTHROPIC_TIER")) warnings.push("ANTHROPIC_TIER is not set. Claude output-token defaults may not match your Tier 2 account.");
+  if (!present("ANTHROPIC_TIER") && present("ANTHROPIC_API_KEY")) warnings.push("ANTHROPIC_TIER is not set. Claude output-token defaults may not match your Tier 2 account.");
 
   return {
     ready: blockers.length === 0,

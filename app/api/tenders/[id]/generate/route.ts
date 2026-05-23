@@ -18,6 +18,7 @@ import { childLogger, reportError, time } from "../../../../../lib/observability
 import { mapGenerationError } from "../../../../../lib/engine/structured-generation-error";
 import { computeStoredMetadataPatch, listInvalidStoredFields } from "../../../../../lib/engine/sanitize-stored-metadata";
 import { isValidClientName } from "../../../../../lib/engine/metadata-validators";
+import { repairSourceGrounding } from "../../../../../lib/engine/repair-source-grounding";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -217,8 +218,30 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       nextAction: "RUN_ENGINE",
     }, { status: 422 });
   }
-  const untracedMandatoryRequirements = tender.requirements.filter((req) => req.priority === "MANDATORY" && ((req.sourceConfidence ?? 0) <= 0));
-  if (untracedMandatoryRequirements.length > 0) return NextResponse.json({ error: `Generation blocked: ${untracedMandatoryRequirements.length} mandatory requirement(s) are not source-grounded yet.`, code: "UNTRACED_MANDATORY_REQUIREMENTS", requirements: untracedMandatoryRequirements.slice(0, 20).map((req) => ({ id: req.id, title: req.title })), nextAction: "RUN_ENGINE_AND_REVIEW_SOURCES" }, { status: 422 });
+  const untracedInitial = tender.requirements.filter((req) => req.priority === "MANDATORY" && ((req.sourceConfidence ?? 0) <= 0));
+  if (untracedInitial.length > 0) {
+    // Attempt one automatic repair pass using uploaded tender file text before hard-blocking.
+    const repairResult = await repairSourceGrounding(id).catch((err) => {
+      console.warn(`[generate] source-grounding repair attempt failed: ${err instanceof Error ? err.message : String(err)}`);
+      return null;
+    });
+    // Reload requirements to see the updated confidence values after repair.
+    const mandatoryAfterRepair = repairResult && repairResult.repairedCount > 0
+      ? await prisma.tenderRequirement.findMany({
+          where: { tenderId: id, priority: "MANDATORY" },
+          select: { id: true, title: true, sourceConfidence: true },
+        }).then((rows) => rows.filter((r) => (r.sourceConfidence ?? 0) <= 0))
+      : untracedInitial;
+    if (mandatoryAfterRepair.length > 0) {
+      return NextResponse.json({
+        error: `Generation blocked: ${mandatoryAfterRepair.length} mandatory requirement(s) are not source-grounded yet.`,
+        code: "UNTRACED_MANDATORY_REQUIREMENTS",
+        requirements: mandatoryAfterRepair.slice(0, 20).map((req) => ({ id: req.id, title: req.title })),
+        nextAction: "REPAIR_SOURCE_GROUNDING",
+        hint: "Use the 'Repair source grounding' button or POST /api/tenders/{id}/repair-source-grounding, then retry generation.",
+      }, { status: 422 });
+    }
+  }
 
   const submissionPlan = buildSubmissionPlan({ id: tender.id, title: tender.title, exactFileNaming: tender.exactFileNaming, exactFileOrder: tender.exactFileOrder, pageLimit: tender.pageLimit, requirements: tender.requirements });
   const explicitSubmissionScope = hasExplicitSubmissionScope(tender);

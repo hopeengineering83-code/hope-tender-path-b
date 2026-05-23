@@ -74,7 +74,7 @@ function getModel(modelName = DEFAULT_GEMINI_MODEL) {
 }
 
 export function isAIEnabled() {
-  return Boolean(apiKey || anthropicApiKey || process.env.OPENAI_API_KEY);
+  return Boolean(apiKey || anthropicApiKey || process.env.OPENAI_API_KEY || process.env.DEEPSEEK_API_KEY);
 }
 
 export function isClaudeEnabled() {
@@ -86,7 +86,7 @@ export function isClaudeEnabled() {
 // (e.g., generate-elite.ts) so the GeneratedDocument.contentSummary can
 // surface which provider was actually used (rather than a generic "AI"
 // label). Reset to null whenever a generation request fails entirely.
-type AIProvider = "claude" | "gemini" | "openai" | null;
+type AIProvider = "claude" | "gemini" | "openai" | "deepseek" | null;
 let lastProposalProvider: AIProvider = null;
 
 export function getLastProposalProvider(): AIProvider {
@@ -234,9 +234,16 @@ async function generateWithClaude(prompt: string, systemPrompt: string = DEFAULT
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         attemptError = `${modelName}: ${msg}`;
-        // 401 / 403 — credentials are wrong, no point retrying or trying other models
+        // 401 / 403 — credentials are wrong, no point retrying or trying other models.
+        // In strict mode (AI_PROVIDER_STRICT_AUTH=true), hard-fail immediately.
+        // In default resilient mode, log and fall through to the next provider.
         if (/401|403|invalid api key|authentication/i.test(msg)) {
-          throw new Error(`Anthropic API key invalid — check ANTHROPIC_API_KEY in environment variables. (${msg})`);
+          const strictAuth = ["1", "true", "yes"].includes((process.env.AI_PROVIDER_STRICT_AUTH || "").trim().toLowerCase());
+          if (strictAuth) {
+            throw new Error(`Anthropic API key invalid — check ANTHROPIC_API_KEY in environment variables. (${msg})`);
+          }
+          console.warn(`[ai] Claude auth error on ${modelName} — continuing to next provider (set AI_PROVIDER_STRICT_AUTH=true to hard-fail): ${msg.slice(0, 100)}`);
+          return null;
         }
         // 429 — rate limit. Retry this model with backoff before falling
         // through to the next model. Free Tier hits this often.
@@ -368,6 +375,9 @@ export async function generateWithFallback(prompt: string, opts?: { systemPrompt
       return null;
     });
     if (openAiResult) return openAiResult;
+    // DeepSeek as 4th tier
+    const deepSeekResult1 = await generateWithDeepSeek(prompt, opts?.systemPrompt).catch(() => null);
+    if (deepSeekResult1) return deepSeekResult1;
     // Always surface Gemini error when it was the root cause — even in
     // mixed deployments where OpenAI is configured but also returned null.
     if (geminiError) {
@@ -399,13 +409,21 @@ export async function generateWithFallback(prompt: string, opts?: { systemPrompt
       return null;
     });
     if (openAiResult) return openAiResult;
+    // DeepSeek as 4th tier
+    const deepSeekResult2 = await generateWithDeepSeek(prompt, opts?.systemPrompt).catch(() => null);
+    if (deepSeekResult2) return deepSeekResult2;
     // If Gemini was the root cause, surface it rather than blaming OpenAI
     if (geminiError) throw geminiError;
     throw new Error(`OpenAI (${process.env.OPENAI_PROPOSAL_MODEL ?? "gpt-4o"}) is configured but did not return a result. Check OPENAI_API_KEY and model access on your account.`);
   }
+  // Try DeepSeek standalone when neither Claude nor Gemini is configured
+  if (isDeepSeekEnabled()) {
+    const deepSeekResult3 = await generateWithDeepSeek(prompt, opts?.systemPrompt).catch(() => null);
+    if (deepSeekResult3) return deepSeekResult3;
+  }
   // Gemini was configured but threw — surface the real error, not "no provider configured"
   if (geminiError) throw geminiError;
-  throw new Error("No AI provider configured — set ANTHROPIC_API_KEY (preferred), GEMINI_API_KEY, or OPENAI_API_KEY.");
+  throw new Error("No AI provider configured — set ANTHROPIC_API_KEY (preferred), GEMINI_API_KEY, OPENAI_API_KEY, or DEEPSEEK_API_KEY.");
 }
 
 // ─── OpenAI (GPT-4o) provider ──────────────────────────────────────────────────
@@ -479,6 +497,100 @@ async function generateWithOpenAI(
 
 export function isOpenAIEnabled() {
   return Boolean(process.env.OPENAI_API_KEY);
+}
+
+export function isDeepSeekEnabled() {
+  return Boolean(process.env.DEEPSEEK_API_KEY);
+}
+
+// ─── DeepSeek provider ─────────────────────────────────────────────────────────
+// Fourth-tier fallback: Claude → Gemini → OpenAI → DeepSeek.
+// Uses the OpenAI-compatible REST endpoint (no SDK needed).
+// Returns null when DEEPSEEK_API_KEY is not configured.
+const DEEPSEEK_DEFAULT_TIMEOUT_MS = 60_000;
+async function generateWithDeepSeek(
+  prompt: string,
+  systemPrompt: string = DEFAULT_PROPOSAL_SYSTEM_PROMPT,
+  maxTokens = 16000,
+): Promise<string | null> {
+  const deepSeekKey = process.env.DEEPSEEK_API_KEY;
+  if (!deepSeekKey) return null;
+
+  const model = process.env.DEEPSEEK_PROPOSAL_MODEL || "deepseek-chat";
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), DEEPSEEK_DEFAULT_TIMEOUT_MS);
+
+  try {
+    const res = await fetch("https://api.deepseek.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${deepSeekKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model,
+        max_tokens: maxTokens,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: prompt },
+        ],
+      }),
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      const sanitized = body.replace(/["']sk-[^"'\s]{8,}[^"'\s]*["']/g, '"[REDACTED]"').slice(0, 200);
+      if (res.status === 401 || res.status === 403) {
+        const strictAuth = ["1", "true", "yes"].includes((process.env.AI_PROVIDER_STRICT_AUTH || "").trim().toLowerCase());
+        if (strictAuth) {
+          throw new Error(`DeepSeek API key invalid (${res.status}): ${sanitized}`);
+        }
+        console.warn(`[ai] DeepSeek auth error (${res.status}) — continuing to deterministic fallback: ${sanitized}`);
+        return null;
+      }
+      if (res.status === 429) {
+        console.warn(`[ai] DeepSeek rate limit (429) on ${model} — skipping to deterministic fallback.`);
+        return null;
+      }
+      console.warn(`[ai] DeepSeek error ${res.status} on ${model}: ${sanitized} — skipping.`);
+      return null;
+    }
+
+    const data = await res.json() as {
+      choices?: Array<{ message?: { content?: string } }>;
+      error?: { message?: string };
+    };
+
+    if (data.error?.message) {
+      const sanitized = data.error.message.replace(/sk-[^\s"']{8,}/g, "[REDACTED]").slice(0, 200);
+      console.warn(`[ai] DeepSeek API error: ${sanitized}`);
+      return null;
+    }
+
+    const text = data.choices?.[0]?.message?.content?.trim() ?? "";
+    if (text.length === 0) {
+      console.warn(`[ai] DeepSeek ${model} returned empty content.`);
+      return null;
+    }
+    return text;
+  } catch (err) {
+    clearTimeout(timeoutId);
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes("aborted") || msg.includes("timeout")) {
+      console.warn(`[ai] DeepSeek fetch timed out after ${DEEPSEEK_DEFAULT_TIMEOUT_MS}ms — falling through.`);
+      return null;
+    }
+    const sanitized = msg.replace(/sk-[^\s"']{8,}/g, "[REDACTED]").slice(0, 200);
+    if (/api\s+key\s+invalid|invalid\s+api\s+key|incorrect\s+api\s+key|authentication|unauthorized/i.test(msg)) {
+      const strictAuth = ["1", "true", "yes"].includes((process.env.AI_PROVIDER_STRICT_AUTH || "").trim().toLowerCase());
+      if (strictAuth) throw err;
+    }
+    console.warn(`[ai] DeepSeek fetch failed: ${sanitized} — falling through to deterministic.`);
+    return null;
+  }
 }
 
 // Try PROPOSAL_MODELS in order until one succeeds — gives the best available model for proposal writing.
@@ -1074,7 +1186,13 @@ export async function generateWithClaudeTools(
         const msg = err instanceof Error ? err.message : String(err);
         attemptError = `${modelName}: ${msg}`;
         if (/401|403|invalid api key|authentication/i.test(msg)) {
-          throw new Error(`Anthropic API key invalid — check ANTHROPIC_API_KEY. (${msg})`);
+          const strictAuth = ["1", "true", "yes"].includes((process.env.AI_PROVIDER_STRICT_AUTH || "").trim().toLowerCase());
+          if (strictAuth) {
+            throw new Error(`Anthropic API key invalid — check ANTHROPIC_API_KEY. (${msg})`);
+          }
+          console.warn(`[ai:tools] Claude auth error on ${modelName} — falling back: ${msg.slice(0, 100)}`);
+          aborted = true;
+          break;
         }
         if (/429|rate.?limit|over.?capacity|tokens per minute/i.test(msg) && turn < MAX_TOOL_TURNS - 1) {
           console.warn(`[ai:tools] Claude rate-limit on ${modelName} mid-loop — aborting this model.`);
@@ -1364,6 +1482,12 @@ export async function critiqueProposalWithAI(input: DeepCritiqueInput): Promise<
       );
       if (openAiResult) return openAiResult;
     }
+    if (isDeepSeekEnabled()) {
+      const deepSeekResult = await withRefinementTimeout(
+        generateWithDeepSeek(prompt, CRITIC_SYSTEM_PROMPT).then((r) => r ?? Promise.reject(new Error("DeepSeek returned null"))),
+      ).catch((e) => { console.warn(`[ai] critiqueProposalWithAI DeepSeek failed: ${e instanceof Error ? e.message : String(e)}`); return null; });
+      if (deepSeekResult) return deepSeekResult;
+    }
   } catch (err) {
     console.warn(`[ai] critiqueProposalWithAI failed: ${err instanceof Error ? err.message : String(err)}`);
     return null;
@@ -1407,6 +1531,15 @@ export async function rewriteProposalWithCritique(input: DeepRewriteInput): Prom
       if (openAiResult) {
         lastProposalProvider = "openai";
         return openAiResult;
+      }
+    }
+    if (isDeepSeekEnabled()) {
+      const deepSeekResult = await withRefinementTimeout(
+        generateWithDeepSeek(prompt, REWRITER_SYSTEM_PROMPT).then((r) => r ?? Promise.reject(new Error("DeepSeek returned null"))),
+      ).catch((e) => { console.warn(`[ai] rewriteProposalWithCritique DeepSeek failed: ${e instanceof Error ? e.message : String(e)}`); return null; });
+      if (deepSeekResult) {
+        lastProposalProvider = "deepseek";
+        return deepSeekResult;
       }
     }
   } catch (err) {
@@ -1513,6 +1646,20 @@ ${input.currentMarkdown}
         }
       } catch (openAiErr) {
         console.warn(`[ai] refineProposalWithAI OpenAI failed: ${openAiErr instanceof Error ? openAiErr.message : String(openAiErr)}`);
+      }
+    }
+    // DeepSeek as 4th refinement fallback
+    if (isDeepSeekEnabled()) {
+      try {
+        const deepSeekResult = await withRefinementTimeout(
+          generateWithDeepSeek(prompt, REFINEMENT_SYSTEM_PROMPT).then((r) => r ?? Promise.reject(new Error("DeepSeek returned null"))),
+        );
+        if (deepSeekResult) {
+          lastProposalProvider = "deepseek";
+          return deepSeekResult;
+        }
+      } catch (deepSeekErr) {
+        console.warn(`[ai] refineProposalWithAI DeepSeek failed: ${deepSeekErr instanceof Error ? deepSeekErr.message : String(deepSeekErr)}`);
       }
     }
   } catch (err) {
@@ -2330,6 +2477,15 @@ Now write the complete technical proposal. Start with the Cover Letter. The eval
         lastProposalProvider = "openai";
         return openAiResult;
       }
+      // DeepSeek as 4th tier
+      const deepSeekResult = await generateWithDeepSeek(prompt).catch((e) => {
+        console.warn(`[ai] DeepSeek also failed: ${e instanceof Error ? e.message : String(e)}`);
+        return null;
+      });
+      if (deepSeekResult) {
+        lastProposalProvider = "deepseek";
+        return deepSeekResult;
+      }
       // Re-throw original Gemini error so callers surface the root cause
       throw geminiErr;
     }
@@ -2341,6 +2497,18 @@ Now write the complete technical proposal. Start with the Cover Letter. The eval
     if (openAiResult) {
       lastProposalProvider = "openai";
       return openAiResult;
+    }
+  }
+
+  // DeepSeek as 4th-tier standalone provider
+  if (isDeepSeekEnabled()) {
+    const deepSeekResult = await generateWithDeepSeek(prompt).catch((e) => {
+      console.warn(`[ai] DeepSeek standalone failed: ${e instanceof Error ? e.message : String(e)}`);
+      return null;
+    });
+    if (deepSeekResult) {
+      lastProposalProvider = "deepseek";
+      return deepSeekResult;
     }
   }
 
@@ -2413,7 +2581,7 @@ interface SectionResult {
   id: ProposalSectionId;
   title: string;
   markdown: string;
-  source: "claude" | "gemini" | "openai" | "fallback";
+  source: "claude" | "gemini" | "openai" | "deepseek" | "fallback";
   error?: string;
   durationMs: number;
 }
@@ -2511,6 +2679,28 @@ async function generateOneSection(spec: ProposalSectionSpec): Promise<SectionRes
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.warn(`[ai] section "${spec.id}" OpenAI fallback failed (${msg}) — using deterministic fallback.`);
+    }
+  }
+
+  // DeepSeek fourth-tier fallback
+  if (isDeepSeekEnabled()) {
+    try {
+      const text = await Promise.race([
+        generateWithDeepSeek(spec.userPrompt, spec.systemPrompt, spec.maxOutputTokens ?? 4096),
+        makeSectionTimeout(),
+      ]);
+      if (text && text.trim().length > 0) {
+        return {
+          id: spec.id,
+          title: spec.title,
+          markdown: text,
+          source: "deepseek",
+          durationMs: Date.now() - t0,
+        };
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[ai] section "${spec.id}" DeepSeek fallback failed (${msg}) — using deterministic fallback.`);
     }
   }
 
@@ -2642,15 +2832,18 @@ export async function generateProposalSectionsParallel(input: AIBidWriterInput, 
   const usedClaude = sections.some((s) => s.source === "claude");
   const usedGemini = sections.some((s) => s.source === "gemini");
   const usedOpenAI = sections.some((s) => s.source === "openai");
+  const usedDeepSeek = sections.some((s) => s.source === "deepseek");
   const allFell = sections.every((s) => s.source === "fallback");
   if (allFell) {
     lastProposalProvider = null;
   } else if (usedClaude) {
     lastProposalProvider = "claude";
-  } else if (usedGemini && !usedOpenAI) {
+  } else if (usedGemini && !usedOpenAI && !usedDeepSeek) {
     lastProposalProvider = "gemini";
-  } else if (usedOpenAI) {
+  } else if (usedOpenAI && !usedDeepSeek) {
     lastProposalProvider = "openai";
+  } else if (usedDeepSeek) {
+    lastProposalProvider = "deepseek";
   }
 
   // Diagnostic summary line — surfaces in Vercel runtime logs so
