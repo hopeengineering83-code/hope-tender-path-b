@@ -111,6 +111,18 @@ describe("checkDocxHygieneReadiness", () => {
     assert.equal(failures.length, 1);
     assert.ok(failures[0].reasons.some((r) => /Placeholder/i.test(r)));
   });
+
+  it("does not block safe no-price-control wording inside DOCX visible text", async () => {
+    const fileContent = await fakeDocxBase64("Technical Proposal This technical proposal does not include fee amounts, rates, unit prices, total price, or financial offer values.");
+    const failures = await checkDocxHygieneReadiness([{ ...READY, name: "Technical Proposal", exactFileName: "Technical-Proposal.docx", fileContent }]);
+    assert.equal(failures.length, 0);
+  });
+
+  it("does not treat financial/commercial DOCX content as technical for pricing hygiene", async () => {
+    const fileContent = await fakeDocxBase64("Financial Proposal The total price is USD 25,000.");
+    const failures = await checkDocxHygieneReadiness([{ ...READY, name: "Financial Proposal", exactFileName: "Financial-Proposal.docx", fileContent }]);
+    assert.equal(failures.length, 0);
+  });
 });
 
 describe("exportReadinessError", () => {
