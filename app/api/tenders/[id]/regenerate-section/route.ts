@@ -14,6 +14,7 @@
 
 import { NextResponse } from "next/server";
 import { getSession } from "../../../../../lib/auth";
+import { rateLimit, AI_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { isAIEnabled, type AIBidWriterInput } from "../../../../../lib/ai";
 import { BENCHMARK_CONTEXT_LINES, buildProposalIntelligence, buildCriterionEvidenceMap, expertProofLine, projectProofLine, safeParseArr } from "../../../../../lib/engine/proposal-intelligence";
@@ -85,6 +86,9 @@ function buildProjectEvidenceLines(projects: { name?: string | null; evidences?:
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const userId = await getSession();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const rl = rateLimit(`regen-section:${userId}`, AI_RATE_LIMIT);
+  if (!rl.allowed) return NextResponse.json({ error: "Too many requests. Please wait before regenerating again.", code: "RATE_LIMITED", resetAt: rl.resetAt }, { status: 429 });
 
   await prismaReady;
   const { id } = await params;

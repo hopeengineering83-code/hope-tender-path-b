@@ -146,6 +146,16 @@ async function validateGeneratedPdf(doc: { id: string; name: string; exactFileNa
     else text = extracted;
   }
   for (const pattern of forbiddenFinalOutputPatterns()) if (pattern.test(text) || pattern.test(doc.name) || pattern.test(filename)) errors.push(`Forbidden final-output trace detected: ${pattern.source}`);
+  const status = errors.length === 0 ? "VALIDATED" : "FAILED";
+  if (doc.validationStatus !== status) {
+    await prisma.generatedDocument.update({
+      where: { id: doc.id },
+      data: {
+        validationStatus: status,
+        reviewNotes: errors.length > 0 ? errors.join("\n") : "Passed deterministic final export validation.",
+      },
+    });
+  }
   return { ok: errors.length === 0, errors, filename };
 }
 

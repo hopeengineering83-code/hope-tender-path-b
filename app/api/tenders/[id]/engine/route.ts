@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSession } from "../../../../../lib/auth";
+import { rateLimit, AI_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { runTenderEngine, type EngineRunOptions } from "../../../../../lib/engine/run-tender-engine";
 import { assessExtractionQuality } from "../../../../../lib/extraction-quality";
@@ -20,6 +21,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const diagnosticId = requestDiagnosticId();
   const userId = await getSession();
   if (!userId) return NextResponse.json({ error: "Unauthorized. Sign in again before running the tender engine.", code: "UNAUTHORIZED", nextAction: "LOGIN_AGAIN", diagnosticId }, { status: 401 });
+
+  const rl = rateLimit(`engine:${userId}`, AI_RATE_LIMIT);
+  if (!rl.allowed) return NextResponse.json({ error: "Too many engine runs. Please wait before retrying.", code: "RATE_LIMITED", resetAt: rl.resetAt, diagnosticId }, { status: 429 });
 
   try {
     await prismaReady;

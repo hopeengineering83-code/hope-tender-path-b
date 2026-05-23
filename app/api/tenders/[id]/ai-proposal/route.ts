@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSession } from "../../../../../lib/auth";
+import { rateLimit, AI_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { generateBenchmarkProposalWithAI, generateProposalSectionsParallel, isAIEnabled } from "../../../../../lib/ai";
 import type { ProposalSectionId } from "../../../../../lib/engine/proposal-sections";
@@ -132,6 +133,9 @@ function fallbackProposal(params: {
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const userId = await getSession();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const rl = rateLimit(`ai-proposal:${userId}`, AI_RATE_LIMIT);
+  if (!rl.allowed) return NextResponse.json({ error: "Too many requests. Please wait before generating again.", code: "RATE_LIMITED", resetAt: rl.resetAt }, { status: 429 });
 
   await prismaReady;
   const { id } = await params;
