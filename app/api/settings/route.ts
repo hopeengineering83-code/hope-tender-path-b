@@ -23,16 +23,24 @@ export async function PUT(req: Request) {
 
   const body = await req.json() as Record<string, unknown>;
 
+  const VALID_CURRENCIES = /^[A-Z]{3}$/;
+  const VALID_EXPORT_FORMATS = new Set(["DOCX", "PDF"]);
+  const VALID_LANGUAGE = /^[a-z]{2}(-[A-Z]{2})?$/;
+
+  const rawCurrency = typeof body.defaultCurrency === "string" ? body.defaultCurrency.trim().toUpperCase() : "USD";
+  const rawFormat = typeof body.exportFormat === "string" ? body.exportFormat.trim().toUpperCase() : "DOCX";
+  const rawLanguage = typeof body.language === "string" ? body.language.trim() : "en";
+
   const data = {
-    defaultCurrency: typeof body.defaultCurrency === "string" ? body.defaultCurrency : "USD",
+    defaultCurrency: VALID_CURRENCIES.test(rawCurrency) ? rawCurrency : "USD",
     aiStrictMode: typeof body.aiStrictMode === "boolean" ? body.aiStrictMode : true,
     allowBrandingDefault: typeof body.allowBrandingDefault === "boolean" ? body.allowBrandingDefault : true,
     allowSignatureDefault: typeof body.allowSignatureDefault === "boolean" ? body.allowSignatureDefault : true,
     allowStampDefault: typeof body.allowStampDefault === "boolean" ? body.allowStampDefault : true,
-    exportFormat: typeof body.exportFormat === "string" ? body.exportFormat : "DOCX",
+    exportFormat: VALID_EXPORT_FORMATS.has(rawFormat) ? rawFormat : "DOCX",
     pageNumbering: typeof body.pageNumbering === "boolean" ? body.pageNumbering : true,
     includeTableOfContents: typeof body.includeTableOfContents === "boolean" ? body.includeTableOfContents : false,
-    language: typeof body.language === "string" ? body.language : "en",
+    language: VALID_LANGUAGE.test(rawLanguage) ? rawLanguage : "en",
     updatedAt: new Date(),
   };
 

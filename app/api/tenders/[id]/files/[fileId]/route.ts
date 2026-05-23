@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getSession } from "../../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../../lib/prisma";
 import { logAction } from "../../../../../../lib/audit";
+import { getStorageAdapter } from "../../../../../../lib/storage";
 
 export async function GET(
   _req: Request,
@@ -21,14 +22,23 @@ export async function GET(
   });
   if (!file) return NextResponse.json({ error: "File not found" }, { status: 404 });
 
-  if (!file.fileContent) {
+  if (!file.fileContent && !file.storagePath) {
     return NextResponse.json({ error: "File content not available" }, { status: 404 });
   }
 
-  const buffer = Buffer.from(file.fileContent, "base64");
+  let buffer: Buffer;
+  try {
+    if (file.fileContent) {
+      buffer = Buffer.from(file.fileContent, "base64");
+    } else {
+      buffer = await getStorageAdapter().getFile({ storagePath: file.storagePath!, fileContent: null, fileName: file.originalFileName });
+    }
+  } catch {
+    return NextResponse.json({ error: "File content could not be retrieved from storage" }, { status: 502 });
+  }
   const safeFileName = file.originalFileName.replace(/[^a-zA-Z0-9._\- ()]/g, "_");
 
-  return new Response(buffer, {
+  return new Response(new Uint8Array(buffer), {
     headers: {
       "Content-Type": file.mimeType || "application/octet-stream",
       "Content-Disposition": `attachment; filename="${safeFileName}"`,

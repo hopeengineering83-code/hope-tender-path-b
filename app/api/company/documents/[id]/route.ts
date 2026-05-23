@@ -5,6 +5,7 @@ import { logAction } from "../../../../../lib/audit";
 import { extractTextFromBuffer, getFileTypeLabel, isMeaningfulExtraction } from "../../../../../lib/extract-text";
 import { importCompanyKnowledgeFromDocuments } from "../../../../../lib/company-knowledge-import-safe";
 import { runCompanyKnowledgeSafetyImport } from "../../../../../lib/company-knowledge-safety-import";
+import { getStorageAdapter } from "../../../../../lib/storage";
 
 export async function GET(
   _req: Request,
@@ -24,14 +25,23 @@ export async function GET(
   });
   if (!doc) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  if (!doc.fileContent) {
+  if (!doc.fileContent && !doc.storagePath) {
     return NextResponse.json({ error: "File content not available" }, { status: 404 });
   }
 
-  const buffer = Buffer.from(doc.fileContent, "base64");
+  let buffer: Buffer;
+  try {
+    if (doc.fileContent) {
+      buffer = Buffer.from(doc.fileContent, "base64");
+    } else {
+      buffer = await getStorageAdapter().getFile({ storagePath: doc.storagePath, fileContent: null, fileName: doc.originalFileName });
+    }
+  } catch {
+    return NextResponse.json({ error: "File content could not be retrieved from storage" }, { status: 502 });
+  }
   const safeFileName = doc.originalFileName.replace(/[^a-zA-Z0-9._\- ()]/g, "_");
 
-  return new Response(buffer, {
+  return new Response(new Uint8Array(buffer), {
     headers: {
       "Content-Type": doc.mimeType || "application/octet-stream",
       "Content-Disposition": `attachment; filename="${safeFileName}"`,
@@ -55,9 +65,18 @@ export async function POST(
 
   const doc = await prisma.companyDocument.findFirst({ where: { id, companyId: company.id } });
   if (!doc) return NextResponse.json({ error: "Not found" }, { status: 404 });
-  if (!doc.fileContent) return NextResponse.json({ error: "File content not stored" }, { status: 400 });
+  if (!doc.fileContent && !doc.storagePath) return NextResponse.json({ error: "File content not stored" }, { status: 400 });
 
-  const buffer = Buffer.from(doc.fileContent, "base64");
+  let buffer: Buffer;
+  try {
+    if (doc.fileContent) {
+      buffer = Buffer.from(doc.fileContent, "base64");
+    } else {
+      buffer = await getStorageAdapter().getFile({ storagePath: doc.storagePath, fileContent: null, fileName: doc.originalFileName });
+    }
+  } catch {
+    return NextResponse.json({ error: "File content could not be retrieved from storage" }, { status: 502 });
+  }
   const extractedText = await extractTextFromBuffer(buffer, doc.mimeType, doc.originalFileName);
   const fileType = getFileTypeLabel(doc.mimeType, doc.originalFileName);
   const meaningful = isMeaningfulExtraction(extractedText);
