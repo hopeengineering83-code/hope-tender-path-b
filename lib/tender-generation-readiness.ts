@@ -4,6 +4,19 @@ import { getCompanyIngestionReadiness, type CompanyIngestionReadiness } from "./
 import { assessTenderAnalysisQuality, type AnalysisQualityReport } from "./analysis-quality";
 import { assessMatchingQuality, type MatchingQualityReport } from "./matching-quality";
 import { isValidClientName, getClientNameStatus } from "./engine/metadata-validators";
+// Round follow-up to PR #424/#425 — surface PDF-required + branding/
+// signature/stamp policy in the readiness panel BEFORE the user
+// clicks Download. Operators see the conflict early and fix it
+// (toggle AppSettings, upload PDF, etc.) instead of hitting a 422
+// at export time.
+import {
+  detectBrandingPolicy,
+  detectTenderFormatPolicy,
+  resolveExportAssetStatus,
+  type BrandingPolicy,
+  type ExportAssetStatus,
+  type TenderFormatPolicy,
+} from "./engine/export-format-policy";
 
 export type GenerationReadinessItem = {
   code: string;
@@ -57,6 +70,21 @@ export type TenderGenerationReadiness = {
   companyReadiness: CompanyIngestionReadiness;
   analysisQuality: AnalysisQualityReport;
   matchingQuality: MatchingQualityReport;
+  /**
+   * Export-format policy detected from the tender's exactFileNaming /
+   * exactFileOrder / per-requirement exactFileName. UI uses this to
+   * show "tender requires PDF" labels in the readiness panel.
+   */
+  formatPolicy: TenderFormatPolicy;
+  /**
+   * Branding / signature / stamp policy combining tender-side
+   * restriction scan with firm-side AppSettings toggles. UI uses
+   * this to show brandingApplied / signatureApplied / stampApplied
+   * badges in the readiness panel BEFORE the user clicks Download
+   * (the actual policy enforcement still happens in the download
+   * route — this is the early-warning surface).
+   */
+  exportAssetStatus: ExportAssetStatus;
   generatedAt: string;
 };
 
@@ -388,6 +416,93 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
     fullProposalBlockers.push(b);
   }
 
+  // ─── Export-format + branding policy surfacing (PR follow-up to #424/#425) ──
+  // Detect what the tender's submission plan requires (.pdf vs .docx)
+  // and what it prohibits (branding / signature / stamp / anonymous).
+  // Compose with the firm's AppSettings to produce the structured
+  // status objects the UI shows in the readiness panel. Surface
+  // matching warnings here so operators see issues BEFORE clicking
+  // Download (the route still enforces; this is the early-warning).
+  const formatPolicy = detectTenderFormatPolicy({
+    exactFileNaming: tender.exactFileNaming,
+    exactFileOrder: tender.exactFileOrder,
+    requirements: tender.requirements.map((r) => ({ exactFileName: r.exactFileName ?? null })),
+  });
+
+  const tenderText = [
+    tender.title ?? "",
+    tender.description ?? "",
+    tender.intakeSummary ?? "",
+    tender.analysisSummary ?? "",
+    tender.evaluationMethodology ?? "",
+    tender.notes ?? "",
+    ...tender.requirements.map((r) => `${r.title ?? ""} ${r.description ?? ""} ${r.restrictions ?? ""}`),
+  ].join("\n\n");
+  const brandingPolicy: BrandingPolicy = detectBrandingPolicy(tenderText);
+
+  // Defensive: tests use lightweight fake Prisma clients that may
+  // omit appSettings. Synchronous undefined access would throw
+  // before .catch() runs, so we guard with optional chaining.
+  // Production Prisma always exposes appSettings; defaulting to
+  // null here means "no firm preference" → assets default to
+  // allowed (matching pre-PR behaviour).
+  const appSettingsRow = await (async () => {
+    try {
+      const result = await client.appSettings?.findFirst?.({
+        where: { companyId: company.id },
+        select: { allowBrandingDefault: true, allowSignatureDefault: true, allowStampDefault: true },
+      });
+      return result ?? null;
+    } catch {
+      return null;
+    }
+  })();
+  const exportAssetStatus = resolveExportAssetStatus(brandingPolicy, {
+    allowBrandingDefault: appSettingsRow?.allowBrandingDefault ?? true,
+    allowSignatureDefault: appSettingsRow?.allowSignatureDefault ?? true,
+    allowStampDefault: appSettingsRow?.allowStampDefault ?? true,
+  });
+
+  // Emit warnings (not blockers) for export-policy issues. They're
+  // warnings because:
+  //   - PDF-required is only a problem at EXPORT time; the user can
+  //     still generate DOCX and decide later (the download route's
+  //     422 PDF_REQUIRED_CONVERSION_UNAVAILABLE is the hard gate).
+  //   - Branding conflict: the user might still toggle AppSettings
+  //     OFF or re-generate without the asset; the download route's
+  //     409 BRANDING_POLICY_CONFLICT is the hard gate.
+  if (formatPolicy.requiresPdf) {
+    warnings.push({
+      code: "TENDER_REQUIRES_PDF",
+      message: `Tender submission plan requires PDF output (${formatPolicy.perFile.filter((p) => p.format === "pdf").map((p) => p.exactFileName).join(", ")}). In-engine PDF conversion is not yet implemented — final export will block with PDF_REQUIRED_CONVERSION_UNAVAILABLE unless a PDF is uploaded.`,
+      nextAction: "OPEN_TENDER_DETAIL",
+    });
+  }
+  if (!exportAssetStatus.brandingAllowed && exportAssetStatus.brandingApplied === false && (appSettingsRow?.allowBrandingDefault ?? true)) {
+    // Tender prohibits branding AND firm setting would apply it (the
+    // resolve function already reconciled, so brandingApplied=false
+    // means the conflict is real). Surface as a warning.
+    warnings.push({
+      code: "TENDER_PROHIBITS_BRANDING",
+      message: `Tender prohibits branding/letterhead but the firm's AppSettings default is ON. Final export will block with BRANDING_POLICY_CONFLICT. Toggle Branding OFF in Settings, OR remove branding from generated documents.`,
+      nextAction: "OPEN_SETTINGS",
+    });
+  }
+  if (!exportAssetStatus.signatureAllowed && (appSettingsRow?.allowSignatureDefault ?? true)) {
+    warnings.push({
+      code: "TENDER_PROHIBITS_SIGNATURE",
+      message: `Tender prohibits signatures (likely "unsigned submission required" or "anonymous submission"). Final export will block with BRANDING_POLICY_CONFLICT. Toggle Signature OFF in Settings.`,
+      nextAction: "OPEN_SETTINGS",
+    });
+  }
+  if (!exportAssetStatus.stampAllowed && (appSettingsRow?.allowStampDefault ?? true)) {
+    warnings.push({
+      code: "TENDER_PROHIBITS_STAMP",
+      message: `Tender prohibits stamps/seals. Final export will block with BRANDING_POLICY_CONFLICT. Toggle Stamp OFF in Settings.`,
+      nextAction: "OPEN_SETTINGS",
+    });
+  }
+
   const supportPackageReady = blockers.length === 0;
   const fullProposalReady = fullProposalBlockers.length === 0;
 
@@ -415,6 +530,8 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
     companyReadiness,
     analysisQuality,
     matchingQuality,
+    formatPolicy,
+    exportAssetStatus,
     generatedAt: new Date().toISOString(),
   };
 }

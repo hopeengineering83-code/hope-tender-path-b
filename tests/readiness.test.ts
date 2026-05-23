@@ -253,6 +253,60 @@ test("tender generation readiness surfaces BEST-AVAILABLE warning when selection
   assert.equal(warning!.nextAction, "REVIEW_MATCHES");
 });
 
+test("tender generation readiness surfaces TENDER_REQUIRES_PDF warning when submission plan declares .pdf", async () => {
+  const readiness = await getTenderGenerationReadiness(fakeClient({
+    documents: [usefulDocument],
+    experts: [{ trustLevel: "REVIEWED" }],
+    projects: [{ trustLevel: "REVIEWED" }],
+    tender: {
+      id: "tender-1",
+      status: "ANALYZED",
+      ...goodAnalysisFields,
+      // Override to declare a PDF requirement
+      exactFileNaming: JSON.stringify(["Technical-Proposal.pdf"]),
+      exactFileOrder: JSON.stringify(["Technical-Proposal.pdf"]),
+      requirements: [expertRequirement, projectRequirement],
+      complianceGaps: [],
+      expertMatches: [{ isSelected: true, expert: { trustLevel: "REVIEWED", fullName: "Senior Engineer" }, rationale: "Auto-selected ≥75%." }],
+      projectMatches: [{ isSelected: true, project: { trustLevel: "REVIEWED", name: "Relevant Project" }, rationale: "Auto-selected ≥75%." }],
+    },
+  }), "user-1", "tender-1");
+
+  assert.ok(readiness);
+  const pdfWarning = readiness.warnings.find((w) => w.code === "TENDER_REQUIRES_PDF");
+  assert.ok(pdfWarning, `expected TENDER_REQUIRES_PDF warning when submission plan declares .pdf; got ${JSON.stringify(readiness.warnings.map((w) => w.code))}`);
+  assert.match(pdfWarning!.message, /PDF_REQUIRED_CONVERSION_UNAVAILABLE/);
+  // Diagnostic field is populated for the UI.
+  assert.equal(readiness.formatPolicy.requiresPdf, true);
+});
+
+test("tender generation readiness surfaces TENDER_PROHIBITS_BRANDING warning when intake notes prohibit branding", async () => {
+  const readiness = await getTenderGenerationReadiness(fakeClient({
+    documents: [usefulDocument],
+    experts: [{ trustLevel: "REVIEWED" }],
+    projects: [{ trustLevel: "REVIEWED" }],
+    tender: {
+      id: "tender-1",
+      status: "ANALYZED",
+      ...goodAnalysisFields,
+      // Plant a branding prohibition in intakeSummary so detectBrandingPolicy fires
+      intakeSummary: "Submission must not contain any logo or company branding.",
+      requirements: [expertRequirement, projectRequirement],
+      complianceGaps: [],
+      expertMatches: [{ isSelected: true, expert: { trustLevel: "REVIEWED", fullName: "Senior Engineer" }, rationale: "Auto-selected ≥75%." }],
+      projectMatches: [{ isSelected: true, project: { trustLevel: "REVIEWED", name: "Relevant Project" }, rationale: "Auto-selected ≥75%." }],
+    },
+  }), "user-1", "tender-1");
+
+  assert.ok(readiness);
+  const brandingWarning = readiness.warnings.find((w) => w.code === "TENDER_PROHIBITS_BRANDING");
+  assert.ok(brandingWarning, `expected TENDER_PROHIBITS_BRANDING warning; got ${JSON.stringify(readiness.warnings.map((w) => w.code))}`);
+  assert.match(brandingWarning!.message, /BRANDING_POLICY_CONFLICT/);
+  // Diagnostic field is populated.
+  assert.equal(readiness.exportAssetStatus.brandingAllowed, false);
+  assert.ok(readiness.exportAssetStatus.policyBlockers.length > 0);
+});
+
 test("tender generation readiness does NOT emit BEST-AVAILABLE warning when matches were promoted via the standard safe-floor path", async () => {
   const readiness = await getTenderGenerationReadiness(fakeClient({
     documents: [usefulDocument],
