@@ -11,6 +11,15 @@ import { getTenderGenerationReadiness } from "../../../../../lib/tender-generati
 // Strict final-ZIP scope resolver — single source of truth for what
 // enters the final submission ZIP. See lib/engine/final-zip-scope.ts.
 import { buildFinalZipEntries } from "../../../../../lib/engine/final-zip-scope";
+// PDF-required + branding/signature/stamp policy. See
+// lib/engine/export-format-policy.ts.
+import {
+  checkTenderFormatCoverage,
+  detectBrandingPolicy,
+  detectTenderFormatPolicy,
+  resolveExportAssetStatus,
+  validateFileSignature,
+} from "../../../../../lib/engine/export-format-policy";
 
 function safeParseArr(v: unknown): string[] {
   try {
@@ -319,6 +328,92 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
           return NextResponse.json({ error: "Generated package order does not match tender-required file order.", requiredOrder, generatedOrder: generatedNames }, { status: 400 });
         }
       }
+    }
+
+    // ─── GAP 2 — PDF-REQUIRED FORMAT COVERAGE ──────────────────────────
+    // Tender's submission plan may explicitly require .pdf output.
+    // Don't silently ship DOCX renamed to .pdf or block-and-confuse the
+    // user — return PDF_REQUIRED_CONVERSION_UNAVAILABLE with a clear
+    // message when the format gap is real. See export-format-policy.ts.
+    const formatPolicy = detectTenderFormatPolicy({
+      exactFileNaming: tender.exactFileNaming,
+      exactFileOrder: tender.exactFileOrder,
+      requirements: tender.requirements.map((r) => ({ exactFileName: r.exactFileName ?? null })),
+    });
+    if (formatPolicy.requiredFormats.length > 0) {
+      const generatedExts = generatedDocs.map((d) => {
+        const fn = d.exactFileName ?? generatedFileName(d.name);
+        return fn.toLowerCase().split(".").pop() ?? "";
+      });
+      const coverage = checkTenderFormatCoverage(formatPolicy, generatedExts);
+      if (!coverage.ok) {
+        return NextResponse.json({
+          error: coverage.reason,
+          code: coverage.code,
+          missing: coverage.missing,
+          requiredFormats: formatPolicy.requiredFormats,
+        }, { status: 422 });
+      }
+    }
+
+    // Per-file signature validation — catches renamed DOCX→.pdf or
+    // PDF→.docx accidents. Each generated doc must have its binary
+    // signature match its declared extension.
+    for (const doc of generatedDocs) {
+      const filename = doc.exactFileName ?? generatedFileName(doc.name);
+      const signatureCheck = validateFileSignature(filename, doc.fileContent ?? "");
+      if (!signatureCheck.ok) {
+        return NextResponse.json({
+          error: `Final export blocked: file signature mismatch on "${filename}".`,
+          code: "FILE_SIGNATURE_MISMATCH",
+          reason: signatureCheck.reason,
+        }, { status: 422 });
+      }
+    }
+
+    // ─── GAP 3 — BRANDING / SIGNATURE / STAMP POLICY ───────────────────
+    // Scan tender text for restriction language and reject the export
+    // when the firm would apply an asset the tender explicitly
+    // prohibits. The asset-status object is also returned to the UI so
+    // the readiness panel can show what was allowed vs blocked.
+    const tenderText = [
+      tender.title ?? "",
+      tender.description ?? "",
+      tender.intakeSummary ?? "",
+      tender.analysisSummary ?? "",
+      tender.evaluationMethodology ?? "",
+      ...tender.requirements.map((r) => `${r.title ?? ""} ${r.description ?? ""} ${r.restrictions ?? ""}`),
+    ].join("\n\n");
+    const brandingPolicy = detectBrandingPolicy(tenderText);
+    // AppSettings is keyed by companyId (one settings row per
+    // company). `company.id` was loaded above when checking ingestion.
+    const appSettings = await prisma.appSettings.findFirst({ where: { companyId: company.id } });
+    const assetStatus = resolveExportAssetStatus(brandingPolicy, {
+      allowBrandingDefault: appSettings?.allowBrandingDefault,
+      allowSignatureDefault: appSettings?.allowSignatureDefault,
+      allowStampDefault: appSettings?.allowStampDefault,
+    });
+    // If the tender prohibits an asset BUT the firm's default is to
+    // apply it, block. The route doesn't currently strip DOCX assets
+    // mid-flight — that's a separate strip-pass follow-up. Until then,
+    // failing closed is the safe choice.
+    const conflictingAssets: string[] = [];
+    if (!brandingPolicy.brandingAllowed && (appSettings?.allowBrandingDefault !== false)) {
+      conflictingAssets.push("branding/letterhead");
+    }
+    if (!brandingPolicy.signatureAllowed && (appSettings?.allowSignatureDefault !== false)) {
+      conflictingAssets.push("signature");
+    }
+    if (!brandingPolicy.stampAllowed && (appSettings?.allowStampDefault !== false)) {
+      conflictingAssets.push("stamp");
+    }
+    if (conflictingAssets.length > 0) {
+      return NextResponse.json({
+        error: `Final export blocked: tender prohibits ${conflictingAssets.join(", ")} but the firm's AppSettings would apply it. Toggle off the relevant default in Settings, OR remove the asset from the generated documents, then retry.`,
+        code: "BRANDING_POLICY_CONFLICT",
+        assetStatus,
+        policyBlockers: brandingPolicy.blockers,
+      }, { status: 409 });
     }
 
     // ─── STRICT FINAL ZIP SCOPE (PR follow-up to #422) ─────────────────
