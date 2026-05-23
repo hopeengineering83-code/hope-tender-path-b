@@ -5,6 +5,7 @@ import { buildTenderFormStrategy, renderTenderFormStrategy } from "./tender-form
 import { enforceTechnicalPriceSeparation } from "./proposal-price-leakage-guard";
 import { renderTenderCriterionGraph } from "./tender-criterion-graph";
 import { renderProposalIntelligenceContract } from "./proposal-intelligence-contract";
+import { applyProposalEvaluatorLoop } from "./proposal-evaluator-loop";
 
 export type EvaluatorMatrixInput = {
   tenderTitle: string;
@@ -200,6 +201,8 @@ export function appendEvaluatorResponseMatrix(markdown: string, input: Evaluator
   for (const line of checklist) output += `\n- ${line}`;
   for (const outputName of tenderFormStrategy.requiredOutputs.slice(0, 8)) output += `\n- Confirm required output is prepared/reconciled: ${outputName}.`;
   output += "\n- Confirm no unsupported claim, placeholder text, AI disclaimer, prohibited financial content or wrong file name remains in the final package.";
+
+  output = applyProposalEvaluatorLoop(output, input);
 
   return enforceTechnicalPriceSeparation(applyProposalQualityRepairAddenda(output, input), input);
 }
