@@ -4,6 +4,20 @@ AI-powered tender proposal generation and compliance engine for Hope Urban Plann
 
 > This README documents the existing codebase. It is intentionally accurate — it describes what the code actually does, not aspirational features.
 
+## Merge policy
+
+**No PR may be merged if GitHub CI is failed, even when Vercel is green.**
+
+Required passing checks before merging to `main`:
+1. **GitHub Actions CI** — "Typecheck, test, and build" (runs typecheck + tests + build)
+2. **Vercel** deployment preview
+3. **Datadog Synthetic tests** where configured for the affected route
+
+See [`docs/audits/current-readiness-blockers.md`](docs/audits/current-readiness-blockers.md) for
+the current list of stale/diverged PRs and active blockers.
+
+---
+
 ## Contents
 
 1. [Product architecture](#1-product-architecture)
