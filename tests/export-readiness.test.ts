@@ -6,7 +6,7 @@
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
 import JSZip from "jszip";
-import { checkDocxHygieneReadiness, checkExportReadiness, exportReadinessError, isReadyForFinalExport } from "../lib/engine/export-readiness";
+import { checkDocxHygieneReadiness, checkExportReadiness, documentHygieneIssues, exportReadinessError, isReadyForFinalExport } from "../lib/engine/export-readiness";
 
 // Minimal base64 with ZIP/PK magic bytes (0x50 0x4B) — passes looksLikeBase64Docx check.
 const MINIMAL_DOCX_B64 = "UEsDBA==";
@@ -78,6 +78,17 @@ describe("checkExportReadiness", () => {
     assert.equal(res.ok, false);
     assert.ok(res.failures[0].reasons.some((r) => /pricing language/i.test(r)));
   });
+
+  it("does not block safe no-price-control wording in technical content", () => {
+    const issues = documentHygieneIssues("Technical Proposal\nThis technical proposal does not include any fee, rate, unit price, total price, or financial offer values.", READY_TEXT);
+    assert.equal(issues.some((r) => /pricing language/i.test(r)), false);
+  });
+
+  it("does not treat financial/commercial documents as technical for pricing hygiene", () => {
+    const financialDoc = { ...READY_TEXT, name: "Financial Proposal", exactFileName: "Financial-Proposal.docx", fileContent: "Financial Proposal\nThe total price is USD 25,000." };
+    const issues = documentHygieneIssues(financialDoc.fileContent, financialDoc);
+    assert.equal(issues.some((r) => /pricing language/i.test(r)), false);
+  });
 });
 
 describe("checkDocxHygieneReadiness", () => {
@@ -99,6 +110,18 @@ describe("checkDocxHygieneReadiness", () => {
     const failures = await checkDocxHygieneReadiness([{ ...READY, name: "Technical Proposal", exactFileName: "Technical-Proposal.docx", fileContent }]);
     assert.equal(failures.length, 1);
     assert.ok(failures[0].reasons.some((r) => /Placeholder/i.test(r)));
+  });
+
+  it("does not block safe no-price-control wording inside DOCX visible text", async () => {
+    const fileContent = await fakeDocxBase64("Technical Proposal This technical proposal does not include fee amounts, rates, unit prices, total price, or financial offer values.");
+    const failures = await checkDocxHygieneReadiness([{ ...READY, name: "Technical Proposal", exactFileName: "Technical-Proposal.docx", fileContent }]);
+    assert.equal(failures.length, 0);
+  });
+
+  it("does not treat financial/commercial DOCX content as technical for pricing hygiene", async () => {
+    const fileContent = await fakeDocxBase64("Financial Proposal The total price is USD 25,000.");
+    const failures = await checkDocxHygieneReadiness([{ ...READY, name: "Financial Proposal", exactFileName: "Financial-Proposal.docx", fileContent }]);
+    assert.equal(failures.length, 0);
   });
 });
 
