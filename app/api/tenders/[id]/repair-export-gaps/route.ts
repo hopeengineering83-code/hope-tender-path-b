@@ -6,6 +6,7 @@ import { buildSubmissionPlan, findMissingGeneratedDocuments, hasExplicitSubmissi
 import { applyActiveUploadedLetterheadToTenderDocuments } from "../../../../../lib/engine/apply-active-letterhead";
 import { deriveDocumentOutputState } from "../../../../../lib/engine/document-output-state";
 import { checkFullExportReadiness, documentHygieneIssues, extractDocxVisibleText } from "../../../../../lib/engine/export-readiness";
+import { generatedDocumentHasContent } from "../../../../../lib/generated-document-content";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 
 export const dynamic = "force-dynamic";
@@ -37,6 +38,7 @@ type RepairDoc = {
   validationStatus: string;
   reviewStatus: string;
   fileContent: string | null;
+  storagePath?: string | null;
 };
 
 function clean(value?: string | null): string {
@@ -239,7 +241,7 @@ async function ensurePlannedRecords(tenderId: string, plannedFiles: SubmissionPl
 }
 
 function needsRepair(doc: RepairDoc): boolean {
-  if (!doc.fileContent) return true;
+  if (!generatedDocumentHasContent(doc)) return true;
   if (doc.generationStatus !== "GENERATED") return true;
   if (doc.validationStatus !== "VALIDATED") return true;
   if (doc.reviewStatus !== "READY_FOR_EXPORT") return true;
@@ -273,7 +275,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   const docs = await prisma.generatedDocument.findMany({
     where: { tenderId, generationStatus: { not: "SUPERSEDED" } },
     orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }],
-    select: { id: true, name: true, exactFileName: true, exactOrder: true, documentType: true, format: true, generationStatus: true, validationStatus: true, reviewStatus: true, fileContent: true },
+    select: { id: true, name: true, exactFileName: true, exactOrder: true, documentType: true, format: true, generationStatus: true, validationStatus: true, reviewStatus: true, fileContent: true, storagePath: true },
   });
 
   const repaired: string[] = [];
@@ -287,7 +289,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       }
       const title = docTitle(doc);
       const documentType = documentTypeFor(title, doc.documentType);
-      const content = doc.fileContent && doc.generationStatus === "GENERATED" ? doc.fileContent : await makeDocx(title, documentType, context);
+      const content = generatedDocumentHasContent(doc) && doc.generationStatus === "GENERATED" ? (doc.fileContent ?? await makeDocx(title, documentType, context)) : await makeDocx(title, documentType, context);
       const fileName = doc.exactFileName || `${title.replace(/[^a-zA-Z0-9]+/g, "-").replace(/^-|-$/g, "")}.docx`;
       const visibleText = await extractDocxVisibleText(content, fileName);
       const hygieneIssues = documentHygieneIssues(visibleText ?? content);
@@ -326,9 +328,9 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   const repairedDocs = await prisma.generatedDocument.findMany({
     where: { tenderId, generationStatus: { not: "SUPERSEDED" } },
     orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }],
-    select: { id: true, name: true, exactFileName: true, exactOrder: true, documentType: true, format: true, generationStatus: true, validationStatus: true, reviewStatus: true, fileContent: true },
+    select: { id: true, name: true, exactFileName: true, exactOrder: true, documentType: true, format: true, generationStatus: true, validationStatus: true, reviewStatus: true, fileContent: true, storagePath: true },
   });
-  const readiness = await checkFullExportReadiness({ tenderId, docs: repairedDocs, requireFileContent: true });
+  const readiness = await checkFullExportReadiness({ tenderId, docs: repairedDocs, requireFileContent: false });
 
   await logAction({
     userId: actor.id,

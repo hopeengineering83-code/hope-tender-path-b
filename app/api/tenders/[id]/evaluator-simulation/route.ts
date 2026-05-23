@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { requireUser, unauthorizedResponse, forbiddenResponse } from "../../../../../lib/auth";
+import { rateLimit, AI_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import { simulateEvaluatorPanel } from "../../../../../lib/engine/evaluator-simulator";
 import { scoreProposalQuality } from "../../../../../lib/engine/proposal-quality-scorer";
 import { logAction } from "../../../../../lib/audit";
@@ -34,6 +35,9 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   }
   const canSimulate = ["ADMIN", "PROPOSAL_MANAGER", "REVIEWER"].includes(actor.role);
   if (!canSimulate) return forbiddenResponse();
+
+  const rl = rateLimit(`eval-sim:${actor.id}`, AI_RATE_LIMIT);
+  if (!rl.allowed) return NextResponse.json({ error: "Too many requests. Please wait before running the simulation again.", code: "RATE_LIMITED", resetAt: rl.resetAt }, { status: 429 });
 
   const { id } = await params;
   await prismaReady;

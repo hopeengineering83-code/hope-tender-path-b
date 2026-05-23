@@ -11,6 +11,7 @@
 
 import { NextResponse } from "next/server";
 import { requireUser, unauthorizedResponse, forbiddenResponse } from "../../../../../lib/auth";
+import { rateLimit, AI_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { generateExpertCvDocx, expertCvFileName } from "../../../../../lib/engine/expert-cv-docx";
 import { logAction } from "../../../../../lib/audit";
@@ -22,6 +23,9 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   let actor;
   try { actor = await requireUser(); } catch { return unauthorizedResponse(); }
   if (!["ADMIN", "PROPOSAL_MANAGER"].includes(actor.role)) return forbiddenResponse();
+
+  const rl = rateLimit(`regen-cvs:${actor.id}`, AI_RATE_LIMIT);
+  if (!rl.allowed) return NextResponse.json({ error: "Too many requests. Please wait before regenerating again.", code: "RATE_LIMITED", resetAt: rl.resetAt }, { status: 429 });
 
   await prismaReady;
   const { id: tenderId } = await params;

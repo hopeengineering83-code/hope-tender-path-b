@@ -86,8 +86,8 @@ export default function KnowledgeReviewBoardPage() {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
-  const experts = company.experts ?? [];
-  const projects = company.projects ?? [];
+  const experts = useMemo(() => company.experts ?? [], [company.experts]);
+  const projects = useMemo(() => company.projects ?? [], [company.projects]);
   const draftExperts = useMemo(() => experts.filter((x) => isDraft(x.trustLevel)), [experts]);
   const draftProjects = useMemo(() => projects.filter((x) => isDraft(x.trustLevel)), [projects]);
   const reviewedExperts = useMemo(() => experts.filter((x) => !isDraft(x.trustLevel)), [experts]);
