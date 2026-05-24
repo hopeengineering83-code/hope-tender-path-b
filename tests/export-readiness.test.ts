@@ -6,7 +6,7 @@
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
 import JSZip from "jszip";
-import { checkDocxHygieneReadiness, checkExportReadiness, documentHygieneIssues, exportReadinessError, isReadyForFinalExport } from "../lib/engine/export-readiness";
+import { checkDocxHygieneReadiness, checkExportReadiness, documentHygieneIssues, exportReadinessError, filePlanBlockersFromLists, isReadyForFinalExport } from "../lib/engine/export-readiness";
 
 // Minimal base64 with ZIP/PK magic bytes (0x50 0x4B) — passes looksLikeBase64Docx check.
 const MINIMAL_DOCX_B64 = "UEsDBA==";
@@ -146,5 +146,24 @@ describe("exportReadinessError", () => {
     }]);
     assert.ok(msg.includes("Cover-Letter.docx"));
     assert.ok(msg.includes("reviewStatus"));
+  });
+});
+
+describe("filePlanBlockersFromLists", () => {
+  it("blocks extra generated files when tender exact naming is explicit", () => {
+    const blockers = filePlanBlockersFromLists([
+      { ...READY, exactFileName: "Technical-Proposal.docx" },
+      { ...READY, id: "doc-2", exactFileName: "Financial-Proposal.docx" },
+      { ...READY, id: "doc-3", exactFileName: "Annex-Extra.docx" },
+    ], JSON.stringify(["Technical-Proposal.docx", "Financial-Proposal.docx"]), null);
+    assert.ok(blockers.some((b) => b.category === "EXTRA_FILES" && b.severity === "HIGH"));
+  });
+
+  it("treats file-order mismatch as a HIGH blocker", () => {
+    const blockers = filePlanBlockersFromLists([
+      { ...READY, exactOrder: 2, exactFileName: "Financial-Proposal.docx" },
+      { ...READY, id: "doc-2", exactOrder: 1, exactFileName: "Technical-Proposal.docx" },
+    ], null, JSON.stringify(["Technical-Proposal.docx", "Financial-Proposal.docx"]));
+    assert.ok(blockers.some((b) => b.category === "FILE_ORDER" && b.severity === "HIGH"));
   });
 });

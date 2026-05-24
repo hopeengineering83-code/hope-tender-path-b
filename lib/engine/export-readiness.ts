@@ -204,7 +204,7 @@ export function exportReadinessError(failures: ExportReadinessFailure[], tenderL
   return out.length === 0 ? "" : out.join("\n\n");
 }
 
-function filePlanBlockersFromLists(docs: ExportReadyDocument[], exactFileNaming: string | null | undefined, exactFileOrder: string | null | undefined): NonNullable<ExportReadinessResult["tenderLevelBlockers"]> {
+export function filePlanBlockersFromLists(docs: ExportReadyDocument[], exactFileNaming: string | null | undefined, exactFileOrder: string | null | undefined): NonNullable<ExportReadinessResult["tenderLevelBlockers"]> {
   const blockers: NonNullable<ExportReadinessResult["tenderLevelBlockers"]> = [];
   const requiredNames = parseRequiredFileList(exactFileNaming);
   const requiredOrder = parseRequiredFileList(exactFileOrder);
@@ -213,11 +213,13 @@ function filePlanBlockersFromLists(docs: ExportReadyDocument[], exactFileNaming:
 
   const missingNames = requiredNames.filter((name) => !actualNameSet.has(normalizeFileName(name)));
   if (missingNames.length > 0) blockers.push({ category: "FILE_NAMING", severity: "HIGH", title: `Missing required generated file name(s): ${missingNames.slice(0, 5).join(", ")}${missingNames.length > 5 ? ` and ${missingNames.length - 5} more` : ""}`, recommendedAction: "Generate or rename documents to match the tender's exact required file names before final export." });
+  const extraFiles = actualNames.filter((name) => requiredNames.length > 0 && !requiredNames.some((required) => normalizeFileName(required) === normalizeFileName(name)));
+  if (extraFiles.length > 0) blockers.push({ category: "EXTRA_FILES", severity: "HIGH", title: `Generated package contains non-required file(s): ${extraFiles.slice(0, 5).join(", ")}${extraFiles.length > 5 ? ` and ${extraFiles.length - 5} more` : ""}`, recommendedAction: "Remove extra generated files not listed in the tender's exact file naming instructions before final export." });
 
   if (requiredOrder.length > 0) {
     const orderedActual = [...docs].sort((a, b) => (a.exactOrder ?? 9999) - (b.exactOrder ?? 9999)).map((doc) => normalizeFileName(documentFileName(doc)));
     const mismatches = requiredOrder.map((name, index) => ({ name, expected: normalizeFileName(name), actual: orderedActual[index] ?? "" })).filter((row) => row.actual && row.expected !== row.actual);
-    if (mismatches.length > 0) blockers.push({ category: "FILE_ORDER", severity: "MEDIUM", title: `Generated file order does not match tender order near: ${mismatches.slice(0, 3).map((m) => m.name).join(", ")}`, recommendedAction: "Reorder the generated documents/export package to match the tender's required attachment order." });
+    if (mismatches.length > 0) blockers.push({ category: "FILE_ORDER", severity: "HIGH", title: `Generated file order does not match tender order near: ${mismatches.slice(0, 3).map((m) => m.name).join(", ")}`, recommendedAction: "Reorder the generated documents/export package to match the tender's required attachment order." });
   }
 
   return blockers;
@@ -273,7 +275,7 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
   if (requiresProjects && totalProjectMatches === 0) blockers.push(tenderBlocker("NO_TENDER_SPECIFIC_PROJECT_MATCHES", "No tender-specific project match rows exist.", "Run Engine to create project matches from the reviewed vault."));
 
   const ungroundedMandatory = tender.requirements.filter((req) => req.priority === "MANDATORY" && !req.sectionReference && !req.sourceTenderFileId && !req.sourcePageNumber && !req.sourceExactQuote && (req.sourceConfidence ?? 0) <= 0);
-  if (ungroundedMandatory.length > 0) blockers.push(tenderBlocker("SOURCE_REFERENCES_MISSING", `${ungroundedMandatory.length} mandatory requirement(s) lack source/page/quote traceability.`, "Run source extraction and review mandatory requirement references before export.", "MEDIUM"));
+  if (ungroundedMandatory.length > 0) blockers.push(tenderBlocker("SOURCE_REFERENCES_MISSING", `${ungroundedMandatory.length} mandatory requirement(s) lack source/page/quote traceability.`, "Run source extraction and review mandatory requirement references before export.", "HIGH"));
 
   blockers.push(...filePlanBlockersFromLists(docs, tender.exactFileNaming, tender.exactFileOrder));
 
