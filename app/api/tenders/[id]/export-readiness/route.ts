@@ -63,7 +63,20 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
 
-  const readiness = await checkFullExportReadiness({ tenderId: id, docs: tender.generatedDocuments, requireFileContent: false });
+  // Deduplicate by exactFileName: multiple active records with the same filename accumulate from
+  // repeated generation runs that didn't supersede old records. Show one failure per logical file.
+  const seenKeys = new Set<string>();
+  const dedupedDocs = tender.generatedDocuments
+    .slice()
+    .sort((a, b) => (a.exactOrder ?? 9999) - (b.exactOrder ?? 9999))
+    .filter((doc) => {
+      const key = (doc.exactFileName ?? doc.name ?? "").trim().toLowerCase();
+      if (seenKeys.has(key)) return false;
+      seenKeys.add(key);
+      return true;
+    });
+
+  const readiness = await checkFullExportReadiness({ tenderId: id, docs: dedupedDocs, requireFileContent: false });
   const documentBlockers = readiness.failures.map((failure) => ({
     ...failure,
     severity: severityForReasons(failure.reasons),

@@ -85,7 +85,24 @@ export async function validateTender(tenderId: string): Promise<ValidationReport
     if (aiDraft.length > 0) issues.push({ code: "AI_DRAFT_PROJECT_NOT_REVIEWED", severity: "BLOCK", message: `${aiDraft.length} selected project(s) are AI_DRAFT but not yet reviewed. Verify each project against source documents and mark REVIEWED before final validation. Affected: ${aiDraft.map((p) => p.name).join(", ")}.` });
   }
 
-  const generatedDocs = tender.generatedDocuments.filter((d) => d.generationStatus === "GENERATED").sort((a, b) => (a.exactOrder ?? Number.MAX_SAFE_INTEGER) - (b.exactOrder ?? Number.MAX_SAFE_INTEGER));
+  // Sort by exactOrder then updatedAt descending so dedup keeps the most-recently-updated record per filename.
+  const allGenerated = tender.generatedDocuments
+    .filter((d) => d.generationStatus === "GENERATED")
+    .sort((a, b) => {
+      const orderDiff = (a.exactOrder ?? Number.MAX_SAFE_INTEGER) - (b.exactOrder ?? Number.MAX_SAFE_INTEGER);
+      if (orderDiff !== 0) return orderDiff;
+      return (b.updatedAt?.getTime() ?? 0) - (a.updatedAt?.getTime() ?? 0);
+    });
+  // Deduplicate: when multiple GENERATED records share the same exactFileName (from repeated
+  // generation runs that didn't supersede the old record), keep only the most-recently-updated
+  // one. Without this, the same filename produces N identical blocking messages.
+  const seenFileKeys = new Set<string>();
+  const generatedDocs = allGenerated.filter((doc) => {
+    const key = (doc.exactFileName ?? doc.name ?? "").trim().toLowerCase();
+    if (seenFileKeys.has(key)) return false;
+    seenFileKeys.add(key);
+    return true;
+  });
 
   const criticalGaps = tender.complianceGaps.filter((g) => !g.isResolved && g.severity === "CRITICAL");
   const hardGaps = criticalGaps.filter(hardCriticalGap);
