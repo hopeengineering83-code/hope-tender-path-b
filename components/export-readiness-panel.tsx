@@ -34,6 +34,7 @@ type RepairResult = {
   error?: string;
   repaired?: number;
   skipped?: number;
+  manualRequired?: number;
   plannedCreated?: number;
   letterheadAppliedCount?: number;
   finalExportReady?: boolean;
@@ -84,7 +85,9 @@ export function ExportReadinessPanel({ tenderId }: { tenderId: string }) {
       if (!res.ok || data.error) throw new Error(data.error ?? `Export repair failed (${res.status})`);
       const remainingDocs = data.remaining?.documentBlockers ?? 0;
       const remainingTender = data.remaining?.tenderLevelBlockers ?? 0;
-      setRepairMessage(`Repair completed: ${data.repaired ?? 0} document(s) repaired, ${data.skipped ?? 0} skipped, ${data.plannedCreated ?? 0} planned record(s) created. Remaining blockers: ${remainingDocs + remainingTender}.`);
+      const manual = data.manualRequired ?? 0;
+      const manualText = manual > 0 ? ` ${manual} official/manual file(s) were skipped and must be attached or reviewed manually.` : "";
+      setRepairMessage(`Repair completed: ${data.repaired ?? 0} generated document(s) repaired, ${data.skipped ?? 0} already safe/skipped.${manualText} Remaining blockers: ${remainingDocs + remainingTender}.`);
       await refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Export repair failed");
@@ -115,9 +118,9 @@ export function ExportReadinessPanel({ tenderId }: { tenderId: string }) {
               onClick={() => void repair()}
               disabled={repairing || loading}
               className="rounded-lg bg-emerald-700 px-3 py-2 text-xs font-medium text-white hover:bg-emerald-800 disabled:opacity-50"
-              title="Generate missing final DOCX content, validate generated package files, and mark repaired documents READY_FOR_EXPORT. Tender-level blockers still require manual resolution."
+              title="Safely repair generated DOCX status/content mismatches only. Official tender forms/templates, original-required rows, PDFs, planned rows, and non-exportable records are skipped and must be handled manually."
             >
-              {repairing ? "Repairing…" : "Repair document gaps"}
+              {repairing ? "Repairing…" : "Repair safe document gaps"}
             </button>
           )}
           <button
