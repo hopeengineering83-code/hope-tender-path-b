@@ -119,9 +119,9 @@ export function fallbackProposal(params: {
     "",
     params.submissionRules.length > 0 ? "## Submission Instructions\n" + params.submissionRules.map((r) => `- ${r}`).join("\n") : null,
     "",
-    params.differentiators.length > 0 ? "## Evidence-Backed Differentiators\n" + params.differentiators.map((d) => `- ${d}`).join("\n") : null,
-    "",
-    params.serviceLines ? `Service lines in company vault: ${params.serviceLines}` : null,
+    requiresTechnical && params.differentiators.length > 0
+      ? "## Evidence-Backed Differentiators\n" + params.differentiators.map((d) => `- ${d}`).join("\n")
+      : null,
   ].filter(Boolean).join("\n");
 }
 

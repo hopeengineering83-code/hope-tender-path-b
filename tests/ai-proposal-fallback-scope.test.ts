@@ -23,6 +23,8 @@ describe("ai-proposal fallback is tender-scoped", () => {
     assert.ok(!out.includes("## Proposed Team"));
     assert.ok(!out.includes("## Relevant Experience"));
     assert.ok(!out.includes("## Technical Response"));
+    assert.ok(!out.includes("## Evidence-Backed Differentiators"));
+    assert.ok(!out.includes("Service lines in company vault"));
   });
 
   it("includes only sections implied by requirements", () => {
@@ -34,6 +36,7 @@ describe("ai-proposal fallback is tender-scoped", () => {
     assert.ok(out.includes("## Proposed Team"));
     assert.ok(out.includes("## Relevant Experience"));
     assert.ok(out.includes("## Technical Response"));
+    assert.ok(out.includes("## Evidence-Backed Differentiators"));
   });
 
   it("does not expose raw provider error details in fallback body", () => {
