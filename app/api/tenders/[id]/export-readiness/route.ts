@@ -7,6 +7,11 @@ import { filterFinalExportCandidateDocuments } from "../../../../../lib/engine/d
 export const dynamic = "force-dynamic";
 export const maxDuration = 10;
 
+function jsonError(message: string, status = 500, extra: Record<string, unknown> = {}) {
+  const code = typeof extra.code === "string" ? extra.code : "EXPORT_READINESS_ERROR";
+  return NextResponse.json({ ok: false, success: false, code, message, error: message, ...extra }, { status });
+}
+
 function nextActionForReason(reason: string): string {
   if (/NO_ACTIVE_GENERATED_DOCUMENTS/i.test(reason)) return "Generate the required documents before exporting.";
   if (/generationStatus/i.test(reason)) return "Regenerate this document or reconcile the submission plan.";
@@ -24,95 +29,103 @@ function severityForReasons(reasons: string[]): "HIGH" | "MEDIUM" | "LOW" {
 }
 
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
-  let actor;
   try {
-    actor = await requireRole("ADMIN", "PROPOSAL_MANAGER", "REVIEWER");
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : "";
-    return msg === "Forbidden" ? forbiddenResponse() : unauthorizedResponse();
-  }
+    let actor;
+    try {
+      actor = await requireRole("ADMIN", "PROPOSAL_MANAGER", "REVIEWER");
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "";
+      return msg === "Forbidden" ? forbiddenResponse() : unauthorizedResponse();
+    }
 
-  await prismaReady;
-  const { id } = await params;
-  const tender = await prisma.tender.findFirst({
-    where: { id, userId: actor.id },
-    select: {
-      id: true,
-      title: true,
-      status: true,
-      stage: true,
-      readinessScore: true,
-      generatedDocuments: {
-        where: { generationStatus: { not: "SUPERSEDED" } },
-        orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }],
-        select: {
-          id: true,
-          name: true,
-          exactFileName: true,
-          exactOrder: true,
-          documentType: true,
-          format: true,
-          generationStatus: true,
-          validationStatus: true,
-          reviewStatus: true,
-          fileContent: true,
-          storagePath: true,
+    await prismaReady;
+    const { id } = await params;
+    const tender = await prisma.tender.findFirst({
+      where: { id, userId: actor.id },
+      select: {
+        id: true,
+        title: true,
+        status: true,
+        stage: true,
+        readinessScore: true,
+        generatedDocuments: {
+          where: { generationStatus: { not: "SUPERSEDED" } },
+          orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }],
+          select: {
+            id: true,
+            name: true,
+            exactFileName: true,
+            exactOrder: true,
+            documentType: true,
+            format: true,
+            generationStatus: true,
+            validationStatus: true,
+            reviewStatus: true,
+            fileContent: true,
+            storagePath: true,
+          },
         },
       },
-    },
-  });
-
-  if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
-
-  // Export readiness must evaluate final-package candidates only.
-  // Internal quick drafts are useful in the workspace, but they are
-  // deliberately NOT_EXPORTABLE and should not block the final ZIP gate.
-  const finalCandidateDocs = filterFinalExportCandidateDocuments(tender.generatedDocuments);
-
-  // Deduplicate by exactFileName: multiple active records with the same filename accumulate from
-  // repeated generation runs that didn't supersede old records. Show one failure per logical file.
-  const seenKeys = new Set<string>();
-  const dedupedDocs = finalCandidateDocs
-    .slice()
-    .sort((a, b) => (a.exactOrder ?? 9999) - (b.exactOrder ?? 9999))
-    .filter((doc) => {
-      const key = (doc.exactFileName ?? doc.name ?? "").trim().toLowerCase();
-      if (seenKeys.has(key)) return false;
-      seenKeys.add(key);
-      return true;
     });
 
-  const readiness = await checkFullExportReadiness({ tenderId: id, docs: dedupedDocs, requireFileContent: false });
-  const documentBlockers = readiness.failures.map((failure) => ({
-    ...failure,
-    severity: severityForReasons(failure.reasons),
-    nextActions: failure.reasons.map(nextActionForReason),
-  }));
-  const tenderLevelBlockers = readiness.tenderLevelBlockers ?? [];
-  const totalBlockers = documentBlockers.length + tenderLevelBlockers.length;
+    if (!tender) return jsonError("Tender not found", 404, { code: "TENDER_NOT_FOUND" });
 
-  return NextResponse.json({
-    success: true,
-    exportReadiness: {
-      ok: readiness.ok,
-      tender: {
-        id: tender.id,
-        title: tender.title,
-        status: tender.status,
-        stage: tender.stage,
-        readinessScore: tender.readinessScore ?? 0,
+    // Export readiness must evaluate final-package candidates only.
+    // Internal quick drafts are useful in the workspace, but they are
+    // deliberately NOT_EXPORTABLE and should not block the final ZIP gate.
+    const finalCandidateDocs = filterFinalExportCandidateDocuments(tender.generatedDocuments);
+
+    // Deduplicate by exactFileName: multiple active records with the same filename accumulate from
+    // repeated generation runs that didn't supersede old records. Show one failure per logical file.
+    const seenKeys = new Set<string>();
+    const dedupedDocs = finalCandidateDocs
+      .slice()
+      .sort((a, b) => (a.exactOrder ?? 9999) - (b.exactOrder ?? 9999))
+      .filter((doc) => {
+        const key = (doc.exactFileName ?? doc.name ?? "").trim().toLowerCase();
+        if (seenKeys.has(key)) return false;
+        seenKeys.add(key);
+        return true;
+      });
+
+    const readiness = await checkFullExportReadiness({ tenderId: id, docs: dedupedDocs, requireFileContent: false });
+    const documentBlockers = readiness.failures.map((failure) => ({
+      ...failure,
+      severity: severityForReasons(failure.reasons),
+      nextActions: failure.reasons.map(nextActionForReason),
+    }));
+    const tenderLevelBlockers = readiness.tenderLevelBlockers ?? [];
+    const totalBlockers = documentBlockers.length + tenderLevelBlockers.length;
+
+    return NextResponse.json({
+      success: true,
+      exportReadiness: {
+        ok: readiness.ok,
+        tender: {
+          id: tender.id,
+          title: tender.title,
+          status: tender.status,
+          stage: tender.stage,
+          readinessScore: tender.readinessScore ?? 0,
+        },
+        summary: {
+          activeDocuments: finalCandidateDocs.length,
+          workspaceDocuments: tender.generatedDocuments.length,
+          excludedInternalDrafts: tender.generatedDocuments.length - finalCandidateDocs.length,
+          documentBlockers: documentBlockers.length,
+          tenderLevelBlockers: tenderLevelBlockers.length,
+          totalBlockers,
+        },
+        documentBlockers,
+        tenderLevelBlockers,
+        message: readiness.ok ? "Export gate passed. All final-package documents and tender-level controls are ready." : exportReadinessError(readiness.failures, tenderLevelBlockers),
       },
-      summary: {
-        activeDocuments: finalCandidateDocs.length,
-        workspaceDocuments: tender.generatedDocuments.length,
-        excludedInternalDrafts: tender.generatedDocuments.length - finalCandidateDocs.length,
-        documentBlockers: documentBlockers.length,
-        tenderLevelBlockers: tenderLevelBlockers.length,
-        totalBlockers,
-      },
-      documentBlockers,
-      tenderLevelBlockers,
-      message: readiness.ok ? "Export gate passed. All final-package documents and tender-level controls are ready." : exportReadinessError(readiness.failures, tenderLevelBlockers),
-    },
-  });
+    });
+  } catch (error) {
+    console.error("Export readiness route failed", error);
+    return jsonError("Export-readiness route failed.", 500, {
+      code: "EXPORT_READINESS_RUNTIME_ERROR",
+      detail: error instanceof Error ? error.message : String(error),
+    });
+  }
 }
