@@ -86,7 +86,11 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     severity: severityForReasons(failure.reasons),
     nextActions: failure.reasons.map(nextActionForReason),
   }));
-  const tenderLevelBlockers = readiness.tenderLevelBlockers ?? [];
+  const tenderLevelBlockers = (readiness.tenderLevelBlockers ?? []).map((blocker) => ({
+    ...blocker,
+    nextAction: blocker.recommendedAction
+      ?? nextActionForReason(`${blocker.category} ${blocker.title}`),
+  }));
   const totalBlockers = documentBlockers.length + tenderLevelBlockers.length;
 
   return NextResponse.json({

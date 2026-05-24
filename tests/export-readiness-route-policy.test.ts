@@ -16,5 +16,9 @@ describe("export-readiness route policy mappings", () => {
     assert.ok(/Placeholder\|pricing language/.test(src));
     assert.ok(/EXTRA_FILES\|FILE_ORDER\|SOURCE_REFERENCES_MISSING/.test(src));
   });
-});
 
+  it("enriches tender-level blockers with a nextAction field", async () => {
+    const src = await readFile("app/api/tenders/[id]/export-readiness/route.ts", "utf8");
+    assert.ok(src.includes("nextAction: blocker.recommendedAction"));
+  });
+});
