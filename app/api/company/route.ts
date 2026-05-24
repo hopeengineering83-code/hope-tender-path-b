@@ -2,19 +2,10 @@ import { NextResponse } from "next/server";
 import { prisma, prismaReady } from "../../../lib/prisma";
 import { getSession } from "../../../lib/auth";
 import { ensureCompanyForUser } from "../../../lib/company-workspace";
+import { cleanupSupportDocImportedRecords } from "../../../lib/company-support-doc-cleanup";
 
 const DEFAULT_COMPANY_NAME = "Hope Urban Planning Architectural and Engineering Consultancy";
 const DEFAULT_COMPANY_DESCRIPTION = "AI-powered tender proposal generation workspace";
-
-const SUPPORT_ONLY_CATEGORIES = new Set([
-  "COMPANY_PROFILE",
-  "LEGAL_REGISTRATION",
-  "FINANCIAL_STATEMENT",
-  "MANUAL",
-  "COMPLIANCE_RECORD",
-  "CERTIFICATION",
-  "OTHER",
-]);
 
 function clean(value: unknown): string {
   return String(value ?? "").replace(/\s+/g, " ").trim();
@@ -47,26 +38,6 @@ function toJsonArray(value: unknown, existing?: string | null): string {
   return existing ?? JSON.stringify([]);
 }
 
-async function cleanupSupportDocImportedRecords(companyId: string) {
-  const supportDocs = await prisma.companyDocument.findMany({
-    where: { companyId, category: { in: [...SUPPORT_ONLY_CATEGORIES] } },
-    select: { id: true, originalFileName: true },
-  });
-  const supportDocIds = supportDocs.map((d) => d.id);
-  const supportFileNames = supportDocs.map((d) => d.originalFileName).filter(Boolean);
-
-  await Promise.all([
-    supportDocIds.length ? prisma.expert.deleteMany({ where: { companyId, sourceDocumentId: { in: supportDocIds } } }) : Promise.resolve({ count: 0 }),
-    supportDocIds.length ? prisma.project.deleteMany({ where: { companyId, sourceDocumentId: { in: supportDocIds } } }) : Promise.resolve({ count: 0 }),
-  ]);
-
-  for (const fileName of supportFileNames) {
-    const expertIds = await prisma.expert.findMany({ where: { companyId, profile: { contains: fileName, mode: "insensitive" } }, select: { id: true } });
-    const projectIds = await prisma.project.findMany({ where: { companyId, summary: { contains: fileName, mode: "insensitive" } }, select: { id: true } });
-    if (expertIds.length) await prisma.expert.deleteMany({ where: { id: { in: expertIds.map((e) => e.id) } } });
-    if (projectIds.length) await prisma.project.deleteMany({ where: { id: { in: projectIds.map((p) => p.id) } } });
-  }
-}
 
 function safeParseArr(v: unknown): string[] {
   try { return JSON.parse(v as string) as string[]; } catch { return []; }

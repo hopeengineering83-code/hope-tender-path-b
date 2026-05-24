@@ -209,7 +209,9 @@ export function assessTenderAnalysisQuality(params: {
   const metadataProvided = clientNameProvided || referenceProvided || countryProvided || contactProvided;
   const metadataQualitySub = !metadataProvided ? 70 : Math.max(0, 100 - metadataIssues.length * 25);
   const submissionPlanQualitySub = likelyMissingSubmissionRules ? 30 : hasExactFileNaming || hasExactFileOrder ? 100 : hasSubmissionNotes ? 75 : 50;
-  const sourceGroundingSub = requirementCount === 0 ? 0 : Math.round((sourceReferencedCount / requirementCount) * 100);
+  const rawGrounding = requirementCount === 0 ? 0 : Math.round((sourceReferencedCount / requirementCount) * 100);
+  const groundingFloor = extractedTextLength >= 5000 ? 25 : extractedTextLength >= 1000 ? 15 : 0;
+  const sourceGroundingSub = Math.min(100, Math.max(rawGrounding, groundingFloor));
 
   score = Math.max(0, Math.min(100, score));
   const severity: AnalysisQualitySeverity = score < 50 ? "POOR" : score < 75 ? "WARNING" : "GOOD";
