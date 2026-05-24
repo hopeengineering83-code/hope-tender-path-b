@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 type Severity = "HIGH" | "MEDIUM" | "LOW";
 
@@ -53,12 +53,19 @@ function severityClass(severity: string): string {
   return SEVERITY_BADGE.LOW;
 }
 
+function isOriginalRequired(blocker: DocumentBlocker): boolean {
+  const text = `${blocker.reasons.join(" ")} ${blocker.nextActions.join(" ")}`;
+  return /ORIGINAL_REQUIRED|REPLACE_WITH_ORIGINAL|tender-issued original|official-original/i.test(text);
+}
+
 export function ExportReadinessPanel({ tenderId }: { tenderId: string }) {
   const [readiness, setReadiness] = useState<ExportReadiness | null>(null);
   const [loading, setLoading] = useState(false);
   const [repairing, setRepairing] = useState(false);
+  const [attachingDocId, setAttachingDocId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [repairMessage, setRepairMessage] = useState<string | null>(null);
+  const fileInputs = useRef<Record<string, HTMLInputElement | null>>({});
 
   async function refresh() {
     setLoading(true);
@@ -96,6 +103,28 @@ export function ExportReadinessPanel({ tenderId }: { tenderId: string }) {
     }
   }
 
+  async function attachOriginal(blocker: DocumentBlocker, file: File | null) {
+    if (!file) return;
+    setAttachingDocId(blocker.documentId);
+    setError(null);
+    setRepairMessage(null);
+    try {
+      const body = new FormData();
+      body.append("file", file);
+      const res = await fetch(`/api/tenders/${tenderId}/documents/${blocker.documentId}/attach-original`, { method: "POST", body });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.error) throw new Error(data.error ?? `Attach original failed (${res.status})`);
+      setRepairMessage(`Official original attached for ${blocker.fileName}. Re-checking export readiness.`);
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Attach original failed");
+    } finally {
+      setAttachingDocId(null);
+      const input = fileInputs.current[blocker.documentId];
+      if (input) input.value = "";
+    }
+  }
+
   const ok = readiness?.ok;
   const hasDocumentBlockers = (readiness?.summary.documentBlockers ?? 0) > 0;
 
@@ -116,7 +145,7 @@ export function ExportReadinessPanel({ tenderId }: { tenderId: string }) {
             <button
               type="button"
               onClick={() => void repair()}
-              disabled={repairing || loading}
+              disabled={repairing || loading || Boolean(attachingDocId)}
               className="rounded-lg bg-emerald-700 px-3 py-2 text-xs font-medium text-white hover:bg-emerald-800 disabled:opacity-50"
               title="Safely repair generated DOCX status/content mismatches only. Official tender forms/templates, original-required rows, PDFs, planned rows, and non-exportable records are skipped and must be handled manually."
             >
@@ -126,7 +155,7 @@ export function ExportReadinessPanel({ tenderId }: { tenderId: string }) {
           <button
             type="button"
             onClick={() => void refresh()}
-            disabled={loading || repairing}
+            disabled={loading || repairing || Boolean(attachingDocId)}
             className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-medium text-white hover:bg-slate-800 disabled:opacity-50"
           >
             {loading ? "Checking…" : readiness ? "Re-check" : "Check export gate"}
@@ -187,9 +216,33 @@ export function ExportReadinessPanel({ tenderId }: { tenderId: string }) {
                   <li key={blocker.documentId} className="rounded-lg border border-slate-100 bg-white p-3 text-xs">
                     <div className="flex items-start gap-2">
                       <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${SEVERITY_BADGE[blocker.severity]}`}>{blocker.severity}</span>
-                      <div className="min-w-0">
-                        <p className="font-medium text-slate-900">{blocker.fileName}</p>
-                        <p className="mt-0.5 text-slate-500">{blocker.name}</p>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <p className="font-medium text-slate-900">{blocker.fileName}</p>
+                            <p className="mt-0.5 text-slate-500">{blocker.name}</p>
+                          </div>
+                          {isOriginalRequired(blocker) && (
+                            <div className="shrink-0">
+                              <input
+                                ref={(el) => { fileInputs.current[blocker.documentId] = el; }}
+                                type="file"
+                                accept=".doc,.docx,.pdf,.xls,.xlsx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                                className="hidden"
+                                onChange={(event) => void attachOriginal(blocker, event.target.files?.[0] ?? null)}
+                              />
+                              <button
+                                type="button"
+                                onClick={() => fileInputs.current[blocker.documentId]?.click()}
+                                disabled={Boolean(attachingDocId) || repairing || loading}
+                                className="rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] font-medium text-emerald-700 hover:bg-emerald-100 disabled:opacity-50"
+                                title="Attach the exact tender-issued original form/template. This does not regenerate the form."
+                              >
+                                {attachingDocId === blocker.documentId ? "Attaching…" : "Attach official original"}
+                              </button>
+                            </div>
+                          )}
+                        </div>
                         <ul className="mt-2 list-disc space-y-1 pl-4 text-slate-600">
                           {blocker.reasons.map((reason, i) => <li key={i}>{reason}</li>)}
                         </ul>
