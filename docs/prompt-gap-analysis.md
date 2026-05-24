@@ -16,7 +16,7 @@ This document maps the current Phase 1 codebase against the original product pro
 ## Partially implemented / architecturally present but not fully complete
 
 ### 1) Database architecture
-The original prompt asked for PostgreSQL with Prisma. The current codebase still uses Prisma, but the schema is configured to use SQLite for deployment simplicity. This is suitable for a lightweight Phase 1 deployment, but it is not yet aligned with the target production database posture.
+The codebase uses Prisma with a PostgreSQL runtime posture (`DATABASE_URL` required for build/runtime checks). Any legacy SQLite references are historical and should not be treated as current production architecture.
 
 ### 2) Domain model completeness
 The prompt requested the following minimum models beyond the current implementation:
@@ -46,7 +46,7 @@ The project is prepared for PWA and future desktop packaging, but Electron/Tauri
 
 ## Highest-priority next upgrades to fully align with the prompt
 
-1. Move Prisma datasource from SQLite to PostgreSQL and add migration-safe deployment configuration.
+1. Keep PostgreSQL/Prisma migration discipline strict (no SQLite fallback assumptions in production docs or readiness checks).
 2. Add first-class models for compliance matrix, evidence records, legal records, financial records, and company compliance records.
 3. Expand generation validation to enforce exact tender-required quantity, naming, order, and mandatory-template restrictions.
 4. Extend auditability with explicit override logs for expert/project/manual selection and compliance bypass actions.
@@ -66,7 +66,7 @@ An attempted sync of `prisma/schema.prisma` was blocked by the GitHub tooling sa
 
 A strong next milestone would be **Phase 1.5 Production Alignment**, focused on:
 
-- PostgreSQL migration
+- PostgreSQL migration hygiene (ongoing)
 - evidence/compliance matrix persistence
 - stricter tender-scope enforcement
 - export package validation hardening
