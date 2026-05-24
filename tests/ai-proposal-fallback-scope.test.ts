@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
-import { fallbackProposal } from "../app/api/tenders/[id]/ai-proposal/route";
+import { fallbackProposal, selectReviewedEvidenceForAIDraft } from "../app/api/tenders/[id]/ai-proposal/route";
 
 function build(requirements: string[]) {
   return fallbackProposal({
@@ -42,3 +42,31 @@ describe("ai-proposal fallback is tender-scoped", () => {
   });
 });
 
+describe("selectReviewedEvidenceForAIDraft", () => {
+  it("uses reviewed selected evidence when present", () => {
+    const out = selectReviewedEvidenceForAIDraft(
+      [{ trustLevel: "REVIEWED", id: 1 }, { trustLevel: "AI_DRAFT", id: 2 }],
+      [{ trustLevel: "REVIEWED", id: 3 }],
+    );
+    assert.deepEqual(out.evidence.map((x) => x.id), [1]);
+    assert.equal(out.usedReviewedVaultFallback, false);
+  });
+
+  it("falls back to reviewed vault evidence when selected set has no reviewed rows", () => {
+    const out = selectReviewedEvidenceForAIDraft(
+      [{ trustLevel: "AI_DRAFT", id: 2 }],
+      [{ trustLevel: "REVIEWED", id: 3 }],
+    );
+    assert.deepEqual(out.evidence.map((x) => x.id), [3]);
+    assert.equal(out.usedReviewedVaultFallback, true);
+  });
+
+  it("never returns unreviewed rows when no reviewed evidence exists", () => {
+    const out = selectReviewedEvidenceForAIDraft(
+      [{ trustLevel: "AI_DRAFT", id: 2 }, { trustLevel: "REGEX_DRAFT", id: 4 }],
+      [],
+    );
+    assert.deepEqual(out.evidence, []);
+    assert.equal(out.usedReviewedVaultFallback, false);
+  });
+});

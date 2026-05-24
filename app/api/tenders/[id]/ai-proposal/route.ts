@@ -125,6 +125,16 @@ export function fallbackProposal(params: {
   ].filter(Boolean).join("\n");
 }
 
+export function selectReviewedEvidenceForAIDraft<T extends { trustLevel?: string | null }>(
+  selected: T[],
+  reviewedVault: T[],
+): { evidence: T[]; usedReviewedVaultFallback: boolean } {
+  const reviewedSelected = selected.filter((row) => row.trustLevel === "REVIEWED");
+  if (reviewedSelected.length > 0) return { evidence: reviewedSelected, usedReviewedVaultFallback: false };
+  if (reviewedVault.length > 0) return { evidence: reviewedVault, usedReviewedVaultFallback: true };
+  return { evidence: [], usedReviewedVaultFallback: false };
+}
+
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const userId = await getSession();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -231,32 +241,26 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   let projects = tender.projectMatches.map((m) => m.project).filter((p) => p.trustLevel === "REVIEWED");
 
   // Vault fallback: if selected matches are all unreviewed (AI_DRAFT /
-  // REGEX_DRAFT), use the company's reviewed vault — matching the same
-  // fallback logic as generate-elite.ts so the AI proposal always has
-  // real evidence rather than an empty context.
-  // Last-resort: if vault is also empty, include all selected matches
-  // regardless of trust level (this is a draft proposal, imperfect
-  // evidence beats no evidence).
+  // REGEX_DRAFT), use the company's reviewed vault.
+  // Do NOT include unreviewed evidence in AI draft context. Unreviewed
+  // records remain visible in dashboards but are excluded from factual
+  // proposal evidence generation.
   const vaultExperts = (company as unknown as { experts?: typeof experts }).experts ?? [];
   const vaultProjects = (company as unknown as { projects?: typeof projects }).projects ?? [];
-  if (experts.length === 0) {
-    if (vaultExperts.length > 0) {
-      experts = vaultExperts;
-      console.warn(`[ai-proposal] No REVIEWED selected experts — using ${experts.length} vault expert(s).`);
-    } else {
-      experts = tender.expertMatches.map((m) => m.expert);
-      if (experts.length > 0) console.warn(`[ai-proposal] No REVIEWED experts in vault — using ${experts.length} unreviewed selected expert(s).`);
-    }
-  }
-  if (projects.length === 0) {
-    if (vaultProjects.length > 0) {
-      projects = vaultProjects as typeof projects;
-      console.warn(`[ai-proposal] No REVIEWED selected projects — using ${projects.length} vault project(s).`);
-    } else {
-      projects = tender.projectMatches.map((m) => m.project);
-      if (projects.length > 0) console.warn(`[ai-proposal] No REVIEWED projects in vault — using ${projects.length} unreviewed selected project(s).`);
-    }
-  }
+  const expertSelection = selectReviewedEvidenceForAIDraft(
+    tender.expertMatches.map((m) => m.expert),
+    vaultExperts,
+  );
+  const projectSelection = selectReviewedEvidenceForAIDraft(
+    tender.projectMatches.map((m) => m.project),
+    vaultProjects as typeof projects,
+  );
+  experts = expertSelection.evidence;
+  projects = projectSelection.evidence;
+  if (expertSelection.usedReviewedVaultFallback) console.warn(`[ai-proposal] No REVIEWED selected experts — using ${experts.length} reviewed vault expert(s).`);
+  if (projectSelection.usedReviewedVaultFallback) console.warn(`[ai-proposal] No REVIEWED selected projects — using ${projects.length} reviewed vault project(s).`);
+  if (experts.length === 0 && tender.expertMatches.length > 0) console.warn("[ai-proposal] No reviewed expert evidence available — expert claims will be omitted from AI draft evidence context.");
+  if (projects.length === 0 && tender.projectMatches.length > 0) console.warn("[ai-proposal] No reviewed project evidence available — project claims will be omitted from AI draft evidence context.");
 
   const generationMode = (process.env.PROPOSAL_GENERATION_MODE || "parallel").toLowerCase();
   // Skip cache for chunked requests — each chunk returns a partial proposal
