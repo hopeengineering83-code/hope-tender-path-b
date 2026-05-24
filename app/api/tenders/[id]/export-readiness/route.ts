@@ -13,12 +13,24 @@ function jsonError(message: string, status = 500, extra: Record<string, unknown>
 }
 
 function nextActionForReason(reason: string): string {
+  if (/ORIGINAL_REQUIRED|REPLACE_WITH_ORIGINAL|tender-issued original/i.test(reason)) {
+    return "Attach or upload the exact tender-issued original form/template for this file. Do not use Repair safe document gaps for official-original rows.";
+  }
+  if (/NOT_EXPORTABLE/i.test(reason)) {
+    return "Manual review required: this row is marked NOT_EXPORTABLE and must not be included in the final package unless replaced by the official source file.";
+  }
+  if (/PLANNED|CONTROL_RECORD_ONLY|control, placeholder, or text-only/i.test(reason)) {
+    return "Generate the actual final file or attach the official original. Planned/control rows are not exportable files.";
+  }
+  if (/PDF_CONVERSION_REQUIRED|not a real PDF/i.test(reason)) {
+    return "Upload the final PDF required by the tender or provide a real PDF file before export.";
+  }
   if (/NO_ACTIVE_GENERATED_DOCUMENTS/i.test(reason)) return "Generate the required documents before exporting.";
   if (/generationStatus/i.test(reason)) return "Regenerate this document or reconcile the submission plan.";
   if (/validationStatus/i.test(reason)) return "Run validation and fix reported document validation issues.";
   if (/reviewStatus/i.test(reason)) return "Complete human review and mark the document READY_FOR_EXPORT.";
   if (/fileContent|MISSING_CONTENT/i.test(reason)) return "Regenerate or upload the missing DOCX/PDF file content.";
-  if (/MARKDOWN|QUICK_DRAFT|DRAFT_ONLY|CONTROL|NOT_EXPORTABLE|REPLACE_WITH_ORIGINAL|PLANNED|not a final export/i.test(reason)) return "Use Generate Docs or attach the tender-issued original; quick drafts, placeholders and control rows cannot be exported.";
+  if (/MARKDOWN|QUICK_DRAFT|DRAFT_ONLY|CONTROL|not a final export/i.test(reason)) return "Use Generate Docs or attach the tender-issued original; quick drafts, placeholders and control rows cannot be exported.";
   return "Review and resolve this blocker before final export.";
 }
 
@@ -70,13 +82,8 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 
     if (!tender) return jsonError("Tender not found", 404, { code: "TENDER_NOT_FOUND" });
 
-    // Export readiness must evaluate final-package candidates only.
-    // Internal quick drafts are useful in the workspace, but they are
-    // deliberately NOT_EXPORTABLE and should not block the final ZIP gate.
     const finalCandidateDocs = filterFinalExportCandidateDocuments(tender.generatedDocuments);
 
-    // Deduplicate by exactFileName: multiple active records with the same filename accumulate from
-    // repeated generation runs that didn't supersede old records. Show one failure per logical file.
     const seenKeys = new Set<string>();
     const dedupedDocs = finalCandidateDocs
       .slice()
@@ -92,7 +99,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     const documentBlockers = readiness.failures.map((failure) => ({
       ...failure,
       severity: severityForReasons(failure.reasons),
-      nextActions: failure.reasons.map(nextActionForReason),
+      nextActions: Array.from(new Set(failure.reasons.map(nextActionForReason))),
     }));
     const tenderLevelBlockers = readiness.tenderLevelBlockers ?? [];
     const totalBlockers = documentBlockers.length + tenderLevelBlockers.length;
