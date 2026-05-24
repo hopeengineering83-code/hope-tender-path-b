@@ -116,6 +116,11 @@ export async function validateTender(tenderId: string): Promise<ValidationReport
   if (generatedDocs.length === 0) issues.push({ code: "NO_GENERATED_DOCUMENTS", severity: "BLOCK", message: "No documents have been generated yet. Run document generation first." });
 
   for (const doc of generatedDocs) {
+    // Skip documents that are already flagged for original replacement — the export gate
+    // handles them as ORIGINAL_REQUIRED. Adding a separate BLOCKING placeholder message
+    // here would be a false positive: these docs intentionally contain placeholder text
+    // as a stub until the user attaches the tender-issued original.
+    if (doc.reviewStatus === "REPLACE_WITH_ORIGINAL") continue;
     const textToCheck = [doc.contentSummary ?? "", doc.name, doc.exactFileName ?? ""].join(" ");
     if (hasPlaceholder(textToCheck)) issues.push({ code: "PLACEHOLDER_IN_DOCUMENT", severity: "BLOCK", message: `Document "${doc.name}" contains placeholder text that must be replaced.` });
   }

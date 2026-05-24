@@ -64,11 +64,14 @@ async function ensurePlannedGeneratedDocumentRecords(tenderId: string, plannedFi
   if (plannedFiles.length === 0) return 0;
   let created = 0;
   for (const file of plannedFiles) {
+    // Guard: skip files without an explicit exact filename — a Prisma lookup with
+    // exactFileName: undefined would match ANY record regardless of filename (silent bug).
+    if (!file.exactFileName || !file.exactFileName.trim()) continue;
     const key = generatedDocumentSubmissionKey({ exactFileName: file.exactFileName });
     const documentType = plannedRecordDocumentType(file);
     const summary = `Planned tender-required file from submission plan. Source requirements: ${file.sourceRequirementIds.join(", ") || "exact file naming/order instruction"}.`;
     const current = await prisma.generatedDocument.findFirst({
-      where: { tenderId, exactFileName: file.exactFileName ?? undefined },
+      where: { tenderId, exactFileName: file.exactFileName },
       select: { id: true, name: true, exactFileName: true, documentType: true, exactOrder: true, format: true, generationStatus: true, fileContent: true, storagePath: true },
     });
     if (!current) {
@@ -121,12 +124,12 @@ function placeholderIntro(): string[] {
 function supportSections(docName: string, context: { tenderTitle: string; requirements: string[]; experts: string[]; projects: string[] }): Array<{ title: string; lines: string[] }> {
   const kind = classifySupportDoc(docName);
   if (kind === "EXPERT_CV") return [
-    { title: "Expert CV Register", lines: context.experts.length ? context.experts.slice(0, 20) : ["Source-evidence action: confirm that reviewed expert CVs are attached separately. This package item is the cover/index for those CVs."] },
+    { title: "Expert CV Register", lines: context.experts.length ? context.experts.slice(0, 20) : ["Expert CVs are attached separately as individual files in this submission package. This document is the cover index for those CVs."] },
     { title: "Role-to-Requirement Mapping", lines: context.requirements.slice(0, 10) },
     { title: "CV Attachment Control", lines: ["Each proposed expert's CV, professional licence, and educational certificate is included as a separate file in this package or the appendix.", "Each CV is mapped to a specific role, qualification, comparable previous project, and assignment responsibility."] },
   ];
   if (kind === "PROJECT_REFERENCES") return [
-    { title: "Relevant Project References", lines: context.projects.length ? context.projects.slice(0, 18) : ["Source-evidence action: confirm that reviewed comparable project references are attached separately with completion certificates and client testimony letters."] },
+    { title: "Relevant Project References", lines: context.projects.length ? context.projects.slice(0, 18) : ["Comparable project references are attached separately with completion certificates and client reference letters. This document is the cover index for those references."] },
     { title: "Evidence Attachment Control", lines: ["Project evidence: completion certificates, client testimony letters, contracts, photos and drawings, where required by the tender.", "Each reference is selected from the firm's reviewed portfolio for direct comparability to the tender scope."] },
   ];
   if (kind === "METHODOLOGY") return [
@@ -149,6 +152,15 @@ function isMainProposalLike(doc: { name: string; exactFileName: string | null; d
   return /\bclient-ready benchmark technical proposal\b|technical-proposal\.docx$/.test(label) || (doc.documentType === "TECHNICAL_PROPOSAL" && /feasibility, design and supervision technical scope/i.test(doc.name));
 }
 
+// Kinds that represent company-produced deliverables and should have a real DOCX generated.
+const COMPANY_PRODUCED_KINDS: ReadonlySet<SupportDocKind> = new Set<SupportDocKind>([
+  "EXPERT_CV",
+  "PROJECT_REFERENCES",
+  "METHODOLOGY",
+  "COMPANY_PROFILE",
+  "SECTOR_TECHNICAL_SCOPE",
+]);
+
 async function fillPlannedSupportDocuments(tenderId: string, plannedFileKeys?: Set<string>): Promise<number> {
   const tender = await prisma.tender.findUnique({ where: { id: tenderId }, include: { requirements: true, expertMatches: { where: { isSelected: true }, include: { expert: true }, orderBy: { score: "desc" } }, projectMatches: { where: { isSelected: true }, include: { project: true }, orderBy: { score: "desc" } } } });
   if (!tender) return 0;
@@ -167,28 +179,48 @@ async function fillPlannedSupportDocuments(tenderId: string, plannedFileKeys?: S
     return true;
   });
   const incomplete = dedupedDocs.filter((doc) => !isMainProposalLike(doc) && !(doc.generationStatus === "GENERATED" && doc.fileContent) && (!plannedFileKeys || plannedFileKeys.has(generatedDocumentSubmissionKey(doc))));
+  let filled = 0;
   for (const doc of incomplete) {
     const title = clean(doc.exactFileName || doc.name);
     const kind = classifySupportDoc(title);
-    const replaceWithOriginal = isReplacementOriginalKind(kind);
     const cleanTitle = cleanTenderTitle(tender.title, { clientName: cleanClientName(tender.clientName, tender.description), description: tender.description });
-    const fileContent = await makeSupportDocx(cleanTitle, title, supportSections(title, { tenderTitle: cleanTitle, requirements, experts, projects }));
-    await prisma.generatedDocument.update({
-      where: { id: doc.id },
-      data: {
-        fileContent,
-        generationStatus: "GENERATED",
-        validationStatus: "PENDING",
-        reviewStatus: replaceWithOriginal ? "REPLACE_WITH_ORIGINAL" : "PENDING",
-        reviewNotes: replaceWithOriginal ? "DO NOT SUBMIT this generated placeholder. Replace it with the tender-issued original / signed / stamped / certified document before final export." : undefined,
-        contentSummary: replaceWithOriginal
-          ? `Generated replacement-control placeholder for ${title}. DO NOT SUBMIT: replace with the tender-issued original / signed / stamped / certified document before final export.`
-          : `Generated supporting package document for ${title} with distinct tender-specific content. Review before final submission.`,
-        updatedAt: new Date(),
-      },
-    });
+
+    if (COMPANY_PRODUCED_KINDS.has(kind)) {
+      // Company-produced deliverable: generate a real DOCX with company evidence content.
+      const fileContent = await makeSupportDocx(cleanTitle, title, supportSections(title, { tenderTitle: cleanTitle, requirements, experts, projects }));
+      await prisma.generatedDocument.update({
+        where: { id: doc.id },
+        data: {
+          fileContent,
+          generationStatus: "GENERATED",
+          validationStatus: "PENDING",
+          reviewStatus: "PENDING",
+          contentSummary: `Generated supporting package document for ${title} with distinct tender-specific content. Review before final submission.`,
+          updatedAt: new Date(),
+        },
+      });
+      filled += 1;
+    } else {
+      // Placeholder / form / legal / financial / declaration / annex / submission-rules / generic:
+      // Do NOT generate a fake DOCX. Mark as PLANNED stub so the user knows to attach the real document.
+      // Only update if the record is not already in the correct placeholder state.
+      if (doc.generationStatus !== "PLANNED" || !doc.fileContent) {
+        await prisma.generatedDocument.update({
+          where: { id: doc.id },
+          data: {
+            generationStatus: "PLANNED",
+            validationStatus: "PENDING",
+            reviewStatus: "REPLACE_WITH_ORIGINAL",
+            reviewNotes: "Attach the tender-issued original / signed / stamped / certified document before final export. Do not submit a generated file in place of this item.",
+            contentSummary: `Placeholder for ${title}. Replace with the tender-issued original before final export. Do not submit this stub.`,
+            updatedAt: new Date(),
+          },
+        });
+        filled += 1;
+      }
+    }
   }
-  return incomplete.length;
+  return filled;
 }
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
