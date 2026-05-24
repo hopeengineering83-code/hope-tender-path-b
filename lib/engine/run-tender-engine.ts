@@ -389,17 +389,10 @@ export async function runTenderEngine(
     }
 
     progress("engine.persist", `Persisting ${requirementRows.length} requirement(s), ${matching.expertMatches.length} expert match(es), ${matching.projectMatches.length} project match(es) to DB`);
-    await prisma.tenderExpertMatch.deleteMany({ where: { tenderId } });
-    await prisma.tenderProjectMatch.deleteMany({ where: { tenderId } });
-    await prisma.complianceGap.deleteMany({ where: { tenderId } });
-    await prisma.complianceMatrix.deleteMany({ where: { tenderId } });
-    await prisma.tenderRequirement.deleteMany({ where: { tenderId } });
 
-    for (const batch of chunks(requirementRows, 100)) await prisma.tenderRequirement.createMany({ data: batch });
+    // Pre-compute all row arrays before entering the transaction
     const expertMatchRows = matching.expertMatches.map((match) => ({ tenderId, expertId: match.expertId, score: match.score, rationale: match.rationale, isSelected: match.isSelected }));
-    for (const batch of chunks(expertMatchRows, 100)) await prisma.tenderExpertMatch.createMany({ data: batch, skipDuplicates: true });
     const projectMatchRows = matching.projectMatches.map((match) => ({ tenderId, projectId: match.projectId, score: match.score, rationale: match.rationale, isSelected: match.isSelected }));
-    for (const batch of chunks(projectMatchRows, 100)) await prisma.tenderProjectMatch.createMany({ data: batch, skipDuplicates: true });
 
     try {
       const { writeScoreBreakdown, deterministicScoreBreakdown } = await import("./score-breakdown-writer");
@@ -428,46 +421,54 @@ export async function runTenderEngine(
     }
 
     const matrixRows = compliance.matrices.map((matrix) => ({ tenderId, requirementId: matrix.requirementId, evidenceType: matrix.evidenceType, evidenceSource: matrix.evidenceSource, evidenceReference: matrix.evidenceReference ?? null, supportLevel: matrix.supportStatus, notes: [matrix.evidenceSummary, matrix.notes].filter(Boolean).join(" | ") || null }));
-    for (const batch of chunks(matrixRows, 100)) await prisma.complianceMatrix.createMany({ data: batch });
-
     const gapRows = compliance.gaps.map((gap) => ({ tenderId, requirementId: gap.requirementId ?? null, severity: gap.severity, title: gap.title, description: gap.description, mitigationPlan: gap.mitigationPlan ?? null }));
     if (hasDraftKnowledge) {
       gapRows.push({ tenderId, requirementId: null, severity: "HIGH", title: "Draft company knowledge requires review", description: `The company knowledge base contains ${aiDraftExpertCount} AI_DRAFT expert(s), ${regexDraftExpertCount} REGEX_DRAFT expert(s), ${aiDraftProjectCount} AI_DRAFT project(s), and ${regexDraftProjectCount} REGEX_DRAFT project(s). Draft records are not used as final submission evidence until marked REVIEWED.`, mitigationPlan: "Open Company Knowledge Review, verify source evidence, correct fields, and mark valid expert/project records as REVIEWED before final generation." });
     }
-    for (const batch of chunks(gapRows, 100)) await prisma.complianceGap.createMany({ data: batch });
-
     const documentRows = documentPlan.documents.map((document) => ({ tenderId, name: document.name, documentType: document.documentType, exactFileName: document.exactFileName ?? null, exactOrder: typeof document.exactOrder === "number" ? document.exactOrder : null, contentSummary: document.contentSummary }));
-    for (const batch of chunks(documentRows, 100)) await prisma.generatedDocument.createMany({ data: batch });
 
-    await prisma.tender.update({
-      where: { id: tenderId },
-      data: {
-        analysisSummary: analysis.summary,
-        exactFileNaming: JSON.stringify(analysis.exactFileNaming),
-        exactFileOrder: JSON.stringify(analysis.exactFileOrder),
-        evaluationMethodology: (analysis as { evaluationMethodology?: string | null }).evaluationMethodology ?? null,
-        readinessScore,
-        status: reviewNeeded ? "COMPLIANCE_REVIEW" : "MATCHED",
-        stage: reviewNeeded ? "COMPLIANCE" : "MATCHING",
-        notes: [
-          `Engine run ID: ${engineRunId}`,
-          activeGeneratedDocuments.length > 0 ? `${activeGeneratedDocuments.length} previous generated document(s) were superseded and preserved for audit/review history.` : null,
-          "Senior consultant mode: broad-fit matching uses capability families, sector/service equivalence, and professional judgment instead of exact wording only.",
-          "Main engine selection: reviewed best-available evidence below 90% can be selected when no selected safe evidence exists for a required class; draft knowledge remains excluded from final evidence.",
-          mainEngineAIRematch.aiApplied ? `Main engine AI multi-perspective scoring applied automatically: ${mainEngineAIRematch.expertAssessments} expert assessment(s), ${mainEngineAIRematch.projectAssessments} project assessment(s), ${mainEngineAIRematch.selectedExpertCount} selected expert(s), ${mainEngineAIRematch.selectedProjectCount} selected project(s).` : null,
-          mainEngineAIRematch.warning ? `Main engine AI multi-perspective scoring fallback: ${mainEngineAIRematch.warning}` : null,
-          analysisMethod === "AI" ? "Analysis source: AI (chunked multi-call when tender > 60K chars)." : `Analysis source: regex fallback (${analysisMethod}). ${analysisFallbackReason ?? ""}`.trim(),
-          hardGaps > 0 ? `${hardGaps} hard evidence gap(s) remain.` : null,
-          reviewGaps > 0 ? `${reviewGaps} senior review item(s) remain; these are not automatic fatal blockers.` : null,
-          knowledgeReadiness.hasBlockingExperts ? `${knowledgeReadiness.aiDraftExperts + knowledgeReadiness.regexDraftExperts} expert record(s) are draft and excluded from final evidence until REVIEWED.` : null,
-          knowledgeReadiness.hasBlockingProjects ? `${knowledgeReadiness.aiDraftProjects + knowledgeReadiness.regexDraftProjects} project record(s) are draft and excluded from final evidence until REVIEWED.` : null,
-          !knowledgeReadiness.hasUsableExperts ? "No REVIEWED experts found — review extracted CV records before final generation." : null,
-          !knowledgeReadiness.hasUsableProjects ? "No REVIEWED projects found — review extracted project records before final generation." : null,
-          knowledgeReadiness.reviewedExperts > 0 ? `${knowledgeReadiness.reviewedExperts} REVIEWED expert(s) available for final generation.` : null,
-          knowledgeReadiness.reviewedProjects > 0 ? `${knowledgeReadiness.reviewedProjects} REVIEWED project(s) available for final generation.` : null,
-        ].filter(Boolean).join("\n") || null,
-      },
-    });
+    await prisma.$transaction(async (tx) => {
+      await tx.tenderExpertMatch.deleteMany({ where: { tenderId } });
+      await tx.tenderProjectMatch.deleteMany({ where: { tenderId } });
+      await tx.complianceGap.deleteMany({ where: { tenderId } });
+      await tx.complianceMatrix.deleteMany({ where: { tenderId } });
+      await tx.tenderRequirement.deleteMany({ where: { tenderId } });
+      for (const batch of chunks(requirementRows, 100)) await tx.tenderRequirement.createMany({ data: batch });
+      for (const batch of chunks(expertMatchRows, 100)) await tx.tenderExpertMatch.createMany({ data: batch, skipDuplicates: true });
+      for (const batch of chunks(projectMatchRows, 100)) await tx.tenderProjectMatch.createMany({ data: batch, skipDuplicates: true });
+      for (const batch of chunks(matrixRows, 100)) await tx.complianceMatrix.createMany({ data: batch });
+      for (const batch of chunks(gapRows, 100)) await tx.complianceGap.createMany({ data: batch });
+      for (const batch of chunks(documentRows, 100)) await tx.generatedDocument.createMany({ data: batch });
+      await tx.tender.update({
+        where: { id: tenderId },
+        data: {
+          analysisSummary: analysis.summary,
+          exactFileNaming: JSON.stringify(analysis.exactFileNaming),
+          exactFileOrder: JSON.stringify(analysis.exactFileOrder),
+          evaluationMethodology: (analysis as { evaluationMethodology?: string | null }).evaluationMethodology ?? null,
+          readinessScore,
+          status: reviewNeeded ? "COMPLIANCE_REVIEW" : "MATCHED",
+          stage: reviewNeeded ? "COMPLIANCE" : "MATCHING",
+          notes: [
+            `Engine run ID: ${engineRunId}`,
+            activeGeneratedDocuments.length > 0 ? `${activeGeneratedDocuments.length} previous generated document(s) were superseded and preserved for audit/review history.` : null,
+            "Senior consultant mode: broad-fit matching uses capability families, sector/service equivalence, and professional judgment instead of exact wording only.",
+            "Main engine selection: reviewed best-available evidence below 90% can be selected when no selected safe evidence exists for a required class; draft knowledge remains excluded from final evidence.",
+            mainEngineAIRematch.aiApplied ? `Main engine AI multi-perspective scoring applied automatically: ${mainEngineAIRematch.expertAssessments} expert assessment(s), ${mainEngineAIRematch.projectAssessments} project assessment(s), ${mainEngineAIRematch.selectedExpertCount} selected expert(s), ${mainEngineAIRematch.selectedProjectCount} selected project(s).` : null,
+            mainEngineAIRematch.warning ? `Main engine AI multi-perspective scoring fallback: ${mainEngineAIRematch.warning}` : null,
+            analysisMethod === "AI" ? "Analysis source: AI (chunked multi-call when tender > 60K chars)." : `Analysis source: regex fallback (${analysisMethod}). ${analysisFallbackReason ?? ""}`.trim(),
+            hardGaps > 0 ? `${hardGaps} hard evidence gap(s) remain.` : null,
+            reviewGaps > 0 ? `${reviewGaps} senior review item(s) remain; these are not automatic fatal blockers.` : null,
+            knowledgeReadiness.hasBlockingExperts ? `${knowledgeReadiness.aiDraftExperts + knowledgeReadiness.regexDraftExperts} expert record(s) are draft and excluded from final evidence until REVIEWED.` : null,
+            knowledgeReadiness.hasBlockingProjects ? `${knowledgeReadiness.aiDraftProjects + knowledgeReadiness.regexDraftProjects} project record(s) are draft and excluded from final evidence until REVIEWED.` : null,
+            !knowledgeReadiness.hasUsableExperts ? "No REVIEWED experts found — review extracted CV records before final generation." : null,
+            !knowledgeReadiness.hasUsableProjects ? "No REVIEWED projects found — review extracted project records before final generation." : null,
+            knowledgeReadiness.reviewedExperts > 0 ? `${knowledgeReadiness.reviewedExperts} REVIEWED expert(s) available for final generation.` : null,
+            knowledgeReadiness.reviewedProjects > 0 ? `${knowledgeReadiness.reviewedProjects} REVIEWED project(s) available for final generation.` : null,
+          ].filter(Boolean).join("\n") || null,
+        },
+      });
+    }, { timeout: 60000 });
 
     await writeEngineRunAudit({
       userId,
@@ -506,6 +507,11 @@ export async function runTenderEngine(
     });
   } catch (error) {
     await writeEngineRunAudit({ userId, tenderId, action: "TENDER_ENGINE_RUN_FAILED", description: `Tender engine run failed for "${tender.title}"`, metadata: { engineRunId, startedAt: startedAt.toISOString(), failedAt: new Date().toISOString(), durationMs: Date.now() - startedAt.getTime(), error: error instanceof Error ? error.message : String(error) } });
+    try {
+      await prisma.tender.update({ where: { id: tenderId }, data: { status: "ERROR", notes: `Engine run failed at ${new Date().toISOString()}: ${error instanceof Error ? error.message : String(error)}` } });
+    } catch {
+      // best-effort — don't mask the original error
+    }
     throw error;
   }
 }
