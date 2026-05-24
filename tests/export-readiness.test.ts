@@ -161,8 +161,8 @@ describe("filePlanBlockersFromLists", () => {
 
   it("treats file-order mismatch as a HIGH blocker", () => {
     const blockers = filePlanBlockersFromLists([
-      { ...READY, exactOrder: 2, exactFileName: "Financial-Proposal.docx" },
-      { ...READY, id: "doc-2", exactOrder: 1, exactFileName: "Technical-Proposal.docx" },
+      { ...READY, exactOrder: 1, exactFileName: "Financial-Proposal.docx" },
+      { ...READY, id: "doc-2", exactOrder: 2, exactFileName: "Technical-Proposal.docx" },
     ], null, JSON.stringify(["Technical-Proposal.docx", "Financial-Proposal.docx"]));
     assert.ok(blockers.some((b) => b.category === "FILE_ORDER" && b.severity === "HIGH"));
   });

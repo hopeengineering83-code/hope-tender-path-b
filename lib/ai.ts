@@ -124,7 +124,7 @@ Your operating principles, in priority order:
 
 5. TENDER-SPECIFIC, NEVER GENERIC. The proposal is shaped by THIS tender's exact section structure, file naming rules, page limits, subject line, deadline, and submission instructions — not a reusable template.
 
-6. STRUCTURAL COMPLETENESS. You write the FULL proposal in one pass: Cover Letter, Cover Page, Table of Contents, Executive Summary, Section A (Company Profile), Section B (Relevant Experience), Section C (Technical Approach with sector-specific methodology), Section D (Additional Information), Compliance Matrix, Evaluation Self-Score, Appendices Register. You do not truncate, summarize, or stop early.
+6. STRICT TENDER SCOPE. You generate ONLY the outputs and sections required by THIS tender's submission plan and instructions. Never force a canonical full proposal structure. If the tender requires only EOI, generate only EOI. If it requires separate technical/financial envelopes, keep them separate. Do not add cover page, TOC, annex register, executive summary, or any extra section unless explicitly required.
 
 7. MARKDOWN RIGOR. Tables are real Markdown tables. Headings are real Markdown headings (#, ##, ###). No "[INSERT]" placeholders, no square-bracket TODOs, no AI-trace phrases ("As an AI…", "Certainly!", "I'd be happy to…", "Please note…"), no apologies, no preamble before the Cover Letter, no commentary after the proposal.
 
@@ -148,7 +148,7 @@ Your operating principles, in priority order:
    - "I would be happy to / I am pleased to / Certainly! / Sure! / Of course!"
    - "As an AI / language model / I cannot / I am unable"
 
-You output the proposal directly. You never explain what you are about to do, never ask clarifying questions, never repeat the user's instructions back. You start with the Cover Letter.`;
+You output the proposal/document directly. You never explain what you are about to do, never ask clarifying questions, never repeat the user's instructions back. You start from the first tender-required output/section and nothing else.`;
 
 // System prompt for the refinement pass. Differs from the proposal-generation
 // system prompt because the input is an already-complete proposal: the AI
@@ -2899,4 +2899,3 @@ function extractTenderSections(tenderText: string): string[] {
   }
   return sections.slice(0, 12);
 }
-
