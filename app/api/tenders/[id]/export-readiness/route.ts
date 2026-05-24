@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { checkFullExportReadiness, exportReadinessError } from "../../../../../lib/engine/export-readiness";
+import { filterFinalExportCandidateDocuments } from "../../../../../lib/engine/document-output-state";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 10;
@@ -63,10 +64,15 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
 
+  // Export readiness must evaluate final-package candidates only.
+  // Internal quick drafts are useful in the workspace, but they are
+  // deliberately NOT_EXPORTABLE and should not block the final ZIP gate.
+  const finalCandidateDocs = filterFinalExportCandidateDocuments(tender.generatedDocuments);
+
   // Deduplicate by exactFileName: multiple active records with the same filename accumulate from
   // repeated generation runs that didn't supersede old records. Show one failure per logical file.
   const seenKeys = new Set<string>();
-  const dedupedDocs = tender.generatedDocuments
+  const dedupedDocs = finalCandidateDocs
     .slice()
     .sort((a, b) => (a.exactOrder ?? 9999) - (b.exactOrder ?? 9999))
     .filter((doc) => {
@@ -97,14 +103,16 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
         readinessScore: tender.readinessScore ?? 0,
       },
       summary: {
-        activeDocuments: tender.generatedDocuments.length,
+        activeDocuments: finalCandidateDocs.length,
+        workspaceDocuments: tender.generatedDocuments.length,
+        excludedInternalDrafts: tender.generatedDocuments.length - finalCandidateDocs.length,
         documentBlockers: documentBlockers.length,
         tenderLevelBlockers: tenderLevelBlockers.length,
         totalBlockers,
       },
       documentBlockers,
       tenderLevelBlockers,
-      message: readiness.ok ? "Export gate passed. All active generated documents and tender-level controls are ready." : exportReadinessError(readiness.failures, tenderLevelBlockers),
+      message: readiness.ok ? "Export gate passed. All final-package documents and tender-level controls are ready." : exportReadinessError(readiness.failures, tenderLevelBlockers),
     },
   });
 }
