@@ -2,6 +2,17 @@ import { NextResponse } from "next/server";
 import { prisma, prismaReady } from "../../../../lib/prisma";
 import { getSession } from "../../../../lib/auth";
 import { parseTenderStatus } from "../../../../lib/tender-workflow";
+import { prepareDashboardGeneratedDocuments } from "../../../../lib/dashboard-generated-documents";
+
+function withDashboardGeneratedDocuments<T extends { generatedDocuments: any[] }>(tender: T): T {
+  const prepared = prepareDashboardGeneratedDocuments(tender.generatedDocuments);
+  return { ...tender, generatedDocuments: prepared.documents };
+}
+
+const generatedDocumentOrder = [
+  { exactOrder: "asc" as const },
+  { createdAt: "desc" as const },
+];
 
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const userId = await getSession();
@@ -19,12 +30,12 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       },
       requirements: { orderBy: { createdAt: "asc" } },
       complianceGaps: { orderBy: { createdAt: "desc" } },
-      generatedDocuments: { orderBy: { createdAt: "desc" } },
+      generatedDocuments: { orderBy: generatedDocumentOrder },
     },
   });
 
   if (!tender) return NextResponse.json({ error: "Not found" }, { status: 404 });
-  return NextResponse.json(tender);
+  return NextResponse.json(withDashboardGeneratedDocuments(tender));
 }
 
 export async function PUT(req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -77,11 +88,11 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
         },
         requirements: { orderBy: { createdAt: "asc" } },
         complianceGaps: { orderBy: { createdAt: "desc" } },
-        generatedDocuments: { orderBy: { createdAt: "desc" } },
+        generatedDocuments: { orderBy: generatedDocumentOrder },
       },
     });
 
-    return NextResponse.json(tender);
+    return NextResponse.json(withDashboardGeneratedDocuments(tender));
   } catch (error) {
     console.error(error);
     return NextResponse.json({ error: "Failed to update tender" }, { status: 500 });
