@@ -47,6 +47,26 @@ export function isGenerated(value?: string | null): boolean {
   return normalizeStatus(value) === "GENERATED";
 }
 
+export function isInternalDraftDocument(doc: DocumentLike): boolean {
+  const label = `${doc.name ?? ""} ${doc.exactFileName ?? ""} ${doc.documentType ?? ""} ${doc.format ?? ""} ${doc.reviewStatus ?? ""} ${doc.generationStatus ?? ""}`;
+  if (/\bquick[_\s-]*draft\b/i.test(label)) return true;
+  if (/\bAI\s*Proposal\s*\(\s*Quick\s*Draft\s*\)/i.test(label)) return true;
+  if (/\bdraft[_\s-]*only\b/i.test(label)) return true;
+  if (/\bmarkdown\b/i.test(label) && normalizeStatus(doc.reviewStatus) === "NOT_EXPORTABLE") return true;
+  return false;
+}
+
+export function isFinalExportCandidateDocument(doc: DocumentLike): boolean {
+  if (normalizeStatus(doc.generationStatus) === "SUPERSEDED") return false;
+  if (normalizeStatus(doc.validationStatus) === "SUPERSEDED") return false;
+  if (isInternalDraftDocument(doc)) return false;
+  return true;
+}
+
+export function filterFinalExportCandidateDocuments<T extends DocumentLike>(docs: T[]): T[] {
+  return docs.filter(isFinalExportCandidateDocument);
+}
+
 function looksLikeBase64Docx(value: string): boolean {
   if (value.length < 8) return false;
   try {

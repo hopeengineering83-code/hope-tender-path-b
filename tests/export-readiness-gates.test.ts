@@ -1,9 +1,15 @@
 // Unit tests for export-readiness gates covering QUICK_DRAFT blocking,
-// NOT_EXPORTABLE blocking, and the zero-documents gate.
+// NOT_EXPORTABLE blocking, zero-documents gate, and final-package candidate filtering.
 
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
-import { deriveDocumentOutputState, EXPORT_BLOCKING_STATES } from "../lib/engine/document-output-state";
+import {
+  deriveDocumentOutputState,
+  EXPORT_BLOCKING_STATES,
+  filterFinalExportCandidateDocuments,
+  isFinalExportCandidateDocument,
+  isInternalDraftDocument,
+} from "../lib/engine/document-output-state";
 import { checkExportReadiness } from "../lib/engine/export-readiness";
 
 describe("document-output-state — draft/non-exportable blocking", () => {
@@ -16,10 +22,7 @@ describe("document-output-state — draft/non-exportable blocking", () => {
       format: null,
       fileContent: "abc",
     });
-    assert.ok(
-      (EXPORT_BLOCKING_STATES as readonly string[]).includes(state),
-      `expected blocking state, got ${state}`,
-    );
+    assert.ok((EXPORT_BLOCKING_STATES as readonly string[]).includes(state), `expected blocking state, got ${state}`);
   });
 
   it("MARKDOWN format → CONTROL_RECORD_ONLY (blocked)", () => {
@@ -31,10 +34,7 @@ describe("document-output-state — draft/non-exportable blocking", () => {
       format: "MARKDOWN",
       fileContent: "# draft",
     });
-    assert.ok(
-      (EXPORT_BLOCKING_STATES as readonly string[]).includes(state),
-      `expected blocking state, got ${state}`,
-    );
+    assert.ok((EXPORT_BLOCKING_STATES as readonly string[]).includes(state), `expected blocking state, got ${state}`);
   });
 
   it("NOT_EXPORTABLE reviewStatus → ORIGINAL_REQUIRED (blocked)", () => {
@@ -60,6 +60,47 @@ describe("document-output-state — draft/non-exportable blocking", () => {
       fileContent: null,
     });
     assert.equal(state, "ORIGINAL_REQUIRED");
+  });
+});
+
+describe("final export candidate filtering", () => {
+  it("excludes the AI Proposal Quick Draft workspace row from final-package gates", () => {
+    const draft = {
+      id: "draft",
+      name: "AI Proposal (Quick Draft)",
+      exactFileName: "AI-Proposal-Quick-Draft.docx",
+      generationStatus: "GENERATED",
+      validationStatus: "PENDING",
+      reviewStatus: "NOT_EXPORTABLE",
+      documentType: "QUICK_DRAFT",
+      format: "MARKDOWN",
+      fileContent: "# draft",
+    };
+    assert.equal(isInternalDraftDocument(draft), true);
+    assert.equal(isFinalExportCandidateDocument(draft), false);
+  });
+
+  it("keeps real DOCX/PDF generated documents as final-package candidates", () => {
+    const technical = {
+      id: "tech",
+      name: "Technical Proposal",
+      exactFileName: "Technical-Proposal.docx",
+      generationStatus: "GENERATED",
+      validationStatus: "VALIDATED",
+      reviewStatus: "READY_FOR_EXPORT",
+      documentType: "TECHNICAL_PROPOSAL",
+      format: "DOCX",
+      fileContent: "UEsDBAoAAAAAA",
+    };
+    assert.equal(isFinalExportCandidateDocument(technical), true);
+  });
+
+  it("filters only final-package candidates from mixed workspace documents", () => {
+    const docs = [
+      { id: "draft", name: "AI Proposal (Quick Draft)", documentType: "QUICK_DRAFT", format: "MARKDOWN", generationStatus: "GENERATED", reviewStatus: "NOT_EXPORTABLE" },
+      { id: "final", name: "Submission method", exactFileName: "Submission method.docx", documentType: "TECHNICAL_PROPOSAL", format: "DOCX", generationStatus: "GENERATED", reviewStatus: "READY_FOR_EXPORT" },
+    ];
+    assert.deepEqual(filterFinalExportCandidateDocuments(docs).map((d) => d.id), ["final"]);
   });
 });
 
