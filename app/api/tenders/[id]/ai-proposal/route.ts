@@ -72,7 +72,7 @@ function _buildProjectEvidenceLines(projects: { name?: string | null; evidences?
   ).slice(0, 30);
 }
 
-function fallbackProposal(params: {
+export function fallbackProposal(params: {
   tenderTitle: string;
   requirements: string[];
   companyName: string;
@@ -106,7 +106,7 @@ function fallbackProposal(params: {
     params.companyProfile
       ? `Prepared using available reviewed company evidence for ${params.companyName}.`
       : null,
-    params.aiError ? `Generation note: primary AI generation was unavailable in this run.` : null,
+    params.aiError ? "Generation note: automated generation was unavailable in this run." : null,
     "",
     "## Extracted Tender Requirements",
     reqText,
