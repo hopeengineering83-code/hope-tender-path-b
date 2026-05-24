@@ -388,7 +388,7 @@ export async function generateWithFallback(prompt: string, opts?: { systemPrompt
       const openAiNote = isOpenAIEnabled()
         ? ` OpenAI (${process.env.OPENAI_PROPOSAL_MODEL ?? "gpt-4o"}) also returned null — check OPENAI_API_KEY.`
         : "";
-      throw new Error(`Claude returned empty on all models; Gemini also failed: ${geminiMsg}.${openAiNote}`);
+      throw new Error(`All 4 AI providers exhausted. Claude returned null on all models; Gemini also failed: ${geminiMsg}.${openAiNote} DeepSeek also returned null. Try re-running the engine in a few minutes.`);
     }
     const providerNote = isOpenAIEnabled()
       ? `OpenAI (${process.env.OPENAI_PROPOSAL_MODEL ?? "gpt-4o"}) also returned null (rate limit or transient error).`
