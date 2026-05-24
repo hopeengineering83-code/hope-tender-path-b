@@ -289,10 +289,11 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       }
       const title = docTitle(doc);
       const documentType = documentTypeFor(title, doc.documentType);
-      const content = generatedDocumentHasContent(doc) && doc.generationStatus === "GENERATED" ? (doc.fileContent ?? await makeDocx(title, documentType, context)) : await makeDocx(title, documentType, context);
+      const mustRegenerate = /REPLACE_WITH_ORIGINAL|NOT_EXPORTABLE/i.test(doc.reviewStatus);
+      const content = (!mustRegenerate && generatedDocumentHasContent(doc) && doc.generationStatus === "GENERATED") ? (doc.fileContent ?? await makeDocx(title, documentType, context)) : await makeDocx(title, documentType, context);
       const fileName = doc.exactFileName || `${title.replace(/[^a-zA-Z0-9]+/g, "-").replace(/^-|-$/g, "")}.docx`;
       const visibleText = await extractDocxVisibleText(content, fileName);
-      const hygieneIssues = documentHygieneIssues(visibleText ?? content);
+      const hygieneIssues = documentHygieneIssues(visibleText ?? content, { name: doc.name, exactFileName: doc.exactFileName, documentType: doc.documentType, format: doc.format });
       if (hygieneIssues.length > 0) {
         blockedByHygiene.push({ name: title, issues: hygieneIssues });
         continue;

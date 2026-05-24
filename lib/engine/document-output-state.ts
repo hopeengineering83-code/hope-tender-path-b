@@ -16,6 +16,7 @@ export type DocumentLike = {
   documentType?: string | null;
   format?: string | null;
   fileContent?: string | null;
+  storagePath?: string | null;
   generationStatus?: string | null;
   validationStatus?: string | null;
   reviewStatus?: string | null;
@@ -82,7 +83,16 @@ export function deriveDocumentOutputState(doc: DocumentLike): DocumentOutputStat
   if (gen === "PLANNED" || want === "markdown" || want === "control") return "CONTROL_RECORD_ONLY";
 
   const content = (doc.fileContent ?? "").trim();
-  if (content.length === 0) return "CONTROL_RECORD_ONLY";
+  const hasStorageContent = (doc.storagePath ?? "").trim().length > 0;
+
+  if (content.length === 0 && !hasStorageContent) return "CONTROL_RECORD_ONLY";
+
+  // Storage-backed docs: trust validation/review status without content-type inspection
+  if (content.length === 0 && hasStorageContent) {
+    if (val === "VALIDATED" && rev === "READY_FOR_EXPORT") return "READY_FOR_EXPORT";
+    if (val === "VALIDATED") return "VALIDATED";
+    return want === "pdf" ? "PDF_GENERATED" : "DOCX_GENERATED";
+  }
 
   const isPdf = looksLikeBase64Pdf(content);
   const isDocx = looksLikeBase64Docx(content);
