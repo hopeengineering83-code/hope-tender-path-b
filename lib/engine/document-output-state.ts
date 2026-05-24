@@ -78,8 +78,11 @@ export function deriveDocumentOutputState(doc: DocumentLike): DocumentOutputStat
   const want = requestedFormat(doc);
 
   if (gen === "SUPERSEDED" || val === "SUPERSEDED") return "SUPERSEDED";
-  if (val === "NEEDS_REVALIDATION") return "NEEDS_REVALIDATION";
+  // REPLACE_WITH_ORIGINAL takes priority over NEEDS_REVALIDATION — a doc that
+  // must use the tender-issuer's original file is ORIGINAL_REQUIRED regardless
+  // of whether a reconcile also flagged it for revalidation.
   if (rev === "REPLACE_WITH_ORIGINAL" || rev === "NOT_EXPORTABLE") return "ORIGINAL_REQUIRED";
+  if (val === "NEEDS_REVALIDATION") return "NEEDS_REVALIDATION";
   if (gen === "PLANNED" || want === "markdown" || want === "control") return "CONTROL_RECORD_ONLY";
 
   const content = (doc.fileContent ?? "").trim();

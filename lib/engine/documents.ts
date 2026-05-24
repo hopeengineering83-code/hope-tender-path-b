@@ -37,7 +37,9 @@ function packageSummary(requirement: RequirementDraft): string {
 function documentKey(document: DocumentPlanResult["documents"][number]): string {
   if (document.documentType === "EXPERT") return "EXPERT::CONSOLIDATED";
   if (document.documentType === "PROJECT_EXPERIENCE") return "PROJECT_EXPERIENCE::CONSOLIDATED";
-  return `${document.documentType}::${document.exactFileName ?? document.name}`;
+  // Deduplicate by filename only — two requirements producing the same output
+  // filename (regardless of document type) should collapse to one document.
+  return document.exactFileName ?? document.name;
 }
 
 export function buildDocumentPlan(requirements: Array<{ id: string; requirement: RequirementDraft }>): DocumentPlanResult {
