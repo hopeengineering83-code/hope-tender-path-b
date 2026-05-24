@@ -42,7 +42,7 @@ const PORT = 3000;
 // without requiring local backend setup.
 const MODE = (process.env.HOPE_TENDER_DESKTOP_MODE || "hosted").toLowerCase();
 const HOSTED_URL = process.env.HOPE_TENDER_DESKTOP_URL || "https://hope-tender-path-b.vercel.app";
-const LOCAL_URL = `${TARGET_URL}`;
+const LOCAL_URL = `http://localhost:${PORT}`;
 const TARGET_URL = MODE === "local-server" ? LOCAL_URL : HOSTED_URL;
 
 function createWindow() {

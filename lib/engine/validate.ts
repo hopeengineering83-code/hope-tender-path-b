@@ -148,7 +148,7 @@ export async function validateTender(tenderId: string): Promise<ValidationReport
     const extras = generatedNames.filter((name) => !normalizedRequired.includes(name));
     if (missing.length > 0) issues.push({ code: "MISSING_REQUIRED_FILES", severity: "BLOCK", message: `The following tender-required file name(s) are missing from generated documents: ${missing.join(", ")}` });
     if (extras.length > 0) issues.push({ code: "EXTRA_GENERATED_FILES", severity: "WARN", message: `Generated package includes additional file(s) not detected in the tender naming rules: ${extras.join(", ")}. Remove them only if the tender strictly prohibits extra files.` });
-    if (generatedDocs.length < normalizedRequired.length) issues.push({ code: "FILE_COUNT_MISMATCH", severity: "BLOCK", message: `Tender requires at least ${normalizedRequired.length} named file(s), but only ${generatedDocs.length} generated file(s) are currently marked as generated.` });
+    if (missing.length === 0 && generatedDocs.length < normalizedRequired.length) issues.push({ code: "FILE_COUNT_MISMATCH", severity: "BLOCK", message: `Tender requires at least ${normalizedRequired.length} named file(s), but only ${generatedDocs.length} generated file(s) are currently marked as generated.` });
   }
 
   const requiredOrder = safeParseArr(tender.exactFileOrder).map((name) => name.trim().toLowerCase());

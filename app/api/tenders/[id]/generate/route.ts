@@ -77,7 +77,7 @@ async function ensurePlannedGeneratedDocumentRecords(tenderId: string, plannedFi
         created += 1;
       } catch { /* race-condition guard: if a concurrent request created the row first, skip silently */ }
     } else if (current.generationStatus !== "GENERATED") {
-      await prisma.generatedDocument.update({ where: { id: current.id }, data: { name: current.name || file.exactFileName.replace(/\.[a-z0-9]{2,5}$/i, ""), documentType, format: file.format, exactFileName: file.exactFileName, exactOrder: file.exactOrder, contentSummary: generatedDocumentHasContent(current) ? current.generationStatus : summary, updatedAt: new Date() } });
+      await prisma.generatedDocument.update({ where: { id: current.id }, data: { name: current.name || file.exactFileName.replace(/\.[a-z0-9]{2,5}$/i, ""), documentType, format: file.format, exactFileName: file.exactFileName, exactOrder: file.exactOrder, contentSummary: generatedDocumentHasContent(current) ? undefined : summary, updatedAt: new Date() } });
     }
     void key;
   }
