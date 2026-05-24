@@ -1,7 +1,15 @@
 import { prisma, prismaReady } from "../prisma";
 import { getStorageAdapter } from "../storage";
 import { isValidClientName } from "./metadata-validators";
-import { deriveDocumentOutputState, exportBlockReason, EXPORT_BLOCKING_STATES, type DocumentOutputState } from "./document-output-state";
+import {
+  deriveDocumentOutputState,
+  exportBlockReason,
+  EXPORT_BLOCKING_STATES,
+  isGenerated,
+  isReviewReadyForExport,
+  isValidationPassed,
+  type DocumentOutputState,
+} from "./document-output-state";
 import { containsPricingLeakage } from "./pricing-hygiene";
 
 export type ExportReadyDocument = {
@@ -120,7 +128,7 @@ export function documentHygieneIssues(text: string | null | undefined, doc?: Pic
 }
 
 export function isReadyForFinalExport(doc: ExportReadyDocument): boolean {
-  return doc.generationStatus === "GENERATED" && doc.validationStatus === "VALIDATED" && doc.reviewStatus === "READY_FOR_EXPORT" && deriveDocumentOutputState(doc) === "READY_FOR_EXPORT";
+  return isGenerated(doc.generationStatus) && isValidationPassed(doc.validationStatus) && isReviewReadyForExport(doc.reviewStatus) && deriveDocumentOutputState(doc) === "READY_FOR_EXPORT";
 }
 
 export function checkExportReadiness(docs: ExportReadyDocument[], opts: { requireFileContent?: boolean } = {}): ExportReadinessResult {
@@ -143,9 +151,9 @@ export function checkExportReadiness(docs: ExportReadyDocument[], opts: { requir
       const blockReason = exportBlockReason(state);
       if (blockReason) reasons.push(`[${state}] ${blockReason}`);
     } else if (state !== "READY_FOR_EXPORT") {
-      if (doc.generationStatus !== "GENERATED") reasons.push(`generationStatus is ${doc.generationStatus}, expected GENERATED`);
-      if (doc.validationStatus !== "VALIDATED") reasons.push(`validationStatus is ${doc.validationStatus}, expected VALIDATED`);
-      if (doc.reviewStatus !== "READY_FOR_EXPORT") reasons.push(`reviewStatus is ${doc.reviewStatus}, expected READY_FOR_EXPORT`);
+      if (!isGenerated(doc.generationStatus)) reasons.push(`generationStatus is ${doc.generationStatus}, expected GENERATED`);
+      if (!isValidationPassed(doc.validationStatus)) reasons.push(`validationStatus is ${doc.validationStatus}, expected PASSED or VALIDATED`);
+      if (!isReviewReadyForExport(doc.reviewStatus)) reasons.push(`reviewStatus is ${doc.reviewStatus}, expected READY_FOR_EXPORT`);
     }
     if (/MARKDOWN|QUICK_DRAFT|DRAFT_ONLY|CONTROL|NOT_EXPORTABLE|REPLACE_WITH_ORIGINAL|PLANNED/i.test(`${doc.format ?? ""} ${doc.documentType ?? ""}`)) {
       reasons.push(`Document format/status (${doc.format ?? "UNKNOWN"}/${doc.documentType ?? "UNKNOWN"}) is not a final export package file.`);
