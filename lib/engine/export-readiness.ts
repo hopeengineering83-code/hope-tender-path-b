@@ -1,4 +1,5 @@
 import { prisma, prismaReady } from "../prisma";
+import { getStorageAdapter } from "../storage";
 import { isValidClientName } from "./metadata-validators";
 import { deriveDocumentOutputState, exportBlockReason, EXPORT_BLOCKING_STATES, type DocumentOutputState } from "./document-output-state";
 import { containsPricingLeakage } from "./pricing-hygiene";
@@ -160,11 +161,29 @@ export function checkExportReadiness(docs: ExportReadyDocument[], opts: { requir
 
 export async function checkDocxHygieneReadiness(docs: ExportReadyDocument[]): Promise<ExportReadinessFailure[]> {
   const failures: ExportReadinessFailure[] = [];
+  const storage = getStorageAdapter();
   for (const doc of docs) {
     const fileName = documentFileName(doc);
-    // Skip DOCX hygiene for storage-backed docs (fileContent unavailable for inspection)
-    if (!doc.fileContent && doc.storagePath) continue;
-    const text = await extractDocxVisibleText(doc.fileContent, fileName);
+    let content = doc.fileContent ?? null;
+    if (!content && doc.storagePath) {
+      try {
+        const bytes = await storage.getFile({
+          storagePath: doc.storagePath,
+          fileContent: doc.fileContent ?? null,
+          fileName,
+        });
+        content = bytes.toString("base64");
+      } catch {
+        failures.push({
+          documentId: doc.id,
+          name: doc.name,
+          fileName,
+          reasons: ["Unable to inspect storage-backed document content for final export hygiene"],
+        });
+        continue;
+      }
+    }
+    const text = await extractDocxVisibleText(content, fileName);
     const reasons = documentHygieneIssues(text, doc).map((issue) => `${issue} inside DOCX visible text`);
     if (reasons.length > 0) failures.push({ documentId: doc.id, name: doc.name, fileName, reasons });
   }
