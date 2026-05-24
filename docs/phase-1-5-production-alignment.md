@@ -32,20 +32,18 @@ This improves the architecture for evidence-backed compliance mapping, company r
 
 ## Remaining production cutover work
 
-### PostgreSQL migration
-The original brief specified PostgreSQL with Prisma. The repository still uses SQLite at runtime today for lightweight deployment compatibility. A safe production cutover should follow this sequence:
+### PostgreSQL migration hygiene
+The target and current production posture is PostgreSQL with Prisma. Continue enforcing migration-safe operation:
 
-1. Change the Prisma datasource from SQLite to PostgreSQL.
-2. Regenerate the Prisma client.
-3. Create and apply migration files.
-4. Remove SQLite-specific bootstrap SQL paths.
-5. Set `DATABASE_URL` to the production PostgreSQL connection string.
-6. Run a one-time data migration from SQLite to PostgreSQL if existing data must be preserved.
-7. Smoke test authentication, tender intake, generation, validation, and export on the new environment.
+1. Keep Prisma datasource and runtime configuration aligned to PostgreSQL.
+2. Regenerate Prisma client after schema changes.
+3. Create and apply migration files via Prisma workflows.
+4. Keep `DATABASE_URL` configured for production and CI environments.
+5. Smoke test authentication, tender intake, generation, validation, and export after each schema migration.
 
 ### Runtime bootstrap alignment
-Because the current deployment path uses SQLite bootstrap SQL for lightweight environments, the runtime bootstrap file also needs to be kept in sync with the Prisma schema. In this session, the schema and validation changes were applied first, while the bootstrap sync itself remains a follow-up item if the current environment still relies on bootstrapped SQLite tables rather than Prisma migrations.
+Runtime bootstrap behavior must remain Prisma/PostgreSQL compatible. Any legacy SQLite bootstrap paths should be treated as historical/development-only and must not contradict production deployment guidance.
 
 ## Recommended next step
 
-The next clean milestone should be **PostgreSQL Production Cutover**, where the app is moved fully onto Prisma migrations and PostgreSQL, and the legacy SQLite bootstrap path is removed or isolated for local/demo use only.
+The next clean milestone should be **Production hardening follow-up**, focused on export/generation strictness, official-form replacement gating, and deeper extraction reliability under PostgreSQL/Prisma production assumptions.

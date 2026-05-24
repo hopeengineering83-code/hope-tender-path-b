@@ -1,4 +1,5 @@
 import { prisma, prismaReady } from "../prisma";
+import { getStorageAdapter } from "../storage";
 import { isValidClientName } from "./metadata-validators";
 import { deriveDocumentOutputState, exportBlockReason, EXPORT_BLOCKING_STATES, type DocumentOutputState } from "./document-output-state";
 import { containsPricingLeakage } from "./pricing-hygiene";
@@ -149,7 +150,7 @@ export function checkExportReadiness(docs: ExportReadyDocument[], opts: { requir
     if (/MARKDOWN|QUICK_DRAFT|DRAFT_ONLY|CONTROL|NOT_EXPORTABLE|REPLACE_WITH_ORIGINAL|PLANNED/i.test(`${doc.format ?? ""} ${doc.documentType ?? ""}`)) {
       reasons.push(`Document format/status (${doc.format ?? "UNKNOWN"}/${doc.documentType ?? "UNKNOWN"}) is not a final export package file.`);
     }
-    if (opts.requireFileContent && !doc.fileContent) reasons.push("fileContent is missing");
+    if (opts.requireFileContent && !doc.fileContent && !doc.storagePath) reasons.push("fileContent is missing");
     for (const issue of documentHygieneIssues(doc.fileContent, doc)) reasons.push(issue);
 
     if (reasons.length > 0) failures.push({ documentId: doc.id, name: doc.name, fileName: documentFileName(doc), reasons });
@@ -160,11 +161,29 @@ export function checkExportReadiness(docs: ExportReadyDocument[], opts: { requir
 
 export async function checkDocxHygieneReadiness(docs: ExportReadyDocument[]): Promise<ExportReadinessFailure[]> {
   const failures: ExportReadinessFailure[] = [];
+  const storage = getStorageAdapter();
   for (const doc of docs) {
     const fileName = documentFileName(doc);
-    // Skip DOCX hygiene for storage-backed docs (fileContent unavailable for inspection)
-    if (!doc.fileContent && doc.storagePath) continue;
-    const text = await extractDocxVisibleText(doc.fileContent, fileName);
+    let content = doc.fileContent ?? null;
+    if (!content && doc.storagePath) {
+      try {
+        const bytes = await storage.getFile({
+          storagePath: doc.storagePath,
+          fileContent: doc.fileContent ?? null,
+          fileName,
+        });
+        content = bytes.toString("base64");
+      } catch {
+        failures.push({
+          documentId: doc.id,
+          name: doc.name,
+          fileName,
+          reasons: ["Unable to inspect storage-backed document content for final export hygiene"],
+        });
+        continue;
+      }
+    }
+    const text = await extractDocxVisibleText(content, fileName);
     const reasons = documentHygieneIssues(text, doc).map((issue) => `${issue} inside DOCX visible text`);
     if (reasons.length > 0) failures.push({ documentId: doc.id, name: doc.name, fileName, reasons });
   }
@@ -204,7 +223,7 @@ export function exportReadinessError(failures: ExportReadinessFailure[], tenderL
   return out.length === 0 ? "" : out.join("\n\n");
 }
 
-function filePlanBlockersFromLists(docs: ExportReadyDocument[], exactFileNaming: string | null | undefined, exactFileOrder: string | null | undefined): NonNullable<ExportReadinessResult["tenderLevelBlockers"]> {
+export function filePlanBlockersFromLists(docs: ExportReadyDocument[], exactFileNaming: string | null | undefined, exactFileOrder: string | null | undefined): NonNullable<ExportReadinessResult["tenderLevelBlockers"]> {
   const blockers: NonNullable<ExportReadinessResult["tenderLevelBlockers"]> = [];
   const requiredNames = parseRequiredFileList(exactFileNaming);
   const requiredOrder = parseRequiredFileList(exactFileOrder);
@@ -213,11 +232,13 @@ function filePlanBlockersFromLists(docs: ExportReadyDocument[], exactFileNaming:
 
   const missingNames = requiredNames.filter((name) => !actualNameSet.has(normalizeFileName(name)));
   if (missingNames.length > 0) blockers.push({ category: "FILE_NAMING", severity: "HIGH", title: `Missing required generated file name(s): ${missingNames.slice(0, 5).join(", ")}${missingNames.length > 5 ? ` and ${missingNames.length - 5} more` : ""}`, recommendedAction: "Generate or rename documents to match the tender's exact required file names before final export." });
+  const extraFiles = actualNames.filter((name) => requiredNames.length > 0 && !requiredNames.some((required) => normalizeFileName(required) === normalizeFileName(name)));
+  if (extraFiles.length > 0) blockers.push({ category: "EXTRA_FILES", severity: "HIGH", title: `Generated package contains non-required file(s): ${extraFiles.slice(0, 5).join(", ")}${extraFiles.length > 5 ? ` and ${extraFiles.length - 5} more` : ""}`, recommendedAction: "Remove extra generated files not listed in the tender's exact file naming instructions before final export." });
 
   if (requiredOrder.length > 0) {
     const orderedActual = [...docs].sort((a, b) => (a.exactOrder ?? 9999) - (b.exactOrder ?? 9999)).map((doc) => normalizeFileName(documentFileName(doc)));
     const mismatches = requiredOrder.map((name, index) => ({ name, expected: normalizeFileName(name), actual: orderedActual[index] ?? "" })).filter((row) => row.actual && row.expected !== row.actual);
-    if (mismatches.length > 0) blockers.push({ category: "FILE_ORDER", severity: "MEDIUM", title: `Generated file order does not match tender order near: ${mismatches.slice(0, 3).map((m) => m.name).join(", ")}`, recommendedAction: "Reorder the generated documents/export package to match the tender's required attachment order." });
+    if (mismatches.length > 0) blockers.push({ category: "FILE_ORDER", severity: "HIGH", title: `Generated file order does not match tender order near: ${mismatches.slice(0, 3).map((m) => m.name).join(", ")}`, recommendedAction: "Reorder the generated documents/export package to match the tender's required attachment order." });
   }
 
   return blockers;
@@ -273,7 +294,7 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
   if (requiresProjects && totalProjectMatches === 0) blockers.push(tenderBlocker("NO_TENDER_SPECIFIC_PROJECT_MATCHES", "No tender-specific project match rows exist.", "Run Engine to create project matches from the reviewed vault."));
 
   const ungroundedMandatory = tender.requirements.filter((req) => req.priority === "MANDATORY" && !req.sectionReference && !req.sourceTenderFileId && !req.sourcePageNumber && !req.sourceExactQuote && (req.sourceConfidence ?? 0) <= 0);
-  if (ungroundedMandatory.length > 0) blockers.push(tenderBlocker("SOURCE_REFERENCES_MISSING", `${ungroundedMandatory.length} mandatory requirement(s) lack source/page/quote traceability.`, "Run source extraction and review mandatory requirement references before export.", "MEDIUM"));
+  if (ungroundedMandatory.length > 0) blockers.push(tenderBlocker("SOURCE_REFERENCES_MISSING", `${ungroundedMandatory.length} mandatory requirement(s) lack source/page/quote traceability.`, "Run source extraction and review mandatory requirement references before export.", "HIGH"));
 
   blockers.push(...filePlanBlockersFromLists(docs, tender.exactFileNaming, tender.exactFileOrder));
 
