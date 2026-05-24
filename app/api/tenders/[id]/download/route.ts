@@ -16,7 +16,8 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 function err(message: string, status = 500, extra: Record<string, unknown> = {}) {
-  return NextResponse.json({ success: false, error: message, ...extra }, { status });
+  const code = typeof extra.code === "string" ? extra.code : "DOWNLOAD_ROUTE_ERROR";
+  return NextResponse.json({ success: false, ok: false, code, error: message, message, ...extra }, { status });
 }
 
 function fileName(name: string): string {
@@ -37,6 +38,24 @@ function asReadyDoc(doc: any): ExportReadyDocument {
     fileContent: doc.fileContent ?? null,
     storagePath: doc.storagePath ?? null,
   };
+}
+
+async function readContentOrError(doc: ExportReadyDocument) {
+  try {
+    return { ok: true as const, content: await readGeneratedDocumentContent(doc) };
+  } catch (error) {
+    return {
+      ok: false as const,
+      response: err("Document bytes are unavailable. Regenerate the document or reattach the final file before export.", 409, {
+        code: "STORAGE_CONTENT_UNAVAILABLE",
+        documentId: doc.id,
+        fileName: doc.exactFileName ?? fileName(doc.name),
+        hasStoragePath: Boolean(doc.storagePath),
+        hasInlineFileContent: Boolean(doc.fileContent),
+        detail: error instanceof Error ? error.message : String(error),
+      }),
+    };
+  }
 }
 
 function makeInternalDoc(title: string, lines: string[]) {
@@ -60,10 +79,10 @@ async function finalPackageGate(userId: string, tender: any) {
   if (!ingestion.ingestionReady) return { ok: false as const, response: err("Final export blocked: company knowledge ingestion is not ready.", 422, { code: "INGESTION_NOT_READY", blockers: ingestion.blockers, totals: ingestion.totals }) };
 
   const generation = await getTenderGenerationReadiness(prisma, userId, tender.id);
-  if (!generation?.ready) return { ok: false as const, response: err("Final export blocked by generation-readiness blockers.", 409, { blockers: generation?.blockers ?? [], warnings: generation?.warnings ?? [], nextAction: "OPEN_GENERATION_READINESS" }) };
+  if (!generation?.ready) return { ok: false as const, response: err("Final export blocked by generation-readiness blockers.", 409, { code: "GENERATION_NOT_READY", blockers: generation?.blockers ?? [], warnings: generation?.warnings ?? [], nextAction: "OPEN_GENERATION_READINESS" }) };
 
   const critical = tender.complianceGaps.filter((g: any) => !g.isResolved && g.severity === "CRITICAL");
-  if (critical.length) return { ok: false as const, response: err("Final export blocked by unresolved CRITICAL compliance gaps.", 409, { reasons: critical.map((g: any) => g.title) }) };
+  if (critical.length) return { ok: false as const, response: err("Final export blocked by unresolved CRITICAL compliance gaps.", 409, { code: "CRITICAL_COMPLIANCE_GAPS", reasons: critical.map((g: any) => g.title) }) };
 
   return { ok: true as const, companyId: company.id };
 }
@@ -75,7 +94,7 @@ async function internalReport(userId: string, tender: any, type: string) {
     for (const gap of tender.complianceGaps) lines.push(`[${gap.severity}] ${gap.title}`, gap.description, gap.mitigationPlan ? `Mitigation: ${gap.mitigationPlan}` : "");
   } else if (type === "requirements") {
     for (const req of tender.requirements) lines.push(`[${req.priority}] ${req.requirementType}: ${req.title}`, req.description);
-  } else return err("Unsupported download type", 400);
+  } else return err("Unsupported download type", 400, { code: "UNSUPPORTED_DOWNLOAD_TYPE" });
 
   const buffer = await Packer.toBuffer(makeInternalDoc(`Internal ${type} report`, lines.filter(Boolean)));
   const name = `${safeFileBaseName(tender.title)}-${type}-internal.docx`;
@@ -85,15 +104,17 @@ async function internalReport(userId: string, tender: any, type: string) {
 
 async function singleDocument(userId: string, tender: any, docId: string) {
   const raw = tender.generatedDocuments.find((d: any) => d.id === docId);
-  if (!raw || raw.generationStatus !== "GENERATED") return err("Document not found or not yet generated.", 404);
+  if (!raw || raw.generationStatus !== "GENERATED") return err("Document not found or not yet generated.", 404, { code: "DOCUMENT_NOT_FOUND" });
   if (!isFinalExportCandidateDocument(raw)) return err("This workspace draft is not a final export file.", 409, { code: "INTERNAL_DRAFT_NOT_EXPORTABLE" });
   if (!generatedDocumentHasContent(raw)) return err("Document content is unavailable.", 409, { code: "MISSING_CONTENT" });
 
   const doc = asReadyDoc(raw);
   const readiness = checkExportReadiness([doc], { requireFileContent: false });
-  if (!readiness.ok) return err(exportReadinessError(readiness.failures), 409, { failures: readiness.failures });
+  if (!readiness.ok) return err(exportReadinessError(readiness.failures), 409, { code: "DOCUMENT_NOT_READY", failures: readiness.failures });
 
-  const content = await readGeneratedDocumentContent(doc);
+  const contentResult = await readContentOrError(doc);
+  if (!contentResult.ok) return contentResult.response;
+  const content = contentResult.content;
   const sig = validateFileSignature(content.filename, content.base64);
   if (!sig.ok) return err(`File signature mismatch on ${content.filename}.`, 422, { code: "FILE_SIGNATURE_MISMATCH", reason: sig.reason });
 
@@ -113,7 +134,7 @@ async function zipPackage(userId: string, tender: any) {
   if (!docs.length) return err("No final exportable generated documents to package.", 400, { code: "NO_FINAL_EXPORT_CANDIDATES" });
 
   const readiness = await checkFullExportReadiness({ tenderId: tender.id, docs, requireFileContent: false });
-  if (!readiness.ok) return err(exportReadinessError(readiness.failures, readiness.tenderLevelBlockers), 409, { failures: readiness.failures, tenderLevelBlockers: readiness.tenderLevelBlockers ?? [] });
+  if (!readiness.ok) return err(exportReadinessError(readiness.failures, readiness.tenderLevelBlockers), 409, { code: "EXPORT_READINESS_BLOCKED", failures: readiness.failures, tenderLevelBlockers: readiness.tenderLevelBlockers ?? [] });
 
   const JSZip = (await import("jszip")).default;
   const zip = new JSZip();
@@ -124,12 +145,14 @@ async function zipPackage(userId: string, tender: any) {
 
   const byId = new Map(docs.map((d) => [d.id, d]));
   const entries = scope.entries.filter((entry) => Boolean(entry.generatedDocId && byId.get(entry.generatedDocId)));
-  if (!entries.length) return err("Final ZIP has no entries after scope filtering.", 409, { exclusions: scope.exclusions });
+  if (!entries.length) return err("Final ZIP has no entries after scope filtering.", 409, { code: "NO_ZIP_ENTRIES_AFTER_SCOPE_FILTERING", exclusions: scope.exclusions });
 
   for (const entry of entries) {
     const doc = byId.get(entry.generatedDocId!);
     if (!doc) continue;
-    const content = await readGeneratedDocumentContent(doc);
+    const contentResult = await readContentOrError(doc);
+    if (!contentResult.ok) return contentResult.response;
+    const content = contentResult.content;
     const sig = validateFileSignature(content.filename, content.base64);
     if (!sig.ok) return err(`File signature mismatch on ${content.filename}.`, 422, { code: "FILE_SIGNATURE_MISMATCH", reason: sig.reason });
     zip.file(entry.name || fileName(doc.name), content.buffer);
@@ -159,12 +182,12 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     const docId = searchParams.get("docId");
 
     const tender = await prisma.tender.findFirst({ where: { id, userId: actor.id }, include: { requirements: true, complianceGaps: true, generatedDocuments: true, exportPackages: true } });
-    if (!tender) return err("Tender not found", 404);
+    if (!tender) return err("Tender not found", 404, { code: "TENDER_NOT_FOUND" });
 
     if (docId) return await singleDocument(actor.id, tender, docId);
     if (type === "zip") return await zipPackage(actor.id, tender);
     if (type === "compliance" || type === "requirements") return await internalReport(actor.id, tender, type);
-    return err("Direct proposal export is disabled. Generate and download final documents or the ZIP package instead.", 409);
+    return err("Direct proposal export is disabled. Generate and download final documents or the ZIP package instead.", 409, { code: "DIRECT_PROPOSAL_EXPORT_DISABLED" });
   } catch (error) {
     console.error("Tender download route failed", error);
     return err("Download route failed.", 500, { code: "DOWNLOAD_ROUTE_RUNTIME_ERROR", detail: error instanceof Error ? error.message : String(error) });
