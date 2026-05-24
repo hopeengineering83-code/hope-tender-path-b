@@ -8,6 +8,17 @@ import { getCompanyIngestionReadiness } from "../../../../../lib/company-ingesti
 
 export const dynamic = "force-dynamic";
 
+type AnalysisSourceRisk = "LOW" | "MEDIUM" | "HIGH";
+
+function analysisSourceFromNotes(notes?: string | null): { label: string; risk: AnalysisSourceRisk; detail: string } {
+  const text = notes ?? "";
+  const line = text.split(/\n+/).find((item) => item.toLowerCase().startsWith("analysis source:"));
+  if (!line) return { label: "Unknown", risk: "MEDIUM", detail: "No persisted analysis-source line was found. Re-run Engine if the tender was analyzed before source tracking was added." };
+  if (/analysis source:\s*ai/i.test(line)) return { label: "AI", risk: "LOW", detail: line.replace(/^Analysis source:\s*/i, "") };
+  if (/regex fallback/i.test(line)) return { label: "Regex fallback", risk: "HIGH", detail: line.replace(/^Analysis source:\s*/i, "") };
+  return { label: "Unknown", risk: "MEDIUM", detail: line };
+}
+
 export async function GET(
   _req: Request,
   { params }: { params: Promise<{ id: string }> },
@@ -72,5 +83,22 @@ export async function GET(
     selectedReviewedProjects: tender.projectMatches.filter((m) => m.isSelected && m.project.trustLevel === "REVIEWED").length,
   });
 
-  return NextResponse.json({ tenderId: id, readyForMatching: quality.severity !== "POOR", quality });
+  const analysisSource = analysisSourceFromNotes(tender.notes);
+  const sourceWarnings = analysisSource.risk === "HIGH"
+    ? ["Analysis used regex fallback because AI providers failed or were exhausted. Regex fallback can miss official forms, evaluation scoring, exact file names, submission instructions, and expert/project requirements."]
+    : [];
+  const sourceRecommendations = analysisSource.risk === "HIGH"
+    ? ["Fix AI provider health or wait for rate limits to reset, then re-run Engine before relying on this tender analysis for final submission."]
+    : [];
+
+  return NextResponse.json({
+    tenderId: id,
+    readyForMatching: quality.severity !== "POOR" && analysisSource.risk !== "HIGH",
+    analysisSource,
+    quality: {
+      ...quality,
+      warnings: [...sourceWarnings, ...quality.warnings],
+      recommendations: [...sourceRecommendations, ...quality.recommendations],
+    },
+  });
 }
