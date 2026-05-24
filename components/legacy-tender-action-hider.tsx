@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import { GeneratedOutputListCleaner } from "./generated-output-list-cleaner";
 
 const DUPLICATE_ACTIONS = new Set(["Run Engine", "Running…", "Running...", "⚡ Generate Docs", "Generating…", "Generating..."]);
 
@@ -31,5 +32,5 @@ export function LegacyTenderActionHider({ targetId }: { targetId: string }) {
     return () => observer.disconnect();
   }, [targetId]);
 
-  return null;
+  return <GeneratedOutputListCleaner targetId={targetId} />;
 }
