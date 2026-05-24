@@ -376,7 +376,10 @@ export async function generateWithFallback(prompt: string, opts?: { systemPrompt
     });
     if (openAiResult) return openAiResult;
     // DeepSeek as 4th tier
-    const deepSeekResult1 = await generateWithDeepSeek(prompt, opts?.systemPrompt).catch(() => null);
+    const deepSeekResult1 = await generateWithDeepSeek(prompt, opts?.systemPrompt).catch((err) => {
+      console.warn(`[ai] DeepSeek failed: ${err instanceof Error ? err.message : String(err)}`);
+      return null;
+    });
     if (deepSeekResult1) return deepSeekResult1;
     // Always surface Gemini error when it was the root cause — even in
     // mixed deployments where OpenAI is configured but also returned null.
@@ -410,7 +413,10 @@ export async function generateWithFallback(prompt: string, opts?: { systemPrompt
     });
     if (openAiResult) return openAiResult;
     // DeepSeek as 4th tier
-    const deepSeekResult2 = await generateWithDeepSeek(prompt, opts?.systemPrompt).catch(() => null);
+    const deepSeekResult2 = await generateWithDeepSeek(prompt, opts?.systemPrompt).catch((err) => {
+      console.warn(`[ai] DeepSeek failed: ${err instanceof Error ? err.message : String(err)}`);
+      return null;
+    });
     if (deepSeekResult2) return deepSeekResult2;
     // If Gemini was the root cause, surface it rather than blaming OpenAI
     if (geminiError) throw geminiError;
@@ -418,7 +424,10 @@ export async function generateWithFallback(prompt: string, opts?: { systemPrompt
   }
   // Try DeepSeek standalone when neither Claude nor Gemini is configured
   if (isDeepSeekEnabled()) {
-    const deepSeekResult3 = await generateWithDeepSeek(prompt, opts?.systemPrompt).catch(() => null);
+    const deepSeekResult3 = await generateWithDeepSeek(prompt, opts?.systemPrompt).catch((err) => {
+      console.warn(`[ai] DeepSeek failed: ${err instanceof Error ? err.message : String(err)}`);
+      return null;
+    });
     if (deepSeekResult3) return deepSeekResult3;
   }
   // Gemini was configured but threw — surface the real error, not "no provider configured"
