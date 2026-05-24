@@ -124,11 +124,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   await logAction({
     userId: actor.id,
-    action: "ORIGINAL_REQUIRED_FILE_ATTACHED",
+    action: "DOCUMENT_REVIEW",
     entityType: "GeneratedDocument",
     entityId: doc.id,
     description: `${actor.email} attached official original "${uploadedName}" for final export file "${outputName}".`,
-    metadata: { tenderId, documentId: doc.id, uploadedFileName: uploadedName, exactFileName: outputName, mimeType, size: file.size },
+    metadata: { tenderId, documentId: doc.id, uploadedFileName: uploadedName, exactFileName: outputName, mimeType, size: file.size, action: "ORIGINAL_REQUIRED_FILE_ATTACHED" },
   });
 
   return NextResponse.json({
