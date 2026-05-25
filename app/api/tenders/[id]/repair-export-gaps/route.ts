@@ -7,6 +7,7 @@ import { deriveDocumentOutputState, normalizeStatus } from "../../../../../lib/e
 import { checkFullExportReadiness, documentHygieneIssues, extractDocxVisibleText } from "../../../../../lib/engine/export-readiness";
 import { generatedDocumentHasContent } from "../../../../../lib/generated-document-content";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
+import { MUTATION_RATE_LIMIT, rateLimit } from "../../../../../lib/rate-limit";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -96,6 +97,11 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     actor = await requireRole("ADMIN", "PROPOSAL_MANAGER");
   } catch (error) {
     return error instanceof Error && error.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse();
+  }
+
+  const rl = rateLimit(`repair-export-gaps:${actor.id}`, MUTATION_RATE_LIMIT);
+  if (!rl.allowed) {
+    return NextResponse.json({ success: false, ok: false, code: "RATE_LIMITED", error: "Too many export-gap repair requests. Wait and retry.", retryAfter: Math.ceil((rl.resetAt - Date.now()) / 1000) }, { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } });
   }
 
   await prismaReady;
