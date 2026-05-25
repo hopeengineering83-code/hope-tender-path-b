@@ -12,6 +12,7 @@ export default async function ExportPage() {
     where: { userId },
     include: {
       generatedDocuments: {
+        where: { generationStatus: { not: "SUPERSEDED" } },
         select: {
           id: true, name: true, generationStatus: true, validationStatus: true,
           reviewStatus: true, exactFileName: true, exactOrder: true,
