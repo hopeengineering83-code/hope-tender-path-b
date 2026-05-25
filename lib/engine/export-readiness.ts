@@ -12,6 +12,7 @@ import {
 } from "./document-output-state";
 import { containsPricingLeakage } from "./pricing-hygiene";
 import { checkExportFileByteReadiness } from "./export-byte-readiness";
+import { detectSubmissionPackageMode } from "./submission-package-mode";
 
 export type ExportReadyDocument = {
   id: string;
@@ -176,19 +177,10 @@ export async function checkDocxHygieneReadiness(docs: ExportReadyDocument[]): Pr
     let content = doc.fileContent ?? null;
     if (!content && doc.storagePath) {
       try {
-        const bytes = await storage.getFile({
-          storagePath: doc.storagePath,
-          fileContent: doc.fileContent ?? null,
-          fileName,
-        });
+        const bytes = await storage.getFile({ storagePath: doc.storagePath, fileContent: doc.fileContent ?? null, fileName });
         content = bytes.toString("base64");
       } catch {
-        failures.push({
-          documentId: doc.id,
-          name: doc.name,
-          fileName,
-          reasons: ["Unable to inspect storage-backed document content for final export hygiene"],
-        });
+        failures.push({ documentId: doc.id, name: doc.name, fileName, reasons: ["Unable to inspect storage-backed document content for final export hygiene"] });
         continue;
       }
     }
@@ -280,6 +272,27 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
   });
 
   if (!tender) return [tenderBlocker("TENDER_NOT_FOUND", "Tender not found for export readiness check.", "Reload the tender and run export readiness again.")];
+
+  const packageMode = detectSubmissionPackageMode({
+    submissionMethod: tender.submissionMethod,
+    submissionAddress: tender.submissionAddress,
+    submissionEmails: tender.submissionEmails,
+    exactFileNaming: tender.exactFileNaming,
+    exactFileOrder: tender.exactFileOrder,
+    analysisSummary: tender.analysisSummary,
+    evaluationMethodology: tender.evaluationMethodology,
+    notes: tender.notes,
+    requirements: tender.requirements,
+    files: tender.files,
+  });
+  if (packageMode.blockingForZip) {
+    blockers.push(tenderBlocker(
+      `PACKAGE_MODE_${packageMode.mode}`,
+      `${packageMode.reason} Signal: ${packageMode.matchedSignals[0] ?? packageMode.mode}`,
+      "Do not use the default final ZIP until the required submission package mode is implemented or manually prepared exactly as the tender instructs.",
+      "HIGH",
+    ));
+  }
 
   if (docs.length === 0) blockers.push(tenderBlocker("NO_ACTIVE_GENERATED_DOCUMENTS", "No active generated documents exist for export.", "Generate, validate and review the required documents before final export."));
   if (!isValidClientName(tender.clientName)) blockers.push(tenderBlocker("CLIENT_NAME_REQUIRED", "Client/procuring entity name is missing or invalid.", "Edit Tender Detail and enter the exact official procuring entity name."));
