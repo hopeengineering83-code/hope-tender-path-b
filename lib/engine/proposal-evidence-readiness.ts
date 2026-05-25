@@ -1,4 +1,5 @@
 import { prisma } from "../prisma";
+import { checkHighValueClaimEvidence } from "./claim-evidence-coverage";
 
 type Severity = "HIGH" | "MEDIUM" | "LOW";
 
@@ -73,7 +74,7 @@ export async function checkProposalEvidenceReadiness(tenderId: string, userId: s
   const company = await prisma.company.findUnique({
     where: { userId },
     include: {
-      documents: { select: { id: true, extractedText: true, aiExtractionStatus: true } },
+      documents: { select: { id: true, category: true, extractedText: true, aiExtractionStatus: true } },
       legalRecords: { select: { id: true } },
       financialRecords: { select: { id: true } },
       complianceRecords: { select: { id: true } },
@@ -158,6 +159,18 @@ export async function checkProposalEvidenceReadiness(tenderId: string, userId: s
     else if (selectedProjectsWithSourceEvidence < reviewedProjects.length) warnings.push({ severity: "MEDIUM", category: "PROJECT_EVIDENCE", title: "Some reviewed projects lack source evidence", detail: `${selectedProjectsWithSourceEvidence}/${reviewedProjects.length} reviewed selected projects have source evidence or substantial summary.`, nextAction: "Attach completion certificates, testimonials, contracts, or strengthen project summaries." });
     else strengths.push("Selected projects are reviewed and evidence-backed.");
   }
+
+  const claimEvidenceFindings = checkHighValueClaimEvidence({
+    company,
+    selectedReviewedExperts: reviewedExperts.map((m) => m.expert),
+    selectedReviewedProjects: reviewedProjects.map((m) => m.project),
+    tenderText: `${tender.title}\n${tender.description ?? ""}\n${tender.analysisSummary ?? ""}\n${requirements.map((r) => `${r.title}\n${r.description}`).join("\n")}`,
+  });
+  for (const finding of claimEvidenceFindings) {
+    if (finding.severity === "HIGH") blockers.push(finding);
+    else warnings.push(finding);
+  }
+  if (claimEvidenceFindings.length === 0 && companyDocumentsExtracted > 0) strengths.push("High-value company claim evidence coverage has no detected blocker.");
 
   if (parseArray(tender.exactFileNaming).length > 0 || parseArray(tender.exactFileOrder).length > 0) strengths.push("Submission file naming/order controls are captured.");
   else if (requirements.length > 0) warnings.push({ severity: "LOW", category: "SUBMISSION_CONTROLS", title: "No exact file naming/order controls captured", detail: "Final export may miss exact packaging rules if the tender contains them.", nextAction: "Confirm whether the tender defines file names, envelope names, or document order." });
