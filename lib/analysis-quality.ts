@@ -204,10 +204,19 @@ export function assessTenderAnalysisQuality(params: {
   const extractedTextLength = params.extractedTextLength ?? 0;
   const extractionQualitySub = extractedTextLength >= 5000 ? 100 : extractedTextLength >= 1000 ? 70 : extractedTextLength >= 200 ? 40 : extractedTextLength > 0 ? 20 : 0;
   const requirementExtractionSub = requirementCount === 0 ? 0 : requirementCount < 5 ? 50 : Math.min(100, 60 + requirementCount * 2);
-  // Metadata sub-score: 100 minus 25 per validation issue, floored at 0.
-  // If metadata wasn't provided at all (legacy callers), default to neutral 70.
+  // Metadata sub-score: weighted per field to match the main-score deductions
+  // (clientName −25, referenceNumber −15, country −8, contactName −6).
+  // Using a flat 25 per issue misrepresents a minor country validation failure
+  // as equally severe as a broken clientName.
   const metadataProvided = clientNameProvided || referenceProvided || countryProvided || contactProvided;
-  const metadataQualitySub = !metadataProvided ? 70 : Math.max(0, 100 - metadataIssues.length * 25);
+  const metadataIssuePenalty = metadataIssues.reduce((sum, issue) => {
+    if (issue.includes("clientName")) return sum + 25;
+    if (issue.includes("referenceNumber")) return sum + 15;
+    if (issue.includes("country")) return sum + 8;
+    if (issue.includes("clientContactName")) return sum + 6;
+    return sum + 10;
+  }, 0);
+  const metadataQualitySub = !metadataProvided ? 70 : Math.max(0, 100 - metadataIssuePenalty);
   const submissionPlanQualitySub = likelyMissingSubmissionRules ? 30 : hasExactFileNaming || hasExactFileOrder ? 100 : hasSubmissionNotes ? 75 : 50;
   const rawGrounding = requirementCount === 0 ? 0 : Math.round((sourceReferencedCount / requirementCount) * 100);
   const groundingFloor = extractedTextLength >= 5000 ? 25 : extractedTextLength >= 1000 ? 15 : 0;

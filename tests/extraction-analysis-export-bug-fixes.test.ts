@@ -149,6 +149,107 @@ signed declaration of eligibility and all supporting documents.
   });
 });
 
+// ─── 3b. Tender metadata — inferClientContactTitle captures role text ──────
+
+describe("inferTenderMetadata — clientContactTitle extraction", () => {
+  it("extracts procurement officer title (was always null due to non-capturing groups)", () => {
+    const tender = `
+REQUEST FOR PROPOSALS
+RFP No. TEST-2026-010
+
+Procuring Entity: Example Authority
+
+Contact Person: Ms. Hiwot Bekele
+Procurement Officer
+Email: hiwot.bekele@example.et
+Tel: +251 911 000 001
+
+Country: Ethiopia
+Deadline: 01 October 2026
+
+This tender is for consulting services. Bidders must submit technical and
+financial proposals with CVs for all key experts. Minimum 5 years of
+experience required. Firms must provide evidence of similar projects.
+    `.repeat(2);
+
+    const m = inferTenderMetadata(tender, "rfp.pdf");
+    assert.ok(
+      m.clientContactTitle !== null,
+      "clientContactTitle should not be null when 'Procurement Officer' appears in document",
+    );
+    assert.match(m.clientContactTitle ?? "", /procurement\s+officer/i);
+  });
+
+  it("extracts project manager title", () => {
+    const tender = `
+REQUEST FOR PROPOSALS
+RFP No. TEST-2026-011
+
+Procuring Entity: Test Ministry
+
+Contact Person: Mr. Alemu Tadesse
+Project Manager
+Email: alemu.tadesse@ministry.et
+
+Country: Ethiopia
+Deadline: 15 October 2026
+
+Consulting services for infrastructure development. Firms must provide
+a team of qualified engineers with relevant experience. Minimum 3
+completed projects required. Proposals must be submitted in sealed
+envelopes to the address indicated above.
+    `.repeat(2);
+
+    const m = inferTenderMetadata(tender, "rfp.pdf");
+    assert.ok(
+      m.clientContactTitle !== null,
+      "clientContactTitle should not be null when 'Project Manager' appears",
+    );
+    assert.match(m.clientContactTitle ?? "", /project\s+manager/i);
+  });
+});
+
+// ─── 3c. Tender metadata — inferPreBidMeeting strips date from location ───
+
+describe("inferTenderMetadata — preBidMeetingLocation does not include date text", () => {
+  it("location does not start with a date when date and venue are in the same phrase", () => {
+    const tender = `
+REQUEST FOR PROPOSALS
+RFP No. TEST-2026-012
+
+Procuring Entity: Test Agency
+
+Pre-bid meeting: 15 April 2026 at Eagle Plaza, Kirkos Sub City
+
+Country: Ethiopia
+Deadline: 30 April 2026
+
+Infrastructure consultancy services. Technical proposal must include
+methodology, work plan, and CVs for all key experts. At least three
+projects of similar nature required. Financial proposal must be sealed
+separately and submitted together with the technical envelope.
+    `.repeat(2);
+
+    const m = inferTenderMetadata(tender, "rfp.pdf");
+    if (m.preBidMeetingLocation !== null) {
+      assert.ok(
+        !/^\d{1,2}\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)/i.test(m.preBidMeetingLocation),
+        `location should not start with date text, got: "${m.preBidMeetingLocation}"`,
+      );
+      assert.ok(
+        m.preBidMeetingLocation.toLowerCase().includes("eagle") ||
+        m.preBidMeetingLocation.toLowerCase().includes("kirkos"),
+        `location should contain venue name, got: "${m.preBidMeetingLocation}"`,
+      );
+    }
+    // Pre-bid date should still parse correctly
+    if (m.preBidMeetingDate !== null) {
+      assert.equal(m.preBidMeetingDate.getMonth(), 3); // April = 3
+      assert.equal(m.preBidMeetingDate.getDate(), 15);
+    }
+  });
+});
+
 // ─── 4. final-zip-scope — null exactOrder sorts AFTER explicit orders ────
 
 describe("buildFinalZipEntries — null exactOrder sorts after high exactOrder", () => {

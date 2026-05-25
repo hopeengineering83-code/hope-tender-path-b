@@ -145,9 +145,12 @@ function inferClientContactName(text: string): string | null {
 }
 
 function inferClientContactTitle(text: string): string | null {
+  // Patterns must use a capture group — firstMatch returns match[1].
+  // The previous version used non-capturing (?:...) so match[1] was always
+  // undefined and this function always returned null.
   return firstMatch(text, [
-    /(?:procurement\s+(?:officer|manager|director|head|specialist))/i,
-    /(?:project\s+manager|tender\s+secretary|contracts\s+manager)/i,
+    /(procurement\s+(?:officer|manager|director|head|specialist))/i,
+    /(project\s+manager|tender\s+secretary|contracts\s+manager)/i,
   ]);
 }
 
@@ -343,7 +346,14 @@ function inferPreBidMeeting(text: string): { date: Date | null; location: string
   ]);
   if (!raw) return { date: null, location: null };
   const date = parseDateValue(raw);
-  return { date, location: raw.length < 150 ? raw : null };
+  // Strip the date portion so the location field holds only the venue text,
+  // not "25 March 2026 at Eagle Plaza, Kirkos Sub City".
+  const locationOnly = raw
+    .replace(/\d{1,2}\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4}/gi, "")
+    .replace(/\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4}/, "")
+    .replace(/^[\s,;:\-–at]+|[\s,;:\-–]+$/g, "")
+    .trim();
+  return { date, location: locationOnly.length >= 5 ? locationOnly : null };
 }
 
 function inferMandatorySiteVisit(text: string): boolean {

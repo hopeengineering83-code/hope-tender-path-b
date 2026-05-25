@@ -139,11 +139,14 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   tryFill("clientName", metadata.clientName);
   tryFill("country", metadata.country);
   // category — only update when stored is "General" (the default)
+  fieldsBefore.category = tender.category;
   if (tender.category === "General" && metadata.category !== "General") {
     update.category = metadata.category;
     fieldsAfter.category = metadata.category;
+  } else {
+    // Always populate fieldsAfter so the audit log never shows undefined.
+    fieldsAfter.category = tender.category;
   }
-  fieldsBefore.category = tender.category;
   tryFill("budget", metadata.budget);
   tryFill("currency", metadata.currency);
   tryFill("deadline", metadata.deadline);
@@ -162,11 +165,14 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   tryFill("preBidMeetingDate", metadata.preBidMeetingDate);
   tryFill("preBidMeetingLocation", metadata.preBidMeetingLocation);
   // mandatorySiteVisit — only flip false→true (user may want to manually clear)
+  fieldsBefore.mandatorySiteVisit = tender.mandatorySiteVisit;
   if (tender.mandatorySiteVisit === false && metadata.mandatorySiteVisit === true) {
     update.mandatorySiteVisit = true;
     fieldsAfter.mandatorySiteVisit = true;
+  } else {
+    // Always populate fieldsAfter so the audit log never shows undefined.
+    fieldsAfter.mandatorySiteVisit = tender.mandatorySiteVisit;
   }
-  fieldsBefore.mandatorySiteVisit = tender.mandatorySiteVisit;
   tryFill("numberOfCopiesRequired", metadata.numberOfCopiesRequired);
   tryFill("technicalWeight", metadata.technicalWeight);
   tryFill("financialWeight", metadata.financialWeight);
