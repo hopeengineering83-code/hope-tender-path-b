@@ -129,7 +129,7 @@ async function zipPackage(userId: string, tender: any) {
   const docs: ExportReadyDocument[] = filterFinalExportCandidateDocuments(tender.generatedDocuments as any[])
     .filter((d: any) => d.generationStatus === "GENERATED")
     .map(asReadyDoc)
-    .sort((a, b) => (a.exactOrder ?? 99) - (b.exactOrder ?? 99));
+    .sort((a, b) => (a.exactOrder ?? Number.MAX_SAFE_INTEGER) - (b.exactOrder ?? Number.MAX_SAFE_INTEGER));
 
   if (!docs.length) return err("No final exportable generated documents to package.", 400, { code: "NO_FINAL_EXPORT_CANDIDATES" });
 

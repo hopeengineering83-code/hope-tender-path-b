@@ -165,7 +165,9 @@ export function buildFinalZipEntries(input: FinalZipScopeInput): FinalZipScopeRe
   const exclusions: Array<{ docId: string; docName: string; reason: string }> = [];
 
   // Sort by exactOrder (stable) so the engine's planned order is preserved.
-  const docsSorted = [...input.generatedDocs].sort((a, b) => (a.exactOrder ?? 99) - (b.exactOrder ?? 99));
+  // Use MAX_SAFE_INTEGER as sentinel so that null-order docs sort LAST,
+  // not at position 99 (which would misplace docs with exactOrder >= 100).
+  const docsSorted = [...input.generatedDocs].sort((a, b) => (a.exactOrder ?? Number.MAX_SAFE_INTEGER) - (b.exactOrder ?? Number.MAX_SAFE_INTEGER));
 
   for (const doc of docsSorted) {
     const baseName = doc.exactFileName ?? doc.name;
