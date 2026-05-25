@@ -11,6 +11,7 @@ import {
   type DocumentOutputState,
 } from "./document-output-state";
 import { containsPricingLeakage } from "./pricing-hygiene";
+import { checkExportFileByteReadiness } from "./export-byte-readiness";
 
 export type ExportReadyDocument = {
   id: string;
@@ -320,7 +321,8 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
 export async function checkFullExportReadiness(opts: { tenderId: string; docs: ExportReadyDocument[]; requireFileContent?: boolean }): Promise<ExportReadinessResult> {
   const perDoc = checkExportReadiness(opts.docs, { requireFileContent: opts.requireFileContent });
   const docxHygieneFailures = await checkDocxHygieneReadiness(opts.docs);
-  const failures = mergeFailures(perDoc.failures, docxHygieneFailures);
+  const byteFailures = await checkExportFileByteReadiness(opts.docs);
+  const failures = mergeFailures(perDoc.failures, docxHygieneFailures, byteFailures);
   const tenderLevelBlockers = await checkTenderLevelExportBlockers(opts.tenderId, opts.docs);
   return { ok: failures.length === 0 && tenderLevelBlockers.length === 0, failures, tenderLevelBlockers };
 }
