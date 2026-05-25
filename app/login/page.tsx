@@ -1,10 +1,16 @@
 import { redirect } from "next/navigation";
 import { getCurrentUser } from "../../lib/auth";
 import { LoginForm } from "../../components/login-form";
+import { LoginRecoveryNote } from "../../components/login-recovery-note";
 
-export default async function LoginPage() {
+export default async function LoginPage({ searchParams }: { searchParams?: Promise<{ error?: string; detail?: string; recovered?: string }> }) {
   const user = await getCurrentUser();
   if (user) redirect("/dashboard");
+
+  const params = await searchParams;
+  const error = params?.error ?? null;
+  const detail = params?.detail ?? null;
+  const recovered = params?.recovered === "1";
 
   return (
     <main className="min-h-screen flex flex-col items-center justify-center p-6 bg-slate-50">
@@ -16,6 +22,7 @@ export default async function LoginPage() {
           <h1 className="text-2xl font-bold text-slate-900">Hope Tender</h1>
           <p className="mt-1 text-sm text-slate-500">Hope Urban Planning Architectural and Engineering Consultancy</p>
         </div>
+        {(error || recovered) && <LoginRecoveryNote error={error} detail={detail} />}
         <div className="rounded-2xl border bg-white p-8 shadow-sm space-y-5">
           <div>
             <h2 className="text-lg font-semibold text-slate-900">Sign in to your workspace</h2>
