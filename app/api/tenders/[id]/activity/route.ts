@@ -21,10 +21,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   const logs = await prisma.auditLog.findMany({
     where: {
       userId,
-      OR: [
-        { entityId: id },
-        { description: { contains: id } },
-      ],
+      entityId: id,
     },
     orderBy: { createdAt: "desc" },
     take: limit + 1,

@@ -11,7 +11,7 @@
 //   Permanently removes a single version (user-initiated cleanup).
 
 import { NextResponse } from "next/server";
-import { getSession } from "../../../../../../lib/auth";
+import { getSession, requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../../lib/prisma";
 
 export const dynamic = "force-dynamic";
@@ -35,8 +35,10 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 }
 
 export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string; versionId: string }> }) {
-  const userId = await getSession();
-  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  let actor;
+  try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER"); }
+  catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
+  const userId = actor.id;
 
   await prismaReady;
   const { id, versionId } = await params;
@@ -58,8 +60,10 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
 // for this tender. Does NOT re-run the engine — just replaces the DOCX content
 // with the saved snapshot so the user can download the restored version.
 export async function POST(req: Request, { params }: { params: Promise<{ id: string; versionId: string }> }) {
-  const userId = await getSession();
-  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  let actor;
+  try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER"); }
+  catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
+  const userId = actor.id;
 
   await prismaReady;
   const { id, versionId } = await params;
@@ -92,6 +96,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         fileContent: v.fileContent ?? existing.fileContent,
         contentSummary: `[Restored from version ${v.version}] ${v.summary ?? ""}`.slice(0, 500),
         generationStatus: "GENERATED",
+        validationStatus: "PENDING",
+        reviewStatus: "PENDING",
         updatedAt: new Date(),
       },
     });

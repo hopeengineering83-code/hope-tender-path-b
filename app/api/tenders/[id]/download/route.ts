@@ -161,9 +161,12 @@ async function zipPackage(userId: string, tender: any) {
   const zipBuffer = await zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" });
   const zipName = `${safeFileBaseName(tender.title)}-submission-package.zip`;
   const fileList = entries.map((entry) => entry.name);
-  const pkg = tender.exportPackages[0];
-  if (pkg) await prisma.exportPackage.update({ where: { id: pkg.id }, data: { status: "READY", fileList: JSON.stringify(fileList), downloadCount: { increment: 1 } } });
-  else await prisma.exportPackage.create({ data: { tenderId: tender.id, status: "READY", fileList: JSON.stringify(fileList), downloadCount: 1 } });
+  const existingPkg = await prisma.exportPackage.findFirst({ where: { tenderId: tender.id } });
+  if (existingPkg) {
+    await prisma.exportPackage.update({ where: { id: existingPkg.id }, data: { status: "READY", fileList: JSON.stringify(fileList), downloadCount: { increment: 1 } } });
+  } else {
+    await prisma.exportPackage.create({ data: { tenderId: tender.id, status: "READY", fileList: JSON.stringify(fileList), downloadCount: 1 } });
+  }
 
   await logAction({ userId, action: "EXPORT_PACKAGE_DOWNLOAD", entityType: "Tender", entityId: tender.id, description: `Downloaded ZIP package for "${tender.title}" (${entries.length} file(s))` });
   return new NextResponse(new Uint8Array(zipBuffer), { headers: { "Content-Type": "application/zip", "Content-Disposition": `attachment; filename="${zipName}"` } });

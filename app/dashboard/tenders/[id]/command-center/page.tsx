@@ -13,6 +13,7 @@ import Link from "next/link";
 import { getSession } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { checkExportReadiness, checkTenderLevelExportBlockers } from "../../../../../lib/engine/export-readiness";
+import { filterFinalExportCandidateDocuments } from "../../../../../lib/engine/document-output-state";
 import { VersionActionsTable } from "./version-actions";
 
 export const dynamic = "force-dynamic";
@@ -36,7 +37,7 @@ export default async function TenderCommandCenter({ params }: { params: Promise<
   if (!tender) notFound();
 
   // ─── Readiness, blockers, evaluator state ───────────────────────────
-  const docReadiness = checkExportReadiness(tender.generatedDocuments);
+  const docReadiness = checkExportReadiness(filterFinalExportCandidateDocuments(tender.generatedDocuments));
   const tenderBlockers = await checkTenderLevelExportBlockers(id);
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
