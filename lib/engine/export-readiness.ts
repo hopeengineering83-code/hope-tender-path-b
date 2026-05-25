@@ -292,14 +292,16 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
   if (requiresExperts && reviewedSelectedExperts === 0) blockers.push(tenderBlocker("NO_SELECTED_REVIEWED_EXPERTS", "Tender requires experts but no selected reviewed expert matches exist.", "Run Engine and select/review expert matches before export."));
   if (requiresProjects && reviewedSelectedProjects === 0) blockers.push(tenderBlocker("NO_SELECTED_REVIEWED_PROJECTS", "Tender requires project references but no selected reviewed project matches exist.", "Run Engine and select/review project matches before export."));
 
-  const [complianceRows, totalExpertMatches, totalProjectMatches] = await Promise.all([
+  const [complianceRows, totalExpertMatches, totalProjectMatches, plannedDocCount] = await Promise.all([
     prisma.complianceMatrix.count({ where: { tenderId } }),
     prisma.tenderExpertMatch.count({ where: { tenderId } }),
     prisma.tenderProjectMatch.count({ where: { tenderId } }),
+    prisma.generatedDocument.count({ where: { tenderId, generationStatus: "PLANNED" } }),
   ]);
   if (tender.requirements.length > 0 && complianceRows === 0) blockers.push(tenderBlocker("EVIDENCE_NOT_ASSESSED", "Compliance/evidence matrix is empty.", "Run Engine successfully so requirement-linked evidence rows are created."));
   if (requiresExperts && totalExpertMatches === 0) blockers.push(tenderBlocker("NO_TENDER_SPECIFIC_EXPERT_MATCHES", "No tender-specific expert match rows exist.", "Run Engine to create expert matches from the reviewed vault."));
   if (requiresProjects && totalProjectMatches === 0) blockers.push(tenderBlocker("NO_TENDER_SPECIFIC_PROJECT_MATCHES", "No tender-specific project match rows exist.", "Run Engine to create project matches from the reviewed vault."));
+  if (plannedDocCount > 0) blockers.push(tenderBlocker("UNGENERATED_PLANNED_DOCUMENTS", `${plannedDocCount} required submission document(s) are planned but not yet generated — the ZIP package would be incomplete.`, "Re-run Engine with a working AI provider to generate all required documents, then re-check export readiness before downloading.", "HIGH"));
 
   const ungroundedMandatory = tender.requirements.filter((req) => req.priority === "MANDATORY" && !req.sectionReference && !req.sourceTenderFileId && !req.sourcePageNumber && !req.sourceExactQuote && (req.sourceConfidence ?? 0) <= 0);
   if (ungroundedMandatory.length > 0) blockers.push(tenderBlocker("SOURCE_REFERENCES_MISSING", `${ungroundedMandatory.length} mandatory requirement(s) lack source/page/quote traceability.`, "Run source extraction and review mandatory requirement references before export.", "HIGH"));
