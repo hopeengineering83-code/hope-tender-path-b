@@ -88,7 +88,7 @@ describe("validateFileSignature", () => {
   it("rejects a PDF binary renamed to .docx (PK signature missing)", () => {
     const result = validateFileSignature("Renamed.docx", PDF_SIG_B64);
     assert.equal(result.ok, false);
-    if (!result.ok) assert.match(result.reason, /not a valid DOCX/i);
+    if (!result.ok) assert.match(result.reason, /not a valid DOC\/DOCX/i);
   });
 
   it("rejects a DOCX binary renamed to .pdf (%PDF signature missing)", () => {
