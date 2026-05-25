@@ -9,12 +9,15 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 const MAX_BYTES = 10 * 1024 * 1024;
+const ALLOWED_EXTENSIONS = new Set(["doc", "docx", "pdf", "xls", "xlsx"]);
 const ALLOWED_MIME = new Set([
   "application/pdf",
   "application/msword",
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   "application/vnd.ms-excel",
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/octet-stream",
+  "",
 ]);
 
 function safeName(value: string): string {
@@ -23,6 +26,16 @@ function safeName(value: string): string {
 
 function extension(value: string): string {
   return value.split(".").pop()?.toLowerCase() ?? "";
+}
+
+function canonicalMimeType(name: string, browserMimeType: string): string {
+  const ext = extension(name);
+  if (ext === "pdf") return "application/pdf";
+  if (ext === "docx") return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  if (ext === "doc") return "application/msword";
+  if (ext === "xlsx") return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+  if (ext === "xls") return "application/vnd.ms-excel";
+  return browserMimeType || "application/octet-stream";
 }
 
 function formatForName(name: string): string {
@@ -64,12 +77,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (file.size <= 0) return NextResponse.json({ success: false, ok: false, code: "EMPTY_FILE", error: "Original file is empty" }, { status: 400 });
   if (file.size > MAX_BYTES) return NextResponse.json({ success: false, ok: false, code: "FILE_TOO_LARGE", error: "Original file exceeds 10 MB limit" }, { status: 413 });
 
-  const mimeType = file.type || "application/octet-stream";
-  if (!ALLOWED_MIME.has(mimeType)) {
+  const uploadedName = safeName(file.name || "original-file");
+  const uploadedExt = extension(uploadedName);
+  const browserMimeType = file.type || "";
+  if (!ALLOWED_EXTENSIONS.has(uploadedExt) || !ALLOWED_MIME.has(browserMimeType)) {
     return NextResponse.json({ success: false, ok: false, code: "UNSUPPORTED_FILE_TYPE", error: "Only DOC, DOCX, PDF, XLS, and XLSX originals can be attached" }, { status: 415 });
   }
 
-  const uploadedName = safeName(file.name || "original-file");
   if (!sameRequiredExtension(doc.exactFileName, uploadedName)) {
     return NextResponse.json({
       success: false,
@@ -84,6 +98,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const buffer = Buffer.from(await file.arrayBuffer());
   const base64 = buffer.toString("base64");
   const outputName = doc.exactFileName || uploadedName;
+  const mimeType = canonicalMimeType(outputName, browserMimeType);
   const sig = validateFileSignature(outputName, base64);
   if (!sig.ok) {
     return NextResponse.json({ success: false, ok: false, code: "FILE_SIGNATURE_MISMATCH", error: sig.reason }, { status: 422 });
