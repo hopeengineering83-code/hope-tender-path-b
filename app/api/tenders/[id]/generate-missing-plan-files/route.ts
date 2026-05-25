@@ -1,8 +1,11 @@
 import { NextResponse } from "next/server";
 import { Document, HeadingLevel, Packer, Paragraph, TextRun } from "docx";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
+import { logAction } from "../../../../../lib/audit";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { buildSubmissionPlan, findMissingGeneratedDocuments } from "../../../../../lib/engine/submission-plan";
+import { MUTATION_RATE_LIMIT, rateLimit } from "../../../../../lib/rate-limit";
+import { extractRequestId } from "../../../../../lib/request-id";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -58,12 +61,18 @@ async function replacementControlContent(tenderTitle: string, fileName: string, 
   return buffer.toString("base64");
 }
 
-export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const requestId = extractRequestId(req);
   let actor;
   try {
     actor = await requireRole("ADMIN", "PROPOSAL_MANAGER");
   } catch (error) {
     return error instanceof Error && error.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse();
+  }
+
+  const rl = rateLimit(`generate-missing-plan-files:${actor.id}`, MUTATION_RATE_LIMIT);
+  if (!rl.allowed) {
+    return NextResponse.json({ success: false, ok: false, code: "RATE_LIMITED", error: "Too many missing-plan generation requests. Wait and retry.", retryAfter: Math.ceil((rl.resetAt - Date.now()) / 1000) }, { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } });
   }
 
   await prismaReady;
@@ -90,6 +99,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   });
   const missing = findMissingGeneratedDocuments(plan, tender.generatedDocuments);
   if (missing.length === 0) {
+    await logAction({ userId: actor.id, action: "DOCUMENT_GENERATE", entityType: "Tender", entityId: id, description: `${actor.email} checked missing planned files for "${tender.title}"; none were missing.`, metadata: { tenderId: id, created: 0, updated: 0 }, requestId });
     return NextResponse.json({ success: true, created: 0, message: "No missing planned files remain." });
   }
 
@@ -124,6 +134,16 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       created.push(file.exactFileName);
     }
   }
+
+  await logAction({
+    userId: actor.id,
+    action: "DOCUMENT_GENERATE",
+    entityType: "Tender",
+    entityId: id,
+    description: `${actor.email} generated ${created.length} and updated ${updated.length} missing planned file control record(s) for "${tender.title}".`,
+    metadata: { tenderId: id, createdCount: created.length, updatedCount: updated.length, created, updated, warning: "Replacement-control documents are not final submission evidence." },
+    requestId,
+  });
 
   return NextResponse.json({
     success: true,
