@@ -1,12 +1,8 @@
-import { redirect } from "next/navigation";
-import { getCurrentUser } from "../../lib/auth";
+import Link from "next/link";
 import { LoginForm } from "../../components/login-form";
 import { LoginRecoveryNote } from "../../components/login-recovery-note";
 
 export default async function LoginPage({ searchParams }: { searchParams?: Promise<{ error?: string; detail?: string; recovered?: string }> }) {
-  const user = await getCurrentUser();
-  if (user) redirect("/dashboard");
-
   const params = await searchParams;
   const error = params?.error ?? null;
   const detail = params?.detail ?? null;
@@ -29,6 +25,9 @@ export default async function LoginPage({ searchParams }: { searchParams?: Promi
             <p className="mt-0.5 text-sm text-slate-500">Enter your credentials to access the tender engine.</p>
           </div>
           <LoginForm />
+          <p className="text-center text-xs text-slate-500">
+            Already signed in? <Link href="/dashboard" className="font-medium text-slate-900 hover:underline">Open dashboard</Link>
+          </p>
         </div>
         <p className="text-center text-xs text-slate-400">
           AI-powered tender proposal generation &amp; compliance engine
