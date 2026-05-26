@@ -196,8 +196,16 @@ describe("isFinalExportCandidateDocument — exclusion rules", () => {
     assert.ok(!isFinalExportCandidateDocument({ generationStatus: "GENERATED", validationStatus: "PASSED", reviewStatus: "NOT_EXPORTABLE" }));
   });
 
+  it("excludes REPLACE_WITH_ORIGINAL reviewStatus", () => {
+    assert.ok(!isFinalExportCandidateDocument({ generationStatus: "GENERATED", validationStatus: "PASSED", reviewStatus: "REPLACE_WITH_ORIGINAL" }));
+  });
+
   it("excludes SUBMISSION_CONTROL documentType", () => {
     assert.ok(!isFinalExportCandidateDocument({ generationStatus: "GENERATED", validationStatus: "PASSED", reviewStatus: "READY_FOR_EXPORT", documentType: "SUBMISSION_CONTROL" }));
+  });
+
+  it("excludes SUBMISSION_RULES documentType", () => {
+    assert.ok(!isFinalExportCandidateDocument({ generationStatus: "GENERATED", validationStatus: "PASSED", reviewStatus: "READY_FOR_EXPORT", documentType: "SUBMISSION_RULES" }));
   });
 
   it("excludes QUICK_DRAFT internal documents", () => {
