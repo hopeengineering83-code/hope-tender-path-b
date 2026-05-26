@@ -30,14 +30,17 @@ function documentTypeFor(fileName: string, fallback: string) {
   const label = fileName.toLowerCase();
   if (/financial|audited|capacity|bank|turnover/.test(label)) return "FINANCIAL_EVIDENCE";
   if (/legal|eligibility|registration|licen[cs]ing|tax|certificate/.test(label)) return "LEGAL_EVIDENCE";
-  if (/form|template/.test(label)) return "FORM_OR_TEMPLATE";
+  // Submission/rules must be checked before form|template — "submission formatting" contains "form"
+  if (/submission formatting|packaging rules|submission rules|delivery instruction|submission method|submission deadline/.test(label)) return "SUBMISSION_RULES";
+  if (/\bform\b|template/.test(label)) return "FORM_OR_TEMPLATE";
   if (/submission|deadline|delivery|method|rules/.test(label)) return "SUBMISSION_RULES";
   return fallback || "TENDER_REQUIRED_FILE";
 }
 
 function needsOriginalReplacement(fileName: string, documentType: string) {
   const label = `${fileName} ${documentType}`.toLowerCase();
-  return /form|template|annex\s*[a-z0-9]+\s*\(?official\)?/.test(label);
+  // Use \bform\b word boundary to prevent "formatting" from matching "form"
+  return /\bform\b|template|annex\s*[a-z0-9]+\s*\(?official\)?/.test(label);
 }
 
 async function replacementControlContent(tenderTitle: string, fileName: string, replaceWithOriginal: boolean) {
