@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma, prismaReady } from "../../../../lib/prisma";
-import { getSession } from "../../../../lib/auth";
+import { getSession, requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../lib/auth";
+import { logAction } from "../../../../lib/audit";
 import { parseTenderStatus } from "../../../../lib/tender-workflow";
 import { prepareDashboardGeneratedDocuments } from "../../../../lib/dashboard-generated-documents";
 
@@ -51,6 +52,7 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
     const body = await req.json();
     const status = parseTenderStatus(body.status);
 
+    const prevStatus = existing.status;
     const tender = await prisma.tender.update({
       where: { id },
       data: {
@@ -92,6 +94,15 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
       },
     });
 
+    await logAction({
+      userId,
+      action: "TENDER_UPDATE",
+      entityType: "Tender",
+      entityId: id,
+      description: `Tender "${tender.title}" updated${status && status !== prevStatus ? ` (status: ${prevStatus} → ${status})` : ""}`,
+      metadata: { tenderId: id, prevStatus, newStatus: status ?? prevStatus },
+    });
+
     return NextResponse.json(withDashboardGeneratedDocuments(tender));
   } catch (error) {
     console.error(error);
@@ -100,14 +111,28 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
 }
 
 export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {
-  const userId = await getSession();
-  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  let actor;
+  try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER"); }
+  catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
 
   await prismaReady;
   const { id } = await params;
-  const existing = await prisma.tender.findFirst({ where: { id, userId } });
+  const existing = await prisma.tender.findFirst({ where: { id, userId: actor.id } });
   if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  await prisma.tender.delete({ where: { id } });
-  return NextResponse.json({ success: true });
+  try {
+    await prisma.tender.delete({ where: { id } });
+    await logAction({
+      userId: actor.id,
+      action: "TENDER_DELETE",
+      entityType: "Tender",
+      entityId: id,
+      description: `Tender "${existing.title}" permanently deleted`,
+      metadata: { tenderId: id, title: existing.title, clientName: existing.clientName },
+    });
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    console.error(error);
+    return NextResponse.json({ error: "Failed to delete tender" }, { status: 500 });
+  }
 }

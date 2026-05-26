@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { prisma, prismaReady } from "../../../lib/prisma";
 import { getSession } from "../../../lib/auth";
+import { logAction } from "../../../lib/audit";
+import { MUTATION_RATE_LIMIT, rateLimit } from "../../../lib/rate-limit";
 import { parseTenderStatus } from "../../../lib/tender-workflow";
 import { cleanClientName, cleanTenderTitle } from "../../../lib/engine/proposal-labels";
 
@@ -55,6 +57,11 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  const rl = rateLimit(`tender-create:${userId}`, MUTATION_RATE_LIMIT);
+  if (!rl.allowed) {
+    return NextResponse.json({ error: "Too many tender creation requests. Wait and retry.", retryAfter: Math.ceil((rl.resetAt - Date.now()) / 1000) }, { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } });
+  }
+
   await prismaReady;
 
   try {
@@ -93,6 +100,15 @@ export async function POST(req: Request) {
         complianceGaps: true,
         generatedDocuments: { select: { id: true, name: true, documentType: true, generationStatus: true, validationStatus: true, reviewStatus: true, exactFileName: true, exactOrder: true } },
       },
+    });
+
+    await logAction({
+      userId,
+      action: "TENDER_CREATE",
+      entityType: "Tender",
+      entityId: tender.id,
+      description: `Tender "${tender.title}" created`,
+      metadata: { tenderId: tender.id, clientName: tender.clientName, category: tender.category },
     });
 
     return NextResponse.json(tender, { status: 201 });

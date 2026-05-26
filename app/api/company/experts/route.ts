@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { prisma, prismaReady } from "../../../../lib/prisma";
-import { getSession } from "../../../../lib/auth";
+import { requireRole, forbiddenResponse, unauthorizedResponse, getSession } from "../../../../lib/auth";
+import { logAction } from "../../../../lib/audit";
+import { MUTATION_RATE_LIMIT, rateLimit } from "../../../../lib/rate-limit";
 import { ensureCompanyForUser } from "../../../../lib/company-workspace";
 
 function toJsonArray(value: unknown): string {
@@ -56,11 +58,17 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
-  const userId = await getSession();
-  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  await prismaReady;
+  let actor;
+  try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER"); }
+  catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
 
-  const company = await ensureCompanyForUser(prisma, userId);
+  const rl = rateLimit(`expert-create:${actor.id}`, MUTATION_RATE_LIMIT);
+  if (!rl.allowed) {
+    return NextResponse.json({ error: "Too many expert creation requests. Wait and retry.", retryAfter: Math.ceil((rl.resetAt - Date.now()) / 1000) }, { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } });
+  }
+
+  await prismaReady;
+  const company = await ensureCompanyForUser(prisma, actor.id);
 
   try {
     const body = await req.json();
@@ -84,10 +92,19 @@ export async function POST(req: Request) {
         certifications: toJsonArray(body.certifications),
         profile: body.profile || null,
         trustLevel: "REVIEWED",
-        reviewedBy: userId,
+        reviewedBy: actor.id,
         reviewedAt: new Date(),
         reviewNotes: "Manual expert record created by authenticated user.",
       },
+    });
+
+    await logAction({
+      userId: actor.id,
+      action: "EXPERT_CREATE",
+      entityType: "Expert",
+      entityId: expert.id,
+      description: `Expert "${expert.fullName}" created`,
+      metadata: { expertId: expert.id, fullName: expert.fullName, companyId: company.id },
     });
 
     return NextResponse.json(normalizeExpert(expert as unknown as Record<string, unknown>), { status: 201 });

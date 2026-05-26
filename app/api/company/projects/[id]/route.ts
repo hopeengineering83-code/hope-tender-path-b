@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
-import { getSession } from "../../../../../lib/auth";
+import { getSession, requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
+import { logAction } from "../../../../../lib/audit";
 
 function toJsonArray(value: unknown): string {
   if (Array.isArray(value)) return JSON.stringify(value.filter(Boolean));
@@ -83,12 +84,13 @@ export async function PATCH(
   req: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const userId = await getSession();
-  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  await prismaReady;
+  let actor;
+  try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER", "REVIEWER"); }
+  catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
 
+  await prismaReady;
   const { id } = await params;
-  const company = await prisma.company.findUnique({ where: { userId } });
+  const company = await prisma.company.findUnique({ where: { userId: actor.id } });
   if (!company) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   const existing = await prisma.project.findFirst({ where: { id, companyId: company.id, deletedAt: null } });
@@ -104,12 +106,22 @@ export async function PATCH(
     where: { id },
     data: {
       trustLevel: isApprove ? "REVIEWED" : "AI_DRAFT",
-      reviewedBy: userId,
+      reviewedBy: actor.id,
       reviewedAt: new Date(),
       reviewNotes: body.notes ?? null,
       updatedAt: new Date(),
     },
   });
+
+  await logAction({
+    userId: actor.id,
+    action: "PROJECT_REVIEW",
+    entityType: "Project",
+    entityId: id,
+    description: `Project "${existing.name}" ${isApprove ? "approved" : "rejected"}${body.notes ? ` — ${body.notes}` : ""}`,
+    metadata: { projectId: id, action: body.action },
+  });
+
   return NextResponse.json(normalizeProject(updated as unknown as Record<string, unknown>));
 }
 
@@ -117,17 +129,28 @@ export async function DELETE(
   _req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const userId = await getSession();
-  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  await prismaReady;
+  let actor;
+  try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER"); }
+  catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
 
+  await prismaReady;
   const { id } = await params;
-  const company = await prisma.company.findUnique({ where: { userId } });
+  const company = await prisma.company.findUnique({ where: { userId: actor.id } });
   if (!company) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   const existing = await prisma.project.findFirst({ where: { id, companyId: company.id, deletedAt: null } });
   if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  await prisma.project.update({ where: { id }, data: { deletedAt: new Date(), deletedBy: userId } });
+  await prisma.project.update({ where: { id }, data: { deletedAt: new Date(), deletedBy: actor.id } });
+
+  await logAction({
+    userId: actor.id,
+    action: "PROJECT_DELETE",
+    entityType: "Project",
+    entityId: id,
+    description: `Project "${existing.name}" soft-deleted`,
+    metadata: { projectId: id, name: existing.name, companyId: company.id },
+  });
+
   return NextResponse.json({ success: true });
 }
