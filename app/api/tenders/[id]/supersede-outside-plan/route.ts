@@ -1,13 +1,16 @@
 import { NextResponse } from "next/server";
 import { forbiddenResponse, requireRole, unauthorizedResponse } from "../../../../../lib/auth";
+import { logAction } from "../../../../../lib/audit";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { buildSubmissionPlan } from "../../../../../lib/engine/submission-plan";
+import { MUTATION_RATE_LIMIT, rateLimit } from "../../../../../lib/rate-limit";
+import { extractRequestId } from "../../../../../lib/request-id";
 
 export const dynamic = "force-dynamic";
 
 const normalizeExactFileName = (value: string) => value.trim().toLowerCase().replace(/\s+/g, " ");
 
-async function getOutsidePlanDocIds(tenderId: string, userId: string): Promise<string[]> {
+async function getOutsidePlanDocIds(tenderId: string, userId: string): Promise<{ ids: string[]; planEmpty: boolean }> {
   const tender = await prisma.tender.findFirst({
     where: { id: tenderId, userId },
     include: {
@@ -18,12 +21,14 @@ async function getOutsidePlanDocIds(tenderId: string, userId: string): Promise<s
       },
     },
   });
-  if (!tender) return [];
+  if (!tender) return { ids: [], planEmpty: false };
   const plan = buildSubmissionPlan(tender);
+  if (plan.files.length === 0) return { ids: [], planEmpty: true };
   const required = new Set(plan.files.map((f) => normalizeExactFileName(f.exactFileName)).filter(Boolean));
-  return tender.generatedDocuments
+  const ids = tender.generatedDocuments
     .filter((d) => !required.has(normalizeExactFileName(d.exactFileName ?? d.name)))
     .map((d) => d.id);
+  return { ids, planEmpty: false };
 }
 
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -33,7 +38,8 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 
   await prismaReady;
   const { id } = await params;
-  const outsideIds = await getOutsidePlanDocIds(id, actor.id);
+  const { ids: outsideIds, planEmpty } = await getOutsidePlanDocIds(id, actor.id);
+  if (planEmpty) return NextResponse.json({ success: true, outsidePlanDocuments: [], warning: "Submission plan empty; outside-plan supersede skipped." });
   const outsidePlanDocuments = outsideIds.length
     ? await prisma.generatedDocument.findMany({ where: { id: { in: outsideIds } }, select: { id: true, name: true, exactFileName: true, exactOrder: true } })
     : [];
@@ -46,11 +52,17 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER"); }
   catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
 
+  const requestId = extractRequestId(req);
+  const rl = rateLimit(`supersede-outside-plan:${actor.id}`, MUTATION_RATE_LIMIT);
+  if (!rl.allowed) return NextResponse.json({ success: false, error: "Rate limit exceeded. Wait and retry.", retryAfter: Math.ceil((rl.resetAt - Date.now()) / 1000) }, { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } });
+
   await prismaReady;
   const { id } = await params;
   const body = await req.json().catch(() => ({}));
   const requestedIds = Array.isArray(body.documentIds) ? body.documentIds.map(String) : [];
-  const outsideIds = await getOutsidePlanDocIds(id, actor.id);
+
+  const { ids: outsideIds, planEmpty } = await getOutsidePlanDocIds(id, actor.id);
+  if (planEmpty) return NextResponse.json({ success: true, superseded: 0, warning: "Submission plan empty; outside-plan supersede skipped." });
   if (outsideIds.length === 0) return NextResponse.json({ success: true, superseded: 0 });
 
   const selectedIds = requestedIds.length > 0
@@ -68,6 +80,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       reviewNotes: "Superseded as outside submission plan.",
     },
   });
+
+  await logAction({ userId: actor.id, action: "OUTSIDE_PLAN_SUPERSEDED", entityType: "Tender", entityId: id, description: `${actor.email} superseded ${selectedIds.length} outside-plan document(s).`, metadata: { tenderId: id, supersededCount: selectedIds.length, supersededIds: selectedIds }, requestId });
 
   return NextResponse.json({ success: true, superseded: selectedIds.length });
 }

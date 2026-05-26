@@ -22,7 +22,15 @@ function isSafeNoPriceSentence(sentence: string): boolean {
     || /\b(financial|commercial|price|pricing|fee|fees|rate|rates|cost|amount|offer|unit price|total price)\b.{0,180}\b(not included|not shown|not disclosed|excluded|separate|separately)\b/i.test(sentence);
 }
 
+function isTechnicalEnvelopeDoc(doc?: Pick<ExportReadyDocument, "name" | "exactFileName" | "documentType" | "format">): boolean {
+  return /\b(technical|methodology|approach|workplan|work\s+plan|strategic|scope\s+of\s+work|implementation|execution\s+plan)\b/i.test(labelOf(doc));
+}
+
 export function containsPricingLeakage(text: string, doc?: Pick<ExportReadyDocument, "name" | "exactFileName" | "documentType" | "format">): boolean {
+  // Only flag pricing leakage in technical/methodology envelope documents.
+  // CVs, project references, company profiles, cover letters, and declarations
+  // may legitimately reference project values or fee expectations.
+  if (!isTechnicalEnvelopeDoc(doc)) return false;
   if (isCommercialOrFinancialDoc(doc)) return false;
 
   const scanText = sentences(text).filter((s) => !isSafeNoPriceSentence(s)).join(" ");

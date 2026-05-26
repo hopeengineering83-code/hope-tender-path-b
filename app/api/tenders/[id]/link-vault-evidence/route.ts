@@ -1,12 +1,13 @@
 import { NextResponse } from "next/server";
 import { Document, Packer, Paragraph, TextRun } from "docx";
 import { forbiddenResponse, requireRole, unauthorizedResponse } from "../../../../../lib/auth";
+import { logAction } from "../../../../../lib/audit";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { documentHygieneIssues } from "../../../../../lib/engine/export-readiness";
 
 export const dynamic = "force-dynamic";
 
-const mapCats = (s: string) => { const t = s.toLowerCase(); if (/financial|audited|bank|turnover|capacity/.test(t)) return ["FINANCIAL_STATEMENT"]; if (/legal|license|tax|vat|tin|registration|cert/.test(t)) return ["LEGAL_REGISTRATION", "CERTIFICATION"]; if (/profile|capability/.test(t)) return ["COMPANY_PROFILE"]; if (/manual|policy/.test(t)) return ["MANUAL"]; if (/cv|personnel|expert/.test(t)) return ["EXPERT_CV"]; if (/project|reference|experience|contract/.test(t)) return ["PROJECT_REFERENCE", "PROJECT_CONTRACT"]; return []; };
+const mapCats = (s: string) => { const t = s.toLowerCase(); if (/financial|audited|bank|turnover|capacity/.test(t)) return ["FINANCIAL_STATEMENT"]; if (/legal|license|tax|vat|tin|registration|cert/.test(t)) return ["LEGAL_REGISTRATION", "CERTIFICATION"]; if (/profile|capability/.test(t)) return ["COMPANY_PROFILE"]; if (/manual|policy|quality|safeguard|compliance/.test(t)) return ["MANUAL", "COMPLIANCE_RECORD"]; if (/cv|personnel|expert/.test(t)) return ["EXPERT_CV"]; if (/project|reference|experience|contract/.test(t)) return ["PROJECT_REFERENCE", "PROJECT_CONTRACT"]; return []; };
 const usable = (d: { fileContent: string | null; storagePath: string; extractedText: string | null }) => Boolean((d.fileContent ?? "").trim() || (d.storagePath ?? "").trim() || (d.extractedText ?? "").trim());
 const scoreOption = (rowName: string, category: string, fileName: string) => {
   let score = 0;
@@ -22,7 +23,7 @@ async function extractedTextDocx(title: string, text: string) { const lines = te
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   let actor; try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER", "REVIEWER"); } catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
   await prismaReady; const { id } = await params;
-  const tender = await prisma.tender.findFirst({ where: { id, userId: actor.id }, select: { generatedDocuments: { where: { generationStatus: { not: "SUPERSEDED" } }, select: { id: true, name: true, exactFileName: true, documentType: true } } } });
+  const tender = await prisma.tender.findFirst({ where: { id, userId: actor.id }, select: { generatedDocuments: { where: { generationStatus: { not: "SUPERSEDED" }, reviewStatus: { in: ["REPLACE_WITH_ORIGINAL", "PENDING", "CHANGES_REQUESTED"] } }, select: { id: true, name: true, exactFileName: true, documentType: true } } } });
   const company = await prisma.company.findUnique({ where: { userId: actor.id }, select: { id: true } });
   if (!tender || !company) return NextResponse.json({ error: "Tender/company not found" }, { status: 404 });
   const vault = await prisma.companyDocument.findMany({ where: { companyId: company.id }, select: { id: true, fileName: true, category: true, fileContent: true, storagePath: true, extractedText: true } });
@@ -44,5 +45,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const ready = hasBytes && hygieneIssues.length === 0;
   await prisma.generatedDocument.update({ where: { id: row.id }, data: { fileContent, storagePath: (vault.storagePath ?? "") || row.storagePath, generationStatus: "GENERATED", validationStatus: ready ? "VALIDATED" : "PENDING", reviewStatus: ready ? "READY_FOR_EXPORT" : "PENDING", reviewNotes: ready ? `Linked Knowledge Vault evidence: ${vault.fileName}` : `Linked Knowledge Vault evidence (${vault.fileName}) but requires validation/hygiene review.` } });
   await prisma.documentReview.create({ data: { documentId: row.id, reviewerId: actor.id, action: ready ? "READY_FOR_EXPORT" : "CHANGES_REQUESTED", notes: `Linked vault evidence ${vault.fileName}`, priorStatus: row.reviewStatus, newStatus: ready ? "READY_FOR_EXPORT" : row.reviewStatus } });
+  await logAction({ userId: actor.id, action: "VAULT_EVIDENCE_LINKED", entityType: "GeneratedDocument", entityId: row.id, description: `Vault evidence linked: ${vault.fileName} → ${row.exactFileName ?? row.name}. Ready: ${ready}.`, metadata: { tenderId: id, packageDocId: row.id, vaultDocId: vault.id, vaultFileName: vault.fileName, readyForExport: ready, hygieneIssues } });
   return NextResponse.json({ success: true, readyForExport: ready, hygieneIssues });
 }

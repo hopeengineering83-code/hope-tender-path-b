@@ -42,6 +42,15 @@ async function toDocx(title: string, text: string): Promise<string> {
   return buffer.toString("base64");
 }
 
+// Documents that must never be auto-approved — they require human upload of
+// the official tender-issued original or auditor-signed evidence.
+const SENSITIVE_DOC_RX = /\b(audited|financial\s+statement|tax\s+clearance|vat|tin|license|registration\s+cert|incorporation|bid\s+form|tender\s+form|declaration\s+form|undertaking\s+form|integrity\s+pact|bank\s+statement|annual\s+report)\b/i;
+
+function isSensitiveDocument(doc: { name?: string | null; exactFileName?: string | null; documentType?: string | null }): boolean {
+  const label = `${doc.name ?? ""} ${doc.exactFileName ?? ""} ${doc.documentType ?? ""}`;
+  return SENSITIVE_DOC_RX.test(label);
+}
+
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   let actor;
   try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER"); } catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
@@ -76,6 +85,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   let processed = 0;
   for (const doc of batch) {
     if (doc.reviewStatus === "REPLACE_WITH_ORIGINAL") continue;
+    if (isSensitiveDocument(doc)) continue; // audited statements, bid forms, tax/legal certs — require manual upload
     const fileName = doc.exactFileName ?? doc.name;
     const technical = /technical|methodology|workplan|approach|strategic/i.test(`${fileName} ${doc.documentType ?? ""}`);
     const visible = await extractDocxVisibleText(doc.fileContent, fileName);
@@ -97,6 +107,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const readiness = await checkFullExportReadiness({ tenderId, docs: finalDocs as any[], requireFileContent: false });
 
   const warning = planEmpty ? "Submission plan empty; outside-plan supersede skipped." : null;
-  await logAction({ userId: actor.id, action: "EXPORT_PACKAGE_REPAIR", entityType: "Tender", entityId: tenderId, description: `Auto-finalize processed ${processed} document(s) for ${tender.title}.`, metadata: { tenderId, processed, remaining: Math.max(0, candidates.length - processed), readinessOk: readiness.ok, warning }, requestId });
+  await logAction({ userId: actor.id, action: "AUTO_FINALIZE_RUN", entityType: "Tender", entityId: tenderId, description: `Auto-finalize processed ${processed} document(s) for ${tender.title}.`, metadata: { tenderId, processed, remaining: Math.max(0, candidates.length - processed), readinessOk: readiness.ok, warning }, requestId });
   return NextResponse.json({ success: true, status: readiness.ok ? "COMPLETED" : "IN_PROGRESS", processedCount: processed, remainingCount: Math.max(0, candidates.length - processed), nextAction: candidates.length - processed > 0 ? "CONTINUE_AUTO_FINALIZE" : "RECHECK_EXPORT_READINESS", readinessOk: readiness.ok, warning });
 }

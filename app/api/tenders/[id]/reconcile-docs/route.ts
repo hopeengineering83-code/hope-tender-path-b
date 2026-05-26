@@ -17,7 +17,7 @@
 
 import { NextResponse } from "next/server";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
-import { requireUser, unauthorizedResponse } from "../../../../../lib/auth";
+import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { buildSubmissionPlan } from "../../../../../lib/engine/submission-plan";
 import { reconcileGeneratedDocuments, applyReconcileDecisions } from "../../../../../lib/engine/reconcile-generated-docs";
 import { logAction } from "../../../../../lib/audit";
@@ -28,9 +28,9 @@ export const dynamic = "force-dynamic";
 export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   let actor;
   try {
-    actor = await requireUser();
-  } catch {
-    return unauthorizedResponse();
+    actor = await requireRole("ADMIN", "PROPOSAL_MANAGER");
+  } catch (e) {
+    return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse();
   }
 
   await prismaReady;
