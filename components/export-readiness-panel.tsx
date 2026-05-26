@@ -29,6 +29,10 @@ type ExportReadiness = {
   message: string;
 };
 
+
+type VaultOption = { id: string; fileName: string; category: string; score?: number };
+type VaultCandidate = { rowId: string; rowName: string; suggestedCategories: string[]; options: VaultOption[] };
+
 type RepairResult = {
   success?: boolean;
   error?: string;
@@ -62,6 +66,10 @@ export function ExportReadinessPanel({ tenderId }: { tenderId: string }) {
   const [readiness, setReadiness] = useState<ExportReadiness | null>(null);
   const [loading, setLoading] = useState(false);
   const [repairing, setRepairing] = useState(false);
+  const [linkingVault, setLinkingVault] = useState(false);
+  const [supersedingOutsidePlan, setSupersedingOutsidePlan] = useState(false);
+  const [vaultCandidates, setVaultCandidates] = useState<VaultCandidate[]>([]);
+  const [selectedVaultOption, setSelectedVaultOption] = useState<Record<string, string>>({});
   const [attachingDocId, setAttachingDocId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [repairMessage, setRepairMessage] = useState<string | null>(null);
@@ -125,6 +133,75 @@ export function ExportReadinessPanel({ tenderId }: { tenderId: string }) {
     }
   }
 
+
+
+  async function linkVaultEvidence() {
+    setLinkingVault(true);
+    setError(null);
+    setRepairMessage(null);
+    try {
+      const listRes = await fetch(`/api/tenders/${tenderId}/link-vault-evidence`, { method: "GET" });
+      const listData = await listRes.json().catch(() => ({}));
+      if (!listRes.ok) throw new Error(listData.error ?? `Vault evidence lookup failed (${listRes.status})`);
+      const candidates = Array.isArray(listData.candidates) ? listData.candidates as VaultCandidate[] : [];
+      setVaultCandidates(candidates);
+      const defaults: Record<string, string> = {};
+      for (const c of candidates) {
+        if (c.options?.[0]?.id) defaults[c.rowId] = c.options[0].id;
+      }
+      setSelectedVaultOption(defaults);
+      if (candidates.length === 0) {
+        setRepairMessage("No vault-linkable blockers were found.");
+        await refresh();
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Vault evidence linking failed");
+    } finally {
+      setLinkingVault(false);
+    }
+  }
+
+  async function applySelectedVaultEvidence() {
+    setLinkingVault(true);
+    setError(null);
+    try {
+      let linked = 0;
+      for (const candidate of vaultCandidates) {
+        const selected = selectedVaultOption[candidate.rowId];
+        if (!selected) continue;
+        const res = await fetch(`/api/tenders/${tenderId}/link-vault-evidence`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ rowId: candidate.rowId, vaultDocumentId: selected }),
+        });
+        if (res.ok) linked += 1;
+      }
+      setRepairMessage(linked > 0 ? `Linked vault evidence for ${linked} document blocker(s).` : "No vault evidence links were applied.");
+      setVaultCandidates([]);
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Applying vault evidence failed");
+    } finally {
+      setLinkingVault(false);
+    }
+  }
+
+  async function supersedeOutsidePlan() {
+    setSupersedingOutsidePlan(true);
+    setError(null);
+    setRepairMessage(null);
+    try {
+      const res = await fetch(`/api/tenders/${tenderId}/supersede-outside-plan`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.error) throw new Error(data.error ?? `Supersede outside-plan failed (${res.status})`);
+      setRepairMessage(`Superseded ${data.superseded ?? 0} outside-plan document(s).`);
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Supersede outside-plan failed");
+    } finally {
+      setSupersedingOutsidePlan(false);
+    }
+  }
   const ok = readiness?.ok;
   const hasDocumentBlockers = (readiness?.summary.documentBlockers ?? 0) > 0;
 
@@ -145,17 +222,37 @@ export function ExportReadinessPanel({ tenderId }: { tenderId: string }) {
             <button
               type="button"
               onClick={() => void repair()}
-              disabled={repairing || loading || Boolean(attachingDocId)}
+              disabled={repairing || loading || Boolean(attachingDocId) || linkingVault || supersedingOutsidePlan}
               className="rounded-lg bg-emerald-700 px-3 py-2 text-xs font-medium text-white hover:bg-emerald-800 disabled:opacity-50"
               title="Safely repair generated DOCX status/content mismatches only. Official tender forms/templates, original-required rows, PDFs, planned rows, and non-exportable records are skipped and must be handled manually."
             >
               {repairing ? "Repairing…" : "Repair safe document gaps"}
             </button>
           )}
+          {readiness && !ok && hasDocumentBlockers && (
+            <button
+              type="button"
+              onClick={() => void linkVaultEvidence()}
+              disabled={linkingVault || loading || repairing || Boolean(attachingDocId) || supersedingOutsidePlan}
+              className="rounded-lg bg-indigo-700 px-3 py-2 text-xs font-medium text-white hover:bg-indigo-800 disabled:opacity-50"
+            >
+              {linkingVault ? "Linking vault…" : "Use vault evidence"}
+            </button>
+          )}
+          {readiness && !ok && hasDocumentBlockers && (
+            <button
+              type="button"
+              onClick={() => void supersedeOutsidePlan()}
+              disabled={supersedingOutsidePlan || loading || repairing || Boolean(attachingDocId) || linkingVault}
+              className="rounded-lg bg-amber-700 px-3 py-2 text-xs font-medium text-white hover:bg-amber-800 disabled:opacity-50"
+            >
+              {supersedingOutsidePlan ? "Superseding…" : "Exclude outside-plan files"}
+            </button>
+          )}
           <button
             type="button"
             onClick={() => void refresh()}
-            disabled={loading || repairing || Boolean(attachingDocId)}
+            disabled={loading || repairing || Boolean(attachingDocId) || linkingVault || supersedingOutsidePlan}
             className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-medium text-white hover:bg-slate-800 disabled:opacity-50"
           >
             {loading ? "Checking…" : readiness ? "Re-check" : "Check export gate"}
@@ -165,6 +262,31 @@ export function ExportReadinessPanel({ tenderId }: { tenderId: string }) {
 
       {error && <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700">{error}</div>}
       {repairMessage && <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-700">{repairMessage}</div>}
+
+      {vaultCandidates.length > 0 && (
+        <div className="mt-3 rounded-lg border border-indigo-200 bg-indigo-50 p-3 text-xs">
+          <p className="font-semibold text-indigo-800">Select vault evidence per blocker</p>
+          <div className="mt-2 space-y-2">
+            {vaultCandidates.map((candidate) => (
+              <div key={candidate.rowId} className="rounded border border-indigo-100 bg-white p-2">
+                <p className="font-medium text-slate-900">{candidate.rowName}</p>
+                <select
+                  className="mt-1 w-full rounded border border-slate-300 p-1"
+                  value={selectedVaultOption[candidate.rowId] ?? ""}
+                  onChange={(e) => setSelectedVaultOption((prev) => ({ ...prev, [candidate.rowId]: e.target.value }))}
+                >
+                  <option value="">Select evidence…</option>
+                  {candidate.options.map((opt) => <option key={opt.id} value={opt.id}>{opt.fileName} ({opt.category})</option>)}
+                </select>
+              </div>
+            ))}
+          </div>
+          <div className="mt-2 flex gap-2">
+            <button type="button" onClick={() => void applySelectedVaultEvidence()} disabled={linkingVault} className="rounded bg-indigo-700 px-3 py-1 text-white">{linkingVault ? "Linking…" : "Apply selected vault evidence"}</button>
+            <button type="button" onClick={() => setVaultCandidates([])} className="rounded border border-slate-300 bg-white px-3 py-1">Cancel</button>
+          </div>
+        </div>
+      )}
 
       {!readiness && !loading && (
         <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4 text-xs text-slate-600">
