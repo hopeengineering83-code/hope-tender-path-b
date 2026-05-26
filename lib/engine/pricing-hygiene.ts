@@ -8,9 +8,12 @@ export function isCommercialOrFinancialDoc(doc?: Pick<ExportReadyDocument, "name
   return /\b(financial|commercial|pricing|price schedule|fee schedule|rate card|bank|audited|turnover)\b/i.test(labelOf(doc));
 }
 
-/** Documents that are inherently financial/legal sensitive — pricing leakage does not apply to them. */
+/**
+ * Documents that are inherently financial/legal sensitive — pricing leakage
+ * does not apply to them. This must match the SENSITIVE_DOC_RX in auto-finalize.
+ */
 export function isSensitiveFinancialOrLegalDoc(doc?: Pick<ExportReadyDocument, "name" | "exactFileName" | "documentType" | "format">): boolean {
-  return /\b(audited|financial\s+statement|tax\s+clearance|vat\s+cert|tin\s+cert|bank\s+statement|bid\s+form|tender\s+form|declaration\s+form|undertaking|integrity\s+pact|rate\s+card)\b/i.test(labelOf(doc));
+  return /\b(audited|financial\s+statement|tax\s+clearance|vat\s+cert|vat\s+certificate|tin\s+cert|tin\s+certificate|bank\s+statement|bid\s+form|tender\s+form|declaration\s+form|undertaking|integrity\s+pact|rate\s+card|business\s+license|registration\s+cert|incorporation)\b/i.test(labelOf(doc));
 }
 
 /** Documents that are CVs or company profiles — pricing leakage does not apply to them. */
@@ -28,7 +31,7 @@ function sentences(text: string): string[] {
 
 function isSafeNoPriceSentence(sentence: string): boolean {
   return /\b(does not|do not|must not|shall not|should not|will not)\b.{0,140}\b(include|contain|show|disclose|present|submit)\b.{0,180}\b(financial|commercial|price|pricing|fee|fees|rate|rates|cost|amount|offer|unit price|total price)\b/i.test(sentence)
-    || /\b(no price leakage|financial offer is submitted separately|commercial offer is submitted separately|no financial offer included)\b/i.test(sentence)
+    || /\b(no price leakage|financial offer is submitted separately|commercial offer is submitted separately|no financial offer included|price[sd]?\s+separately|submitted\s+separately|as\s+a\s+separate\s+(?:financial|commercial|price))\b/i.test(sentence)
     || /\b(financial|commercial|price|pricing|fee|fees|rate|rates|cost|amount|offer|unit price|total price)\b.{0,180}\b(not included|not shown|not disclosed|excluded|separate|separately)\b/i.test(sentence);
 }
 
@@ -60,25 +63,33 @@ export function containsPricingLeakage(text: string, doc?: Pick<ExportReadyDocum
   const scanText = sentences(text).filter((s) => !isSafeNoPriceSentence(s)).join(" ");
   if (!scanText) return false;
 
-  // Currency amounts: explicit symbols or named currency codes followed by numbers
+  // Currency amounts: explicit symbols or named currency codes followed by numbers.
+  // Covers USD, ETB, EUR, GBP, Birr, dollar, euro, £, $, € with or without amounts.
   const currencyAmount = /(?:\b(?:EUR|USD|ETB|GBP|Birr|dollar|euro)\s*[0-9][0-9,]*(?:\.\d+)?(?:[KkMmBb](?:illion)?)?\b|\b[0-9][0-9,]*(?:\.\d+)?(?:[KkMmBb](?:illion)?)?\s*(?:EUR|USD|ETB|GBP|Birr|dollar|euro)\b|[$€£]\s*[0-9][0-9,]*(?:\.\d+)?(?:[KkMmBb](?:illion)?)?)/i;
 
   // Explicit priced terms directly paired with a number
-  const pricedTermNumber = /\b(total price|unit price|price schedule|fee schedule|commercial offer|financial proposal|commercial proposal|daily rate|monthly rate|hourly rate|consultancy fee|professional fee|lump sum|contract amount|contract value|bill of quantities|BoQ|quoted amount|invoice amount|payment amount|VAT amount)\b.{0,90}\b[0-9][0-9,]*(?:\.\d+)?\b/i;
-  const numberPricedTerm = /\b[0-9][0-9,]*(?:\.\d+)?\b.{0,90}\b(total price|unit price|price schedule|fee schedule|commercial offer|financial proposal|commercial proposal|daily rate|monthly rate|hourly rate|consultancy fee|professional fee|lump sum|contract amount|contract value|bill of quantities|BoQ|quoted amount|invoice amount|payment amount|VAT amount)\b/i;
+  const pricedTermNumber = /\b(total price|unit price|price schedule|fee schedule|commercial offer|financial proposal|commercial proposal|daily rate|monthly rate|hourly rate|consultancy fee|professional fee|lump sum|contract amount|contract value|bill of quantities|BoQ|quoted amount|quoted price|invoice amount|payment amount|VAT amount|reimbursable amount)\b.{0,90}\b[0-9][0-9,]*(?:\.\d+)?\b/i;
+  const numberPricedTerm = /\b[0-9][0-9,]*(?:\.\d+)?\b.{0,90}\b(total price|unit price|price schedule|fee schedule|commercial offer|financial proposal|commercial proposal|daily rate|monthly rate|hourly rate|consultancy fee|professional fee|lump sum|contract amount|contract value|bill of quantities|BoQ|quoted amount|quoted price|invoice amount|payment amount|VAT amount|reimbursable amount)\b/i;
 
-  // Standalone high-signal financial/commercial terms without safe context
-  // "bill of quantities", "BoQ", "quotation", "rate card", "commercial proposal" alone are enough
-  const standaloneFinancialTerm = /\b(bill of quantities|commercial proposal|financial proposal|rate card|price schedule|fee schedule|quotation|quoted price|lump sum price|contract price|contract fee|reimbursable\s+(?:cost|expense)|percentage.based\s+fee)\b/i;
+  // Standalone high-signal financial/commercial terms — appearing alone in a
+  // technical document is a strong leakage signal regardless of accompanying numbers.
+  // Note: "bill of quantities", "BoQ", "quotation", "rate card", "commercial proposal",
+  // "financial proposal", "price schedule", "fee schedule" are all high-signal.
+  const standaloneFinancialTerm = /\b(bill of quantities|BoQ|commercial proposal|financial proposal|rate card|price schedule|fee schedule|quotation|quoted price|lump sum price|contract price|contract fee|reimbursable\s+(?:cost|expense)|percentage.{0,5}based\s+fee|unit\s+price\s+list|price\s+breakdown|cost\s+breakdown|budget\s+breakdown|payment\s+schedule|invoice\s+schedule|commercial\s+envelope|financial\s+envelope)\b/i;
 
   // Percentage-based fee references (e.g. "5% of contract value", "fee of 10%")
-  const percentageFeeRef = /\b(fee|rate|charge|commission)\b.{0,60}\b\d+\s*%|\b\d+\s*%.{0,60}\b(fee|rate|charge|commission)\b/i;
+  const percentageFeeRef = /\b(fee|rate|charge|commission|pricing)\b.{0,60}\b\d+\s*%|\b\d+\s*%.{0,60}\b(fee|rate|charge|commission|pricing|cost)\b/i;
+
+  // Standalone currency symbols or codes with no number context are low-signal
+  // but explicit currency code references with price context are still leakage.
+  const currencyCodeAlone = /\b(USD|ETB|EUR|GBP)\b.{0,40}\b(price|fee|rate|cost|amount|budget|payment|quotation|invoice)\b|\b(price|fee|rate|cost|amount|budget|payment|quotation|invoice)\b.{0,40}\b(USD|ETB|EUR|GBP)\b/i;
 
   return (
     currencyAmount.test(scanText) ||
     pricedTermNumber.test(scanText) ||
     numberPricedTerm.test(scanText) ||
     standaloneFinancialTerm.test(scanText) ||
-    percentageFeeRef.test(scanText)
+    percentageFeeRef.test(scanText) ||
+    currencyCodeAlone.test(scanText)
   );
 }
