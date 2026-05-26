@@ -60,6 +60,13 @@ export function isInternalDraftDocument(doc: DocumentLike): boolean {
 export function isFinalExportCandidateDocument(doc: DocumentLike): boolean {
   if (normalizeStatus(doc.generationStatus) === "SUPERSEDED") return false;
   if (normalizeStatus(doc.validationStatus) === "SUPERSEDED") return false;
+  if (normalizeStatus(doc.generationStatus) === "PLANNED") return false;
+  const rev = normalizeStatus(doc.reviewStatus);
+  if (rev === "NOT_EXPORTABLE") return false;
+  const fmt = normalizeStatus(doc.format);
+  if (fmt === "CONTROL") return false;
+  const dtype = normalizeStatus(doc.documentType ?? "");
+  if (dtype === "SUBMISSION_CONTROL" || dtype === "SUBMISSION_RULES") return false;
   if (isInternalDraftDocument(doc)) return false;
   return true;
 }
