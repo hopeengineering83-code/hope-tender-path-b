@@ -53,7 +53,7 @@ export function classifySubmissionPlanItem(input: ClassifierInput): ClassifierRe
     return result("FORM_TEMPLATE_TO_COMPLETE", officialTemplate.reason ?? "Official tender-issued form/template detected.");
   }
 
-  if (/financial proposal exclusion|separate envelope|two envelope|technical only|do not include price|do not include financial/.test(value)) {
+  if (/financial proposal exclusion|separate envelope|two[-\s]envelope|sealed envelope|technical only|do not include price|do not include financial/.test(value)) {
     return result("COMMERCIAL_SEPARATION_RULE", "Financial/technical separation rule, not a deliverable file.");
   }
 
@@ -65,7 +65,7 @@ export function classifySubmissionPlanItem(input: ClassifierInput): ClassifierRe
     return result("INTERNAL_COMPLIANCE_CONTROL", "Internal format/control rule, not a generated file.");
   }
 
-  if (/business license|trade license|tax clearance|audited statement|registration certificate|incorporation certificate|tin certificate|vat certificate|grade certificate|good standing certificate/.test(value)) {
+  if (/business license|trade license|tax clearance|audited\s+(financial\s+)?statements?|financial statements?|registration\s+certificate|certificate\s+of\s+registration|incorporation\s+certificate|certificate\s+of\s+incorporation|tin certificate|vat certificate|grade certificate|good standing certificate/.test(value)) {
     return result("ORIGINAL_EVIDENCE_ATTACHMENT", "Evidence attachment must be uploaded as an original document, not generated.");
   }
 
