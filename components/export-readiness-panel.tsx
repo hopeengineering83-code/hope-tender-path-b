@@ -261,9 +261,12 @@ export function ExportReadinessPanel({ tenderId }: { tenderId: string }) {
             </button>
           )}
           {readiness && !ok && hasDocumentBlockers && (
-            <button type="button" onClick={() => void autoFinalize()} disabled={busy} className="rounded-lg bg-blue-700 px-3 py-2 text-xs font-medium text-white hover:bg-blue-800 disabled:opacity-50" title="Cleans technical documents, removes AI traces, removes pricing leakage, applies letterhead, validates, and marks safe documents ready for export.">
-              {autoFinalizing ? "Auto-finalizing…" : "Auto-finalize for print/submission"}
-            </button>
+            <div className="flex flex-col items-start gap-1">
+              <button type="button" onClick={() => void autoFinalize()} disabled={busy} className="rounded-lg bg-blue-700 px-3 py-2 text-xs font-medium text-white hover:bg-blue-800 disabled:opacity-50">
+                {autoFinalizing ? "Auto-finalizing…" : "Auto-finalize for print/submission"}
+              </button>
+              <p className="text-[10px] text-slate-500 max-w-xs">Cleans technical documents, removes AI traces, removes pricing leakage, applies letterhead, validates, and marks safe documents ready for export.</p>
+            </div>
           )}
           {readiness && !ok && hasDocumentBlockers && (
             <button type="button" onClick={() => void repair()} disabled={busy} className="rounded-lg bg-emerald-700 px-3 py-2 text-xs font-medium text-white hover:bg-emerald-800 disabled:opacity-50" title="Safely repair generated DOCX status/content mismatches only. Official tender forms/templates, original-required rows, PDFs, planned rows, and non-exportable records are skipped and must be handled manually.">

@@ -33,6 +33,7 @@ export async function GET(req: Request) {
       requirements: { select: { id: true, title: true, requirementType: true, priority: true, createdAt: true } },
       complianceGaps: { select: { id: true, title: true, severity: true, isResolved: true } },
       generatedDocuments: {
+        where: { generationStatus: { not: "SUPERSEDED" } },
         select: { id: true, name: true, documentType: true, generationStatus: true, validationStatus: true, reviewStatus: true, exactFileName: true, exactOrder: true },
       },
     },
