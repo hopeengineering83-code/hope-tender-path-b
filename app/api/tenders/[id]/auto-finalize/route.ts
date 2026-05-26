@@ -7,6 +7,9 @@ import { checkFullExportReadiness, documentHygieneIssues, extractDocxVisibleText
 import { generateWithFallback } from "../../../../../lib/ai";
 import { applyActiveUploadedLetterheadToTenderDocuments } from "../../../../../lib/engine/apply-active-letterhead";
 import { buildSubmissionPlan } from "../../../../../lib/engine/submission-plan";
+import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../../lib/rate-limit";
+import { extractRequestId } from "../../../../../lib/request-id";
+import { logAction } from "../../../../../lib/audit";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -39,15 +42,19 @@ async function toDocx(title: string, text: string): Promise<string> {
   return buffer.toString("base64");
 }
 
-export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   let actor;
   try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER"); } catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
+  const requestId = extractRequestId(req);
+  const rl = rateLimit(`auto-finalize:${actor.id}`, MUTATION_RATE_LIMIT);
+  if (!rl.allowed) return NextResponse.json({ error: "Rate limit exceeded", retryAfter: Math.ceil((rl.resetAt - Date.now()) / 1000) }, { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } });
   await prismaReady;
   const { id: tenderId } = await params;
   const tender = await prisma.tender.findFirst({ where: { id: tenderId, userId: actor.id }, include: { requirements: true, generatedDocuments: { where: { generationStatus: { not: "SUPERSEDED" } }, orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }] } } });
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
 
   const plan = buildSubmissionPlan(tender);
+  const planEmpty = plan.files.length === 0;
   const plannedNames = new Set(plan.files.map((f) => (f.exactFileName ?? "").trim().toLowerCase()));
 
   // Reconcile old wrong rows: submission rules + outside-plan supersede
@@ -57,7 +64,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       await prisma.generatedDocument.update({ where: { id: doc.id }, data: { format: "CONTROL", reviewStatus: "NOT_EXPORTABLE", reviewNotes: "Submission control metadata; excluded from final export." } });
       continue;
     }
-    if (!plannedNames.has((doc.exactFileName ?? doc.name ?? "").trim().toLowerCase())) {
+    if (!planEmpty && !plannedNames.has((doc.exactFileName ?? doc.name ?? "").trim().toLowerCase())) {
       await prisma.generatedDocument.update({ where: { id: doc.id }, data: { generationStatus: "SUPERSEDED", validationStatus: "SUPERSEDED", reviewStatus: "NOT_EXPORTABLE", reviewNotes: "Superseded as outside submission plan." } });
     }
   }
@@ -78,7 +85,9 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     const rebuilt = await toDocx(fileName, cleaned || `${fileName}\nPrepared for submission.`);
     const issues = documentHygieneIssues(cleaned, { name: doc.name, exactFileName: doc.exactFileName, documentType: doc.documentType ?? undefined, format: "DOCX" });
     const ready = issues.length === 0 && rebuilt.length > 0;
+    const priorStatus = doc.reviewStatus;
     await prisma.generatedDocument.update({ where: { id: doc.id }, data: { fileContent: rebuilt, format: "DOCX", generationStatus: "GENERATED", validationStatus: ready ? "VALIDATED" : "PENDING", reviewStatus: ready ? "READY_FOR_EXPORT" : "PENDING", reviewedBy: actor.id, reviewedAt: new Date(), reviewNotes: ready ? "Auto-finalized for print/submission." : `Auto-finalized but needs review: ${issues.join("; ")}` } });
+    if (ready && priorStatus !== "READY_FOR_EXPORT") await prisma.documentReview.create({ data: { documentId: doc.id, reviewerId: actor.id, action: "READY_FOR_EXPORT", notes: "Auto-finalized for print/submission.", priorStatus, newStatus: "READY_FOR_EXPORT" } });
     processed += 1;
   }
 
@@ -87,5 +96,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   const finalDocs = filterFinalExportCandidateDocuments(finalAll as any[]);
   const readiness = await checkFullExportReadiness({ tenderId, docs: finalDocs as any[], requireFileContent: false });
 
-  return NextResponse.json({ success: true, status: readiness.ok ? "COMPLETED" : "IN_PROGRESS", processedCount: processed, remainingCount: Math.max(0, candidates.length - processed), nextAction: candidates.length - processed > 0 ? "CONTINUE_AUTO_FINALIZE" : "RECHECK_EXPORT_READINESS", readinessOk: readiness.ok });
+  const warning = planEmpty ? "Submission plan empty; outside-plan supersede skipped." : null;
+  await logAction({ userId: actor.id, action: "EXPORT_PACKAGE_REPAIR", entityType: "Tender", entityId: tenderId, description: `Auto-finalize processed ${processed} document(s) for ${tender.title}.`, metadata: { tenderId, processed, remaining: Math.max(0, candidates.length - processed), readinessOk: readiness.ok, warning }, requestId });
+  return NextResponse.json({ success: true, status: readiness.ok ? "COMPLETED" : "IN_PROGRESS", processedCount: processed, remainingCount: Math.max(0, candidates.length - processed), nextAction: candidates.length - processed > 0 ? "CONTINUE_AUTO_FINALIZE" : "RECHECK_EXPORT_READINESS", readinessOk: readiness.ok, warning });
 }
