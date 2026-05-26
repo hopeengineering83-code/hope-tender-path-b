@@ -43,27 +43,33 @@ export async function GET(req: Request) {
 export async function DELETE(req: Request) {
   const userId = await getSession();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  await prismaReady;
 
-  const { searchParams } = new URL(req.url);
-  const id = searchParams.get("id");
-  if (!id) return NextResponse.json({ error: "Missing id" }, { status: 400 });
+  try {
+    await prismaReady;
 
-  const company = await prisma.company.findUnique({ where: { userId } });
-  if (!company) return NextResponse.json({ error: "Company not found" }, { status: 404 });
+    const { searchParams } = new URL(req.url);
+    const id = searchParams.get("id");
+    if (!id) return NextResponse.json({ error: "Missing id" }, { status: 400 });
 
-  const doc = await prisma.companyDocument.findFirst({ where: { id, companyId: company.id } });
-  if (!doc) return NextResponse.json({ error: "Document not found" }, { status: 404 });
+    const company = await prisma.company.findUnique({ where: { userId } });
+    if (!company) return NextResponse.json({ error: "Company not found" }, { status: 404 });
 
-  await prisma.companyDocument.delete({ where: { id } });
+    const doc = await prisma.companyDocument.findFirst({ where: { id, companyId: company.id } });
+    if (!doc) return NextResponse.json({ error: "Document not found" }, { status: 404 });
 
-  await logAction({
-    userId,
-    action: "COMPANY_DOCUMENT_DELETE",
-    entityType: "CompanyDocument",
-    entityId: id,
-    description: `Deleted company document "${doc.originalFileName}"`,
-  });
+    await prisma.companyDocument.delete({ where: { id } });
 
-  return NextResponse.json({ success: true });
+    await logAction({
+      userId,
+      action: "COMPANY_DOCUMENT_DELETE",
+      entityType: "CompanyDocument",
+      entityId: id,
+      description: `Deleted company document "${doc.originalFileName}"`,
+    });
+
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    console.error("Company document DELETE failed", error);
+    return NextResponse.json({ error: "Failed to delete document" }, { status: 500 });
+  }
 }

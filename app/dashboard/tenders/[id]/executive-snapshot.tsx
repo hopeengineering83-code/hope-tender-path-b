@@ -35,6 +35,7 @@ type TenderLike = {
   exactFileNaming?: string | null;
   exactFileOrder?: string | null;
   pageLimit?: number | null;
+  bidOutcome?: string | null;
   requirements?: TenderRequirementLike[];
   complianceGaps?: Array<{ severity: string; isResolved: boolean }>;
   generatedDocuments?: GeneratedDocLike[];
@@ -80,6 +81,13 @@ function visiblePackageDocs(docs: GeneratedDocLike[]): GeneratedDocLike[] {
     if (!current || docScore(doc) >= docScore(current)) byKey.set(key, doc);
   }
   return Array.from(byKey.values());
+}
+
+function bidOutcomeBadgeClass(outcome: string): string {
+  if (outcome === "WON") return "bg-green-100 text-green-700 border-green-200";
+  if (outcome === "LOST") return "bg-red-100 text-red-700 border-red-200";
+  if (outcome === "WITHDRAWN") return "bg-slate-100 text-slate-600 border-slate-200";
+  return "bg-amber-100 text-amber-700 border-amber-200";
 }
 
 export function ExecutiveSnapshot({ tender }: { tender: TenderLike }) {
@@ -179,7 +187,14 @@ export function ExecutiveSnapshot({ tender }: { tender: TenderLike }) {
             One proposal-management view for readiness, critical gaps, evidence coverage, selected experts/projects, submission-plan documents, validation, review status, and extraction health.
           </p>
         </div>
-        <span className={`w-fit rounded-full border px-4 py-2 text-sm font-bold ${badgeClass(decision)}`}>{decision}</span>
+        <div className="flex flex-wrap items-center gap-2">
+          {tender.bidOutcome && (
+            <span className={`rounded-full border px-3 py-1.5 text-xs font-semibold ${bidOutcomeBadgeClass(tender.bidOutcome)}`}>
+              Bid: {tender.bidOutcome}
+            </span>
+          )}
+          <span className={`rounded-full border px-4 py-2 text-sm font-bold ${badgeClass(decision)}`}>{decision}</span>
+        </div>
       </div>
 
       <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-6">

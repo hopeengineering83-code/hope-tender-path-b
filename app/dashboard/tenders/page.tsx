@@ -21,17 +21,39 @@ const STATUS_FILTERS = [
   "CLOSED",
 ] as const;
 
+const SORT_OPTIONS = [
+  { value: "createdAt_desc", label: "Newest first" },
+  { value: "createdAt_asc", label: "Oldest first" },
+  { value: "deadline_asc", label: "Deadline (soonest)" },
+  { value: "deadline_desc", label: "Deadline (latest)" },
+  { value: "readinessScore_desc", label: "Readiness (high)" },
+  { value: "readinessScore_asc", label: "Readiness (low)" },
+  { value: "status_asc", label: "Status A–Z" },
+] as const;
+
+type SortOption = (typeof SORT_OPTIONS)[number]["value"];
+
+function parseSortOption(raw: string): SortOption {
+  return SORT_OPTIONS.find((o) => o.value === raw)?.value ?? "createdAt_desc";
+}
+
+function buildOrderBy(sort: SortOption): { [key: string]: "asc" | "desc" } {
+  const [field, dir] = sort.split("_") as [string, "asc" | "desc"];
+  return { [field]: dir };
+}
+
 export default async function TendersPage({
   searchParams,
 }: {
-  searchParams: Promise<{ status?: string; q?: string }>;
+  searchParams: Promise<{ status?: string; q?: string; sort?: string }>;
 }) {
   const userId = await getSession();
   if (!userId) redirect("/login");
   await prismaReady;
 
-  const { status = "ALL", q = "" } = await searchParams;
+  const { status = "ALL", q = "", sort: sortRaw = "createdAt_desc" } = await searchParams;
   const statusFilter = parseTenderStatus(status);
+  const sort = parseSortOption(sortRaw);
 
   const tenders = await prisma.tender.findMany({
     where: {
@@ -42,12 +64,13 @@ export default async function TendersPage({
     select: {
       id: true, title: true, reference: true, clientName: true,
       deadline: true, status: true, category: true, budget: true, currency: true,
+      readinessScore: true,
       createdAt: true, updatedAt: true,
       // Only counts — never fetch fileContent, extractedText, or base64 data
       _count: { select: { files: true, requirements: true } },
       complianceGaps: { select: { id: true, isResolved: true, severity: true } },
     },
-    orderBy: { createdAt: "desc" },
+    orderBy: buildOrderBy(sort),
   });
 
   return (
