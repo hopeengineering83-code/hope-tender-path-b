@@ -87,6 +87,8 @@ export default function CompanyPage() {
   const [deletingProjectId, setDeletingProjectId] = useState<string|null>(null);
   const [reimporting, setReimporting] = useState(false);
   const [reimportResult, setReimportResult] = useState<{expertsCreated:number;projectsCreated:number;docsProcessed:number}|null>(null);
+  const [searchExpert, setSearchExpert] = useState("");
+  const [searchProject, setSearchProject] = useState("");
 
   async function loadDocs() {
     const r = await fetch("/api/company/documents");
@@ -264,6 +266,20 @@ export default function CompanyPage() {
     const mc = filterCat==="ALL" || d.category===filterCat;
     return ms && mc;
   });
+
+  const filteredExperts = (company.experts ?? []).filter(ex =>
+    !searchExpert ||
+    ex.fullName.toLowerCase().includes(searchExpert.toLowerCase()) ||
+    (ex.title ?? "").toLowerCase().includes(searchExpert.toLowerCase()) ||
+    (ex.disciplines ?? []).some(d => d.toLowerCase().includes(searchExpert.toLowerCase()))
+  );
+
+  const filteredProjects = (company.projects ?? []).filter(p =>
+    !searchProject ||
+    p.name.toLowerCase().includes(searchProject.toLowerCase()) ||
+    (p.clientName ?? "").toLowerCase().includes(searchProject.toLowerCase()) ||
+    (p.sector ?? "").toLowerCase().includes(searchProject.toLowerCase())
+  );
 
   if (loading) return <div className="text-sm text-slate-400 py-16 text-center">Loading…</div>;
 
@@ -451,9 +467,21 @@ export default function CompanyPage() {
             </form>
           </div>
 
+          {(company.experts ?? []).length > 0 && (
+            <div className="mb-2">
+              <input
+                value={searchExpert}
+                onChange={e => setSearchExpert(e.target.value)}
+                placeholder="Search experts by name, title, or discipline…"
+                className="w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-black"
+              />
+            </div>
+          )}
           <div className="rounded-2xl border bg-white shadow-sm overflow-hidden">
             {(company.experts||[]).length===0 ? (
               <p className="text-sm text-slate-400 py-10 text-center">No experts yet.</p>
+            ) : filteredExperts.length === 0 ? (
+              <p className="text-sm text-slate-400 py-10 text-center">No experts match your search.</p>
             ) : (
               <table className="w-full text-sm">
                 <thead className="bg-slate-50 text-left text-slate-500 text-xs">
@@ -466,7 +494,7 @@ export default function CompanyPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y">
-                  {(company.experts||[]).map(ex => (
+                  {filteredExperts.map(ex => (
                     <tr key={ex.id} className="hover:bg-slate-50">
                       <td className="px-5 py-3 font-medium text-slate-900">{ex.fullName}</td>
                       <td className="px-5 py-3 text-slate-500 hidden md:table-cell">{ex.title??"-"}</td>
@@ -511,9 +539,21 @@ export default function CompanyPage() {
             </form>
           </div>
 
+          {(company.projects ?? []).length > 0 && (
+            <div className="mb-2">
+              <input
+                value={searchProject}
+                onChange={e => setSearchProject(e.target.value)}
+                placeholder="Search projects by name, client, or sector…"
+                className="w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-black"
+              />
+            </div>
+          )}
           <div className="rounded-2xl border bg-white shadow-sm overflow-hidden">
             {(company.projects||[]).length===0 ? (
               <p className="text-sm text-slate-400 py-10 text-center">No projects yet.</p>
+            ) : filteredProjects.length === 0 ? (
+              <p className="text-sm text-slate-400 py-10 text-center">No projects match your search.</p>
             ) : (
               <table className="w-full text-sm">
                 <thead className="bg-slate-50 text-left text-slate-500 text-xs">
@@ -526,7 +566,7 @@ export default function CompanyPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y">
-                  {(company.projects||[]).map(p => (
+                  {filteredProjects.map(p => (
                     <tr key={p.id} className="hover:bg-slate-50">
                       <td className="px-5 py-3 font-medium text-slate-900">{p.name}</td>
                       <td className="px-5 py-3 text-slate-500 hidden md:table-cell">{p.clientName??"-"}</td>

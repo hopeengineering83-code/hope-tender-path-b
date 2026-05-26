@@ -63,6 +63,7 @@ export default async function DashboardPage() {
     total: tenders.length,
     inProgress: tenders.filter((t) => !["DRAFT", "EXPORTED", "CLOSED"].includes(t.status)).length,
     criticalGaps: tenders.reduce((sum, t) => sum + t.complianceGaps.filter((g: { isResolved: boolean; severity: string }) => !g.isResolved && g.severity === "CRITICAL").length, 0),
+    highGaps: tenders.reduce((sum, t) => sum + t.complianceGaps.filter((g: { isResolved: boolean; severity: string }) => !g.isResolved && g.severity === "HIGH").length, 0),
     dueSoon: dueSoon7.length,
     overdue: overdue.length,
   };
@@ -111,11 +112,12 @@ export default async function DashboardPage() {
       )}
 
       {/* Stats */}
-      <div className="grid gap-4 grid-cols-2 xl:grid-cols-5">
+      <div className="grid gap-4 grid-cols-2 xl:grid-cols-6">
         {[
           { label: "Total Tenders", value: stats.total, color: "text-slate-900" },
           { label: "In Progress", value: stats.inProgress, color: "text-blue-600" },
           { label: "Critical Gaps", value: stats.criticalGaps, color: stats.criticalGaps > 0 ? "text-red-600" : "text-green-600" },
+          { label: "High Gaps", value: stats.highGaps, color: stats.highGaps > 0 ? "text-orange-600" : "text-slate-400" },
           { label: "Due ≤ 7 Days", value: stats.dueSoon, color: stats.dueSoon > 0 ? "text-amber-600" : "text-slate-400" },
           { label: "Overdue", value: stats.overdue, color: stats.overdue > 0 ? "text-red-700" : "text-slate-400" },
         ].map((s) => (
