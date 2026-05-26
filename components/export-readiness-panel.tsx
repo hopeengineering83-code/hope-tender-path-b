@@ -68,6 +68,7 @@ export function ExportReadinessPanel({ tenderId }: { tenderId: string }) {
   const [linkingVault, setLinkingVault] = useState(false);
   const [supersedingOutsidePlan, setSupersedingOutsidePlan] = useState(false);
   const [autoFinalizing, setAutoFinalizing] = useState(false);
+  const [generatingMissing, setGeneratingMissing] = useState(false);
   const [vaultCandidates, setVaultCandidates] = useState<VaultCandidate[]>([]);
   const [selectedVaultOption, setSelectedVaultOption] = useState<Record<string, string>>({});
   const [attachingDocId, setAttachingDocId] = useState<string | null>(null);
@@ -75,7 +76,7 @@ export function ExportReadinessPanel({ tenderId }: { tenderId: string }) {
   const [repairMessage, setRepairMessage] = useState<string | null>(null);
   const fileInputs = useRef<Record<string, HTMLInputElement | null>>({});
 
-  const busy = loading || repairing || linkingVault || supersedingOutsidePlan || autoFinalizing || Boolean(attachingDocId);
+  const busy = loading || repairing || linkingVault || supersedingOutsidePlan || autoFinalizing || generatingMissing || Boolean(attachingDocId);
 
   async function refresh() {
     setLoading(true);
@@ -89,6 +90,24 @@ export function ExportReadinessPanel({ tenderId }: { tenderId: string }) {
       setError(err instanceof Error ? err.message : "Export readiness failed");
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function generateMissingPlanned() {
+    setGeneratingMissing(true);
+    setError(null);
+    setRepairMessage(null);
+    try {
+      const res = await fetch(`/api/tenders/${tenderId}/generate-missing-plan-files`, { method: "POST" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.error) throw new Error(data.error ?? `Generate missing files failed (${res.status})`);
+      const total = (data.created ?? 0) + (data.updated ?? 0) + (data.convertedFromPlanned ?? 0);
+      setRepairMessage(`Generated ${total} planned document placeholder(s). Re-checking readiness.`);
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Generate missing planned files failed");
+    } finally {
+      setGeneratingMissing(false);
     }
   }
 
@@ -237,7 +256,12 @@ export function ExportReadinessPanel({ tenderId }: { tenderId: string }) {
             </span>
           )}
           {readiness && !ok && hasDocumentBlockers && (
-            <button type="button" onClick={() => void autoFinalize()} disabled={busy} className="rounded-lg bg-blue-700 px-3 py-2 text-xs font-medium text-white hover:bg-blue-800 disabled:opacity-50">
+            <button type="button" onClick={() => void generateMissingPlanned()} disabled={busy} className="rounded-lg bg-sky-700 px-3 py-2 text-xs font-medium text-white hover:bg-sky-800 disabled:opacity-50" title="Convert PLANNED document rows into draft control records so the export gate can proceed.">
+              {generatingMissing ? "Generating…" : "Generate missing planned docs"}
+            </button>
+          )}
+          {readiness && !ok && hasDocumentBlockers && (
+            <button type="button" onClick={() => void autoFinalize()} disabled={busy} className="rounded-lg bg-blue-700 px-3 py-2 text-xs font-medium text-white hover:bg-blue-800 disabled:opacity-50" title="Cleans technical documents, removes AI traces, removes pricing leakage, applies letterhead, validates, and marks safe documents ready for export.">
               {autoFinalizing ? "Auto-finalizing…" : "Auto-finalize for print/submission"}
             </button>
           )}
@@ -307,6 +331,21 @@ export function ExportReadinessPanel({ tenderId }: { tenderId: string }) {
               </div>
             </div>
           </div>
+
+          {!ok && (readiness.documentBlockers.length > 0 || readiness.tenderLevelBlockers.length > 0) && (
+            <div className="rounded-xl border border-sky-100 bg-sky-50 p-3">
+              <p className="text-xs font-semibold text-sky-900">How to clear blockers</p>
+              <ol className="mt-2 space-y-1 pl-4 text-xs text-sky-800 list-decimal">
+                <li>Click <strong>Generate missing planned docs</strong> to convert any PLANNED rows into draft placeholders.</li>
+                <li>For official-original rows (bid forms, tender templates): click <strong>Attach official original</strong> on each blocker below.</li>
+                <li>Click <strong>Repair safe document gaps</strong> — automatically cleans AI traces, pricing leakage, and placeholders from generated DOCX files.</li>
+                <li>If blockers remain: click <strong>Auto-finalize for print/submission</strong> to AI-polish and mark safe documents ready for export. Run again if <em>remainingCount &gt; 0</em>.</li>
+                <li>If outside-plan files are present: click <strong>Exclude outside-plan files</strong>.</li>
+                <li>Click <strong>Re-check</strong> to refresh the gate.</li>
+              </ol>
+              <p className="mt-2 text-[10px] text-sky-600">Manual action required only for: tender-issued official forms/templates, missing company evidence not in Knowledge Vault, or missing official tender source file.</p>
+            </div>
+          )}
 
           {readiness.tenderLevelBlockers.length > 0 && (
             <div>

@@ -139,13 +139,43 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }
   }
 
+  // ── Pass 2: convert any lingering PLANNED rows to control drafts ──────────
+  // Engine planned these docs but the AI provider failed to generate them.
+  // Convert them to replacement-control records so the export gate can proceed.
+  const plannedRows = await prisma.generatedDocument.findMany({
+    where: { tenderId: id, generationStatus: "PLANNED" },
+    select: { id: true, name: true, exactFileName: true, documentType: true },
+  });
+  const convertedFromPlanned: string[] = [];
+  for (const row of plannedRows) {
+    const fileName = row.exactFileName ?? row.name ?? "Unnamed document";
+    const documentType = documentTypeFor(fileName, row.documentType ?? "");
+    const replaceWithOriginal = needsOriginalReplacement(fileName, documentType);
+    const isSubmissionRules = documentType === "SUBMISSION_RULES" || /submission formatting|packaging rules|submission rules|delivery instruction/i.test(fileName);
+    const fileContent = await replacementControlContent(tender.title, fileName, replaceWithOriginal);
+    await prisma.generatedDocument.update({
+      where: { id: row.id },
+      data: {
+        fileContent,
+        generationStatus: "GENERATED",
+        validationStatus: "PENDING",
+        reviewStatus: isSubmissionRules ? "NOT_EXPORTABLE" : (replaceWithOriginal ? "REPLACE_WITH_ORIGINAL" : "PENDING"),
+        reviewNotes: isSubmissionRules
+          ? "Submission formatting/packaging rules are internal control metadata and are excluded from export."
+          : (replaceWithOriginal ? "DO NOT SUBMIT this generated placeholder. Replace it with the tender-issued original before final export." : "Review this generated support control document before final export."),
+        updatedAt: new Date(),
+      },
+    });
+    convertedFromPlanned.push(fileName);
+  }
+
   await logAction({
     userId: actor.id,
     action: "DOCUMENT_GENERATE",
     entityType: "Tender",
     entityId: id,
-    description: `${actor.email} generated ${created.length} and updated ${updated.length} missing planned file control record(s) for "${tender.title}".`,
-    metadata: { tenderId: id, createdCount: created.length, updatedCount: updated.length, created, updated, warning: "Replacement-control documents are not final submission evidence." },
+    description: `${actor.email} generated ${created.length} and updated ${updated.length} missing planned file control record(s), converted ${convertedFromPlanned.length} PLANNED rows, for "${tender.title}".`,
+    metadata: { tenderId: id, createdCount: created.length, updatedCount: updated.length, created, updated, convertedFromPlanned, warning: "Replacement-control documents are not final submission evidence." },
     requestId,
   });
 
@@ -153,7 +183,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     success: true,
     created: created.length,
     updated: updated.length,
-    files: { created, updated },
+    convertedFromPlanned: convertedFromPlanned.length,
+    files: { created, updated, convertedFromPlanned },
     warning: "Replacement-control documents are not final submission evidence. Replace originals before export where reviewStatus is REPLACE_WITH_ORIGINAL.",
   });
 }

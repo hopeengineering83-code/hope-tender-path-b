@@ -40,7 +40,8 @@ export function isValidationPassed(value?: string | null): boolean {
 }
 
 export function isReviewReadyForExport(value?: string | null): boolean {
-  return normalizeStatus(value) === "READY_FOR_EXPORT";
+  const s = normalizeStatus(value);
+  return s === "READY_FOR_EXPORT" || s === "APPROVED";
 }
 
 export function isGenerated(value?: string | null): boolean {

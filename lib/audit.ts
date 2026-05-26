@@ -62,7 +62,11 @@ export type AuditAction =
   //   - telemetry: { totalCalls, totalMs, byStep }
   // Allows operators to query historical deep-reasoning runs without
   // parsing console logs.
-  | "TENDER_DEEP_REASONING_RUN";
+  | "TENDER_DEEP_REASONING_RUN"
+  | "DOCUMENT_GENERATE"
+  | "VAULT_EVIDENCE_LINKED"
+  | "OUTSIDE_PLAN_SUPERSEDED"
+  | "AUTO_FINALIZE_RUN";
 
 export async function logAction(opts: {
   userId?: string;

@@ -727,6 +727,28 @@ async function bootstrap(client: PrismaClient): Promise<void> {
   await ensureColumn(client, "TenderRequirement", "sourceConfidence", "DOUBLE PRECISION NOT NULL DEFAULT 0");
 
 
+  // ── DocumentReview / DocumentComment — per-document approval workflow ────
+  await client.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "DocumentReview" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "generatedDocumentId" TEXT NOT NULL,
+    "reviewerId" TEXT,
+    "reviewStatus" TEXT NOT NULL DEFAULT 'PENDING',
+    "reviewNotes" TEXT,
+    "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    FOREIGN KEY ("generatedDocumentId") REFERENCES "GeneratedDocument"("id") ON DELETE CASCADE
+  )`);
+  await client.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "DocumentComment" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "generatedDocumentId" TEXT NOT NULL,
+    "authorId" TEXT,
+    "body" TEXT NOT NULL,
+    "resolved" BOOLEAN NOT NULL DEFAULT FALSE,
+    "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    FOREIGN KEY ("generatedDocumentId") REFERENCES "GeneratedDocument"("id") ON DELETE CASCADE
+  )`);
+
   // ── indexes (each wrapped so one failure never blocks the rest) ──────────
   const idxStatements = [
     `CREATE INDEX IF NOT EXISTS "CompanyDocument_companyId_idx" ON "CompanyDocument"("companyId")`,
@@ -766,6 +788,9 @@ async function bootstrap(client: PrismaClient): Promise<void> {
     // G9 — TenderRequirement source coords
     `CREATE INDEX IF NOT EXISTS "TenderRequirement_tenderId_idx" ON "TenderRequirement"("tenderId")`,
     `CREATE INDEX IF NOT EXISTS "TenderRequirement_sourceTenderFileId_idx" ON "TenderRequirement"("sourceTenderFileId")`,
+    // DocumentReview / DocumentComment
+    `CREATE INDEX IF NOT EXISTS "DocumentReview_generatedDocumentId_idx" ON "DocumentReview"("generatedDocumentId")`,
+    `CREATE INDEX IF NOT EXISTS "DocumentComment_generatedDocumentId_idx" ON "DocumentComment"("generatedDocumentId")`,
   ];
   for (const sql of idxStatements) {
     try { await client.$executeRawUnsafe(sql); } catch (e) {
