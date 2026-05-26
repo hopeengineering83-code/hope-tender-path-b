@@ -29,7 +29,6 @@ type ExportReadiness = {
   message: string;
 };
 
-
 type VaultOption = { id: string; fileName: string; category: string; score?: number };
 type VaultCandidate = { rowId: string; rowName: string; suggestedCategories: string[]; options: VaultOption[] };
 
@@ -68,12 +67,15 @@ export function ExportReadinessPanel({ tenderId }: { tenderId: string }) {
   const [repairing, setRepairing] = useState(false);
   const [linkingVault, setLinkingVault] = useState(false);
   const [supersedingOutsidePlan, setSupersedingOutsidePlan] = useState(false);
+  const [autoFinalizing, setAutoFinalizing] = useState(false);
   const [vaultCandidates, setVaultCandidates] = useState<VaultCandidate[]>([]);
   const [selectedVaultOption, setSelectedVaultOption] = useState<Record<string, string>>({});
   const [attachingDocId, setAttachingDocId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [repairMessage, setRepairMessage] = useState<string | null>(null);
   const fileInputs = useRef<Record<string, HTMLInputElement | null>>({});
+
+  const busy = loading || repairing || linkingVault || supersedingOutsidePlan || autoFinalizing || Boolean(attachingDocId);
 
   async function refresh() {
     setLoading(true);
@@ -111,6 +113,23 @@ export function ExportReadinessPanel({ tenderId }: { tenderId: string }) {
     }
   }
 
+  async function autoFinalize() {
+    setAutoFinalizing(true);
+    setError(null);
+    setRepairMessage(null);
+    try {
+      const res = await fetch(`/api/tenders/${tenderId}/auto-finalize`, { method: "POST" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.error) throw new Error(data.error ?? `Auto-finalize failed (${res.status})`);
+      setRepairMessage(`Auto-finalize: processed ${data.processedCount ?? 0}, remaining ${data.remainingCount ?? 0}. ${data.readinessOk ? "Export gate passed." : "Re-check or continue auto-finalize if blockers remain."}`);
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Auto-finalize failed");
+    } finally {
+      setAutoFinalizing(false);
+    }
+  }
+
   async function attachOriginal(blocker: DocumentBlocker, file: File | null) {
     if (!file) return;
     setAttachingDocId(blocker.documentId);
@@ -133,8 +152,6 @@ export function ExportReadinessPanel({ tenderId }: { tenderId: string }) {
     }
   }
 
-
-
   async function linkVaultEvidence() {
     setLinkingVault(true);
     setError(null);
@@ -143,7 +160,7 @@ export function ExportReadinessPanel({ tenderId }: { tenderId: string }) {
       const listRes = await fetch(`/api/tenders/${tenderId}/link-vault-evidence`, { method: "GET" });
       const listData = await listRes.json().catch(() => ({}));
       if (!listRes.ok) throw new Error(listData.error ?? `Vault evidence lookup failed (${listRes.status})`);
-      const candidates = Array.isArray(listData.candidates) ? listData.candidates as VaultCandidate[] : [];
+      const candidates = Array.isArray(listData.candidates) ? (listData.candidates as VaultCandidate[]) : [];
       setVaultCandidates(candidates);
       const defaults: Record<string, string> = {};
       for (const c of candidates) {
@@ -202,6 +219,7 @@ export function ExportReadinessPanel({ tenderId }: { tenderId: string }) {
       setSupersedingOutsidePlan(false);
     }
   }
+
   const ok = readiness?.ok;
   const hasDocumentBlockers = (readiness?.summary.documentBlockers ?? 0) > 0;
 
@@ -219,42 +237,26 @@ export function ExportReadinessPanel({ tenderId }: { tenderId: string }) {
             </span>
           )}
           {readiness && !ok && hasDocumentBlockers && (
-            <button
-              type="button"
-              onClick={() => void repair()}
-              disabled={repairing || loading || Boolean(attachingDocId) || linkingVault || supersedingOutsidePlan}
-              className="rounded-lg bg-emerald-700 px-3 py-2 text-xs font-medium text-white hover:bg-emerald-800 disabled:opacity-50"
-              title="Safely repair generated DOCX status/content mismatches only. Official tender forms/templates, original-required rows, PDFs, planned rows, and non-exportable records are skipped and must be handled manually."
-            >
+            <button type="button" onClick={() => void autoFinalize()} disabled={busy} className="rounded-lg bg-blue-700 px-3 py-2 text-xs font-medium text-white hover:bg-blue-800 disabled:opacity-50">
+              {autoFinalizing ? "Auto-finalizing…" : "Auto-finalize for print/submission"}
+            </button>
+          )}
+          {readiness && !ok && hasDocumentBlockers && (
+            <button type="button" onClick={() => void repair()} disabled={busy} className="rounded-lg bg-emerald-700 px-3 py-2 text-xs font-medium text-white hover:bg-emerald-800 disabled:opacity-50" title="Safely repair generated DOCX status/content mismatches only. Official tender forms/templates, original-required rows, PDFs, planned rows, and non-exportable records are skipped and must be handled manually.">
               {repairing ? "Repairing…" : "Repair safe document gaps"}
             </button>
           )}
           {readiness && !ok && hasDocumentBlockers && (
-            <button
-              type="button"
-              onClick={() => void linkVaultEvidence()}
-              disabled={linkingVault || loading || repairing || Boolean(attachingDocId) || supersedingOutsidePlan}
-              className="rounded-lg bg-indigo-700 px-3 py-2 text-xs font-medium text-white hover:bg-indigo-800 disabled:opacity-50"
-            >
+            <button type="button" onClick={() => void linkVaultEvidence()} disabled={busy} className="rounded-lg bg-indigo-700 px-3 py-2 text-xs font-medium text-white hover:bg-indigo-800 disabled:opacity-50">
               {linkingVault ? "Linking vault…" : "Use vault evidence"}
             </button>
           )}
           {readiness && !ok && hasDocumentBlockers && (
-            <button
-              type="button"
-              onClick={() => void supersedeOutsidePlan()}
-              disabled={supersedingOutsidePlan || loading || repairing || Boolean(attachingDocId) || linkingVault}
-              className="rounded-lg bg-amber-700 px-3 py-2 text-xs font-medium text-white hover:bg-amber-800 disabled:opacity-50"
-            >
+            <button type="button" onClick={() => void supersedeOutsidePlan()} disabled={busy} className="rounded-lg bg-amber-700 px-3 py-2 text-xs font-medium text-white hover:bg-amber-800 disabled:opacity-50">
               {supersedingOutsidePlan ? "Superseding…" : "Exclude outside-plan files"}
             </button>
           )}
-          <button
-            type="button"
-            onClick={() => void refresh()}
-            disabled={loading || repairing || Boolean(attachingDocId) || linkingVault || supersedingOutsidePlan}
-            className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-medium text-white hover:bg-slate-800 disabled:opacity-50"
-          >
+          <button type="button" onClick={() => void refresh()} disabled={busy} className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-medium text-white hover:bg-slate-800 disabled:opacity-50">
             {loading ? "Checking…" : readiness ? "Re-check" : "Check export gate"}
           </button>
         </div>
@@ -270,11 +272,7 @@ export function ExportReadinessPanel({ tenderId }: { tenderId: string }) {
             {vaultCandidates.map((candidate) => (
               <div key={candidate.rowId} className="rounded border border-indigo-100 bg-white p-2">
                 <p className="font-medium text-slate-900">{candidate.rowName}</p>
-                <select
-                  className="mt-1 w-full rounded border border-slate-300 p-1"
-                  value={selectedVaultOption[candidate.rowId] ?? ""}
-                  onChange={(e) => setSelectedVaultOption((prev) => ({ ...prev, [candidate.rowId]: e.target.value }))}
-                >
+                <select className="mt-1 w-full rounded border border-slate-300 p-1" value={selectedVaultOption[candidate.rowId] ?? ""} onChange={(e) => setSelectedVaultOption((prev) => ({ ...prev, [candidate.rowId]: e.target.value }))}>
                   <option value="">Select evidence…</option>
                   {candidate.options.map((opt) => <option key={opt.id} value={opt.id}>{opt.fileName} ({opt.category})</option>)}
                 </select>
@@ -346,31 +344,15 @@ export function ExportReadinessPanel({ tenderId }: { tenderId: string }) {
                           </div>
                           {isOriginalRequired(blocker) && (
                             <div className="shrink-0">
-                              <input
-                                ref={(el) => { fileInputs.current[blocker.documentId] = el; }}
-                                type="file"
-                                accept=".doc,.docx,.pdf,.xls,.xlsx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                                className="hidden"
-                                onChange={(event) => void attachOriginal(blocker, event.target.files?.[0] ?? null)}
-                              />
-                              <button
-                                type="button"
-                                onClick={() => fileInputs.current[blocker.documentId]?.click()}
-                                disabled={Boolean(attachingDocId) || repairing || loading}
-                                className="rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] font-medium text-emerald-700 hover:bg-emerald-100 disabled:opacity-50"
-                                title="Attach the exact tender-issued original form/template. This does not regenerate the form."
-                              >
+                              <input ref={(el) => { fileInputs.current[blocker.documentId] = el; }} type="file" accept=".doc,.docx,.pdf,.xls,.xlsx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" className="hidden" onChange={(event) => void attachOriginal(blocker, event.target.files?.[0] ?? null)} />
+                              <button type="button" onClick={() => fileInputs.current[blocker.documentId]?.click()} disabled={busy} className="rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] font-medium text-emerald-700 hover:bg-emerald-100 disabled:opacity-50" title="Attach the exact tender-issued original form/template. This does not regenerate the form.">
                                 {attachingDocId === blocker.documentId ? "Attaching…" : "Attach official original"}
                               </button>
                             </div>
                           )}
                         </div>
-                        <ul className="mt-2 list-disc space-y-1 pl-4 text-slate-600">
-                          {blocker.reasons.map((reason, i) => <li key={i}>{reason}</li>)}
-                        </ul>
-                        <ul className="mt-2 list-disc space-y-1 pl-4 text-emerald-700">
-                          {blocker.nextActions.map((action, i) => <li key={i}>{action}</li>)}
-                        </ul>
+                        <ul className="mt-2 list-disc space-y-1 pl-4 text-slate-600">{blocker.reasons.map((reason, i) => <li key={i}>{reason}</li>)}</ul>
+                        <ul className="mt-2 list-disc space-y-1 pl-4 text-emerald-700">{blocker.nextActions.map((action, i) => <li key={i}>{action}</li>)}</ul>
                       </div>
                     </div>
                   </li>
