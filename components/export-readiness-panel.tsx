@@ -62,6 +62,8 @@ export function ExportReadinessPanel({ tenderId }: { tenderId: string }) {
   const [readiness, setReadiness] = useState<ExportReadiness | null>(null);
   const [loading, setLoading] = useState(false);
   const [repairing, setRepairing] = useState(false);
+  const [linkingVault, setLinkingVault] = useState(false);
+  const [supersedingOutsidePlan, setSupersedingOutsidePlan] = useState(false);
   const [attachingDocId, setAttachingDocId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [repairMessage, setRepairMessage] = useState<string | null>(null);
@@ -125,6 +127,58 @@ export function ExportReadinessPanel({ tenderId }: { tenderId: string }) {
     }
   }
 
+
+
+  async function linkVaultEvidence() {
+    setLinkingVault(true);
+    setError(null);
+    setRepairMessage(null);
+    try {
+      const listRes = await fetch(`/api/tenders/${tenderId}/link-vault-evidence`, { method: "GET" });
+      const listData = await listRes.json().catch(() => ({}));
+      if (!listRes.ok) throw new Error(listData.error ?? `Vault evidence lookup failed (${listRes.status})`);
+      const candidates = Array.isArray(listData.candidates) ? listData.candidates : [];
+      if (candidates.length === 0) {
+        setRepairMessage("No vault-linkable blockers were found.");
+        await refresh();
+        return;
+      }
+      let linked = 0;
+      for (const candidate of candidates) {
+        const first = Array.isArray(candidate.options) ? candidate.options[0] : null;
+        if (!first?.id || !candidate?.rowId) continue;
+        const res = await fetch(`/api/tenders/${tenderId}/link-vault-evidence`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ rowId: candidate.rowId, vaultDocumentId: first.id }),
+        });
+        if (res.ok) linked += 1;
+      }
+      setRepairMessage(linked > 0 ? `Linked vault evidence for ${linked} document blocker(s).` : "No vault evidence links were applied.");
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Vault evidence linking failed");
+    } finally {
+      setLinkingVault(false);
+    }
+  }
+
+  async function supersedeOutsidePlan() {
+    setSupersedingOutsidePlan(true);
+    setError(null);
+    setRepairMessage(null);
+    try {
+      const res = await fetch(`/api/tenders/${tenderId}/supersede-outside-plan`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.error) throw new Error(data.error ?? `Supersede outside-plan failed (${res.status})`);
+      setRepairMessage(`Superseded ${data.superseded ?? 0} outside-plan document(s).`);
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Supersede outside-plan failed");
+    } finally {
+      setSupersedingOutsidePlan(false);
+    }
+  }
   const ok = readiness?.ok;
   const hasDocumentBlockers = (readiness?.summary.documentBlockers ?? 0) > 0;
 
@@ -145,17 +199,37 @@ export function ExportReadinessPanel({ tenderId }: { tenderId: string }) {
             <button
               type="button"
               onClick={() => void repair()}
-              disabled={repairing || loading || Boolean(attachingDocId)}
+              disabled={repairing || loading || Boolean(attachingDocId) || linkingVault || supersedingOutsidePlan}
               className="rounded-lg bg-emerald-700 px-3 py-2 text-xs font-medium text-white hover:bg-emerald-800 disabled:opacity-50"
               title="Safely repair generated DOCX status/content mismatches only. Official tender forms/templates, original-required rows, PDFs, planned rows, and non-exportable records are skipped and must be handled manually."
             >
               {repairing ? "Repairing…" : "Repair safe document gaps"}
             </button>
           )}
+          {readiness && !ok && hasDocumentBlockers && (
+            <button
+              type="button"
+              onClick={() => void linkVaultEvidence()}
+              disabled={linkingVault || loading || repairing || Boolean(attachingDocId) || supersedingOutsidePlan}
+              className="rounded-lg bg-indigo-700 px-3 py-2 text-xs font-medium text-white hover:bg-indigo-800 disabled:opacity-50"
+            >
+              {linkingVault ? "Linking vault…" : "Use vault evidence"}
+            </button>
+          )}
+          {readiness && !ok && hasDocumentBlockers && (
+            <button
+              type="button"
+              onClick={() => void supersedeOutsidePlan()}
+              disabled={supersedingOutsidePlan || loading || repairing || Boolean(attachingDocId) || linkingVault}
+              className="rounded-lg bg-amber-700 px-3 py-2 text-xs font-medium text-white hover:bg-amber-800 disabled:opacity-50"
+            >
+              {supersedingOutsidePlan ? "Superseding…" : "Exclude outside-plan files"}
+            </button>
+          )}
           <button
             type="button"
             onClick={() => void refresh()}
-            disabled={loading || repairing || Boolean(attachingDocId)}
+            disabled={loading || repairing || Boolean(attachingDocId) || linkingVault || supersedingOutsidePlan}
             className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-medium text-white hover:bg-slate-800 disabled:opacity-50"
           >
             {loading ? "Checking…" : readiness ? "Re-check" : "Check export gate"}
