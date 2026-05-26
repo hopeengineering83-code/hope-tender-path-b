@@ -37,7 +37,7 @@ export async function GET() {
   if (!claudeConfigured && !geminiConfigured) blockers.push("No Claude or Gemini API key is configured. AI analysis/proposal quality will fall back or fail.");
   if (claudeConfigured && claudeModels.length === 0) warnings.push("Claude is configured but no Claude model chain was resolved.");
   if (geminiConfigured && !present(process.env.GEMINI_MODEL)) warnings.push("GEMINI_MODEL is not set; the app will use its built-in Gemini default.");
-  if (openaiConfigured) warnings.push("OPENAI_API_KEY is present, but this app currently uses Claude/Gemini for core tender generation unless OpenAI support is explicitly implemented.");
+  if (openaiConfigured) warnings.push("OPENAI API key is configured. OpenAI is available in the fallback chain when higher-priority providers fail.");
 
   return NextResponse.json({
     success: blockers.length === 0,
@@ -56,7 +56,7 @@ export async function GET() {
       },
       openai: {
         configured: openaiConfigured,
-        note: "Detected only. OpenAI is not the primary tender engine provider in the current code path.",
+        note: "Configured fallback provider (Claude → Gemini → OpenAI → DeepSeek).",
       },
     },
     preferredProvider,

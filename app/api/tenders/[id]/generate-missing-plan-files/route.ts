@@ -33,7 +33,8 @@ function documentTypeFor(fileName: string, fallback: string) {
 }
 
 function needsOriginalReplacement(fileName: string, documentType: string) {
-  return /financial|audited|capacity|bank|legal|eligibility|registration|licen[cs]ing|tax|certificate|form|template/i.test(`${fileName} ${documentType}`);
+  const label = `${fileName} ${documentType}`.toLowerCase();
+  return /form|template|annex\s*[a-z0-9]+\s*\(?official\)?/.test(label);
 }
 
 async function replacementControlContent(tenderTitle: string, fileName: string, replaceWithOriginal: boolean) {
@@ -98,19 +99,22 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   for (const file of missing) {
     const documentType = documentTypeFor(file.exactFileName, file.documentType);
     const replaceWithOriginal = needsOriginalReplacement(file.exactFileName, documentType);
+    const isSubmissionRules = documentType === "SUBMISSION_RULES" || /submission formatting|packaging rules|submission rules|delivery instruction/i.test(file.exactFileName);
     const fileContent = await replacementControlContent(tender.title, file.exactFileName, replaceWithOriginal);
     const existing = await prisma.generatedDocument.findFirst({ where: { tenderId: id, exactFileName: file.exactFileName }, select: { id: true } });
     const data = {
       name: file.exactFileName.replace(/\.[a-z0-9]{2,5}$/i, ""),
       documentType,
-      format: replaceWithOriginal ? "CONTROL" : file.format,
+      format: replaceWithOriginal || isSubmissionRules ? "CONTROL" : file.format,
       exactFileName: file.exactFileName,
       exactOrder: file.exactOrder,
       fileContent,
       generationStatus: "GENERATED",
       validationStatus: "PENDING",
-      reviewStatus: replaceWithOriginal ? "REPLACE_WITH_ORIGINAL" : "PENDING",
-      reviewNotes: replaceWithOriginal ? "DO NOT SUBMIT this generated placeholder. Replace it with the tender-issued original / signed / stamped / certified document before final export." : "Review this generated support control document before final export.",
+      reviewStatus: isSubmissionRules ? "NOT_EXPORTABLE" : (replaceWithOriginal ? "REPLACE_WITH_ORIGINAL" : "PENDING"),
+      reviewNotes: isSubmissionRules
+        ? "Submission formatting/packaging rules are internal control metadata and are excluded from export."
+        : (replaceWithOriginal ? "DO NOT SUBMIT this generated placeholder. Replace it with the tender-issued original / signed / stamped / certified document before final export." : "Review this generated support control document before final export."),
       contentSummary: replaceWithOriginal
         ? `Replacement-control record for tender-required file ${file.exactFileName}. This internal control record is intentionally non-final and must be replaced with the original before export.`
         : `Generated support-control record for tender-required file ${file.exactFileName}. Review before final export.`,

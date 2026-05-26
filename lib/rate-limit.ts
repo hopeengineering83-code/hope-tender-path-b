@@ -71,3 +71,6 @@ export const AUTH_RATE_LIMIT: RateLimitConfig = { limit: 10, windowMs: 60_000 };
 
 /** Bulk upload: 5 per minute per user */
 export const UPLOAD_RATE_LIMIT: RateLimitConfig = { limit: 5, windowMs: 60_000 };
+
+/** Mutating routes: 30 calls per minute per user */
+export const MUTATION_RATE_LIMIT: RateLimitConfig = { limit: 30, windowMs: 60_000 };

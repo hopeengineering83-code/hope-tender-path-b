@@ -2,6 +2,7 @@ import { prisma } from "../prisma";
 import { exactSelectionLimit } from "./scope-policy";
 import { buildDeterministicComprehension } from "./deterministic-prohibition-extractor";
 import { validateConstraints } from "./constraint-validator";
+import { filterFinalExportCandidateDocuments } from "./document-output-state";
 
 export interface ValidationIssue {
   code: string;
@@ -86,7 +87,7 @@ export async function validateTender(tenderId: string): Promise<ValidationReport
   }
 
   // Sort by exactOrder then updatedAt descending so dedup keeps the most-recently-updated record per filename.
-  const allGenerated = tender.generatedDocuments
+  const allGenerated = filterFinalExportCandidateDocuments(tender.generatedDocuments as any[])
     .filter((d) => d.generationStatus === "GENERATED")
     .sort((a, b) => {
       const orderDiff = (a.exactOrder ?? Number.MAX_SAFE_INTEGER) - (b.exactOrder ?? Number.MAX_SAFE_INTEGER);
@@ -203,6 +204,6 @@ export async function validateTender(tenderId: string): Promise<ValidationReport
 
   const blockCount = issues.filter((i) => i.severity === "BLOCK").length;
   const newStatus = blockCount === 0 ? "PASSED" : "FAILED";
-  await prisma.generatedDocument.updateMany({ where: { tenderId, generationStatus: "GENERATED" }, data: { validationStatus: newStatus } });
+  await prisma.generatedDocument.updateMany({ where: { tenderId, id: { in: generatedDocs.map((d) => d.id) } }, data: { validationStatus: newStatus } });
   return { passed: blockCount === 0, issues, checkedAt: new Date().toISOString() };
 }
