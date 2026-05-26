@@ -64,6 +64,7 @@ export default async function DashboardPage() {
     inProgress: tenders.filter((t) => !["DRAFT", "EXPORTED", "CLOSED"].includes(t.status)).length,
     criticalGaps: tenders.reduce((sum, t) => sum + t.complianceGaps.filter((g: { isResolved: boolean; severity: string }) => !g.isResolved && g.severity === "CRITICAL").length, 0),
     dueSoon: dueSoon7.length,
+    overdue: overdue.length,
   };
 
   const aiEnabled = isAIEnabled();
@@ -73,9 +74,13 @@ export default async function DashboardPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Dashboard</h1>
-          <p className="mt-0.5 text-slate-500">
-            {company ? `${company.name} · ` : ""}
-            {aiEnabled ? "✦ AI-powered" : ""}
+          <p className="mt-0.5 text-slate-500 flex items-center gap-2">
+            {company ? `${company.name}` : ""}
+            {company && <span className="text-slate-300">·</span>}
+            {aiEnabled
+              ? <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-2 py-0.5">✦ AI enabled</span>
+              : <span className="inline-flex items-center gap-1 text-xs font-medium text-slate-500 bg-slate-100 border border-slate-200 rounded-full px-2 py-0.5">AI offline — rule-based mode</span>
+            }
           </p>
         </div>
         <Link href="/dashboard/tenders/new" className="rounded-lg bg-black px-4 py-2 text-sm text-white hover:bg-slate-800">
@@ -106,12 +111,13 @@ export default async function DashboardPage() {
       )}
 
       {/* Stats */}
-      <div className="grid gap-4 grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-4 grid-cols-2 xl:grid-cols-5">
         {[
           { label: "Total Tenders", value: stats.total, color: "text-slate-900" },
           { label: "In Progress", value: stats.inProgress, color: "text-blue-600" },
           { label: "Critical Gaps", value: stats.criticalGaps, color: stats.criticalGaps > 0 ? "text-red-600" : "text-green-600" },
-          { label: "Due ≤ 7 Days", value: stats.dueSoon, color: stats.dueSoon > 0 ? "text-amber-600" : "text-slate-900" },
+          { label: "Due ≤ 7 Days", value: stats.dueSoon, color: stats.dueSoon > 0 ? "text-amber-600" : "text-slate-400" },
+          { label: "Overdue", value: stats.overdue, color: stats.overdue > 0 ? "text-red-700" : "text-slate-400" },
         ].map((s) => (
           <div key={s.label} className="rounded-2xl border bg-white p-5 shadow-sm">
             <p className="text-sm text-slate-500">{s.label}</p>

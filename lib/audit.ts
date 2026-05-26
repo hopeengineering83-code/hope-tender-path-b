@@ -66,7 +66,10 @@ export type AuditAction =
   | "DOCUMENT_GENERATE"
   | "VAULT_EVIDENCE_LINKED"
   | "OUTSIDE_PLAN_SUPERSEDED"
-  | "AUTO_FINALIZE_RUN";
+  | "AUTO_FINALIZE_RUN"
+  // Knowledge vault — expert and project lifecycle events.
+  | "EXPERT_CREATE" | "EXPERT_UPDATE" | "EXPERT_DELETE" | "EXPERT_REVIEW"
+  | "PROJECT_CREATE" | "PROJECT_UPDATE" | "PROJECT_DELETE" | "PROJECT_REVIEW";
 
 export async function logAction(opts: {
   userId?: string;

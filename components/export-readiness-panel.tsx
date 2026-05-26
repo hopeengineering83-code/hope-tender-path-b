@@ -265,7 +265,7 @@ export function ExportReadinessPanel({ tenderId }: { tenderId: string }) {
               <button type="button" onClick={() => void autoFinalize()} disabled={busy} className="rounded-lg bg-blue-700 px-3 py-2 text-xs font-medium text-white hover:bg-blue-800 disabled:opacity-50">
                 {autoFinalizing ? "Auto-finalizing…" : "Auto-finalize for print/submission"}
               </button>
-              <p className="text-[10px] text-slate-500 max-w-xs">Cleans technical documents, removes AI traces, removes pricing leakage, applies letterhead, validates, and marks safe documents ready for export.</p>
+              <p className="text-[10px] text-slate-500 max-w-xs">Auto-finalize cleans 1–3 documents per click. Click multiple times until remaining = 0. Official original files still require manual attachment.</p>
             </div>
           )}
           {readiness && !ok && hasDocumentBlockers && (

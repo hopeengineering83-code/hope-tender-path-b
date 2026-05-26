@@ -147,6 +147,16 @@ async function zipPackage(userId: string, tender: any) {
   const entries = scope.entries.filter((entry) => Boolean(entry.generatedDocId && byId.get(entry.generatedDocId)));
   if (!entries.length) return err("Final ZIP has no entries after scope filtering.", 409, { code: "NO_ZIP_ENTRIES_AFTER_SCOPE_FILTERING", exclusions: scope.exclusions });
 
+  // Duplicate filename guard — two docs with the same ZIP path would silently overwrite each other.
+  const seenNames = new Set<string>();
+  const dupes: string[] = [];
+  for (const entry of entries) {
+    const name = entry.name.toLowerCase();
+    if (seenNames.has(name)) dupes.push(entry.name);
+    seenNames.add(name);
+  }
+  if (dupes.length) return err(`Duplicate filenames in export package: ${dupes.join(", ")}. Ensure each document has a unique exactFileName.`, 409, { code: "DUPLICATE_FILENAMES_IN_ZIP", duplicates: dupes });
+
   for (const entry of entries) {
     const doc = byId.get(entry.generatedDocId!);
     if (!doc) continue;
