@@ -1,16 +1,18 @@
 import { NextResponse } from "next/server";
-import { getSession } from "../../../../../lib/auth";
+import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 
 export async function PUT(
   req: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const userId = await getSession();
-  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  let actor;
+  try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER"); }
+  catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
 
   await prismaReady;
   const { id: tenderId } = await params;
+  const userId = actor.id;
 
   const tender = await prisma.tender.findFirst({ where: { id: tenderId, userId } });
   if (!tender) return NextResponse.json({ error: "Not found" }, { status: 404 });
