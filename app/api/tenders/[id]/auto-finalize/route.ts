@@ -36,6 +36,16 @@ async function polishWithAI(text: string, technical: boolean): Promise<string> {
   try { return await generateWithFallback(prompt, { systemPrompt: "You are a senior tender editor. Keep facts, improve quality, no inventions." }); } catch { return text; }
 }
 
+
+function classifyEnvelope(name: string, documentType?: string | null): "TECHNICAL" | "FINANCIAL" | "EVIDENCE" | "CONTROL" | "ORIGINAL" {
+  const label = `${name} ${documentType ?? ""}`.toLowerCase();
+  if (/replace_with_original|form_or_template|official/.test(label)) return "ORIGINAL";
+  if (/submission_rules|submission_control|control/.test(label)) return "CONTROL";
+  if (/financial|price|boq|commercial|cost/.test(label)) return "FINANCIAL";
+  if (/legal|registration|license|vat|tin|bank|audited|cv|reference|profile|manual/.test(label)) return "EVIDENCE";
+  return "TECHNICAL";
+}
+
 async function toDocx(title: string, text: string): Promise<string> {
   const lines = text.split(/\n+/).map((l) => l.trim()).filter(Boolean);
   const buffer = await Packer.toBuffer(new Document({ sections: [{ children: [new Paragraph({ children: [new TextRun({ text: title, bold: true, size: 28 })] }), ...lines.map((l) => new Paragraph({ children: [new TextRun({ text: l, size: 22 })] }))] }] }));
@@ -74,10 +84,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   const batch = candidates.slice(0, 3);
   let processed = 0;
+  const startedAt = Date.now();
   for (const doc of batch) {
+    if (Date.now() - startedAt > 45_000) break;
     if (doc.reviewStatus === "REPLACE_WITH_ORIGINAL") continue;
     const fileName = doc.exactFileName ?? doc.name;
-    const technical = /technical|methodology|workplan|approach|strategic/i.test(`${fileName} ${doc.documentType ?? ""}`);
+    const envelope = classifyEnvelope(fileName, doc.documentType);
+    if (envelope === "ORIGINAL" || envelope === "CONTROL") continue;
+    if (envelope === "EVIDENCE") continue;
+    const technical = envelope === "TECHNICAL";
     const visible = await extractDocxVisibleText(doc.fileContent, fileName);
     const baseText = (visible ?? "").split(/\n+/).map((line) => cleanLine(line, technical)).filter(Boolean).join("\n");
     const polished = await polishWithAI(baseText || `Document: ${fileName}`, technical);
@@ -98,5 +113,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   const warning = planEmpty ? "Submission plan empty; outside-plan supersede skipped." : null;
   await logAction({ userId: actor.id, action: "EXPORT_PACKAGE_REPAIR", entityType: "Tender", entityId: tenderId, description: `Auto-finalize processed ${processed} document(s) for ${tender.title}.`, metadata: { tenderId, processed, remaining: Math.max(0, candidates.length - processed), readinessOk: readiness.ok, warning }, requestId });
-  return NextResponse.json({ success: true, status: readiness.ok ? "COMPLETED" : "IN_PROGRESS", processedCount: processed, remainingCount: Math.max(0, candidates.length - processed), nextAction: candidates.length - processed > 0 ? "CONTINUE_AUTO_FINALIZE" : "RECHECK_EXPORT_READINESS", readinessOk: readiness.ok, warning });
+  const remaining = Math.max(0, candidates.length - processed);
+  return NextResponse.json({ success: true, status: readiness.ok ? "COMPLETED" : "IN_PROGRESS", processedCount: processed, remainingCount: remaining, nextAction: remaining > 0 ? "CONTINUE_AUTO_FINALIZE" : "RECHECK_EXPORT_READINESS", readinessOk: readiness.ok, warning });
 }

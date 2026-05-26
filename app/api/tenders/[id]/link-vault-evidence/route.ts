@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { Document, Packer, Paragraph, TextRun } from "docx";
 import { forbiddenResponse, requireRole, unauthorizedResponse } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
-import { documentHygieneIssues } from "../../../../../lib/engine/export-readiness";
+import { documentHygieneIssues, extractDocxVisibleText } from "../../../../../lib/engine/export-readiness";
 
 export const dynamic = "force-dynamic";
 
@@ -40,7 +40,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (!vault || !usable(vault)) return NextResponse.json({ error: "Vault evidence not found or empty" }, { status: 400 });
   const fileContent = (vault.fileContent ?? "").trim() ? vault.fileContent : (vault.extractedText ?? "").trim() ? await extractedTextDocx(vault.fileName, vault.extractedText ?? "") : row.fileContent;
   const hasBytes = Boolean((fileContent ?? "").trim() || (vault.storagePath ?? "").trim());
-  const hygieneIssues = documentHygieneIssues(vault.extractedText ?? vault.fileName, { name: row.name, exactFileName: row.exactFileName, documentType: row.documentType ?? undefined, format: row.format ?? undefined });
+  const visibleText = await extractDocxVisibleText(fileContent, row.exactFileName ?? row.name);
+  const hygieneIssues = documentHygieneIssues(visibleText ?? vault.extractedText ?? vault.fileName, { name: row.name, exactFileName: row.exactFileName, documentType: row.documentType ?? undefined, format: row.format ?? undefined });
   const ready = hasBytes && hygieneIssues.length === 0;
   await prisma.generatedDocument.update({ where: { id: row.id }, data: { fileContent, storagePath: (vault.storagePath ?? "") || row.storagePath, generationStatus: "GENERATED", validationStatus: ready ? "VALIDATED" : "PENDING", reviewStatus: ready ? "READY_FOR_EXPORT" : "PENDING", reviewNotes: ready ? `Linked Knowledge Vault evidence: ${vault.fileName}` : `Linked Knowledge Vault evidence (${vault.fileName}) but requires validation/hygiene review.` } });
   await prisma.documentReview.create({ data: { documentId: row.id, reviewerId: actor.id, action: ready ? "READY_FOR_EXPORT" : "CHANGES_REQUESTED", notes: `Linked vault evidence ${vault.fileName}`, priorStatus: row.reviewStatus, newStatus: ready ? "READY_FOR_EXPORT" : row.reviewStatus } });

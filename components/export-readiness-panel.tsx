@@ -238,6 +238,9 @@ export function ExportReadinessPanel({ tenderId }: { tenderId: string }) {
             </span>
           )}
           {readiness && !ok && hasDocumentBlockers && (
+            <div className="text-[11px] text-slate-600">This will clean technical documents, remove AI traces, remove pricing leakage, apply letterhead, validate, and mark safe documents ready for export.</div>
+          )}
+          {readiness && !ok && hasDocumentBlockers && (
             <button
               type="button"
               onClick={() => void autoFinalize()}
