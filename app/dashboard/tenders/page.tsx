@@ -5,6 +5,7 @@ import { prisma, prismaReady } from "../../../lib/prisma";
 import { StatusBadge } from "../../../components/status-badge";
 import { formatDate, formatTenderStatus, parseTenderStatus } from "../../../lib/tender-workflow";
 import { cleanClientName, cleanTenderTitle } from "../../../lib/engine/proposal-labels";
+import { DuplicateButton } from "../history/duplicate-button";
 
 const STATUS_FILTERS = [
   "ALL",
@@ -150,9 +151,12 @@ export default async function TendersPage({
                     </td>
                     <td className="px-6 py-4"><StatusBadge status={tender.status} /></td>
                     <td className="px-6 py-4">
-                      <Link href={`/dashboard/tenders/${tender.id}`} className="text-blue-600 hover:underline">
-                        Open workspace
-                      </Link>
+                      <div className="flex items-center gap-3">
+                        <Link href={`/dashboard/tenders/${tender.id}`} className="text-blue-600 hover:underline">
+                          Open workspace
+                        </Link>
+                        <DuplicateButton tenderId={tender.id} />
+                      </div>
                     </td>
                   </tr>
                 );

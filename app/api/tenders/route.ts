@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma, prismaReady } from "../../../lib/prisma";
 import { getSession } from "../../../lib/auth";
 import { logAction } from "../../../lib/audit";
-import { MUTATION_RATE_LIMIT, rateLimit } from "../../../lib/rate-limit";
+import { API_RATE_LIMIT, MUTATION_RATE_LIMIT, rateLimit } from "../../../lib/rate-limit";
 import { parseTenderStatus } from "../../../lib/tender-workflow";
 import { cleanClientName, cleanTenderTitle } from "../../../lib/engine/proposal-labels";
 
@@ -11,6 +11,9 @@ export async function GET(req: Request) {
   if (!userId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+
+  const rl = rateLimit(`tender-list:${userId}`, API_RATE_LIMIT);
+  if (!rl.allowed) return NextResponse.json({ error: "Rate limit exceeded", retryAfter: Math.ceil((rl.resetAt - Date.now()) / 1000) }, { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } });
 
   await prismaReady;
   const { searchParams } = new URL(req.url);
