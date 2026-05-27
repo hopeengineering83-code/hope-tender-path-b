@@ -123,23 +123,24 @@ Branch: `claude/high-priority-gaps-post-474`
 - [x] ~~Merge PR #474~~ — merged as d1b4fc2
 - [ ] Monitor PR #475 CI (Vercel build) — open
 
-### HIGH — DONE in PR #475
+### HIGH — DONE in PR #475 (merged d598a65)
 - [x] ZIP envelope breakdown headers + audit log
 - [x] Browser tab title badge (🚨 / count / clear)
 - [x] Auto-finalize remaining-count amber nudge banner
 
-### MEDIUM
-- [ ] **Feasibility tender type in UI**: `lib/engine/universal-tender-taxonomy.ts`
-  already has FEASIBILITY_STUDY; confirm the tender creation form allows
-  selecting it and the analysis pipeline surfaces it properly
-- [ ] **Donor safeguard checklist**: for NGO/donor tenders detected by the
-  taxonomy, auto-add compliance gaps for ESMP, logframe, and M&E plan if they
-  are not in the submission plan
-- [ ] **Envelope badge on submission plan UI**: show TECHNICAL / FINANCIAL / ADMIN
-  badge next to each file in the submission plan table (uses the new
-  `envelope` field)
+### MEDIUM — in progress (PR #476, branch claude/medium-priority-gaps-post-475)
+- [x] Feasibility Study + NGO/Donor-Funded added to tender categories
+- [x] Donor safeguard checklist in export readiness (ESMP, logframe, M&E)
+- [x] Envelope badge (TECHNICAL/FINANCIAL/ADMIN) on submission plan table
 
-### LOW / NICE-TO-HAVE
+### MEDIUM — DONE in PR #476
+- [x] Feasibility Study + NGO/Donor-Funded in categories (`new/page.tsx`)
+- [x] Donor safeguard blockers in `checkTenderLevelExportBlockers`
+      (ESMP, logframe, M&E plan — MEDIUM severity, keyword-detected)
+- [x] Envelope badge column in `submission-plan-reconciliation-panel.tsx`
+      (blue=TECHNICAL, amber=FINANCIAL, slate=ADMIN)
+
+### LOW / NICE-TO-HAVE (next)
 - [ ] Add `AUTH_RATE_LIMIT` (10/min) export from `lib/rate-limit.ts` to the
   login route if not already applied
 - [ ] Confirm `isInternalDraftDocument` is called before any document enters
@@ -179,4 +180,4 @@ Branch: `claude/high-priority-gaps-post-474`
 4. Work the "IMMEDIATE" queue first, then HIGH, then MEDIUM
 5. Update this file at the end of every session
 
-_Last updated: 2026-05-27 by Claude after PR #475 push_
+_Last updated: 2026-05-27 by Claude after PR #476 push_

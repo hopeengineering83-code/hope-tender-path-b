@@ -328,6 +328,48 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
   const workbook = await prisma.pricingWorkbook.findUnique({ where: { tenderId }, select: { id: true, noPriceLeakage: true } });
   if (workbook && workbook.noPriceLeakage === false) blockers.push(tenderBlocker("PRICING_LEAKAGE", "Pricing leakage flag is set on the pricing workbook.", "Confirm no prices, rates, or fees appear in the technical proposal envelope."));
 
+  // ── Donor / NGO safeguard checklist ──────────────────────────────────────
+  // When the tender is NGO/donor-funded (detected by category or keyword
+  // signals in description/analysis), verify that the three mandatory donor
+  // safeguard artefacts are present in the submission plan requirements or
+  // generated documents. Missing items are surfaced as MEDIUM blockers so the
+  // user is reminded before final export — they do not hard-block, since some
+  // donors accept a separate ESMP/logframe delivery milestone.
+  const isDonorTender =
+    /ngo|donor.?funded|world\s+bank|afdb|african\s+development|eu\s+funded|usaid|dfid|fcdo|giz|undp|unicef|wfp|unhcr|ifad|gfatm|global\s+fund/i.test(
+      [tender.category, tender.description, tender.analysisSummary, tender.notes, tender.intakeSummary].filter(Boolean).join(" "),
+    );
+  if (isDonorTender) {
+    const planText = tender.requirements.map((r) => `${r.title} ${r.description ?? ""}`).join(" ").toLowerCase();
+    const docText = docs.map((d) => `${d.name} ${d.documentType ?? ""}`).join(" ").toLowerCase();
+    const allText = `${planText} ${docText}`;
+
+    if (!/esmp|environmental.*social.*management|esia|safeguard.*plan|environmental.*management.*plan/i.test(allText)) {
+      blockers.push(tenderBlocker(
+        "DONOR_ESMP_MISSING",
+        "NGO/donor tender: Environmental and Social Management Plan (ESMP) not detected in submission plan or generated documents.",
+        "Add an ESMP section or annex to the technical proposal, or confirm the donor accepts a separate delivery milestone for the ESMP per the ToR.",
+        "MEDIUM",
+      ));
+    }
+    if (!/logframe|log\s+frame|logical\s+framework|result[s]?\s+framework/i.test(allText)) {
+      blockers.push(tenderBlocker(
+        "DONOR_LOGFRAME_MISSING",
+        "NGO/donor tender: Logical Framework (logframe / results framework) not detected in submission plan or generated documents.",
+        "Include a logframe with outputs, outcomes, and impact indicators in the technical proposal, or confirm the donor provides their own template.",
+        "MEDIUM",
+      ));
+    }
+    if (!/m&e\s+plan|monitoring.*evaluation|me\s+plan|m\s+and\s+e\s+plan|monitoring\s+plan/i.test(allText)) {
+      blockers.push(tenderBlocker(
+        "DONOR_ME_PLAN_MISSING",
+        "NGO/donor tender: Monitoring & Evaluation (M&E) plan not detected in submission plan or generated documents.",
+        "Add an M&E plan section covering baseline, data collection methods, midline/endline evaluation, and reporting frequency.",
+        "MEDIUM",
+      ));
+    }
+  }
+
   return blockers;
 }
 
