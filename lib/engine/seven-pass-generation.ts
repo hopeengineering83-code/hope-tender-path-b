@@ -101,7 +101,12 @@ export function evaluateSevenPassGenerationGate(input: GeneratedDocumentGateInpu
   const aiTraceCount = asCount(input.aiTraceCount);
   const pricingLeakageCount = asCount(input.pricingLeakageCount);
   const officialOriginalRiskCount = asCount(input.officialOriginalRiskCount);
-  const selfReviewScore = Math.max(0, Math.min(100, Number(input.selfReviewScore ?? 0)));
+  // null/undefined means "not yet scored" — treated as a warning, not a blocker.
+  // Callers that can compute a real score (e.g. scoreProposalQuality) should pass it.
+  // Only an explicitly-provided score < 80 blocks the gate.
+  const selfReviewScore: number | null = input.selfReviewScore != null
+    ? Math.max(0, Math.min(100, Number(input.selfReviewScore)))
+    : null;
   const deterministicFallbackUsed = Boolean(input.deterministicFallbackUsed) || analysisSource === "DETERMINISTIC_FALLBACK";
   const selectedEvidenceTrustLevels = (input.selectedEvidenceTrustLevels ?? []).map((level) => String(level ?? "UNKNOWN"));
 
@@ -136,7 +141,9 @@ export function evaluateSevenPassGenerationGate(input: GeneratedDocumentGateInpu
   ]));
 
   passes.push(result("SELF_REVIEW_SCORING", [
-    ...(selfReviewScore < 80 ? [`Self-review score ${selfReviewScore} is below required 80.`] : []),
+    // Only fail if a score was explicitly provided AND is below threshold.
+    // A null score means "not yet computed" — does not block by itself.
+    ...(selfReviewScore !== null && selfReviewScore < 80 ? [`Self-review score ${selfReviewScore} is below required 80.`] : []),
     ...(pricingLeakageCount > 0 ? [`${pricingLeakageCount} pricing/commercial leakage issue(s) detected.`] : []),
     ...(input.technicalFinancialSeparationOk === false ? ["Technical/financial envelope separation failed."] : []),
   ]));

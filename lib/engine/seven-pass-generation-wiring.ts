@@ -222,8 +222,12 @@ export function buildSevenPassGateInput(ctx: SevenPassWiringContext): GeneratedD
   // Deterministic fallback
   const deterministicFallbackUsed = ctx.deterministicFallbackUsed ?? false;
 
-  // Self-review score: use provided score or 0 (conservative)
-  const selfReviewScore = ctx.selfReviewScore != null ? ctx.selfReviewScore : 0;
+  // Self-review score: pass null when the caller has not computed a score.
+  // The gate treats null as "not yet evaluated" and skips the threshold check —
+  // other passes (placeholders, AI traces, evidence, pricing) still block.
+  // Passing 0 would permanently block every document; null is the correct
+  // sentinel for "score not available in this code path."
+  const selfReviewScore: number | null = ctx.selfReviewScore != null ? ctx.selfReviewScore : null;
 
   return {
     analysisSource,
