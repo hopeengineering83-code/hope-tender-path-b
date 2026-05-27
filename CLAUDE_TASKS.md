@@ -99,7 +99,11 @@ Branch: `fix/seven-pass-wiring-self-review-and-donor-regex`
 - export-readiness.ts: isDonorTender regex extended with ADB, JICA, bilateral donor
 - **1315 pass / 0 fail**
 
-### PR #487 — Blocked-readiness recovery and document classification (open, CI pending)
+### PR #489 — Wire real selfReviewScore into auto-finalize (merged ✅)
+- `auto-finalize/route.ts`: calls `assessGeneratedDocumentQuality()` on cleaned text; passes `report.score` as `selfReviewScore` to `evaluateSevenPassForDocument()` so SELF_REVIEW_SCORING pass enforces ≥80 threshold instead of skipping with null
+- **1339 pass / 0 fail**
+
+### PR #487 — Blocked-readiness recovery and document classification (merged ✅)
 Branch: `claude/relaxed-mendel-YHnOx`
 - `lib/engine/document-type-normalizer.ts` (NEW)
 - `lib/engine/document-quality-gate.ts`: document-type-aware gating
@@ -119,7 +123,7 @@ Branch: `claude/relaxed-mendel-YHnOx`
 
 ### REMAINING KNOWN GAPS
 - [ ] `tenderScopeOnly` semantic scope drift (different industry) requires AI analysis — current proxy only catches reference-number mismatches
-- [ ] `auto-finalize` does not call `scoreProposalQuality()` for a real selfReviewScore; passes null (gate skips threshold check)
+- (none — all known gaps resolved)
 
 ---
 
@@ -148,7 +152,8 @@ Branch: `claude/relaxed-mendel-YHnOx`
 - After PR #484 merge: **~1290 pass** (many new test files added)
 - After PR #485 merge: **1315 pass / 0 fail**
 - After PR #486 (pending): **1315 pass / 0 fail**
-- After PR #487 (pending): **1330 pass / 0 fail** (+15 new tests)
+- After PR #487 (merged): **1330 pass / 0 fail** (+15 new tests)
+- After PR #489 (merged): **1339 pass / 0 fail**
 - Never regress below the baseline at merge time
 
 ---
@@ -161,4 +166,4 @@ Branch: `claude/relaxed-mendel-YHnOx`
 5. Work the "IMMEDIATE" queue first
 6. Update this file at the end of every session
 
-_Last updated: 2026-05-27 by Claude after PR #488 merge — all gaps resolved; test baseline 1339 pass / 0 fail_
+_Last updated: 2026-05-27 by Claude after PR #489 merge — all known gaps resolved; test baseline 1339 pass / 0 fail_
