@@ -42,125 +42,117 @@ After pushing, always open a draft PR targeting main.
 - Bid outcome badge, notifications pagination, dashboard stats, vault search,
   documents DELETE endpoint
 
-### PR #473 — Universal submission engine hardening (merged 2026-05-27)
-**REPLACE_WITH_ORIGINAL exclusion**
-- `lib/engine/document-output-state.ts`: `isFinalExportCandidateDocument` now
-  explicitly excludes `REPLACE_WITH_ORIGINAL` reviewStatus
-- Tests: `tests/pricing-hygiene-extended.test.ts` — 2 regression assertions added
+### PR #473 — Universal submission engine hardening
+- `isFinalExportCandidateDocument` excludes REPLACE_WITH_ORIGINAL reviewStatus
+- Rate limit on GET /api/tenders (API_RATE_LIMIT 300 req/min)
+- Pre-ZIP content check (409 DOCUMENTS_MISSING_CONTENT)
+- Company profile completeness bar (13-field, ≥80% green)
+- ComplianceGapsPanel CRITICAL/HIGH/MEDIUM/LOW severity badges
+- DuplicateButton on tender list
 
-**Rate limit on GET /api/tenders**
-- `app/api/tenders/route.ts`: `API_RATE_LIMIT` (300 req/min) applied per userId
-  after session check; returns `429` with `Retry-After` header
-
-**Pre-ZIP content check**
-- `app/api/tenders/[id]/download/route.ts`: pre-loop check — documents with
-  neither `fileContent` nor `storagePath` return `409 DOCUMENTS_MISSING_CONTENT`
-
-**Company profile completeness bar**
-- `app/dashboard/company/page.tsx`: 13-field completeness bar
-  (≥80% green, ≥50% amber, <50% red)
-
-**ComplianceGapsPanel**
-- `app/dashboard/tenders/[id]/tender-detail.tsx`: CRITICAL/HIGH/MEDIUM/LOW
-  severity badges, Resolve/Reopen toggle, visible error handling with dismiss
-  banner, show-all toggle when gaps > 5
-
-**DuplicateButton on tender list**
-- `app/dashboard/tenders/page.tsx`: DuplicateButton in Action column
-
-**New test files (all pass)**
-- `tests/export-safety.test.ts` — 24 assertions
-- `tests/auto-finalize-safety.test.ts` — 30 assertions
-- `tests/rate-limit-safety.test.ts` — 10 assertions
-
----
-
-### PR #474 — Remaining gaps (MERGED 2026-05-27)
-Branch: `claude/relaxed-mendel-YHnOx` → merged to main as `d1b4fc2`
-
+### PR #474 — Remaining gaps (merged d1b4fc2)
 - Export Readiness Panel: Download Final ZIP button (enabled/disabled)
 - Sector strategies: feasibility, government/public procurement, NGO/donor
-- Submission plan envelope separation (`SubmissionEnvelope` type + `envelope` field)
-- Test count after merge: **1161 pass / 0 fail**
+- Submission plan envelope separation (SubmissionEnvelope type + envelope field)
 
----
-
-### PR #475 — HIGH-priority gaps (MERGED d598a65)
+### PR #475 — HIGH-priority gaps (merged d598a65)
 - ZIP envelope breakdown headers (X-Envelope-Breakdown, X-Envelope-Note)
 - Browser tab title badge (🚨 critical / count / clear on unmount)
 - Auto-finalize remaining-count amber nudge banner
 
----
+### PR #476 — MEDIUM-priority gaps (merged e25abb4)
+- Feasibility Study + NGO/Donor-Funded in tender categories
+- Donor safeguard blockers in `checkTenderLevelExportBlockers` (ESMP, logframe, M&E)
+- Envelope badge column in submission plan table (blue/amber/slate)
 
-### PR #476 — MEDIUM-priority gaps (open, Vercel building)
-Branch: `claude/medium-priority-gaps-post-475`
-- Feasibility Study + NGO/Donor-Funded added to tender categories
-- Donor safeguard checklist in export readiness (ESMP, logframe, M&E — MEDIUM)
-- Envelope badge (TECHNICAL/FINANCIAL/ADMIN) in submission plan table
+### PR #477 — LOW-priority gaps (merged)
+- Compliance-gaps panel pagination (≤20 → show-all toggle; >20 → Prev/Next paged)
+
+### PR #482 — Canonical readiness score UI + placeholder stripping (merged)
+- Canonical readiness score widget in UI
+- Bid-Team placeholder stripping in proposal output
+
+### PR #484 — Seven-pass senior-quality generation gate (merged 50cdb5c)
+- `lib/engine/seven-pass-generation.ts`: evaluateSevenPassGenerationGate()
+- `lib/engine/document-quality-gate.ts`: assessGeneratedDocumentQuality()
+- `lib/engine/analysis-source.ts`: detectAnalysisSource(), assertAnalysisReadyForFinalGeneration()
+- `lib/engine/final-submission-readiness.ts`: canonical readiness summary
+- `lib/engine/readiness-scoring.ts`: weighted readiness score with hard caps
+- Analysis-source gate wired into generate/route.ts (blocks regex fallback)
+- Bulk reassessment endpoint: POST /api/admin/generated-proposals/reassess
+- AI provider health tracker: POST /api/admin/ai-provider-health
+- Tests: seven-pass-generation, document-quality-gate, analysis-source-gate,
+  final-submission-readiness, readiness-scoring-hard-caps, reassess-endpoint-contract,
+  bid-team-placeholder-stripping, and more
+
+### PR #485 — Wire seven-pass gate into finalization (open, Vercel green ✅)
+Branch: `chatgpt/wire-seven-pass-generation-gate`
+- `lib/engine/seven-pass-generation-wiring.ts` (NEW): adapter module
+  - buildSevenPassGateInput(), applySevenPassGateToDocumentState()
+  - summarizeSevenPassForReviewNotes(), evaluateSevenPassForDocument()
+  - shouldBlockFinalApprovalBySevenPassGate()
+- `auto-finalize/route.ts`: seven-pass gate enforced — READY_FOR_EXPORT only when
+  BOTH hygiene/pricing AND seven-pass gate pass; loads reviewed evidence counts
+- `reassess/route.ts`: supplemental analysis-source check (regex fallback demotes
+  READY_FOR_EXPORT docs); per-tender notes cache (no N+1)
+- Tests: tests/seven-pass-generation-wiring.test.ts (17 assertions)
+- **1315 pass / 0 fail**
 
 ---
 
 ## Next actions queue (prioritised)
 
 ### IMMEDIATE
-- [x] All PRs #473–#477 merged — full task queue complete ✅
+- [ ] Merge PR #485 once CI is confirmed green
 
-### HIGH — DONE in PR #475 ✅ (merged d598a65)
-- [x] ZIP envelope breakdown headers + audit log
-- [x] Browser tab title badge (🚨 / count / clear)
-- [x] Auto-finalize remaining-count amber nudge banner
-
-### MEDIUM — DONE in PR #476 ✅ (merged e25abb4)
-- [x] Feasibility Study + NGO/Donor-Funded in categories (`new/page.tsx`)
-- [x] Donor safeguard blockers in `checkTenderLevelExportBlockers`
-      (ESMP, logframe, M&E plan — MEDIUM severity, keyword-detected)
-- [x] Envelope badge column in `submission-plan-reconciliation-panel.tsx`
-      (blue=TECHNICAL, amber=FINANCIAL, slate=ADMIN)
-
-### LOW — DONE in PR #477 ✅
-- [x] AUTH_RATE_LIMIT on login — already applied (`app/api/auth/login/route.ts:85`)
-- [x] isInternalDraftDocument — already gates `isFinalExportCandidateDocument`
-      (line 70 of document-output-state.ts); `filterFinalExportCandidateDocuments`
-      is used in both download and export-readiness routes — confirmed, no extra work needed
-- [x] Compliance-gaps panel pagination:
-      - ≤ 20 gaps → show first 5 with "Show all" toggle (unchanged)
-      - > 20 gaps → paginated view (10/page) with ← Prev / Next → buttons
-        and "Page N of M · X gaps" counter
+### REMAINING KNOWN GAPS (post-#485)
+- [ ] `selfReviewScore` in auto-finalize defaults to 0 (conservative proxy);
+      could call `scoreProposalQuality()` on cleaned text for a real score
+- [ ] `tenderScopeOnly` and `outlineMatchesTender` default to true in wiring;
+      explicit structural checks require comparing doc outline to submission plan
+- [ ] Reassess endpoint does not load per-tender reviewed-evidence counts for
+      bulk performance; document quality gate covers content signals (MISSING_EVIDENCE_REFERENCE)
+- [ ] Donor regex in export-readiness.ts diverges from ai.ts (missing ADB, JICA,
+      bilateral donor — see code-review findings from PR #473-477 session)
+- [ ] Inline filename normalisation in reconciliation panel duplicates
+      submissionPlanFileKey() from submission-plan.ts
 
 ---
 
 ## Key files reference (quick lookup)
 | File | Purpose |
 |---|---|
-| `lib/engine/document-output-state.ts` | `isFinalExportCandidateDocument`, `filterFinalExportCandidateDocuments`, `isInternalDraftDocument` |
-| `lib/engine/pricing-hygiene.ts` | `containsPricingLeakage`, `isSensitiveFinancialOrLegalDoc`, `isMixedTechnicalFinancialSentence` |
+| `lib/engine/document-output-state.ts` | `isFinalExportCandidateDocument`, `filterFinalExportCandidateDocuments` |
+| `lib/engine/pricing-hygiene.ts` | `containsPricingLeakage`, `isSensitiveFinancialOrLegalDoc` |
 | `lib/engine/submission-plan.ts` | `buildSubmissionPlan`, `SubmissionPlanFile`, `SubmissionEnvelope` |
-| `lib/engine/proposal-sections.ts` | AI system prompts for each proposal section |
-| `lib/engine/universal-tender-taxonomy.ts` | Tender type classification (FEASIBILITY_STUDY, etc.) |
+| `lib/engine/seven-pass-generation.ts` | `evaluateSevenPassGenerationGate`, `sevenPassBlocksFinalApproval` |
+| `lib/engine/seven-pass-generation-wiring.ts` | Adapter: `buildSevenPassGateInput`, `evaluateSevenPassForDocument` |
+| `lib/engine/document-quality-gate.ts` | `assessGeneratedDocumentQuality` |
+| `lib/engine/analysis-source.ts` | `detectAnalysisSource`, `assertAnalysisReadyForFinalGeneration` |
+| `lib/engine/final-submission-readiness.ts` | Canonical readiness summary |
+| `lib/engine/export-readiness.ts` | `checkFullExportReadiness`, `documentHygieneIssues` |
 | `lib/rate-limit.ts` | `rateLimit`, `API_RATE_LIMIT`, `MUTATION_RATE_LIMIT`, `AI_RATE_LIMIT`, `AUTH_RATE_LIMIT` |
-| `components/export-readiness-panel.tsx` | Export gate UI, Download ZIP button, action buttons |
-| `app/api/tenders/[id]/download/route.ts` | ZIP assembly, pre-content-check |
-| `app/api/tenders/[id]/auto-finalize/route.ts` | Auto-finalize: batch=3, skips sensitive docs |
-| `app/api/tenders/[id]/export-readiness/route.ts` | Export gate checker |
-| `app/dashboard/tenders/[id]/tender-detail.tsx` | ComplianceGapsPanel |
-| `app/dashboard/company/page.tsx` | Company profile completeness bar |
+| `components/export-readiness-panel.tsx` | Export gate UI, Download ZIP button |
+| `app/api/tenders/[id]/download/route.ts` | ZIP assembly, envelope headers |
+| `app/api/tenders/[id]/auto-finalize/route.ts` | Auto-finalize + seven-pass gate |
+| `app/api/tenders/[id]/generate/route.ts` | Generation route + analysis-source gate |
+| `app/api/admin/generated-proposals/reassess/route.ts` | Bulk reassessment + seven-pass |
 
 ## Test count baseline
 - After PR #473 merge: **1148 pass**
-- After PR #474 (current): **1161 pass**
+- After PR #474 merge: **1161 pass**
+- After PR #484 merge: **~1290 pass** (many new test files added)
+- After PR #485 (current): **1315 pass / 0 fail**
 - Never regress below the baseline at merge time
 
 ---
 
 ## How to resume in a new session
 1. `Read CLAUDE_TASKS.md` — this file
-2. `git log --oneline -10` to see recent commits
-3. Check open PRs: look for any `claude/*` draft PRs not yet merged
-4. Work the "IMMEDIATE" queue first, then HIGH, then MEDIUM
-5. Update this file at the end of every session
+2. `git fetch origin && git checkout main && git pull origin main`
+3. `git log --oneline -10` to see recent commits
+4. Check open PRs: look for any `claude/*` or `chatgpt/*` draft PRs not yet merged
+5. Work the "IMMEDIATE" queue first
+6. Update this file at the end of every session
 
-<<<<<<< HEAD
-_Last updated: 2026-05-27 by Claude after PR #476 push_
-=======
-_Last updated: 2026-05-27 by Claude after PR #477 push_
->>>>>>> b1de7a3 (Implement LOW-priority gap: compliance-gaps panel pagination)
+_Last updated: 2026-05-27 by Claude after PR #485 push (Vercel green)_
