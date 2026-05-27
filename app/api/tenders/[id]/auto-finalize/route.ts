@@ -192,6 +192,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     // ── Seven-pass gate check ───────────────────────────────────────────────
     const gateEvaluation = evaluateSevenPassForDocument({
       tenderNotes: tender.notes,
+      tenderReference: tender.reference ?? null,
       visibleText: cleaned,
       reviewedExpertCount,
       reviewedProjectCount,
