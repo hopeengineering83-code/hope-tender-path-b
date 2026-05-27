@@ -85,35 +85,44 @@ After pushing, always open a draft PR targeting main.
   final-submission-readiness, readiness-scoring-hard-caps, reassess-endpoint-contract,
   bid-team-placeholder-stripping, and more
 
-### PR #485 — Wire seven-pass gate into finalization (open, Vercel green ✅)
-Branch: `chatgpt/wire-seven-pass-generation-gate`
+### PR #485 — Wire seven-pass gate into finalization (merged ✅)
 - `lib/engine/seven-pass-generation-wiring.ts` (NEW): adapter module
-  - buildSevenPassGateInput(), applySevenPassGateToDocumentState()
-  - summarizeSevenPassForReviewNotes(), evaluateSevenPassForDocument()
-  - shouldBlockFinalApprovalBySevenPassGate()
-- `auto-finalize/route.ts`: seven-pass gate enforced — READY_FOR_EXPORT only when
-  BOTH hygiene/pricing AND seven-pass gate pass; loads reviewed evidence counts
-- `reassess/route.ts`: supplemental analysis-source check (regex fallback demotes
-  READY_FOR_EXPORT docs); per-tender notes cache (no N+1)
-- Tests: tests/seven-pass-generation-wiring.test.ts (17 assertions)
+- `auto-finalize/route.ts`: seven-pass gate enforced
+- `reassess/route.ts`: supplemental analysis-source check
 - **1315 pass / 0 fail**
+
+### PR #486 — Post-#485 gap fixes (open, CI green ✅)
+Branch: `fix/seven-pass-wiring-self-review-and-donor-regex`
+- selfReviewScore null sentinel (gate no longer blocks when score not provided)
+- proposal-versions RBAC (DELETE+POST require ADMIN/PROPOSAL_MANAGER)
+- export/page.tsx: allPassed accepts VALIDATED as well as PASSED
+- export-readiness.ts: isDonorTender regex extended with ADB, JICA, bilateral donor
+- **1315 pass / 0 fail**
+
+### PR #487 — Blocked-readiness recovery and document classification (open, CI pending)
+Branch: `claude/relaxed-mendel-YHnOx`
+- `lib/engine/document-type-normalizer.ts` (NEW)
+- `lib/engine/document-quality-gate.ts`: document-type-aware gating
+- `app/api/tenders/[id]/reclassify-documents/route.ts` (NEW)
+- `app/api/tenders/[id]/deduplicate-documents/route.ts` (NEW)
+- `components/export-readiness-panel.tsx`: retry AI analysis, approve fallback, source grounding, reclassify, dedup, historical row count
+- `lib/engine/final-submission-readiness.ts`: ungeneratedPlannedRequired + missingCriticalMetadataFields
+- `components/canonical-readiness-score-widget.tsx`: shows planned-doc gap
+- **1330 pass / 0 fail** (15 new tests)
 
 ---
 
 ## Next actions queue (prioritised)
 
 ### IMMEDIATE
-- [ ] Merge PR #485 once CI is confirmed green
+- [ ] Merge PR #486 (CI green)
+- [ ] Merge PR #487 once CI confirmed green
 
-### REMAINING KNOWN GAPS (post-#485)
-- [ ] `selfReviewScore` in auto-finalize defaults to 0 (conservative proxy);
-      could call `scoreProposalQuality()` on cleaned text for a real score
+### REMAINING KNOWN GAPS
 - [ ] `tenderScopeOnly` and `outlineMatchesTender` default to true in wiring;
       explicit structural checks require comparing doc outline to submission plan
 - [ ] Reassess endpoint does not load per-tender reviewed-evidence counts for
-      bulk performance; document quality gate covers content signals (MISSING_EVIDENCE_REFERENCE)
-- [ ] Donor regex in export-readiness.ts diverges from ai.ts (missing ADB, JICA,
-      bilateral donor — see code-review findings from PR #473-477 session)
+      bulk performance; document quality gate covers content signals
 - [ ] Inline filename normalisation in reconciliation panel duplicates
       submissionPlanFileKey() from submission-plan.ts
 
@@ -142,7 +151,9 @@ Branch: `chatgpt/wire-seven-pass-generation-gate`
 - After PR #473 merge: **1148 pass**
 - After PR #474 merge: **1161 pass**
 - After PR #484 merge: **~1290 pass** (many new test files added)
-- After PR #485 (current): **1315 pass / 0 fail**
+- After PR #485 merge: **1315 pass / 0 fail**
+- After PR #486 (pending): **1315 pass / 0 fail**
+- After PR #487 (pending): **1330 pass / 0 fail** (+15 new tests)
 - Never regress below the baseline at merge time
 
 ---
@@ -155,4 +166,4 @@ Branch: `chatgpt/wire-seven-pass-generation-gate`
 5. Work the "IMMEDIATE" queue first
 6. Update this file at the end of every session
 
-_Last updated: 2026-05-27 by Claude after PR #485 push (Vercel green)_
+_Last updated: 2026-05-27 by Claude after PR #487 push — blocked-readiness recovery and doc-type classification_
