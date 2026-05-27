@@ -20,6 +20,7 @@ import { mapGenerationError } from "../../../../../lib/engine/structured-generat
 import { computeStoredMetadataPatch, listInvalidStoredFields } from "../../../../../lib/engine/sanitize-stored-metadata";
 import { isValidClientName } from "../../../../../lib/engine/metadata-validators";
 import { repairSourceGrounding } from "../../../../../lib/engine/repair-source-grounding";
+import { assertAnalysisReadyForFinalGeneration } from "../../../../../lib/engine/analysis-source";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -260,6 +261,31 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       code: "NO_REQUIREMENTS",
       nextAction: "RUN_ENGINE",
     }, { status: 422 });
+  }
+
+  // ── Regex-fallback analysis gate (Part 4) ────────────────────────────────
+  // If the last engine run fell back to regex analysis because AI providers
+  // failed, do not produce a final proposal unless a senior engineer has
+  // explicitly approved the fallback analysis via
+  // POST /api/tenders/[id]/approve-analysis. This is what prevents the
+  // screenshot regression where regex-fallback analysis quietly produced
+  // PASSED/APPROVED final proposal documents.
+  const analysisGate = await assertAnalysisReadyForFinalGeneration(prisma, id, tender);
+  if (!analysisGate.ok) {
+    await logAction({
+      userId,
+      action: "GENERATION_BLOCKED_REGEX_FALLBACK",
+      entityType: "Tender",
+      entityId: id,
+      description: "Final generation blocked: analysis source is regex fallback and has not been human-approved.",
+      requestId,
+    });
+    return NextResponse.json({
+      error: analysisGate.message,
+      code: analysisGate.code,
+      nextAction: analysisGate.nextAction,
+      details: "Re-run AI Analyze with healthy providers, or POST /api/tenders/[id]/approve-analysis to explicitly approve the current regex-fallback analysis.",
+    }, { status: 409 });
   }
   const untracedInitial = tender.requirements.filter((req) => req.priority === "MANDATORY" && ((req.sourceConfidence ?? 0) <= 0));
   if (untracedInitial.length > 0) {
