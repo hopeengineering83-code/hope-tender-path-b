@@ -103,6 +103,11 @@ Branch: `fix/seven-pass-wiring-self-review-and-donor-regex`
 - `auto-finalize/route.ts`: calls `assessGeneratedDocumentQuality()` on cleaned text; passes `report.score` as `selfReviewScore` to `evaluateSevenPassForDocument()` so SELF_REVIEW_SCORING pass enforces ≥80 threshold instead of skipping with null
 - **1339 pass / 0 fail**
 
+### PR #491 — Wire selfReviewScore + requirements into reassess; 4 new sectors (merged ✅)
+- `reassess/route.ts`: batch-load requirements alongside notes; pass `requirements` to `assessGeneratedDocumentQuality()`; forward `report.score` as `selfReviewScore` to `buildSevenPassGateInput()` so SELF_REVIEW_SCORING threshold enforced in reassess path
+- `seven-pass-generation-wiring.ts`: add EDUCATION, WATER_SANITATION, HEALTH_SERVICES, ENERGY sectors (4 new tests)
+- **1350 pass / 0 fail**
+
 ### PR #490 — Industry-sector mismatch detection in tenderScopeOnly (merged ✅)
 - `lib/engine/seven-pass-generation-wiring.ts`: `detectTenderScopeOnly()` extended with `detectIndustrySectorMismatch()` — 6 sector fingerprints (PHARMA, CONSTRUCTION, OIL_GAS, IT_SYSTEMS, AGRICULTURE); requires ≥2 hits in both tender notes and doc text before flagging; conservative by design
 - 7 new tests in `seven-pass-generation-wiring.test.ts`
@@ -159,6 +164,7 @@ Branch: `claude/relaxed-mendel-YHnOx`
 - After PR #487 (merged): **1330 pass / 0 fail** (+15 new tests)
 - After PR #489 (merged): **1339 pass / 0 fail**
 - After PR #490 (merged): **1346 pass / 0 fail**
+- After PR #491 (merged): **1350 pass / 0 fail**
 - Never regress below the baseline at merge time
 
 ---
@@ -171,4 +177,4 @@ Branch: `claude/relaxed-mendel-YHnOx`
 5. Work the "IMMEDIATE" queue first
 6. Update this file at the end of every session
 
-_Last updated: 2026-05-27 by Claude after PR #490 merge — all known gaps resolved; test baseline 1346 pass / 0 fail_
+_Last updated: 2026-05-27 by Claude after PR #491 merge — all known gaps resolved; test baseline 1350 pass / 0 fail_
