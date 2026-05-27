@@ -126,6 +126,10 @@ export type FinalReadinessSummary = {
   readinessScore: number;
   /** Human-readable reason for the binding cap (if any), else null. */
   readinessCapReason: string | null;
+  /** Count of required plan items that are in PLANNED status (not yet generated). */
+  ungeneratedPlannedRequired: number;
+  /** List of exact missing critical metadata field names. */
+  missingCriticalMetadataFields: string[];
 };
 
 export type FinalSubmissionReadiness = {
@@ -648,6 +652,8 @@ export async function getFinalSubmissionReadiness(
     metadataCompletenessRatio: metadata.overallRatio,
     readinessScore: readinessScoreResult.score,
     readinessCapReason: readinessScoreResult.appliedCap?.reason ?? null,
+    ungeneratedPlannedRequired: tender.generatedDocuments.filter((d) => (d.generationStatus ?? "").toUpperCase() === "PLANNED").length,
+    missingCriticalMetadataFields: metadata.missingCritical.map((f) => f.field),
   };
 
   const ok = readiness.ok && documentBlockers.length === 0 && tenderLevelBlockers.length === 0;

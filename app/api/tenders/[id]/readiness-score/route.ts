@@ -70,6 +70,8 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
         envelopeBreakdown: readiness.summary.envelopeBreakdown,
         strictTwoEnvelope: readiness.summary.strictTwoEnvelope,
         planStatus: readiness.summary.planStatus,
+        ungeneratedPlannedRequired: readiness.summary.ungeneratedPlannedRequired,
+        missingCriticalMetadataFields: readiness.summary.missingCriticalMetadataFields,
       },
     });
   } catch (error) {

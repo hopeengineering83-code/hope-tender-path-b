@@ -105,9 +105,13 @@ export function ExportReadinessPanel({ tenderId }: { tenderId: string }) {
   const [error, setError] = useState<string | null>(null);
   const [repairMessage, setRepairMessage] = useState<string | null>(null);
   const [autoFinalizeRemaining, setAutoFinalizeRemaining] = useState<number | null>(null);
+  const [retryingAnalysis, setRetryingAnalysis] = useState(false);
+  const [repairingSource, setRepairingSource] = useState(false);
+  const [reclassifying, setReclassifying] = useState(false);
+  const [deduplicating, setDeduplicating] = useState(false);
   const fileInputs = useRef<Record<string, HTMLInputElement | null>>({});
 
-  const busy = loading || repairing || linkingVault || supersedingOutsidePlan || autoFinalizing || generatingMissing || Boolean(attachingDocId) || Boolean(resolvingAdvisory);
+  const busy = loading || repairing || linkingVault || supersedingOutsidePlan || autoFinalizing || generatingMissing || Boolean(attachingDocId) || Boolean(resolvingAdvisory) || retryingAnalysis || repairingSource || reclassifying || deduplicating;
 
   async function refresh() {
     setLoading(true);
@@ -296,6 +300,108 @@ export function ExportReadinessPanel({ tenderId }: { tenderId: string }) {
     }
   }
 
+  async function retryAiAnalysis() {
+    setRetryingAnalysis(true);
+    setError(null);
+    setRepairMessage(null);
+    try {
+      // /api/tenders/[id]/analyze does not exist; use ai-analyze endpoint instead
+      const res = await fetch(`/api/tenders/${tenderId}/ai-analyze`, { method: "POST" });
+      const data = (await res.json().catch(() => ({} as Record<string, unknown>))) as { success?: boolean; error?: string };
+      if (data.success) {
+        setRepairMessage("AI analysis re-triggered. Re-checking readiness…");
+      } else {
+        setError((data.error as string | undefined) ?? "Failed to retry AI analysis");
+      }
+    } catch {
+      setError("Failed to retry AI analysis");
+    } finally {
+      setRetryingAnalysis(false);
+      await refresh();
+    }
+  }
+
+  async function approveRegexFallback() {
+    try {
+      const note = "Manually approved after reviewing extracted requirements";
+      const res = await fetch(`/api/tenders/${tenderId}/approve-analysis`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ note }),
+      });
+      const data = (await res.json().catch(() => ({} as Record<string, unknown>))) as { success?: boolean; error?: string };
+      if (data.success) {
+        setRepairMessage("Regex fallback analysis approved. Re-checking readiness…");
+      } else {
+        setError((data.error as string | undefined) ?? "Failed to approve fallback analysis");
+      }
+    } catch {
+      setError("Failed to approve fallback analysis");
+    } finally {
+      await refresh();
+    }
+  }
+
+  async function repairSourceGrounding() {
+    setRepairingSource(true);
+    setError(null);
+    setRepairMessage(null);
+    try {
+      const res = await fetch(`/api/tenders/${tenderId}/repair-source-grounding`, { method: "POST" });
+      const data = (await res.json().catch(() => ({} as Record<string, unknown>))) as { success?: boolean; repairedCount?: number; remainingCount?: number; error?: string };
+      if (data.success) {
+        setRepairMessage(`Source grounding: ${data.repairedCount ?? 0} requirement(s) repaired. ${data.remainingCount ? `${data.remainingCount} still need manual review.` : "All repaired."}`);
+      } else {
+        setError((data.error as string | undefined) ?? "Source grounding repair failed");
+      }
+    } catch {
+      setError("Source grounding repair failed");
+    } finally {
+      setRepairingSource(false);
+      await refresh();
+    }
+  }
+
+  async function reclassifyDocuments() {
+    setReclassifying(true);
+    setError(null);
+    setRepairMessage(null);
+    try {
+      const res = await fetch(`/api/tenders/${tenderId}/reclassify-documents`, { method: "POST" });
+      const data = (await res.json().catch(() => ({} as Record<string, unknown>))) as { success?: boolean; changed?: number; error?: string };
+      if (data.success) {
+        setRepairMessage(`Reclassified ${data.changed ?? 0} document type(s). Re-checking readiness…`);
+      } else {
+        setError((data.error as string | undefined) ?? "Reclassification failed");
+      }
+    } catch {
+      setError("Reclassification failed");
+    } finally {
+      setReclassifying(false);
+      await refresh();
+    }
+  }
+
+  async function deduplicateDocuments() {
+    setDeduplicating(true);
+    setError(null);
+    setRepairMessage(null);
+    try {
+      const res = await fetch(`/api/tenders/${tenderId}/deduplicate-documents`, { method: "POST" });
+      const data = (await res.json().catch(() => ({} as Record<string, unknown>))) as { success?: boolean; duplicatesFound?: number; error?: string };
+      if (data.success) {
+        setRepairMessage(`Deduplicated ${data.duplicatesFound ?? 0} row(s). Re-checking readiness…`);
+      } else {
+        setError((data.error as string | undefined) ?? "Deduplication failed");
+      }
+    } catch {
+      setError("Deduplication failed");
+    } finally {
+      setDeduplicating(false);
+      await refresh();
+    }
+  }
+
   const ok = readiness?.ok;
   const hasDocumentBlockers = (readiness?.summary.documentBlockers ?? 0) > 0;
   const advisoryWarnings = readiness?.advisoryWarnings ?? [];
@@ -337,6 +443,39 @@ export function ExportReadinessPanel({ tenderId }: { tenderId: string }) {
           {readiness && !ok && hasDocumentBlockers && (
             <button type="button" onClick={() => void linkVaultEvidence()} disabled={busy} className="rounded-lg bg-indigo-700 px-3 py-2 text-xs font-medium text-white hover:bg-indigo-800 disabled:opacity-50">
               {linkingVault ? "Linking vault…" : "Use vault evidence"}
+            </button>
+          )}
+          {readiness && !ok && (
+            <button
+              type="button"
+              onClick={() => void repairSourceGrounding()}
+              disabled={busy}
+              className="rounded-lg bg-teal-700 px-3 py-2 text-xs font-medium text-white hover:bg-teal-800 disabled:opacity-50"
+              title="Extract source page/section/quote for mandatory requirements that lack traceability."
+            >
+              {repairingSource ? "Repairing…" : "Repair source references"}
+            </button>
+          )}
+          {readiness && !ok && (
+            <button
+              type="button"
+              onClick={() => void reclassifyDocuments()}
+              disabled={busy}
+              className="rounded-lg bg-violet-700 px-3 py-2 text-xs font-medium text-white hover:bg-violet-800 disabled:opacity-50"
+              title="Reclassify mistyped documents (e.g. financial evidence marked as TECHNICAL_PROPOSAL)."
+            >
+              {reclassifying ? "Reclassifying…" : "Fix document types"}
+            </button>
+          )}
+          {readiness && !ok && (
+            <button
+              type="button"
+              onClick={() => void deduplicateDocuments()}
+              disabled={busy}
+              className="rounded-lg bg-orange-700 px-3 py-2 text-xs font-medium text-white hover:bg-orange-800 disabled:opacity-50"
+              title="Find and supersede duplicate document rows (same name+type, multiple versions)."
+            >
+              {deduplicating ? "Deduplicating…" : "Clean duplicate rows"}
             </button>
           )}
           {readiness && !ok && hasDocumentBlockers && (
@@ -460,10 +599,15 @@ export function ExportReadinessPanel({ tenderId }: { tenderId: string }) {
                 )}
               </div>
               <div className="grid grid-cols-3 gap-2 text-center text-xs">
-                <div className="rounded-lg bg-white/70 px-2 py-1"><p className="font-bold text-slate-900">{readiness.summary.activeDocuments}</p><p className="text-slate-500">Docs</p></div>
+                <div className="rounded-lg bg-white/70 px-2 py-1"><p className="font-bold text-slate-900">{readiness.summary.finalExportCandidates ?? readiness.summary.activeDocuments}</p><p className="text-slate-500">Export docs</p></div>
                 <div className="rounded-lg bg-white/70 px-2 py-1"><p className="font-bold text-slate-900">{readiness.summary.documentBlockers}</p><p className="text-slate-500">Doc blockers</p></div>
                 <div className="rounded-lg bg-white/70 px-2 py-1"><p className="font-bold text-slate-900">{readiness.summary.tenderLevelBlockers}</p><p className="text-slate-500">Tender blockers</p></div>
               </div>
+              {(readiness.summary.excludedInternalRows ?? 0) > 0 && (
+                <p className="mt-1 text-[11px] text-slate-400">
+                  {readiness.summary.excludedInternalRows} historical/superseded row(s) archived — not in export package.
+                </p>
+              )}
             </div>
           </div>
 
@@ -499,6 +643,33 @@ export function ExportReadinessPanel({ tenderId }: { tenderId: string }) {
                   </li>
                 ))}
               </ul>
+              {readiness.tenderLevelBlockers.some((b) => b.category === "ANALYSIS_REGEX_FALLBACK_UNAPPROVED") && (
+                <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3">
+                  <p className="mb-2 text-xs font-semibold text-amber-800">⚠ Regex fallback analysis — recovery actions:</p>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => void retryAiAnalysis()}
+                      disabled={busy}
+                      className="rounded-md border border-amber-400 bg-white px-2.5 py-1 text-xs font-medium text-amber-800 hover:bg-amber-100 disabled:opacity-50"
+                    >
+                      {retryingAnalysis ? "Retrying…" : "↺ Retry AI Analysis"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void approveRegexFallback()}
+                      disabled={busy}
+                      className="rounded-md border border-amber-400 bg-white px-2.5 py-1 text-xs font-medium text-amber-800 hover:bg-amber-100 disabled:opacity-50"
+                      title="Manually review and approve the regex-extracted tender requirements. Only use this if the extracted requirements are accurate."
+                    >
+                      ✓ Approve fallback analysis (manual review)
+                    </button>
+                  </div>
+                  <p className="mt-1 text-[10px] text-amber-700">
+                    Retry AI Analysis re-runs the tender analysis with all available AI providers. Approve fallback only if you have manually verified the extracted requirements are correct.
+                  </p>
+                </div>
+              )}
             </div>
           )}
 

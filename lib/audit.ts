@@ -92,7 +92,10 @@ export type AuditAction =
   | "AI_PROVIDER_FAILOVER"
   // Knowledge vault — expert and project lifecycle events.
   | "EXPERT_CREATE" | "EXPERT_UPDATE" | "EXPERT_DELETE" | "EXPERT_REVIEW"
-  | "PROJECT_CREATE" | "PROJECT_UPDATE" | "PROJECT_DELETE" | "PROJECT_REVIEW";
+  | "PROJECT_CREATE" | "PROJECT_UPDATE" | "PROJECT_DELETE" | "PROJECT_REVIEW"
+  // Document reclassification and deduplication maintenance routes.
+  | "DOCUMENT_RECLASSIFY"
+  | "DOCUMENT_DEDUPLICATE";
 
 export async function logAction(opts: {
   userId?: string;

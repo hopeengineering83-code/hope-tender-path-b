@@ -36,6 +36,8 @@ type ReadinessSummary = {
   envelopeBreakdown: { TECHNICAL?: number; FINANCIAL?: number; ADMIN?: number };
   strictTwoEnvelope: boolean;
   planStatus: string;
+  ungeneratedPlannedRequired?: number;
+  missingCriticalMetadataFields?: string[];
 };
 
 type ReadinessScoreResponse = {
@@ -131,10 +133,15 @@ export function CanonicalReadinessScoreWidget({ tenderId }: { tenderId: string }
           </div>
           <div className="rounded-xl bg-white px-3 py-2 shadow-sm">
             <p className="text-slate-500">Required docs</p>
-            <p className={`font-semibold ${data.summary.missingRequiredDocuments === 0 ? "text-emerald-700" : "text-red-700"}`}>
+            <p className={`font-semibold ${data.summary.missingRequiredDocuments === 0 && (data.summary.ungeneratedPlannedRequired ?? 0) === 0 ? "text-emerald-700" : "text-red-700"}`}>
               {data.summary.finalExportCandidates}/{data.summary.finalExportCandidates + data.summary.missingRequiredDocuments}
               {data.summary.missingRequiredDocuments > 0 && <span className="ml-1 text-[10px]">({data.summary.missingRequiredDocuments} missing)</span>}
             </p>
+            {(data.summary.ungeneratedPlannedRequired ?? 0) > 0 && (
+              <p className="mt-0.5 text-[10px] text-amber-700">
+                {data.summary.ungeneratedPlannedRequired} planned (not generated)
+              </p>
+            )}
           </div>
           <div className="rounded-xl bg-white px-3 py-2 shadow-sm">
             <p className="text-slate-500">Quality</p>
