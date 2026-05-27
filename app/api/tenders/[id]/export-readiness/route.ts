@@ -102,6 +102,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       nextActions: Array.from(new Set(failure.reasons.map(nextActionForReason))),
     }));
     const tenderLevelBlockers = readiness.tenderLevelBlockers ?? [];
+    const advisoryWarnings = readiness.advisoryWarnings ?? [];
     const totalBlockers = documentBlockers.length + tenderLevelBlockers.length;
 
     return NextResponse.json({
@@ -121,10 +122,12 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
           excludedInternalDrafts: tender.generatedDocuments.length - finalCandidateDocs.length,
           documentBlockers: documentBlockers.length,
           tenderLevelBlockers: tenderLevelBlockers.length,
+          advisoryWarnings: advisoryWarnings.length,
           totalBlockers,
         },
         documentBlockers,
         tenderLevelBlockers,
+        advisoryWarnings,
         message: readiness.ok ? "Export gate passed. All final-package documents and tender-level controls are ready." : exportReadinessError(readiness.failures, tenderLevelBlockers),
       },
     });

@@ -37,7 +37,8 @@ export default async function TenderCommandCenter({ params }: { params: Promise<
 
   // ─── Readiness, blockers, evaluator state ───────────────────────────
   const docReadiness = checkExportReadiness(tender.generatedDocuments);
-  const tenderBlockers = await checkTenderLevelExportBlockers(id);
+  const tenderReadiness = await checkTenderLevelExportBlockers(id);
+  const tenderBlockers = tenderReadiness.blockers;
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const objections: any[] = await (prisma as any).evaluatorObjection.findMany({
