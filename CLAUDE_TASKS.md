@@ -115,16 +115,11 @@ Branch: `claude/relaxed-mendel-YHnOx`
 ## Next actions queue (prioritised)
 
 ### IMMEDIATE
-- [ ] Merge PR #486 (CI green)
-- [ ] Merge PR #487 once CI confirmed green
+- (none — all known gaps resolved)
 
 ### REMAINING KNOWN GAPS
-- [ ] `tenderScopeOnly` and `outlineMatchesTender` default to true in wiring;
-      explicit structural checks require comparing doc outline to submission plan
-- [ ] Reassess endpoint does not load per-tender reviewed-evidence counts for
-      bulk performance; document quality gate covers content signals
-- [ ] Inline filename normalisation in reconciliation panel duplicates
-      submissionPlanFileKey() from submission-plan.ts
+- [ ] `tenderScopeOnly` semantic scope drift (different industry) requires AI analysis — current proxy only catches reference-number mismatches
+- [ ] `auto-finalize` does not call `scoreProposalQuality()` for a real selfReviewScore; passes null (gate skips threshold check)
 
 ---
 
@@ -166,4 +161,4 @@ Branch: `claude/relaxed-mendel-YHnOx`
 5. Work the "IMMEDIATE" queue first
 6. Update this file at the end of every session
 
-_Last updated: 2026-05-27 by Claude after PR #487 push — blocked-readiness recovery and doc-type classification_
+_Last updated: 2026-05-27 by Claude after PR #488 merge — all gaps resolved; test baseline 1339 pass / 0 fail_
