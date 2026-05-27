@@ -2,6 +2,16 @@ import { classifySubmissionPlanItem } from "./submission-plan-classifier";
 
 export type SubmissionPlanFormat = "DOCX" | "PDF" | "ZIP" | "XLSX" | "OTHER";
 
+/** Which physical submission envelope this file belongs to.
+ * - TECHNICAL  — goes into the sealed technical envelope / technical volume
+ * - FINANCIAL  — goes into the sealed financial/commercial envelope (price data, BoQ, rate cards)
+ * - ADMIN      — goes into the administrative/eligibility envelope (registrations, bid bond, declarations)
+ *
+ * Downstream checks use this to enforce technical/financial separation: no
+ * FINANCIAL file may appear in a TECHNICAL envelope and vice-versa.
+ */
+export type SubmissionEnvelope = "TECHNICAL" | "FINANCIAL" | "ADMIN";
+
 export type SubmissionPlanFile = {
   canonicalId: string;
   exactFileName: string;
@@ -9,6 +19,7 @@ export type SubmissionPlanFile = {
   required: boolean;
   exactOrder: number;
   format: SubmissionPlanFormat;
+  envelope: SubmissionEnvelope;
   sourceRequirementIds: string[];
   pageLimit?: number | null;
   templateRequired?: boolean;
@@ -153,6 +164,32 @@ function restrictionAllows(text: string, subject: "letterhead" | "signature" | "
   return !forbidden.test(normalized);
 }
 
+/** Infer which submission envelope a file belongs to based on document-type
+ * and file name keywords.
+ *
+ * Rules (in order of specificity):
+ * 1. Explicit FINANCIAL requirementType or pricing/commercial/BoQ keywords → FINANCIAL
+ * 2. Admin/eligibility keywords (registration, declaration, eligibility, bid bond,
+ *    bank guarantee, tax clearance, VAT, TIN, incorporation, undertaking, integrity,
+ *    compliance, form, annex, schedule) → ADMIN
+ * 3. Everything else → TECHNICAL
+ */
+function inferEnvelope(
+  requirementType: string,
+  fileName: string,
+  description?: string | null,
+): SubmissionEnvelope {
+  const text = `${requirementType} ${fileName} ${description ?? ""}`.toLowerCase();
+
+  const financialRx = /\bfinancial\b|commercial[\s-]+offer|price[\s-]+(schedule|proposal|form)|bill[\s-]+of[\s-]+quantit|rate[\s-]+card|cost[\s-]+proposal|budget[\s-]+proposal|pricing|fee[\s-]+schedule|boq\b|b\.o\.q\b|lump[\s-]+sum[\s-]+offer|schedule[\s-]+of[\s-]+rates/i;
+  if (financialRx.test(text)) return "FINANCIAL";
+
+  const adminRx = /\bregistration\b|\bdeclaration\b|\beligibility\b|\bbid\s+bond\b|\bbid\s+security\b|\bbank\s+guarantee\b|\btax\s+clearance\b|\bvat\s+cert|\btin\s+cert|\bincorporation\b|\bundertaking\b|\bintegrity\s+pact\b|\bannex\b|\bschedule\b|\bform\b|\bcompliance\s+(matrix|certif)|\bpower\s+of\s+attorney\b|\baudited\s+financial\b|\bbank\s+statement\b|\bbusiness\s+licen\b/i;
+  if (adminRx.test(text)) return "ADMIN";
+
+  return "TECHNICAL";
+}
+
 function documentTypeFromRequirement(requirement: TenderRequirementLike): string {
   const type = requirement.requirementType.toUpperCase();
   if (type === "EXPERT") return "EXPERT";
@@ -216,6 +253,7 @@ function buildFileFromRequirement(requirement: TenderRequirementLike, index: num
     required: requirement.priority?.toUpperCase() === "MANDATORY" || Boolean(requirement.exactFileName),
     exactOrder: requirement.exactOrder ?? index + 1,
     format,
+    envelope: inferEnvelope(requirement.requirementType, baseName, requirement.description),
     sourceRequirementIds: [requirement.id],
     pageLimit: requirement.pageLimit ?? null,
     templateRequired: /template|form|annex|schedule|declaration/i.test(`${requirement.title} ${requirement.description ?? ""} ${restrictions}`),
@@ -243,6 +281,7 @@ function buildFilesFromExactNames(tender: TenderLike, startOrder: number): Submi
       required: true,
       exactOrder: startOrder + index,
       format,
+      envelope: inferEnvelope("TENDER_REQUIRED_FILE", name),
       sourceRequirementIds: [],
       pageLimit: tender.pageLimit ?? null,
       templateRequired: /template|form|annex|schedule|declaration/i.test(name),
