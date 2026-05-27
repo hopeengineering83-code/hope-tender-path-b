@@ -62,7 +62,7 @@ export function isFinalExportCandidateDocument(doc: DocumentLike): boolean {
   if (normalizeStatus(doc.validationStatus) === "SUPERSEDED") return false;
   if (normalizeStatus(doc.generationStatus) === "PLANNED") return false;
   const rev = normalizeStatus(doc.reviewStatus);
-  if (rev === "NOT_EXPORTABLE") return false;
+  if (rev === "NOT_EXPORTABLE" || rev === "REPLACE_WITH_ORIGINAL") return false;
   const fmt = normalizeStatus(doc.format);
   if (fmt === "CONTROL") return false;
   const dtype = normalizeStatus(doc.documentType ?? "");

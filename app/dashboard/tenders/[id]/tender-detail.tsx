@@ -316,6 +316,110 @@ function normalizeRequirementType(value: string | null | undefined): string {
   return String(value ?? "").toUpperCase();
 }
 
+const GAP_SEVERITY_STYLE: Record<string, string> = {
+  CRITICAL: "bg-red-100 text-red-700 border-red-200",
+  HIGH:     "bg-orange-100 text-orange-700 border-orange-200",
+  MEDIUM:   "bg-amber-100 text-amber-700 border-amber-200",
+  LOW:      "bg-slate-100 text-slate-600 border-slate-200",
+};
+
+function ComplianceGapsPanel({ tenderId, initialGaps }: { tenderId: string; initialGaps: ComplianceGap[] }) {
+  const [gaps, setGaps] = useState<ComplianceGap[]>(initialGaps);
+  const [toggling, setToggling] = useState<string | null>(null);
+  const [toggleError, setToggleError] = useState<string | null>(null);
+  const [showAll, setShowAll] = useState(false);
+
+  async function toggleResolved(gap: ComplianceGap) {
+    setToggling(gap.id);
+    setToggleError(null);
+    try {
+      const res = await fetch(`/api/tenders/${tenderId}/gaps/${gap.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ isResolved: !gap.isResolved }),
+      });
+      if (res.ok) {
+        const updated = await res.json() as ComplianceGap;
+        setGaps((prev) => prev.map((g) => g.id === gap.id ? { ...g, isResolved: updated.isResolved } : g));
+      } else {
+        const data = await res.json().catch(() => ({})) as Record<string, unknown>;
+        setToggleError(typeof data.error === "string" ? data.error : `Failed to update gap (${res.status}). Please try again.`);
+      }
+    } catch {
+      setToggleError("Network error — please check your connection and try again.");
+    } finally {
+      setToggling(null);
+    }
+  }
+
+  const visible = showAll ? gaps : gaps.slice(0, 5);
+  const unresolvedCount = gaps.filter((g) => !g.isResolved).length;
+
+  return (
+    <div className="rounded-2xl border bg-white p-6 shadow-sm">
+      <div className="flex items-center justify-between gap-2 mb-1">
+        <h2 className="text-lg font-semibold text-slate-900">Compliance gaps</h2>
+        {unresolvedCount > 0 && (
+          <span className="rounded-full bg-red-50 border border-red-200 px-2 py-0.5 text-xs font-medium text-red-700">
+            {unresolvedCount} unresolved
+          </span>
+        )}
+      </div>
+      {toggleError && (
+        <div className="mt-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 flex items-center justify-between gap-2">
+          <span>{toggleError}</span>
+          <button onClick={() => setToggleError(null)} className="text-red-400 hover:text-red-700 font-bold shrink-0">✕</button>
+        </div>
+      )}
+      {gaps.length === 0 ? (
+        <p className="mt-3 text-sm text-slate-400">No compliance gaps recorded yet.</p>
+      ) : (
+        <>
+          <ul className="mt-4 space-y-3">
+            {visible.map((gap) => (
+              <li key={gap.id} className={`rounded-xl border px-4 py-3 transition-opacity ${gap.isResolved ? "opacity-50" : ""}`}>
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <p className={`text-sm font-medium ${gap.isResolved ? "line-through text-slate-400" : "text-slate-900"}`}>{gap.title}</p>
+                      <span className={`rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${GAP_SEVERITY_STYLE[gap.severity] ?? GAP_SEVERITY_STYLE.LOW}`}>
+                        {gap.severity}
+                      </span>
+                      {gap.isResolved && <span className="text-[10px] font-medium text-green-600 uppercase tracking-wide">Resolved</span>}
+                    </div>
+                    <p className="mt-1.5 text-sm text-slate-600">
+                      {gap.description.length > 160 ? `${gap.description.slice(0, 160)}…` : gap.description}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => toggleResolved(gap)}
+                    disabled={toggling === gap.id}
+                    className={`shrink-0 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-colors disabled:opacity-40 ${
+                      gap.isResolved
+                        ? "border-slate-200 text-slate-500 hover:bg-slate-50"
+                        : "border-green-200 bg-green-50 text-green-700 hover:bg-green-100"
+                    }`}
+                  >
+                    {toggling === gap.id ? "…" : gap.isResolved ? "Reopen" : "Resolve"}
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+          {gaps.length > 5 && (
+            <button
+              onClick={() => setShowAll((s) => !s)}
+              className="mt-3 text-xs text-blue-600 hover:underline"
+            >
+              {showAll ? "Show less" : `Show all ${gaps.length} gaps`}
+            </button>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; aiEnabled?: boolean }) {
   const router = useRouter();
   const [tender, setTender] = useState(initial);
@@ -1330,26 +1434,7 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
             onRematchComplete={() => router.refresh()}
           />
 
-          <div className="rounded-2xl border bg-white p-6 shadow-sm">
-            <h2 className="text-lg font-semibold text-slate-900">Compliance gaps</h2>
-            {tender.complianceGaps.length === 0 ? (
-              <p className="mt-3 text-sm text-slate-400">No compliance gaps recorded yet.</p>
-            ) : (
-              <ul className="mt-4 space-y-3">
-                {tender.complianceGaps.slice(0, 5).map((gap) => (
-                  <li key={gap.id} className="rounded-xl border px-4 py-3">
-                    <div className="flex items-center justify-between gap-2">
-                      <p className="text-sm font-medium text-slate-900">{gap.title}</p>
-                      <span className="text-xs font-medium text-amber-700">{gap.severity}</span>
-                    </div>
-                    <p className="mt-2 text-sm text-slate-600">
-                      {gap.description.length > 140 ? `${gap.description.slice(0, 140)}…` : gap.description}
-                    </p>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
+          <ComplianceGapsPanel tenderId={tender.id} initialGaps={tender.complianceGaps} />
 
           {(tender.expertMatches?.length ?? 0) > 0 && (
             <div className="rounded-2xl border bg-white p-6 shadow-sm">
