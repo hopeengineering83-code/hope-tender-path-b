@@ -1,0 +1,181 @@
+# Claude Agent — Persistent Task Tracker
+<!-- This file is the source-of-truth for any Claude Code session on this repo.
+     Read it at the start of every session. Update it at the end of every session.
+     Never delete it. -->
+
+## App identity
+- **Repo**: hopeengineering83-code/hope-tender-path-b
+- **Production URL**: https://hope-tender-path-b.vercel.app
+- **Stack**: Next.js 15.5 / React 19 / TypeScript 6 / Prisma 6.19.3 / PostgreSQL
+- **AI providers**: Claude (primary) → Gemini → OpenAI → DeepSeek → deterministic fallback
+- **Deployment**: Vercel (auto-deploy on merge to main)
+
+## Development branch rule
+Always develop on the branch specified in the session's system-reminder
+(`claude/<name>` pattern). Never push directly to main.
+After pushing, always open a draft PR targeting main.
+
+---
+
+## Permanent security constraints (NEVER violate)
+1. Do NOT hard-code Pharo, pharmaceutical, healthcare, or any single tender type.
+2. Do NOT remove already merged work from any merged PR.
+3. Do NOT rebuild the app from scratch.
+4. Do NOT fake official documents.
+5. Do NOT invent company evidence, experts, projects, certificates, contracts, dates,
+   contract values, or client references.
+6. Do NOT mark unsafe documents READY_FOR_EXPORT.
+7. Do NOT include official-original placeholders in the final ZIP.
+8. Do NOT include control / planned / superseded / not-exportable rows in final ZIP.
+9. Never expose raw stack traces to the client in production.
+10. Rate-limit hierarchy must remain: AUTH (10/min) < AI (20/min) < MUTATION (30/min)
+    < API (300/min).
+
+---
+
+## What has been merged to main (do not re-do)
+
+### PR #469 — Base engine
+- 7-pass AI pipeline, Knowledge Vault, universal tender taxonomy, DOCX generation
+
+### PR #470 — Product gaps batch 1
+- Bid outcome badge, notifications pagination, dashboard stats, vault search,
+  documents DELETE endpoint
+
+### PR #473 — Universal submission engine hardening (merged 2026-05-27)
+**REPLACE_WITH_ORIGINAL exclusion**
+- `lib/engine/document-output-state.ts`: `isFinalExportCandidateDocument` now
+  explicitly excludes `REPLACE_WITH_ORIGINAL` reviewStatus
+- Tests: `tests/pricing-hygiene-extended.test.ts` — 2 regression assertions added
+
+**Rate limit on GET /api/tenders**
+- `app/api/tenders/route.ts`: `API_RATE_LIMIT` (300 req/min) applied per userId
+  after session check; returns `429` with `Retry-After` header
+
+**Pre-ZIP content check**
+- `app/api/tenders/[id]/download/route.ts`: pre-loop check — documents with
+  neither `fileContent` nor `storagePath` return `409 DOCUMENTS_MISSING_CONTENT`
+
+**Company profile completeness bar**
+- `app/dashboard/company/page.tsx`: 13-field completeness bar
+  (≥80% green, ≥50% amber, <50% red)
+
+**ComplianceGapsPanel**
+- `app/dashboard/tenders/[id]/tender-detail.tsx`: CRITICAL/HIGH/MEDIUM/LOW
+  severity badges, Resolve/Reopen toggle, visible error handling with dismiss
+  banner, show-all toggle when gaps > 5
+
+**DuplicateButton on tender list**
+- `app/dashboard/tenders/page.tsx`: DuplicateButton in Action column
+
+**New test files (all pass)**
+- `tests/export-safety.test.ts` — 24 assertions
+- `tests/auto-finalize-safety.test.ts` — 30 assertions
+- `tests/rate-limit-safety.test.ts` — 10 assertions
+
+---
+
+### PR #474 — Remaining gaps (draft, open as of 2026-05-27, Vercel building)
+Branch: `claude/relaxed-mendel-YHnOx`
+
+**Export Readiness Panel — Download Final ZIP button**
+- `components/export-readiness-panel.tsx`: explicit Download ZIP button
+  - Enabled (emerald `<a download>`) when `readiness.ok === true`
+  - Disabled (slate, `cursor-not-allowed`, tooltip with blocker count) when
+    `readiness.ok === false`
+
+**Sector strategies for feasibility, government, NGO/donor tenders**
+- `lib/engine/proposal-sections.ts` — `TECHNICAL_APPROACH_SYSTEM_PROMPT`:
+  Added 3 new sector bullets before "Other sectors" catch-all:
+  - Feasibility/pre-feasibility/options analysis/business case
+    (options matrix, NPV/IRR/payback/sensitivity, EIRR, demand projections,
+    implementation roadmap, recommended preferred option, ToR compliance matrix)
+  - Government/public procurement (proclamation citation, local content,
+    bid security/bond, GoE/Ministry BOQ, PPPA/PPSD portal)
+  - NGO/donor-funded (WB/AfDB/EU/USAID/DFID/UN/GIZ) (donor procurement
+    framework QCBS/LCS/FBS/CQS/DC, logframe, M&E, DLIs, ESF/IFC PS/AfDB ISS
+    safeguards, procurement plan, community engagement)
+
+**Submission plan envelope separation**
+- `lib/engine/submission-plan.ts`: `SubmissionEnvelope` type
+  `"TECHNICAL" | "FINANCIAL" | "ADMIN"` + `envelope` field on every
+  `SubmissionPlanFile`; `inferEnvelope()` helper with priority-ordered
+  regex (handles hyphens and spaces); populated in `buildFileFromRequirement`
+  and `buildFilesFromExactNames`
+- `tests/submission-plan-envelope.test.ts` (NEW) — 13 assertions
+
+**Test count after PR #474**: 1161 pass / 0 fail, typecheck clean
+
+---
+
+## Next actions queue (prioritised)
+
+### IMMEDIATE
+- [ ] Monitor PR #474 CI (Vercel build, typecheck, tests)
+- [ ] Merge PR #474 once CI green
+
+### HIGH — next batch after #474 merges
+- [ ] **Final ZIP envelope enforcement**: in
+  `app/api/tenders/[id]/download/route.ts`, use `SubmissionPlanFile.envelope`
+  to assert no FINANCIAL file enters the TECHNICAL ZIP (currently the field
+  exists but the route doesn't enforce separation at download time)
+- [ ] **Export readiness panel blocker count in page title / tab badge**:
+  surface unresolved blocker count as a `<title>` or badge in the tender
+  detail page so users see it without opening the panel
+- [ ] **Auto-finalize remaining-count UX**: after auto-finalize returns
+  `remainingCount > 0`, the panel should show a persistent "X docs still need
+  finalization — click again" nudge rather than requiring the user to read the
+  repair message
+
+### MEDIUM
+- [ ] **Feasibility tender type in UI**: `lib/engine/universal-tender-taxonomy.ts`
+  already has FEASIBILITY_STUDY; confirm the tender creation form allows
+  selecting it and the analysis pipeline surfaces it properly
+- [ ] **Donor safeguard checklist**: for NGO/donor tenders detected by the
+  taxonomy, auto-add compliance gaps for ESMP, logframe, and M&E plan if they
+  are not in the submission plan
+- [ ] **Envelope badge on submission plan UI**: show TECHNICAL / FINANCIAL / ADMIN
+  badge next to each file in the submission plan table (uses the new
+  `envelope` field)
+
+### LOW / NICE-TO-HAVE
+- [ ] Add `AUTH_RATE_LIMIT` (10/min) export from `lib/rate-limit.ts` to the
+  login route if not already applied
+- [ ] Confirm `isInternalDraftDocument` is called before any document enters
+  the compliance-gaps or export-readiness check (prevent internal drafts from
+  surfacing as blockers)
+- [ ] Add pagination to the compliance-gaps panel when a tender has > 20 gaps
+
+---
+
+## Key files reference (quick lookup)
+| File | Purpose |
+|---|---|
+| `lib/engine/document-output-state.ts` | `isFinalExportCandidateDocument`, `filterFinalExportCandidateDocuments`, `isInternalDraftDocument` |
+| `lib/engine/pricing-hygiene.ts` | `containsPricingLeakage`, `isSensitiveFinancialOrLegalDoc`, `isMixedTechnicalFinancialSentence` |
+| `lib/engine/submission-plan.ts` | `buildSubmissionPlan`, `SubmissionPlanFile`, `SubmissionEnvelope` |
+| `lib/engine/proposal-sections.ts` | AI system prompts for each proposal section |
+| `lib/engine/universal-tender-taxonomy.ts` | Tender type classification (FEASIBILITY_STUDY, etc.) |
+| `lib/rate-limit.ts` | `rateLimit`, `API_RATE_LIMIT`, `MUTATION_RATE_LIMIT`, `AI_RATE_LIMIT`, `AUTH_RATE_LIMIT` |
+| `components/export-readiness-panel.tsx` | Export gate UI, Download ZIP button, action buttons |
+| `app/api/tenders/[id]/download/route.ts` | ZIP assembly, pre-content-check |
+| `app/api/tenders/[id]/auto-finalize/route.ts` | Auto-finalize: batch=3, skips sensitive docs |
+| `app/api/tenders/[id]/export-readiness/route.ts` | Export gate checker |
+| `app/dashboard/tenders/[id]/tender-detail.tsx` | ComplianceGapsPanel |
+| `app/dashboard/company/page.tsx` | Company profile completeness bar |
+
+## Test count baseline
+- After PR #473 merge: **1148 pass**
+- After PR #474 (current): **1161 pass**
+- Never regress below the baseline at merge time
+
+---
+
+## How to resume in a new session
+1. `Read CLAUDE_TASKS.md` — this file
+2. `git log --oneline -10` to see recent commits
+3. Check open PRs: look for any `claude/*` draft PRs not yet merged
+4. Work the "IMMEDIATE" queue first, then HIGH, then MEDIUM
+5. Update this file at the end of every session
+
+_Last updated: 2026-05-27 by Claude after PR #474 push_

@@ -286,6 +286,26 @@ export function ExportReadinessPanel({ tenderId }: { tenderId: string }) {
           <button type="button" onClick={() => void refresh()} disabled={busy} className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-medium text-white hover:bg-slate-800 disabled:opacity-50">
             {loading ? "Checking…" : readiness ? "Re-check" : "Check export gate"}
           </button>
+          {readiness && ok && (
+            <a
+              href={`/api/tenders/${tenderId}/download`}
+              download
+              className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-medium text-white hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-400"
+              title="All blockers cleared — download the final submission ZIP."
+            >
+              ⬇ Download Final ZIP
+            </a>
+          )}
+          {readiness && !ok && (
+            <button
+              type="button"
+              disabled
+              className="cursor-not-allowed rounded-lg bg-slate-200 px-3 py-2 text-xs font-medium text-slate-400"
+              title={`Download blocked — resolve all ${readiness.summary.totalBlockers} blocker(s) above, then re-check.`}
+            >
+              ⬇ Download Final ZIP
+            </button>
+          )}
         </div>
       </div>
 
