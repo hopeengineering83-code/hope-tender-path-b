@@ -9,6 +9,7 @@ import { getClientNameStatus, clientNameDisplayMessage } from "../../../../lib/e
 import { BidStrategyPanel } from "../../../../components/bid-strategy-panel";
 import { EvaluatorSimulatorPanel } from "../../../../components/evaluator-simulator-panel";
 import { AIRematchButton } from "../../../../components/ai-rematch-button";
+import { CanonicalReadinessScoreWidget } from "../../../../components/canonical-readiness-score-widget";
 
 function renderInline(text: string): React.ReactNode[] {
   const parts = text.split(/(\*\*[^*\n]+\*\*|\*[^*\n]+\*|_[^_\n]+_)/g);
@@ -1185,6 +1186,13 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
         </div>
       )}
 
+      {/* Canonical readiness score (PR audit gates) — replaces the
+          misleading "100% readiness" tile when caps apply. The legacy
+          DB-stored readiness tile below is retained but is now
+          relabelled "Workflow status" so it isn't confused with the
+          actual export-readiness score. */}
+      <CanonicalReadinessScoreWidget tenderId={tender.id} />
+
       <div className={`grid gap-4 md:grid-cols-3 ${proposalQuality ? "xl:grid-cols-7" : "xl:grid-cols-6"}`}>
         <div className="rounded-2xl border bg-white p-5 shadow-sm">
           <p className="text-sm text-slate-500">Files</p>
@@ -1211,8 +1219,8 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
           <p className="mt-1 text-3xl font-bold text-slate-900">{tender.projectMatches?.filter((m) => m.isSelected).length ?? 0}</p>
           <p className="mt-1 text-xs text-slate-500">of {tender.projectMatches?.length ?? 0} matched</p>
         </div>
-        <div className="rounded-2xl border bg-white p-5 shadow-sm">
-          <p className="text-sm text-slate-500">Readiness</p>
+        <div className="rounded-2xl border bg-white p-5 shadow-sm" title="Workflow progress only — derived from requirements vs critical gaps. NOT the export-readiness score. See the Canonical Readiness Score panel above for the gated number used by the gates and the ZIP route.">
+          <p className="text-sm text-slate-500">Workflow status</p>
           <p className={`mt-1 text-3xl font-bold ${readinessScore >= 80 ? "text-green-600" : readinessScore >= 50 ? "text-amber-500" : "text-red-500"}`}>
             {readinessScore}%
           </p>
@@ -1220,6 +1228,7 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
             <div className={`h-full rounded-full ${readinessScore >= 80 ? "bg-green-500" : readinessScore >= 50 ? "bg-amber-400" : "bg-red-400"}`}
               style={{ width: `${readinessScore}%` }} />
           </div>
+          <p className="mt-1 text-[10px] text-slate-400">Workflow progress only — see canonical score above.</p>
         </div>
         {proposalQuality && (
           <div className="rounded-2xl border bg-white p-5 shadow-sm">
