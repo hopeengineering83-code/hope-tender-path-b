@@ -49,6 +49,10 @@ import {
   type SubmissionEnvelope,
 } from "./submission-plan";
 import { detectSubmissionPackageMode } from "./submission-package-mode";
+import { assessGeneratedDocumentQuality } from "./document-quality-gate";
+import { assessTenderMetadataCompleteness } from "./tender-metadata-completeness";
+import { detectAnalysisSourceWithApproval, type AnalysisSource } from "./analysis-source";
+import { computeReadinessScore } from "./readiness-scoring";
 
 export type FinalReadinessSeverity = "HIGH" | "MEDIUM" | "LOW";
 
@@ -99,6 +103,29 @@ export type FinalReadinessSummary = {
   strictTwoEnvelope: boolean;
   packageMode: string;
   planStatus: FinalReadinessPlanStatus;
+  // ── PR audit extensions: gate dimensions surfaced for the dashboard
+  // and the admin audit endpoint so every consumer can see the same
+  // counts (no panel-mismatch regression possible).
+  /** Documents we cannot vouch for at senior-tender quality. */
+  qualityFailedDocuments: number;
+  /** Count of required submission-plan items not satisfied by current outputs. */
+  missingRequiredDocuments: number;
+  /** Generated docs that live outside the explicit submission plan. */
+  outsidePlanDocuments: number;
+  /** Historical/SUPERSEDED rows hidden from the package logic but visible in audit. */
+  staleRowCount: number;
+  /** Source of the latest tender analysis (AI / regex fallback / human-approved). */
+  analysisSource: "AI" | "REGEX_FALLBACK_AI_ERROR" | "HUMAN_APPROVED_REGEX_FALLBACK" | "UNKNOWN";
+  /** Critical metadata fields missing on the tender (e.g. submissionMethod). */
+  missingCriticalMetadataCount: number;
+  /** Tender metadata fields containing "Bid-Team to confirm" / TBC / etc. */
+  metadataPlaceholderCount: number;
+  /** 0..1 — auto-fill coverage across critical + non-critical metadata fields. */
+  metadataCompletenessRatio: number;
+  /** Weighted readiness score 0..100 with hard caps applied. */
+  readinessScore: number;
+  /** Human-readable reason for the binding cap (if any), else null. */
+  readinessCapReason: string | null;
 };
 
 export type FinalSubmissionReadiness = {
@@ -331,6 +358,25 @@ export async function getFinalSubmissionReadiness(
       analysisSummary: true,
       evaluationMethodology: true,
       notes: true,
+      // Metadata-completeness signals consumed by the gate (Part 5).
+      clientName: true,
+      reference: true,
+      country: true,
+      deadline: true,
+      clientContactName: true,
+      clientContactEmail: true,
+      clientContactPhone: true,
+      budget: true,
+      currency: true,
+      validityDays: true,
+      bidBondAmount: true,
+      bidBondCurrency: true,
+      mandatorySiteVisit: true,
+      numberOfCopiesRequired: true,
+      preBidMeetingDate: true,
+      preBidMeetingLocation: true,
+      technicalWeight: true,
+      financialWeight: true,
       requirements: {
         select: {
           id: true,
@@ -344,6 +390,7 @@ export async function getFinalSubmissionReadiness(
           pageLimit: true,
           restrictions: true,
           sectionReference: true,
+          sourceConfidence: true,
         },
       },
       generatedDocuments: {
@@ -366,6 +413,10 @@ export async function getFinalSubmissionReadiness(
     },
   });
   if (!tender) return null;
+  // Stale/superseded rows are surfaced separately from the package logic
+  // — the dashboard screenshot showed 152 hidden historical outputs that
+  // should be auditable but excluded from blocker counts.
+  const staleRowCount = await client.generatedDocument.count({ where: { tenderId: opts.tenderId, generationStatus: "SUPERSEDED" } });
 
   const workspaceDocuments = tender.generatedDocuments.length;
   const finalCandidates = filterFinalExportCandidateDocuments(tender.generatedDocuments);
@@ -449,6 +500,120 @@ export async function getFinalSubmissionReadiness(
   });
   const strictTwoEnvelope = packageMode.mode === "SEPARATE_TECHNICAL_FINANCIAL";
 
+  // ── Document quality gate (Part 8/9) ─────────────────────────────────────
+  // Run the rules-based quality gate over every final-export candidate.
+  // Documents below threshold drive both the readiness-scoring cap and
+  // a tender-level blocker so the screenshot regression (PASSED docs
+  // with shallow content) cannot recur silently.
+  const qualityReports = finalCandidates.map((doc) => {
+    const visible = typeof doc.fileContent === "string" && doc.fileContent.length < 2_000_000
+      // The base64-decoded visible text is best-effort here; the admin audit
+      // endpoint performs the proper DOCX visible-text decode. For the
+      // readiness gate we just need a quality SIGNAL, not the perfect text.
+      ? doc.fileContent
+      : null;
+    return {
+      doc,
+      report: assessGeneratedDocumentQuality({
+        doc,
+        visibleText: visible,
+        rawFileContent: doc.fileContent,
+        hasStoragePath: Boolean(doc.storagePath && doc.storagePath.length > 0),
+        requirements: tender.requirements,
+      }),
+    };
+  });
+  const qualityFailed = qualityReports.filter(({ report }) => report.recommendedStatus === "QUALITY_FAILED").length;
+
+  // ── Metadata completeness gate (Part 5) ──────────────────────────────────
+  const metadata = assessTenderMetadataCompleteness({
+    clientName: tender.clientName,
+    title: tender.title,
+    reference: tender.reference,
+    country: tender.country,
+    submissionMethod: tender.submissionMethod,
+    submissionAddress: tender.submissionAddress,
+    submissionEmails: tender.submissionEmails,
+    deadline: tender.deadline ?? null,
+    clientContactName: tender.clientContactName,
+    clientContactEmail: tender.clientContactEmail,
+    clientContactPhone: tender.clientContactPhone,
+    pageLimit: tender.pageLimit,
+    budget: tender.budget,
+    currency: tender.currency,
+    validityDays: tender.validityDays,
+    bidBondAmount: tender.bidBondAmount,
+    bidBondCurrency: tender.bidBondCurrency,
+    mandatorySiteVisit: tender.mandatorySiteVisit,
+    numberOfCopiesRequired: tender.numberOfCopiesRequired,
+    preBidMeetingDate: tender.preBidMeetingDate ?? null,
+    preBidMeetingLocation: tender.preBidMeetingLocation,
+    technicalWeight: tender.technicalWeight,
+    financialWeight: tender.financialWeight,
+    requirementCount: tender.requirements.length,
+    hasEvaluationMethodology: Boolean((tender.evaluationMethodology ?? "").trim()),
+    hasSubmissionRules: Boolean((tender.submissionMethod ?? "").trim()) || Boolean((tender.submissionEmails ?? "").trim()) || Boolean((tender.submissionAddress ?? "").trim()),
+  });
+
+  // ── Analysis-source detection (Part 4) ───────────────────────────────────
+  const analysisSource: AnalysisSource = await detectAnalysisSourceWithApproval(client, opts.tenderId, tender);
+
+  // ── Source-reference coverage (used by the readiness score). ────────────
+  const sourceReferenceCoverage = tender.requirements.length === 0
+    ? 0
+    : tender.requirements.filter((r) => (r.sourceConfidence ?? 0) > 0 || (r.sectionReference ?? "").trim().length > 0).length / tender.requirements.length;
+
+  // ── Readiness scoring (Part 3) — weighted, with hard caps. ───────────────
+  const readinessScoreResult = computeReadinessScore({
+    analysisSource,
+    metadataCompletenessRatio: metadata.overallRatio,
+    metadataInvalidCount: metadata.invalidFields.length,
+    sourceReferenceCoverage,
+    // The canonical helper does not run a full evidence-coverage pass on
+    // every call (that would re-load the company vault). The readiness
+    // panel separately surfaces evidence-readiness; here we approximate
+    // by counting MANDATORY requirements that have a compliance-matrix
+    // row OR a non-zero sourceConfidence. This is conservative enough
+    // for the cap to kick in when evidence is clearly absent.
+    evidenceCoverage: tender.requirements.length === 0 ? 0 : tender.requirements.filter((r) => r.priority === "MANDATORY" && ((r.sourceConfidence ?? 0) > 0 || (r.sectionReference ?? "").trim().length > 0)).length / Math.max(1, tender.requirements.filter((r) => r.priority === "MANDATORY").length),
+    requiredDocumentsTotal: requiredPlanCount,
+    requiredDocumentsSatisfied: Math.max(0, requiredPlanCount - missingPlan.length),
+    outsidePlanDocuments: extraPlan.length,
+    qualityFailedDocuments: qualityFailed,
+    finalExportCandidatesCount: finalCandidates.length,
+    readyForExportCount: finalCandidates.filter((d) => /READY_FOR_EXPORT|APPROVED/i.test(d.reviewStatus ?? "")).length,
+    finalExportGateOk: readiness.ok && documentBlockers.length === 0 && tenderLevelBlockers.length === 0,
+  });
+
+  // Surface a tender-level blocker when the canonical gate would otherwise
+  // pass but the metadata gate is failing. This is the only place where the
+  // canonical helper adds *new* tender-level blockers on top of
+  // checkTenderLevelExportBlockers — every other case is upstream.
+  if (metadata.blockingForGeneration) {
+    tenderLevelBlockers.push({
+      category: "METADATA_INCOMPLETE_FOR_FINAL_GENERATION",
+      severity: "HIGH",
+      title: `Tender metadata is incomplete (${metadata.missingCritical.length} critical field(s) missing${metadata.placeholderCount > 0 ? `, ${metadata.placeholderCount} "Bid-Team to confirm" placeholder(s)` : ""}).`,
+      recommendedAction: "Fill the missing critical tender metadata fields before final proposal generation.",
+    });
+  }
+  if (qualityFailed > 0) {
+    tenderLevelBlockers.push({
+      category: "GENERATED_DOCUMENT_QUALITY_FAILED",
+      severity: "HIGH",
+      title: `${qualityFailed} generated document(s) failed the quality gate (QUALITY_FAILED).`,
+      recommendedAction: "Review the flagged documents in the Export Readiness panel; rewrite or attach official originals before export.",
+    });
+  }
+  if (analysisSource === "REGEX_FALLBACK_AI_ERROR") {
+    tenderLevelBlockers.push({
+      category: "ANALYSIS_REGEX_FALLBACK_UNAPPROVED",
+      severity: "HIGH",
+      title: "Tender analysis came from the regex fallback (AI providers failed) and has not been human-approved.",
+      recommendedAction: "Re-run AI Analyze with healthy providers, or POST /api/tenders/[id]/approve-analysis if you have manually verified the fallback analysis is correct.",
+    });
+  }
+
   const summary: FinalReadinessSummary = {
     totalBlockers: documentBlockers.length + tenderLevelBlockers.length,
     documentBlockers: documentBlockers.length,
@@ -472,6 +637,17 @@ export async function getFinalSubmissionReadiness(
       nameMismatch,
       orderMismatch,
     }),
+    // ── Gate extensions ───────────────────────────────────────────────────
+    qualityFailedDocuments: qualityFailed,
+    missingRequiredDocuments: missingPlan.length,
+    outsidePlanDocuments: extraPlan.length,
+    staleRowCount,
+    analysisSource,
+    missingCriticalMetadataCount: metadata.missingCritical.length,
+    metadataPlaceholderCount: metadata.placeholderCount,
+    metadataCompletenessRatio: metadata.overallRatio,
+    readinessScore: readinessScoreResult.score,
+    readinessCapReason: readinessScoreResult.appliedCap?.reason ?? null,
   };
 
   const ok = readiness.ok && documentBlockers.length === 0 && tenderLevelBlockers.length === 0;

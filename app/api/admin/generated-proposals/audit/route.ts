@@ -71,6 +71,8 @@ import {
 import { validateFileSignature } from "../../../../../lib/engine/export-format-policy";
 import { containsPricingLeakage } from "../../../../../lib/engine/pricing-hygiene";
 import { inferEnvelope } from "../../../../../lib/engine/submission-plan";
+import { assessGeneratedDocumentQuality } from "../../../../../lib/engine/document-quality-gate";
+import { METADATA_PLACEHOLDER_PATTERNS } from "../../../../../lib/engine/tender-metadata-completeness";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -96,11 +98,26 @@ type AuditRow = {
   storageReadable: boolean | null;
   byteSignatureOk: boolean | null;
   docxVisibleTextInspectable: boolean;
+  // ── Quality-gate fields (Part 14) ──────────────────────────────────────
+  wordCount: number;
+  sectionCount: number;
+  requiredSectionsPresent: string[];
+  missingRequiredSections: string[];
+  requirementCoverageRatio: number;
+  qualityScore: number;
+  qualityRecommendedStatus: string;
+  // ── Issue flags (booleans only — no body text leaks) ─────────────────
   aiTraceIssue: boolean;
   placeholderIssue: boolean;
+  bidTeamToConfirmIssue: boolean;
   pricingLeakageIssue: boolean;
+  genericContentIssue: boolean;
+  unsupportedClaimRisk: boolean;
+  internalTraceabilityIssue: boolean;
   officialOriginalPlaceholderRisk: boolean;
   missingContentIssue: boolean;
+  duplicatedSectionsIssue: boolean;
+  // ── Outcome ───────────────────────────────────────────────────────────
   readyForExport: boolean;
   zipEligible: boolean;
   recommendedAction: string;
@@ -124,6 +141,15 @@ function why(row: AuditRow): { recommendedAction: string; severity: Severity } {
   if (row.byteSignatureOk === false) {
     return { recommendedAction: "File extension does not match the actual byte signature. Regenerate this document in the required format.", severity: "HIGH" };
   }
+  if (row.qualityRecommendedStatus === "QUALITY_FAILED") {
+    return { recommendedAction: `Quality gate FAILED (score ${row.qualityScore}/100). Rewrite the document or attach the official original before export.`, severity: "HIGH" };
+  }
+  if (row.bidTeamToConfirmIssue) {
+    return { recommendedAction: '"Bid-Team to confirm" or similar internal placeholder text detected. These must never appear in submitted proposals.', severity: "HIGH" };
+  }
+  if (row.internalTraceabilityIssue) {
+    return { recommendedAction: "Internal traceability text (source-id / evidence-id / match-score) detected. Strip before submission.", severity: "HIGH" };
+  }
   if (row.pricingLeakageIssue) {
     return { recommendedAction: "Pricing/financial language detected in a technical document. Remove all pricing/rate language from the technical envelope.", severity: "HIGH" };
   }
@@ -132,6 +158,18 @@ function why(row: AuditRow): { recommendedAction: string; severity: Severity } {
   }
   if (row.placeholderIssue) {
     return { recommendedAction: "Unresolved placeholder/drafting instruction detected. Run repair-export-gaps or edit the document.", severity: "MEDIUM" };
+  }
+  if (row.qualityRecommendedStatus === "NEEDS_REWRITE") {
+    return { recommendedAction: `Document quality is weak (score ${row.qualityScore}/100). Rewrite or expand before approval.`, severity: "MEDIUM" };
+  }
+  if (row.genericContentIssue) {
+    return { recommendedAction: "Generic marketing filler detected. Replace with tender-specific language and evidence-backed claims.", severity: "MEDIUM" };
+  }
+  if (row.unsupportedClaimRisk) {
+    return { recommendedAction: "Document may contain unsupported numeric claims. Verify against reviewed vault evidence.", severity: "MEDIUM" };
+  }
+  if (row.duplicatedSectionsIssue) {
+    return { recommendedAction: "Same heading repeated ≥3 times — likely a regeneration without dedupe. Deduplicate before export.", severity: "MEDIUM" };
   }
   if (!row.finalExportCandidate) {
     const reason = row.excludedReason ?? "Workspace-only row";
@@ -265,6 +303,29 @@ export async function GET(req: Request) {
       const pricingLeakageIssue = hygiene.some((r) => /pricing language/i.test(r)) || (visibleText ? containsPricingLeakage(visibleText, d) : false);
       const officialOriginalPlaceholderRisk = detectOfficialOriginalRisk(d);
 
+      // ── Quality-gate per document (Part 14). Runs only when we have visible
+      // text; otherwise we mark it inspectable=false and skip the gate so
+      // we don't penalise documents whose body lives in storage we did not
+      // fetch in this bulk audit.
+      const quality = visibleText
+        ? assessGeneratedDocumentQuality({ doc: d, visibleText, rawFileContent: inlineBase64, hasStoragePath })
+        : null;
+      const wordCount = quality?.wordCount ?? 0;
+      const sectionCount = quality?.sectionCount ?? 0;
+      const requiredSectionsPresent = quality?.requiredSectionsPresent ?? [];
+      const missingRequiredSections = quality?.missingRequiredSections ?? [];
+      const requirementCoverageRatio = quality?.requirementCoverageRatio ?? 0;
+      const qualityScore = quality?.score ?? 0;
+      const qualityRecommendedStatus = quality?.recommendedStatus ?? (visibleText ? "PASSED" : "DRAFT_ONLY");
+      // Issue flags derived from the quality gate so the admin audit
+      // surface lines up with the gate's verdict.
+      const issueCodes = new Set(quality?.issues.map((i) => i.code) ?? []);
+      const bidTeamToConfirmIssue = issueCodes.has("BID_TEAM_TO_CONFIRM") || (visibleText ? METADATA_PLACEHOLDER_PATTERNS.some((rx) => rx.test(visibleText)) : false);
+      const genericContentIssue = issueCodes.has("GENERIC_FILLER");
+      const unsupportedClaimRisk = issueCodes.has("UNSUPPORTED_CLAIM_RISK");
+      const internalTraceabilityIssue = issueCodes.has("INTERNAL_TRACEABILITY");
+      const duplicatedSectionsIssue = issueCodes.has("DUPLICATED_SECTIONS");
+
       const generated = isGenerated(d.generationStatus);
       const validated = isValidationPassed(d.validationStatus);
       const reviewed = isReviewReadyForExport(d.reviewStatus);
@@ -294,11 +355,23 @@ export async function GET(req: Request) {
         storageReadable: null,
         byteSignatureOk,
         docxVisibleTextInspectable,
+        wordCount,
+        sectionCount,
+        requiredSectionsPresent,
+        missingRequiredSections,
+        requirementCoverageRatio,
+        qualityScore,
+        qualityRecommendedStatus,
         aiTraceIssue,
         placeholderIssue,
+        bidTeamToConfirmIssue,
         pricingLeakageIssue,
+        genericContentIssue,
+        unsupportedClaimRisk,
+        internalTraceabilityIssue,
         officialOriginalPlaceholderRisk,
         missingContentIssue,
+        duplicatedSectionsIssue,
         readyForExport,
         zipEligible,
         recommendedAction: "",
@@ -314,7 +387,10 @@ export async function GET(req: Request) {
 
     const hasIssue = (r: AuditRow) =>
       r.missingContentIssue || r.officialOriginalPlaceholderRisk || r.byteSignatureOk === false ||
-      r.pricingLeakageIssue || r.aiTraceIssue || r.placeholderIssue || (!r.readyForExport && r.finalExportCandidate);
+      r.pricingLeakageIssue || r.aiTraceIssue || r.placeholderIssue || r.bidTeamToConfirmIssue ||
+      r.genericContentIssue || r.unsupportedClaimRisk || r.internalTraceabilityIssue ||
+      r.duplicatedSectionsIssue || r.qualityRecommendedStatus !== "PASSED" ||
+      (!r.readyForExport && r.finalExportCandidate);
 
     let visibleRows = includeReady ? rows : rows.filter(hasIssue);
     if (severityFilter) visibleRows = visibleRows.filter((r) => r.severity === severityFilter);
@@ -322,14 +398,23 @@ export async function GET(req: Request) {
 
     const summary = {
       totalGeneratedDocuments: rows.length,
+      currentOutputs: rows.filter((r) => r.finalExportCandidate && r.generationStatus === "GENERATED").length,
+      staleOutputs: rows.filter((r) => !r.finalExportCandidate).length,
       finalExportCandidates: rows.filter((r) => r.finalExportCandidate).length,
       readyForExport: rows.filter((r) => r.readyForExport).length,
       blockedDocuments: rows.filter((r) => r.finalExportCandidate && !r.readyForExport).length,
+      qualityFailed: rows.filter((r) => r.qualityRecommendedStatus === "QUALITY_FAILED").length,
+      missingRequiredDocs: 0, // Computed at the tender level by the canonical helper, not in the bulk audit.
       missingContent: rows.filter((r) => r.missingContentIssue).length,
       invalidSignatures: rows.filter((r) => r.byteSignatureOk === false).length,
       aiTraceIssues: rows.filter((r) => r.aiTraceIssue).length,
       placeholderIssues: rows.filter((r) => r.placeholderIssue).length,
+      bidTeamToConfirmIssues: rows.filter((r) => r.bidTeamToConfirmIssue).length,
       pricingLeakageIssues: rows.filter((r) => r.pricingLeakageIssue).length,
+      genericContentIssues: rows.filter((r) => r.genericContentIssue).length,
+      unsupportedClaimRisks: rows.filter((r) => r.unsupportedClaimRisk).length,
+      internalTraceabilityIssues: rows.filter((r) => r.internalTraceabilityIssue).length,
+      duplicatedSectionsIssues: rows.filter((r) => r.duplicatedSectionsIssue).length,
       officialOriginalRisks: rows.filter((r) => r.officialOriginalPlaceholderRisk).length,
       staleInternalRows: rows.filter((r) => !r.finalExportCandidate).length,
     };
