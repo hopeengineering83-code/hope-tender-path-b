@@ -25,6 +25,13 @@ function normalizeLabel(value?: string | null): string {
     .replace(/<PARSED TEXT FOR PAGE:[^>]+>/gi, " ")
     .replace(/\bPARSED TEXT FOR PAGE\b[^\n]*/gi, " ")
     .replace(/[\u0000-\u001F\u007F]/g, " ")
+    // Strip internal metadata placeholders ("Bid-Team to confirm",
+    // "TBC", "TBD", "placeholder") so they cannot leak into proposal-
+    // facing labels like the cover-letter subject. Defense in depth on
+    // top of sanitize-stored-metadata.ts.
+    .replace(/\bbid[-_\s]?team\s+to\s+confirm\b/gi, " ")
+    .replace(/\bto\s+be\s+confirmed\b/gi, " ")
+    .replace(/\bplaceholder\b/gi, " ")
     .replace(/\s+/g, " ")
     .trim();
 }

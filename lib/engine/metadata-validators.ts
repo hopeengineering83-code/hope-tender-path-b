@@ -42,8 +42,24 @@ export const KNOWN_COUNTRIES: readonly string[] = [
  */
 const PROPOSAL_SECTION_NOISE_PATTERN = /\b(references?\b|photos?\b|drawings?\b|technical\s+approach|methodology|compliance|appendix|annex|declaration|relevant\s+experience|section\s+[a-d]\b|cover\s+letter|executive\s+summary|company\s+profile|project\s+reference|financial\s+proposal|submission\s+rules|terms\s+of\s+reference|table\s+of\s+contents|understanding\s+of\s+the\s+assignment|proposed\s+design|where\s+available|completed\s+projects)\b/i;
 
-/** Common placeholder strings that mean "no client set", not a real value. */
-const PLACEHOLDER_CLIENT_PATTERN = /^(the\s+client|client|unknown|n\/a|na|none|-+|tbd|tba|to\s+be\s+(determined|confirmed|advised))$/i;
+/** Common placeholder strings that mean "no client set", not a real value.
+ * "bid[-_\s]?team\s+to\s+confirm" was the most common production
+ * regression (the screenshots showed it in 11/16 metadata fields and
+ * leaking straight into generated proposals). */
+const PLACEHOLDER_CLIENT_PATTERN = /^(the\s+client|client|unknown|n\/a|na|none|-+|tbd|tba|tbc|to\s+be\s+(determined|confirmed|advised|set)|bid[-_\s]?team\s+to\s+confirm|bid\s+team\s+to\s+confirm|placeholder|fill[-_\s]?in)$/i;
+
+/** Generic-anywhere placeholder pattern. Returns true if the value
+ * contains a "Bid-Team to confirm" / "TBC" / "TBD" / "placeholder" string
+ * anywhere — not just as the whole value. Used by sanitize-stored-metadata
+ * so the engine never reads internal placeholder text from any column. */
+export const ANYWHERE_PLACEHOLDER_PATTERN = /\b(bid[-_\s]?team\s+to\s+confirm|to\s+be\s+confirmed|placeholder)\b|^(tbc|tbd|tba|n\/a)$/i;
+
+export function containsMetadataPlaceholder(value: string | null | undefined): boolean {
+  if (!value || typeof value !== "string") return false;
+  const text = value.trim();
+  if (text.length === 0) return false;
+  return ANYWHERE_PLACEHOLDER_PATTERN.test(text) || PLACEHOLDER_CLIENT_PATTERN.test(text);
+}
 
 /** Words that are NOT valid reference numbers when captured alone. */
 const NON_REFERENCE_WORDS = /^(only|n\/a|tbd|none|refer|see|above|below|this|that|the|a|an|where|available|attached|enclosed|here|there)$/i;
