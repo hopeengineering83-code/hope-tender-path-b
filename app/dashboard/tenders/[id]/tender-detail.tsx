@@ -979,6 +979,23 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
     : null;
   const displayClientLine = displayClient && displayClient !== "Client" ? ` · ${displayClient}` : "";
 
+  // Browser tab title badge — updates in real-time as gaps are resolved.
+  // Critical gaps: 🚨 N critical — <title>
+  // Unresolved gaps: (N) <title>
+  // All clear: <title>
+  // Restores "Tenders" on unmount so navigating back shows the list title.
+  useEffect(() => {
+    const shortTitle = (tender.title ?? "Tender").slice(0, 50);
+    if (criticalGaps > 0) {
+      document.title = `🚨 ${criticalGaps} critical — ${shortTitle}`;
+    } else if (unresolvedGaps > 0) {
+      document.title = `(${unresolvedGaps}) ${shortTitle}`;
+    } else {
+      document.title = shortTitle;
+    }
+    return () => { document.title = "Tenders"; };
+  }, [criticalGaps, unresolvedGaps, tender.title]);
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">

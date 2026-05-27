@@ -74,6 +74,7 @@ export function ExportReadinessPanel({ tenderId }: { tenderId: string }) {
   const [attachingDocId, setAttachingDocId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [repairMessage, setRepairMessage] = useState<string | null>(null);
+  const [autoFinalizeRemaining, setAutoFinalizeRemaining] = useState<number | null>(null);
   const fileInputs = useRef<Record<string, HTMLInputElement | null>>({});
 
   const busy = loading || repairing || linkingVault || supersedingOutsidePlan || autoFinalizing || generatingMissing || Boolean(attachingDocId);
@@ -85,7 +86,10 @@ export function ExportReadinessPanel({ tenderId }: { tenderId: string }) {
       const res = await fetch(`/api/tenders/${tenderId}/export-readiness`, { method: "GET" });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error ?? `Export readiness failed (${res.status})`);
-      setReadiness(data.exportReadiness);
+      const r = data.exportReadiness;
+      setReadiness(r);
+      // Clear the "click again" nudge once the gate passes or blockers are resolved
+      if (r?.ok || (r?.summary?.documentBlockers ?? 0) === 0) setAutoFinalizeRemaining(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Export readiness failed");
     } finally {
@@ -140,7 +144,9 @@ export function ExportReadinessPanel({ tenderId }: { tenderId: string }) {
       const res = await fetch(`/api/tenders/${tenderId}/auto-finalize`, { method: "POST" });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || data.error) throw new Error(data.error ?? `Auto-finalize failed (${res.status})`);
-      setRepairMessage(`Auto-finalize: processed ${data.processedCount ?? 0}, remaining ${data.remainingCount ?? 0}. ${data.readinessOk ? "Export gate passed." : "Re-check or continue auto-finalize if blockers remain."}`);
+      const remaining = data.remainingCount ?? 0;
+      setAutoFinalizeRemaining(remaining > 0 ? remaining : null);
+      setRepairMessage(`Auto-finalize: processed ${data.processedCount ?? 0}, remaining ${remaining}. ${data.readinessOk ? "Export gate passed ✓" : remaining > 0 ? `${remaining} doc(s) still need finalization — click Auto-finalize again.` : "Re-check to refresh the gate."}`);
       await refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Auto-finalize failed");
@@ -311,6 +317,15 @@ export function ExportReadinessPanel({ tenderId }: { tenderId: string }) {
 
       {error && <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700">{error}</div>}
       {repairMessage && <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-700">{repairMessage}</div>}
+      {autoFinalizeRemaining !== null && autoFinalizeRemaining > 0 && !ok && (
+        <div className="mt-3 flex items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3">
+          <p className="text-xs text-amber-800">
+            <strong>{autoFinalizeRemaining} document{autoFinalizeRemaining === 1 ? "" : "s"}</strong> still need finalization.
+            Click <strong>Auto-finalize for print/submission</strong> again to continue — each run processes up to 3 documents.
+          </p>
+          <button type="button" onClick={() => setAutoFinalizeRemaining(null)} className="shrink-0 text-amber-600 hover:text-amber-800 text-xs font-medium">✕</button>
+        </div>
+      )}
 
       {vaultCandidates.length > 0 && (
         <div className="mt-3 rounded-lg border border-indigo-200 bg-indigo-50 p-3 text-xs">
