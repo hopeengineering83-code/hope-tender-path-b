@@ -93,18 +93,109 @@ function isFinancialDocument(docLabel: string): boolean {
 
 // ── Structural proxy checks ────────────────────────────────────────────────
 //
-// tenderScopeOnly: true unless the text contains obvious off-scope signals —
-//   a different tender reference number or a known competing-tender phrase.
-//   We cannot detect arbitrary scope drift without AI, so we only catch the
-//   most obvious case: the document body contains a reference number that does
-//   NOT match the tender's own reference.  When tenderReference is not
-//   available, we conservatively return true (pass the check) to avoid
-//   blocking legitimate documents.
+// tenderScopeOnly: true unless the text contains obvious off-scope signals.
+//   Two complementary checks (both must pass to return true):
+//
+//   1. Reference-number mismatch: if the document body contains a tender
+//      reference that does NOT match our own, it is out of scope.
+//
+//   2. Industry-sector mismatch: if the tender notes and the document text
+//      each have ≥2 hits from DIFFERENT sector signature-phrase sets, the
+//      document is likely written for the wrong industry. Requires both
+//      signals to be strongly present (≥2 matches each) to avoid false
+//      positives on documents that legitimately mention cross-sector terms.
+//
+//   When tenderReference and tenderNotes are both absent, we return true
+//   (conservative pass) to avoid blocking legitimate documents.
 //
 // outlineMatchesTender: true unless the document is a recognised narrative type
 //   AND has no headings at all — a heading-free wall of text does not match
 //   any structured outline.  Short docs (< 100 words) are exempted because
 //   cover letters and transmittal notes are legitimately heading-free.
+
+// Industry sector fingerprints.  Each entry is a set of phrases that are
+// highly distinctive to ONE sector and very unlikely to appear in another.
+// Phrases are checked case-insensitively; all must be distinct enough that
+// 2 simultaneous hits = confident sector identification.
+const SECTOR_SIGNATURES: Record<string, RegExp[]> = {
+  PHARMA: [
+    /\bpharma(?:ceutical|covigilance|copeia)?\b/i,
+    /\bgood\s+manufacturing\s+practice\b/i,
+    /\bgmp\s+compliance\b/i,
+    /\bclinical\s+trial\b/i,
+    /\bdrug\s+(?:substance|product|registration)\b/i,
+    /\bregulatory\s+(?:submission|dossier|authority)\b/i,
+    /\bfda\s+(?:approval|guidance|submission)\b/i,
+    /\bema\s+(?:approval|guidance|submission)\b/i,
+    /\bactive\s+pharmaceutical\s+ingredient\b/i,
+  ],
+  CONSTRUCTION: [
+    /\bbill\s+of\s+quantities?\b/i,
+    /\bearthworks?\b/i,
+    /\breinforced\s+concrete\b/i,
+    /\bstructural\s+drawings?\b/i,
+    /\bsite\s+(?:supervision|clearing|hoarding)\b/i,
+    /\bcivil\s+works?\s+(?:contractor|package)\b/i,
+    /\bpiling\b/i,
+    /\bmasonr(?:y|ies)\b/i,
+    /\bbrick(?:work|layer)\b/i,
+    /\bformwork\b/i,
+  ],
+  OIL_GAS: [
+    /\bhydrocarbon\b/i,
+    /\bwellbore\b/i,
+    /\bupstream\s+(?:operations?|sector|oil)\b/i,
+    /\bdownstream\s+refiner(?:y|ies)\b/i,
+    /\bfpso\b/i,
+    /\bpetroleum\s+(?:engineering|exploration|production)\b/i,
+    /\boil\s+(?:field|well|spill|platform)\b/i,
+    /\bnatural\s+gas\s+(?:pipeline|processing|liquefied)\b/i,
+  ],
+  IT_SYSTEMS: [
+    /\bsoftware\s+development\s+(?:lifecycle|life\s+cycle|kit)\b/i,
+    /\bapi\s+integration\b/i,
+    /\bdatabase\s+schema\b/i,
+    /\bmicroservices?\b/i,
+    /\bdevops\b/i,
+    /\bcybersecurity\s+(?:assessment|audit|framework)\b/i,
+    /\bcloud\s+(?:infrastructure|migration|deployment|architecture)\b/i,
+    /\berp\s+(?:implementation|system|migration)\b/i,
+    /\bsource\s+code\s+(?:repository|management)\b/i,
+  ],
+  AGRICULTURE: [
+    /\bagricultural\s+(?:extension|inputs?|land|production)\b/i,
+    /\bcrop\s+(?:yield|rotation|management|production)\b/i,
+    /\blivestock\s+(?:management|health|production)\b/i,
+    /\birrigation\s+(?:scheme|system|canal|infrastructure)\b/i,
+    /\bsoil\s+(?:fertility|conservation|health|analysis)\b/i,
+    /\bseed\s+(?:distribution|variety|system)\b/i,
+    /\bpost-harvest\s+(?:handling|loss|storage)\b/i,
+  ],
+};
+
+function detectIndustrySectorMismatch(
+  tenderNotes: string,
+  docText: string,
+): boolean {
+  function topSector(text: string): string | null {
+    let bestSector: string | null = null;
+    let bestCount = 0;
+    for (const [sector, patterns] of Object.entries(SECTOR_SIGNATURES)) {
+      const count = patterns.filter((p) => p.test(text)).length;
+      if (count >= 2 && count > bestCount) {
+        bestCount = count;
+        bestSector = sector;
+      }
+    }
+    return bestSector;
+  }
+
+  const tenderSector = topSector(tenderNotes);
+  if (!tenderSector) return false; // tender sector unclear → no mismatch detected
+  const docSector = topSector(docText);
+  if (!docSector) return false; // doc sector unclear → benefit of the doubt
+  return tenderSector !== docSector;
+}
 
 function detectOutlineMatchesTender(
   docLabel: string,
@@ -132,25 +223,34 @@ function detectOutlineMatchesTender(
 function detectTenderScopeOnly(
   visibleText: string,
   tenderReference?: string | null,
+  tenderNotes?: string | null,
 ): boolean {
-  // Without a reference number we cannot detect scope leakage — pass by default.
-  if (!tenderReference || !visibleText) return true;
+  if (!visibleText) return true;
 
-  // Normalise: strip whitespace, lowercase, remove common separators
-  const normRef = tenderReference.replace(/[\s\-_/]+/g, "").toLowerCase();
-  if (normRef.length < 4) return true; // too short to match reliably
+  // ── Check 1: reference-number mismatch ──────────────────────────────────
+  if (tenderReference) {
+    const normRef = tenderReference.replace(/[\s\-_/]+/g, "").toLowerCase();
+    if (normRef.length >= 4) {
+      const refMatches = visibleText.matchAll(/(?:ref(?:erence)?|rfp|rfq|tender\s+(?:no\.?|number|ref)|itb|eoi)\s*[:#]?\s*([\w\-/]+)/gi);
+      for (const m of refMatches) {
+        const found = (m[1] ?? "").replace(/[\s\-_/]+/g, "").toLowerCase();
+        if (found.length >= 4 && found !== normRef && !normRef.includes(found) && !found.includes(normRef)) {
+          return false;
+        }
+      }
+    }
+  }
 
-  // Look for a DIFFERENT reference pattern in the document body.
-  // Heuristic: find text like "Ref:", "RFP:", "Tender No." followed by a token
-  // that looks like a tender reference and is clearly different from ours.
-  const refMatches = visibleText.matchAll(/(?:ref(?:erence)?|rfp|rfq|tender\s+(?:no\.?|number|ref)|itb|eoi)\s*[:#]?\s*([\w\-/]+)/gi);
-  for (const m of refMatches) {
-    const found = (m[1] ?? "").replace(/[\s\-_/]+/g, "").toLowerCase();
-    if (found.length >= 4 && found !== normRef && !normRef.includes(found) && !found.includes(normRef)) {
-      // Found a reference that doesn't match ours — possible scope leakage
+  // ── Check 2: industry-sector mismatch ───────────────────────────────────
+  // Only runs when tender notes are available and strongly identify a sector.
+  // Requires ≥2 sector signature hits in BOTH sources to avoid false positives
+  // on documents that incidentally mention cross-sector terminology.
+  if (tenderNotes && tenderNotes.length >= 40) {
+    if (detectIndustrySectorMismatch(tenderNotes, visibleText)) {
       return false;
     }
   }
+
   return true;
 }
 
@@ -305,7 +405,7 @@ export function buildSevenPassGateInput(ctx: SevenPassWiringContext): GeneratedD
     pricingLeakageCount,
     officialOriginalRiskCount,
     technicalFinancialSeparationOk,
-    tenderScopeOnly: detectTenderScopeOnly(text, ctx.tenderReference),
+    tenderScopeOnly: detectTenderScopeOnly(text, ctx.tenderReference, ctx.tenderNotes),
     outlineMatchesTender: detectOutlineMatchesTender(docLabel, text),
     selectedEvidenceTrustLevels,
     selfReviewScore,
