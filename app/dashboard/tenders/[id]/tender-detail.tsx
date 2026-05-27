@@ -326,10 +326,12 @@ const GAP_SEVERITY_STYLE: Record<string, string> = {
 function ComplianceGapsPanel({ tenderId, initialGaps }: { tenderId: string; initialGaps: ComplianceGap[] }) {
   const [gaps, setGaps] = useState<ComplianceGap[]>(initialGaps);
   const [toggling, setToggling] = useState<string | null>(null);
+  const [toggleError, setToggleError] = useState<string | null>(null);
   const [showAll, setShowAll] = useState(false);
 
   async function toggleResolved(gap: ComplianceGap) {
     setToggling(gap.id);
+    setToggleError(null);
     try {
       const res = await fetch(`/api/tenders/${tenderId}/gaps/${gap.id}`, {
         method: "PUT",
@@ -339,7 +341,12 @@ function ComplianceGapsPanel({ tenderId, initialGaps }: { tenderId: string; init
       if (res.ok) {
         const updated = await res.json() as ComplianceGap;
         setGaps((prev) => prev.map((g) => g.id === gap.id ? { ...g, isResolved: updated.isResolved } : g));
+      } else {
+        const data = await res.json().catch(() => ({})) as Record<string, unknown>;
+        setToggleError(typeof data.error === "string" ? data.error : `Failed to update gap (${res.status}). Please try again.`);
       }
+    } catch {
+      setToggleError("Network error — please check your connection and try again.");
     } finally {
       setToggling(null);
     }
@@ -358,6 +365,12 @@ function ComplianceGapsPanel({ tenderId, initialGaps }: { tenderId: string; init
           </span>
         )}
       </div>
+      {toggleError && (
+        <div className="mt-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 flex items-center justify-between gap-2">
+          <span>{toggleError}</span>
+          <button onClick={() => setToggleError(null)} className="text-red-400 hover:text-red-700 font-bold shrink-0">✕</button>
+        </div>
+      )}
       {gaps.length === 0 ? (
         <p className="mt-3 text-sm text-slate-400">No compliance gaps recorded yet.</p>
       ) : (
