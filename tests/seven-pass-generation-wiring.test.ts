@@ -354,3 +354,89 @@ describe("outlineMatchesTender proxy", () => {
     assert.strictEqual(input.outlineMatchesTender, true);
   });
 });
+
+describe("tenderScopeOnly sector mismatch proxy", () => {
+  const PHARMA_NOTES =
+    "This tender is for pharmaceutical manufacturing services. " +
+    "Good manufacturing practice (GMP) compliance is mandatory. " +
+    "The supplier must have experience with clinical trial supply and drug substance handling.";
+
+  const PHARMA_DOC =
+    "Our company has extensive experience in pharmaceutical manufacturing. " +
+    "We comply fully with GMP compliance requirements. " +
+    "We have supplied clinical trial materials and managed drug substance logistics.";
+
+  const CONSTRUCTION_DOC =
+    "## Methodology\n" +
+    "Our team will carry out earthworks and reinforced concrete foundations. " +
+    "The structural drawings will be finalised within two weeks. " +
+    "Civil works contractor mobilisation begins on Day 1. " +
+    "Site supervision will be conducted daily throughout the project.";
+
+  const IT_NOTES =
+    "Scope: cloud infrastructure migration and ERP implementation. " +
+    "The system must support API integration with existing microservices. " +
+    "DevOps practices including CI/CD pipelines are required.";
+
+  const IT_DOC =
+    "## Technical Approach\n" +
+    "We will manage the cloud infrastructure migration using Terraform. " +
+    "Our ERP implementation methodology uses a phased rollout. " +
+    "API integration with existing microservices will be handled via REST. " +
+    "DevOps practices are embedded throughout our SDLC.";
+
+  it("passes when tender notes and document are both pharma", () => {
+    const input = buildSevenPassGateInput({
+      tenderNotes: PHARMA_NOTES,
+      visibleText: PHARMA_DOC,
+    });
+    assert.strictEqual(input.tenderScopeOnly, true);
+  });
+
+  it("fails when tender is pharma but document is construction", () => {
+    const input = buildSevenPassGateInput({
+      tenderNotes: PHARMA_NOTES,
+      visibleText: CONSTRUCTION_DOC,
+    });
+    assert.strictEqual(input.tenderScopeOnly, false);
+  });
+
+  it("passes when tender notes are absent (cannot determine sector)", () => {
+    const input = buildSevenPassGateInput({
+      visibleText: CONSTRUCTION_DOC,
+    });
+    assert.strictEqual(input.tenderScopeOnly, true);
+  });
+
+  it("passes when tender notes are too short to identify a sector", () => {
+    const input = buildSevenPassGateInput({
+      tenderNotes: "General consulting services.",
+      visibleText: CONSTRUCTION_DOC,
+    });
+    assert.strictEqual(input.tenderScopeOnly, true);
+  });
+
+  it("passes when tender notes have sector but document sector is unclear", () => {
+    const input = buildSevenPassGateInput({
+      tenderNotes: PHARMA_NOTES,
+      visibleText: "We are pleased to submit our proposal for the above-referenced tender.",
+    });
+    assert.strictEqual(input.tenderScopeOnly, true);
+  });
+
+  it("passes when tender is IT and document is IT", () => {
+    const input = buildSevenPassGateInput({
+      tenderNotes: IT_NOTES,
+      visibleText: IT_DOC,
+    });
+    assert.strictEqual(input.tenderScopeOnly, true);
+  });
+
+  it("fails when tender is IT but document is construction", () => {
+    const input = buildSevenPassGateInput({
+      tenderNotes: IT_NOTES,
+      visibleText: CONSTRUCTION_DOC,
+    });
+    assert.strictEqual(input.tenderScopeOnly, false);
+  });
+});
