@@ -71,6 +71,17 @@ export type AuditAction =
   // panel → mark advisory NOT_REQUIRED_BY_TOR / POST_AWARD_DELIVERABLE /
   // DONOR_TEMPLATE_PROVIDED / ADDED_TO_TECHNICAL / REOPEN).
   | "ADVISORY_RESOLUTION"
+  // Human approval / revocation of a regex-fallback analysis. Recorded
+  // when a senior engineer confirms a regex-fallback analysis is
+  // sufficient (or revokes that confirmation), so the readiness scoring
+  // helper and the generate route can decide whether to allow final
+  // proposal generation from that analysis.
+  | "ANALYSIS_REGEX_FALLBACK_APPROVED"
+  | "ANALYSIS_REGEX_FALLBACK_REVOKED"
+  // Generate routes refused to produce a final proposal because the
+  // analysis source was an unapproved regex fallback (see
+  // lib/engine/analysis-source.ts).
+  | "GENERATION_BLOCKED_REGEX_FALLBACK"
   // Knowledge vault — expert and project lifecycle events.
   | "EXPERT_CREATE" | "EXPERT_UPDATE" | "EXPERT_DELETE" | "EXPERT_REVIEW"
   | "PROJECT_CREATE" | "PROJECT_UPDATE" | "PROJECT_DELETE" | "PROJECT_REVIEW";

@@ -10,6 +10,8 @@ import { extractTenderLanguageEchoes, formatEchoesForPrompt } from "../../../../
 import { extractTenderFacts, formatFactsForPrompt } from "../../../../../lib/engine/tender-facts-extractor";
 import { buildProposalCacheKey, getCachedProposal, setCachedProposal } from "../../../../../lib/proposal-cache";
 import { fallbackProposal, selectReviewedEvidenceForAIDraft } from "../../../../../lib/engine/ai-proposal-fallback";
+import { assertAnalysisReadyForFinalGeneration } from "../../../../../lib/engine/analysis-source";
+import { logAction } from "../../../../../lib/audit";
 
 // Vercel route timeout — Claude proposal generation needs >10s default.
 // 60 = Hobby max; Pro applies its own plan limit when this is exceeded.
@@ -144,6 +146,29 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   ]);
 
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
+
+  // ── Regex-fallback analysis gate (Part 4) ────────────────────────────────
+  // Mirror the gate in /api/tenders/[id]/generate so the AI-proposal route
+  // also refuses to produce final-quality output from an unapproved
+  // regex-fallback analysis. Chunked drafts and the deterministic
+  // fallbackProposal() path are NOT considered "final" here, so we only
+  // block when this is not the explicit fallback flow.
+  const analysisGate = await assertAnalysisReadyForFinalGeneration(prisma, id, tender);
+  if (!analysisGate.ok && isAIEnabled() && company) {
+    await logAction({
+      userId,
+      action: "GENERATION_BLOCKED_REGEX_FALLBACK",
+      entityType: "Tender",
+      entityId: id,
+      description: "AI proposal generation blocked: analysis source is regex fallback and has not been human-approved.",
+    });
+    return NextResponse.json({
+      error: analysisGate.message,
+      code: analysisGate.code,
+      nextAction: analysisGate.nextAction,
+      details: "Re-run AI Analyze with healthy providers, or POST /api/tenders/[id]/approve-analysis to explicitly approve the current regex-fallback analysis.",
+    }, { status: 409 });
+  }
 
   const companyName = company?.name ?? "Our Company";
   const companyProfile = company?.profileSummary ?? (company as { description?: string | null } | null)?.description ?? "";
