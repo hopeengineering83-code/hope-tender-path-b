@@ -297,6 +297,43 @@ export default function CompanyPage() {
         <p className="mt-1 text-slate-500 text-sm">Reusable company knowledge for all tender proposals.</p>
       </div>
 
+      {(() => {
+        const checks = [
+          { label: "Company name", done: !!company.name },
+          { label: "Legal name", done: !!company.legalName },
+          { label: "Description", done: !!company.description },
+          { label: "Address", done: !!company.address },
+          { label: "Email", done: !!company.email },
+          { label: "Registration number", done: !!company.registrationNumber },
+          { label: "TIN", done: !!company.tin },
+          { label: "Service lines", done: (company.serviceLines||[]).length > 0 },
+          { label: "Sectors", done: (company.sectors||[]).length > 0 },
+          { label: "Profile summary", done: !!company.profileSummary },
+          { label: "At least 1 expert", done: (company.experts||[]).length > 0 },
+          { label: "At least 1 project", done: (company.projects||[]).length > 0 },
+          { label: "At least 1 document", done: docs.length > 0 },
+        ];
+        const done = checks.filter(c => c.done).length;
+        const pct = Math.round((done / checks.length) * 100);
+        const barColor = pct >= 80 ? "bg-green-500" : pct >= 50 ? "bg-amber-400" : "bg-red-400";
+        const textColor = pct >= 80 ? "text-green-600" : pct >= 50 ? "text-amber-600" : "text-red-600";
+        const missing = checks.filter(c => !c.done).map(c => c.label);
+        return (
+          <div className="rounded-2xl border bg-white p-5 shadow-sm">
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-sm font-medium text-slate-700">Profile completeness</p>
+              <span className={`text-sm font-bold ${textColor}`}>{pct}%</span>
+            </div>
+            <div className="h-2 w-full rounded-full bg-slate-100 overflow-hidden">
+              <div className={`h-full rounded-full transition-all ${barColor}`} style={{ width: `${pct}%` }} />
+            </div>
+            {missing.length > 0 && (
+              <p className="mt-2 text-xs text-slate-400">Missing: {missing.join(", ")}</p>
+            )}
+          </div>
+        );
+      })()}
+
       <div className="grid gap-4 grid-cols-2 xl:grid-cols-4">
         {[
           { label:"Documents", value:docs.length, color:"text-blue-600" },

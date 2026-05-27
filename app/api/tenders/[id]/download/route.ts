@@ -147,6 +147,21 @@ async function zipPackage(userId: string, tender: any) {
   const entries = scope.entries.filter((entry) => Boolean(entry.generatedDocId && byId.get(entry.generatedDocId)));
   if (!entries.length) return err("Final ZIP has no entries after scope filtering.", 409, { code: "NO_ZIP_ENTRIES_AFTER_SCOPE_FILTERING", exclusions: scope.exclusions });
 
+  // Pre-check: identify entries whose document has no file content before attempting ZIP.
+  // This gives a clear structured error listing exactly which documents need regenerating,
+  // rather than a generic storage error mid-loop.
+  const noContent = entries
+    .map((entry) => byId.get(entry.generatedDocId!))
+    .filter((doc): doc is ExportReadyDocument => !!doc && !doc.fileContent && !doc.storagePath);
+  if (noContent.length) {
+    const names = noContent.map((d) => d.exactFileName ?? d.name ?? d.id);
+    return err(
+      `${noContent.length} document(s) have no file content and cannot be exported: ${names.join(", ")}. Run auto-finalize or regenerate these documents first.`,
+      409,
+      { code: "DOCUMENTS_MISSING_CONTENT", documents: noContent.map((d) => ({ id: d.id, name: d.exactFileName ?? d.name })) },
+    );
+  }
+
   // Duplicate filename guard — two docs with the same ZIP path would silently overwrite each other.
   const seenNames = new Set<string>();
   const dupes: string[] = [];
