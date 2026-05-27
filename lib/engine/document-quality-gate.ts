@@ -32,6 +32,207 @@
 import { documentHygieneIssues } from "./export-readiness";
 import { looksLikeMetadataPlaceholder, METADATA_PLACEHOLDER_PATTERNS } from "./tender-metadata-completeness";
 
+// ── Document-type gating ─────────────────────────────────────────────────────
+
+export type DocumentGatingCategory =
+  | "NARRATIVE"          // technical proposal, methodology, cover letter, work plan, etc.
+  | "CV_PACKAGE"         // expert CVs (lighter gating: word count + no AI traces)
+  | "PROJECT_REFERENCE"  // project references (lighter gating)
+  | "FINANCIAL_OFFICIAL" // audited financials, bank statements, financial capacity evidence
+  | "LEGAL_OFFICIAL"     // business licenses, registration certs, tax clearance, TIN/VAT
+  | "BID_FORM"           // bid forms, tender forms, declarations, undertakings, integrity pact, bid bond
+  | "FINANCIAL_PROPOSAL" // financial envelope: BOQ, price schedule, rate card
+  | "SUBMISSION_CONTROL" // submission rules, packaging rules, deadline instructions
+  | "COMPLIANCE_MATRIX"  // compliance matrix (light narrative check)
+  | "OTHER";             // everything else — apply light checks only
+
+const FINANCIAL_OFFICIAL_PATTERNS: RegExp[] = [
+  /audited\s+financial/i,
+  /financial\s+capacity/i,
+  /financial\s+evidence/i,
+  /bank\s+statement/i,
+  /bank\s+guarantee/i,
+  /turnover\s+evidence/i,
+  /financial\s+statement/i,
+  /annual\s+report/i,
+  /balance\s+sheet/i,
+  /income\s+statement/i,
+  /profit\s+.*loss/i,
+];
+
+const LEGAL_OFFICIAL_PATTERNS: RegExp[] = [
+  /trade\s+licen/i,
+  /business\s+licen/i,
+  /registration\s+cert/i,
+  /tax\s+clearance/i,
+  /tin\s+cert/i,
+  /vat\s+cert/i,
+  /legal\s+entity/i,
+  /certificate\s+of\s+incorporation/i,
+  /memorandum\s+of\s+(association|understanding)/i,
+];
+
+const BID_FORM_PATTERNS_GATING: RegExp[] = [
+  /\bbid\s+form\b/i,
+  /\btender\s+form\b/i,
+  /\bdeclaration\s+(?:of|form)\b/i,
+  /\bundertaking\b/i,
+  /\bintegrity\s+pact\b/i,
+  /\bbid\s+bond\b/i,
+  /\bbid\s+security\b/i,
+];
+
+const FINANCIAL_PROPOSAL_PATTERNS_GATING: RegExp[] = [
+  /financial\s+proposal/i,
+  /commercial\s+proposal/i,
+  /price\s+schedule/i,
+  /rate\s+card/i,
+  /bill\s+of\s+quantities/i,
+  /\bboq\b/i,
+  /quotation/i,
+  /cost\s+breakdown/i,
+];
+
+const SUBMISSION_CONTROL_PATTERNS_GATING: RegExp[] = [
+  /submission\s+(method|rules?|format|deadline|packaging|delivery|instruction)/i,
+  /packaging\s+rules?/i,
+  /file\s+(?:naming|format|packaging)\s+rules?/i,
+  /delivery\s+(?:rules?|instruction)/i,
+  /portal\s+submission/i,
+  /email\s+submission/i,
+];
+
+export function detectDocumentGatingCategory(label: string, documentType?: string | null): DocumentGatingCategory {
+  const dt = (documentType ?? "").toUpperCase();
+  // Check documentType field first (most reliable)
+  if (dt === "FINANCIAL_EVIDENCE" || dt === "OFFICIAL_FINANCIAL_EVIDENCE") return "FINANCIAL_OFFICIAL";
+  if (dt === "LEGAL_EVIDENCE" || dt === "OFFICIAL_LEGAL_EVIDENCE") return "LEGAL_OFFICIAL";
+  if (dt === "BID_FORM" || dt === "TENDER_FORM") return "BID_FORM";
+  if (dt === "SUBMISSION_RULES" || dt === "CONTROL" || dt === "INTERNAL_COMPLIANCE_CONTROL") return "SUBMISSION_CONTROL";
+  if (dt === "FINANCIAL_PROPOSAL" || dt === "COMMERCIAL_PROPOSAL") return "FINANCIAL_PROPOSAL";
+  if (dt === "FORM_OR_TEMPLATE" || dt === "FORM_TEMPLATE_TO_COMPLETE" || dt === "ORIGINAL_EVIDENCE_ATTACHMENT") return "BID_FORM";
+  if (dt === "EXPERT_CV_PACKAGE" || dt === "CV_PACKAGE") return "CV_PACKAGE";
+  if (dt === "PROJECT_REFERENCE_PACKAGE" || dt === "PROJECT_REFERENCE") return "PROJECT_REFERENCE";
+
+  // Fall back to label matching
+  if (FINANCIAL_OFFICIAL_PATTERNS.some((rx) => rx.test(label))) return "FINANCIAL_OFFICIAL";
+  if (LEGAL_OFFICIAL_PATTERNS.some((rx) => rx.test(label))) return "LEGAL_OFFICIAL";
+  if (BID_FORM_PATTERNS_GATING.some((rx) => rx.test(label))) return "BID_FORM";
+  if (FINANCIAL_PROPOSAL_PATTERNS_GATING.some((rx) => rx.test(label))) return "FINANCIAL_PROPOSAL";
+  if (SUBMISSION_CONTROL_PATTERNS_GATING.some((rx) => rx.test(label))) return "SUBMISSION_CONTROL";
+  if (/\bexpert\s+cv\b|\bcv\s+package\b|\bstaff.*cv\b/i.test(label)) return "CV_PACKAGE";
+  if (/project\s+(reference|experience).*package/i.test(label)) return "PROJECT_REFERENCE";
+  if (/compliance\s+matrix/i.test(label)) return "COMPLIANCE_MATRIX";
+  return "NARRATIVE";
+}
+
+function buildNonNarrativeReport(
+  category: DocumentGatingCategory,
+  _label: string,
+  input: DocumentQualityInput,
+): DocumentQualityReport {
+  const text = normalize(input.visibleText);
+  const wordCount = text ? text.split(/\s+/).filter(Boolean).length : 0;
+  const issues: DocumentQualityIssue[] = [];
+
+  // For all official-original types: if they have narrative placeholder content, flag it.
+  if (category === "FINANCIAL_OFFICIAL" || category === "LEGAL_OFFICIAL" || category === "BID_FORM") {
+    // Check for AI/meta traces — still a problem even for official originals
+    if (text && /\b(as an ai|ai language model|chatgpt|claude|gemini|generated by ai|bid-team action)\b/i.test(text)) {
+      issues.push({ code: "AI_TRACE", severity: "HIGH", message: "Generated placeholder for official original contains AI/meta traces." });
+    }
+    // Check for metadata placeholders (Bid-Team to confirm, TBC, [insert...]) — official originals must not contain these
+    const metadataPlaceholderHits = text ? METADATA_PLACEHOLDER_PATTERNS.reduce((count, rx) => {
+      const matches = text.match(new RegExp(rx.source, rx.flags.includes("g") ? rx.flags : `${rx.flags}g`));
+      return count + (matches ? matches.length : 0);
+    }, 0) : 0;
+    if (metadataPlaceholderHits > 0 || (text && /\[(insert|add|fill|placeholder|todo|tbd)[^\]]*\]/i.test(text))) {
+      issues.push({ code: "OFFICIAL_ORIGINAL_PLACEHOLDER_RISK", severity: "HIGH", message: `${category === "BID_FORM" ? "Bid/tender form" : "Official evidence document"} requires the tender-issued original — generated placeholder must be replaced with the actual official document.` });
+    }
+    const hasHighIssue = issues.some((i) => i.severity === "HIGH");
+    const score = issues.length > 0 ? 30 : 60;
+    return {
+      score,
+      severity: issues.length > 0 ? (hasHighIssue ? "FAILED" : "POOR") : "WARNING",
+      recommendedStatus: hasHighIssue ? "QUALITY_FAILED" : (issues.length > 0 ? "NEEDS_REWRITE" : "NEEDS_REWRITE"), // caller should override to REPLACE_WITH_ORIGINAL for official originals
+      wordCount,
+      sectionCount: 0,
+      requiredSectionsPresent: [],
+      missingRequiredSections: [],
+      requirementCoverageRatio: 1,
+      evidenceReferenceCount: 0,
+      issues,
+      notes: [`Non-narrative document (category: ${category}). Requires official original attachment — narrative quality gate does not apply.`],
+    };
+  }
+
+  if (category === "SUBMISSION_CONTROL") {
+    return {
+      score: 100,
+      severity: "GOOD",
+      recommendedStatus: "PASSED",
+      wordCount,
+      sectionCount: 0,
+      requiredSectionsPresent: [],
+      missingRequiredSections: [],
+      requirementCoverageRatio: 1,
+      evidenceReferenceCount: 0,
+      issues: [],
+      notes: ["Submission rule / control record — excluded from narrative quality gate."],
+    };
+  }
+
+  if (category === "FINANCIAL_PROPOSAL") {
+    // Financial proposals: check for AI traces but skip pricing-leakage check (it IS a pricing doc)
+    if (text && /\b(as an ai|ai language model|chatgpt|claude|gemini)\b/i.test(text)) {
+      issues.push({ code: "AI_TRACE", severity: "HIGH", message: "Financial proposal contains AI/meta traces." });
+    }
+    if (text && wordCount < 50 && wordCount > 0) {
+      issues.push({ code: "TOO_SHORT", severity: "HIGH", message: `Financial proposal has only ${wordCount} words.` });
+    }
+    const score = Math.max(0, 100 - issues.length * 25);
+    return {
+      score,
+      severity: severityFromScore(score),
+      recommendedStatus: issues.length > 0 ? "QUALITY_FAILED" : "PASSED",
+      wordCount,
+      sectionCount: 0,
+      requiredSectionsPresent: [],
+      missingRequiredSections: [],
+      requirementCoverageRatio: 1,
+      evidenceReferenceCount: 0,
+      issues,
+      notes: ["Financial proposal — pricing-leakage check skipped; AI trace check applied."],
+    };
+  }
+
+  // CV_PACKAGE and PROJECT_REFERENCE: lighter checks
+  const hygieneDoc = { name: input.doc.name ?? "", exactFileName: input.doc.exactFileName ?? null, documentType: input.doc.documentType ?? null, format: input.doc.format ?? null };
+  const hygiene = text ? documentHygieneIssues(text, hygieneDoc) : [];
+  for (const h of hygiene) {
+    if (/AI\/meta-preparation/i.test(h)) issues.push({ code: "AI_TRACE", severity: "HIGH", message: h });
+    else if (/Placeholder/i.test(h)) issues.push({ code: "PLACEHOLDER", severity: "HIGH", message: h });
+    // Skip pricing leakage for financial proposals
+  }
+  if (wordCount > 0 && wordCount < 80) {
+    issues.push({ code: "TOO_SHORT", severity: "HIGH", message: `Document has only ${wordCount} words.` });
+  }
+  const score = Math.max(0, 100 - issues.reduce((s, i) => s + (i.severity === "HIGH" ? 25 : i.severity === "MEDIUM" ? 12 : 5), 0));
+  return {
+    score,
+    severity: severityFromScore(score),
+    recommendedStatus: score < 75 ? "QUALITY_FAILED" : "PASSED",
+    wordCount,
+    sectionCount: 0,
+    requiredSectionsPresent: [],
+    missingRequiredSections: [],
+    requirementCoverageRatio: 1,
+    evidenceReferenceCount: 0,
+    issues,
+    notes: [`Non-narrative document category: ${category} — lightweight quality check applied.`],
+  };
+}
+
 export type DocumentQualitySeverity = "GOOD" | "WARNING" | "POOR" | "FAILED";
 
 export type DocumentQualityRecommendedStatus =
@@ -298,6 +499,17 @@ function recommendStatus(score: number, severity: DocumentQualitySeverity, issue
 export function assessGeneratedDocumentQuality(input: DocumentQualityInput): DocumentQualityReport {
   const doc = input.doc;
   const label = labelOf(doc);
+
+  // ── Document-type gate: non-narrative docs skip quality assessment ─────────
+  // Official originals, financial/legal evidence, CV packages, submission rules,
+  // and control rows are NOT narrative proposals. Running the narrative quality
+  // gate on them produces false QUALITY_FAILED results. Instead we return a
+  // minimal report that signals the correct handling path.
+  const gatingCategory = detectDocumentGatingCategory(label, doc.documentType);
+  if (gatingCategory !== "NARRATIVE") {
+    return buildNonNarrativeReport(gatingCategory, label, input);
+  }
+
   const text = normalize(input.visibleText);
   const wordCount = text ? text.split(/\s+/).filter(Boolean).length : 0;
   const sectionCount = countSections(text);
