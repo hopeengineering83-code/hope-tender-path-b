@@ -103,6 +103,11 @@ Branch: `fix/seven-pass-wiring-self-review-and-donor-regex`
 - `auto-finalize/route.ts`: calls `assessGeneratedDocumentQuality()` on cleaned text; passes `report.score` as `selfReviewScore` to `evaluateSevenPassForDocument()` so SELF_REVIEW_SCORING pass enforces ≥80 threshold instead of skipping with null
 - **1339 pass / 0 fail**
 
+### PR #490 — Industry-sector mismatch detection in tenderScopeOnly (merged ✅)
+- `lib/engine/seven-pass-generation-wiring.ts`: `detectTenderScopeOnly()` extended with `detectIndustrySectorMismatch()` — 6 sector fingerprints (PHARMA, CONSTRUCTION, OIL_GAS, IT_SYSTEMS, AGRICULTURE); requires ≥2 hits in both tender notes and doc text before flagging; conservative by design
+- 7 new tests in `seven-pass-generation-wiring.test.ts`
+- **1346 pass / 0 fail**
+
 ### PR #487 — Blocked-readiness recovery and document classification (merged ✅)
 Branch: `claude/relaxed-mendel-YHnOx`
 - `lib/engine/document-type-normalizer.ts` (NEW)
@@ -122,7 +127,6 @@ Branch: `claude/relaxed-mendel-YHnOx`
 - (none — all known gaps resolved)
 
 ### REMAINING KNOWN GAPS
-- [ ] `tenderScopeOnly` semantic scope drift (different industry) requires AI analysis — current proxy only catches reference-number mismatches
 - (none — all known gaps resolved)
 
 ---
@@ -154,6 +158,7 @@ Branch: `claude/relaxed-mendel-YHnOx`
 - After PR #486 (pending): **1315 pass / 0 fail**
 - After PR #487 (merged): **1330 pass / 0 fail** (+15 new tests)
 - After PR #489 (merged): **1339 pass / 0 fail**
+- After PR #490 (merged): **1346 pass / 0 fail**
 - Never regress below the baseline at merge time
 
 ---
@@ -166,4 +171,4 @@ Branch: `claude/relaxed-mendel-YHnOx`
 5. Work the "IMMEDIATE" queue first
 6. Update this file at the end of every session
 
-_Last updated: 2026-05-27 by Claude after PR #489 merge — all known gaps resolved; test baseline 1339 pass / 0 fail_
+_Last updated: 2026-05-27 by Claude after PR #490 merge — all known gaps resolved; test baseline 1346 pass / 0 fail_
