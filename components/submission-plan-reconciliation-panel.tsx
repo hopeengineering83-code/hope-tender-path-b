@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { getSession } from "../lib/auth";
 import { prisma, prismaReady } from "../lib/prisma";
-import { buildSubmissionPlan, findExtraGeneratedDocuments, findMissingGeneratedDocuments, submissionPlanFileCount } from "../lib/engine/submission-plan";
+import { buildSubmissionPlan, findExtraGeneratedDocuments, findMissingGeneratedDocuments, submissionPlanFileCount, type SubmissionEnvelope } from "../lib/engine/submission-plan";
 import { GenerateMissingPlanFilesButton } from "./generate-missing-plan-files-button";
 import { ReconcileStaleFilesButton } from "./reconcile-stale-files-button";
 
@@ -12,6 +12,12 @@ function statusClass(ok: boolean) {
 function docStatusLabel(status?: string | null) {
   return (status ?? "PLANNED").replace(/_/g, " ");
 }
+
+const ENVELOPE_BADGE: Record<SubmissionEnvelope, string> = {
+  TECHNICAL: "bg-blue-100 text-blue-700",
+  FINANCIAL: "bg-amber-100 text-amber-700",
+  ADMIN:     "bg-slate-100 text-slate-600",
+};
 
 export async function SubmissionPlanReconciliationPanel({ tenderId }: { tenderId: string }) {
   const userId = await getSession();
@@ -79,6 +85,7 @@ export async function SubmissionPlanReconciliationPanel({ tenderId }: { tenderId
               <tr>
                 <th className="px-3 py-2">Order</th>
                 <th className="px-3 py-2">Tender-required file</th>
+                <th className="px-3 py-2">Envelope</th>
                 <th className="px-3 py-2">Format</th>
                 <th className="px-3 py-2">Status</th>
                 <th className="px-3 py-2">Review</th>
@@ -93,6 +100,11 @@ export async function SubmissionPlanReconciliationPanel({ tenderId }: { tenderId
                     <td className="px-3 py-2">
                       <p className="font-semibold text-slate-900">{file.exactFileName}</p>
                       <p className="text-xs text-slate-500">{file.documentType}</p>
+                    </td>
+                    <td className="px-3 py-2">
+                      <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${ENVELOPE_BADGE[file.envelope ?? "TECHNICAL"]}`}>
+                        {file.envelope ?? "TECHNICAL"}
+                      </span>
                     </td>
                     <td className="px-3 py-2">{file.format}</td>
                     <td className="px-3 py-2">{generated ? docStatusLabel(generated.generationStatus) : "MISSING"}</td>
