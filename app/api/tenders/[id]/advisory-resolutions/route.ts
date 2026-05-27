@@ -1,0 +1,152 @@
+// Persistent donor advisory resolution endpoint.
+//
+// Why this exists:
+//   Donor safeguard advisories (DONOR_ESMP_MISSING, DONOR_LOGFRAME_MISSING,
+//   DONOR_ME_PLAN_MISSING, etc.) are non-blocking by default. A user can
+//   mark them as resolved (e.g. "not required by ToR", "post-award
+//   deliverable", "donor template provided", "added to technical proposal")
+//   and that decision MUST persist across re-checks — otherwise the
+//   advisory section keeps re-surfacing items the user already triaged.
+//
+// Storage strategy:
+//   Re-use the existing ComplianceGap table — same shape (tenderId,
+//   severity, title, description, isResolved, resolvedNote, etc.). We
+//   namespace donor advisory rows by:
+//     - title = "ADVISORY:<code>"
+//     - severity = "ADVISORY"
+//   This avoids a brand-new Prisma model + migration on Vercel.
+//
+// The canonical readiness helper (lib/engine/final-submission-readiness.ts)
+// reads these rows and skips resolved advisories so the user's prior
+// decision is honoured.
+
+import { NextResponse } from "next/server";
+import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
+import { prisma, prismaReady } from "../../../../../lib/prisma";
+import { logAction } from "../../../../../lib/audit";
+import { ADVISORY_GAP_PREFIX, buildAdvisoryGapTitle, parseAdvisoryGapTitle } from "../../../../../lib/engine/final-submission-readiness";
+
+export const dynamic = "force-dynamic";
+export const maxDuration = 10;
+
+const VALID_RESOLUTIONS = new Set([
+  "NOT_REQUIRED_BY_TOR",
+  "POST_AWARD_DELIVERABLE",
+  "DONOR_TEMPLATE_PROVIDED",
+  "ADDED_TO_TECHNICAL",
+  "REOPEN",
+]);
+
+function jsonError(message: string, status = 500, extra: Record<string, unknown> = {}) {
+  const code = typeof extra.code === "string" ? extra.code : "ADVISORY_RESOLUTION_ERROR";
+  return NextResponse.json({ ok: false, success: false, code, error: message, message, ...extra }, { status });
+}
+
+export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+  try {
+    let actor;
+    try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER", "REVIEWER"); }
+    catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
+    await prismaReady;
+    const { id } = await params;
+
+    // User scoping — make sure this user owns this tender before exposing
+    // any persisted resolutions.
+    const tender = await prisma.tender.findFirst({ where: { id, userId: actor.id }, select: { id: true } });
+    if (!tender) return jsonError("Tender not found", 404, { code: "TENDER_NOT_FOUND" });
+
+    const rows = await prisma.complianceGap.findMany({
+      where: { tenderId: id, severity: "ADVISORY", title: { startsWith: ADVISORY_GAP_PREFIX } },
+      select: { id: true, title: true, isResolved: true, resolvedNote: true, createdAt: true, updatedAt: true },
+      orderBy: { updatedAt: "desc" },
+    });
+
+    return NextResponse.json({
+      success: true,
+      resolutions: rows.map((row) => ({
+        code: parseAdvisoryGapTitle(row.title),
+        resolved: row.isResolved,
+        resolution: row.resolvedNote,
+        createdAt: row.createdAt.toISOString(),
+        updatedAt: row.updatedAt.toISOString(),
+      })),
+    });
+  } catch (error) {
+    console.error("advisory-resolutions GET failed", error);
+    return jsonError("Advisory resolution lookup failed.", 500, { code: "ADVISORY_RESOLUTION_RUNTIME_ERROR", detail: error instanceof Error ? error.message : String(error) });
+  }
+}
+
+export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  try {
+    let actor;
+    try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER", "REVIEWER"); }
+    catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
+    await prismaReady;
+    const { id } = await params;
+
+    const tender = await prisma.tender.findFirst({ where: { id, userId: actor.id }, select: { id: true } });
+    if (!tender) return jsonError("Tender not found", 404, { code: "TENDER_NOT_FOUND" });
+
+    const body = await req.json().catch(() => ({}));
+    const code = typeof body.code === "string" ? body.code.trim() : "";
+    const resolution = typeof body.resolution === "string" ? body.resolution.trim().toUpperCase() : "";
+    const note = typeof body.note === "string" ? body.note.trim().slice(0, 500) : "";
+
+    if (!code) return jsonError("Missing required field: code (e.g. DONOR_ESMP_MISSING).", 400, { code: "MISSING_CODE" });
+    if (!VALID_RESOLUTIONS.has(resolution)) {
+      return jsonError(`Invalid resolution. Use one of: ${Array.from(VALID_RESOLUTIONS).join(", ")}.`, 400, { code: "INVALID_RESOLUTION" });
+    }
+
+    const title = buildAdvisoryGapTitle(code);
+    const resolvedNote = note ? `${resolution} | ${note}` : resolution;
+
+    const existing = await prisma.complianceGap.findFirst({
+      where: { tenderId: id, severity: "ADVISORY", title },
+      select: { id: true },
+    });
+
+    // REOPEN deletes the persisted resolution so the advisory re-surfaces
+    // on the next readiness check. All other resolutions persist with
+    // isResolved=true so downstream consumers (tender-generation-readiness,
+    // bid-control) never see ADVISORY rows in their `where: isResolved=false`
+    // blocker queries.
+    if (resolution === "REOPEN") {
+      if (existing) await prisma.complianceGap.delete({ where: { id: existing.id } });
+    } else if (existing) {
+      await prisma.complianceGap.update({
+        where: { id: existing.id },
+        data: { isResolved: true, resolvedNote },
+      });
+    } else {
+      await prisma.complianceGap.create({
+        data: {
+          tenderId: id,
+          severity: "ADVISORY",
+          title,
+          description: `Donor advisory resolution for ${code} — recorded via Export Readiness panel.`,
+          isResolved: true,
+          resolvedNote,
+        },
+      });
+    }
+
+    await logAction({
+      userId: actor.id,
+      action: "ADVISORY_RESOLUTION",
+      entityType: "Tender",
+      entityId: id,
+      description: `Advisory ${code} marked ${resolution}${note ? ` — ${note}` : ""}`,
+    });
+
+    return NextResponse.json({
+      success: true,
+      code,
+      resolution,
+      resolved: resolution !== "REOPEN",
+    });
+  } catch (error) {
+    console.error("advisory-resolutions POST failed", error);
+    return jsonError("Advisory resolution failed.", 500, { code: "ADVISORY_RESOLUTION_RUNTIME_ERROR", detail: error instanceof Error ? error.message : String(error) });
+  }
+}
