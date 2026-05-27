@@ -39,6 +39,7 @@ export type ExportReadinessResult = {
   ok: boolean;
   failures: ExportReadinessFailure[];
   tenderLevelBlockers?: Array<{ category: string; severity: string; title: string; recommendedAction?: string | null }>;
+  advisoryWarnings?: Array<{ category: string; severity: string; title: string; recommendedAction?: string | null }>;
 };
 
 function generatedFileName(name: string): string {
@@ -257,9 +258,14 @@ function hasStrategyOnlySignals(files: Array<{ originalFileName: string; extract
   return strategyHits && !officialHits;
 }
 
-export async function checkTenderLevelExportBlockers(tenderId: string, docs: ExportReadyDocument[] = []): Promise<NonNullable<ExportReadinessResult["tenderLevelBlockers"]>> {
+export function donorSafeguardsExplicitlyRequired(sourceText: string): boolean {
+  return /(?:tor|terms?\s+of\s+reference|mandatory|required|must|shall).{0,80}(?:esmp|logframe|results?\s+framework|m&e|monitoring.*evaluation|environmental|social.*safeguard)|deliverable.{0,40}(?:esmp|logframe|m&e|results?\s+framework)/i.test(sourceText);
+}
+
+export async function checkTenderLevelExportBlockers(tenderId: string, docs: ExportReadyDocument[] = []): Promise<{ blockers: NonNullable<ExportReadinessResult["tenderLevelBlockers"]>; advisoryWarnings: NonNullable<ExportReadinessResult["advisoryWarnings"]> }> {
   await prismaReady;
   const blockers: NonNullable<ExportReadinessResult["tenderLevelBlockers"]> = [];
+  const advisoryWarnings: NonNullable<ExportReadinessResult["advisoryWarnings"]> = [];
 
   const tender = await prisma.tender.findUnique({
     where: { id: tenderId },
@@ -271,7 +277,7 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
     },
   });
 
-  if (!tender) return [tenderBlocker("TENDER_NOT_FOUND", "Tender not found for export readiness check.", "Reload the tender and run export readiness again.")];
+  if (!tender) return { blockers: [tenderBlocker("TENDER_NOT_FOUND", "Tender not found for export readiness check.", "Reload the tender and run export readiness again.")], advisoryWarnings };
 
   const packageMode = detectSubmissionPackageMode({
     submissionMethod: tender.submissionMethod,
@@ -343,34 +349,38 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
     const planText = tender.requirements.map((r) => `${r.title} ${r.description ?? ""}`).join(" ").toLowerCase();
     const docText = docs.map((d) => `${d.name} ${d.documentType ?? ""}`).join(" ").toLowerCase();
     const allText = `${planText} ${docText}`;
+    const sourceText = [tender.description, tender.analysisSummary, tender.notes, tender.intakeSummary, ...tender.requirements.map((r) => `${r.title} ${r.description ?? ""}`)].filter(Boolean).join(" ").toLowerCase();
+    const explicitlyRequired = donorSafeguardsExplicitlyRequired(sourceText);
+    const addDonorIssue = (code: string, title: string, action: string) => {
+      const issue = tenderBlocker(code, title, action, "MEDIUM");
+      if (explicitlyRequired) blockers.push(issue);
+      else advisoryWarnings.push(issue);
+    };
 
     if (!/esmp|environmental.*social.*management|esia|safeguard.*plan|environmental.*management.*plan/i.test(allText)) {
-      blockers.push(tenderBlocker(
+      addDonorIssue(
         "DONOR_ESMP_MISSING",
         "NGO/donor tender: Environmental and Social Management Plan (ESMP) not detected in submission plan or generated documents.",
-        "Add an ESMP section or annex to the technical proposal, or confirm the donor accepts a separate delivery milestone for the ESMP per the ToR.",
-        "MEDIUM",
-      ));
+        "Add ESMP section/annex, or mark as not required by ToR / separate post-award deliverable / donor template provided.",
+      );
     }
     if (!/logframe|log\s+frame|logical\s+framework|result[s]?\s+framework/i.test(allText)) {
-      blockers.push(tenderBlocker(
+      addDonorIssue(
         "DONOR_LOGFRAME_MISSING",
         "NGO/donor tender: Logical Framework (logframe / results framework) not detected in submission plan or generated documents.",
-        "Include a logframe with outputs, outcomes, and impact indicators in the technical proposal, or confirm the donor provides their own template.",
-        "MEDIUM",
-      ));
+        "Add logframe/results framework, or mark as not required by ToR / separate post-award deliverable / donor template provided.",
+      );
     }
     if (!/m&e\s+plan|monitoring.*evaluation|me\s+plan|m\s+and\s+e\s+plan|monitoring\s+plan/i.test(allText)) {
-      blockers.push(tenderBlocker(
+      addDonorIssue(
         "DONOR_ME_PLAN_MISSING",
         "NGO/donor tender: Monitoring & Evaluation (M&E) plan not detected in submission plan or generated documents.",
-        "Add an M&E plan section covering baseline, data collection methods, midline/endline evaluation, and reporting frequency.",
-        "MEDIUM",
-      ));
+        "Add M&E plan, or mark as not required by ToR / separate post-award deliverable / donor template provided.",
+      );
     }
   }
 
-  return blockers;
+  return { blockers, advisoryWarnings };
 }
 
 export async function checkFullExportReadiness(opts: { tenderId: string; docs: ExportReadyDocument[]; requireFileContent?: boolean }): Promise<ExportReadinessResult> {
@@ -378,6 +388,6 @@ export async function checkFullExportReadiness(opts: { tenderId: string; docs: E
   const docxHygieneFailures = await checkDocxHygieneReadiness(opts.docs);
   const byteFailures = await checkExportFileByteReadiness(opts.docs);
   const failures = mergeFailures(perDoc.failures, docxHygieneFailures, byteFailures);
-  const tenderLevelBlockers = await checkTenderLevelExportBlockers(opts.tenderId, opts.docs);
-  return { ok: failures.length === 0 && tenderLevelBlockers.length === 0, failures, tenderLevelBlockers };
+  const tenderReadiness = await checkTenderLevelExportBlockers(opts.tenderId, opts.docs);
+  return { ok: failures.length === 0 && tenderReadiness.blockers.length === 0, failures, tenderLevelBlockers: tenderReadiness.blockers, advisoryWarnings: tenderReadiness.advisoryWarnings };
 }

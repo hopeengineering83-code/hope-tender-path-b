@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 
 type ExportReadiness = {
   ok: boolean;
-  summary?: { totalBlockers?: number; documentBlockers?: number; tenderLevelBlockers?: number };
+  summary?: { totalBlockers?: number; documentBlockers?: number; tenderLevelBlockers?: number; advisoryWarnings?: number };
   message?: string;
 };
 
@@ -67,7 +67,7 @@ export function FinalSubmissionControlCenter({ tenderId, generationReadiness }: 
         no: 3,
         title: "Resolve final export blockers",
         state: exportState as "done" | "blocked" | "unknown",
-        status: exportReadiness ? (exportReadiness.ok ? "Export gate passed" : `${exportReadiness.summary?.totalBlockers ?? "Some"} blocker(s)`) : "Not checked",
+        status: exportReadiness ? (exportReadiness.ok ? "Export gate passed" : `${exportReadiness.summary?.documentBlockers ?? 0} document blockers · ${exportReadiness.summary?.tenderLevelBlockers ?? 0} tender blockers`) : "Not checked",
         action: "Open Export Readiness",
         href: "#export-readiness",
       },
@@ -75,9 +75,9 @@ export function FinalSubmissionControlCenter({ tenderId, generationReadiness }: 
         no: 4,
         title: "Download final ZIP",
         state: exportReadiness?.ok ? "done" as const : "blocked" as const,
-        status: exportReadiness?.ok ? "Available" : "Blocked until export gate passes",
-        action: "Download ZIP",
-        href: `/api/tenders/${tenderId}/download?type=zip`,
+        status: exportReadiness?.ok ? "Available" : "Resolve blockers first",
+        action: exportReadiness?.ok ? "Download ZIP" : "Download blocked",
+        href: exportReadiness?.ok ? `/api/tenders/${tenderId}/download?type=zip` : "#export-readiness",
       },
     ];
   }, [exportReadiness, generationBlocked, generationReadiness?.analysisSourceGate, generationReady, tenderId]);
@@ -103,7 +103,7 @@ export function FinalSubmissionControlCenter({ tenderId, generationReadiness }: 
         <div>
           <h2 className="text-base font-semibold text-slate-900">Final Submission Control Center</h2>
           <p className="mt-1 text-xs text-slate-500">
-            Use this as the main workflow. Generation readiness only means documents can be generated; final export is separate and must pass the export gate.
+            Approved means the tender record is approved for processing. It does not mean final submission is ready; final submission requires Step 3 export gate to pass.
           </p>
         </div>
         <button

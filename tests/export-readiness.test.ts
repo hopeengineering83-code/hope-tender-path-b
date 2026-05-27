@@ -9,7 +9,7 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import JSZip from "jszip";
-import { checkDocxHygieneReadiness, checkExportReadiness, documentHygieneIssues, exportReadinessError, filePlanBlockersFromLists, isReadyForFinalExport } from "../lib/engine/export-readiness";
+import { checkDocxHygieneReadiness, checkExportReadiness, documentHygieneIssues, donorSafeguardsExplicitlyRequired, exportReadinessError, filePlanBlockersFromLists, isReadyForFinalExport } from "../lib/engine/export-readiness";
 
 // Minimal base64 with ZIP/PK magic bytes (0x50 0x4B) — passes looksLikeBase64Docx check.
 const MINIMAL_DOCX_B64 = "UEsDBA==";
@@ -183,5 +183,17 @@ describe("filePlanBlockersFromLists", () => {
       { ...READY, id: "doc-2", exactOrder: 2, exactFileName: "Technical-Proposal.docx" },
     ], null, JSON.stringify(["Technical-Proposal.docx", "Financial-Proposal.docx"]));
     assert.ok(blockers.some((b) => b.category === "FILE_ORDER" && b.severity === "HIGH"));
+  });
+});
+
+describe("donor safeguard mandatory detection", () => {
+  it("returns false for donor-funded context without explicit ToR requirement wording", () => {
+    const text = "NGO donor-funded assignment. Suggest ESMP and logframe where relevant. Donor may provide templates post-award.";
+    assert.equal(donorSafeguardsExplicitlyRequired(text), false);
+  });
+
+  it("returns true when ToR explicitly requires ESMP/logframe/M&E deliverables", () => {
+    const text = "Terms of Reference: bidder shall include ESMP, results framework/logframe, and M&E plan as mandatory deliverables.";
+    assert.equal(donorSafeguardsExplicitlyRequired(text), true);
   });
 });

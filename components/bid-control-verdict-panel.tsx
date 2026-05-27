@@ -109,7 +109,7 @@ export async function BidControlVerdictPanel({ tenderId }: { tenderId: string })
           <p className="mt-1 max-w-3xl text-sm text-slate-600">Consolidates generation readiness, submission-plan reconciliation, compliance gaps, document validation, and review status into one final bid-control signal.</p>
         </div>
         <div className="rounded-xl bg-white px-4 py-3 text-right shadow-sm">
-          <p className="text-xs text-slate-500">Tender status</p>
+          <p className="text-xs text-slate-500">Tender workflow status</p>
           <p className="text-sm font-bold text-slate-900">{statusText(tender.status)}</p>
         </div>
       </div>
@@ -127,7 +127,7 @@ export async function BidControlVerdictPanel({ tenderId }: { tenderId: string })
           <p className="text-xs text-slate-500">Support pkg</p>
           <p className={`text-lg font-bold ${supportPackageReady ? "text-emerald-700" : "text-red-700"}`}>{supportPackageReady ? "Ready" : "Blocked"}</p>
         </div>
-        <div className="rounded-xl bg-white p-3"><p className="text-xs text-slate-500">Plan files</p><p className="text-lg font-bold text-slate-900">{Math.max(0, requiredPlanCount - missingPlanFiles.length)}/{requiredPlanCount}</p></div>
+        <div className="rounded-xl bg-white p-3"><p className="text-xs text-slate-500">Plan files</p><p className="text-lg font-bold text-slate-900">{requiredPlanCount === 0 && activeDocs > 0 ? "Mismatch" : `${Math.max(0, requiredPlanCount - missingPlanFiles.length)}/${requiredPlanCount}`}</p></div>
         <div className="rounded-xl bg-white p-3" title={`${activeDocs} non-superseded GeneratedDocument row(s). Includes ${extraPlanFiles.length} row(s) outside the current submission plan that should be reconciled or superseded.`}><p className="text-xs text-slate-500">Active rows{extraPlanFiles.length > 0 ? ` (${extraPlanFiles.length} stale)` : ""}</p><p className="text-lg font-bold text-slate-900">{activeDocs}</p></div>
         <div className="rounded-xl bg-white p-3"><p className="text-xs text-slate-500">Critical gaps</p><p className="text-lg font-bold text-slate-900">{criticalGaps.length}</p></div>
         <div className="rounded-xl bg-white p-3"><p className="text-xs text-slate-500">Ready for export</p><p className="text-lg font-bold text-slate-900">{activeDocs > 0 && ungeneratedDocs.length + unvalidatedDocs.length + unreviewedDocs.length === 0 ? "Yes" : "No"}</p></div>
