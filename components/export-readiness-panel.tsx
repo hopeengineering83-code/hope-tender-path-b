@@ -20,12 +20,34 @@ type TenderLevelBlocker = {
   recommendedAction?: string | null;
 };
 
+type AdvisoryWarning = TenderLevelBlocker & {
+  code?: string;
+  resolved?: boolean;
+  resolutionNote?: string | null;
+};
+
+type EnvelopeBreakdown = { TECHNICAL?: number; FINANCIAL?: number; ADMIN?: number };
+
 type ExportReadiness = {
   ok: boolean;
   tender: { id: string; title: string; status: string; stage: string; readinessScore: number };
-  summary: { activeDocuments: number; documentBlockers: number; tenderLevelBlockers: number; totalBlockers: number };
+  summary: {
+    activeDocuments: number;
+    documentBlockers: number;
+    tenderLevelBlockers: number;
+    advisoryWarnings?: number;
+    totalBlockers: number;
+    finalExportCandidates?: number;
+    workspaceDocuments?: number;
+    excludedInternalRows?: number;
+    envelopeBreakdown?: EnvelopeBreakdown;
+    strictTwoEnvelope?: boolean;
+    packageMode?: string;
+    planStatus?: string;
+  };
   documentBlockers: DocumentBlocker[];
   tenderLevelBlockers: TenderLevelBlocker[];
+  advisoryWarnings?: AdvisoryWarning[];
   message: string;
 };
 
@@ -61,6 +83,13 @@ function isOriginalRequired(blocker: DocumentBlocker): boolean {
   return /ORIGINAL_REQUIRED|REPLACE_WITH_ORIGINAL|tender-issued original|official-original/i.test(text);
 }
 
+const ADVISORY_RESOLUTION_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: "NOT_REQUIRED_BY_TOR", label: "Not required by ToR" },
+  { value: "POST_AWARD_DELIVERABLE", label: "Post-award deliverable" },
+  { value: "DONOR_TEMPLATE_PROVIDED", label: "Donor template provided" },
+  { value: "ADDED_TO_TECHNICAL", label: "Already added to technical proposal" },
+];
+
 export function ExportReadinessPanel({ tenderId }: { tenderId: string }) {
   const [readiness, setReadiness] = useState<ExportReadiness | null>(null);
   const [loading, setLoading] = useState(false);
@@ -69,6 +98,7 @@ export function ExportReadinessPanel({ tenderId }: { tenderId: string }) {
   const [supersedingOutsidePlan, setSupersedingOutsidePlan] = useState(false);
   const [autoFinalizing, setAutoFinalizing] = useState(false);
   const [generatingMissing, setGeneratingMissing] = useState(false);
+  const [resolvingAdvisory, setResolvingAdvisory] = useState<string | null>(null);
   const [vaultCandidates, setVaultCandidates] = useState<VaultCandidate[]>([]);
   const [selectedVaultOption, setSelectedVaultOption] = useState<Record<string, string>>({});
   const [attachingDocId, setAttachingDocId] = useState<string | null>(null);
@@ -77,7 +107,7 @@ export function ExportReadinessPanel({ tenderId }: { tenderId: string }) {
   const [autoFinalizeRemaining, setAutoFinalizeRemaining] = useState<number | null>(null);
   const fileInputs = useRef<Record<string, HTMLInputElement | null>>({});
 
-  const busy = loading || repairing || linkingVault || supersedingOutsidePlan || autoFinalizing || generatingMissing || Boolean(attachingDocId);
+  const busy = loading || repairing || linkingVault || supersedingOutsidePlan || autoFinalizing || generatingMissing || Boolean(attachingDocId) || Boolean(resolvingAdvisory);
 
   async function refresh() {
     setLoading(true);
@@ -152,6 +182,27 @@ export function ExportReadinessPanel({ tenderId }: { tenderId: string }) {
       setError(err instanceof Error ? err.message : "Auto-finalize failed");
     } finally {
       setAutoFinalizing(false);
+    }
+  }
+
+  async function resolveAdvisory(code: string, resolution: string) {
+    setResolvingAdvisory(code);
+    setError(null);
+    setRepairMessage(null);
+    try {
+      const res = await fetch(`/api/tenders/${tenderId}/advisory-resolutions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code, resolution }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.error) throw new Error(data.error ?? `Advisory resolution failed (${res.status})`);
+      setRepairMessage(`Marked advisory ${code} as ${resolution.toLowerCase().replace(/_/g, " ")}. Re-checking readiness.`);
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Advisory resolution failed");
+    } finally {
+      setResolvingAdvisory(null);
     }
   }
 
@@ -247,13 +298,17 @@ export function ExportReadinessPanel({ tenderId }: { tenderId: string }) {
 
   const ok = readiness?.ok;
   const hasDocumentBlockers = (readiness?.summary.documentBlockers ?? 0) > 0;
+  const advisoryWarnings = readiness?.advisoryWarnings ?? [];
+  const advisoryCount = readiness?.summary.advisoryWarnings ?? advisoryWarnings.length;
+  const strictTwoEnvelope = readiness?.summary.strictTwoEnvelope ?? false;
+  const envelopeBreakdown = readiness?.summary.envelopeBreakdown;
 
   return (
     <div className="rounded-2xl border bg-white p-5 shadow-sm" id="export-readiness">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h3 className="text-sm font-semibold text-slate-900">Export Readiness Gate</h3>
-          <p className="mt-0.5 text-xs text-slate-500">Shows exactly why final ZIP/export is blocked and what to fix next.</p>
+          <p className="mt-0.5 text-xs text-slate-500">Shows exactly why final ZIP/export is blocked and what to fix next. Advisory warnings do not block the gate.</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {readiness && (
@@ -292,9 +347,13 @@ export function ExportReadinessPanel({ tenderId }: { tenderId: string }) {
           <button type="button" onClick={() => void refresh()} disabled={busy} className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-medium text-white hover:bg-slate-800 disabled:opacity-50">
             {loading ? "Checking…" : readiness ? "Re-check" : "Check export gate"}
           </button>
-          {readiness && ok && (
+          {/* Download affordance — ONLY renders a real <a href> when the
+              canonical gate is open. When blocked, render a disabled
+              <button> with NO href so the user cannot accidentally hit
+              the URL. The download route also enforces this server-side. */}
+          {readiness && ok && !strictTwoEnvelope && (
             <a
-              href={`/api/tenders/${tenderId}/download`}
+              href={`/api/tenders/${tenderId}/download?type=zip`}
               download
               className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-medium text-white hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-400"
               title="All blockers cleared — download the final submission ZIP."
@@ -302,14 +361,45 @@ export function ExportReadinessPanel({ tenderId }: { tenderId: string }) {
               ⬇ Download Final ZIP
             </a>
           )}
+          {readiness && ok && strictTwoEnvelope && (
+            <div className="flex flex-wrap gap-1">
+              <a
+                href={`/api/tenders/${tenderId}/download?type=zip&envelope=technical`}
+                download
+                className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-medium text-white hover:bg-emerald-700"
+                title="Two-envelope tender — download the TECHNICAL ZIP only."
+              >
+                ⬇ Technical ZIP
+              </a>
+              <a
+                href={`/api/tenders/${tenderId}/download?type=zip&envelope=financial`}
+                download
+                className="rounded-lg bg-emerald-700 px-3 py-2 text-xs font-medium text-white hover:bg-emerald-800"
+                title="Two-envelope tender — download the FINANCIAL ZIP separately."
+              >
+                ⬇ Financial ZIP
+              </a>
+              {(envelopeBreakdown?.ADMIN ?? 0) > 0 && (
+                <a
+                  href={`/api/tenders/${tenderId}/download?type=zip&envelope=admin`}
+                  download
+                  className="rounded-lg bg-slate-600 px-3 py-2 text-xs font-medium text-white hover:bg-slate-700"
+                  title="Two-envelope tender — admin/eligibility ZIP."
+                >
+                  ⬇ Admin ZIP
+                </a>
+              )}
+            </div>
+          )}
           {readiness && !ok && (
             <button
               type="button"
               disabled
+              aria-disabled="true"
               className="cursor-not-allowed rounded-lg bg-slate-200 px-3 py-2 text-xs font-medium text-slate-400"
               title={`Download blocked — resolve all ${readiness.summary.totalBlockers} blocker(s) above, then re-check.`}
             >
-              ⬇ Download Final ZIP
+              Download blocked — resolve blockers first
             </button>
           )}
         </div>
@@ -360,7 +450,14 @@ export function ExportReadinessPanel({ tenderId }: { tenderId: string }) {
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <p className={`text-sm font-semibold ${ok ? "text-emerald-900" : "text-red-900"}`}>{ok ? "Export gate passed" : "Export gate blocked"}</p>
-                <p className={`mt-1 text-xs ${ok ? "text-emerald-700" : "text-red-700"}`}>{readiness.message}</p>
+                <p className={`mt-1 text-xs ${ok ? "text-emerald-700" : "text-red-700"}`}>
+                  {readiness.summary.documentBlockers} document blocker(s) · {readiness.summary.tenderLevelBlockers} tender blocker(s) · {advisoryCount} advisory warning(s)
+                </p>
+                {strictTwoEnvelope && (
+                  <p className="mt-1 text-[11px] font-medium text-amber-700">
+                    Strict two-envelope tender — download separate technical and financial ZIPs.
+                  </p>
+                )}
               </div>
               <div className="grid grid-cols-3 gap-2 text-center text-xs">
                 <div className="rounded-lg bg-white/70 px-2 py-1"><p className="font-bold text-slate-900">{readiness.summary.activeDocuments}</p><p className="text-slate-500">Docs</p></div>
@@ -387,7 +484,7 @@ export function ExportReadinessPanel({ tenderId }: { tenderId: string }) {
 
           {readiness.tenderLevelBlockers.length > 0 && (
             <div>
-              <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Tender-level blockers</p>
+              <p className="text-xs font-semibold uppercase tracking-wide text-red-700">Tender-level blockers</p>
               <ul className="mt-2 space-y-2">
                 {readiness.tenderLevelBlockers.map((blocker, i) => (
                   <li key={`${blocker.category}-${i}`} className="rounded-lg border border-red-100 bg-white p-3 text-xs">
@@ -407,7 +504,7 @@ export function ExportReadinessPanel({ tenderId }: { tenderId: string }) {
 
           {readiness.documentBlockers.length > 0 && (
             <div>
-              <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Document blockers</p>
+              <p className="text-xs font-semibold uppercase tracking-wide text-red-700">Document blockers</p>
               <ul className="mt-2 space-y-2">
                 {readiness.documentBlockers.map((blocker) => (
                   <li key={blocker.documentId} className="rounded-lg border border-slate-100 bg-white p-3 text-xs">
@@ -430,6 +527,43 @@ export function ExportReadinessPanel({ tenderId }: { tenderId: string }) {
                         </div>
                         <ul className="mt-2 list-disc space-y-1 pl-4 text-slate-600">{blocker.reasons.map((reason, i) => <li key={i}>{reason}</li>)}</ul>
                         <ul className="mt-2 list-disc space-y-1 pl-4 text-emerald-700">{blocker.nextActions.map((action, i) => <li key={i}>{action}</li>)}</ul>
+                      </div>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {advisoryWarnings.length > 0 && (
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">Advisory warnings (do not block export)</p>
+              <p className="mt-0.5 text-[10px] text-slate-500">
+                Missing donor safeguard artefacts are advisory by default and become blockers only when the tender/ToR explicitly requires them as submission deliverables.
+              </p>
+              <ul className="mt-2 space-y-2">
+                {advisoryWarnings.map((advisory, i) => (
+                  <li key={`${advisory.category}-${i}`} className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs">
+                    <div className="flex items-start gap-2">
+                      <span className="shrink-0 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">ADVISORY</span>
+                      <div className="min-w-0 flex-1">
+                        <p className="font-medium text-slate-900">{advisory.title}</p>
+                        <p className="mt-0.5 text-slate-600">{advisory.category}</p>
+                        {advisory.recommendedAction && <p className="mt-1 text-slate-700">Suggested: {advisory.recommendedAction}</p>}
+                        <div className="mt-2 flex flex-wrap gap-1.5">
+                          {ADVISORY_RESOLUTION_OPTIONS.map((opt) => (
+                            <button
+                              key={opt.value}
+                              type="button"
+                              disabled={busy || resolvingAdvisory === advisory.category}
+                              onClick={() => void resolveAdvisory(advisory.category, opt.value)}
+                              className="rounded-md border border-amber-300 bg-white px-2 py-1 text-[10px] font-medium text-amber-800 hover:bg-amber-100 disabled:opacity-50"
+                              title={`Mark this advisory as ${opt.label} (does not affect blockers).`}
+                            >
+                              {resolvingAdvisory === advisory.category ? "…" : opt.label}
+                            </button>
+                          ))}
+                        </div>
                       </div>
                     </div>
                   </li>

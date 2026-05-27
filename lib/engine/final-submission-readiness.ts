@@ -1,0 +1,510 @@
+// Canonical final-submission readiness helper.
+//
+// Single source of truth used by:
+//   - app/api/tenders/[id]/export-readiness/route.ts
+//   - app/api/tenders/[id]/download/route.ts (final ZIP gate)
+//   - components/bid-control-verdict-panel.tsx
+//   - components/final-submission-control-center.tsx (via the API)
+//   - components/export-readiness-panel.tsx (via the API)
+//   - app/api/admin/generated-proposals/audit/route.ts
+//
+// Why this lives here:
+//   Prior to this helper, every consumer rebuilt its own "is this tender
+//   ready?" logic from raw fields. That caused inconsistent counts across
+//   Bid Control, Export Gate, Final Submission Control Center, and the
+//   ZIP download route — the same tender could read "BID READY" in one
+//   place and "0 of 3 documents ready" in another. This module pulls
+//   the actual user-scoped tender, runs the existing
+//   checkFullExportReadiness pipeline, and returns ONE shape with:
+//     - documentBlockers  (per-doc reasons + suggested next actions)
+//     - tenderLevelBlockers (hard tender-level rules — e.g. ungenerated
+//                             planned docs, missing client name, package
+//                             mode mismatch, evaluator HIGH objections)
+//     - advisoryWarnings  (donor safeguards that the ToR did NOT
+//                          explicitly mandate, mark-as-resolved by user)
+//     - summary           (counts + envelope breakdown + planStatus)
+//     - planStatus enum   (one of the plan-vs-docs states)
+//
+// Acceptance: any change to readiness logic must go through this helper.
+// Consumers must NEVER inline blockers/advisory checks that conflict.
+
+import type { PrismaClient } from "@prisma/client";
+import {
+  checkFullExportReadiness,
+  type ExportReadinessFailure,
+  type ExportReadinessResult,
+  type ExportReadyDocument,
+} from "./export-readiness";
+import {
+  filterFinalExportCandidateDocuments,
+  isFinalExportCandidateDocument,
+  type DocumentLike,
+} from "./document-output-state";
+import {
+  buildSubmissionPlan,
+  findExtraGeneratedDocuments,
+  findMissingGeneratedDocuments,
+  inferEnvelope,
+  submissionPlanFileCount,
+  type SubmissionEnvelope,
+} from "./submission-plan";
+import { detectSubmissionPackageMode } from "./submission-package-mode";
+
+export type FinalReadinessSeverity = "HIGH" | "MEDIUM" | "LOW";
+
+export type FinalReadinessDocumentBlocker = {
+  documentId: string;
+  name: string;
+  fileName: string;
+  reasons: string[];
+  severity: FinalReadinessSeverity;
+  nextActions: string[];
+};
+
+export type FinalReadinessTenderBlocker = {
+  category: string;
+  severity: string;
+  title: string;
+  recommendedAction?: string | null;
+};
+
+export type FinalReadinessAdvisoryWarning = FinalReadinessTenderBlocker & {
+  code: string;
+  resolved?: boolean;
+  resolutionNote?: string | null;
+};
+
+export type FinalReadinessPlanStatus =
+  | "NO_PLAN_NO_DOCS"
+  | "NO_PLAN_WITH_ACTIVE_DOCS"
+  | "PLAN_MATCHED"
+  | "PLAN_MISSING_DOCS"
+  | "PLAN_EXTRA_DOCS"
+  | "PLAN_ORDER_MISMATCH"
+  | "PLAN_NAME_MISMATCH";
+
+export type FinalReadinessSummary = {
+  totalBlockers: number;
+  documentBlockers: number;
+  tenderLevelBlockers: number;
+  advisoryWarnings: number;
+  finalExportCandidates: number;
+  workspaceDocuments: number;
+  excludedInternalRows: number;
+  missingContentCount: number;
+  invalidSignatureCount: number;
+  hygieneIssueCount: number;
+  officialOriginalBlockers: number;
+  envelopeBreakdown: Record<SubmissionEnvelope, number>;
+  strictTwoEnvelope: boolean;
+  packageMode: string;
+  planStatus: FinalReadinessPlanStatus;
+};
+
+export type FinalSubmissionReadiness = {
+  ok: boolean;
+  tender: { id: string; title: string; status: string; stage: string; readinessScore: number };
+  documentBlockers: FinalReadinessDocumentBlocker[];
+  tenderLevelBlockers: FinalReadinessTenderBlocker[];
+  advisoryWarnings: FinalReadinessAdvisoryWarning[];
+  summary: FinalReadinessSummary;
+  message: string;
+};
+
+export type GetFinalSubmissionReadinessOptions = {
+  tenderId: string;
+  userId: string;
+  requireFileContent?: boolean;
+};
+
+// ── helpers ────────────────────────────────────────────────────────────────
+
+function nextActionForReason(reason: string): string {
+  if (/ORIGINAL_REQUIRED|REPLACE_WITH_ORIGINAL|tender-issued original/i.test(reason)) {
+    return "Attach or upload the exact tender-issued original form/template for this file. Do not use Repair safe document gaps for official-original rows.";
+  }
+  if (/NOT_EXPORTABLE/i.test(reason)) {
+    return "Manual review required: this row is marked NOT_EXPORTABLE and must not be included in the final package unless replaced by the official source file.";
+  }
+  if (/PLANNED|CONTROL_RECORD_ONLY|control, placeholder, or text-only/i.test(reason)) {
+    return "Generate the actual final file or attach the official original. Planned/control rows are not exportable files.";
+  }
+  if (/PDF_CONVERSION_REQUIRED|not a real PDF/i.test(reason)) {
+    return "Upload the final PDF required by the tender or provide a real PDF file before export.";
+  }
+  if (/NO_ACTIVE_GENERATED_DOCUMENTS/i.test(reason)) return "Generate the required documents before exporting.";
+  if (/generationStatus/i.test(reason)) return "Regenerate this document or reconcile the submission plan.";
+  if (/validationStatus/i.test(reason)) return "Run validation and fix reported document validation issues.";
+  if (/reviewStatus/i.test(reason)) return "Complete human review and mark the document READY_FOR_EXPORT.";
+  if (/fileContent|MISSING_CONTENT/i.test(reason)) return "Regenerate or upload the missing DOCX/PDF file content.";
+  if (/MARKDOWN|QUICK_DRAFT|DRAFT_ONLY|CONTROL|not a final export/i.test(reason)) {
+    return "Use Generate Docs or attach the tender-issued original; quick drafts, placeholders and control rows cannot be exported.";
+  }
+  return "Review and resolve this blocker before final export.";
+}
+
+function severityForReasons(reasons: string[]): FinalReadinessSeverity {
+  if (reasons.some((r) =>
+    /NO_ACTIVE_GENERATED_DOCUMENTS|fileContent|generationStatus|CONTROL|ORIGINAL_REQUIRED|PDF_CONVERSION_REQUIRED|NOT_EXPORTABLE|REPLACE_WITH_ORIGINAL|PLANNED|MISSING_CONTENT/i.test(r),
+  )) return "HIGH";
+  if (reasons.some((r) => /validationStatus|reviewStatus|MARKDOWN|QUICK_DRAFT|DRAFT_ONLY/i.test(r))) return "MEDIUM";
+  return "LOW";
+}
+
+function asReadyDoc(doc: {
+  id: string;
+  name: string;
+  exactFileName: string | null;
+  exactOrder: number | null;
+  documentType: string | null;
+  format: string | null;
+  generationStatus: string;
+  validationStatus: string;
+  reviewStatus: string;
+  fileContent: string | null;
+  storagePath: string | null;
+}): ExportReadyDocument {
+  return {
+    id: doc.id,
+    name: doc.name,
+    exactFileName: doc.exactFileName ?? null,
+    exactOrder: doc.exactOrder ?? null,
+    documentType: doc.documentType ?? null,
+    format: doc.format ?? null,
+    generationStatus: String(doc.generationStatus ?? ""),
+    validationStatus: String(doc.validationStatus ?? ""),
+    reviewStatus: String(doc.reviewStatus ?? ""),
+    fileContent: doc.fileContent ?? null,
+    storagePath: doc.storagePath ?? null,
+  };
+}
+
+function derivePlanStatus(opts: {
+  requiredPlanCount: number;
+  finalCandidateCount: number;
+  missingCount: number;
+  extraCount: number;
+  nameMismatch: boolean;
+  orderMismatch: boolean;
+}): FinalReadinessPlanStatus {
+  const { requiredPlanCount, finalCandidateCount, missingCount, extraCount, nameMismatch, orderMismatch } = opts;
+  if (requiredPlanCount === 0 && finalCandidateCount === 0) return "NO_PLAN_NO_DOCS";
+  if (requiredPlanCount === 0 && finalCandidateCount > 0) return "NO_PLAN_WITH_ACTIVE_DOCS";
+  if (missingCount > 0) return "PLAN_MISSING_DOCS";
+  if (extraCount > 0) return "PLAN_EXTRA_DOCS";
+  if (nameMismatch) return "PLAN_NAME_MISMATCH";
+  if (orderMismatch) return "PLAN_ORDER_MISMATCH";
+  return "PLAN_MATCHED";
+}
+
+function detectMessageType(failures: ExportReadinessFailure[]): {
+  missingContent: number;
+  invalidSignature: number;
+  hygiene: number;
+  originalRequired: number;
+} {
+  let missingContent = 0;
+  let invalidSignature = 0;
+  let hygiene = 0;
+  let originalRequired = 0;
+  for (const f of failures) {
+    if (f.reasons.some((r) => /fileContent is missing|MISSING_CONTENT|DOCUMENTS_MISSING_CONTENT|no file content/i.test(r))) missingContent += 1;
+    if (f.reasons.some((r) => /signature mismatch|not a real PDF|signature/i.test(r))) invalidSignature += 1;
+    if (f.reasons.some((r) => /AI\/meta-preparation|Placeholder|pricing language|hygiene/i.test(r))) hygiene += 1;
+    if (f.reasons.some((r) => /ORIGINAL_REQUIRED|REPLACE_WITH_ORIGINAL|NOT_EXPORTABLE|tender-issued original/i.test(r))) originalRequired += 1;
+  }
+  return { missingContent, invalidSignature, hygiene, originalRequired };
+}
+
+function buildMessage(input: { ok: boolean; documentBlockers: FinalReadinessDocumentBlocker[]; tenderLevelBlockers: FinalReadinessTenderBlocker[]; advisoryWarnings: FinalReadinessAdvisoryWarning[] }): string {
+  if (input.ok) return "Export gate passed. All final-package documents and tender-level controls are ready.";
+  const parts: string[] = [];
+  if (input.documentBlockers.length > 0) {
+    parts.push(
+      input.documentBlockers.length === 1
+        ? "1 document is not ready for export."
+        : `${input.documentBlockers.length} documents are not ready for export.`,
+    );
+  }
+  if (input.tenderLevelBlockers.length > 0) {
+    parts.push(`${input.tenderLevelBlockers.length} tender-level blocker(s) remain.`);
+  }
+  if (input.advisoryWarnings.length > 0) {
+    parts.push(`${input.advisoryWarnings.length} advisory warning(s) (do not block export, but should be reviewed).`);
+  }
+  return parts.length > 0 ? parts.join(" ") : "Export gate blocked.";
+}
+
+// ── donor advisory persistence using ComplianceGap (existing model) ───────
+//
+// We re-use the ComplianceGap table to persist user resolutions for donor
+// safeguard advisories without adding a new Prisma model (which would need
+// a migration on Vercel). The convention:
+//   - title  = `ADVISORY:${code}` (e.g., "ADVISORY:DONOR_ESMP_MISSING")
+//   - severity = "ADVISORY"
+//   - isResolved = true once user marks the advisory resolved
+//   - resolvedNote = one of:
+//        "NOT_REQUIRED_BY_TOR"
+//        "POST_AWARD_DELIVERABLE"
+//        "DONOR_TEMPLATE_PROVIDED"
+//        "ADDED_TO_TECHNICAL"
+//        plus optional free-text appended after " | "
+//
+// applyAdvisoryResolutions() removes resolved advisories from the
+// readiness response so re-checks honour the user's prior decision.
+
+export const ADVISORY_GAP_PREFIX = "ADVISORY:";
+
+export type AdvisoryResolutionKind =
+  | "NOT_REQUIRED_BY_TOR"
+  | "POST_AWARD_DELIVERABLE"
+  | "DONOR_TEMPLATE_PROVIDED"
+  | "ADDED_TO_TECHNICAL"
+  | "REOPEN";
+
+export function isAdvisoryCode(value: string): boolean {
+  return value.startsWith(ADVISORY_GAP_PREFIX);
+}
+
+export function buildAdvisoryGapTitle(code: string): string {
+  return `${ADVISORY_GAP_PREFIX}${code}`;
+}
+
+export function parseAdvisoryGapTitle(title: string): string | null {
+  if (!title.startsWith(ADVISORY_GAP_PREFIX)) return null;
+  return title.slice(ADVISORY_GAP_PREFIX.length);
+}
+
+async function loadAdvisoryResolutions(client: PrismaClient, tenderId: string): Promise<Map<string, { resolved: boolean; note: string | null }>> {
+  const rows = await client.complianceGap.findMany({
+    where: { tenderId, severity: "ADVISORY", title: { startsWith: ADVISORY_GAP_PREFIX } },
+    select: { title: true, isResolved: true, resolvedNote: true },
+  });
+  const out = new Map<string, { resolved: boolean; note: string | null }>();
+  for (const row of rows) {
+    const code = parseAdvisoryGapTitle(row.title);
+    if (!code) continue;
+    out.set(code, { resolved: row.isResolved, note: row.resolvedNote ?? null });
+  }
+  return out;
+}
+
+function applyAdvisoryResolutions(
+  advisoryWarnings: ExportReadinessResult["advisoryWarnings"] = [],
+  resolutions: Map<string, { resolved: boolean; note: string | null }>,
+): FinalReadinessAdvisoryWarning[] {
+  const out: FinalReadinessAdvisoryWarning[] = [];
+  for (const advisory of advisoryWarnings) {
+    const code = advisory.category;
+    const resolution = resolutions.get(code);
+    if (resolution?.resolved) continue; // honour the user's prior decision; do not re-surface
+    out.push({
+      ...advisory,
+      code,
+      resolved: false,
+      resolutionNote: resolution?.note ?? null,
+    });
+  }
+  return out;
+}
+
+// ── canonical helper ──────────────────────────────────────────────────────
+
+export async function getFinalSubmissionReadiness(
+  client: PrismaClient,
+  opts: GetFinalSubmissionReadinessOptions,
+): Promise<FinalSubmissionReadiness | null> {
+  const tender = await client.tender.findFirst({
+    where: { id: opts.tenderId, userId: opts.userId },
+    select: {
+      id: true,
+      title: true,
+      status: true,
+      stage: true,
+      readinessScore: true,
+      exactFileNaming: true,
+      exactFileOrder: true,
+      pageLimit: true,
+      submissionMethod: true,
+      submissionAddress: true,
+      submissionEmails: true,
+      analysisSummary: true,
+      evaluationMethodology: true,
+      notes: true,
+      requirements: {
+        select: {
+          id: true,
+          title: true,
+          description: true,
+          requirementType: true,
+          priority: true,
+          exactFileName: true,
+          exactOrder: true,
+          requiredQuantity: true,
+          pageLimit: true,
+          restrictions: true,
+          sectionReference: true,
+        },
+      },
+      generatedDocuments: {
+        where: { generationStatus: { not: "SUPERSEDED" } },
+        orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }],
+        select: {
+          id: true,
+          name: true,
+          exactFileName: true,
+          exactOrder: true,
+          documentType: true,
+          format: true,
+          generationStatus: true,
+          validationStatus: true,
+          reviewStatus: true,
+          fileContent: true,
+          storagePath: true,
+        },
+      },
+    },
+  });
+  if (!tender) return null;
+
+  const workspaceDocuments = tender.generatedDocuments.length;
+  const finalCandidates = filterFinalExportCandidateDocuments(tender.generatedDocuments);
+  const dedupedDocs = (() => {
+    const seen = new Set<string>();
+    const sorted = finalCandidates.slice().sort((a, b) => (a.exactOrder ?? 9999) - (b.exactOrder ?? 9999));
+    return sorted.filter((doc) => {
+      const key = (doc.exactFileName ?? doc.name ?? "").trim().toLowerCase();
+      if (!key) return true;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  })();
+  const readyDocs = dedupedDocs.map(asReadyDoc);
+
+  const readiness = await checkFullExportReadiness({
+    tenderId: opts.tenderId,
+    docs: readyDocs,
+    requireFileContent: opts.requireFileContent ?? false,
+  });
+
+  const documentBlockers: FinalReadinessDocumentBlocker[] = readiness.failures.map((failure) => ({
+    documentId: failure.documentId,
+    name: failure.name,
+    fileName: failure.fileName,
+    reasons: failure.reasons,
+    severity: severityForReasons(failure.reasons),
+    nextActions: Array.from(new Set(failure.reasons.map(nextActionForReason))),
+  }));
+
+  // Donor advisory persistence: honour user-saved resolutions so re-check
+  // does not re-surface advisories the user already triaged.
+  const resolutions = await loadAdvisoryResolutions(client, opts.tenderId);
+  const advisoryWarnings = applyAdvisoryResolutions(readiness.advisoryWarnings, resolutions);
+  const tenderLevelBlockers: FinalReadinessTenderBlocker[] = (readiness.tenderLevelBlockers ?? []).map((b) => ({
+    category: b.category,
+    severity: b.severity,
+    title: b.title,
+    recommendedAction: b.recommendedAction,
+  }));
+
+  // Plan reconciliation — used for the summary planStatus enum.
+  const plan = buildSubmissionPlan({
+    id: tender.id,
+    title: tender.title,
+    exactFileNaming: tender.exactFileNaming,
+    exactFileOrder: tender.exactFileOrder,
+    pageLimit: tender.pageLimit,
+    requirements: tender.requirements,
+  });
+  const requiredPlanCount = submissionPlanFileCount(plan);
+  const missingPlan = findMissingGeneratedDocuments(plan, finalCandidates);
+  const extraPlan = findExtraGeneratedDocuments(plan, finalCandidates);
+  const planNames = new Set(plan.files.map((f) => f.exactFileName.toLowerCase().trim()));
+  const actualNames = finalCandidates.map((d) => (d.exactFileName ?? d.name ?? "").toLowerCase().trim()).filter(Boolean);
+  const nameMismatch = requiredPlanCount > 0 && actualNames.some((n) => !planNames.has(n));
+  const orderMismatch = false; // currently surfaced via filePlanBlockersFromLists in tenderLevelBlockers
+
+  const detail = detectMessageType(readiness.failures);
+
+  // Envelope breakdown — used by the strict two-envelope guard and surfaced
+  // to UI/audit consumers.
+  const envelopeBreakdown: Record<SubmissionEnvelope, number> = { TECHNICAL: 0, FINANCIAL: 0, ADMIN: 0 };
+  for (const doc of finalCandidates) {
+    const env = inferEnvelope(doc.documentType ?? "TECHNICAL", doc.exactFileName ?? doc.name ?? "");
+    envelopeBreakdown[env] = (envelopeBreakdown[env] ?? 0) + 1;
+  }
+
+  const packageMode = detectSubmissionPackageMode({
+    submissionMethod: tender.submissionMethod,
+    submissionAddress: tender.submissionAddress,
+    submissionEmails: tender.submissionEmails,
+    exactFileNaming: tender.exactFileNaming,
+    exactFileOrder: tender.exactFileOrder,
+    analysisSummary: tender.analysisSummary,
+    evaluationMethodology: tender.evaluationMethodology,
+    notes: tender.notes,
+    requirements: tender.requirements,
+    files: [],
+  });
+  const strictTwoEnvelope = packageMode.mode === "SEPARATE_TECHNICAL_FINANCIAL";
+
+  const summary: FinalReadinessSummary = {
+    totalBlockers: documentBlockers.length + tenderLevelBlockers.length,
+    documentBlockers: documentBlockers.length,
+    tenderLevelBlockers: tenderLevelBlockers.length,
+    advisoryWarnings: advisoryWarnings.length,
+    finalExportCandidates: finalCandidates.length,
+    workspaceDocuments,
+    excludedInternalRows: workspaceDocuments - finalCandidates.length,
+    missingContentCount: detail.missingContent,
+    invalidSignatureCount: detail.invalidSignature,
+    hygieneIssueCount: detail.hygiene,
+    officialOriginalBlockers: detail.originalRequired,
+    envelopeBreakdown,
+    strictTwoEnvelope,
+    packageMode: packageMode.mode,
+    planStatus: derivePlanStatus({
+      requiredPlanCount,
+      finalCandidateCount: finalCandidates.length,
+      missingCount: missingPlan.length,
+      extraCount: extraPlan.length,
+      nameMismatch,
+      orderMismatch,
+    }),
+  };
+
+  const ok = readiness.ok && documentBlockers.length === 0 && tenderLevelBlockers.length === 0;
+  const message = buildMessage({ ok, documentBlockers, tenderLevelBlockers, advisoryWarnings });
+
+  return {
+    ok,
+    tender: {
+      id: tender.id,
+      title: tender.title,
+      status: tender.status,
+      stage: tender.stage,
+      readinessScore: tender.readinessScore ?? 0,
+    },
+    documentBlockers,
+    tenderLevelBlockers,
+    advisoryWarnings,
+    summary,
+    message,
+  };
+}
+
+// ── pure exports for tests ─────────────────────────────────────────────────
+
+export const __testing__ = {
+  severityForReasons,
+  nextActionForReason,
+  derivePlanStatus,
+  applyAdvisoryResolutions,
+  buildMessage,
+  detectMessageType,
+};
+
+// Re-export shared types so consumers don't need to also import from
+// ./document-output-state when they only want the canonical shape.
+export type { DocumentLike };

@@ -12,7 +12,7 @@ import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
 import { getSession } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
-import { checkExportReadiness, checkTenderLevelExportBlockers } from "../../../../../lib/engine/export-readiness";
+import { getFinalSubmissionReadiness } from "../../../../../lib/engine/final-submission-readiness";
 import { VersionActionsTable } from "./version-actions";
 
 export const dynamic = "force-dynamic";
@@ -36,9 +36,15 @@ export default async function TenderCommandCenter({ params }: { params: Promise<
   if (!tender) notFound();
 
   // ─── Readiness, blockers, evaluator state ───────────────────────────
-  const docReadiness = checkExportReadiness(tender.generatedDocuments);
-  const tenderReadiness = await checkTenderLevelExportBlockers(id);
-  const tenderBlockers = tenderReadiness.blockers;
+  // Use the canonical readiness helper so this page can NEVER show
+  // counts that disagree with Export Gate / Bid Control / FSCC.
+  const canonical = await getFinalSubmissionReadiness(prisma, { tenderId: id, userId, requireFileContent: false });
+  const docReadiness = {
+    ok: canonical ? canonical.summary.documentBlockers === 0 : false,
+    failures: canonical?.documentBlockers ?? [],
+  };
+  const tenderBlockers = canonical?.tenderLevelBlockers ?? [];
+  const advisoryWarnings = canonical?.advisoryWarnings ?? [];
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const objections: any[] = await (prisma as any).evaluatorObjection.findMany({
@@ -189,6 +195,14 @@ export default async function TenderCommandCenter({ params }: { params: Promise<
                 ))}
               </div>
             )}
+          </div>
+        )}
+        {advisoryWarnings.length > 0 && (
+          <div className="mt-2 rounded-lg bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-800">
+            <p className="font-semibold mb-2">Advisory warnings ({advisoryWarnings.length}) — non-blocking</p>
+            {advisoryWarnings.slice(0, 6).map((a, i) => (
+              <div key={`${a.category}-${i}`} className="mb-1 text-xs">• [{a.severity}] {a.title}</div>
+            ))}
           </div>
         )}
       </section>

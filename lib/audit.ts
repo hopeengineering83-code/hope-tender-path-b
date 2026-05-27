@@ -67,6 +67,10 @@ export type AuditAction =
   | "VAULT_EVIDENCE_LINKED"
   | "OUTSIDE_PLAN_SUPERSEDED"
   | "AUTO_FINALIZE_RUN"
+  // Donor advisory resolution recorded against a tender (Export Readiness
+  // panel → mark advisory NOT_REQUIRED_BY_TOR / POST_AWARD_DELIVERABLE /
+  // DONOR_TEMPLATE_PROVIDED / ADDED_TO_TECHNICAL / REOPEN).
+  | "ADVISORY_RESOLUTION"
   // Knowledge vault — expert and project lifecycle events.
   | "EXPERT_CREATE" | "EXPERT_UPDATE" | "EXPERT_DELETE" | "EXPERT_REVIEW"
   | "PROJECT_CREATE" | "PROJECT_UPDATE" | "PROJECT_DELETE" | "PROJECT_REVIEW";
