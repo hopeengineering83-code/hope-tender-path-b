@@ -439,4 +439,56 @@ describe("tenderScopeOnly sector mismatch proxy", () => {
     });
     assert.strictEqual(input.tenderScopeOnly, false);
   });
+
+  it("passes when tender is education and document is education", () => {
+    const educationNotes =
+      "This tender is for curriculum development and teacher training. " +
+      "The contractor will design learning materials and pedagogy guidelines. " +
+      "Student enrolment targets and learning outcomes must be defined.";
+    const educationDoc =
+      "## Approach\nOur curriculum development team will design learning materials. " +
+      "Teacher training workshops will embed pedagogical best practices. " +
+      "Student enrolment data will be tracked against learning outcomes.";
+    const input = buildSevenPassGateInput({ tenderNotes: educationNotes, visibleText: educationDoc });
+    assert.strictEqual(input.tenderScopeOnly, true);
+  });
+
+  it("fails when tender is education but document is oil & gas", () => {
+    const educationNotes =
+      "Scope: teacher training and curriculum development. " +
+      "Classroom construction and student enrolment improvement. " +
+      "Pedagogy reform and learning outcomes assessment.";
+    const oilDoc =
+      "## Technical Approach\nOur team has extensive upstream operations experience. " +
+      "We will manage wellbore integrity and hydrocarbon extraction. " +
+      "Downstream refinery integration ensures full petroleum production coverage.";
+    const input = buildSevenPassGateInput({ tenderNotes: educationNotes, visibleText: oilDoc });
+    assert.strictEqual(input.tenderScopeOnly, false);
+  });
+
+  it("passes when tender is WASH and document is WASH", () => {
+    const washNotes =
+      "Provision of water supply systems and sanitation infrastructure. " +
+      "Open defecation free communities through latrine construction. " +
+      "Hygiene promotion in target villages.";
+    const washDoc =
+      "## Methodology\nWe will install water supply kiosks and sanitation facilities. " +
+      "Latrine construction will serve 5 000 households. " +
+      "Hygiene promotion campaigns will achieve open defecation free status.";
+    const input = buildSevenPassGateInput({ tenderNotes: washNotes, visibleText: washDoc });
+    assert.strictEqual(input.tenderScopeOnly, true);
+  });
+
+  it("fails when tender is energy but document is agriculture", () => {
+    const energyNotes =
+      "Installation of solar PV mini-grid systems for off-grid electrification. " +
+      "Renewable energy generation capacity of 500 kW. " +
+      "Electricity grid extension to rural communities.";
+    const agriDoc =
+      "## Approach\nOur agricultural extension team will support crop yield improvement. " +
+      "Irrigation scheme design and livestock management are core activities. " +
+      "Soil fertility analysis and seed distribution complete the programme.";
+    const input = buildSevenPassGateInput({ tenderNotes: energyNotes, visibleText: agriDoc });
+    assert.strictEqual(input.tenderScopeOnly, false);
+  });
 });

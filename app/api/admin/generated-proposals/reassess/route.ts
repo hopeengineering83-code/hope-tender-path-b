@@ -102,14 +102,23 @@ export async function POST(req: Request) {
     // instead of N+1 individual queries.
     const tenderIds = [...new Set(docs.map((d) => d.tenderId))];
 
-    // Tender notes cache
+    // Tender notes + requirements cache
+    type TenderReq = { title?: string | null; description?: string | null; priority?: string | null };
     const tenderNotesCache = new Map<string, string | null>();
+    const tenderRequirementsCache = new Map<string, TenderReq[]>();
     if (tenderIds.length > 0) {
       const tenders = await prisma.tender.findMany({
         where: { id: { in: tenderIds } },
-        select: { id: true, notes: true },
+        select: {
+          id: true,
+          notes: true,
+          requirements: { select: { title: true, description: true, priority: true } },
+        },
       });
-      for (const t of tenders) tenderNotesCache.set(t.id, t.notes ?? null);
+      for (const t of tenders) {
+        tenderNotesCache.set(t.id, t.notes ?? null);
+        tenderRequirementsCache.set(t.id, t.requirements ?? []);
+      }
     }
     async function getTenderNotes(tid: string): Promise<string | null> {
       // Sync lookup after pre-load; fallback to DB only for IDs not in batch.
@@ -118,6 +127,9 @@ export async function POST(req: Request) {
       const notes = t?.notes ?? null;
       tenderNotesCache.set(tid, notes);
       return notes;
+    }
+    function getTenderRequirements(tid: string): TenderReq[] {
+      return tenderRequirementsCache.get(tid) ?? [];
     }
 
     // Reviewed evidence counts per tender — batch GROUP BY using groupBy
@@ -170,6 +182,7 @@ export async function POST(req: Request) {
         visibleText: visible,
         rawFileContent: doc.fileContent,
         hasStoragePath: Boolean(doc.storagePath && doc.storagePath.length > 0),
+        requirements: getTenderRequirements(doc.tenderId),
       });
       const isFail = report.recommendedStatus === "QUALITY_FAILED" || report.recommendedStatus === "NEEDS_REWRITE";
       const priorReview = (doc.reviewStatus ?? "").toUpperCase();
@@ -192,6 +205,8 @@ export async function POST(req: Request) {
         // Batch-loaded evidence counts: no N+1 per document
         reviewedExpertCount: evidenceCounts.reviewedExperts,
         reviewedProjectCount: evidenceCounts.reviewedProjects,
+        // Forward quality score so SELF_REVIEW_SCORING pass can enforce ≥80 threshold
+        selfReviewScore: report.score,
       });
       const sevenPassEval = evaluateSevenPassGenerationGate(sevenPassInput);
       const sevenPassFails = !sevenPassEval.finalApprovalAllowed;
