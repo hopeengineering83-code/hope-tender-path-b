@@ -12,6 +12,7 @@ import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import { extractRequestId } from "../../../../../lib/request-id";
 import { logAction } from "../../../../../lib/audit";
 import { buildSevenPassGateInput, applySevenPassGateToDocumentState, summarizeSevenPassForReviewNotes, evaluateSevenPassForDocument } from "../../../../../lib/engine/seven-pass-generation-wiring";
+import { assessGeneratedDocumentQuality } from "../../../../../lib/engine/document-quality-gate";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -189,6 +190,18 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const issues = documentHygieneIssues(cleaned, docMeta);
     const hygieneReady = issues.length === 0 && !stillHasPricingLeakage && rebuilt.length > 0;
 
+    // ── Self-review score (deterministic) ─────────────────────────────────────
+    // Run the document quality gate on the cleaned text to produce a real
+    // selfReviewScore (0–100). This replaces the null sentinel so the
+    // SELF_REVIEW_SCORING pass in the seven-pass gate actually enforces the ≥80
+    // threshold rather than skipping it.
+    const qualityReport = assessGeneratedDocumentQuality({
+      doc: { name: doc.name, exactFileName: doc.exactFileName, documentType: doc.documentType, format: "DOCX" },
+      visibleText: cleaned,
+      requirements: tender.requirements,
+    });
+    const selfReviewScore = qualityReport.score;
+
     // ── Seven-pass gate check ───────────────────────────────────────────────
     const gateEvaluation = evaluateSevenPassForDocument({
       tenderNotes: tender.notes,
@@ -204,6 +217,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       documentName: doc.name,
       exactFileName: doc.exactFileName,
       currentReviewStatus: doc.reviewStatus,
+      selfReviewScore,
     });
     // A document can only be READY_FOR_EXPORT if both hygiene AND the seven-pass gate allow it.
     const ready = hygieneReady && gateEvaluation.finalApprovalAllowed;
