@@ -23,9 +23,10 @@ type TenderLevelBlocker = {
 type ExportReadiness = {
   ok: boolean;
   tender: { id: string; title: string; status: string; stage: string; readinessScore: number };
-  summary: { activeDocuments: number; documentBlockers: number; tenderLevelBlockers: number; totalBlockers: number };
+  summary: { activeDocuments: number; documentBlockers: number; tenderLevelBlockers: number; advisoryWarnings?: number; totalBlockers: number; planStatus?: string };
   documentBlockers: DocumentBlocker[];
   tenderLevelBlockers: TenderLevelBlocker[];
+  advisoryWarnings?: TenderLevelBlocker[];
   message: string;
 };
 
@@ -361,6 +362,9 @@ export function ExportReadinessPanel({ tenderId }: { tenderId: string }) {
               <div>
                 <p className={`text-sm font-semibold ${ok ? "text-emerald-900" : "text-red-900"}`}>{ok ? "Export gate passed" : "Export gate blocked"}</p>
                 <p className={`mt-1 text-xs ${ok ? "text-emerald-700" : "text-red-700"}`}>{readiness.message}</p>
+                <p className="mt-1 text-xs text-slate-600">
+                  {readiness.summary.documentBlockers} document blockers · {readiness.summary.tenderLevelBlockers} tender blockers · {readiness.summary.advisoryWarnings ?? 0} advisory warnings
+                </p>
               </div>
               <div className="grid grid-cols-3 gap-2 text-center text-xs">
                 <div className="rounded-lg bg-white/70 px-2 py-1"><p className="font-bold text-slate-900">{readiness.summary.activeDocuments}</p><p className="text-slate-500">Docs</p></div>
@@ -397,6 +401,26 @@ export function ExportReadinessPanel({ tenderId }: { tenderId: string }) {
                         <p className="font-medium text-slate-900">{blocker.title}</p>
                         <p className="mt-0.5 text-slate-500">{blocker.category}</p>
                         {blocker.recommendedAction && <p className="mt-1 text-slate-700">Action: {blocker.recommendedAction}</p>}
+                      </div>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {(readiness.advisoryWarnings?.length ?? 0) > 0 && (
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">Advisory warnings</p>
+              <ul className="mt-2 space-y-2">
+                {readiness.advisoryWarnings?.map((warning, i) => (
+                  <li key={`${warning.category}-${i}`} className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs">
+                    <div className="flex items-start gap-2">
+                      <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${severityClass(warning.severity)}`}>{warning.severity}</span>
+                      <div>
+                        <p className="font-medium text-slate-900">{warning.title}</p>
+                        <p className="mt-0.5 text-slate-500">{warning.category}</p>
+                        {warning.recommendedAction && <p className="mt-1 text-slate-700">Action: {warning.recommendedAction}</p>}
                       </div>
                     </div>
                   </li>

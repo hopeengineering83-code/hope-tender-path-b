@@ -13,6 +13,7 @@ import Link from "next/link";
 import { getSession } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { checkExportReadiness, checkTenderLevelExportBlockers } from "../../../../../lib/engine/export-readiness";
+import { getFinalSubmissionReadiness } from "../../../../../lib/engine/final-submission-readiness";
 import { VersionActionsTable } from "./version-actions";
 
 export const dynamic = "force-dynamic";
@@ -37,8 +38,9 @@ export default async function TenderCommandCenter({ params }: { params: Promise<
 
   // ─── Readiness, blockers, evaluator state ───────────────────────────
   const docReadiness = checkExportReadiness(tender.generatedDocuments);
+  const canonical = await getFinalSubmissionReadiness(id);
   const tenderReadiness = await checkTenderLevelExportBlockers(id);
-  const tenderBlockers = tenderReadiness.blockers;
+  const tenderBlockers = canonical?.tenderLevelBlockers ?? tenderReadiness.blockers;
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const objections: any[] = await (prisma as any).evaluatorObjection.findMany({
@@ -157,14 +159,14 @@ export default async function TenderCommandCenter({ params }: { params: Promise<
       <section className="grid grid-cols-2 gap-3 sm:grid-cols-4 mb-6">
         <StatCard title="Selected experts" value={tender.expertMatches.length} caption={tender.expertMatches.slice(0, 2).map((m) => m.expert.fullName).join(" · ") || "None"} />
         <StatCard title="Selected projects" value={tender.projectMatches.length} caption={tender.projectMatches.slice(0, 2).map((m) => m.project.name).join(" · ") || "None"} />
-        <StatCard title="Documents" value={tender.generatedDocuments.length} caption={`${docReadiness.failures.length} not yet ready`} />
+        <StatCard title="Documents" value={tender.generatedDocuments.length} caption={`${canonical?.summary.documentBlockers ?? docReadiness.failures.length} final blockers`} />
         <StatCard title="Open HIGH objections" value={openHigh.length} caption={openHigh.length > 0 ? "Export gate is closed" : "Export gate clear"} highlight={openHigh.length > 0} />
       </section>
 
       {/* Export gate */}
       <section id="blockers" className="mb-6">
         <h2 className="mb-2 text-sm font-semibold text-slate-900">Export gate</h2>
-        {docReadiness.ok && tenderBlockers.length === 0 ? (
+        {(canonical?.ok ?? (docReadiness.ok && tenderBlockers.length === 0)) ? (
           <div className="rounded-lg bg-emerald-50 border border-emerald-200 px-4 py-3 text-sm text-emerald-800">
             ✓ Export gate is open. All documents READY_FOR_EXPORT and no tender-level blockers.
           </div>
