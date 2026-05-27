@@ -10,6 +10,7 @@ import { BidStrategyPanel } from "../../../../components/bid-strategy-panel";
 import { EvaluatorSimulatorPanel } from "../../../../components/evaluator-simulator-panel";
 import { AIRematchButton } from "../../../../components/ai-rematch-button";
 import { CanonicalReadinessScoreWidget } from "../../../../components/canonical-readiness-score-widget";
+import { SubmissionPlanCompletenessPanel } from "../../../../components/submission-plan-completeness-panel";
 
 function renderInline(text: string): React.ReactNode[] {
   const parts = text.split(/(\*\*[^*\n]+\*\*|\*[^*\n]+\*|_[^_\n]+_)/g);
@@ -1192,6 +1193,11 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
           relabelled "Workflow status" so it isn't confused with the
           actual export-readiness score. */}
       <CanonicalReadinessScoreWidget tenderId={tender.id} />
+
+      {/* Submission Plan Completeness — answers the "Docs 6/19" question
+          by listing every required file with its status and the
+          recommended next action. */}
+      <SubmissionPlanCompletenessPanel tenderId={tender.id} />
 
       <div className={`grid gap-4 md:grid-cols-3 ${proposalQuality ? "xl:grid-cols-7" : "xl:grid-cols-6"}`}>
         <div className="rounded-2xl border bg-white p-5 shadow-sm">
