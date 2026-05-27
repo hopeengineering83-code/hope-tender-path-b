@@ -277,3 +277,80 @@ describe("seven-pass generation wiring", () => {
     assert.equal(input.analysisSource, "AI");
   });
 });
+
+// ── Structural proxy checks ────────────────────────────────────────────────
+
+describe("tenderScopeOnly proxy", () => {
+  it("passes when no tenderReference provided", () => {
+    const input = buildSevenPassGateInput({
+      visibleText: "This document discusses a different tender Ref: XYZ-999",
+    });
+    assert.strictEqual(input.tenderScopeOnly, true);
+  });
+
+  it("passes when visible text matches tenderReference", () => {
+    const input = buildSevenPassGateInput({
+      visibleText: "For Tender Ref: RFP-2024-001 we propose the following methodology.",
+      tenderReference: "RFP-2024-001",
+    });
+    assert.strictEqual(input.tenderScopeOnly, true);
+  });
+
+  it("fails when visible text contains a different reference number", () => {
+    const input = buildSevenPassGateInput({
+      visibleText: "Following the requirements of Tender No. ABCD-5678 we submit this proposal.",
+      tenderReference: "RFP-2024-001",
+    });
+    assert.strictEqual(input.tenderScopeOnly, false);
+  });
+
+  it("passes when tenderReference is too short to match reliably", () => {
+    const input = buildSevenPassGateInput({
+      visibleText: "Ref: XY different content",
+      tenderReference: "XY",
+    });
+    assert.strictEqual(input.tenderScopeOnly, true);
+  });
+});
+
+describe("outlineMatchesTender proxy", () => {
+  it("passes for non-narrative document with no headings", () => {
+    const input = buildSevenPassGateInput({
+      documentName: "Financial capacity evidence",
+      visibleText: "Please see attached audited financial statements for the past three years.",
+    });
+    assert.strictEqual(input.outlineMatchesTender, true);
+  });
+
+  it("passes for short cover letter with no headings", () => {
+    const input = buildSevenPassGateInput({
+      documentName: "Cover Letter",
+      visibleText: "Dear Sir/Madam, we are pleased to submit our proposal.",
+    });
+    assert.strictEqual(input.outlineMatchesTender, true);
+  });
+
+  it("passes for technical proposal with markdown headings", () => {
+    const input = buildSevenPassGateInput({
+      documentName: "Technical Proposal",
+      visibleText: Array(200).fill("word").join(" ") + "\n## Executive Summary\nContent here.\n## Methodology\nMore content.",
+    });
+    assert.strictEqual(input.outlineMatchesTender, true);
+  });
+
+  it("fails for long technical proposal with no headings at all", () => {
+    const input = buildSevenPassGateInput({
+      documentName: "Technical Proposal Methodology and Work Plan",
+      visibleText: Array(250).fill("plain text word without any heading structure").join(" "),
+    });
+    assert.strictEqual(input.outlineMatchesTender, false);
+  });
+
+  it("passes for technical proposal with numbered section headings", () => {
+    const input = buildSevenPassGateInput({
+      documentName: "Technical Proposal",
+      visibleText: Array(150).fill("word").join(" ") + "\n1. UNDERSTANDING OF REQUIREMENTS\nContent.\n2. METHODOLOGY\nContent.",
+    });
+    assert.strictEqual(input.outlineMatchesTender, true);
+  });
+});

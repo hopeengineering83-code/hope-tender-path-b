@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { getSession } from "../lib/auth";
 import { prisma, prismaReady } from "../lib/prisma";
-import { buildSubmissionPlan, findExtraGeneratedDocuments, findMissingGeneratedDocuments, submissionPlanFileCount, type SubmissionEnvelope } from "../lib/engine/submission-plan";
+import { buildSubmissionPlan, findExtraGeneratedDocuments, findMissingGeneratedDocuments, submissionPlanFileCount, submissionPlanFileKey, type SubmissionEnvelope } from "../lib/engine/submission-plan";
 import { GenerateMissingPlanFilesButton } from "./generate-missing-plan-files-button";
 import { ReconcileStaleFilesButton } from "./reconcile-stale-files-button";
 
@@ -93,7 +93,7 @@ export async function SubmissionPlanReconciliationPanel({ tenderId }: { tenderId
             </thead>
             <tbody className="divide-y divide-slate-100 text-slate-700">
               {plan.files.filter((file) => file.required).map((file) => {
-                const generated = tender.generatedDocuments.find((doc) => (doc.exactFileName ?? doc.name ?? "").toLowerCase().replace(/\.[a-z0-9]+$/i, "").replace(/[^a-z0-9]+/g, " ").trim() === file.exactFileName.toLowerCase().replace(/\.[a-z0-9]+$/i, "").replace(/[^a-z0-9]+/g, " ").trim());
+                const generated = tender.generatedDocuments.find((doc) => submissionPlanFileKey(doc.exactFileName ?? doc.name) === submissionPlanFileKey(file.exactFileName));
                 return (
                   <tr key={file.canonicalId}>
                     <td className="px-3 py-2 font-medium">{file.exactOrder}</td>

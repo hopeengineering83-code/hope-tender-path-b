@@ -95,14 +95,57 @@ export async function POST(req: Request) {
       },
     });
 
-    // Cache tender notes per tenderId so we only query each tender once.
+    // ── Batch-load per-tender data (notes + evidence counts) ─────────────────
+    // Collect all distinct tender IDs in the working set, then run three
+    // aggregate queries — one for notes, one for reviewed expert matches, one
+    // for reviewed project matches — so the loop below has O(1) cache lookups
+    // instead of N+1 individual queries.
+    const tenderIds = [...new Set(docs.map((d) => d.tenderId))];
+
+    // Tender notes cache
     const tenderNotesCache = new Map<string, string | null>();
+    if (tenderIds.length > 0) {
+      const tenders = await prisma.tender.findMany({
+        where: { id: { in: tenderIds } },
+        select: { id: true, notes: true },
+      });
+      for (const t of tenders) tenderNotesCache.set(t.id, t.notes ?? null);
+    }
     async function getTenderNotes(tid: string): Promise<string | null> {
+      // Sync lookup after pre-load; fallback to DB only for IDs not in batch.
       if (tenderNotesCache.has(tid)) return tenderNotesCache.get(tid) ?? null;
       const t = await prisma.tender.findUnique({ where: { id: tid }, select: { notes: true } });
       const notes = t?.notes ?? null;
       tenderNotesCache.set(tid, notes);
       return notes;
+    }
+
+    // Reviewed evidence counts per tender — batch GROUP BY using groupBy
+    type EvidenceCounts = { reviewedExperts: number; reviewedProjects: number };
+    const evidenceCountCache = new Map<string, EvidenceCounts>();
+    if (tenderIds.length > 0) {
+      const [expertGroups, projectGroups] = await Promise.all([
+        prisma.tenderExpertMatch.groupBy({
+          by: ["tenderId"],
+          where: { tenderId: { in: tenderIds }, isSelected: true, expert: { trustLevel: "REVIEWED" } },
+          _count: { id: true },
+        }),
+        prisma.tenderProjectMatch.groupBy({
+          by: ["tenderId"],
+          where: { tenderId: { in: tenderIds }, isSelected: true, project: { trustLevel: "REVIEWED" } },
+          _count: { id: true },
+        }),
+      ]);
+      // Build map: initialise all tenderIds to 0
+      for (const tid of tenderIds) evidenceCountCache.set(tid, { reviewedExperts: 0, reviewedProjects: 0 });
+      for (const g of expertGroups) {
+        const existing = evidenceCountCache.get(g.tenderId) ?? { reviewedExperts: 0, reviewedProjects: 0 };
+        evidenceCountCache.set(g.tenderId, { ...existing, reviewedExperts: g._count.id });
+      }
+      for (const g of projectGroups) {
+        const existing = evidenceCountCache.get(g.tenderId) ?? { reviewedExperts: 0, reviewedProjects: 0 };
+        evidenceCountCache.set(g.tenderId, { ...existing, reviewedProjects: g._count.id });
+      }
     }
 
     const rows: ReassessmentRow[] = [];
@@ -139,14 +182,16 @@ export async function POST(req: Request) {
       // if the tender used regex-fallback analysis, any READY_FOR_EXPORT row
       // produced from it must be demoted.
       const tenderNotes = await getTenderNotes(doc.tenderId);
+      const evidenceCounts = evidenceCountCache.get(doc.tenderId) ?? { reviewedExperts: 0, reviewedProjects: 0 };
       const sevenPassInput = buildSevenPassGateInput({
         tenderNotes,
         visibleText: visible,
         documentType: doc.documentType,
         documentName: doc.name,
         exactFileName: doc.exactFileName,
-        // Evidence counts are not loaded in the bulk endpoint for performance;
-        // use the visible-text proxy defaults in the wiring module.
+        // Batch-loaded evidence counts: no N+1 per document
+        reviewedExpertCount: evidenceCounts.reviewedExperts,
+        reviewedProjectCount: evidenceCounts.reviewedProjects,
       });
       const sevenPassEval = evaluateSevenPassGenerationGate(sevenPassInput);
       const sevenPassFails = !sevenPassEval.finalApprovalAllowed;
