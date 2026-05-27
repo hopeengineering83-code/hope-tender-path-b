@@ -75,57 +75,58 @@ After pushing, always open a draft PR targeting main.
 
 ---
 
-### PR #474 — Remaining gaps (draft, open as of 2026-05-27, Vercel building)
-Branch: `claude/relaxed-mendel-YHnOx`
+### PR #474 — Remaining gaps (MERGED 2026-05-27)
+Branch: `claude/relaxed-mendel-YHnOx` → merged to main as `d1b4fc2`
 
-**Export Readiness Panel — Download Final ZIP button**
-- `components/export-readiness-panel.tsx`: explicit Download ZIP button
-  - Enabled (emerald `<a download>`) when `readiness.ok === true`
-  - Disabled (slate, `cursor-not-allowed`, tooltip with blocker count) when
-    `readiness.ok === false`
+- Export Readiness Panel: Download Final ZIP button (enabled/disabled)
+- Sector strategies: feasibility, government/public procurement, NGO/donor
+- Submission plan envelope separation (`SubmissionEnvelope` type + `envelope` field)
+- Test count after merge: **1161 pass / 0 fail**
 
-**Sector strategies for feasibility, government, NGO/donor tenders**
-- `lib/engine/proposal-sections.ts` — `TECHNICAL_APPROACH_SYSTEM_PROMPT`:
-  Added 3 new sector bullets before "Other sectors" catch-all:
-  - Feasibility/pre-feasibility/options analysis/business case
-    (options matrix, NPV/IRR/payback/sensitivity, EIRR, demand projections,
-    implementation roadmap, recommended preferred option, ToR compliance matrix)
-  - Government/public procurement (proclamation citation, local content,
-    bid security/bond, GoE/Ministry BOQ, PPPA/PPSD portal)
-  - NGO/donor-funded (WB/AfDB/EU/USAID/DFID/UN/GIZ) (donor procurement
-    framework QCBS/LCS/FBS/CQS/DC, logframe, M&E, DLIs, ESF/IFC PS/AfDB ISS
-    safeguards, procurement plan, community engagement)
+---
 
-**Submission plan envelope separation**
-- `lib/engine/submission-plan.ts`: `SubmissionEnvelope` type
-  `"TECHNICAL" | "FINANCIAL" | "ADMIN"` + `envelope` field on every
-  `SubmissionPlanFile`; `inferEnvelope()` helper with priority-ordered
-  regex (handles hyphens and spaces); populated in `buildFileFromRequirement`
-  and `buildFilesFromExactNames`
-- `tests/submission-plan-envelope.test.ts` (NEW) — 13 assertions
+### PR #475 — HIGH-priority gaps (open, Vercel building)
+Branch: `claude/high-priority-gaps-post-474`
 
-**Test count after PR #474**: 1161 pass / 0 fail, typecheck clean
+**ZIP envelope breakdown headers**
+- `lib/engine/submission-plan.ts`: `inferEnvelope` exported (was private)
+- `app/api/tenders/[id]/download/route.ts`: after ZIP assembly, compute
+  envelope breakdown (TECHNICAL/FINANCIAL/ADMIN counts per doc type)
+  - `X-Envelope-Breakdown: TECHNICAL=5,FINANCIAL=1,ADMIN=2` on every ZIP response
+  - `X-Envelope-Note: ...` advisory header when FINANCIAL docs are present
+  - Breakdown included in audit log description
+
+**Browser tab title badge**
+- `app/dashboard/tenders/[id]/tender-detail.tsx`:
+  `useEffect` updates `document.title` in real-time as gaps are resolved:
+  - `🚨 N critical — <title>` when CRITICAL gaps exist
+  - `(N) <title>` when non-critical unresolved gaps exist
+  - `<title>` when all gaps resolved
+  - Restores `"Tenders"` on unmount
+
+**Auto-finalize remaining-count nudge**
+- `components/export-readiness-panel.tsx`:
+  - `autoFinalizeRemaining` state tracks docs still needing finalization
+  - Amber "N documents still need finalization — click Auto-finalize again"
+    banner persists after each run until count reaches 0 or gate passes
+  - Banner has a dismiss (✕) button; also auto-cleared when re-check shows
+    no remaining document blockers
+
+**Test count**: 1161 pass / 0 fail, typecheck clean
 
 ---
 
 ## Next actions queue (prioritised)
 
 ### IMMEDIATE
-- [ ] Monitor PR #474 CI (Vercel build, typecheck, tests)
-- [ ] Merge PR #474 once CI green
+- [x] ~~Monitor PR #474 CI~~ — green, merged
+- [x] ~~Merge PR #474~~ — merged as d1b4fc2
+- [ ] Monitor PR #475 CI (Vercel build) — open
 
-### HIGH — next batch after #474 merges
-- [ ] **Final ZIP envelope enforcement**: in
-  `app/api/tenders/[id]/download/route.ts`, use `SubmissionPlanFile.envelope`
-  to assert no FINANCIAL file enters the TECHNICAL ZIP (currently the field
-  exists but the route doesn't enforce separation at download time)
-- [ ] **Export readiness panel blocker count in page title / tab badge**:
-  surface unresolved blocker count as a `<title>` or badge in the tender
-  detail page so users see it without opening the panel
-- [ ] **Auto-finalize remaining-count UX**: after auto-finalize returns
-  `remainingCount > 0`, the panel should show a persistent "X docs still need
-  finalization — click again" nudge rather than requiring the user to read the
-  repair message
+### HIGH — DONE in PR #475
+- [x] ZIP envelope breakdown headers + audit log
+- [x] Browser tab title badge (🚨 / count / clear)
+- [x] Auto-finalize remaining-count amber nudge banner
 
 ### MEDIUM
 - [ ] **Feasibility tender type in UI**: `lib/engine/universal-tender-taxonomy.ts`
@@ -178,4 +179,4 @@ Branch: `claude/relaxed-mendel-YHnOx`
 4. Work the "IMMEDIATE" queue first, then HIGH, then MEDIUM
 5. Update this file at the end of every session
 
-_Last updated: 2026-05-27 by Claude after PR #474 push_
+_Last updated: 2026-05-27 by Claude after PR #475 push_

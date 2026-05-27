@@ -174,7 +174,7 @@ function restrictionAllows(text: string, subject: "letterhead" | "signature" | "
  *    compliance, form, annex, schedule) → ADMIN
  * 3. Everything else → TECHNICAL
  */
-function inferEnvelope(
+export function inferEnvelope(
   requirementType: string,
   fileName: string,
   description?: string | null,

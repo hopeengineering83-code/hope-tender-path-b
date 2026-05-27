@@ -11,6 +11,7 @@ import { validateFileSignature } from "../../../../../lib/engine/export-format-p
 import { getCompanyIngestionReadiness } from "../../../../../lib/company-ingestion-readiness";
 import { getTenderGenerationReadiness } from "../../../../../lib/tender-generation-readiness";
 import { generatedDocumentHasContent, readGeneratedDocumentContent } from "../../../../../lib/generated-document-content";
+import { inferEnvelope, type SubmissionEnvelope } from "../../../../../lib/engine/submission-plan";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -183,6 +184,20 @@ async function zipPackage(userId: string, tender: any) {
     zip.file(entry.name || fileName(doc.name), content.buffer);
   }
 
+  // ── Envelope breakdown — annotate the response so clients know how many
+  // TECHNICAL / FINANCIAL / ADMIN files are in this ZIP. For two-envelope
+  // tenders the caller should submit the FINANCIAL files in a separate sealed
+  // envelope; they are included here for single-envelope submissions.
+  const envelopeCounts: Record<SubmissionEnvelope, number> = { TECHNICAL: 0, FINANCIAL: 0, ADMIN: 0 };
+  for (const entry of entries) {
+    const doc = byId.get(entry.generatedDocId!);
+    if (!doc) continue;
+    const env = inferEnvelope(doc.documentType ?? "TECHNICAL", doc.exactFileName ?? doc.name ?? "");
+    envelopeCounts[env] = (envelopeCounts[env] ?? 0) + 1;
+  }
+  const envelopeBreakdown = `TECHNICAL=${envelopeCounts.TECHNICAL},FINANCIAL=${envelopeCounts.FINANCIAL},ADMIN=${envelopeCounts.ADMIN}`;
+  const hasFinancialDocs = envelopeCounts.FINANCIAL > 0;
+
   const zipBuffer = await zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" });
   const zipName = `${safeFileBaseName(tender.title)}-submission-package.zip`;
   const fileList = entries.map((entry) => entry.name);
@@ -191,8 +206,17 @@ async function zipPackage(userId: string, tender: any) {
   if (freshPkg) await prisma.exportPackage.update({ where: { id: freshPkg.id }, data: { status: "READY", fileList: JSON.stringify(fileList), downloadCount: { increment: 1 } } });
   else await prisma.exportPackage.create({ data: { tenderId: tender.id, status: "READY", fileList: JSON.stringify(fileList), downloadCount: 1 } });
 
-  await logAction({ userId, action: "EXPORT_PACKAGE_DOWNLOAD", entityType: "Tender", entityId: tender.id, description: `Downloaded ZIP package for "${tender.title}" (${entries.length} file(s))` });
-  return new NextResponse(new Uint8Array(zipBuffer), { headers: { "Content-Type": "application/zip", "Content-Disposition": `attachment; filename="${zipName}"` } });
+  await logAction({ userId, action: "EXPORT_PACKAGE_DOWNLOAD", entityType: "Tender", entityId: tender.id, description: `Downloaded ZIP package for "${tender.title}" (${entries.length} file(s); ${envelopeBreakdown})` });
+  const responseHeaders: Record<string, string> = {
+    "Content-Type": "application/zip",
+    "Content-Disposition": `attachment; filename="${zipName}"`,
+    "X-Envelope-Breakdown": envelopeBreakdown,
+  };
+  if (hasFinancialDocs) {
+    responseHeaders["X-Envelope-Note"] =
+      "FINANCIAL documents are included. If this tender requires separate technical and financial envelopes, submit the financial files in a separate sealed package per the tender instructions.";
+  }
+  return new NextResponse(new Uint8Array(zipBuffer), { headers: responseHeaders });
 }
 
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
