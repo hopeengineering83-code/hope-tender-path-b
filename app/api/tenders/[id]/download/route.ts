@@ -4,7 +4,7 @@ import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../.
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { logAction } from "../../../../../lib/audit";
 import { safeFileBaseName } from "../../../../../lib/engine/proposal-labels";
-import { checkExportReadiness, checkFullExportReadiness, exportReadinessError, type ExportReadyDocument } from "../../../../../lib/engine/export-readiness";
+import { checkExportReadiness, exportReadinessError, type ExportReadyDocument } from "../../../../../lib/engine/export-readiness";
 import { filterFinalExportCandidateDocuments, isFinalExportCandidateDocument } from "../../../../../lib/engine/document-output-state";
 import { buildFinalZipEntries } from "../../../../../lib/engine/final-zip-scope";
 import { validateFileSignature } from "../../../../../lib/engine/export-format-policy";
@@ -12,6 +12,7 @@ import { getCompanyIngestionReadiness } from "../../../../../lib/company-ingesti
 import { getTenderGenerationReadiness } from "../../../../../lib/tender-generation-readiness";
 import { generatedDocumentHasContent, readGeneratedDocumentContent } from "../../../../../lib/generated-document-content";
 import { inferEnvelope, type SubmissionEnvelope } from "../../../../../lib/engine/submission-plan";
+import { getFinalSubmissionReadiness } from "../../../../../lib/engine/final-submission-readiness";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -134,8 +135,12 @@ async function zipPackage(userId: string, tender: any) {
 
   if (!docs.length) return err("No final exportable generated documents to package.", 400, { code: "NO_FINAL_EXPORT_CANDIDATES" });
 
-  const readiness = await checkFullExportReadiness({ tenderId: tender.id, docs, requireFileContent: false });
-  if (!readiness.ok) return err(exportReadinessError(readiness.failures, readiness.tenderLevelBlockers), 409, { code: "EXPORT_READINESS_BLOCKED", failures: readiness.failures, tenderLevelBlockers: readiness.tenderLevelBlockers ?? [] });
+  const canonical = await getFinalSubmissionReadiness(tender.id);
+  if (!canonical) return err("Tender not found", 404, { code: "TENDER_NOT_FOUND" });
+  if (!canonical.ok) return err(exportReadinessError(canonical.documentBlockers, canonical.tenderLevelBlockers), 409, { code: "EXPORT_READINESS_BLOCKED", failures: canonical.documentBlockers, tenderLevelBlockers: canonical.tenderLevelBlockers ?? [] });
+  if (canonical.summary.strictTwoEnvelope) {
+    return err("This tender requires separate envelopes. Download technical and financial packages separately.", 409, { code: "SEPARATE_ENVELOPE_REQUIRED", envelopeBreakdown: canonical.summary.envelopeBreakdown });
+  }
 
   const JSZip = (await import("jszip")).default;
   const zip = new JSZip();

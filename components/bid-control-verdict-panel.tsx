@@ -2,6 +2,8 @@ import { getSession } from "../lib/auth";
 import { prisma, prismaReady } from "../lib/prisma";
 import { getTenderGenerationReadiness } from "../lib/tender-generation-readiness";
 import { buildSubmissionPlan, findExtraGeneratedDocuments, findMissingGeneratedDocuments, submissionPlanFileCount } from "../lib/engine/submission-plan";
+import { filterFinalExportCandidateDocuments, isValidationPassed } from "../lib/engine/document-output-state";
+import { getFinalSubmissionReadiness } from "../lib/engine/final-submission-readiness";
 
 type Verdict = "BID_READY" | "BID_READY_WITH_WARNINGS" | "NOT_READY" | "NO_BID";
 
@@ -28,8 +30,9 @@ export async function BidControlVerdictPanel({ tenderId }: { tenderId: string })
   if (!userId) return null;
   await prismaReady;
 
-  const [generationReadiness, tender] = await Promise.all([
+  const [generationReadiness, canonical, tender] = await Promise.all([
     getTenderGenerationReadiness(prisma, userId, tenderId),
+    getFinalSubmissionReadiness(tenderId),
     prisma.tender.findFirst({
       where: { id: tenderId, userId },
       include: {
@@ -44,7 +47,7 @@ export async function BidControlVerdictPanel({ tenderId }: { tenderId: string })
     }),
   ]);
 
-  if (!tender || !generationReadiness) return null;
+  if (!tender || !generationReadiness || !canonical) return null;
 
   const plan = buildSubmissionPlan({
     id: tender.id,
@@ -54,13 +57,14 @@ export async function BidControlVerdictPanel({ tenderId }: { tenderId: string })
     pageLimit: tender.pageLimit,
     requirements: tender.requirements,
   });
-  const missingPlanFiles = findMissingGeneratedDocuments(plan, tender.generatedDocuments);
-  const extraPlanFiles = findExtraGeneratedDocuments(plan, tender.generatedDocuments);
+  const finalCandidates = filterFinalExportCandidateDocuments(tender.generatedDocuments as any[]);
+  const missingPlanFiles = findMissingGeneratedDocuments(plan, finalCandidates as any[]);
+  const extraPlanFiles = findExtraGeneratedDocuments(plan, finalCandidates as any[]);
   const requiredPlanCount = submissionPlanFileCount(plan);
   const activeDocs = tender.generatedDocuments.length;
-  const ungeneratedDocs = tender.generatedDocuments.filter((doc) => doc.generationStatus !== "GENERATED");
-  const unvalidatedDocs = tender.generatedDocuments.filter((doc) => doc.validationStatus !== "VALIDATED");
-  const unreviewedDocs = tender.generatedDocuments.filter((doc) => doc.reviewStatus !== "READY_FOR_EXPORT");
+  const ungeneratedDocs = finalCandidates.filter((doc) => doc.generationStatus !== "GENERATED");
+  const unvalidatedDocs = finalCandidates.filter((doc) => !isValidationPassed(doc.validationStatus));
+  const unreviewedDocs = finalCandidates.filter((doc) => doc.reviewStatus !== "READY_FOR_EXPORT");
   const criticalGaps = tender.complianceGaps.filter((gap) => gap.severity === "CRITICAL");
   const highGaps = tender.complianceGaps.filter((gap) => gap.severity === "HIGH");
 
@@ -82,14 +86,15 @@ export async function BidControlVerdictPanel({ tenderId }: { tenderId: string })
   // gate to pass.
   if (!fullProposalReady) blockers.push(...fullProposalBlockers.map((item) => item.message));
   if (requiredPlanCount > 0 && missingPlanFiles.length > 0) blockers.push(`${missingPlanFiles.length} required planned file(s) are missing.`);
-  if (activeDocs === 0) blockers.push("No active generated documents exist yet.");
+  if (finalCandidates.length === 0) blockers.push("No final export candidate documents exist yet.");
   if (ungeneratedDocs.length > 0) blockers.push(`${ungeneratedDocs.length} document(s) are not generated.`);
   if (unvalidatedDocs.length > 0) blockers.push(`${unvalidatedDocs.length} document(s) are not validated.`);
   if (unreviewedDocs.length > 0) blockers.push(`${unreviewedDocs.length} document(s) are not marked READY_FOR_EXPORT.`);
   if (criticalGaps.length > 0) blockers.push(`${criticalGaps.length} unresolved critical compliance gap(s).`);
 
   warnings.push(...generationReadiness.warnings.map((item) => item.message));
-  if (extraPlanFiles.length > 0) warnings.push(`${extraPlanFiles.length} generated file(s) are outside the tender submission plan.`);
+  if (extraPlanFiles.length > 0) warnings.push(`${extraPlanFiles.length} final-candidate file(s) are outside the tender submission plan.`);
+  if ((canonical.summary.advisoryWarnings ?? 0) > 0) warnings.push(`${canonical.summary.advisoryWarnings} advisory warning(s) do not block export.`);
   if (highGaps.length > 0) warnings.push(`${highGaps.length} unresolved high-severity review gap(s).`);
 
   const verdict: Verdict = tender.status === "NO_BID"
@@ -130,7 +135,7 @@ export async function BidControlVerdictPanel({ tenderId }: { tenderId: string })
         <div className="rounded-xl bg-white p-3"><p className="text-xs text-slate-500">Plan files</p><p className="text-lg font-bold text-slate-900">{requiredPlanCount === 0 && activeDocs > 0 ? "Mismatch" : `${Math.max(0, requiredPlanCount - missingPlanFiles.length)}/${requiredPlanCount}`}</p></div>
         <div className="rounded-xl bg-white p-3" title={`${activeDocs} non-superseded GeneratedDocument row(s). Includes ${extraPlanFiles.length} row(s) outside the current submission plan that should be reconciled or superseded.`}><p className="text-xs text-slate-500">Active rows{extraPlanFiles.length > 0 ? ` (${extraPlanFiles.length} stale)` : ""}</p><p className="text-lg font-bold text-slate-900">{activeDocs}</p></div>
         <div className="rounded-xl bg-white p-3"><p className="text-xs text-slate-500">Critical gaps</p><p className="text-lg font-bold text-slate-900">{criticalGaps.length}</p></div>
-        <div className="rounded-xl bg-white p-3"><p className="text-xs text-slate-500">Ready for export</p><p className="text-lg font-bold text-slate-900">{activeDocs > 0 && ungeneratedDocs.length + unvalidatedDocs.length + unreviewedDocs.length === 0 ? "Yes" : "No"}</p></div>
+        <div className="rounded-xl bg-white p-3"><p className="text-xs text-slate-500">Ready for export</p><p className="text-lg font-bold text-slate-900">{canonical.ok ? "Yes" : "No"}</p></div>
       </div>
 
       {blockers.length > 0 && (

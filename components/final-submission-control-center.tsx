@@ -126,14 +126,20 @@ export function FinalSubmissionControlCenter({ tenderId, generationReadiness }: 
               <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${pillClass(step.state)}`}>{step.status}</span>
             </div>
             <h3 className="mt-2 text-sm font-semibold text-slate-900">{step.title}</h3>
-            <a
-              className="mt-3 inline-flex text-xs font-medium text-emerald-700 hover:text-emerald-800"
-              href={step.href}
-              target={step.href.startsWith("/api/") ? "_blank" : undefined}
-              rel={step.href.startsWith("/api/") ? "noreferrer" : undefined}
-            >
-              {step.action}
-            </a>
+            {step.no === 4 && !exportReadiness?.ok ? (
+              <button type="button" disabled className="mt-3 inline-flex cursor-not-allowed text-xs font-medium text-slate-400">
+                Download blocked — resolve blockers first ({exportReadiness?.summary?.totalBlockers ?? "?"})
+              </button>
+            ) : (
+              <a
+                className={`mt-3 inline-flex text-xs font-medium ${step.href.startsWith("/api/") ? "text-emerald-700 hover:text-emerald-800" : "text-slate-700 hover:text-slate-900"}`}
+                href={step.href}
+                target={step.href.startsWith("/api/") ? "_blank" : undefined}
+                rel={step.href.startsWith("/api/") ? "noreferrer" : undefined}
+              >
+                {step.action}
+              </a>
+            )}
           </div>
         ))}
       </div>

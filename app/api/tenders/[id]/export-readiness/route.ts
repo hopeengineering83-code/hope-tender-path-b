@@ -3,6 +3,7 @@ import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../.
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { checkFullExportReadiness, exportReadinessError } from "../../../../../lib/engine/export-readiness";
 import { filterFinalExportCandidateDocuments } from "../../../../../lib/engine/document-output-state";
+import { getFinalSubmissionReadiness } from "../../../../../lib/engine/final-submission-readiness";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 10;
@@ -95,7 +96,9 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
         return true;
       });
 
-    const readiness = await checkFullExportReadiness({ tenderId: id, docs: dedupedDocs, requireFileContent: false });
+    const canonical = await getFinalSubmissionReadiness(id);
+    if (!canonical) return jsonError("Tender not found", 404, { code: "TENDER_NOT_FOUND" });
+    const readiness = await checkFullExportReadiness({ tenderId: id, docs: dedupedDocs, requireFileContent: true });
     const documentBlockers = readiness.failures.map((failure) => ({
       ...failure,
       severity: severityForReasons(failure.reasons),
@@ -117,13 +120,15 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
           readinessScore: tender.readinessScore ?? 0,
         },
         summary: {
-          activeDocuments: finalCandidateDocs.length,
-          workspaceDocuments: tender.generatedDocuments.length,
-          excludedInternalDrafts: tender.generatedDocuments.length - finalCandidateDocs.length,
+          activeDocuments: canonical.summary.finalExportCandidates,
+          workspaceDocuments: canonical.summary.workspaceDocuments,
+          excludedInternalDrafts: canonical.summary.excludedInternalRows,
           documentBlockers: documentBlockers.length,
           tenderLevelBlockers: tenderLevelBlockers.length,
           advisoryWarnings: advisoryWarnings.length,
           totalBlockers,
+          missingContentCount: canonical.summary.missingContentCount,
+          planStatus: canonical.summary.planStatus,
         },
         documentBlockers,
         tenderLevelBlockers,
