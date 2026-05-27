@@ -323,11 +323,15 @@ const GAP_SEVERITY_STYLE: Record<string, string> = {
   LOW:      "bg-slate-100 text-slate-600 border-slate-200",
 };
 
+const GAPS_PAGE_SIZE = 10;
+const GAPS_PAGINATION_THRESHOLD = 20; // use pagination instead of show-all when gap count exceeds this
+
 function ComplianceGapsPanel({ tenderId, initialGaps }: { tenderId: string; initialGaps: ComplianceGap[] }) {
   const [gaps, setGaps] = useState<ComplianceGap[]>(initialGaps);
   const [toggling, setToggling] = useState<string | null>(null);
   const [toggleError, setToggleError] = useState<string | null>(null);
   const [showAll, setShowAll] = useState(false);
+  const [page, setPage] = useState(0); // zero-based; only used when gaps.length > GAPS_PAGINATION_THRESHOLD
 
   async function toggleResolved(gap: ComplianceGap) {
     setToggling(gap.id);
@@ -352,7 +356,12 @@ function ComplianceGapsPanel({ tenderId, initialGaps }: { tenderId: string; init
     }
   }
 
-  const visible = showAll ? gaps : gaps.slice(0, 5);
+  const usePagination = gaps.length > GAPS_PAGINATION_THRESHOLD;
+  const totalPages = usePagination ? Math.ceil(gaps.length / GAPS_PAGE_SIZE) : 1;
+  const clampedPage = Math.min(page, totalPages - 1);
+  const visible = usePagination
+    ? gaps.slice(clampedPage * GAPS_PAGE_SIZE, (clampedPage + 1) * GAPS_PAGE_SIZE)
+    : showAll ? gaps : gaps.slice(0, 5);
   const unresolvedCount = gaps.filter((g) => !g.isResolved).length;
 
   return (
@@ -406,7 +415,27 @@ function ComplianceGapsPanel({ tenderId, initialGaps }: { tenderId: string; init
               </li>
             ))}
           </ul>
-          {gaps.length > 5 && (
+          {usePagination ? (
+            <div className="mt-3 flex items-center gap-3">
+              <button
+                onClick={() => setPage((p) => Math.max(0, p - 1))}
+                disabled={clampedPage === 0}
+                className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-40"
+              >
+                ← Prev
+              </button>
+              <span className="text-xs text-slate-500">
+                Page {clampedPage + 1} of {totalPages} · {gaps.length} gaps
+              </span>
+              <button
+                onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
+                disabled={clampedPage >= totalPages - 1}
+                className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-40"
+              >
+                Next →
+              </button>
+            </div>
+          ) : gaps.length > 5 && (
             <button
               onClick={() => setShowAll((s) => !s)}
               className="mt-3 text-xs text-blue-600 hover:underline"

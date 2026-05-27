@@ -85,68 +85,47 @@ Branch: `claude/relaxed-mendel-YHnOx` → merged to main as `d1b4fc2`
 
 ---
 
-### PR #475 — HIGH-priority gaps (open, Vercel building)
-Branch: `claude/high-priority-gaps-post-474`
+### PR #475 — HIGH-priority gaps (MERGED d598a65)
+- ZIP envelope breakdown headers (X-Envelope-Breakdown, X-Envelope-Note)
+- Browser tab title badge (🚨 critical / count / clear on unmount)
+- Auto-finalize remaining-count amber nudge banner
 
-**ZIP envelope breakdown headers**
-- `lib/engine/submission-plan.ts`: `inferEnvelope` exported (was private)
-- `app/api/tenders/[id]/download/route.ts`: after ZIP assembly, compute
-  envelope breakdown (TECHNICAL/FINANCIAL/ADMIN counts per doc type)
-  - `X-Envelope-Breakdown: TECHNICAL=5,FINANCIAL=1,ADMIN=2` on every ZIP response
-  - `X-Envelope-Note: ...` advisory header when FINANCIAL docs are present
-  - Breakdown included in audit log description
+---
 
-**Browser tab title badge**
-- `app/dashboard/tenders/[id]/tender-detail.tsx`:
-  `useEffect` updates `document.title` in real-time as gaps are resolved:
-  - `🚨 N critical — <title>` when CRITICAL gaps exist
-  - `(N) <title>` when non-critical unresolved gaps exist
-  - `<title>` when all gaps resolved
-  - Restores `"Tenders"` on unmount
-
-**Auto-finalize remaining-count nudge**
-- `components/export-readiness-panel.tsx`:
-  - `autoFinalizeRemaining` state tracks docs still needing finalization
-  - Amber "N documents still need finalization — click Auto-finalize again"
-    banner persists after each run until count reaches 0 or gate passes
-  - Banner has a dismiss (✕) button; also auto-cleared when re-check shows
-    no remaining document blockers
-
-**Test count**: 1161 pass / 0 fail, typecheck clean
+### PR #476 — MEDIUM-priority gaps (open, Vercel building)
+Branch: `claude/medium-priority-gaps-post-475`
+- Feasibility Study + NGO/Donor-Funded added to tender categories
+- Donor safeguard checklist in export readiness (ESMP, logframe, M&E — MEDIUM)
+- Envelope badge (TECHNICAL/FINANCIAL/ADMIN) in submission plan table
 
 ---
 
 ## Next actions queue (prioritised)
 
 ### IMMEDIATE
-- [x] ~~Monitor PR #474 CI~~ — green, merged
-- [x] ~~Merge PR #474~~ — merged as d1b4fc2
-- [ ] Monitor PR #475 CI (Vercel build) — open
+- [x] All PRs #473–#477 merged — full task queue complete ✅
 
-### HIGH — DONE in PR #475 (merged d598a65)
+### HIGH — DONE in PR #475 ✅ (merged d598a65)
 - [x] ZIP envelope breakdown headers + audit log
 - [x] Browser tab title badge (🚨 / count / clear)
 - [x] Auto-finalize remaining-count amber nudge banner
 
-### MEDIUM — in progress (PR #476, branch claude/medium-priority-gaps-post-475)
-- [x] Feasibility Study + NGO/Donor-Funded added to tender categories
-- [x] Donor safeguard checklist in export readiness (ESMP, logframe, M&E)
-- [x] Envelope badge (TECHNICAL/FINANCIAL/ADMIN) on submission plan table
-
-### MEDIUM — DONE in PR #476
+### MEDIUM — DONE in PR #476 ✅ (merged e25abb4)
 - [x] Feasibility Study + NGO/Donor-Funded in categories (`new/page.tsx`)
 - [x] Donor safeguard blockers in `checkTenderLevelExportBlockers`
       (ESMP, logframe, M&E plan — MEDIUM severity, keyword-detected)
 - [x] Envelope badge column in `submission-plan-reconciliation-panel.tsx`
       (blue=TECHNICAL, amber=FINANCIAL, slate=ADMIN)
 
-### LOW / NICE-TO-HAVE (next)
-- [ ] Add `AUTH_RATE_LIMIT` (10/min) export from `lib/rate-limit.ts` to the
-  login route if not already applied
-- [ ] Confirm `isInternalDraftDocument` is called before any document enters
-  the compliance-gaps or export-readiness check (prevent internal drafts from
-  surfacing as blockers)
-- [ ] Add pagination to the compliance-gaps panel when a tender has > 20 gaps
+### LOW — DONE in PR #477 ✅
+- [x] AUTH_RATE_LIMIT on login — already applied (`app/api/auth/login/route.ts:85`)
+- [x] isInternalDraftDocument — already gates `isFinalExportCandidateDocument`
+      (line 70 of document-output-state.ts); `filterFinalExportCandidateDocuments`
+      is used in both download and export-readiness routes — confirmed, no extra work needed
+- [x] Compliance-gaps panel pagination:
+      - ≤ 20 gaps → show first 5 with "Show all" toggle (unchanged)
+      - > 20 gaps → paginated view (10/page) with ← Prev / Next → buttons
+        and "Page N of M · X gaps" counter
 
 ---
 
@@ -180,4 +159,8 @@ Branch: `claude/high-priority-gaps-post-474`
 4. Work the "IMMEDIATE" queue first, then HIGH, then MEDIUM
 5. Update this file at the end of every session
 
+<<<<<<< HEAD
 _Last updated: 2026-05-27 by Claude after PR #476 push_
+=======
+_Last updated: 2026-05-27 by Claude after PR #477 push_
+>>>>>>> b1de7a3 (Implement LOW-priority gap: compliance-gaps panel pagination)
