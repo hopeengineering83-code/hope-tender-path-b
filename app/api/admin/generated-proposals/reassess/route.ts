@@ -33,6 +33,9 @@ import { logAction } from "../../../../../lib/audit";
 import { assessGeneratedDocumentQuality } from "../../../../../lib/engine/document-quality-gate";
 import { extractDocxVisibleText } from "../../../../../lib/engine/export-readiness";
 import { isFinalExportCandidateDocument } from "../../../../../lib/engine/document-output-state";
+import { buildSevenPassGateInput, summarizeSevenPassForReviewNotes } from "../../../../../lib/engine/seven-pass-generation-wiring";
+import { evaluateSevenPassGenerationGate } from "../../../../../lib/engine/seven-pass-generation";
+import { detectAnalysisSource } from "../../../../../lib/engine/analysis-source";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -92,6 +95,16 @@ export async function POST(req: Request) {
       },
     });
 
+    // Cache tender notes per tenderId so we only query each tender once.
+    const tenderNotesCache = new Map<string, string | null>();
+    async function getTenderNotes(tid: string): Promise<string | null> {
+      if (tenderNotesCache.has(tid)) return tenderNotesCache.get(tid) ?? null;
+      const t = await prisma.tender.findUnique({ where: { id: tid }, select: { notes: true } });
+      const notes = t?.notes ?? null;
+      tenderNotesCache.set(tid, notes);
+      return notes;
+    }
+
     const rows: ReassessmentRow[] = [];
     let demotedCount = 0;
     let inspectedCount = 0;
@@ -118,7 +131,32 @@ export async function POST(req: Request) {
       const isFail = report.recommendedStatus === "QUALITY_FAILED" || report.recommendedStatus === "NEEDS_REWRITE";
       const priorReview = (doc.reviewStatus ?? "").toUpperCase();
       const priorValidation = (doc.validationStatus ?? "").toUpperCase();
-      const eligibleForDemotion = isFail && REVIEW_DEMOTABLE.has(priorReview);
+
+      // ── Seven-pass gate: analysis-source check ───────────────────────────
+      // The document quality gate already covers BID_TEAM_TO_CONFIRM,
+      // AI_TRACE, PLACEHOLDER, PRICING_LEAKAGE. The supplemental check here
+      // covers the analysis-source dimension that the quality gate cannot see:
+      // if the tender used regex-fallback analysis, any READY_FOR_EXPORT row
+      // produced from it must be demoted.
+      const tenderNotes = await getTenderNotes(doc.tenderId);
+      const sevenPassInput = buildSevenPassGateInput({
+        tenderNotes,
+        visibleText: visible,
+        documentType: doc.documentType,
+        documentName: doc.name,
+        exactFileName: doc.exactFileName,
+        // Evidence counts are not loaded in the bulk endpoint for performance;
+        // use the visible-text proxy defaults in the wiring module.
+      });
+      const sevenPassEval = evaluateSevenPassGenerationGate(sevenPassInput);
+      const sevenPassFails = !sevenPassEval.finalApprovalAllowed;
+      const sevenPassAnalysisBlock = sevenPassEval.passes.some((p) => p.id === "TENDER_COMPREHENSION" && p.status === "BLOCKED");
+
+      // Only add the analysis-source demotion when it is the NEW trigger
+      // (quality gate didn't already catch it) to avoid doubling the reason.
+      const eligibleForQualityDemotion = isFail && REVIEW_DEMOTABLE.has(priorReview);
+      const eligibleForAnalysisDemotion = sevenPassAnalysisBlock && REVIEW_DEMOTABLE.has(priorReview) && !eligibleForQualityDemotion;
+      const eligibleForDemotion = eligibleForQualityDemotion || eligibleForAnalysisDemotion;
 
       const row: ReassessmentRow = {
         tenderId: doc.tenderId,
@@ -128,14 +166,21 @@ export async function POST(req: Request) {
         priorReviewStatus: doc.reviewStatus,
         priorValidationStatus: doc.validationStatus,
         qualityScore: report.score,
-        qualityStatus: report.recommendedStatus,
-        issues: report.issues.map((i) => i.code),
+        qualityStatus: sevenPassFails ? `${report.recommendedStatus}+SEVEN_PASS_BLOCKED` : report.recommendedStatus,
+        issues: [
+          ...report.issues.map((i) => i.code),
+          ...(sevenPassAnalysisBlock ? ["ANALYSIS_SOURCE_BLOCKED"] : []),
+        ],
         demoted: false,
         demotionReason: null,
       };
 
       if (eligibleForDemotion) {
-        row.demotionReason = `Quality gate ${report.recommendedStatus} (score ${report.score}/100; issues: ${report.issues.slice(0, 4).map((i) => i.code).join(", ") || "none"})`;
+        if (eligibleForQualityDemotion) {
+          row.demotionReason = `Quality gate ${report.recommendedStatus} (score ${report.score}/100; issues: ${report.issues.slice(0, 4).map((i) => i.code).join(", ") || "none"})`;
+        } else {
+          row.demotionReason = `Seven-pass gate: analysis source blocked. ${summarizeSevenPassForReviewNotes(sevenPassEval).slice(0, 200)}`;
+        }
         if (!dryRun) {
           const noteSuffix = `\n[quality-gate] reassessment-${new Date().toISOString()}: demoted to NEEDS_REWRITE — ${row.demotionReason}`;
           const update: { reviewStatus: string; reviewNotes: string; validationStatus?: string } = {

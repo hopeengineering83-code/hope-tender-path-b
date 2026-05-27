@@ -11,6 +11,7 @@ import { buildSubmissionPlan } from "../../../../../lib/engine/submission-plan";
 import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import { extractRequestId } from "../../../../../lib/request-id";
 import { logAction } from "../../../../../lib/audit";
+import { buildSevenPassGateInput, applySevenPassGateToDocumentState, summarizeSevenPassForReviewNotes, evaluateSevenPassForDocument } from "../../../../../lib/engine/seven-pass-generation-wiring";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -159,6 +160,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const refreshedAll = await prisma.generatedDocument.findMany({ where: { tenderId, generationStatus: { not: "SUPERSEDED" } }, orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }] });
   const candidates = filterFinalExportCandidateDocuments(refreshedAll as any[]).filter((d) => d.reviewStatus !== "READY_FOR_EXPORT" || d.validationStatus === "FAILED");
 
+  // ── Seven-pass gate: load evidence context once for the whole batch ───────
+  const [reviewedExpertCount, reviewedProjectCount] = await Promise.all([
+    prisma.tenderExpertMatch.count({ where: { tenderId, isSelected: true, expert: { trustLevel: "REVIEWED" } } }),
+    prisma.tenderProjectMatch.count({ where: { tenderId, isSelected: true, project: { trustLevel: "REVIEWED" } } }),
+  ]);
+  const requiredExpertCount = tender.requirements.filter((r) => r.requirementType === "EXPERT").length;
+  const requiredProjectCount = tender.requirements.filter((r) => r.requirementType === "PROJECT_EXPERIENCE").length;
+  const totalMandatory = tender.requirements.filter((r) => r.priority === "MANDATORY").length;
+  const sourcedMandatory = tender.requirements.filter((r) => r.priority === "MANDATORY" && ((r.sourceConfidence ?? 0) > 0 || (r.sectionReference ?? "").trim().length > 0)).length;
+
   const batch = candidates.slice(0, 3);
   let processed = 0;
   for (const doc of batch) {
@@ -176,9 +187,34 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     // Re-check pricing leakage on visible text AFTER cleaning — only mark READY_FOR_EXPORT if genuinely clean
     const stillHasPricingLeakage = technical && containsPricingLeakage(cleaned, docMeta);
     const issues = documentHygieneIssues(cleaned, docMeta);
-    const ready = issues.length === 0 && !stillHasPricingLeakage && rebuilt.length > 0;
+    const hygieneReady = issues.length === 0 && !stillHasPricingLeakage && rebuilt.length > 0;
+
+    // ── Seven-pass gate check ───────────────────────────────────────────────
+    const gateEvaluation = evaluateSevenPassForDocument({
+      tenderNotes: tender.notes,
+      visibleText: cleaned,
+      reviewedExpertCount,
+      reviewedProjectCount,
+      requiredExpertCount,
+      requiredProjectCount,
+      totalMandatoryRequirements: totalMandatory,
+      sourcedMandatoryRequirements: sourcedMandatory,
+      documentType: doc.documentType,
+      documentName: doc.name,
+      exactFileName: doc.exactFileName,
+      currentReviewStatus: doc.reviewStatus,
+    });
+    // A document can only be READY_FOR_EXPORT if both hygiene AND the seven-pass gate allow it.
+    const ready = hygieneReady && gateEvaluation.finalApprovalAllowed;
+
     const priorStatus = doc.reviewStatus;
-    await prisma.generatedDocument.update({ where: { id: doc.id }, data: { fileContent: rebuilt, format: "DOCX", generationStatus: "GENERATED", validationStatus: ready ? "VALIDATED" : "PENDING", reviewStatus: ready ? "READY_FOR_EXPORT" : "PENDING", reviewedBy: actor.id, reviewedAt: new Date(), reviewNotes: ready ? "Auto-finalized for print/submission." : `Auto-finalized but needs review: ${[...issues, ...(stillHasPricingLeakage ? ["pricing leakage detected"] : [])].join("; ")}` } });
+    const hygieneNotes = hygieneReady ? "" : `hygiene: ${[...issues, ...(stillHasPricingLeakage ? ["pricing leakage detected"] : [])].join("; ")}`;
+    const gateNotes = summarizeSevenPassForReviewNotes(gateEvaluation);
+    const reviewNotes = ready
+      ? `Auto-finalized for print/submission. ${gateNotes}`
+      : `Auto-finalized but needs review. ${[hygieneNotes, gateNotes].filter(Boolean).join(" | ")}`;
+
+    await prisma.generatedDocument.update({ where: { id: doc.id }, data: { fileContent: rebuilt, format: "DOCX", generationStatus: "GENERATED", validationStatus: ready ? "VALIDATED" : (gateEvaluation.recommendedValidationStatus === "DRAFT" ? "DRAFT" : "PENDING"), reviewStatus: ready ? "READY_FOR_EXPORT" : "NEEDS_REVIEW", reviewedBy: actor.id, reviewedAt: new Date(), reviewNotes: reviewNotes.slice(0, 4000) } });
     if (ready && priorStatus !== "READY_FOR_EXPORT") await prisma.documentReview.create({ data: { documentId: doc.id, reviewerId: actor.id, action: "READY_FOR_EXPORT", notes: "Auto-finalized for print/submission.", priorStatus, newStatus: "READY_FOR_EXPORT" } });
     processed += 1;
   }
