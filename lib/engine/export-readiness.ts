@@ -338,7 +338,7 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
   // user is reminded before final export — they do not hard-block, since some
   // donors accept a separate ESMP/logframe delivery milestone.
   const isDonorTender =
-    /ngo|donor.?funded|world\s+bank|afdb|african\s+development|eu\s+funded|usaid|dfid|fcdo|giz|undp|unicef|wfp|unhcr|ifad|gfatm|global\s+fund/i.test(
+    /ngo|donor.?funded|world\s+bank|afdb|african\s+development|adb|asian\s+development|jica|eu\s+funded|usaid|dfid|fcdo|giz|undp|unicef|wfp|unhcr|ifad|gfatm|global\s+fund|development.*partner.*fund|bilateral.*donor/i.test(
       [tender.category, tender.description, tender.analysisSummary, tender.notes, tender.intakeSummary].filter(Boolean).join(" "),
     );
   if (isDonorTender) {
