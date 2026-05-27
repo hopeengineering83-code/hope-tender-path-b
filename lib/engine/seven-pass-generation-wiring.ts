@@ -91,6 +91,69 @@ function isFinancialDocument(docLabel: string): boolean {
   return /\bfinancial\b|\bcommercial\b|\bprice\b|\brate\s+card\b|\bboq\b|\bbill\s+of\s+quantities?\b/i.test(docLabel);
 }
 
+// ── Structural proxy checks ────────────────────────────────────────────────
+//
+// tenderScopeOnly: true unless the text contains obvious off-scope signals —
+//   a different tender reference number or a known competing-tender phrase.
+//   We cannot detect arbitrary scope drift without AI, so we only catch the
+//   most obvious case: the document body contains a reference number that does
+//   NOT match the tender's own reference.  When tenderReference is not
+//   available, we conservatively return true (pass the check) to avoid
+//   blocking legitimate documents.
+//
+// outlineMatchesTender: true unless the document is a recognised narrative type
+//   AND has no headings at all — a heading-free wall of text does not match
+//   any structured outline.  Short docs (< 100 words) are exempted because
+//   cover letters and transmittal notes are legitimately heading-free.
+
+function detectOutlineMatchesTender(
+  docLabel: string,
+  visibleText: string,
+): boolean {
+  const isNarrative = /technical\s+proposal|methodology|work\s+plan|approach\s+(?:to|and)|implementation\s+plan/i.test(docLabel);
+  if (!isNarrative) return true; // non-narrative docs don't need a structured outline
+
+  if (!visibleText || visibleText.trim().length === 0) return true; // no text → gate skips
+
+  const wordCount = visibleText.split(/\s+/).filter(Boolean).length;
+  if (wordCount < 100) return true; // short doc — heading-free is acceptable
+
+  // Check for at least one heading signal in the first 3 000 chars
+  const sample = visibleText.slice(0, 3000);
+  const hasHeading =
+    /^#{1,6}\s+\S/m.test(sample) ||
+    /^[A-Z][A-Z0-9 \-,'/&]{4,}$/m.test(sample) ||
+    /^\d+\.\s+\S/m.test(sample) ||
+    /^(?:section|chapter|annex|appendix)\s+[0-9A-Z]/im.test(sample);
+
+  return hasHeading;
+}
+
+function detectTenderScopeOnly(
+  visibleText: string,
+  tenderReference?: string | null,
+): boolean {
+  // Without a reference number we cannot detect scope leakage — pass by default.
+  if (!tenderReference || !visibleText) return true;
+
+  // Normalise: strip whitespace, lowercase, remove common separators
+  const normRef = tenderReference.replace(/[\s\-_/]+/g, "").toLowerCase();
+  if (normRef.length < 4) return true; // too short to match reliably
+
+  // Look for a DIFFERENT reference pattern in the document body.
+  // Heuristic: find text like "Ref:", "RFP:", "Tender No." followed by a token
+  // that looks like a tender reference and is clearly different from ours.
+  const refMatches = visibleText.matchAll(/(?:ref(?:erence)?|rfp|rfq|tender\s+(?:no\.?|number|ref)|itb|eoi)\s*[:#]?\s*([\w\-/]+)/gi);
+  for (const m of refMatches) {
+    const found = (m[1] ?? "").replace(/[\s\-_/]+/g, "").toLowerCase();
+    if (found.length >= 4 && found !== normRef && !normRef.includes(found) && !found.includes(normRef)) {
+      // Found a reference that doesn't match ours — possible scope leakage
+      return false;
+    }
+  }
+  return true;
+}
+
 // ── Count helpers ──────────────────────────────────────────────────────────
 
 function countPatternMatches(text: string, patterns: RegExp[]): number {
@@ -134,6 +197,8 @@ export type SevenPassWiringContext = {
   deterministicFallbackUsed?: boolean;
   /** AI provider used (for surfacing in metadata) */
   providerUsed?: string | null;
+  /** tender.reference — used for tenderScopeOnly proxy check */
+  tenderReference?: string | null;
 };
 
 // ── Core builder ───────────────────────────────────────────────────────────
@@ -240,8 +305,8 @@ export function buildSevenPassGateInput(ctx: SevenPassWiringContext): GeneratedD
     pricingLeakageCount,
     officialOriginalRiskCount,
     technicalFinancialSeparationOk,
-    tenderScopeOnly: true, // caller would need explicit check; default true
-    outlineMatchesTender: true, // caller would need explicit check; default true
+    tenderScopeOnly: detectTenderScopeOnly(text, ctx.tenderReference),
+    outlineMatchesTender: detectOutlineMatchesTender(docLabel, text),
     selectedEvidenceTrustLevels,
     selfReviewScore,
     deterministicFallbackUsed,
