@@ -78,6 +78,18 @@ const AI_PROVIDER_KEYS = [
       "DeepSeek API key. Fourth-tier fallback for proposal generation via OpenAI-compatible endpoint (deepseek-chat / deepseek-reasoner).",
     validate: (_v) => null, // no canonical prefix to validate
   },
+  {
+    name: "GROQ_API_KEY",
+    description:
+      "Groq API key (gsk_...). Fifth-tier fallback for proposal generation via OpenAI-compatible endpoint. Model overridable via GROQ_PROPOSAL_MODEL (default llama-3.3-70b-versatile).",
+    validate: (_v) => null,
+  },
+  {
+    name: "OPENROUTER_API_KEY",
+    description:
+      "OpenRouter API key (sk-or-...). Sixth-tier fallback aggregator via OpenAI-compatible endpoint. Model overridable via OPENROUTER_PROPOSAL_MODEL (default openrouter/auto).",
+    validate: (_v) => null,
+  },
 ];
 
 // Operational readiness — important for full functionality but never a build
@@ -185,7 +197,7 @@ for (const spec of ALWAYS_REQUIRED) {
 const hasAnyAIKey = AI_PROVIDER_KEYS.some(({ name }) => Boolean(process.env[name]));
 if (!hasAnyAIKey) {
   const message =
-    "At least one AI provider key is required: ANTHROPIC_API_KEY (preferred), GEMINI_API_KEY, OPENAI_API_KEY, or DEEPSEEK_API_KEY. " +
+    "At least one AI provider key is required: ANTHROPIC_API_KEY (preferred), GEMINI_API_KEY, OPENAI_API_KEY, DEEPSEEK_API_KEY, GROQ_API_KEY, or OPENROUTER_API_KEY. " +
     "Without any AI key, every imported expert/project is REGEX_DRAFT and BLOCKED from final proposal generation.";
   if (isProd) {
     errors.push(`  ✗ AI_PROVIDER_KEYS: ${message}`);

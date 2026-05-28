@@ -3,9 +3,13 @@ import {
   isDeepSeekConfigured,
   deepSeekOfficialEnvPresent,
   getDeepSeekModel,
+  isGroqConfigured,
+  getGroqModel,
+  isOpenRouterConfigured,
+  getOpenRouterModel,
 } from "../lib/ai-provider-health";
 
-const AI_FALLBACK_CHAIN = "Claude → Gemini → OpenAI → DeepSeek → deterministic draft fallback";
+const AI_FALLBACK_CHAIN = "Claude → Gemini → OpenAI → DeepSeek → Groq → OpenRouter → deterministic draft fallback";
 
 type AIHealthResponse = {
   success: boolean;
@@ -18,8 +22,14 @@ type AIHealthResponse = {
     gemini: { configured: boolean; primaryModel: string; fallbackModels: string[]; extractionModel: string | null };
     openai: { configured: boolean; note: string };
     deepseek: { configured: boolean; envPresent: boolean; model: string; failing: boolean; coolingDown: boolean };
+    groq: { configured: boolean; model: string; failing: boolean };
+    openrouter: { configured: boolean; model: string; failing: boolean };
   };
 };
+
+function genericProviderState(configured: boolean, runtime: { coolingDown: boolean; consecutiveFailures: number }) {
+  return { configured, failing: configured && (runtime.coolingDown || runtime.consecutiveFailures > 0) };
+}
 
 function present(value: string | undefined) {
   return Boolean(value && value.trim().length > 0);
@@ -56,6 +66,9 @@ function getAIHealth(): AIHealthResponse {
     warnings.push("DeepSeek is enabled via a fallback alias env var. Rename it to DEEPSEEK_API_KEY (the official variable) in Vercel.");
   }
 
+  const groqState = genericProviderState(isGroqConfigured(), getProviderRuntimeSnapshot("groq"));
+  const openRouterState = genericProviderState(isOpenRouterConfigured(), getProviderRuntimeSnapshot("openrouter"));
+
   return {
     success: blockers.length === 0,
     providers: {
@@ -82,6 +95,8 @@ function getAIHealth(): AIHealthResponse {
         failing: deepseekFailing,
         coolingDown: deepseekRuntime.coolingDown,
       },
+      groq: { configured: groqState.configured, model: getGroqModel(), failing: groqState.failing },
+      openrouter: { configured: openRouterState.configured, model: getOpenRouterModel(), failing: openRouterState.failing },
     },
     preferredProvider,
     blockers,
@@ -94,6 +109,24 @@ function statusPill(configured: boolean) {
   return configured
     ? <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700">Configured</span>
     : <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-semibold text-red-700">Missing</span>;
+}
+
+function GenericProviderCard({ name, tier, envVar, configured, failing, model }: { name: string; tier: string; envVar: string; configured: boolean; failing: boolean; model: string }) {
+  return (
+    <div className="rounded-xl bg-white p-3 shadow-sm">
+      <div className="flex items-center justify-between">
+        <p className="font-semibold text-slate-900">{name}</p>
+        {configured
+          ? (failing
+              ? <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">Configured · failing</span>
+              : statusPill(true))
+          : statusPill(false)}
+      </div>
+      {!configured && <p className="mt-2 text-xs text-slate-600">Not configured — set {envVar} in Vercel Production environment.</p>}
+      {configured && failing && <p className="mt-2 text-xs text-amber-700">Configured, but last response failed or returned empty. Check {name} model access or retry after cooldown.</p>}
+      {configured && !failing && <p className="mt-2 text-xs text-slate-600">{tier}. Model: {model}</p>}
+    </div>
+  );
 }
 
 export async function AIHealthPanel() {
@@ -110,7 +143,7 @@ export async function AIHealthPanel() {
         <span className={`rounded-full px-3 py-1 text-xs font-bold ${ok ? "bg-emerald-100 text-emerald-800" : "bg-red-100 text-red-800"}`}>{health.nextAction.replace(/_/g, " ")}</span>
       </div>
 
-      <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <div className="rounded-xl bg-white p-3 shadow-sm">
           <div className="flex items-center justify-between"><p className="font-semibold text-slate-900">Claude</p>{statusPill(health.providers.claude.configured)}</div>
           <p className="mt-2 text-xs text-slate-600">Tier: {health.providers.claude.tier ?? "not set"}</p>
@@ -144,6 +177,8 @@ export async function AIHealthPanel() {
             <p className="mt-2 text-xs text-slate-600">Fourth-tier fallback provider. Model: {health.providers.deepseek.model}</p>
           )}
         </div>
+        <GenericProviderCard name="Groq" tier="Fifth-tier fallback provider" envVar="GROQ_API_KEY" configured={health.providers.groq.configured} failing={health.providers.groq.failing} model={health.providers.groq.model} />
+        <GenericProviderCard name="OpenRouter" tier="Sixth-tier fallback provider" envVar="OPENROUTER_API_KEY" configured={health.providers.openrouter.configured} failing={health.providers.openrouter.failing} model={health.providers.openrouter.model} />
       </div>
 
       <p className="mt-3 text-xs text-slate-500">Fallback chain: {AI_FALLBACK_CHAIN}</p>

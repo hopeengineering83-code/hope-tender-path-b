@@ -7,9 +7,13 @@ import {
   isDeepSeekConfigured,
   deepSeekOfficialEnvPresent,
   getDeepSeekModel,
+  isGroqConfigured,
+  getGroqModel,
+  isOpenRouterConfigured,
+  getOpenRouterModel,
 } from "../../../../lib/ai-provider-health";
 
-const AI_FALLBACK_CHAIN = "Claude → Gemini → OpenAI → DeepSeek → deterministic draft fallback";
+const AI_FALLBACK_CHAIN = "Claude → Gemini → OpenAI → DeepSeek → Groq → OpenRouter → deterministic draft fallback";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 10;
@@ -63,6 +67,11 @@ export async function GET() {
     warnings.push("DeepSeek is enabled via a fallback alias env var. Rename it to DEEPSEEK_API_KEY (the official variable) in Vercel.");
   }
 
+  const groqConfigured = isGroqConfigured();
+  const groqRuntime = getProviderRuntimeSnapshot("groq");
+  const openRouterConfigured = isOpenRouterConfigured();
+  const openRouterRuntime = getProviderRuntimeSnapshot("openrouter");
+
   return NextResponse.json({
     success: blockers.length === 0,
     providers: {
@@ -93,6 +102,22 @@ export async function GET() {
         label: "DeepSeek",
         note: "Fourth-tier fallback provider",
         runtime: deepSeekRuntime,
+      },
+      groq: {
+        configured: groqConfigured,
+        model: getGroqModel(),
+        fallbackRank: 5,
+        label: "Groq",
+        note: "Fifth-tier fallback provider",
+        runtime: groqRuntime,
+      },
+      openrouter: {
+        configured: openRouterConfigured,
+        model: getOpenRouterModel(),
+        fallbackRank: 6,
+        label: "OpenRouter",
+        note: "Sixth-tier fallback provider",
+        runtime: openRouterRuntime,
       },
     },
     fallbackChain: AI_FALLBACK_CHAIN,

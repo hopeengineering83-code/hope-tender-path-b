@@ -31,7 +31,7 @@
 //     // skip Gemini for now — it 429'd N seconds ago
 //   }
 
-export type AiProviderName = "anthropic" | "gemini" | "openai" | "deepseek";
+export type AiProviderName = "anthropic" | "gemini" | "openai" | "deepseek" | "groq" | "openrouter";
 
 export type AiProviderFailureCategory =
   | "RATE_LIMIT"
@@ -67,6 +67,8 @@ const PROVIDER_ENV_KEY: Record<AiProviderName, string> = {
   gemini: "GEMINI_API_KEY",
   openai: "OPENAI_API_KEY",
   deepseek: "DEEPSEEK_API_KEY",
+  groq: "GROQ_API_KEY",
+  openrouter: "OPENROUTER_API_KEY",
 };
 
 // ─── Central DeepSeek key resolution ──────────────────────────────────────
@@ -100,8 +102,38 @@ export function getDeepSeekModel(): string {
   return process.env.DEEPSEEK_PROPOSAL_MODEL || "deepseek-chat";
 }
 
+// ─── Groq (OpenAI-compatible) ─────────────────────────────────────────────
+// Fifth-tier fallback. Official variable GROQ_API_KEY. Model overridable via
+// GROQ_PROPOSAL_MODEL (default: a current Llama 3.3 70B instruct model).
+export function getGroqApiKey(): string | undefined {
+  const v = process.env.GROQ_API_KEY;
+  return v && v.trim().length > 0 ? v.trim() : undefined;
+}
+export function isGroqConfigured(): boolean {
+  return Boolean(getGroqApiKey());
+}
+export function getGroqModel(): string {
+  return process.env.GROQ_PROPOSAL_MODEL || "llama-3.3-70b-versatile";
+}
+
+// ─── OpenRouter (OpenAI-compatible aggregator) ────────────────────────────
+// Sixth-tier fallback. Official variable OPENROUTER_API_KEY. Model overridable
+// via OPENROUTER_PROPOSAL_MODEL (default: openrouter/auto picks a live model).
+export function getOpenRouterApiKey(): string | undefined {
+  const v = process.env.OPENROUTER_API_KEY;
+  return v && v.trim().length > 0 ? v.trim() : undefined;
+}
+export function isOpenRouterConfigured(): boolean {
+  return Boolean(getOpenRouterApiKey());
+}
+export function getOpenRouterModel(): string {
+  return process.env.OPENROUTER_PROPOSAL_MODEL || "openrouter/auto";
+}
+
 function isProviderConfigured(provider: AiProviderName): boolean {
   if (provider === "deepseek") return isDeepSeekConfigured();
+  if (provider === "groq") return isGroqConfigured();
+  if (provider === "openrouter") return isOpenRouterConfigured();
   return Boolean(process.env[PROVIDER_ENV_KEY[provider]]);
 }
 

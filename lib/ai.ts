@@ -1,6 +1,6 @@
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { GoogleGenerativeAI } = require("@google/generative-ai") as typeof import("@google/generative-ai");
-import { recordProviderSuccess, recordProviderFailure, isProviderCooledDown, getDeepSeekApiKey, isDeepSeekConfigured, getDeepSeekModel } from "./ai-provider-health";
+import { recordProviderSuccess, recordProviderFailure, isProviderCooledDown, getDeepSeekApiKey, isDeepSeekConfigured, getDeepSeekModel, getGroqApiKey, isGroqConfigured, getGroqModel, getOpenRouterApiKey, isOpenRouterConfigured, getOpenRouterModel } from "./ai-provider-health";
 
 const apiKey = process.env.GEMINI_API_KEY;
 const anthropicApiKey = process.env.ANTHROPIC_API_KEY;
@@ -75,7 +75,7 @@ function getModel(modelName = DEFAULT_GEMINI_MODEL) {
 }
 
 export function isAIEnabled() {
-  return Boolean(apiKey || anthropicApiKey || process.env.OPENAI_API_KEY || isDeepSeekConfigured());
+  return Boolean(apiKey || anthropicApiKey || process.env.OPENAI_API_KEY || isDeepSeekConfigured() || isGroqConfigured() || isOpenRouterConfigured());
 }
 
 export function isClaudeEnabled() {
@@ -87,7 +87,7 @@ export function isClaudeEnabled() {
 // (e.g., generate-elite.ts) so the GeneratedDocument.contentSummary can
 // surface which provider was actually used (rather than a generic "AI"
 // label). Reset to null whenever a generation request fails entirely.
-type AIProvider = "claude" | "gemini" | "openai" | "deepseek" | null;
+type AIProvider = "claude" | "gemini" | "openai" | "deepseek" | "groq" | "openrouter" | null;
 let lastProposalProvider: AIProvider = null;
 
 export function getLastProposalProvider(): AIProvider {
@@ -395,6 +395,9 @@ export async function generateWithFallback(prompt: string, opts?: { systemPrompt
       });
       if (deepSeekResult1) { recordProviderSuccess("deepseek"); return deepSeekResult1; }
     }
+    // Groq (5th) → OpenRouter (6th) tail.
+    const tail1 = await tryTailFallbackProviders(prompt, opts?.systemPrompt);
+    if (tail1) return tail1.text;
     // Always surface Gemini error when it was the root cause — even in
     // mixed deployments where OpenAI is configured but also returned null.
     if (geminiError) {
@@ -402,7 +405,7 @@ export async function generateWithFallback(prompt: string, opts?: { systemPrompt
       const openAiNote = isOpenAIEnabled()
         ? ` OpenAI (${process.env.OPENAI_PROPOSAL_MODEL ?? "gpt-4o"}) also returned null — check OPENAI_API_KEY.`
         : "";
-      throw new Error(`All 4 AI providers exhausted. Claude returned null on all models; Gemini also failed: ${geminiMsg}.${openAiNote} DeepSeek also returned null. Try re-running the engine in a few minutes.`);
+      throw new Error(`All configured AI providers exhausted. Claude returned null on all models; Gemini also failed: ${geminiMsg}.${openAiNote} DeepSeek/Groq/OpenRouter also returned null or are not configured. Try re-running the engine in a few minutes.`);
     }
     const providerNote = isOpenAIEnabled()
       ? `OpenAI (${process.env.OPENAI_PROPOSAL_MODEL ?? "gpt-4o"}) also returned null (rate limit or transient error).`
@@ -439,6 +442,9 @@ export async function generateWithFallback(prompt: string, opts?: { systemPrompt
       });
       if (deepSeekResult2) { recordProviderSuccess("deepseek"); return deepSeekResult2; }
     }
+    // Groq (5th) → OpenRouter (6th) tail.
+    const tail2 = await tryTailFallbackProviders(prompt, opts?.systemPrompt);
+    if (tail2) return tail2.text;
     // If Gemini was the root cause, surface it rather than blaming OpenAI
     if (geminiError) throw geminiError;
     throw new Error(`OpenAI (${process.env.OPENAI_PROPOSAL_MODEL ?? "gpt-4o"}) is configured but did not return a result. Check OPENAI_API_KEY and model access on your account.`);
@@ -452,9 +458,12 @@ export async function generateWithFallback(prompt: string, opts?: { systemPrompt
     });
     if (deepSeekResult3) { recordProviderSuccess("deepseek"); return deepSeekResult3; }
   }
+  // Groq → OpenRouter standalone tail (when only those keys are set).
+  const tail3 = await tryTailFallbackProviders(prompt, opts?.systemPrompt);
+  if (tail3) return tail3.text;
   // Gemini was configured but threw — surface the real error, not "no provider configured"
   if (geminiError) throw geminiError;
-  throw new Error("No AI provider configured — set ANTHROPIC_API_KEY (preferred), GEMINI_API_KEY, OPENAI_API_KEY, or DEEPSEEK_API_KEY.");
+  throw new Error("No AI provider configured — set ANTHROPIC_API_KEY (preferred), GEMINI_API_KEY, OPENAI_API_KEY, DEEPSEEK_API_KEY, GROQ_API_KEY, or OPENROUTER_API_KEY.");
 }
 
 // ─── OpenAI (GPT-4o) provider ──────────────────────────────────────────────────
@@ -622,6 +631,148 @@ async function generateWithDeepSeek(
     console.warn(`[ai] DeepSeek fetch failed: ${sanitized} — falling through to deterministic.`);
     return null;
   }
+}
+
+export function isGroqEnabled() {
+  return isGroqConfigured();
+}
+
+export function isOpenRouterEnabled() {
+  return isOpenRouterConfigured();
+}
+
+// ─── Generic OpenAI-compatible chat-completions caller ──────────────────────
+// Groq and OpenRouter both speak the OpenAI /chat/completions wire format, so
+// they share one implementation. Mirrors generateWithDeepSeek's safety: hard
+// timeout, key redaction in any surfaced text, null (not throw) on transient
+// errors so the chain can fall through to the next provider / deterministic.
+const OPENAI_COMPAT_DEFAULT_TIMEOUT_MS = 60_000;
+async function generateOpenAICompatible(params: {
+  providerLabel: string;
+  endpoint: string;
+  apiKey: string;
+  model: string;
+  prompt: string;
+  systemPrompt: string;
+  maxTokens: number;
+  extraHeaders?: Record<string, string>;
+}): Promise<string | null> {
+  const { providerLabel, endpoint, apiKey: key, model, prompt, systemPrompt, maxTokens, extraHeaders } = params;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), OPENAI_COMPAT_DEFAULT_TIMEOUT_MS);
+  try {
+    const res = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${key}`,
+        "Content-Type": "application/json",
+        ...(extraHeaders ?? {}),
+      },
+      body: JSON.stringify({
+        model,
+        max_tokens: maxTokens,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: prompt },
+        ],
+      }),
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      const sanitized = body.replace(/(sk|gsk)[-_][A-Za-z0-9-_]{8,}/g, "[REDACTED]").slice(0, 200);
+      if (res.status === 401 || res.status === 403) {
+        const strictAuth = ["1", "true", "yes"].includes((process.env.AI_PROVIDER_STRICT_AUTH || "").trim().toLowerCase());
+        if (strictAuth) throw new Error(`${providerLabel} API key invalid (${res.status}): ${sanitized}`);
+        console.warn(`[ai] ${providerLabel} auth error (${res.status}) — continuing to next provider: ${sanitized}`);
+        return null;
+      }
+      if (res.status === 429) {
+        console.warn(`[ai] ${providerLabel} rate limit (429) on ${model} — skipping to next provider.`);
+        return null;
+      }
+      console.warn(`[ai] ${providerLabel} error ${res.status} on ${model}: ${sanitized} — skipping.`);
+      return null;
+    }
+
+    const data = await res.json() as { choices?: Array<{ message?: { content?: string } }>; error?: { message?: string } };
+    if (data.error?.message) {
+      const sanitized = data.error.message.replace(/(sk|gsk)[-_][A-Za-z0-9-_]{8,}/g, "[REDACTED]").slice(0, 200);
+      console.warn(`[ai] ${providerLabel} API error: ${sanitized}`);
+      return null;
+    }
+    const text = data.choices?.[0]?.message?.content?.trim() ?? "";
+    if (text.length === 0) {
+      console.warn(`[ai] ${providerLabel} ${model} returned empty content.`);
+      return null;
+    }
+    return text;
+  } catch (err) {
+    clearTimeout(timeoutId);
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes("aborted") || msg.includes("timeout")) {
+      console.warn(`[ai] ${providerLabel} fetch timed out after ${OPENAI_COMPAT_DEFAULT_TIMEOUT_MS}ms — falling through.`);
+      return null;
+    }
+    if (/api\s+key\s+invalid|invalid\s+api\s+key|incorrect\s+api\s+key|authentication|unauthorized/i.test(msg)) {
+      const strictAuth = ["1", "true", "yes"].includes((process.env.AI_PROVIDER_STRICT_AUTH || "").trim().toLowerCase());
+      if (strictAuth) throw err;
+    }
+    console.warn(`[ai] ${providerLabel} fetch failed: ${msg.slice(0, 200)} — falling through.`);
+    return null;
+  }
+}
+
+// Fifth-tier fallback: Groq (fast OpenAI-compatible inference). Null when GROQ_API_KEY unset.
+async function generateWithGroq(prompt: string, systemPrompt: string = DEFAULT_PROPOSAL_SYSTEM_PROMPT, maxTokens = 16000): Promise<string | null> {
+  const key = getGroqApiKey();
+  if (!key) return null;
+  return generateOpenAICompatible({
+    providerLabel: "Groq",
+    endpoint: "https://api.groq.com/openai/v1/chat/completions",
+    apiKey: key,
+    model: getGroqModel(),
+    prompt,
+    systemPrompt,
+    maxTokens,
+  });
+}
+
+// Sixth-tier fallback: OpenRouter (OpenAI-compatible aggregator). Null when OPENROUTER_API_KEY unset.
+async function generateWithOpenRouter(prompt: string, systemPrompt: string = DEFAULT_PROPOSAL_SYSTEM_PROMPT, maxTokens = 16000): Promise<string | null> {
+  const key = getOpenRouterApiKey();
+  if (!key) return null;
+  return generateOpenAICompatible({
+    providerLabel: "OpenRouter",
+    endpoint: "https://openrouter.ai/api/v1/chat/completions",
+    apiKey: key,
+    model: getOpenRouterModel(),
+    prompt,
+    systemPrompt,
+    maxTokens,
+    // OpenRouter recommends (optional) attribution headers.
+    extraHeaders: {
+      "HTTP-Referer": process.env.OPENROUTER_SITE_URL || "https://hope-tender-path-b.vercel.app",
+      "X-Title": process.env.OPENROUTER_SITE_NAME || "Hope Tender Path",
+    },
+  });
+}
+
+// Shared tail of the fallback chain: Groq → OpenRouter. Honours per-provider
+// cooldown and records health so the AI Health panel and AI Analyze
+// diagnostics stay accurate. Returns the text + which provider produced it.
+async function tryTailFallbackProviders(prompt: string, systemPrompt?: string): Promise<{ text: string; provider: "groq" | "openrouter" } | null> {
+  if (isGroqEnabled() && !isProviderCooledDown("groq")) {
+    const r = await generateWithGroq(prompt, systemPrompt).catch((err) => { recordProviderFailure("groq", err); return null; });
+    if (r) { recordProviderSuccess("groq"); return { text: r, provider: "groq" }; }
+  }
+  if (isOpenRouterEnabled() && !isProviderCooledDown("openrouter")) {
+    const r = await generateWithOpenRouter(prompt, systemPrompt).catch((err) => { recordProviderFailure("openrouter", err); return null; });
+    if (r) { recordProviderSuccess("openrouter"); return { text: r, provider: "openrouter" }; }
+  }
+  return null;
 }
 
 // Try PROPOSAL_MODELS in order until one succeeds — gives the best available model for proposal writing.
@@ -1519,6 +1670,8 @@ export async function critiqueProposalWithAI(input: DeepCritiqueInput): Promise<
       ).catch((e) => { console.warn(`[ai] critiqueProposalWithAI DeepSeek failed: ${e instanceof Error ? e.message : String(e)}`); return null; });
       if (deepSeekResult) return deepSeekResult;
     }
+    const tail = await withRefinementTimeout(tryTailFallbackProviders(prompt, CRITIC_SYSTEM_PROMPT)).catch(() => null);
+    if (tail) return tail.text;
   } catch (err) {
     console.warn(`[ai] critiqueProposalWithAI failed: ${err instanceof Error ? err.message : String(err)}`);
     return null;
@@ -1573,6 +1726,8 @@ export async function rewriteProposalWithCritique(input: DeepRewriteInput): Prom
         return deepSeekResult;
       }
     }
+    const tail = await withRefinementTimeout(tryTailFallbackProviders(prompt, REWRITER_SYSTEM_PROMPT)).catch(() => null);
+    if (tail) { lastProposalProvider = tail.provider; return tail.text; }
   } catch (err) {
     console.warn(`[ai] rewriteProposalWithCritique failed: ${err instanceof Error ? err.message : String(err)}`);
     return null;
@@ -1693,6 +1848,9 @@ ${input.currentMarkdown}
         console.warn(`[ai] refineProposalWithAI DeepSeek failed: ${deepSeekErr instanceof Error ? deepSeekErr.message : String(deepSeekErr)}`);
       }
     }
+    // Groq → OpenRouter refinement tail.
+    const tail = await withRefinementTimeout(tryTailFallbackProviders(prompt, REFINEMENT_SYSTEM_PROMPT)).catch(() => null);
+    if (tail) { lastProposalProvider = tail.provider; return tail.text; }
   } catch (err) {
     console.warn(`[ai] refineProposalWithAI failed: ${err instanceof Error ? err.message : String(err)}`);
     return null;
@@ -2517,6 +2675,9 @@ Now write the complete technical proposal. Start with the Cover Letter. The eval
         lastProposalProvider = "deepseek";
         return deepSeekResult;
       }
+      // Groq → OpenRouter tail.
+      const tail = await tryTailFallbackProviders(prompt);
+      if (tail) { lastProposalProvider = tail.provider; return tail.text; }
       // Re-throw original Gemini error so callers surface the root cause
       throw geminiErr;
     }
@@ -2542,6 +2703,10 @@ Now write the complete technical proposal. Start with the Cover Letter. The eval
       return deepSeekResult;
     }
   }
+
+  // Groq → OpenRouter standalone tail.
+  const standaloneTail = await tryTailFallbackProviders(prompt);
+  if (standaloneTail) { lastProposalProvider = standaloneTail.provider; return standaloneTail.text; }
 
   lastProposalProvider = null;
   // Diagnostic error message: distinguishes between (a) no key at all,
@@ -2612,7 +2777,7 @@ interface SectionResult {
   id: ProposalSectionId;
   title: string;
   markdown: string;
-  source: "claude" | "gemini" | "openai" | "deepseek" | "fallback";
+  source: "claude" | "gemini" | "openai" | "deepseek" | "groq" | "openrouter" | "fallback";
   error?: string;
   durationMs: number;
 }
@@ -2733,6 +2898,20 @@ async function generateOneSection(spec: ProposalSectionSpec): Promise<SectionRes
       const msg = err instanceof Error ? err.message : String(err);
       console.warn(`[ai] section "${spec.id}" DeepSeek fallback failed (${msg}) — using deterministic fallback.`);
     }
+  }
+
+  // Groq (5th) → OpenRouter (6th) section tail.
+  try {
+    const tail = await Promise.race([
+      tryTailFallbackProviders(spec.userPrompt, spec.systemPrompt),
+      makeSectionTimeout(),
+    ]);
+    if (tail && tail.text.trim().length > 0) {
+      return { id: spec.id, title: spec.title, markdown: tail.text, source: tail.provider, durationMs: Date.now() - t0 };
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(`[ai] section "${spec.id}" Groq/OpenRouter fallback failed (${msg}) — using deterministic fallback.`);
   }
 
   // All providers failed (or unavailable). Use the deterministic

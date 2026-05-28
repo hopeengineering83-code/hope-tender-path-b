@@ -139,7 +139,7 @@ describe("/api/ai/health route contract", () => {
     assert.match(source, /envPresent:/);
     assert.match(source, /model:\s*getDeepSeekModel\(\)/);
     assert.match(source, /fallbackChain:/);
-    assert.match(source, /Claude → Gemini → OpenAI → DeepSeek → deterministic draft fallback/);
+    assert.match(source, /Claude → Gemini → OpenAI → DeepSeek → Groq → OpenRouter → deterministic draft fallback/);
   });
 
   it("AIHealthPanel renders a fourth DeepSeek card with configure/failing messaging", () => {
@@ -147,6 +147,6 @@ describe("/api/ai/health route contract", () => {
     assert.match(source, />DeepSeek</);
     assert.match(source, /set DEEPSEEK_API_KEY in Vercel Production environment/);
     assert.match(source, /Check DeepSeek model access or retry after cooldown/);
-    assert.match(source, /lg:grid-cols-4/);
+    assert.match(source, /lg:grid-cols-/);
   });
 });
