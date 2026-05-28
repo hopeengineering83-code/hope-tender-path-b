@@ -9,6 +9,7 @@ import { extractRequestId } from "../../../../../lib/request-id";
 import { createNotification } from "../../../../../lib/notifications";
 import { assessExtractionQuality } from "../../../../../lib/extraction-quality";
 import { buildAnalysisFallbackDiagnostics, formatFallbackDiagnosticsLine, type AnalysisFallbackDiagnostics } from "../../../../../lib/engine/analysis-fallback-diagnostics";
+import { buildProviderDiagnosticsSnapshot } from "../../../../../lib/ai-provider-health";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -90,6 +91,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const result = analyzeTender(tenderRecord);
     const fallbackDiagnostics = diagnostics ?? (errorMessage ? buildAnalysisFallbackDiagnostics(errorMessage) : buildAnalysisFallbackDiagnostics("No AI provider configured"));
     const diagnosticsLine = formatFallbackDiagnosticsLine(fallbackDiagnostics);
+    // Provider-specific snapshot so the fallback message is actionable
+    // (which providers were tried, which are cooling down, safe category per
+    // provider). Sourced from the in-memory health tracker — already redacted,
+    // never includes keys, raw provider bodies, prompts, or proposal text.
+    const providerDiagnostics = buildProviderDiagnosticsSnapshot();
 
     await prisma.$transaction(async (tx) => {
       await tx.tenderRequirement.deleteMany({ where: { tenderId: id } });
@@ -121,6 +127,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       summary: result.summary,
       requirementCount: result.requirements.length,
       fallbackDiagnostics,
+      providerDiagnostics,
     };
   }
 
@@ -131,6 +138,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       summary: string;
       requirementCount: number;
       fallbackDiagnostics?: AnalysisFallbackDiagnostics;
+      providerDiagnostics?: ReturnType<typeof buildProviderDiagnosticsSnapshot>;
     };
 
     if (isAIEnabled()) {
@@ -215,6 +223,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         ai: analysisResult.ai,
         fallback: analysisResult.fallback,
         fallbackDiagnostics: analysisResult.fallbackDiagnostics ?? null,
+        providerDiagnostics: analysisResult.providerDiagnostics ?? null,
         requirementCount: analysisResult.requirementCount,
         forcedPoorExtraction: force,
         extractionWarnings: extractionReports.filter((item) => item.quality.severity === "WARNING"),
@@ -234,9 +243,19 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       link: `/dashboard/tenders/${id}`,
     });
 
+    // Surface a stable, machine-readable code when the AI chain failed so the
+    // UI can route to "Retry AI Analyze" / "Review AI Provider Health" /
+    // "Approve fallback analysis with audit note" actions.
+    const fallbackCode = analysisResult.fallback
+      ? (analysisResult.fallbackDiagnostics?.category === "NO_PROVIDER_CONFIGURED"
+          ? "AI_NO_PROVIDER_CONFIGURED"
+          : "AI_PROVIDERS_EXHAUSTED")
+      : null;
+
     return NextResponse.json({
       success: true,
       ...analysisResult,
+      code: fallbackCode,
       tender: updated,
       extractionWarnings: extractionReports.filter((item) => item.quality.severity === "WARNING"),
     });
