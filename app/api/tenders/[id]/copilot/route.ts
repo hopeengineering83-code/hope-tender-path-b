@@ -4,6 +4,7 @@ import { requireUser, unauthorizedResponse, forbiddenResponse } from "../../../.
 import { answerTenderCopilotQuestion } from "../../../../../lib/engine/tender-ai-copilot";
 import { buildEvidenceGraph } from "../../../../../lib/evidence-graph";
 import { logAction } from "../../../../../lib/audit";
+import { rateLimit, AI_RATE_LIMIT } from "../../../../../lib/rate-limit";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -22,10 +23,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   }
   if (!["ADMIN", "PROPOSAL_MANAGER", "REVIEWER"].includes(actor.role)) return forbiddenResponse();
 
+  const rl = rateLimit(`copilot:${actor.id}`, AI_RATE_LIMIT);
+  if (!rl.allowed) return NextResponse.json({ error: "Too many requests", retryAfter: Math.ceil((rl.resetAt - Date.now()) / 1000) }, { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } });
+
   const { id } = await params;
   const body = await req.json().catch(() => ({} as { question?: string }));
   const question = typeof body.question === "string" ? body.question.trim() : "";
   if (question.length < 3) return NextResponse.json({ error: "Question must be at least 3 characters." }, { status: 400 });
+  if (question.length > 2000) return NextResponse.json({ error: "Question must be 2000 characters or fewer." }, { status: 400 });
 
   await prismaReady;
   const tender = await prisma.tender.findFirst({

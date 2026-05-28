@@ -3,12 +3,17 @@ import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { getSession } from "../../../../../lib/auth";
 import { ensureCompanyForUser } from "../../../../../lib/company-workspace";
 import { logAction } from "../../../../../lib/audit";
+import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../../lib/rate-limit";
 
 const VALID_TRUST_LEVELS = new Set(["REVIEWED", "AI_EXTRACTED", "IMPORTED"]);
 
 export async function PATCH(req: Request) {
   const userId = await getSession();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const rl = rateLimit(`projects-batch:${userId}`, MUTATION_RATE_LIMIT);
+  if (!rl.allowed) return NextResponse.json({ error: "Too many requests", retryAfter: Math.ceil((rl.resetAt - Date.now()) / 1000) }, { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } });
+
   await prismaReady;
 
   const body = await req.json().catch(() => ({} as Record<string, unknown>));
