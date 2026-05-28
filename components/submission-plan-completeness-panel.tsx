@@ -79,11 +79,34 @@ function toneClass(tone: "ok" | "warn" | "bad" | "neutral"): string {
   return "bg-slate-100 text-slate-500";
 }
 
+function RowActionButton({ label, busy, disabled, onClick }: { label: string; busy: boolean; disabled: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className="whitespace-nowrap rounded border border-slate-300 bg-white px-1.5 py-0.5 text-[10px] font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+    >
+      {busy ? "Working…" : label}
+    </button>
+  );
+}
+
+type PlanRowAction = "RECLASSIFY_TO_PLAN" | "MARK_NOT_EXPORTABLE" | "SUPERSEDE_DUPLICATE" | "EXCLUDE_OUTSIDE_PLAN";
+const ACTION_NEEDS_NOTE: Record<PlanRowAction, boolean> = {
+  RECLASSIFY_TO_PLAN: false,
+  MARK_NOT_EXPORTABLE: true,
+  SUPERSEDE_DUPLICATE: true,
+  EXCLUDE_OUTSIDE_PLAN: true,
+};
+
 export function SubmissionPlanCompletenessPanel({ tenderId }: { tenderId: string }) {
   const [data, setData] = useState<Response | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showHistorical, setShowHistorical] = useState(false);
+  const [busyKey, setBusyKey] = useState<string | null>(null);
+  const [actionMsg, setActionMsg] = useState<string | null>(null);
 
   async function load() {
     setLoading(true);
@@ -97,6 +120,33 @@ export function SubmissionPlanCompletenessPanel({ tenderId }: { tenderId: string
       setError(err instanceof Error ? err.message : "Failed to load submission plan");
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function runRowAction(documentId: string, action: PlanRowAction) {
+    let note: string | undefined;
+    if (ACTION_NEEDS_NOTE[action]) {
+      const entered = window.prompt(`Add a short audit note for "${action.replace(/_/g, " ").toLowerCase()}":`);
+      if (entered === null) return; // cancelled
+      if (entered.trim().length === 0) { setActionMsg("An audit note is required for this action."); return; }
+      note = entered.trim();
+    }
+    setBusyKey(`${documentId}:${action}`);
+    setActionMsg(null);
+    try {
+      const res = await fetch(`/api/tenders/${tenderId}/documents/${documentId}/plan-action`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, note }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error ?? `Action failed (${res.status})`);
+      setActionMsg(`Done — ${json.detail ?? action}.`);
+      await load();
+    } catch (err) {
+      setActionMsg(err instanceof Error ? err.message : "Action failed");
+    } finally {
+      setBusyKey(null);
     }
   }
 
@@ -132,6 +182,10 @@ export function SubmissionPlanCompletenessPanel({ tenderId }: { tenderId: string
           )}
         </div>
       </div>
+
+      {actionMsg && (
+        <p className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-2 text-xs text-slate-700">{actionMsg}</p>
+      )}
 
       <div className="mt-4 grid grid-cols-2 gap-2 text-center text-xs sm:grid-cols-4 md:grid-cols-7">
         <div className="rounded-xl bg-slate-50 px-2 py-2">
@@ -187,11 +241,14 @@ export function SubmissionPlanCompletenessPanel({ tenderId }: { tenderId: string
               <th className="px-2 py-2">Envelope</th>
               <th className="px-2 py-2">Status</th>
               <th className="px-2 py-2">Recommended action</th>
+              <th className="px-2 py-2">Actions</th>
             </tr>
           </thead>
           <tbody>
             {visibleRows.map((row, index) => {
               const badge = STATUS_BADGE[row.status];
+              const canAct = Boolean(row.documentId) && row.status !== "SUPERSEDED";
+              const isOutsidePlan = row.status === "OUTSIDE_PLAN";
               return (
                 <tr key={row.key} className="border-t border-slate-100 align-top">
                   <td className="px-2 py-2 text-slate-400">{row.exactOrder ?? index + 1}</td>
@@ -206,11 +263,27 @@ export function SubmissionPlanCompletenessPanel({ tenderId }: { tenderId: string
                     {row.officialOriginal && <p className="mt-1 text-[10px] text-amber-600">Official original</p>}
                   </td>
                   <td className="px-2 py-2 text-slate-600">{row.recommendedAction}</td>
+                  <td className="px-2 py-2">
+                    {canAct && row.documentId ? (
+                      <div className="flex flex-col gap-1">
+                        <RowActionButton label="Reclassify to plan" busy={busyKey === `${row.documentId}:RECLASSIFY_TO_PLAN`} disabled={busyKey !== null} onClick={() => void runRowAction(row.documentId!, "RECLASSIFY_TO_PLAN")} />
+                        {isOutsidePlan && (
+                          <>
+                            <RowActionButton label="Mark control / not exportable" busy={busyKey === `${row.documentId}:MARK_NOT_EXPORTABLE`} disabled={busyKey !== null} onClick={() => void runRowAction(row.documentId!, "MARK_NOT_EXPORTABLE")} />
+                            <RowActionButton label="Supersede duplicate" busy={busyKey === `${row.documentId}:SUPERSEDE_DUPLICATE`} disabled={busyKey !== null} onClick={() => void runRowAction(row.documentId!, "SUPERSEDE_DUPLICATE")} />
+                            <RowActionButton label="Exclude outside-plan" busy={busyKey === `${row.documentId}:EXCLUDE_OUTSIDE_PLAN`} disabled={busyKey !== null} onClick={() => void runRowAction(row.documentId!, "EXCLUDE_OUTSIDE_PLAN")} />
+                          </>
+                        )}
+                      </div>
+                    ) : (
+                      <span className="text-[10px] text-slate-400">—</span>
+                    )}
+                  </td>
                 </tr>
               );
             })}
             {visibleRows.length === 0 && (
-              <tr><td colSpan={5} className="px-2 py-4 text-center text-slate-500">No rows to display.</td></tr>
+              <tr><td colSpan={6} className="px-2 py-4 text-center text-slate-500">No rows to display.</td></tr>
             )}
           </tbody>
         </table>
