@@ -12,6 +12,7 @@ import { AIRematchButton } from "../../../../components/ai-rematch-button";
 import { CanonicalReadinessScoreWidget } from "../../../../components/canonical-readiness-score-widget";
 import { SubmissionPlanCompletenessPanel } from "../../../../components/submission-plan-completeness-panel";
 import TenderRecoveryCommandCenter from "../../../../components/tender-recovery-command-center";
+import { detectAnalysisSource } from "../../../../lib/engine/analysis-source";
 
 function renderInline(text: string): React.ReactNode[] {
   const parts = text.split(/(\*\*[^*\n]+\*\*|\*[^*\n]+\*|_[^_\n]+_)/g);
@@ -970,29 +971,49 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
   const hasRecoverableProjectSelection = reviewedProjectMatches > 0;
   const hasReviewedExpertPath = !expertReqExists || selectedExpertCount === 0 || reviewedExpertMatches > 0;
   const hasReviewedProjectPath = !projectReqExists || selectedProjectCount === 0 || reviewedProjectMatches > 0;
-  const canGenerateDocs = tender.requirements.length > 0
+  // Block generation when analysis came from regex fallback and has not
+  // been explicitly approved — the orchestrator enforces this globally and
+  // we mirror it here so the button is visually disabled immediately.
+  const analysisSourceRaw = detectAnalysisSource(tender);
+  const analysisIsFallbackUnapproved = analysisSourceRaw === "REGEX_FALLBACK_AI_ERROR";
+
+  const canGenerateDocs = !analysisIsFallbackUnapproved
+    && tender.requirements.length > 0
     && (!expertReqExists || selectedExpertCount > 0 || !expertMatchesExist || hasRecoverableExpertSelection)
     && (!projectReqExists || selectedProjectCount > 0 || !projectMatchesExist || hasRecoverableProjectSelection)
     && hasReviewedExpertPath
     && hasReviewedProjectPath
     && !criticalHardBlockExists;
-  const generateDisabledReason = tender.requirements.length === 0
-    ? "Run AI Analyze or Run Engine first to extract requirements"
-    : (expertReqExists && selectedExpertCount === 0 && totalExpertMatches === 0)
-      ? "Run Engine first to generate expert matches"
-      : (projectReqExists && selectedProjectCount === 0 && totalProjectMatches === 0)
-        ? "Run Engine first to generate project matches"
-        : (expertReqExists && expertMatchesExist && selectedExpertCount === 0 && !hasRecoverableExpertSelection)
-          ? "Select at least one reviewed expert match before generating"
-          : (projectReqExists && projectMatchesExist && selectedProjectCount === 0 && !hasRecoverableProjectSelection)
-            ? "Select at least one reviewed project match before generating"
-            : (expertReqExists && selectedExpertCount > 0 && reviewedExpertMatches === 0)
-              ? "Review at least one selected expert before generating"
-              : (projectReqExists && selectedProjectCount > 0 && reviewedProjectMatches === 0)
-                ? "Review at least one selected project before generating"
-                : criticalHardBlockExists
-                  ? "Resolve critical hard blockers before generating"
-                  : "Generate proposal documents";
+  const generateDisabledReason = analysisIsFallbackUnapproved
+    ? "Analysis used regex fallback — retry AI Analyze or approve the fallback before generating"
+    : tender.requirements.length === 0
+      ? "Run AI Analyze or Run Engine first to extract requirements"
+      : (expertReqExists && selectedExpertCount === 0 && totalExpertMatches === 0)
+        ? "Run Engine first to generate expert matches"
+        : (projectReqExists && selectedProjectCount === 0 && totalProjectMatches === 0)
+          ? "Run Engine first to generate project matches"
+          : (expertReqExists && expertMatchesExist && selectedExpertCount === 0 && !hasRecoverableExpertSelection)
+            ? "Select at least one reviewed expert match before generating"
+            : (projectReqExists && projectMatchesExist && selectedProjectCount === 0 && !hasRecoverableProjectSelection)
+              ? "Select at least one reviewed project match before generating"
+              : (expertReqExists && selectedExpertCount > 0 && reviewedExpertMatches === 0)
+                ? "Review at least one selected expert before generating"
+                : (projectReqExists && selectedProjectCount > 0 && reviewedProjectMatches === 0)
+                  ? "Review at least one selected project before generating"
+                  : criticalHardBlockExists
+                    ? "Resolve critical hard blockers before generating"
+                    : "Generate proposal documents";
+
+  // ZIP is only safe when there are generated documents. The canonical
+  // export-readiness gate (Export Readiness panel) blocks the final ZIP
+  // link — this simpler guard prevents the raw ZIP endpoint from being
+  // called when no documents exist at all.
+  const hasAnyGeneratedDoc = (tender.generatedDocuments?.length ?? 0) > 0;
+  const zipDisabledReason = analysisIsFallbackUnapproved
+    ? "Analysis source is unapproved regex fallback — approve or retry AI Analyze first"
+    : !hasAnyGeneratedDoc
+      ? "No generated documents yet — generate documents before downloading"
+      : null;
   const readinessScore = tender.readinessScore ??
     (tender.requirements.length === 0 ? 0
       : Math.max(0, Math.round(((tender.requirements.length - criticalGaps) / tender.requirements.length) * 100)));
@@ -1090,7 +1111,9 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
             </button>
           )}
           <button onClick={downloadZip}
-            className="rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm text-emerald-800 hover:bg-emerald-100">
+            disabled={!!zipDisabledReason}
+            title={zipDisabledReason ?? "Download the final ZIP package"}
+            className="rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm text-emerald-800 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-40">
             ↓ ZIP Package
           </button>
           <button onClick={() => downloadDoc("proposal")}
@@ -1765,23 +1788,52 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
 
       {validationReport && (
         <div className={`rounded-2xl border p-6 shadow-sm ${validationReport.passed ? "border-green-200 bg-green-50" : "border-red-200 bg-red-50"}`}>
-          <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center justify-between mb-4">
             <h2 className={`text-lg font-semibold ${validationReport.passed ? "text-green-800" : "text-red-800"}`}>
               {validationReport.passed ? "✓ Validation Passed — Ready for Export" : "✗ Validation Failed"}
             </h2>
             <button onClick={() => setValidationReport(null)} className="text-sm text-slate-400 hover:text-slate-600">Dismiss</button>
           </div>
-          {validationReport.issues.length === 0 ? (
-            <p className="text-sm text-green-700">All checks passed. This tender package is ready for export.</p>
-          ) : (
-            <ul className="space-y-2">
-              {validationReport.issues.map((issue) => (
-                <li key={issue.code} className={`rounded-lg px-3 py-2 text-sm ${issue.severity === "BLOCK" ? "bg-red-100 text-red-800" : "bg-amber-100 text-amber-800"}`}>
-                  <span className="font-medium">{issue.severity === "BLOCK" ? "BLOCKING: " : "WARNING: "}</span>
-                  {issue.message}
-                </li>
-              ))}
-            </ul>
+          {/* ── Blocking issues ───────────────────────────────────────────── */}
+          {validationReport.issues.filter((i) => i.severity === "BLOCK").length > 0 && (
+            <div className="mb-4">
+              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-red-700">
+                Blockers ({validationReport.issues.filter((i) => i.severity === "BLOCK").length})
+              </p>
+              <ul className="space-y-1.5">
+                {validationReport.issues.filter((i) => i.severity === "BLOCK").map((issue) => (
+                  <li key={issue.code} className="rounded-lg border border-red-200 bg-red-100 px-3 py-2 text-sm text-red-800">
+                    <span className="font-medium">✗ </span>{issue.message}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {/* ── Warnings ──────────────────────────────────────────────────── */}
+          {validationReport.issues.filter((i) => i.severity !== "BLOCK").length > 0 && (
+            <div className="mb-4">
+              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-amber-700">
+                Warnings ({validationReport.issues.filter((i) => i.severity !== "BLOCK").length})
+              </p>
+              <ul className="space-y-1.5">
+                {validationReport.issues.filter((i) => i.severity !== "BLOCK").map((issue) => (
+                  <li key={issue.code} className="rounded-lg border border-amber-200 bg-amber-100 px-3 py-2 text-sm text-amber-800">
+                    <span className="font-medium">⚠ </span>{issue.message}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {/* ── Passed checks ─────────────────────────────────────────────── */}
+          {validationReport.passed && validationReport.issues.length === 0 && (
+            <div className="rounded-lg border border-green-200 bg-green-100 px-3 py-2 text-sm text-green-800">
+              ✓ All checks passed. This tender package is ready for export.
+            </div>
+          )}
+          {validationReport.passed && validationReport.issues.length > 0 && (
+            <div className="rounded-lg border border-green-200 bg-green-100 px-3 py-2 text-sm text-green-700">
+              ✓ No blocking issues — {validationReport.issues.length} advisory warning(s) only.
+            </div>
           )}
         </div>
       )}
