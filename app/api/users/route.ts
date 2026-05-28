@@ -4,6 +4,7 @@ import { prisma, prismaReady } from "../../../lib/prisma";
 import { requireRole, unauthorizedResponse, forbiddenResponse } from "../../../lib/auth";
 import { logAction } from "../../../lib/audit";
 import { rateLimit, MUTATION_RATE_LIMIT } from "../../../lib/rate-limit";
+import { validatePassword } from "../../../lib/password-policy";
 
 export async function GET() {
   let actor;
@@ -61,12 +62,8 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Email already in use" }, { status: 409 });
   }
 
-  if (password.length < 8) {
-    return NextResponse.json({ error: "Password must be at least 8 characters" }, { status: 400 });
-  }
-  if (password.length > 1024) {
-    return NextResponse.json({ error: "Password too long (max 1024 characters)" }, { status: 400 });
-  }
+  const pwCheck = validatePassword(password);
+  if (!pwCheck.ok) return NextResponse.json({ error: pwCheck.error }, { status: 400 });
 
   const passwordHash = await bcrypt.hash(password, 10);
   const user = await prisma.user.create({

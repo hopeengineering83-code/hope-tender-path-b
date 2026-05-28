@@ -113,6 +113,42 @@ describe("tender title length validation", () => {
   });
 });
 
+// ── Password policy ──────────────────────────────────────────────────────────
+
+import { validatePassword } from "../lib/password-policy.js";
+
+describe("validatePassword", () => {
+  it("rejects passwords shorter than 8 chars", () => {
+    const result = validatePassword("abc1");
+    assert.equal(result.ok, false);
+    assert.match((result as { ok: false; error: string }).error, /8 characters/);
+  });
+
+  it("rejects passwords with no letters", () => {
+    const result = validatePassword("12345678");
+    assert.equal(result.ok, false);
+    assert.match((result as { ok: false; error: string }).error, /letter/);
+  });
+
+  it("rejects passwords with no numbers", () => {
+    const result = validatePassword("abcdefgh");
+    assert.equal(result.ok, false);
+    assert.match((result as { ok: false; error: string }).error, /number/);
+  });
+
+  it("rejects passwords over 1024 chars", () => {
+    const result = validatePassword("aA1" + "x".repeat(1024));
+    assert.equal(result.ok, false);
+    assert.match((result as { ok: false; error: string }).error, /1024/);
+  });
+
+  it("accepts valid passwords with letter and number", () => {
+    assert.equal(validatePassword("Password1").ok, true);
+    assert.equal(validatePassword("abc12345").ok, true);
+    assert.equal(validatePassword("MyStr0ngPass!").ok, true);
+  });
+});
+
 // ── JSON parse safety ────────────────────────────────────────────────────────
 
 describe("JSON parse safety pattern", () => {
