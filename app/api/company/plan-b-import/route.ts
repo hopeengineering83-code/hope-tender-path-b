@@ -5,6 +5,7 @@ import { prisma, prismaReady } from "../../../../lib/prisma";
 import { ensureCompanyForUser } from "../../../../lib/company-workspace";
 import { logAction } from "../../../../lib/audit";
 import { completenessStats, deriveExpectedCounts, hasUsableText } from "./helpers";
+import { sanitizeError } from "../../../../lib/sanitize-error";
 
 // Vercel route timeout — plan-B import processes all uploaded documents.
 // 60 = Hobby max; Pro applies its own plan limit when exceeded.
@@ -654,6 +655,6 @@ export async function POST(req: Request) {
         })),
       }, { status: 400 });
     }
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Plan-B import failed" }, { status: 400 });
+    return NextResponse.json({ error: sanitizeError(error) }, { status: 400 });
   }
 }

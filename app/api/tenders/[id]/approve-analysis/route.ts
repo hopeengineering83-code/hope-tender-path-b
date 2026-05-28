@@ -29,6 +29,7 @@ import {
   revokeRegexFallbackApproval,
 } from "../../../../../lib/engine/analysis-source";
 import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../../lib/rate-limit";
+import { sanitizeError } from "../../../../../lib/sanitize-error";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 10;
@@ -69,7 +70,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     return NextResponse.json({ success: true, approved: true, analysisSource: source });
   } catch (error) {
     console.error("approve-analysis POST failed", error);
-    return err("Approve-analysis failed.", 500, { code: "ANALYSIS_APPROVAL_RUNTIME_ERROR", detail: error instanceof Error ? error.message : String(error) });
+    return err("Approve-analysis failed.", 500, { code: "ANALYSIS_APPROVAL_RUNTIME_ERROR", detail: sanitizeError(error) });
   }
 }
 
@@ -94,6 +95,6 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
     return NextResponse.json({ success: true, approved: false, gapTitle: ANALYSIS_APPROVAL_GAP_TITLE });
   } catch (error) {
     console.error("approve-analysis DELETE failed", error);
-    return err("Revoke-approval failed.", 500, { code: "ANALYSIS_APPROVAL_RUNTIME_ERROR", detail: error instanceof Error ? error.message : String(error) });
+    return err("Revoke-approval failed.", 500, { code: "ANALYSIS_APPROVAL_RUNTIME_ERROR", detail: sanitizeError(error) });
   }
 }

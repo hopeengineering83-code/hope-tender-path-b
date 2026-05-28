@@ -5,6 +5,8 @@ import { validateTender } from "../../../../../lib/engine/validate";
 import { logAction } from "../../../../../lib/audit";
 import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../../lib/rate-limit";
 
+export const dynamic = "force-dynamic";
+
 export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   let actor;
   try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER"); }
