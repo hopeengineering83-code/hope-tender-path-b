@@ -1,3 +1,12 @@
+import {
+  getProviderRuntimeSnapshot,
+  isDeepSeekConfigured,
+  deepSeekOfficialEnvPresent,
+  getDeepSeekModel,
+} from "../lib/ai-provider-health";
+
+const AI_FALLBACK_CHAIN = "Claude → Gemini → OpenAI → DeepSeek → deterministic draft fallback";
+
 type AIHealthResponse = {
   success: boolean;
   preferredProvider: string;
@@ -8,6 +17,7 @@ type AIHealthResponse = {
     claude: { configured: boolean; tier: string | null; proposalModels: string[]; maxOutputTokens: number | null };
     gemini: { configured: boolean; primaryModel: string; fallbackModels: string[]; extractionModel: string | null };
     openai: { configured: boolean; note: string };
+    deepseek: { configured: boolean; envPresent: boolean; model: string; failing: boolean; coolingDown: boolean };
   };
 };
 
@@ -39,6 +49,13 @@ function getAIHealth(): AIHealthResponse {
   if (geminiConfigured && !present(process.env.GEMINI_MODEL)) warnings.push("GEMINI_MODEL is not set; the app will use its built-in Gemini default.");
   if (openaiConfigured) warnings.push("OPENAI API key is configured. OpenAI is available in the fallback chain when higher-priority providers fail.");
 
+  const deepseekConfigured = isDeepSeekConfigured();
+  const deepseekRuntime = getProviderRuntimeSnapshot("deepseek");
+  const deepseekFailing = deepseekConfigured && (deepseekRuntime.coolingDown || deepseekRuntime.consecutiveFailures > 0);
+  if (deepseekConfigured && !deepSeekOfficialEnvPresent()) {
+    warnings.push("DeepSeek is enabled via a fallback alias env var. Rename it to DEEPSEEK_API_KEY (the official variable) in Vercel.");
+  }
+
   return {
     success: blockers.length === 0,
     providers: {
@@ -57,6 +74,13 @@ function getAIHealth(): AIHealthResponse {
       openai: {
         configured: openaiConfigured,
         note: "Configured fallback provider (Claude → Gemini → OpenAI → DeepSeek).",
+      },
+      deepseek: {
+        configured: deepseekConfigured,
+        envPresent: deepSeekOfficialEnvPresent(),
+        model: getDeepSeekModel(),
+        failing: deepseekFailing,
+        coolingDown: deepseekRuntime.coolingDown,
       },
     },
     preferredProvider,
@@ -81,12 +105,12 @@ export async function AIHealthPanel() {
         <div>
           <p className={`text-xs font-semibold uppercase tracking-wide ${ok ? "text-emerald-700" : "text-red-700"}`}>AI provider health</p>
           <h2 className="mt-1 text-lg font-bold text-slate-900">Preferred provider: {health.preferredProvider}</h2>
-          <p className="mt-1 max-w-3xl text-sm text-slate-600">Shows whether Claude/Gemini keys and model chains are available before running AI Analyze, Run Engine, or Generate Docs. Secret values are never displayed.</p>
+          <p className="mt-1 max-w-3xl text-sm text-slate-600">Shows whether the Claude, Gemini, OpenAI, and DeepSeek keys and model chains are available before running AI Analyze, Run Engine, or Generate Docs. Secret values are never displayed.</p>
         </div>
         <span className={`rounded-full px-3 py-1 text-xs font-bold ${ok ? "bg-emerald-100 text-emerald-800" : "bg-red-100 text-red-800"}`}>{health.nextAction.replace(/_/g, " ")}</span>
       </div>
 
-      <div className="mt-4 grid gap-3 lg:grid-cols-3">
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <div className="rounded-xl bg-white p-3 shadow-sm">
           <div className="flex items-center justify-between"><p className="font-semibold text-slate-900">Claude</p>{statusPill(health.providers.claude.configured)}</div>
           <p className="mt-2 text-xs text-slate-600">Tier: {health.providers.claude.tier ?? "not set"}</p>
@@ -101,7 +125,28 @@ export async function AIHealthPanel() {
           <div className="flex items-center justify-between"><p className="font-semibold text-slate-900">OpenAI</p>{statusPill(health.providers.openai.configured)}</div>
           <p className="mt-2 text-xs text-slate-600">{health.providers.openai.note}</p>
         </div>
+        <div className="rounded-xl bg-white p-3 shadow-sm">
+          <div className="flex items-center justify-between">
+            <p className="font-semibold text-slate-900">DeepSeek</p>
+            {health.providers.deepseek.configured
+              ? (health.providers.deepseek.failing
+                  ? <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">Configured · failing</span>
+                  : statusPill(true))
+              : statusPill(false)}
+          </div>
+          {!health.providers.deepseek.configured && (
+            <p className="mt-2 text-xs text-slate-600">Not configured — set DEEPSEEK_API_KEY in Vercel Production environment.</p>
+          )}
+          {health.providers.deepseek.configured && health.providers.deepseek.failing && (
+            <p className="mt-2 text-xs text-amber-700">Configured, but last response failed or returned empty. Check DeepSeek model access or retry after cooldown.</p>
+          )}
+          {health.providers.deepseek.configured && !health.providers.deepseek.failing && (
+            <p className="mt-2 text-xs text-slate-600">Fourth-tier fallback provider. Model: {health.providers.deepseek.model}</p>
+          )}
+        </div>
       </div>
+
+      <p className="mt-3 text-xs text-slate-500">Fallback chain: {AI_FALLBACK_CHAIN}</p>
 
       {(health.blockers.length > 0 || health.warnings.length > 0) && (
         <div className="mt-4 grid gap-3 lg:grid-cols-2">

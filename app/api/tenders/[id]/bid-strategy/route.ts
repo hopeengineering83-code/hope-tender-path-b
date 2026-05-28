@@ -17,6 +17,13 @@ import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { requireUser, unauthorizedResponse, forbiddenResponse } from "../../../../../lib/auth";
 import { computeBidStrategy } from "../../../../../lib/engine/bid-strategy";
 import { computeWinProbability } from "../../../../../lib/engine/win-probability";
+import { detectAnalysisSourceWithApproval } from "../../../../../lib/engine/analysis-source";
+
+// Confidence ceiling applied to bid-strategy win probability when the tender
+// analysis came from an unapproved regex/deterministic fallback. The strategy
+// is computed from requirements/matches the regex extractor may have gotten
+// wrong, so the headline number must not read as a confident recommendation.
+const FALLBACK_CONFIDENCE_CEILING = 50;
 
 export async function GET(
   _req: Request,
@@ -118,6 +125,20 @@ export async function GET(
     },
   });
 
+  // Part 12 — keep bid strategy consistent with the analysis source. If the
+  // analysis came from an unapproved regex/deterministic fallback, the inputs
+  // to computeBidStrategy are low-confidence, so the headline win probability
+  // must be capped and the recommendation must not read as "BID_HARD".
+  const analysisSource = await detectAnalysisSourceWithApproval(prisma, id, tender).catch(() => "UNKNOWN" as const);
+  const confidenceCapped = analysisSource === "REGEX_FALLBACK_AI_ERROR" || analysisSource === "UNKNOWN";
+  if (confidenceCapped && strategy.winProbability > FALLBACK_CONFIDENCE_CEILING) {
+    strategy.winProbability = FALLBACK_CONFIDENCE_CEILING;
+    if (strategy.recommendation === "BID_HARD") strategy.recommendation = "BID_CAREFULLY";
+  }
+  const confidenceNote = confidenceCapped
+    ? "Bid strategy confidence is capped because the tender analysis used an unapproved regex/deterministic fallback. Re-run AI Analyze (or approve the fallback analysis with an audit note) for a full-confidence recommendation."
+    : null;
+
   // Win-probability 4-axis breakdown (evidence match / team strength /
   // compliance posture / historical outcomes) — surfaced in the panel as
   // actionable per-axis scores with explanatory notes.
@@ -142,5 +163,8 @@ export async function GET(
     strategy,
     winProbabilityBreakdown: winProbability,
     historicalBidStats: { total: historicalTotal, wins: historicalWins },
+    analysisSource,
+    confidenceCapped,
+    confidenceNote,
   });
 }

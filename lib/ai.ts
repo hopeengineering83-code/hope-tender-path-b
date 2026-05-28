@@ -1,6 +1,6 @@
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { GoogleGenerativeAI } = require("@google/generative-ai") as typeof import("@google/generative-ai");
-import { recordProviderSuccess, recordProviderFailure, isProviderCooledDown } from "./ai-provider-health";
+import { recordProviderSuccess, recordProviderFailure, isProviderCooledDown, getDeepSeekApiKey, isDeepSeekConfigured, getDeepSeekModel } from "./ai-provider-health";
 
 const apiKey = process.env.GEMINI_API_KEY;
 const anthropicApiKey = process.env.ANTHROPIC_API_KEY;
@@ -75,7 +75,7 @@ function getModel(modelName = DEFAULT_GEMINI_MODEL) {
 }
 
 export function isAIEnabled() {
-  return Boolean(apiKey || anthropicApiKey || process.env.OPENAI_API_KEY || process.env.DEEPSEEK_API_KEY);
+  return Boolean(apiKey || anthropicApiKey || process.env.OPENAI_API_KEY || isDeepSeekConfigured());
 }
 
 export function isClaudeEnabled() {
@@ -531,7 +531,7 @@ export function isOpenAIEnabled() {
 }
 
 export function isDeepSeekEnabled() {
-  return Boolean(process.env.DEEPSEEK_API_KEY);
+  return isDeepSeekConfigured();
 }
 
 // ─── DeepSeek provider ─────────────────────────────────────────────────────────
@@ -544,10 +544,10 @@ async function generateWithDeepSeek(
   systemPrompt: string = DEFAULT_PROPOSAL_SYSTEM_PROMPT,
   maxTokens = 16000,
 ): Promise<string | null> {
-  const deepSeekKey = process.env.DEEPSEEK_API_KEY;
+  const deepSeekKey = getDeepSeekApiKey();
   if (!deepSeekKey) return null;
 
-  const model = process.env.DEEPSEEK_PROPOSAL_MODEL || "deepseek-chat";
+  const model = getDeepSeekModel();
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), DEEPSEEK_DEFAULT_TIMEOUT_MS);
 

@@ -69,6 +69,42 @@ const PROVIDER_ENV_KEY: Record<AiProviderName, string> = {
   deepseek: "DEEPSEEK_API_KEY",
 };
 
+// ─── Central DeepSeek key resolution ──────────────────────────────────────
+// Official variable is DEEPSEEK_API_KEY. Two common mis-spellings are also
+// accepted so a mis-named Vercel env var still activates the provider, but
+// UI/help text always recommends the official name. Resolved in ONE place so
+// lib/ai.ts, the health route, and the health panel agree on "configured".
+export const DEEPSEEK_OFFICIAL_ENV = "DEEPSEEK_API_KEY";
+const DEEPSEEK_ENV_CANDIDATES = ["DEEPSEEK_API_KEY", "DEEP_SEEK_API_KEY", "DEEPSEEK_KEY"] as const;
+
+export function getDeepSeekApiKey(): string | undefined {
+  for (const name of DEEPSEEK_ENV_CANDIDATES) {
+    const value = process.env[name];
+    if (value && value.trim().length > 0) return value.trim();
+  }
+  return undefined;
+}
+
+export function isDeepSeekConfigured(): boolean {
+  return Boolean(getDeepSeekApiKey());
+}
+
+/** True only when the OFFICIAL DEEPSEEK_API_KEY is set (not an alias). Lets the
+ * UI nudge operators to rename an alias to the canonical variable. */
+export function deepSeekOfficialEnvPresent(): boolean {
+  const value = process.env.DEEPSEEK_API_KEY;
+  return Boolean(value && value.trim().length > 0);
+}
+
+export function getDeepSeekModel(): string {
+  return process.env.DEEPSEEK_PROPOSAL_MODEL || "deepseek-chat";
+}
+
+function isProviderConfigured(provider: AiProviderName): boolean {
+  if (provider === "deepseek") return isDeepSeekConfigured();
+  return Boolean(process.env[PROVIDER_ENV_KEY[provider]]);
+}
+
 const COOLDOWN_PER_CATEGORY_MS: Record<AiProviderFailureCategory, number> = {
   RATE_LIMIT: 60_000,        // 60s — typical for 429 from Anthropic / Gemini
   AUTH: 5 * 60_000,           // 5min — bad keys won't recover on their own
@@ -165,7 +201,7 @@ export function getProviderHealth(provider: AiProviderName): AiProviderHealth {
   };
   return {
     provider,
-    configured: Boolean(process.env[PROVIDER_ENV_KEY[provider]]),
+    configured: isProviderConfigured(provider),
     lastSuccessAt: s.lastSuccessAt ? new Date(s.lastSuccessAt).toISOString() : null,
     lastFailureAt: s.lastFailureAt ? new Date(s.lastFailureAt).toISOString() : null,
     lastFailureCategory: s.lastFailureCategory,
@@ -177,6 +213,67 @@ export function getProviderHealth(provider: AiProviderName): AiProviderHealth {
 
 export function getAllProviderHealth(): AiProviderHealth[] {
   return (Object.keys(PROVIDER_ENV_KEY) as AiProviderName[]).map(getProviderHealth);
+}
+
+export type ProviderRuntimeSnapshot = {
+  lastSuccessAt: string | null;
+  lastFailureAt: string | null;
+  lastErrorCategory: AiProviderFailureCategory | null;
+  lastSafeErrorMessage: string | null;
+  cooldownUntil: string | null;
+  consecutiveFailures: number;
+  coolingDown: boolean;
+};
+
+/** Route/UI-friendly runtime view. Field names match the public API contract
+ * (lastErrorCategory / lastSafeErrorMessage). The message is already redacted
+ * by recordProviderFailure, so this never leaks keys or raw provider bodies. */
+export function getProviderRuntimeSnapshot(provider: AiProviderName): ProviderRuntimeSnapshot {
+  const h = getProviderHealth(provider);
+  return {
+    lastSuccessAt: h.lastSuccessAt,
+    lastFailureAt: h.lastFailureAt,
+    lastErrorCategory: h.lastFailureCategory,
+    lastSafeErrorMessage: h.lastFailureMessage,
+    cooldownUntil: h.cooldownUntil,
+    consecutiveFailures: h.consecutiveFailures,
+    coolingDown: isProviderCooledDown(provider),
+  };
+}
+
+export type ProviderAttemptDiagnostic = {
+  provider: AiProviderName;
+  configured: boolean;
+  coolingDown: boolean;
+  lastErrorCategory: AiProviderFailureCategory | null;
+  cooldownUntil: string | null;
+};
+
+/** Builds a safe, provider-specific snapshot for the AI Analyze diagnostics.
+ * Used to turn a vague "regex fallback" paragraph into an actionable,
+ * per-provider report (which providers were tried, which are cooling down,
+ * and the safe failure category for each). Never includes keys/raw bodies. */
+export function buildProviderDiagnosticsSnapshot(): {
+  providersAttempted: AiProviderName[];
+  providersCoolingDown: AiProviderName[];
+  perProvider: ProviderAttemptDiagnostic[];
+} {
+  const providers = Object.keys(PROVIDER_ENV_KEY) as AiProviderName[];
+  const perProvider: ProviderAttemptDiagnostic[] = providers.map((provider) => {
+    const h = getProviderHealth(provider);
+    return {
+      provider,
+      configured: h.configured,
+      coolingDown: isProviderCooledDown(provider),
+      lastErrorCategory: h.lastFailureCategory,
+      cooldownUntil: h.cooldownUntil,
+    };
+  });
+  return {
+    providersAttempted: perProvider.filter((p) => p.configured).map((p) => p.provider),
+    providersCoolingDown: perProvider.filter((p) => p.coolingDown).map((p) => p.provider),
+    perProvider,
+  };
 }
 
 /** Reset state (test-only, also used by an admin endpoint when an

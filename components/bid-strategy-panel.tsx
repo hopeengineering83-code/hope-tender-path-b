@@ -93,6 +93,7 @@ export function BidStrategyPanel({ tenderId, defaultExpanded = true }: BidStrate
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(defaultExpanded);
+  const [confidenceNote, setConfidenceNote] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -107,6 +108,7 @@ export function BidStrategyPanel({ tenderId, defaultExpanded = true }: BidStrate
       setStrategy(data.strategy);
       if (data.winProbabilityBreakdown) setWinBreakdown(data.winProbabilityBreakdown);
       if (data.historicalBidStats) setHistoricalStats(data.historicalBidStats);
+      setConfidenceNote(data.confidenceCapped ? (data.confidenceNote ?? null) : null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load bid strategy");
     } finally {
@@ -156,6 +158,12 @@ export function BidStrategyPanel({ tenderId, defaultExpanded = true }: BidStrate
           {expanded ? "Collapse" : "Expand"}
         </button>
       </div>
+
+      {confidenceNote && (
+        <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-2.5 text-[11px] leading-relaxed text-amber-800">
+          <span className="font-semibold">Confidence capped: </span>{confidenceNote}
+        </div>
+      )}
 
       {/* Headline: win probability + recommendation */}
       <div className={`mt-4 rounded-xl p-4 ${recStyle.bg}`}>

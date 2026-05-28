@@ -1,6 +1,15 @@
 import { NextResponse } from "next/server";
 import { getSession } from "../../../../lib/auth";
-import { getAllProviderHealth, isProviderCooledDown } from "../../../../lib/ai-provider-health";
+import {
+  getAllProviderHealth,
+  isProviderCooledDown,
+  getProviderRuntimeSnapshot,
+  isDeepSeekConfigured,
+  deepSeekOfficialEnvPresent,
+  getDeepSeekModel,
+} from "../../../../lib/ai-provider-health";
+
+const AI_FALLBACK_CHAIN = "Claude → Gemini → OpenAI → DeepSeek → deterministic draft fallback";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 10;
@@ -48,6 +57,12 @@ export async function GET() {
     warnings.push(`Provider(s) in cooldown: ${coolingDown.map((h) => h.provider).join(", ")}. Requests will skip cooled-down providers until the window expires.`);
   }
 
+  const deepSeekConfigured = isDeepSeekConfigured();
+  const deepSeekRuntime = getProviderRuntimeSnapshot("deepseek");
+  if (deepSeekConfigured && !deepSeekOfficialEnvPresent()) {
+    warnings.push("DeepSeek is enabled via a fallback alias env var. Rename it to DEEPSEEK_API_KEY (the official variable) in Vercel.");
+  }
+
   return NextResponse.json({
     success: blockers.length === 0,
     providers: {
@@ -71,11 +86,16 @@ export async function GET() {
         runtime: healthByProvider["openai"] ?? null,
       },
       deepseek: {
-        configured: Boolean(process.env.DEEPSEEK_API_KEY),
-        note: "Fourth-tier fallback provider.",
-        runtime: healthByProvider["deepseek"] ?? null,
+        configured: deepSeekConfigured,
+        envPresent: deepSeekOfficialEnvPresent(),
+        model: getDeepSeekModel(),
+        fallbackRank: 4,
+        label: "DeepSeek",
+        note: "Fourth-tier fallback provider",
+        runtime: deepSeekRuntime,
       },
     },
+    fallbackChain: AI_FALLBACK_CHAIN,
     preferredProvider,
     blockers,
     warnings,

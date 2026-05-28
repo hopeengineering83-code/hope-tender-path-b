@@ -96,6 +96,9 @@ export type AuditAction =
   // Document reclassification and deduplication maintenance routes.
   | "DOCUMENT_RECLASSIFY"
   | "DOCUMENT_DEDUPLICATE"
+  // Per-row submission-plan recovery actions (reclassify / mark-not-exportable /
+  // supersede / exclude) from the Submission Plan Completeness panel.
+  | "SUBMISSION_PLAN_ROW_ACTION"
   | "LOGIN_FAILED"
   | "COMPANY_PROFILE_UPDATED"
   | "SETTINGS_UPDATED";

@@ -4,6 +4,7 @@ import { getCompanyIngestionReadiness, type CompanyIngestionReadiness } from "./
 import { assessTenderAnalysisQuality, type AnalysisQualityReport } from "./analysis-quality";
 import { assessMatchingQuality, type MatchingQualityReport } from "./matching-quality";
 import { isValidClientName, getClientNameStatus } from "./engine/metadata-validators";
+import { assertAnalysisReadyForFinalGeneration } from "./engine/analysis-source";
 // Round follow-up to PR #424/#425 — surface PDF-required + branding/
 // signature/stamp policy in the readiness panel BEFORE the user
 // clicks Download. Operators see the conflict early and fix it
@@ -322,6 +323,20 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
       code: "FULL_PROPOSAL_ANALYSIS_POOR",
       message: `Full proposal generation is blocked: analysis quality is poor (${analysisQuality.score}/100).`,
       nextAction: "OPEN_ANALYSIS_QUALITY",
+    });
+  }
+  // Mirror the server-side generate-route gate so the panel can never show
+  // "Full proposal generation gate: passes" / a green button while the
+  // analysis came from an unapproved regex/deterministic fallback. The
+  // generate route returns 409 in that state; the UI must reflect the same
+  // truth instead of contradicting it. Defensive try/catch: test fakes may
+  // not implement complianceGap.findFirst.
+  const analysisGate = await assertAnalysisReadyForFinalGeneration(client, tenderId, tender).catch(() => ({ ok: true as const }));
+  if (!analysisGate.ok) {
+    fullProposalBlockers.push({
+      code: analysisGate.code,
+      message: `Full proposal generation is blocked: ${analysisGate.message}`,
+      nextAction: analysisGate.nextAction,
     });
   }
   // Full proposal also requires reviewed selected evidence when the tender
