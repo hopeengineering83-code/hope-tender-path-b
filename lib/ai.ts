@@ -1,5 +1,6 @@
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { GoogleGenerativeAI } = require("@google/generative-ai") as typeof import("@google/generative-ai");
+import { recordProviderSuccess, recordProviderFailure, isProviderCooledDown } from "./ai-provider-health";
 
 const apiKey = process.env.GEMINI_API_KEY;
 const anthropicApiKey = process.env.ANTHROPIC_API_KEY;
@@ -356,31 +357,44 @@ async function generate(prompt: string, modelName = DEFAULT_GEMINI_MODEL): Promi
  */
 export async function generateWithFallback(prompt: string, opts?: { systemPrompt?: string; geminiModel?: string }): Promise<string> {
   if (isClaudeEnabled()) {
-    const claudeResult = await generateWithClaude(prompt, opts?.systemPrompt);
-    if (claudeResult) return claudeResult;
-    // Claude returned null — try Gemini, then OpenAI before giving up.
+    if (!isProviderCooledDown("anthropic")) {
+      const claudeResult = await generateWithClaude(prompt, opts?.systemPrompt)
+        .catch((err) => { recordProviderFailure("anthropic", err); return null; });
+      if (claudeResult) { recordProviderSuccess("anthropic"); return claudeResult; }
+      recordProviderFailure("anthropic", new Error("empty response"));
+    }
+    // Claude returned null or is in cooldown — try Gemini, then OpenAI before giving up.
     let geminiError: unknown = null;
-    if (apiKey) {
+    if (apiKey && !isProviderCooledDown("gemini")) {
       try {
-        return await generate(prompt, opts?.geminiModel);
+        const r = await generate(prompt, opts?.geminiModel);
+        recordProviderSuccess("gemini");
+        return r;
       } catch (geminiErr) {
         geminiError = geminiErr;
+        recordProviderFailure("gemini", geminiErr);
         console.warn(`[ai] generateWithFallback Gemini failed: ${geminiErr instanceof Error ? geminiErr.message : String(geminiErr)} — trying OpenAI.`);
       }
     }
     // No Gemini or Gemini threw — try OpenAI as final tier
-    const openAiResult = await generateWithOpenAI(prompt, opts?.systemPrompt).catch((err) => {
-      const msg = err instanceof Error ? err.message : String(err);
-      if (/api\s+key\s+invalid|invalid\s+api\s+key|incorrect\s+api\s+key|authentication|unauthorized/i.test(msg)) throw err; // re-throw auth errors
-      return null;
-    });
-    if (openAiResult) return openAiResult;
+    if (!isProviderCooledDown("openai")) {
+      const openAiResult = await generateWithOpenAI(prompt, opts?.systemPrompt).catch((err) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (/api\s+key\s+invalid|invalid\s+api\s+key|incorrect\s+api\s+key|authentication|unauthorized/i.test(msg)) { recordProviderFailure("openai", err); throw err; }
+        recordProviderFailure("openai", err);
+        return null;
+      });
+      if (openAiResult) { recordProviderSuccess("openai"); return openAiResult; }
+    }
     // DeepSeek as 4th tier
-    const deepSeekResult1 = await generateWithDeepSeek(prompt, opts?.systemPrompt).catch((err) => {
-      console.warn(`[ai] DeepSeek failed: ${err instanceof Error ? err.message : String(err)}`);
-      return null;
-    });
-    if (deepSeekResult1) return deepSeekResult1;
+    if (!isProviderCooledDown("deepseek")) {
+      const deepSeekResult1 = await generateWithDeepSeek(prompt, opts?.systemPrompt).catch((err) => {
+        console.warn(`[ai] DeepSeek failed: ${err instanceof Error ? err.message : String(err)}`);
+        recordProviderFailure("deepseek", err);
+        return null;
+      });
+      if (deepSeekResult1) { recordProviderSuccess("deepseek"); return deepSeekResult1; }
+    }
     // Always surface Gemini error when it was the root cause — even in
     // mixed deployments where OpenAI is configured but also returned null.
     if (geminiError) {
@@ -396,39 +410,47 @@ export async function generateWithFallback(prompt: string, opts?: { systemPrompt
     throw new Error(`Claude returned empty on all models in chain (${CLAUDE_PROPOSAL_MODELS.join(", ")}). ${providerNote} If ANTHROPIC_PROPOSAL_MODELS is set, model IDs must be lowercase with dashes (e.g. "claude-sonnet-4-5").`);
   }
   let geminiError: unknown = null;
-  if (apiKey) {
+  if (apiKey && !isProviderCooledDown("gemini")) {
     try {
-      return await generate(prompt, opts?.geminiModel);
+      const r = await generate(prompt, opts?.geminiModel);
+      recordProviderSuccess("gemini");
+      return r;
     } catch (geminiErr) {
       geminiError = geminiErr;
+      recordProviderFailure("gemini", geminiErr);
       console.warn(`[ai] generateWithFallback Gemini failed: ${geminiErr instanceof Error ? geminiErr.message : String(geminiErr)} — trying OpenAI.`);
     }
   }
   // Neither Claude nor Gemini (or both failed) — try OpenAI as final fallback
-  if (isOpenAIEnabled()) {
+  if (isOpenAIEnabled() && !isProviderCooledDown("openai")) {
     const openAiResult = await generateWithOpenAI(prompt, opts?.systemPrompt).catch((err) => {
       const msg = err instanceof Error ? err.message : String(err);
-      if (/api\s+key\s+invalid|invalid\s+api\s+key|incorrect\s+api\s+key|authentication|unauthorized/i.test(msg)) throw err; // re-throw auth errors
+      if (/api\s+key\s+invalid|invalid\s+api\s+key|incorrect\s+api\s+key|authentication|unauthorized/i.test(msg)) { recordProviderFailure("openai", err); throw err; }
+      recordProviderFailure("openai", err);
       return null;
     });
-    if (openAiResult) return openAiResult;
+    if (openAiResult) { recordProviderSuccess("openai"); return openAiResult; }
     // DeepSeek as 4th tier
-    const deepSeekResult2 = await generateWithDeepSeek(prompt, opts?.systemPrompt).catch((err) => {
-      console.warn(`[ai] DeepSeek failed: ${err instanceof Error ? err.message : String(err)}`);
-      return null;
-    });
-    if (deepSeekResult2) return deepSeekResult2;
+    if (!isProviderCooledDown("deepseek")) {
+      const deepSeekResult2 = await generateWithDeepSeek(prompt, opts?.systemPrompt).catch((err) => {
+        console.warn(`[ai] DeepSeek failed: ${err instanceof Error ? err.message : String(err)}`);
+        recordProviderFailure("deepseek", err);
+        return null;
+      });
+      if (deepSeekResult2) { recordProviderSuccess("deepseek"); return deepSeekResult2; }
+    }
     // If Gemini was the root cause, surface it rather than blaming OpenAI
     if (geminiError) throw geminiError;
     throw new Error(`OpenAI (${process.env.OPENAI_PROPOSAL_MODEL ?? "gpt-4o"}) is configured but did not return a result. Check OPENAI_API_KEY and model access on your account.`);
   }
   // Try DeepSeek standalone when neither Claude nor Gemini is configured
-  if (isDeepSeekEnabled()) {
+  if (isDeepSeekEnabled() && !isProviderCooledDown("deepseek")) {
     const deepSeekResult3 = await generateWithDeepSeek(prompt, opts?.systemPrompt).catch((err) => {
       console.warn(`[ai] DeepSeek failed: ${err instanceof Error ? err.message : String(err)}`);
+      recordProviderFailure("deepseek", err);
       return null;
     });
-    if (deepSeekResult3) return deepSeekResult3;
+    if (deepSeekResult3) { recordProviderSuccess("deepseek"); return deepSeekResult3; }
   }
   // Gemini was configured but threw — surface the real error, not "no provider configured"
   if (geminiError) throw geminiError;
