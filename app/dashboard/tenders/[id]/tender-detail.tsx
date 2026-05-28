@@ -463,6 +463,7 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
   const [validating, setValidating] = useState(false);
   const [validationReport, setValidationReport] = useState<{ passed: boolean; issues: { code: string; severity: string; message: string }[] } | null>(null);
   const [reviewingDocId, setReviewingDocId] = useState<string | null>(null);
+  const [submittingReviewDocId, setSubmittingReviewDocId] = useState<string | null>(null);
   const [reviewNote, setReviewNote] = useState("");
   const [deleting, setDeleting] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -841,20 +842,34 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
       if (!res.ok) { const d = await res.json().catch(() => ({})); setError((d as { error?: string }).error || "Failed to save bid outcome"); return; }
       const updated = await res.json() as { tender: { bidOutcome?: string | null; bidOutcomeNote?: string | null; bidOutcomeAt?: string | null } };
       setTender((prev) => ({ ...prev, bidOutcome: updated.tender.bidOutcome, bidOutcomeNote: updated.tender.bidOutcomeNote, bidOutcomeAt: updated.tender.bidOutcomeAt }));
+      setToast({ message: "Bid outcome saved", type: "success" });
     } catch { setError("Network error saving bid outcome"); }
     finally { setSavingOutcome(false); }
   }
 
   async function submitReview(docId: string, reviewStatus: string) {
-    await fetch(`/api/tenders/${tender.id}/documents/${docId}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ reviewStatus, reviewNotes: reviewNote }),
-    });
-    setReviewingDocId(null);
-    setReviewNote("");
-    const res = await fetch(`/api/tenders/${tender.id}`);
-    if (res.ok) { setTender(await res.json() as Tender); }
+    setSubmittingReviewDocId(docId);
+    try {
+      const res = await fetch(`/api/tenders/${tender.id}/documents/${docId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reviewStatus, reviewNotes: reviewNote }),
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({})) as { error?: string };
+        setToast({ message: d.error ?? "Failed to save review", type: "error" });
+        return;
+      }
+      setToast({ message: `Review saved: ${reviewStatus.replace(/_/g, " ")}`, type: "success" });
+      setReviewingDocId(null);
+      setReviewNote("");
+      const refreshed = await fetch(`/api/tenders/${tender.id}`);
+      if (refreshed.ok) { setTender(await refreshed.json() as Tender); }
+    } catch {
+      setToast({ message: "Network error saving review", type: "error" });
+    } finally {
+      setSubmittingReviewDocId(null);
+    }
   }
 
   async function handleDelete() {
@@ -1723,9 +1738,9 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
                           onChange={(e) => setReviewNote(e.target.value)}
                         />
                         <div className="flex gap-1.5">
-                          <button onClick={() => submitReview(doc.id, "APPROVED")} className="rounded bg-green-600 px-2.5 py-1 text-xs text-white hover:bg-green-700">Approve</button>
-                          <button onClick={() => submitReview(doc.id, "NEEDS_REVISION")} className="rounded bg-amber-500 px-2.5 py-1 text-xs text-white hover:bg-amber-600">Needs Revision</button>
-                          <button onClick={() => submitReview(doc.id, "REJECTED")} className="rounded bg-red-600 px-2.5 py-1 text-xs text-white hover:bg-red-700">Reject</button>
+                          <button onClick={() => { void submitReview(doc.id, "APPROVED"); }} disabled={submittingReviewDocId === doc.id} className="rounded bg-green-600 px-2.5 py-1 text-xs text-white hover:bg-green-700 disabled:opacity-50">{submittingReviewDocId === doc.id ? "Saving…" : "Approve"}</button>
+                          <button onClick={() => { void submitReview(doc.id, "NEEDS_REVISION"); }} disabled={submittingReviewDocId === doc.id} className="rounded bg-amber-500 px-2.5 py-1 text-xs text-white hover:bg-amber-600 disabled:opacity-50">Needs Revision</button>
+                          <button onClick={() => { void submitReview(doc.id, "REJECTED"); }} disabled={submittingReviewDocId === doc.id} className="rounded bg-red-600 px-2.5 py-1 text-xs text-white hover:bg-red-700 disabled:opacity-50">Reject</button>
                           <button onClick={() => setReviewingDocId(null)} className="rounded border px-2.5 py-1 text-xs">Cancel</button>
                         </div>
                       </div>

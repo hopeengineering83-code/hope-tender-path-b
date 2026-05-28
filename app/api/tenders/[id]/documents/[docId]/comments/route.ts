@@ -71,7 +71,9 @@ export async function POST(
   if (!canComment) return forbiddenResponse();
 
   const { id: tenderId, docId } = await params;
-  const { body, parentId } = await req.json() as { body?: string; parentId?: string | null };
+  const rawBody = await req.json().catch(() => null) as { body?: string; parentId?: string | null } | null;
+  if (!rawBody) return NextResponse.json({ error: "Request body must be valid JSON" }, { status: 400 });
+  const { body, parentId } = rawBody;
 
   if (!body || body.trim().length === 0) {
     return NextResponse.json({ error: "Comment body is required" }, { status: 400 });
@@ -141,7 +143,9 @@ export async function PATCH(
   const commentId = searchParams.get("commentId");
   if (!commentId) return NextResponse.json({ error: "commentId query parameter required" }, { status: 400 });
 
-  const { resolved, body } = await req.json() as { resolved?: boolean; body?: string };
+  const patchBody = await req.json().catch(() => null) as { resolved?: boolean; body?: string } | null;
+  if (!patchBody) return NextResponse.json({ error: "Request body must be valid JSON" }, { status: 400 });
+  const { resolved, body } = patchBody;
 
   await prismaReady;
 
