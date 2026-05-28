@@ -31,7 +31,7 @@
 //     // skip Gemini for now — it 429'd N seconds ago
 //   }
 
-export type AiProviderName = "anthropic" | "gemini" | "openai" | "deepseek";
+export type AiProviderName = "anthropic" | "gemini" | "openai" | "deepseek" | "groq" | "openrouter";
 
 export type AiProviderFailureCategory =
   | "RATE_LIMIT"
@@ -67,6 +67,8 @@ const PROVIDER_ENV_KEY: Record<AiProviderName, string> = {
   gemini: "GEMINI_API_KEY",
   openai: "OPENAI_API_KEY",
   deepseek: "DEEPSEEK_API_KEY",
+  groq: "GROQ_API_KEY",
+  openrouter: "OPENROUTER_API_KEY",
 };
 
 // ─── Central DeepSeek key resolution ──────────────────────────────────────
@@ -100,8 +102,56 @@ export function getDeepSeekModel(): string {
   return process.env.DEEPSEEK_PROPOSAL_MODEL || "deepseek-chat";
 }
 
+// ─── Groq (OpenAI-compatible) ─────────────────────────────────────────────
+// Fifth-tier fallback. Official variable GROQ_API_KEY. Model overridable via
+// GROQ_PROPOSAL_MODEL (default: a current Llama 3.3 70B instruct model).
+export function getGroqApiKey(): string | undefined {
+  const v = process.env.GROQ_API_KEY;
+  return v && v.trim().length > 0 ? v.trim() : undefined;
+}
+export function isGroqConfigured(): boolean {
+  return Boolean(getGroqApiKey());
+}
+export function getGroqModel(): string {
+  return process.env.GROQ_PROPOSAL_MODEL || "llama-3.3-70b-versatile";
+}
+export function getGroqBaseUrl(): string {
+  const v = process.env.GROQ_BASE_URL;
+  return (v && v.trim().length > 0 ? v.trim() : "https://api.groq.com/openai/v1").replace(/\/+$/, "");
+}
+
+// ─── OpenRouter (OpenAI-compatible aggregator) ────────────────────────────
+// Sixth-tier fallback. Official variable OPENROUTER_API_KEY. Model overridable
+// via OPENROUTER_PROPOSAL_MODEL (default: openrouter/auto picks a live model).
+export function getOpenRouterApiKey(): string | undefined {
+  const v = process.env.OPENROUTER_API_KEY;
+  return v && v.trim().length > 0 ? v.trim() : undefined;
+}
+export function isOpenRouterConfigured(): boolean {
+  return Boolean(getOpenRouterApiKey());
+}
+export function getOpenRouterModel(): string {
+  return process.env.OPENROUTER_PROPOSAL_MODEL || "openrouter/auto";
+}
+export function getOpenRouterBaseUrl(): string {
+  const v = process.env.OPENROUTER_BASE_URL;
+  return (v && v.trim().length > 0 ? v.trim() : "https://openrouter.ai/api/v1").replace(/\/+$/, "");
+}
+export function getOpenRouterSiteUrl(): string {
+  const v = process.env.OPENROUTER_SITE_URL;
+  return v && v.trim().length > 0 ? v.trim() : "https://hope-tender-path-b.vercel.app";
+}
+/** Standard variable is OPENROUTER_APP_NAME; OPENROUTER_SITE_NAME is accepted
+ * as a back-compat alias (used for the OpenRouter X-Title attribution header). */
+export function getOpenRouterAppName(): string {
+  const v = process.env.OPENROUTER_APP_NAME || process.env.OPENROUTER_SITE_NAME;
+  return v && v.trim().length > 0 ? v.trim() : "Hope Tender Proposal Generator";
+}
+
 function isProviderConfigured(provider: AiProviderName): boolean {
   if (provider === "deepseek") return isDeepSeekConfigured();
+  if (provider === "groq") return isGroqConfigured();
+  if (provider === "openrouter") return isOpenRouterConfigured();
   return Boolean(process.env[PROVIDER_ENV_KEY[provider]]);
 }
 

@@ -1,15 +1,20 @@
 import { NextResponse } from "next/server";
 import { getSession } from "../../../../lib/auth";
 import {
-  getAllProviderHealth,
   isProviderCooledDown,
   getProviderRuntimeSnapshot,
   isDeepSeekConfigured,
   deepSeekOfficialEnvPresent,
   getDeepSeekModel,
+  isGroqConfigured,
+  getGroqModel,
+  isOpenRouterConfigured,
+  getOpenRouterModel,
+  type AiProviderName,
 } from "../../../../lib/ai-provider-health";
 
-const AI_FALLBACK_CHAIN = "Claude → Gemini → OpenAI → DeepSeek → deterministic draft fallback";
+// Canonical fallback order surfaced to operators. Must match lib/ai.ts.
+const AI_FALLBACK_CHAIN = "Claude → Gemini → OpenAI → DeepSeek → Groq → OpenRouter → deterministic draft fallback";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 10;
@@ -37,53 +42,79 @@ export async function GET() {
   const claudeConfigured = present(process.env.ANTHROPIC_API_KEY);
   const geminiConfigured = present(process.env.GEMINI_API_KEY);
   const openaiConfigured = present(process.env.OPENAI_API_KEY);
-  const preferredProvider = claudeConfigured ? "claude" : geminiConfigured ? "gemini" : openaiConfigured ? "openai" : "none";
+  const deepSeekConfigured = isDeepSeekConfigured();
+  const groqConfigured = isGroqConfigured();
+  const openRouterConfigured = isOpenRouterConfigured();
+
+  // success/preferred reflect the WHOLE chain: any one configured provider is
+  // enough to run AI (Groq-only or OpenRouter-only deployments are valid).
+  const anyConfigured =
+    claudeConfigured || geminiConfigured || openaiConfigured || deepSeekConfigured || groqConfigured || openRouterConfigured;
+  const preferredProvider =
+    claudeConfigured ? "claude"
+    : geminiConfigured ? "gemini"
+    : openaiConfigured ? "openai"
+    : deepSeekConfigured ? "deepseek"
+    : groqConfigured ? "groq"
+    : openRouterConfigured ? "openrouter"
+    : "none";
 
   const claudeModels = splitModels(process.env.ANTHROPIC_PROPOSAL_MODELS, ["claude-sonnet-4-5", "claude-opus-4-1", "claude-3-5-sonnet-latest", "claude-3-5-haiku-latest"]);
   const geminiModels = splitModels(process.env.GEMINI_FALLBACK_MODELS, ["gemini-2.5-flash", "gemini-2.0-flash"]);
   const warnings: string[] = [];
   const blockers: string[] = [];
 
-  if (!claudeConfigured && !geminiConfigured) blockers.push("No Claude or Gemini API key is configured. AI analysis/proposal quality will fall back or fail.");
+  // Only a TRUE blocker when NO provider at all is configured.
+  if (!anyConfigured) {
+    blockers.push("No AI provider key is configured. Set ANTHROPIC_API_KEY (preferred), GEMINI_API_KEY, OPENAI_API_KEY, DEEPSEEK_API_KEY, GROQ_API_KEY, or OPENROUTER_API_KEY. AI analysis/generation will use the deterministic fallback, which cannot be exported as final.");
+  }
   if (claudeConfigured && claudeModels.length === 0) warnings.push("Claude is configured but no Claude model chain was resolved.");
   if (geminiConfigured && !present(process.env.GEMINI_MODEL)) warnings.push("GEMINI_MODEL is not set; the app will use its built-in Gemini default.");
-  if (openaiConfigured) warnings.push("OPENAI API key is configured. OpenAI is available in the fallback chain when higher-priority providers fail.");
+  if (deepSeekConfigured && !deepSeekOfficialEnvPresent()) warnings.push("DeepSeek is enabled via a fallback alias env var. Rename it to DEEPSEEK_API_KEY (the official variable) in Vercel.");
 
-  const runtimeHealth = getAllProviderHealth();
-  const healthByProvider = Object.fromEntries(runtimeHealth.map((h) => [h.provider, h]));
-
-  const coolingDown = runtimeHealth.filter((h) => isProviderCooledDown(h.provider));
-  if (coolingDown.length > 0) {
-    warnings.push(`Provider(s) in cooldown: ${coolingDown.map((h) => h.provider).join(", ")}. Requests will skip cooled-down providers until the window expires.`);
+  // Cooldown notice — purely advisory; the chain skips cooled-down providers.
+  const cooling = (["anthropic", "gemini", "openai", "deepseek", "groq", "openrouter"] as AiProviderName[]).filter(isProviderCooledDown);
+  if (cooling.length > 0) {
+    warnings.push(`Provider(s) in cooldown: ${cooling.join(", ")}. Requests skip cooled-down providers until the window expires.`);
   }
 
-  const deepSeekConfigured = isDeepSeekConfigured();
-  const deepSeekRuntime = getProviderRuntimeSnapshot("deepseek");
-  if (deepSeekConfigured && !deepSeekOfficialEnvPresent()) {
-    warnings.push("DeepSeek is enabled via a fallback alias env var. Rename it to DEEPSEEK_API_KEY (the official variable) in Vercel.");
-  }
+  const openaiModel = process.env.OPENAI_PROPOSAL_MODEL || "gpt-4o";
 
   return NextResponse.json({
-    success: blockers.length === 0,
+    success: anyConfigured,
     providers: {
       claude: {
         configured: claudeConfigured,
+        envPresent: claudeConfigured,
+        model: claudeModels[0] ?? null,
+        fallbackRank: 1,
+        label: "Claude",
+        note: "Preferred primary provider",
         tier: process.env.ANTHROPIC_TIER || null,
         proposalModels: maskModelChain(claudeModels),
         maxOutputTokens: Number(process.env.ANTHROPIC_MAX_OUTPUT_TOKENS || 0) || null,
-        runtime: healthByProvider["anthropic"] ?? null,
+        runtime: getProviderRuntimeSnapshot("anthropic"),
       },
       gemini: {
         configured: geminiConfigured,
+        envPresent: geminiConfigured,
+        model: process.env.GEMINI_MODEL || "gemini-2.5-pro",
+        fallbackRank: 2,
+        label: "Gemini",
+        note: "Second-tier fallback provider",
         primaryModel: process.env.GEMINI_MODEL || "gemini-2.5-pro",
         fallbackModels: maskModelChain(geminiModels),
         extractionModel: process.env.GEMINI_EXTRACTION_MODEL || process.env.GEMINI_EXTRACT_MODEL || null,
-        runtime: healthByProvider["gemini"] ?? null,
+        runtime: getProviderRuntimeSnapshot("gemini"),
       },
       openai: {
         configured: openaiConfigured,
-        note: "Configured fallback provider (Claude → Gemini → OpenAI → DeepSeek).",
-        runtime: healthByProvider["openai"] ?? null,
+        envPresent: openaiConfigured,
+        model: openaiModel,
+        fallbackRank: 3,
+        label: "OpenAI",
+        note: "Third-tier fallback provider",
+        runtime: getProviderRuntimeSnapshot("openai"),
       },
       deepseek: {
         configured: deepSeekConfigured,
@@ -92,7 +123,25 @@ export async function GET() {
         fallbackRank: 4,
         label: "DeepSeek",
         note: "Fourth-tier fallback provider",
-        runtime: deepSeekRuntime,
+        runtime: getProviderRuntimeSnapshot("deepseek"),
+      },
+      groq: {
+        configured: groqConfigured,
+        envPresent: groqConfigured,
+        model: getGroqModel(),
+        fallbackRank: 5,
+        label: "Groq",
+        note: "Fifth-tier fallback provider",
+        runtime: getProviderRuntimeSnapshot("groq"),
+      },
+      openrouter: {
+        configured: openRouterConfigured,
+        envPresent: openRouterConfigured,
+        model: getOpenRouterModel(),
+        fallbackRank: 6,
+        label: "OpenRouter",
+        note: "Sixth-tier fallback provider",
+        runtime: getProviderRuntimeSnapshot("openrouter"),
       },
     },
     fallbackChain: AI_FALLBACK_CHAIN,
