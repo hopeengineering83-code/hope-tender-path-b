@@ -1,6 +1,6 @@
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { GoogleGenerativeAI } = require("@google/generative-ai") as typeof import("@google/generative-ai");
-import { recordProviderSuccess, recordProviderFailure, isProviderCooledDown, getDeepSeekApiKey, isDeepSeekConfigured, getDeepSeekModel, getGroqApiKey, isGroqConfigured, getGroqModel, getOpenRouterApiKey, isOpenRouterConfigured, getOpenRouterModel } from "./ai-provider-health";
+import { recordProviderSuccess, recordProviderFailure, isProviderCooledDown, getDeepSeekApiKey, isDeepSeekConfigured, getDeepSeekModel, getGroqApiKey, isGroqConfigured, getGroqModel, getGroqBaseUrl, getOpenRouterApiKey, isOpenRouterConfigured, getOpenRouterModel, getOpenRouterBaseUrl, getOpenRouterSiteUrl, getOpenRouterAppName } from "./ai-provider-health";
 
 const apiKey = process.env.GEMINI_API_KEY;
 const anthropicApiKey = process.env.ANTHROPIC_API_KEY;
@@ -647,6 +647,10 @@ export function isOpenRouterEnabled() {
 // timeout, key redaction in any surfaced text, null (not throw) on transient
 // errors so the chain can fall through to the next provider / deterministic.
 const OPENAI_COMPAT_DEFAULT_TIMEOUT_MS = 60_000;
+function fallbackTemperature(): number {
+  const raw = Number(process.env.AI_FALLBACK_TEMPERATURE);
+  return Number.isFinite(raw) && raw >= 0 && raw <= 2 ? raw : 0.4;
+}
 async function generateOpenAICompatible(params: {
   providerLabel: string;
   endpoint: string;
@@ -671,6 +675,7 @@ async function generateOpenAICompatible(params: {
       body: JSON.stringify({
         model,
         max_tokens: maxTokens,
+        temperature: fallbackTemperature(),
         messages: [
           { role: "system", content: systemPrompt },
           { role: "user", content: prompt },
@@ -731,7 +736,7 @@ async function generateWithGroq(prompt: string, systemPrompt: string = DEFAULT_P
   if (!key) return null;
   return generateOpenAICompatible({
     providerLabel: "Groq",
-    endpoint: "https://api.groq.com/openai/v1/chat/completions",
+    endpoint: `${getGroqBaseUrl()}/chat/completions`,
     apiKey: key,
     model: getGroqModel(),
     prompt,
@@ -746,7 +751,7 @@ async function generateWithOpenRouter(prompt: string, systemPrompt: string = DEF
   if (!key) return null;
   return generateOpenAICompatible({
     providerLabel: "OpenRouter",
-    endpoint: "https://openrouter.ai/api/v1/chat/completions",
+    endpoint: `${getOpenRouterBaseUrl()}/chat/completions`,
     apiKey: key,
     model: getOpenRouterModel(),
     prompt,
@@ -754,8 +759,8 @@ async function generateWithOpenRouter(prompt: string, systemPrompt: string = DEF
     maxTokens,
     // OpenRouter recommends (optional) attribution headers.
     extraHeaders: {
-      "HTTP-Referer": process.env.OPENROUTER_SITE_URL || "https://hope-tender-path-b.vercel.app",
-      "X-Title": process.env.OPENROUTER_SITE_NAME || "Hope Tender Path",
+      "HTTP-Referer": getOpenRouterSiteUrl(),
+      "X-Title": getOpenRouterAppName(),
     },
   });
 }

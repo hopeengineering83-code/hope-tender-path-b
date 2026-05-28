@@ -115,6 +115,10 @@ export function isGroqConfigured(): boolean {
 export function getGroqModel(): string {
   return process.env.GROQ_PROPOSAL_MODEL || "llama-3.3-70b-versatile";
 }
+export function getGroqBaseUrl(): string {
+  const v = process.env.GROQ_BASE_URL;
+  return (v && v.trim().length > 0 ? v.trim() : "https://api.groq.com/openai/v1").replace(/\/+$/, "");
+}
 
 // ─── OpenRouter (OpenAI-compatible aggregator) ────────────────────────────
 // Sixth-tier fallback. Official variable OPENROUTER_API_KEY. Model overridable
@@ -128,6 +132,20 @@ export function isOpenRouterConfigured(): boolean {
 }
 export function getOpenRouterModel(): string {
   return process.env.OPENROUTER_PROPOSAL_MODEL || "openrouter/auto";
+}
+export function getOpenRouterBaseUrl(): string {
+  const v = process.env.OPENROUTER_BASE_URL;
+  return (v && v.trim().length > 0 ? v.trim() : "https://openrouter.ai/api/v1").replace(/\/+$/, "");
+}
+export function getOpenRouterSiteUrl(): string {
+  const v = process.env.OPENROUTER_SITE_URL;
+  return v && v.trim().length > 0 ? v.trim() : "https://hope-tender-path-b.vercel.app";
+}
+/** Standard variable is OPENROUTER_APP_NAME; OPENROUTER_SITE_NAME is accepted
+ * as a back-compat alias (used for the OpenRouter X-Title attribution header). */
+export function getOpenRouterAppName(): string {
+  const v = process.env.OPENROUTER_APP_NAME || process.env.OPENROUTER_SITE_NAME;
+  return v && v.trim().length > 0 ? v.trim() : "Hope Tender Proposal Generator";
 }
 
 function isProviderConfigured(provider: AiProviderName): boolean {
