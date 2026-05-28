@@ -202,7 +202,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           });
         });
 
-        analysisResult = { ai: true, fallback: false, summary: aiResult.summary, requirementCount: aiResult.requirements.length };
+        analysisResult = {
+          ai: true,
+          fallback: false,
+          summary: aiResult.summary,
+          requirementCount: aiResult.requirements.length,
+          providerDiagnostics: buildProviderDiagnosticsSnapshot(),
+        };
       } catch (aiError) {
         const msg = aiError instanceof Error ? aiError.message : String(aiError);
         const diagnostics = buildAnalysisFallbackDiagnostics(msg);
