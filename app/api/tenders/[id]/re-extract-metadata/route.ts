@@ -25,6 +25,7 @@ import {
   isValidClientContact,
 } from "../../../../../lib/engine/metadata-validators";
 import { logAction } from "../../../../../lib/audit";
+import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../../lib/rate-limit";
 
 // ─── Root-cause fix for "Re-extract from PDF" doesn't clean corruption ──
 // PRIOR BUG: tryFill used "fill-empty-only" semantics, treating any
@@ -75,6 +76,9 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   let actor;
   try { actor = await requireUser(); } catch { return unauthorizedResponse(); }
   if (!["ADMIN", "PROPOSAL_MANAGER"].includes(actor.role)) return forbiddenResponse();
+
+  const rl = rateLimit(`re-extract-metadata:${actor.id}`, MUTATION_RATE_LIMIT);
+  if (!rl.allowed) return NextResponse.json({ error: "Too many requests", retryAfter: Math.ceil((rl.resetAt - Date.now()) / 1000) }, { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } });
 
   await prismaReady;
   const { id } = await params;

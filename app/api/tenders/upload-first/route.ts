@@ -7,6 +7,7 @@ import { inferTenderMetadata } from "../../../../lib/engine/tender-metadata";
 import { runTenderEngine } from "../../../../lib/engine/run-tender-engine";
 import { extractRequestId } from "../../../../lib/request-id";
 import { getStorageAdapter } from "../../../../lib/storage";
+import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../lib/rate-limit";
 
 /**
  * Redact DATABASE_URL-style connection strings from any error message
@@ -39,6 +40,9 @@ export async function POST(req: Request) {
   const requestId = extractRequestId(req);
   const userId = await getSession();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const rl = rateLimit(`upload-first:${userId}`, MUTATION_RATE_LIMIT);
+  if (!rl.allowed) return NextResponse.json({ error: "Too many requests", retryAfter: Math.ceil((rl.resetAt - Date.now()) / 1000) }, { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } });
 
   await prismaReady;
 
