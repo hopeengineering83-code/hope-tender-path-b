@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getSession } from "../../../lib/auth";
 import { prisma, prismaReady } from "../../../lib/prisma";
 import { rateLimit, MUTATION_RATE_LIMIT } from "../../../lib/rate-limit";
+import { logAction } from "../../../lib/audit";
 
 export async function GET() {
   const userId = await getSession();
@@ -56,5 +57,6 @@ export async function PUT(req: Request) {
     create: { companyId: company.id, ...data },
   });
 
+  void logAction({ userId, action: "SETTINGS_UPDATED", entityType: "AppSettings", entityId: settings.id, description: "App settings updated" }).catch(() => {});
   return NextResponse.json({ settings });
 }

@@ -281,7 +281,9 @@ async function readPayload(req: Request): Promise<PlanBPayload> {
     const text = await file.text();
     return planBPayloadSchema.parse(JSON.parse(text)) as PlanBPayload;
   }
-  return planBPayloadSchema.parse(await req.json()) as PlanBPayload;
+  const rawJson = await req.json().catch(() => null);
+  if (!rawJson) throw new Error("Request body must be valid JSON");
+  return planBPayloadSchema.parse(rawJson) as PlanBPayload;
 }
 
 function sourceLine(item: { sourceDocument?: string; sourcePages?: { start?: number; end?: number }; sourceNo?: number | string }) {

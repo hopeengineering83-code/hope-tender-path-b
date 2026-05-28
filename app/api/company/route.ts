@@ -4,6 +4,7 @@ import { getSession } from "../../../lib/auth";
 import { ensureCompanyForUser } from "../../../lib/company-workspace";
 import { cleanupSupportDocImportedRecords } from "../../../lib/company-support-doc-cleanup";
 import { rateLimit, MUTATION_RATE_LIMIT } from "../../../lib/rate-limit";
+import { logAction } from "../../../lib/audit";
 
 const DEFAULT_COMPANY_NAME = "Hope Urban Planning Architectural and Engineering Consultancy";
 const DEFAULT_COMPANY_DESCRIPTION = "AI-powered tender proposal generation workspace";
@@ -249,6 +250,7 @@ export async function PUT(req: Request) {
     });
 
     if (!refreshed) return NextResponse.json({});
+    void logAction({ userId, action: "COMPANY_PROFILE_UPDATED", entityType: "Company", entityId: refreshed.id, description: "Company profile updated" }).catch(() => {});
     const docs = await getDocumentsForFallback(refreshed.id);
     const fallback = deriveCompanyProfileFallback(docs);
     return NextResponse.json(serializeCompany(refreshed, fallback));

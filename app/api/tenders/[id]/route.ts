@@ -4,6 +4,7 @@ import { getSession, requireRole, forbiddenResponse, unauthorizedResponse } from
 import { logAction } from "../../../../lib/audit";
 import { parseTenderStatus } from "../../../../lib/tender-workflow";
 import { prepareDashboardGeneratedDocuments } from "../../../../lib/dashboard-generated-documents";
+import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../lib/rate-limit";
 
 function withDashboardGeneratedDocuments<T extends { generatedDocuments: any[] }>(tender: T): T {
   const prepared = prepareDashboardGeneratedDocuments(tender.generatedDocuments);
@@ -42,6 +43,9 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 export async function PUT(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const userId = await getSession();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const rl = rateLimit(`tender-update:${userId}`, MUTATION_RATE_LIMIT);
+  if (!rl.allowed) return NextResponse.json({ error: "Too many requests", retryAfter: Math.ceil((rl.resetAt - Date.now()) / 1000) }, { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } });
 
   await prismaReady;
   const { id } = await params;

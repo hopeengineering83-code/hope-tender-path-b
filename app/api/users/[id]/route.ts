@@ -63,6 +63,9 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
     if (password.length < 8) {
       return NextResponse.json({ error: "Password must be at least 8 characters" }, { status: 400 });
     }
+    if (password.length > 1024) {
+      return NextResponse.json({ error: "Password too long (max 1024 characters)" }, { status: 400 });
+    }
     // Non-admins changing own password must supply currentPassword
     if (isSelf && !isAdmin) {
       if (!currentPassword) {

@@ -42,6 +42,12 @@ export async function POST(req: Request) {
   if (!email || !password) {
     return NextResponse.json({ error: "Email and password required" }, { status: 400 });
   }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return NextResponse.json({ error: "Invalid email format" }, { status: 400 });
+  }
+  if (email.length > 254) {
+    return NextResponse.json({ error: "Email address too long (max 254 characters)" }, { status: 400 });
+  }
 
   const validRoles = ["ADMIN", "PROPOSAL_MANAGER", "REVIEWER", "VIEWER"];
   if (role && !validRoles.includes(role)) {
@@ -57,6 +63,9 @@ export async function POST(req: Request) {
 
   if (password.length < 8) {
     return NextResponse.json({ error: "Password must be at least 8 characters" }, { status: 400 });
+  }
+  if (password.length > 1024) {
+    return NextResponse.json({ error: "Password too long (max 1024 characters)" }, { status: 400 });
   }
 
   const passwordHash = await bcrypt.hash(password, 10);
