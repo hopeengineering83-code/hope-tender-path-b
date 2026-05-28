@@ -379,7 +379,7 @@ function ComplianceGapsPanel({ tenderId, initialGaps }: { tenderId: string; init
       {toggleError && (
         <div className="mt-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 flex items-center justify-between gap-2">
           <span>{toggleError}</span>
-          <button onClick={() => setToggleError(null)} className="text-red-400 hover:text-red-700 font-bold shrink-0">✕</button>
+          <button onClick={() => setToggleError(null)} aria-label="Dismiss error" className="text-red-400 hover:text-red-700 font-bold shrink-0">✕</button>
         </div>
       )}
       {gaps.length === 0 ? (
@@ -463,6 +463,7 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
   const [validating, setValidating] = useState(false);
   const [validationReport, setValidationReport] = useState<{ passed: boolean; issues: { code: string; severity: string; message: string }[] } | null>(null);
   const [reviewingDocId, setReviewingDocId] = useState<string | null>(null);
+  const [submittingReviewDocId, setSubmittingReviewDocId] = useState<string | null>(null);
   const [reviewNote, setReviewNote] = useState("");
   const [deleting, setDeleting] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -841,20 +842,34 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
       if (!res.ok) { const d = await res.json().catch(() => ({})); setError((d as { error?: string }).error || "Failed to save bid outcome"); return; }
       const updated = await res.json() as { tender: { bidOutcome?: string | null; bidOutcomeNote?: string | null; bidOutcomeAt?: string | null } };
       setTender((prev) => ({ ...prev, bidOutcome: updated.tender.bidOutcome, bidOutcomeNote: updated.tender.bidOutcomeNote, bidOutcomeAt: updated.tender.bidOutcomeAt }));
+      setToast({ message: "Bid outcome saved", type: "success" });
     } catch { setError("Network error saving bid outcome"); }
     finally { setSavingOutcome(false); }
   }
 
   async function submitReview(docId: string, reviewStatus: string) {
-    await fetch(`/api/tenders/${tender.id}/documents/${docId}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ reviewStatus, reviewNotes: reviewNote }),
-    });
-    setReviewingDocId(null);
-    setReviewNote("");
-    const res = await fetch(`/api/tenders/${tender.id}`);
-    if (res.ok) { setTender(await res.json() as Tender); }
+    setSubmittingReviewDocId(docId);
+    try {
+      const res = await fetch(`/api/tenders/${tender.id}/documents/${docId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reviewStatus, reviewNotes: reviewNote }),
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({})) as { error?: string };
+        setToast({ message: d.error ?? "Failed to save review", type: "error" });
+        return;
+      }
+      setToast({ message: `Review saved: ${reviewStatus.replace(/_/g, " ")}`, type: "success" });
+      setReviewingDocId(null);
+      setReviewNote("");
+      const refreshed = await fetch(`/api/tenders/${tender.id}`);
+      if (refreshed.ok) { setTender(await refreshed.json() as Tender); }
+    } catch {
+      setToast({ message: "Network error saving review", type: "error" });
+    } finally {
+      setSubmittingReviewDocId(null);
+    }
   }
 
   async function handleDelete() {
@@ -1182,7 +1197,7 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
                 <p className="mt-1 text-xs text-red-600">Check your internet connection and retry.</p>
               )}
             </div>
-            <button onClick={() => setError("")} className="shrink-0 text-red-400 hover:text-red-600 text-xs">✕</button>
+            <button onClick={() => setError("")} aria-label="Dismiss error" className="shrink-0 text-red-400 hover:text-red-600 text-xs">✕</button>
           </div>
         </div>
       )}
@@ -1427,12 +1442,14 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
                       <div className="flex items-center gap-1.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
                         <button
                           onClick={() => handleDownloadFile(file.id, file.originalFileName)}
+                          aria-label={`Download ${file.originalFileName}`}
                           className="rounded border px-2 py-1 text-xs text-blue-600 hover:bg-blue-50"
                         >
                           ↓
                         </button>
                         <button
                           onClick={() => handleDeleteFile(file.id)}
+                          aria-label={`Delete ${file.originalFileName}`}
                           className="rounded border border-red-200 px-2 py-1 text-xs text-red-600 hover:bg-red-50"
                         >
                           ✕
@@ -1685,6 +1702,7 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
                             disabled={regeneratingSection === doc.id}
                             className="text-xs text-purple-600 hover:text-purple-800 border border-purple-200 rounded px-2 py-0.5 disabled:opacity-50"
                             title="Regenerate this section only (~20s)"
+                            aria-label={`Regenerate ${doc.name}`}
                           >
                             {regeneratingSection === doc.id ? "Regenerating…" : "↺"}
                           </button>
@@ -1698,7 +1716,7 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
                           </button>
                         )}
                         {doc.generationStatus === "GENERATED" && (
-                          <button onClick={() => downloadDocById(doc.id)} className="text-xs text-blue-600 hover:underline">↓</button>
+                          <button onClick={() => downloadDocById(doc.id)} aria-label={`Download ${doc.name}`} className="text-xs text-blue-600 hover:underline">↓</button>
                         )}
                       </div>
                     </div>
@@ -1723,9 +1741,9 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
                           onChange={(e) => setReviewNote(e.target.value)}
                         />
                         <div className="flex gap-1.5">
-                          <button onClick={() => submitReview(doc.id, "APPROVED")} className="rounded bg-green-600 px-2.5 py-1 text-xs text-white hover:bg-green-700">Approve</button>
-                          <button onClick={() => submitReview(doc.id, "NEEDS_REVISION")} className="rounded bg-amber-500 px-2.5 py-1 text-xs text-white hover:bg-amber-600">Needs Revision</button>
-                          <button onClick={() => submitReview(doc.id, "REJECTED")} className="rounded bg-red-600 px-2.5 py-1 text-xs text-white hover:bg-red-700">Reject</button>
+                          <button onClick={() => { void submitReview(doc.id, "APPROVED"); }} disabled={submittingReviewDocId === doc.id} className="rounded bg-green-600 px-2.5 py-1 text-xs text-white hover:bg-green-700 disabled:opacity-50">{submittingReviewDocId === doc.id ? "Saving…" : "Approve"}</button>
+                          <button onClick={() => { void submitReview(doc.id, "NEEDS_REVISION"); }} disabled={submittingReviewDocId === doc.id} className="rounded bg-amber-500 px-2.5 py-1 text-xs text-white hover:bg-amber-600 disabled:opacity-50">Needs Revision</button>
+                          <button onClick={() => { void submitReview(doc.id, "REJECTED"); }} disabled={submittingReviewDocId === doc.id} className="rounded bg-red-600 px-2.5 py-1 text-xs text-white hover:bg-red-700 disabled:opacity-50">Reject</button>
                           <button onClick={() => setReviewingDocId(null)} className="rounded border px-2.5 py-1 text-xs">Cancel</button>
                         </div>
                       </div>
@@ -1805,7 +1823,7 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
           toast.type === "success" ? "bg-emerald-700 text-white" : "bg-red-700 text-white"
         }`}>
           {toast.type === "success" ? "✓" : "✗"} {toast.message}
-          <button onClick={() => setToast(null)} className="ml-1 opacity-70 hover:opacity-100">✕</button>
+          <button onClick={() => setToast(null)} aria-label="Dismiss notification" className="ml-1 opacity-70 hover:opacity-100">✕</button>
         </div>
       )}
     </div>

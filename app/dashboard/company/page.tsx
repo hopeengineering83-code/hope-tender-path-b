@@ -472,9 +472,9 @@ export default function CompanyPage() {
                     </div>
                   </div>
                   <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100">
-                    <button onClick={()=>void reextractDoc(doc.id)} className="rounded border px-2 py-0.5 text-[10px] text-slate-500 hover:bg-slate-50 border-slate-200" title="Re-extract text">↺</button>
-                    <a href={`/api/company/documents/${doc.id}`} download={doc.originalFileName} className="rounded border px-2 py-0.5 text-[10px] text-blue-600 hover:bg-blue-50 border-blue-200">↓</a>
-                    <button onClick={()=>deleteDoc(doc.id)} className="rounded border px-2 py-0.5 text-[10px] text-red-500 hover:bg-red-50 border-red-200">✕</button>
+                    <button onClick={()=>void reextractDoc(doc.id)} aria-label={`Re-extract text from ${doc.originalFileName}`} className="rounded border px-2 py-0.5 text-[10px] text-slate-500 hover:bg-slate-50 border-slate-200" title="Re-extract text">↺</button>
+                    <a href={`/api/company/documents/${doc.id}`} download={doc.originalFileName} aria-label={`Download ${doc.originalFileName}`} className="rounded border px-2 py-0.5 text-[10px] text-blue-600 hover:bg-blue-50 border-blue-200">↓</a>
+                    <button onClick={()=>deleteDoc(doc.id)} aria-label={`Delete ${doc.originalFileName}`} className="rounded border px-2 py-0.5 text-[10px] text-red-500 hover:bg-red-50 border-red-200">✕</button>
                   </div>
                 </div>
               </div>

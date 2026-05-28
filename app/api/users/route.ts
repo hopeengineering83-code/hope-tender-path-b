@@ -3,6 +3,8 @@ import bcrypt from "bcryptjs";
 import { prisma, prismaReady } from "../../../lib/prisma";
 import { requireRole, unauthorizedResponse, forbiddenResponse } from "../../../lib/auth";
 import { logAction } from "../../../lib/audit";
+import { rateLimit, MUTATION_RATE_LIMIT } from "../../../lib/rate-limit";
+import { validatePassword } from "../../../lib/password-policy";
 
 export async function GET() {
   let actor;
@@ -31,10 +33,21 @@ export async function POST(req: Request) {
     return msg === "Forbidden" ? forbiddenResponse() : unauthorizedResponse();
   }
 
-  const { name, email, password, role } = await req.json();
+  const rl = rateLimit(`user-create:${actor.id}`, MUTATION_RATE_LIMIT);
+  if (!rl.allowed) return NextResponse.json({ error: "Too many requests", retryAfter: Math.ceil((rl.resetAt - Date.now()) / 1000) }, { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } });
+
+  const body = await req.json().catch(() => null);
+  if (!body) return NextResponse.json({ error: "Request body must be valid JSON" }, { status: 400 });
+  const { name, email, password, role } = body as { name?: string; email?: string; password?: string; role?: string };
 
   if (!email || !password) {
     return NextResponse.json({ error: "Email and password required" }, { status: 400 });
+  }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return NextResponse.json({ error: "Invalid email format" }, { status: 400 });
+  }
+  if (email.length > 254) {
+    return NextResponse.json({ error: "Email address too long (max 254 characters)" }, { status: 400 });
   }
 
   const validRoles = ["ADMIN", "PROPOSAL_MANAGER", "REVIEWER", "VIEWER"];
@@ -49,9 +62,8 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Email already in use" }, { status: 409 });
   }
 
-  if (password.length < 8) {
-    return NextResponse.json({ error: "Password must be at least 8 characters" }, { status: 400 });
-  }
+  const pwCheck = validatePassword(password);
+  if (!pwCheck.ok) return NextResponse.json({ error: pwCheck.error }, { status: 400 });
 
   const passwordHash = await bcrypt.hash(password, 10);
   const user = await prisma.user.create({

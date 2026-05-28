@@ -13,6 +13,7 @@
 import { NextResponse } from "next/server";
 import { getSession, requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../../lib/prisma";
+import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../../../lib/rate-limit";
 
 export const dynamic = "force-dynamic";
 
@@ -39,6 +40,9 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
   try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER"); }
   catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
 
+  const rl = rateLimit(`version-delete:${actor.id}`, MUTATION_RATE_LIMIT);
+  if (!rl.allowed) return NextResponse.json({ error: "Too many requests", retryAfter: Math.ceil((rl.resetAt - Date.now()) / 1000) }, { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } });
+
   await prismaReady;
   const { id, versionId } = await params;
 
@@ -60,6 +64,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   let actor;
   try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER"); }
   catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
+
+  const rl = rateLimit(`version-restore:${actor.id}`, MUTATION_RATE_LIMIT);
+  if (!rl.allowed) return NextResponse.json({ error: "Too many requests", retryAfter: Math.ceil((rl.resetAt - Date.now()) / 1000) }, { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } });
 
   await prismaReady;
   const { id, versionId } = await params;

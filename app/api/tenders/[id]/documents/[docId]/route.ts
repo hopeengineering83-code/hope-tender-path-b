@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma, prismaReady } from "../../../../../../lib/prisma";
 import { requireUser, unauthorizedResponse, forbiddenResponse } from "../../../../../../lib/auth";
 import { logAction } from "../../../../../../lib/audit";
+import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../../../lib/rate-limit";
 
 // Per-document review action endpoint (PR #247).
 //
@@ -86,8 +87,13 @@ export async function PUT(
   const canReview = ["ADMIN", "PROPOSAL_MANAGER", "REVIEWER"].includes(actor.role);
   if (!canReview) return forbiddenResponse();
 
+  const rl = rateLimit(`doc-review:${actor.id}`, MUTATION_RATE_LIMIT);
+  if (!rl.allowed) return NextResponse.json({ error: "Too many requests", retryAfter: Math.ceil((rl.resetAt - Date.now()) / 1000) }, { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } });
+
   const { id: tenderId, docId } = await params;
-  const { reviewStatus, reviewNotes, reviewAction } = await req.json() as {
+  const rawBody = await req.json().catch(() => null);
+  if (!rawBody) return NextResponse.json({ error: "Request body must be valid JSON" }, { status: 400 });
+  const { reviewStatus, reviewNotes, reviewAction } = rawBody as {
     reviewStatus?: string;
     reviewNotes?: string;
     // Optional explicit action label (APPROVED / REJECTED / CHANGES_REQUESTED

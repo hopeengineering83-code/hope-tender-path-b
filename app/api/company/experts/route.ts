@@ -71,7 +71,8 @@ export async function POST(req: Request) {
   const company = await ensureCompanyForUser(prisma, actor.id);
 
   try {
-    const body = await req.json();
+    const body = await req.json().catch(() => null);
+    if (!body) return NextResponse.json({ error: "Request body must be valid JSON" }, { status: 400 });
     if (!body.fullName || String(body.fullName).trim().length < 2) {
       return NextResponse.json({ error: "fullName is required" }, { status: 400 });
     }

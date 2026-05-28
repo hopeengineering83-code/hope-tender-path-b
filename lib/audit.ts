@@ -95,7 +95,10 @@ export type AuditAction =
   | "PROJECT_CREATE" | "PROJECT_UPDATE" | "PROJECT_DELETE" | "PROJECT_REVIEW"
   // Document reclassification and deduplication maintenance routes.
   | "DOCUMENT_RECLASSIFY"
-  | "DOCUMENT_DEDUPLICATE";
+  | "DOCUMENT_DEDUPLICATE"
+  | "LOGIN_FAILED"
+  | "COMPANY_PROFILE_UPDATED"
+  | "SETTINGS_UPDATED";
 
 export async function logAction(opts: {
   userId?: string;

@@ -4,6 +4,7 @@ import { getSession, requireRole, forbiddenResponse, unauthorizedResponse } from
 import { logAction } from "../../../../lib/audit";
 import { parseTenderStatus } from "../../../../lib/tender-workflow";
 import { prepareDashboardGeneratedDocuments } from "../../../../lib/dashboard-generated-documents";
+import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../lib/rate-limit";
 
 function withDashboardGeneratedDocuments<T extends { generatedDocuments: any[] }>(tender: T): T {
   const prepared = prepareDashboardGeneratedDocuments(tender.generatedDocuments);
@@ -43,13 +44,23 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
   const userId = await getSession();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
+  const rl = rateLimit(`tender-update:${userId}`, MUTATION_RATE_LIMIT);
+  if (!rl.allowed) return NextResponse.json({ error: "Too many requests", retryAfter: Math.ceil((rl.resetAt - Date.now()) / 1000) }, { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } });
+
   await prismaReady;
   const { id } = await params;
   const existing = await prisma.tender.findFirst({ where: { id, userId } });
   if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   try {
-    const body = await req.json();
+    const body = await req.json().catch(() => null);
+    if (!body) return NextResponse.json({ error: "Request body must be valid JSON" }, { status: 400 });
+    if (body.budget !== undefined && body.budget !== null) {
+      const parsedBudget = parseFloat(body.budget);
+      if (!Number.isFinite(parsedBudget) || parsedBudget < 0 || parsedBudget > 1e12) {
+        return NextResponse.json({ error: "budget must be a finite number between 0 and 1,000,000,000,000" }, { status: 400 });
+      }
+    }
     const status = parseTenderStatus(body.status);
 
     const prevStatus = existing.status;

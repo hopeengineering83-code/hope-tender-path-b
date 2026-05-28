@@ -21,6 +21,7 @@ import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../.
 import { buildSubmissionPlan } from "../../../../../lib/engine/submission-plan";
 import { reconcileGeneratedDocuments, applyReconcileDecisions } from "../../../../../lib/engine/reconcile-generated-docs";
 import { logAction } from "../../../../../lib/audit";
+import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../../lib/rate-limit";
 
 export const maxDuration = 30;
 export const dynamic = "force-dynamic";
@@ -32,6 +33,9 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   } catch (e) {
     return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse();
   }
+
+  const rl = rateLimit(`reconcile-docs:${actor.id}`, MUTATION_RATE_LIMIT);
+  if (!rl.allowed) return NextResponse.json({ error: "Too many requests", retryAfter: Math.ceil((rl.resetAt - Date.now()) / 1000) }, { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } });
 
   await prismaReady;
   const { id: tenderId } = await params;

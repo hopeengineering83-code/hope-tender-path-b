@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma, prismaReady } from "../../../../../../lib/prisma";
 import { requireUser, unauthorizedResponse, forbiddenResponse } from "../../../../../../lib/auth";
 import { logAction } from "../../../../../../lib/audit";
+import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../../../lib/rate-limit";
 
 /**
  * Bulk Review action endpoint (PR TT).
@@ -59,6 +60,9 @@ export async function POST(
 
   const canReview = ["ADMIN", "PROPOSAL_MANAGER", "REVIEWER"].includes(actor.role);
   if (!canReview) return forbiddenResponse();
+
+  const rl = rateLimit(`bulk-review:${actor.id}`, MUTATION_RATE_LIMIT);
+  if (!rl.allowed) return NextResponse.json({ error: "Too many requests", retryAfter: Math.ceil((rl.resetAt - Date.now()) / 1000) }, { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } });
 
   const { id: tenderId } = await params;
   const body = await req.json().catch(() => ({} as Record<string, unknown>));

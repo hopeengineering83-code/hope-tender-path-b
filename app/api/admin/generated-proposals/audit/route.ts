@@ -73,6 +73,7 @@ import { containsPricingLeakage } from "../../../../../lib/engine/pricing-hygien
 import { inferEnvelope } from "../../../../../lib/engine/submission-plan";
 import { assessGeneratedDocumentQuality } from "../../../../../lib/engine/document-quality-gate";
 import { METADATA_PLACEHOLDER_PATTERNS } from "../../../../../lib/engine/tender-metadata-completeness";
+import { sanitizeError } from "../../../../../lib/sanitize-error";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -450,6 +451,6 @@ export async function GET(req: Request) {
     });
   } catch (error) {
     console.error("admin generated-proposals audit failed", error);
-    return jsonError("Admin audit failed.", 500, { code: "ADMIN_AUDIT_RUNTIME_ERROR", detail: error instanceof Error ? error.message : String(error) });
+    return jsonError("Admin audit failed.", 500, { code: "ADMIN_AUDIT_RUNTIME_ERROR", detail: sanitizeError(error) });
   }
 }

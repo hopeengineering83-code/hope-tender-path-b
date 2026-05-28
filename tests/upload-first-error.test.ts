@@ -74,7 +74,7 @@ describe("Gap 4 — upload-first route source enforces production stack hiding",
     assert.ok(stackAssignmentIdx > 0, "expected guarded body.stack assignment");
 
     // Ensure sanitize call is applied to message + stack.
-    assert.match(src, /sanitizeErrorDetail/);
+    assert.match(src, /sanitizeError/);
   });
 
   it("does not return a top-level `stack` key in the literal object", async () => {

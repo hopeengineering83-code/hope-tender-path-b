@@ -6,6 +6,9 @@ import { importCompanyKnowledgeFromDocuments } from "../../../../lib/company-kno
 import { cleanTenderTitle, cleanClientName } from "../../../../lib/engine/proposal-labels";
 import { getStorageAdapter } from "../../../../lib/storage";
 
+export const maxDuration = 60;
+export const dynamic = "force-dynamic";
+
 /**
  * POST /api/admin/repair
  * Full repair workflow:
@@ -55,8 +58,13 @@ export async function POST(req: Request) {
 
     let success = 0, failed = 0, skipped = 0;
     const details: Array<{ name: string; chars: number; status: string; error?: string }> = [];
+    const deadline = Date.now() + 45_000; // leave headroom before 60s maxDuration
 
     for (const doc of docs) {
+      if (Date.now() > deadline) {
+        details.push({ name: "…aborted", chars: 0, status: "timeout", error: "Deadline reached — run again to process remaining documents" });
+        break;
+      }
       if (!doc.fileContent && !doc.storagePath) { skipped++; continue; }
       try {
         let buffer: Buffer;

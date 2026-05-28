@@ -114,6 +114,8 @@ export function DocumentReviewPanel({
   const [actionInFlight, setActionInFlight] = useState<string | null>(null);
   const [actionNote, setActionNote] = useState("");
   const [newCommentBody, setNewCommentBody] = useState("");
+  const [postingComment, setPostingComment] = useState(false);
+  const [resolvingCommentId, setResolvingCommentId] = useState<string | null>(null);
   const [replyingTo, setReplyingTo] = useState<string | null>(null);
   const [replyBody, setReplyBody] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -177,6 +179,7 @@ export function DocumentReviewPanel({
   async function postComment(parentId: string | null, body: string) {
     if (body.trim().length === 0) return;
     setError(null);
+    setPostingComment(true);
     try {
       const res = await fetch(`/api/tenders/${tenderId}/documents/${docId}/comments`, {
         method: "POST",
@@ -196,10 +199,13 @@ export function DocumentReviewPanel({
       await refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Comment failed");
+    } finally {
+      setPostingComment(false);
     }
   }
 
   async function toggleResolve(commentId: string, currentlyResolved: boolean) {
+    setResolvingCommentId(commentId);
     setError(null);
     try {
       const res = await fetch(`/api/tenders/${tenderId}/documents/${docId}/comments?commentId=${commentId}`, {
@@ -214,6 +220,8 @@ export function DocumentReviewPanel({
       await refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Resolve failed");
+    } finally {
+      setResolvingCommentId(null);
     }
   }
 
@@ -313,11 +321,11 @@ export function DocumentReviewPanel({
             <div className="mt-2 flex justify-end">
               <button
                 type="button"
-                disabled={newCommentBody.trim().length === 0}
+                disabled={newCommentBody.trim().length === 0 || postingComment}
                 onClick={() => void postComment(null, newCommentBody)}
                 className="rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-slate-800 disabled:opacity-50"
               >
-                Post comment
+                {postingComment ? "Posting…" : "Post comment"}
               </button>
             </div>
           </div>
@@ -379,9 +387,10 @@ export function DocumentReviewPanel({
                     <button
                       type="button"
                       onClick={() => void toggleResolve(c.id, Boolean(c.resolvedAt))}
-                      className="text-[11px] font-medium text-slate-600 hover:text-slate-900"
+                      disabled={resolvingCommentId === c.id}
+                      className="text-[11px] font-medium text-slate-600 hover:text-slate-900 disabled:opacity-50"
                     >
-                      {c.resolvedAt ? "Reopen thread" : "Mark resolved"}
+                      {resolvingCommentId === c.id ? "Saving…" : c.resolvedAt ? "Reopen thread" : "Mark resolved"}
                     </button>
                   </div>
                 )}
@@ -399,11 +408,11 @@ export function DocumentReviewPanel({
                     <div className="mt-1 flex justify-end">
                       <button
                         type="button"
-                        disabled={replyBody.trim().length === 0}
+                        disabled={replyBody.trim().length === 0 || postingComment}
                         onClick={() => void postComment(c.id, replyBody)}
                         className="rounded-lg bg-slate-900 px-2.5 py-1 text-[11px] font-medium text-white transition-colors hover:bg-slate-800 disabled:opacity-50"
                       >
-                        Post reply
+                        {postingComment ? "Posting…" : "Post reply"}
                       </button>
                     </div>
                   </div>

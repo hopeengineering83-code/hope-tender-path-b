@@ -195,7 +195,12 @@ async function zipPackage(userId: string, tender: any, envelopeFilter: EnvelopeF
 
   const scopedDocs = envelopeFilter ? docs.filter((d) => docEnvelopes.get(d.id) === envelopeFilter) : docs;
   if (envelopeFilter && scopedDocs.length === 0) {
-    return err(`No generated documents in the ${envelopeFilter} envelope.`, 409, { code: "NO_DOCUMENTS_IN_ENVELOPE", envelopeBreakdown: fullEnvelopeCounts });
+    const available = (Object.entries(fullEnvelopeCounts) as Array<[string, number]>).filter(([, count]) => count > 0).map(([env]) => env.toLowerCase());
+    return err(
+      `No generated documents in the ${envelopeFilter} envelope.${available.length ? ` Available: ${available.join(", ")}.` : ""}`,
+      409,
+      { code: "NO_DOCUMENTS_IN_ENVELOPE", requested: envelopeFilter, available, envelopeBreakdown: fullEnvelopeCounts },
+    );
   }
 
   const JSZip = (await import("jszip")).default;
