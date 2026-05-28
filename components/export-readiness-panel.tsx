@@ -565,7 +565,7 @@ export function ExportReadinessPanel({ tenderId }: { tenderId: string }) {
             <strong>{autoFinalizeRemaining} document{autoFinalizeRemaining === 1 ? "" : "s"}</strong> still need finalization.
             Click <strong>Auto-finalize for print/submission</strong> again to continue — each run processes up to 3 documents.
           </p>
-          <button type="button" onClick={() => setAutoFinalizeRemaining(null)} className="shrink-0 text-amber-600 hover:text-amber-800 text-xs font-medium">✕</button>
+          <button type="button" onClick={() => setAutoFinalizeRemaining(null)} aria-label="Dismiss auto-finalize notice" className="shrink-0 text-amber-600 hover:text-amber-800 text-xs font-medium">✕</button>
         </div>
       )}
 

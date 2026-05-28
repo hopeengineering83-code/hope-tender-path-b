@@ -140,7 +140,15 @@ export default async function TendersPage({
                       })()}
                     </td>
                     <td className="px-6 py-4 text-slate-500">{tender.reference || "—"}</td>
-                    <td className="px-6 py-4 text-slate-500">{formatDate(tender.deadline)}</td>
+                    <td className="px-6 py-4 text-slate-500">
+                      {tender.deadline ? (() => {
+                        const daysLeft = Math.ceil((new Date(tender.deadline).getTime() - Date.now()) / 86_400_000);
+                        if (daysLeft < 0) return <span className="text-red-600 font-medium">⚠ Overdue ({formatDate(tender.deadline)})</span>;
+                        if (daysLeft <= 3) return <span className="text-red-500 font-medium">⚠ {daysLeft}d left ({formatDate(tender.deadline)})</span>;
+                        if (daysLeft <= 7) return <span className="text-amber-500">⏰ {daysLeft}d left ({formatDate(tender.deadline)})</span>;
+                        return formatDate(tender.deadline);
+                      })() : "—"}
+                    </td>
                     <td className="px-6 py-4 text-slate-500">
                       {tender._count.files} files · {tender._count.requirements} reqs
                       {unresolvedGaps > 0 && (
