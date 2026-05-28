@@ -11,7 +11,9 @@ export default async function DashboardPage() {
   if (!userId) redirect("/login");
   await prismaReady;
 
-  const [tenders, company, recentActivity] = await Promise.all([
+  const tenderIds = await prisma.tender.findMany({ where: { userId }, select: { id: true } }).then((r) => r.map((t) => t.id));
+
+  const [tenders, company, recentActivity, generatedDocStats] = await Promise.all([
     prisma.tender.findMany({
       where: { userId },
       select: {
@@ -29,6 +31,11 @@ export default async function DashboardPage() {
       orderBy: { createdAt: "desc" },
       take: 8,
     }),
+    tenderIds.length > 0 ? prisma.generatedDocument.groupBy({
+      by: ["reviewStatus"],
+      where: { tenderId: { in: tenderIds }, generationStatus: { not: "SUPERSEDED" } },
+      _count: { _all: true },
+    }) : Promise.resolve([]),
   ]);
 
   const now = new Date();
@@ -67,6 +74,11 @@ export default async function DashboardPage() {
     dueSoon: dueSoon7.length,
     overdue: overdue.length,
   };
+
+  const totalGenDocs = generatedDocStats.reduce((s, g) => s + g._count._all, 0);
+  const exportReadyDocs = generatedDocStats
+    .filter((g) => g.reviewStatus === "READY_FOR_EXPORT" || g.reviewStatus === "APPROVED")
+    .reduce((s, g) => s + g._count._all, 0);
 
   const aiEnabled = isAIEnabled();
 
@@ -129,7 +141,7 @@ export default async function DashboardPage() {
       </div>
 
       {/* Analytics strip */}
-      {(winRate !== null || pipelineValue > 0 || avgReadiness !== null) && (
+      {(winRate !== null || pipelineValue > 0 || avgReadiness !== null || totalGenDocs > 0) && (
         <div className="grid gap-4 grid-cols-2 xl:grid-cols-4">
           {winRate !== null && (
             <div className="rounded-2xl border bg-white p-5 shadow-sm">
@@ -156,6 +168,13 @@ export default async function DashboardPage() {
               <p className="text-sm text-slate-500">Avg Readiness</p>
               <p className={`mt-1 text-3xl font-bold ${avgReadiness >= 80 ? "text-green-600" : avgReadiness >= 50 ? "text-amber-600" : "text-red-500"}`}>{avgReadiness}%</p>
               <p className="mt-1 text-xs text-slate-400">across {scoredTenders.length} scored tender(s)</p>
+            </div>
+          )}
+          {totalGenDocs > 0 && (
+            <div className="rounded-2xl border bg-white p-5 shadow-sm">
+              <p className="text-sm text-slate-500">Docs Export-Ready</p>
+              <p className={`mt-1 text-3xl font-bold ${exportReadyDocs === totalGenDocs ? "text-green-600" : exportReadyDocs > 0 ? "text-amber-600" : "text-slate-400"}`}>{exportReadyDocs}</p>
+              <p className="mt-1 text-xs text-slate-400">of {totalGenDocs} generated document{totalGenDocs !== 1 ? "s" : ""}</p>
             </div>
           )}
           <div className="rounded-2xl border bg-white p-5 shadow-sm">
