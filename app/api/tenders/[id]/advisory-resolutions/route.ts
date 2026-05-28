@@ -25,6 +25,7 @@ import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../.
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { logAction } from "../../../../../lib/audit";
 import { ADVISORY_GAP_PREFIX, buildAdvisoryGapTitle, parseAdvisoryGapTitle } from "../../../../../lib/engine/final-submission-readiness";
+import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../../lib/rate-limit";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 10;
@@ -82,6 +83,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     let actor;
     try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER", "REVIEWER"); }
     catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
+
+    const rl = rateLimit(`advisory-resolutions:${actor.id}`, MUTATION_RATE_LIMIT);
+    if (!rl.allowed) return NextResponse.json({ error: "Too many requests", retryAfter: Math.ceil((rl.resetAt - Date.now()) / 1000) }, { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } });
+
     await prismaReady;
     const { id } = await params;
 

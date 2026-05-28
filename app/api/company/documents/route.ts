@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getSession } from "../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../lib/prisma";
 import { logAction } from "../../../../lib/audit";
+import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../lib/rate-limit";
 
 export async function GET(req: Request) {
   const userId = await getSession();
@@ -43,6 +44,9 @@ export async function GET(req: Request) {
 export async function DELETE(req: Request) {
   const userId = await getSession();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const rl = rateLimit(`docs-delete:${userId}`, MUTATION_RATE_LIMIT);
+  if (!rl.allowed) return NextResponse.json({ error: "Too many requests", retryAfter: Math.ceil((rl.resetAt - Date.now()) / 1000) }, { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } });
 
   try {
     await prismaReady;
