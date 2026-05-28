@@ -129,10 +129,10 @@ Branch: `claude/relaxed-mendel-YHnOx`
 ## Next actions queue (prioritised)
 
 ### IMMEDIATE
-- (none — all known gaps resolved)
+- [ ] Merge PR #492 once CI green
 
 ### REMAINING KNOWN GAPS
-- (none — all known gaps resolved)
+- [ ] PR #492 (open): AI provider health wiring + storage-backed document audit — CI pending
 
 ---
 
@@ -177,4 +177,4 @@ Branch: `claude/relaxed-mendel-YHnOx`
 5. Work the "IMMEDIATE" queue first
 6. Update this file at the end of every session
 
-_Last updated: 2026-05-27 by Claude after PR #491 merge — all known gaps resolved; test baseline 1350 pass / 0 fail_
+_Last updated: 2026-05-28 by Claude — PR #492 open (AI provider recovery + storage audit, CI pending); local baseline 1359 pass / 0 fail_

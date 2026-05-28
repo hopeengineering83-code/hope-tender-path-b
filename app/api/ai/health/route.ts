@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSession } from "../../../../lib/auth";
+import { getAllProviderHealth, isProviderCooledDown } from "../../../../lib/ai-provider-health";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 10;
@@ -39,6 +40,14 @@ export async function GET() {
   if (geminiConfigured && !present(process.env.GEMINI_MODEL)) warnings.push("GEMINI_MODEL is not set; the app will use its built-in Gemini default.");
   if (openaiConfigured) warnings.push("OPENAI API key is configured. OpenAI is available in the fallback chain when higher-priority providers fail.");
 
+  const runtimeHealth = getAllProviderHealth();
+  const healthByProvider = Object.fromEntries(runtimeHealth.map((h) => [h.provider, h]));
+
+  const coolingDown = runtimeHealth.filter((h) => isProviderCooledDown(h.provider));
+  if (coolingDown.length > 0) {
+    warnings.push(`Provider(s) in cooldown: ${coolingDown.map((h) => h.provider).join(", ")}. Requests will skip cooled-down providers until the window expires.`);
+  }
+
   return NextResponse.json({
     success: blockers.length === 0,
     providers: {
@@ -47,16 +56,24 @@ export async function GET() {
         tier: process.env.ANTHROPIC_TIER || null,
         proposalModels: maskModelChain(claudeModels),
         maxOutputTokens: Number(process.env.ANTHROPIC_MAX_OUTPUT_TOKENS || 0) || null,
+        runtime: healthByProvider["anthropic"] ?? null,
       },
       gemini: {
         configured: geminiConfigured,
         primaryModel: process.env.GEMINI_MODEL || "gemini-2.5-pro",
         fallbackModels: maskModelChain(geminiModels),
         extractionModel: process.env.GEMINI_EXTRACTION_MODEL || process.env.GEMINI_EXTRACT_MODEL || null,
+        runtime: healthByProvider["gemini"] ?? null,
       },
       openai: {
         configured: openaiConfigured,
         note: "Configured fallback provider (Claude → Gemini → OpenAI → DeepSeek).",
+        runtime: healthByProvider["openai"] ?? null,
+      },
+      deepseek: {
+        configured: Boolean(process.env.DEEPSEEK_API_KEY),
+        note: "Fourth-tier fallback provider.",
+        runtime: healthByProvider["deepseek"] ?? null,
       },
     },
     preferredProvider,
