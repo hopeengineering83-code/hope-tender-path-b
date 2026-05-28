@@ -239,7 +239,7 @@ function detectMessageType(failures: ExportReadinessFailure[]): {
   let hygiene = 0;
   let originalRequired = 0;
   for (const f of failures) {
-    if (f.reasons.some((r) => /fileContent is missing|MISSING_CONTENT|DOCUMENTS_MISSING_CONTENT|no file content/i.test(r))) missingContent += 1;
+    if (f.reasons.some((r) => /fileContent is missing|MISSING_CONTENT|DOCUMENTS_MISSING_CONTENT|no file content|Unable to inspect storage-backed/i.test(r))) missingContent += 1;
     if (f.reasons.some((r) => /signature mismatch|not a real PDF|signature/i.test(r))) invalidSignature += 1;
     if (f.reasons.some((r) => /AI\/meta-preparation|Placeholder|pricing language|hygiene/i.test(r))) hygiene += 1;
     if (f.reasons.some((r) => /ORIGINAL_REQUIRED|REPLACE_WITH_ORIGINAL|NOT_EXPORTABLE|tender-issued original/i.test(r))) originalRequired += 1;
