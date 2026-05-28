@@ -103,6 +103,13 @@ Branch: `fix/seven-pass-wiring-self-review-and-donor-regex`
 - `auto-finalize/route.ts`: calls `assessGeneratedDocumentQuality()` on cleaned text; passes `report.score` as `selfReviewScore` to `evaluateSevenPassForDocument()` so SELF_REVIEW_SCORING pass enforces ≥80 threshold instead of skipping with null
 - **1339 pass / 0 fail**
 
+### PR #492 — AI provider recovery and storage-backed document audit (merged ✅)
+- `lib/ai.ts`: wire `recordProviderSuccess/Failure/isProviderCooledDown` into `generateWithFallback`; skip cooled-down providers
+- `app/api/ai/health/route.ts`: add runtime health data + DeepSeek + cooldown warning
+- `lib/engine/storage-backed-document-audit.ts` (NEW): read storagePath files, validate signatures, run quality gate, return flags only
+- `app/api/admin/generated-proposals/audit/route.ts`: probe storagePath docs in bulk audit
+- **1359 pass / 0 fail**
+
 ### PR #491 — Wire selfReviewScore + requirements into reassess; 4 new sectors (merged ✅)
 - `reassess/route.ts`: batch-load requirements alongside notes; pass `requirements` to `assessGeneratedDocumentQuality()`; forward `report.score` as `selfReviewScore` to `buildSevenPassGateInput()` so SELF_REVIEW_SCORING threshold enforced in reassess path
 - `seven-pass-generation-wiring.ts`: add EDUCATION, WATER_SANITATION, HEALTH_SERVICES, ENERGY sectors (4 new tests)
@@ -129,10 +136,10 @@ Branch: `claude/relaxed-mendel-YHnOx`
 ## Next actions queue (prioritised)
 
 ### IMMEDIATE
-- [ ] Merge PR #492 once CI green
+- (none)
 
 ### REMAINING KNOWN GAPS
-- [ ] PR #492 (open): AI provider health wiring + storage-backed document audit — CI pending
+- (none — all known gaps resolved)
 
 ---
 
@@ -177,4 +184,4 @@ Branch: `claude/relaxed-mendel-YHnOx`
 5. Work the "IMMEDIATE" queue first
 6. Update this file at the end of every session
 
-_Last updated: 2026-05-28 by Claude — PR #492 open (AI provider recovery + storage audit, CI pending); local baseline 1359 pass / 0 fail_
+_Last updated: 2026-05-28 by Claude after PR #492 merge — all known gaps resolved; test baseline 1359 pass / 0 fail_
