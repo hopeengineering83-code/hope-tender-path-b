@@ -243,7 +243,7 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
                           {row.sourceSectionHeading && <div>Heading: {row.sourceSectionHeading}</div>}
                           {row.sourceExactQuote && (
                             <blockquote className="mt-1 border-l-2 border-gray-300 pl-2 text-gray-600 italic">
-                              "{row.sourceExactQuote.slice(0, 200)}{row.sourceExactQuote.length > 200 ? "…" : ""}"
+                              &ldquo;{row.sourceExactQuote.slice(0, 200)}{row.sourceExactQuote.length > 200 ? "…" : ""}&rdquo;
                             </blockquote>
                           )}
                           <div className="text-gray-400">Confidence: {Math.round(row.sourceConfidence * 100)}%</div>
