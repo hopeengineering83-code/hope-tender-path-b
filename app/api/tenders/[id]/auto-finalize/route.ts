@@ -71,9 +71,22 @@ function cleanLine(line: string, technical: boolean): string {
   return out;
 }
 
+// Per-document AI polish timeout — 18s leaves headroom for 3 docs within maxDuration=60s.
+const POLISH_TIMEOUT_MS = 18_000;
+
 async function polishWithAI(text: string, technical: boolean): Promise<string> {
   const prompt = `Rewrite this tender document content to be client-ready, factual, concise, and professional. Remove AI/meta traces and placeholders.${technical ? " Remove pricing/commercial/financial wording from technical envelope content. If a sentence mixes technical content with financial phrasing, keep the technical substance but remove the financial reference. Do not delete entire sections unless they are purely financial." : ""}\n\nCONTENT:\n${text.slice(0, 12000)}`;
-  try { return await generateWithFallback(prompt, { systemPrompt: "You are a senior tender editor. Keep facts, improve quality, no inventions." }); } catch { return text; }
+  const timeout = new Promise<string>((_, reject) =>
+    setTimeout(() => reject(new Error("polish timeout")), POLISH_TIMEOUT_MS)
+  );
+  try {
+    return await Promise.race([
+      generateWithFallback(prompt, { systemPrompt: "You are a senior tender editor. Keep facts, improve quality, no inventions." }),
+      timeout,
+    ]);
+  } catch {
+    return text;
+  }
 }
 
 function isHeadingLine(line: string): boolean {

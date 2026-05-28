@@ -242,6 +242,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     });
   } catch (error) {
     console.error("Analysis route error:", error);
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Analysis failed" }, { status: 500 });
+    const raw = error instanceof Error ? error.message : "Analysis failed";
+    // Sanitize before returning — strip API keys and truncate stack detail
+    const safe = raw
+      .replace(/sk-[a-zA-Z0-9_-]{10,}/g, "[KEY_REDACTED]")
+      .replace(/AIza[a-zA-Z0-9_-]{30,}/g, "[KEY_REDACTED]")
+      .replace(/Bearer\s+[a-zA-Z0-9._-]{10,}/gi, "Bearer [REDACTED]")
+      .slice(0, 300);
+    return NextResponse.json({ error: safe }, { status: 500 });
   }
 }

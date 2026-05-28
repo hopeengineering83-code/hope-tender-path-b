@@ -106,6 +106,7 @@ export function ExportReadinessPanel({ tenderId }: { tenderId: string }) {
   const [repairMessage, setRepairMessage] = useState<string | null>(null);
   const [autoFinalizeRemaining, setAutoFinalizeRemaining] = useState<number | null>(null);
   const [retryingAnalysis, setRetryingAnalysis] = useState(false);
+  const [providerCooldownWarning, setProviderCooldownWarning] = useState<string | null>(null);
   const [repairingSource, setRepairingSource] = useState(false);
   const [reclassifying, setReclassifying] = useState(false);
   const [deduplicating, setDeduplicating] = useState(false);
@@ -304,6 +305,7 @@ export function ExportReadinessPanel({ tenderId }: { tenderId: string }) {
     setRetryingAnalysis(true);
     setError(null);
     setRepairMessage(null);
+    setProviderCooldownWarning(null);
     try {
       // /api/tenders/[id]/analyze does not exist; use ai-analyze endpoint instead
       const res = await fetch(`/api/tenders/${tenderId}/ai-analyze`, { method: "POST" });
@@ -312,6 +314,17 @@ export function ExportReadinessPanel({ tenderId }: { tenderId: string }) {
         setRepairMessage("AI analysis re-triggered. Re-checking readiness…");
       } else {
         setError((data.error as string | undefined) ?? "Failed to retry AI analysis");
+        // Fetch provider health to surface any cooldown context to the user
+        try {
+          const healthRes = await fetch("/api/ai/health");
+          if (healthRes.ok) {
+            const health = (await healthRes.json()) as { warnings?: string[]; providers?: Record<string, { runtime?: { cooldownUntil?: number | null } | null }> };
+            const coolingWarning = (health.warnings ?? []).find((w) => /cooldown/i.test(w));
+            if (coolingWarning) setProviderCooldownWarning(coolingWarning);
+          }
+        } catch {
+          // health fetch failure is non-critical; silently ignore
+        }
       }
     } catch {
       setError("Failed to retry AI analysis");
@@ -665,6 +678,11 @@ export function ExportReadinessPanel({ tenderId }: { tenderId: string }) {
                       ✓ Approve fallback analysis (manual review)
                     </button>
                   </div>
+                  {providerCooldownWarning && (
+                    <p className="mt-2 text-[10px] text-amber-800 bg-amber-100 rounded px-2 py-1">
+                      ⏳ {providerCooldownWarning} Wait a moment then retry.
+                    </p>
+                  )}
                   <p className="mt-1 text-[10px] text-amber-700">
                     Retry AI Analysis re-runs the tender analysis with all available AI providers. Approve fallback only if you have manually verified the extracted requirements are correct.
                   </p>
