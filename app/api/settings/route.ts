@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSession } from "../../../lib/auth";
 import { prisma, prismaReady } from "../../../lib/prisma";
+import { rateLimit, MUTATION_RATE_LIMIT } from "../../../lib/rate-limit";
 
 export async function GET() {
   const userId = await getSession();
@@ -16,12 +17,17 @@ export async function GET() {
 export async function PUT(req: Request) {
   const userId = await getSession();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const rl = rateLimit(`settings-update:${userId}`, MUTATION_RATE_LIMIT);
+  if (!rl.allowed) return NextResponse.json({ error: "Too many requests", retryAfter: Math.ceil((rl.resetAt - Date.now()) / 1000) }, { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } });
+
   await prismaReady;
 
   const company = await prisma.company.findUnique({ where: { userId } });
   if (!company) return NextResponse.json({ error: "Company profile required" }, { status: 400 });
 
-  const body = await req.json() as Record<string, unknown>;
+  const body = await req.json().catch(() => null) as Record<string, unknown> | null;
+  if (!body) return NextResponse.json({ error: "Request body must be valid JSON" }, { status: 400 });
 
   const VALID_CURRENCIES = /^[A-Z]{3}$/;
   const VALID_EXPORT_FORMATS = new Set(["DOCX", "PDF"]);

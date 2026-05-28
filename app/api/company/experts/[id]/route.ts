@@ -57,7 +57,8 @@ export async function PUT(
   if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   try {
-    const body = await req.json() as Record<string, unknown>;
+    const body = await req.json().catch(() => null) as Record<string, unknown> | null;
+    if (!body) return NextResponse.json({ error: "Request body must be valid JSON" }, { status: 400 });
     const updated = await prisma.expert.update({
       where: { id },
       data: {
@@ -104,7 +105,8 @@ export async function PATCH(
   const existing = await prisma.expert.findFirst({ where: { id, companyId: company.id, deletedAt: null } });
   if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  const body = await req.json() as { action?: string; notes?: string };
+  const body = await req.json().catch(() => null) as { action?: string; notes?: string } | null;
+  if (!body) return NextResponse.json({ error: "Request body must be valid JSON" }, { status: 400 });
   if (!body.action || !["approve", "reject"].includes(body.action)) {
     return NextResponse.json({ error: "action must be 'approve' or 'reject'" }, { status: 400 });
   }

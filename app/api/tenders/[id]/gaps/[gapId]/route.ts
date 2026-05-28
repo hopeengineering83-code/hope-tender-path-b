@@ -21,7 +21,8 @@ export async function PUT(
   const gap = await prisma.complianceGap.findFirst({ where: { id: gapId, tenderId } });
   if (!gap) return NextResponse.json({ error: "Gap not found" }, { status: 404 });
 
-  const body = await req.json() as { isResolved?: boolean; resolvedNote?: string; mitigationPlan?: string };
+  const body = await req.json().catch(() => null) as { isResolved?: boolean; resolvedNote?: string; mitigationPlan?: string } | null;
+  if (!body) return NextResponse.json({ error: "Request body must be valid JSON" }, { status: 400 });
 
   const updated = await prisma.complianceGap.update({
     where: { id: gapId },

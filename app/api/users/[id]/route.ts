@@ -39,7 +39,8 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
 
   if (!isSelf && !isAdmin) return forbiddenResponse();
 
-  const body = await req.json();
+  const body = await req.json().catch(() => null);
+  if (!body) return NextResponse.json({ error: "Request body must be valid JSON" }, { status: 400 });
   const { name, role, password, currentPassword } = body as { name?: string; role?: string; password?: string; currentPassword?: string };
 
   await prismaReady;

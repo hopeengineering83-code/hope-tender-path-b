@@ -66,13 +66,14 @@ export async function POST(req: Request) {
   const company = await ensureCompanyForUser(prisma, actor.id);
 
   try {
-    const body = await req.json();
+    const body = await req.json().catch(() => null);
+    if (!body) return NextResponse.json({ error: "Request body must be valid JSON" }, { status: 400 });
     if (!body.name || String(body.name).trim().length < 2) {
       return NextResponse.json({ error: "Project name is required (min 2 characters)" }, { status: 400 });
     }
     const contractValue = body.contractValue ? Number(body.contractValue) : null;
-    if (contractValue !== null && (isNaN(contractValue) || contractValue < 0)) {
-      return NextResponse.json({ error: "contractValue must be a non-negative number" }, { status: 400 });
+    if (contractValue !== null && (!Number.isFinite(contractValue) || contractValue < 0 || contractValue > 1e12)) {
+      return NextResponse.json({ error: "contractValue must be a finite non-negative number up to 1,000,000,000,000" }, { status: 400 });
     }
     const project = await prisma.project.create({
       data: {

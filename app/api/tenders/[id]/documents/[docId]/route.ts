@@ -87,7 +87,9 @@ export async function PUT(
   if (!canReview) return forbiddenResponse();
 
   const { id: tenderId, docId } = await params;
-  const { reviewStatus, reviewNotes, reviewAction } = await req.json() as {
+  const rawBody = await req.json().catch(() => null);
+  if (!rawBody) return NextResponse.json({ error: "Request body must be valid JSON" }, { status: 400 });
+  const { reviewStatus, reviewNotes, reviewAction } = rawBody as {
     reviewStatus?: string;
     reviewNotes?: string;
     // Optional explicit action label (APPROVED / REJECTED / CHANGES_REQUESTED

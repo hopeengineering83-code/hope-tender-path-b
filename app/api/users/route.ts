@@ -3,6 +3,7 @@ import bcrypt from "bcryptjs";
 import { prisma, prismaReady } from "../../../lib/prisma";
 import { requireRole, unauthorizedResponse, forbiddenResponse } from "../../../lib/auth";
 import { logAction } from "../../../lib/audit";
+import { rateLimit, MUTATION_RATE_LIMIT } from "../../../lib/rate-limit";
 
 export async function GET() {
   let actor;
@@ -31,7 +32,12 @@ export async function POST(req: Request) {
     return msg === "Forbidden" ? forbiddenResponse() : unauthorizedResponse();
   }
 
-  const { name, email, password, role } = await req.json();
+  const rl = rateLimit(`user-create:${actor.id}`, MUTATION_RATE_LIMIT);
+  if (!rl.allowed) return NextResponse.json({ error: "Too many requests", retryAfter: Math.ceil((rl.resetAt - Date.now()) / 1000) }, { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } });
+
+  const body = await req.json().catch(() => null);
+  if (!body) return NextResponse.json({ error: "Request body must be valid JSON" }, { status: 400 });
+  const { name, email, password, role } = body as { name?: string; email?: string; password?: string; role?: string };
 
   if (!email || !password) {
     return NextResponse.json({ error: "Email and password required" }, { status: 400 });

@@ -17,7 +17,8 @@ export async function PUT(
   const tender = await prisma.tender.findFirst({ where: { id: tenderId, userId } });
   if (!tender) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  const body = await req.json() as { matchId: string; matchType: "expert" | "project"; isSelected: boolean };
+  const body = await req.json().catch(() => null) as { matchId: string; matchType: "expert" | "project"; isSelected: boolean } | null;
+  if (!body) return NextResponse.json({ error: "Request body must be valid JSON" }, { status: 400 });
   const { matchId, matchType, isSelected } = body;
 
   if (matchType === "expert") {

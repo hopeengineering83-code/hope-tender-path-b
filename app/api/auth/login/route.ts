@@ -126,6 +126,7 @@ export async function POST(req: Request) {
     }
 
     if (!user || !passwordOk) {
+      void logAction({ userId: user?.id, action: "LOGIN_FAILED", entityType: "User", entityId: user?.id, description: `Failed login attempt for ${email}` }).catch(() => {});
       return NextResponse.json(
         { error: "Invalid credentials", detail: "The email or password is incorrect." },
         { status: 401 },

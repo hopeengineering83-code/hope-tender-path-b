@@ -3,6 +3,7 @@ import { prisma, prismaReady } from "../../../lib/prisma";
 import { getSession } from "../../../lib/auth";
 import { ensureCompanyForUser } from "../../../lib/company-workspace";
 import { cleanupSupportDocImportedRecords } from "../../../lib/company-support-doc-cleanup";
+import { rateLimit, MUTATION_RATE_LIMIT } from "../../../lib/rate-limit";
 
 const DEFAULT_COMPANY_NAME = "Hope Urban Planning Architectural and Engineering Consultancy";
 const DEFAULT_COMPANY_DESCRIPTION = "AI-powered tender proposal generation workspace";
@@ -143,9 +144,18 @@ export async function PUT(req: Request) {
   const userId = await getSession();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
+  const rl = rateLimit(`company-update:${userId}`, MUTATION_RATE_LIMIT);
+  if (!rl.allowed) {
+    return NextResponse.json(
+      { error: "Too many profile update requests. Wait a moment and retry.", retryAfter: Math.ceil((rl.resetAt - Date.now()) / 1000) },
+      { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } },
+    );
+  }
+
   await prismaReady;
   try {
-    const body = await req.json();
+    const body = await req.json().catch(() => null);
+    if (!body) return NextResponse.json({ error: "Request body must be valid JSON" }, { status: 400 });
     const existing = await prisma.company.findUnique({ where: { userId } });
 
     const company = await prisma.company.upsert({

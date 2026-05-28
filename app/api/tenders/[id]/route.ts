@@ -49,7 +49,14 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
   if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   try {
-    const body = await req.json();
+    const body = await req.json().catch(() => null);
+    if (!body) return NextResponse.json({ error: "Request body must be valid JSON" }, { status: 400 });
+    if (body.budget !== undefined && body.budget !== null) {
+      const parsedBudget = parseFloat(body.budget);
+      if (!Number.isFinite(parsedBudget) || parsedBudget < 0 || parsedBudget > 1e12) {
+        return NextResponse.json({ error: "budget must be a finite number between 0 and 1,000,000,000,000" }, { status: 400 });
+      }
+    }
     const status = parseTenderStatus(body.status);
 
     const prevStatus = existing.status;
