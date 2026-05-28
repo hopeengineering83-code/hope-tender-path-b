@@ -11,6 +11,7 @@ import { EvaluatorSimulatorPanel } from "../../../../components/evaluator-simula
 import { AIRematchButton } from "../../../../components/ai-rematch-button";
 import { CanonicalReadinessScoreWidget } from "../../../../components/canonical-readiness-score-widget";
 import { SubmissionPlanCompletenessPanel } from "../../../../components/submission-plan-completeness-panel";
+import TenderRecoveryCommandCenter from "../../../../components/tender-recovery-command-center";
 
 function renderInline(text: string): React.ReactNode[] {
   const parts = text.split(/(\*\*[^*\n]+\*\*|\*[^*\n]+\*|_[^_\n]+_)/g);
@@ -1207,6 +1208,12 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
           DB-stored readiness tile below is retained but is now
           relabelled "Workflow status" so it isn't confused with the
           actual export-readiness score. */}
+      {/* Tender Recovery Command Center — single source of truth for
+          lifecycle state, primary next action, and global action gating.
+          Must appear before all other panels so the user sees one clear
+          next action even when multiple panels are visible. */}
+      <TenderRecoveryCommandCenter tenderId={tender.id} />
+
       <CanonicalReadinessScoreWidget tenderId={tender.id} />
 
       {/* Submission Plan Completeness — answers the "Docs 6/19" question
