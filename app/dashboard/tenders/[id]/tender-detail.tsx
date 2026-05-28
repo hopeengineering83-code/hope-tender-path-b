@@ -14,6 +14,7 @@ import { SubmissionPlanCompletenessPanel } from "../../../../components/submissi
 import TenderRecoveryCommandCenter from "../../../../components/tender-recovery-command-center";
 import RequirementCoveragePanel from "../../../../components/requirement-coverage-panel";
 import TenderControlsPanel from "../../../../components/tender-controls-panel";
+import ScoreBreakdownPanel from "../../../../components/score-breakdown-panel";
 import { detectAnalysisSource } from "../../../../lib/engine/analysis-source";
 
 function renderInline(text: string): React.ReactNode[] {
@@ -1249,6 +1250,8 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
       <RequirementCoveragePanel tenderId={tender.id} />
 
       <TenderControlsPanel tenderId={tender.id} />
+
+      <ScoreBreakdownPanel tenderId={tender.id} />
 
       <div className={`grid gap-4 md:grid-cols-3 ${proposalQuality ? "xl:grid-cols-7" : "xl:grid-cols-6"}`}>
         <div className="rounded-2xl border bg-white p-5 shadow-sm">
