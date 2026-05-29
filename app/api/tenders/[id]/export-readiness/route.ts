@@ -55,6 +55,13 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
           strictTwoEnvelope: readiness.summary.strictTwoEnvelope,
           packageMode: readiness.summary.packageMode,
           planStatus: readiness.summary.planStatus,
+          // Analysis-source gate — consumed by Export Readiness Panel to warn
+          // when analysis is regex fallback or unapproved.
+          analysisSource: readiness.summary.analysisSource,
+          readinessScore: readiness.summary.readinessScore,
+          missingRequiredDocuments: readiness.summary.missingRequiredDocuments,
+          ungeneratedPlannedRequired: readiness.summary.ungeneratedPlannedRequired,
+          qualityFailedDocuments: readiness.summary.qualityFailedDocuments,
         },
         documentBlockers: readiness.documentBlockers,
         tenderLevelBlockers: readiness.tenderLevelBlockers,

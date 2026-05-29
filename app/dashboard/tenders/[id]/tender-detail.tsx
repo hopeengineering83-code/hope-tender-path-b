@@ -483,6 +483,8 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
     jobId: string | null;
     chunks: { total: number; completed: number; failed: number; skipped: number; isPartial: boolean } | null;
     code: string | null;
+    nextAction: string | null;
+    extractionWarnings: string[] | null;
   } | null>(null);
   const [approvingFallback, setApprovingFallback] = useState(false);
   const [fallbackNote, setFallbackNote] = useState("");
@@ -639,6 +641,8 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
         jobId: data.jobId ?? null,
         chunks: data.chunks ?? null,
         code: data.code ?? null,
+        nextAction: data.nextAction ?? null,
+        extractionWarnings: Array.isArray(data.extractionWarnings) ? data.extractionWarnings : null,
       });
       if (data.jobId) setContinueJobId(data.jobId);
       router.refresh();
@@ -660,6 +664,8 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
         jobId: data.jobId ?? null,
         chunks: data.chunks ?? null,
         code: data.code ?? null,
+        nextAction: data.nextAction ?? null,
+        extractionWarnings: Array.isArray(data.extractionWarnings) ? data.extractionWarnings : null,
       });
       if (data.jobId) setContinueJobId(data.jobId);
       if (data.tender) setTender((cur) => ({ ...cur, ...data.tender }));
@@ -1392,6 +1398,21 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
                     {analyzing ? "Continuing…" : "Continue Analysis"}
                   </button>
                 </div>
+              )}
+              {analyzeResult.nextAction && (
+                <p className="mt-2 text-xs text-slate-600">
+                  <span className="font-medium">Next:</span> {analyzeResult.nextAction.replace(/_/g, " ").toLowerCase()}
+                </p>
+              )}
+              {analyzeResult.extractionWarnings && analyzeResult.extractionWarnings.length > 0 && (
+                <details className="mt-2">
+                  <summary className="cursor-pointer text-xs text-amber-700 hover:underline">
+                    {analyzeResult.extractionWarnings.length} extraction warning(s)
+                  </summary>
+                  <ul className="mt-1 list-disc pl-4 text-xs text-amber-700 space-y-0.5">
+                    {analyzeResult.extractionWarnings.slice(0, 5).map((w, i) => <li key={i}>{w}</li>)}
+                  </ul>
+                </details>
               )}
             </div>
             <button onClick={() => setAnalyzeResult(null)} aria-label="Dismiss" className="shrink-0 text-slate-400 hover:text-slate-600 text-xs">✕</button>
