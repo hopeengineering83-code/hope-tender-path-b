@@ -395,6 +395,9 @@ export async function getFinalSubmissionReadiness(
           restrictions: true,
           sectionReference: true,
           sourceConfidence: true,
+          complianceMatrixRows: {
+            select: { id: true, supportLevel: true },
+          },
         },
       },
       generatedDocuments: {
@@ -575,11 +578,13 @@ export async function getFinalSubmissionReadiness(
     sourceReferenceCoverage,
     // The canonical helper does not run a full evidence-coverage pass on
     // every call (that would re-load the company vault). The readiness
-    // panel separately surfaces evidence-readiness; here we approximate
-    // by counting MANDATORY requirements that have a compliance-matrix
-    // row OR a non-zero sourceConfidence. This is conservative enough
-    // for the cap to kick in when evidence is clearly absent.
-    evidenceCoverage: tender.requirements.length === 0 ? 0 : tender.requirements.filter((r) => r.priority === "MANDATORY" && ((r.sourceConfidence ?? 0) > 0 || (r.sectionReference ?? "").trim().length > 0)).length / Math.max(1, tender.requirements.filter((r) => r.priority === "MANDATORY").length),
+    // Count MANDATORY requirements covered by at least one REVIEWED compliance-matrix
+    // row (FULL or SUBSTANTIAL). Falls back to sourceConfidence heuristic when no
+    // matrix rows exist so partial analysis still contributes a signal.
+    evidenceCoverage: tender.requirements.length === 0 ? 0 : tender.requirements.filter((r) => r.priority === "MANDATORY" && (
+      (r.complianceMatrixRows ?? []).some((row) => row.supportLevel === "FULL" || row.supportLevel === "SUBSTANTIAL") ||
+      ((r.sourceConfidence ?? 0) > 0 && (r.complianceMatrixRows ?? []).length === 0)
+    )).length / Math.max(1, tender.requirements.filter((r) => r.priority === "MANDATORY").length),
     requiredDocumentsTotal: requiredPlanCount,
     requiredDocumentsSatisfied: Math.max(0, requiredPlanCount - missingPlan.length),
     outsidePlanDocuments: extraPlan.length,

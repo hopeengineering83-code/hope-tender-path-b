@@ -35,12 +35,15 @@
 
 export const METADATA_PLACEHOLDER_PATTERNS: RegExp[] = [
   /\bbid[\s-]?team\s+to\s+confirm\b/i,
-  /\bto\s+be\s+confirmed\b/i,
-  /\b\bTBD\b/,
-  /\bTBC\b/,
+  /\bto\s+be\s+(?:confirmed|determined|provided|completed|inserted)\b/i,
+  /\b(?:tbd|tbc|tba)\b/i,
+  /\b(?:not\s+provided|not\s+available|not\s+specified|unknown)\b/i,
+  /\bn\/?a\b/i,
   /\bplaceholder\b/i,
-  /\binsert\b.{0,40}\bhere\b/i,
+  /\b(?:insert|add|fill)\b.{0,40}\b(?:here|later|manually)\b/i,
   /\b\[?fill[\s_-]?in\]?/i,
+  /\bexact\s+site\s+to\s+be\s+determined\b/i,
+  /\bwith\s+consultant'?s\s+assistance\b/i,
 ];
 
 export type CriticalMetadataField =
@@ -141,6 +144,9 @@ export function looksLikeMetadataPlaceholder(value?: string | null): boolean {
   if (!value || typeof value !== "string") return false;
   const text = value.trim();
   if (text.length === 0) return false;
+  // Do not treat a legitimate acronym-only response as placeholder when the
+  // field is a long descriptive field; for short fields, the patterns above
+  // still catch exact "TBD/TBC/N/A" style placeholders.
   return METADATA_PLACEHOLDER_PATTERNS.some((rx) => rx.test(text));
 }
 
@@ -163,6 +169,12 @@ export function assessTenderMetadataCompleteness(input: MetadataCompletenessInpu
   const invalidFields: MetadataFieldFinding[] = [];
   const notes: string[] = [];
 
+  const isValidPresent = (value: unknown): boolean => {
+    if (!isPresent(value)) return false;
+    if (typeof value === "string" && looksLikeMetadataPlaceholder(value)) return false;
+    return true;
+  };
+
   // ── Critical fields. ─────────────────────────────────────────────────────
   // A critical field missing means the generated proposal cannot accurately
   // address the procuring entity or the submission deadline / rules.
@@ -171,14 +183,14 @@ export function assessTenderMetadataCompleteness(input: MetadataCompletenessInpu
     value: unknown,
     reason: string,
   ) => {
-    if (!isPresent(value)) missingCritical.push({ field, reason });
+    if (!isValidPresent(value)) missingCritical.push({ field, reason });
   };
 
   checkCritical("clientName", input.clientName, "Client / procuring entity name is required for cover letter and declarations.");
   checkCritical("title", input.title, "Tender title is required throughout the proposal.");
   checkCritical("submissionMethod", input.submissionMethod, "Submission method (portal / sealed envelope / email) drives package mode and final ZIP behaviour.");
   // submissionEndpoint = either an email list, a submission address, or a portal URL
-  const hasAnyEndpoint = isPresent(input.submissionEmails) || isPresent(input.submissionAddress);
+  const hasAnyEndpoint = isValidPresent(input.submissionEmails) || isValidPresent(input.submissionAddress);
   if (!hasAnyEndpoint) missingCritical.push({ field: "submissionEndpoint", reason: "Submission endpoint (email or address) is required for the cover letter and submission package label." });
   checkCritical("deadline", input.deadline, "Submission deadline is required for scheduling and final approval rules.");
   if ((input.requirementCount ?? 0) === 0) {
@@ -190,7 +202,7 @@ export function assessTenderMetadataCompleteness(input: MetadataCompletenessInpu
 
   // ── Non-critical fields (surfaced as warnings, not blockers). ───────────
   const checkNonCritical = (field: NonCriticalMetadataField, value: unknown, reason: string) => {
-    if (!isPresent(value)) missingNonCritical.push({ field, reason });
+    if (!isValidPresent(value)) missingNonCritical.push({ field, reason });
   };
 
   checkNonCritical("reference", input.reference, "Tender reference number improves identification on the cover letter.");
@@ -241,7 +253,7 @@ export function assessTenderMetadataCompleteness(input: MetadataCompletenessInpu
   let placeholderCount = 0;
   for (const [field, raw] of stringFieldsForScan) {
     if (typeof raw === "string" && looksLikeMetadataPlaceholder(raw)) {
-      invalidFields.push({ field, reason: `Value "${raw.trim().slice(0, 60)}" is an internal placeholder (e.g. "Bid-Team to confirm") and must not enter generated proposals.` });
+      invalidFields.push({ field, reason: `Value "${raw.trim().slice(0, 60)}" is an internal placeholder (e.g. "Bid-Team to confirm", "TBD", "N/A") and must not enter generated proposals.` });
       placeholderCount += 1;
     }
   }
@@ -270,11 +282,11 @@ export function assessTenderMetadataCompleteness(input: MetadataCompletenessInpu
     input.mandatorySiteVisit,
     input.validityDays,
   ];
-  const present = tracked.filter((v) => isPresent(v) && (typeof v !== "string" || !looksLikeMetadataPlaceholder(v))).length;
+  const present = tracked.filter((v) => isValidPresent(v)).length;
   const overallRatio = present / tracked.length;
 
   if (missingCritical.length > 0) {
-    notes.push(`${missingCritical.length} critical metadata field(s) missing — final generation is blocked until completed.`);
+    notes.push(`${missingCritical.length} critical metadata field(s) missing or placeholder-filled — final generation is blocked until completed.`);
   }
   if (invalidFields.length > 0) {
     notes.push(`${invalidFields.length} field(s) contain internal placeholder language (e.g. "Bid-Team to confirm") and must be cleaned before generation.`);
@@ -295,4 +307,4 @@ export function assessTenderMetadataCompleteness(input: MetadataCompletenessInpu
   };
 }
 
-export const __testing__ = { isPresent, METADATA_PLACEHOLDER_PATTERNS };
+export const __testing__ = { isPresent, METADATA_PLACEHOLDER_PATTERNS, looksLikeMetadataPlaceholder };

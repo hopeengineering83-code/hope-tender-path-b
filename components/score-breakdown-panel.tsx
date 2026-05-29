@@ -39,6 +39,15 @@ type DimensionRow = {
   source: string;
 };
 
+type CorrectiveAction = {
+  severity: "HIGH" | "MEDIUM" | "LOW";
+  title: string;
+  action: string;
+  dimension: DimensionCode;
+  entity?: string;
+  selected?: boolean;
+};
+
 type EntityBreakdown = {
   entityId: string;
   name: string;
@@ -47,6 +56,7 @@ type EntityBreakdown = {
   isSelected: boolean;
   dimensions: DimensionRow[];
   weakDimensions: DimensionCode[];
+  correctiveActions?: CorrectiveAction[];
 };
 
 type BreakdownData = {
@@ -54,6 +64,7 @@ type BreakdownData = {
   projects: EntityBreakdown[];
   hasDimensionData: boolean;
   dimensionOrder: DimensionCode[];
+  correctiveActionSummary?: CorrectiveAction[];
 };
 
 function scoreColor(score: number): string {
@@ -66,6 +77,12 @@ function scoreBadgeColor(score: number): string {
   if (score >= 70) return "text-green-700 bg-green-50";
   if (score >= 40) return "text-amber-700 bg-amber-50";
   return "text-red-700 bg-red-50";
+}
+
+function severityBadge(action: CorrectiveAction) {
+  if (action.severity === "HIGH") return "border-red-200 bg-red-50 text-red-700";
+  if (action.severity === "MEDIUM") return "border-amber-200 bg-amber-50 text-amber-700";
+  return "border-gray-200 bg-gray-50 text-gray-700";
 }
 
 function DimensionBar({ dim }: { dim: DimensionRow }) {
@@ -100,9 +117,31 @@ function DimensionBar({ dim }: { dim: DimensionRow }) {
   );
 }
 
+function CorrectiveActions({ actions }: { actions: CorrectiveAction[] }) {
+  if (!actions || actions.length === 0) return null;
+  return (
+    <div className="mt-3 rounded-lg border border-amber-100 bg-amber-50/60 p-3">
+      <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-amber-800">Corrective actions</p>
+      <div className="space-y-2">
+        {actions.map((action, idx) => (
+          <div key={`${action.dimension}-${idx}`} className="rounded-md border border-amber-100 bg-white p-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className={`rounded border px-1.5 py-0.5 text-[10px] font-semibold ${severityBadge(action)}`}>{action.severity}</span>
+              <span className="text-xs font-semibold text-gray-900">{action.title}</span>
+              <span className="text-[10px] text-gray-500">{DIMENSION_LABELS[action.dimension]}</span>
+            </div>
+            <p className="mt-1 text-xs text-gray-600">{action.action}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function EntityCard({ entity }: { entity: EntityBreakdown }) {
   const [open, setOpen] = useState(false);
   const hasDims = entity.dimensions.length > 0;
+  const actions = entity.correctiveActions ?? [];
   return (
     <div className="border border-gray-100 rounded-lg px-4 py-3">
       <button
@@ -127,6 +166,11 @@ function EntityCard({ entity }: { entity: EntityBreakdown }) {
             {entity.weakDimensions.length > 0 && (
               <span className="rounded bg-red-50 border border-red-200 px-1.5 py-0.5 text-xs text-red-700">
                 {entity.weakDimensions.length} weak {entity.weakDimensions.length === 1 ? "dimension" : "dimensions"}
+              </span>
+            )}
+            {actions.length > 0 && (
+              <span className="rounded bg-amber-50 border border-amber-200 px-1.5 py-0.5 text-xs text-amber-700">
+                {actions.length} action{actions.length === 1 ? "" : "s"}
               </span>
             )}
             {!hasDims && (
@@ -158,6 +202,7 @@ function EntityCard({ entity }: { entity: EntityBreakdown }) {
           <p className="mt-1 text-xs text-gray-400">
             Source: {entity.dimensions[0]?.source ?? "—"} · Match score: {entity.matchScore}
           </p>
+          <CorrectiveActions actions={actions} />
         </div>
       )}
     </div>
@@ -221,6 +266,7 @@ export default function ScoreBreakdownPanel({ tenderId }: { tenderId: string }) 
   const entities = entityType === "EXPERT" ? data.experts : data.projects;
   const weakCount = entities.filter((e) => e.weakDimensions.length > 0).length;
   const withDimensions = entities.filter((e) => e.dimensions.length > 0).length;
+  const summaryActions = data.correctiveActionSummary ?? [];
 
   return (
     <div className="rounded-xl border border-gray-200 bg-white shadow-sm">
@@ -238,6 +284,11 @@ export default function ScoreBreakdownPanel({ tenderId }: { tenderId: string }) 
               {weakCount} with weak dimensions
             </span>
           )}
+          {summaryActions.length > 0 && (
+            <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">
+              {summaryActions.length} corrective action{summaryActions.length === 1 ? "" : "s"}
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-2">
           <button onClick={load} className="rounded px-2 py-1 text-xs text-gray-500 hover:bg-gray-100" aria-label="Refresh scores">↻</button>
@@ -246,6 +297,23 @@ export default function ScoreBreakdownPanel({ tenderId }: { tenderId: string }) 
           </button>
         </div>
       </div>
+
+      {summaryActions.length > 0 && !expanded && (
+        <div className="border-b border-amber-100 bg-amber-50 px-5 py-3">
+          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-amber-900">Top corrective actions</p>
+          <div className="grid gap-2 md:grid-cols-2">
+            {summaryActions.slice(0, 4).map((action, idx) => (
+              <div key={`${action.entity ?? "entity"}-${action.dimension}-${idx}`} className="rounded-md border border-amber-200 bg-white p-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className={`rounded border px-1.5 py-0.5 text-[10px] font-semibold ${severityBadge(action)}`}>{action.severity}</span>
+                  <span className="text-xs font-semibold text-gray-900">{action.entity ? `${action.entity}: ` : ""}{action.title}</span>
+                </div>
+                <p className="mt-1 text-xs text-gray-600">{action.action}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {!data.hasDimensionData && (
         <div className="border-b border-amber-100 bg-amber-50 px-5 py-2 text-xs text-amber-800">
