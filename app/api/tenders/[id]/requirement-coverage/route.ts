@@ -27,6 +27,7 @@ type EvidenceLink = {
   evidenceSource: string;
   evidenceReference: string | null;
   supportLevel: string;
+  autoLinked?: boolean; // true = derived from vault match, not a stored compliance row
 };
 
 type RequirementCoverageRow = {
@@ -45,6 +46,58 @@ type RequirementCoverageRow = {
   isFullyCovered: boolean;
   nextAction: string;
 };
+
+// ── Auto-linking category keywords ──────────────────────────────────────────
+
+const PERSONNEL_KEYWORDS = /personnel|team|expert|staffing|key personnel|staff|workforce|human resource/i;
+const EXPERIENCE_KEYWORDS = /experience|references|similar projects|track record|past performance|portfolio/i;
+const COMPANY_KEYWORDS = /company profile|organization|legal entity|firm profile|corporate profile/i;
+const FINANCIAL_KEYWORDS = /financial capacity|turnover|audited statements|financial statements|annual revenue|bank/i;
+
+// Returns a support level for auto-linked evidence.
+// REVIEWED evidence → PARTIAL (display only, not final — user must confirm).
+// UNREVIEWED evidence → cannot count toward coverage per constraints.
+function autoLinkSupportLevel(isReviewed: boolean): SupportLevel {
+  return isReviewed ? "PARTIAL" : "NONE";
+}
+
+type VaultEvidence = {
+  id: string;
+  name: string;
+  type: "EXPERT" | "PROJECT" | "COMPANY" | "FINANCIAL";
+  isReviewed: boolean;
+};
+
+function buildAutoLinks(
+  req: { id: string; title: string; requirementType: string },
+  vault: VaultEvidence[],
+): EvidenceLink[] {
+  const title = req.title.toLowerCase();
+  const autoLinks: EvidenceLink[] = [];
+
+  for (const v of vault) {
+    if (!v.isReviewed) continue; // only REVIEWED vault items can be auto-linked (even partially)
+
+    let matches = false;
+    if (v.type === "EXPERT" && (PERSONNEL_KEYWORDS.test(title) || req.requirementType === "EXPERT")) matches = true;
+    if (v.type === "PROJECT" && (EXPERIENCE_KEYWORDS.test(title) || req.requirementType === "PROJECT_EXPERIENCE")) matches = true;
+    if (v.type === "COMPANY" && COMPANY_KEYWORDS.test(title)) matches = true;
+    if (v.type === "FINANCIAL" && FINANCIAL_KEYWORDS.test(title)) matches = true;
+
+    if (matches) {
+      autoLinks.push({
+        id: `auto-${v.id}-${req.id}`,
+        evidenceType: v.type,
+        evidenceSource: "VAULT_AUTO_LINK",
+        evidenceReference: v.name,
+        supportLevel: "PARTIAL", // auto-links are at most PARTIAL; user must confirm for FULL
+        autoLinked: true,
+      });
+    }
+  }
+
+  return autoLinks;
+}
 
 function deriveSupportLevel(links: EvidenceLink[]): SupportLevel {
   if (links.length === 0) return "NONE";
@@ -91,48 +144,98 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 
     const tender = await prisma.tender.findFirst({
       where: { id, userId: actor.id },
-      select: { id: true },
+      select: { id: true, userId: true },
     });
     if (!tender) return NextResponse.json({ ok: false, error: "Tender not found" }, { status: 404 });
 
-    const requirements = await prisma.tenderRequirement.findMany({
-      where: { tenderId: id, priority: "MANDATORY" },
-      orderBy: { createdAt: "asc" },
-      select: {
-        id: true,
-        title: true,
-        requirementType: true,
-        priority: true,
-        sectionReference: true,
-        sourcePageNumber: true,
-        sourceSectionHeading: true,
-        sourceExactQuote: true,
-        sourceConfidence: true,
-        complianceMatrixRows: {
-          select: {
-            id: true,
-            evidenceType: true,
-            evidenceSource: true,
-            evidenceReference: true,
-            supportLevel: true,
-          },
-        },
-      },
+    // Find the company for this user to look up vault evidence
+    const company = await prisma.company.findUnique({
+      where: { userId: tender.userId },
+      select: { id: true },
     });
 
+    const [requirements, vaultExperts, vaultProjects] = await Promise.all([
+      prisma.tenderRequirement.findMany({
+        where: { tenderId: id, priority: "MANDATORY" },
+        orderBy: { createdAt: "asc" },
+        select: {
+          id: true,
+          title: true,
+          requirementType: true,
+          priority: true,
+          sectionReference: true,
+          sourcePageNumber: true,
+          sourceSectionHeading: true,
+          sourceExactQuote: true,
+          sourceConfidence: true,
+          complianceMatrixRows: {
+            select: {
+              id: true,
+              evidenceType: true,
+              evidenceSource: true,
+              evidenceReference: true,
+              supportLevel: true,
+            },
+          },
+        },
+      }),
+      // Load reviewed experts for auto-linking (company-scoped)
+      company ? prisma.expert.findMany({
+        where: { companyId: company.id, deletedAt: null },
+        select: { id: true, fullName: true, trustLevel: true },
+        take: 50,
+      }) : Promise.resolve([]),
+      // Load reviewed projects for auto-linking (company-scoped)
+      company ? prisma.project.findMany({
+        where: { companyId: company.id, deletedAt: null },
+        select: { id: true, name: true, trustLevel: true },
+        take: 50,
+      }) : Promise.resolve([]),
+    ]);
+
+    // Build vault evidence list for auto-linking (display only)
+    const vaultEvidence: VaultEvidence[] = [
+      ...vaultExperts.map((e) => ({
+        id: e.id,
+        name: e.fullName ?? "Expert",
+        type: "EXPERT" as const,
+        isReviewed: e.trustLevel === "REVIEWED",
+      })),
+      ...vaultProjects.map((p) => ({
+        id: p.id,
+        name: p.name ?? "Project",
+        type: "PROJECT" as const,
+        isReviewed: p.trustLevel === "REVIEWED",
+      })),
+    ];
+
     const rows: RequirementCoverageRow[] = requirements.map((req) => {
-      const links: EvidenceLink[] = req.complianceMatrixRows.map((r) => ({
+      const storedLinks: EvidenceLink[] = req.complianceMatrixRows.map((r) => ({
         id: r.id,
         evidenceType: r.evidenceType,
         evidenceSource: r.evidenceSource,
         evidenceReference: r.evidenceReference,
         supportLevel: r.supportLevel,
+        autoLinked: false,
       }));
-      const supportLevel = deriveSupportLevel(links);
+
+      // Auto-link reviewed vault evidence for display (at most PARTIAL, user must confirm for FULL)
+      // Only add auto-links when there are no stored compliance matrix rows for this requirement
+      const autoLinks = storedLinks.length === 0
+        ? buildAutoLinks(req, vaultEvidence)
+        : [];
+
+      const links = [...storedLinks, ...autoLinks];
+      // Auto-linked evidence from unreviewed sources cannot count toward coverage;
+      // stored rows reflect actual user-confirmed links.
+      const effectiveLinks = links.filter((l) => !l.autoLinked || l.supportLevel !== "NONE");
+      const supportLevel = deriveSupportLevel(effectiveLinks);
       const hasSourceRef = Boolean(
         req.sectionReference || req.sourcePageNumber || req.sourceExactQuote || (req.sourceConfidence ?? 0) > 0,
       );
-      const isFullyCovered = (supportLevel === "FULL" || supportLevel === "SUBSTANTIAL") && hasSourceRef;
+      // Auto-linked evidence cannot make a requirement isFullyCovered — user must confirm
+      const hasOnlyAutoLinks = storedLinks.length === 0 && autoLinks.length > 0;
+      const isFullyCovered = !hasOnlyAutoLinks && (supportLevel === "FULL" || supportLevel === "SUBSTANTIAL") && hasSourceRef;
       return {
         id: req.id,
         title: req.title,
@@ -147,7 +250,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
         evidenceLinks: links,
         supportLevel,
         isFullyCovered,
-        nextAction: nextActionFor({ supportLevel, hasSourceRef, requirementType: req.requirementType, evidenceLinks: links }),
+        nextAction: nextActionFor({ supportLevel, hasSourceRef, requirementType: req.requirementType, evidenceLinks: effectiveLinks }),
       };
     });
 

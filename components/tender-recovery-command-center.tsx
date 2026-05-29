@@ -211,11 +211,57 @@ export default function TenderRecoveryCommandCenter({ tenderId }: { tenderId: st
         </div>
       </div>
 
+      {/* Regex fallback warning — prominent, non-blocking label */}
+      {data.analysisStatus.source === "REGEX_FALLBACK_AI_ERROR" && (
+        <div className="border-b border-amber-200 bg-amber-50 px-5 py-2">
+          <p className="text-xs font-semibold text-amber-800">
+            ⚠ Analysis: Regex Fallback (AI unavailable) — confidence is low, not AI-validated.
+            Generate Docs, Auto-finalize, and ZIP download are blocked until AI analysis succeeds or a human approves this fallback.
+          </p>
+        </div>
+      )}
+
       {/* Primary Next Action */}
       <div className="border-b border-gray-100 bg-blue-50 px-5 py-3">
         <p className="text-xs font-medium uppercase tracking-wide text-blue-600">Primary Next Action</p>
         <p className="mt-0.5 text-sm font-semibold text-blue-900">{actionLabel}</p>
       </div>
+
+      {/* Prioritized next steps — shows ordering context for key pre-generation gates */}
+      {(() => {
+        const steps: Array<{ label: string; done: boolean; warn?: boolean }> = [];
+        const src = data.analysisStatus.source;
+        const analysisOk = src === "AI" || src === "HUMAN_APPROVED_REGEX_FALLBACK";
+        const metaOk = data.metadataStatus.criticalMissing.length === 0;
+        const hasEvalCriteria = !data.metadataStatus.criticalMissing.includes("evaluationCriteria");
+        const hasPlan = data.planStatus.hasExplicitPlan;
+        const evidenceCoverage = data.evidenceStatus.coverageRatio ?? 0;
+
+        steps.push({ label: analysisOk ? "✓ AI analysis approved" : src === "REGEX_FALLBACK_AI_ERROR" ? "⚠ Retry AI Analyze (regex fallback active)" : "Run AI Analyze", done: analysisOk, warn: src === "REGEX_FALLBACK_AI_ERROR" });
+        steps.push({ label: metaOk && hasEvalCriteria ? "✓ Metadata complete (incl. evaluation criteria)" : "Complete metadata (especially evaluation criteria)", done: metaOk && hasEvalCriteria, warn: !hasEvalCriteria });
+        steps.push({ label: hasPlan ? "✓ Submission plan built" : "Build submission plan", done: hasPlan });
+        steps.push({ label: evidenceCoverage > 0 ? `✓ Evidence linked (${Math.round(evidenceCoverage * 100)}% covered)` : "Link mandatory evidence", done: evidenceCoverage > 0 });
+        steps.push({ label: data.counts.plannedMissingDocs === 0 && data.counts.generatedNarrativeDocs > 0 ? "✓ Documents generated" : "Generate required documents", done: data.counts.plannedMissingDocs === 0 && data.counts.generatedNarrativeDocs > 0 });
+
+        const anyIncomplete = steps.some((s) => !s.done);
+        if (!anyIncomplete) return null;
+
+        return (
+          <div className="border-b border-gray-100 bg-gray-50 px-5 py-3">
+            <p className="mb-1.5 text-xs font-medium uppercase tracking-wide text-gray-500">Workflow Steps (in order)</p>
+            <ol className="space-y-1">
+              {steps.map((step, i) => (
+                <li key={i} className={`flex items-center gap-2 text-xs ${step.done ? "text-green-700" : step.warn ? "text-amber-700 font-medium" : "text-gray-700"}`}>
+                  <span className={`shrink-0 h-4 w-4 rounded-full text-center leading-4 text-xs font-bold ${step.done ? "bg-green-100" : step.warn ? "bg-amber-100" : "bg-gray-200"}`}>
+                    {i + 1}
+                  </span>
+                  {step.label}
+                </li>
+              ))}
+            </ol>
+          </div>
+        );
+      })()}
 
       {/* Blockers */}
       {data.blockers.length > 0 && (
