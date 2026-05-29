@@ -13,6 +13,7 @@ function actionHref(tenderId: string, action?: string): string {
   if (action === "OPEN_KNOWLEDGE_REVIEW") return "/dashboard/company/review-board";
   if (action === "OPEN_COMPLIANCE_REVIEW") return "/dashboard/compliance";
   if (action === "RESOLVE_COMPLIANCE_GAPS") return "/dashboard/compliance";
+  if (action === "RUN_ENGINE_OR_APPROVE_ANALYSIS") return `/dashboard/tenders/${tenderId}#ai-analyze-section`;
   return `/dashboard/tenders/${tenderId}`;
 }
 
@@ -25,6 +26,7 @@ function buildActionLabel(action?: string): string {
   if (action === "REVIEW_MATCHES") return "Review matches";
   if (action === "OPEN_KNOWLEDGE_REVIEW") return "Open review board";
   if (action === "OPEN_COMPLIANCE_REVIEW" || action === "RESOLVE_COMPLIANCE_GAPS") return "Open compliance";
+  if (action === "RUN_ENGINE_OR_APPROVE_ANALYSIS") return "Retry AI Analyze or approve fallback";
   return "Open tender";
 }
 

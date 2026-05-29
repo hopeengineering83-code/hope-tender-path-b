@@ -1157,7 +1157,7 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
           </p>
         </div>
 
-        <div className="flex flex-wrap gap-2">
+        <div id="ai-analyze-section" className="flex flex-wrap gap-2">
           {aiEnabled && (
             <button onClick={handleAIAnalyze} disabled={analyzing}
               className="rounded-lg bg-purple-600 px-3 py-2 text-sm text-white hover:bg-purple-700 disabled:opacity-50">
