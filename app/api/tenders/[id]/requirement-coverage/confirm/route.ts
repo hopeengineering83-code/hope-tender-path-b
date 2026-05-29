@@ -1,0 +1,105 @@
+import { NextResponse } from "next/server";
+import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../../lib/auth";
+import { prisma, prismaReady } from "../../../../../../lib/prisma";
+import { logAction } from "../../../../../../lib/audit";
+import { extractRequestId } from "../../../../../../lib/request-id";
+
+export const dynamic = "force-dynamic";
+export const maxDuration = 10;
+
+type Body = {
+  requirementId?: string;
+  evidenceType?: string;
+  evidenceId?: string;
+  evidenceReference?: string;
+  supportLevel?: string;
+  notes?: string;
+};
+
+function supportLevel(value: unknown): string {
+  const normalized = String(value ?? "PARTIAL").toUpperCase();
+  if (["FULL", "SUBSTANTIAL", "PARTIAL", "NONE", "NOT_APPLICABLE"].includes(normalized)) return normalized;
+  return "PARTIAL";
+}
+
+async function resolveReviewedEvidence(companyId: string, body: Body) {
+  const type = String(body.evidenceType ?? "").toUpperCase();
+  const ref = String(body.evidenceReference ?? "").trim();
+  const id = String(body.evidenceId ?? "").trim();
+
+  if (type === "EXPERT") {
+    const expert = await prisma.expert.findFirst({
+      where: {
+        companyId,
+        deletedAt: null,
+        trustLevel: "REVIEWED",
+        OR: [
+          ...(id ? [{ id }] : []),
+          ...(ref ? [{ fullName: ref }] : []),
+        ],
+      },
+      select: { id: true, fullName: true },
+    });
+    if (!expert) return null;
+    return { evidenceType: "EXPERT", evidenceSource: "VAULT_CONFIRMED", evidenceReference: expert.fullName, evidenceId: expert.id };
+  }
+
+  if (type === "PROJECT") {
+    const project = await prisma.project.findFirst({
+      where: {
+        companyId,
+        deletedAt: null,
+        trustLevel: "REVIEWED",
+        OR: [
+          ...(id ? [{ id }] : []),
+          ...(ref ? [{ name: ref }] : []),
+        ],
+      },
+      select: { id: true, name: true },
+    });
+    if (!project) return null;
+    return { evidenceType: "PROJECT", evidenceSource: "VAULT_CONFIRMED", evidenceReference: project.name, evidenceId: project.id };
+  }
+
+  return null;
+}
+
+export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const requestId = extractRequestId(req);
+  let actor;
+  try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER"); }
+  catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
+
+  await prismaReady;
+  const { id } = await params;
+  const body = await req.json().catch(() => ({})) as Body;
+  if (!body.requirementId) return NextResponse.json({ ok: false, error: "requirementId is required" }, { status: 400 });
+
+  const tender = await prisma.tender.findFirst({ where: { id, userId: actor.id }, select: { id: true, userId: true } });
+  if (!tender) return NextResponse.json({ ok: false, error: "Tender not found" }, { status: 404 });
+
+  const requirement = await prisma.tenderRequirement.findFirst({ where: { id: body.requirementId, tenderId: id }, select: { id: true, title: true } });
+  if (!requirement) return NextResponse.json({ ok: false, error: "Requirement not found for this tender" }, { status: 404 });
+
+  const company = await prisma.company.findUnique({ where: { userId: tender.userId }, select: { id: true } });
+  if (!company) return NextResponse.json({ ok: false, error: "Company profile required" }, { status: 422 });
+
+  const evidence = await resolveReviewedEvidence(company.id, body);
+  if (!evidence) {
+    return NextResponse.json({ ok: false, code: "REVIEWED_EVIDENCE_NOT_FOUND", error: "Only REVIEWED vault experts/projects can be confirmed as requirement evidence." }, { status: 422 });
+  }
+
+  const level = supportLevel(body.supportLevel);
+  const existing = await prisma.complianceMatrix.findFirst({
+    where: { tenderId: id, requirementId: requirement.id, evidenceType: evidence.evidenceType, evidenceReference: evidence.evidenceReference },
+    select: { id: true },
+  });
+
+  const row = existing
+    ? await prisma.complianceMatrix.update({ where: { id: existing.id }, data: { evidenceSource: evidence.evidenceSource, supportLevel: level, notes: body.notes ?? "Confirmed reviewed vault evidence.", updatedAt: new Date() } })
+    : await prisma.complianceMatrix.create({ data: { tenderId: id, requirementId: requirement.id, evidenceType: evidence.evidenceType, evidenceSource: evidence.evidenceSource, evidenceReference: evidence.evidenceReference, supportLevel: level, notes: body.notes ?? "Confirmed reviewed vault evidence." } });
+
+  await logAction({ userId: actor.id, action: "REQUIREMENT_EVIDENCE_CONFIRMED", entityType: "Tender", entityId: id, description: `Confirmed ${evidence.evidenceType.toLowerCase()} evidence for requirement: ${requirement.title}`, metadata: { requirementId: requirement.id, complianceMatrixId: row.id, evidenceId: evidence.evidenceId, supportLevel: level }, requestId });
+
+  return NextResponse.json({ ok: true, success: true, row });
+}

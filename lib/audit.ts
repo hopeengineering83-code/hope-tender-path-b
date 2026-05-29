@@ -99,8 +99,11 @@ export type AuditAction =
   // Per-row submission-plan recovery actions (reclassify / mark-not-exportable /
   // supersede / exclude) from the Submission Plan Completeness panel.
   | "SUBMISSION_PLAN_ROW_ACTION"
-  // Submission plan stub rows created via planOnly=true on the generate route.
+  // Explicit plan and evidence-confirmation workflow actions.
+  | "SUBMISSION_PLAN_BUILT"
   | "TENDER_PLAN_BUILT"
+  | "REQUIREMENT_EVIDENCE_CONFIRMED"
+  | "REQUIREMENT_EVIDENCE_SUGGESTION_REJECTED"
   | "LOGIN_FAILED"
   | "COMPANY_PROFILE_UPDATED"
   | "SETTINGS_UPDATED";
