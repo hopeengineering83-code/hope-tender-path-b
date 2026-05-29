@@ -48,12 +48,16 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       score: readiness.summary.readinessScore,
       severity: readiness.summary.readinessScore >= 80 ? "READY" : readiness.summary.readinessScore >= 50 ? "PARTIAL" : "BLOCKED",
       capReason: readiness.summary.readinessCapReason,
+      capDimension: readiness.summary.readinessCapDimension,
+      capScore: readiness.summary.readinessCapScore,
       tender: readiness.tender,
       summary: {
         // Gate signals consumed by the readiness-score widget on the dashboard.
         ok: readiness.ok,
         readinessScore: readiness.summary.readinessScore,
         capReason: readiness.summary.readinessCapReason,
+        capDimension: readiness.summary.readinessCapDimension,
+        capScore: readiness.summary.readinessCapScore,
         analysisSource: readiness.summary.analysisSource,
         metadataCompletenessRatio: readiness.summary.metadataCompletenessRatio,
         missingCriticalMetadataCount: readiness.summary.missingCriticalMetadataCount,

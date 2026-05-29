@@ -45,6 +45,8 @@ type ReadinessScoreResponse = {
   score: number;
   severity: ReadinessSeverity;
   capReason: string | null;
+  capDimension: string | null;
+  capScore: number | null;
   summary: ReadinessSummary;
 };
 
@@ -158,7 +160,8 @@ export function CanonicalReadinessScoreWidget({ tenderId }: { tenderId: string }
 
       {data.capReason && (
         <p className="mt-3 rounded-lg border border-amber-200 bg-white px-3 py-2 text-xs text-amber-800">
-          <span className="font-semibold">Cap applied:</span> {data.capReason}
+          <span className="font-semibold">Score capped{data.capScore != null ? ` at ${data.capScore}` : ""}{data.capDimension ? ` (${data.capDimension.replace(/_/g, " ")})` : ""}:</span>{" "}
+          {data.capReason}
         </p>
       )}
 

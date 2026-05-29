@@ -66,3 +66,29 @@ describe("generate route — regex fallback gate", () => {
     assert.match(source, /await\s+assertAnalysisReadyForFinalGeneration\(/);
   });
 });
+
+describe("generation-readiness route — canonical analysis-source helper", () => {
+  it("imports detectAnalysisSourceWithApproval, not a local regex", async () => {
+    const { readFileSync } = await import("node:fs");
+    const source = readFileSync("app/api/tenders/[id]/generation-readiness/route.ts", "utf8");
+    // Must use the canonical helper that checks the ComplianceGap approval row.
+    assert.match(source, /detectAnalysisSourceWithApproval/);
+    // Must NOT use the old ad-hoc regex against tender.notes only.
+    assert.doesNotMatch(source, /hasRegexFallbackSource/);
+  });
+
+  it("exposes ALLOWED_APPROVED_FALLBACK gate state for human-approved analyses", async () => {
+    const { readFileSync } = await import("node:fs");
+    const source = readFileSync("app/api/tenders/[id]/generation-readiness/route.ts", "utf8");
+    assert.match(source, /ALLOWED_APPROVED_FALLBACK/);
+  });
+
+  it("blocks only REGEX_FALLBACK_AI_ERROR, not HUMAN_APPROVED_REGEX_FALLBACK", async () => {
+    const { readFileSync } = await import("node:fs");
+    const source = readFileSync("app/api/tenders/[id]/generation-readiness/route.ts", "utf8");
+    // The full-proposal readyForFullProposal must reference isUnapprovedFallback, not a plain regex check.
+    assert.match(source, /isUnapprovedFallback/);
+    // The gate must distinguish approved from unapproved fallback.
+    assert.match(source, /isApprovedFallback/);
+  });
+});
