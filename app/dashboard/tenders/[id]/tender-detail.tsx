@@ -9,6 +9,7 @@ import { getClientNameStatus, clientNameDisplayMessage } from "../../../../lib/e
 import { BidStrategyPanel } from "../../../../components/bid-strategy-panel";
 import { EvaluatorSimulatorPanel } from "../../../../components/evaluator-simulator-panel";
 import { AIRematchButton } from "../../../../components/ai-rematch-button";
+import { AiAnalyzeStatusBanner } from "../../../../components/ai-analyze-status-banner";
 import { CanonicalReadinessScoreWidget } from "../../../../components/canonical-readiness-score-widget";
 import { SubmissionPlanCompletenessPanel } from "../../../../components/submission-plan-completeness-panel";
 import TenderRecoveryCommandCenter from "../../../../components/tender-recovery-command-center";
@@ -463,6 +464,10 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
   const [saving, setSaving] = useState(false);
   const [engineRunning, setEngineRunning] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
+  const [lastAnalysisJobId, setLastAnalysisJobId] = useState<string | null>(null);
+  const [lastAnalysisChunks, setLastAnalysisChunks] = useState<{ total: number; completed: number; failed: number; skipped: number; isPartial: boolean } | null>(null);
+  const [analysisIsPartial, setAnalysisIsPartial] = useState(false);
+  const [analysisDiagnostics, setAnalysisDiagnostics] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
   const [generatingDocs, setGeneratingDocs] = useState(false);
   const [validating, setValidating] = useState(false);
@@ -617,10 +622,78 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
   async function handleAIAnalyze() {
     setAnalyzing(true);
     setError("");
+    setAnalysisDiagnostics(null);
     try {
       const res = await fetch(`/api/tenders/${tender.id}/ai-analyze`, { method: "POST" });
-      const data = await res.json();
-      if (!res.ok) { setError(data.error || "Analysis failed"); return; }
+      const data = await res.json() as {
+        success?: boolean; ai?: boolean; jobId?: string;
+        chunks?: { total: number; completed: number; failed: number; skipped: number; isPartial: boolean };
+        nextAction?: string; code?: string; error?: string;
+        providerDiagnostics?: Array<{ provider: string; reason: string }>;
+        tender?: typeof tender;
+      };
+      if (!res.ok) {
+        if (
+          (data.code === "AI_PROVIDERS_EXHAUSTED" || data.code === "AI_NO_PROVIDER_CONFIGURED") &&
+          Array.isArray(data.providerDiagnostics) && data.providerDiagnostics.length > 0
+        ) {
+          const providerList = data.providerDiagnostics.map((p) => `${p.provider}: ${p.reason}`).join(", ");
+          setAnalysisDiagnostics(`All providers exhausted (${providerList}). Review AI Provider Health or wait and retry.`);
+        }
+        setError(data.error || "Analysis failed");
+        return;
+      }
+      if (data.jobId) setLastAnalysisJobId(data.jobId);
+      if (data.chunks) {
+        setLastAnalysisChunks(data.chunks);
+        if (data.chunks.isPartial || data.nextAction === "CONTINUE_AI_ANALYSIS") {
+          setAnalysisIsPartial(true);
+        } else {
+          setAnalysisIsPartial(false);
+        }
+      }
+      if (data.tender) setTender((cur) => ({ ...cur, ...data.tender }));
+      router.refresh();
+    } catch { setError("Analysis failed"); }
+    finally { setAnalyzing(false); }
+  }
+
+  async function handleContinueAIAnalyze() {
+    if (!lastAnalysisJobId) return;
+    setAnalyzing(true);
+    setError("");
+    setAnalysisDiagnostics(null);
+    try {
+      const res = await fetch(`/api/tenders/${tender.id}/ai-analyze?continue=${lastAnalysisJobId}`, { method: "POST" });
+      const data = await res.json() as {
+        success?: boolean; ai?: boolean; jobId?: string;
+        chunks?: { total: number; completed: number; failed: number; skipped: number; isPartial: boolean };
+        nextAction?: string; code?: string; error?: string;
+        providerDiagnostics?: Array<{ provider: string; reason: string }>;
+        tender?: typeof tender;
+      };
+      if (!res.ok) {
+        if (
+          (data.code === "AI_PROVIDERS_EXHAUSTED" || data.code === "AI_NO_PROVIDER_CONFIGURED") &&
+          Array.isArray(data.providerDiagnostics) && data.providerDiagnostics.length > 0
+        ) {
+          const providerList = data.providerDiagnostics.map((p) => `${p.provider}: ${p.reason}`).join(", ");
+          setAnalysisDiagnostics(`All providers exhausted (${providerList}). Review AI Provider Health or wait and retry.`);
+        }
+        setError(data.error || "Analysis failed");
+        return;
+      }
+      if (data.jobId) setLastAnalysisJobId(data.jobId);
+      if (data.chunks) {
+        setLastAnalysisChunks(data.chunks);
+        if (data.chunks.isPartial || data.nextAction === "CONTINUE_AI_ANALYSIS") {
+          setAnalysisIsPartial(true);
+        } else {
+          setAnalysisIsPartial(false);
+        }
+      } else {
+        setAnalysisIsPartial(false);
+      }
       if (data.tender) setTender((cur) => ({ ...cur, ...data.tender }));
       router.refresh();
     } catch { setError("Analysis failed"); }
@@ -1136,6 +1209,25 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
           </button>
         </div>
       </div>
+
+      {/* AI Analyze partial-progress banner */}
+      {aiEnabled && (lastAnalysisChunks || analysisIsPartial) && (
+        <AiAnalyzeStatusBanner
+          chunks={lastAnalysisChunks}
+          jobId={lastAnalysisJobId}
+          isAnalyzing={analyzing}
+          onContinue={handleContinueAIAnalyze}
+          onRetry={handleAIAnalyze}
+        />
+      )}
+
+      {/* Provider diagnostics — shown when all AI providers are exhausted */}
+      {analysisDiagnostics && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 flex items-start justify-between gap-2">
+          <span>{analysisDiagnostics}</span>
+          <button onClick={() => setAnalysisDiagnostics(null)} aria-label="Dismiss" className="shrink-0 text-amber-500 hover:text-amber-800 text-xs">✕</button>
+        </div>
+      )}
 
       {matchingDiagnostics && (
         <div className="rounded-2xl border border-indigo-200 bg-indigo-50 p-4">
