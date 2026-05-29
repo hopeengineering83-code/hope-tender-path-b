@@ -173,7 +173,7 @@ export default async function TendersPage({
                   <th className="px-6 py-3 font-medium">Title</th>
                   <th className="px-6 py-3 font-medium">Reference</th>
                   <th className="px-6 py-3 font-medium">Deadline</th>
-                  <th className="px-6 py-3 font-medium">Readiness</th>
+                  <th className="px-6 py-3 font-medium">Workflow Progress</th>
                   <th className="px-6 py-3 font-medium">Status</th>
                   <th className="px-6 py-3 font-medium">Action</th>
                 </tr>
@@ -201,6 +201,7 @@ export default async function TendersPage({
                         ) : (
                           <span className="text-slate-400">—</span>
                         )}
+                        <span className="ml-1 text-xs text-slate-400 italic">(workflow)</span>
                         <span className="ml-1 text-xs text-slate-400">
                           ({tender._count.files} files · {tender._count.requirements} reqs
                           {unresolvedGaps > 0 && (
@@ -249,7 +250,7 @@ export default async function TendersPage({
                       <DeadlineCell deadline={tender.deadline} />
                       {tender.readinessScore != null ? (
                         <span className="text-slate-500">
-                          Readiness: <span className="font-medium text-slate-700">{tender.readinessScore}%</span>
+                          Workflow: <span className="font-medium text-slate-700">{tender.readinessScore}%</span>
                         </span>
                       ) : null}
                       {unresolvedGaps > 0 && (

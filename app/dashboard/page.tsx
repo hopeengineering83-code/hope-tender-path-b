@@ -212,7 +212,7 @@ export default async function DashboardPage() {
                   <th className="px-6 py-3 font-medium">Title</th>
                   <th className="px-6 py-3 font-medium">Deadline</th>
                   <th className="px-6 py-3 font-medium">Status</th>
-                  <th className="px-6 py-3 font-medium">Readiness</th>
+                  <th className="px-6 py-3 font-medium">Workflow Progress</th>
                 </tr>
               </thead>
               <tbody className="divide-y">
@@ -241,7 +241,7 @@ export default async function DashboardPage() {
                               <div className={`h-full rounded-full ${readiness >= 80 ? "bg-green-500" : readiness >= 50 ? "bg-amber-400" : "bg-red-400"}`}
                                 style={{ width: `${readiness}%` }} />
                             </div>
-                            <span className="text-xs text-slate-500">{readiness}%</span>
+                            <span className="text-xs text-slate-500">{readiness}% <span className="text-slate-300">(workflow)</span></span>
                           </div>
                         ) : (
                           <span className="text-xs text-slate-400">No analysis</span>
