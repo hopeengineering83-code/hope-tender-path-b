@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
+import crypto from "crypto";
 import { getSession } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
-import { analyzeWithAI, isAIEnabled } from "../../../../../lib/ai";
+import { analyzeWithAI, isAIEnabled, type AnalysisWithMeta } from "../../../../../lib/ai";
 import { analyzeTender } from "../../../../../lib/engine/analysis";
 import { logAction } from "../../../../../lib/audit";
 import { rateLimit, AI_RATE_LIMIT } from "../../../../../lib/rate-limit";
@@ -45,6 +46,8 @@ function stripExtractionHeader(txt: string): string {
   return txt.replace(/^\[(?:PDF text|OCR text)[^\]]*\]\s*\n+/i, "").trim();
 }
 
+const SAFE_DEADLINE_MS = 48_000; // leave buffer inside maxDuration=60
+
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const requestId = extractRequestId(req);
   const userId = await getSession();
@@ -60,7 +63,23 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   await prismaReady;
   const { id } = await params;
-  const force = new URL(req.url).searchParams.get("force") === "true";
+  const reqUrl = new URL(req.url);
+  const force = reqUrl.searchParams.get("force") === "true";
+  const continueJobId = reqUrl.searchParams.get("continue");
+  let startFromChunk: number | undefined;
+  let existingContentHash: string | undefined;
+  if (continueJobId) {
+    const existingJob = await prisma.aiJob.findFirst({
+      where: { id: continueJobId, tenderId: id, userId },
+    });
+    if (existingJob?.output) {
+      try {
+        const savedOutput = JSON.parse(existingJob.output) as { completedChunks?: number; contentHash?: string };
+        startFromChunk = savedOutput.completedChunks ?? 0;
+        existingContentHash = savedOutput.contentHash;
+      } catch { /* ignore parse errors — do a full re-run */ }
+    }
+  }
 
   const [tender, company] = await Promise.all([
     prisma.tender.findFirst({ where: { id, userId }, include: { files: true } }),
@@ -140,6 +159,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       fallbackDiagnostics?: AnalysisFallbackDiagnostics;
       providerDiagnostics?: ReturnType<typeof buildProviderDiagnosticsSnapshot>;
     };
+    let analysisJobId: string | null = null;
+    let analysisMeta: AnalysisWithMeta | null = null;
 
     if (isAIEnabled()) {
       try {
@@ -161,7 +182,64 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           companyContext || null,
         ].filter(Boolean).join("\n\n");
 
-        const aiResult = await withTimeout(analyzeWithAI(tenderContent), AI_ANALYSIS_TIMEOUT_MS);
+        // Compute content hash for continuation validation
+        const contentHash = crypto.createHash("sha256").update(tenderContent).digest("hex").slice(0, 16);
+        // Validate content hash if continuing from a previous job
+        if (existingContentHash && existingContentHash !== contentHash) {
+          // Content changed — do a full re-run, ignore startFromChunk
+          startFromChunk = undefined;
+        }
+
+        // Create an AiJob record to track this synchronous analysis run
+        let analysisJob: { id: string } | null = null;
+        try {
+          analysisJob = await prisma.aiJob.create({
+            data: {
+              tenderId: id,
+              userId,
+              jobType: "AI_ANALYZE",
+              status: "RUNNING",
+              startedAt: new Date(),
+              input: JSON.stringify({
+                contentLength: tenderContent.length,
+                chunkCount: Math.ceil(tenderContent.length / 50_000),
+                contentHash,
+              }),
+            },
+            select: { id: true },
+          });
+        } catch (jobCreateErr) {
+          console.warn("[ai-analyze] Failed to create AiJob record — continuing without job tracking:", jobCreateErr instanceof Error ? jobCreateErr.message : String(jobCreateErr));
+        }
+
+        const deadlineAt = Date.now() + SAFE_DEADLINE_MS;
+        let aiMeta: AnalysisWithMeta;
+        try {
+          aiMeta = await withTimeout(
+            analyzeWithAI(tenderContent, { deadlineAt, startFromChunk }),
+            AI_ANALYSIS_TIMEOUT_MS,
+          );
+        } catch (aiErr) {
+          // Fail the job before re-throwing
+          if (analysisJob) {
+            const errMsg = aiErr instanceof Error ? aiErr.message : String(aiErr);
+            const safeErrMsg = errMsg.replace(/sk-[a-zA-Z0-9_-]{10,}/g, "[KEY_REDACTED]").replace(/AIza[a-zA-Z0-9_-]{30,}/g, "[KEY_REDACTED]").replace(/Bearer\s+[a-zA-Z0-9._-]{10,}/gi, "Bearer [REDACTED]").slice(0, 300);
+            await prisma.aiJob.update({
+              where: { id: analysisJob.id },
+              data: {
+                status: "FAILED",
+                finishedAt: new Date(),
+                output: JSON.stringify({
+                  analysisSource: "REGEX_FALLBACK",
+                  nextAction: "RETRY_AI_ANALYZE",
+                }),
+                errorMessage: safeErrMsg,
+              },
+            }).catch(() => {});
+          }
+          throw aiErr;
+        }
+        const aiResult = aiMeta.result;
 
         await prisma.$transaction(async (tx) => {
           await tx.tenderRequirement.deleteMany({ where: { tenderId: id } });
@@ -183,9 +261,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           }
 
           const existingNotes = (tenderRecord.notes ?? "").split("\n");
+          const analysisSourceNote = aiMeta.isPartial
+            ? `Analysis source: AI (partial, ${aiMeta.completedChunks}/${aiMeta.totalChunks} chunks completed — deadline reached).`
+            : "Analysis source: AI (re-run via AI Analyze button).";
           const updatedNotesLines = existingNotes
             .filter((line) => !/^Analysis source:/i.test(line.trim()) && !/^Analysis fallback diagnostics:/i.test(line.trim()))
-            .concat(["Analysis source: AI (re-run via AI Analyze button)."]);
+            .concat([analysisSourceNote]);
           const updatedNotes = updatedNotesLines.join("\n").trim() || null;
 
           await tx.tender.update({
@@ -202,7 +283,36 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           });
         });
 
-        analysisResult = { ai: true, fallback: false, summary: aiResult.summary, requirementCount: aiResult.requirements.length };
+        // Update the AiJob to SUCCEEDED with chunk metadata
+        if (analysisJob) {
+          analysisJobId = analysisJob.id;
+          await prisma.aiJob.update({
+            where: { id: analysisJob.id },
+            data: {
+              status: "SUCCEEDED",
+              finishedAt: new Date(),
+              output: JSON.stringify({
+                isPartial: aiMeta.isPartial,
+                totalChunks: aiMeta.totalChunks,
+                completedChunks: aiMeta.completedChunks,
+                failedChunks: aiMeta.failedChunks,
+                skippedChunks: aiMeta.skippedChunks,
+                contentHash,
+                analysisSource: "AI",
+                nextAction: aiMeta.isPartial ? "CONTINUE_AI_ANALYSIS" : null,
+              }),
+            },
+          }).catch(() => {});
+        }
+        analysisMeta = aiMeta;
+
+        analysisResult = {
+          ai: true,
+          fallback: false,
+          summary: aiResult.summary,
+          requirementCount: aiResult.requirements.length,
+          providerDiagnostics: buildProviderDiagnosticsSnapshot(),
+        };
       } catch (aiError) {
         const msg = aiError instanceof Error ? aiError.message : String(aiError);
         const diagnostics = buildAnalysisFallbackDiagnostics(msg);
@@ -256,6 +366,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       success: true,
       ...analysisResult,
       code: fallbackCode,
+      jobId: analysisJobId,
+      chunks: analysisMeta ? {
+        total: analysisMeta.totalChunks,
+        completed: analysisMeta.completedChunks,
+        failed: analysisMeta.failedChunks,
+        skipped: analysisMeta.skippedChunks,
+        isPartial: analysisMeta.isPartial,
+      } : null,
+      nextAction: analysisMeta?.isPartial ? "CONTINUE_AI_ANALYSIS" : null,
       tender: updated,
       extractionWarnings: extractionReports.filter((item) => item.quality.severity === "WARNING"),
     });

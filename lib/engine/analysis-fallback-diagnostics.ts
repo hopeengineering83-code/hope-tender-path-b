@@ -17,7 +17,13 @@ export type AnalysisFallbackDiagnostics = {
 };
 
 function cleanMessage(value?: string | null): string {
-  return (value ?? "").replace(/sk-[^\s"']{8,}/g, "[REDACTED]").replace(/\s+/g, " ").trim().slice(0, 300);
+  return (value ?? "")
+    .replace(/sk-[^\s"']{8,}/g, "[REDACTED]")
+    .replace(/AIza[A-Za-z0-9_-]{30,}/g, "[REDACTED]")
+    .replace(/Bearer\s+[A-Za-z0-9._-]{10,}/gi, "Bearer [REDACTED]")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 300);
 }
 
 export function buildAnalysisFallbackDiagnostics(rawError?: string | null): AnalysisFallbackDiagnostics {

@@ -39,6 +39,7 @@ export type JobType =
   | "EVALUATOR_SIM"
   | "COPILOT_DEEP_ANALYSIS"
   | "PROFILE_FACT_EXTRACTION"
+  | "AI_ANALYZE"
   // Wraps the synchronous tender engine pipeline (analyze → match → AI rematch)
   // in a queued job so it can run outside the 60s Vercel Hobby route cap.
   | "ENGINE_RUN";
