@@ -974,69 +974,6 @@ const ANALYSIS_CHUNK_OVERLAP = 5_000;
 // chars covers an extremely long RFP. Anything past 300K is rare.
 const ANALYSIS_MAX_CHUNKS = 6;
 
-// ── Critical section extraction ───────────────────────────────────────────
-//
-// Before chunking long tenders, extract spans around keyword anchors that
-// tend to contain evaluation criteria, submission rules, and requirements.
-// These are prepended to the first chunk so the AI always sees them even
-// when they appear in the middle or end of a very long document.
-
-const CRITICAL_SECTION_KEYWORDS = [
-  "evaluation",
-  "scoring",
-  "criteria",
-  "submission",
-  "deadline",
-  "required documents",
-  "forms",
-  "annex",
-  "appendix",
-  "technical proposal",
-  "financial proposal",
-  "envelope",
-  "qualification",
-  "eligibility",
-];
-
-const CRITICAL_SPAN_RADIUS = 500; // chars around each keyword anchor
-
-export function extractCriticalSections(text: string): string {
-  if (!text || text.length === 0) return "";
-
-  const lower = text.toLowerCase();
-  const spans: Array<[number, number]> = [];
-
-  for (const kw of CRITICAL_SECTION_KEYWORDS) {
-    let pos = 0;
-    while (pos < lower.length) {
-      const idx = lower.indexOf(kw, pos);
-      if (idx === -1) break;
-      const start = Math.max(0, idx - CRITICAL_SPAN_RADIUS);
-      const end = Math.min(text.length, idx + kw.length + CRITICAL_SPAN_RADIUS);
-      spans.push([start, end]);
-      pos = idx + 1;
-    }
-  }
-
-  if (spans.length === 0) return "";
-
-  // Sort and merge overlapping spans to avoid duplication
-  spans.sort((a, b) => a[0] - b[0]);
-  const merged: Array<[number, number]> = [];
-  for (const [start, end] of spans) {
-    if (merged.length > 0 && start <= merged[merged.length - 1][1]) {
-      merged[merged.length - 1][1] = Math.max(merged[merged.length - 1][1], end);
-    } else {
-      merged.push([start, end]);
-    }
-  }
-
-  const excerpts = merged.map(([s, e]) => text.slice(s, e).trim()).filter(Boolean);
-  if (excerpts.length === 0) return "";
-
-  return "KEY SECTIONS:\n" + excerpts.join("\n---\n");
-}
-
 function chunkTenderContent(content: string): string[] {
   if (content.length <= ANALYSIS_CHUNK_SOFT_LIMIT) return [content];
   const chunks: string[] = [];
@@ -1217,19 +1154,6 @@ export async function analyzeWithAI(
   // tender previously launched up to 36 concurrent provider calls. Each chunk is
   // independently analyzed; results merge below.
   const chunks = chunkTenderContent(tenderContent);
-
-  // For multi-chunk tenders, prepend critical sections to the first chunk so
-  // evaluation criteria / submission rules are always seen even if they appear
-  // mid-document. Single-chunk tenders already contain the full text.
-  if (chunks.length > 1) {
-    const criticalPrefix = extractCriticalSections(tenderContent);
-    if (criticalPrefix) {
-      // Prepend critical sections, keeping chunk within a reasonable bound
-      const prefixBudget = Math.min(criticalPrefix.length, 8_000);
-      chunks[0] = criticalPrefix.slice(0, prefixBudget) + "\n\n---\n\n" + chunks[0];
-    }
-  }
-
   if (chunks.length === 1) {
     const result = await analyzeOneChunk(chunks[0], 0, 1);
     return { result, isPartial: false, totalChunks: 1, completedChunks: 1, failedChunks: 0, skippedChunks: 0 };
@@ -3233,4 +3157,42 @@ function extractTenderSections(tenderText: string): string[] {
     }
   }
   return sections.slice(0, 12);
+}
+
+// ─── Section-aware critical content extractor ────────────────────────────────
+// Scans tender text for spans around evaluation/submission keywords and returns
+// a compacted excerpt prefixed with "KEY SECTIONS:" so the AI prompt can focus
+// on the most decision-relevant parts without ingesting irrelevant boilerplate.
+
+const CRITICAL_KEYWORDS = [
+  "evaluation", "scoring", "criteria", "submission", "deadline",
+  "annex", "appendix", "form", "financial proposal", "technical proposal",
+  "envelope", "email", "subject line", "bid bond", "eligibility", "qualification",
+];
+const SECTION_RADIUS = 500; // chars around each keyword match to include
+
+export function extractCriticalSections(text: string): string {
+  if (!text) return "";
+  const lower = text.toLowerCase();
+  const spans: Array<[number, number]> = [];
+  for (const keyword of CRITICAL_KEYWORDS) {
+    let idx = 0;
+    while ((idx = lower.indexOf(keyword, idx)) !== -1) {
+      spans.push([Math.max(0, idx - SECTION_RADIUS), Math.min(text.length, idx + keyword.length + SECTION_RADIUS)]);
+      idx += keyword.length;
+    }
+  }
+  if (spans.length === 0) return "";
+  // Merge overlapping spans
+  spans.sort((a, b) => a[0] - b[0]);
+  const merged: Array<[number, number]> = [];
+  for (const [start, end] of spans) {
+    if (merged.length > 0 && start <= merged[merged.length - 1][1]) {
+      merged[merged.length - 1][1] = Math.max(merged[merged.length - 1][1], end);
+    } else {
+      merged.push([start, end]);
+    }
+  }
+  const excerpts = merged.map(([s, e]) => text.slice(s, e).trim()).filter(Boolean);
+  return excerpts.length > 0 ? "KEY SECTIONS:\n\n" + excerpts.join("\n\n---\n\n") : "";
 }

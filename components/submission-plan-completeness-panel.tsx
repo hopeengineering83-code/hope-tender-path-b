@@ -79,20 +79,6 @@ function toneClass(tone: "ok" | "warn" | "bad" | "neutral"): string {
   return "bg-slate-100 text-slate-500";
 }
 
-export function suggestOutsidePlanResolution(docName: string): string {
-  const lower = docName.toLowerCase();
-  if (/cover\s*letter|transmittal/.test(lower)) return "Reclassify to plan — cover letters typically belong in ADMIN envelope.";
-  if (/cv|curriculum\s*vitae|resume/.test(lower)) return "Reclassify to plan — CVs are usually required in the TECHNICAL envelope.";
-  if (/financial\s*proposal|price|bill\s*of\s*quantities|boq|schedule\s*of\s*rates/.test(lower)) return "Reclassify to plan — financial documents belong in FINANCIAL envelope.";
-  if (/technical\s*proposal|methodology|approach|work\s*plan|gantt/.test(lower)) return "Reclassify to plan — technical documents belong in TECHNICAL envelope.";
-  if (/certificate|registration|license|incorporation/.test(lower)) return "Reclassify to plan — legal/registration documents belong in ADMIN envelope.";
-  if (/audit|financial\s*statement|balance\s*sheet|income\s*statement/.test(lower)) return "Reclassify to plan — audited financials belong in FINANCIAL envelope.";
-  if (/bank\s*guarantee|bid\s*bond|bid\s*security/.test(lower)) return "Reclassify to plan — bid security belongs in ADMIN envelope.";
-  if (/declaration|affidavit|statement\s*of/.test(lower)) return "Reclassify to plan — declarations typically belong in ADMIN envelope.";
-  if (/draft|wip|internal|control|test/.test(lower)) return "Mark as control / not exportable — appears to be an internal draft.";
-  return "Review: reclassify to plan if submission-required, or exclude if internal/control document.";
-}
-
 function RowActionButton({ label, busy, disabled, onClick }: { label: string; busy: boolean; disabled: boolean; onClick: () => void }) {
   return (
     <button
@@ -114,6 +100,25 @@ const ACTION_NEEDS_NOTE: Record<PlanRowAction, boolean> = {
   EXCLUDE_OUTSIDE_PLAN: true,
 };
 
+// Heuristic guidance for documents that are outside the current submission plan.
+// Used by tests and by the panel's action menu labels.
+export function suggestOutsidePlanResolution(fileName: string): string {
+  const lower = fileName.toLowerCase();
+  if (/cover\s*letter|transmittal|covering|introduction letter/.test(lower)) {
+    return "ADMIN — this appears to be a cover/transmittal letter. Route to administrative team.";
+  }
+  if (/\bcv\b|curriculum\s*vitae|resume|personnel|expert|staff/.test(lower)) {
+    return "TECHNICAL — this appears to be an expert/personnel CV. Attach under team composition.";
+  }
+  if (/financial|price|commercial|budget|cost/.test(lower)) {
+    return "FINANCIAL — route to financial section or create a Financial Proposal document.";
+  }
+  if (/internal|draft|wip|temp|backup|copy|~/.test(lower)) {
+    return "EXCLUDE — this looks like an internal draft or working file; exclude from submission.";
+  }
+  return "Review this document and decide: reclassify to match a plan requirement, mark not exportable, or exclude.";
+}
+
 export function SubmissionPlanCompletenessPanel({ tenderId }: { tenderId: string }) {
   const [data, setData] = useState<Response | null>(null);
   const [loading, setLoading] = useState(true);
@@ -121,24 +126,7 @@ export function SubmissionPlanCompletenessPanel({ tenderId }: { tenderId: string
   const [showHistorical, setShowHistorical] = useState(false);
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [actionMsg, setActionMsg] = useState<string | null>(null);
-  const [buildingPlan, setBuildingPlan] = useState(false);
-  const [planBuildMsg, setPlanBuildMsg] = useState<string | null>(null);
-
-  async function buildPlan() {
-    setBuildingPlan(true);
-    setPlanBuildMsg(null);
-    try {
-      const res = await fetch(`/api/tenders/${tenderId}/generate?planOnly=true`, { method: "POST" });
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(json.error ?? `Plan build failed (${res.status})`);
-      setPlanBuildMsg(json.message ?? "Submission plan built.");
-      await load();
-    } catch (err) {
-      setPlanBuildMsg(err instanceof Error ? err.message : "Failed to build plan");
-    } finally {
-      setBuildingPlan(false);
-    }
-  }
+  const [building, setBuilding] = useState(false);
 
   async function load() {
     setLoading(true);
@@ -182,6 +170,22 @@ export function SubmissionPlanCompletenessPanel({ tenderId }: { tenderId: string
     }
   }
 
+  async function buildPlan() {
+    setBuilding(true);
+    setActionMsg(null);
+    try {
+      const res = await fetch(`/api/tenders/${tenderId}/submission-plan/build`, { method: "POST" });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error ?? `Build failed (${res.status})`);
+      setActionMsg(`Submission plan built — ${json.created ?? 0} planned file(s) created, ${json.skipped ?? 0} already existed.`);
+      await load();
+    } catch (err) {
+      setActionMsg(err instanceof Error ? err.message : "Build plan failed");
+    } finally {
+      setBuilding(false);
+    }
+  }
+
   useEffect(() => { void load(); /* eslint-disable-line react-hooks/exhaustive-deps */ }, [tenderId]);
 
   if (loading) {
@@ -203,6 +207,9 @@ export function SubmissionPlanCompletenessPanel({ tenderId }: { tenderId: string
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2 text-xs">
+          <button type="button" onClick={() => void buildPlan()} className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50" disabled={loading || building}>
+            {building ? "Building…" : "⚡ Build Plan"}
+          </button>
           <button type="button" onClick={() => void load()} className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-medium text-white hover:bg-slate-800 disabled:opacity-50" disabled={loading}>
             Re-check
           </button>
@@ -259,20 +266,9 @@ export function SubmissionPlanCompletenessPanel({ tenderId }: { tenderId: string
       )}
 
       {!data.summary.hasExplicitScope && (
-        <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
-          <p>No explicit submission plan detected (no exactFileNaming / exactFileOrder / per-requirement exactFileName). Outside-plan generated rows are listed below for visibility, but no missing-required check applies until the plan is extracted.</p>
-          <div className="mt-2 flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => void buildPlan()}
-              disabled={buildingPlan}
-              className="rounded bg-amber-700 px-3 py-1 text-xs font-semibold text-white hover:bg-amber-800 disabled:opacity-50"
-            >
-              {buildingPlan ? "Building plan…" : "Build Submission Plan"}
-            </button>
-            {planBuildMsg && <span className="text-amber-900">{planBuildMsg}</span>}
-          </div>
-        </div>
+        <p className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
+          No explicit submission plan detected for this tender (no exactFileNaming / exactFileOrder / per-requirement exactFileName). Outside-plan generated rows are listed below for visibility, but no missing-required check applies until the plan is extracted.
+        </p>
       )}
 
       <div className="mt-4 overflow-x-auto">
@@ -305,12 +301,7 @@ export function SubmissionPlanCompletenessPanel({ tenderId }: { tenderId: string
                     <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${toneClass(badge.tone)}`}>{badge.label}</span>
                     {row.officialOriginal && <p className="mt-1 text-[10px] text-amber-600">Official original</p>}
                   </td>
-                  <td className="px-2 py-2 text-slate-600">
-                    {row.recommendedAction}
-                    {isOutsidePlan && (
-                      <p className="mt-1 text-[10px] text-amber-700">{suggestOutsidePlanResolution(row.exactFileName ?? row.name)}</p>
-                    )}
-                  </td>
+                  <td className="px-2 py-2 text-slate-600">{row.recommendedAction}</td>
                   <td className="px-2 py-2">
                     {canAct && row.documentId ? (
                       <div className="flex flex-col gap-1">

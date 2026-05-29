@@ -15,6 +15,30 @@ import { buildProviderDiagnosticsSnapshot } from "../../../../../lib/ai-provider
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
 
+function buildChunkStepResults(meta: AnalysisWithMeta): Array<{
+  stepName: string;
+  status: string;
+  output: string;
+}> {
+  const results: Array<{ stepName: string; status: string; output: string }> = [];
+  for (let i = 0; i < meta.totalChunks; i++) {
+    let status: string;
+    if (i < meta.completedChunks) {
+      status = "SUCCEEDED";
+    } else if (meta.skippedChunks > 0 && i >= meta.completedChunks + meta.failedChunks) {
+      status = "SKIPPED";
+    } else {
+      status = "FAILED";
+    }
+    results.push({
+      stepName: `chunk_${i}`,
+      status,
+      output: JSON.stringify({ chunkIndex: i }),
+    });
+  }
+  return results;
+}
+
 const AI_ANALYSIS_TIMEOUT_MS = (() => {
   const raw = Number(process.env.AI_ANALYSIS_TIMEOUT_MS);
   if (Number.isFinite(raw) && raw >= 5_000 && raw <= 600_000) return raw;
@@ -304,28 +328,21 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
             },
           }).catch(() => {});
 
-          // Populate per-chunk summary AiJobStep records so the UI can show
-          // chunk-level status without re-running analysis.
-          if (analysisJob && aiMeta.totalChunks > 0) {
-            const stepPromises: Promise<unknown>[] = [];
-            for (let chunkIdx = 0; chunkIdx < aiMeta.totalChunks; chunkIdx++) {
-              const isCompleted = chunkIdx < aiMeta.completedChunks;
-              const isFailed = !isCompleted && chunkIdx < (aiMeta.completedChunks + aiMeta.failedChunks);
-              const chunkStatus = isCompleted ? "SUCCEEDED" : isFailed ? "FAILED" : "SKIPPED";
-              stepPromises.push(
-                prisma.aiJobStep.create({
-                  data: {
-                    jobId: analysisJob.id,
-                    stepIndex: chunkIdx,
-                    stepName: `chunk_${chunkIdx}`,
-                    status: chunkStatus,
-                    startedAt: new Date(),
-                    finishedAt: new Date(),
-                  },
-                }).catch(() => {}) // non-critical — don't block response
-              );
-            }
-            await Promise.all(stepPromises);
+          // Persist per-chunk step records for observability
+          const chunkResults = buildChunkStepResults(aiMeta);
+          for (let stepIdx = 0; stepIdx < chunkResults.length; stepIdx++) {
+            const step = chunkResults[stepIdx];
+            await prisma.aiJobStep.create({
+              data: {
+                jobId: analysisJob.id,
+                stepIndex: stepIdx,
+                stepName: step.stepName,
+                status: step.status,
+                startedAt: new Date(),
+                finishedAt: new Date(),
+                message: step.output,
+              },
+            }).catch(() => {});
           }
         }
         analysisMeta = aiMeta;

@@ -1,63 +1,139 @@
+// POST /api/tenders/[id]/submission-plan/build
+//
+// Builds and persists a submission plan for the given tender.
+// Creates GeneratedDocument rows (status=PLANNED) for each planned file
+// that does not already have a matching row. Never overwrites rows that
+// have already been generated (generationStatus !== "PLANNED").
+//
+// Auth: ADMIN or PROPOSAL_MANAGER. User-scoped tender query.
+
 import { NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../../lib/prisma";
+import { buildSubmissionPlan, plannedSubmissionTargetFiles } from "../../../../../../lib/engine/submission-plan";
 import { logAction } from "../../../../../../lib/audit";
-import { extractRequestId } from "../../../../../../lib/request-id";
-import { buildSubmissionPlan, hasExplicitSubmissionScope, plannedSubmissionTargetFiles, type SubmissionPlanFile } from "../../../../../../lib/engine/submission-plan";
+import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../../../lib/rate-limit";
+import { sanitizeError } from "../../../../../../lib/sanitize-error";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 15;
 
-function documentTypeFor(file: SubmissionPlanFile): string {
-  const label = `${file.exactFileName} ${file.documentType}`.toLowerCase();
-  if (/technical[-\s_]*proposal|methodology|technical approach/.test(label)) return "TECHNICAL_PROPOSAL";
-  if (/financial|price|commercial/.test(label)) return "FINANCIAL_PROPOSAL";
-  if (/expert|cv|personnel|staff/.test(label)) return "EXPERT_CV_PACKAGE";
-  if (/project|experience|reference/.test(label)) return "PROJECT_REFERENCE_PACKAGE";
-  if (/form|declaration|annex|schedule|certificate|compliance/.test(label)) return "FORM_OR_ANNEX";
-  return file.documentType || "TENDER_REQUIRED_FILE";
-}
-
-export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
-  const requestId = extractRequestId(req);
+export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   let actor;
   try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER"); }
   catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
 
+  const rl = rateLimit(`submission-plan-build:${actor.id}`, MUTATION_RATE_LIMIT);
+  if (!rl.allowed) {
+    return NextResponse.json(
+      { ok: false, error: "Rate limit exceeded. Please wait and retry.", retryAfter: Math.ceil((rl.resetAt - Date.now()) / 1000) },
+      { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } },
+    );
+  }
+
   await prismaReady;
   const { id } = await params;
-  const tender = await prisma.tender.findFirst({ where: { id, userId: actor.id }, include: { requirements: true } });
-  if (!tender) return NextResponse.json({ ok: false, error: "Tender not found" }, { status: 404 });
-  if (tender.requirements.length === 0) {
-    return NextResponse.json({ ok: false, code: "NO_REQUIREMENTS", error: "Run AI Analyze / Run Engine before building a submission plan.", nextAction: "RUN_AI_ANALYZE" }, { status: 422 });
-  }
 
-  const explicitSubmissionScope = hasExplicitSubmissionScope(tender);
-  const plan = buildSubmissionPlan({ id: tender.id, title: tender.title, exactFileNaming: tender.exactFileNaming, exactFileOrder: tender.exactFileOrder, pageLimit: tender.pageLimit, requirements: tender.requirements });
-  const plannedFiles = explicitSubmissionScope ? plannedSubmissionTargetFiles(plan) : [];
-  if (!explicitSubmissionScope || plannedFiles.length === 0) {
-    return NextResponse.json({ ok: false, code: "NO_EXPLICIT_SUBMISSION_PLAN", error: "No explicit tender submission plan was detected. Repair submission rules/source extraction first.", nextAction: "REPAIR_SOURCE_REFERENCES" }, { status: 422 });
-  }
+  try {
+    const tender = await prisma.tender.findFirst({
+      where: { id, userId: actor.id },
+      select: {
+        id: true,
+        title: true,
+        exactFileNaming: true,
+        exactFileOrder: true,
+        pageLimit: true,
+        requirements: {
+          select: {
+            id: true,
+            title: true,
+            description: true,
+            requirementType: true,
+            priority: true,
+            exactFileName: true,
+            exactOrder: true,
+            requiredQuantity: true,
+            pageLimit: true,
+            restrictions: true,
+            sectionReference: true,
+          },
+        },
+        generatedDocuments: {
+          select: {
+            id: true,
+            exactFileName: true,
+            name: true,
+            generationStatus: true,
+          },
+        },
+      },
+    });
 
-  let created = 0;
-  let updated = 0;
-  let unchanged = 0;
-  for (const file of plannedFiles) {
-    const exactFileName = file.exactFileName?.trim();
-    if (!exactFileName) continue;
-    const existing = await prisma.generatedDocument.findFirst({ where: { tenderId: id, exactFileName, generationStatus: { not: "SUPERSEDED" } }, select: { id: true, generationStatus: true, fileContent: true, storagePath: true } });
-    const contentSummary = `Planned tender-required file from explicit submission plan. Source requirements: ${file.sourceRequirementIds.join(", ") || "exact file naming/order instruction"}.`;
-    if (!existing) {
-      await prisma.generatedDocument.create({ data: { tenderId: id, name: exactFileName.replace(/\.[a-z0-9]{2,5}$/i, ""), documentType: documentTypeFor(file), format: file.format || "DOCX", exactFileName, exactOrder: file.exactOrder, generationStatus: "PLANNED", validationStatus: "PENDING", reviewStatus: "PENDING", contentSummary } });
-      created += 1;
-    } else if (existing.generationStatus === "GENERATED" && (existing.fileContent || existing.storagePath)) {
-      unchanged += 1;
-    } else {
-      await prisma.generatedDocument.update({ where: { id: existing.id }, data: { documentType: documentTypeFor(file), format: file.format || "DOCX", exactOrder: file.exactOrder, generationStatus: "PLANNED", validationStatus: "PENDING", reviewStatus: "PENDING", contentSummary, updatedAt: new Date() } });
-      updated += 1;
+    if (!tender) {
+      return NextResponse.json({ ok: false, error: "Tender not found", code: "TENDER_NOT_FOUND" }, { status: 404 });
     }
-  }
 
-  await logAction({ userId: actor.id, action: "SUBMISSION_PLAN_BUILT", entityType: "Tender", entityId: id, description: `Built explicit submission plan for ${plannedFiles.length} tender-required file(s).`, metadata: { plannedTargetCount: plannedFiles.length, created, updated, unchanged }, requestId });
-  return NextResponse.json({ ok: true, success: true, explicitSubmissionScope, plannedTargetCount: plannedFiles.length, created, updated, unchanged });
+    if (tender.requirements.length === 0) {
+      return NextResponse.json({ ok: false, error: "Tender has no requirements — run AI Analyze first.", code: "NO_REQUIREMENTS" }, { status: 422 });
+    }
+
+    const plan = buildSubmissionPlan(tender);
+    const plannedFiles = plannedSubmissionTargetFiles(plan);
+
+    // Build a set of already-existing exactFileNames (case-insensitive)
+    const existingKeys = new Set(
+      tender.generatedDocuments
+        .map((doc) => (doc.exactFileName ?? doc.name ?? "").toLowerCase())
+        .filter(Boolean),
+    );
+
+    let created = 0;
+    let skipped = 0;
+    const fileStatuses: { exactFileName: string; status: "created" | "skipped" }[] = [];
+
+    for (const file of plannedFiles) {
+      const key = file.exactFileName.toLowerCase();
+      if (existingKeys.has(key)) {
+        skipped++;
+        fileStatuses.push({ exactFileName: file.exactFileName, status: "skipped" });
+        continue;
+      }
+
+      await prisma.generatedDocument.create({
+        data: {
+          tenderId: id,
+          name: file.exactFileName,
+          exactFileName: file.exactFileName,
+          exactOrder: file.exactOrder,
+          documentType: file.documentType ?? "TECHNICAL_PROPOSAL",
+          generationStatus: "PLANNED",
+          reviewStatus: "PENDING",
+          validationStatus: "PENDING",
+        },
+      });
+      existingKeys.add(key);
+      created++;
+      fileStatuses.push({ exactFileName: file.exactFileName, status: "created" });
+    }
+
+    await logAction({
+      userId: actor.id,
+      action: "SUBMISSION_PLAN_BUILT",
+      entityType: "Tender",
+      entityId: id,
+      description: `Submission plan built for tender "${tender.title}" — ${created} created, ${skipped} skipped, ${plannedFiles.length} total planned files`,
+      metadata: { created, skipped, total: plannedFiles.length },
+    });
+
+    return NextResponse.json({
+      ok: true,
+      created,
+      skipped,
+      total: plannedFiles.length,
+      files: fileStatuses,
+    });
+  } catch (error) {
+    console.error("[submission-plan/build] error:", error);
+    return NextResponse.json({ ok: false, error: sanitizeError(error) }, { status: 500 });
+  }
 }
