@@ -151,7 +151,8 @@ export function looksLikeMetadataPlaceholder(value?: string | null): boolean {
 }
 
 /** Document-level placeholder patterns — superset of metadata patterns plus
- *  bracket/template markers common in generated proposal text. */
+ *  bracket/template markers common in generated proposal text.
+ *  Used by seven-pass-generation-wiring.ts (single canonical source). */
 export const DOCUMENT_PLACEHOLDER_PATTERNS: RegExp[] = [
   ...METADATA_PLACEHOLDER_PATTERNS,
   /\[INSERT\b/i,
@@ -164,6 +165,13 @@ export const DOCUMENT_PLACEHOLDER_PATTERNS: RegExp[] = [
   /\[YEAR\]/i,
   /\[AMOUNT\]/i,
   /\[NUMBER\]/i,
+  // Seven-pass wiring patterns (merged from seven-pass-generation-wiring.ts)
+  /Bid-Team\s+Action/i,
+  /Source-evidence\s+action/i,
+  /\bTODO\b/,
+  /\[CLIENT\s+TO\s+BE\s+CONFIRMED[^\]]*\]/i,
+  /\[(insert|add here|fill|name of|date here|signature here|stamp here|tbd|tbc)[^\]]*\]/i,
+  /PLACEHOLDER FOR TENDER-ISSUED ORIGINAL/i,
 ];
 
 /**

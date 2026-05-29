@@ -18,24 +18,12 @@
 import { evaluateSevenPassGenerationGate, sevenPassBlocksFinalApproval, type GeneratedDocumentGateInput, type SevenPassEvaluation } from "./seven-pass-generation";
 import { detectAnalysisSource } from "./analysis-source";
 import { containsPricingLeakage } from "./pricing-hygiene";
+import { DOCUMENT_PLACEHOLDER_PATTERNS } from "./tender-metadata-completeness";
 
-// ── Placeholder patterns ───────────────────────────────────────────────────
-
-const PLACEHOLDER_PATTERNS: RegExp[] = [
-  /Bid-Team\s+to\s+confirm/i,
-  /Bid-Team\s+Action/i,
-  /Source-evidence\s+action/i,
-  /\bTBC\b/,
-  /\bTBD\b/,
-  /\bTODO\b/,
-  /to\s+be\s+confirmed/i,
-  /\bfill\s+in\b/i,
-  /\bPLACEHOLDER\b/i,
-  /\[INSERT[^\]]*\]/i,
-  /\[CLIENT\s+TO\s+BE\s+CONFIRMED[^\]]*\]/i,
-  /\[(insert|add here|fill|name of|date here|signature here|stamp here|tbd|tbc)[^\]]*\]/i,
-  /PLACEHOLDER FOR TENDER-ISSUED ORIGINAL/i,
-];
+// Use the canonical pattern set from tender-metadata-completeness.ts so
+// placeholder detection is consistent across the seven-pass gate, the
+// document quality banner, and the submission plan completeness panel.
+const PLACEHOLDER_PATTERNS = DOCUMENT_PLACEHOLDER_PATTERNS;
 
 // ── AI / meta trace patterns ───────────────────────────────────────────────
 
