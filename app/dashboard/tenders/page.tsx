@@ -62,6 +62,18 @@ function DeadlineCell({ deadline }: { deadline: Date | null }) {
   return <span className="text-slate-500">{formatDate(deadline)}</span>;
 }
 
+function parseAnalysisSource(notes?: string | null): "AI" | "PARTIAL" | "REGEX" | null {
+  if (!notes) return null;
+  for (const line of notes.split("\n")) {
+    if (/^Analysis source:/i.test(line.trim())) {
+      if (/regex fallback/i.test(line)) return "REGEX";
+      if (/partial/i.test(line)) return "PARTIAL";
+      if (/\bAI\b/i.test(line)) return "AI";
+    }
+  }
+  return null;
+}
+
 export default async function TendersPage({
   searchParams,
 }: {
@@ -74,18 +86,24 @@ export default async function TendersPage({
   const { status = "ALL", q = "", sort: sortRaw = "createdAt_desc" } = await searchParams;
   const statusFilter = parseTenderStatus(status);
   const sort = parseSortOption(sortRaw);
+  // Special pseudo-filter: show only tenders with regex fallback analysis
+  const regexOnlyFilter = status === "REGEX_FALLBACK";
   const isFiltered = status !== "ALL" || q !== "";
 
   const tenders = await prisma.tender.findMany({
     where: {
       userId,
-      ...(statusFilter ? { status: statusFilter } : {}),
+      ...(statusFilter && !regexOnlyFilter ? { status: statusFilter } : {}),
       ...(q ? { title: { contains: q } } : {}),
+      // REGEX_FALLBACK filter: notes contains "Analysis source: Regex fallback"
+      ...(regexOnlyFilter ? { notes: { contains: "Analysis source: Regex fallback" } } : {}),
     },
     select: {
       id: true, title: true, reference: true, clientName: true,
       deadline: true, status: true, category: true, budget: true, currency: true,
       readinessScore: true,
+      notes: true,
+      stage: true,
       createdAt: true, updatedAt: true,
       // Only counts — never fetch fileContent, extractedText, or base64 data
       _count: { select: { files: true, requirements: true } },
@@ -134,6 +152,15 @@ export default async function TendersPage({
                 {filterValue === "ALL" ? "All" : formatTenderStatus(filterValue)}
               </Link>
             ))}
+            <Link
+              href={`/dashboard/tenders?status=REGEX_FALLBACK&sort=${sort}`}
+              className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
+                status === "REGEX_FALLBACK" ? "bg-red-700 text-white" : "bg-red-50 text-red-700 hover:bg-red-100"
+              }`}
+              title="Tenders analyzed by regex fallback — AI providers failed. These need re-analysis."
+            >
+              Needs re-analysis
+            </Link>
           </div>
         </div>
 
@@ -190,6 +217,7 @@ export default async function TendersPage({
                           const c = cleanClientName(tender.clientName);
                           return c && c !== "Client" ? <p className="text-xs text-slate-400">{c}</p> : null;
                         })()}
+                        {tender.stage && <p className="text-[10px] text-slate-400 mt-0.5">{tender.stage.replace(/_/g, " ")}</p>}
                       </td>
                       <td className="px-6 py-4 text-slate-500">{tender.reference || "—"}</td>
                       <td className="px-6 py-4">
@@ -201,6 +229,13 @@ export default async function TendersPage({
                         ) : (
                           <span className="text-slate-400">—</span>
                         )}
+                        {(() => {
+                          const src = parseAnalysisSource(tender.notes);
+                          if (!src) return null;
+                          if (src === "REGEX") return <span className="ml-1 rounded bg-red-100 px-1 py-0.5 text-[10px] font-semibold text-red-700" title="Analysis by regex fallback — AI providers failed. Re-run AI Analyze.">REGEX</span>;
+                          if (src === "PARTIAL") return <span className="ml-1 rounded bg-amber-100 px-1 py-0.5 text-[10px] font-semibold text-amber-700" title="Partial AI analysis — some chunks failed.">PARTIAL</span>;
+                          return <span className="ml-1 rounded bg-emerald-100 px-1 py-0.5 text-[10px] font-semibold text-emerald-700" title="Analyzed by AI.">AI</span>;
+                        })()}
                         <span className="ml-1 text-xs text-slate-400 italic">(workflow)</span>
                         <span className="ml-1 text-xs text-slate-400">
                           ({tender._count.files} files · {tender._count.requirements} reqs
@@ -243,7 +278,16 @@ export default async function TendersPage({
                           <p className="text-xs text-slate-400 mt-0.5">{clientName}</p>
                         )}
                       </div>
-                      <StatusBadge status={tender.status} />
+                      <div className="flex items-center gap-1">
+                        <StatusBadge status={tender.status} />
+                        {(() => {
+                          const src = parseAnalysisSource(tender.notes);
+                          if (!src) return null;
+                          if (src === "REGEX") return <span className="rounded bg-red-100 px-1 py-0.5 text-[10px] font-semibold text-red-700" title="Analysis by regex fallback — AI providers failed. Re-run AI Analyze.">REGEX</span>;
+                          if (src === "PARTIAL") return <span className="rounded bg-amber-100 px-1 py-0.5 text-[10px] font-semibold text-amber-700" title="Partial AI analysis — some chunks failed.">PARTIAL</span>;
+                          return <span className="rounded bg-emerald-100 px-1 py-0.5 text-[10px] font-semibold text-emerald-700" title="Analyzed by AI.">AI</span>;
+                        })()}
+                      </div>
                     </div>
 
                     <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">

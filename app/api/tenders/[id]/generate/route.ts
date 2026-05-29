@@ -21,6 +21,7 @@ import { computeStoredMetadataPatch, listInvalidStoredFields } from "../../../..
 import { isValidClientName } from "../../../../../lib/engine/metadata-validators";
 import { repairSourceGrounding } from "../../../../../lib/engine/repair-source-grounding";
 import { assertAnalysisReadyForFinalGeneration } from "../../../../../lib/engine/analysis-source";
+import { assessTenderMetadataCompleteness } from "../../../../../lib/engine/tender-metadata-completeness";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -260,6 +261,47 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       error: "Generation blocked: no tender requirements were extracted yet. Run AI Analyze / Run Engine first, or add requirements manually before generating documents.",
       code: "NO_REQUIREMENTS",
       nextAction: "RUN_ENGINE",
+    }, { status: 422 });
+  }
+
+  // ── Metadata completeness gate ────────────────────────────────────────────
+  // Blocks generation when critical metadata is missing or placeholder-filled
+  // (e.g. client name "Bid-Team to confirm", no submission endpoint, no deadline).
+  // overallRatio < 0.3 is a hard block; missingCritical / invalidFields always block.
+  const metadataReport = assessTenderMetadataCompleteness({
+    clientName: tender.clientName,
+    title: tender.title,
+    reference: tender.reference ?? null,
+    country: tender.country ?? null,
+    submissionMethod: tender.submissionMethod ?? null,
+    submissionAddress: tender.submissionAddress ?? null,
+    submissionEmails: tender.submissionEmails ?? null,
+    deadline: tender.deadline ?? null,
+    clientContactName: tender.clientContactName ?? null,
+    clientContactEmail: tender.clientContactEmail ?? null,
+    clientContactPhone: tender.clientContactPhone ?? null,
+    pageLimit: tender.pageLimit ?? null,
+    budget: tender.budget ?? null,
+    currency: tender.currency ?? null,
+    validityDays: tender.validityDays ?? null,
+    bidBondAmount: tender.bidBondAmount ?? null,
+    bidBondCurrency: tender.bidBondCurrency ?? null,
+    mandatorySiteVisit: tender.mandatorySiteVisit ?? null,
+    numberOfCopiesRequired: tender.numberOfCopiesRequired ?? null,
+    preBidMeetingDate: tender.preBidMeetingDate ?? null,
+    preBidMeetingLocation: tender.preBidMeetingLocation ?? null,
+    requirementCount: tender.requirements.length,
+    hasEvaluationMethodology: Boolean(tender.evaluationMethodology),
+    hasSubmissionRules: Boolean(tender.submissionMethod || tender.submissionEmails || tender.submissionAddress),
+  });
+  if (metadataReport.blockingForGeneration) {
+    return NextResponse.json({
+      error: `Generation blocked: ${metadataReport.missingCritical.length > 0 ? `${metadataReport.missingCritical.length} critical metadata field(s) missing` : ""}${metadataReport.invalidFields.length > 0 ? `${metadataReport.missingCritical.length > 0 ? "; " : ""}${metadataReport.invalidFields.length} field(s) contain placeholder language` : ""}. Edit the tender and fill in the missing fields before generating.`,
+      code: "METADATA_INCOMPLETE_FOR_GENERATION",
+      missingCritical: metadataReport.missingCritical.map((f) => ({ field: f.field, reason: f.reason })),
+      invalidFields: metadataReport.invalidFields.map((f) => ({ field: f.field, reason: f.reason })),
+      overallRatio: metadataReport.overallRatio,
+      nextAction: "EDIT_TENDER",
     }, { status: 422 });
   }
 
