@@ -84,6 +84,8 @@ export interface BidStrategyInput {
     }>;
     evaluationMethodology?: string | null;
     submissionMethod?: string | null;
+    analysisSource?: string | null;
+    evidenceCoverageRatio?: number | null;
   };
   company: {
     name: string;
@@ -439,6 +441,17 @@ export function computeBidStrategy(input: BidStrategyInput): BidStrategy {
     const rate = historicalWins / historicalTotal;
     const modifier = Math.round((rate - 0.4) * 20); // [-8, +12] range
     winProbability = Math.max(0, Math.min(100, winProbability + modifier));
+  }
+
+  // Penalise when analysis source is regex/provisional — extracted requirements
+  // may be incomplete, inflating the compliance and alignment axes.
+  if (input.tender.analysisSource === "REGEX_FALLBACK_AI_ERROR") {
+    winProbability = Math.max(0, winProbability - 15);
+  }
+  // Additional penalty when evidence coverage is zero — indicates no company
+  // evidence has been linked regardless of analysis quality.
+  if ((input.tender.evidenceCoverageRatio ?? 1) === 0) {
+    winProbability = Math.max(0, winProbability - 10);
   }
 
   const recommendation = synthesizeRecommendation(winProbability);
