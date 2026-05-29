@@ -480,6 +480,7 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
   const [generationPhase, setGenerationPhase] = useState("");
   const [generationProgress, setGenerationProgress] = useState(0);
+  const [generationStep, setGenerationStep] = useState(0);
   const [regeneratingSection, setRegeneratingSection] = useState<string | null>(null);
   const [previewDocId, setPreviewDocId] = useState<string | null>(null);
   const [bidOutcome, setBidOutcome] = useState(initial.bidOutcome ?? "");
@@ -676,41 +677,59 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
     setTimeout(() => setToast(null), 5000);
   }
 
-  // Phase-based progress animation for the 45-60s generation window.
-  // Gives users something meaningful to read instead of a frozen button.
-  const GENERATION_PHASES = [
-    { label: "Analyzing tender requirements…", pct: 8 },
-    { label: "Matching experts and projects…", pct: 20 },
-    { label: "Generating proposal sections (A–D)…", pct: 65 },
-    { label: "Refining and humanizing…", pct: 88 },
-    { label: "Saving documents…", pct: 97 },
+  // 7-pass generation progress animation for the 45-60s generation window.
+  // Advances one step every 4 seconds while the request is in-flight,
+  // then jumps to complete (step 7) when the response arrives.
+  const SEVEN_PASS_STEPS = [
+    "Extracting requirements",
+    "Matching experts & projects",
+    "Building evidence chains",
+    "Drafting proposal sections",
+    "Reviewing & improving",
+    "Checking compliance",
+    "Final quality pass",
   ];
   const progressCreepRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const stepTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
   function startGenerationProgress() {
-    const durations = [6000, 14000, 35000, 10000, 5000];
-    let cumulative = 0;
-    GENERATION_PHASES.forEach((phase, i) => {
-      const delay = cumulative;
-      setTimeout(() => {
-        setGenerationPhase(phase.label);
-        setGenerationProgress(phase.pct);
-        // After the last timed phase, start creeping from 97 → 99 at 0.1%
-        // per second so the bar stays alive during long AI generation calls
-        // instead of freezing at 97% for up to 2 minutes.
-        if (i === GENERATION_PHASES.length - 1) {
-          if (progressCreepRef.current) clearInterval(progressCreepRef.current);
-          progressCreepRef.current = setInterval(() => {
-            setGenerationProgress((prev) => (prev < 99 ? Math.min(99, prev + 0.1) : prev));
-          }, 1000);
-        }
-      }, delay);
-      cumulative += durations[i];
-    });
+    // Clear any stale timers
+    stepTimersRef.current.forEach(clearTimeout);
+    stepTimersRef.current = [];
+    setGenerationStep(1);
+    setGenerationPhase(SEVEN_PASS_STEPS[0]);
+    setGenerationProgress(5);
+    // Advance one step every 4 seconds through steps 1-6
+    for (let step = 2; step <= 6; step++) {
+      const t = setTimeout(() => {
+        setGenerationStep(step);
+        setGenerationPhase(SEVEN_PASS_STEPS[step - 1]);
+        setGenerationProgress(Math.round((step / 7) * 95));
+      }, (step - 1) * 4000);
+      stepTimersRef.current.push(t);
+    }
+    // After step 6 completes, keep creeping progress to signal it's still running
+    const creepStart = 5 * 4000;
+    const t = setTimeout(() => {
+      if (progressCreepRef.current) clearInterval(progressCreepRef.current);
+      progressCreepRef.current = setInterval(() => {
+        setGenerationProgress((prev) => (prev < 99 ? Math.min(99, prev + 0.1) : prev));
+      }, 1000);
+    }, creepStart);
+    stepTimersRef.current.push(t);
   }
   function stopGenerationProgress() {
+    stepTimersRef.current.forEach(clearTimeout);
+    stepTimersRef.current = [];
     if (progressCreepRef.current) { clearInterval(progressCreepRef.current); progressCreepRef.current = null; }
-    setGenerationPhase("");
-    setGenerationProgress(0);
+    setGenerationStep(7);
+    setGenerationPhase("Final quality pass");
+    setGenerationProgress(100);
+    // Reset after a short delay to clear the UI
+    setTimeout(() => {
+      setGenerationStep(0);
+      setGenerationPhase("");
+      setGenerationProgress(0);
+    }, 1200);
   }
 
   async function handleGenerateDocs() {
@@ -1167,19 +1186,40 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
         </div>
       )}
 
-      {/* Generation progress bar — visible during generate/generate-docs */}
-      {(generatingDocs || generating) && generationPhase && (
-        <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3">
-          <div className="flex items-center justify-between mb-1.5">
-            <p className="text-sm font-medium text-blue-800">{generationPhase}</p>
-            <p className="text-xs text-blue-600">{generationProgress}%</p>
+      {/* 7-pass generation progress — visible during generate/generate-docs */}
+      {(generatingDocs || generating) && generationStep > 0 && (
+        <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-4">
+          <div className="flex items-center justify-between mb-3">
+            <p className="text-sm font-medium text-blue-800">Generating proposal…</p>
+            <p className="text-xs text-blue-600">{Math.round(generationProgress)}%</p>
           </div>
-          <div className="h-1.5 w-full overflow-hidden rounded-full bg-blue-100">
+          <div className="h-1.5 w-full overflow-hidden rounded-full bg-blue-100 mb-4">
             <div
               className="h-full rounded-full bg-blue-500 transition-all duration-1000 ease-in-out"
               style={{ width: `${generationProgress}%` }}
             />
           </div>
+          <ol className="space-y-1.5">
+            {["Extracting requirements","Matching experts & projects","Building evidence chains","Drafting proposal sections","Reviewing & improving","Checking compliance","Final quality pass"].map((stepLabel, idx) => {
+              const stepNum = idx + 1;
+              const isDone = generationStep > stepNum || generationProgress >= 100;
+              const isActive = generationStep === stepNum && generationProgress < 100;
+              return (
+                <li key={stepNum} className={`flex items-center gap-2 text-xs transition-colors ${isDone ? "text-slate-400" : isActive ? "text-blue-800 font-medium" : "text-slate-300"}`}>
+                  <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-[10px] font-bold transition-colors ${
+                    isDone
+                      ? "border-slate-300 bg-slate-100 text-slate-400"
+                      : isActive
+                        ? "border-blue-400 bg-blue-500 text-white"
+                        : "border-slate-200 bg-white text-slate-300"
+                  }`}>
+                    {isDone ? "✓" : stepNum}
+                  </span>
+                  {stepLabel}
+                </li>
+              );
+            })}
+          </ol>
         </div>
       )}
 
