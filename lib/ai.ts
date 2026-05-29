@@ -1133,7 +1133,21 @@ ${tenderContent}`;
   }
 }
 
-export async function analyzeWithAI(tenderContent: string): Promise<AIAnalysisResult> {
+export const CHUNK_DEADLINE_MARGIN_MS = 8_000;
+
+export type AnalysisWithMeta = {
+  result: AIAnalysisResult;
+  isPartial: boolean;
+  totalChunks: number;
+  completedChunks: number;
+  failedChunks: number;
+  skippedChunks: number; // stopped by deadline
+};
+
+export async function analyzeWithAI(
+  tenderContent: string,
+  opts?: { deadlineAt?: number; startFromChunk?: number },
+): Promise<AnalysisWithMeta> {
   // For tenders within the soft limit, run a single call (faster path).
   // For larger tenders, chunk into overlapping pieces and analyze sequentially.
   // Sequential processing prevents simultaneous provider-chain storms: a 6-chunk
@@ -1141,28 +1155,55 @@ export async function analyzeWithAI(tenderContent: string): Promise<AIAnalysisRe
   // independently analyzed; results merge below.
   const chunks = chunkTenderContent(tenderContent);
   if (chunks.length === 1) {
-    return analyzeOneChunk(chunks[0], 0, 1);
+    const result = await analyzeOneChunk(chunks[0], 0, 1);
+    return { result, isPartial: false, totalChunks: 1, completedChunks: 1, failedChunks: 0, skippedChunks: 0 };
   }
 
   console.info(`[ai] tender content is ${tenderContent.length.toLocaleString()} chars — chunking into ${chunks.length} sequential analysis calls.`);
   const successes: AIAnalysisResult[] = [];
   const failures: string[] = [];
+  let completedChunks = 0;
+  let failedChunks = 0;
+
   for (let i = 0; i < chunks.length; i++) {
+    // Skip chunks before startFromChunk (resume support)
+    if (opts?.startFromChunk !== undefined && i < opts.startFromChunk) {
+      continue;
+    }
+
+    // Deadline check: stop before starting this chunk if not enough time remains
+    if (opts?.deadlineAt !== undefined && Date.now() + CHUNK_DEADLINE_MARGIN_MS > opts.deadlineAt) {
+      console.warn(`[ai] deadline approaching — stopping before chunk ${i + 1}/${chunks.length}. Completed: ${completedChunks}, Failed: ${failedChunks}`);
+      break;
+    }
+
     try {
       successes.push(await analyzeOneChunk(chunks[i], i, chunks.length));
+      completedChunks++;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       failures.push(`chunk ${i + 1}: ${msg}`);
+      failedChunks++;
       console.warn(`[ai] chunk ${i + 1}/${chunks.length} failed — continuing with remaining chunks. Error: ${msg}`);
     }
   }
-  if (successes.length === 0) {
+
+  const skippedChunks = chunks.length - (completedChunks + failedChunks);
+
+  if (completedChunks === 0) {
+    if (skippedChunks === chunks.length) {
+      throw new Error(`All ${chunks.length} chunks were skipped due to deadline — no analysis completed.`);
+    }
     throw new Error(`All ${chunks.length} chunked analysis calls failed. Errors: ${failures.join(" | ")}`);
   }
+
   if (failures.length > 0) {
     console.warn(`[ai] ${failures.length} of ${chunks.length} chunks failed — merging the ${successes.length} that succeeded. Errors: ${failures.join(" | ")}`);
   }
-  return mergeAnalysisResults(successes);
+
+  const isPartial = skippedChunks > 0 || (failedChunks > 0 && completedChunks > 0);
+  const result = mergeAnalysisResults(successes);
+  return { result, isPartial, totalChunks: chunks.length, completedChunks, failedChunks, skippedChunks };
 }
 
 // ─── CV / Expert extraction ───────────────────────────────────────────────────

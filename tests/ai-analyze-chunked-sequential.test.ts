@@ -152,3 +152,106 @@ describe("sequential chunk failure accumulation", () => {
     assert.match(failures[1], /chunk 3/);
   });
 });
+
+// ─── Route error sanitizer ────────────────────────────────────────────────────
+// Mirrors the catch-block key-redaction in app/api/tenders/[id]/ai-analyze/route.ts
+
+function sanitizeRouteError(raw: string): string {
+  return raw
+    .replace(/sk-[a-zA-Z0-9_-]{10,}/g, "[KEY_REDACTED]")
+    .replace(/AIza[a-zA-Z0-9_-]{30,}/g, "[KEY_REDACTED]")
+    .replace(/Bearer\s+[a-zA-Z0-9._-]{10,}/gi, "Bearer [REDACTED]")
+    .slice(0, 300);
+}
+
+describe("route error sanitizer (mirrors catch-block redaction in ai-analyze route)", () => {
+  it("redacts sk- Anthropic/OpenAI API keys", () => {
+    const out = sanitizeRouteError("error: invalid key sk-ant-api03-testkey1234567890ABCD");
+    assert.ok(!out.includes("testkey1234567890"));
+    assert.ok(out.includes("[KEY_REDACTED]"));
+  });
+
+  it("redacts Gemini AIza keys", () => {
+    const out = sanitizeRouteError("bad request: AIzaSyD_verylongfakekeyfortestingpurposesXXXX");
+    assert.ok(!out.includes("verylongfakekeyfortestingpurposes"));
+    assert.ok(out.includes("[KEY_REDACTED]"));
+  });
+
+  it("redacts Bearer tokens", () => {
+    const out = sanitizeRouteError("401: Bearer eyJhbGciOiJIUzI1NiJ9.testPayload1234567890");
+    assert.ok(!out.includes("eyJhbGciOiJIUzI1NiJ9"));
+    assert.ok(out.includes("Bearer [REDACTED]"));
+  });
+
+  it("passes through messages without keys", () => {
+    const msg = "rate limit exceeded, please wait";
+    assert.equal(sanitizeRouteError(msg), msg);
+  });
+
+  it("truncates output to 300 chars", () => {
+    const out = sanitizeRouteError("x".repeat(400));
+    assert.equal(out.length, 300);
+  });
+});
+
+// ─── Deadline-check arithmetic ────────────────────────────────────────────────
+// Mirrors the guard inside analyzeWithAI: Date.now() + CHUNK_DEADLINE_MARGIN_MS > deadlineAt
+
+describe("deadline-check arithmetic (mirrors analyzeWithAI guard)", () => {
+  const CHUNK_DEADLINE_MARGIN_MS = 8_000;
+
+  it("does not stop when deadline is comfortably in the future", () => {
+    const deadlineAt = Date.now() + 48_000;
+    const wouldStop = Date.now() + CHUNK_DEADLINE_MARGIN_MS > deadlineAt;
+    assert.equal(wouldStop, false);
+  });
+
+  it("stops when deadline has already passed", () => {
+    const deadlineAt = Date.now() - 1;
+    const wouldStop = Date.now() + CHUNK_DEADLINE_MARGIN_MS > deadlineAt;
+    assert.equal(wouldStop, true);
+  });
+
+  it("stops when remaining time is less than the margin", () => {
+    const deadlineAt = Date.now() + 5_000; // 5s left, but margin is 8s
+    const wouldStop = Date.now() + CHUNK_DEADLINE_MARGIN_MS > deadlineAt;
+    assert.equal(wouldStop, true);
+  });
+});
+
+// ─── cleanMessage security (mirrors analysis-fallback-diagnostics.ts) ─────────
+
+function cleanFallbackMessage(value?: string | null): string {
+  return (value ?? "")
+    .replace(/sk-[^\s"']{8,}/g, "[REDACTED]")
+    .replace(/AIza[A-Za-z0-9_-]{30,}/g, "[REDACTED]")
+    .replace(/Bearer\s+[A-Za-z0-9._-]{10,}/gi, "Bearer [REDACTED]")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 300);
+}
+
+describe("cleanMessage redaction (mirrors analysis-fallback-diagnostics.ts)", () => {
+  it("redacts sk- keys", () => {
+    const out = cleanFallbackMessage("fail: sk-ant-key12345678");
+    assert.ok(!out.includes("key12345678"));
+    assert.ok(out.includes("[REDACTED]"));
+  });
+
+  it("redacts Gemini AIza keys (new in this PR)", () => {
+    const out = cleanFallbackMessage("fail: AIzaSyDxxx_xxxxxxxxxxxxxxxxxxxxxxxxxx12");
+    assert.ok(out.includes("[REDACTED]"));
+    assert.ok(!out.includes("AIzaSyDxxx"));
+  });
+
+  it("redacts Bearer tokens (new in this PR)", () => {
+    const out = cleanFallbackMessage("fail: Bearer mytoken1234567890abcdefgh");
+    assert.ok(out.includes("Bearer [REDACTED]"));
+    assert.ok(!out.includes("mytoken1234567890"));
+  });
+
+  it("passes through safe messages unchanged", () => {
+    const out = cleanFallbackMessage("rate limit exceeded");
+    assert.equal(out, "rate limit exceeded");
+  });
+});
