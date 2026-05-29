@@ -333,9 +333,19 @@ const GAP_SEVERITY_STYLE: Record<string, string> = {
 
 const GAPS_PAGE_SIZE = 10;
 const GAPS_PAGINATION_THRESHOLD = 20; // use pagination instead of show-all when gap count exceeds this
+const GAP_SEVERITY_ORDER: Record<string, number> = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3 };
+
+function sortGapsBySeverity(gaps: ComplianceGap[]): ComplianceGap[] {
+  return [...gaps].sort((a, b) => {
+    // Unresolved before resolved
+    if (a.isResolved !== b.isResolved) return a.isResolved ? 1 : -1;
+    // Within same resolved state: CRITICAL first
+    return (GAP_SEVERITY_ORDER[a.severity] ?? 99) - (GAP_SEVERITY_ORDER[b.severity] ?? 99);
+  });
+}
 
 function ComplianceGapsPanel({ tenderId, initialGaps }: { tenderId: string; initialGaps: ComplianceGap[] }) {
-  const [gaps, setGaps] = useState<ComplianceGap[]>(initialGaps);
+  const [gaps, setGaps] = useState<ComplianceGap[]>(() => sortGapsBySeverity(initialGaps));
   const [toggling, setToggling] = useState<string | null>(null);
   const [toggleError, setToggleError] = useState<string | null>(null);
   const [showAll, setShowAll] = useState(false);
@@ -352,7 +362,7 @@ function ComplianceGapsPanel({ tenderId, initialGaps }: { tenderId: string; init
       });
       if (res.ok) {
         const updated = await res.json() as ComplianceGap;
-        setGaps((prev) => prev.map((g) => g.id === gap.id ? { ...g, isResolved: updated.isResolved } : g));
+        setGaps((prev) => sortGapsBySeverity(prev.map((g) => g.id === gap.id ? { ...g, isResolved: updated.isResolved } : g)));
       } else {
         const data = await res.json().catch(() => ({})) as Record<string, unknown>;
         setToggleError(typeof data.error === "string" ? data.error : `Failed to update gap (${res.status}). Please try again.`);
@@ -475,6 +485,7 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
   const [reviewingDocId, setReviewingDocId] = useState<string | null>(null);
   const [submittingReviewDocId, setSubmittingReviewDocId] = useState<string | null>(null);
   const [reviewNote, setReviewNote] = useState("");
+  const [batchApproving, setBatchApproving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [fileQueue, setFileQueue] = useState<UploadItem[]>([]);
@@ -969,6 +980,30 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
     }
   }
 
+  async function batchApproveAll() {
+    const docsToApprove = tender.generatedDocuments.filter(
+      (d) => d.generationStatus === "GENERATED" && d.reviewStatus !== "APPROVED"
+    );
+    if (docsToApprove.length === 0) return;
+    if (!confirm(`Approve all ${docsToApprove.length} generated document(s)? This marks each as APPROVED with no review notes.`)) return;
+    setBatchApproving(true);
+    let approved = 0;
+    for (const doc of docsToApprove) {
+      try {
+        const res = await fetch(`/api/tenders/${tender.id}/documents/${doc.id}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ reviewStatus: "APPROVED", reviewNotes: "" }),
+        });
+        if (res.ok) approved++;
+      } catch { /* continue */ }
+    }
+    setToast({ message: `Batch approved ${approved}/${docsToApprove.length} document(s).`, type: approved === docsToApprove.length ? "success" : "error" });
+    const refreshed = await fetch(`/api/tenders/${tender.id}`);
+    if (refreshed.ok) setTender(await refreshed.json() as Tender);
+    setBatchApproving(false);
+  }
+
   async function handleDelete() {
     if (!confirm("Delete this tender? This cannot be undone.")) return;
     setDeleting(true);
@@ -1355,6 +1390,20 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
               {/network/i.test(error) && (
                 <p className="mt-1 text-xs text-red-600">Check your internet connection and retry.</p>
               )}
+              {/expert match|project match|REVIEW_MATCHES|select.*evidence|select.*expert|select.*project/i.test(error) && (
+                <a href="#expert-matches" className="mt-2 inline-block rounded border border-red-300 bg-white px-2.5 py-1 text-xs font-medium text-red-700 hover:bg-red-50">
+                  → Scroll to Expert/Project Matches
+                </a>
+              )}
+              {/metadata.*incomplete|critical metadata|Bid-Team to confirm/i.test(error) && (
+                <button
+                  type="button"
+                  onClick={() => { setEditing(true); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+                  className="mt-2 inline-block rounded border border-red-300 bg-white px-2.5 py-1 text-xs font-medium text-red-700 hover:bg-red-50"
+                >
+                  → Edit Tender Metadata
+                </button>
+              )}
             </div>
             <button onClick={() => setError("")} aria-label="Dismiss error" className="shrink-0 text-red-400 hover:text-red-600 text-xs">✕</button>
           </div>
@@ -1686,7 +1735,7 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
           <ComplianceGapsPanel tenderId={tender.id} initialGaps={tender.complianceGaps} />
 
           {(tender.expertMatches?.length ?? 0) > 0 && (
-            <div className="rounded-2xl border bg-white p-6 shadow-sm">
+            <div id="expert-matches" className="rounded-2xl border bg-white p-6 shadow-sm">
               <h2 className="text-lg font-semibold text-slate-900 mb-4">
                 Expert Matches
                 <span className="ml-2 text-sm font-normal text-slate-400">
@@ -1802,9 +1851,21 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
           )}
 
           <div className="rounded-2xl border bg-white p-6 shadow-sm">
-            <div className="flex items-center justify-between mb-3">
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
               <h2 className="text-lg font-semibold text-slate-900">Generated outputs</h2>
-              <button onClick={() => downloadDoc("compliance")} className="text-xs text-blue-600 hover:underline">↓ Compliance Report</button>
+              <div className="flex items-center gap-2">
+                {tender.generatedDocuments.some((d) => d.generationStatus === "GENERATED" && d.reviewStatus !== "APPROVED") && (
+                  <button
+                    onClick={() => void batchApproveAll()}
+                    disabled={batchApproving}
+                    className="rounded border border-green-300 bg-green-50 px-2.5 py-1 text-xs font-medium text-green-700 hover:bg-green-100 disabled:opacity-50"
+                    title="Approve all generated documents in one click"
+                  >
+                    {batchApproving ? "Approving…" : "Approve All Generated"}
+                  </button>
+                )}
+                <button onClick={() => downloadDoc("compliance")} className="text-xs text-blue-600 hover:underline">↓ Compliance Report</button>
+              </div>
             </div>
             {tender.generatedDocuments.length === 0 ? (
               <p className="text-sm text-slate-400">Run the engine then click &quot;Generate Docs&quot; to create submission-ready files.</p>
