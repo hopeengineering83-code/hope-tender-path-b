@@ -188,6 +188,22 @@ export default function TenderRecoveryCommandCenter({ tenderId }: { tenderId: st
         document.getElementById("submission-plan-completeness")?.scrollIntoView({ behavior: "smooth" });
       } else if (action === "ATTACH_OFFICIAL_ORIGINALS") {
         document.getElementById("generated-documents")?.scrollIntoView({ behavior: "smooth" });
+      } else if (action === "CONFIGURE_AI_PROVIDER") {
+        window.location.href = `/dashboard/analytics`;
+      } else if (action === "REPAIR_SOURCE_REFERENCES") {
+        const res = await fetch(`/api/tenders/${tenderId}/repair-source-grounding`, { method: "POST" });
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(json.error ?? "Source repair failed");
+        setActionMsg(`Source repair complete — ${json.repairedCount ?? 0} requirement(s) updated.`);
+        await load();
+      } else if (action === "UPLOAD_TENDER_DOCUMENT") {
+        document.getElementById("tender-files")?.scrollIntoView({ behavior: "smooth" });
+      } else if (action === "RUN_AI_ANALYZE") {
+        const res = await fetch(`/api/tenders/${tenderId}/ai-analyze`, { method: "POST" });
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(json.error ?? "AI Analyze failed");
+        setActionMsg(json.fallback ? "Regex fallback used — approve below or retry when providers recover." : "Analysis complete.");
+        await load();
       }
     } catch (e) {
       setActionMsg(e instanceof Error ? e.message : "Action failed");

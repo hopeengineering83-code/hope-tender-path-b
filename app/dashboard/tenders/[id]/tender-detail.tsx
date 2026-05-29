@@ -1563,7 +1563,7 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
             )}
           </div>
 
-          <div className="rounded-2xl border bg-white p-6 shadow-sm">
+          <div id="tender-files" className="rounded-2xl border bg-white p-6 shadow-sm">
             <div className="mb-4 flex items-center justify-between">
               <h2 className="text-lg font-semibold text-slate-900">
                 Tender files
