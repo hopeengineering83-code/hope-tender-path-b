@@ -139,6 +139,62 @@ export default function TenderRecoveryCommandCenter({ tenderId }: { tenderId: st
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
+  const [actioning, setActioning] = useState(false);
+  const [actionMsg, setActionMsg] = useState<string | null>(null);
+  const [approvalNote, setApprovalNote] = useState("");
+
+  async function executeAction(action: string) {
+    setActioning(true);
+    setActionMsg(null);
+    try {
+      if (action === "RETRY_AI_ANALYZE" || action === "REVIEW_ANALYSIS") {
+        const res = await fetch(`/api/tenders/${tenderId}/ai-analyze`, { method: "POST" });
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(json.error ?? "AI Analyze failed");
+        setActionMsg(json.fallback ? "Regex fallback used — approve below or retry when providers recover." : "Analysis complete.");
+        await load();
+      } else if (action === "BUILD_SUBMISSION_PLAN") {
+        const res = await fetch(`/api/tenders/${tenderId}/submission-plan/build`, { method: "POST" });
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(json.error ?? "Build plan failed");
+        setActionMsg(`Plan built — ${json.created ?? 0} file(s) created, ${json.skipped ?? 0} already existed.`);
+        await load();
+      } else if (action === "RUN_ENGINE") {
+        const res = await fetch(`/api/tenders/${tenderId}/engine`, { method: "POST" });
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(json.error ?? "Engine run failed");
+        setActionMsg("Engine ran successfully.");
+        await load();
+      } else if (action === "APPROVE_FALLBACK_WITH_NOTE") {
+        const note = approvalNote.trim();
+        if (!note) { setActionMsg("An approval note is required."); setActioning(false); return; }
+        const res = await fetch(`/api/tenders/${tenderId}/approve-analysis`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ note }),
+        });
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(json.error ?? "Approval failed");
+        setActionMsg("Fallback analysis approved — generation unblocked.");
+        setApprovalNote("");
+        await load();
+      } else if (action === "DOWNLOAD_FINAL_ZIP") {
+        window.location.href = `/api/tenders/${tenderId}/download`;
+      } else if (action === "LINK_VAULT_EVIDENCE") {
+        window.location.href = `/dashboard/vault`;
+      } else if (action === "COMPLETE_METADATA") {
+        document.getElementById("tender-edit-form")?.scrollIntoView({ behavior: "smooth" });
+      } else if (action === "GENERATE_REQUIRED_DOCUMENTS" || action === "REPAIR_DOCUMENT_QUALITY" || action === "AUTO_FINALIZE" || action === "RESOLVE_EXPORT_BLOCKERS" || action === "RECONCILE_OUTSIDE_PLAN_DOCS") {
+        document.getElementById("submission-plan-completeness")?.scrollIntoView({ behavior: "smooth" });
+      } else if (action === "ATTACH_OFFICIAL_ORIGINALS") {
+        document.getElementById("generated-documents")?.scrollIntoView({ behavior: "smooth" });
+      }
+    } catch (e) {
+      setActionMsg(e instanceof Error ? e.message : "Action failed");
+    } finally {
+      setActioning(false);
+    }
+  }
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -211,57 +267,42 @@ export default function TenderRecoveryCommandCenter({ tenderId }: { tenderId: st
         </div>
       </div>
 
-      {/* Regex fallback warning — prominent, non-blocking label */}
-      {data.analysisStatus.source === "REGEX_FALLBACK_AI_ERROR" && (
-        <div className="border-b border-amber-200 bg-amber-50 px-5 py-2">
-          <p className="text-xs font-semibold text-amber-800">
-            ⚠ Analysis: Regex Fallback (AI unavailable) — confidence is low, not AI-validated.
-            Generate Docs, Auto-finalize, and ZIP download are blocked until AI analysis succeeds or a human approves this fallback.
-          </p>
-        </div>
-      )}
-
       {/* Primary Next Action */}
       <div className="border-b border-gray-100 bg-blue-50 px-5 py-3">
         <p className="text-xs font-medium uppercase tracking-wide text-blue-600">Primary Next Action</p>
-        <p className="mt-0.5 text-sm font-semibold text-blue-900">{actionLabel}</p>
-      </div>
-
-      {/* Prioritized next steps — shows ordering context for key pre-generation gates */}
-      {(() => {
-        const steps: Array<{ label: string; done: boolean; warn?: boolean }> = [];
-        const src = data.analysisStatus.source;
-        const analysisOk = src === "AI" || src === "HUMAN_APPROVED_REGEX_FALLBACK";
-        const metaOk = data.metadataStatus.criticalMissing.length === 0;
-        const hasEvalCriteria = !data.metadataStatus.criticalMissing.includes("evaluationCriteria");
-        const hasPlan = data.planStatus.hasExplicitPlan;
-        const evidenceCoverage = data.evidenceStatus.coverageRatio ?? 0;
-
-        steps.push({ label: analysisOk ? "✓ AI analysis approved" : src === "REGEX_FALLBACK_AI_ERROR" ? "⚠ Retry AI Analyze (regex fallback active)" : "Run AI Analyze", done: analysisOk, warn: src === "REGEX_FALLBACK_AI_ERROR" });
-        steps.push({ label: metaOk && hasEvalCriteria ? "✓ Metadata complete (incl. evaluation criteria)" : "Complete metadata (especially evaluation criteria)", done: metaOk && hasEvalCriteria, warn: !hasEvalCriteria });
-        steps.push({ label: hasPlan ? "✓ Submission plan built" : "Build submission plan", done: hasPlan });
-        steps.push({ label: evidenceCoverage > 0 ? `✓ Evidence linked (${Math.round(evidenceCoverage * 100)}% covered)` : "Link mandatory evidence", done: evidenceCoverage > 0 });
-        steps.push({ label: data.counts.plannedMissingDocs === 0 && data.counts.generatedNarrativeDocs > 0 ? "✓ Documents generated" : "Generate required documents", done: data.counts.plannedMissingDocs === 0 && data.counts.generatedNarrativeDocs > 0 });
-
-        const anyIncomplete = steps.some((s) => !s.done);
-        if (!anyIncomplete) return null;
-
-        return (
-          <div className="border-b border-gray-100 bg-gray-50 px-5 py-3">
-            <p className="mb-1.5 text-xs font-medium uppercase tracking-wide text-gray-500">Workflow Steps (in order)</p>
-            <ol className="space-y-1">
-              {steps.map((step, i) => (
-                <li key={i} className={`flex items-center gap-2 text-xs ${step.done ? "text-green-700" : step.warn ? "text-amber-700 font-medium" : "text-gray-700"}`}>
-                  <span className={`shrink-0 h-4 w-4 rounded-full text-center leading-4 text-xs font-bold ${step.done ? "bg-green-100" : step.warn ? "bg-amber-100" : "bg-gray-200"}`}>
-                    {i + 1}
-                  </span>
-                  {step.label}
-                </li>
-              ))}
-            </ol>
+        <div className="mt-1.5 flex flex-wrap items-center gap-2">
+          <p className="text-sm font-semibold text-blue-900">{actionLabel}</p>
+          {data.primaryNextAction !== "DOWNLOAD_FINAL_ZIP" && (
+            <button
+              onClick={() => void executeAction(data.primaryNextAction)}
+              disabled={actioning}
+              className="rounded bg-blue-600 px-3 py-1 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+            >
+              {actioning ? "Working…" : "▶ Execute"}
+            </button>
+          )}
+          {data.primaryNextAction === "DOWNLOAD_FINAL_ZIP" && (
+            <a href={`/api/tenders/${tenderId}/download`} className="rounded bg-emerald-600 px-3 py-1 text-xs font-medium text-white hover:bg-emerald-700">
+              ↓ Download ZIP
+            </a>
+          )}
+        </div>
+        {data.primaryNextAction === "APPROVE_FALLBACK_WITH_NOTE" && (
+          <div className="mt-2 flex gap-2">
+            <input
+              type="text"
+              value={approvalNote}
+              onChange={(e) => setApprovalNote(e.target.value)}
+              placeholder="Approval note (required)…"
+              className="flex-1 rounded border border-blue-200 bg-white px-2 py-1 text-xs text-slate-700 placeholder:text-slate-400"
+              maxLength={200}
+            />
           </div>
-        );
-      })()}
+        )}
+        {actionMsg && (
+          <p className="mt-2 text-xs text-blue-700 font-medium">{actionMsg}</p>
+        )}
+      </div>
 
       {/* Blockers */}
       {data.blockers.length > 0 && (
