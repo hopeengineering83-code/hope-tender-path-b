@@ -101,13 +101,24 @@ export async function BidControlVerdictPanel({ tenderId }: { tenderId: string })
   // documents need reconciliation. When plan files exist, show the
   // resolved/total count derived from the canonical plan status.
   const planLabel = (() => {
-    if (planStatus === "NO_PLAN_WITH_ACTIVE_DOCS") return "Mismatch";
+    if (planStatus === "NO_PLAN_WITH_ACTIVE_DOCS") return "No plan";
+    if (planStatus === "NO_PLAN_NO_DOCS") return "No plan";
     if (planStatus === "PLAN_MATCHED") return "Plan ✓";
     if (planStatus === "PLAN_MISSING_DOCS") return "Missing";
     if (planStatus === "PLAN_EXTRA_DOCS") return "Extras";
     if (planStatus === "PLAN_NAME_MISMATCH" || planStatus === "PLAN_ORDER_MISMATCH") return "Mismatch";
+    if (!planStatus) return "No plan";
     return "—";
   })();
+  const planLabelNote = (() => {
+    if (planStatus === "NO_PLAN_WITH_ACTIVE_DOCS" || planStatus === "NO_PLAN_NO_DOCS" || !planStatus)
+      return "Build submission plan first";
+    return null;
+  })();
+  // Top reason why full proposal is blocked, for inline display
+  const fullProposalBlockReason = !fullProposalReady && fullProposalBlockers.length > 0
+    ? fullProposalBlockers[0].message
+    : null;
 
   return (
     <section className={`mb-4 rounded-2xl border p-5 shadow-sm ${verdictClass(verdict)}`}>
@@ -127,13 +138,14 @@ export async function BidControlVerdictPanel({ tenderId }: { tenderId: string })
         <div className="rounded-xl bg-white p-3" title="Strict gate — full proposal generation. Requires valid client metadata, real tender-specific matches with reviewed selections, non-zero matching score, and analysis quality not POOR.">
           <p className="text-xs text-slate-500">Full proposal</p>
           <p className={`text-lg font-bold ${fullProposalReady ? "text-emerald-700" : "text-red-700"}`}>{fullProposalReady ? "Ready" : "Blocked"}</p>
+          {fullProposalBlockReason && <p className="mt-0.5 text-[10px] text-red-600 leading-tight">{fullProposalBlockReason}</p>}
         </div>
         <div className="rounded-xl bg-white p-3" title="Lenient gate — support / compliance file generation. Allows vault fallback evidence.">
           <p className="text-xs text-slate-500">Support pkg</p>
           <p className={`text-lg font-bold ${supportPackageReady ? "text-emerald-700" : "text-red-700"}`}>{supportPackageReady ? "Ready" : "Blocked"}</p>
         </div>
-        <div className="rounded-xl bg-white p-3" title="Submission plan status (NO_PLAN_NO_DOCS / NO_PLAN_WITH_ACTIVE_DOCS / PLAN_MATCHED / PLAN_MISSING_DOCS / PLAN_EXTRA_DOCS / PLAN_ORDER_MISMATCH / PLAN_NAME_MISMATCH)."><p className="text-xs text-slate-500">Plan files</p><p className="text-lg font-bold text-slate-900">{planLabel}</p></div>
-        <div className="rounded-xl bg-white p-3" title={`Workspace rows: ${workspaceDocuments}. Final export candidates: ${finalExportCandidates}. Excluded internal/control rows: ${excludedInternalRows}.`}><p className="text-xs text-slate-500">Workspace · Final</p><p className="text-lg font-bold text-slate-900">{workspaceDocuments} · {finalExportCandidates}</p></div>
+        <div className="rounded-xl bg-white p-3" title="Submission plan status (NO_PLAN_NO_DOCS / NO_PLAN_WITH_ACTIVE_DOCS / PLAN_MATCHED / PLAN_MISSING_DOCS / PLAN_EXTRA_DOCS / PLAN_ORDER_MISMATCH / PLAN_NAME_MISMATCH)."><p className="text-xs text-slate-500">Plan files</p><p className={`text-lg font-bold ${planStatus === "PLAN_MATCHED" ? "text-emerald-700" : "text-slate-900"}`}>{planLabel}</p>{planLabelNote && <p className="mt-0.5 text-[10px] text-amber-600 leading-tight">{planLabelNote}</p>}</div>
+        <div className="rounded-xl bg-white p-3" title={`Workspace rows: ${workspaceDocuments}. Final export candidates: ${finalExportCandidates}. Excluded internal/control rows: ${excludedInternalRows}.`}><p className="text-xs text-slate-500">Workspace · Final</p><p className="text-lg font-bold text-slate-900">{workspaceDocuments} · {finalExportCandidates}</p>{workspaceDocuments > 0 && finalExportCandidates === 0 && <p className="mt-0.5 text-[10px] text-amber-600 leading-tight">review quality/classification</p>}</div>
         <div className="rounded-xl bg-white p-3"><p className="text-xs text-slate-500">Doc blockers</p><p className={`text-lg font-bold ${documentBlockersCount === 0 ? "text-emerald-700" : "text-red-700"}`}>{documentBlockersCount}</p></div>
         <div className="rounded-xl bg-white p-3"><p className="text-xs text-slate-500">Critical gaps</p><p className={`text-lg font-bold ${criticalGaps.length === 0 ? "text-emerald-700" : "text-red-700"}`}>{criticalGaps.length}</p></div>
         <div className="rounded-xl bg-white p-3" title="Canonical Export Gate result. Yes only when canonical.ok === true; advisories never flip this to No."><p className="text-xs text-slate-500">Ready for export</p><p className={`text-lg font-bold ${canonical.ok ? "text-emerald-700" : "text-red-700"}`}>{readyForExportLabel}</p></div>

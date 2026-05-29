@@ -1852,6 +1852,11 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
                             </div>
                           );
                         })()}
+                        {doc.contentSummary && /placeholder|Bid-Team to confirm|\[INSERT|\[TBC\]|drafting instruction/i.test(doc.contentSummary) && (
+                          <p className="mt-1 rounded bg-amber-50 border border-amber-200 px-2 py-1 text-xs text-amber-800">
+                            ⚠ Contains placeholders — review before export
+                          </p>
+                        )}
                         {doc.reviewNotes && (
                           <p className="mt-1 text-xs text-slate-500 italic">&ldquo;{doc.reviewNotes}&rdquo;</p>
                         )}
