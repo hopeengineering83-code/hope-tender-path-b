@@ -263,6 +263,22 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }, { status: 422 });
   }
 
+  // ── Plan-only mode: build submission plan stubs without running full AI generation ──
+  const url = new URL(req.url);
+  if (url.searchParams.get("planOnly") === "true") {
+    const plan = buildSubmissionPlan(tender);
+    const alreadyInProgress = await prisma.generatedDocument.count({
+      where: { tenderId: id, generationStatus: { in: ["GENERATING", "QUEUED"] } },
+    });
+    if (alreadyInProgress > 0) {
+      return NextResponse.json({ error: "Generation already in progress — cannot build plan while documents are generating.", code: "GENERATION_IN_PROGRESS" }, { status: 409 });
+    }
+    const plannedFiles = plannedSubmissionTargetFiles(plan);
+    const planRowsCreated = await ensurePlannedGeneratedDocumentRecords(id, plannedFiles);
+    await logAction({ userId, action: "TENDER_PLAN_BUILT", entityType: "Tender", entityId: id, description: `Submission plan built: ${planRowsCreated} planned document stub(s) created.`, metadata: { tenderId: id, planRowsCreated, plannedFileCount: plannedFiles.length } });
+    return NextResponse.json({ planBuilt: true, planRowsCreated, plannedFileCount: plannedFiles.length, message: `Submission plan built — ${planRowsCreated} planned document stub(s) created from ${plannedFiles.length} required file(s).` });
+  }
+
   // ── Regex-fallback analysis gate (Part 4) ────────────────────────────────
   // If the last engine run fell back to regex analysis because AI providers
   // failed, do not produce a final proposal unless a senior engineer has

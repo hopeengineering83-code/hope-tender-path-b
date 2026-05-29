@@ -150,6 +150,36 @@ export function looksLikeMetadataPlaceholder(value?: string | null): boolean {
   return METADATA_PLACEHOLDER_PATTERNS.some((rx) => rx.test(text));
 }
 
+/** Document-level placeholder patterns — superset of metadata patterns plus
+ *  bracket/template markers common in generated proposal text. */
+export const DOCUMENT_PLACEHOLDER_PATTERNS: RegExp[] = [
+  ...METADATA_PLACEHOLDER_PATTERNS,
+  /\[INSERT\b/i,
+  /\[ADD\b/i,
+  /\bADD HERE\b/i,
+  /\bPLACEHOLDER\b/i,
+  /\[Company Name\]/i,
+  /\[Client Name\]/i,
+  /\[DATE\]/i,
+  /\[YEAR\]/i,
+  /\[AMOUNT\]/i,
+  /\[NUMBER\]/i,
+];
+
+/**
+ * Counts placeholder occurrences in document content.
+ * Returns 0 for empty/null content (safe to call on any stored text).
+ */
+export function detectDocumentPlaceholders(content?: string | null): number {
+  if (!content || typeof content !== "string") return 0;
+  let count = 0;
+  for (const rx of DOCUMENT_PLACEHOLDER_PATTERNS) {
+    const matches = content.match(new RegExp(rx.source, rx.flags + (rx.flags.includes("g") ? "" : "g")));
+    if (matches) count += matches.length;
+  }
+  return count;
+}
+
 /**
  * Removes any metadata placeholder phrase ("Bid-Team to confirm", "TBC", etc.)
  * from a candidate string. Used by the document quality gate so generated

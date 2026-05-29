@@ -79,6 +79,20 @@ function toneClass(tone: "ok" | "warn" | "bad" | "neutral"): string {
   return "bg-slate-100 text-slate-500";
 }
 
+export function suggestOutsidePlanResolution(docName: string): string {
+  const lower = docName.toLowerCase();
+  if (/cover\s*letter|transmittal/.test(lower)) return "Reclassify to plan — cover letters typically belong in ADMIN envelope.";
+  if (/cv|curriculum\s*vitae|resume/.test(lower)) return "Reclassify to plan — CVs are usually required in the TECHNICAL envelope.";
+  if (/financial\s*proposal|price|bill\s*of\s*quantities|boq|schedule\s*of\s*rates/.test(lower)) return "Reclassify to plan — financial documents belong in FINANCIAL envelope.";
+  if (/technical\s*proposal|methodology|approach|work\s*plan|gantt/.test(lower)) return "Reclassify to plan — technical documents belong in TECHNICAL envelope.";
+  if (/certificate|registration|license|incorporation/.test(lower)) return "Reclassify to plan — legal/registration documents belong in ADMIN envelope.";
+  if (/audit|financial\s*statement|balance\s*sheet|income\s*statement/.test(lower)) return "Reclassify to plan — audited financials belong in FINANCIAL envelope.";
+  if (/bank\s*guarantee|bid\s*bond|bid\s*security/.test(lower)) return "Reclassify to plan — bid security belongs in ADMIN envelope.";
+  if (/declaration|affidavit|statement\s*of/.test(lower)) return "Reclassify to plan — declarations typically belong in ADMIN envelope.";
+  if (/draft|wip|internal|control|test/.test(lower)) return "Mark as control / not exportable — appears to be an internal draft.";
+  return "Review: reclassify to plan if submission-required, or exclude if internal/control document.";
+}
+
 function RowActionButton({ label, busy, disabled, onClick }: { label: string; busy: boolean; disabled: boolean; onClick: () => void }) {
   return (
     <button
@@ -107,6 +121,24 @@ export function SubmissionPlanCompletenessPanel({ tenderId }: { tenderId: string
   const [showHistorical, setShowHistorical] = useState(false);
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [actionMsg, setActionMsg] = useState<string | null>(null);
+  const [buildingPlan, setBuildingPlan] = useState(false);
+  const [planBuildMsg, setPlanBuildMsg] = useState<string | null>(null);
+
+  async function buildPlan() {
+    setBuildingPlan(true);
+    setPlanBuildMsg(null);
+    try {
+      const res = await fetch(`/api/tenders/${tenderId}/generate?planOnly=true`, { method: "POST" });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error ?? `Plan build failed (${res.status})`);
+      setPlanBuildMsg(json.message ?? "Submission plan built.");
+      await load();
+    } catch (err) {
+      setPlanBuildMsg(err instanceof Error ? err.message : "Failed to build plan");
+    } finally {
+      setBuildingPlan(false);
+    }
+  }
 
   async function load() {
     setLoading(true);
@@ -227,9 +259,20 @@ export function SubmissionPlanCompletenessPanel({ tenderId }: { tenderId: string
       )}
 
       {!data.summary.hasExplicitScope && (
-        <p className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
-          No explicit submission plan detected for this tender (no exactFileNaming / exactFileOrder / per-requirement exactFileName). Outside-plan generated rows are listed below for visibility, but no missing-required check applies until the plan is extracted.
-        </p>
+        <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+          <p>No explicit submission plan detected (no exactFileNaming / exactFileOrder / per-requirement exactFileName). Outside-plan generated rows are listed below for visibility, but no missing-required check applies until the plan is extracted.</p>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => void buildPlan()}
+              disabled={buildingPlan}
+              className="rounded bg-amber-700 px-3 py-1 text-xs font-semibold text-white hover:bg-amber-800 disabled:opacity-50"
+            >
+              {buildingPlan ? "Building plan…" : "Build Submission Plan"}
+            </button>
+            {planBuildMsg && <span className="text-amber-900">{planBuildMsg}</span>}
+          </div>
+        </div>
       )}
 
       <div className="mt-4 overflow-x-auto">
@@ -262,7 +305,12 @@ export function SubmissionPlanCompletenessPanel({ tenderId }: { tenderId: string
                     <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${toneClass(badge.tone)}`}>{badge.label}</span>
                     {row.officialOriginal && <p className="mt-1 text-[10px] text-amber-600">Official original</p>}
                   </td>
-                  <td className="px-2 py-2 text-slate-600">{row.recommendedAction}</td>
+                  <td className="px-2 py-2 text-slate-600">
+                    {row.recommendedAction}
+                    {isOutsidePlan && (
+                      <p className="mt-1 text-[10px] text-amber-700">{suggestOutsidePlanResolution(row.exactFileName ?? row.name)}</p>
+                    )}
+                  </td>
                   <td className="px-2 py-2">
                     {canAct && row.documentId ? (
                       <div className="flex flex-col gap-1">
