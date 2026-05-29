@@ -5,14 +5,13 @@ import { assessTenderAnalysisQuality } from "../lib/analysis-quality";
 import { assessMatchingQuality } from "../lib/matching-quality";
 import { ensureCompanyForUser } from "../lib/company-workspace";
 import { getCompanyIngestionReadiness } from "../lib/company-ingestion-readiness";
+import { detectAnalysisSourceWithApproval } from "../lib/engine/analysis-source";
 
-function analysisSourceFromNotes(notes?: string | null) {
-  const text = notes ?? "";
-  const line = text.split(/\n+/).find((item) => item.toLowerCase().startsWith("analysis source:"));
-  if (!line) return { label: "Unknown", risk: "MEDIUM", detail: "No persisted analysis-source line was found. Re-run Engine after this update if needed." };
-  if (/analysis source:\s*ai/i.test(line)) return { label: "AI", risk: "LOW", detail: line.replace(/^Analysis source:\s*/i, "") };
-  if (/regex fallback/i.test(line)) return { label: "Regex fallback", risk: "HIGH", detail: line.replace(/^Analysis source:\s*/i, "") };
-  return { label: "Unknown", risk: "MEDIUM", detail: line };
+function analysisSourceSummary(source: Awaited<ReturnType<typeof detectAnalysisSourceWithApproval>>) {
+  if (source === "AI") return { label: "AI", risk: "LOW" as const, detail: "Analysis produced by AI provider." };
+  if (source === "HUMAN_APPROVED_REGEX_FALLBACK") return { label: "Regex fallback (approved)", risk: "MEDIUM" as const, detail: "Regex fallback was used, but a human reviewer has approved it as sufficient." };
+  if (source === "REGEX_FALLBACK_AI_ERROR") return { label: "Regex fallback", risk: "HIGH" as const, detail: "AI providers failed or were unavailable — regex extraction was used. Review carefully before submission." };
+  return { label: "Unknown", risk: "MEDIUM" as const, detail: "Analysis source not yet determined. Run AI Analyze to classify the source." };
 }
 
 export async function AnalysisQualityPanel({ tenderId }: { tenderId: string }) {
@@ -68,7 +67,8 @@ export async function AnalysisQualityPanel({ tenderId }: { tenderId: string }) {
     selectedReviewedProjects: tender.projectMatches.filter((m) => m.isSelected && m.project?.trustLevel === "REVIEWED").length,
   });
 
-  const analysisSource = analysisSourceFromNotes(tender.notes);
+  const rawSource = await detectAnalysisSourceWithApproval(prisma, tenderId, tender).catch(() => "UNKNOWN" as const);
+  const analysisSource = analysisSourceSummary(rawSource);
   const ready = quality.severity !== "POOR" && analysisSource.risk !== "HIGH";
   const sourceRiskClass = analysisSource.risk === "LOW" ? "bg-emerald-100 text-emerald-700" : analysisSource.risk === "HIGH" ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-700";
 
