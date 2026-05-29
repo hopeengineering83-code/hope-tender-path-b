@@ -471,6 +471,7 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
   const [reviewingDocId, setReviewingDocId] = useState<string | null>(null);
   const [submittingReviewDocId, setSubmittingReviewDocId] = useState<string | null>(null);
   const [reviewNote, setReviewNote] = useState("");
+  const [batchApproving, setBatchApproving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [fileQueue, setFileQueue] = useState<UploadItem[]>([]);
@@ -939,6 +940,29 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
       setToast({ message: "Network error saving review", type: "error" });
     } finally {
       setSubmittingReviewDocId(null);
+    }
+  }
+
+  async function handleBatchApproveAll() {
+    const pending = tender.generatedDocuments.filter((d) => d.reviewStatus !== "READY_FOR_EXPORT" && d.generationStatus === "GENERATED").length;
+    if (pending === 0) { setToast({ message: "All generated documents are already ready for export.", type: "success" }); return; }
+    if (!confirm(`Mark all ${pending} generated document(s) as Ready for Export? Use this only after reviewing the package for correctness.`)) return;
+    setBatchApproving(true);
+    try {
+      const res = await fetch(`/api/tenders/${tender.id}/documents/bulk-review`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reviewStatus: "READY_FOR_EXPORT", skipAlreadyAtTarget: true, reviewNotes: "Batch approved by bid manager." }),
+      });
+      const data = await res.json().catch(() => ({})) as { updated?: number; error?: string };
+      if (!res.ok) { setToast({ message: data.error ?? "Batch approval failed", type: "error" }); return; }
+      setToast({ message: `${data.updated ?? 0} document(s) marked Ready for Export.`, type: "success" });
+      const refreshed = await fetch(`/api/tenders/${tender.id}`);
+      if (refreshed.ok) { setTender(await refreshed.json() as Tender); }
+    } catch {
+      setToast({ message: "Network error during batch approval", type: "error" });
+    } finally {
+      setBatchApproving(false);
     }
   }
 
@@ -1885,9 +1909,21 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
           )}
 
           <div id="generated-documents" className="rounded-2xl border bg-white p-6 shadow-sm">
-            <div className="flex items-center justify-between mb-3">
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
               <h2 className="text-lg font-semibold text-slate-900">Generated outputs</h2>
-              <button onClick={() => downloadDoc("compliance")} className="text-xs text-blue-600 hover:underline">↓ Compliance Report</button>
+              <div className="flex items-center gap-2">
+                {tender.generatedDocuments.some((d) => d.generationStatus === "GENERATED" && d.reviewStatus !== "READY_FOR_EXPORT") && (
+                  <button
+                    onClick={() => void handleBatchApproveAll()}
+                    disabled={batchApproving}
+                    className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+                    title="Mark all generated documents as Ready for Export in one action"
+                  >
+                    {batchApproving ? "Approving…" : "✓ Approve All"}
+                  </button>
+                )}
+                <button onClick={() => downloadDoc("compliance")} className="text-xs text-blue-600 hover:underline">↓ Compliance Report</button>
+              </div>
             </div>
             {tender.generatedDocuments.length === 0 ? (
               <p className="text-sm text-slate-400">Run the engine then click &quot;Generate Docs&quot; to create submission-ready files.</p>
