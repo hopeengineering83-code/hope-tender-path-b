@@ -610,7 +610,17 @@ export default function CompanyPage() {
           )}
           <div className="rounded-2xl border bg-white shadow-sm overflow-hidden">
             {(company.experts||[]).length===0 ? (
-              <p className="text-sm text-slate-400 py-10 text-center">No experts yet.</p>
+              <div className="flex flex-col items-center py-12 px-6 text-center">
+                <span className="text-4xl mb-3" aria-hidden="true">👤</span>
+                <h3 className="text-sm font-semibold text-slate-700 mb-1">No experts in your knowledge vault</h3>
+                <p className="text-xs text-slate-400 max-w-xs mb-4">Import CVs to add experts. They&apos;ll be automatically matched to tenders.</p>
+                <button
+                  onClick={() => setTab("documents")}
+                  className="rounded-lg bg-black px-4 py-2 text-xs text-white hover:bg-slate-800"
+                >
+                  Upload expert CVs
+                </button>
+              </div>
             ) : filteredExperts.length === 0 ? (
               <p className="text-sm text-slate-400 py-10 text-center">No experts match your search.</p>
             ) : (
@@ -682,7 +692,17 @@ export default function CompanyPage() {
           )}
           <div className="rounded-2xl border bg-white shadow-sm overflow-hidden">
             {(company.projects||[]).length===0 ? (
-              <p className="text-sm text-slate-400 py-10 text-center">No projects yet.</p>
+              <div className="flex flex-col items-center py-12 px-6 text-center">
+                <span className="text-4xl mb-3" aria-hidden="true">📁</span>
+                <h3 className="text-sm font-semibold text-slate-700 mb-1">No projects in your portfolio</h3>
+                <p className="text-xs text-slate-400 max-w-xs mb-4">Add completed projects as references. They&apos;ll be matched to tender requirements.</p>
+                <button
+                  onClick={() => document.querySelector<HTMLFormElement>("form")?.scrollIntoView({ behavior: "smooth" })}
+                  className="rounded-lg bg-black px-4 py-2 text-xs text-white hover:bg-slate-800"
+                >
+                  Add your first project
+                </button>
+              </div>
             ) : filteredProjects.length === 0 ? (
               <p className="text-sm text-slate-400 py-10 text-center">No projects match your search.</p>
             ) : (
