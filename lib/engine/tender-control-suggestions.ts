@@ -42,7 +42,15 @@ export type ControlSuggestionCode =
   | "AI_PROVIDERS_NOT_CONFIGURED"
   | "MISSING_OFFICIAL_ORIGINALS"
   | "QUALITY_FAILED_DOCS"
-  | "SUBMISSION_PLAN_NOT_BUILT";
+  | "SUBMISSION_PLAN_NOT_BUILT"
+  // I — weak-match feeds. Selected expert/project matches with a score
+  // below the strong threshold are "selected but weak coverage" and must
+  // not be treated as fully covered. JV mitigation suggestions fire when
+  // no strong candidate exists in the vault at all.
+  | "WEAK_EXPERT_COVERAGE"
+  | "WEAK_PROJECT_COVERAGE"
+  | "JV_MITIGATION_NEEDED_EXPERTS"
+  | "JV_MITIGATION_NEEDED_PROJECTS";
 
 export type SuggestedControl = {
   /** Stable suggestion code — used by the accept/reject endpoint to dedupe. */
@@ -77,6 +85,15 @@ export type SuggestionDerivationInput = {
   counts: { finalExportCandidates: number; qualityFailedCandidates: number; outsidePlanRows: number };
   providerStatus: { hasAnyProvider: boolean; hasCooledDownProvider: boolean };
   officialOriginalStatus?: { required: number; attached: number };
+  /** Weak-match feed (I) — optional so existing callers keep working. */
+  weakMatchReport?: {
+    selectedButWeakExperts: number;
+    selectedButWeakProjects: number;
+    needsJVExperts: boolean;
+    needsJVProjects: boolean;
+    selectedButWeakExpertLabels: string[];
+    selectedButWeakProjectLabels: string[];
+  };
 };
 
 const REGEX_FALLBACK_SOURCES = new Set([
@@ -252,6 +269,55 @@ export function deriveControlSuggestions(input: SuggestionDerivationInput): Sugg
     }));
   }
 
+  // 13-16 — weak-match feeds (I). Selected-but-weak matches must not be
+  // treated as fully covered. JV mitigation fires when the vault simply
+  // does not contain a strong candidate for the required disciplines.
+  if (input.weakMatchReport) {
+    const w = input.weakMatchReport;
+    if (w.selectedButWeakExperts > 0) {
+      const labels = w.selectedButWeakExpertLabels.length > 0 ? ` (${w.selectedButWeakExpertLabels.join(", ")})` : "";
+      out.push(mkSuggestion({
+        code: "WEAK_EXPERT_COVERAGE",
+        type: "RISK",
+        title: `${w.selectedButWeakExperts} selected expert(s) have weak scope coverage`,
+        description: `Selected experts${labels} score below the strong-coverage threshold for this tender's disciplines. Evaluator scoring will be weak; consider replacing them with stronger reviewed experts from the vault or adding a JV/subcontract for the missing disciplines.`,
+        severity: "HIGH",
+        nextAction: "Open Knowledge Review and replace the weak selections, or add a JV/subcontractor for the missing disciplines.",
+      }));
+    }
+    if (w.selectedButWeakProjects > 0) {
+      const labels = w.selectedButWeakProjectLabels.length > 0 ? ` (${w.selectedButWeakProjectLabels.join(", ")})` : "";
+      out.push(mkSuggestion({
+        code: "WEAK_PROJECT_COVERAGE",
+        type: "RISK",
+        title: `${w.selectedButWeakProjects} selected project reference(s) have weak scope coverage`,
+        description: `Selected project references${labels} score below the strong-coverage threshold for this tender. Evaluator experience-fit scoring will be weak; replace them with closer-fitting reviewed projects or add a JV/subcontract.`,
+        severity: "HIGH",
+        nextAction: "Open Knowledge Review and replace the weak project selections, or add a JV/subcontractor.",
+      }));
+    }
+    if (w.needsJVExperts) {
+      out.push(mkSuggestion({
+        code: "JV_MITIGATION_NEEDED_EXPERTS",
+        type: "TASK",
+        title: "Consider a JV / subcontract for missing expert disciplines",
+        description: "The tender requires expert disciplines but the company vault has NO strong-coverage expert match for them. A JV with (or subcontract to) a firm carrying those disciplines is the realistic mitigation; otherwise the bid carries a high capability risk.",
+        severity: "MEDIUM",
+        nextAction: "Identify a JV / subcontract partner whose vault covers the missing expert disciplines and add a JV-mitigation note.",
+      }));
+    }
+    if (w.needsJVProjects) {
+      out.push(mkSuggestion({
+        code: "JV_MITIGATION_NEEDED_PROJECTS",
+        type: "TASK",
+        title: "Consider a JV / subcontract for missing project references",
+        description: "The tender requires similar-experience project references but the company vault has NO strong-coverage reference. A JV / subcontract is the realistic mitigation.",
+        severity: "MEDIUM",
+        nextAction: "Identify a JV / subcontract partner whose vault carries similar past projects and add a JV-mitigation note.",
+      }));
+    }
+  }
+
   return out;
 }
 
@@ -271,6 +337,8 @@ export function isHighConfidenceSuggestion(s: SuggestedControl): boolean {
     "NO_ACTIVE_EXPORT_CANDIDATES",
     "MISSING_OFFICIAL_ORIGINALS",
     "QUALITY_FAILED_DOCS",
+    "WEAK_EXPERT_COVERAGE",
+    "WEAK_PROJECT_COVERAGE",
   ];
   return highConfidence.includes(s.code);
 }

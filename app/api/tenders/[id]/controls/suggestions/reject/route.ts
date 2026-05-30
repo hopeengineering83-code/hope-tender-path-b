@@ -35,6 +35,11 @@ const KNOWN_CODES = new Set([
   "MISSING_OFFICIAL_ORIGINALS",
   "QUALITY_FAILED_DOCS",
   "SUBMISSION_PLAN_NOT_BUILT",
+  // I — weak-match feeds
+  "WEAK_EXPERT_COVERAGE",
+  "WEAK_PROJECT_COVERAGE",
+  "JV_MITIGATION_NEEDED_EXPERTS",
+  "JV_MITIGATION_NEEDED_PROJECTS",
 ]);
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
