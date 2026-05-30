@@ -798,6 +798,51 @@ async function bootstrap(client: PrismaClient): Promise<void> {
     }
   }
 
+  // ── Add FK cascade constraints to tables created without them. ────────────
+  // These DO blocks are idempotent: they check pg_constraint before adding.
+  const fkStatements = [
+    // G3 — MatchScoreBreakdown.tenderId → Tender (CASCADE)
+    `DO $$ BEGIN
+       IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'MatchScoreBreakdown_tenderId_fkey') THEN
+         ALTER TABLE "MatchScoreBreakdown" ADD CONSTRAINT "MatchScoreBreakdown_tenderId_fkey"
+           FOREIGN KEY ("tenderId") REFERENCES "Tender"("id") ON DELETE CASCADE;
+       END IF;
+     END $$`,
+    // G4 — EvaluatorObjection.tenderId → Tender (CASCADE)
+    `DO $$ BEGIN
+       IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'EvaluatorObjection_tenderId_fkey') THEN
+         ALTER TABLE "EvaluatorObjection" ADD CONSTRAINT "EvaluatorObjection_tenderId_fkey"
+           FOREIGN KEY ("tenderId") REFERENCES "Tender"("id") ON DELETE CASCADE;
+       END IF;
+     END $$`,
+    // G5 — SectionEvidenceMap.tenderId → Tender (CASCADE)
+    `DO $$ BEGIN
+       IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'SectionEvidenceMap_tenderId_fkey') THEN
+         ALTER TABLE "SectionEvidenceMap" ADD CONSTRAINT "SectionEvidenceMap_tenderId_fkey"
+           FOREIGN KEY ("tenderId") REFERENCES "Tender"("id") ON DELETE CASCADE;
+       END IF;
+     END $$`,
+    // G6 — AiJob.tenderId → Tender (SET NULL — tenderId is nullable)
+    `DO $$ BEGIN
+       IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'AiJob_tenderId_fkey') THEN
+         ALTER TABLE "AiJob" ADD CONSTRAINT "AiJob_tenderId_fkey"
+           FOREIGN KEY ("tenderId") REFERENCES "Tender"("id") ON DELETE SET NULL;
+       END IF;
+     END $$`,
+    // G8 — PricingWorkbook.tenderId → Tender (CASCADE)
+    `DO $$ BEGIN
+       IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'PricingWorkbook_tenderId_fkey') THEN
+         ALTER TABLE "PricingWorkbook" ADD CONSTRAINT "PricingWorkbook_tenderId_fkey"
+           FOREIGN KEY ("tenderId") REFERENCES "Tender"("id") ON DELETE CASCADE;
+       END IF;
+     END $$`,
+  ];
+  for (const sql of fkStatements) {
+    try { await client.$executeRawUnsafe(sql); } catch (e) {
+      console.warn("[bootstrap] FK constraint skipped:", e instanceof Error ? e.message : e);
+    }
+  }
+
   // ── seed roles ────────────────────────────────────────────────────────────
   const roleCount = await client.role.count();
   if (roleCount === 0) {

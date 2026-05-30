@@ -574,34 +574,8 @@ export async function getFinalSubmissionReadiness(
     ? 0
     : tender.requirements.filter((r) => (r.sourceConfidence ?? 0) > 0 || (r.sectionReference ?? "").trim().length > 0).length / tender.requirements.length;
 
-  // ── Readiness scoring (Part 3) — weighted, with hard caps. ───────────────
-  const readinessScoreResult = computeReadinessScore({
-    analysisSource,
-    metadataCompletenessRatio: metadata.overallRatio,
-    metadataInvalidCount: metadata.invalidFields.length,
-    sourceReferenceCoverage,
-    // The canonical helper does not run a full evidence-coverage pass on
-    // every call (that would re-load the company vault). The readiness
-    // Count MANDATORY requirements covered by at least one REVIEWED compliance-matrix
-    // row (FULL or SUBSTANTIAL). Falls back to sourceConfidence heuristic when no
-    // matrix rows exist so partial analysis still contributes a signal.
-    evidenceCoverage: tender.requirements.length === 0 ? 0 : tender.requirements.filter((r) => r.priority === "MANDATORY" && (
-      (r.complianceMatrixRows ?? []).some((row) => row.supportLevel === "FULL" || row.supportLevel === "SUBSTANTIAL") ||
-      ((r.sourceConfidence ?? 0) > 0 && (r.complianceMatrixRows ?? []).length === 0)
-    )).length / Math.max(1, tender.requirements.filter((r) => r.priority === "MANDATORY").length),
-    requiredDocumentsTotal: requiredPlanCount,
-    requiredDocumentsSatisfied: Math.max(0, requiredPlanCount - missingPlan.length),
-    outsidePlanDocuments: extraPlan.length,
-    qualityFailedDocuments: qualityFailed,
-    finalExportCandidatesCount: finalCandidates.length,
-    readyForExportCount: finalCandidates.filter((d) => /READY_FOR_EXPORT|APPROVED/i.test(d.reviewStatus ?? "")).length,
-    finalExportGateOk: readiness.ok && documentBlockers.length === 0 && tenderLevelBlockers.length === 0,
-  });
-
-  // Surface a tender-level blocker when the canonical gate would otherwise
-  // pass but the metadata gate is failing. This is the only place where the
-  // canonical helper adds *new* tender-level blockers on top of
-  // checkTenderLevelExportBlockers — every other case is upstream.
+  // ── Tender-level blockers (computed before readiness score so the gate
+  //    flag is accurate). ─────────────────────────────────────────────────────
   if (metadata.blockingForGeneration) {
     tenderLevelBlockers.push({
       category: "METADATA_INCOMPLETE_FOR_FINAL_GENERATION",
@@ -640,6 +614,32 @@ export async function getFinalSubmissionReadiness(
       recommendedAction: "Open the Evaluator Objections panel, resolve each HIGH objection with evidence, then re-run the export gate.",
     });
   }
+
+  // ── Readiness scoring (Part 3) — weighted, with hard caps. ───────────────
+  // NOTE: all tender-level blockers must be pushed above this call so that
+  // finalExportGateOk correctly reflects the blocked state.
+  const readinessScoreResult = computeReadinessScore({
+    analysisSource,
+    metadataCompletenessRatio: metadata.overallRatio,
+    metadataInvalidCount: metadata.invalidFields.length,
+    sourceReferenceCoverage,
+    // The canonical helper does not run a full evidence-coverage pass on
+    // every call (that would re-load the company vault). The readiness
+    // Count MANDATORY requirements covered by at least one REVIEWED compliance-matrix
+    // row (FULL or SUBSTANTIAL). Falls back to sourceConfidence heuristic when no
+    // matrix rows exist so partial analysis still contributes a signal.
+    evidenceCoverage: tender.requirements.length === 0 ? 0 : tender.requirements.filter((r) => r.priority === "MANDATORY" && (
+      (r.complianceMatrixRows ?? []).some((row) => row.supportLevel === "FULL" || row.supportLevel === "SUBSTANTIAL") ||
+      ((r.sourceConfidence ?? 0) > 0 && (r.complianceMatrixRows ?? []).length === 0)
+    )).length / Math.max(1, tender.requirements.filter((r) => r.priority === "MANDATORY").length),
+    requiredDocumentsTotal: requiredPlanCount,
+    requiredDocumentsSatisfied: Math.max(0, requiredPlanCount - missingPlan.length),
+    outsidePlanDocuments: extraPlan.length,
+    qualityFailedDocuments: qualityFailed,
+    finalExportCandidatesCount: finalCandidates.length,
+    readyForExportCount: finalCandidates.filter((d) => /READY_FOR_EXPORT|APPROVED/i.test(d.reviewStatus ?? "")).length,
+    finalExportGateOk: readiness.ok && documentBlockers.length === 0 && tenderLevelBlockers.length === 0,
+  });
 
   const summary: FinalReadinessSummary = {
     totalBlockers: documentBlockers.length + tenderLevelBlockers.length,

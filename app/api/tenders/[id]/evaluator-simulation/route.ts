@@ -53,17 +53,25 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   const { id } = await params;
   await prismaReady;
 
-  const tender = await prisma.tender.findFirst({
-    where: { id, userId: actor.id },
-    include: {
-      requirements: { orderBy: { createdAt: "asc" } },
-      complianceGaps: { where: { isResolved: false }, orderBy: { createdAt: "desc" } },
-      expertMatches: { where: { isSelected: true }, include: { expert: true }, orderBy: { score: "desc" } },
-      projectMatches: { where: { isSelected: true }, include: { project: true }, orderBy: { score: "desc" } },
-      generatedDocuments: { where: { generationStatus: { not: "SUPERSEDED" } }, orderBy: { exactOrder: "asc" } },
-    },
-  });
+  const [tender, latestProposalVersion] = await Promise.all([
+    prisma.tender.findFirst({
+      where: { id, userId: actor.id },
+      include: {
+        requirements: { orderBy: { createdAt: "asc" } },
+        complianceGaps: { where: { isResolved: false }, orderBy: { createdAt: "desc" } },
+        expertMatches: { where: { isSelected: true }, include: { expert: true }, orderBy: { score: "desc" } },
+        projectMatches: { where: { isSelected: true }, include: { project: true }, orderBy: { score: "desc" } },
+        generatedDocuments: { where: { generationStatus: { not: "SUPERSEDED" } }, orderBy: { exactOrder: "asc" } },
+      },
+    }),
+    prisma.proposalVersion.findFirst({
+      where: { tenderId: id },
+      orderBy: { version: "desc" },
+      select: { version: true },
+    }),
+  ]);
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
+  const currentProposalVersion = latestProposalVersion?.version ?? 1;
 
   const proposalContext = generatedDocTextFromTender(tender);
   if (!proposalContext || proposalContext.trim().length < 500) {
@@ -183,6 +191,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       await tx.evaluatorObjection.createMany({
         data: result.topObjections.map((o) => ({
           tenderId: id,
+          proposalVersion: currentProposalVersion,
           severity: o.severity,
           category: inferObjectionCategory(o.persona, o.detail),
           title: o.title.slice(0, 300),
