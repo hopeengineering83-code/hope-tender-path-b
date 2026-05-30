@@ -8,6 +8,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 
 type Status =
   | "GENERATED"
@@ -120,6 +121,7 @@ export function suggestOutsidePlanResolution(fileName: string): string {
 }
 
 export function SubmissionPlanCompletenessPanel({ tenderId }: { tenderId: string }) {
+  const router = useRouter();
   const [data, setData] = useState<Response | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -163,6 +165,7 @@ export function SubmissionPlanCompletenessPanel({ tenderId }: { tenderId: string
       if (!res.ok) throw new Error(json.error ?? `Action failed (${res.status})`);
       setActionMsg(`Done — ${json.detail ?? action}.`);
       await load();
+      router.refresh();
     } catch (err) {
       setActionMsg(err instanceof Error ? err.message : "Action failed");
     } finally {
@@ -179,6 +182,7 @@ export function SubmissionPlanCompletenessPanel({ tenderId }: { tenderId: string
       if (!res.ok) throw new Error(json.error ?? `Build failed (${res.status})`);
       setActionMsg(`Submission plan built — ${json.created ?? 0} planned file(s) created, ${json.skipped ?? 0} already existed.`);
       await load();
+      router.refresh();
     } catch (err) {
       setActionMsg(err instanceof Error ? err.message : "Build plan failed");
     } finally {

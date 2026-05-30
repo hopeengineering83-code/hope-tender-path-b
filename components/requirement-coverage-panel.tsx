@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { useRouter } from "next/navigation";
 
 type SupportLevel = "FULL" | "SUBSTANTIAL" | "PARTIAL" | "NONE" | "NOT_APPLICABLE";
 
@@ -72,6 +73,7 @@ type TraceabilitySummary = {
 };
 
 export default function RequirementCoveragePanel({ tenderId }: { tenderId: string }) {
+  const router = useRouter();
   const [data, setData] = useState<CoverageData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -134,6 +136,7 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
       }
       setLinkAction(key, { pending: false, error: null, success: "Confirmed" });
       void load();
+      router.refresh();
     } catch {
       setLinkAction(key, { pending: false, error: "Network error", success: null });
     }
@@ -159,6 +162,7 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
         return;
       }
       setLinkAction(key, { pending: false, error: null, success: "Rejected" });
+      router.refresh();
     } catch {
       setLinkAction(key, { pending: false, error: "Network error", success: null });
     }

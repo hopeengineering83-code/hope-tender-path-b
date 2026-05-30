@@ -342,6 +342,7 @@ model Tender {
   exportPackages        ExportPackage[]
   evaluatorObjections   EvaluatorObjection[]
   matchScoreBreakdowns  MatchScoreBreakdown[]
+  aiJobs                AiJob[]
   sectionEvidenceMaps   SectionEvidenceMap[]
   proposalVersions      ProposalVersion[]
   pricingWorkbook       PricingWorkbook?
@@ -736,6 +737,7 @@ model SectionEvidenceMap {
 model AiJob {
   id            String      @id @default(uuid())
   tenderId      String?
+  tender        Tender?     @relation(fields: [tenderId], references: [id], onDelete: SetNull)
   userId        String
   // jobType: "PROPOSAL_GENERATION" | "AI_REMATCH" | "EVALUATOR_SIM" |
   // "COPILOT_DEEP_ANALYSIS" | "PROFILE_FACT_EXTRACTION"

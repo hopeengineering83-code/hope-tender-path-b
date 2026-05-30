@@ -35,12 +35,20 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 
   const note = typeof body.bidOutcomeNote === "string" ? body.bidOutcomeNote.trim() || null : null;
 
+  const outcomeStatus: Record<string, string> = {
+    WON: "CLOSED_WON",
+    LOST: "CLOSED_LOST",
+    WITHDRAWN: "WITHDRAWN",
+    PENDING: "ACTIVE",
+  };
+
   const tender = await prisma.tender.update({
     where: { id },
     data: {
       bidOutcome: outcome,
       bidOutcomeNote: note,
       bidOutcomeAt: outcome ? new Date() : null,
+      ...(outcome ? { status: outcomeStatus[outcome] } : { status: "ACTIVE" }),
     },
     select: {
       id: true, title: true, status: true, bidOutcome: true,
