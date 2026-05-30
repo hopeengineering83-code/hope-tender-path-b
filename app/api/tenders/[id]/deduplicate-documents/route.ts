@@ -7,6 +7,7 @@ import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../.
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { logAction } from "../../../../../lib/audit";
 import { MUTATION_RATE_LIMIT, rateLimit } from "../../../../../lib/rate-limit";
+import { planDeduplication } from "../../../../../lib/engine/generated-document-dedup-planner";
 
 export const dynamic = "force-dynamic";
 
@@ -33,57 +34,46 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     orderBy: [{ updatedAt: "desc" }],
     select: {
       id: true, name: true, exactFileName: true, documentType: true,
-      reviewStatus: true, generationStatus: true, updatedAt: true,
-      fileContent: true, storagePath: true, exactOrder: true,
+      reviewStatus: true, generationStatus: true, validationStatus: true,
+      updatedAt: true, fileContent: true, storagePath: true, exactOrder: true,
     },
   });
 
-  // Group by dedup key: normalized name + documentType
-  function dedupKey(doc: typeof docs[0]): string {
-    const nameKey = (doc.exactFileName ?? doc.name).trim().toLowerCase().replace(/\s+\d+\.docx?$/i, "");
-    const typeKey = (doc.documentType ?? "").toUpperCase();
-    return `${nameKey}||${typeKey}`;
-  }
+  // Delegate the grouping + keep/supersede decisions to the pure planner
+  // module so the same logic is unit-testable across canonical-name variants.
+  const plan = planDeduplication(docs);
 
-  const groups = new Map<string, typeof docs>();
-  for (const doc of docs) {
-    const key = dedupKey(doc);
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key)!.push(doc);
-  }
-
-  const toSupersede: string[] = [];
-  for (const [, group] of groups) {
-    if (group.length <= 1) continue;
-    // Keep the best: prefer rows with fileContent or storagePath, then latest
-    const [keep, ...supersede] = group.sort((a, b) => {
-      const aHasContent = (a.fileContent ? 1 : 0) + (a.storagePath ? 1 : 0);
-      const bHasContent = (b.fileContent ? 1 : 0) + (b.storagePath ? 1 : 0);
-      if (bHasContent !== aHasContent) return bHasContent - aHasContent;
-      return b.updatedAt.getTime() - a.updatedAt.getTime();
-    });
-    void keep; // explicitly used as the kept row (not superseded)
-    toSupersede.push(...supersede.map((d) => d.id));
-  }
-
-  if (!dryRun && toSupersede.length > 0) {
+  if (!dryRun && plan.supersedeIds.length > 0) {
     await prisma.generatedDocument.updateMany({
-      where: { id: { in: toSupersede } },
+      where: { id: { in: plan.supersedeIds } },
       data: { generationStatus: "SUPERSEDED", validationStatus: "SUPERSEDED" },
     });
+    // Audit metadata carries the per-row reason so a reviewer can audit WHY
+    // each historical row was retired.
+    const supersededDecisions = plan.decisions.filter((d) => d.action === "SUPERSEDE");
     await logAction({
       userId: actor.id,
       action: "DOCUMENT_DEDUPLICATE",
       entityType: "Tender",
       entityId: tenderId,
-      description: `Superseded ${toSupersede.length} duplicate document(s).`,
+      description: `Superseded ${plan.supersedeIds.length} duplicate document(s) across ${plan.summary.duplicateGroups} canonical group(s).`,
+      metadata: {
+        tenderId,
+        duplicateGroups: plan.summary.duplicateGroups,
+        supersededCount: plan.summary.supersededRows,
+        keptCount: plan.summary.keptRows,
+        decisions: supersededDecisions.map((d) => ({ id: d.id, groupKey: d.groupKey, reason: d.reason })),
+      },
     });
   }
 
   return NextResponse.json({
     success: true,
     dryRun,
-    duplicatesFound: toSupersede.length,
-    supersededIds: dryRun ? toSupersede : [],
+    duplicatesFound: plan.supersedeIds.length,
+    supersededIds: dryRun ? plan.supersedeIds : [],
+    summary: plan.summary,
+    // Surface the per-row plan when dryRun so the operator can preview.
+    plan: dryRun ? plan.decisions : undefined,
   });
 }
