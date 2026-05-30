@@ -110,9 +110,10 @@ export function ExportReadinessPanel({ tenderId }: { tenderId: string }) {
   const [repairingSource, setRepairingSource] = useState(false);
   const [reclassifying, setReclassifying] = useState(false);
   const [deduplicating, setDeduplicating] = useState(false);
+  const [repairingAssets, setRepairingAssets] = useState(false);
   const fileInputs = useRef<Record<string, HTMLInputElement | null>>({});
 
-  const busy = loading || repairing || linkingVault || supersedingOutsidePlan || autoFinalizing || generatingMissing || Boolean(attachingDocId) || Boolean(resolvingAdvisory) || retryingAnalysis || repairingSource || reclassifying || deduplicating;
+  const busy = loading || repairing || linkingVault || supersedingOutsidePlan || autoFinalizing || generatingMissing || Boolean(attachingDocId) || Boolean(resolvingAdvisory) || retryingAnalysis || repairingSource || reclassifying || deduplicating || repairingAssets;
 
   async function refresh() {
     setLoading(true);
@@ -415,6 +416,29 @@ export function ExportReadinessPanel({ tenderId }: { tenderId: string }) {
     }
   }
 
+  async function repairExportPolicyAssets() {
+    setRepairingAssets(true);
+    setError(null);
+    setRepairMessage(null);
+    try {
+      const res = await fetch(`/api/tenders/${tenderId}/export-policy/repair-assets`, { method: "POST" });
+      const data = (await res.json().catch(() => ({} as Record<string, unknown>))) as { ok?: boolean; changed?: number; message?: string; conflicts?: string[]; error?: string };
+      if (data.ok) {
+        const conflicts = (data.conflicts ?? []).join(", ");
+        setRepairMessage(data.changed === 0
+          ? "No prohibited asset conflicts found."
+          : `Marked ${data.changed} document(s) for regeneration (conflicts: ${conflicts}).`);
+      } else {
+        setError(data.error ?? "Asset repair failed");
+      }
+    } catch {
+      setError("Asset repair failed");
+    } finally {
+      setRepairingAssets(false);
+      await refresh();
+    }
+  }
+
   const ok = readiness?.ok;
   const hasDocumentBlockers = (readiness?.summary.documentBlockers ?? 0) > 0;
   const advisoryWarnings = readiness?.advisoryWarnings ?? [];
@@ -491,6 +515,15 @@ export function ExportReadinessPanel({ tenderId }: { tenderId: string }) {
               {deduplicating ? "Deduplicating…" : "Clean duplicate rows"}
             </button>
           )}
+          <button
+            type="button"
+            onClick={() => void repairExportPolicyAssets()}
+            disabled={busy}
+            className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+            title="Check for prohibited branding/signature/stamp in generated documents and mark affected docs for regeneration."
+          >
+            {repairingAssets ? "Checking…" : "Repair prohibited assets"}
+          </button>
           {readiness && !ok && hasDocumentBlockers && (
             <button type="button" onClick={() => void supersedeOutsidePlan()} disabled={busy} className="rounded-lg bg-amber-700 px-3 py-2 text-xs font-medium text-white hover:bg-amber-800 disabled:opacity-50">
               {supersedingOutsidePlan ? "Superseding…" : "Exclude outside-plan files"}
