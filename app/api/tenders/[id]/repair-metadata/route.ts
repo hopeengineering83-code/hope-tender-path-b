@@ -25,10 +25,19 @@ import {
   extractEvaluationMethodologyFromSource,
   formatExtractionForAudit,
 } from "../../../../../lib/engine/evaluation-methodology-source-extractor";
+import {
+  SUPPORTED_EXTRACTORS,
+  runExtractorByField,
+  type ExtractorFieldName,
+  type ExtractedFieldOrMissing,
+} from "../../../../../lib/engine/tender-field-extractors";
 
 export const dynamic = "force-dynamic";
 
-const SUPPORTED_FIELDS = ["evaluationMethodology"] as const;
+// Union of every field the repair endpoint can write. evaluationMethodology
+// has its own AI-precedent extractor (lib/engine/evaluation-methodology-source-extractor.ts);
+// the scalar metadata fields come from the multi-field extractor framework.
+const SUPPORTED_FIELDS = ["evaluationMethodology", ...SUPPORTED_EXTRACTORS] as const;
 type SupportedField = (typeof SUPPORTED_FIELDS)[number];
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -71,8 +80,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   }
 
   const results: Record<string, unknown> = {};
-  const updates: Record<string, string> = {};
+  // Prisma update map — accepts string / number / Date / null. Cast at write time.
+  const updates: Record<string, unknown> = {};
 
+  const filesInput = { files: tender.files.map((f) => ({ fileName: f.fileName, extractedText: f.extractedText })) };
+
+  // ── evaluationMethodology (AI-precedent extractor, separate module) ───
   if (requestedFields.includes("evaluationMethodology")) {
     if (tender.evaluationMethodology && tender.evaluationMethodology.trim().length > 0 && !force) {
       results.evaluationMethodology = {
@@ -80,13 +93,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         reason: "evaluationMethodology is already populated. Pass force:true (ADMIN only) to overwrite.",
       };
     } else {
-      const extraction = extractEvaluationMethodologyFromSource({
-        files: tender.files.map((f) => ({ fileName: f.fileName, extractedText: f.extractedText })),
-      });
+      const extraction = extractEvaluationMethodologyFromSource(filesInput);
       if (!extraction.found) {
         results.evaluationMethodology = { status: "NOT_FOUND", reason: extraction.reason };
       } else {
-        updates.evaluationMethodology = extraction.methodologyText;
+        (updates as Record<string, unknown>).evaluationMethodology = extraction.methodologyText;
         results.evaluationMethodology = {
           status: "REPAIRED",
           confidence: extraction.confidence,
@@ -115,8 +126,65 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }
   }
 
+  // ── Scalar fields via the multi-field extractor framework. ─────────────
+  // Each field consults the same per-field rule: skip when already populated
+  // (unless ADMIN force:true); set status NOT_FOUND when the regex misses;
+  // persist + audit when found.
+  for (const field of SUPPORTED_EXTRACTORS) {
+    if (!requestedFields.includes(field)) continue;
+    const currentValue = (tender as unknown as Record<string, unknown>)[field];
+    const alreadyPopulated = currentValue !== null && currentValue !== undefined && String(currentValue).trim().length > 0;
+    if (alreadyPopulated && !force) {
+      results[field] = { status: "SKIPPED", reason: `${field} is already populated. Pass force:true (ADMIN only) to overwrite.` };
+      continue;
+    }
+    const extraction = runExtractorByField(field as ExtractorFieldName, filesInput) as ExtractedFieldOrMissing<unknown>;
+    if (!extraction.found) {
+      results[field] = { status: "NOT_FOUND", reason: extraction.reason };
+      continue;
+    }
+    // bidBondAmount produces { amount, currency } — split into two DB columns.
+    if (field === "bidBondAmount") {
+      const v = extraction.value as { amount: number; currency: string | null };
+      if (v.amount > 0 && v.currency !== "PERCENT") {
+        (updates as Record<string, unknown>).bidBondAmount = v.amount;
+        if (v.currency) (updates as Record<string, unknown>).bidBondCurrency = v.currency;
+      }
+      // PERCENT-only matches are reported but not persisted — needs the budget
+      // to compute the absolute amount, which we will not invent.
+    } else if (field === "deadline") {
+      const dt = extraction.value as Date;
+      (updates as Record<string, unknown>).deadline = dt;
+    } else {
+      (updates as Record<string, unknown>)[field] = extraction.value;
+    }
+    results[field] = {
+      status: "REPAIRED",
+      confidence: extraction.confidence,
+      sourceFile: extraction.sourceFile,
+      sourceQuote: extraction.sourceQuote,
+      value: extraction.value,
+    };
+    await logAction({
+      userId: actor.id,
+      action: "TENDER_METADATA_REPAIRED",
+      entityType: "Tender",
+      entityId: tenderId,
+      description: `${actor.email} repaired ${field} from ${extraction.sourceFile ?? "tender source"} (${extraction.confidence})`.slice(0, 500),
+      metadata: {
+        tenderId,
+        field,
+        extractionSource: "DETERMINISTIC_SOURCE_EXTRACTOR",
+        sourceFile: extraction.sourceFile,
+        confidence: extraction.confidence,
+        sourceQuote: extraction.sourceQuote,
+      },
+      requestId,
+    });
+  }
+
   if (Object.keys(updates).length > 0) {
-    await prisma.tender.update({ where: { id: tenderId }, data: updates });
+    await prisma.tender.update({ where: { id: tenderId }, data: updates as Record<string, unknown> });
   }
 
   return NextResponse.json({

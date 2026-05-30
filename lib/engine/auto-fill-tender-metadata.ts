@@ -23,10 +23,17 @@ type TenderForAutoFill = {
   deadline?: Date | null;
   submissionMethod?: string | null;
   submissionAddress?: string | null;
+  submissionEmails?: string | null;
   clientContactName?: string | null;
   clientContactTitle?: string | null;
   clientContactEmail?: string | null;
   clientContactPhone?: string | null;
+  validityDays?: number | null;
+  pageLimit?: number | null;
+  bidBondAmount?: number | null;
+  bidBondCurrency?: string | null;
+  numberOfCopiesRequired?: number | null;
+  mandatorySiteVisit?: boolean | null;
   files: TenderFileForAutoFill[];
 };
 
@@ -94,6 +101,31 @@ export async function autoFillTenderMetadata(
   tryFill("clientContactTitle", tender.clientContactTitle, draft.clientContactTitle);
   tryFill("clientContactEmail", tender.clientContactEmail, draft.clientContactEmail);
   tryFill("clientContactPhone", tender.clientContactPhone, draft.clientContactPhone);
+
+  // The fields below are inferred by inferTenderMetadata but were not being
+  // patched — they were the source of "Bid-Team to confirm" placeholders the
+  // user was being asked to fill manually even though the tender file plainly
+  // carried them. tryFill only sets when the current DB value is empty, so
+  // human edits are never overwritten.
+  const submissionEmailsJoined = (draft.submissionEmails ?? []).join(", ").trim();
+  tryFill("submissionEmails", tender.submissionEmails, submissionEmailsJoined.length > 0 ? submissionEmailsJoined : null);
+  tryFill("validityDays", tender.validityDays, draft.validityDays);
+  tryFill("pageLimit", tender.pageLimit, draft.pageLimit);
+  tryFill("bidBondAmount", tender.bidBondAmount, draft.bidBondAmount);
+  tryFill("bidBondCurrency", tender.bidBondCurrency, draft.bidBondCurrency);
+  tryFill("numberOfCopiesRequired", tender.numberOfCopiesRequired, draft.numberOfCopiesRequired);
+  // mandatorySiteVisit is a boolean — write only when the current DB value is null
+  // (booleans bypass isEmptyOrPlaceholder, which is string-only).
+  if (tender.mandatorySiteVisit === null || tender.mandatorySiteVisit === undefined) {
+    if (draft.mandatorySiteVisit !== null && draft.mandatorySiteVisit !== undefined) {
+      patch["mandatorySiteVisit"] = draft.mandatorySiteVisit;
+      filled.push("mandatorySiteVisit");
+    } else {
+      skipped.push("mandatorySiteVisit");
+    }
+  } else {
+    skipped.push("mandatorySiteVisit");
+  }
 
   // Category: only promote from the default "General" to something specific.
   if (
