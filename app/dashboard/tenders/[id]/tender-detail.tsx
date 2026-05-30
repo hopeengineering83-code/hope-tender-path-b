@@ -2043,8 +2043,22 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
                       <div className="min-w-0">
                         <p className="text-sm font-medium text-slate-900 truncate">{doc.exactFileName ?? doc.name}</p>
                         <div className="flex flex-wrap gap-2 mt-0.5">
-                          <span className={`text-xs ${doc.generationStatus === "GENERATED" ? "text-green-600" : "text-slate-400"}`}>
-                            {doc.generationStatus}
+                          <span className={`text-xs font-medium ${
+                            doc.generationStatus === "GENERATED" ? "text-green-600" :
+                            doc.generationStatus === "GENERATED_NEEDS_REVIEW" ? "text-amber-600" :
+                            doc.generationStatus === "GENERATED_QUALITY_FAILED" ? "text-red-600" :
+                            doc.generationStatus === "REPLACE_WITH_ORIGINAL" ? "text-orange-600" :
+                            doc.generationStatus === "SUPERSEDED" ? "text-slate-300" :
+                            doc.generationStatus === "PLANNED" ? "text-blue-500" :
+                            "text-slate-400"
+                          }`}>
+                            {doc.generationStatus === "GENERATED" ? "Generated" :
+                             doc.generationStatus === "GENERATED_NEEDS_REVIEW" ? "Needs review" :
+                             doc.generationStatus === "GENERATED_QUALITY_FAILED" ? "Quality failed" :
+                             doc.generationStatus === "REPLACE_WITH_ORIGINAL" ? "Needs official original" :
+                             doc.generationStatus === "SUPERSEDED" ? "Superseded" :
+                             doc.generationStatus === "PLANNED" ? "Planned (not generated)" :
+                             doc.generationStatus}
                           </span>
                           {doc.validationStatus && doc.validationStatus !== "PENDING" && (
                             <span className={`text-xs ${doc.validationStatus === "PASSED" ? "text-green-600" : "text-red-500"}`}>
@@ -2053,11 +2067,12 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
                           )}
                           {doc.reviewStatus && doc.reviewStatus !== "PENDING" && (
                             <span className={`text-xs font-medium ${
+                              doc.reviewStatus === "READY_FOR_EXPORT" ? "text-emerald-700" :
                               doc.reviewStatus === "APPROVED" ? "text-green-700" :
                               doc.reviewStatus === "REJECTED" ? "text-red-600" :
                               "text-amber-600"
                             }`}>
-                              · {doc.reviewStatus}
+                              · {doc.reviewStatus === "READY_FOR_EXPORT" ? "Export ready" : doc.reviewStatus}
                             </span>
                           )}
                         </div>

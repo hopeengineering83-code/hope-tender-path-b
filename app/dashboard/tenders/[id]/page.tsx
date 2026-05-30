@@ -77,6 +77,7 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
         tenderId={tender.id}
         vaultReviewedExperts={generationReadiness?.matchingQuality?.vaultReviewedExperts ?? 0}
         vaultReviewedProjects={generationReadiness?.matchingQuality?.vaultReviewedProjects ?? 0}
+        lifecycleBlockersExist={(generationReadiness?.blockers?.length ?? 0) > 0}
       /></div>
       <ExtractionQualityPanel tenderId={tender.id} />
       <div id="analysis-quality"><AnalysisQualityPanel tenderId={tender.id} /></div>
