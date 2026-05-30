@@ -45,6 +45,11 @@ export type AuditAction =
   | "TENDER_CONTROL_TASK"
   | "TENDER_CONTROL_RISK"
   | "TENDER_CONTROL_COMMERCIAL_ASSUMPTION"
+  // Suggestion accept/reject from the Controls Ledger panel (H).
+  // ACCEPTED is implicit (a new TENDER_CONTROL_* row is written when a
+  // suggestion is accepted); REJECTED records the decision so the panel
+  // can hide the suggestion on the next reload.
+  | "TENDER_CONTROL_SUGGESTION_REJECTED"
   | "TENDER_BID_OUTCOME_SET"
   // Maintenance: regenerate Expert CV DOCX files after the trace-stripper
   // fix landed in expert-cv-docx.ts. Triggered via /regenerate-cvs.
