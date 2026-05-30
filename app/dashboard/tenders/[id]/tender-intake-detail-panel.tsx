@@ -118,22 +118,26 @@ export function TenderIntakeDetailPanel({ tender }: { tender: TenderDetailLike }
         <Detail label="Evaluation weights" value={evaluation} />
       </div>
 
-      {(tender.description || tender.evaluationMethodology || tender.intakeSummary || tender.analysisSummary) && (
-        <div className="mt-4 space-y-3 border-t border-slate-100 pt-4">
-          {tender.description && (
-            <ProseBlock label="Description" value={tender.description} />
-          )}
-          {tender.evaluationMethodology && (
-            <ProseBlock label="Evaluation methodology" value={tender.evaluationMethodology} />
-          )}
-          {tender.intakeSummary && (
-            <ProseBlock label="Intake summary" value={tender.intakeSummary} />
-          )}
-          {tender.analysisSummary && (
-            <ProseBlock label="Analysis summary" value={tender.analysisSummary} />
-          )}
-        </div>
-      )}
+      <div className="mt-4 space-y-3 border-t border-slate-100 pt-4">
+        {tender.description && (
+          <ProseBlock label="Description" value={tender.description} />
+        )}
+        {tender.evaluationMethodology
+          ? <ProseBlock label="Evaluation methodology" value={tender.evaluationMethodology} />
+          : (
+            <div>
+              <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Evaluation methodology</div>
+              <p className="text-sm italic text-amber-700">Not extracted — re-extract from PDF or add manually. Required for scored proposals.</p>
+            </div>
+          )
+        }
+        {tender.intakeSummary && (
+          <ProseBlock label="Intake summary" value={tender.intakeSummary} />
+        )}
+        {tender.analysisSummary && (
+          <ProseBlock label="Analysis summary" value={tender.analysisSummary} />
+        )}
+      </div>
     </section>
   );
 }
