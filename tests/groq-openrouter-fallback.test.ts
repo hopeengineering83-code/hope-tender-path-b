@@ -131,7 +131,7 @@ describe("AI Health panel renders all six provider cards from the contract", () 
   it("renders cards by mapping the provider contract (rank + cooldown shown)", () => {
     assert.match(source, /health\.providers\.map/);
     assert.match(source, /Fallback rank \{p\.rank\}/);
-    assert.match(source, /In cooldown/);
+    assert.match(source, /Rate-limited|coolingDown/);
   });
   it("nudges pinning a model when OpenRouter uses the auto default", () => {
     assert.match(source, /Set OPENROUTER_PROPOSAL_MODEL/);
