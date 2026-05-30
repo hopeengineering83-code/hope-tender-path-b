@@ -13,6 +13,7 @@ import {
 } from "../../../../../lib/engine/tender-control-ledger";
 import { computeTenderLifecycle } from "../../../../../lib/engine/tender-lifecycle-orchestrator";
 import { deriveControlSuggestions, type SuggestedControl } from "../../../../../lib/engine/tender-control-suggestions";
+import { classifyWeakMatches } from "../../../../../lib/engine/weak-match-classifier";
 
 export const dynamic = "force-dynamic";
 
@@ -28,6 +29,34 @@ async function deriveSuggestedControls(tenderId: string): Promise<SuggestedContr
   try {
     const lifecycle = await computeTenderLifecycle(prisma, tenderId);
     if (!lifecycle) return [];
+    // Fetch match rows for the weak-match classifier (I). Bounded — at most
+    // 200 of each — so we never load thousands of rows for an extreme tender.
+    const tenderForMatches = await prisma.tender.findFirst({
+      where: { id: tenderId },
+      select: {
+        requirements: { select: { requirementType: true, description: true } },
+        expertMatches: { take: 200, select: { id: true, score: true, isSelected: true, expert: { select: { fullName: true, trustLevel: true } } } },
+        projectMatches: { take: 200, select: { id: true, score: true, isSelected: true, project: { select: { name: true, trustLevel: true } } } },
+      },
+    });
+    const expertRequirementsCount = tenderForMatches?.requirements.filter(
+      (r) => r.requirementType === "EXPERT" || /technical|methodology|expertise/i.test(r.description ?? ""),
+    ).length ?? 0;
+    const projectRequirementsCount = tenderForMatches?.requirements.filter(
+      (r) => r.requirementType === "PROJECT_EXPERIENCE" || /similar\s+(project|experience|assignment)|past\s+performance|reference/i.test(r.description ?? ""),
+    ).length ?? 0;
+    const weakMatchReport = classifyWeakMatches({
+      expertMatches: (tenderForMatches?.expertMatches ?? []).map((m) => ({
+        id: m.id, score: m.score, isSelected: m.isSelected,
+        trustLevel: m.expert.trustLevel, label: m.expert.fullName,
+      })),
+      projectMatches: (tenderForMatches?.projectMatches ?? []).map((m) => ({
+        id: m.id, score: m.score, isSelected: m.isSelected,
+        trustLevel: m.project.trustLevel, label: m.project.name,
+      })),
+      expertRequirementsCount,
+      projectRequirementsCount,
+    });
     const all = deriveControlSuggestions({
       metadataStatus: lifecycle.metadataStatus,
       analysisStatus: lifecycle.analysisStatus,
@@ -37,6 +66,7 @@ async function deriveSuggestedControls(tenderId: string): Promise<SuggestedContr
       counts: lifecycle.counts,
       providerStatus: lifecycle.providerStatus,
       officialOriginalStatus: lifecycle.officialOriginalStatus,
+      weakMatchReport,
     });
     // Hide suggestions the user has explicitly rejected. Lookup the audit log
     // for TENDER_CONTROL_SUGGESTION_REJECTED entries on this tender; the
