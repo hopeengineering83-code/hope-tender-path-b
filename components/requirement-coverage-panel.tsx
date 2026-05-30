@@ -10,6 +10,7 @@ type EvidenceLink = {
   evidenceSource: string;
   evidenceReference: string | null;
   supportLevel: string;
+  autoLinked?: boolean;
 };
 
 type RequirementCoverageRow = {
@@ -61,6 +62,8 @@ const REQ_TYPE_LABELS: Record<string, string> = {
   SUBMISSION_RULE: "Submission",
 };
 
+type ActionState = { pending: boolean; error: string | null; success: string | null };
+
 export default function RequirementCoveragePanel({ tenderId }: { tenderId: string }) {
   const [data, setData] = useState<CoverageData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -68,6 +71,7 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
   const [expanded, setExpanded] = useState(false);
   const [filter, setFilter] = useState<"ALL" | "UNCOVERED" | "PARTIAL" | "COVERED">("UNCOVERED");
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
+  const [actionStates, setActionStates] = useState<Record<string, ActionState>>({});
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -93,6 +97,61 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
       else next.add(id);
       return next;
     });
+  };
+
+  const setLinkAction = (key: string, state: ActionState) =>
+    setActionStates((prev) => ({ ...prev, [key]: state }));
+
+  const confirmEvidence = async (requirementId: string, link: EvidenceLink) => {
+    const key = `${requirementId}-${link.id}`;
+    setLinkAction(key, { pending: true, error: null, success: null });
+    try {
+      const res = await fetch(`/api/tenders/${tenderId}/requirement-coverage/confirm`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          requirementId,
+          evidenceType: link.evidenceType,
+          evidenceReference: link.evidenceReference,
+          supportLevel: "FULL",
+          notes: "Confirmed auto-linked vault evidence by reviewer.",
+        }),
+      });
+      const json = await res.json() as { ok?: boolean; error?: string; code?: string };
+      if (!res.ok || !json.ok) {
+        setLinkAction(key, { pending: false, error: json.error ?? "Failed to confirm evidence", success: null });
+        return;
+      }
+      setLinkAction(key, { pending: false, error: null, success: "Confirmed" });
+      void load();
+    } catch {
+      setLinkAction(key, { pending: false, error: "Network error", success: null });
+    }
+  };
+
+  const rejectEvidence = async (requirementId: string, link: EvidenceLink) => {
+    const key = `${requirementId}-${link.id}-reject`;
+    setLinkAction(key, { pending: true, error: null, success: null });
+    try {
+      const res = await fetch(`/api/tenders/${tenderId}/requirement-coverage/reject`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          requirementId,
+          evidenceType: link.evidenceType,
+          evidenceReference: link.evidenceReference,
+          reason: "Rejected by reviewer — does not satisfy this requirement.",
+        }),
+      });
+      const json = await res.json() as { ok?: boolean; error?: string };
+      if (!res.ok || !json.ok) {
+        setLinkAction(key, { pending: false, error: json.error ?? "Failed to reject evidence", success: null });
+        return;
+      }
+      setLinkAction(key, { pending: false, error: null, success: "Rejected" });
+    } catch {
+      setLinkAction(key, { pending: false, error: "Network error", success: null });
+    }
   };
 
   if (loading) {
@@ -261,17 +320,53 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
                       {row.evidenceLinks.length === 0 ? (
                         <p className="text-xs text-red-600">No evidence linked. Use vault evidence or run Engine.</p>
                       ) : (
-                        <ul className="space-y-1">
+                        <ul className="space-y-1.5">
                           {row.evidenceLinks.map((link) => {
                             const lCfg = SUPPORT_LEVEL_CONFIG[link.supportLevel as SupportLevel] ?? SUPPORT_LEVEL_CONFIG.PARTIAL;
+                            const confirmKey = `${row.id}-${link.id}`;
+                            const rejectKey = `${row.id}-${link.id}-reject`;
+                            const confirmState = actionStates[confirmKey];
+                            const rejectState = actionStates[rejectKey];
                             return (
-                              <li key={link.id} className="flex items-center gap-2 text-xs text-gray-700">
-                                <span className={`h-2 w-2 shrink-0 rounded-full ${lCfg.dot}`} />
-                                <span className="font-medium">{link.evidenceType}</span>
-                                <span className="text-gray-500">—</span>
-                                <span className="truncate">{link.evidenceSource}</span>
-                                {link.evidenceReference && <span className="text-gray-400 shrink-0">({link.evidenceReference})</span>}
-                                <span className={`shrink-0 rounded border px-1 py-0.5 text-xs ${lCfg.color}`}>{link.supportLevel}</span>
+                              <li key={link.id} className="rounded border border-gray-100 bg-gray-50 px-2 py-1.5">
+                                <div className="flex items-center gap-2 text-xs text-gray-700 flex-wrap">
+                                  <span className={`h-2 w-2 shrink-0 rounded-full ${lCfg.dot}`} />
+                                  <span className="font-medium">{link.evidenceType}</span>
+                                  <span className="text-gray-500">—</span>
+                                  <span className="truncate">{link.evidenceSource}</span>
+                                  {link.evidenceReference && <span className="text-gray-400 shrink-0">({link.evidenceReference})</span>}
+                                  <span className={`shrink-0 rounded border px-1 py-0.5 text-xs ${lCfg.color}`}>{link.supportLevel}</span>
+                                  {link.autoLinked && <span className="rounded bg-blue-100 px-1 py-0.5 text-[10px] font-medium text-blue-700">auto-linked</span>}
+                                </div>
+                                {link.autoLinked && (
+                                  <div className="mt-1.5 flex items-center gap-2 flex-wrap">
+                                    {confirmState?.success ? (
+                                      <span className="text-[10px] text-green-700 font-medium">{confirmState.success} ✓</span>
+                                    ) : rejectState?.success ? (
+                                      <span className="text-[10px] text-red-700 font-medium">{rejectState.success}</span>
+                                    ) : (
+                                      <>
+                                        <button
+                                          onClick={() => void confirmEvidence(row.id, link)}
+                                          disabled={confirmState?.pending || rejectState?.pending}
+                                          className="rounded bg-green-100 px-2 py-0.5 text-[10px] font-medium text-green-800 hover:bg-green-200 disabled:opacity-50"
+                                        >
+                                          {confirmState?.pending ? "…" : "✓ Confirm evidence"}
+                                        </button>
+                                        <button
+                                          onClick={() => void rejectEvidence(row.id, link)}
+                                          disabled={confirmState?.pending || rejectState?.pending}
+                                          className="rounded bg-red-100 px-2 py-0.5 text-[10px] font-medium text-red-700 hover:bg-red-200 disabled:opacity-50"
+                                        >
+                                          {rejectState?.pending ? "…" : "✗ Not applicable"}
+                                        </button>
+                                      </>
+                                    )}
+                                    {(confirmState?.error || rejectState?.error) && (
+                                      <span className="text-[10px] text-red-600">{confirmState?.error ?? rejectState?.error}</span>
+                                    )}
+                                  </div>
+                                )}
                               </li>
                             );
                           })}

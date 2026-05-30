@@ -2,6 +2,7 @@ import { getSession } from "../lib/auth";
 import { prisma, prismaReady } from "../lib/prisma";
 import { getTenderGenerationReadiness } from "../lib/tender-generation-readiness";
 import { getFinalSubmissionReadiness } from "../lib/engine/final-submission-readiness";
+import { BidDecisionForm } from "./bid-decision-form";
 
 type Verdict = "BID_READY" | "BID_READY_WITH_WARNINGS" | "NOT_READY" | "NO_BID";
 
@@ -169,6 +170,7 @@ export async function BidControlVerdictPanel({ tenderId }: { tenderId: string })
           <ul className="mt-2 list-disc space-y-1 pl-5">{warnings.slice(0, 8).map((item) => <li key={item}>{item}</li>)}</ul>
         </div>
       )}
+      <BidDecisionForm tenderId={tenderId} />
     </section>
   );
 }
