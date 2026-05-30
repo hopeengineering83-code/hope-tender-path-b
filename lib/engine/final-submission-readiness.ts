@@ -627,6 +627,20 @@ export async function getFinalSubmissionReadiness(
     });
   }
 
+  // OPEN HIGH evaluator objections are hard blockers — the evaluator committee
+  // flagged a critical gap the proposal must address before submission.
+  const openHighObjections = await client.evaluatorObjection.count({
+    where: { tenderId: opts.tenderId, status: "OPEN", severity: "HIGH" },
+  });
+  if (openHighObjections > 0) {
+    tenderLevelBlockers.push({
+      category: "EVALUATOR_OBJECTION_HIGH_OPEN",
+      severity: "HIGH",
+      title: `${openHighObjections} unresolved HIGH evaluator objection(s) must be addressed before final export.`,
+      recommendedAction: "Open the Evaluator Objections panel, resolve each HIGH objection with evidence, then re-run the export gate.",
+    });
+  }
+
   const summary: FinalReadinessSummary = {
     totalBlockers: documentBlockers.length + tenderLevelBlockers.length,
     documentBlockers: documentBlockers.length,
