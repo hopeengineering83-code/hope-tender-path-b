@@ -1135,6 +1135,30 @@ ${tenderContent}`;
 
 export const CHUNK_DEADLINE_MARGIN_MS = 8_000;
 
+// Per-chunk retry-once on transient errors. The chunk loop used to log a
+// failure on the first error (rate-limit, timeout, malformed JSON) and march
+// on, which on rate-limited days produced an AnalysisWithMeta with most chunks
+// failed → downstream consumers treated the analysis as "AI-unverified" and
+// the regex-fallback gate fired. A single, bounded retry-once recovers nearly
+// every transient failure without changing the deadline contract.
+const CHUNK_RETRY_BACKOFF_MS = 1500;
+const TRANSIENT_CHUNK_ERROR_PATTERN = /429|rate.?limit|quota|tokens?\s+per\s+minute|timed?\s*out|timeout|aborted|malformed json|no json|json object|json parse|empty\s+response/i;
+export function isTransientChunkError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err ?? "");
+  return TRANSIENT_CHUNK_ERROR_PATTERN.test(msg);
+}
+async function analyzeOneChunkWithRetry(content: string, index: number, total: number): Promise<AIAnalysisResult> {
+  try {
+    return await analyzeOneChunk(content, index, total);
+  } catch (err) {
+    if (!isTransientChunkError(err)) throw err;
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(`[ai] chunk ${index + 1}/${total} hit transient error — retrying once after ${CHUNK_RETRY_BACKOFF_MS}ms. Error: ${msg.slice(0, 200)}`);
+    await new Promise((r) => setTimeout(r, CHUNK_RETRY_BACKOFF_MS));
+    return await analyzeOneChunk(content, index, total);
+  }
+}
+
 export type AnalysisWithMeta = {
   result: AIAnalysisResult;
   isPartial: boolean;
@@ -1178,7 +1202,7 @@ export async function analyzeWithAI(
     }
 
     try {
-      successes.push(await analyzeOneChunk(chunks[i], i, chunks.length));
+      successes.push(await analyzeOneChunkWithRetry(chunks[i], i, chunks.length));
       completedChunks++;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
