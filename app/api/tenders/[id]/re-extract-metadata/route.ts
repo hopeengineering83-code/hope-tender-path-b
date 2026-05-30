@@ -180,6 +180,8 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   tryFill("numberOfCopiesRequired", metadata.numberOfCopiesRequired);
   tryFill("technicalWeight", metadata.technicalWeight);
   tryFill("financialWeight", metadata.financialWeight);
+  tryFill("description", metadata.description);
+  tryFill("intakeSummary", metadata.intakeSummary);
 
   const updatedCount = Object.keys(update).length;
   if (updatedCount === 0) {
