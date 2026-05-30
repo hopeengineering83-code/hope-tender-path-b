@@ -64,6 +64,13 @@ const REQ_TYPE_LABELS: Record<string, string> = {
 
 type ActionState = { pending: boolean; error: string | null; success: string | null };
 
+type TraceabilitySummary = {
+  requirements: number;
+  weakRequirements: number;
+  selectedExpertsWithWeakEvidence: number;
+  selectedProjectsWithWeakEvidence: number;
+};
+
 export default function RequirementCoveragePanel({ tenderId }: { tenderId: string }) {
   const [data, setData] = useState<CoverageData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -72,6 +79,9 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
   const [filter, setFilter] = useState<"ALL" | "UNCOVERED" | "PARTIAL" | "COVERED">("UNCOVERED");
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
   const [actionStates, setActionStates] = useState<Record<string, ActionState>>({});
+  const [traceability, setTraceability] = useState<{ summary: TraceabilitySummary; warnings: string[] } | null>(null);
+  const [traceLoading, setTraceLoading] = useState(false);
+  const [traceOpen, setTraceOpen] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -154,6 +164,23 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
     }
   };
 
+  const loadTraceability = async () => {
+    if (traceOpen && traceability) { setTraceOpen(false); return; }
+    setTraceOpen(true);
+    if (traceability) return;
+    setTraceLoading(true);
+    try {
+      const res = await fetch(`/api/tenders/${tenderId}/traceability`);
+      const json = await res.json() as { success?: boolean; traceability?: { summary: TraceabilitySummary; warnings: string[] }; error?: string };
+      if (!res.ok || !json.success || !json.traceability) return;
+      setTraceability({ summary: json.traceability.summary, warnings: (json.traceability.warnings ?? []).filter(Boolean) as string[] });
+    } catch {
+      // silently fail — traceability is a non-critical diagnostic
+    } finally {
+      setTraceLoading(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
@@ -210,11 +237,35 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
         </div>
         <div className="flex items-center gap-2">
           <button onClick={load} className="rounded px-2 py-1 text-xs text-gray-500 hover:bg-gray-100" aria-label="Refresh coverage">↻</button>
+          <button onClick={() => void loadTraceability()} disabled={traceLoading} className="rounded px-2 py-1 text-xs text-gray-500 hover:bg-gray-100 disabled:opacity-50">
+            {traceLoading ? "…" : traceOpen ? "▲ Traceability" : "▼ Traceability"}
+          </button>
           <button onClick={() => setExpanded((v) => !v)} className="rounded px-2 py-1 text-xs text-gray-500 hover:bg-gray-100">
             {expanded ? "▲ Collapse" : "▼ Show requirements"}
           </button>
         </div>
       </div>
+
+      {/* Traceability summary */}
+      {traceOpen && traceability && (
+        <div className="border-b border-gray-100 px-5 py-3 bg-amber-50">
+          <p className="text-xs font-semibold uppercase tracking-wide text-amber-700 mb-2">Traceability Audit</p>
+          <div className="grid grid-cols-4 gap-3 text-xs text-center">
+            <div><div className="text-base font-bold text-gray-800">{traceability.summary.requirements}</div><div className="text-gray-500">Requirements</div></div>
+            <div><div className={`text-base font-bold ${traceability.summary.weakRequirements > 0 ? "text-red-600" : "text-green-600"}`}>{traceability.summary.weakRequirements}</div><div className="text-gray-500">Weak source</div></div>
+            <div><div className={`text-base font-bold ${traceability.summary.selectedExpertsWithWeakEvidence > 0 ? "text-amber-600" : "text-green-600"}`}>{traceability.summary.selectedExpertsWithWeakEvidence}</div><div className="text-gray-500">Weak experts</div></div>
+            <div><div className={`text-base font-bold ${traceability.summary.selectedProjectsWithWeakEvidence > 0 ? "text-amber-600" : "text-green-600"}`}>{traceability.summary.selectedProjectsWithWeakEvidence}</div><div className="text-gray-500">Weak projects</div></div>
+          </div>
+          {traceability.warnings.length > 0 && (
+            <ul className="mt-2 space-y-0.5 text-xs text-amber-800">
+              {traceability.warnings.map((w) => <li key={w}>⚠ {w}</li>)}
+            </ul>
+          )}
+          {traceability.warnings.length === 0 && (
+            <p className="mt-2 text-xs text-green-700">All requirements and selected evidence have acceptable traceability.</p>
+          )}
+        </div>
+      )}
 
       {/* Summary bar */}
       <div className="grid grid-cols-4 gap-px border-b border-gray-100 bg-gray-100 text-center text-xs">
