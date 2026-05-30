@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { buildSubmissionPlan, findExtraGeneratedDocuments, findMissingGeneratedDocuments, submissionPlanFileCount } from "@/lib/engine/submission-plan";
 import { computeEvidenceCoverage } from "@/lib/engine/requirement-evidence-profile";
 
@@ -194,6 +195,12 @@ export function ExecutiveSnapshot({ tender }: { tender: TenderLike }) {
             </span>
           )}
           <span className={`rounded-full border px-4 py-2 text-sm font-bold ${badgeClass(decision)}`}>{decision}</span>
+          <Link
+            href={`/dashboard/tenders/${tender.id}/command-center`}
+            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+          >
+            Full Command Center →
+          </Link>
         </div>
       </div>
 
