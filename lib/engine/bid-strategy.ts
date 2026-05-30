@@ -205,7 +205,20 @@ function scoreCapabilityCoverage(input: BidStrategyInput): { score: number; matc
   if (distinctive.length === 0) {
     return { score: 70, matchedDisciplines: [], missingDisciplines: [] };
   }
-  const score = Math.round((matched.length / distinctive.length) * 100);
+  const rawScore = Math.round((matched.length / distinctive.length) * 100);
+
+  // FIX 7 — distinguish evidence-LINKING gaps from capability gaps.
+  // If the raw score is 0 but experts exist (selected or matched — even
+  // unreviewed), the root cause is that disciplines haven't been linked /
+  // reviewed yet, NOT that the firm lacks the capability. Scoring 0 in
+  // that case drives a misleading DECLINE recommendation. Floor at 30
+  // when experts exist so the recommendation reflects uncertainty rather
+  // than confirmed incapability.
+  const selectedExperts = input.tender.expertMatches.filter((m) => m.isSelected).length;
+  const reviewedExpertMatches = input.tender.expertMatches.filter((m) => m.expert.trustLevel === "REVIEWED").length;
+  const anyExpertEvidence = selectedExperts > 0 || reviewedExpertMatches > 0 || input.tender.expertMatches.length > 0;
+  const score = rawScore === 0 && anyExpertEvidence ? 30 : rawScore;
+
   return { score, matchedDisciplines: matched.slice(0, 5), missingDisciplines: missing.slice(0, 5) };
 }
 

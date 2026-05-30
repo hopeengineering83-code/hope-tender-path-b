@@ -383,6 +383,7 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
       nextAction: "REPAIR_OR_EDIT_TENDER",
     });
   }
+
   // Full proposal also requires reviewed selected evidence when the tender
   // demands experts/projects — not just vault fallback availability.
   // Skip these when the engine hasn't run yet (VAULT_AWAITS_ENGINE) — the
@@ -436,6 +437,8 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
     FULL_PROPOSAL_MATCHES_WEAK: "MATCHING",
     FULL_PROPOSAL_ENGINE_NOT_RUN: "MATCHING",
     FULL_PROPOSAL_NO_VAULT: "MATCHING",
+    // Metadata completeness
+    FULL_PROPOSAL_METADATA_INCOMPLETE: "METADATA",
     // Expert match availability
     NO_EXPERT_MATCHES_FOUND: "EXPERT_MATCHES",
     NO_REVIEWED_EXPERT_MATCHES: "EXPERT_MATCHES",

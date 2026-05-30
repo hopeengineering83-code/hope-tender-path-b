@@ -144,12 +144,16 @@ function getAIHealth(): AIHealthResponse {
 }
 
 function ProviderCard({ p }: { p: ProviderCardData }) {
-  const failing = p.configured && (p.runtime.coolingDown || p.runtime.consecutiveFailures > 0);
   const pill = !p.configured
     ? <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-semibold text-red-700">Not configured</span>
-    : failing
-      ? <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">Configured · failing</span>
-      : <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700">Configured</span>;
+    : p.runtime.coolingDown
+      ? <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">Rate-limited{p.runtime.cooldownUntil ? ` until ${new Date(p.runtime.cooldownUntil).toLocaleTimeString()}` : ""}</span>
+      : p.runtime.consecutiveFailures > 0
+        ? <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">Configured · failing</span>
+        : p.runtime.lastSuccessAt
+          ? <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700">Available</span>
+          : <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">Configured, not runtime-verified</span>;
+  const failing = p.configured && (p.runtime.coolingDown || p.runtime.consecutiveFailures > 0);
   return (
     <div className="rounded-xl bg-white p-3 shadow-sm">
       <div className="flex items-center justify-between">
@@ -160,12 +164,9 @@ function ProviderCard({ p }: { p: ProviderCardData }) {
       {!p.configured && <p className="mt-1 text-xs text-slate-600">Not configured — set {p.envVar} in Vercel Production environment.</p>}
       {p.configured && <p className="mt-1 text-xs text-slate-600">Model: {p.model ?? "provider default"}</p>}
       {p.configured && p.detail && <p className="mt-1 text-xs text-slate-500">{p.detail}</p>}
-      {p.configured && p.runtime.coolingDown && (
-        <p className="mt-1 text-xs text-amber-700">In cooldown{p.runtime.cooldownUntil ? ` until ${new Date(p.runtime.cooldownUntil).toLocaleTimeString()}` : ""} — requests skip this provider.</p>
-      )}
-      {p.configured && failing && (
+      {p.configured && failing && !p.runtime.coolingDown && (
         <p className="mt-1 text-xs text-amber-700">
-          Configured, but last response failed or returned empty{p.runtime.lastErrorCategory ? ` (${p.runtime.lastErrorCategory})` : ""}. Check {p.label} model access or retry after cooldown.
+          Last response failed or returned empty{p.runtime.lastErrorCategory ? ` (${p.runtime.lastErrorCategory})` : ""}. Check {p.label} model access or retry after cooldown.
         </p>
       )}
       {p.configured && p.modelHint && <p className="mt-1 text-xs text-slate-500">{p.modelHint}</p>}
