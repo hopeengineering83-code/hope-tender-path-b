@@ -38,8 +38,12 @@ describe("GenerationActionPanel wires the repair-metadata endpoint", () => {
     assert.ok(repairedBlock && /router\.refresh\(\)/.test(repairedBlock[0]), "REPAIRED branch must call router.refresh");
   });
 
-  it("the button label clearly says 'from source' so the user knows it's source-grounded", () => {
-    assert.match(source, /Repair evaluationMethodology from source/);
+  it("the button label clearly conveys the source-grounded intent", () => {
+    // The single-field button label changed when the batch "Repair all" button
+    // landed next to it — match the still-present "evaluationMethodology" token
+    // and the source-grounded descriptor in the help text.
+    assert.match(source, /Repair evaluationMethodology only/);
+    assert.match(source, /source-grounded repair/);
   });
 
   it("does not duplicate or weaken the existing fullProposalReady disable on the Generate Docs button", () => {
