@@ -325,6 +325,10 @@ export type SevenPassWiringContext = {
   providerUsed?: string | null;
   /** tender.reference — used for tenderScopeOnly proxy check */
   tenderReference?: string | null;
+  /** Pre-resolved analysis source (from detectAnalysisSourceWithApproval). When
+   * provided this takes precedence over the sync detection from tenderNotes, so
+   * human-approved regex-fallback analyses are correctly treated as approved. */
+  resolvedAnalysisSource?: import("./analysis-source").AnalysisSource | null;
 };
 
 // ── Core builder ───────────────────────────────────────────────────────────
@@ -337,14 +341,15 @@ export function buildSevenPassGateInput(ctx: SevenPassWiringContext): GeneratedD
   const text = ctx.visibleText ?? "";
   const docLabel = `${ctx.documentName ?? ""} ${ctx.exactFileName ?? ""} ${ctx.documentType ?? ""}`;
 
-  // Analysis source mapping
-  const rawSource = detectAnalysisSource({ notes: ctx.tenderNotes });
+  // Analysis source mapping — prefer the pre-resolved value (which includes DB
+  // approval check) over the sync notes-only detection.
+  const effectiveSource = ctx.resolvedAnalysisSource ?? detectAnalysisSource({ notes: ctx.tenderNotes });
   let analysisSource: string;
-  if (rawSource === "AI") {
+  if (effectiveSource === "AI") {
     analysisSource = "AI";
-  } else if (rawSource === "HUMAN_APPROVED_REGEX_FALLBACK") {
+  } else if (effectiveSource === "HUMAN_APPROVED_REGEX_FALLBACK") {
     analysisSource = "HUMAN_APPROVED_REGEX";
-  } else if (rawSource === "REGEX_FALLBACK_AI_ERROR") {
+  } else if (effectiveSource === "REGEX_FALLBACK_AI_ERROR") {
     analysisSource = "REGEX_FALLBACK";
   } else {
     // UNKNOWN — conservative: block until source confirmed
