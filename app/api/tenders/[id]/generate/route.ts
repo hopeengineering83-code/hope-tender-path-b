@@ -295,13 +295,21 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     hasSubmissionRules: Boolean(tender.submissionMethod || tender.submissionEmails || tender.submissionAddress),
   });
   if (metadataReport.blockingForGeneration) {
+    // Name the actual missing fields so the user knows exactly what's wrong,
+    // and nudge them to the one-click repair button. The endpoint behind that
+    // button never invents — it returns NOT_FOUND when no source quote matches.
+    const missingNames = metadataReport.missingCritical.map((f) => f.field).slice(0, 5);
+    const placeholderNames = metadataReport.invalidFields.map((f) => f.field).slice(0, 5);
+    const parts: string[] = [];
+    if (missingNames.length > 0) parts.push(`${missingNames.length} critical field(s) missing (${missingNames.join(", ")})`);
+    if (placeholderNames.length > 0) parts.push(`${placeholderNames.length} field(s) contain placeholder language (${placeholderNames.join(", ")})`);
     return NextResponse.json({
-      error: `Generation blocked: ${metadataReport.missingCritical.length > 0 ? `${metadataReport.missingCritical.length} critical metadata field(s) missing` : ""}${metadataReport.invalidFields.length > 0 ? `${metadataReport.missingCritical.length > 0 ? "; " : ""}${metadataReport.invalidFields.length} field(s) contain placeholder language` : ""}. Edit the tender and fill in the missing fields before generating.`,
+      error: `Generation blocked: ${parts.join("; ")}. First try the "Repair all empty fields from source" button — the deterministic extractor pulls verifiable values from the uploaded tender files when present. If a field is genuinely absent from the tender source, edit the tender and confirm it manually.`,
       code: "METADATA_INCOMPLETE_FOR_GENERATION",
       missingCritical: metadataReport.missingCritical.map((f) => ({ field: f.field, reason: f.reason })),
       invalidFields: metadataReport.invalidFields.map((f) => ({ field: f.field, reason: f.reason })),
       overallRatio: metadataReport.overallRatio,
-      nextAction: "EDIT_TENDER",
+      nextAction: "REPAIR_OR_EDIT_TENDER",
     }, { status: 422 });
   }
 
