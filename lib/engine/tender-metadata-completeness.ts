@@ -336,6 +336,14 @@ export function assessTenderMetadataCompleteness(input: MetadataCompletenessInpu
   // evaluationCriteria, pageLimit, bidBond, siteVisit, proposalValidity).
   // We count critical AND non-critical present fields so the ratio aligns
   // with the "5/16" auto-fill coverage UI label.
+  // Budget and bidBondAmount are FINANCIAL-PROPOSAL-ONLY metadata. Most
+  // tenders never publish the ceiling budget and the bond is often expressed
+  // as "1% of the bid value" — there is no honest absolute amount to extract.
+  // Including them in the auto-fill denominator dragged the coverage ratio
+  // below the 60% threshold even on fully-populated tenders, surfacing a
+  // misleading "tender metadata is weak" note in the readiness panel.
+  // They remain non-critical missing warnings (see checkNonCritical above)
+  // but no longer count against the cross-tender auto-fill ratio.
   const tracked: Array<unknown> = [
     input.clientName,
     input.title,
@@ -349,8 +357,6 @@ export function assessTenderMetadataCompleteness(input: MetadataCompletenessInpu
     input.clientContactEmail,
     input.clientContactPhone,
     input.pageLimit,
-    input.budget,
-    input.bidBondAmount,
     input.mandatorySiteVisit,
     input.validityDays,
   ];
