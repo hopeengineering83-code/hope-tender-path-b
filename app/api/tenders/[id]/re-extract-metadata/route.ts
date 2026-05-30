@@ -151,6 +151,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     // Always populate fieldsAfter so the audit log never shows undefined.
     fieldsAfter.category = tender.category;
   }
+  tryFill("evaluationMethodology", metadata.evaluationMethodology);
   tryFill("budget", metadata.budget);
   tryFill("currency", metadata.currency);
   tryFill("deadline", metadata.deadline);
