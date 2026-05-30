@@ -24,6 +24,15 @@ function statusText(value?: string | null) {
   return (value ?? "UNKNOWN").replace(/_/g, " ");
 }
 
+function analysisSourceFromNotes(notes: string | null | undefined): string {
+  if (!notes) return "Not analyzed";
+  if (/HUMAN.APPROVED.REGEX.FALLBACK/i.test(notes) || /human.approved/i.test(notes)) return "Human-approved fallback";
+  if (/REGEX_FALLBACK|regex fallback/i.test(notes)) return "Regex fallback (provisional)";
+  if (/Analysis source:\s*AI\b/i.test(notes) || /analysi[zs]ed.*AI/i.test(notes)) return "AI verified";
+  if (/ANALYZED/i.test(notes)) return "AI verified";
+  return "Not analyzed";
+}
+
 export async function BidControlVerdictPanel({ tenderId }: { tenderId: string }) {
   const userId = await getSession();
   if (!userId) return null;
@@ -43,6 +52,7 @@ export async function BidControlVerdictPanel({ tenderId }: { tenderId: string })
         id: true,
         title: true,
         status: true,
+        notes: true,
         complianceGaps: { where: { isResolved: false, severity: { in: ["CRITICAL", "HIGH"] } }, select: { id: true, severity: true } },
       },
     }),
@@ -130,8 +140,9 @@ export async function BidControlVerdictPanel({ tenderId }: { tenderId: string })
           <p className="mt-1 max-w-3xl text-sm text-slate-600">Consolidates generation readiness, canonical export readiness, compliance gaps, and donor advisories into one bid-control signal.</p>
         </div>
         <div className="rounded-xl bg-white px-4 py-3 text-right shadow-sm">
-          <p className="text-xs text-slate-500">Tender workflow status</p>
-          <p className="text-sm font-bold text-slate-900">{statusText(tender.status)}</p>
+          <p className="text-xs text-slate-500">Analysis</p>
+          <p className="text-sm font-bold text-slate-900">{analysisSourceFromNotes(tender.notes)}</p>
+          <p className="text-[10px] text-slate-400">{statusText(tender.status)}</p>
         </div>
       </div>
 
