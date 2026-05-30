@@ -473,6 +473,7 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
   const [reviewNote, setReviewNote] = useState("");
   const [togglingMatchId, setTogglingMatchId] = useState<string | null>(null);
   const [batchApproving, setBatchApproving] = useState(false);
+  const [regeneratingCvs, setRegeneratingCvs] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [fileQueue, setFileQueue] = useState<UploadItem[]>([]);
@@ -986,6 +987,25 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
       setToast({ message: "Network error during batch approval", type: "error" });
     } finally {
       setBatchApproving(false);
+    }
+  }
+
+  async function handleRegenerateCvs() {
+    const cvCount = tender.generatedDocuments.filter((d) => d.documentType === "EXPERT_CV_PACKAGE" && d.generationStatus === "GENERATED").length;
+    if (cvCount === 0) { setToast({ message: "No Expert CV documents found to regenerate.", type: "error" }); return; }
+    if (!confirm(`Regenerate all ${cvCount} Expert CV document(s) to remove any trace artifacts? This overwrites the current CVs.`)) return;
+    setRegeneratingCvs(true);
+    try {
+      const res = await fetch(`/api/tenders/${tender.id}/regenerate-cvs`, { method: "POST" });
+      const data = await res.json().catch(() => ({})) as { regenerated?: number; skipped?: number; error?: string };
+      if (!res.ok) { setToast({ message: data.error ?? "CV regeneration failed", type: "error" }); return; }
+      setToast({ message: `${data.regenerated ?? 0} CV(s) regenerated, ${data.skipped ?? 0} skipped.`, type: "success" });
+      const refreshed = await fetch(`/api/tenders/${tender.id}`);
+      if (refreshed.ok) { setTender(await refreshed.json() as Tender); }
+    } catch {
+      setToast({ message: "Network error during CV regeneration", type: "error" });
+    } finally {
+      setRegeneratingCvs(false);
     }
   }
 
@@ -1957,6 +1977,16 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
                     title="Mark all generated documents as Ready for Export in one action"
                   >
                     {batchApproving ? "Approving…" : "✓ Approve All"}
+                  </button>
+                )}
+                {tender.generatedDocuments.some((d) => d.documentType === "EXPERT_CV_PACKAGE" && d.generationStatus === "GENERATED") && (
+                  <button
+                    onClick={() => void handleRegenerateCvs()}
+                    disabled={regeneratingCvs}
+                    className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                    title="Regenerate Expert CV documents to remove any trace artifacts"
+                  >
+                    {regeneratingCvs ? "Regenerating…" : "↻ Regen CVs"}
                   </button>
                 )}
                 <button onClick={() => downloadDoc("compliance")} className="text-xs text-blue-600 hover:underline">↓ Compliance Report</button>
