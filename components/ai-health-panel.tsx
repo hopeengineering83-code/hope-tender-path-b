@@ -109,13 +109,37 @@ function getAIHealth(): AIHealthResponse {
   const cooling = providers.filter((p) => p.runtime.coolingDown).map((p) => p.label);
   if (cooling.length > 0) warnings.push(`Provider(s) in cooldown: ${cooling.join(", ")}. Requests skip cooled-down providers until the window expires.`);
 
+  // Configured ≠ verified runtime. The pill must not claim READY purely
+  // because keys exist — the screenshot bug. Reflect three new states:
+  //  • ALL_PROVIDERS_COOLING — every configured provider is in cooldown;
+  //    AI Analyze cannot proceed until at least one window expires.
+  //  • RUNTIME_NOT_VERIFIED — keys present but no provider has produced
+  //    a successful response yet on this instance, so runtime is unknown.
+  //  • READY — at least one configured provider has a recorded success
+  //    and no warnings; only state worth a green pill.
+  const configuredProviders = providers.filter((p) => p.configured);
+  const anyHasRecentSuccess = configuredProviders.some((p) => p.runtime.lastSuccessAt);
+  const allConfiguredCooling = anyConfigured && configuredProviders.every((p) => p.runtime.coolingDown);
+  if (allConfiguredCooling) warnings.push("All configured AI providers are currently in cooldown. AI Analyze will fall back to regex (UNAPPROVED) until a provider's cooldown expires.");
+  if (anyConfigured && !anyHasRecentSuccess) warnings.push("AI providers are configured but no successful response has been recorded on this instance yet — runtime availability is not verified. Run AI Analyze or Generate Docs to confirm.");
+
+  const nextAction = blockers.length > 0
+    ? "CONFIGURE_AI_KEYS"
+    : allConfiguredCooling
+      ? "ALL_PROVIDERS_COOLING"
+      : !anyHasRecentSuccess
+        ? "RUNTIME_NOT_VERIFIED"
+        : warnings.length > 0
+          ? "REVIEW_AI_CONFIGURATION"
+          : "READY";
+
   return {
     success: anyConfigured,
     providers,
     preferredProvider,
     blockers,
     warnings,
-    nextAction: blockers.length > 0 ? "CONFIGURE_AI_KEYS" : warnings.length > 0 ? "REVIEW_AI_CONFIGURATION" : "READY",
+    nextAction,
   };
 }
 
@@ -151,16 +175,22 @@ function ProviderCard({ p }: { p: ProviderCardData }) {
 
 export async function AIHealthPanel() {
   const health = getAIHealth();
-  const ok = health.success;
+  // Header tone follows the same trichotomy as the pill so the panel never
+  // reads "all green" while runtime is unverified or every provider is cooling.
+  const verified = health.nextAction === "READY";
+  const degraded = health.nextAction === "RUNTIME_NOT_VERIFIED" || health.nextAction === "REVIEW_AI_CONFIGURATION" || health.nextAction === "ALL_PROVIDERS_COOLING";
+  const sectionTone = verified ? "border-emerald-200 bg-emerald-50" : degraded ? "border-amber-200 bg-amber-50" : "border-red-200 bg-red-50";
+  const labelTone = verified ? "text-emerald-700" : degraded ? "text-amber-700" : "text-red-700";
+  const pillTone = verified ? "bg-emerald-100 text-emerald-800" : degraded ? "bg-amber-100 text-amber-800" : "bg-red-100 text-red-800";
   return (
-    <section className={`mb-4 rounded-2xl border p-5 shadow-sm ${ok ? "border-emerald-200 bg-emerald-50" : "border-red-200 bg-red-50"}`}>
+    <section className={`mb-4 rounded-2xl border p-5 shadow-sm ${sectionTone}`}>
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
         <div>
-          <p className={`text-xs font-semibold uppercase tracking-wide ${ok ? "text-emerald-700" : "text-red-700"}`}>AI provider health</p>
+          <p className={`text-xs font-semibold uppercase tracking-wide ${labelTone}`}>AI provider health</p>
           <h2 className="mt-1 text-lg font-bold text-slate-900">Preferred provider: {health.preferredProvider}</h2>
-          <p className="mt-1 max-w-3xl text-sm text-slate-600">Shows whether the Claude, Gemini, OpenAI, DeepSeek, Groq, and OpenRouter keys and models are available before running AI Analyze, Run Engine, or Generate Docs. Secret values are never displayed.</p>
+          <p className="mt-1 max-w-3xl text-sm text-slate-600">Shows whether the Claude, Gemini, OpenAI, DeepSeek, Groq, and OpenRouter keys are configured AND whether at least one provider has produced a successful response on this instance. &ldquo;Configured&rdquo; alone does not guarantee runtime availability. Secret values are never displayed.</p>
         </div>
-        <span className={`rounded-full px-3 py-1 text-xs font-bold ${ok ? "bg-emerald-100 text-emerald-800" : "bg-red-100 text-red-800"}`}>{health.nextAction.replace(/_/g, " ")}</span>
+        <span className={`rounded-full px-3 py-1 text-xs font-bold ${pillTone}`}>{health.nextAction.replace(/_/g, " ")}</span>
       </div>
 
       <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">

@@ -153,7 +153,19 @@ export function EngineActionPanel({
         setResult(data);
         return;
       }
-      setResult({ ...data, success: true, error: "Engine completed successfully." });
+      // "Engine succeeded" here means the engine HTTP run passed its
+       // postconditions — it does NOT mean tender readiness is green. Downstream
+       // blockers (regex fallback unapproved, metadata incomplete, submission
+       // plan not built, evidence uncoverage) still apply. Make the label honest
+       // so the user is steered to the readiness panels below.
+      const warningCount = Array.isArray(data?.extractionWarnings) ? data.extractionWarnings.length : 0;
+      setResult({
+        ...data,
+        success: true,
+        error: warningCount > 0
+          ? `Engine run completed with ${warningCount} extraction warning(s). Review the readiness panels below — remaining blockers (analysis source, metadata, submission plan, evidence) still apply.`
+          : "Engine run completed. Review the readiness panels below — any remaining blockers (analysis source, metadata, submission plan, evidence) still apply before Generate Docs.",
+      });
       startTransition(() => router.refresh());
     } catch (error) {
       setResult({

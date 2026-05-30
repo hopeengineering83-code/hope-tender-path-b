@@ -5,6 +5,10 @@ export type AnalysisFallbackCategory =
   | "MODEL_UNAVAILABLE"
   | "MALFORMED_AI_JSON"
   | "ALL_PROVIDERS_EXHAUSTED"
+  // Distinct from ALL_PROVIDERS_EXHAUSTED: every configured provider is
+  // currently in cooldown after a 429/quota — re-running AI Analyze a few
+  // minutes later (without changing any keys) should recover.
+  | "AI_PROVIDERS_RATE_LIMITED"
   | "NO_PROVIDER_CONFIGURED"
   | "UNKNOWN_AI_FAILURE";
 
@@ -36,6 +40,18 @@ export function buildAnalysisFallbackDiagnostics(rawError?: string | null): Anal
       risk: "HIGH",
       message: message || "AI analysis timed out before a full tender analysis completed.",
       nextAction: "Wait briefly, then re-run AI Analyze. For long tenders, increase AI_ANALYSIS_TIMEOUT_MS or reduce/clean uploaded tender files.",
+      retryRecommended: true,
+    };
+  }
+  // The "all providers in cooldown" + bare AI_PROVIDERS_RATE_LIMITED branch
+  // MUST come before the singular RATE_LIMIT branch, otherwise the
+  // generic "rate limit" regex shadows it.
+  if (/all .*providers? .*(rate.?limit|cool|429|quota|cooldown)/.test(lower) || /ai_providers_rate_limited/.test(lower)) {
+    return {
+      category: "AI_PROVIDERS_RATE_LIMITED",
+      risk: "HIGH",
+      message: message || "Every configured AI provider is currently rate-limited or in cooldown.",
+      nextAction: "Wait for provider cooldowns to expire (a few minutes for 429) and re-run AI Analyze. Do not approve regex fallback as final unless wait is unacceptable.",
       retryRecommended: true,
     };
   }

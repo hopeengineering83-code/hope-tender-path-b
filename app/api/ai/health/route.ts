@@ -73,10 +73,24 @@ export async function GET() {
   if (deepSeekConfigured && !deepSeekOfficialEnvPresent()) warnings.push("DeepSeek is enabled via a fallback alias env var. Rename it to DEEPSEEK_API_KEY (the official variable) in Vercel.");
 
   // Cooldown notice — purely advisory; the chain skips cooled-down providers.
-  const cooling = (["anthropic", "gemini", "openai", "deepseek", "groq", "openrouter"] as AiProviderName[]).filter(isProviderCooledDown);
+  const allProviderNames: AiProviderName[] = ["anthropic", "gemini", "openai", "deepseek", "groq", "openrouter"];
+  const cooling = allProviderNames.filter(isProviderCooledDown);
   if (cooling.length > 0) {
     warnings.push(`Provider(s) in cooldown: ${cooling.join(", ")}. Requests skip cooled-down providers until the window expires.`);
   }
+
+  // Configured ≠ runtime-verified. Distinguish keys-present-but-never-used
+  // from keys-present-AND-recently-succeeded. Production screenshots showed
+  // a "READY" pill while AI Analyze had actually fallen through to regex.
+  const configuredMap: Record<AiProviderName, boolean> = {
+    anthropic: claudeConfigured, gemini: geminiConfigured, openai: openaiConfigured,
+    deepseek: deepSeekConfigured, groq: groqConfigured, openrouter: openRouterConfigured,
+  };
+  const configuredNames = allProviderNames.filter((n) => configuredMap[n]);
+  const anyHasRecentSuccess = configuredNames.some((n) => Boolean(getProviderRuntimeSnapshot(n).lastSuccessAt));
+  const allConfiguredCooling = anyConfigured && configuredNames.every((n) => isProviderCooledDown(n));
+  if (allConfiguredCooling) warnings.push("All configured AI providers are currently in cooldown. AI Analyze will fall back to regex (UNAPPROVED) until a provider's cooldown expires.");
+  if (anyConfigured && !anyHasRecentSuccess) warnings.push("AI providers are configured but no successful response has been recorded on this serverless instance yet — runtime availability is not verified.");
 
   const openaiModel = process.env.OPENAI_PROPOSAL_MODEL || "gpt-4o";
 
@@ -148,6 +162,14 @@ export async function GET() {
     preferredProvider,
     blockers,
     warnings,
-    nextAction: blockers.length > 0 ? "CONFIGURE_AI_KEYS" : warnings.length > 0 ? "REVIEW_AI_CONFIGURATION" : "READY",
+    nextAction: blockers.length > 0
+      ? "CONFIGURE_AI_KEYS"
+      : allConfiguredCooling
+        ? "ALL_PROVIDERS_COOLING"
+        : !anyHasRecentSuccess
+          ? "RUNTIME_NOT_VERIFIED"
+          : warnings.length > 0
+            ? "REVIEW_AI_CONFIGURATION"
+            : "READY",
   });
 }
