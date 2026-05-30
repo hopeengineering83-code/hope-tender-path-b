@@ -474,6 +474,9 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
   const [togglingMatchId, setTogglingMatchId] = useState<string | null>(null);
   const [batchApproving, setBatchApproving] = useState(false);
   const [regeneratingCvs, setRegeneratingCvs] = useState(false);
+  const [deepReasoningReport, setDeepReasoningReport] = useState<{ markdown: string; createdAt: string } | null>(null);
+  const [loadingDeepReasoning, setLoadingDeepReasoning] = useState(false);
+  const [deepReasoningOpen, setDeepReasoningOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [fileQueue, setFileQueue] = useState<UploadItem[]>([]);
@@ -1006,6 +1009,25 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
       setToast({ message: "Network error during CV regeneration", type: "error" });
     } finally {
       setRegeneratingCvs(false);
+    }
+  }
+
+  async function handleLoadDeepReasoning() {
+    if (deepReasoningOpen && deepReasoningReport) { setDeepReasoningOpen(false); return; }
+    setDeepReasoningOpen(true);
+    if (deepReasoningReport) return;
+    setLoadingDeepReasoning(true);
+    try {
+      const res = await fetch(`/api/tenders/${tender.id}/deep-reasoning-summary`);
+      const data = await res.json() as { available?: boolean; reason?: string; markdown?: string; createdAt?: string; error?: string };
+      if (!res.ok) { setToast({ message: data.error ?? "Failed to load reasoning report", type: "error" }); setDeepReasoningOpen(false); return; }
+      if (!data.available) { setToast({ message: data.reason ?? "No deep-reasoning run recorded yet.", type: "error" }); setDeepReasoningOpen(false); return; }
+      setDeepReasoningReport({ markdown: data.markdown ?? "", createdAt: data.createdAt ?? "" });
+    } catch {
+      setToast({ message: "Network error loading reasoning report", type: "error" });
+      setDeepReasoningOpen(false);
+    } finally {
+      setLoadingDeepReasoning(false);
     }
   }
 
@@ -1989,9 +2011,21 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
                     {regeneratingCvs ? "Regenerating…" : "↻ Regen CVs"}
                   </button>
                 )}
+                <button onClick={() => void handleLoadDeepReasoning()} disabled={loadingDeepReasoning} className="text-xs text-purple-600 hover:underline disabled:opacity-50">
+                  {loadingDeepReasoning ? "Loading…" : deepReasoningOpen ? "▲ AI Reasoning" : "▼ AI Reasoning"}
+                </button>
                 <button onClick={() => downloadDoc("compliance")} className="text-xs text-blue-600 hover:underline">↓ Compliance Report</button>
               </div>
             </div>
+            {deepReasoningOpen && deepReasoningReport && (
+              <div className="mb-4 rounded-xl border border-purple-200 bg-purple-50 px-4 py-3">
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-purple-700">AI Reasoning Report</p>
+                  <p className="text-[10px] text-purple-500">{deepReasoningReport.createdAt ? new Date(deepReasoningReport.createdAt).toLocaleString() : ""}</p>
+                </div>
+                <pre className="whitespace-pre-wrap text-xs text-purple-900 font-mono leading-relaxed max-h-64 overflow-y-auto">{deepReasoningReport.markdown}</pre>
+              </div>
+            )}
             {tender.generatedDocuments.length === 0 ? (
               <p className="text-sm text-slate-400">Run the engine then click &quot;Generate Docs&quot; to create submission-ready files.</p>
             ) : (
