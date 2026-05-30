@@ -379,8 +379,8 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
     if (placeholderCount > 0) parts.push(`${placeholderCount} field(s) contain placeholder language`);
     fullProposalBlockers.push({
       code: "FULL_PROPOSAL_METADATA_INCOMPLETE",
-      message: `Full proposal generation is blocked: ${parts.join("; ")}. Edit the tender and fill the missing fields before generating.`,
-      nextAction: "EDIT_TENDER",
+      message: `Full proposal generation is blocked: ${parts.join("; ")}. Try the "Repair all empty fields from source" button first — the deterministic extractor will populate any value that's actually in the uploaded tender file. If the field is genuinely absent from the tender source, edit the tender to confirm it manually.`,
+      nextAction: "REPAIR_OR_EDIT_TENDER",
     });
   }
   // Full proposal also requires reviewed selected evidence when the tender
