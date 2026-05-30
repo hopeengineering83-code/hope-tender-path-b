@@ -20,6 +20,7 @@
 // fetches its own data on mount.
 
 import { useState, useEffect, useCallback } from "react";
+import { useRouter } from "next/navigation";
 
 type Reviewer = {
   id: string;
@@ -119,6 +120,7 @@ export function DocumentReviewPanel({
   const [replyingTo, setReplyingTo] = useState<string | null>(null);
   const [replyBody, setReplyBody] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const router = useRouter();
 
   const canReview = ["ADMIN", "PROPOSAL_MANAGER", "REVIEWER"].includes(currentUserRole);
   const canComment = canReview;
@@ -143,7 +145,8 @@ export function DocumentReviewPanel({
     } finally {
       setLoading(false);
     }
-  }, [tenderId, docId, currentReviewStatus]);
+    router.refresh();
+  }, [tenderId, docId, currentReviewStatus, router]);
 
   useEffect(() => {
     void refresh();

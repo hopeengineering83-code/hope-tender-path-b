@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 
 type CostLine = {
   id: string;
@@ -56,6 +57,7 @@ function money(value: number, currency: string): string {
 }
 
 export function PricingWorkbookPanel({ tenderId }: { tenderId: string }) {
+  const router = useRouter();
   const [workbook, setWorkbook] = useState<PricingWorkbook | null>(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -90,6 +92,7 @@ export function PricingWorkbookPanel({ tenderId }: { tenderId: string }) {
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error ?? `Failed to save pricing workbook (${res.status})`);
       setWorkbook(data.workbook);
+      router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save pricing workbook");
     } finally {
@@ -121,6 +124,7 @@ export function PricingWorkbookPanel({ tenderId }: { tenderId: string }) {
       if (!res.ok) throw new Error(data.error ?? `Failed to add cost line (${res.status})`);
       setDraft(EMPTY_LINE);
       await load();
+      router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to add cost line");
     } finally {
@@ -136,6 +140,7 @@ export function PricingWorkbookPanel({ tenderId }: { tenderId: string }) {
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error ?? `Failed to delete cost line (${res.status})`);
       await load();
+      router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to delete cost line");
     } finally {

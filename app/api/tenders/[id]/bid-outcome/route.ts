@@ -35,12 +35,17 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 
   const note = typeof body.bidOutcomeNote === "string" ? body.bidOutcomeNote.trim() || null : null;
 
+  // Terminal outcomes close the tender; PENDING keeps it active.
+  // The specific win/loss/withdrawal detail is already stored in bidOutcome.
+  const closesTheTender = outcome && outcome !== "PENDING";
+
   const tender = await prisma.tender.update({
     where: { id },
     data: {
       bidOutcome: outcome,
       bidOutcomeNote: note,
       bidOutcomeAt: outcome ? new Date() : null,
+      ...(closesTheTender ? { status: "CLOSED" } : outcome === "PENDING" ? { status: "ACTIVE" } : {}),
     },
     select: {
       id: true, title: true, status: true, bidOutcome: true,

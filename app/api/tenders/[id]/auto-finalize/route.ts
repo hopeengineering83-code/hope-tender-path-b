@@ -13,6 +13,7 @@ import { extractRequestId } from "../../../../../lib/request-id";
 import { logAction } from "../../../../../lib/audit";
 import { buildSevenPassGateInput, applySevenPassGateToDocumentState, summarizeSevenPassForReviewNotes, evaluateSevenPassForDocument } from "../../../../../lib/engine/seven-pass-generation-wiring";
 import { assessGeneratedDocumentQuality } from "../../../../../lib/engine/document-quality-gate";
+import { detectAnalysisSourceWithApproval } from "../../../../../lib/engine/analysis-source";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -155,6 +156,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const tender = await prisma.tender.findFirst({ where: { id: tenderId, userId: actor.id }, include: { requirements: true, generatedDocuments: { where: { generationStatus: { not: "SUPERSEDED" } }, orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }] } } });
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
 
+  // Resolve analysis source once (includes DB approval check) so the seven-pass
+  // gate correctly honours human approval of regex-fallback analyses.
+  const resolvedAnalysisSource = await detectAnalysisSourceWithApproval(prisma, tenderId, tender);
+
   const plan = buildSubmissionPlan(tender);
   const planEmpty = plan.files.length === 0;
   const plannedNames = new Set(plan.files.map((f) => (f.exactFileName ?? "").trim().toLowerCase()));
@@ -218,6 +223,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     // ── Seven-pass gate check ───────────────────────────────────────────────
     const gateEvaluation = evaluateSevenPassForDocument({
       tenderNotes: tender.notes,
+      resolvedAnalysisSource,
       tenderReference: tender.reference ?? null,
       visibleText: cleaned,
       reviewedExpertCount,

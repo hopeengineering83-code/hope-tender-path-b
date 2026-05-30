@@ -227,7 +227,12 @@ type GeneratedDocument = {
   reviewStatus: string;
   reviewNotes: string | null;
   exactFileName?: string | null;
+  exactOrder?: number | null;
   contentSummary?: string | null;
+  reviewedExpertCount?: number | null;
+  draftExpertCount?: number | null;
+  reviewedProjectCount?: number | null;
+  draftProjectCount?: number | null;
 };
 
 type ExpertMatch = {
@@ -335,6 +340,7 @@ const GAPS_PAGE_SIZE = 10;
 const GAPS_PAGINATION_THRESHOLD = 20; // use pagination instead of show-all when gap count exceeds this
 
 function ComplianceGapsPanel({ tenderId, initialGaps }: { tenderId: string; initialGaps: ComplianceGap[] }) {
+  const router = useRouter();
   const [gaps, setGaps] = useState<ComplianceGap[]>(initialGaps);
   const [toggling, setToggling] = useState<string | null>(null);
   const [toggleError, setToggleError] = useState<string | null>(null);
@@ -353,6 +359,7 @@ function ComplianceGapsPanel({ tenderId, initialGaps }: { tenderId: string; init
       if (res.ok) {
         const updated = await res.json() as ComplianceGap;
         setGaps((prev) => prev.map((g) => g.id === gap.id ? { ...g, isResolved: updated.isResolved } : g));
+        router.refresh();
       } else {
         const data = await res.json().catch(() => ({})) as Record<string, unknown>;
         setToggleError(typeof data.error === "string" ? data.error : `Failed to update gap (${res.status}). Please try again.`);
@@ -2072,6 +2079,22 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
                             </div>
                           );
                         })()}
+                        {((doc.reviewedExpertCount ?? 0) > 0 || (doc.reviewedProjectCount ?? 0) > 0 || (doc.draftExpertCount ?? 0) > 0 || (doc.draftProjectCount ?? 0) > 0) && (
+                          <div className="flex flex-wrap gap-1 mt-1">
+                            {(doc.reviewedExpertCount ?? 0) > 0 && (
+                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700">{doc.reviewedExpertCount} expert{doc.reviewedExpertCount !== 1 ? "s" : ""} reviewed</span>
+                            )}
+                            {(doc.draftExpertCount ?? 0) > 0 && (
+                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-700">{doc.draftExpertCount} expert draft{doc.draftExpertCount !== 1 ? "s" : ""}</span>
+                            )}
+                            {(doc.reviewedProjectCount ?? 0) > 0 && (
+                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700">{doc.reviewedProjectCount} project{doc.reviewedProjectCount !== 1 ? "s" : ""} reviewed</span>
+                            )}
+                            {(doc.draftProjectCount ?? 0) > 0 && (
+                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-700">{doc.draftProjectCount} project draft{doc.draftProjectCount !== 1 ? "s" : ""}</span>
+                            )}
+                          </div>
+                        )}
                         {doc.reviewNotes && (
                           <p className="mt-1 text-xs text-slate-500 italic">&ldquo;{doc.reviewNotes}&rdquo;</p>
                         )}

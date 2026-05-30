@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 
 type Decision = "BID" | "BID_WITH_CONDITIONS" | "NO_BID";
 
@@ -19,6 +20,7 @@ type BidDecisionResponse = {
 };
 
 export function BidDecisionForm({ tenderId }: { tenderId: string }) {
+  const router = useRouter();
   const [open, setOpen] = useState(false);
   const [evaluating, setEvaluating] = useState(false);
   const [evaluated, setEvaluated] = useState<BidDecisionResult | null>(null);
@@ -69,6 +71,7 @@ export function BidDecisionForm({ tenderId }: { tenderId: string }) {
       }
       setResult({ decision: json.decision.decision, summary: json.decision.summary });
       setOpen(false);
+      router.refresh();
     } catch {
       setError("Network error recording decision");
     } finally {

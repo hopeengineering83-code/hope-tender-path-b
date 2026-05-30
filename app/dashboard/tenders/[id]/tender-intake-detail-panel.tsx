@@ -37,6 +37,10 @@ type TenderDetailLike = {
   numberOfCopiesRequired?: number | null;
   technicalWeight?: number | null;
   financialWeight?: number | null;
+  description?: string | null;
+  evaluationMethodology?: string | null;
+  intakeSummary?: string | null;
+  analysisSummary?: string | null;
 };
 
 function formatDeadline(value: Date | string | null | undefined): string | null {
@@ -69,7 +73,7 @@ export function TenderIntakeDetailPanel({ tender }: { tender: TenderDetailLike }
     tender.reference, tender.clientName, tender.clientContactName, tender.clientContactEmail,
     tender.clientContactPhone, tender.clientAddress, tender.country, deadline, tender.submissionMethod,
     budget, tender.validityDays, bond, preBid, tender.numberOfCopiesRequired, tender.pageLimit,
-    evaluation,
+    evaluation, tender.description, tender.evaluationMethodology, tender.intakeSummary, tender.analysisSummary,
   ];
   const filledCount = fields.filter((f) => f !== null && f !== undefined && f !== "").length;
   const totalCount = fields.length;
@@ -113,6 +117,23 @@ export function TenderIntakeDetailPanel({ tender }: { tender: TenderDetailLike }
         <Detail label="Mandatory site visit" value={tender.mandatorySiteVisit ? "YES" : null} highlight={tender.mandatorySiteVisit} />
         <Detail label="Evaluation weights" value={evaluation} />
       </div>
+
+      {(tender.description || tender.evaluationMethodology || tender.intakeSummary || tender.analysisSummary) && (
+        <div className="mt-4 space-y-3 border-t border-slate-100 pt-4">
+          {tender.description && (
+            <ProseBlock label="Description" value={tender.description} />
+          )}
+          {tender.evaluationMethodology && (
+            <ProseBlock label="Evaluation methodology" value={tender.evaluationMethodology} />
+          )}
+          {tender.intakeSummary && (
+            <ProseBlock label="Intake summary" value={tender.intakeSummary} />
+          )}
+          {tender.analysisSummary && (
+            <ProseBlock label="Analysis summary" value={tender.analysisSummary} />
+          )}
+        </div>
+      )}
     </section>
   );
 }
@@ -125,6 +146,15 @@ function Detail({ label, value, highlight }: { label: string; value: string | nu
       <div className={`flex-1 text-sm ${empty ? "italic text-slate-400" : highlight ? "font-semibold text-amber-700" : "text-slate-800"}`}>
         {empty ? REVIEW_NOTE : value}
       </div>
+    </div>
+  );
+}
+
+function ProseBlock({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</div>
+      <p className="whitespace-pre-wrap text-sm text-slate-800 leading-relaxed">{value}</p>
     </div>
   );
 }
