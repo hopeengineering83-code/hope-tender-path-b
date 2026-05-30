@@ -340,6 +340,7 @@ const GAPS_PAGE_SIZE = 10;
 const GAPS_PAGINATION_THRESHOLD = 20; // use pagination instead of show-all when gap count exceeds this
 
 function ComplianceGapsPanel({ tenderId, initialGaps }: { tenderId: string; initialGaps: ComplianceGap[] }) {
+  const router = useRouter();
   const [gaps, setGaps] = useState<ComplianceGap[]>(initialGaps);
   const [toggling, setToggling] = useState<string | null>(null);
   const [toggleError, setToggleError] = useState<string | null>(null);
@@ -358,6 +359,7 @@ function ComplianceGapsPanel({ tenderId, initialGaps }: { tenderId: string; init
       if (res.ok) {
         const updated = await res.json() as ComplianceGap;
         setGaps((prev) => prev.map((g) => g.id === gap.id ? { ...g, isResolved: updated.isResolved } : g));
+        router.refresh();
       } else {
         const data = await res.json().catch(() => ({})) as Record<string, unknown>;
         setToggleError(typeof data.error === "string" ? data.error : `Failed to update gap (${res.status}). Please try again.`);

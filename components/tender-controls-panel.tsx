@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { useRouter } from "next/navigation";
 
 type ControlType =
   | "ADDENDUM"
@@ -71,6 +72,7 @@ const EMPTY_FORM = {
 };
 
 export default function TenderControlsPanel({ tenderId }: { tenderId: string }) {
+  const router = useRouter();
   const [data, setData] = useState<ControlsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -135,6 +137,7 @@ export default function TenderControlsPanel({ tenderId }: { tenderId: string }) 
       setForm(EMPTY_FORM);
       setShowForm(false);
       void load();
+      router.refresh();
     } catch (e) {
       setSubmitError(e instanceof Error ? e.message : "Failed to add control");
     } finally {
@@ -160,6 +163,7 @@ export default function TenderControlsPanel({ tenderId }: { tenderId: string }) 
       const json = await res.json();
       if (!res.ok || !json.success) throw new Error(json.error ?? "Failed to resolve control");
       void load();
+      router.refresh();
     } catch {
       // silently ignore — user can retry
     } finally {
