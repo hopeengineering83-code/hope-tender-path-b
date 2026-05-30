@@ -114,6 +114,33 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
       metadata: { tenderId: id, prevStatus, newStatus: status ?? prevStatus },
     });
 
+    // Record a MANUAL_CONFIRMED audit entry when the user provided a NEW
+    // value for one of the critical metadata fields. The metadata-repair
+    // endpoint and the AI-extracted analysis are the only other sources for
+    // these fields; logging a manual confirmation lets later panels show
+    // "this field was set by <user> on <date>" instead of "AI-extracted".
+    const MANUAL_FIELDS = [
+      ["clientName", existing.clientName, tender.clientName],
+      ["reference", existing.reference, tender.reference],
+      ["submissionMethod", existing.submissionMethod, tender.submissionMethod],
+      ["submissionAddress", existing.submissionAddress, tender.submissionAddress],
+      ["deadline", existing.deadline?.toISOString() ?? null, tender.deadline?.toISOString() ?? null],
+      ["evaluationMethodology", existing.evaluationMethodology, tender.evaluationMethodology],
+    ] as const;
+    const manuallySet = MANUAL_FIELDS
+      .filter(([field, before, after]) => body[field] !== undefined && (after ?? "") !== (before ?? ""))
+      .map(([field]) => field);
+    if (manuallySet.length > 0) {
+      await logAction({
+        userId,
+        action: "TENDER_METADATA_MANUAL_CONFIRMED",
+        entityType: "Tender",
+        entityId: id,
+        description: `${manuallySet.length} critical metadata field(s) manually confirmed: ${manuallySet.join(", ")}`,
+        metadata: { tenderId: id, fields: manuallySet, source: "MANUAL_CONFIRMED" },
+      });
+    }
+
     return NextResponse.json(withDashboardGeneratedDocuments(tender));
   } catch (error) {
     console.error(error);
