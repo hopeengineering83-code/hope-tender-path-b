@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { useRouter } from "next/navigation";
 
 // ─── Types (mirror lib/engine/tender-lifecycle-orchestrator.ts) ───────────────
 
@@ -135,6 +136,7 @@ function submissionBadge(status: "BLOCKED" | "PARTIAL" | "READY") {
 // ─── Component ─────────────────────────────────────────────────────────────────
 
 export default function TenderRecoveryCommandCenter({ tenderId }: { tenderId: string }) {
+  const router = useRouter();
   const [data, setData] = useState<LifecycleResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -153,18 +155,21 @@ export default function TenderRecoveryCommandCenter({ tenderId }: { tenderId: st
         if (!res.ok) throw new Error(json.error ?? "AI Analyze failed");
         setActionMsg(json.fallback ? "Regex fallback used — approve below or retry when providers recover." : "Analysis complete.");
         await load();
+        router.refresh();
       } else if (action === "BUILD_SUBMISSION_PLAN") {
         const res = await fetch(`/api/tenders/${tenderId}/submission-plan/build`, { method: "POST" });
         const json = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(json.error ?? "Build plan failed");
         setActionMsg(`Plan built — ${json.created ?? 0} file(s) created, ${json.skipped ?? 0} already existed.`);
         await load();
+        router.refresh();
       } else if (action === "RUN_ENGINE") {
         const res = await fetch(`/api/tenders/${tenderId}/engine`, { method: "POST" });
         const json = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(json.error ?? "Engine run failed");
         setActionMsg("Engine ran successfully.");
         await load();
+        router.refresh();
       } else if (action === "APPROVE_FALLBACK_WITH_NOTE") {
         const note = approvalNote.trim();
         if (!note) { setActionMsg("An approval note is required."); setActioning(false); return; }
@@ -178,6 +183,7 @@ export default function TenderRecoveryCommandCenter({ tenderId }: { tenderId: st
         setActionMsg("Fallback analysis approved — generation unblocked.");
         setApprovalNote("");
         await load();
+        router.refresh();
       } else if (action === "DOWNLOAD_FINAL_ZIP") {
         window.location.href = `/api/tenders/${tenderId}/download`;
       } else if (action === "LINK_VAULT_EVIDENCE") {
@@ -196,6 +202,7 @@ export default function TenderRecoveryCommandCenter({ tenderId }: { tenderId: st
         if (!res.ok) throw new Error(json.error ?? "Source repair failed");
         setActionMsg(`Source repair complete — ${json.repairedCount ?? 0} requirement(s) updated.`);
         await load();
+        router.refresh();
       } else if (action === "UPLOAD_TENDER_DOCUMENT") {
         document.getElementById("tender-files")?.scrollIntoView({ behavior: "smooth" });
       } else if (action === "RUN_AI_ANALYZE") {
@@ -204,6 +211,7 @@ export default function TenderRecoveryCommandCenter({ tenderId }: { tenderId: st
         if (!res.ok) throw new Error(json.error ?? "AI Analyze failed");
         setActionMsg(json.fallback ? "Regex fallback used — approve below or retry when providers recover." : "Analysis complete.");
         await load();
+        router.refresh();
       }
     } catch (e) {
       setActionMsg(e instanceof Error ? e.message : "Action failed");
