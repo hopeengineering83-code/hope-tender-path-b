@@ -52,6 +52,7 @@
  */
 
 import type { Prisma } from "@prisma/client";
+import { classifyBidStrategyGaps, type BidStrategyGapAnalysis } from "./bid-strategy-gap-classifier";
 
 // Type aliases for the records we read. Kept loose so the engine
 // works against whatever the caller passes in.
@@ -121,6 +122,10 @@ export interface BidStrategy {
     evaluationAlignment: number;
     eligibilityClearance: number;
   };
+  /** Per-dimension gap classification. When system-readiness gaps drive a
+   *  low capability score the engine REFUSES to collapse the recommendation
+   *  to DECLINE — the gap is in the system, not the company. */
+  gapAnalysis?: BidStrategyGapAnalysis;
   computedAt: string;
 }
 
@@ -454,11 +459,36 @@ export function computeBidStrategy(input: BidStrategyInput): BidStrategy {
     winProbability = Math.max(0, winProbability - 10);
   }
 
-  const recommendation = synthesizeRecommendation(winProbability);
+  // Classify why capabilityCoverage is low BEFORE synthesising the
+  // recommendation. When the gap is system-readiness (regex-fallback,
+  // metadata not extracted, evidence not linked) we MUST NOT collapse to
+  // DECLINE — the company hasn't been proven incapable, the analysis just
+  // hasn't finished.
+  const gapAnalysis = classifyBidStrategyGaps({
+    tender: {
+      requirements: input.tender.requirements,
+      expertMatches: input.tender.expertMatches,
+      analysisSource: input.tender.analysisSource ?? null,
+      evidenceCoverageRatio: input.tender.evidenceCoverageRatio ?? null,
+    },
+    company: { expertCount: input.company.expertCount },
+    capabilityScore: capability.score,
+  });
+
+  let recommendation = synthesizeRecommendation(winProbability);
+  if (gapAnalysis.inhibitDecline && recommendation === "DECLINE") {
+    // Hold — the DECLINE was driven by a system-readiness gap, not a true
+    // capability gap. Promote to BID_CAREFULLY so the user repairs the
+    // gap and re-runs the strategy instead of dropping the tender.
+    recommendation = "BID_CAREFULLY";
+  }
   const posture = synthesizePosture(recommendation, capability, experience, eligibility);
   const topRisks = buildTopRisks(capability, experience, compliance, eligibility);
   const topAdvantages = buildTopAdvantages(experience, capability, evaluation, input);
-  const rationale = buildRationale(recommendation, posture, winProbability, topRisks.length);
+  const baseRationale = buildRationale(recommendation, posture, winProbability, topRisks.length);
+  const rationale = gapAnalysis.capabilityGapCause === "NO_CAPABILITY_GAP" && !gapAnalysis.systemReadinessGapsPresent
+    ? baseRationale
+    : `${baseRationale} Gap analysis: ${gapAnalysis.explanation}`;
 
   return {
     winProbability,
@@ -474,6 +504,7 @@ export function computeBidStrategy(input: BidStrategyInput): BidStrategy {
       evaluationAlignment: evaluation.score,
       eligibilityClearance: eligibility.score,
     },
+    gapAnalysis,
     computedAt: new Date().toISOString(),
   };
 }

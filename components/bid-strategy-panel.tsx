@@ -30,6 +30,28 @@ type BidStrategy = {
     evaluationAlignment: number;
     eligibilityClearance: number;
   };
+  /** Gap classifier output (J) — distinguishes system-readiness gaps from
+   *  true company-capability gaps so a low capability score doesn't get
+   *  read as "the company can't do this work". */
+  gapAnalysis?: {
+    capabilityGapCause:
+      | "NO_CAPABILITY_GAP"
+      | "TRUE_CAPABILITY_GAP"
+      | "EVIDENCE_LINKING_GAP"
+      | "METADATA_EXTRACTION_GAP"
+      | "PROVIDER_RATE_LIMIT_GAP";
+    systemReadinessGapsPresent: boolean;
+    signals: {
+      analysisRegexFallback: boolean;
+      noRequirementsExtracted: boolean;
+      vaultLacksReviewedExperts: boolean;
+      vaultHasExpertsButNoneLinked: boolean;
+      vaultHasExpertsButNoneReviewed: boolean;
+      evidenceCoverageZero: boolean;
+    };
+    explanation: string;
+    inhibitDecline: boolean;
+  };
   computedAt: string;
 };
 
@@ -179,6 +201,17 @@ export function BidStrategyPanel({ tenderId, defaultExpanded = true }: BidStrate
           </div>
         </div>
         <p className="mt-3 text-xs leading-relaxed text-slate-700">{strategy.rationale}</p>
+        {strategy.gapAnalysis && strategy.gapAnalysis.capabilityGapCause !== "NO_CAPABILITY_GAP" && (
+          <div className={`mt-3 rounded-lg border p-2.5 text-xs ${strategy.gapAnalysis.inhibitDecline ? "border-amber-200 bg-amber-50 text-amber-900" : "border-red-200 bg-red-50 text-red-900"}`}>
+            <p className="font-semibold">
+              Capability score read with care — gap cause: {strategy.gapAnalysis.capabilityGapCause.replace(/_/g, " ").toLowerCase()}
+            </p>
+            <p className="mt-1 leading-relaxed">{strategy.gapAnalysis.explanation}</p>
+            {strategy.gapAnalysis.inhibitDecline && (
+              <p className="mt-1 font-medium">Recommendation was prevented from collapsing to DECLINE because the gap is system-readiness, not true capability — repair the gap and re-run before deciding.</p>
+            )}
+          </div>
+        )}
       </div>
 
       {expanded && (
