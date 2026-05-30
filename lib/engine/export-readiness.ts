@@ -1,6 +1,7 @@
 import { prisma, prismaReady } from "../prisma";
 import { getStorageAdapter } from "../storage";
 import { isValidClientName } from "./metadata-validators";
+import { isExportBlockingConfidence, scanTenderForExplicitDonorRequirement } from "./donor-advisory-confidence";
 import {
   deriveDocumentOutputState,
   exportBlockReason,
@@ -38,8 +39,8 @@ export type ExportReadinessFailure = {
 export type ExportReadinessResult = {
   ok: boolean;
   failures: ExportReadinessFailure[];
-  tenderLevelBlockers?: Array<{ category: string; severity: string; title: string; recommendedAction?: string | null }>;
-  advisoryWarnings?: Array<{ category: string; severity: string; title: string; recommendedAction?: string | null }>;
+  tenderLevelBlockers?: Array<{ category: string; severity: string; title: string; recommendedAction?: string | null; confidence?: import("./donor-advisory-confidence").DonorAdvisoryConfidence; sourceQuote?: string | null }>;
+  advisoryWarnings?: Array<{ category: string; severity: string; title: string; recommendedAction?: string | null; confidence?: import("./donor-advisory-confidence").DonorAdvisoryConfidence; sourceQuote?: string | null }>;
 };
 
 function generatedFileName(name: string): string {
@@ -345,12 +346,19 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
     const planText = tender.requirements.map((r) => `${r.title} ${r.description ?? ""}`).join(" ").toLowerCase();
     const docText = docs.map((d) => `${d.name} ${d.documentType ?? ""}`).join(" ").toLowerCase();
     const allText = `${planText} ${docText}`;
-    const sourceText = [tender.description, tender.analysisSummary, tender.notes, tender.intakeSummary, ...tender.requirements.map((r) => `${r.title} ${r.description ?? ""}`)].filter(Boolean).join(" ").toLowerCase();
-    const explicitlyRequired = /(?:tor|terms?\s+of\s+reference|mandatory|required|must|shall).{0,80}(?:esmp|logframe|results?\s+framework|m&e|monitoring.*evaluation|environmental|social.*safeguard)|deliverable.{0,40}(?:esmp|logframe|m&e|results?\s+framework)/i.test(sourceText);
+    const sourceText = [tender.description, tender.analysisSummary, tender.notes, tender.intakeSummary, ...tender.requirements.map((r) => `${r.title} ${r.description ?? ""}`)].filter(Boolean).join(" ");
+    // Use the formalised donor-advisory confidence model. The scanner returns
+    // the verbatim quote of the explicit ToR requirement (≤200 chars) so the
+    // readiness panel + audit log can show WHERE the requirement was found
+    // instead of an opaque "system says blocking".
+    const explicitScan = scanTenderForExplicitDonorRequirement(sourceText);
     const addDonorIssue = (code: string, title: string, action: string) => {
       const issue = tenderBlocker(code, title, action, "MEDIUM");
-      if (explicitlyRequired) blockers.push(issue);
-      else advisoryWarnings.push(issue);
+      // Hard invariant: only EXPLICIT_TOR_REQUIRED can promote to a blocker.
+      // Everything else stays in advisoryWarnings (non-export-blocking).
+      const annotated = { ...issue, confidence: explicitScan.confidence, sourceQuote: explicitScan.sourceQuote };
+      if (isExportBlockingConfidence(explicitScan.confidence)) blockers.push(annotated);
+      else advisoryWarnings.push(annotated);
     };
 
     if (!/esmp|environmental.*social.*management|esia|safeguard.*plan|environmental.*management.*plan/i.test(allText)) {
