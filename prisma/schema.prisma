@@ -340,6 +340,11 @@ model Tender {
   complianceMatrix      ComplianceMatrix[]
   generatedDocuments    GeneratedDocument[]
   exportPackages        ExportPackage[]
+  evaluatorObjections   EvaluatorObjection[]
+  matchScoreBreakdowns  MatchScoreBreakdown[]
+  sectionEvidenceMaps   SectionEvidenceMap[]
+  proposalVersions      ProposalVersion[]
+  pricingWorkbook       PricingWorkbook?
 }
 
 model TenderFile {
@@ -602,6 +607,7 @@ model Notification {
 model ProposalVersion {
   id                  String   @id @default(uuid())
   tenderId            String
+  tender              Tender   @relation(fields: [tenderId], references: [id], onDelete: Cascade)
   version             Int
   markdown            String
   fileContent         String?
@@ -629,6 +635,7 @@ model ProposalVersion {
 model MatchScoreBreakdown {
   id              String   @id @default(uuid())
   tenderId        String
+  tender          Tender   @relation(fields: [tenderId], references: [id], onDelete: Cascade)
   // entityType: "EXPERT" or "PROJECT"
   entityType      String
   // entityId points at Expert.id or Project.id (no FK constraint because
@@ -662,6 +669,7 @@ model MatchScoreBreakdown {
 model EvaluatorObjection {
   id              String    @id @default(uuid())
   tenderId        String
+  tender          Tender    @relation(fields: [tenderId], references: [id], onDelete: Cascade)
   // version of the proposal this objection was raised against.
   proposalVersion Int       @default(1)
   // severity: "HIGH" | "MEDIUM" | "LOW"
@@ -698,6 +706,7 @@ model EvaluatorObjection {
 model SectionEvidenceMap {
   id              String   @id @default(uuid())
   tenderId        String
+  tender          Tender   @relation(fields: [tenderId], references: [id], onDelete: Cascade)
   proposalVersion Int      @default(1)
   // canonical section ID, e.g. "cover-letter", "section-a-1", "section-c-2".
   sectionId       String
@@ -771,6 +780,7 @@ model AiJobStep {
 model PricingWorkbook {
   id              String     @id @default(uuid())
   tenderId        String     @unique
+  tender          Tender     @relation(fields: [tenderId], references: [id], onDelete: Cascade)
   currency        String     @default("USD")
   // validity period in days
   validityDays    Int        @default(90)
