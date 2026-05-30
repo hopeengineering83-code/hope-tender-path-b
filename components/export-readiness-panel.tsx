@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 
 type Severity = "HIGH" | "MEDIUM" | "LOW";
 
@@ -91,6 +92,7 @@ const ADVISORY_RESOLUTION_OPTIONS: Array<{ value: string; label: string }> = [
 ];
 
 export function ExportReadinessPanel({ tenderId }: { tenderId: string }) {
+  const router = useRouter();
   const [readiness, setReadiness] = useState<ExportReadiness | null>(null);
   const [loading, setLoading] = useState(false);
   const [repairing, setRepairing] = useState(false);
@@ -126,6 +128,7 @@ export function ExportReadinessPanel({ tenderId }: { tenderId: string }) {
       setReadiness(r);
       // Clear the "click again" nudge once the gate passes or blockers are resolved
       if (r?.ok || (r?.summary?.documentBlockers ?? 0) === 0) setAutoFinalizeRemaining(null);
+      router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Export readiness failed");
     } finally {
