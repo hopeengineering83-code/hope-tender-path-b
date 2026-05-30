@@ -32,6 +32,7 @@
 
 export type ControlSuggestionCode =
   | "METADATA_INCOMPLETE"
+  | "ANALYSIS_NOT_RUN"
   | "REGEX_FALLBACK_UNAPPROVED"
   | "SOURCE_REFS_MISSING"
   | "MANDATORY_COVERAGE_ZERO"
@@ -146,9 +147,22 @@ export function deriveControlSuggestions(input: SuggestionDerivationInput): Sugg
     }));
   }
 
-  // 3. Regex fallback unapproved
-  const sourceUpper = (input.analysisStatus.source ?? "").toString().trim().toUpperCase();
-  if (sourceUpper.length > 0 && REGEX_FALLBACK_SOURCES.has(sourceUpper)) {
+  // 3a. Analysis never run (source null/empty/UNKNOWN)
+  const sourceRaw = (input.analysisStatus.source ?? "").toString().trim();
+  const sourceUpper = sourceRaw.toUpperCase();
+  if (sourceRaw.length === 0 || sourceUpper === "UNKNOWN") {
+    out.push(mkSuggestion({
+      code: "ANALYSIS_NOT_RUN",
+      type: "TASK",
+      title: "Run AI Analyze before generating proposals",
+      description: "This tender has not been analyzed yet. AI Analyze extracts requirements, evaluation criteria, scoring weights, and submission rules. Without it, proposal generation is blocked and requirement coverage cannot be assessed.",
+      severity: "HIGH",
+      nextAction: "Click 'Run AI Analyze' in the engine panel above.",
+    }));
+  }
+
+  // 3b. Regex fallback unapproved
+  if (sourceRaw.length > 0 && REGEX_FALLBACK_SOURCES.has(sourceUpper)) {
     out.push(mkSuggestion({
       code: "REGEX_FALLBACK_UNAPPROVED",
       type: "RISK",
@@ -331,6 +345,7 @@ export function isHighConfidenceSuggestion(s: SuggestedControl): boolean {
   if (s.severity !== "HIGH") return false;
   const highConfidence: ControlSuggestionCode[] = [
     "AI_PROVIDERS_NOT_CONFIGURED",
+    "ANALYSIS_NOT_RUN",
     "REGEX_FALLBACK_UNAPPROVED",
     "METADATA_INCOMPLETE",
     "MANDATORY_COVERAGE_ZERO",
