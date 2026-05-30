@@ -12,126 +12,51 @@ import {
   normalizeTenderControlPayload,
 } from "../../../../../lib/engine/tender-control-ledger";
 import { computeTenderLifecycle } from "../../../../../lib/engine/tender-lifecycle-orchestrator";
+import { deriveControlSuggestions, type SuggestedControl } from "../../../../../lib/engine/tender-control-suggestions";
 
 export const dynamic = "force-dynamic";
 
 // ── Suggested controls derived from lifecycle state (read-only, no DB writes) ─
-
-type SuggestedControl = {
-  id: string;
-  type: "TASK" | "RISK";
-  title: string;
-  description: string;
-  severity: "HIGH" | "MEDIUM" | "LOW";
-  status: "SUGGESTED";
-  action: "SUGGESTED";
-  createdAt: string;
-  createdBy: null;
-};
+//
+// Delegates to the pure lib/engine/tender-control-suggestions module so the
+// derivation is unit-testable and covers every blocker category from the
+// audit task (metadata, regex fallback, source refs, mandatory coverage,
+// outside-plan, planned-not-generated, no-export-candidates, AI providers,
+// official originals, quality-failed, plan-not-built).
 
 async function deriveSuggestedControls(tenderId: string): Promise<SuggestedControl[]> {
   try {
     const lifecycle = await computeTenderLifecycle(prisma, tenderId);
     if (!lifecycle) return [];
-
-    const suggested: SuggestedControl[] = [];
-    const now = new Date().toISOString();
-
-    // Metadata incomplete
-    if (lifecycle.metadataStatus.criticalMissing.length > 0) {
-      suggested.push({
-        id: `suggested-metadata-${tenderId}`,
-        type: "TASK",
-        title: "Complete critical metadata",
-        description: `Missing fields: ${lifecycle.metadataStatus.criticalMissing.slice(0, 4).join(", ")}. Incomplete metadata blocks downstream analysis accuracy.`,
-        severity: "HIGH",
-        status: "SUGGESTED",
-        action: "SUGGESTED",
-        createdAt: now,
-        createdBy: null,
-      });
+    const all = deriveControlSuggestions({
+      metadataStatus: lifecycle.metadataStatus,
+      analysisStatus: lifecycle.analysisStatus,
+      sourceReferenceStatus: lifecycle.sourceReferenceStatus,
+      planStatus: lifecycle.planStatus,
+      evidenceStatus: lifecycle.evidenceStatus,
+      counts: lifecycle.counts,
+      providerStatus: lifecycle.providerStatus,
+      officialOriginalStatus: lifecycle.officialOriginalStatus,
+    });
+    // Hide suggestions the user has explicitly rejected. Lookup the audit log
+    // for TENDER_CONTROL_SUGGESTION_REJECTED entries on this tender; the
+    // suggestionCode lives in the metadata blob.
+    const rejectedLogs = await prisma.auditLog.findMany({
+      where: { entityType: "Tender", entityId: tenderId, action: "TENDER_CONTROL_SUGGESTION_REJECTED" },
+      select: { metadata: true },
+    });
+    const rejectedCodes = new Set<string>();
+    for (const row of rejectedLogs) {
+      const raw = row.metadata;
+      const parsed = typeof raw === "string" ? (() => { try { return JSON.parse(raw); } catch { return null; } })() : raw;
+      const code = parsed && typeof parsed === "object" && "suggestionCode" in (parsed as Record<string, unknown>)
+        ? String((parsed as Record<string, unknown>).suggestionCode)
+        : null;
+      if (code) rejectedCodes.add(code);
     }
-
-    // Regex fallback unapproved
-    if (lifecycle.analysisStatus.source === "REGEX_FALLBACK_AI_ERROR") {
-      suggested.push({
-        id: `suggested-fallback-${tenderId}`,
-        type: "RISK",
-        title: "Analysis is regex fallback — low confidence",
-        description: "AI analysis failed and regex fallback is unapproved. Requirement list may be incomplete. Retry AI Analyze or approve fallback with a human note.",
-        severity: "HIGH",
-        status: "SUGGESTED",
-        action: "SUGGESTED",
-        createdAt: now,
-        createdBy: null,
-      });
-    }
-
-    // Outside-plan documents
-    if (lifecycle.counts.outsidePlanRows > 0) {
-      suggested.push({
-        id: `suggested-outside-plan-${tenderId}`,
-        type: "TASK",
-        title: `Reconcile ${lifecycle.counts.outsidePlanRows} outside-plan document(s)`,
-        description: "Documents exist that are not mapped to any submission plan row. Map, supersede, or delete them before export.",
-        severity: "MEDIUM",
-        status: "SUGGESTED",
-        action: "SUGGESTED",
-        createdAt: now,
-        createdBy: null,
-      });
-    }
-
-    // Mandatory requirements uncovered
-    const totalReqs = lifecycle.evidenceStatus.totalRequirements;
-    const coveredReqs = lifecycle.evidenceStatus.requirementsWithLinkedEvidence;
-    if (coveredReqs === 0 && totalReqs > 0) {
-      suggested.push({
-        id: `suggested-no-evidence-${tenderId}`,
-        type: "RISK",
-        title: "Mandatory requirements have zero evidence coverage",
-        description: `${totalReqs} requirement(s) have no linked evidence. Link experts, projects, or documents before generating the proposal.`,
-        severity: "HIGH",
-        status: "SUGGESTED",
-        action: "SUGGESTED",
-        createdAt: now,
-        createdBy: null,
-      });
-    }
-
-    // No submission plan
-    if (!lifecycle.planStatus.hasExplicitPlan && lifecycle.planStatus.totalRequired === 0) {
-      suggested.push({
-        id: `suggested-no-plan-${tenderId}`,
-        type: "TASK",
-        title: "Build submission plan",
-        description: "No explicit submission plan exists. Without a plan, generated documents cannot be validated against tender requirements.",
-        severity: "MEDIUM",
-        status: "SUGGESTED",
-        action: "SUGGESTED",
-        createdAt: now,
-        createdBy: null,
-      });
-    }
-
-    // Quality failed documents
-    if (lifecycle.counts.qualityFailedCandidates > 0) {
-      suggested.push({
-        id: `suggested-quality-failed-${tenderId}`,
-        type: "RISK",
-        title: `${lifecycle.counts.qualityFailedCandidates} document(s) failed quality gate`,
-        description: "Quality-failed documents cannot be included in the export package. Rewrite or replace them.",
-        severity: "HIGH",
-        status: "SUGGESTED",
-        action: "SUGGESTED",
-        createdAt: now,
-        createdBy: null,
-      });
-    }
-
-    return suggested;
+    return all.filter((s) => !rejectedCodes.has(s.code));
   } catch {
-    // Never block the main controls response if suggestion derivation fails
+    // Never block the main controls response if suggestion derivation fails.
     return [];
   }
 }

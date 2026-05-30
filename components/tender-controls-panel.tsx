@@ -36,10 +36,50 @@ type ControlSummary = {
   byType: Partial<Record<ControlType, number>>;
 };
 
+type SuggestionCode =
+  | "METADATA_INCOMPLETE"
+  | "REGEX_FALLBACK_UNAPPROVED"
+  | "SOURCE_REFS_MISSING"
+  | "MANDATORY_COVERAGE_ZERO"
+  | "OUTSIDE_PLAN_DOCS"
+  | "PLANNED_DOCS_NOT_GENERATED"
+  | "NO_ACTIVE_EXPORT_CANDIDATES"
+  | "AI_PROVIDERS_COOLING"
+  | "AI_PROVIDERS_NOT_CONFIGURED"
+  | "MISSING_OFFICIAL_ORIGINALS"
+  | "QUALITY_FAILED_DOCS"
+  | "SUBMISSION_PLAN_NOT_BUILT";
+
+type SuggestedControl = {
+  id: string;
+  code: SuggestionCode;
+  type: "TASK" | "RISK";
+  title: string;
+  description: string;
+  severity: Severity;
+  status: "SUGGESTED";
+  nextAction: string;
+  createdAt: string;
+  createdBy: null;
+};
+
 type ControlsData = {
   controls: TenderControlRecord[];
   summary: ControlSummary;
+  suggestedControls?: SuggestedControl[];
 };
+
+// HIGH-confidence codes — match isHighConfidenceSuggestion in
+// lib/engine/tender-control-suggestions. Used by "Accept all high-confidence".
+const HIGH_CONFIDENCE_CODES: SuggestionCode[] = [
+  "AI_PROVIDERS_NOT_CONFIGURED",
+  "REGEX_FALLBACK_UNAPPROVED",
+  "METADATA_INCOMPLETE",
+  "MANDATORY_COVERAGE_ZERO",
+  "NO_ACTIVE_EXPORT_CANDIDATES",
+  "MISSING_OFFICIAL_ORIGINALS",
+  "QUALITY_FAILED_DOCS",
+];
 
 const TYPE_CONFIG: Record<ControlType, { label: string; color: string; icon: string }> = {
   ADDENDUM:             { label: "Addendum",          color: "bg-purple-100 text-purple-800 border-purple-300", icon: "📄" },
@@ -102,6 +142,84 @@ export default function TenderControlsPanel({ tenderId }: { tenderId: string }) 
   }, [tenderId]);
 
   useEffect(() => { void load(); }, [load]);
+
+  // ── Suggested-control workflow (H). ───────────────────────────────────────
+  const [suggestionBusy, setSuggestionBusy] = useState<string | null>(null);
+  const [suggestionMsg, setSuggestionMsg] = useState<string | null>(null);
+
+  async function acceptSuggestion(s: SuggestedControl) {
+    setSuggestionBusy(s.id);
+    setSuggestionMsg(null);
+    try {
+      const res = await fetch(`/api/tenders/${tenderId}/controls`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: s.type,
+          title: s.title,
+          description: s.description,
+          severity: s.severity,
+          status: "OPEN",
+        }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error ?? `Accept failed (${res.status})`);
+      setSuggestionMsg(`Accepted: ${s.title}`);
+      await load();
+      router.refresh();
+    } catch (e) {
+      setSuggestionMsg(e instanceof Error ? e.message : "Accept failed");
+    } finally {
+      setSuggestionBusy(null);
+    }
+  }
+
+  async function rejectSuggestion(s: SuggestedControl) {
+    const note = window.prompt(`Add a short audit note for dismissing "${s.title}":`);
+    if (note === null) return; // cancelled
+    setSuggestionBusy(s.id);
+    setSuggestionMsg(null);
+    try {
+      const res = await fetch(`/api/tenders/${tenderId}/controls/suggestions/reject`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code: s.code, note: note.trim() }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error ?? `Reject failed (${res.status})`);
+      setSuggestionMsg(`Dismissed: ${s.title}`);
+      await load();
+    } catch (e) {
+      setSuggestionMsg(e instanceof Error ? e.message : "Reject failed");
+    } finally {
+      setSuggestionBusy(null);
+    }
+  }
+
+  async function acceptAllHighConfidence() {
+    const suggestions = data?.suggestedControls ?? [];
+    const targets = suggestions.filter((s) => HIGH_CONFIDENCE_CODES.includes(s.code));
+    if (targets.length === 0) { setSuggestionMsg("No high-confidence suggestions to accept."); return; }
+    setSuggestionBusy("__bulk__");
+    setSuggestionMsg(null);
+    let accepted = 0;
+    let failed = 0;
+    for (const s of targets) {
+      try {
+        const res = await fetch(`/api/tenders/${tenderId}/controls`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ type: s.type, title: s.title, description: s.description, severity: s.severity, status: "OPEN" }),
+        });
+        if (res.ok) accepted++;
+        else failed++;
+      } catch { failed++; }
+    }
+    setSuggestionMsg(`Accept-all complete: ${accepted} accepted${failed > 0 ? `, ${failed} failed` : ""}.`);
+    await load();
+    router.refresh();
+    setSuggestionBusy(null);
+  }
 
   const toggleRow = (id: string) => {
     setExpandedRows((prev) => {
@@ -252,6 +370,66 @@ export default function TenderControlsPanel({ tenderId }: { tenderId: string }) 
           </div>
         ))}
       </div>
+
+      {/* Suggested controls (derived from lifecycle blockers) — H */}
+      {data && data.suggestedControls && data.suggestedControls.length > 0 && (
+        <div className="border-b border-amber-100 bg-amber-50 px-5 py-3">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-amber-900">Suggested controls ({data.suggestedControls.length})</p>
+              <p className="mt-0.5 text-[11px] text-amber-800">Derived from the current lifecycle state. Accept to add a real ledger row; dismiss to hide on subsequent loads (audit-logged).</p>
+            </div>
+            <button
+              type="button"
+              onClick={acceptAllHighConfidence}
+              disabled={suggestionBusy !== null}
+              className="rounded-lg bg-amber-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-800 disabled:cursor-not-allowed disabled:opacity-50"
+              title="Accept every HIGH-severity suggestion (regex fallback, metadata, mandatory coverage, etc.) as real ledger rows."
+            >
+              {suggestionBusy === "__bulk__" ? "Accepting…" : "Accept all high-confidence"}
+            </button>
+          </div>
+          <ul className="mt-2 space-y-2">
+            {data.suggestedControls.map((s) => (
+              <li key={s.id} className="rounded-lg border border-amber-200 bg-white p-2 text-xs">
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-1">
+                      <span className={`rounded border px-1.5 py-0.5 text-[10px] font-semibold ${SEVERITY_CONFIG[s.severity].color}`}>{SEVERITY_CONFIG[s.severity].label}</span>
+                      <span className="rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[10px] font-medium text-slate-700">{TYPE_CONFIG[s.type].icon} {TYPE_CONFIG[s.type].label}</span>
+                      <span className="rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[10px] font-mono text-slate-500">{s.code}</span>
+                    </div>
+                    <p className="mt-1 font-semibold text-slate-900">{s.title}</p>
+                    <p className="mt-0.5 leading-relaxed text-slate-700">{s.description}</p>
+                    <p className="mt-1 text-[11px] text-emerald-700">Next: {s.nextAction}</p>
+                  </div>
+                  <div className="flex shrink-0 flex-col gap-1">
+                    <button
+                      type="button"
+                      onClick={() => void acceptSuggestion(s)}
+                      disabled={suggestionBusy !== null}
+                      className="rounded bg-emerald-700 px-2 py-1 text-[11px] font-semibold text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {suggestionBusy === s.id ? "Working…" : "Accept"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void rejectSuggestion(s)}
+                      disabled={suggestionBusy !== null}
+                      className="rounded border border-slate-300 bg-white px-2 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Dismiss
+                    </button>
+                  </div>
+                </div>
+              </li>
+            ))}
+          </ul>
+          {suggestionMsg && (
+            <p className="mt-2 text-[11px] text-amber-900">{suggestionMsg}</p>
+          )}
+        </div>
+      )}
 
       {/* Add control form */}
       {showForm && (
