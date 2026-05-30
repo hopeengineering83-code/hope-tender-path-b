@@ -104,6 +104,10 @@ export type AuditAction =
   | "TENDER_PLAN_BUILT"
   | "REQUIREMENT_EVIDENCE_CONFIRMED"
   | "REQUIREMENT_EVIDENCE_SUGGESTION_REJECTED"
+  // Metadata repair from source text (deterministic extractor) and
+  // manual confirmation by the user via the tender edit form.
+  | "TENDER_METADATA_REPAIRED"
+  | "TENDER_METADATA_MANUAL_CONFIRMED"
   | "LOGIN_FAILED"
   | "COMPANY_PROFILE_UPDATED"
   | "SETTINGS_UPDATED";

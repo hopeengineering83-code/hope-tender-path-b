@@ -150,6 +150,40 @@ export function looksLikeMetadataPlaceholder(value?: string | null): boolean {
   return METADATA_PLACEHOLDER_PATTERNS.some((rx) => rx.test(text));
 }
 
+// Polluted-text detection — distinct from placeholder detection. The
+// production screenshots showed metadata fields polluted with scraped
+// tender-portal navigation text ("Status CLOSED", "related tender alerts",
+// "View Tender") and adjacent unrelated tender headings. These markers are
+// CONTAMINATION (wrong content from a scrape), not placeholders.
+//
+// Conservative on purpose — must not reject legitimate long descriptions.
+// Returns the first matching contamination signal, or null when the value
+// looks clean.
+export const METADATA_CONTAMINATION_PATTERNS: Array<{ rx: RegExp; signal: string }> = [
+  { rx: /\bStatus\s*:?\s*(?:CLOSED|OPEN|PENDING)\b/i, signal: "TENDER_PORTAL_STATUS_BANNER" },
+  { rx: /\brelated\s+tender\s+alerts?\b/i, signal: "TENDER_PORTAL_RELATED_ALERTS" },
+  { rx: /\btender\s+alerts?\s+(?:for|from)\b/i, signal: "TENDER_PORTAL_ALERTS_FEED" },
+  { rx: /\bview\s+tender\b/i, signal: "TENDER_PORTAL_NAV_LINK" },
+  { rx: /\bclick\s+here\s+to\s+(?:view|download)\b/i, signal: "PORTAL_CALL_TO_ACTION" },
+  { rx: /\bSubscribe\s+to\s+Tender\s+Alerts\b/i, signal: "PORTAL_SUBSCRIBE_LINK" },
+];
+
+export function detectMetadataContamination(value?: string | null): { contaminated: boolean; signal: string | null } {
+  if (!value || typeof value !== "string") return { contaminated: false, signal: null };
+  const text = value.trim();
+  if (text.length === 0) return { contaminated: false, signal: null };
+  for (const { rx, signal } of METADATA_CONTAMINATION_PATTERNS) {
+    if (rx.test(text)) return { contaminated: true, signal };
+  }
+  // Heuristic: a SHORT field (≤300 chars) containing ≥3 distinct ALL-CAPS
+  // heading-style lines is almost always a scrape, not a legitimate value.
+  if (text.length <= 300) {
+    const allCapsLines = text.split(/\n/).filter((line) => /^[A-Z][A-Z\s]{6,}$/.test(line.trim())).length;
+    if (allCapsLines >= 3) return { contaminated: true, signal: "MULTIPLE_HEADING_LINES_IN_SHORT_FIELD" };
+  }
+  return { contaminated: false, signal: null };
+}
+
 /** Document-level placeholder patterns — superset of metadata patterns plus
  *  bracket/template markers common in generated proposal text.
  *  Used by seven-pass-generation-wiring.ts (single canonical source). */
