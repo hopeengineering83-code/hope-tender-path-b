@@ -471,6 +471,7 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
   const [reviewingDocId, setReviewingDocId] = useState<string | null>(null);
   const [submittingReviewDocId, setSubmittingReviewDocId] = useState<string | null>(null);
   const [reviewNote, setReviewNote] = useState("");
+  const [togglingMatchId, setTogglingMatchId] = useState<string | null>(null);
   const [batchApproving, setBatchApproving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -940,6 +941,28 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
       setToast({ message: "Network error saving review", type: "error" });
     } finally {
       setSubmittingReviewDocId(null);
+    }
+  }
+
+  async function toggleMatchSelection(matchId: string, matchType: "expert" | "project", currentSelected: boolean) {
+    setTogglingMatchId(matchId);
+    try {
+      const res = await fetch(`/api/tenders/${tender.id}/matches`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ matchId, matchType, isSelected: !currentSelected }),
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({})) as { error?: string };
+        setToast({ message: d.error ?? "Failed to update match selection", type: "error" });
+        return;
+      }
+      const refreshed = await fetch(`/api/tenders/${tender.id}`);
+      if (refreshed.ok) { setTender(await refreshed.json() as Tender); }
+    } catch {
+      setToast({ message: "Network error updating match selection", type: "error" });
+    } finally {
+      setTogglingMatchId(null);
     }
   }
 
@@ -1823,6 +1846,13 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
                           <div className={`h-full rounded-full ${match.score >= 0.6 ? "bg-green-500" : match.score >= 0.3 ? "bg-amber-400" : "bg-slate-300"}`}
                             style={{ width: `${Math.round(match.score * 100)}%` }} />
                         </div>
+                        <button
+                          onClick={() => toggleMatchSelection(match.id, "expert", match.isSelected)}
+                          disabled={togglingMatchId === match.id}
+                          className={`mt-1.5 rounded px-2 py-0.5 text-[10px] font-medium transition-colors ${match.isSelected ? "bg-red-100 text-red-700 hover:bg-red-200" : "bg-green-100 text-green-700 hover:bg-green-200"} disabled:opacity-50`}
+                        >
+                          {togglingMatchId === match.id ? "…" : match.isSelected ? "Deselect" : "Select"}
+                        </button>
                       </div>
                     </div>
                   </li>
@@ -1874,6 +1904,13 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
                           <div className={`h-full rounded-full ${match.score >= 0.6 ? "bg-blue-500" : match.score >= 0.3 ? "bg-amber-400" : "bg-slate-300"}`}
                             style={{ width: `${Math.round(match.score * 100)}%` }} />
                         </div>
+                        <button
+                          onClick={() => toggleMatchSelection(match.id, "project", match.isSelected)}
+                          disabled={togglingMatchId === match.id}
+                          className={`mt-1.5 rounded px-2 py-0.5 text-[10px] font-medium transition-colors ${match.isSelected ? "bg-red-100 text-red-700 hover:bg-red-200" : "bg-blue-100 text-blue-700 hover:bg-blue-200"} disabled:opacity-50`}
+                        >
+                          {togglingMatchId === match.id ? "…" : match.isSelected ? "Deselect" : "Select"}
+                        </button>
                       </div>
                     </div>
                   </li>
