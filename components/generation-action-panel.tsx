@@ -110,6 +110,72 @@ export function GenerationActionPanel({ tenderId, readiness }: { tenderId: strin
       setRepairing(false);
     }
   }
+
+  // Batch "Repair all from source" — calls the endpoint with every supported
+  // field. Skips fields the tender already has populated (the endpoint enforces
+  // the no-overwrite rule); reports REPAIRED / NOT_FOUND / SKIPPED counts so
+  // the user understands what changed and what didn't. Refresh fires only when
+  // at least one field was actually written.
+  const ALL_REPAIRABLE_FIELDS = [
+    "evaluationMethodology",
+    "reference",
+    "deadline",
+    "submissionEmails",
+    "submissionMethod",
+    "pageLimit",
+    "validityDays",
+    "bidBondAmount",
+    "numberOfCopiesRequired",
+    "mandatorySiteVisit",
+  ] as const;
+
+  async function runRepairAllMetadata() {
+    setRepairing(true);
+    setRepairMsg(null);
+    try {
+      const res = await fetch(`/api/tenders/${tenderId}/repair-metadata`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fields: ALL_REPAIRABLE_FIELDS }),
+      });
+      const data = await res.json().catch(() => ({} as Record<string, unknown>));
+      if (!res.ok) {
+        const err = typeof data.error === "string" ? data.error : `Batch repair failed (${res.status})`;
+        setRepairMsg({ kind: "error", text: err });
+        return;
+      }
+      type ResultEntry = { status?: string; reason?: string; sourceFile?: string | null; confidence?: string };
+      const results = (data.results as Record<string, ResultEntry> | undefined) ?? {};
+      const repairedFields: string[] = [];
+      const notFoundFields: string[] = [];
+      const skippedFields: string[] = [];
+      for (const field of ALL_REPAIRABLE_FIELDS) {
+        const r = results[field];
+        if (!r) continue;
+        if (r.status === "REPAIRED") repairedFields.push(field);
+        else if (r.status === "NOT_FOUND") notFoundFields.push(field);
+        else if (r.status === "SKIPPED") skippedFields.push(field);
+      }
+      const parts: string[] = [];
+      if (repairedFields.length > 0) parts.push(`${repairedFields.length} repaired (${repairedFields.join(", ")})`);
+      if (notFoundFields.length > 0) parts.push(`${notFoundFields.length} not found in source`);
+      if (skippedFields.length > 0) parts.push(`${skippedFields.length} already populated (skipped)`);
+      const summary = parts.length > 0 ? parts.join(" · ") : "no fields needed repair";
+      if (repairedFields.length > 0) {
+        setRepairMsg({ kind: "success", text: `Batch repair: ${summary}. Re-check generation readiness.` });
+        startTransition(() => router.refresh());
+      } else if (notFoundFields.length === ALL_REPAIRABLE_FIELDS.length) {
+        setRepairMsg({ kind: "info", text: "No fields could be repaired from source. Open the tender editor and confirm values manually." });
+      } else {
+        setRepairMsg({ kind: "info", text: `Batch repair: ${summary}.` });
+      }
+    } catch (e) {
+      setRepairMsg({ kind: "error", text: e instanceof Error ? e.message : "Batch repair failed due to a network/runtime error." });
+    } finally {
+      setRepairing(false);
+    }
+  }
+
   const autoPromotionAvailable = Boolean(
     readiness?.counts
     && ((readiness.counts.selectedExperts ?? 0) === 0 && (readiness.counts.reviewedExpertMatches ?? 0) > 0
@@ -218,15 +284,25 @@ export function GenerationActionPanel({ tenderId, readiness }: { tenderId: strin
           {metadataBlockerPresent && (
             <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm">
               <p className="font-semibold text-amber-900">Try a source-grounded repair</p>
-              <p className="mt-1 text-xs text-amber-800">If the tender file already contains an &ldquo;Evaluation Methodology&rdquo; / &ldquo;Evaluation Criteria&rdquo; section, the deterministic repair will populate <code>tender.evaluationMethodology</code> from a verbatim source quote and log the source file + confidence. It never invents content and never overwrites a non-empty value.</p>
+              <p className="mt-1 text-xs text-amber-800">If the tender files already contain the values, the deterministic repair will populate them from a verbatim source quote and log the source file + confidence for each. It never invents content and never overwrites a non-empty value.</p>
               <div className="mt-2 flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={runRepairAllMetadata}
+                  disabled={repairing}
+                  className="rounded-lg bg-amber-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-900 disabled:cursor-not-allowed disabled:opacity-50"
+                  title="Run the deterministic extractor for every supported metadata field — reference, deadline, submission emails, page limit, validity, bid bond, copies, mandatory site visit, and evaluationMethodology."
+                >
+                  {repairing ? "Repairing all…" : "Repair all empty fields from source"}
+                </button>
                 <button
                   type="button"
                   onClick={runRepairMetadata}
                   disabled={repairing}
-                  className="rounded-lg bg-amber-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-800 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="rounded-lg border border-amber-700 bg-white px-3 py-1.5 text-xs font-semibold text-amber-800 hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  title="Run only the evaluationMethodology extractor."
                 >
-                  {repairing ? "Repairing…" : "Repair evaluationMethodology from source"}
+                  {repairing ? "Repairing…" : "Repair evaluationMethodology only"}
                 </button>
                 {repairMsg && (
                   <span className={`text-xs ${repairMsg.kind === "success" ? "text-emerald-800" : repairMsg.kind === "error" ? "text-red-700" : "text-slate-700"}`}>
