@@ -11,6 +11,17 @@ import { extractDeepTenderComprehension } from "../../../../../lib/engine/evalua
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
 
+function inferObjectionCategory(persona: string, detail: string): string {
+  const d = detail.toLowerCase();
+  const p = persona.toLowerCase();
+  if (/compliance|declaration|eligib|certif|missing.*form|required.*document/.test(d)) return "COMPLIANCE_GAP";
+  if (/evidence|expert|project.*reference|past.*performance|cv|qualification|experience/.test(d)) return "EVIDENCE_GAP";
+  if (/criterion|scoring|evaluation|criterion.*miss|not.*addressed|not.*covered/.test(d)) return "EVAL_CRITERION_MISS";
+  if (/price|cost|budget|financial|commercial|value/.test(d) || p === "commercial") return "PRICING_GAP";
+  if (/incorrect|wrong|inaccur|contradict|fact/.test(d)) return "FACT_ERROR";
+  return "OTHER";
+}
+
 function short(value: string | null | undefined, max = 420): string {
   const clean = (value ?? "").replace(/\s+/g, " ").trim();
   return clean.length > max ? `${clean.slice(0, max - 1)}…` : clean;
@@ -163,31 +174,24 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   });
 
   // Persist evaluator objections so the EvaluatorObjectionsPanel can display
-  // and resolve them. Clear existing OPEN objections first so a re-run
-  // replaces stale results; RESOLVED and WAIVED objections are preserved.
-  await prisma.evaluatorObjection.deleteMany({ where: { tenderId: id, status: "OPEN" } });
-  if (result.topObjections.length > 0) {
-    function inferCategory(persona: string, detail: string): string {
-      const d = detail.toLowerCase();
-      const p = persona.toLowerCase();
-      if (/compliance|declaration|eligib|certif|missing.*form|required.*document/.test(d)) return "COMPLIANCE_GAP";
-      if (/evidence|expert|project.*reference|past.*performance|cv|qualification|experience/.test(d)) return "EVIDENCE_GAP";
-      if (/criterion|scoring|evaluation|criterion.*miss|not.*addressed|not.*covered/.test(d)) return "EVAL_CRITERION_MISS";
-      if (/price|cost|budget|financial|commercial|value/.test(d) || p === "commercial") return "PRICING_GAP";
-      if (/incorrect|wrong|inaccur|contradict|fact/.test(d)) return "FACT_ERROR";
-      return "OTHER";
+  // and resolve them. Wrapped in a transaction so a concurrent re-run can't
+  // leave the table in a partially-cleared state. RESOLVED and WAIVED
+  // objections are preserved across re-runs.
+  await prisma.$transaction(async (tx) => {
+    await tx.evaluatorObjection.deleteMany({ where: { tenderId: id, status: "OPEN" } });
+    if (result.topObjections.length > 0) {
+      await tx.evaluatorObjection.createMany({
+        data: result.topObjections.map((o) => ({
+          tenderId: id,
+          severity: o.severity,
+          category: inferObjectionCategory(o.persona, o.detail),
+          title: o.title.slice(0, 300),
+          description: `[${o.persona}] ${o.detail}`.slice(0, 2000),
+          status: "OPEN",
+        })),
+      });
     }
-    await prisma.evaluatorObjection.createMany({
-      data: result.topObjections.map((o) => ({
-        tenderId: id,
-        severity: o.severity,
-        category: inferCategory(o.persona, o.detail),
-        title: o.title.slice(0, 300),
-        description: `[${o.persona}] ${o.detail}`.slice(0, 2000),
-        status: "OPEN",
-      })),
-    });
-  }
+  });
 
   await prisma.tender.update({
     where: { id },

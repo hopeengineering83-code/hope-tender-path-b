@@ -41,7 +41,7 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
       complianceGaps: { orderBy: { createdAt: "desc" } },
       generatedDocuments: {
         orderBy: { exactOrder: "asc" },
-        select: { id: true, name: true, documentType: true, generationStatus: true, validationStatus: true, reviewStatus: true, reviewNotes: true, exactFileName: true, exactOrder: true, contentSummary: true },
+        select: { id: true, name: true, documentType: true, generationStatus: true, validationStatus: true, reviewStatus: true, reviewNotes: true, exactFileName: true, exactOrder: true, contentSummary: true, reviewedExpertCount: true, draftExpertCount: true, reviewedProjectCount: true, draftProjectCount: true },
       },
       expertMatches: {
         orderBy: { score: "desc" },
