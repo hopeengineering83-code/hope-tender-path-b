@@ -468,7 +468,7 @@ export async function generateWithFallback(
 }
 
 // ─── OpenAI (GPT-4o) provider ──────────────────────────────────────────────────
-// Third-tier fallback: Claude → Gemini → GPT-4o → deterministic.
+// First-tier provider in the default/proposal/validation chains.
 // Uses fetch() directly (no SDK dependency) so it works in any serverless runtime.
 // Returns null when OPENAI_API_KEY is not configured, so callers can proceed to
 // the next tier without throwing.
@@ -545,7 +545,7 @@ export function isDeepSeekEnabled() {
 }
 
 // ─── DeepSeek provider ─────────────────────────────────────────────────────────
-// Fourth-tier fallback: Claude → Gemini → OpenAI → DeepSeek.
+// Third-tier provider in the default chain (OpenAI → Gemini → DeepSeek → Groq → OpenRouter → Claude).
 // Uses the OpenAI-compatible REST endpoint (no SDK needed).
 // Returns null when DEEPSEEK_API_KEY is not configured.
 const DEEPSEEK_DEFAULT_TIMEOUT_MS = 60_000;
@@ -731,7 +731,7 @@ async function generateOpenAICompatible(params: {
   }
 }
 
-// Fifth-tier fallback: Groq (fast OpenAI-compatible inference). Null when GROQ_API_KEY unset.
+// Fourth-tier provider (default chain). Also first in the "fast" use-case chain. Null when GROQ_API_KEY unset.
 async function generateWithGroq(prompt: string, systemPrompt: string = DEFAULT_PROPOSAL_SYSTEM_PROMPT, maxTokens = 16000): Promise<string | null> {
   const key = getGroqApiKey();
   if (!key) return null;
@@ -746,7 +746,7 @@ async function generateWithGroq(prompt: string, systemPrompt: string = DEFAULT_P
   });
 }
 
-// Sixth-tier fallback: OpenRouter (OpenAI-compatible aggregator). Null when OPENROUTER_API_KEY unset.
+// Fifth-tier provider (default chain). Aggregates many models; useful when direct providers are exhausted. Null when OPENROUTER_API_KEY unset.
 async function generateWithOpenRouter(prompt: string, systemPrompt: string = DEFAULT_PROPOSAL_SYSTEM_PROMPT, maxTokens = 16000): Promise<string | null> {
   const key = getOpenRouterApiKey();
   if (!key) return null;

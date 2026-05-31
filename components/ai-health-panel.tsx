@@ -10,7 +10,7 @@ import {
   type ProviderRuntimeSnapshot,
 } from "../lib/ai-provider-health";
 
-const AI_FALLBACK_CHAIN = "Claude → Gemini → OpenAI → DeepSeek → Groq → OpenRouter → deterministic draft fallback";
+const AI_FALLBACK_CHAIN = "OpenAI → Gemini → DeepSeek → Groq → OpenRouter → Claude → deterministic draft fallback";
 
 type ProviderCardData = {
   key: string;

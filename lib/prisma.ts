@@ -58,11 +58,12 @@ async function ensureColumn(client: PrismaClient, table: string, column: string,
 
 async function verifyConnectivity(client: PrismaClient): Promise<void> {
   // Lightweight probe: a SELECT 1 round-trip with retry for Neon cold-start.
-  // Neon free-tier databases auto-pause after inactivity and can take up to
-  // 5s to wake up — the first connection attempt fails with ECONNREFUSED or
-  // "Can't reach database server". Three attempts with 2s back-off cover the
-  // typical wake-up window without delaying normal requests noticeably.
-  const MAX_ATTEMPTS = 3;
+  // Neon free-tier databases auto-pause after inactivity and typically take
+  // 5-15 seconds to wake. Five attempts at 3s intervals (≤15s total) covers
+  // the full wake-up window. Normal requests (DB already warm) return on
+  // the first attempt with no delay.
+  const MAX_ATTEMPTS = 5;
+  const BACKOFF_MS = 3000;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
       await client.$queryRawUnsafe(`SELECT 1`);
@@ -71,8 +72,8 @@ async function verifyConnectivity(client: PrismaClient): Promise<void> {
       const msg = err instanceof Error ? err.message : String(err);
       const isTransient = /can't reach|connection refused|ECONNREFUSED|ETIMEDOUT|connect timeout|unable to connect|network socket/i.test(msg);
       if (isTransient && attempt < MAX_ATTEMPTS) {
-        console.warn(`[prisma] DB connectivity attempt ${attempt}/${MAX_ATTEMPTS} failed (transient) — retrying in 2s…`);
-        await new Promise((r) => setTimeout(r, 2000));
+        console.warn(`[prisma] DB connectivity attempt ${attempt}/${MAX_ATTEMPTS} failed (transient) — retrying in ${BACKOFF_MS / 1000}s…`);
+        await new Promise((r) => setTimeout(r, BACKOFF_MS));
         continue;
       }
       throw err;

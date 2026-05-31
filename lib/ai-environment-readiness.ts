@@ -24,7 +24,7 @@ function status(name: string, scope: AIEnvironmentVariableStatus["scope"], sever
 
 export function getAIEnvironmentReadiness(): AIEnvironmentReadiness {
   const variables: AIEnvironmentVariableStatus[] = [
-    status("ANTHROPIC_API_KEY", "ai", "critical", "Primary Claude provider for deep proposal generation, extraction fallback, OCR reasoning, and long-form refinement."),
+    status("ANTHROPIC_API_KEY", "ai", "recommended", "Last-resort provider (sixth in default chain). Placed last to avoid Anthropic rate limits blocking the app when other providers are available."),
     status("ANTHROPIC_TIER", "ai", "recommended", "Used to select Claude output-token defaults; Tier 2 supports larger proposal outputs than Tier 1."),
     status("ANTHROPIC_MAX_OUTPUT_TOKENS", "ai", "recommended", "Controls Claude proposal output budget. Use a realistic value for your Vercel timeout and Anthropic tier."),
     status("ANTHROPIC_PROPOSAL_MODELS", "ai", "recommended", "Comma-separated Claude model chain for proposal generation."),
@@ -33,10 +33,14 @@ export function getAIEnvironmentReadiness(): AIEnvironmentReadiness {
     status("GEMINI_ANALYSIS_MODEL", "ai", "recommended", "Gemini model for tender analysis when configured."),
     status("GEMINI_EXTRACTION_MODEL", "ai", "recommended", "Gemini model for company knowledge extraction when configured."),
     status("GEMINI_FALLBACK_MODELS", "ai", "recommended", "Fallback Gemini model chain."),
-    status("OPENAI_API_KEY", "ai", "recommended", "Third-tier fallback provider for proposal generation across all proposal paths."),
+    status("OPENAI_API_KEY", "ai", "critical", "First-tier provider for proposal generation, validation, and default chain."),
     status("OPENAI_PROPOSAL_MODEL", "ai", "optional", "OpenAI proposal model (default: gpt-4o)."),
-    status("DEEPSEEK_API_KEY", "ai", "optional", "Fourth-tier fallback provider via OpenAI-compatible DeepSeek endpoint."),
+    status("DEEPSEEK_API_KEY", "ai", "optional", "Third-tier fallback provider via OpenAI-compatible DeepSeek endpoint."),
     status("DEEPSEEK_PROPOSAL_MODEL", "ai", "optional", "DeepSeek proposal model (default: deepseek-chat; deepseek-reasoner for deeper reasoning)."),
+    status("GROQ_API_KEY", "ai", "optional", "Fourth-tier fallback provider; also first in the fast/cheap use-case chain (llama-3.3-70b-versatile)."),
+    status("GROQ_PROPOSAL_MODEL", "ai", "optional", "Groq model override (default: llama-3.3-70b-versatile)."),
+    status("OPENROUTER_API_KEY", "ai", "optional", "Fifth-tier fallback provider; aggregates many models via OpenAI-compatible API."),
+    status("OPENROUTER_PROPOSAL_MODEL", "ai", "optional", "OpenRouter model pin (default: openrouter/auto — pin to a specific model for predictable costs)."),
     status("PDF_OCR_ENABLED", "ocr", "recommended", "Enables OCR path for scanned/image-heavy PDFs."),
     status("PDF_OCR_MODEL", "ocr", "recommended", "OCR reasoning model selector."),
     status("PDF_OCR_MAX_PAGES", "ocr", "recommended", "Caps OCR pages to avoid serverless timeout/cost overrun."),
@@ -48,17 +52,20 @@ export function getAIEnvironmentReadiness(): AIEnvironmentReadiness {
     status("PROPOSAL_SECTION_TIMEOUT_MS", "runtime", "recommended", "Section-level proposal timeout guard."),
   ];
 
+  // Reflect actual PROVIDER_CHAINS order: OpenAI → Gemini → DeepSeek → Groq → OpenRouter → Claude
   const providerChain: string[] = [];
-  if (present("ANTHROPIC_API_KEY")) providerChain.push("Claude");
-  if (present("GEMINI_API_KEY")) providerChain.push("Gemini");
-  if (present("OPENAI_API_KEY")) providerChain.push("OpenAI");
+  if (present("OPENAI_API_KEY")) providerChain.push(`OpenAI (${process.env.OPENAI_PROPOSAL_MODEL || "gpt-4o"})`);
+  if (present("GEMINI_API_KEY")) providerChain.push(`Gemini (${process.env.GEMINI_MODEL || "gemini-2.5-pro"})`);
   if (present("DEEPSEEK_API_KEY")) providerChain.push(`DeepSeek (${process.env.DEEPSEEK_PROPOSAL_MODEL || "deepseek-chat"})`);
+  if (present("GROQ_API_KEY")) providerChain.push(`Groq (${process.env.GROQ_PROPOSAL_MODEL || "llama-3.3-70b-versatile"})`);
+  if (present("OPENROUTER_API_KEY")) providerChain.push(`OpenRouter (${process.env.OPENROUTER_PROPOSAL_MODEL || "auto"})`);
+  if (present("ANTHROPIC_API_KEY")) providerChain.push("Claude (last-resort)");
 
   const blockers: string[] = [];
   const warnings: string[] = [];
 
-  if (!present("ANTHROPIC_API_KEY") && !present("GEMINI_API_KEY") && !present("OPENAI_API_KEY") && !present("DEEPSEEK_API_KEY")) {
-    blockers.push("No AI provider is configured. Set at least one of: ANTHROPIC_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, or DEEPSEEK_API_KEY.");
+  if (!present("OPENAI_API_KEY") && !present("GEMINI_API_KEY") && !present("ANTHROPIC_API_KEY") && !present("DEEPSEEK_API_KEY") && !present("GROQ_API_KEY") && !present("OPENROUTER_API_KEY")) {
+    blockers.push("No AI provider is configured. Set at least one of: OPENAI_API_KEY, GEMINI_API_KEY, DEEPSEEK_API_KEY, GROQ_API_KEY, OPENROUTER_API_KEY, or ANTHROPIC_API_KEY.");
   }
   if (!present("DATABASE_URL")) blockers.push("DATABASE_URL is missing.");
   if (!present("SESSION_SECRET")) blockers.push("SESSION_SECRET is missing.");
