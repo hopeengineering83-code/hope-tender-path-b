@@ -150,7 +150,7 @@ export function CalendarClient({ tenders }: { tenders: TenderItem[] }) {
                         <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium border ${STATUS_COLORS[t.status] ?? ""}`}>{t.status}</span>
                         {t.readinessScore != null && (
                           <span className={`text-xs font-medium ${t.readinessScore >= 80 ? "text-green-600" : t.readinessScore >= 50 ? "text-amber-600" : "text-red-500"}`}>
-                            {t.readinessScore}% ready
+                            {t.readinessScore}% workflow
                           </span>
                         )}
                       </div>

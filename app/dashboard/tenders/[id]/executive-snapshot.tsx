@@ -155,12 +155,15 @@ export function ExecutiveSnapshot({ tender }: { tender: TenderLike }) {
     })),
   );
   const evidenceScore = evidenceCoverage.strongCoveragePercent;
-  const readiness = tender.readinessScore ?? evidenceScore;
+  // Legacy DB readiness is displayed as workflow progress only. It must not
+  // drive the GO/REVIEW decision because it can drift from canonical gates.
+  const workflowProgress = tender.readinessScore ?? evidenceScore;
+  const canonicalDecisionScore = evidenceScore;
 
   const hasPlanMismatch = missingPlannedDocs.length > 0 || extraGeneratedDocs.length > 0;
   const decision: "GO" | "REVIEW" | "NO_GO" = unresolvedCritical > 0
     ? "NO_GO"
-    : readiness >= 85 && unresolvedHigh === 0 && dashboardGeneratedCount > 0 && !hasPlanMismatch
+    : canonicalDecisionScore >= 85 && unresolvedHigh === 0 && dashboardGeneratedCount > 0 && !hasPlanMismatch
       ? "GO"
       : "REVIEW";
 
@@ -205,7 +208,7 @@ export function ExecutiveSnapshot({ tender }: { tender: TenderLike }) {
       </div>
 
       <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-6">
-        <div className="rounded-xl bg-slate-50 p-4" title="Workflow progress score from tender DB — not the canonical final submission readiness. Use the Canonical Readiness panel for export gating."><p className="text-xs text-slate-400">Workflow Progress</p><p className="mt-1 text-2xl font-bold text-slate-900">{readiness}%</p><p className="text-[10px] text-slate-400">(workflow, not final)</p></div>
+        <div className="rounded-xl bg-slate-50 p-4" title="Workflow progress score from tender DB — not the canonical final submission readiness. Use the Canonical Readiness panel for export gating."><p className="text-xs text-slate-400">Workflow Progress</p><p className="mt-1 text-2xl font-bold text-slate-900">{workflowProgress}%</p><p className="text-[10px] text-slate-400">(workflow, not final)</p></div>
         <div className="rounded-xl bg-slate-50 p-4" title={`Strong evidence coverage: ${evidenceCoverage.requirementsWithStrongEvidence}/${evidenceCoverage.totalRequirements} requirement(s) linked to FULL or SUBSTANTIAL evidence. Lenient (any link, including PARTIAL): ${evidenceScoreLegacy}%.`}><p className="text-xs text-slate-400">Evidence coverage</p><p className="mt-1 text-2xl font-bold text-slate-900">{evidenceScore}%</p><p className="text-xs text-slate-500">{evidenceCoverage.requirementsWithStrongEvidence}/{evidenceCoverage.totalRequirements} strong</p></div>
         <div className="rounded-xl bg-slate-50 p-4"><p className="text-xs text-slate-400">Critical / High</p><p className="mt-1 text-2xl font-bold text-slate-900">{unresolvedCritical}/{unresolvedHigh}</p></div>
         <div className="rounded-xl bg-slate-50 p-4"><p className="text-xs text-slate-400">Experts ≥90%</p><p className="mt-1 text-2xl font-bold text-slate-900">{strongExperts}</p><p className="text-xs text-slate-500">{reviewedExperts}/{selectedExperts.length} reviewed selected</p></div>

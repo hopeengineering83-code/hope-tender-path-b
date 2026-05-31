@@ -691,7 +691,9 @@ export async function getFinalSubmissionReadiness(
       title: tender.title,
       status: tender.status,
       stage: tender.stage,
-      readinessScore: tender.readinessScore ?? 0,
+      // Mirror the canonical gated score in API responses so callers do not
+      // accidentally display the legacy DB workflow-progress column as final readiness.
+      readinessScore: readinessScoreResult.score,
     },
     documentBlockers,
     tenderLevelBlockers,

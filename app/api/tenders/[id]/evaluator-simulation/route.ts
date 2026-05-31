@@ -136,7 +136,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       ...tender.projectMatches.map((match) => `Project ${match.project.name}: ${short(match.rationale, 420)}`),
     ],
     readinessSummary: [
-      `Tender readiness=${Math.round(tender.readinessScore ?? 0)}/100; open gaps=${tender.complianceGaps.length}; selected experts=${tender.expertMatches.length}; selected projects=${tender.projectMatches.length}; documents=${tender.generatedDocuments.length}`,
+      `Tender workflowProgress=${Math.round(tender.readinessScore ?? 0)}/100; open gaps=${tender.complianceGaps.length}; selected experts=${tender.expertMatches.length}; selected projects=${tender.projectMatches.length}; documents=${tender.generatedDocuments.length}`,
       weakAxesSummary,
     ].filter(Boolean).join(" | "),
     sharedCriteria,
