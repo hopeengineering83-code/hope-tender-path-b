@@ -255,3 +255,88 @@ describe("cleanMessage redaction (mirrors analysis-fallback-diagnostics.ts)", ()
     assert.equal(out, "rate limit exceeded");
   });
 });
+
+// ─── Schema sanitizer (mirrors tryParseAndSanitize inside analyzeOneChunk) ──────
+// These tests verify that the sanitizer converts malformed-but-parseable JSON
+// into a safe AIAnalysisResult rather than throwing or returning null.
+
+type AIAnalysisResultLike = {
+  summary: string;
+  requirements: unknown[];
+  exactFileNaming: string[];
+  exactFileOrder: string[];
+  evaluationMethodology: string;
+  submissionNotes: string;
+};
+
+function tryParseAndSanitize(raw: string): AIAnalysisResultLike | null {
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return null;
+    return {
+      summary: typeof parsed.summary === "string" ? parsed.summary : "",
+      requirements: Array.isArray(parsed.requirements) ? parsed.requirements.filter((r: unknown) => r && typeof r === "object") : [],
+      exactFileNaming: Array.isArray(parsed.exactFileNaming) ? parsed.exactFileNaming.filter((s: unknown) => typeof s === "string") : [],
+      exactFileOrder: Array.isArray(parsed.exactFileOrder) ? parsed.exactFileOrder.filter((s: unknown) => typeof s === "string") : [],
+      evaluationMethodology: typeof parsed.evaluationMethodology === "string" ? parsed.evaluationMethodology : "",
+      submissionNotes: typeof parsed.submissionNotes === "string" ? parsed.submissionNotes : "",
+    };
+  } catch {
+    return null;
+  }
+}
+
+describe("schema sanitizer (mirrors tryParseAndSanitize inside analyzeOneChunk)", () => {
+  it("returns null for unparseable input", () => {
+    assert.equal(tryParseAndSanitize("{not valid json"), null);
+  });
+
+  it("returns null for non-object values", () => {
+    assert.equal(tryParseAndSanitize('"just a string"'), null);
+    assert.equal(tryParseAndSanitize("42"), null);
+    assert.equal(tryParseAndSanitize("null"), null);
+  });
+
+  it("normalises null requirements to empty array", () => {
+    const result = tryParseAndSanitize('{"requirements": null, "summary": "ok"}');
+    assert.ok(result !== null);
+    assert.deepEqual(result.requirements, []);
+  });
+
+  it("normalises missing fields to empty strings/arrays", () => {
+    const result = tryParseAndSanitize('{"summary": "test"}');
+    assert.ok(result !== null);
+    assert.equal(result.summary, "test");
+    assert.deepEqual(result.requirements, []);
+    assert.deepEqual(result.exactFileNaming, []);
+    assert.equal(result.evaluationMethodology, "");
+    assert.equal(result.submissionNotes, "");
+  });
+
+  it("filters out non-object items from requirements array", () => {
+    const result = tryParseAndSanitize('{"requirements": [{"title": "Req 1"}, null, "string", 42]}');
+    assert.ok(result !== null);
+    assert.equal(result.requirements.length, 1);
+  });
+
+  it("filters out non-string items from exactFileNaming", () => {
+    const result = tryParseAndSanitize('{"exactFileNaming": ["file1.pdf", null, 42, "file2.pdf"]}');
+    assert.ok(result !== null);
+    assert.deepEqual(result.exactFileNaming, ["file1.pdf", "file2.pdf"]);
+  });
+
+  it("passes a well-formed result through unchanged", () => {
+    const result = tryParseAndSanitize(JSON.stringify({
+      summary: "Test tender",
+      requirements: [{ title: "Req 1", description: "desc" }],
+      exactFileNaming: ["tech_proposal.pdf"],
+      exactFileOrder: ["tech_proposal.pdf"],
+      evaluationMethodology: "Technical 70%",
+      submissionNotes: "By email",
+    }));
+    assert.ok(result !== null);
+    assert.equal(result.summary, "Test tender");
+    assert.equal(result.requirements.length, 1);
+    assert.equal(result.exactFileNaming[0], "tech_proposal.pdf");
+  });
+});
