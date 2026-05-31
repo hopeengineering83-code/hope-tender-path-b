@@ -9,7 +9,17 @@ import { resolveBootstrapAdminPolicy, BOOTSTRAP_ADMIN_EMAIL } from "../../../../
 
 function safeMessage(error: unknown): string {
   const msg = error instanceof Error ? error.message : String(error);
-  return msg.replace(/postgres(?:ql)?:\/\/[^\s]+/gi, "postgresql://[redacted]").slice(0, 700);
+  const isConnectivityError = /can't reach|connection refused|ECONNREFUSED|ETIMEDOUT|connect timeout|unable to connect|network socket/i.test(msg);
+  if (isConnectivityError) {
+    return "Database temporarily unavailable. Please wait a moment and try again.";
+  }
+  return msg
+    .replace(/postgres(?:ql)?:\/\/[^\s'"]+/gi, "postgresql://[redacted]")
+    .replace(/\bep-[a-z0-9-]+[\w.-]*/gi, "[db-host]") // Neon endpoint IDs (ep-wild-union-...)
+    .replace(/at [`'"][^`'"]*\.neon\.tech[^`'"]*[`'"]/gi, "at [db-host]")
+    .replace(/server at [`'"][^`'"]+[`'"]/gi, "server at [redacted]")
+    .replace(/Invalid `prisma\.\$\w+\(\)` invocation: */g, "")
+    .slice(0, 200);
 }
 
 /**

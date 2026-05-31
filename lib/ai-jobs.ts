@@ -44,7 +44,7 @@ export type JobType =
   // in a queued job so it can run outside the 60s Vercel Hobby route cap.
   | "ENGINE_RUN";
 
-export type JobStatus = "QUEUED" | "RUNNING" | "SUCCEEDED" | "FAILED" | "CANCELED";
+export type JobStatus = "QUEUED" | "RUNNING" | "SUCCEEDED" | "PARTIAL_SUCCESS" | "FAILED" | "CANCELED";
 
 export interface EnqueueJobInput {
   userId: string;
