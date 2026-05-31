@@ -11,6 +11,7 @@ import { createNotification } from "../../../../../lib/notifications";
 import { assessExtractionQuality } from "../../../../../lib/extraction-quality";
 import { buildAnalysisFallbackDiagnostics, formatFallbackDiagnosticsLine, type AnalysisFallbackDiagnostics } from "../../../../../lib/engine/analysis-fallback-diagnostics";
 import { buildProviderDiagnosticsSnapshot } from "../../../../../lib/ai-provider-health";
+import { restoreHealthFromDb, persistAllHealthToDb } from "../../../../../lib/ai-provider-health-db";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -33,7 +34,7 @@ function buildChunkStepResults(meta: AnalysisWithMeta): Array<{
     results.push({
       stepName: `chunk_${i}`,
       status,
-      output: JSON.stringify({ chunkIndex: i }),
+      output: JSON.stringify({ chunkIndex: i, providerUsed: meta.chunkProviders[i] ?? null }),
     });
   }
   return results;
@@ -320,6 +321,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           console.warn("[ai-analyze] Failed to create AiJob record — continuing without job tracking:", jobCreateErr instanceof Error ? jobCreateErr.message : String(jobCreateErr));
         }
 
+        // Restore provider cooldown state from DB before analysis.
+        // A 2-second timeout prevents a slow DB from blocking the analysis.
+        // The in-memory state is still usable without a successful restore.
+        await Promise.race([
+          restoreHealthFromDb(),
+          new Promise<void>((r) => setTimeout(r, 2_000)),
+        ]).catch(() => {});
+
         const deadlineAt = Date.now() + SAFE_DEADLINE_MS;
         let aiMeta: AnalysisWithMeta;
         try {
@@ -406,6 +415,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
                 completedChunks: aiMeta.completedChunks,
                 failedChunks: aiMeta.failedChunks,
                 skippedChunks: aiMeta.skippedChunks,
+                chunkProviders: aiMeta.chunkProviders,
                 contentHash,
                 analysisSource: "AI",
                 nextAction: aiMeta.isPartial ? "CONTINUE_AI_ANALYSIS" : null,
@@ -431,6 +441,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           }
         }
         analysisMeta = aiMeta;
+        // Persist updated provider health to DB after analysis completes.
+        // Fire-and-forget — never blocks the response.
+        void persistAllHealthToDb().catch(() => {});
 
         analysisResult = {
           ai: true,
@@ -443,6 +456,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         const msg = aiError instanceof Error ? aiError.message : String(aiError);
         const diagnostics = buildAnalysisFallbackDiagnostics(msg);
         console.error("AI analysis failed; deterministic fallback used:", { category: diagnostics.category, message: diagnostics.message });
+        // Persist failure state so the next cold start knows which providers are cooling down.
+        void persistAllHealthToDb().catch(() => {});
         analysisResult = await runRegexFallback(msg, diagnostics);
       }
     } else {

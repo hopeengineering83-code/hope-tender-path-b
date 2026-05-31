@@ -775,6 +775,23 @@ model AiJobStep {
   @@index([jobId, stepIndex])
 }
 
+// ─── ProviderHealthSnapshot ───────────────────────────────────────────────────
+// Persists per-provider cooldown state across Vercel cold starts. The in-memory
+// tracker in lib/ai-provider-health.ts resets on every cold start; this table
+// lets the AI Analyze route restore active cooldowns on boot so a rate-limited
+// provider isn't re-hit immediately after an instance recycles.
+// Never stores API keys, prompts, or raw provider responses.
+model ProviderHealthSnapshot {
+  provider             String    @id   // AiProviderName
+  lastSuccessAt        DateTime?
+  lastFailureAt        DateTime?
+  lastFailureCategory  String?         // AiProviderFailureCategory
+  lastSafeErrorMessage String?         // already redacted by recordProviderFailure
+  consecutiveFailures  Int       @default(0)
+  cooldownUntil        DateTime?
+  updatedAt            DateTime  @updatedAt
+}
+
 // ─── PricingWorkbook + CostLine (G8 fix) ─────────────────────────────────────
 // PR XX-F — structured pricing engine. Replaces ad-hoc commercial
 // assumptions with a real pricing workbook the user can fill in,
