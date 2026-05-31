@@ -8,7 +8,7 @@ type CompanyDoc = {
 type Expert = {
   id: string; fullName: string; title: string | null; disciplines: string[];
   sectors: string[]; certifications: string[]; yearsExperience: number | null;
-  profile: string | null; isActive: boolean;
+  profile: string | null; isActive: boolean; trustLevel?: string | null;
 };
 type Project = {
   id: string; name: string; clientName: string | null; sector: string | null;
@@ -51,6 +51,13 @@ const CAT_COLORS: Record<string,string> = {
 };
 const ACCEPT = ".pdf,.doc,.docx,.xls,.xlsx,.ods,.ppt,.pptx,.csv,.txt,.rtf,.jpg,.jpeg,.png,.gif,.webp";
 const empty: Company = { name:"",legalName:"",description:"",website:"",address:"",phone:"",email:"",knowledgeMode:"PROFILE_FIRST",serviceLines:[],sectors:[],profileSummary:"",gmName:"",gmTitle:"",gmLicense:"",foundingYear:null,headcount:null,licenseGrade:"",registrationNumber:"",tin:"",vat:"" };
+
+const PLACEHOLDER_PATTERNS = /^\s*(tbd|tbc|n\/a|unknown|not provided|placeholder|pending|to be confirmed|to be determined)\s*$/i;
+function isPlaceholder(v: unknown): boolean {
+  if (!v && v !== 0) return true;
+  return PLACEHOLDER_PATTERNS.test(String(v));
+}
+function hasReal(v: unknown): boolean { return !isPlaceholder(v); }
 
 function fmt(b: number) { return b<1024?`${b} B`:b<1048576?`${(b/1024).toFixed(0)} KB`:`${(b/1048576).toFixed(1)} MB`; }
 function ext(name: string) { return name.toLowerCase().split(".").pop()??""; }
