@@ -291,7 +291,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     preBidMeetingDate: tender.preBidMeetingDate ?? null,
     preBidMeetingLocation: tender.preBidMeetingLocation ?? null,
     requirementCount: tender.requirements.length,
-    hasEvaluationMethodology: Boolean(tender.evaluationMethodology),
+    hasEvaluationMethodology: Boolean((tender.evaluationMethodology ?? "").trim()),
     hasSubmissionRules: Boolean(tender.submissionMethod || tender.submissionEmails || tender.submissionAddress),
   });
   if (metadataReport.blockingForGeneration) {

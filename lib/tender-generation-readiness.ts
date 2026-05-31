@@ -171,6 +171,7 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
     matchingScore: matchingQuality.score,
     selectedReviewedExperts: tender.expertMatches.filter((m) => m.isSelected && m.expert.trustLevel === "REVIEWED").length,
     selectedReviewedProjects: tender.projectMatches.filter((m) => m.isSelected && m.project.trustLevel === "REVIEWED").length,
+    analysisSource: (tender.notes ?? "").split(/\n+/).map((l) => l.trim()).find((l) => /^analysis source:/i.test(l))?.replace(/^analysis source:\s*/i, "").trim() ?? null,
   });
 
   const blockers: GenerationReadinessItem[] = companyReadiness.blockers.map((message) => ({ code: "COMPANY_INGESTION_NOT_READY", message, nextAction: "OPEN_COMPANY_READINESS" }));
@@ -368,7 +369,7 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
     preBidMeetingDate: tender.preBidMeetingDate ?? null,
     preBidMeetingLocation: tender.preBidMeetingLocation ?? null,
     requirementCount: tender.requirements.length,
-    hasEvaluationMethodology: Boolean(tender.evaluationMethodology),
+    hasEvaluationMethodology: Boolean((tender.evaluationMethodology ?? "").trim()),
     hasSubmissionRules: Boolean(tender.submissionMethod || tender.submissionEmails || tender.submissionAddress),
   });
   if (metadataReport.blockingForGeneration) {
@@ -383,6 +384,7 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
       nextAction: "REPAIR_OR_EDIT_TENDER",
     });
   }
+
   // Full proposal also requires reviewed selected evidence when the tender
   // demands experts/projects — not just vault fallback availability.
   // Skip these when the engine hasn't run yet (VAULT_AWAITS_ENGINE) — the
@@ -436,6 +438,8 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
     FULL_PROPOSAL_MATCHES_WEAK: "MATCHING",
     FULL_PROPOSAL_ENGINE_NOT_RUN: "MATCHING",
     FULL_PROPOSAL_NO_VAULT: "MATCHING",
+    // Metadata completeness
+    FULL_PROPOSAL_METADATA_INCOMPLETE: "METADATA",
     // Expert match availability
     NO_EXPERT_MATCHES_FOUND: "EXPERT_MATCHES",
     NO_REVIEWED_EXPERT_MATCHES: "EXPERT_MATCHES",

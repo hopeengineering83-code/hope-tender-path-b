@@ -86,7 +86,11 @@ export async function AnalysisQualityPanel({ tenderId }: { tenderId: string }) {
       </div>
 
       <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-        <div className="rounded-xl bg-white p-3"><p className="text-xs text-slate-500">Score</p><p className="text-xl font-bold text-slate-900">{quality.score}/100</p></div>
+        <div className="rounded-xl bg-white p-3">
+          <p className="text-xs text-slate-500">Score</p>
+          <p className="text-xl font-bold text-slate-900">{quality.score}/100</p>
+          {quality.isRegexFallback && <p className="text-[10px] text-amber-700 leading-tight">Score capped — regex fallback</p>}
+        </div>
         <div className="rounded-xl bg-white p-3"><p className="text-xs text-slate-500">Requirements</p><p className="text-xl font-bold text-slate-900">{quality.requirementCount}</p></div>
         <div className="rounded-xl bg-white p-3"><p className="text-xs text-slate-500">Mandatory</p><p className="text-xl font-bold text-slate-900">{quality.mandatoryCount}</p></div>
         <div className="rounded-xl bg-white p-3"><p className="text-xs text-slate-500">Source refs</p><p className="text-xl font-bold text-slate-900">{quality.sourceReferencedCount}</p></div>

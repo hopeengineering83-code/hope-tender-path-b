@@ -52,6 +52,67 @@ const MAX_FILE_CHARS_FOR_AI_ANALYSIS = (() => {
   return 12_000;
 })();
 
+const SECTION_SCAN_CHARS = (() => {
+  const raw = Number(process.env.TENDER_AI_SECTION_SCAN_CHARS);
+  if (Number.isFinite(raw) && raw >= 500 && raw <= 10_000) return raw;
+  return 3_000;
+})();
+
+// Soft cap on total tender content sent to AI. Content above this threshold
+// is chunked by analyzeWithAI. Setting a max prevents OOM from extremely
+// large tenders while still covering multi-file tenders well.
+const MAX_TOTAL_AI_CHARS = (() => {
+  const raw = Number(process.env.TENDER_AI_MAX_TOTAL_CHARS);
+  if (Number.isFinite(raw) && raw >= 10_000 && raw <= 500_000) return raw;
+  return 300_000; // 6 × 50K chunks
+})();
+
+const SECTION_KEYWORDS = /evaluation|scoring|criteria|submission|deadline|annex|appendix|form[s\s]|financial proposal|technical proposal|envelope|subject line|bid bond|eligibility|qualification|instructions to (bidders?|tenderers?)|evaluation matrix|scoring matrix|award criteria/i;
+
+/**
+ * For files larger than maxChars, extracts the first portion PLUS sections
+ * near evaluation/submission/scoring keywords. This surfaces critical tender
+ * instructions that appear deep in a document rather than always truncating
+ * from the start.
+ */
+function extractRelevantSections(text: string, maxChars: number): string {
+  if (text.length <= maxChars) return text;
+
+  const head = text.slice(0, Math.floor(maxChars * 0.6));
+  const scanBudget = maxChars - head.length;
+
+  // Find positions of keyword-bearing lines beyond the head section
+  const tail = text.slice(head.length);
+  const snippets: string[] = [];
+  let budgetUsed = 0;
+
+  // Walk the tail looking for lines that match section keywords
+  let searchPos = 0;
+  while (budgetUsed < scanBudget && searchPos < tail.length) {
+    const nextMatch = tail.slice(searchPos).search(SECTION_KEYWORDS);
+    if (nextMatch === -1) break;
+
+    const matchStart = searchPos + nextMatch;
+    // Find the start of the line containing the match
+    const lineStart = tail.lastIndexOf("\n", matchStart) + 1;
+    // Extract SECTION_SCAN_CHARS around the match
+    const snippetStart = Math.max(lineStart, matchStart - 200);
+    const snippetEnd = Math.min(tail.length, snippetStart + SECTION_SCAN_CHARS);
+    const snippet = tail.slice(snippetStart, snippetEnd);
+
+    if (!head.includes(snippet.slice(0, 50))) {
+      snippets.push(snippet);
+      budgetUsed += snippet.length;
+    }
+
+    searchPos = snippetEnd;
+    if (budgetUsed >= scanBudget) break;
+  }
+
+  if (snippets.length === 0) return head;
+  return `${head}\n\n[... key sections extracted from remainder ...]\n\n${snippets.join("\n\n---\n\n")}`;
+}
+
 async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
@@ -190,7 +251,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       try {
         const fileTexts = tenderRecord.files
           .map((f) => f.extractedText
-            ? `[FILE: ${f.originalFileName}]\n${stripExtractionHeader(f.extractedText).slice(0, MAX_FILE_CHARS_FOR_AI_ANALYSIS)}`
+            ? `[FILE: ${f.originalFileName}]\n${extractRelevantSections(stripExtractionHeader(f.extractedText), MAX_FILE_CHARS_FOR_AI_ANALYSIS)}`
             : `[FILE: ${f.originalFileName} ${f.classification ?? ""}]`)
           .join("\n\n");
 
@@ -200,11 +261,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
         const tenderContent = [
           `TENDER: ${tenderRecord.title}`,
-          tenderRecord.description ? `DESCRIPTION: ${tenderRecord.description}` : null,
-          tenderRecord.intakeSummary ? `INTAKE NOTES: ${tenderRecord.intakeSummary}` : null,
+          // Cap description/intakeSummary so they don't crowd out the actual
+          // file content. 2K each is enough for context without inflating the
+          // total beyond the MAX_TOTAL_AI_CHARS budget.
+          tenderRecord.description ? `DESCRIPTION: ${tenderRecord.description.slice(0, 2_000)}` : null,
+          tenderRecord.intakeSummary ? `INTAKE NOTES: ${tenderRecord.intakeSummary.slice(0, 2_000)}` : null,
           fileTexts || null,
           companyContext || null,
-        ].filter(Boolean).join("\n\n");
+        ].filter(Boolean).join("\n\n").slice(0, MAX_TOTAL_AI_CHARS);
 
         // Compute content hash for continuation validation
         const contentHash = crypto.createHash("sha256").update(tenderContent).digest("hex").slice(0, 16);
@@ -213,6 +277,21 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           // Content changed — do a full re-run, ignore startFromChunk
           startFromChunk = undefined;
         }
+
+        // Clean up stale RUNNING jobs before creating a new one.
+        // When a Vercel function is killed by the platform timeout, the job
+        // stays RUNNING indefinitely. Mark any RUNNING job older than 90s as
+        // FAILED so the UI doesn't show a phantom "in progress" state.
+        await prisma.aiJob.updateMany({
+          where: {
+            tenderId: id,
+            userId,
+            jobType: "AI_ANALYZE",
+            status: "RUNNING",
+            startedAt: { lt: new Date(Date.now() - 90_000) },
+          },
+          data: { status: "FAILED", finishedAt: new Date(), errorMessage: "Timed out (cleaned up by subsequent request)" },
+        }).catch(() => {});
 
         // Create an AiJob record to track this synchronous analysis run
         let analysisJob: { id: string } | null = null;

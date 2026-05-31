@@ -23,6 +23,7 @@ import {
   isValidReferenceNumber,
   isValidCountry,
   isValidClientContact,
+  containsMetadataPlaceholder,
 } from "../../../../../lib/engine/metadata-validators";
 import { logAction } from "../../../../../lib/audit";
 import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../../lib/rate-limit";
@@ -60,6 +61,8 @@ import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../../lib/rate-limit";
 function isValidStoredValue(field: string, value: unknown): boolean {
   if (value === null || value === undefined) return false;
   if (typeof value === "string" && value.trim() === "") return false;
+  // Reject placeholder/Bid-Team-to-confirm strings regardless of field
+  if (typeof value === "string" && containsMetadataPlaceholder(value)) return false;
   switch (field) {
     case "clientName":         return isValidClientName(String(value));
     case "reference":          return isValidReferenceNumber(String(value));
@@ -151,6 +154,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     // Always populate fieldsAfter so the audit log never shows undefined.
     fieldsAfter.category = tender.category;
   }
+  tryFill("evaluationMethodology", metadata.evaluationMethodology);
   tryFill("budget", metadata.budget);
   tryFill("currency", metadata.currency);
   tryFill("deadline", metadata.deadline);

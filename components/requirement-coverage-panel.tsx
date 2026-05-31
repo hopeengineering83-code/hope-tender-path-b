@@ -84,6 +84,8 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
   const [traceability, setTraceability] = useState<{ summary: TraceabilitySummary; warnings: string[] } | null>(null);
   const [traceLoading, setTraceLoading] = useState(false);
   const [traceOpen, setTraceOpen] = useState(false);
+  const [confirmingAll, setConfirmingAll] = useState(false);
+  const [confirmAllResult, setConfirmAllResult] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -168,6 +170,37 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
     }
   };
 
+  const confirmAllSafe = async () => {
+    if (!data) return;
+    const autoLinks = data.rows.flatMap((row) =>
+      row.evidenceLinks
+        .filter((link) => link.autoLinked && !actionStates[`${row.id}-${link.id}`]?.success)
+        .map((link) => ({ requirementId: row.id, link }))
+    );
+    if (autoLinks.length === 0) { setConfirmAllResult("No unconfirmed auto-linked suggestions found."); return; }
+    setConfirmingAll(true);
+    setConfirmAllResult(null);
+    let confirmed = 0;
+    for (const { requirementId, link } of autoLinks) {
+      try {
+        const res = await fetch(`/api/tenders/${tenderId}/requirement-coverage/confirm`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ requirementId, evidenceType: link.evidenceType, evidenceReference: link.evidenceReference, supportLevel: "FULL", notes: "Bulk-confirmed auto-linked vault evidence." }),
+        });
+        const json = await res.json() as { ok?: boolean };
+        if (res.ok && json.ok) {
+          confirmed++;
+          setLinkAction(`${requirementId}-${link.id}`, { pending: false, error: null, success: "Confirmed" });
+        }
+      } catch { /* continue remaining items */ }
+    }
+    setConfirmingAll(false);
+    setConfirmAllResult(`Confirmed ${confirmed} of ${autoLinks.length} auto-linked suggestion(s).`);
+    void load();
+    router.refresh();
+  };
+
   const loadTraceability = async () => {
     if (traceOpen && traceability) { setTraceOpen(false); return; }
     setTraceOpen(true);
@@ -239,8 +272,17 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
             </span>
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <button onClick={load} className="rounded px-2 py-1 text-xs text-gray-500 hover:bg-gray-100" aria-label="Refresh coverage">↻</button>
+          {data && data.rows.some((r) => r.evidenceLinks.some((l) => l.autoLinked && !actionStates[`${r.id}-${l.id}`]?.success)) && (
+            <button
+              onClick={() => void confirmAllSafe()}
+              disabled={confirmingAll}
+              className="rounded border border-green-300 bg-green-50 px-2 py-1 text-xs font-medium text-green-800 hover:bg-green-100 disabled:opacity-50"
+            >
+              {confirmingAll ? "Confirming…" : "Confirm all auto-linked"}
+            </button>
+          )}
           <button onClick={() => void loadTraceability()} disabled={traceLoading} className="rounded px-2 py-1 text-xs text-gray-500 hover:bg-gray-100 disabled:opacity-50">
             {traceLoading ? "…" : traceOpen ? "▲ Traceability" : "▼ Traceability"}
           </button>
@@ -249,6 +291,10 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
           </button>
         </div>
       </div>
+
+      {confirmAllResult && (
+        <div className="border-b border-green-100 bg-green-50 px-5 py-2 text-xs text-green-800">{confirmAllResult}</div>
+      )}
 
       {/* Traceability summary */}
       {traceOpen && traceability && (

@@ -224,8 +224,8 @@ export function GenerationActionPanel({ tenderId, readiness }: { tenderId: strin
   const headlineText = fullProposalReady
     ? "Full proposal generation gate: passes"
     : supportReady
-      ? "Only support-package generation is allowed — full proposal blocked"
-      : "Resolve generation blockers first";
+      ? "Support evidence available — full proposal blocked"
+      : "Generation blocked";
 
   return (
     <section className={`mb-4 rounded-2xl border p-5 shadow-sm ${panelClass}`}>
@@ -244,7 +244,7 @@ export function GenerationActionPanel({ tenderId, readiness }: { tenderId: strin
               kind of output they can produce and which they cannot. */}
           <div className="mt-3 flex flex-wrap gap-2 text-xs">
             <span className={`rounded-full px-3 py-1 font-semibold ${supportReady ? "bg-emerald-100 text-emerald-800" : "bg-red-100 text-red-800"}`}>
-              Support package: {supportReady ? "ready" : "blocked"}
+              Support evidence: {supportReady ? "available" : "blocked"}
             </span>
             <span className={`rounded-full px-3 py-1 font-semibold ${fullProposalReady ? "bg-emerald-100 text-emerald-800" : "bg-red-100 text-red-800"}`}>
               Full proposal: {fullProposalReady ? "ready" : "blocked"}

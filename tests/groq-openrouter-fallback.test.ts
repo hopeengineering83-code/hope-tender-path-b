@@ -95,10 +95,13 @@ describe("lib/ai.ts wires Groq → OpenRouter into the chain", () => {
     assert.match(source, /getGroqBaseUrl\(\)/);
     assert.match(source, /getOpenRouterBaseUrl\(\)/);
   });
-  it("calls the tail helper in generateWithFallback (both branches)", () => {
-    assert.match(source, /tail1/);
-    assert.match(source, /tail2/);
-    assert.match(source, /tail3/);
+  it("groq and openrouter are included in the provider chain", () => {
+    // PROVIDER_CHAINS includes groq and openrouter in every chain variant
+    assert.match(source, /PROVIDER_CHAINS/);
+    assert.match(source, /"groq"/);
+    assert.match(source, /"openrouter"/);
+    // tryTailFallbackProviders is still used in section-parallel generation
+    assert.match(source, /tryTailFallbackProviders/);
   });
   it("includes the new keys in the no-provider error", () => {
     assert.match(source, /GROQ_API_KEY, or OPENROUTER_API_KEY/);
@@ -131,7 +134,7 @@ describe("AI Health panel renders all six provider cards from the contract", () 
   it("renders cards by mapping the provider contract (rank + cooldown shown)", () => {
     assert.match(source, /health\.providers\.map/);
     assert.match(source, /Fallback rank \{p\.rank\}/);
-    assert.match(source, /In cooldown/);
+    assert.match(source, /Rate-limited|coolingDown/);
   });
   it("nudges pinning a model when OpenRouter uses the auto default", () => {
     assert.match(source, /Set OPENROUTER_PROPOSAL_MODEL/);

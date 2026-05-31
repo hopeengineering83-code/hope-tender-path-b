@@ -66,7 +66,8 @@ export type LifecycleState =
   | "AUTO_FINALIZE_REQUIRED"
   | "EXPORT_READINESS_BLOCKED"
   | "EXPORT_READY"
-  | "ZIP_READY";
+  | "ZIP_READY"
+  | "CLOSED";
 
 export type PrimaryNextAction =
   | "UPLOAD_TENDER_DOCUMENT"
@@ -681,6 +682,29 @@ export async function computeTenderLifecycle(
     });
   } else {
     allowed.push("DOWNLOAD_ZIP");
+  }
+
+  // ── Closed-tender override ─────────────────────────────────────────────────
+  // A CLOSED tender (bid outcome WON/LOST/WITHDRAWN) is in a terminal state.
+  // Block all mutating actions; keep RE_CHECK and DOWNLOAD_ZIP if export ready.
+  if (tender.status === "CLOSED") {
+    lifecycleState = "CLOSED";
+    primaryNextAction = "DOWNLOAD_FINAL_ZIP";
+    const closedReason = "Tender is closed (bid outcome recorded). No further workflow actions are permitted.";
+    const mutatingActions: AllowedAction[] = [
+      "AI_ANALYZE", "APPROVE_FALLBACK", "REVOKE_FALLBACK_APPROVAL",
+      "COMPLETE_METADATA", "REPAIR_SOURCE_REFERENCES", "BUILD_SUBMISSION_PLAN",
+      "RUN_ENGINE", "LINK_VAULT_EVIDENCE", "GENERATE_DOCS",
+      "ATTACH_OFFICIAL_ORIGINALS", "REPAIR_DOCS", "AUTO_FINALIZE",
+      "RECONCILE_OUTSIDE_PLAN",
+    ];
+    for (const a of mutatingActions) {
+      const idx = allowed.indexOf(a);
+      if (idx !== -1) allowed.splice(idx, 1);
+      if (!blocked.some((b) => b.action === a)) blocked.push({ action: a, reason: closedReason });
+    }
+    // Keep RE_CHECK and DOWNLOAD_ZIP per existing allowed computation.
+    blockers.splice(0, blockers.length); // tender is intentionally closed — no workflow blockers
   }
 
   // ── Final submission status ────────────────────────────────────────────────

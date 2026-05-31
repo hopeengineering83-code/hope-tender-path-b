@@ -498,6 +498,10 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
     code: string | null;
     nextAction: string | null;
     extractionWarnings: string[] | null;
+    providerDiagnostics: {
+      providersCoolingDown: string[];
+      perProvider: Array<{ provider: string; configured: boolean; coolingDown: boolean; lastErrorCategory: string | null; cooldownUntil: string | null }>;
+    } | null;
   } | null>(null);
   const [approvingFallback, setApprovingFallback] = useState(false);
   const [fallbackNote, setFallbackNote] = useState("");
@@ -656,6 +660,7 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
         code: data.code ?? null,
         nextAction: data.nextAction ?? null,
         extractionWarnings: Array.isArray(data.extractionWarnings) ? data.extractionWarnings : null,
+        providerDiagnostics: data.providerDiagnostics ?? null,
       });
       if (data.jobId) setContinueJobId(data.jobId);
       router.refresh();
@@ -679,6 +684,7 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
         code: data.code ?? null,
         nextAction: data.nextAction ?? null,
         extractionWarnings: Array.isArray(data.extractionWarnings) ? data.extractionWarnings : null,
+        providerDiagnostics: data.providerDiagnostics ?? null,
       });
       if (data.jobId) setContinueJobId(data.jobId);
       if (data.tender) setTender((cur) => ({ ...cur, ...data.tender }));
@@ -1465,6 +1471,30 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
               {analyzeResult.fallback && (
                 <div className="mt-2 space-y-2">
                   <p className="text-xs text-amber-700">AI providers unavailable — regex fallback used. Approve the fallback to unblock document generation, or retry AI Analyze when providers recover.</p>
+                  {analyzeResult.providerDiagnostics && (() => {
+                    const configured = analyzeResult.providerDiagnostics.perProvider.filter((p) => p.configured);
+                    const notConfigured = analyzeResult.providerDiagnostics.perProvider.filter((p) => !p.configured);
+                    const cooling = configured.filter((p) => p.coolingDown);
+                    if (configured.length === 0 && notConfigured.length > 0) {
+                      return <p className="text-xs text-red-700 font-medium">No AI providers configured. Set ANTHROPIC_API_KEY, GEMINI_API_KEY, GROQ_API_KEY, or OPENROUTER_API_KEY in Vercel environment variables.</p>;
+                    }
+                    return (
+                      <details className="text-xs">
+                        <summary className="cursor-pointer text-amber-700 hover:underline">Provider diagnostics ({cooling.length} cooling down)</summary>
+                        <ul className="mt-1 space-y-0.5 pl-2">
+                          {configured.map((p) => (
+                            <li key={p.provider} className={p.coolingDown ? "text-red-700" : "text-slate-600"}>
+                              <span className="font-medium capitalize">{p.provider}</span>:
+                              {p.coolingDown ? ` Rate-limited (${p.lastErrorCategory ?? "error"}) — cooling down until ${p.cooldownUntil ? new Date(p.cooldownUntil).toLocaleTimeString() : "?"}` : ` OK (last error: ${p.lastErrorCategory ?? "none"})`}
+                            </li>
+                          ))}
+                          {notConfigured.length > 0 && (
+                            <li className="text-slate-400">Not configured: {notConfigured.map((p) => p.provider).join(", ")}</li>
+                          )}
+                        </ul>
+                      </details>
+                    );
+                  })()}
                   <div className="flex gap-2 flex-wrap">
                     <input
                       type="text"
@@ -2043,8 +2073,22 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
                       <div className="min-w-0">
                         <p className="text-sm font-medium text-slate-900 truncate">{doc.exactFileName ?? doc.name}</p>
                         <div className="flex flex-wrap gap-2 mt-0.5">
-                          <span className={`text-xs ${doc.generationStatus === "GENERATED" ? "text-green-600" : "text-slate-400"}`}>
-                            {doc.generationStatus}
+                          <span className={`text-xs font-medium ${
+                            doc.generationStatus === "GENERATED" ? "text-green-600" :
+                            doc.generationStatus === "GENERATED_NEEDS_REVIEW" ? "text-amber-600" :
+                            doc.generationStatus === "GENERATED_QUALITY_FAILED" ? "text-red-600" :
+                            doc.generationStatus === "REPLACE_WITH_ORIGINAL" ? "text-orange-600" :
+                            doc.generationStatus === "SUPERSEDED" ? "text-slate-300" :
+                            doc.generationStatus === "PLANNED" ? "text-blue-500" :
+                            "text-slate-400"
+                          }`}>
+                            {doc.generationStatus === "GENERATED" ? "Generated" :
+                             doc.generationStatus === "GENERATED_NEEDS_REVIEW" ? "Needs review" :
+                             doc.generationStatus === "GENERATED_QUALITY_FAILED" ? "Quality failed" :
+                             doc.generationStatus === "REPLACE_WITH_ORIGINAL" ? "Needs official original" :
+                             doc.generationStatus === "SUPERSEDED" ? "Superseded" :
+                             doc.generationStatus === "PLANNED" ? "Planned (not generated)" :
+                             doc.generationStatus}
                           </span>
                           {doc.validationStatus && doc.validationStatus !== "PENDING" && (
                             <span className={`text-xs ${doc.validationStatus === "PASSED" ? "text-green-600" : "text-red-500"}`}>
@@ -2053,11 +2097,12 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
                           )}
                           {doc.reviewStatus && doc.reviewStatus !== "PENDING" && (
                             <span className={`text-xs font-medium ${
+                              doc.reviewStatus === "READY_FOR_EXPORT" ? "text-emerald-700" :
                               doc.reviewStatus === "APPROVED" ? "text-green-700" :
                               doc.reviewStatus === "REJECTED" ? "text-red-600" :
                               "text-amber-600"
                             }`}>
-                              · {doc.reviewStatus}
+                              · {doc.reviewStatus === "READY_FOR_EXPORT" ? "Export ready" : doc.reviewStatus}
                             </span>
                           )}
                         </div>
