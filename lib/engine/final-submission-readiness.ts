@@ -53,6 +53,7 @@ import { assessGeneratedDocumentQuality } from "./document-quality-gate";
 import { assessTenderMetadataCompleteness } from "./tender-metadata-completeness";
 import { detectAnalysisSourceWithApproval, type AnalysisSource } from "./analysis-source";
 import { computeReadinessScore } from "./readiness-scoring";
+import { isStrongSupportLevel, normalizeSupportLevel } from "./requirement-evidence-profile";
 
 export type FinalReadinessSeverity = "HIGH" | "MEDIUM" | "LOW";
 
@@ -176,6 +177,18 @@ function nextActionForReason(reason: string): string {
     return "Use Generate Docs or attach the tender-issued original; quick drafts, placeholders and control rows cannot be exported.";
   }
   return "Review and resolve this blocker before final export.";
+}
+
+function mandatoryEvidenceCoverageRatio(requirements: Array<{
+  priority?: string | null;
+  complianceMatrixRows?: Array<{ supportLevel?: string | null }> | null;
+}>): number {
+  const mandatory = requirements.filter((r) => r.priority === "MANDATORY");
+  if (mandatory.length === 0) return 0;
+  const confirmedCovered = mandatory.filter((r) =>
+    (r.complianceMatrixRows ?? []).some((row) => isStrongSupportLevel(normalizeSupportLevel(row.supportLevel))),
+  ).length;
+  return confirmedCovered / mandatory.length;
 }
 
 function severityForReasons(reasons: string[]): FinalReadinessSeverity {
@@ -623,15 +636,12 @@ export async function getFinalSubmissionReadiness(
     metadataCompletenessRatio: metadata.overallRatio,
     metadataInvalidCount: metadata.invalidFields.length,
     sourceReferenceCoverage,
-    // The canonical helper does not run a full evidence-coverage pass on
-    // every call (that would re-load the company vault). The readiness
-    // Count MANDATORY requirements covered by at least one REVIEWED compliance-matrix
-    // row (FULL or SUBSTANTIAL). Falls back to sourceConfidence heuristic when no
-    // matrix rows exist so partial analysis still contributes a signal.
-    evidenceCoverage: tender.requirements.length === 0 ? 0 : tender.requirements.filter((r) => r.priority === "MANDATORY" && (
-      (r.complianceMatrixRows ?? []).some((row) => row.supportLevel === "FULL" || row.supportLevel === "SUBSTANTIAL") ||
-      ((r.sourceConfidence ?? 0) > 0 && (r.complianceMatrixRows ?? []).length === 0)
-    )).length / Math.max(1, tender.requirements.filter((r) => r.priority === "MANDATORY").length),
+    // Confirmed mandatory evidence coverage comes ONLY from complianceMatrix
+    // rows with FULL/SUBSTANTIAL support. Source-confidence traceability and
+    // auto-linked/selected vault suggestions are useful progress signals, but
+    // they must not count as confirmed final evidence coverage until a reviewer
+    // confirms them into complianceMatrix.
+    evidenceCoverage: mandatoryEvidenceCoverageRatio(tender.requirements),
     requiredDocumentsTotal: requiredPlanCount,
     requiredDocumentsSatisfied: Math.max(0, requiredPlanCount - missingPlan.length),
     outsidePlanDocuments: extraPlan.length,
@@ -712,6 +722,7 @@ export const __testing__ = {
   applyAdvisoryResolutions,
   buildMessage,
   detectMessageType,
+  mandatoryEvidenceCoverageRatio,
 };
 
 // Re-export shared types so consumers don't need to also import from
