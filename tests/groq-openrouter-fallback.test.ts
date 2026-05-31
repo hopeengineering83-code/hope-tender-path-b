@@ -200,6 +200,6 @@ describe("/api/ai/health success + preferredProvider span the whole chain", () =
     assert.match(source, /envPresent:/);
     assert.match(source, /fallbackRank: 1/);
     assert.match(source, /fallbackRank: 6/);
-    assert.match(source, /runtime: getProviderRuntimeSnapshot/);
+    assert.match(source, /providerRuntime\.(openai|gemini|deepseek|groq|openrouter|anthropic)/);
   });
 });

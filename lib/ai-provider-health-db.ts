@@ -27,10 +27,15 @@ const ALL_PROVIDERS: AiProviderName[] = ["anthropic", "gemini", "openai", "deeps
 let restoredAt: number | null = null;
 const RESTORE_ONCE_MS = 5 * 60_000; // re-allow restore after 5 min (handles long-lived instances)
 
-export async function restoreHealthFromDb(): Promise<void> {
+export type ProviderHealthRestoreResult = {
+  restored: boolean;
+  skipped: boolean;
+  warning: string | null;
+};
+
+export async function restoreHealthFromDb(): Promise<ProviderHealthRestoreResult> {
   const now = Date.now();
-  if (restoredAt !== null && now - restoredAt < RESTORE_ONCE_MS) return;
-  restoredAt = now;
+  if (restoredAt !== null && now - restoredAt < RESTORE_ONCE_MS) return { restored: false, skipped: true, warning: null };
 
   try {
     const snapshots = await prisma.providerHealthSnapshot.findMany();
@@ -42,6 +47,8 @@ export async function restoreHealthFromDb(): Promise<void> {
       // carrying forward state from a much earlier run
       if (snap.lastFailureAt && now - snap.lastFailureAt.getTime() > 10 * 60_000 && !cooldownUntilMs) continue;
 
+      if (!ALL_PROVIDERS.includes(snap.provider as AiProviderName)) continue;
+
       restoreProviderState(snap.provider as AiProviderName, {
         lastSuccessAt: snap.lastSuccessAt ? snap.lastSuccessAt.getTime() : null,
         lastFailureAt: snap.lastFailureAt ? snap.lastFailureAt.getTime() : null,
@@ -51,10 +58,16 @@ export async function restoreHealthFromDb(): Promise<void> {
         cooldownUntil: cooldownUntilMs,
       });
     }
+    restoredAt = now;
+    return { restored: true, skipped: false, warning: null };
   } catch (err) {
+    const warning = "Provider health DB restore failed; using in-memory provider health for this response.";
     console.warn("[ai-health-db] Failed to restore provider health from DB:", err instanceof Error ? err.message : String(err));
+    return { restored: false, skipped: false, warning };
   }
 }
+
+export const __testing__ = { resetRestoreGuard: () => { restoredAt = null; } };
 
 export async function persistAllHealthToDb(): Promise<void> {
   try {

@@ -230,8 +230,10 @@ export function recordProviderFailure(provider: AiProviderName, error: unknown):
 }
 
 /** Merges persisted DB state into the in-memory tracker on cold start.
- * Only applies values newer than what's already in memory and only restores
- * cooldowns that haven't expired yet. Called by lib/ai-provider-health-db.ts. */
+ * Applies newer persisted timestamps and also preserves the more restrictive
+ * active cooldown when another serverless instance has already observed a
+ * provider failure. This keeps a local success from incorrectly masking a
+ * DB-backed rate-limit window that is still active across Vercel instances. */
 export function restoreProviderState(
   provider: AiProviderName,
   snapshot: {
@@ -247,15 +249,21 @@ export function restoreProviderState(
   if (snapshot.lastSuccessAt && snapshot.lastSuccessAt > (s.lastSuccessAt ?? 0)) {
     s.lastSuccessAt = snapshot.lastSuccessAt;
   }
-  if (snapshot.lastFailureAt && snapshot.lastFailureAt > (s.lastFailureAt ?? 0)) {
+  const now = Date.now();
+  const persistedCooldownActive = Boolean(snapshot.cooldownUntil && snapshot.cooldownUntil > now);
+  const persistedFailureNewer = Boolean(snapshot.lastFailureAt && snapshot.lastFailureAt > (s.lastFailureAt ?? 0));
+  const persistedCooldownMoreRestrictive = Boolean(
+    persistedCooldownActive && snapshot.cooldownUntil! > (s.cooldownUntil ?? 0),
+  );
+
+  if (persistedFailureNewer || persistedCooldownMoreRestrictive) {
     s.lastFailureAt = snapshot.lastFailureAt;
     s.lastFailureCategory = snapshot.lastFailureCategory;
     s.lastFailureMessage = snapshot.lastFailureMessage;
     s.consecutiveFailures = Math.max(s.consecutiveFailures, snapshot.consecutiveFailures);
-    const now = Date.now();
-    if (snapshot.cooldownUntil && snapshot.cooldownUntil > now) {
-      s.cooldownUntil = snapshot.cooldownUntil;
-    }
+  }
+  if (persistedCooldownMoreRestrictive) {
+    s.cooldownUntil = snapshot.cooldownUntil;
   }
 }
 
@@ -318,9 +326,13 @@ export type ProviderRuntimeSnapshot = {
   lastFailureAt: string | null;
   lastErrorCategory: AiProviderFailureCategory | null;
   lastSafeErrorMessage: string | null;
+  lastFailureReason: string | null;
   cooldownUntil: string | null;
   consecutiveFailures: number;
   coolingDown: boolean;
+  rateLimited: boolean;
+  runtimeVerified: boolean;
+  available: boolean;
 };
 
 /** Route/UI-friendly runtime view. Field names match the public API contract
@@ -328,14 +340,19 @@ export type ProviderRuntimeSnapshot = {
  * by recordProviderFailure, so this never leaks keys or raw provider bodies. */
 export function getProviderRuntimeSnapshot(provider: AiProviderName): ProviderRuntimeSnapshot {
   const h = getProviderHealth(provider);
+  const coolingDown = isProviderCooledDown(provider);
   return {
     lastSuccessAt: h.lastSuccessAt,
     lastFailureAt: h.lastFailureAt,
     lastErrorCategory: h.lastFailureCategory,
     lastSafeErrorMessage: h.lastFailureMessage,
+    lastFailureReason: h.lastFailureMessage,
     cooldownUntil: h.cooldownUntil,
     consecutiveFailures: h.consecutiveFailures,
-    coolingDown: isProviderCooledDown(provider),
+    coolingDown,
+    rateLimited: coolingDown && h.lastFailureCategory === "RATE_LIMIT",
+    runtimeVerified: Boolean(h.lastSuccessAt),
+    available: h.configured && !coolingDown,
   };
 }
 
