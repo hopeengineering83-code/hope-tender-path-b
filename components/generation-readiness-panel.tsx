@@ -17,6 +17,8 @@ function actionHref(tenderId: string, action?: string): string {
   if (action === "RETRY_AI_ANALYZE") return `/dashboard/tenders/${tenderId}#run-engine-action`;
   if (action === "REVIEW_ANALYSIS") return `/dashboard/tenders/${tenderId}#analysis-quality`;
   if (action === "REPAIR_OR_EDIT_TENDER") return `/dashboard/tenders/${tenderId}#legacy-tender-detail-actions`;
+  if (action === "OPEN_SETTINGS") return "/dashboard/settings";
+  if (action === "OPEN_TENDER_DETAIL") return `/dashboard/tenders/${tenderId}`;
   return `/dashboard/tenders/${tenderId}`;
 }
 
@@ -33,6 +35,8 @@ function buildActionLabel(action?: string): string {
   if (action === "RETRY_AI_ANALYZE") return "Retry AI Analyze";
   if (action === "REVIEW_ANALYSIS") return "Review analysis quality";
   if (action === "REPAIR_OR_EDIT_TENDER") return "Repair or edit metadata";
+  if (action === "OPEN_SETTINGS") return "Open settings";
+  if (action === "OPEN_TENDER_DETAIL") return "Open tender detail";
   return "Open tender";
 }
 

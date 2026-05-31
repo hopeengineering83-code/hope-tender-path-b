@@ -171,7 +171,7 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
     matchingScore: matchingQuality.score,
     selectedReviewedExperts: tender.expertMatches.filter((m) => m.isSelected && m.expert.trustLevel === "REVIEWED").length,
     selectedReviewedProjects: tender.projectMatches.filter((m) => m.isSelected && m.project.trustLevel === "REVIEWED").length,
-    analysisSource: (tender.notes ?? "").split(/\n+/).find((l) => /analysis source:/i.test(l))?.replace(/^analysis source:\s*/i, "") ?? null,
+    analysisSource: (tender.notes ?? "").split(/\n+/).map((l) => l.trim()).find((l) => /^analysis source:/i.test(l))?.replace(/^analysis source:\s*/i, "").trim() ?? null,
   });
 
   const blockers: GenerationReadinessItem[] = companyReadiness.blockers.map((message) => ({ code: "COMPANY_INGESTION_NOT_READY", message, nextAction: "OPEN_COMPANY_READINESS" }));
