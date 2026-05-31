@@ -27,6 +27,9 @@ type Company = {
   experts?: Expert[]; projects?: Project[];
 };
 type UploadItem = { file: File; status: "queued"|"uploading"|"done"|"error"; error?: string; category: string };
+type CompanyAsset = { id: string; assetType: string; originalFileName: string; isActive: boolean };
+
+const REQUIRED_ASSET_TYPES = ["LOGO", "LETTERHEAD", "SIGNATURE", "STAMP"];
 
 const DOC_CATEGORIES = [
   "AUTO_DETECT","COMPANY_PROFILE","EXPERT_CV","PROJECT_REFERENCE","PROJECT_CONTRACT",
@@ -100,6 +103,7 @@ export default function CompanyPage() {
   const [deletingProjectId, setDeletingProjectId] = useState<string|null>(null);
   const [reimporting, setReimporting] = useState(false);
   const [reimportResult, setReimportResult] = useState<{expertsCreated:number;projectsCreated:number;docsProcessed:number}|null>(null);
+  const [assets, setAssets] = useState<CompanyAsset[]>([]);
   const [searchExpert, setSearchExpert] = useState("");
   const [searchProject, setSearchProject] = useState("");
 
@@ -193,7 +197,8 @@ export default function CompanyPage() {
     Promise.all([
       fetch("/api/company").then(r=>r.json()),
       fetch("/api/company/documents").then(r=>r.json()),
-    ]).then(([c, d]: [{ company?: Company } & Company, { items?: CompanyDoc[] }]) => {
+      fetch("/api/company/assets").then(r=>r.json()),
+    ]).then(([c, d, a]: [{ company?: Company } & Company, { items?: CompanyDoc[] }, { assets?: CompanyAsset[] }]) => {
       const co = c.company ?? c;
       if (co.name !== undefined) {
         setCompany({ ...empty, ...(co as Company) });
@@ -201,6 +206,7 @@ export default function CompanyPage() {
         setSectorsTxt(((co as Company).sectors||[]).join(", "));
       }
       setDocs(d.items ?? []);
+      setAssets(a.assets ?? []);
     }).finally(() => setLoading(false));
   }, []);
 
@@ -392,6 +398,7 @@ export default function CompanyPage() {
       </div>
 
       {(() => {
+        const activeAssetTypes = new Set(assets.filter(a => a.isActive).map(a => a.assetType));
         const checks = [
           { label: "Company name", done: !!company.name },
           { label: "Legal name", done: !!company.legalName },
@@ -406,6 +413,7 @@ export default function CompanyPage() {
           { label: "At least 1 expert", done: (company.experts||[]).length > 0 },
           { label: "At least 1 project", done: (company.projects||[]).length > 0 },
           { label: "At least 1 document", done: docs.length > 0 },
+          ...REQUIRED_ASSET_TYPES.map(t => ({ label: `${t.charAt(0) + t.slice(1).toLowerCase()} asset`, done: activeAssetTypes.has(t) })),
         ];
         const done = checks.filter(c => c.done).length;
         const pct = Math.round((done / checks.length) * 100);
