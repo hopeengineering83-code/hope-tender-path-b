@@ -1218,6 +1218,15 @@ export async function analyzeWithAI(
       failures.push(`chunk ${i + 1}: ${msg}`);
       failedChunks++;
       console.warn(`[ai] chunk ${i + 1}/${chunks.length} failed — continuing with remaining chunks. Error: ${msg}`);
+      // Brief inter-chunk delay after a transient failure (rate-limit, timeout)
+      // so cooled-down providers have more recovery time before the next chunk.
+      // Skip the delay when the deadline is near (< 15s remaining) to avoid
+      // burning the remaining window on a sleep.
+      const isTransient = isTransientChunkError(err);
+      const hasDeadlineRoom = opts?.deadlineAt === undefined || Date.now() + 15_000 < opts.deadlineAt;
+      if (isTransient && hasDeadlineRoom && i < chunks.length - 1) {
+        await new Promise((r) => setTimeout(r, 3_000));
+      }
     }
   }
 
