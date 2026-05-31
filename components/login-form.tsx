@@ -8,18 +8,18 @@ export function LoginForm() {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [isDbError, setIsDbError] = useState(false);
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setLoading(true);
     setError("");
+    setIsDbError(false);
 
     try {
       const res = await fetch("/api/auth/login", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: email.trim().toLowerCase(), password }),
       });
 
@@ -27,6 +27,12 @@ export function LoginForm() {
 
       if (res.ok) {
         window.location.href = "/dashboard";
+        return;
+      }
+
+      if (res.status === 503) {
+        setIsDbError(true);
+        setError("Database is waking up — this can take a few seconds on first login. Please try again.");
         return;
       }
 
@@ -43,7 +49,15 @@ export function LoginForm() {
     <form onSubmit={handleSubmit} className="space-y-5">
       {error && (
         <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm leading-5 text-red-700">
-          {error}
+          <p>{error}</p>
+          {isDbError && (
+            <button
+              type="submit"
+              className="mt-2 text-xs font-medium underline text-red-700 hover:text-red-900"
+            >
+              Retry now
+            </button>
+          )}
         </div>
       )}
 

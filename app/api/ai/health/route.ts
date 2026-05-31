@@ -13,8 +13,10 @@ import {
   type AiProviderName,
 } from "../../../../lib/ai-provider-health";
 
-// Canonical fallback order surfaced to operators. Must match lib/ai.ts.
-const AI_FALLBACK_CHAIN = "Claude → Gemini → OpenAI → DeepSeek → Groq → OpenRouter → deterministic draft fallback";
+// Canonical fallback order surfaced to operators. Must match lib/ai.ts PROVIDER_CHAINS.
+// Claude is placed LAST so Anthropic rate limits do not block other providers.
+const AI_FALLBACK_CHAIN = "OpenAI → Gemini → DeepSeek → Groq → OpenRouter → Claude → deterministic draft fallback";
+const AI_FALLBACK_CHAIN_EXTRACTION = "Gemini → OpenAI → DeepSeek → Groq → OpenRouter → Claude → deterministic draft fallback";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 10;
@@ -50,13 +52,14 @@ export async function GET() {
   // enough to run AI (Groq-only or OpenRouter-only deployments are valid).
   const anyConfigured =
     claudeConfigured || geminiConfigured || openaiConfigured || deepSeekConfigured || groqConfigured || openRouterConfigured;
+  // preferredProvider reflects the actual default chain order (Claude is last)
   const preferredProvider =
-    claudeConfigured ? "claude"
+    openaiConfigured ? "openai"
     : geminiConfigured ? "gemini"
-    : openaiConfigured ? "openai"
     : deepSeekConfigured ? "deepseek"
     : groqConfigured ? "groq"
     : openRouterConfigured ? "openrouter"
+    : claudeConfigured ? "claude"
     : "none";
 
   const claudeModels = splitModels(process.env.ANTHROPIC_PROPOSAL_MODELS, ["claude-sonnet-4-5", "claude-opus-4-1", "claude-3-5-sonnet-latest", "claude-3-5-haiku-latest"]);
@@ -97,17 +100,14 @@ export async function GET() {
   return NextResponse.json({
     success: anyConfigured,
     providers: {
-      claude: {
-        configured: claudeConfigured,
-        envPresent: claudeConfigured,
-        model: claudeModels[0] ?? null,
+      openai: {
+        configured: openaiConfigured,
+        envPresent: openaiConfigured,
+        model: openaiModel,
         fallbackRank: 1,
-        label: "Claude",
-        note: "Preferred primary provider",
-        tier: process.env.ANTHROPIC_TIER || null,
-        proposalModels: maskModelChain(claudeModels),
-        maxOutputTokens: Number(process.env.ANTHROPIC_MAX_OUTPUT_TOKENS || 0) || null,
-        runtime: getProviderRuntimeSnapshot("anthropic"),
+        label: "OpenAI",
+        note: "First-tier provider (default chain)",
+        runtime: getProviderRuntimeSnapshot("openai"),
       },
       gemini: {
         configured: geminiConfigured,
@@ -115,50 +115,54 @@ export async function GET() {
         model: process.env.GEMINI_MODEL || "gemini-2.5-pro",
         fallbackRank: 2,
         label: "Gemini",
-        note: "Second-tier fallback provider",
+        note: "Second-tier provider (first for extraction/analysis)",
         primaryModel: process.env.GEMINI_MODEL || "gemini-2.5-pro",
         fallbackModels: maskModelChain(geminiModels),
         extractionModel: process.env.GEMINI_EXTRACTION_MODEL || process.env.GEMINI_EXTRACT_MODEL || null,
         runtime: getProviderRuntimeSnapshot("gemini"),
       },
-      openai: {
-        configured: openaiConfigured,
-        envPresent: openaiConfigured,
-        model: openaiModel,
-        fallbackRank: 3,
-        label: "OpenAI",
-        note: "Third-tier fallback provider",
-        runtime: getProviderRuntimeSnapshot("openai"),
-      },
       deepseek: {
         configured: deepSeekConfigured,
         envPresent: deepSeekOfficialEnvPresent(),
         model: getDeepSeekModel(),
-        fallbackRank: 4,
+        fallbackRank: 3,
         label: "DeepSeek",
-        note: "Fourth-tier fallback provider",
+        note: "Third-tier fallback provider",
         runtime: getProviderRuntimeSnapshot("deepseek"),
       },
       groq: {
         configured: groqConfigured,
         envPresent: groqConfigured,
         model: getGroqModel(),
-        fallbackRank: 5,
+        fallbackRank: 4,
         label: "Groq",
-        note: "Fifth-tier fallback provider",
+        note: "Fourth-tier fallback provider",
         runtime: getProviderRuntimeSnapshot("groq"),
       },
       openrouter: {
         configured: openRouterConfigured,
         envPresent: openRouterConfigured,
         model: getOpenRouterModel(),
-        fallbackRank: 6,
+        fallbackRank: 5,
         label: "OpenRouter",
-        note: "Sixth-tier fallback provider",
+        note: "Fifth-tier fallback provider",
         runtime: getProviderRuntimeSnapshot("openrouter"),
+      },
+      claude: {
+        configured: claudeConfigured,
+        envPresent: claudeConfigured,
+        model: claudeModels[0] ?? null,
+        fallbackRank: 6,
+        label: "Claude",
+        note: "Last-resort provider (placed last to avoid Anthropic rate-limit blocking)",
+        tier: process.env.ANTHROPIC_TIER || null,
+        proposalModels: maskModelChain(claudeModels),
+        maxOutputTokens: Number(process.env.ANTHROPIC_MAX_OUTPUT_TOKENS || 0) || null,
+        runtime: getProviderRuntimeSnapshot("anthropic"),
       },
     },
     fallbackChain: AI_FALLBACK_CHAIN,
+    fallbackChainExtraction: AI_FALLBACK_CHAIN_EXTRACTION,
     preferredProvider,
     blockers,
     warnings,

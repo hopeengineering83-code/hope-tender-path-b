@@ -134,12 +134,12 @@ describe("/api/ai/health route contract", () => {
   it("always exposes a deepseek provider object with the required fields", () => {
     const source = readFileSync("app/api/ai/health/route.ts", "utf8");
     assert.match(source, /deepseek:\s*\{/);
-    assert.match(source, /fallbackRank:\s*4/);
+    assert.match(source, /fallbackRank:\s*3/);
     assert.match(source, /label:\s*"DeepSeek"/);
     assert.match(source, /envPresent:/);
     assert.match(source, /model:\s*getDeepSeekModel\(\)/);
     assert.match(source, /fallbackChain:/);
-    assert.match(source, /Claude → Gemini → OpenAI → DeepSeek → Groq → OpenRouter → deterministic draft fallback/);
+    assert.match(source, /OpenAI → Gemini → DeepSeek → Groq → OpenRouter → Claude → deterministic draft fallback/);
   });
 
   it("AIHealthPanel renders a DeepSeek card with configure/failing messaging", () => {

@@ -55,43 +55,44 @@ function getAIHealth(): AIHealthResponse {
   const geminiModels = splitModels(process.env.GEMINI_FALLBACK_MODELS, ["gemini-2.5-flash", "gemini-2.0-flash"]);
   const openRouterModel = getOpenRouterModel();
 
-  // Provider order IS the fallback priority (rank 1..6).
+  // Provider order IS the fallback priority (rank 1..6). Claude is LAST so
+  // Anthropic rate limits do not block the app when other providers are available.
   const providers: ProviderCardData[] = [
     {
-      key: "claude", label: "Claude", rank: 1, configured: claudeConfigured, envVar: "ANTHROPIC_API_KEY",
-      model: claudeModels[0] ?? null, note: "Preferred primary provider",
-      detail: `Tier ${process.env.ANTHROPIC_TIER ?? "not set"} · models ${claudeModels.slice(0, 2).join(", ") || "none"}`,
-      modelHint: null, runtime: getProviderRuntimeSnapshot("anthropic"),
+      key: "openai", label: "OpenAI", rank: 1, configured: openaiConfigured, envVar: "OPENAI_API_KEY",
+      model: process.env.OPENAI_PROPOSAL_MODEL || "gpt-4o", note: "First-tier provider",
+      detail: null, modelHint: null, runtime: getProviderRuntimeSnapshot("openai"),
     },
     {
       key: "gemini", label: "Gemini", rank: 2, configured: geminiConfigured, envVar: "GEMINI_API_KEY",
-      model: process.env.GEMINI_MODEL || "gemini-2.5-pro", note: "Second-tier fallback provider",
+      model: process.env.GEMINI_MODEL || "gemini-2.5-pro", note: "Second-tier provider (first for extraction)",
       detail: `Fallback: ${geminiModels.slice(0, 2).join(", ") || "none"}`,
       modelHint: null, runtime: getProviderRuntimeSnapshot("gemini"),
     },
     {
-      key: "openai", label: "OpenAI", rank: 3, configured: openaiConfigured, envVar: "OPENAI_API_KEY",
-      model: process.env.OPENAI_PROPOSAL_MODEL || "gpt-4o", note: "Third-tier fallback provider",
-      detail: null, modelHint: null, runtime: getProviderRuntimeSnapshot("openai"),
-    },
-    {
-      key: "deepseek", label: "DeepSeek", rank: 4, configured: deepseekConfigured, envVar: "DEEPSEEK_API_KEY",
-      model: getDeepSeekModel(), note: "Fourth-tier fallback provider",
+      key: "deepseek", label: "DeepSeek", rank: 3, configured: deepseekConfigured, envVar: "DEEPSEEK_API_KEY",
+      model: getDeepSeekModel(), note: "Third-tier provider",
       detail: deepseekConfigured && !deepSeekOfficialEnvPresent() ? "Enabled via alias env var — rename to DEEPSEEK_API_KEY." : null,
       modelHint: null, runtime: getProviderRuntimeSnapshot("deepseek"),
     },
     {
-      key: "groq", label: "Groq", rank: 5, configured: groqConfigured, envVar: "GROQ_API_KEY",
-      model: getGroqModel(), note: "Fifth-tier fallback provider", detail: null, modelHint: null,
+      key: "groq", label: "Groq", rank: 4, configured: groqConfigured, envVar: "GROQ_API_KEY",
+      model: getGroqModel(), note: "Fourth-tier provider", detail: null, modelHint: null,
       runtime: getProviderRuntimeSnapshot("groq"),
     },
     {
-      key: "openrouter", label: "OpenRouter", rank: 6, configured: openRouterConfigured, envVar: "OPENROUTER_API_KEY",
-      model: openRouterModel, note: "Sixth-tier fallback provider", detail: null,
+      key: "openrouter", label: "OpenRouter", rank: 5, configured: openRouterConfigured, envVar: "OPENROUTER_API_KEY",
+      model: openRouterModel, note: "Fifth-tier provider", detail: null,
       modelHint: openRouterConfigured && openRouterModel === "openrouter/auto"
         ? "Using openrouter/auto. Set OPENROUTER_PROPOSAL_MODEL to a model available in your OpenRouter account to pin it."
         : null,
       runtime: getProviderRuntimeSnapshot("openrouter"),
+    },
+    {
+      key: "claude", label: "Claude", rank: 6, configured: claudeConfigured, envVar: "ANTHROPIC_API_KEY",
+      model: claudeModels[0] ?? null, note: "Last-resort provider (placed last to avoid Anthropic rate-limit blocking)",
+      detail: `Tier ${process.env.ANTHROPIC_TIER ?? "not set"} · models ${claudeModels.slice(0, 2).join(", ") || "none"}`,
+      modelHint: null, runtime: getProviderRuntimeSnapshot("anthropic"),
     },
   ];
 
@@ -101,7 +102,7 @@ function getAIHealth(): AIHealthResponse {
   const warnings: string[] = [];
   const blockers: string[] = [];
   if (!anyConfigured) {
-    blockers.push("No AI provider key is configured. Set ANTHROPIC_API_KEY (preferred), GEMINI_API_KEY, OPENAI_API_KEY, DEEPSEEK_API_KEY, GROQ_API_KEY, or OPENROUTER_API_KEY. Without one, only the deterministic fallback runs, which cannot be exported as final.");
+    blockers.push("No AI provider key is configured. Set OPENAI_API_KEY, GEMINI_API_KEY, DEEPSEEK_API_KEY, GROQ_API_KEY, OPENROUTER_API_KEY, or ANTHROPIC_API_KEY. Without one, only the deterministic fallback runs, which cannot be exported as final.");
   }
   if (claudeConfigured && claudeModels.length === 0) warnings.push("Claude is configured but no Claude model chain was resolved.");
   if (geminiConfigured && !present(process.env.GEMINI_MODEL)) warnings.push("GEMINI_MODEL is not set; the app will use its built-in Gemini default.");

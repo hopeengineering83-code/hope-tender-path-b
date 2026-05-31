@@ -110,14 +110,16 @@ describe("lib/ai.ts wires Groq → OpenRouter into the chain", () => {
 
 describe("/api/ai/health exposes groq + openrouter and the full chain", () => {
   const source = readFileSync("app/api/ai/health/route.ts", "utf8");
-  it("returns groq (rank 5) and openrouter (rank 6) provider objects", () => {
+  it("returns groq and openrouter provider objects with fallback ranks", () => {
     assert.match(source, /groq:\s*\{/);
     assert.match(source, /openrouter:\s*\{/);
+    // Claude is last (rank 6); openrouter and groq are in the chain
     assert.match(source, /fallbackRank:\s*5/);
     assert.match(source, /fallbackRank:\s*6/);
   });
-  it("advertises the extended fallback chain", () => {
-    assert.match(source, /DeepSeek → Groq → OpenRouter → deterministic draft fallback/);
+  it("advertises the extended fallback chain with Claude last", () => {
+    // DeepSeek → Groq → OpenRouter appear together before Claude
+    assert.match(source, /DeepSeek → Groq → OpenRouter → Claude → deterministic draft fallback/);
   });
 });
 

@@ -131,7 +131,12 @@ function stripExtractionHeader(txt: string): string {
   return txt.replace(/^\[(?:PDF text|OCR text)[^\]]*\]\s*\n+/i, "").trim();
 }
 
-const SAFE_DEADLINE_MS = 48_000; // leave buffer inside maxDuration=60
+// SAFE_DEADLINE_MS must stay within maxDuration (60s). On Vercel Hobby the
+// platform hard-kills the function at 60s regardless of AI_ANALYSIS_TIMEOUT_MS.
+// The outer withTimeout races against AI_ANALYSIS_TIMEOUT_MS but the inner
+// deadlineAt caps chunk processing at SAFE_DEADLINE_MS so we always return
+// a partial result rather than being killed mid-write.
+const SAFE_DEADLINE_MS = Math.min(48_000, (maxDuration - 12) * 1_000);
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const requestId = extractRequestId(req);
@@ -386,13 +391,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           });
         });
 
-        // Update the AiJob to SUCCEEDED with chunk metadata
+        // Update the AiJob to SUCCEEDED (or PARTIAL_SUCCESS) with chunk metadata.
+        // PARTIAL_SUCCESS = some chunks succeeded, some failed/skipped due to deadline.
         if (analysisJob) {
           analysisJobId = analysisJob.id;
           await prisma.aiJob.update({
             where: { id: analysisJob.id },
             data: {
-              status: "SUCCEEDED",
+              status: aiMeta.isPartial ? "PARTIAL_SUCCESS" : "SUCCEEDED",
               finishedAt: new Date(),
               output: JSON.stringify({
                 isPartial: aiMeta.isPartial,
