@@ -229,6 +229,54 @@ export function recordProviderFailure(provider: AiProviderName, error: unknown):
   return category;
 }
 
+/** Merges persisted DB state into the in-memory tracker on cold start.
+ * Only applies values newer than what's already in memory and only restores
+ * cooldowns that haven't expired yet. Called by lib/ai-provider-health-db.ts. */
+export function restoreProviderState(
+  provider: AiProviderName,
+  snapshot: {
+    lastSuccessAt: number | null;
+    lastFailureAt: number | null;
+    lastFailureCategory: AiProviderFailureCategory | null;
+    lastFailureMessage: string | null;
+    consecutiveFailures: number;
+    cooldownUntil: number | null;
+  },
+): void {
+  const s = ensureState(provider);
+  if (snapshot.lastSuccessAt && snapshot.lastSuccessAt > (s.lastSuccessAt ?? 0)) {
+    s.lastSuccessAt = snapshot.lastSuccessAt;
+  }
+  if (snapshot.lastFailureAt && snapshot.lastFailureAt > (s.lastFailureAt ?? 0)) {
+    s.lastFailureAt = snapshot.lastFailureAt;
+    s.lastFailureCategory = snapshot.lastFailureCategory;
+    s.lastFailureMessage = snapshot.lastFailureMessage;
+    s.consecutiveFailures = Math.max(s.consecutiveFailures, snapshot.consecutiveFailures);
+    const now = Date.now();
+    if (snapshot.cooldownUntil && snapshot.cooldownUntil > now) {
+      s.cooldownUntil = snapshot.cooldownUntil;
+    }
+  }
+}
+
+/** Returns a plain-object snapshot of the current in-memory state for
+ * persistence. Used by lib/ai-provider-health-db.ts. */
+export function getProviderStateSnapshot(provider: AiProviderName): {
+  lastSuccessAt: number | null;
+  lastFailureAt: number | null;
+  lastFailureCategory: AiProviderFailureCategory | null;
+  lastFailureMessage: string | null;
+  consecutiveFailures: number;
+  cooldownUntil: number | null;
+} {
+  const s = state.get(provider) ?? {
+    lastSuccessAt: null, lastFailureAt: null,
+    lastFailureCategory: null, lastFailureMessage: null,
+    consecutiveFailures: 0, cooldownUntil: null,
+  };
+  return { ...s };
+}
+
 export function isProviderCooledDown(provider: AiProviderName): boolean {
   const s = state.get(provider);
   if (!s || !s.cooldownUntil) return false;
