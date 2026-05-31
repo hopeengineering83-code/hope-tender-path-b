@@ -37,6 +37,8 @@ import {
 } from "./submission-plan-completeness";
 import {
   computeEvidenceCoverage,
+  isStrongSupportLevel,
+  normalizeSupportLevel,
   type EvidenceCoverageReport,
 } from "./requirement-evidence-profile";
 import {
@@ -442,17 +444,6 @@ export async function computeTenderLifecycle(
   // ── Derived counts ─────────────────────────────────────────────────────────
   const counts = countSummaryFromPlan(plan, docsSnap);
 
-  // ── Export status (lightweight — full check done by export-readiness API) ──
-  // Unapproved regex fallback analysis can never unlock final export —
-  // the orchestrator enforces this regardless of document counts.
-  const finalExportReady =
-    (analysisSource === "AI" || analysisSource === "HUMAN_APPROVED_REGEX_FALLBACK") &&
-    counts.finalExportCandidates > 0 &&
-    counts.plannedMissingDocs === 0 &&
-    counts.outsidePlanRows === 0 &&
-    counts.qualityFailedCandidates === 0 &&
-    (tender.readinessScore ?? 0) >= 80;
-
   // ── Official originals ─────────────────────────────────────────────────────
   const officialRequired =
     plan.totalOfficialOriginalsRequired +
@@ -462,6 +453,24 @@ export async function computeTenderLifecycle(
       r.officialOriginal &&
       (r.status === "GENERATED" || r.status === "GENERATED_NEEDS_REVIEW"),
   ).length;
+
+  // ── Export status (lightweight — full check done by export-readiness API) ──
+  // This deliberately does NOT read tender.readinessScore. That DB column is a
+  // legacy workflow-progress hint and can drift from the canonical gates. The
+  // lifecycle can only show READY when the explicit gate signals below are clear.
+  const mandatoryEvidenceReady = mandatoryReqs.every((r) =>
+    (r.complianceMatrixRows ?? []).some((row) => isStrongSupportLevel(normalizeSupportLevel(row.supportLevel))),
+  );
+  const finalExportReady =
+    (analysisSource === "AI" || analysisSource === "HUMAN_APPROVED_REGEX_FALLBACK") &&
+    meta.missingCritical.length === 0 &&
+    ungroundedMandatory.length === 0 &&
+    mandatoryEvidenceReady &&
+    counts.finalExportCandidates > 0 &&
+    counts.plannedMissingDocs === 0 &&
+    counts.outsidePlanRows === 0 &&
+    counts.qualityFailedCandidates === 0 &&
+    officialRequired <= officialAttached;
 
   // ─────────────────────────────────────────────────────────────────────────
   // Determine lifecycle state (strict priority ordering)
@@ -675,6 +684,9 @@ export async function computeTenderLifecycle(
     if (noFinalDocs) reasons.push("no active final export candidates");
     if (counts.plannedMissingDocs > 0) reasons.push(`${counts.plannedMissingDocs} required document(s) not yet generated`);
     if (officialRequired > officialAttached) reasons.push(`${officialRequired - officialAttached} official original(s) not attached`);
+    if (meta.missingCritical.length > 0) reasons.push(`${meta.missingCritical.length} critical metadata field(s) missing`);
+    if (ungroundedMandatory.length > 0) reasons.push(`${ungroundedMandatory.length} mandatory requirement(s) missing source traceability`);
+    if (!mandatoryEvidenceReady) reasons.push("mandatory requirements are not covered by confirmed FULL/SUBSTANTIAL evidence");
     if (counts.qualityFailedCandidates > 0) reasons.push(`${counts.qualityFailedCandidates} document(s) failed quality gate`);
     blocked.push({
       action: "DOWNLOAD_ZIP",
@@ -726,6 +738,8 @@ export async function computeTenderLifecycle(
     analysisStatus: {
       source: analysisSource,
       hasText,
+      // Legacy DB score retained only as workflow progress context; it is not
+      // used to decide finalSubmissionStatus or DOWNLOAD_ZIP availability.
       score: tender.readinessScore,
     },
     metadataStatus: {

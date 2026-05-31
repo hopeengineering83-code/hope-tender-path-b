@@ -28,8 +28,8 @@ const SORT_OPTIONS = [
   { value: "createdAt_asc", label: "Oldest first" },
   { value: "deadline_asc", label: "Deadline (soonest)" },
   { value: "deadline_desc", label: "Deadline (latest)" },
-  { value: "readinessScore_desc", label: "Readiness (high)" },
-  { value: "readinessScore_asc", label: "Readiness (low)" },
+  { value: "readinessScore_desc", label: "Workflow Progress (high)" },
+  { value: "readinessScore_asc", label: "Workflow Progress (low)" },
   { value: "status_asc", label: "Status A–Z" },
 ] as const;
 

@@ -12,6 +12,7 @@ import {
   getOpenRouterModel,
   type AiProviderName,
 } from "../../../../lib/ai-provider-health";
+import { restoreHealthFromDb } from "../../../../lib/ai-provider-health-db";
 
 // Canonical fallback order surfaced to operators. Must match lib/ai.ts PROVIDER_CHAINS.
 // Claude is placed LAST so Anthropic rate limits do not block other providers.
@@ -37,9 +38,26 @@ function maskModelChain(models: string[]) {
   return models.map((model) => model.replace(/\s+/g, " ").trim()).filter(Boolean);
 }
 
+async function restoreProviderHealthBeforeResponse(): Promise<string | null> {
+  try {
+    const result = await Promise.race([
+      restoreHealthFromDb(),
+      new Promise<{ warning: string }>((resolve) => setTimeout(() => resolve({ warning: "Provider health DB restore timed out; using in-memory provider health for this response." }), 2_000)),
+    ]);
+    return result.warning ?? null;
+  } catch {
+    return "Provider health DB restore failed; using in-memory provider health for this response.";
+  }
+}
+
 export async function GET() {
   const userId = await getSession();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  // Merge persisted cross-instance health before computing cooldowns. The DB
+  // snapshot is authoritative when it is newer or carries a more restrictive
+  // active cooldown; failures are non-fatal and only add a safe warning.
+  const providerHealthRestoreWarning = await restoreProviderHealthBeforeResponse();
 
   const claudeConfigured = present(process.env.ANTHROPIC_API_KEY);
   const geminiConfigured = present(process.env.GEMINI_API_KEY);
@@ -48,8 +66,10 @@ export async function GET() {
   const groqConfigured = isGroqConfigured();
   const openRouterConfigured = isOpenRouterConfigured();
 
-  // success/preferred reflect the WHOLE chain: any one configured provider is
-  // enough to run AI (Groq-only or OpenRouter-only deployments are valid).
+  // Configuration/preference reflect the WHOLE chain: any one configured
+  // provider is valid (Groq-only or OpenRouter-only deployments are valid).
+  // The response success flag is downgraded later only when every configured
+  // provider is actively cooling down.
   const anyConfigured =
     claudeConfigured || geminiConfigured || openaiConfigured || deepSeekConfigured || groqConfigured || openRouterConfigured;
   // preferredProvider reflects the actual default chain order (Claude is last)
@@ -66,6 +86,7 @@ export async function GET() {
   const geminiModels = splitModels(process.env.GEMINI_FALLBACK_MODELS, ["gemini-2.5-flash", "gemini-2.0-flash"]);
   const warnings: string[] = [];
   const blockers: string[] = [];
+  if (providerHealthRestoreWarning) warnings.push(providerHealthRestoreWarning);
 
   // Only a TRUE blocker when NO provider at all is configured.
   if (!anyConfigured) {
@@ -90,15 +111,20 @@ export async function GET() {
     deepseek: deepSeekConfigured, groq: groqConfigured, openrouter: openRouterConfigured,
   };
   const configuredNames = allProviderNames.filter((n) => configuredMap[n]);
-  const anyHasRecentSuccess = configuredNames.some((n) => Boolean(getProviderRuntimeSnapshot(n).lastSuccessAt));
-  const allConfiguredCooling = anyConfigured && configuredNames.every((n) => isProviderCooledDown(n));
-  if (allConfiguredCooling) warnings.push("All configured AI providers are currently in cooldown. AI Analyze will fall back to regex (UNAPPROVED) until a provider's cooldown expires.");
+  const providerRuntime = Object.fromEntries(allProviderNames.map((n) => [n, getProviderRuntimeSnapshot(n)])) as Record<AiProviderName, ReturnType<typeof getProviderRuntimeSnapshot>>;
+  const anyHasRecentSuccess = configuredNames.some((n) => Boolean(providerRuntime[n].lastSuccessAt));
+  const configuredProvidersAvailable = configuredNames.filter((n) => providerRuntime[n].available);
+  const allConfiguredCooling = anyConfigured && configuredNames.every((n) => providerRuntime[n].coolingDown);
+  if (allConfiguredCooling) warnings.push("All configured AI providers are currently in cooldown. AI Analyze will fall back to regex (UNAPPROVED) until a provider's cooldown expires. Next action: wait for the earliest cooldown window to expire or reset provider health after fixing the upstream limit.");
   if (anyConfigured && !anyHasRecentSuccess) warnings.push("AI providers are configured but no successful response has been recorded on this serverless instance yet — runtime availability is not verified.");
 
   const openaiModel = process.env.OPENAI_PROPOSAL_MODEL || "gpt-4o";
 
   return NextResponse.json({
-    success: anyConfigured,
+    success: anyConfigured && !allConfiguredCooling,
+    configuredProviderCount: configuredNames.length,
+    availableProviderCount: configuredProvidersAvailable.length,
+    allProvidersCooling: allConfiguredCooling,
     providers: {
       openai: {
         configured: openaiConfigured,
@@ -107,7 +133,7 @@ export async function GET() {
         fallbackRank: 1,
         label: "OpenAI",
         note: "First-tier provider (default chain)",
-        runtime: getProviderRuntimeSnapshot("openai"),
+        runtime: providerRuntime.openai,
       },
       gemini: {
         configured: geminiConfigured,
@@ -119,7 +145,7 @@ export async function GET() {
         primaryModel: process.env.GEMINI_MODEL || "gemini-2.5-pro",
         fallbackModels: maskModelChain(geminiModels),
         extractionModel: process.env.GEMINI_EXTRACTION_MODEL || process.env.GEMINI_EXTRACT_MODEL || null,
-        runtime: getProviderRuntimeSnapshot("gemini"),
+        runtime: providerRuntime.gemini,
       },
       deepseek: {
         configured: deepSeekConfigured,
@@ -128,7 +154,7 @@ export async function GET() {
         fallbackRank: 3,
         label: "DeepSeek",
         note: "Third-tier fallback provider",
-        runtime: getProviderRuntimeSnapshot("deepseek"),
+        runtime: providerRuntime.deepseek,
       },
       groq: {
         configured: groqConfigured,
@@ -137,7 +163,7 @@ export async function GET() {
         fallbackRank: 4,
         label: "Groq",
         note: "Fourth-tier fallback provider",
-        runtime: getProviderRuntimeSnapshot("groq"),
+        runtime: providerRuntime.groq,
       },
       openrouter: {
         configured: openRouterConfigured,
@@ -146,7 +172,7 @@ export async function GET() {
         fallbackRank: 5,
         label: "OpenRouter",
         note: "Fifth-tier fallback provider",
-        runtime: getProviderRuntimeSnapshot("openrouter"),
+        runtime: providerRuntime.openrouter,
       },
       claude: {
         configured: claudeConfigured,
@@ -158,7 +184,7 @@ export async function GET() {
         tier: process.env.ANTHROPIC_TIER || null,
         proposalModels: maskModelChain(claudeModels),
         maxOutputTokens: Number(process.env.ANTHROPIC_MAX_OUTPUT_TOKENS || 0) || null,
-        runtime: getProviderRuntimeSnapshot("anthropic"),
+        runtime: providerRuntime.anthropic,
       },
     },
     fallbackChain: AI_FALLBACK_CHAIN,

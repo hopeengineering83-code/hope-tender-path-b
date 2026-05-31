@@ -73,7 +73,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           tender.analysisSummary ? `Analysis: ${short(tender.analysisSummary, 900)}` : null,
           tender.evaluationMethodology ? `Evaluation: ${short(tender.evaluationMethodology, 900)}` : null,
           tender.notes ? `Notes: ${short(tender.notes, 900)}` : null,
-          `Status=${tender.status}, stage=${tender.stage}, readiness=${Math.round(tender.readinessScore ?? 0)}/100`,
+          `Status=${tender.status}, stage=${tender.stage}, workflowProgress=${Math.round(tender.readinessScore ?? 0)}/100`,
         ].filter(Boolean).join("\n"),
         requirements: tender.requirements.map((req) => `[${req.priority}] ${req.requirementType}: ${req.title} — ${short(req.description, 360)}`),
         complianceGaps: tender.complianceGaps.map((gap) => `[${gap.severity}] ${gap.title} — ${short(gap.description, 360)}${gap.mitigationPlan ? ` | Mitigation: ${short(gap.mitigationPlan, 220)}` : ""}`),
