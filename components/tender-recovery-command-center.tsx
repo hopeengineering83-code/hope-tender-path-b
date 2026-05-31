@@ -12,7 +12,7 @@ type LifecycleState =
   | "SUBMISSION_PLAN_READY" | "EVIDENCE_MATCHING_REQUIRED" | "EVIDENCE_MATCHED"
   | "DOCUMENT_GENERATION_REQUIRED" | "DOCUMENTS_GENERATED" | "OFFICIAL_ORIGINALS_REQUIRED"
   | "QUALITY_REVIEW_REQUIRED" | "AUTO_FINALIZE_REQUIRED" | "EXPORT_READINESS_BLOCKED"
-  | "EXPORT_READY" | "ZIP_READY";
+  | "EXPORT_READY" | "ZIP_READY" | "CLOSED";
 
 type BlockedAction = { action: string; reason: string };
 type Blocker = { code: string; message: string; action: string };
@@ -97,6 +97,7 @@ const STATE_LABELS: Record<LifecycleState, string> = {
   EXPORT_READINESS_BLOCKED: "Export Blocked",
   EXPORT_READY: "Export Ready",
   ZIP_READY: "ZIP Ready",
+  CLOSED: "Closed (WON/LOST/WITHDRAWN)",
 };
 
 const ACTION_LABELS: Record<string, string> = {
@@ -122,6 +123,7 @@ const ACTION_LABELS: Record<string, string> = {
 
 function stateColor(state: LifecycleState): string {
   if (state === "EXPORT_READY" || state === "ZIP_READY") return "bg-green-100 text-green-800 border-green-300";
+  if (state === "CLOSED") return "bg-slate-100 text-slate-600 border-slate-300";
   if (state === "AUTO_FINALIZE_REQUIRED" || state === "DOCUMENTS_GENERATED") return "bg-blue-100 text-blue-800 border-blue-300";
   if (state.includes("REQUIRED") || state.includes("MISSING") || state.includes("FAILED") || state.includes("UNAPPROVED")) return "bg-red-100 text-red-800 border-red-300";
   return "bg-amber-100 text-amber-800 border-amber-300";
