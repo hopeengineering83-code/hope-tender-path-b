@@ -49,6 +49,8 @@ type GatingInput = {
   officialRequired: number;
   officialAttached: number;
   qualityFailed: number;
+  mandatoryEvidenceReady: boolean;
+  /** Legacy DB workflow progress only; must not unlock final export. */
   readinessScore: number;
 };
 
@@ -74,11 +76,13 @@ function simulateLifecycle(input: GatingInput): GatingResult {
   const finalExportReady =
     !fallbackUnapproved &&
     analysisOk &&
+    input.criticalMetadataMissing === 0 &&
+    input.mandatoryEvidenceReady &&
     input.finalExportCandidates > 0 &&
     input.plannedMissingDocs === 0 &&
     input.outsidePlanRows === 0 &&
     input.qualityFailed === 0 &&
-    input.readinessScore >= 80;
+    input.officialRequired <= input.officialAttached;
 
   // State machine
   if (!input.hasFiles) {
@@ -160,6 +164,9 @@ function simulateLifecycle(input: GatingInput): GatingResult {
     if (fallbackUnapproved) reasons.push("analysis source is unapproved regex fallback");
     if (noFinalDocs) reasons.push("no active final export candidates");
     if (input.plannedMissingDocs > 0) reasons.push(`${input.plannedMissingDocs} required document(s) not yet generated`);
+    if (input.criticalMetadataMissing > 0) reasons.push(`${input.criticalMetadataMissing} critical metadata field(s) missing`);
+    if (!input.mandatoryEvidenceReady) reasons.push("mandatory requirements are not covered by confirmed FULL/SUBSTANTIAL evidence");
+    if (input.officialRequired > input.officialAttached) reasons.push(`${input.officialRequired - input.officialAttached} official original(s) not attached`);
     blocked.push({ action: "DOWNLOAD_ZIP", reason: reasons.length > 0 ? reasons.join("; ") : "Canonical readiness has not passed." });
   } else {
     allowed.push("DOWNLOAD_ZIP");
@@ -188,6 +195,7 @@ const BASE: GatingInput = {
   officialRequired: 0,
   officialAttached: 0,
   qualityFailed: 0,
+  mandatoryEvidenceReady: true,
   readinessScore: 85,
 };
 
@@ -298,14 +306,14 @@ describe("Scenario G — Outside-plan docs with export candidates", () => {
 });
 
 describe("Scenario H — Auto-finalize ready", () => {
-  it("state is AUTO_FINALIZE_REQUIRED when docs exist but readiness < 80", () => {
+  it("legacy workflow progress below 80 does not block export when canonical gates pass", () => {
     const r = simulateLifecycle({ ...BASE, finalExportCandidates: 3, plannedMissingDocs: 0, readinessScore: 75 });
-    assert.equal(r.lifecycleState, "AUTO_FINALIZE_REQUIRED");
-    assert.equal(r.primaryNextAction, "AUTO_FINALIZE");
+    assert.equal(r.lifecycleState, "EXPORT_READY");
+    assert.equal(r.primaryNextAction, "DOWNLOAD_FINAL_ZIP");
   });
 
   it("AUTO_FINALIZE allowed when docs exist and analysis approved", () => {
-    const r = simulateLifecycle({ ...BASE, finalExportCandidates: 3, plannedMissingDocs: 0, readinessScore: 75 });
+    const r = simulateLifecycle({ ...BASE, finalExportCandidates: 3, plannedMissingDocs: 0, mandatoryEvidenceReady: false, readinessScore: 100 });
     assert.ok(r.allowedActions.includes("AUTO_FINALIZE"));
   });
 });
@@ -325,6 +333,22 @@ describe("Scenario J — Download ZIP blocked when readiness not passed", () => 
     const zipBlock = r.blockedActions.find((b) => b.action === "DOWNLOAD_ZIP");
     assert.ok(zipBlock, "DOWNLOAD_ZIP must be blocked when planned docs are missing");
     assert.match(zipBlock.reason, /required document/i);
+  });
+
+  it("stale workflow progress cannot unlock DOWNLOAD_ZIP when mandatory evidence is missing", () => {
+    const r = simulateLifecycle({
+      ...BASE,
+      finalExportCandidates: 3,
+      plannedMissingDocs: 0,
+      outsidePlanRows: 0,
+      qualityFailed: 0,
+      mandatoryEvidenceReady: false,
+      readinessScore: 100,
+    });
+    const zipBlock = r.blockedActions.find((b) => b.action === "DOWNLOAD_ZIP");
+    assert.ok(zipBlock, "DOWNLOAD_ZIP must be blocked by canonical evidence even when legacy workflow progress is 100");
+    assert.match(zipBlock.reason, /FULL\/SUBSTANTIAL evidence/i);
+    assert.equal(r.lifecycleState, "AUTO_FINALIZE_REQUIRED");
   });
 
   it("DOWNLOAD_ZIP is allowed only when all conditions pass", () => {

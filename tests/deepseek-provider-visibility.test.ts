@@ -84,10 +84,14 @@ describe("DeepSeek runtime snapshot", () => {
       "consecutiveFailures",
       "coolingDown",
       "cooldownUntil",
+      "available",
       "lastErrorCategory",
       "lastFailureAt",
+      "lastFailureReason",
       "lastSafeErrorMessage",
       "lastSuccessAt",
+      "rateLimited",
+      "runtimeVerified",
     ].sort());
   });
 

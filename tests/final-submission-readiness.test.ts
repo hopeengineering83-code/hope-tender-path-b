@@ -15,7 +15,7 @@ import {
   isAdvisoryCode,
 } from "../lib/engine/final-submission-readiness";
 
-const { severityForReasons, nextActionForReason, derivePlanStatus, applyAdvisoryResolutions, buildMessage, detectMessageType } = __testing__;
+const { severityForReasons, nextActionForReason, derivePlanStatus, applyAdvisoryResolutions, buildMessage, detectMessageType, mandatoryEvidenceCoverageRatio } = __testing__;
 
 describe("final-submission-readiness — severityForReasons", () => {
   it("returns HIGH for missing-content reasons", () => {
@@ -152,5 +152,31 @@ describe("final-submission-readiness — detectMessageType", () => {
       { documentId: "1", name: "a", fileName: "a.docx", reasons: ["ORIGINAL_REQUIRED: tender-issued original"] },
     ]);
     assert.equal(out.originalRequired, 1);
+  });
+});
+
+describe("final-submission-readiness — mandatory evidence coverage truth", () => {
+  it("selected/unconfirmed evidence suggestions do not count without complianceMatrix rows", () => {
+    const ratio = mandatoryEvidenceCoverageRatio([
+      { priority: "MANDATORY", complianceMatrixRows: [] },
+    ]);
+    assert.equal(ratio, 0);
+  });
+
+  it("sourceConfidence without a complianceMatrix row does not count as FULL/SUBSTANTIAL coverage", () => {
+    const ratio = mandatoryEvidenceCoverageRatio([
+      { priority: "MANDATORY", sourceConfidence: 0.95, complianceMatrixRows: [] } as { priority: string; sourceConfidence: number; complianceMatrixRows: [] },
+    ]);
+    assert.equal(ratio, 0);
+  });
+
+  it("confirmed FULL/SUBSTANTIAL complianceMatrix rows increase coverage", () => {
+    const ratio = mandatoryEvidenceCoverageRatio([
+      { priority: "MANDATORY", complianceMatrixRows: [{ supportLevel: "FULL" }] },
+      { priority: "MANDATORY", complianceMatrixRows: [{ supportLevel: "SUBSTANTIAL" }] },
+      { priority: "MANDATORY", complianceMatrixRows: [{ supportLevel: "PARTIAL" }] },
+      { priority: "OPTIONAL", complianceMatrixRows: [{ supportLevel: "FULL" }] },
+    ]);
+    assert.equal(ratio, 2 / 3);
   });
 });
