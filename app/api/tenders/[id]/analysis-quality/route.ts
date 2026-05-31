@@ -81,6 +81,7 @@ export async function GET(
     extractedTextLength,
     selectedReviewedExperts: tender.expertMatches.filter((m) => m.isSelected && m.expert.trustLevel === "REVIEWED").length,
     selectedReviewedProjects: tender.projectMatches.filter((m) => m.isSelected && m.project.trustLevel === "REVIEWED").length,
+    analysisSource: (tender.notes ?? "").split(/\n+/).find((l) => /analysis source:/i.test(l))?.replace(/^analysis source:\s*/i, "") ?? null,
   });
 
   const analysisSource = analysisSourceFromNotes(tender.notes);

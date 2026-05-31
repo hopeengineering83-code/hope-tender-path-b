@@ -52,6 +52,58 @@ const MAX_FILE_CHARS_FOR_AI_ANALYSIS = (() => {
   return 12_000;
 })();
 
+const SECTION_SCAN_CHARS = (() => {
+  const raw = Number(process.env.TENDER_AI_SECTION_SCAN_CHARS);
+  if (Number.isFinite(raw) && raw >= 500 && raw <= 10_000) return raw;
+  return 3_000;
+})();
+
+const SECTION_KEYWORDS = /evaluation|scoring|criteria|submission|deadline|annex|appendix|form[s\s]|financial proposal|technical proposal|envelope|subject line|bid bond|eligibility|qualification|instructions to (bidders?|tenderers?)|evaluation matrix|scoring matrix|award criteria/i;
+
+/**
+ * For files larger than maxChars, extracts the first portion PLUS sections
+ * near evaluation/submission/scoring keywords. This surfaces critical tender
+ * instructions that appear deep in a document rather than always truncating
+ * from the start.
+ */
+function extractRelevantSections(text: string, maxChars: number): string {
+  if (text.length <= maxChars) return text;
+
+  const head = text.slice(0, Math.floor(maxChars * 0.6));
+  const scanBudget = maxChars - head.length;
+
+  // Find positions of keyword-bearing lines beyond the head section
+  const tail = text.slice(head.length);
+  const snippets: string[] = [];
+  let budgetUsed = 0;
+
+  // Walk the tail looking for lines that match section keywords
+  let searchPos = 0;
+  while (budgetUsed < scanBudget && searchPos < tail.length) {
+    const nextMatch = tail.slice(searchPos).search(SECTION_KEYWORDS);
+    if (nextMatch === -1) break;
+
+    const matchStart = searchPos + nextMatch;
+    // Find the start of the line containing the match
+    const lineStart = tail.lastIndexOf("\n", matchStart) + 1;
+    // Extract SECTION_SCAN_CHARS around the match
+    const snippetStart = Math.max(lineStart, matchStart - 200);
+    const snippetEnd = Math.min(tail.length, snippetStart + SECTION_SCAN_CHARS);
+    const snippet = tail.slice(snippetStart, snippetEnd);
+
+    if (!head.includes(snippet.slice(0, 50))) {
+      snippets.push(snippet);
+      budgetUsed += snippet.length;
+    }
+
+    searchPos = snippetEnd;
+    if (budgetUsed >= scanBudget) break;
+  }
+
+  if (snippets.length === 0) return head;
+  return `${head}\n\n[... key sections extracted from remainder ...]\n\n${snippets.join("\n\n---\n\n")}`;
+}
+
 async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
@@ -190,7 +242,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       try {
         const fileTexts = tenderRecord.files
           .map((f) => f.extractedText
-            ? `[FILE: ${f.originalFileName}]\n${stripExtractionHeader(f.extractedText).slice(0, MAX_FILE_CHARS_FOR_AI_ANALYSIS)}`
+            ? `[FILE: ${f.originalFileName}]\n${extractRelevantSections(stripExtractionHeader(f.extractedText), MAX_FILE_CHARS_FOR_AI_ANALYSIS)}`
             : `[FILE: ${f.originalFileName} ${f.classification ?? ""}]`)
           .join("\n\n");
 
