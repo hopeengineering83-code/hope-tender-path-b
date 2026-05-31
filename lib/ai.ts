@@ -270,6 +270,15 @@ async function generateWithClaude(prompt: string, systemPrompt: string = DEFAULT
 
   if (errors.length > 0) {
     console.warn(`[ai] All Claude models exhausted. Errors: ${errors.join(" | ")} — falling back to Gemini.`);
+    // When every model failed due to rate-limiting, throw a rate-limit error so
+    // generateWithFallback's catch handler records RATE_LIMIT (60s cooldown)
+    // instead of treating a null return as "empty response" (UNKNOWN, 30s).
+    // This prevents subsequent chunks in the same multi-chunk analysis job
+    // from re-attempting Claude before the rate-limit window has cleared.
+    const hadRateLimit = errors.some((e) => /429|rate.?limit|over.?capacity|tokens?\s+per\s+minute/i.test(e));
+    if (hadRateLimit && errors.every((e) => /429|rate.?limit|over.?capacity|tokens?\s+per\s+minute|404|not.?found|model_not_found|empty\s+response/i.test(e))) {
+      throw new Error(`Claude rate-limited (all models in chain returned 429 or were unavailable): ${errors.join(" | ")}`);
+    }
   }
   return null;
 }
