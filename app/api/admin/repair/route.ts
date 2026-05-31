@@ -21,7 +21,8 @@ export const dynamic = "force-dynamic";
  *   ?step=import       — only run import (skip re-extraction)
  *   ?step=labels       — clean tender titles and client names for all tenders
  *   ?step=requirements — clear false-positive expert/project quantities (e.g. "Section 29 Expert")
- *   ?step=all (default) — extract + import (labels/requirements must be run separately)
+ *   ?step=appsettings  — ensure AppSettings row exists for every Company (safe after new DB)
+ *   ?step=all (default) — extract + import + appsettings (labels/requirements must be run separately)
  */
 export async function POST(req: Request) {
   let actor;
@@ -46,6 +47,7 @@ export async function POST(req: Request) {
     import: null as null | { docsProcessed: number; expertsCreated: number; projectsCreated: number; aiUsed: boolean; aiFailures: number },
     labels: null as null | { total: number; updated: number; details: Array<{ id: string; before: string; after: string }> },
     requirements: null as null | { scanned: number; cleared: number },
+    appsettings: null as null | { ensured: number },
     timestamp: new Date().toISOString(),
   };
 
@@ -167,6 +169,34 @@ export async function POST(req: Request) {
     }
     const allReqs = await prisma.tenderRequirement.count({ where: { tenderId: { in: tenderIds } } });
     results.requirements = { scanned: allReqs, cleared: oversized.length };
+  }
+
+  // ── Step 5: Ensure AppSettings row exists for every Company ──────────────
+  // After switching to a new Neon DB, existing companies may have no AppSettings
+  // row. This creates one with safe defaults so branding/export settings work.
+  if (step === "appsettings" || step === "all") {
+    const companies = await prisma.company.findMany({ select: { id: true } });
+    let ensured = 0;
+    for (const co of companies) {
+      await prisma.appSettings.upsert({
+        where: { companyId: co.id },
+        update: {},
+        create: {
+          companyId: co.id,
+          defaultCurrency: "USD",
+          aiStrictMode: true,
+          allowBrandingDefault: true,
+          allowSignatureDefault: true,
+          allowStampDefault: true,
+          exportFormat: "DOCX",
+          pageNumbering: true,
+          includeTableOfContents: false,
+          language: "en",
+        },
+      });
+      ensured++;
+    }
+    results.appsettings = { ensured };
   }
 
   return NextResponse.json(results);

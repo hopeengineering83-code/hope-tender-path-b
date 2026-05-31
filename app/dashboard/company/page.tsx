@@ -8,12 +8,12 @@ type CompanyDoc = {
 type Expert = {
   id: string; fullName: string; title: string | null; disciplines: string[];
   sectors: string[]; certifications: string[]; yearsExperience: number | null;
-  profile: string | null; isActive: boolean;
+  profile: string | null; isActive: boolean; trustLevel?: string | null;
 };
 type Project = {
   id: string; name: string; clientName: string | null; sector: string | null;
   country: string | null; serviceAreas: string[]; contractValue: number | null;
-  currency: string | null; summary: string | null;
+  currency: string | null; summary: string | null; trustLevel?: string | null;
 };
 type Company = {
   id?: string; name: string; legalName: string; description: string; website: string;
@@ -27,6 +27,9 @@ type Company = {
   experts?: Expert[]; projects?: Project[];
 };
 type UploadItem = { file: File; status: "queued"|"uploading"|"done"|"error"; error?: string; category: string };
+type CompanyAsset = { id: string; assetType: string; originalFileName: string; isActive: boolean };
+
+const REQUIRED_ASSET_TYPES = ["LOGO", "LETTERHEAD", "SIGNATURE", "STAMP"];
 
 const DOC_CATEGORIES = [
   "AUTO_DETECT","COMPANY_PROFILE","EXPERT_CV","PROJECT_REFERENCE","PROJECT_CONTRACT",
@@ -48,6 +51,13 @@ const CAT_COLORS: Record<string,string> = {
 };
 const ACCEPT = ".pdf,.doc,.docx,.xls,.xlsx,.ods,.ppt,.pptx,.csv,.txt,.rtf,.jpg,.jpeg,.png,.gif,.webp";
 const empty: Company = { name:"",legalName:"",description:"",website:"",address:"",phone:"",email:"",knowledgeMode:"PROFILE_FIRST",serviceLines:[],sectors:[],profileSummary:"",gmName:"",gmTitle:"",gmLicense:"",foundingYear:null,headcount:null,licenseGrade:"",registrationNumber:"",tin:"",vat:"" };
+
+const PLACEHOLDER_PATTERNS = /^\s*(tbd|tbc|n\/a|unknown|not provided|placeholder|pending|to be confirmed|to be determined)\s*$/i;
+function isPlaceholder(v: unknown): boolean {
+  if (!v && v !== 0) return true;
+  return PLACEHOLDER_PATTERNS.test(String(v));
+}
+function hasReal(v: unknown): boolean { return !isPlaceholder(v); }
 
 function fmt(b: number) { return b<1024?`${b} B`:b<1048576?`${(b/1024).toFixed(0)} KB`:`${(b/1048576).toFixed(1)} MB`; }
 function ext(name: string) { return name.toLowerCase().split(".").pop()??""; }
@@ -100,6 +110,7 @@ export default function CompanyPage() {
   const [deletingProjectId, setDeletingProjectId] = useState<string|null>(null);
   const [reimporting, setReimporting] = useState(false);
   const [reimportResult, setReimportResult] = useState<{expertsCreated:number;projectsCreated:number;docsProcessed:number}|null>(null);
+  const [assets, setAssets] = useState<CompanyAsset[]>([]);
   const [searchExpert, setSearchExpert] = useState("");
   const [searchProject, setSearchProject] = useState("");
 
@@ -193,7 +204,8 @@ export default function CompanyPage() {
     Promise.all([
       fetch("/api/company").then(r=>r.json()),
       fetch("/api/company/documents").then(r=>r.json()),
-    ]).then(([c, d]: [{ company?: Company } & Company, { items?: CompanyDoc[] }]) => {
+      fetch("/api/company/assets").then(r=>r.json()),
+    ]).then(([c, d, a]: [{ company?: Company } & Company, { items?: CompanyDoc[] }, { assets?: CompanyAsset[] }]) => {
       const co = c.company ?? c;
       if (co.name !== undefined) {
         setCompany({ ...empty, ...(co as Company) });
@@ -201,6 +213,7 @@ export default function CompanyPage() {
         setSectorsTxt(((co as Company).sectors||[]).join(", "));
       }
       setDocs(d.items ?? []);
+      setAssets(a.assets ?? []);
     }).finally(() => setLoading(false));
   }, []);
 
@@ -392,20 +405,36 @@ export default function CompanyPage() {
       </div>
 
       {(() => {
+        const activeAssetTypes = new Set(assets.filter(a => a.isActive).map(a => a.assetType));
+        const allExperts = company.experts ?? [];
+        const allProjects = company.projects ?? [];
+        const reviewedExpertCount = allExperts.filter(e => e.trustLevel === "REVIEWED").length;
+        const reviewedProjectCount = allProjects.filter(p => p.trustLevel === "REVIEWED").length;
+        const draftExpertCount = allExperts.length - reviewedExpertCount;
+        const draftProjectCount = allProjects.length - reviewedProjectCount;
         const checks = [
-          { label: "Company name", done: !!company.name },
-          { label: "Legal name", done: !!company.legalName },
-          { label: "Description", done: !!company.description },
-          { label: "Address", done: !!company.address },
-          { label: "Email", done: !!company.email },
-          { label: "Registration number", done: !!company.registrationNumber },
-          { label: "TIN", done: !!company.tin },
+          { label: "Company name", done: hasReal(company.name) },
+          { label: "Legal name", done: hasReal(company.legalName) },
+          { label: "Description", done: hasReal(company.description) },
+          { label: "Address", done: hasReal(company.address) },
+          { label: "Email", done: hasReal(company.email) },
+          { label: "Phone", done: hasReal(company.phone) },
+          { label: "Website", done: hasReal(company.website) },
+          { label: "Registration number", done: hasReal(company.registrationNumber) },
+          { label: "TIN", done: hasReal(company.tin) },
+          { label: "VAT", done: hasReal(company.vat) },
+          { label: "GM name", done: hasReal(company.gmName) },
+          { label: "GM title", done: hasReal(company.gmTitle) },
+          { label: "Founding year", done: hasReal(company.foundingYear) },
+          { label: "Headcount", done: hasReal(company.headcount) },
+          { label: "License grade", done: hasReal(company.licenseGrade) },
           { label: "Service lines", done: (company.serviceLines||[]).length > 0 },
           { label: "Sectors", done: (company.sectors||[]).length > 0 },
-          { label: "Profile summary", done: !!company.profileSummary },
-          { label: "At least 1 expert", done: (company.experts||[]).length > 0 },
-          { label: "At least 1 project", done: (company.projects||[]).length > 0 },
+          { label: "Profile summary", done: hasReal(company.profileSummary) },
+          { label: "At least 1 expert", done: allExperts.length > 0 },
+          { label: "At least 1 project", done: allProjects.length > 0 },
           { label: "At least 1 document", done: docs.length > 0 },
+          ...REQUIRED_ASSET_TYPES.map(t => ({ label: `${t.charAt(0) + t.slice(1).toLowerCase()} asset`, done: activeAssetTypes.has(t) })),
         ];
         const done = checks.filter(c => c.done).length;
         const pct = Math.round((done / checks.length) * 100);
@@ -413,7 +442,7 @@ export default function CompanyPage() {
         const textColor = pct >= 80 ? "text-green-600" : pct >= 50 ? "text-amber-600" : "text-red-600";
         const missing = checks.filter(c => !c.done).map(c => c.label);
         return (
-          <div className="rounded-2xl border bg-white p-5 shadow-sm">
+          <div className="rounded-2xl border bg-white p-5 shadow-sm space-y-3">
             <div className="flex items-center justify-between mb-2">
               <p className="text-sm font-medium text-slate-700">Profile completeness</p>
               <span className={`text-sm font-bold ${textColor}`}>{pct}%</span>
@@ -424,6 +453,13 @@ export default function CompanyPage() {
             {missing.length > 0 && (
               <p className="mt-2 text-xs text-slate-400">Missing: {missing.join(", ")}</p>
             )}
+            <div className="border-t pt-3">
+              <p className="text-xs font-medium text-slate-600 mb-1.5">Knowledge vault</p>
+              <div className="flex flex-wrap gap-4 text-xs text-slate-500">
+                <span>Experts: <span className="font-medium text-slate-700">{reviewedExpertCount} reviewed</span>{draftExpertCount > 0 ? `, ${draftExpertCount} draft` : ""}</span>
+                <span>Projects: <span className="font-medium text-slate-700">{reviewedProjectCount} reviewed</span>{draftProjectCount > 0 ? `, ${draftProjectCount} draft` : ""}</span>
+              </div>
+            </div>
           </div>
         );
       })()}
@@ -484,8 +520,14 @@ export default function CompanyPage() {
               <input value={company.gmTitle ?? ""} onChange={e=>setCompany({...company,gmTitle:e.target.value})} placeholder="GM title (e.g., General Manager and Founder)" className="rounded-lg border px-3 py-2 text-sm" />
               <input value={company.gmLicense ?? ""} onChange={e=>setCompany({...company,gmLicense:e.target.value})} placeholder="GM license / registration (e.g., IPSTE/6884)" className="rounded-lg border px-3 py-2 text-sm" />
               <input value={company.licenseGrade ?? ""} onChange={e=>setCompany({...company,licenseGrade:e.target.value})} placeholder="License grade / category (e.g., Grade I)" className="rounded-lg border px-3 py-2 text-sm" />
-              <input value={company.registrationNumber ?? ""} onChange={e=>setCompany({...company,registrationNumber:e.target.value})} placeholder="Business registration number" className="rounded-lg border px-3 py-2 text-sm" />
-              <input value={company.tin ?? ""} onChange={e=>setCompany({...company,tin:e.target.value})} placeholder="TIN (Tax Identification Number)" className="rounded-lg border px-3 py-2 text-sm" />
+              <div className="flex flex-col gap-1">
+                <input value={company.registrationNumber ?? ""} onChange={e=>setCompany({...company,registrationNumber:e.target.value})} placeholder="Business registration number" className="rounded-lg border px-3 py-2 text-sm" />
+                <p className="text-xs text-slate-400">Use exact value from official company registration documents.</p>
+              </div>
+              <div className="flex flex-col gap-1">
+                <input value={company.tin ?? ""} onChange={e=>setCompany({...company,tin:e.target.value})} placeholder="TIN (Tax Identification Number)" className="rounded-lg border px-3 py-2 text-sm" />
+                <p className="text-xs text-slate-400">Use exact value from official TIN documents.</p>
+              </div>
               <input value={company.vat ?? ""} onChange={e=>setCompany({...company,vat:e.target.value})} placeholder="VAT registration" className="rounded-lg border px-3 py-2 text-sm" />
               <input value={company.foundingYear ?? ""} onChange={e=>setCompany({...company,foundingYear:e.target.value?Number(e.target.value):null})} type="number" placeholder="Founding year (e.g., 2019)" className="rounded-lg border px-3 py-2 text-sm" />
               <input value={company.headcount ?? ""} onChange={e=>setCompany({...company,headcount:e.target.value?Number(e.target.value):null})} type="number" placeholder="Permanent staff headcount" className="rounded-lg border px-3 py-2 text-sm" />
