@@ -73,8 +73,15 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       return NextResponse.json({ ok: false, error: "Tender not found", code: "TENDER_NOT_FOUND" }, { status: 404 });
     }
 
-    if (tender.requirements.length === 0) {
-      return NextResponse.json({ ok: false, error: "Tender has no requirements — run AI Analyze first.", code: "NO_REQUIREMENTS" }, { status: 422 });
+    // Allow building from exactFileNaming/exactFileOrder even when no
+    // requirements are extracted yet, because buildSubmissionPlan calls
+    // buildFilesFromExactNames() as a fallback. Only block when neither
+    // requirements nor explicit file lists exist.
+    const hasExplicitFiles =
+      (tender.exactFileNaming ?? "").trim().length > 2 ||
+      (tender.exactFileOrder ?? "").trim().length > 2;
+    if (tender.requirements.length === 0 && !hasExplicitFiles) {
+      return NextResponse.json({ ok: false, error: "Tender has no requirements or explicit file lists — run AI Analyze first, or manually add requirements/exact file names.", code: "NO_REQUIREMENTS" }, { status: 422 });
     }
 
     const plan = buildSubmissionPlan(tender);
