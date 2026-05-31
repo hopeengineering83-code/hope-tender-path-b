@@ -95,10 +95,13 @@ describe("lib/ai.ts wires Groq → OpenRouter into the chain", () => {
     assert.match(source, /getGroqBaseUrl\(\)/);
     assert.match(source, /getOpenRouterBaseUrl\(\)/);
   });
-  it("calls the tail helper in generateWithFallback (both branches)", () => {
-    assert.match(source, /tail1/);
-    assert.match(source, /tail2/);
-    assert.match(source, /tail3/);
+  it("groq and openrouter are included in the provider chain", () => {
+    // PROVIDER_CHAINS includes groq and openrouter in every chain variant
+    assert.match(source, /PROVIDER_CHAINS/);
+    assert.match(source, /"groq"/);
+    assert.match(source, /"openrouter"/);
+    // tryTailFallbackProviders is still used in section-parallel generation
+    assert.match(source, /tryTailFallbackProviders/);
   });
   it("includes the new keys in the no-provider error", () => {
     assert.match(source, /GROQ_API_KEY, or OPENROUTER_API_KEY/);
