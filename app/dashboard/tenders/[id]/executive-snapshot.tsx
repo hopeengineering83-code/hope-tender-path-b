@@ -161,15 +161,31 @@ export function ExecutiveSnapshot({ tender }: { tender: TenderLike }) {
   const canonicalDecisionScore = evidenceScore;
 
   const hasPlanMismatch = missingPlannedDocs.length > 0 || extraGeneratedDocs.length > 0;
+  const hasRequirements = requirements.length > 0;
+  const hasSelectedEvidence = selectedExperts.length + selectedProjects.length > 0;
+  const hasConfirmedEvidenceRows = matrix.length > 0;
+  const hasStrongEvidenceGap = hasRequirements && evidenceCoverage.requirementsWithStrongEvidence < evidenceCoverage.totalRequirements;
+  const hasNoDocsForWorkflow = hasRequirements && dashboardDocTotal === 0 && generatedDocs.length === 0;
+  const hasNoGeneratedDocs = dashboardDocTotal > 0 && dashboardGeneratedCount === 0;
+
   const decision: "GO" | "REVIEW" | "NO_GO" = unresolvedCritical > 0
     ? "NO_GO"
-    : canonicalDecisionScore >= 85 && unresolvedHigh === 0 && dashboardGeneratedCount > 0 && !hasPlanMismatch
-      ? "GO"
-      : "REVIEW";
+    : canonicalDecisionScore >= 85
+      && unresolvedHigh === 0
+      && dashboardGeneratedCount > 0
+      && !hasPlanMismatch
+      && !hasStrongEvidenceGap
+        ? "GO"
+        : "REVIEW";
 
   const nextActions = [
     unresolvedCritical > 0 ? `Resolve ${unresolvedCritical} critical blocker(s) before final export.` : null,
     unresolvedCritical === 0 && unresolvedHigh > 0 ? `Senior review ${unresolvedHigh} high-priority item(s).` : null,
+    hasRequirements && !hasConfirmedEvidenceRows ? `Confirm reviewed vault evidence for ${requirements.length} requirement(s); selected matches alone do not count as final evidence.` : null,
+    hasRequirements && hasConfirmedEvidenceRows && hasStrongEvidenceGap ? `Strengthen evidence coverage: ${evidenceCoverage.totalRequirements - evidenceCoverage.requirementsWithStrongEvidence} requirement(s) still lack FULL/SUBSTANTIAL evidence.` : null,
+    hasRequirements && !hasSelectedEvidence ? "Run matching and select reviewed expert/project evidence before final generation." : null,
+    hasNoDocsForWorkflow ? "Build the submission plan and generate the required proposal documents before export." : null,
+    hasNoGeneratedDocs ? `Generate ${dashboardDocTotal} planned document(s); planned rows are not export-ready documents.` : null,
     missingPlannedDocs.length > 0 ? `Generate or reconcile ${missingPlannedDocs.length} tender-required planned document(s).` : null,
     extraGeneratedDocs.length > 0 ? `Remove or justify ${extraGeneratedDocs.length} generated document(s) not found in the submission plan.` : null,
     selectedExperts.length > reviewedExperts ? `Review ${selectedExperts.length - reviewedExperts} selected expert draft record(s) or deselect them.` : null,
@@ -180,6 +196,8 @@ export function ExecutiveSnapshot({ tender }: { tender: TenderLike }) {
     extractedFiles < files.length ? `Review extraction for ${files.length - extractedFiles} tender file(s) with weak/no text.` : null,
     submissionPlan.warnings.length > 0 ? submissionPlan.warnings[0] : null,
   ].filter(Boolean) as string[];
+
+  const clearForHumanReview = decision === "GO" && nextActions.length === 0;
 
   return (
     <section className="mb-6 rounded-2xl border bg-white p-5 shadow-sm">
@@ -230,7 +248,11 @@ export function ExecutiveSnapshot({ tender }: { tender: TenderLike }) {
             <ol className="mt-2 list-decimal space-y-1 pl-5 text-sm text-slate-600">
               {nextActions.slice(0, 6).map((action) => <li key={action}>{action}</li>)}
             </ol>
-          ) : <p className="mt-2 text-sm text-green-700">No major blockers detected. Proceed to final human review and export package.</p>}
+          ) : clearForHumanReview ? (
+            <p className="mt-2 text-sm text-green-700">No major blockers detected. Proceed to final human review and export package.</p>
+          ) : (
+            <p className="mt-2 text-sm text-amber-700">Readiness is not final. Open the Full Command Center and resolve canonical readiness/export blockers before final submission.</p>
+          )}
         </div>
         <div className="rounded-xl border border-slate-100 p-4">
           <p className="text-sm font-semibold text-slate-900">Tender intelligence</p>
