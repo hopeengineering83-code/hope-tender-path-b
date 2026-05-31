@@ -439,7 +439,7 @@ async function callProvider(
 
 export async function generateWithFallback(
   prompt: string,
-  opts?: { systemPrompt?: string; geminiModel?: string; useCase?: AiUseCase },
+  opts?: { systemPrompt?: string; geminiModel?: string; useCase?: AiUseCase; onProviderUsed?: (provider: AiProviderName) => void },
 ): Promise<string> {
   const useCase = opts?.useCase ?? "default";
   const chain = PROVIDER_CHAINS[useCase];
@@ -450,7 +450,10 @@ export async function generateWithFallback(
     if (isProviderCooledDown(provider)) continue;
     tried.push(provider);
     const result = await callProvider(provider, prompt, opts);
-    if (result) return result;
+    if (result) {
+      opts?.onProviderUsed?.(provider);
+      return result;
+    }
   }
 
   const configured = chain.filter(isProviderEnabled);
@@ -1053,7 +1056,7 @@ function mergeAnalysisResults(parts: AIAnalysisResult[]): AIAnalysisResult {
   return { summary, requirements, exactFileNaming, exactFileOrder, evaluationMethodology, submissionNotes };
 }
 
-async function analyzeOneChunk(tenderContent: string, chunkIndex: number, totalChunks: number): Promise<AIAnalysisResult> {
+async function analyzeOneChunk(tenderContent: string, chunkIndex: number, totalChunks: number, onProviderUsed?: (provider: AiProviderName) => void): Promise<AIAnalysisResult> {
   const chunkLabel = totalChunks > 1 ? ` (chunk ${chunkIndex + 1} of ${totalChunks})` : "";
   const prompt = `You are a 100-person senior tender board compressed into one analysis engine: lead bid manager, procurement lawyer, technical director, evaluator, document-control lead, and proposal writer. You have evaluated thousands of tenders for World Bank, UNDP, government, and private-sector clients.${chunkLabel ? `\n\nNOTE${chunkLabel}: This is one chunk of a larger tender document. Extract everything visible IN THIS CHUNK. Do not invent content from missing chunks; downstream merge will combine chunk results.` : ""}
 
@@ -1111,6 +1114,7 @@ ${tenderContent}`;
     systemPrompt: "You are a senior tender analyst. Output ONLY a valid JSON object — no markdown, no code fences, no preamble. The JSON object must match the structure described in the user prompt exactly.",
     geminiModel: process.env.GEMINI_ANALYSIS_MODEL || DEFAULT_GEMINI_MODEL,
     useCase: "extraction",
+    onProviderUsed,
   });
   const cleaned = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
   const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
@@ -1167,15 +1171,15 @@ export function isTransientChunkError(err: unknown): boolean {
   const msg = err instanceof Error ? err.message : String(err ?? "");
   return TRANSIENT_CHUNK_ERROR_PATTERN.test(msg);
 }
-async function analyzeOneChunkWithRetry(content: string, index: number, total: number): Promise<AIAnalysisResult> {
+async function analyzeOneChunkWithRetry(content: string, index: number, total: number, onProviderUsed?: (provider: AiProviderName) => void): Promise<AIAnalysisResult> {
   try {
-    return await analyzeOneChunk(content, index, total);
+    return await analyzeOneChunk(content, index, total, onProviderUsed);
   } catch (err) {
     if (!isTransientChunkError(err)) throw err;
     const msg = err instanceof Error ? err.message : String(err);
     console.warn(`[ai] chunk ${index + 1}/${total} hit transient error — retrying once after ${CHUNK_RETRY_BACKOFF_MS}ms. Error: ${msg.slice(0, 200)}`);
     await new Promise((r) => setTimeout(r, CHUNK_RETRY_BACKOFF_MS));
-    return await analyzeOneChunk(content, index, total);
+    return await analyzeOneChunk(content, index, total, onProviderUsed);
   }
 }
 
@@ -1186,6 +1190,7 @@ export type AnalysisWithMeta = {
   completedChunks: number;
   failedChunks: number;
   skippedChunks: number; // stopped by deadline
+  chunkProviders: Array<string | null>; // provider that succeeded per chunk (null = failed/skipped)
 };
 
 export async function analyzeWithAI(
@@ -1199,13 +1204,15 @@ export async function analyzeWithAI(
   // independently analyzed; results merge below.
   const chunks = chunkTenderContent(tenderContent);
   if (chunks.length === 1) {
-    const result = await analyzeOneChunk(chunks[0], 0, 1);
-    return { result, isPartial: false, totalChunks: 1, completedChunks: 1, failedChunks: 0, skippedChunks: 0 };
+    let chunkProvider: string | null = null;
+    const result = await analyzeOneChunk(chunks[0], 0, 1, (p) => { chunkProvider = p; });
+    return { result, isPartial: false, totalChunks: 1, completedChunks: 1, failedChunks: 0, skippedChunks: 0, chunkProviders: [chunkProvider] };
   }
 
   console.info(`[ai] tender content is ${tenderContent.length.toLocaleString()} chars — chunking into ${chunks.length} sequential analysis calls.`);
   const successes: AIAnalysisResult[] = [];
   const failures: string[] = [];
+  const chunkProviders: Array<string | null> = Array(chunks.length).fill(null);
   let completedChunks = 0;
   let failedChunks = 0;
 
@@ -1222,7 +1229,8 @@ export async function analyzeWithAI(
     }
 
     try {
-      successes.push(await analyzeOneChunkWithRetry(chunks[i], i, chunks.length));
+      const chunkIdx = i;
+      successes.push(await analyzeOneChunkWithRetry(chunks[i], i, chunks.length, (p) => { chunkProviders[chunkIdx] = p; }));
       completedChunks++;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -1256,7 +1264,7 @@ export async function analyzeWithAI(
 
   const isPartial = skippedChunks > 0 || (failedChunks > 0 && completedChunks > 0);
   const result = mergeAnalysisResults(successes);
-  return { result, isPartial, totalChunks: chunks.length, completedChunks, failedChunks, skippedChunks };
+  return { result, isPartial, totalChunks: chunks.length, completedChunks, failedChunks, skippedChunks, chunkProviders };
 }
 
 // ─── CV / Expert extraction ───────────────────────────────────────────────────

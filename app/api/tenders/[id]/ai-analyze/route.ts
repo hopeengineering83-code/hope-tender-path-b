@@ -33,7 +33,7 @@ function buildChunkStepResults(meta: AnalysisWithMeta): Array<{
     results.push({
       stepName: `chunk_${i}`,
       status,
-      output: JSON.stringify({ chunkIndex: i }),
+      output: JSON.stringify({ chunkIndex: i, providerUsed: meta.chunkProviders[i] ?? null }),
     });
   }
   return results;
@@ -406,6 +406,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
                 completedChunks: aiMeta.completedChunks,
                 failedChunks: aiMeta.failedChunks,
                 skippedChunks: aiMeta.skippedChunks,
+                chunkProviders: aiMeta.chunkProviders,
                 contentHash,
                 analysisSource: "AI",
                 nextAction: aiMeta.isPartial ? "CONTINUE_AI_ANALYSIS" : null,
