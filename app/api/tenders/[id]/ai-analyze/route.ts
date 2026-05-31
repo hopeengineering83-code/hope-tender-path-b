@@ -266,6 +266,21 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           startFromChunk = undefined;
         }
 
+        // Clean up stale RUNNING jobs before creating a new one.
+        // When a Vercel function is killed by the platform timeout, the job
+        // stays RUNNING indefinitely. Mark any RUNNING job older than 90s as
+        // FAILED so the UI doesn't show a phantom "in progress" state.
+        await prisma.aiJob.updateMany({
+          where: {
+            tenderId: id,
+            userId,
+            jobType: "AI_ANALYZE",
+            status: "RUNNING",
+            startedAt: { lt: new Date(Date.now() - 90_000) },
+          },
+          data: { status: "FAILED", finishedAt: new Date(), errorMessage: "Timed out (cleaned up by subsequent request)" },
+        }).catch(() => {});
+
         // Create an AiJob record to track this synchronous analysis run
         let analysisJob: { id: string } | null = null;
         try {
