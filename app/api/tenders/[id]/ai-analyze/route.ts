@@ -58,6 +58,15 @@ const SECTION_SCAN_CHARS = (() => {
   return 3_000;
 })();
 
+// Soft cap on total tender content sent to AI. Content above this threshold
+// is chunked by analyzeWithAI. Setting a max prevents OOM from extremely
+// large tenders while still covering multi-file tenders well.
+const MAX_TOTAL_AI_CHARS = (() => {
+  const raw = Number(process.env.TENDER_AI_MAX_TOTAL_CHARS);
+  if (Number.isFinite(raw) && raw >= 10_000 && raw <= 500_000) return raw;
+  return 300_000; // 6 × 50K chunks
+})();
+
 const SECTION_KEYWORDS = /evaluation|scoring|criteria|submission|deadline|annex|appendix|form[s\s]|financial proposal|technical proposal|envelope|subject line|bid bond|eligibility|qualification|instructions to (bidders?|tenderers?)|evaluation matrix|scoring matrix|award criteria/i;
 
 /**
@@ -252,11 +261,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
         const tenderContent = [
           `TENDER: ${tenderRecord.title}`,
-          tenderRecord.description ? `DESCRIPTION: ${tenderRecord.description}` : null,
-          tenderRecord.intakeSummary ? `INTAKE NOTES: ${tenderRecord.intakeSummary}` : null,
+          // Cap description/intakeSummary so they don't crowd out the actual
+          // file content. 2K each is enough for context without inflating the
+          // total beyond the MAX_TOTAL_AI_CHARS budget.
+          tenderRecord.description ? `DESCRIPTION: ${tenderRecord.description.slice(0, 2_000)}` : null,
+          tenderRecord.intakeSummary ? `INTAKE NOTES: ${tenderRecord.intakeSummary.slice(0, 2_000)}` : null,
           fileTexts || null,
           companyContext || null,
-        ].filter(Boolean).join("\n\n");
+        ].filter(Boolean).join("\n\n").slice(0, MAX_TOTAL_AI_CHARS);
 
         // Compute content hash for continuation validation
         const contentHash = crypto.createHash("sha256").update(tenderContent).digest("hex").slice(0, 16);
