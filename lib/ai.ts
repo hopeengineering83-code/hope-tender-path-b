@@ -1125,21 +1125,42 @@ ${tenderContent}`;
   const cleaned = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
   const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
   if (!jsonMatch) throw new Error(`AI returned no JSON object for tender analysis${chunkLabel}`);
-  try {
-    return JSON.parse(jsonMatch[0]) as AIAnalysisResult;
-  } catch {
-    const allMatches = [...cleaned.matchAll(/\{[\s\S]*?\}/g)].sort((a, b) => b[0].length - a[0].length);
-    for (const m of allMatches) {
-      try { return JSON.parse(m[0]) as AIAnalysisResult; } catch { /* continue */ }
+
+  function tryParseAndSanitize(raw: string): AIAnalysisResult | null {
+    try {
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== "object") return null;
+      // Sanitize: ensure required fields exist with correct types
+      // A missing or wrong-type field should never crash downstream consumers.
+      return {
+        summary: typeof parsed.summary === "string" ? parsed.summary : "",
+        requirements: Array.isArray(parsed.requirements) ? parsed.requirements.filter((r: unknown) => r && typeof r === "object") : [],
+        exactFileNaming: Array.isArray(parsed.exactFileNaming) ? parsed.exactFileNaming.filter((s: unknown) => typeof s === "string") : [],
+        exactFileOrder: Array.isArray(parsed.exactFileOrder) ? parsed.exactFileOrder.filter((s: unknown) => typeof s === "string") : [],
+        evaluationMethodology: typeof parsed.evaluationMethodology === "string" ? parsed.evaluationMethodology : "",
+        submissionNotes: typeof parsed.submissionNotes === "string" ? parsed.submissionNotes : "",
+      };
+    } catch {
+      return null;
     }
-    // Trailing-comma repair: remove commas immediately before } or ] which
-    // strict JSON forbids. Only attempted after all other parse paths fail.
-    const repaired = jsonMatch[0].replace(/,(\s*[}\]])/g, "$1");
-    if (repaired !== jsonMatch[0]) {
-      try { return JSON.parse(repaired) as AIAnalysisResult; } catch { /* continue */ }
-    }
-    throw new Error(`AI returned malformed JSON for tender analysis${chunkLabel}`);
   }
+
+  const direct = tryParseAndSanitize(jsonMatch[0]);
+  if (direct) return direct;
+
+  const allMatches = [...cleaned.matchAll(/\{[\s\S]*?\}/g)].sort((a, b) => b[0].length - a[0].length);
+  for (const m of allMatches) {
+    const r = tryParseAndSanitize(m[0]);
+    if (r) return r;
+  }
+  // Trailing-comma repair: remove commas immediately before } or ] which
+  // strict JSON forbids. Only attempted after all other parse paths fail.
+  const repaired = jsonMatch[0].replace(/,(\s*[}\]])/g, "$1");
+  if (repaired !== jsonMatch[0]) {
+    const r = tryParseAndSanitize(repaired);
+    if (r) return r;
+  }
+  throw new Error(`AI returned malformed JSON for tender analysis${chunkLabel}`);
 }
 
 export const CHUNK_DEADLINE_MARGIN_MS = 8_000;
