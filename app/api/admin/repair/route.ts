@@ -24,6 +24,10 @@ export const dynamic = "force-dynamic";
  *   ?step=appsettings  — ensure AppSettings row exists for every Company (safe after new DB)
  *   ?step=prune-superseded — delete GeneratedDocument rows with generationStatus=SUPERSEDED older than
  *                            ?cutoffDays (default 7). Frees DB transfer. Never deletes active docs.
+ *   ?step=schema-drift     — idempotent ALTER TABLE SQL that adds correct column names to DocumentReview
+ *                            and DocumentComment tables created by the old bootstrap (which used
+ *                            generatedDocumentId/reviewNotes/reviewStatus instead of documentId/notes/action).
+ *                            Safe to run multiple times. Copies data from old columns to new ones.
  *   ?step=all (default) — extract + import + appsettings (labels/requirements/prune must be run separately)
  */
 export async function POST(req: Request) {
@@ -51,6 +55,7 @@ export async function POST(req: Request) {
     requirements: null as null | { scanned: number; cleared: number },
     appsettings: null as null | { ensured: number },
     pruneSuperseded: null as null | { deleted: number; cutoffDays: number },
+    schemaDrift: null as null | { repairs: string[] },
     timestamp: new Date().toISOString(),
   };
 
@@ -202,7 +207,42 @@ export async function POST(req: Request) {
     results.appsettings = { ensured };
   }
 
-  // ── Step 6: Prune SUPERSEDED generated documents ─────────────────────────
+  // ── Step 6: Schema-drift repair ──────────────────────────────────────────
+  if (step === "schema-drift") {
+    const repairs: string[] = [];
+    const sqlSteps = [
+      // DocumentReview: add correct columns if missing (old bootstrap used wrong names)
+      `ALTER TABLE "DocumentReview" ADD COLUMN IF NOT EXISTS "documentId" TEXT`,
+      `ALTER TABLE "DocumentReview" ADD COLUMN IF NOT EXISTS "reviewerId" TEXT`,
+      `ALTER TABLE "DocumentReview" ADD COLUMN IF NOT EXISTS "action" TEXT`,
+      `ALTER TABLE "DocumentReview" ADD COLUMN IF NOT EXISTS "notes" TEXT`,
+      `ALTER TABLE "DocumentReview" ADD COLUMN IF NOT EXISTS "priorStatus" TEXT`,
+      `ALTER TABLE "DocumentReview" ADD COLUMN IF NOT EXISTS "newStatus" TEXT`,
+      // Copy data from old column names to new ones (idempotent)
+      `UPDATE "DocumentReview" SET "documentId" = "generatedDocumentId" WHERE "documentId" IS NULL AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='DocumentReview' AND column_name='generatedDocumentId')`,
+      `UPDATE "DocumentReview" SET "notes" = "reviewNotes" WHERE "notes" IS NULL AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='DocumentReview' AND column_name='reviewNotes')`,
+      `UPDATE "DocumentReview" SET "action" = "reviewStatus" WHERE "action" IS NULL AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='DocumentReview' AND column_name='reviewStatus')`,
+      // DocumentComment: same fix
+      `ALTER TABLE "DocumentComment" ADD COLUMN IF NOT EXISTS "documentId" TEXT`,
+      `ALTER TABLE "DocumentComment" ADD COLUMN IF NOT EXISTS "authorId" TEXT`,
+      `UPDATE "DocumentComment" SET "documentId" = "generatedDocumentId" WHERE "documentId" IS NULL AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='DocumentComment' AND column_name='generatedDocumentId')`,
+      // Correct indexes
+      `CREATE INDEX IF NOT EXISTS "DocumentReview_documentId_createdAt_idx" ON "DocumentReview"("documentId", "createdAt")`,
+      `CREATE INDEX IF NOT EXISTS "DocumentReview_reviewerId_idx" ON "DocumentReview"("reviewerId")`,
+      `CREATE INDEX IF NOT EXISTS "DocumentComment_documentId_idx" ON "DocumentComment"("documentId")`,
+    ];
+    for (const sql of sqlSteps) {
+      try {
+        await prisma.$executeRawUnsafe(sql);
+        repairs.push(`OK: ${sql.slice(0, 80)}`);
+      } catch (err) {
+        repairs.push(`SKIP: ${sql.slice(0, 80)} — ${err instanceof Error ? err.message.slice(0, 100) : String(err)}`);
+      }
+    }
+    results.schemaDrift = { repairs };
+  }
+
+  // ── Step 7: Prune SUPERSEDED generated documents ─────────────────────────
   if (step === "prune-superseded") {
     const cutoffDays = Math.max(1, parseInt(searchParams.get("cutoffDays") ?? "7", 10) || 7);
     const cutoffDate = new Date(Date.now() - cutoffDays * 24 * 60 * 60 * 1000);

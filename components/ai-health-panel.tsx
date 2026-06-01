@@ -154,7 +154,7 @@ function ProviderCard({ p }: { p: ProviderCardData }) {
         ? <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">Configured · failing</span>
         : p.runtime.lastSuccessAt
           ? <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700">Available</span>
-          : <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">Configured, not runtime-verified</span>;
+          : <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">Configured — not yet tested on this instance</span>;
   const failing = p.configured && (p.runtime.coolingDown || p.runtime.consecutiveFailures > 0);
   return (
     <div className="rounded-xl bg-white p-3 shadow-sm">
@@ -172,6 +172,9 @@ function ProviderCard({ p }: { p: ProviderCardData }) {
         </p>
       )}
       {p.configured && p.modelHint && <p className="mt-1 text-xs text-slate-500">{p.modelHint}</p>}
+      {p.configured && !p.runtime.lastSuccessAt && !p.runtime.coolingDown && p.runtime.consecutiveFailures === 0 && (
+        <p className="mt-1 text-xs text-slate-400">Providers are tested automatically when AI Analyze or proposal generation is first run.</p>
+      )}
     </div>
   );
 }

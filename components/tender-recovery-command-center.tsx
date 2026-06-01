@@ -384,6 +384,15 @@ export default function TenderRecoveryCommandCenter({ tenderId }: { tenderId: st
           </div>
         ))}
       </div>
+      {/* Plan-not-built notice: shown when all counters are 0 and no submission plan exists */}
+      {data.counts.requiredPlanRows === 0
+        && data.counts.generatedNarrativeDocs === 0
+        && data.counts.finalExportCandidates === 0
+        && !data.planStatus.hasExplicitPlan && (
+        <div className="border-b border-amber-100 bg-amber-50 px-5 py-2 text-xs text-amber-800">
+          Plan not built — build the submission plan first.
+        </div>
+      )}
 
       {/* Expanded details */}
       {expanded && (
