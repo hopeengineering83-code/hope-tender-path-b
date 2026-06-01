@@ -143,7 +143,7 @@ describe("/api/ai/health route contract", () => {
     assert.match(source, /envPresent:/);
     assert.match(source, /model:\s*getDeepSeekModel\(\)/);
     assert.match(source, /fallbackChain:/);
-    assert.match(source, /OpenAI → Gemini → DeepSeek → Groq → OpenRouter → Claude → deterministic draft fallback/);
+    assert.match(source, /OpenAI → Gemini → DeepSeek → Groq → OpenRouter → Mistral → Together → Claude → deterministic draft fallback/);
   });
 
   it("AIHealthPanel renders a DeepSeek card with configure/failing messaging", () => {
