@@ -22,7 +22,9 @@ export const dynamic = "force-dynamic";
  *   ?step=labels       — clean tender titles and client names for all tenders
  *   ?step=requirements — clear false-positive expert/project quantities (e.g. "Section 29 Expert")
  *   ?step=appsettings  — ensure AppSettings row exists for every Company (safe after new DB)
- *   ?step=all (default) — extract + import + appsettings (labels/requirements must be run separately)
+ *   ?step=prune-superseded — delete GeneratedDocument rows with generationStatus=SUPERSEDED older than
+ *                            ?cutoffDays (default 7). Frees DB transfer. Never deletes active docs.
+ *   ?step=all (default) — extract + import + appsettings (labels/requirements/prune must be run separately)
  */
 export async function POST(req: Request) {
   let actor;
@@ -48,6 +50,7 @@ export async function POST(req: Request) {
     labels: null as null | { total: number; updated: number; details: Array<{ id: string; before: string; after: string }> },
     requirements: null as null | { scanned: number; cleared: number },
     appsettings: null as null | { ensured: number },
+    pruneSuperseded: null as null | { deleted: number; cutoffDays: number },
     timestamp: new Date().toISOString(),
   };
 
@@ -197,6 +200,21 @@ export async function POST(req: Request) {
       ensured++;
     }
     results.appsettings = { ensured };
+  }
+
+  // ── Step 6: Prune SUPERSEDED generated documents ─────────────────────────
+  if (step === "prune-superseded") {
+    const cutoffDays = Math.max(1, parseInt(searchParams.get("cutoffDays") ?? "7", 10) || 7);
+    const cutoffDate = new Date(Date.now() - cutoffDays * 24 * 60 * 60 * 1000);
+    const tenderIds = (await prisma.tender.findMany({ where: { userId: actor.id }, select: { id: true } })).map((t) => t.id);
+    const { count } = await prisma.generatedDocument.deleteMany({
+      where: {
+        tenderId: { in: tenderIds },
+        generationStatus: "SUPERSEDED",
+        updatedAt: { lt: cutoffDate },
+      },
+    });
+    results.pruneSuperseded = { deleted: count, cutoffDays };
   }
 
   return NextResponse.json(results);
