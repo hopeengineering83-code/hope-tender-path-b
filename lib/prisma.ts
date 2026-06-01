@@ -576,6 +576,44 @@ async function bootstrap(client: PrismaClient): Promise<void> {
   await ensureColumn(client, "Expert", "deletedBy", "TEXT");
   await ensureColumn(client, "Project", "deletedAt", "TIMESTAMPTZ");
   await ensureColumn(client, "Project", "deletedBy", "TEXT");
+
+  // ── Schema-drift repair: DocumentReview / DocumentComment ─────────────────
+  // Earlier bootstrap created these tables with wrong column names
+  // (generatedDocumentId, reviewStatus, reviewNotes). Prisma uses documentId,
+  // action, notes. These ensureColumn calls add the correct columns and copy
+  // existing data over so no rows are lost. All ops are idempotent.
+  await ensureColumn(client, "DocumentReview", "documentId", "TEXT");
+  await ensureColumn(client, "DocumentReview", "action", "TEXT");
+  await ensureColumn(client, "DocumentReview", "notes", "TEXT");
+  await ensureColumn(client, "DocumentReview", "priorStatus", "TEXT");
+  await ensureColumn(client, "DocumentReview", "newStatus", "TEXT");
+  await ensureColumn(client, "DocumentComment", "documentId", "TEXT");
+  await ensureColumn(client, "DocumentComment", "visibility", "TEXT NOT NULL DEFAULT 'INTERNAL'");
+  await ensureColumn(client, "DocumentComment", "resolvedAt", "TIMESTAMPTZ");
+  await ensureColumn(client, "DocumentComment", "resolvedBy", "TEXT");
+  await ensureColumn(client, "DocumentComment", "parentId", "TEXT");
+  // Copy data from old column names to new ones where the old columns exist
+  try {
+    await client.$executeRawUnsafe(
+      `UPDATE "DocumentReview" SET "documentId" = "generatedDocumentId" WHERE "documentId" IS NULL AND "generatedDocumentId" IS NOT NULL`,
+    );
+  } catch { /* old column may not exist on fresh deployments */ }
+  try {
+    await client.$executeRawUnsafe(
+      `UPDATE "DocumentReview" SET "action" = "reviewStatus" WHERE "action" IS NULL AND "reviewStatus" IS NOT NULL`,
+    );
+  } catch { /* old column may not exist on fresh deployments */ }
+  try {
+    await client.$executeRawUnsafe(
+      `UPDATE "DocumentReview" SET "notes" = "reviewNotes" WHERE "notes" IS NULL AND "reviewNotes" IS NOT NULL`,
+    );
+  } catch { /* old column may not exist on fresh deployments */ }
+  try {
+    await client.$executeRawUnsafe(
+      `UPDATE "DocumentComment" SET "documentId" = "generatedDocumentId" WHERE "documentId" IS NULL AND "generatedDocumentId" IS NOT NULL`,
+    );
+  } catch { /* old column may not exist on fresh deployments */ }
+
   // Notification table
   await client.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "Notification" (
     "id" TEXT NOT NULL PRIMARY KEY,
@@ -746,25 +784,34 @@ async function bootstrap(client: PrismaClient): Promise<void> {
 
 
   // ── DocumentReview / DocumentComment — per-document approval workflow ────
+  // Column names match the Prisma schema exactly (documentId, action, notes,
+  // priorStatus, newStatus). Earlier bootstrap versions used the wrong names
+  // (generatedDocumentId, reviewStatus, reviewNotes); those are repaired via
+  // ensureColumn + data-copy below.
   await client.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "DocumentReview" (
     "id" TEXT NOT NULL PRIMARY KEY,
-    "generatedDocumentId" TEXT NOT NULL,
-    "reviewerId" TEXT,
-    "reviewStatus" TEXT NOT NULL DEFAULT 'PENDING',
-    "reviewNotes" TEXT,
+    "documentId" TEXT NOT NULL,
+    "reviewerId" TEXT NOT NULL,
+    "action" TEXT NOT NULL,
+    "notes" TEXT,
+    "priorStatus" TEXT NOT NULL DEFAULT '',
+    "newStatus" TEXT NOT NULL DEFAULT '',
     "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    FOREIGN KEY ("generatedDocumentId") REFERENCES "GeneratedDocument"("id") ON DELETE CASCADE
+    FOREIGN KEY ("documentId") REFERENCES "GeneratedDocument"("id") ON DELETE CASCADE
   )`);
   await client.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "DocumentComment" (
     "id" TEXT NOT NULL PRIMARY KEY,
-    "generatedDocumentId" TEXT NOT NULL,
-    "authorId" TEXT,
+    "documentId" TEXT NOT NULL,
+    "authorId" TEXT NOT NULL,
+    "parentId" TEXT,
     "body" TEXT NOT NULL,
+    "visibility" TEXT NOT NULL DEFAULT 'INTERNAL',
+    "resolvedAt" TIMESTAMPTZ,
+    "resolvedBy" TEXT,
     "resolved" BOOLEAN NOT NULL DEFAULT FALSE,
     "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    FOREIGN KEY ("generatedDocumentId") REFERENCES "GeneratedDocument"("id") ON DELETE CASCADE
+    FOREIGN KEY ("documentId") REFERENCES "GeneratedDocument"("id") ON DELETE CASCADE
   )`);
 
   // ── indexes (each wrapped so one failure never blocks the rest) ──────────
@@ -806,9 +853,12 @@ async function bootstrap(client: PrismaClient): Promise<void> {
     // G9 — TenderRequirement source coords
     `CREATE INDEX IF NOT EXISTS "TenderRequirement_tenderId_idx" ON "TenderRequirement"("tenderId")`,
     `CREATE INDEX IF NOT EXISTS "TenderRequirement_sourceTenderFileId_idx" ON "TenderRequirement"("sourceTenderFileId")`,
-    // DocumentReview / DocumentComment
-    `CREATE INDEX IF NOT EXISTS "DocumentReview_generatedDocumentId_idx" ON "DocumentReview"("generatedDocumentId")`,
-    `CREATE INDEX IF NOT EXISTS "DocumentComment_generatedDocumentId_idx" ON "DocumentComment"("generatedDocumentId")`,
+    // DocumentReview / DocumentComment — correct Prisma-matching index names
+    `CREATE INDEX IF NOT EXISTS "DocumentReview_documentId_createdAt_idx" ON "DocumentReview"("documentId", "createdAt")`,
+    `CREATE INDEX IF NOT EXISTS "DocumentReview_reviewerId_idx" ON "DocumentReview"("reviewerId")`,
+    `CREATE INDEX IF NOT EXISTS "DocumentComment_documentId_idx" ON "DocumentComment"("documentId")`,
+    `CREATE INDEX IF NOT EXISTS "DocumentComment_documentId_parentId_idx" ON "DocumentComment"("documentId", "parentId")`,
+    `CREATE INDEX IF NOT EXISTS "DocumentComment_authorId_idx" ON "DocumentComment"("authorId")`,
   ];
   for (const sql of idxStatements) {
     try { await client.$executeRawUnsafe(sql); } catch (e) {
