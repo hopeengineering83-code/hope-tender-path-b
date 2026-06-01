@@ -30,7 +30,21 @@ export default async function TenderCommandCenter({ params }: { params: Promise<
       complianceGaps: true,
       expertMatches: { where: { isSelected: true }, include: { expert: { select: { id: true, fullName: true, title: true } } }, orderBy: { score: "desc" } },
       projectMatches: { where: { isSelected: true }, include: { project: { select: { id: true, name: true, clientName: true } } }, orderBy: { score: "desc" } },
-      generatedDocuments: { where: { generationStatus: { not: "SUPERSEDED" } } },
+      generatedDocuments: {
+        where: { generationStatus: { not: "SUPERSEDED" } },
+        select: {
+          id: true,
+          name: true,
+          exactFileName: true,
+          exactOrder: true,
+          documentType: true,
+          format: true,
+          generationStatus: true,
+          validationStatus: true,
+          reviewStatus: true,
+          storagePath: true,
+        },
+      },
     },
   });
   if (!tender) notFound();

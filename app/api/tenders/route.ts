@@ -39,7 +39,7 @@ export async function GET(req: Request) {
       // Exclude fileContent / base64 fields to keep response small
       files: {
         orderBy: { createdAt: "desc" },
-        select: { id: true, fileName: true, originalFileName: true, mimeType: true, size: true, classification: true, extractedText: true, createdAt: true },
+        select: { id: true, fileName: true, originalFileName: true, mimeType: true, size: true, classification: true, createdAt: true },
       },
       requirements: { select: { id: true, title: true, requirementType: true, priority: true, createdAt: true } },
       complianceGaps: { select: { id: true, title: true, severity: true, isResolved: true } },
@@ -114,7 +114,7 @@ export async function POST(req: Request) {
         userId,
       },
       include: {
-        files: { select: { id: true, fileName: true, originalFileName: true, mimeType: true, size: true, classification: true, extractedText: true, createdAt: true } },
+        files: { select: { id: true, fileName: true, originalFileName: true, mimeType: true, size: true, classification: true, createdAt: true } },
         requirements: true,
         complianceGaps: true,
         generatedDocuments: { select: { id: true, name: true, documentType: true, generationStatus: true, validationStatus: true, reviewStatus: true, exactFileName: true, exactOrder: true } },

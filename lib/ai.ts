@@ -13,9 +13,10 @@ const FALLBACK_GEMINI_MODELS = (process.env.GEMINI_FALLBACK_MODELS || "gemini-2.
 // Model chain for proposal generation — tried in order until one succeeds.
 const PROPOSAL_MODELS = ["gemini-2.5-pro", "gemini-2.0-flash", "gemini-1.5-pro"];
 
-// Claude models in preference order. Claude is preferred over Gemini for
-// proposal generation when ANTHROPIC_API_KEY is configured, because the
-// benchmark used for the quality target is Claude-generated.
+// Claude models in preference order when the last-resort Anthropic provider
+// is reached. The overall proposal provider chain is OpenAI → Gemini →
+// DeepSeek → Groq → OpenRouter → Claude, keeping Anthropic last so rate
+// limits do not block the app when earlier providers are available.
 //
 // The default chain prefers stable, widely-available aliases so it works
 // on a fresh Anthropic account without configuration. To pin specific
@@ -400,13 +401,8 @@ async function callProvider(
     }
     case "openai": {
       const r = await generateWithOpenAI(prompt, opts?.systemPrompt).catch((err) => {
-        const msg = err instanceof Error ? err.message : String(err);
-        if (/api\s+key\s+invalid|invalid\s+api\s+key|incorrect\s+api\s+key|authentication|unauthorized/i.test(msg)) {
-          recordProviderFailure("openai", err);
-          throw err; // auth errors propagate so callers know the key is bad
-        }
         recordProviderFailure("openai", err);
-        return null;
+        return null; // never re-throw — always continue the fallback chain
       });
       if (r) { recordProviderSuccess("openai"); return r; }
       return null;
@@ -500,6 +496,8 @@ async function generateWithOpenAI(
 
   const model = process.env.OPENAI_PROPOSAL_MODEL || "gpt-4o";
 
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 20_000);
   try {
     const res = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
@@ -515,15 +513,19 @@ async function generateWithOpenAI(
           { role: "user", content: prompt },
         ],
       }),
+      signal: controller.signal,
     });
+    clearTimeout(timeoutId);
 
     if (!res.ok) {
       const body = await res.text().catch(() => "");
       if (res.status === 401 || res.status === 403) {
-        throw new Error(`OpenAI API key invalid (${res.status}): ${body.slice(0, 200)}`);
+        // Auth errors: record failure but return null so fallback chain continues.
+        console.warn(`[ai] OpenAI auth error (${res.status}) — skipping to next provider.`);
+        return null;
       }
       if (res.status === 429) {
-        console.warn(`[ai] OpenAI rate limit (429) on ${model} — skipping to deterministic fallback.`);
+        console.warn(`[ai] OpenAI rate limit (429) on ${model} — skipping to next provider.`);
         return null;
       }
       console.warn(`[ai] OpenAI error ${res.status} on ${model}: ${body.slice(0, 240)} — skipping.`);
@@ -547,9 +549,13 @@ async function generateWithOpenAI(
     }
     return text;
   } catch (err) {
+    clearTimeout(timeoutId);
     const msg = err instanceof Error ? err.message : String(err);
-    if (/api\s+key\s+invalid|invalid\s+api\s+key|incorrect\s+api\s+key|authentication|unauthorized/i.test(msg)) throw err; // re-throw auth errors
-    console.warn(`[ai] OpenAI fetch failed: ${msg} — falling through to deterministic.`);
+    if (msg.includes("aborted") || msg.includes("timeout")) {
+      console.warn(`[ai] OpenAI fetch timed out after 20000ms — falling through.`);
+      return null;
+    }
+    console.warn(`[ai] OpenAI fetch failed: ${msg} — falling through to next provider.`);
     return null;
   }
 }
@@ -566,7 +572,10 @@ export function isDeepSeekEnabled() {
 // Third-tier provider in the default chain (OpenAI → Gemini → DeepSeek → Groq → OpenRouter → Claude).
 // Uses the OpenAI-compatible REST endpoint (no SDK needed).
 // Returns null when DEEPSEEK_API_KEY is not configured.
-const DEEPSEEK_DEFAULT_TIMEOUT_MS = 60_000;
+// 20s per-provider cap — Vercel Hobby has a 60s function limit so each
+// provider must time out well before the function is killed, leaving room
+// to try the next provider in the fallback chain.
+const DEEPSEEK_DEFAULT_TIMEOUT_MS = 20_000;
 async function generateWithDeepSeek(
   prompt: string,
   systemPrompt: string = DEFAULT_PROPOSAL_SYSTEM_PROMPT,
@@ -672,7 +681,7 @@ export function isTogetherEnabled() {
 // they share one implementation. Mirrors generateWithDeepSeek's safety: hard
 // timeout, key redaction in any surfaced text, null (not throw) on transient
 // errors so the chain can fall through to the next provider / deterministic.
-const OPENAI_COMPAT_DEFAULT_TIMEOUT_MS = 60_000;
+const OPENAI_COMPAT_DEFAULT_TIMEOUT_MS = 20_000;
 function fallbackTemperature(): number {
   const raw = Number(process.env.AI_FALLBACK_TEMPERATURE);
   return Number.isFinite(raw) && raw >= 0 && raw <= 2 ? raw : 0.4;

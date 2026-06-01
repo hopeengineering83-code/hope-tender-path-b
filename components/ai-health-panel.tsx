@@ -13,6 +13,7 @@ import {
   getTogetherModel,
   type ProviderRuntimeSnapshot,
 } from "../lib/ai-provider-health";
+import { AIHealthTestButton } from "./ai-health-test-button";
 
 const AI_FALLBACK_CHAIN = "OpenAI → Gemini → DeepSeek → Groq → OpenRouter → Mistral → Together → Claude → deterministic draft fallback";
 
@@ -225,6 +226,8 @@ export async function AIHealthPanel() {
       </div>
 
       <p className="mt-3 text-xs text-slate-500">Fallback chain: {AI_FALLBACK_CHAIN}</p>
+
+      <AIHealthTestButton />
 
       {(health.blockers.length > 0 || health.warnings.length > 0) && (
         <div className="mt-4 grid gap-3 lg:grid-cols-2">
