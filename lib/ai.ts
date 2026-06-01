@@ -885,7 +885,55 @@ export type AIAnalysisResult = {
   exactFileOrder: string[];
   evaluationMethodology: string;
   submissionNotes: string;
+  // ─── Tender-shape classification (tender-driven, sector-agnostic) ──────────
+  // These are DETECTED from the tender document content, never assumed from a
+  // hardcoded sector. They let the engine adapt section planning, envelope
+  // separation, and readiness scoring to ANY tender type (building design,
+  // road/infrastructure, water/irrigation, urban planning, healthcare,
+  // industrial, donor-funded, EOI, vendor registration, etc.). All optional
+  // so legacy callers and the regex fallback continue to work unchanged.
+  //
+  // tenderCategory — broad assignment family, e.g. "BUILDING_DESIGN",
+  //   "ROAD_INFRASTRUCTURE", "WATER_SUPPLY", "URBAN_PLANNING", "HEALTHCARE",
+  //   "INDUSTRIAL_FACILITY", "DONOR_PROJECT", "EOI", "VENDOR_REGISTRATION".
+  //   Free-form string so new categories never require a code change.
+  tenderCategory?: string;
+  // envelopeMode — how the submission is packaged. Drives ZIP/export
+  //   structure (TWO_ENVELOPE => separate sealed technical/financial folders).
+  envelopeMode?: EnvelopeMode;
+  // clientType — who is procuring. Drives compliance framing (procurement
+  //   proclamation vs donor guidelines vs NGO policy).
+  clientType?: ClientType;
+  // submissionFormat — the document set's overall format expectation.
+  submissionFormat?: SubmissionFormat;
 };
+
+// Allowed enum values for the classification fields. Exported so analysis
+// sanitisation and tests can validate against them without duplicating the
+// literal lists. Any value outside these sets is dropped during sanitisation
+// (the field becomes undefined) rather than trusted blindly.
+export const ENVELOPE_MODES = ["SINGLE", "TWO_ENVELOPE", "EOI", "DONOR_FORMAT"] as const;
+export const CLIENT_TYPES = ["GOVERNMENT", "DONOR_MULTILATERAL", "DONOR_BILATERAL", "NGO", "PRIVATE"] as const;
+export const SUBMISSION_FORMATS = ["GOVERNMENT_RFP", "DONOR_RFP", "EOI", "VENDOR_REGISTRATION", "COMBINED"] as const;
+
+export type EnvelopeMode = (typeof ENVELOPE_MODES)[number];
+export type ClientType = (typeof CLIENT_TYPES)[number];
+export type SubmissionFormat = (typeof SUBMISSION_FORMATS)[number];
+
+export function sanitizeEnvelopeMode(v: unknown): EnvelopeMode | undefined {
+  return typeof v === "string" && (ENVELOPE_MODES as readonly string[]).includes(v) ? (v as EnvelopeMode) : undefined;
+}
+export function sanitizeClientType(v: unknown): ClientType | undefined {
+  return typeof v === "string" && (CLIENT_TYPES as readonly string[]).includes(v) ? (v as ClientType) : undefined;
+}
+export function sanitizeSubmissionFormat(v: unknown): SubmissionFormat | undefined {
+  return typeof v === "string" && (SUBMISSION_FORMATS as readonly string[]).includes(v) ? (v as SubmissionFormat) : undefined;
+}
+export function sanitizeTenderCategory(v: unknown): string | undefined {
+  if (typeof v !== "string") return undefined;
+  const trimmed = v.trim();
+  return trimmed.length > 0 && trimmed.length <= 60 ? trimmed.toUpperCase().replace(/\s+/g, "_") : undefined;
+}
 
 // ─── AI-extracted knowledge types ────────────────────────────────────────────
 
@@ -1108,7 +1156,34 @@ function mergeAnalysisResults(parts: AIAnalysisResult[]): AIAnalysisResult {
     .filter((v, i, a) => a.indexOf(v) === i)
     .join("\n\n");
 
-  return { summary, requirements, exactFileNaming, exactFileOrder, evaluationMethodology, submissionNotes };
+  // Classification fields — first chunk that confidently detected a value
+  // wins. Chunk 0 (the tender's intro/instructions) almost always carries the
+  // envelope/client signals, so first-non-empty is the right merge rule. A
+  // later chunk never overrides an earlier detection.
+  const firstDefined = <T,>(pick: (p: AIAnalysisResult) => T | undefined): T | undefined => {
+    for (const p of parts) {
+      const v = pick(p);
+      if (v !== undefined && v !== null) return v;
+    }
+    return undefined;
+  };
+  const tenderCategory = firstDefined((p) => p.tenderCategory);
+  const envelopeMode = firstDefined((p) => p.envelopeMode);
+  const clientType = firstDefined((p) => p.clientType);
+  const submissionFormat = firstDefined((p) => p.submissionFormat);
+
+  return {
+    summary,
+    requirements,
+    exactFileNaming,
+    exactFileOrder,
+    evaluationMethodology,
+    submissionNotes,
+    tenderCategory,
+    envelopeMode,
+    clientType,
+    submissionFormat,
+  };
 }
 
 async function analyzeOneChunk(tenderContent: string, chunkIndex: number, totalChunks: number, onProviderUsed?: (provider: AiProviderName) => void): Promise<AIAnalysisResult> {
@@ -1122,7 +1197,13 @@ Step 1 — Identify: client name, tender title, tender reference, deadline, subm
 Step 2 — Detect: is financial proposal excluded? Is this technical-only? Are there shortlisting stages?
 Step 3 — Extract SECTIONS: what sections must the proposal contain (Company Profile, Relevant Experience, Technical Approach, Additional Information, etc.)?
 Step 4 — Extract EVALUATION CRITERIA: what will evaluators score and how? IMPORTANT — capture numeric WEIGHTS (e.g., "Technical 70%, Financial 30%", "Relevant Experience 25 points", sub-criteria weights). If a weight is stated anywhere in the document (criteria table, scoring matrix, or prose), include it verbatim in evaluationMethodology and in the per-criterion weights array.
-Step 5 — Extract QUALIFICATION REQUIREMENTS: required licences, team composition, healthcare experience, donor compliance standards.
+Step 4b — CLASSIFY THE TENDER from its content (do NOT assume any sector or guess from the responding firm's history):
+   • tenderCategory — the broad assignment family this tender belongs to, expressed as an UPPER_SNAKE_CASE string. Examples (non-exhaustive, pick the one the DOCUMENT describes or coin a fitting one): BUILDING_DESIGN, ROAD_INFRASTRUCTURE, WATER_SUPPLY, IRRIGATION, URBAN_PLANNING, INTERIOR_DESIGN, GEOTECHNICAL_INVESTIGATION, CONSTRUCTION_SUPERVISION, FEASIBILITY_STUDY, HEALTHCARE, INDUSTRIAL_FACILITY, DONOR_PROJECT, EOI, VENDOR_REGISTRATION. Choose based ONLY on what the tender asks for.
+   • envelopeMode — how the submission must be packaged: TWO_ENVELOPE if separate sealed technical and financial envelopes/proposals are required; EOI if this is an expression-of-interest / prequalification with no full priced proposal; DONOR_FORMAT if a multilateral/bilateral donor (World Bank, UN agency, KfW, AfDB, etc.) prescribes its own proposal format/forms; otherwise SINGLE for one combined submission.
+   • clientType — who is procuring, judged from the document: GOVERNMENT (ministry, public agency, national/regional procurement board), DONOR_MULTILATERAL (World Bank, UN, AfDB, IGAD, etc.), DONOR_BILATERAL (KfW, GIZ, USAID, JICA, etc.), NGO (foundation, charity, not-for-profit), or PRIVATE (company/individual).
+   • submissionFormat — the overall document-set expectation: GOVERNMENT_RFP, DONOR_RFP, EOI, VENDOR_REGISTRATION, or COMBINED.
+   If a field is genuinely undeterminable from this chunk, omit it (use null) rather than guessing.
+Step 5 — Extract QUALIFICATION REQUIREMENTS: required licences/registrations, professional grades, team composition, relevant sector/domain experience AS STATED BY THIS TENDER, and any donor/government compliance standards the document names. Capture ONLY what this tender actually requires — do not import requirements from any particular sector.
 Step 6 — Extract EXPERT REQUIREMENTS: how many experts, what disciplines, what minimum experience?
 Step 7 — Extract PROJECT REQUIREMENTS: how many references, what sector/type, what minimum value/scale?
 Step 8 — Extract FORMAT/SUBMISSION RULES: file format, naming, page limits, appendix structure.
@@ -1158,6 +1239,10 @@ JSON structure required:
   ],
   "exactFileNaming": ["exact filenames required by the tender"],
   "exactFileOrder": ["files in the required submission order"],
+  "tenderCategory": "detected category string (UPPER_SNAKE_CASE), or null if undeterminable",
+  "envelopeMode": "SINGLE | TWO_ENVELOPE | EOI | DONOR_FORMAT, or null",
+  "clientType": "GOVERNMENT | DONOR_MULTILATERAL | DONOR_BILATERAL | NGO | PRIVATE, or null",
+  "submissionFormat": "GOVERNMENT_RFP | DONOR_RFP | EOI | VENDOR_REGISTRATION | COMBINED, or null",
   "evaluationMethodology": "Detailed scoring guidance: for each evaluation criterion, explain what evidence to present, what to emphasise, and what the evaluator is looking for. Include criterion weights verbatim if specified (e.g., 'Technical 70% / Financial 30%; Relevant Experience 25 points; Methodology 20 points').",
   "submissionNotes": "Complete submission instructions: deadline with time and timezone, email recipients (all), exact subject line (verbatim), file format requirements, financial proposal restriction (yes/no), appendix lettering, and any other document-control notes. ALSO include when stated: bid bond amount and form, performance guarantee percentage, bid validity period in days, clarification / pre-bid question deadline, site visit or pre-bid meeting date and venue, contract duration, currency, payment terms, eligibility jurisdictions, consortia / joint-venture rules, local-content requirement."
 }
@@ -1188,6 +1273,14 @@ ${tenderContent}`;
         exactFileOrder: Array.isArray(parsed.exactFileOrder) ? parsed.exactFileOrder.filter((s: unknown) => typeof s === "string") : [],
         evaluationMethodology: typeof parsed.evaluationMethodology === "string" ? parsed.evaluationMethodology : "",
         submissionNotes: typeof parsed.submissionNotes === "string" ? parsed.submissionNotes : "",
+        // Classification fields — validated against the allowed enum sets.
+        // Anything the model returns outside those sets (or a free-form
+        // tenderCategory that is empty/too long) is dropped to undefined so a
+        // hallucinated label can never drive downstream envelope/section logic.
+        tenderCategory: sanitizeTenderCategory(parsed.tenderCategory),
+        envelopeMode: sanitizeEnvelopeMode(parsed.envelopeMode),
+        clientType: sanitizeClientType(parsed.clientType),
+        submissionFormat: sanitizeSubmissionFormat(parsed.submissionFormat),
       };
     } catch {
       return null;
@@ -2414,6 +2507,14 @@ AfDB / AFD PROCUREMENT GUIDANCE (mandatory for this tender):
     ? `"10+ Donor-Funded Projects Delivered | World Bank / UNDP Track Record | ISO-Aligned Quality System | FIDIC-Compliant Contract Administration"`
     : `"10+ Major Projects Delivered | Multidisciplinary Expert Team | Evidence-Backed Technical Approach | ISO-Aligned Quality System"`;
 
+  // Section planning is TENDER-DRIVEN. The canonical Cover Letter / Executive
+  // Summary / Section A–D scaffold used elsewhere in this prompt is only a
+  // DEFAULT for tenders that do not prescribe their own structure. Whenever the
+  // tender document itself lists the required sections (extractTenderSections
+  // found them), THOSE sections override the default and the writer must follow
+  // them precisely — so a road-design EOI, a water-supply RFP, and a vendor
+  // registration package each get the structure THAT tender asks for, not a
+  // fixed one-size-fits-all list.
   const sectionStructureGuidance =
     tenderSections.length > 0
       ? `
@@ -2464,7 +2565,7 @@ Keep these four anchors in mind. They must appear — by name, value, and role �
 > "We are committed to delivering high-quality services that meet international standards and client expectations."
 
 **STRONG:**
-> "Our Quality Management Plan follows ISO 9001:2015 with four design-review gates — concept, schematic, detailed design, and pre-issue — each requiring sign-off from the Principal Architect and Technical Director before the next stage begins. On the Pharo Ethiopia Specialty Medical Center assignment, this staged process will catch clinical workflow conflicts and regulatory gaps before they reach the construction contractor."
+> "Our Quality Management Plan follows ISO 9001:2015 with four design-review gates — concept, schematic, detailed design, and pre-issue — each requiring sign-off from the lead discipline engineer and the Technical Director before the next stage begins. On a comparable assignment of this type and scale, this staged process catches design conflicts and regulatory gaps before they reach the construction contractor."
 
 **Rule:** Every paragraph must contain at least one specific, verifiable fact from the evidence — a project name, contract value, expert name + licence, or client reference. If no evidence exists, write a single "Bid-Team Action:" note and move on. Do not pad with vague language.
 
