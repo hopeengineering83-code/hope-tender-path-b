@@ -10,14 +10,18 @@ import {
   getGroqModel,
   isOpenRouterConfigured,
   getOpenRouterModel,
+  isMistralConfigured,
+  getMistralModel,
+  isTogetherConfigured,
+  getTogetherModel,
   type AiProviderName,
 } from "../../../../lib/ai-provider-health";
 import { restoreHealthFromDb } from "../../../../lib/ai-provider-health-db";
 
 // Canonical fallback order surfaced to operators. Must match lib/ai.ts PROVIDER_CHAINS.
 // Claude is placed LAST so Anthropic rate limits do not block other providers.
-const AI_FALLBACK_CHAIN = "OpenAI → Gemini → DeepSeek → Groq → OpenRouter → Claude → deterministic draft fallback";
-const AI_FALLBACK_CHAIN_EXTRACTION = "Gemini → OpenAI → DeepSeek → Groq → OpenRouter → Claude → deterministic draft fallback";
+const AI_FALLBACK_CHAIN = "OpenAI → Gemini → DeepSeek → Groq → OpenRouter → Mistral → Together → Claude → deterministic draft fallback";
+const AI_FALLBACK_CHAIN_EXTRACTION = "Gemini → OpenAI → DeepSeek → Groq → OpenRouter → Mistral → Together → Claude → deterministic draft fallback";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 10;
@@ -70,8 +74,10 @@ export async function GET() {
   // provider is valid (Groq-only or OpenRouter-only deployments are valid).
   // The response success flag is downgraded later only when every configured
   // provider is actively cooling down.
+  const mistralConfigured = isMistralConfigured();
+  const togetherConfigured = isTogetherConfigured();
   const anyConfigured =
-    claudeConfigured || geminiConfigured || openaiConfigured || deepSeekConfigured || groqConfigured || openRouterConfigured;
+    claudeConfigured || geminiConfigured || openaiConfigured || deepSeekConfigured || groqConfigured || openRouterConfigured || mistralConfigured || togetherConfigured;
   // preferredProvider reflects the actual default chain order (Claude is last)
   const preferredProvider =
     openaiConfigured ? "openai"
@@ -79,6 +85,8 @@ export async function GET() {
     : deepSeekConfigured ? "deepseek"
     : groqConfigured ? "groq"
     : openRouterConfigured ? "openrouter"
+    : mistralConfigured ? "mistral"
+    : togetherConfigured ? "together"
     : claudeConfigured ? "claude"
     : "none";
 
@@ -90,7 +98,7 @@ export async function GET() {
 
   // Only a TRUE blocker when NO provider at all is configured.
   if (!anyConfigured) {
-    blockers.push("No AI provider key is configured. Set ANTHROPIC_API_KEY (preferred), GEMINI_API_KEY, OPENAI_API_KEY, DEEPSEEK_API_KEY, GROQ_API_KEY, or OPENROUTER_API_KEY. AI analysis/generation will use the deterministic fallback, which cannot be exported as final.");
+    blockers.push("No AI provider key is configured. Set at least one of: OPENAI_API_KEY, GEMINI_API_KEY, DEEPSEEK_API_KEY, GROQ_API_KEY, OPENROUTER_API_KEY, MISTRAL_API_KEY, TOGETHER_API_KEY, or ANTHROPIC_API_KEY. AI analysis/generation will use the deterministic fallback, which cannot be exported as final.");
   }
   if (claudeConfigured && claudeModels.length === 0) warnings.push("Claude is configured but no Claude model chain was resolved.");
   if (geminiConfigured && !present(process.env.GEMINI_MODEL)) warnings.push("GEMINI_MODEL is not set; the app will use its built-in Gemini default.");
@@ -109,7 +117,7 @@ export async function GET() {
   const configuredMap: Record<AiProviderName, boolean> = {
     anthropic: claudeConfigured, gemini: geminiConfigured, openai: openaiConfigured,
     deepseek: deepSeekConfigured, groq: groqConfigured, openrouter: openRouterConfigured,
-    mistral: Boolean(process.env.MISTRAL_API_KEY?.trim()), together: Boolean(process.env.TOGETHER_API_KEY?.trim()),
+    mistral: mistralConfigured, together: togetherConfigured,
   };
   const configuredNames = allProviderNames.filter((n) => configuredMap[n]);
   const providerRuntime = Object.fromEntries(allProviderNames.map((n) => [n, getProviderRuntimeSnapshot(n)])) as Record<AiProviderName, ReturnType<typeof getProviderRuntimeSnapshot>>;
@@ -175,11 +183,29 @@ export async function GET() {
         note: "Fifth-tier fallback provider",
         runtime: providerRuntime.openrouter,
       },
+      mistral: {
+        configured: mistralConfigured,
+        envPresent: mistralConfigured,
+        model: getMistralModel(),
+        fallbackRank: 6,
+        label: "Mistral AI",
+        note: "Sixth-tier fallback provider (free tier available)",
+        runtime: providerRuntime.mistral,
+      },
+      together: {
+        configured: togetherConfigured,
+        envPresent: togetherConfigured,
+        model: getTogetherModel(),
+        fallbackRank: 7,
+        label: "Together AI",
+        note: "Seventh-tier fallback provider (free tier available)",
+        runtime: providerRuntime.together,
+      },
       claude: {
         configured: claudeConfigured,
         envPresent: claudeConfigured,
         model: claudeModels[0] ?? null,
-        fallbackRank: 6,
+        fallbackRank: 8,
         label: "Claude",
         note: "Last-resort provider (placed last to avoid Anthropic rate-limit blocking)",
         tier: process.env.ANTHROPIC_TIER || null,
