@@ -43,7 +43,7 @@ type TenderLike = {
   expertMatches?: Array<{ isSelected: boolean; score: number; expert?: { trustLevel?: string | null } }>;
   projectMatches?: Array<{ isSelected: boolean; score: number; project?: { trustLevel?: string | null } }>;
   complianceMatrix?: Array<{ id: string; requirementId?: string | null; supportLevel: string }>;
-  files?: Array<{ extractedText?: string | null }>;
+  files?: Array<{ extractedTextLength?: number | null }>;
 };
 
 function pct(value: number, total: number) {
@@ -124,7 +124,7 @@ export function ExecutiveSnapshot({ tender }: { tender: TenderLike }) {
   const generatedCount = generatedDocs.filter((d) => statusValue(d.generationStatus) === "GENERATED").length;
   const validatedCount = generatedDocs.filter((d) => ["PASSED", "VALIDATED", "APPROVED"].includes(statusValue(d.validationStatus))).length;
   const approvedCount = generatedDocs.filter((d) => ["APPROVED", "ACCEPTED", "SIGNED_OFF", "SIGNED OFF"].includes(statusValue(d.reviewStatus))).length;
-  const extractedFiles = files.filter((f) => (f.extractedText ?? "").length > 80).length;
+  const extractedFiles = files.filter((f) => (f.extractedTextLength ?? 0) > 80).length;
 
   // Legacy evidence score — lenient counting (PARTIAL counts), kept for
   // backward-compat with the readiness score the engine writes to

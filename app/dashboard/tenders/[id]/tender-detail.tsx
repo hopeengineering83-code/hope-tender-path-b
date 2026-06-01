@@ -140,7 +140,8 @@ type TenderFile = {
   size: number;
   mimeType: string;
   createdAt: string | Date;
-  extractedText?: string | null;
+  extractedTextLength?: number | null;
+  isScannedPlaceholder?: boolean | null;
   classification?: string | null;
 };
 
@@ -188,10 +189,11 @@ function FileTypeBadge({ name }: { name: string }) {
   return <span className={`inline-block rounded px-1.5 py-0.5 text-[10px] font-bold uppercase ${cls}`}>{ext || "file"}</span>;
 }
 
-function ExtractionBadge({ text }: { text?: string | null }) {
-  if (!text) return <span className="text-xs text-slate-300">no text</span>;
-  if (text.startsWith("[Scanned")) return <span className="text-xs text-amber-600">⚠ scanned</span>;
-  return <span className="text-xs text-green-600">{text.length.toLocaleString()} chars</span>;
+function ExtractionBadge({ extractedTextLength, isScannedPlaceholder }: { extractedTextLength?: number | null; isScannedPlaceholder?: boolean | null }) {
+  if (isScannedPlaceholder) return <span className="text-xs text-amber-600">⚠ scanned</span>;
+  const length = extractedTextLength ?? 0;
+  if (length <= 0) return <span className="text-xs text-slate-300">no text</span>;
+  return <span className="text-xs text-green-600">{length.toLocaleString()} chars</span>;
 }
 
 function TrustBadge({ level }: { level?: string | null }) {
@@ -1787,9 +1789,9 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
                           <span>·</span>
                           <span>{formatDate(file.createdAt)}</span>
                           <span>·</span>
-                          <ExtractionBadge text={file.extractedText} />
+                          <ExtractionBadge extractedTextLength={file.extractedTextLength} isScannedPlaceholder={file.isScannedPlaceholder} />
                         </div>
-                        {file.extractedText?.startsWith("[Scanned") && (
+                        {file.isScannedPlaceholder && (
                           <p className="mt-1 text-xs text-amber-700 bg-amber-50 rounded px-2 py-1">
                             ⚠ Scanned PDF — no text layer found. Run OCR or upload a text-based version for AI analysis.
                           </p>

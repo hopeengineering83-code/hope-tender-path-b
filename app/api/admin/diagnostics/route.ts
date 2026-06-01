@@ -42,13 +42,19 @@ export async function GET() {
     include: {
       experts: { select: { id: true, trustLevel: true, sourceDocumentId: true } },
       projects: { select: { id: true, trustLevel: true, sourceDocumentId: true } },
-      documents: { select: { id: true, originalFileName: true, extractedText: true, aiExtractionStatus: true, aiExtractionError: true, category: true } },
+      documents: { select: { id: true, originalFileName: true, aiExtractionStatus: true, aiExtractionError: true, category: true } },
     },
   });
 
   const experts = company?.experts ?? [];
   const projects = company?.projects ?? [];
   const docs = company?.documents ?? [];
+  const docTextMetrics = company ? await prisma.$queryRaw<Array<{ id: string; extractedTextLength: number }>>`
+    SELECT id, COALESCE(char_length("extractedText"), 0)::int AS "extractedTextLength"
+    FROM "CompanyDocument"
+    WHERE "companyId" = ${company.id}
+  ` : [];
+  const docTextLengthById = new Map(docTextMetrics.map((doc) => [doc.id, doc.extractedTextLength]));
 
   const expertsByTrust = {
     REVIEWED: experts.filter((e) => e.trustLevel === "REVIEWED").length,
@@ -61,8 +67,8 @@ export async function GET() {
     REGEX_DRAFT: projects.filter((p) => p.trustLevel === "REGEX_DRAFT").length,
   };
 
-  const docsWithText = docs.filter((d) => d.extractedText && d.extractedText.trim().length > 100).length;
-  const docsNoText = docs.filter((d) => !d.extractedText || d.extractedText.trim().length <= 100).length;
+  const docsWithText = docs.filter((d) => (docTextLengthById.get(d.id) ?? 0) > 100).length;
+  const docsNoText = docs.filter((d) => (docTextLengthById.get(d.id) ?? 0) <= 100).length;
   const docsAIExtracted = docs.filter((d) => d.aiExtractionStatus === "EXTRACTED").length;
   const docsAIFailed = docs.filter((d) => d.aiExtractionStatus === "FAILED").length;
   const docsAIPending = docs.filter((d) => d.aiExtractionStatus === "PENDING").length;
