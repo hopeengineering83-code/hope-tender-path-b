@@ -44,7 +44,10 @@ const AI_ANALYSIS_TIMEOUT_MS = (() => {
   const raw = Number(process.env.AI_ANALYSIS_TIMEOUT_MS);
   if (Number.isFinite(raw) && raw >= 5_000 && raw <= 600_000) return raw;
   const tier = (process.env.ANTHROPIC_TIER || "").trim();
-  return tier === "1" ? 50_000 : tier === "3" || tier === "4" ? 240_000 : 180_000;
+  // Tier 1 and 2 are Vercel Hobby/basic — hard-kill at 60s, must stay under.
+  // Tier 3/4 are Pro/Enterprise with 300s limit.
+  // Unknown tier defaults to Hobby-safe 50s so a missing env var never causes a silent 504.
+  return tier === "3" || tier === "4" ? 240_000 : 50_000;
 })();
 
 const MAX_FILE_CHARS_FOR_AI_ANALYSIS = (() => {
