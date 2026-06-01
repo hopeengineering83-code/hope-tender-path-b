@@ -396,6 +396,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
               evaluationMethodology: aiResult.evaluationMethodology || null,
               exactFileNaming: JSON.stringify(aiResult.exactFileNaming),
               exactFileOrder: JSON.stringify(aiResult.exactFileOrder),
+              // Tender-driven classification: when the analysis detected a
+              // category, store it on the existing Tender.category column so
+              // section planning / readiness / matching adapt to the actual
+              // tender type instead of a fixed default. Detection is best-effort
+              // — leave the prior value untouched when undetermined.
+              ...(aiResult.tenderCategory ? { category: aiResult.tenderCategory } : {}),
               notes: updatedNotes,
               status: "ANALYZED",
               stage: "ANALYSIS",

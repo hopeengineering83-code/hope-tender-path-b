@@ -7,11 +7,15 @@ import {
   getGroqModel,
   isOpenRouterConfigured,
   getOpenRouterModel,
+  isMistralConfigured,
+  getMistralModel,
+  isTogetherConfigured,
+  getTogetherModel,
   type ProviderRuntimeSnapshot,
 } from "../lib/ai-provider-health";
 import { AIHealthTestButton } from "./ai-health-test-button";
 
-const AI_FALLBACK_CHAIN = "OpenAI → Gemini → DeepSeek → Groq → OpenRouter → Claude → deterministic draft fallback";
+const AI_FALLBACK_CHAIN = "OpenAI → Gemini → DeepSeek → Groq → OpenRouter → Mistral → Together → Claude → deterministic draft fallback";
 
 type ProviderCardData = {
   key: string;
@@ -51,6 +55,8 @@ function getAIHealth(): AIHealthResponse {
   const deepseekConfigured = isDeepSeekConfigured();
   const groqConfigured = isGroqConfigured();
   const openRouterConfigured = isOpenRouterConfigured();
+  const mistralConfigured = isMistralConfigured();
+  const togetherConfigured = isTogetherConfigured();
 
   const claudeModels = splitModels(process.env.ANTHROPIC_PROPOSAL_MODELS, ["claude-sonnet-4-5", "claude-opus-4-1", "claude-3-5-sonnet-latest", "claude-3-5-haiku-latest"]);
   const geminiModels = splitModels(process.env.GEMINI_FALLBACK_MODELS, ["gemini-2.5-flash", "gemini-2.0-flash"]);
@@ -90,7 +96,23 @@ function getAIHealth(): AIHealthResponse {
       runtime: getProviderRuntimeSnapshot("openrouter"),
     },
     {
-      key: "claude", label: "Claude", rank: 6, configured: claudeConfigured, envVar: "ANTHROPIC_API_KEY",
+      key: "mistral", label: "Mistral", rank: 6, configured: mistralConfigured, envVar: "MISTRAL_API_KEY",
+      model: getMistralModel(), note: "Sixth-tier provider — good for multilingual tenders",
+      detail: null, modelHint: mistralConfigured && !process.env.MISTRAL_PROPOSAL_MODEL
+        ? "Using mistral-small-latest. Set MISTRAL_PROPOSAL_MODEL to override (e.g. mistral-large-latest)."
+        : null,
+      runtime: getProviderRuntimeSnapshot("mistral"),
+    },
+    {
+      key: "together", label: "Together AI", rank: 7, configured: togetherConfigured, envVar: "TOGETHER_API_KEY",
+      model: getTogetherModel(), note: "Seventh-tier provider — open-source models via Together AI",
+      detail: null, modelHint: togetherConfigured && !process.env.TOGETHER_PROPOSAL_MODEL
+        ? "Using meta-llama/Llama-3-70b-chat-hf. Set TOGETHER_PROPOSAL_MODEL to override."
+        : null,
+      runtime: getProviderRuntimeSnapshot("together"),
+    },
+    {
+      key: "claude", label: "Claude", rank: 8, configured: claudeConfigured, envVar: "ANTHROPIC_API_KEY",
       model: claudeModels[0] ?? null, note: "Last-resort provider (placed last to avoid Anthropic rate-limit blocking)",
       detail: `Tier ${process.env.ANTHROPIC_TIER ?? "not set"} · models ${claudeModels.slice(0, 2).join(", ") || "none"}`,
       modelHint: null, runtime: getProviderRuntimeSnapshot("anthropic"),
