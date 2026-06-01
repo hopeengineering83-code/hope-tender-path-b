@@ -31,7 +31,7 @@
 //     // skip Gemini for now — it 429'd N seconds ago
 //   }
 
-export type AiProviderName = "anthropic" | "gemini" | "openai" | "deepseek" | "groq" | "openrouter";
+export type AiProviderName = "anthropic" | "gemini" | "openai" | "deepseek" | "groq" | "openrouter" | "mistral" | "together";
 
 export type AiProviderFailureCategory =
   | "RATE_LIMIT"
@@ -69,6 +69,8 @@ const PROVIDER_ENV_KEY: Record<AiProviderName, string> = {
   deepseek: "DEEPSEEK_API_KEY",
   groq: "GROQ_API_KEY",
   openrouter: "OPENROUTER_API_KEY",
+  mistral: "MISTRAL_API_KEY",
+  together: "TOGETHER_API_KEY",
 };
 
 // ─── Central DeepSeek key resolution ──────────────────────────────────────
@@ -148,10 +150,44 @@ export function getOpenRouterAppName(): string {
   return v && v.trim().length > 0 ? v.trim() : "Hope Tender Proposal Generator";
 }
 
+// ─── Mistral AI (OpenAI-compatible) ──────────────────────────────────────
+// Seventh-tier fallback. Official variable MISTRAL_API_KEY.
+export function getMistralApiKey(): string | undefined {
+  const v = process.env.MISTRAL_API_KEY;
+  return v && v.trim().length > 0 ? v.trim() : undefined;
+}
+export function isMistralConfigured(): boolean {
+  return Boolean(getMistralApiKey());
+}
+export function getMistralModel(): string {
+  return process.env.MISTRAL_PROPOSAL_MODEL || "mistral-small-latest";
+}
+export function getMistralBaseUrl(): string {
+  return "https://api.mistral.ai/v1";
+}
+
+// ─── Together AI (OpenAI-compatible) ─────────────────────────────────────
+// Eighth-tier fallback. Official variable TOGETHER_API_KEY.
+export function getTogetherApiKey(): string | undefined {
+  const v = process.env.TOGETHER_API_KEY;
+  return v && v.trim().length > 0 ? v.trim() : undefined;
+}
+export function isTogetherConfigured(): boolean {
+  return Boolean(getTogetherApiKey());
+}
+export function getTogetherModel(): string {
+  return process.env.TOGETHER_PROPOSAL_MODEL || "meta-llama/Llama-3-70b-chat-hf";
+}
+export function getTogetherBaseUrl(): string {
+  return "https://api.together.xyz/v1";
+}
+
 function isProviderConfigured(provider: AiProviderName): boolean {
   if (provider === "deepseek") return isDeepSeekConfigured();
   if (provider === "groq") return isGroqConfigured();
   if (provider === "openrouter") return isOpenRouterConfigured();
+  if (provider === "mistral") return isMistralConfigured();
+  if (provider === "together") return isTogetherConfigured();
   return Boolean(process.env[PROVIDER_ENV_KEY[provider]]);
 }
 

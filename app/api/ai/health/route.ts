@@ -97,7 +97,7 @@ export async function GET() {
   if (deepSeekConfigured && !deepSeekOfficialEnvPresent()) warnings.push("DeepSeek is enabled via a fallback alias env var. Rename it to DEEPSEEK_API_KEY (the official variable) in Vercel.");
 
   // Cooldown notice — purely advisory; the chain skips cooled-down providers.
-  const allProviderNames: AiProviderName[] = ["anthropic", "gemini", "openai", "deepseek", "groq", "openrouter"];
+  const allProviderNames: AiProviderName[] = ["anthropic", "gemini", "openai", "deepseek", "groq", "openrouter", "mistral", "together"];
   const cooling = allProviderNames.filter(isProviderCooledDown);
   if (cooling.length > 0) {
     warnings.push(`Provider(s) in cooldown: ${cooling.join(", ")}. Requests skip cooled-down providers until the window expires.`);
@@ -109,6 +109,7 @@ export async function GET() {
   const configuredMap: Record<AiProviderName, boolean> = {
     anthropic: claudeConfigured, gemini: geminiConfigured, openai: openaiConfigured,
     deepseek: deepSeekConfigured, groq: groqConfigured, openrouter: openRouterConfigured,
+    mistral: Boolean(process.env.MISTRAL_API_KEY?.trim()), together: Boolean(process.env.TOGETHER_API_KEY?.trim()),
   };
   const configuredNames = allProviderNames.filter((n) => configuredMap[n]);
   const providerRuntime = Object.fromEntries(allProviderNames.map((n) => [n, getProviderRuntimeSnapshot(n)])) as Record<AiProviderName, ReturnType<typeof getProviderRuntimeSnapshot>>;

@@ -23,6 +23,14 @@ import {
   getOpenRouterBaseUrl,
   getOpenRouterSiteUrl,
   getOpenRouterAppName,
+  getMistralApiKey,
+  isMistralConfigured,
+  getMistralModel,
+  getMistralBaseUrl,
+  getTogetherApiKey,
+  isTogetherConfigured,
+  getTogetherModel,
+  getTogetherBaseUrl,
   classifyAiError,
 } from "../../../../../lib/ai-provider-health";
 
@@ -91,7 +99,7 @@ async function testGemini(): Promise<ProviderTestResult> {
 
 // ── OpenAI-compatible helper ──────────────────────────────────────────────────
 async function testOpenAICompat(
-  providerKey: "openai" | "deepseek" | "groq" | "openrouter",
+  providerKey: "openai" | "deepseek" | "groq" | "openrouter" | "mistral" | "together",
   apiKey: string,
   baseUrl: string,
   model: string,
@@ -160,6 +168,20 @@ async function testOpenRouter(): Promise<ProviderTestResult> {
   });
 }
 
+// ── Mistral ───────────────────────────────────────────────────────────────────
+async function testMistral(): Promise<ProviderTestResult> {
+  if (!isMistralConfigured()) return { provider: "mistral", status: "not_configured", model: "", durationMs: 0 };
+  const key = getMistralApiKey()!;
+  return testOpenAICompat("mistral", key, getMistralBaseUrl(), getMistralModel());
+}
+
+// ── Together AI ───────────────────────────────────────────────────────────────
+async function testTogether(): Promise<ProviderTestResult> {
+  if (!isTogetherConfigured()) return { provider: "together", status: "not_configured", model: "", durationMs: 0 };
+  const key = getTogetherApiKey()!;
+  return testOpenAICompat("together", key, getTogetherBaseUrl(), getTogetherModel());
+}
+
 // ── Anthropic (Claude) ────────────────────────────────────────────────────────
 async function testAnthropic(): Promise<ProviderTestResult> {
   const key = process.env.ANTHROPIC_API_KEY;
@@ -213,6 +235,8 @@ export async function POST(req: Request) {
     testDeepSeek,
     testGroq,
     testOpenRouter,
+    testMistral,
+    testTogether,
     testAnthropic,
   ];
 
