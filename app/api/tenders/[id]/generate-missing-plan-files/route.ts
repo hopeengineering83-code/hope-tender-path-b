@@ -87,7 +87,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       requirements: true,
       generatedDocuments: {
         where: { generationStatus: { not: "SUPERSEDED" } },
-        select: { id: true, name: true, exactFileName: true, documentType: true, format: true, exactOrder: true, generationStatus: true, fileContent: true },
+        select: { id: true, name: true, exactFileName: true, documentType: true, format: true, exactOrder: true, generationStatus: true },
       },
     },
   });
