@@ -2755,7 +2755,7 @@ For EVERY mandatory and scored requirement listed in CONSOLIDATED REQUIREMENTS /
 |---|---|---|---|---|
 | 1 | "Minimum 10 years' experience in healthcare facility design" | Section A.1 + B.2 | 12 years; G+6 Dr. Abdul Seid Hospital (ETB 550M, 2018) | FULLY MET |
 | 2 | "Lead Architect must hold EIASC Grade A licence" | Section A.4 | Dr. Almaz Tadesse, EIASC Grade A IPSTE/6884 valid 2030 | FULLY MET |
-| 3 | "Submit 3 client reference letters with seal" | Appendix D | Pharo Foundation, MoH, Gimba City Admin reference letters | PARTIALLY MET — Bid-Team Action: confirm Gimba seal before submission |
+| 3 | "Submit 3 client reference letters with seal" | Appendix D | [Reference Client 1], [Reference Client 2], [Reference Client 3] reference letters | PARTIALLY MET — Bid-Team Action: confirm third seal before submission |
 \`\`\`
 
 Rules: every requirement gets one row. Compliance Status MUST be one of FULLY MET / PARTIALLY MET / NOT MET. Where NOT MET, the row must propose a credible mitigation in the same row (subcontractor, joint venture, deferred delivery, etc.). Do not silently skip a requirement — if you cannot map it, write a Bid-Team Action note.

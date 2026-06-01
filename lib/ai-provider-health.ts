@@ -176,7 +176,7 @@ export function isTogetherConfigured(): boolean {
   return Boolean(getTogetherApiKey());
 }
 export function getTogetherModel(): string {
-  return process.env.TOGETHER_PROPOSAL_MODEL || "meta-llama/Llama-3-70b-chat-hf";
+  return process.env.TOGETHER_PROPOSAL_MODEL || "meta-llama/Llama-3.3-70B-Instruct-Turbo";
 }
 export function getTogetherBaseUrl(): string {
   return "https://api.together.xyz/v1";

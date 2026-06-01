@@ -40,7 +40,10 @@ function isSuspiciousLabel(value: string): boolean {
   const text = value.toLowerCase();
   return value.length > 140
     || /\b(headquarters|full name|relationship|ref only|references where available|photos or drawings|proposed design methodology|technical approach understanding|not specified in texts)\b/i.test(value)
-    || (text.includes("pharo ventures") && text.includes("relationship"));
+    // A label that reads like a project-relationship description (a named entity
+    // followed by "relationship") is the firm's prior client, not the current
+    // procuring entity — flag it as suspicious regardless of which firm it names.
+    || (/\b[A-Z][A-Za-z0-9&.'’()\-/]+(?:\s+[A-Z][A-Za-z0-9&.'’()\-/]+)*\b/.test(value) && text.includes("relationship"));
 }
 
 export function extractLikelyClientName(...values: Array<string | null | undefined>): string | null {
