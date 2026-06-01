@@ -11,10 +11,54 @@ function withDashboardGeneratedDocuments<T extends { generatedDocuments: any[] }
   return { ...tender, generatedDocuments: prepared.documents };
 }
 
+async function withDashboardFileMetrics<T extends { id: string; files: any[] }>(tender: T): Promise<T> {
+  const fileTextMetrics = await prisma.$queryRaw<Array<{ id: string; extractedTextLength: number; isScannedPlaceholder: boolean }>>`
+    SELECT
+      id,
+      COALESCE(char_length("extractedText"), 0)::int AS "extractedTextLength",
+      COALESCE("extractedText" LIKE '[Scanned%', false) AS "isScannedPlaceholder"
+    FROM "TenderFile"
+    WHERE "tenderId" = ${tender.id}
+  `;
+  const metricById = new Map(fileTextMetrics.map((file) => [file.id, file]));
+  return {
+    ...tender,
+    files: tender.files.map((file) => {
+      const metric = metricById.get(file.id);
+      return {
+        ...file,
+        extractedTextLength: metric?.extractedTextLength ?? 0,
+        isScannedPlaceholder: metric?.isScannedPlaceholder ?? false,
+      };
+    }),
+  };
+}
+
+function withDashboardPayload<T extends { id: string; files: any[]; generatedDocuments: any[] }>(tender: T): Promise<T> {
+  return withDashboardFileMetrics(withDashboardGeneratedDocuments(tender));
+}
+
 const generatedDocumentOrder = [
   { exactOrder: "asc" as const },
   { createdAt: "desc" as const },
 ];
+
+const generatedDocumentDashboardSelect = {
+  id: true,
+  name: true,
+  documentType: true,
+  generationStatus: true,
+  validationStatus: true,
+  reviewStatus: true,
+  reviewNotes: true,
+  exactFileName: true,
+  exactOrder: true,
+  contentSummary: true,
+  reviewedExpertCount: true,
+  draftExpertCount: true,
+  reviewedProjectCount: true,
+  draftProjectCount: true,
+};
 
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const userId = await getSession();
@@ -28,16 +72,16 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     include: {
       files: {
         orderBy: { createdAt: "desc" },
-        select: { id: true, fileName: true, originalFileName: true, mimeType: true, size: true, classification: true, extractedText: true, createdAt: true },
+        select: { id: true, fileName: true, originalFileName: true, mimeType: true, size: true, classification: true, createdAt: true },
       },
       requirements: { orderBy: { createdAt: "asc" } },
       complianceGaps: { orderBy: { createdAt: "desc" } },
-      generatedDocuments: { orderBy: generatedDocumentOrder },
+      generatedDocuments: { orderBy: generatedDocumentOrder, select: generatedDocumentDashboardSelect },
     },
   });
 
   if (!tender) return NextResponse.json({ error: "Not found" }, { status: 404 });
-  return NextResponse.json(withDashboardGeneratedDocuments(tender));
+  return NextResponse.json(await withDashboardPayload(tender));
 }
 
 export async function PUT(req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -97,11 +141,11 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
       include: {
         files: {
           orderBy: { createdAt: "desc" },
-          select: { id: true, fileName: true, originalFileName: true, mimeType: true, size: true, classification: true, extractedText: true, createdAt: true },
+          select: { id: true, fileName: true, originalFileName: true, mimeType: true, size: true, classification: true, createdAt: true },
         },
         requirements: { orderBy: { createdAt: "asc" } },
         complianceGaps: { orderBy: { createdAt: "desc" } },
-        generatedDocuments: { orderBy: generatedDocumentOrder },
+        generatedDocuments: { orderBy: generatedDocumentOrder, select: generatedDocumentDashboardSelect },
       },
     });
 
@@ -141,7 +185,7 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
       });
     }
 
-    return NextResponse.json(withDashboardGeneratedDocuments(tender));
+    return NextResponse.json(await withDashboardPayload(tender));
   } catch (error) {
     console.error(error);
     return NextResponse.json({ error: "Failed to update tender" }, { status: 500 });

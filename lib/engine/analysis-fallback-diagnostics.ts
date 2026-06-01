@@ -105,7 +105,7 @@ export function buildAnalysisFallbackDiagnostics(rawError?: string | null): Anal
       category: "NO_PROVIDER_CONFIGURED",
       risk: "HIGH",
       message: message || "No AI provider is configured.",
-      nextAction: "Set ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, DEEPSEEK_API_KEY, GROQ_API_KEY, or OPENROUTER_API_KEY in Vercel, redeploy, then run AI Analyze.",
+      nextAction: "Set OPENAI_API_KEY, GEMINI_API_KEY, DEEPSEEK_API_KEY, GROQ_API_KEY, OPENROUTER_API_KEY, or ANTHROPIC_API_KEY in Vercel, redeploy, then run AI Analyze.",
       retryRecommended: false,
     };
   }

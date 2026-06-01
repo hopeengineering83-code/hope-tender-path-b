@@ -43,7 +43,7 @@ type TenderLike = {
   expertMatches?: Array<{ isSelected: boolean; score: number; expert?: { trustLevel?: string | null } }>;
   projectMatches?: Array<{ isSelected: boolean; score: number; project?: { trustLevel?: string | null } }>;
   complianceMatrix?: Array<{ id: string; requirementId?: string | null; supportLevel: string }>;
-  files?: Array<{ extractedText?: string | null }>;
+  files?: Array<{ extractedTextLength?: number | null }>;
 };
 
 function pct(value: number, total: number) {
@@ -124,7 +124,7 @@ export function ExecutiveSnapshot({ tender }: { tender: TenderLike }) {
   const generatedCount = generatedDocs.filter((d) => statusValue(d.generationStatus) === "GENERATED").length;
   const validatedCount = generatedDocs.filter((d) => ["PASSED", "VALIDATED", "APPROVED"].includes(statusValue(d.validationStatus))).length;
   const approvedCount = generatedDocs.filter((d) => ["APPROVED", "ACCEPTED", "SIGNED_OFF", "SIGNED OFF"].includes(statusValue(d.reviewStatus))).length;
-  const extractedFiles = files.filter((f) => (f.extractedText ?? "").length > 80).length;
+  const extractedFiles = files.filter((f) => (f.extractedTextLength ?? 0) > 80).length;
 
   // Legacy evidence score — lenient counting (PARTIAL counts), kept for
   // backward-compat with the readiness score the engine writes to
@@ -256,7 +256,7 @@ export function ExecutiveSnapshot({ tender }: { tender: TenderLike }) {
               {nextActions.slice(0, 6).map((action) => <li key={action}>{action}</li>)}
             </ol>
           ) : clearForHumanReview ? (
-            <p className="mt-2 text-sm text-green-700">No major blockers detected. Proceed to final human review and export package.</p>
+            <p className="mt-2 text-sm text-green-700">No major snapshot blockers detected. Continue to canonical final submission/export readiness before releasing the package.</p>
           ) : (
             <p className="mt-2 text-sm text-amber-700">Readiness is not final. Open the Full Command Center and resolve canonical readiness/export blockers before final submission.</p>
           )}

@@ -321,9 +321,9 @@ export function formatComprehensionForPrompt(comp: DeepTenderComprehension): str
  * Run the semantic extractor. Returns null on any failure — caller
  * MUST tolerate null and fall through to the regex analyzer.
  *
- * AI provider selection follows the rest of the engine: Claude
- * preferred, Gemini fallback, OpenAI last. The same fallback chain
- * `generateWithFallback` already implements is reused.
+ * AI provider selection follows the rest of the engine fallback chain.
+ * The shared `generateWithFallback` implementation keeps Claude/Anthropic
+ * last so Anthropic rate limits do not block earlier providers.
  */
 export async function extractDeepTenderComprehension(tenderText: string): Promise<DeepTenderComprehension | null> {
   if (!isAIEnabled()) return null;

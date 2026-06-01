@@ -134,12 +134,16 @@ function resolveStatus(doc: GeneratedDocSnapshot | null, planFile: SubmissionPla
   }
   if (!doc) return "MISSING";
   const gen = (doc.generationStatus ?? "").toUpperCase();
+  const val = (doc.validationStatus ?? "").toUpperCase();
   const rev = (doc.reviewStatus ?? "").toUpperCase();
+  const storedQualityFailed = [gen, val, rev].some((status) =>
+    status === "GENERATED_QUALITY_FAILED" || status === "QUALITY_FAILED" || status === "NEEDS_REWRITE",
+  );
   if (gen === "SUPERSEDED") return "SUPERSEDED";
   if (rev === "REPLACE_WITH_ORIGINAL") return "REPLACE_WITH_ORIGINAL";
   if (rev === "NOT_EXPORTABLE") return "REPLACE_WITH_ORIGINAL";
   if (gen === "PLANNED") return "PLANNED";
-  if (qualityFailed) return "GENERATED_QUALITY_FAILED";
+  if (qualityFailed || storedQualityFailed) return "GENERATED_QUALITY_FAILED";
   if (!isFinalExportCandidateDocument(doc)) return "PLANNED";
   if (rev === "READY_FOR_EXPORT" || rev === "APPROVED") return "GENERATED";
   return "GENERATED_NEEDS_REVIEW";
@@ -231,7 +235,10 @@ export function resolveSubmissionPlanCompleteness(input: ResolvePlanCompleteness
     const status: SubmissionPlanRowStatus = gen === "SUPERSEDED" ? "SUPERSEDED" : "OUTSIDE_PLAN";
     const envelope = inferEnvelope(doc.documentType ?? "TECHNICAL", doc.exactFileName ?? doc.name ?? "");
     const officialOriginal = looksLikeOfficialOriginal(`${doc.name} ${doc.exactFileName ?? ""} ${doc.documentType ?? ""}`);
-    const qualityFailed = Boolean(input.qualityFailedIds?.has(doc.id));
+    const storedQualityFailed = [doc.generationStatus, doc.validationStatus, doc.reviewStatus]
+      .map((status) => (status ?? "").toUpperCase())
+      .some((status) => status === "GENERATED_QUALITY_FAILED" || status === "QUALITY_FAILED" || status === "NEEDS_REWRITE");
+    const qualityFailed = Boolean(input.qualityFailedIds?.has(doc.id)) || storedQualityFailed;
     const effectiveStatus = qualityFailed && status === "OUTSIDE_PLAN" ? "GENERATED_QUALITY_FAILED" : status;
     rows.push({
       key: `doc:${doc.id}`,

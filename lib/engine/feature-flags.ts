@@ -37,7 +37,7 @@ function isTruthy(value: string | undefined): boolean {
  *     call rewrites with that critique as input. See
  *     `lib/engine/deep-reasoning-refiner.ts`.
  *
- * Both paths require an AI provider (Claude preferred); they no-op
+ * Both paths require an AI provider from the configured chain; they no-op
  * silently when no provider is configured.
  *
  * Default OFF: feature is additive; existing generation behaviour is
