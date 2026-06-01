@@ -13,9 +13,10 @@ const FALLBACK_GEMINI_MODELS = (process.env.GEMINI_FALLBACK_MODELS || "gemini-2.
 // Model chain for proposal generation — tried in order until one succeeds.
 const PROPOSAL_MODELS = ["gemini-2.5-pro", "gemini-2.0-flash", "gemini-1.5-pro"];
 
-// Claude models in preference order. Claude is preferred over Gemini for
-// proposal generation when ANTHROPIC_API_KEY is configured, because the
-// benchmark used for the quality target is Claude-generated.
+// Claude models in preference order when the last-resort Anthropic provider
+// is reached. The overall proposal provider chain is OpenAI → Gemini →
+// DeepSeek → Groq → OpenRouter → Claude, keeping Anthropic last so rate
+// limits do not block the app when earlier providers are available.
 //
 // The default chain prefers stable, widely-available aliases so it works
 // on a fresh Anthropic account without configuration. To pin specific

@@ -28,7 +28,7 @@ export function getAIEnvironmentReadiness(): AIEnvironmentReadiness {
     status("ANTHROPIC_TIER", "ai", "recommended", "Used to select Claude output-token defaults; Tier 2 supports larger proposal outputs than Tier 1."),
     status("ANTHROPIC_MAX_OUTPUT_TOKENS", "ai", "recommended", "Controls Claude proposal output budget. Use a realistic value for your Vercel timeout and Anthropic tier."),
     status("ANTHROPIC_PROPOSAL_MODELS", "ai", "recommended", "Comma-separated Claude model chain for proposal generation."),
-    status("GEMINI_API_KEY", "ai", "critical", "Gemini fallback provider and fast analysis/extraction model."),
+    status("GEMINI_API_KEY", "ai", "critical", "Gemini analysis/extraction primary and second-tier proposal fallback provider."),
     status("GEMINI_MODEL", "ai", "recommended", "Default Gemini model for general AI calls."),
     status("GEMINI_ANALYSIS_MODEL", "ai", "recommended", "Gemini model for tender analysis when configured."),
     status("GEMINI_EXTRACTION_MODEL", "ai", "recommended", "Gemini model for company knowledge extraction when configured."),
@@ -44,7 +44,7 @@ export function getAIEnvironmentReadiness(): AIEnvironmentReadiness {
     status("PDF_OCR_ENABLED", "ocr", "recommended", "Enables OCR path for scanned/image-heavy PDFs."),
     status("PDF_OCR_MODEL", "ocr", "recommended", "OCR reasoning model selector."),
     status("PDF_OCR_MAX_PAGES", "ocr", "recommended", "Caps OCR pages to avoid serverless timeout/cost overrun."),
-    status("PDF_OCR_MAX_RACES", "ocr", "optional", "Controls OCR concurrency/race settings if supported by extraction code."),
+    status("PDF_OCR_MAX_RACES", "ocr", "optional", "Optional OCR race/concurrency guard. Recommended production value: 1 for conservative Vercel OCR behavior."),
     status("DATABASE_URL", "database", "critical", "Persistent database connection."),
     status("SESSION_SECRET", "auth", "critical", "Required for secure login/session cookies."),
     status("AI_ANALYSIS_TIMEOUT_MS", "runtime", "recommended", "Tender-analysis timeout guard."),
@@ -70,6 +70,7 @@ export function getAIEnvironmentReadiness(): AIEnvironmentReadiness {
   if (!present("DATABASE_URL")) blockers.push("DATABASE_URL is missing.");
   if (!present("SESSION_SECRET")) blockers.push("SESSION_SECRET is missing.");
   if (!present("PDF_OCR_ENABLED")) warnings.push("PDF_OCR_ENABLED is not set. Scanned PDFs may extract poorly unless OCR defaults are enabled elsewhere.");
+  if (!present("PDF_OCR_MAX_RACES")) warnings.push("PDF_OCR_MAX_RACES is not set. Recommended value: 1 to keep OCR provider races/concurrency conservative on Vercel.");
   if (!present("ANTHROPIC_TIER") && present("ANTHROPIC_API_KEY")) warnings.push("ANTHROPIC_TIER is not set. Claude output-token defaults may not match your Tier 2 account.");
 
   return {

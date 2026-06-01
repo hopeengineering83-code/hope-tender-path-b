@@ -95,6 +95,20 @@ describe("submission-plan completeness — quality failed propagates", () => {
     assert.equal(report.totalQualityFailed, 1);
     assert.ok(report.rows[0].status === "GENERATED_QUALITY_FAILED");
   });
+
+  it("preserves stored quality-failed statuses without needing inline fileContent", () => {
+    const required = ["Technical-Proposal.docx"];
+    const present = doc({
+      exactFileName: "Technical-Proposal.docx",
+      name: "Technical Proposal",
+      fileContent: null,
+      storagePath: "generated/technical-proposal.docx",
+      validationStatus: "QUALITY_FAILED",
+    });
+    const report = resolveSubmissionPlanCompleteness({ tender: planTender(required), generatedDocuments: [present] });
+    assert.equal(report.totalQualityFailed, 1);
+    assert.equal(report.rows[0].status, "GENERATED_QUALITY_FAILED");
+  });
 });
 
 describe("submission-plan completeness — historical (SUPERSEDED) rows excluded from package counts", () => {

@@ -3,6 +3,18 @@ import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../.
 import { prisma, prismaReady } from "../../../../lib/prisma";
 import { isAIEnabled, isAIConfigured } from "../../../../lib/env-check";
 
+function sanitizeDiagnosticMessage(value: string | null | undefined): string | null {
+  if (!value) return null;
+  return value
+    .replace(/(?:postgres(?:ql)?|mysql|mongodb|redis):\/\/[^\s"']+/gi, "[REDACTED_DSN]")
+    .replace(/sk-[A-Za-z0-9-_]{8,}/g, "[REDACTED_KEY]")
+    .replace(/AIza[A-Za-z0-9_-]{20,}/g, "[REDACTED_KEY]")
+    .replace(/Bearer\s+[A-Za-z0-9._-]+/gi, "Bearer [REDACTED]")
+    .replace(/password=([^\s&]+)/gi, "password=[REDACTED]")
+    .replace(/user(name)?=([^\s&]+)/gi, "user$1=[REDACTED]")
+    .slice(0, 240);
+}
+
 export async function GET() {
   let actor;
   try {
@@ -21,7 +33,7 @@ export async function GET() {
     await prisma.$queryRawUnsafe("SELECT 1");
     dbOk = true;
   } catch (e) {
-    dbError = e instanceof Error ? e.message : String(e);
+    dbError = sanitizeDiagnosticMessage(e instanceof Error ? e.message : String(e));
   }
 
   // ── company knowledge health ──────────────────────────────────────────────
@@ -85,13 +97,13 @@ export async function GET() {
   // ── AI extraction failures detail ─────────────────────────────────────────
   const failedDocs = docs
     .filter((d) => d.aiExtractionStatus === "FAILED")
-    .map((d) => ({ id: d.id, name: d.originalFileName, category: d.category, error: d.aiExtractionError }));
+    .map((d) => ({ id: d.id, name: d.originalFileName, category: d.category, error: sanitizeDiagnosticMessage(d.aiExtractionError) }));
 
   // ── action items ──────────────────────────────────────────────────────────
   const actionItems: Array<{ severity: string; message: string }> = [];
 
-  if (!dbOk) actionItems.push({ severity: "CRITICAL", message: `Database connection failed: ${dbError}` });
-  if (!isAIConfigured()) actionItems.push({ severity: "HIGH", message: "No AI provider key set (ANTHROPIC_API_KEY or GEMINI_API_KEY) — AI extraction disabled. All records will be REGEX_DRAFT only and cannot be promoted to trusted status." });
+  if (!dbOk) actionItems.push({ severity: "CRITICAL", message: "Database connection failed. Check DATABASE_URL/Neon connectivity in Vercel; raw database diagnostics are intentionally hidden." });
+  if (!isAIConfigured()) actionItems.push({ severity: "HIGH", message: "No AI provider key set. Configure OPENAI_API_KEY, GEMINI_API_KEY, DEEPSEEK_API_KEY, GROQ_API_KEY, OPENROUTER_API_KEY, or ANTHROPIC_API_KEY. AI extraction is disabled; all records will be REGEX_DRAFT only and cannot be promoted to trusted status." });
   if (expertsByTrust.REVIEWED === 0 && experts.length > 0) actionItems.push({ severity: "HIGH", message: `${experts.length} expert(s) imported but none reviewed. Proposals will use unverified draft data.` });
   if (projectsByTrust.REVIEWED === 0 && projects.length > 0) actionItems.push({ severity: "HIGH", message: `${projects.length} project(s) imported but none reviewed. Proposals will use unverified draft data.` });
   if (docsNoText > 0) actionItems.push({ severity: "MEDIUM", message: `${docsNoText} document(s) have no extracted text. Run repair to re-extract.` });
@@ -102,7 +114,7 @@ export async function GET() {
 
   return NextResponse.json({
     timestamp: new Date().toISOString(),
-    database: { ok: dbOk, error: dbError, url: (process.env.DATABASE_URL ?? "").replace(/:\/\/[^@]+@/, "://*****@") },
+    database: { ok: dbOk, error: dbError ? "Database connectivity check failed; details redacted." : null },
     ai: { enabled: isAIEnabled(), configured: isAIConfigured() },
     knowledge: {
       totalDocuments: docs.length,

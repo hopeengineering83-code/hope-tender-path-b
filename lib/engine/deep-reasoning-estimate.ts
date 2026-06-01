@@ -101,7 +101,7 @@ export function estimateDeepReasoningCost(input: EstimateInput): DeepReasoningEs
   if (!aiOn) {
     return {
       willRun: false,
-      blocker: "No AI provider configured (ANTHROPIC_API_KEY / GEMINI_API_KEY / OPENAI_API_KEY)",
+      blocker: "No AI provider configured (OPENAI_API_KEY / GEMINI_API_KEY / DEEPSEEK_API_KEY / GROQ_API_KEY / OPENROUTER_API_KEY / ANTHROPIC_API_KEY)",
       worstCaseCalls: 0,
       typicalCalls: 0,
       steps: [],

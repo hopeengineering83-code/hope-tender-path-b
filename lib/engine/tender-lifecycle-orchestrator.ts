@@ -345,7 +345,6 @@ export async function computeTenderLifecycle(
           generationStatus: true,
           validationStatus: true,
           reviewStatus: true,
-          fileContent: true,
           storagePath: true,
         },
       }),
@@ -430,7 +429,7 @@ export async function computeTenderLifecycle(
   };
   const docsSnap: GeneratedDocSnapshot[] = generatedDocs.map((d) => ({
     ...d,
-    fileContent: d.fileContent ?? null,
+    fileContent: null,
     storagePath: d.storagePath ?? null,
     generationStatus: d.generationStatus ?? "",
     validationStatus: d.validationStatus ?? "",
