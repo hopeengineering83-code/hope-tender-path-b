@@ -107,7 +107,7 @@ function getAIHealth(): AIHealthResponse {
       key: "together", label: "Together AI", rank: 7, configured: togetherConfigured, envVar: "TOGETHER_API_KEY",
       model: getTogetherModel(), note: "Seventh-tier provider — open-source models via Together AI",
       detail: null, modelHint: togetherConfigured && !process.env.TOGETHER_PROPOSAL_MODEL
-        ? "Using meta-llama/Llama-3-70b-chat-hf. Set TOGETHER_PROPOSAL_MODEL to override."
+        ? "Using meta-llama/Llama-3.3-70B-Instruct-Turbo. Set TOGETHER_PROPOSAL_MODEL to override."
         : null,
       runtime: getProviderRuntimeSnapshot("together"),
     },
@@ -216,7 +216,7 @@ export async function AIHealthPanel() {
         <div>
           <p className={`text-xs font-semibold uppercase tracking-wide ${labelTone}`}>AI provider health</p>
           <h2 className="mt-1 text-lg font-bold text-slate-900">Preferred provider: {health.preferredProvider}</h2>
-          <p className="mt-1 max-w-3xl text-sm text-slate-600">Shows whether the Claude, Gemini, OpenAI, DeepSeek, Groq, and OpenRouter keys are configured AND whether at least one provider has produced a successful response on this instance. &ldquo;Configured&rdquo; alone does not guarantee runtime availability. Secret values are never displayed.</p>
+          <p className="mt-1 max-w-3xl text-sm text-slate-600">Shows whether AI provider keys are configured AND whether at least one provider has produced a successful response on this instance. Providers tested: OpenAI, Gemini, DeepSeek, Groq, OpenRouter, Mistral, Together AI, Claude. &ldquo;Configured&rdquo; alone does not guarantee runtime availability. Secret values are never displayed.</p>
         </div>
         <span className={`rounded-full px-3 py-1 text-xs font-bold ${pillTone}`}>{health.nextAction.replace(/_/g, " ")}</span>
       </div>
