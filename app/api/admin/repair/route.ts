@@ -207,7 +207,7 @@ export async function POST(req: Request) {
     results.appsettings = { ensured };
   }
 
-  // ── Step 6: Prune SUPERSEDED generated documents ─────────────────────────
+  // ── Step 6: Schema-drift repair ──────────────────────────────────────────
   if (step === "schema-drift") {
     const repairs: string[] = [];
     const sqlSteps = [
@@ -242,6 +242,7 @@ export async function POST(req: Request) {
     results.schemaDrift = { repairs };
   }
 
+  // ── Step 7: Prune SUPERSEDED generated documents ─────────────────────────
   if (step === "prune-superseded") {
     const cutoffDays = Math.max(1, parseInt(searchParams.get("cutoffDays") ?? "7", 10) || 7);
     const cutoffDate = new Date(Date.now() - cutoffDays * 24 * 60 * 60 * 1000);
