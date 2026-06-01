@@ -37,7 +37,7 @@ export const METADATA_PLACEHOLDER_PATTERNS: RegExp[] = [
   /\bbid[\s-]?team\s+to\s+confirm\b/i,
   /\bto\s+be\s+(?:confirmed|determined|provided|completed|inserted)\b/i,
   /\b(?:tbd|tbc|tba)\b/i,
-  /\b(?:not\s+provided|not\s+available|not\s+specified|unknown)\b/i,
+  /\b(?:not\s+provided|not\s+available|not\s+specified|unknown|pending)\b/i,
   /\bn\/?a\b/i,
   /\bplaceholder\b/i,
   /\b(?:insert|add|fill)\b.{0,40}\b(?:here|later|manually)\b/i,
