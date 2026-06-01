@@ -35,26 +35,56 @@ export async function GET(
   const { id: tenderId, docId } = await params;
   await prismaReady;
 
-  const doc = await prisma.generatedDocument.findFirst({
-    where: { id: docId, tenderId },
-    include: {
-      reviews: {
-        orderBy: { createdAt: "desc" },
-        include: { reviewer: { select: { id: true, name: true, email: true, role: true } } },
-      },
-      comments: {
-        where: { parentId: null },
-        orderBy: { createdAt: "asc" },
-        include: {
-          author: { select: { id: true, name: true, email: true, role: true } },
-          replies: {
-            orderBy: { createdAt: "asc" },
-            include: { author: { select: { id: true, name: true, email: true, role: true } } },
+  // Attempt to fetch with full reviews + comments include. If the DB was
+  // created from the old bootstrap (which used generatedDocumentId instead of
+  // documentId), Prisma will throw a "column does not exist" error. In that
+  // case we fall back to a bare findFirst and return empty arrays so the rest
+  // of the UI still works while the admin runs ?step=schema-drift to repair
+  // the production DB.
+  let doc: Awaited<ReturnType<typeof prisma.generatedDocument.findFirst>> & {
+    reviews?: unknown[];
+    comments?: unknown[];
+  } | null = null;
+  let reviews: unknown[] = [];
+  let comments: unknown[] = [];
+
+  try {
+    const result = await prisma.generatedDocument.findFirst({
+      where: { id: docId, tenderId },
+      include: {
+        reviews: {
+          orderBy: { createdAt: "desc" },
+          include: { reviewer: { select: { id: true, name: true, email: true, role: true } } },
+        },
+        comments: {
+          where: { parentId: null },
+          orderBy: { createdAt: "asc" },
+          include: {
+            author: { select: { id: true, name: true, email: true, role: true } },
+            replies: {
+              orderBy: { createdAt: "asc" },
+              include: { author: { select: { id: true, name: true, email: true, role: true } } },
+            },
           },
         },
       },
-    },
-  });
+    });
+    if (result) {
+      doc = result;
+      reviews = (result as { reviews?: unknown[] }).reviews ?? [];
+      comments = (result as { comments?: unknown[] }).comments ?? [];
+    }
+  } catch (err) {
+    // Schema drift: old DB has generatedDocumentId column instead of documentId.
+    // Retry without the broken includes so callers still get the document fields.
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes("documentId") || msg.includes("does not exist") || msg.includes("column")) {
+      doc = await prisma.generatedDocument.findFirst({ where: { id: docId, tenderId } });
+      // reviews and comments stay as empty arrays — run ?step=schema-drift to fix
+    } else {
+      throw err;
+    }
+  }
 
   if (!doc) return NextResponse.json({ error: "Document not found" }, { status: 404 });
 
@@ -67,8 +97,8 @@ export async function GET(
       reviewedBy: doc.reviewedBy,
       reviewedAt: doc.reviewedAt,
     },
-    reviews: doc.reviews,
-    comments: doc.comments,
+    reviews,
+    comments,
   });
 }
 

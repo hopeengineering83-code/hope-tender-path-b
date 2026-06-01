@@ -746,25 +746,31 @@ async function bootstrap(client: PrismaClient): Promise<void> {
 
 
   // ── DocumentReview / DocumentComment — per-document approval workflow ────
+  // Column names match the Prisma schema exactly (documentId, reviewerId,
+  // action, notes, priorStatus, newStatus). The old bootstrap used
+  // generatedDocumentId / reviewNotes / reviewStatus which caused
+  // "column does not exist" crashes in the Run Engine (schema drift fix).
   await client.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "DocumentReview" (
     "id" TEXT NOT NULL PRIMARY KEY,
-    "generatedDocumentId" TEXT NOT NULL,
-    "reviewerId" TEXT,
-    "reviewStatus" TEXT NOT NULL DEFAULT 'PENDING',
-    "reviewNotes" TEXT,
+    "documentId" TEXT NOT NULL,
+    "reviewerId" TEXT NOT NULL,
+    "action" TEXT NOT NULL,
+    "notes" TEXT,
+    "priorStatus" TEXT NOT NULL,
+    "newStatus" TEXT NOT NULL,
     "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    FOREIGN KEY ("generatedDocumentId") REFERENCES "GeneratedDocument"("id") ON DELETE CASCADE
+    FOREIGN KEY ("documentId") REFERENCES "GeneratedDocument"("id") ON DELETE CASCADE
   )`);
   await client.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "DocumentComment" (
     "id" TEXT NOT NULL PRIMARY KEY,
-    "generatedDocumentId" TEXT NOT NULL,
-    "authorId" TEXT,
+    "documentId" TEXT NOT NULL,
+    "authorId" TEXT NOT NULL,
     "body" TEXT NOT NULL,
+    "parentId" TEXT,
     "resolved" BOOLEAN NOT NULL DEFAULT FALSE,
     "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    FOREIGN KEY ("generatedDocumentId") REFERENCES "GeneratedDocument"("id") ON DELETE CASCADE
+    FOREIGN KEY ("documentId") REFERENCES "GeneratedDocument"("id") ON DELETE CASCADE
   )`);
 
   // ── indexes (each wrapped so one failure never blocks the rest) ──────────
@@ -807,8 +813,9 @@ async function bootstrap(client: PrismaClient): Promise<void> {
     `CREATE INDEX IF NOT EXISTS "TenderRequirement_tenderId_idx" ON "TenderRequirement"("tenderId")`,
     `CREATE INDEX IF NOT EXISTS "TenderRequirement_sourceTenderFileId_idx" ON "TenderRequirement"("sourceTenderFileId")`,
     // DocumentReview / DocumentComment
-    `CREATE INDEX IF NOT EXISTS "DocumentReview_generatedDocumentId_idx" ON "DocumentReview"("generatedDocumentId")`,
-    `CREATE INDEX IF NOT EXISTS "DocumentComment_generatedDocumentId_idx" ON "DocumentComment"("generatedDocumentId")`,
+    `CREATE INDEX IF NOT EXISTS "DocumentReview_documentId_createdAt_idx" ON "DocumentReview"("documentId", "createdAt")`,
+    `CREATE INDEX IF NOT EXISTS "DocumentReview_reviewerId_idx" ON "DocumentReview"("reviewerId")`,
+    `CREATE INDEX IF NOT EXISTS "DocumentComment_documentId_idx" ON "DocumentComment"("documentId")`,
   ];
   for (const sql of idxStatements) {
     try { await client.$executeRawUnsafe(sql); } catch (e) {

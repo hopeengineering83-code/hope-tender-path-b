@@ -197,7 +197,14 @@ export function ExecutiveSnapshot({ tender }: { tender: TenderLike }) {
     submissionPlan.warnings.length > 0 ? submissionPlan.warnings[0] : null,
   ].filter(Boolean) as string[];
 
-  const clearForHumanReview = decision === "GO" && nextActions.length === 0;
+  // Belt-and-suspenders: never show green "No major blockers" when evidence
+  // rows = 0 and requirements exist, or when no expert/project evidence is
+  // selected and requirements exist. The nextActions check above should catch
+  // these, but this guard prevents edge cases where the conditions slip through.
+  const clearForHumanReview = decision === "GO"
+    && nextActions.length === 0
+    && !(hasRequirements && !hasConfirmedEvidenceRows)   // never green with 0 evidence rows
+    && !(hasRequirements && !hasSelectedEvidence);        // never green with 0 selected evidence
 
   return (
     <section className="mb-6 rounded-2xl border bg-white p-5 shadow-sm">
