@@ -256,7 +256,7 @@ export function ExecutiveSnapshot({ tender }: { tender: TenderLike }) {
               {nextActions.slice(0, 6).map((action) => <li key={action}>{action}</li>)}
             </ol>
           ) : clearForHumanReview ? (
-            <p className="mt-2 text-sm text-green-700">No major blockers detected. Proceed to final human review and export package.</p>
+            <p className="mt-2 text-sm text-green-700">No major snapshot blockers detected. Continue to canonical final submission/export readiness before releasing the package.</p>
           ) : (
             <p className="mt-2 text-sm text-amber-700">Readiness is not final. Open the Full Command Center and resolve canonical readiness/export blockers before final submission.</p>
           )}

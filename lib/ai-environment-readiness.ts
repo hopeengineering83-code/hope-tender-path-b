@@ -28,7 +28,7 @@ export function getAIEnvironmentReadiness(): AIEnvironmentReadiness {
     status("ANTHROPIC_TIER", "ai", "recommended", "Used to select Claude output-token defaults; Tier 2 supports larger proposal outputs than Tier 1."),
     status("ANTHROPIC_MAX_OUTPUT_TOKENS", "ai", "recommended", "Controls Claude proposal output budget. Use a realistic value for your Vercel timeout and Anthropic tier."),
     status("ANTHROPIC_PROPOSAL_MODELS", "ai", "recommended", "Comma-separated Claude model chain for proposal generation."),
-    status("GEMINI_API_KEY", "ai", "critical", "Gemini fallback provider and fast analysis/extraction model."),
+    status("GEMINI_API_KEY", "ai", "critical", "Gemini analysis/extraction primary and second-tier proposal fallback provider."),
     status("GEMINI_MODEL", "ai", "recommended", "Default Gemini model for general AI calls."),
     status("GEMINI_ANALYSIS_MODEL", "ai", "recommended", "Gemini model for tender analysis when configured."),
     status("GEMINI_EXTRACTION_MODEL", "ai", "recommended", "Gemini model for company knowledge extraction when configured."),

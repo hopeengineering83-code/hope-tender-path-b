@@ -1476,7 +1476,7 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
                     const notConfigured = analyzeResult.providerDiagnostics.perProvider.filter((p) => !p.configured);
                     const cooling = configured.filter((p) => p.coolingDown);
                     if (configured.length === 0 && notConfigured.length > 0) {
-                      return <p className="text-xs text-red-700 font-medium">No AI providers configured. Set ANTHROPIC_API_KEY, GEMINI_API_KEY, GROQ_API_KEY, or OPENROUTER_API_KEY in Vercel environment variables.</p>;
+                      return <p className="text-xs text-red-700 font-medium">No AI providers configured. Set OPENAI_API_KEY, GEMINI_API_KEY, DEEPSEEK_API_KEY, GROQ_API_KEY, OPENROUTER_API_KEY, or ANTHROPIC_API_KEY in Vercel environment variables.</p>;
                     }
                     return (
                       <details className="text-xs">
