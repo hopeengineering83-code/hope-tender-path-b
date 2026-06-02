@@ -56,10 +56,14 @@ const AI_PROVIDER_KEYS = [
   {
     name: "GEMINI_API_KEY",
     description:
-      "Google Gemini API key (AIza..., 39 chars). Primary analysis/extraction provider and second-tier proposal fallback. Without any AI provider key, imported records remain REGEX_DRAFT only.",
+      "Google Gemini API key (AIza... legacy or AQ... new format). Primary analysis/extraction provider and second-tier proposal fallback. Without any AI provider key, imported records remain REGEX_DRAFT only.",
     validate: (v) => {
-      if (!v.startsWith("AIza")) return `Expected a Gemini API key starting with "AIza". Got: "${v.slice(0, 8)}..." — check you have not set an Anthropic or OpenAI key here.`;
-      if (v.length < 35) return `Gemini API key is too short (${v.length} chars). A real key is 39 characters.`;
+      // Google AI Studio keys have historically started with "AIza" (39 chars).
+      // Newer projects issue keys starting with "AQ" — accept both formats.
+      if (!v.startsWith("AIza") && !v.startsWith("AQ")) {
+        return `Expected a Gemini API key starting with "AIza" or "AQ". Got: "${v.slice(0, 8)}..." — check you have not set an Anthropic or OpenAI key here.`;
+      }
+      if (v.length < 20) return `Gemini API key is too short (${v.length} chars).`;
       return null;
     },
   },
