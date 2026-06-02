@@ -2,10 +2,7 @@ import { getSession } from "../lib/auth";
 import { prisma, prismaReady } from "../lib/prisma";
 import { getTenderGenerationReadiness } from "../lib/tender-generation-readiness";
 import { getFinalSubmissionReadiness } from "../lib/engine/final-submission-readiness";
-<<<<<<< HEAD
-=======
 import { BidDecisionForm } from "./bid-decision-form";
->>>>>>> origin/main
 
 type Verdict = "BID_READY" | "BID_READY_WITH_WARNINGS" | "NOT_READY" | "NO_BID";
 
@@ -55,10 +52,7 @@ export async function BidControlVerdictPanel({ tenderId }: { tenderId: string })
         id: true,
         title: true,
         status: true,
-<<<<<<< HEAD
-=======
         notes: true,
->>>>>>> origin/main
         complianceGaps: { where: { isResolved: false, severity: { in: ["CRITICAL", "HIGH"] } }, select: { id: true, severity: true } },
       },
     }),
@@ -118,15 +112,6 @@ export async function BidControlVerdictPanel({ tenderId }: { tenderId: string })
   // documents need reconciliation. When plan files exist, show the
   // resolved/total count derived from the canonical plan status.
   const planLabel = (() => {
-<<<<<<< HEAD
-    if (planStatus === "NO_PLAN_WITH_ACTIVE_DOCS") return "Mismatch";
-    if (planStatus === "PLAN_MATCHED") return "Plan ✓";
-    if (planStatus === "PLAN_MISSING_DOCS") return "Missing";
-    if (planStatus === "PLAN_EXTRA_DOCS") return "Extras";
-    if (planStatus === "PLAN_NAME_MISMATCH" || planStatus === "PLAN_ORDER_MISMATCH") return "Mismatch";
-    return "—";
-  })();
-=======
     if (planStatus === "NO_PLAN_WITH_ACTIVE_DOCS") return "Not detected";
     if (planStatus === "NO_PLAN_NO_DOCS") return "Not detected";
     if (planStatus === "PLAN_MATCHED") return "Plan matched ✓";
@@ -147,7 +132,6 @@ export async function BidControlVerdictPanel({ tenderId }: { tenderId: string })
   const fullProposalBlockReason = !fullProposalReady && fullProposalBlockers.length > 0
     ? fullProposalBlockers[0].message
     : null;
->>>>>>> origin/main
 
   return (
     <section className={`mb-4 rounded-2xl border p-5 shadow-sm ${verdictClass(verdict)}`}>
@@ -174,17 +158,10 @@ export async function BidControlVerdictPanel({ tenderId }: { tenderId: string })
           <p className="text-xs text-slate-500">Support pkg</p>
           <p className={`text-lg font-bold ${supportPackageReady ? "text-emerald-700" : "text-red-700"}`}>{supportPackageReady ? "Ready" : "Blocked"}</p>
         </div>
-<<<<<<< HEAD
-        <div className="rounded-xl bg-white p-3" title="Submission plan status (NO_PLAN_NO_DOCS / NO_PLAN_WITH_ACTIVE_DOCS / PLAN_MATCHED / PLAN_MISSING_DOCS / PLAN_EXTRA_DOCS / PLAN_ORDER_MISMATCH / PLAN_NAME_MISMATCH)."><p className="text-xs text-slate-500">Plan files</p><p className="text-lg font-bold text-slate-900">{planLabel}</p></div>
-        <div className="rounded-xl bg-white p-3" title={`Workspace rows: ${workspaceDocuments}. Final export candidates: ${finalExportCandidates}. Excluded internal/control rows: ${excludedInternalRows}.`}><p className="text-xs text-slate-500">Workspace · Final</p><p className="text-lg font-bold text-slate-900">{workspaceDocuments} · {finalExportCandidates}</p></div>
-        <div className="rounded-xl bg-white p-3"><p className="text-xs text-slate-500">Doc blockers</p><p className={`text-lg font-bold ${documentBlockersCount === 0 ? "text-emerald-700" : "text-red-700"}`}>{documentBlockersCount}</p></div>
-        <div className="rounded-xl bg-white p-3"><p className="text-xs text-slate-500">Critical gaps</p><p className={`text-lg font-bold ${criticalGaps.length === 0 ? "text-emerald-700" : "text-red-700"}`}>{criticalGaps.length}</p></div>
-=======
         <div className="rounded-xl bg-white p-3" title="Submission plan status (NO_PLAN_NO_DOCS / NO_PLAN_WITH_ACTIVE_DOCS / PLAN_MATCHED / PLAN_MISSING_DOCS / PLAN_EXTRA_DOCS / DERIVED_PLAN_UNCONFIRMED / PLAN_ORDER_MISMATCH / PLAN_NAME_MISMATCH)."><p className="text-xs text-slate-500">Plan files</p><p className={`text-lg font-bold ${planStatus === "PLAN_MATCHED" ? "text-emerald-700" : "text-slate-900"}`}>{planLabel}</p>{planLabelNote && <p className="mt-0.5 text-[10px] text-amber-600 leading-tight">{planLabelNote}</p>}</div>
         <div className="rounded-xl bg-white p-3" title={`Workspace rows: ${workspaceDocuments}. Final export candidates: ${finalExportCandidates}. Excluded internal/control rows: ${excludedInternalRows}.`}><p className="text-xs text-slate-500">Workspace / export</p><p className="text-lg font-bold text-slate-900">{workspaceDocuments} / {finalExportCandidates}</p>{workspaceDocuments > 0 && finalExportCandidates === 0 && <p className="mt-0.5 text-[10px] text-amber-600 leading-tight">{workspaceDocuments} workspace rows, 0 export candidates — review quality/classification</p>}</div>
         <div className="rounded-xl bg-white p-3"><p className="text-xs text-slate-500">Doc blockers</p><p className={`text-lg font-bold ${documentBlockersCount === 0 ? "text-emerald-700" : "text-red-700"}`}>{documentBlockersCount}</p></div>
         <div className="rounded-xl bg-white p-3" title="Registered critical/high compliance gaps (not the same as lifecycle blockers). Use the Recovery Command Center for full blocker list."><p className="text-xs text-slate-500">Registered gaps</p><p className={`text-lg font-bold ${criticalGaps.length + highGaps.length === 0 ? "text-emerald-700" : "text-red-700"}`}>{criticalGaps.length + highGaps.length}</p><p className="text-[10px] text-slate-400">{criticalGaps.length} critical, {highGaps.length} high</p></div>
->>>>>>> origin/main
         <div className="rounded-xl bg-white p-3" title="Canonical Export Gate result. Yes only when canonical.ok === true; advisories never flip this to No."><p className="text-xs text-slate-500">Ready for export</p><p className={`text-lg font-bold ${canonical.ok ? "text-emerald-700" : "text-red-700"}`}>{readyForExportLabel}</p></div>
       </div>
 

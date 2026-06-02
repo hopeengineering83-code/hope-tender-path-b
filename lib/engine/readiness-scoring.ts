@@ -329,8 +329,6 @@ export function computeReadinessScore(input: ReadinessScoreInput): ReadinessScor
       reason: "Analysis came from regex fallback. Readiness is capped at 45 until AI analysis is re-run or a human explicitly approves the fallback analysis.",
     });
   }
-<<<<<<< HEAD
-=======
   if (input.analysisSource === "HUMAN_APPROVED_REGEX_FALLBACK") {
     // A human approved the regex-fallback analysis, so generation is allowed —
     // but readiness stays capped at 70 unless every critical dimension that the
@@ -350,7 +348,6 @@ export function computeReadinessScore(input: ReadinessScoreInput): ReadinessScor
       });
     }
   }
->>>>>>> origin/main
   if (
     (input.metadataCompletenessRatio ?? 0) < 0.6 ||
     (input.metadataInvalidCount ?? 0) > 0

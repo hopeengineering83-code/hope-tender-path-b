@@ -15,11 +15,7 @@ import {
   isAdvisoryCode,
 } from "../lib/engine/final-submission-readiness";
 
-<<<<<<< HEAD
-const { severityForReasons, nextActionForReason, derivePlanStatus, applyAdvisoryResolutions, buildMessage, detectMessageType } = __testing__;
-=======
 const { severityForReasons, nextActionForReason, derivePlanStatus, applyAdvisoryResolutions, buildMessage, detectMessageType, mandatoryEvidenceCoverageRatio } = __testing__;
->>>>>>> origin/main
 
 describe("final-submission-readiness — severityForReasons", () => {
   it("returns HIGH for missing-content reasons", () => {
@@ -82,12 +78,9 @@ describe("final-submission-readiness — derivePlanStatus", () => {
   it("PLAN_NAME_MISMATCH when names diverge but counts align", () => {
     assert.equal(derivePlanStatus({ requiredPlanCount: 2, finalCandidateCount: 2, missingCount: 0, extraCount: 0, nameMismatch: true, orderMismatch: false }), "PLAN_NAME_MISMATCH");
   });
-<<<<<<< HEAD
-=======
   it("DERIVED_PLAN_UNCONFIRMED when a derived plan matches counts but lacks tender-issued scope", () => {
     assert.equal(derivePlanStatus({ requiredPlanCount: 2, finalCandidateCount: 2, missingCount: 0, extraCount: 0, nameMismatch: false, orderMismatch: false, hasExplicitScope: false }), "DERIVED_PLAN_UNCONFIRMED");
   });
->>>>>>> origin/main
 });
 
 describe("final-submission-readiness — applyAdvisoryResolutions", () => {
@@ -164,8 +157,6 @@ describe("final-submission-readiness — detectMessageType", () => {
     assert.equal(out.originalRequired, 1);
   });
 });
-<<<<<<< HEAD
-=======
 
 describe("final-submission-readiness — mandatory evidence coverage truth", () => {
   it("selected/unconfirmed evidence suggestions do not count without complianceMatrix rows", () => {
@@ -192,4 +183,3 @@ describe("final-submission-readiness — mandatory evidence coverage truth", () 
     assert.equal(ratio, 2 / 3);
   });
 });
->>>>>>> origin/main

@@ -42,10 +42,7 @@ import {
 } from "./document-output-state";
 import {
   buildSubmissionPlan,
-<<<<<<< HEAD
-=======
   hasExplicitSubmissionScope,
->>>>>>> origin/main
   findExtraGeneratedDocuments,
   findMissingGeneratedDocuments,
   inferEnvelope,
@@ -57,10 +54,7 @@ import { assessGeneratedDocumentQuality } from "./document-quality-gate";
 import { assessTenderMetadataCompleteness } from "./tender-metadata-completeness";
 import { detectAnalysisSourceWithApproval, type AnalysisSource } from "./analysis-source";
 import { computeReadinessScore } from "./readiness-scoring";
-<<<<<<< HEAD
-=======
 import { isStrongSupportLevel, normalizeSupportLevel } from "./requirement-evidence-profile";
->>>>>>> origin/main
 
 export type FinalReadinessSeverity = "HIGH" | "MEDIUM" | "LOW";
 
@@ -92,10 +86,7 @@ export type FinalReadinessPlanStatus =
   | "PLAN_MATCHED"
   | "PLAN_MISSING_DOCS"
   | "PLAN_EXTRA_DOCS"
-<<<<<<< HEAD
-=======
   | "DERIVED_PLAN_UNCONFIRMED"
->>>>>>> origin/main
   | "PLAN_ORDER_MISMATCH"
   | "PLAN_NAME_MISMATCH";
 
@@ -138,8 +129,6 @@ export type FinalReadinessSummary = {
   readinessScore: number;
   /** Human-readable reason for the binding cap (if any), else null. */
   readinessCapReason: string | null;
-<<<<<<< HEAD
-=======
   /** The scoring dimension that applied the binding cap (e.g. "analysisSource", "evidence"), or null. */
   readinessCapDimension: string | null;
   /** The cap score value (0–100) applied by the binding cap, or null. */
@@ -148,7 +137,6 @@ export type FinalReadinessSummary = {
   ungeneratedPlannedRequired: number;
   /** List of exact missing critical metadata field names. */
   missingCriticalMetadataFields: string[];
->>>>>>> origin/main
 };
 
 export type FinalSubmissionReadiness = {
@@ -193,8 +181,6 @@ function nextActionForReason(reason: string): string {
   return "Review and resolve this blocker before final export.";
 }
 
-<<<<<<< HEAD
-=======
 function mandatoryEvidenceCoverageRatio(requirements: Array<{
   priority?: string | null;
   complianceMatrixRows?: Array<{ supportLevel?: string | null }> | null;
@@ -207,7 +193,6 @@ function mandatoryEvidenceCoverageRatio(requirements: Array<{
   return confirmedCovered / mandatory.length;
 }
 
->>>>>>> origin/main
 function severityForReasons(reasons: string[]): FinalReadinessSeverity {
   if (reasons.some((r) =>
     /NO_ACTIVE_GENERATED_DOCUMENTS|fileContent|generationStatus|CONTROL|ORIGINAL_REQUIRED|PDF_CONVERSION_REQUIRED|NOT_EXPORTABLE|REPLACE_WITH_ORIGINAL|PLANNED|MISSING_CONTENT/i.test(r),
@@ -251,10 +236,7 @@ function derivePlanStatus(opts: {
   extraCount: number;
   nameMismatch: boolean;
   orderMismatch: boolean;
-<<<<<<< HEAD
-=======
   hasExplicitScope?: boolean;
->>>>>>> origin/main
 }): FinalReadinessPlanStatus {
   const { requiredPlanCount, finalCandidateCount, missingCount, extraCount, nameMismatch, orderMismatch } = opts;
   if (requiredPlanCount === 0 && finalCandidateCount === 0) return "NO_PLAN_NO_DOCS";
@@ -263,10 +245,7 @@ function derivePlanStatus(opts: {
   if (extraCount > 0) return "PLAN_EXTRA_DOCS";
   if (nameMismatch) return "PLAN_NAME_MISMATCH";
   if (orderMismatch) return "PLAN_ORDER_MISMATCH";
-<<<<<<< HEAD
-=======
   if (requiredPlanCount > 0 && opts.hasExplicitScope === false) return "DERIVED_PLAN_UNCONFIRMED";
->>>>>>> origin/main
   return "PLAN_MATCHED";
 }
 
@@ -281,11 +260,7 @@ function detectMessageType(failures: ExportReadinessFailure[]): {
   let hygiene = 0;
   let originalRequired = 0;
   for (const f of failures) {
-<<<<<<< HEAD
-    if (f.reasons.some((r) => /fileContent is missing|MISSING_CONTENT|DOCUMENTS_MISSING_CONTENT|no file content/i.test(r))) missingContent += 1;
-=======
     if (f.reasons.some((r) => /fileContent is missing|MISSING_CONTENT|DOCUMENTS_MISSING_CONTENT|no file content|Unable to inspect storage-backed/i.test(r))) missingContent += 1;
->>>>>>> origin/main
     if (f.reasons.some((r) => /signature mismatch|not a real PDF|signature/i.test(r))) invalidSignature += 1;
     if (f.reasons.some((r) => /AI\/meta-preparation|Placeholder|pricing language|hygiene/i.test(r))) hygiene += 1;
     if (f.reasons.some((r) => /ORIGINAL_REQUIRED|REPLACE_WITH_ORIGINAL|NOT_EXPORTABLE|tender-issued original/i.test(r))) originalRequired += 1;
@@ -441,12 +416,9 @@ export async function getFinalSubmissionReadiness(
           restrictions: true,
           sectionReference: true,
           sourceConfidence: true,
-<<<<<<< HEAD
-=======
           complianceMatrixRows: {
             select: { id: true, supportLevel: true },
           },
->>>>>>> origin/main
         },
       },
       generatedDocuments: {
@@ -525,8 +497,6 @@ export async function getFinalSubmissionReadiness(
     requirements: tender.requirements,
   });
   const requiredPlanCount = submissionPlanFileCount(plan);
-<<<<<<< HEAD
-=======
   const hasExplicitPlanScope = hasExplicitSubmissionScope({
     id: tender.id,
     title: tender.title,
@@ -535,7 +505,6 @@ export async function getFinalSubmissionReadiness(
     pageLimit: tender.pageLimit,
     requirements: tender.requirements,
   });
->>>>>>> origin/main
   const missingPlan = findMissingGeneratedDocuments(plan, finalCandidates);
   const extraPlan = findExtraGeneratedDocuments(plan, finalCandidates);
   const planNames = new Set(plan.files.map((f) => f.exactFileName.toLowerCase().trim()));
@@ -630,37 +599,8 @@ export async function getFinalSubmissionReadiness(
     ? 0
     : tender.requirements.filter((r) => (r.sourceConfidence ?? 0) > 0 || (r.sectionReference ?? "").trim().length > 0).length / tender.requirements.length;
 
-<<<<<<< HEAD
-  // ── Readiness scoring (Part 3) — weighted, with hard caps. ───────────────
-  const readinessScoreResult = computeReadinessScore({
-    analysisSource,
-    metadataCompletenessRatio: metadata.overallRatio,
-    metadataInvalidCount: metadata.invalidFields.length,
-    sourceReferenceCoverage,
-    // The canonical helper does not run a full evidence-coverage pass on
-    // every call (that would re-load the company vault). The readiness
-    // panel separately surfaces evidence-readiness; here we approximate
-    // by counting MANDATORY requirements that have a compliance-matrix
-    // row OR a non-zero sourceConfidence. This is conservative enough
-    // for the cap to kick in when evidence is clearly absent.
-    evidenceCoverage: tender.requirements.length === 0 ? 0 : tender.requirements.filter((r) => r.priority === "MANDATORY" && ((r.sourceConfidence ?? 0) > 0 || (r.sectionReference ?? "").trim().length > 0)).length / Math.max(1, tender.requirements.filter((r) => r.priority === "MANDATORY").length),
-    requiredDocumentsTotal: requiredPlanCount,
-    requiredDocumentsSatisfied: Math.max(0, requiredPlanCount - missingPlan.length),
-    outsidePlanDocuments: extraPlan.length,
-    qualityFailedDocuments: qualityFailed,
-    finalExportCandidatesCount: finalCandidates.length,
-    readyForExportCount: finalCandidates.filter((d) => /READY_FOR_EXPORT|APPROVED/i.test(d.reviewStatus ?? "")).length,
-    finalExportGateOk: readiness.ok && documentBlockers.length === 0 && tenderLevelBlockers.length === 0,
-  });
-
-  // Surface a tender-level blocker when the canonical gate would otherwise
-  // pass but the metadata gate is failing. This is the only place where the
-  // canonical helper adds *new* tender-level blockers on top of
-  // checkTenderLevelExportBlockers — every other case is upstream.
-=======
   // ── Tender-level blockers (computed before readiness score so the gate
   //    flag is accurate). ─────────────────────────────────────────────────────
->>>>>>> origin/main
   if (metadata.blockingForGeneration) {
     tenderLevelBlockers.push({
       category: "METADATA_INCOMPLETE_FOR_FINAL_GENERATION",
@@ -677,8 +617,6 @@ export async function getFinalSubmissionReadiness(
       recommendedAction: "Review the flagged documents in the Export Readiness panel; rewrite or attach official originals before export.",
     });
   }
-<<<<<<< HEAD
-=======
   if (requiredPlanCount > 0 && !hasExplicitPlanScope) {
     tenderLevelBlockers.push({
       category: "SUBMISSION_PLAN_DERIVED_UNCONFIRMED",
@@ -687,7 +625,6 @@ export async function getFinalSubmissionReadiness(
       recommendedAction: "Review the Submission Plan Completeness panel, then confirm exact file names/order from the tender before final export. Do not treat derived rows as official tender forms.",
     });
   }
->>>>>>> origin/main
   if (analysisSource === "REGEX_FALLBACK_AI_ERROR") {
     tenderLevelBlockers.push({
       category: "ANALYSIS_REGEX_FALLBACK_UNAPPROVED",
@@ -697,8 +634,6 @@ export async function getFinalSubmissionReadiness(
     });
   }
 
-<<<<<<< HEAD
-=======
   // OPEN HIGH evaluator objections are hard blockers — the evaluator committee
   // flagged a critical gap the proposal must address before submission.
   const openHighObjections = await client.evaluatorObjection.count({
@@ -736,7 +671,6 @@ export async function getFinalSubmissionReadiness(
     finalExportGateOk: readiness.ok && documentBlockers.length === 0 && tenderLevelBlockers.length === 0,
   });
 
->>>>>>> origin/main
   const summary: FinalReadinessSummary = {
     totalBlockers: documentBlockers.length + tenderLevelBlockers.length,
     documentBlockers: documentBlockers.length,
@@ -759,10 +693,7 @@ export async function getFinalSubmissionReadiness(
       extraCount: extraPlan.length,
       nameMismatch,
       orderMismatch,
-<<<<<<< HEAD
-=======
       hasExplicitScope: hasExplicitPlanScope,
->>>>>>> origin/main
     }),
     // ── Gate extensions ───────────────────────────────────────────────────
     qualityFailedDocuments: qualityFailed,
@@ -775,13 +706,10 @@ export async function getFinalSubmissionReadiness(
     metadataCompletenessRatio: metadata.overallRatio,
     readinessScore: readinessScoreResult.score,
     readinessCapReason: readinessScoreResult.appliedCap?.reason ?? null,
-<<<<<<< HEAD
-=======
     readinessCapDimension: readinessScoreResult.appliedCap?.dimension ?? null,
     readinessCapScore: readinessScoreResult.appliedCap?.capScore ?? null,
     ungeneratedPlannedRequired: tender.generatedDocuments.filter((d) => (d.generationStatus ?? "").toUpperCase() === "PLANNED").length,
     missingCriticalMetadataFields: metadata.missingCritical.map((f) => f.field),
->>>>>>> origin/main
   };
 
   const ok = readiness.ok && documentBlockers.length === 0 && tenderLevelBlockers.length === 0;
@@ -794,13 +722,9 @@ export async function getFinalSubmissionReadiness(
       title: tender.title,
       status: tender.status,
       stage: tender.stage,
-<<<<<<< HEAD
-      readinessScore: tender.readinessScore ?? 0,
-=======
       // Mirror the canonical gated score in API responses so callers do not
       // accidentally display the legacy DB workflow-progress column as final readiness.
       readinessScore: readinessScoreResult.score,
->>>>>>> origin/main
     },
     documentBlockers,
     tenderLevelBlockers,
@@ -819,10 +743,7 @@ export const __testing__ = {
   applyAdvisoryResolutions,
   buildMessage,
   detectMessageType,
-<<<<<<< HEAD
-=======
   mandatoryEvidenceCoverageRatio,
->>>>>>> origin/main
 };
 
 // Re-export shared types so consumers don't need to also import from

@@ -87,8 +87,6 @@ export type AuditAction =
   // analysis source was an unapproved regex fallback (see
   // lib/engine/analysis-source.ts).
   | "GENERATION_BLOCKED_REGEX_FALLBACK"
-<<<<<<< HEAD
-=======
   // Bulk reassessment of generated documents against the quality gate.
   // POST /api/admin/generated-proposals/reassess records this with the
   // demoted-count + inspected-count in description.
@@ -97,7 +95,6 @@ export type AuditAction =
   // (OpenAI → Gemini → Mistral → DeepSeek → Groq → Together → OpenRouter → Claude). Tracked so
   // an operator can confirm a fallback was attempted before regex was used.
   | "AI_PROVIDER_FAILOVER"
->>>>>>> origin/main
   // Knowledge vault — expert and project lifecycle events.
   | "EXPERT_CREATE" | "EXPERT_UPDATE" | "EXPERT_DELETE" | "EXPERT_REVIEW"
   | "PROJECT_CREATE" | "PROJECT_UPDATE" | "PROJECT_DELETE" | "PROJECT_REVIEW"

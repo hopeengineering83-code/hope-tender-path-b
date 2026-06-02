@@ -69,13 +69,6 @@ describe("readiness scoring — HARD CAP: regex fallback analysis", () => {
     assert.ok(r.score <= 45, `expected ≤45, got ${r.score}`);
     assert.equal(r.appliedCap?.dimension, "analysisSource");
   });
-<<<<<<< HEAD
-  it("does NOT cap when analysis source is HUMAN_APPROVED_REGEX_FALLBACK", () => {
-    const r = computeReadinessScore({ ...fullyHealthyInput(), analysisSource: "HUMAN_APPROVED_REGEX_FALLBACK" });
-    // Approved fallback still scores lower in the dimension but no cap kicks in.
-    assert.equal(r.applicableCaps.find((c) => c.dimension === "analysisSource"), undefined);
-  });
-=======
   it("does NOT cap when analysis source is HUMAN_APPROVED_REGEX_FALLBACK and fully verified", () => {
     const r = computeReadinessScore({ ...fullyHealthyInput(), analysisSource: "HUMAN_APPROVED_REGEX_FALLBACK" });
     // Approved fallback still scores lower in the dimension but no cap kicks in
@@ -105,7 +98,6 @@ describe("readiness scoring — HARD CAP: regex fallback analysis", () => {
     assert.ok(cap, "expected an analysisSource cap");
     assert.equal(cap?.capScore, 70);
   });
->>>>>>> origin/main
 });
 
 describe("readiness scoring — HARD CAP: critical metadata missing", () => {

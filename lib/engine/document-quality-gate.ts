@@ -32,8 +32,6 @@
 import { documentHygieneIssues } from "./export-readiness";
 import { looksLikeMetadataPlaceholder, METADATA_PLACEHOLDER_PATTERNS } from "./tender-metadata-completeness";
 
-<<<<<<< HEAD
-=======
 // ── Document-type gating ─────────────────────────────────────────────────────
 
 export type DocumentGatingCategory =
@@ -235,7 +233,6 @@ function buildNonNarrativeReport(
   };
 }
 
->>>>>>> origin/main
 export type DocumentQualitySeverity = "GOOD" | "WARNING" | "POOR" | "FAILED";
 
 export type DocumentQualityRecommendedStatus =
@@ -502,8 +499,6 @@ function recommendStatus(score: number, severity: DocumentQualitySeverity, issue
 export function assessGeneratedDocumentQuality(input: DocumentQualityInput): DocumentQualityReport {
   const doc = input.doc;
   const label = labelOf(doc);
-<<<<<<< HEAD
-=======
 
   // ── Document-type gate: non-narrative docs skip quality assessment ─────────
   // Official originals, financial/legal evidence, CV packages, submission rules,
@@ -515,7 +510,6 @@ export function assessGeneratedDocumentQuality(input: DocumentQualityInput): Doc
     return buildNonNarrativeReport(gatingCategory, label, input);
   }
 
->>>>>>> origin/main
   const text = normalize(input.visibleText);
   const wordCount = text ? text.split(/\s+/).filter(Boolean).length : 0;
   const sectionCount = countSections(text);

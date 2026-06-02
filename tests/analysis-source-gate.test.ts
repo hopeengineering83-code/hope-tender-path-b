@@ -66,8 +66,6 @@ describe("generate route — regex fallback gate", () => {
     assert.match(source, /await\s+assertAnalysisReadyForFinalGeneration\(/);
   });
 });
-<<<<<<< HEAD
-=======
 
 describe("generation-readiness route — canonical analysis-source helper", () => {
   it("imports detectAnalysisSourceWithApproval, not a local regex", async () => {
@@ -116,4 +114,3 @@ describe("generation-readiness route — canonical analysis-source helper", () =
     assert.match(source, /REPAIR_OR_EDIT_TENDER/);
   });
 });
->>>>>>> origin/main

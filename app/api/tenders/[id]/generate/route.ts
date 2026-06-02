@@ -21,10 +21,7 @@ import { computeStoredMetadataPatch, listInvalidStoredFields } from "../../../..
 import { isValidClientName } from "../../../../../lib/engine/metadata-validators";
 import { repairSourceGrounding } from "../../../../../lib/engine/repair-source-grounding";
 import { assertAnalysisReadyForFinalGeneration } from "../../../../../lib/engine/analysis-source";
-<<<<<<< HEAD
-=======
 import { assessTenderMetadataCompleteness } from "../../../../../lib/engine/tender-metadata-completeness";
->>>>>>> origin/main
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -267,8 +264,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }, { status: 422 });
   }
 
-<<<<<<< HEAD
-=======
   // ── Metadata completeness gate ────────────────────────────────────────────
   // Blocks generation when critical metadata is missing or placeholder-filled
   // (e.g. client name "Bid-Team to confirm", no submission endpoint, no deadline).
@@ -334,7 +329,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     return NextResponse.json({ planBuilt: true, planRowsCreated, plannedFileCount: plannedFiles.length, message: `Submission plan built — ${planRowsCreated} planned document stub(s) created from ${plannedFiles.length} required file(s).` });
   }
 
->>>>>>> origin/main
   // ── Regex-fallback analysis gate (Part 4) ────────────────────────────────
   // If the last engine run fell back to regex analysis because AI providers
   // failed, do not produce a final proposal unless a senior engineer has

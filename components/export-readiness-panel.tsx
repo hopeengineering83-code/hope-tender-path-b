@@ -115,11 +115,7 @@ export function ExportReadinessPanel({ tenderId }: { tenderId: string }) {
   const [repairingAssets, setRepairingAssets] = useState(false);
   const fileInputs = useRef<Record<string, HTMLInputElement | null>>({});
 
-<<<<<<< HEAD
-  const busy = loading || repairing || linkingVault || supersedingOutsidePlan || autoFinalizing || generatingMissing || Boolean(attachingDocId) || Boolean(resolvingAdvisory);
-=======
   const busy = loading || repairing || linkingVault || supersedingOutsidePlan || autoFinalizing || generatingMissing || Boolean(attachingDocId) || Boolean(resolvingAdvisory) || retryingAnalysis || repairingSource || reclassifying || deduplicating || repairingAssets;
->>>>>>> origin/main
 
   async function refresh() {
     setLoading(true);
