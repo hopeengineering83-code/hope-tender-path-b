@@ -189,7 +189,43 @@ export default function TenderRecoveryCommandCenter({ tenderId }: { tenderId: st
       } else if (action === "DOWNLOAD_FINAL_ZIP") {
         window.location.href = `/api/tenders/${tenderId}/download`;
       } else if (action === "LINK_VAULT_EVIDENCE") {
-        window.location.href = `/dashboard/vault`;
+        // Step 1: fetch candidates from the existing backend route.
+        const getRes = await fetch(`/api/tenders/${tenderId}/link-vault-evidence`);
+        const getJson = await getRes.json().catch(() => ({}));
+        if (!getRes.ok) throw new Error(getJson.error ?? "Failed to fetch vault evidence candidates");
+        const candidates: Array<{ rowId: string; rowName: string; options: Array<{ id: string }> }> = getJson.candidates ?? [];
+        if (candidates.length === 0) {
+          setActionMsg("No reviewed evidence available in the Knowledge Vault for this tender's documents.");
+          return;
+        }
+        // Step 2: auto-link the highest-scored option for each candidate document row.
+        let linked = 0;
+        let partialLinked = 0;
+        for (const candidate of candidates) {
+          const best = candidate.options[0];
+          if (!best) continue;
+          const postRes = await fetch(`/api/tenders/${tenderId}/link-vault-evidence`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ rowId: candidate.rowId, vaultDocumentId: best.id }),
+          });
+          const postJson = await postRes.json().catch(() => ({}));
+          if (postRes.ok) {
+            if (postJson.readyForExport) linked++;
+            else partialLinked++;
+          }
+        }
+        if (linked + partialLinked === 0) {
+          setActionMsg("Evidence suggestions created but no documents could be linked. Open Mandatory Requirement Coverage to confirm evidence.");
+        } else if (linked > 0 && partialLinked === 0) {
+          setActionMsg(`Vault evidence linking completed — ${linked} document(s) linked and ready for export.`);
+        } else if (linked > 0) {
+          setActionMsg(`Vault evidence linking started — ${linked} document(s) ready, ${partialLinked} require validation review. Open Mandatory Requirement Coverage to confirm evidence.`);
+        } else {
+          setActionMsg(`Evidence suggestions created — ${partialLinked} document(s) linked but require validation/hygiene review. Open Mandatory Requirement Coverage to confirm evidence.`);
+        }
+        await load();
+        router.refresh();
       } else if (action === "COMPLETE_METADATA") {
         document.getElementById("tender-edit-form")?.scrollIntoView({ behavior: "smooth" });
       } else if (action === "GENERATE_REQUIRED_DOCUMENTS" || action === "REPAIR_DOCUMENT_QUALITY" || action === "AUTO_FINALIZE" || action === "RESOLVE_EXPORT_BLOCKERS" || action === "RECONCILE_OUTSIDE_PLAN_DOCS") {
@@ -214,6 +250,8 @@ export default function TenderRecoveryCommandCenter({ tenderId }: { tenderId: st
         setActionMsg(json.fallback ? "Regex fallback used — approve below or retry when providers recover." : "Analysis complete.");
         await load();
         router.refresh();
+      } else {
+        setActionMsg("Action not available yet — open the relevant panel manually.");
       }
     } catch (e) {
       setActionMsg(e instanceof Error ? e.message : "Action failed");
