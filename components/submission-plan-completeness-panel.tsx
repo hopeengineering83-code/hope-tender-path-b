@@ -378,6 +378,9 @@ export function SubmissionPlanCompletenessPanel({ tenderId }: { tenderId: string
         {data.summary.requiresUserConfirmation && (
           <p className="mt-2">This is a conservative derived draft from requirement titles/types, not a tender-issued file list. Confirm exact file names/order from the tender before final export; official forms/templates must still be attached as originals and must not be fabricated.</p>
         )}
+        {data.summary.planState === "DERIVED_DRAFT_UNCONFIRMED" && (
+          <p className="mt-2 font-semibold">Submission plan is derived from weak extraction — verify all required documents against the original tender before finalising.</p>
+        )}
         {data.summary.planState === "NO_REQUIREMENTS" && (
           <p className="mt-2">No tender requirements are extracted yet. Run AI Analyze or add requirements manually before building the submission package.</p>
         )}
