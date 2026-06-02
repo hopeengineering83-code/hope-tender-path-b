@@ -1,11 +1,21 @@
-/**
- * extraction-quality-gate.ts
- *
- * Derives a machine-readable extraction status from the per-file quality
- * metrics stored on TenderFile rows, and exposes two gate functions used
- * by the Generate Docs and Export routes to decide whether the extraction
- * quality is acceptable for the requested operation.
- */
+// Extraction Quality Gate
+//
+// Centralises the rules for deciding whether extraction quality is
+// acceptable for AI Analyze, Build Plan, Generate Docs, and Final ZIP
+// export.  The functions are pure (no Prisma / IO) so they can be used
+// in both API routes and unit tests.
+//
+// ExtractionStatus values mirror the labels required by CLAUDE.md:
+//   FULL_EXTRACTION_AI_ANALYZED
+//   PARTIAL_EXTRACTION_AI_ANALYZED
+//   OCR_REQUIRED
+//   EXTRACTION_WEAK_REVIEW_REQUIRED
+//   REGEX_FALLBACK_FROM_WEAK_EXTRACTION
+//
+// The TenderFile fields consumed here (extractionScore, totalPages,
+// extractedPages, ocrPages, failedPages) may be null when the app has
+// not yet recorded per-file extraction metrics — in that case the gate
+// treats the file as partially extracted but not critically failed.
 
 export type ExtractionStatus =
   | "FULL_EXTRACTION_AI_ANALYZED"
@@ -14,47 +24,57 @@ export type ExtractionStatus =
   | "EXTRACTION_WEAK_REVIEW_REQUIRED"
   | "REGEX_FALLBACK_FROM_WEAK_EXTRACTION";
 
-export interface TenderFileQuality {
+export type ExtractionFileMetrics = {
+  extractionScore: number | null;
   totalPages: number | null;
   extractedPages: number | null;
   ocrPages: number | null;
   failedPages: number | null;
-  extractionScore: number | null; // 0-100
+};
+
+// Backwards-compatible alias used by ai-analyze route
+export type TenderFileQuality = ExtractionFileMetrics;
+
+// ── thresholds ───────────────────────────────────────────────────────────────
+const FULL_EXTRACTION_MIN_SCORE = 80;
+const PARTIAL_EXTRACTION_MIN_SCORE = 60;
+const WEAK_MIN_SCORE = 40;
+const CRITICALLY_FAILED_SCORE = 40;
+const EXPORT_BLOCK_SCORE = 20;
+
+function averageScore(files: ExtractionFileMetrics[]): number | null {
+  const scoredFiles = files.filter((f) => f.extractionScore !== null);
+  if (scoredFiles.length === 0) return null;
+  const sum = scoredFiles.reduce((acc, f) => acc + (f.extractionScore as number), 0);
+  return sum / scoredFiles.length;
 }
 
-/**
- * Derives the overall extraction status from an array of TenderFile quality
- * snapshots. Returns a conservative status when any data is missing.
- */
-export function deriveExtractionStatus(files: TenderFileQuality[]): ExtractionStatus {
+function hasOcrPages(files: ExtractionFileMetrics[]): boolean {
+  return files.some((f) => f.ocrPages !== null && (f.ocrPages as number) > 0);
+}
+
+function hasFailedPages(files: ExtractionFileMetrics[]): boolean {
+  return files.some((f) => f.failedPages !== null && (f.failedPages as number) > 0);
+}
+
+export function deriveExtractionStatus(files: ExtractionFileMetrics[]): ExtractionStatus {
   if (files.length === 0) return "EXTRACTION_WEAK_REVIEW_REQUIRED";
-  const hasScore = files.some(f => f.extractionScore !== null);
-  if (!hasScore) return "PARTIAL_EXTRACTION_AI_ANALYZED"; // unknown quality — treat as partial
-  const avgScore = files.reduce((s, f) => s + (f.extractionScore ?? 50), 0) / files.length;
-  const hasOcr = files.some(f => (f.ocrPages ?? 0) > 0);
-  const hasFailed = files.some(f => (f.failedPages ?? 0) > 0);
-  if (avgScore >= 75 && !hasFailed) return hasOcr ? "PARTIAL_EXTRACTION_AI_ANALYZED" : "FULL_EXTRACTION_AI_ANALYZED";
-  if (avgScore >= 45) return "EXTRACTION_WEAK_REVIEW_REQUIRED";
-  return "REGEX_FALLBACK_FROM_WEAK_EXTRACTION";
+  const avg = averageScore(files);
+  if (avg === null) return "PARTIAL_EXTRACTION_AI_ANALYZED";
+  if (avg < WEAK_MIN_SCORE) return "REGEX_FALLBACK_FROM_WEAK_EXTRACTION";
+  if (avg < PARTIAL_EXTRACTION_MIN_SCORE) return "EXTRACTION_WEAK_REVIEW_REQUIRED";
+  if (avg >= FULL_EXTRACTION_MIN_SCORE && !hasOcrPages(files) && !hasFailedPages(files)) {
+    return "FULL_EXTRACTION_AI_ANALYZED";
+  }
+  return "PARTIAL_EXTRACTION_AI_ANALYZED";
 }
 
-/**
- * Returns true when extraction quality is good enough to run document
- * generation. Blocks only on very poor extraction (REGEX_FALLBACK).
- */
-export function isExtractionAcceptableForGeneration(files: TenderFileQuality[]): boolean {
-  // Allow generation if at least partial extraction; block only on REGEX_FALLBACK from very poor extraction
-  const status = deriveExtractionStatus(files);
-  return status !== "REGEX_FALLBACK_FROM_WEAK_EXTRACTION";
+export function isExtractionAcceptableForGeneration(files: ExtractionFileMetrics[]): boolean {
+  if (files.length === 0) return true;
+  return !files.some((f) => f.extractionScore !== null && (f.extractionScore as number) < CRITICALLY_FAILED_SCORE);
 }
 
-/**
- * Returns true when extraction quality is good enough to proceed with
- * final ZIP export. Rejects files with an extractionScore below 20 (nearly
- * no usable text extracted).
- */
-export function isExtractionAcceptableForExport(files: TenderFileQuality[]): boolean {
-  // Export requires at least partial extraction — no failed-only files
+export function isExtractionAcceptableForExport(files: ExtractionFileMetrics[]): boolean {
   if (files.length === 0) return false;
-  return !files.some(f => f.extractionScore !== null && f.extractionScore < 20);
+  return !files.some((f) => f.extractionScore !== null && (f.extractionScore as number) < EXPORT_BLOCK_SCORE);
 }
