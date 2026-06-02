@@ -493,7 +493,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         analysisResult = await runRegexFallback(msg, diagnostics);
       }
     } else {
-      analysisResult = await runRegexFallback("No AI provider configured", buildAnalysisFallbackDiagnostics("No AI provider configured"));
+      analysisResult = await runRegexFallback(undefined, buildAnalysisFallbackDiagnostics("No AI provider configured"));
     }
 
     await logAction({

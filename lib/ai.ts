@@ -76,7 +76,7 @@ function getModel(modelName = DEFAULT_GEMINI_MODEL) {
 }
 
 export function isAIEnabled() {
-  return Boolean(apiKey || anthropicApiKey || process.env.OPENAI_API_KEY || isDeepSeekConfigured() || isGroqConfigured() || isOpenRouterConfigured());
+  return Boolean(apiKey || anthropicApiKey || process.env.OPENAI_API_KEY || isDeepSeekConfigured() || isGroqConfigured() || isOpenRouterConfigured() || isMistralConfigured() || isTogetherConfigured());
 }
 
 export function isClaudeEnabled() {
