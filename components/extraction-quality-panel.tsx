@@ -10,7 +10,7 @@ export async function ExtractionQualityPanel({ tenderId }: { tenderId: string })
   await prismaReady;
   const tender = await prisma.tender.findFirst({
     where: { id: tenderId, userId },
-    include: { files: { orderBy: { createdAt: "asc" } } },
+    include: { files: { orderBy: { createdAt: "asc" }, select: { id: true, fileName: true, originalFileName: true, extractedText: true } } },
   });
   if (!tender || tender.files.length === 0) return null;
 
@@ -31,9 +31,16 @@ export async function ExtractionQualityPanel({ tenderId }: { tenderId: string })
           <h2 className="mt-1 text-lg font-bold text-slate-900">{ready ? "Extracted text appears usable" : "Extraction quality blockers found"}</h2>
           <p className="mt-1 text-sm text-slate-600">Preflight check for scanned PDFs, failed extraction, low text density, legacy DOC files, and table-heavy tender documents.</p>
         </div>
-        <Link href={`/api/tenders/${tenderId}/extraction-quality`} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50">
-          Open JSON
-        </Link>
+        <div className="flex items-center gap-2">
+          {!ready && (
+            <a href="#legacy-tender-detail-actions" className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800 hover:bg-amber-100">
+              Re-extract from PDF ↓
+            </a>
+          )}
+          <Link href={`/api/tenders/${tenderId}/extraction-quality`} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50">
+            Open JSON
+          </Link>
+        </div>
       </div>
 
       {(blockers.length > 0 || warnings.length > 0) && (

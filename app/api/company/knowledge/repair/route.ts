@@ -5,8 +5,8 @@ import { importCompanyKnowledgeFromDocuments } from "../../../../../lib/company-
 import { logAction } from "../../../../../lib/audit";
 import { isCompanyKnowledgeAIEnabled } from "../../../../../lib/company-knowledge-ai";
 
-// Vercel route timeout — knowledge repair runs Claude expert / project
-// extraction across all uploaded documents. 60 = Hobby max.
+// Vercel route timeout — knowledge repair runs the configured AI provider chain
+// across uploaded documents. 60 = Hobby max.
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
 
@@ -85,9 +85,20 @@ async function buildDiagnostics(companyId: string) {
   const gaps: Gap[] = [];
   if (docs.length === 0) gaps.push({ severity: "CRITICAL", title: "No company documents uploaded", detail: "Upload company profile, CVs, project references, legal records, and evidence documents." });
   if (docs.length > 0 && extractedDocuments === 0) gaps.push({ severity: "CRITICAL", title: "No usable extracted text", detail: "Documents exist, but none contain usable extracted text. Re-upload text PDFs or add OCR/document-intelligence support." });
-  if (!isCompanyKnowledgeAIEnabled()) gaps.push({ severity: "CRITICAL", title: "AI extraction is not enabled", detail: "GEMINI_API_KEY is required for reliable extraction from complex CV and project-reference PDFs. (ANTHROPIC_API_KEY and OPENAI_API_KEY enable proposal generation but do not power knowledge extraction.)" });
-  if (expertSourceDocuments === 0) gaps.push({ severity: "HIGH", title: "No expert source documents detected", detail: "Upload or categorize CV/staff documents so expert extraction can run." });
-  if (projectSourceDocuments === 0) gaps.push({ severity: "HIGH", title: "No project source documents detected", detail: "Upload or categorize project references, portfolios, contracts, or experience sheets." });
+  if (!isCompanyKnowledgeAIEnabled()) gaps.push({ severity: "CRITICAL", title: "AI extraction is not enabled", detail: "Configure at least one provider in the company-knowledge extraction chain: OPENAI_API_KEY, GEMINI_API_KEY, MISTRAL_API_KEY, DEEPSEEK_API_KEY, GROQ_API_KEY, TOGETHER_API_KEY, OPENROUTER_API_KEY, or ANTHROPIC_API_KEY. Claude/Anthropic remains last-resort." });
+
+  if (expertSourceDocuments === 0 && reviewedExperts === 0) {
+    gaps.push({ severity: "HIGH", title: "No expert source documents detected", detail: "Upload or categorize CV/staff documents so expert extraction can run." });
+  } else if (expertSourceDocuments === 0 && reviewedExperts > 0) {
+    gaps.push({ severity: "LOW", title: "No dedicated expert source documents detected", detail: `Reviewed records available; dedicated source docs optional. ${reviewedExperts} reviewed expert record(s) are available for tender matching. Upload/categorize CV files later only if you need to rebuild expert records from source documents.` });
+  }
+
+  if (projectSourceDocuments === 0 && reviewedProjects === 0) {
+    gaps.push({ severity: "HIGH", title: "No project source documents detected", detail: "Upload or categorize project references, portfolios, contracts, or experience sheets." });
+  } else if (projectSourceDocuments === 0 && reviewedProjects > 0) {
+    gaps.push({ severity: "LOW", title: "No dedicated project source documents detected", detail: `Reviewed records available; dedicated source docs optional. ${reviewedProjects} reviewed project record(s) are available for tender matching. Upload/categorize project-reference files later only if you need to rebuild project records from source documents.` });
+  }
+
   if (experts.length > 0 && reviewedExperts === 0) gaps.push({ severity: "HIGH", title: "Experts are not reviewed", detail: `${experts.length} expert records exist, but none are marked REVIEWED. Review records before final generation.` });
   if (projects.length > 0 && reviewedProjects === 0) gaps.push({ severity: "HIGH", title: "Projects are not reviewed", detail: `${projects.length} project records exist, but none are marked REVIEWED. Review records before final generation.` });
   if (expectedExperts && experts.length < expectedExperts) gaps.push({ severity: "MEDIUM", title: "Fewer experts than expected", detail: `Detected expectation around ${expectedExperts} experts, but only ${experts.length} records exist.` });

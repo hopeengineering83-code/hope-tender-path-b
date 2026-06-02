@@ -57,6 +57,7 @@ export type TenderMetadataDraft = {
   pageLimit: number | null;
   technicalWeight: number | null;
   financialWeight: number | null;
+  evaluationMethodology: string | null;
   description: string | null;
   intakeSummary: string | null;
 };
@@ -145,9 +146,12 @@ function inferClientContactName(text: string): string | null {
 }
 
 function inferClientContactTitle(text: string): string | null {
+  // Patterns must use a capture group — firstMatch returns match[1].
+  // The previous version used non-capturing (?:...) so match[1] was always
+  // undefined and this function always returned null.
   return firstMatch(text, [
-    /(?:procurement\s+(?:officer|manager|director|head|specialist))/i,
-    /(?:project\s+manager|tender\s+secretary|contracts\s+manager)/i,
+    /(procurement\s+(?:officer|manager|director|head|specialist))/i,
+    /(project\s+manager|tender\s+secretary|contracts\s+manager)/i,
   ]);
 }
 
@@ -156,6 +160,27 @@ function inferEmails(text: string): string[] {
   const matches = text.match(/\b[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}\b/gi) ?? [];
   for (const m of matches) out.add(m.toLowerCase());
   return Array.from(out).slice(0, 6);
+}
+
+/**
+ * Infer the contact-person email from the tender text. Unlike
+ * inferEmails (which extracts ALL emails), this looks specifically
+ * for an email address that appears near contact-person context
+ * phrases (e.g. "contact person:", "focal person:", "procurement
+ * officer:"). Falls back to null when no context-bound email is found,
+ * so we do NOT accidentally use the submission/tender-box email as the
+ * contact email.
+ */
+function inferContactEmail(text: string): string | null {
+  // Capture email within ~200 chars following a contact/focal-person label.
+  const m = text.match(
+    /(?:contact\s+person|focal\s+person|procurement\s+(?:officer|manager|focal)|attn(?:ention)?|to\s+the\s+attention\s+of)[^\n]{0,200}?\b([A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,})\b/i,
+  );
+  if (m) return m[1].toLowerCase();
+  // Also look for email appearing immediately after a "Email:" / "E-mail:" label.
+  const m2 = text.match(/\b(?:e-?mail)\s*[:\-]\s*([A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,})\b/i);
+  if (m2) return m2[1].toLowerCase();
+  return null;
 }
 
 function inferPhone(text: string): string | null {
@@ -269,18 +294,21 @@ function inferSubmissionAddress(text: string): string | null {
 }
 
 function inferBudget(text: string): { amount: number | null; currency: string | null } {
-  const patterns = [
-    /(?:budget|estimated\s+cost|contract\s+value|tender\s+value)\s*[:\-]?\s*(USD|EUR|GBP|ETB|NGN|KES|UGX|TZS|RWF|ZAR|EGP|XAF|XOF|MAD)\s*([\d,]+(?:\.\d+)?)/i,
-    /(?:budget|estimated\s+cost|contract\s+value|tender\s+value)\s*[:\-]?\s*([\d,]+(?:\.\d+)?)\s*(USD|EUR|GBP|ETB|NGN|KES|UGX|TZS|RWF|ZAR|EGP|XAF|XOF|MAD)/i,
-  ];
-  for (const pat of patterns) {
-    const m = text.match(pat);
-    if (m) {
-      const currency = (m[1].length === 3 ? m[1] : m[2]).toUpperCase();
-      const rawAmount = m[1].length === 3 ? m[2] : m[1];
-      const amount = Number(rawAmount.replace(/,/g, ""));
-      if (Number.isFinite(amount) && amount > 0) return { amount, currency };
-    }
+  // Pattern 0: currency code comes BEFORE the number ("ETB 7,500,000").
+  // m[1] = currency code, m[2] = number string.
+  const patCurrFirst = /(?:budget|estimated\s+cost|contract\s+value|tender\s+value)\s*[:\-]?\s*(USD|EUR|GBP|ETB|NGN|KES|UGX|TZS|RWF|ZAR|EGP|XAF|XOF|MAD)\s*([\d,]+(?:\.\d+)?)/i;
+  // Pattern 1: number comes BEFORE the currency code ("7,500,000 ETB").
+  // m[1] = number string, m[2] = currency code.
+  const patAmountFirst = /(?:budget|estimated\s+cost|contract\s+value|tender\s+value)\s*[:\-]?\s*([\d,]+(?:\.\d+)?)\s*(USD|EUR|GBP|ETB|NGN|KES|UGX|TZS|RWF|ZAR|EGP|XAF|XOF|MAD)/i;
+  const m0 = text.match(patCurrFirst);
+  if (m0) {
+    const amount = Number(m0[2].replace(/,/g, ""));
+    if (Number.isFinite(amount) && amount > 0) return { amount, currency: m0[1].toUpperCase() };
+  }
+  const m1 = text.match(patAmountFirst);
+  if (m1) {
+    const amount = Number(m1[1].replace(/,/g, ""));
+    if (Number.isFinite(amount) && amount > 0) return { amount, currency: m1[2].toUpperCase() };
   }
   return { amount: null, currency: null };
 }
@@ -296,18 +324,19 @@ function inferValidityDays(text: string): number | null {
 }
 
 function inferBidBond(text: string): { amount: number | null; currency: string | null } {
-  const patterns = [
-    /(?:bid\s+bond|earnest\s+money|EMD|tender\s+security|performance\s+security)\s*[:\-]?\s*(USD|EUR|GBP|ETB|NGN|KES|ZAR|EGP)\s*([\d,]+)/i,
-    /(?:bid\s+bond|earnest\s+money|EMD|tender\s+security)\s*[:\-]?\s*([\d,]+)\s*(USD|EUR|GBP|ETB|NGN|KES|ZAR|EGP)/i,
-  ];
-  for (const pat of patterns) {
-    const m = text.match(pat);
-    if (m) {
-      const currency = (m[1].length === 3 ? m[1] : m[2]).toUpperCase();
-      const rawAmount = m[1].length === 3 ? m[2] : m[1];
-      const amount = Number(rawAmount.replace(/,/g, ""));
-      if (Number.isFinite(amount) && amount > 0) return { amount, currency };
-    }
+  // Pattern 0: currency code comes BEFORE the number.
+  const patCurrFirst = /(?:bid\s+bond|earnest\s+money|EMD|tender\s+security|performance\s+security)\s*[:\-]?\s*(USD|EUR|GBP|ETB|NGN|KES|ZAR|EGP)\s*([\d,]+)/i;
+  // Pattern 1: number comes BEFORE the currency code.
+  const patAmountFirst = /(?:bid\s+bond|earnest\s+money|EMD|tender\s+security)\s*[:\-]?\s*([\d,]+)\s*(USD|EUR|GBP|ETB|NGN|KES|ZAR|EGP)/i;
+  const m0 = text.match(patCurrFirst);
+  if (m0) {
+    const amount = Number(m0[2].replace(/,/g, ""));
+    if (Number.isFinite(amount) && amount > 0) return { amount, currency: m0[1].toUpperCase() };
+  }
+  const m1 = text.match(patAmountFirst);
+  if (m1) {
+    const amount = Number(m1[1].replace(/,/g, ""));
+    if (Number.isFinite(amount) && amount > 0) return { amount, currency: m1[2].toUpperCase() };
   }
   return { amount: null, currency: null };
 }
@@ -318,7 +347,14 @@ function inferPreBidMeeting(text: string): { date: Date | null; location: string
   ]);
   if (!raw) return { date: null, location: null };
   const date = parseDateValue(raw);
-  return { date, location: raw.length < 150 ? raw : null };
+  // Strip the date portion so the location field holds only the venue text,
+  // not "25 March 2026 at Eagle Plaza, Kirkos Sub City".
+  const locationOnly = raw
+    .replace(/\d{1,2}\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4}/gi, "")
+    .replace(/\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4}/, "")
+    .replace(/^[\s,;:\-–at]+|[\s,;:\-–]+$/g, "")
+    .trim();
+  return { date, location: locationOnly.length >= 5 ? locationOnly : null };
 }
 
 function inferMandatorySiteVisit(text: string): boolean {
@@ -343,6 +379,30 @@ function inferPageLimit(text: string): number | null {
   if (!raw) return null;
   const n = Number(raw);
   return Number.isFinite(n) && n > 0 && n < 1000 ? n : null;
+}
+
+function inferEvaluationMethodology(text: string): string | null {
+  // Look for evaluation criteria / scoring section. Search for the section
+  // header and capture up to 2000 chars of following content.
+  const sectionPattern = /(?:evaluation\s+(?:criteria|methodology|framework|scoring|scheme|method)|scoring\s+(?:criteria|matrix|methodology)|award\s+criteria|proposal\s+evaluation|technical\s+evaluation)\s*[:\-]?\s*\n([\s\S]{30,2000}?)(?=\n\s*\n\s*[A-Z]|\n\s*(?:Section|SECTION|Annex|ANNEX|Appendix|APPENDIX|\d+\.?\s+[A-Z])|$)/i;
+  const m = text.match(sectionPattern);
+  if (m?.[1]) {
+    const body = m[1].replace(/\s+/g, " ").trim().slice(0, 1800);
+    if (body.length >= 30) return body;
+  }
+  // Fallback: look for lines mentioning criteria/scores near weight keywords
+  const lines = text.split(/\n/).map((l) => l.trim()).filter(Boolean);
+  const scoringLines: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i];
+    if (/(criterion|criteria|scoring|score|marks?|weight|technical.*\d+\s*%|financial.*\d+\s*%|pass\/fail|qualification|responsiveness|evaluation)/i.test(l)) {
+      scoringLines.push(l);
+      if (i + 1 < lines.length) scoringLines.push(lines[i + 1]);
+      if (scoringLines.length >= 20) break;
+    }
+  }
+  if (scoringLines.length > 0) return scoringLines.join(" ").replace(/\s+/g, " ").trim().slice(0, 1800);
+  return null;
 }
 
 function inferEvaluationWeights(text: string): { technical: number | null; financial: number | null } {
@@ -408,6 +468,7 @@ export function inferTenderMetadata(extractedText: string, fallbackFileName: str
       pageLimit: null,
       technicalWeight: null,
       financialWeight: null,
+      evaluationMethodology: null,
       description: `Tender intake from "${fallbackFileName}" extracted only ${trimmedLen} characters of text — not enough for automatic metadata inference. Likely a scanned PDF without an OCR text layer. Set PDF_OCR_ENABLED=true and re-upload, OR use the Edit form to fill in tender details manually.`,
       intakeSummary: null,
     };
@@ -427,7 +488,9 @@ export function inferTenderMetadata(extractedText: string, fallbackFileName: str
   // Client contact details (NEW)
   const clientContactName = inferClientContactName(text);
   const clientContactTitle = inferClientContactTitle(text);
-  const clientContactEmail = submissionEmails[0] ?? null;
+  // Use a context-aware email search so we capture the focal/contact
+  // person's email rather than the first submission email in the doc.
+  const clientContactEmail = inferContactEmail(text);
   const clientContactPhone = inferPhone(text);
   const clientAddress = inferClientAddress(text);
 
@@ -440,6 +503,7 @@ export function inferTenderMetadata(extractedText: string, fallbackFileName: str
   const numberOfCopiesRequired = inferNumberOfCopies(text);
   const pageLimit = inferPageLimit(text);
   const evalWeights = inferEvaluationWeights(text);
+  const evaluationMethodology = inferEvaluationMethodology(text);
 
   const intakeSummary = summaryFromText(text);
   const description = intakeSummary?.slice(0, 1200) ?? text.slice(0, 1200) ?? null;
@@ -471,6 +535,7 @@ export function inferTenderMetadata(extractedText: string, fallbackFileName: str
     pageLimit,
     technicalWeight: evalWeights.technical,
     financialWeight: evalWeights.financial,
+    evaluationMethodology,
     description,
     intakeSummary,
   };

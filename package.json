@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "node scripts/check-env.mjs && prisma generate && next build",
+    "vercel-build": "node scripts/check-env.mjs && prisma generate && prisma db push --accept-data-loss=false && next build",
     "typecheck": "tsc --noEmit",
     "test": "node scripts/run-tests.mjs",
     "lint": "eslint . --ext .ts,.tsx --max-warnings 50",

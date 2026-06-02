@@ -3,12 +3,18 @@ import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../.
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { validateTender } from "../../../../../lib/engine/validate";
 import { checkExportReadiness, checkFullExportReadiness, exportReadinessError } from "../../../../../lib/engine/export-readiness";
+import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../../lib/rate-limit";
+import { filterFinalExportCandidateDocuments } from "../../../../../lib/engine/document-output-state";
 import { logAction } from "../../../../../lib/audit";
 import { getCompanyIngestionReadiness } from "../../../../../lib/company-ingestion-readiness";
 
 export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   let actor;
   try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER"); } catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
+
+  const rl = rateLimit(`export:${actor.id}`, MUTATION_RATE_LIMIT);
+  if (!rl.allowed) return NextResponse.json({ error: "Too many requests", retryAfter: Math.ceil((rl.resetAt - Date.now()) / 1000) }, { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } });
+
   const userId = actor.id;
 
   await prismaReady;
@@ -63,7 +69,10 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       );
     }
 
-    const generatedDocuments = tender.generatedDocuments.filter((doc) => doc.generationStatus === "GENERATED");
+    // Only count final export candidates (not internal drafts, SUPERSEDED, etc.)
+    const generatedDocuments = filterFinalExportCandidateDocuments(
+      tender.generatedDocuments.filter((doc) => doc.generationStatus === "GENERATED"),
+    );
     if (generatedDocuments.length === 0) {
       return NextResponse.json({ error: "No generated documents are available for export." }, { status: 400 });
     }

@@ -2,6 +2,15 @@ export const TENDER_STATUSES = [
   "DRAFT",
   "INTAKE",
   "ANALYZED",
+  // Analysis-source-aware statuses set by the AI Analyze route.
+  // AI_ANALYZED:            Full AI analysis succeeded (all chunks).
+  // AI_ANALYSIS_PARTIAL:    Some AI chunks succeeded; deadline reached before all chunks completed.
+  // FALLBACK_DRAFT_CREATED: AI was attempted but failed; regex fallback used (no AI chunks succeeded but AI was configured).
+  // ANALYSIS_REQUIRES_REVIEW: No AI available or AI entirely failed; regex fallback used; human review recommended.
+  "AI_ANALYZED",
+  "AI_ANALYSIS_PARTIAL",
+  "FALLBACK_DRAFT_CREATED",
+  "ANALYSIS_REQUIRES_REVIEW",
   "MATCHED",
   "COMPLIANCE_REVIEW",
   "READY_FOR_GENERATION",
@@ -18,6 +27,10 @@ export const TENDER_STATUS_LABELS: Record<TenderStatusValue, string> = {
   DRAFT: "Draft",
   INTAKE: "Intake",
   ANALYZED: "Analyzed",
+  AI_ANALYZED: "AI Analyzed",
+  AI_ANALYSIS_PARTIAL: "AI Analysis (Partial)",
+  FALLBACK_DRAFT_CREATED: "Fallback Draft Created",
+  ANALYSIS_REQUIRES_REVIEW: "Analysis Requires Review",
   MATCHED: "Matched",
   COMPLIANCE_REVIEW: "Compliance Review",
   READY_FOR_GENERATION: "Ready for Generation",
@@ -32,6 +45,8 @@ export const NEXT_STATUS: Partial<Record<TenderStatusValue, TenderStatusValue>> 
   DRAFT: "INTAKE",
   INTAKE: "ANALYZED",
   ANALYZED: "MATCHED",
+  AI_ANALYZED: "MATCHED",
+  AI_ANALYSIS_PARTIAL: "MATCHED",
   MATCHED: "COMPLIANCE_REVIEW",
   COMPLIANCE_REVIEW: "READY_FOR_GENERATION",
   READY_FOR_GENERATION: "GENERATED",

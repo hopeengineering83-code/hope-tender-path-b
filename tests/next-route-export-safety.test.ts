@@ -30,3 +30,4 @@ describe("Next.js route export safety — ai-proposal route", () => {
     }
   });
 });
+

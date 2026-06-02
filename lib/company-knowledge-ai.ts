@@ -41,6 +41,18 @@ Return ONLY valid JSON. No markdown fences, no commentary.
 Every expert/project must include a sourceQuote copied from the source text.
 When uncertain, lower confidence instead of fabricating.`;
 
+
+function sanitizeProviderMessage(value: string | null | undefined): string {
+  return (value ?? "unknown error")
+    .replace(/(?:postgres(?:ql)?|mysql|mongodb|redis):\/\/[^\s"']+/gi, "[REDACTED_DSN]")
+    .replace(/sk-[A-Za-z0-9-_]{8,}/g, "[REDACTED_KEY]")
+    .replace(/AIza[A-Za-z0-9_-]{20,}/g, "[REDACTED_KEY]")
+    .replace(/Bearer\s+[A-Za-z0-9._-]+/gi, "Bearer [REDACTED]")
+    .replace(/password=([^\s&]+)/gi, "password=[REDACTED]")
+    .replace(/user(name)?=([^\s&]+)/gi, "user$1=[REDACTED]")
+    .slice(0, 240);
+}
+
 function clean(value: string | null | undefined): string {
   return (value ?? "").replace(/\s+/g, " ").trim();
 }
@@ -195,7 +207,7 @@ export async function extractCompanyKnowledgeWithAI(params: {
   projectText: string;
 }): Promise<AIKnowledgeExtraction> {
   if (!isAIEnabled()) {
-    return { experts: [], projects: [], warnings: ["No AI provider configured; AI extraction skipped."] };
+    return { experts: [], projects: [], warnings: ["No AI provider configured; set OPENAI_API_KEY, GEMINI_API_KEY, MISTRAL_API_KEY, DEEPSEEK_API_KEY, GROQ_API_KEY, TOGETHER_API_KEY, OPENROUTER_API_KEY, or ANTHROPIC_API_KEY. AI extraction skipped."] };
   }
 
   const expertChunks = chunkText(params.expertText).slice(0, MAX_CHUNKS).map((content, index) => ({ kind: "EXPERT_CV" as const, index, content }));
@@ -223,7 +235,7 @@ export async function extractCompanyKnowledgeWithAI(params: {
       }
       warnings.push(...normalized.warnings);
     } catch (error) {
-      warnings.push(`AI extraction failed for ${chunk.kind} chunk ${chunk.index}: ${error instanceof Error ? error.message : "unknown error"}`);
+      warnings.push(`AI extraction failed for ${chunk.kind} chunk ${chunk.index}: ${sanitizeProviderMessage(error instanceof Error ? error.message : "unknown error")}`);
     }
   }
 

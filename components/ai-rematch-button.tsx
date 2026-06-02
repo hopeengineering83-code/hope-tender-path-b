@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 
 type Perspective =
   | "DISCIPLINE_FIT"
@@ -107,6 +108,7 @@ function criticalFloor(assessment: CandidateAssessment): number | null {
 }
 
 export function AIRematchButton({ tenderId, experts = [], projects = [], onRematchComplete }: AIRematchButtonProps) {
+  const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<AIRematchResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -128,6 +130,7 @@ export function AIRematchButton({ tenderId, experts = [], projects = [], onRemat
       const data = await res.json();
       setResult(data);
       setShowResult(true);
+      router.refresh();
       onRematchComplete?.();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Rematch failed");

@@ -3,6 +3,7 @@ import bcrypt from "bcryptjs";
 import { prisma, prismaReady } from "../../../../lib/prisma";
 import { requireRole, requireUser, unauthorizedResponse, forbiddenResponse } from "../../../../lib/auth";
 import { logAction } from "../../../../lib/audit";
+import { validatePassword } from "../../../../lib/password-policy";
 
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   let actor;
@@ -39,7 +40,8 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
 
   if (!isSelf && !isAdmin) return forbiddenResponse();
 
-  const body = await req.json();
+  const body = await req.json().catch(() => null);
+  if (!body) return NextResponse.json({ error: "Request body must be valid JSON" }, { status: 400 });
   const { name, role, password, currentPassword } = body as { name?: string; role?: string; password?: string; currentPassword?: string };
 
   await prismaReady;
@@ -59,9 +61,8 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
   if (name !== undefined) data.name = name || null;
   if (role !== undefined) data.role = role;
   if (password) {
-    if (password.length < 8) {
-      return NextResponse.json({ error: "Password must be at least 8 characters" }, { status: 400 });
-    }
+    const pwCheck = validatePassword(password);
+    if (!pwCheck.ok) return NextResponse.json({ error: pwCheck.error }, { status: 400 });
     // Non-admins changing own password must supply currentPassword
     if (isSelf && !isAdmin) {
       if (!currentPassword) {

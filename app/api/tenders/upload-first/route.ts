@@ -7,17 +7,8 @@ import { inferTenderMetadata } from "../../../../lib/engine/tender-metadata";
 import { runTenderEngine } from "../../../../lib/engine/run-tender-engine";
 import { extractRequestId } from "../../../../lib/request-id";
 import { getStorageAdapter } from "../../../../lib/storage";
-
-/**
- * Redact DATABASE_URL-style connection strings from any error message
- * fragment before it's returned to the client. Keeps stack traces and
- * verbose Postgres errors from leaking credentials.
- */
-function sanitizeErrorDetail(input: string): string {
-  return input
-    .replace(/postgres(?:ql)?:\/\/[^\s"]+/gi, "postgresql://[redacted]")
-    .replace(/(mongodb(?:\+srv)?|mysql|redis):\/\/[^\s"]+/gi, "$1://[redacted]");
-}
+import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../lib/rate-limit";
+import { sanitizeError } from "../../../../lib/sanitize-error";
 
 // Vercel route timeout — full intake pipeline (PDF extraction + tender
 // engine analysis). 60 = Hobby max; Pro applies its own plan limit.
@@ -39,6 +30,9 @@ export async function POST(req: Request) {
   const requestId = extractRequestId(req);
   const userId = await getSession();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const rl = rateLimit(`upload-first:${userId}`, MUTATION_RATE_LIMIT);
+  if (!rl.allowed) return NextResponse.json({ error: "Too many requests", retryAfter: Math.ceil((rl.resetAt - Date.now()) / 1000) }, { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } });
 
   await prismaReady;
 
@@ -254,8 +248,7 @@ export async function POST(req: Request) {
     // versions, and (when Postgres throws) connection strings. We log
     // the full stack server-side and return only sanitised text to the
     // client. Development keeps the stack to ease local debugging.
-    const rawMsg = error instanceof Error ? error.message : String(error);
-    const msg = sanitizeErrorDetail(rawMsg);
+    const msg = sanitizeError(error);
     const stackRaw = error instanceof Error ? error.stack?.slice(0, 800) : undefined;
     const isProduction = process.env.NODE_ENV === "production";
     console.error(`[upload-first tender] failed (requestId=${requestId}):`, error);
@@ -276,7 +269,7 @@ export async function POST(req: Request) {
       requestId,
     };
     if (!isProduction && stackRaw) {
-      body.stack = sanitizeErrorDetail(stackRaw);
+      body.stack = sanitizeError(stackRaw);
     }
     return NextResponse.json(body, { status: 500 });
   }

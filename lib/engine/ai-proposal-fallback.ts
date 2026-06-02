@@ -3,6 +3,7 @@ export function fallbackProposal(params: {
   requirements: string[];
   companyName: string;
   companyProfile: string;
+  serviceLines: string;
   expertLines: string[];
   projectLines: string[];
   differentiators: string[];
@@ -59,3 +60,4 @@ export function selectReviewedEvidenceForAIDraft<T extends { trustLevel?: string
   if (reviewedVault.length > 0) return { evidence: reviewedVault, usedReviewedVaultFallback: true };
   return { evidence: [], usedReviewedVaultFallback: false };
 }
+

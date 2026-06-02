@@ -1,8 +1,19 @@
 import { prisma, prismaReady } from "../prisma";
 import { getStorageAdapter } from "../storage";
 import { isValidClientName } from "./metadata-validators";
-import { deriveDocumentOutputState, exportBlockReason, EXPORT_BLOCKING_STATES, type DocumentOutputState } from "./document-output-state";
+import { isExportBlockingConfidence, scanTenderForExplicitDonorRequirement } from "./donor-advisory-confidence";
+import {
+  deriveDocumentOutputState,
+  exportBlockReason,
+  EXPORT_BLOCKING_STATES,
+  isGenerated,
+  isReviewReadyForExport,
+  isValidationPassed,
+  type DocumentOutputState,
+} from "./document-output-state";
 import { containsPricingLeakage } from "./pricing-hygiene";
+import { checkExportFileByteReadiness } from "./export-byte-readiness";
+import { detectSubmissionPackageMode } from "./submission-package-mode";
 
 export type ExportReadyDocument = {
   id: string;
@@ -28,7 +39,8 @@ export type ExportReadinessFailure = {
 export type ExportReadinessResult = {
   ok: boolean;
   failures: ExportReadinessFailure[];
-  tenderLevelBlockers?: Array<{ category: string; severity: string; title: string; recommendedAction?: string | null }>;
+  tenderLevelBlockers?: Array<{ category: string; severity: string; title: string; recommendedAction?: string | null; confidence?: import("./donor-advisory-confidence").DonorAdvisoryConfidence; sourceQuote?: string | null }>;
+  advisoryWarnings?: Array<{ category: string; severity: string; title: string; recommendedAction?: string | null; confidence?: import("./donor-advisory-confidence").DonorAdvisoryConfidence; sourceQuote?: string | null }>;
 };
 
 function generatedFileName(name: string): string {
@@ -120,7 +132,7 @@ export function documentHygieneIssues(text: string | null | undefined, doc?: Pic
 }
 
 export function isReadyForFinalExport(doc: ExportReadyDocument): boolean {
-  return doc.generationStatus === "GENERATED" && doc.validationStatus === "VALIDATED" && doc.reviewStatus === "READY_FOR_EXPORT" && deriveDocumentOutputState(doc) === "READY_FOR_EXPORT";
+  return isGenerated(doc.generationStatus) && isValidationPassed(doc.validationStatus) && isReviewReadyForExport(doc.reviewStatus) && deriveDocumentOutputState(doc) === "READY_FOR_EXPORT";
 }
 
 export function checkExportReadiness(docs: ExportReadyDocument[], opts: { requireFileContent?: boolean } = {}): ExportReadinessResult {
@@ -143,9 +155,9 @@ export function checkExportReadiness(docs: ExportReadyDocument[], opts: { requir
       const blockReason = exportBlockReason(state);
       if (blockReason) reasons.push(`[${state}] ${blockReason}`);
     } else if (state !== "READY_FOR_EXPORT") {
-      if (doc.generationStatus !== "GENERATED") reasons.push(`generationStatus is ${doc.generationStatus}, expected GENERATED`);
-      if (doc.validationStatus !== "VALIDATED") reasons.push(`validationStatus is ${doc.validationStatus}, expected VALIDATED`);
-      if (doc.reviewStatus !== "READY_FOR_EXPORT") reasons.push(`reviewStatus is ${doc.reviewStatus}, expected READY_FOR_EXPORT`);
+      if (!isGenerated(doc.generationStatus)) reasons.push(`generationStatus is ${doc.generationStatus}, expected GENERATED`);
+      if (!isValidationPassed(doc.validationStatus)) reasons.push(`validationStatus is ${doc.validationStatus}, expected PASSED or VALIDATED`);
+      if (!isReviewReadyForExport(doc.reviewStatus)) reasons.push(`reviewStatus is ${doc.reviewStatus}, expected READY_FOR_EXPORT`);
     }
     if (/MARKDOWN|QUICK_DRAFT|DRAFT_ONLY|CONTROL|NOT_EXPORTABLE|REPLACE_WITH_ORIGINAL|PLANNED/i.test(`${doc.format ?? ""} ${doc.documentType ?? ""}`)) {
       reasons.push(`Document format/status (${doc.format ?? "UNKNOWN"}/${doc.documentType ?? "UNKNOWN"}) is not a final export package file.`);
@@ -167,19 +179,10 @@ export async function checkDocxHygieneReadiness(docs: ExportReadyDocument[]): Pr
     let content = doc.fileContent ?? null;
     if (!content && doc.storagePath) {
       try {
-        const bytes = await storage.getFile({
-          storagePath: doc.storagePath,
-          fileContent: doc.fileContent ?? null,
-          fileName,
-        });
+        const bytes = await storage.getFile({ storagePath: doc.storagePath, fileContent: doc.fileContent ?? null, fileName });
         content = bytes.toString("base64");
       } catch {
-        failures.push({
-          documentId: doc.id,
-          name: doc.name,
-          fileName,
-          reasons: ["Unable to inspect storage-backed document content for final export hygiene"],
-        });
+        failures.push({ documentId: doc.id, name: doc.name, fileName, reasons: ["Unable to inspect storage-backed document content for final export hygiene"] });
         continue;
       }
     }
@@ -256,9 +259,10 @@ function hasStrategyOnlySignals(files: Array<{ originalFileName: string; extract
   return strategyHits && !officialHits;
 }
 
-export async function checkTenderLevelExportBlockers(tenderId: string, docs: ExportReadyDocument[] = []): Promise<NonNullable<ExportReadinessResult["tenderLevelBlockers"]>> {
+export async function checkTenderLevelExportBlockers(tenderId: string, docs: ExportReadyDocument[] = []): Promise<{ blockers: NonNullable<ExportReadinessResult["tenderLevelBlockers"]>; advisoryWarnings: NonNullable<ExportReadinessResult["advisoryWarnings"]> }> {
   await prismaReady;
   const blockers: NonNullable<ExportReadinessResult["tenderLevelBlockers"]> = [];
+  const advisoryWarnings: NonNullable<ExportReadinessResult["advisoryWarnings"]> = [];
 
   const tender = await prisma.tender.findUnique({
     where: { id: tenderId },
@@ -270,11 +274,32 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
     },
   });
 
-  if (!tender) return [tenderBlocker("TENDER_NOT_FOUND", "Tender not found for export readiness check.", "Reload the tender and run export readiness again.")];
+  if (!tender) return { blockers: [tenderBlocker("TENDER_NOT_FOUND", "Tender not found for export readiness check.", "Reload the tender and run export readiness again.")], advisoryWarnings };
+
+  const packageMode = detectSubmissionPackageMode({
+    submissionMethod: tender.submissionMethod,
+    submissionAddress: tender.submissionAddress,
+    submissionEmails: tender.submissionEmails,
+    exactFileNaming: tender.exactFileNaming,
+    exactFileOrder: tender.exactFileOrder,
+    analysisSummary: tender.analysisSummary,
+    evaluationMethodology: tender.evaluationMethodology,
+    notes: tender.notes,
+    requirements: tender.requirements,
+    files: tender.files,
+  });
+  if (packageMode.blockingForZip) {
+    blockers.push(tenderBlocker(
+      `PACKAGE_MODE_${packageMode.mode}`,
+      `${packageMode.reason} Signal: ${packageMode.matchedSignals[0] ?? packageMode.mode}`,
+      "Do not use the default final ZIP until the required submission package mode is implemented or manually prepared exactly as the tender instructs.",
+      "HIGH",
+    ));
+  }
 
   if (docs.length === 0) blockers.push(tenderBlocker("NO_ACTIVE_GENERATED_DOCUMENTS", "No active generated documents exist for export.", "Generate, validate and review the required documents before final export."));
   if (!isValidClientName(tender.clientName)) blockers.push(tenderBlocker("CLIENT_NAME_REQUIRED", "Client/procuring entity name is missing or invalid.", "Edit Tender Detail and enter the exact official procuring entity name."));
-  if ((tender.readinessScore ?? 0) <= 0 || /^(ANALYZED|DRAFT)$/i.test(tender.status) || /^(ANALYSIS|TENDER_INTAKE)$/i.test(tender.stage)) blockers.push(tenderBlocker("FULL_PROPOSAL_NOT_READY", `Tender is still at ${tender.status}/${tender.stage} with readiness score ${tender.readinessScore ?? 0}.`, "Run Engine, resolve readiness blockers, generate documents, then rerun export readiness."));
+  if ((tender.readinessScore ?? 0) <= 0 || /^(ANALYZED|AI_ANALYZED|AI_ANALYSIS_PARTIAL|FALLBACK_DRAFT_CREATED|ANALYSIS_REQUIRES_REVIEW|DRAFT)$/i.test(tender.status) || /^(ANALYSIS|TENDER_INTAKE)$/i.test(tender.stage)) blockers.push(tenderBlocker("FULL_PROPOSAL_NOT_READY", `Tender is still at ${tender.status}/${tender.stage} with workflow progress ${tender.readinessScore ?? 0}.`, "Run Engine, resolve canonical readiness blockers, generate documents, then rerun export readiness."));
   if (hasStrategyOnlySignals(tender.files)) blockers.push(tenderBlocker("OFFICIAL_SOURCE_REQUIRED", "Uploaded source appears to be strategy/market-intelligence only, not an official RFP/ToR/forms package.", "Upload the official tender source package before final export."));
 
   const requiresExperts = tender.requirements.some((r) => r.requirementType === "EXPERT");
@@ -284,14 +309,16 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
   if (requiresExperts && reviewedSelectedExperts === 0) blockers.push(tenderBlocker("NO_SELECTED_REVIEWED_EXPERTS", "Tender requires experts but no selected reviewed expert matches exist.", "Run Engine and select/review expert matches before export."));
   if (requiresProjects && reviewedSelectedProjects === 0) blockers.push(tenderBlocker("NO_SELECTED_REVIEWED_PROJECTS", "Tender requires project references but no selected reviewed project matches exist.", "Run Engine and select/review project matches before export."));
 
-  const [complianceRows, totalExpertMatches, totalProjectMatches] = await Promise.all([
+  const [complianceRows, totalExpertMatches, totalProjectMatches, plannedDocCount] = await Promise.all([
     prisma.complianceMatrix.count({ where: { tenderId } }),
     prisma.tenderExpertMatch.count({ where: { tenderId } }),
     prisma.tenderProjectMatch.count({ where: { tenderId } }),
+    prisma.generatedDocument.count({ where: { tenderId, generationStatus: "PLANNED" } }),
   ]);
   if (tender.requirements.length > 0 && complianceRows === 0) blockers.push(tenderBlocker("EVIDENCE_NOT_ASSESSED", "Compliance/evidence matrix is empty.", "Run Engine successfully so requirement-linked evidence rows are created."));
   if (requiresExperts && totalExpertMatches === 0) blockers.push(tenderBlocker("NO_TENDER_SPECIFIC_EXPERT_MATCHES", "No tender-specific expert match rows exist.", "Run Engine to create expert matches from the reviewed vault."));
   if (requiresProjects && totalProjectMatches === 0) blockers.push(tenderBlocker("NO_TENDER_SPECIFIC_PROJECT_MATCHES", "No tender-specific project match rows exist.", "Run Engine to create project matches from the reviewed vault."));
+  if (plannedDocCount > 0) blockers.push(tenderBlocker("UNGENERATED_PLANNED_DOCUMENTS", `${plannedDocCount} required submission document(s) are planned but not yet generated — the ZIP package would be incomplete.`, "Click 'Generate missing planned documents' to convert PLANNED rows into draft documents. For official-original rows (bid forms, tender templates) you must upload the real file via 'Attach official original'.", "HIGH"));
 
   const ungroundedMandatory = tender.requirements.filter((req) => req.priority === "MANDATORY" && !req.sectionReference && !req.sourceTenderFileId && !req.sourcePageNumber && !req.sourceExactQuote && (req.sourceConfidence ?? 0) <= 0);
   if (ungroundedMandatory.length > 0) blockers.push(tenderBlocker("SOURCE_REFERENCES_MISSING", `${ungroundedMandatory.length} mandatory requirement(s) lack source/page/quote traceability.`, "Run source extraction and review mandatory requirement references before export.", "HIGH"));
@@ -304,13 +331,67 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
   const workbook = await prisma.pricingWorkbook.findUnique({ where: { tenderId }, select: { id: true, noPriceLeakage: true } });
   if (workbook && workbook.noPriceLeakage === false) blockers.push(tenderBlocker("PRICING_LEAKAGE", "Pricing leakage flag is set on the pricing workbook.", "Confirm no prices, rates, or fees appear in the technical proposal envelope."));
 
-  return blockers;
+  // ── Donor / NGO safeguard checklist ──────────────────────────────────────
+  // When the tender is NGO/donor-funded (detected by category or keyword
+  // signals in description/analysis), verify that the three mandatory donor
+  // safeguard artefacts are present in the submission plan requirements or
+  // generated documents. Missing items are surfaced as MEDIUM blockers so the
+  // user is reminded before final export — they do not hard-block, since some
+  // donors accept a separate ESMP/logframe delivery milestone.
+  const isDonorTender =
+    /ngo|donor.?funded|world\s+bank|afdb|african\s+development|adb|asian\s+development|jica|eu\s+funded|usaid|dfid|fcdo|giz|undp|unicef|wfp|unhcr|ifad|gfatm|global\s+fund|development.*partner.*fund|bilateral.*donor/i.test(
+      [tender.category, tender.description, tender.analysisSummary, tender.notes, tender.intakeSummary].filter(Boolean).join(" "),
+    );
+  if (isDonorTender) {
+    const planText = tender.requirements.map((r) => `${r.title} ${r.description ?? ""}`).join(" ").toLowerCase();
+    const docText = docs.map((d) => `${d.name} ${d.documentType ?? ""}`).join(" ").toLowerCase();
+    const allText = `${planText} ${docText}`;
+    const sourceText = [tender.description, tender.analysisSummary, tender.notes, tender.intakeSummary, ...tender.requirements.map((r) => `${r.title} ${r.description ?? ""}`)].filter(Boolean).join(" ");
+    // Use the formalised donor-advisory confidence model. The scanner returns
+    // the verbatim quote of the explicit ToR requirement (≤200 chars) so the
+    // readiness panel + audit log can show WHERE the requirement was found
+    // instead of an opaque "system says blocking".
+    const explicitScan = scanTenderForExplicitDonorRequirement(sourceText);
+    const addDonorIssue = (code: string, title: string, action: string) => {
+      const issue = tenderBlocker(code, title, action, "MEDIUM");
+      // Hard invariant: only EXPLICIT_TOR_REQUIRED can promote to a blocker.
+      // Everything else stays in advisoryWarnings (non-export-blocking).
+      const annotated = { ...issue, confidence: explicitScan.confidence, sourceQuote: explicitScan.sourceQuote };
+      if (isExportBlockingConfidence(explicitScan.confidence)) blockers.push(annotated);
+      else advisoryWarnings.push(annotated);
+    };
+
+    if (!/esmp|environmental.*social.*management|esia|safeguard.*plan|environmental.*management.*plan/i.test(allText)) {
+      addDonorIssue(
+        "DONOR_ESMP_MISSING",
+        "NGO/donor tender: Environmental and Social Management Plan (ESMP) not detected in submission plan or generated documents.",
+        "Add ESMP section/annex, or mark as not required by ToR / separate post-award deliverable / donor template provided.",
+      );
+    }
+    if (!/logframe|log\s+frame|logical\s+framework|result[s]?\s+framework/i.test(allText)) {
+      addDonorIssue(
+        "DONOR_LOGFRAME_MISSING",
+        "NGO/donor tender: Logical Framework (logframe / results framework) not detected in submission plan or generated documents.",
+        "Add logframe/results framework, or mark as not required by ToR / separate post-award deliverable / donor template provided.",
+      );
+    }
+    if (!/m&e\s+plan|monitoring.*evaluation|me\s+plan|m\s+and\s+e\s+plan|monitoring\s+plan/i.test(allText)) {
+      addDonorIssue(
+        "DONOR_ME_PLAN_MISSING",
+        "NGO/donor tender: Monitoring & Evaluation (M&E) plan not detected in submission plan or generated documents.",
+        "Add M&E plan, or mark as not required by ToR / separate post-award deliverable / donor template provided.",
+      );
+    }
+  }
+
+  return { blockers, advisoryWarnings };
 }
 
 export async function checkFullExportReadiness(opts: { tenderId: string; docs: ExportReadyDocument[]; requireFileContent?: boolean }): Promise<ExportReadinessResult> {
   const perDoc = checkExportReadiness(opts.docs, { requireFileContent: opts.requireFileContent });
   const docxHygieneFailures = await checkDocxHygieneReadiness(opts.docs);
-  const failures = mergeFailures(perDoc.failures, docxHygieneFailures);
-  const tenderLevelBlockers = await checkTenderLevelExportBlockers(opts.tenderId, opts.docs);
-  return { ok: failures.length === 0 && tenderLevelBlockers.length === 0, failures, tenderLevelBlockers };
+  const byteFailures = await checkExportFileByteReadiness(opts.docs);
+  const failures = mergeFailures(perDoc.failures, docxHygieneFailures, byteFailures);
+  const tenderReadiness = await checkTenderLevelExportBlockers(opts.tenderId, opts.docs);
+  return { ok: failures.length === 0 && tenderReadiness.blockers.length === 0, failures, tenderLevelBlockers: tenderReadiness.blockers, advisoryWarnings: tenderReadiness.advisoryWarnings };
 }

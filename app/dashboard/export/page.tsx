@@ -12,6 +12,7 @@ export default async function ExportPage() {
     where: { userId },
     include: {
       generatedDocuments: {
+        where: { generationStatus: { not: "SUPERSEDED" } },
         select: {
           id: true, name: true, generationStatus: true, validationStatus: true,
           reviewStatus: true, exactFileName: true, exactOrder: true,
@@ -45,7 +46,7 @@ export default async function ExportPage() {
       <div className="space-y-6">
         {tenders.map((tender) => {
           const generated = tender.generatedDocuments.filter((d) => d.generationStatus === "GENERATED");
-          const allPassed = generated.every((d) => d.validationStatus === "PASSED");
+          const allPassed = generated.every((d) => d.validationStatus === "PASSED" || d.validationStatus === "VALIDATED");
           const criticalGaps = tender.complianceGaps.filter((g) => !g.isResolved && g.severity === "CRITICAL");
           const highGaps = tender.complianceGaps.filter((g) => !g.isResolved && g.severity === "HIGH");
           const unresolvedMediumLow = tender.complianceGaps.filter((g) => !g.isResolved && !["CRITICAL", "HIGH"].includes(g.severity));

@@ -1,18 +1,24 @@
 import { NextResponse } from "next/server";
-import { getSession } from "../../../../../lib/auth";
+import { getSession, requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { logAction } from "../../../../../lib/audit";
+import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../../lib/rate-limit";
 
 export const dynamic = "force-dynamic";
 
 const VALID_OUTCOMES = new Set(["WON", "LOST", "WITHDRAWN", "PENDING"]);
 
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
-  const userId = await getSession();
-  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  let actor;
+  try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER"); }
+  catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
+
+  const rl = rateLimit(`bid-outcome:${actor.id}`, MUTATION_RATE_LIMIT);
+  if (!rl.allowed) return NextResponse.json({ error: "Too many requests", retryAfter: Math.ceil((rl.resetAt - Date.now()) / 1000) }, { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } });
 
   await prismaReady;
   const { id } = await params;
+  const userId = actor.id;
 
   const existing = await prisma.tender.findFirst({ where: { id, userId } });
   if (!existing) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
@@ -29,12 +35,17 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 
   const note = typeof body.bidOutcomeNote === "string" ? body.bidOutcomeNote.trim() || null : null;
 
+  // Terminal outcomes close the tender; PENDING keeps it active.
+  // The specific win/loss/withdrawal detail is already stored in bidOutcome.
+  const closesTheTender = outcome && outcome !== "PENDING";
+
   const tender = await prisma.tender.update({
     where: { id },
     data: {
       bidOutcome: outcome,
       bidOutcomeNote: note,
       bidOutcomeAt: outcome ? new Date() : null,
+      ...(closesTheTender ? { status: "CLOSED" } : outcome === "PENDING" ? { status: "ACTIVE" } : {}),
     },
     select: {
       id: true, title: true, status: true, bidOutcome: true,

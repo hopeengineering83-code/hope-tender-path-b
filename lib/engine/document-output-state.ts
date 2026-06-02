@@ -30,6 +30,51 @@ export const EXPORT_BLOCKING_STATES: readonly DocumentOutputState[] = [
   "NEEDS_REVALIDATION",
 ];
 
+export function normalizeStatus(value?: string | null): string {
+  return (value ?? "").trim().toUpperCase();
+}
+
+export function isValidationPassed(value?: string | null): boolean {
+  const status = normalizeStatus(value);
+  return status === "VALIDATED" || status === "PASSED";
+}
+
+export function isReviewReadyForExport(value?: string | null): boolean {
+  const s = normalizeStatus(value);
+  return s === "READY_FOR_EXPORT" || s === "APPROVED";
+}
+
+export function isGenerated(value?: string | null): boolean {
+  return normalizeStatus(value) === "GENERATED";
+}
+
+export function isInternalDraftDocument(doc: DocumentLike): boolean {
+  const label = `${doc.name ?? ""} ${doc.exactFileName ?? ""} ${doc.documentType ?? ""} ${doc.format ?? ""} ${doc.reviewStatus ?? ""} ${doc.generationStatus ?? ""}`;
+  if (/\bquick[_\s-]*draft\b/i.test(label)) return true;
+  if (/\bAI\s*Proposal\s*\(\s*Quick\s*Draft\s*\)/i.test(label)) return true;
+  if (/\bdraft[_\s-]*only\b/i.test(label)) return true;
+  if (/\bmarkdown\b/i.test(label) && normalizeStatus(doc.reviewStatus) === "NOT_EXPORTABLE") return true;
+  return false;
+}
+
+export function isFinalExportCandidateDocument(doc: DocumentLike): boolean {
+  if (normalizeStatus(doc.generationStatus) === "SUPERSEDED") return false;
+  if (normalizeStatus(doc.validationStatus) === "SUPERSEDED") return false;
+  if (normalizeStatus(doc.generationStatus) === "PLANNED") return false;
+  const rev = normalizeStatus(doc.reviewStatus);
+  if (rev === "NOT_EXPORTABLE" || rev === "REPLACE_WITH_ORIGINAL") return false;
+  const fmt = normalizeStatus(doc.format);
+  if (fmt === "CONTROL") return false;
+  const dtype = normalizeStatus(doc.documentType ?? "");
+  if (dtype === "SUBMISSION_CONTROL" || dtype === "SUBMISSION_RULES") return false;
+  if (isInternalDraftDocument(doc)) return false;
+  return true;
+}
+
+export function filterFinalExportCandidateDocuments<T extends DocumentLike>(docs: T[]): T[] {
+  return docs.filter(isFinalExportCandidateDocument);
+}
+
 function looksLikeBase64Docx(value: string): boolean {
   if (value.length < 8) return false;
   try {
@@ -72,9 +117,11 @@ function requestedFormat(doc: DocumentLike): "pdf" | "docx" | "xlsx" | "zip" | "
 }
 
 export function deriveDocumentOutputState(doc: DocumentLike): DocumentOutputState {
-  const gen = (doc.generationStatus ?? "").toUpperCase();
-  const val = (doc.validationStatus ?? "").toUpperCase();
-  const rev = (doc.reviewStatus ?? "").toUpperCase();
+  const gen = normalizeStatus(doc.generationStatus);
+  const val = normalizeStatus(doc.validationStatus);
+  const reviewReady = isReviewReadyForExport(doc.reviewStatus);
+  const rev = normalizeStatus(doc.reviewStatus);
+  const validationPassed = isValidationPassed(doc.validationStatus);
   const want = requestedFormat(doc);
 
   if (gen === "SUPERSEDED" || val === "SUPERSEDED") return "SUPERSEDED";
@@ -90,10 +137,13 @@ export function deriveDocumentOutputState(doc: DocumentLike): DocumentOutputStat
 
   if (content.length === 0 && !hasStorageContent) return "CONTROL_RECORD_ONLY";
 
-  // Storage-backed docs: trust validation/review status without content-type inspection
+  // Storage-backed docs: trust validation/review status without content-type inspection.
+  // Validation historically used both PASSED and VALIDATED. Treat both as the
+  // same successful validation state so older generated documents do not stay
+  // blocked after deterministic validation already passed.
   if (content.length === 0 && hasStorageContent) {
-    if (val === "VALIDATED" && rev === "READY_FOR_EXPORT") return "READY_FOR_EXPORT";
-    if (val === "VALIDATED") return "VALIDATED";
+    if (validationPassed && reviewReady) return "READY_FOR_EXPORT";
+    if (validationPassed) return "VALIDATED";
     return want === "pdf" ? "PDF_GENERATED" : "DOCX_GENERATED";
   }
 
@@ -105,14 +155,14 @@ export function deriveDocumentOutputState(doc: DocumentLike): DocumentOutputStat
   if ((want === "xlsx" || want === "zip") && !isDocx && !isPdf) return "CONTROL_RECORD_ONLY";
 
   if (isPdf) {
-    if (val === "VALIDATED" && rev === "READY_FOR_EXPORT") return "READY_FOR_EXPORT";
-    if (val === "VALIDATED") return "VALIDATED";
+    if (validationPassed && reviewReady) return "READY_FOR_EXPORT";
+    if (validationPassed) return "VALIDATED";
     return "PDF_GENERATED";
   }
 
   if (isDocx) {
-    if (val === "VALIDATED" && rev === "READY_FOR_EXPORT") return "READY_FOR_EXPORT";
-    if (val === "VALIDATED") return "VALIDATED";
+    if (validationPassed && reviewReady) return "READY_FOR_EXPORT";
+    if (validationPassed) return "VALIDATED";
     return "DOCX_GENERATED";
   }
 

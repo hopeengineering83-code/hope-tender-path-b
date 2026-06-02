@@ -20,6 +20,8 @@ import { mapGenerationError } from "../../../../../lib/engine/structured-generat
 import { computeStoredMetadataPatch, listInvalidStoredFields } from "../../../../../lib/engine/sanitize-stored-metadata";
 import { isValidClientName } from "../../../../../lib/engine/metadata-validators";
 import { repairSourceGrounding } from "../../../../../lib/engine/repair-source-grounding";
+import { assertAnalysisReadyForFinalGeneration } from "../../../../../lib/engine/analysis-source";
+import { assessTenderMetadataCompleteness } from "../../../../../lib/engine/tender-metadata-completeness";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -261,6 +263,96 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       nextAction: "RUN_ENGINE",
     }, { status: 422 });
   }
+
+  // ── Metadata completeness gate ────────────────────────────────────────────
+  // Blocks generation when critical metadata is missing or placeholder-filled
+  // (e.g. client name "Bid-Team to confirm", no submission endpoint, no deadline).
+  // overallRatio < 0.3 is a hard block; missingCritical / invalidFields always block.
+  const metadataReport = assessTenderMetadataCompleteness({
+    clientName: tender.clientName,
+    title: tender.title,
+    reference: tender.reference ?? null,
+    country: tender.country ?? null,
+    submissionMethod: tender.submissionMethod ?? null,
+    submissionAddress: tender.submissionAddress ?? null,
+    submissionEmails: tender.submissionEmails ?? null,
+    deadline: tender.deadline ?? null,
+    clientContactName: tender.clientContactName ?? null,
+    clientContactEmail: tender.clientContactEmail ?? null,
+    clientContactPhone: tender.clientContactPhone ?? null,
+    pageLimit: tender.pageLimit ?? null,
+    budget: tender.budget ?? null,
+    currency: tender.currency ?? null,
+    validityDays: tender.validityDays ?? null,
+    bidBondAmount: tender.bidBondAmount ?? null,
+    bidBondCurrency: tender.bidBondCurrency ?? null,
+    mandatorySiteVisit: tender.mandatorySiteVisit ?? null,
+    numberOfCopiesRequired: tender.numberOfCopiesRequired ?? null,
+    preBidMeetingDate: tender.preBidMeetingDate ?? null,
+    preBidMeetingLocation: tender.preBidMeetingLocation ?? null,
+    requirementCount: tender.requirements.length,
+    hasEvaluationMethodology: Boolean((tender.evaluationMethodology ?? "").trim()),
+    hasSubmissionRules: Boolean(tender.submissionMethod || tender.submissionEmails || tender.submissionAddress),
+  });
+  if (metadataReport.blockingForGeneration) {
+    // Name the actual missing fields so the user knows exactly what's wrong,
+    // and nudge them to the one-click repair button. The endpoint behind that
+    // button never invents — it returns NOT_FOUND when no source quote matches.
+    const missingNames = metadataReport.missingCritical.map((f) => f.field).slice(0, 5);
+    const placeholderNames = metadataReport.invalidFields.map((f) => f.field).slice(0, 5);
+    const parts: string[] = [];
+    if (missingNames.length > 0) parts.push(`${missingNames.length} critical field(s) missing (${missingNames.join(", ")})`);
+    if (placeholderNames.length > 0) parts.push(`${placeholderNames.length} field(s) contain placeholder language (${placeholderNames.join(", ")})`);
+    return NextResponse.json({
+      error: `Generation blocked: ${parts.join("; ")}. First try the "Repair all empty fields from source" button — the deterministic extractor pulls verifiable values from the uploaded tender files when present. If a field is genuinely absent from the tender source, edit the tender and confirm it manually.`,
+      code: "METADATA_INCOMPLETE_FOR_GENERATION",
+      missingCritical: metadataReport.missingCritical.map((f) => ({ field: f.field, reason: f.reason })),
+      invalidFields: metadataReport.invalidFields.map((f) => ({ field: f.field, reason: f.reason })),
+      overallRatio: metadataReport.overallRatio,
+      nextAction: "REPAIR_OR_EDIT_TENDER",
+    }, { status: 422 });
+  }
+
+  // ── Plan-only mode: build submission plan stubs without running full AI generation ──
+  const url = new URL(req.url);
+  if (url.searchParams.get("planOnly") === "true") {
+    const plan = buildSubmissionPlan(tender);
+    const alreadyInProgress = await prisma.generatedDocument.count({
+      where: { tenderId: id, generationStatus: { in: ["GENERATING", "QUEUED"] } },
+    });
+    if (alreadyInProgress > 0) {
+      return NextResponse.json({ error: "Generation already in progress — cannot build plan while documents are generating.", code: "GENERATION_IN_PROGRESS" }, { status: 409 });
+    }
+    const plannedFiles = plannedSubmissionTargetFiles(plan);
+    const planRowsCreated = await ensurePlannedGeneratedDocumentRecords(id, plannedFiles);
+    await logAction({ userId, action: "TENDER_PLAN_BUILT", entityType: "Tender", entityId: id, description: `Submission plan built: ${planRowsCreated} planned document stub(s) created.`, metadata: { tenderId: id, planRowsCreated, plannedFileCount: plannedFiles.length } });
+    return NextResponse.json({ planBuilt: true, planRowsCreated, plannedFileCount: plannedFiles.length, message: `Submission plan built — ${planRowsCreated} planned document stub(s) created from ${plannedFiles.length} required file(s).` });
+  }
+
+  // ── Regex-fallback analysis gate (Part 4) ────────────────────────────────
+  // If the last engine run fell back to regex analysis because AI providers
+  // failed, do not produce a final proposal unless a senior engineer has
+  // explicitly approved the fallback analysis via
+  // POST /api/tenders/[id]/approve-analysis. This is what prevents the
+  // screenshot regression where regex-fallback analysis quietly produced
+  // PASSED/APPROVED final proposal documents.
+  const analysisGate = await assertAnalysisReadyForFinalGeneration(prisma, id, tender);
+  if (!analysisGate.ok) {
+    await logAction({
+      userId,
+      action: "GENERATION_BLOCKED_REGEX_FALLBACK",
+      entityType: "Tender",
+      entityId: id,
+      description: "Final generation blocked: analysis source is regex fallback and has not been human-approved.",
+      requestId,
+    });
+    return NextResponse.json({
+      error: analysisGate.message,
+      code: analysisGate.code,
+      nextAction: analysisGate.nextAction,
+      details: "Re-run AI Analyze with healthy providers, or POST /api/tenders/[id]/approve-analysis to explicitly approve the current regex-fallback analysis.",
+    }, { status: 409 });
+  }
   const untracedInitial = tender.requirements.filter((req) => req.priority === "MANDATORY" && ((req.sourceConfidence ?? 0) <= 0));
   if (untracedInitial.length > 0) {
     // Attempt one automatic repair pass using uploaded tender file text before hard-blocking.
@@ -347,7 +439,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const letterheadAppliedCount = await applyActiveUploadedLetterheadToTenderDocuments(id, userId);
     if (letterheadAppliedCount > 0) warnings.push(`Uploaded Word letterhead applied to ${letterheadAppliedCount} generated DOCX file(s).`);
 
-    const generatedDocsForPlan = explicitSubmissionScope ? await prisma.generatedDocument.findMany({ where: { tenderId: id }, select: { id: true, name: true, exactFileName: true, exactOrder: true, documentType: true, format: true, generationStatus: true, fileContent: true } }) : [];
+    const generatedDocsForPlan = explicitSubmissionScope ? await prisma.generatedDocument.findMany({ where: { tenderId: id }, select: { id: true, name: true, exactFileName: true, exactOrder: true, documentType: true, format: true, generationStatus: true } }) : [];
     const missingPlanFiles = explicitSubmissionScope ? findMissingGeneratedDocuments(submissionPlan, generatedDocsForPlan) : [];
     const extraGeneratedDocs = explicitSubmissionScope ? findExtraGeneratedDocuments(submissionPlan, generatedDocsForPlan) : [];
     if (missingPlanFiles.length > 0) warnings.push(`Submission plan still has ${missingPlanFiles.length} missing tender-required file(s): ${missingPlanFiles.map((file) => file.exactFileName).join(", ")}.`);
@@ -355,8 +447,18 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
     advanceJob(job.id, "VALIDATE");
     if (reviewedExpertCount > 0 || draftExperts.length > 0 || reviewedProjectCount > 0 || draftProjects.length > 0) await prisma.generatedDocument.updateMany({ where: { tenderId: id }, data: { reviewedExpertCount, draftExpertCount: draftExperts.length, reviewedProjectCount, draftProjectCount: draftProjects.length, updatedAt: new Date() } });
+    // Advance tender stage to GENERATION so the header stage pill reflects progress.
+    await prisma.tender.update({ where: { id }, data: { stage: "GENERATION" } }).catch(() => {});
     await logAction({ userId, action: "TENDER_GENERATED", entityType: "Tender", entityId: id, description: `Generated benchmark-quality documents for tender "${tender.title}" — ${reviewedExpertCount} reviewed experts, ${draftExperts.length} draft experts, ${reviewedProjectCount} reviewed projects, ${draftProjects.length} draft projects, ${supportDocumentCount} supporting/replacement-control package documents, ${letterheadAppliedCount} uploaded letterhead overlays, ${seniorReviewCriticals.length} senior-review gaps`, metadata: { tenderId: id, reviewedExpertCount, draftExpertCount: draftExperts.length, reviewedProjectCount, draftProjectCount: draftProjects.length, promotedExpertCount: promotion.promotedExpertCount, promotedProjectCount: promotion.promotedProjectCount, plannedRecordCount, supportDocumentCount, letterheadAppliedCount, seniorReviewGapCount: seniorReviewCriticals.length, explicitSubmissionScope, plannedTargetCount: plannedTargetFiles.length, missingPlanFileCount: missingPlanFiles.length, extraGeneratedFileCount: extraGeneratedDocs.length, readiness: readiness.totals, warnings }, requestId });
-    const updatedTender = await prisma.tender.findFirst({ where: { id, userId }, include: { generatedDocuments: { orderBy: { exactOrder: "asc" } } } });
+    const updatedTender = await prisma.tender.findFirst({
+      where: { id, userId },
+      include: {
+        generatedDocuments: {
+          orderBy: { exactOrder: "asc" },
+          select: { id: true, name: true, documentType: true, generationStatus: true, validationStatus: true, reviewStatus: true, reviewNotes: true, exactFileName: true, exactOrder: true, contentSummary: true, reviewedExpertCount: true, draftExpertCount: true, reviewedProjectCount: true, draftProjectCount: true },
+        },
+      },
+    });
     const jobResult = { warnings, supportDocumentCount, letterheadAppliedCount, promotedExpertCount: promotion.promotedExpertCount, promotedProjectCount: promotion.promotedProjectCount };
     completeJob(job.id, jobResult);
     void createNotification({ userId, type: "TENDER_GENERATED", title: `Documents generated for "${tender.title}"`, body: `${(updatedTender?.generatedDocuments ?? []).length} document(s) ready for review.`, entityType: "Tender", entityId: id, link: `/dashboard/tenders/${id}` });

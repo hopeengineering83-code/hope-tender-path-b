@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getSession } from "../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../lib/prisma";
 import { logAction } from "../../../../lib/audit";
+import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../lib/rate-limit";
 
 export async function GET(req: Request) {
   const userId = await getSession();
@@ -43,27 +44,36 @@ export async function GET(req: Request) {
 export async function DELETE(req: Request) {
   const userId = await getSession();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  await prismaReady;
 
-  const { searchParams } = new URL(req.url);
-  const id = searchParams.get("id");
-  if (!id) return NextResponse.json({ error: "Missing id" }, { status: 400 });
+  const rl = rateLimit(`docs-delete:${userId}`, MUTATION_RATE_LIMIT);
+  if (!rl.allowed) return NextResponse.json({ error: "Too many requests", retryAfter: Math.ceil((rl.resetAt - Date.now()) / 1000) }, { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } });
 
-  const company = await prisma.company.findUnique({ where: { userId } });
-  if (!company) return NextResponse.json({ error: "Company not found" }, { status: 404 });
+  try {
+    await prismaReady;
 
-  const doc = await prisma.companyDocument.findFirst({ where: { id, companyId: company.id } });
-  if (!doc) return NextResponse.json({ error: "Document not found" }, { status: 404 });
+    const { searchParams } = new URL(req.url);
+    const id = searchParams.get("id");
+    if (!id) return NextResponse.json({ error: "Missing id" }, { status: 400 });
 
-  await prisma.companyDocument.delete({ where: { id } });
+    const company = await prisma.company.findUnique({ where: { userId } });
+    if (!company) return NextResponse.json({ error: "Company not found" }, { status: 404 });
 
-  await logAction({
-    userId,
-    action: "COMPANY_DOCUMENT_DELETE",
-    entityType: "CompanyDocument",
-    entityId: id,
-    description: `Deleted company document "${doc.originalFileName}"`,
-  });
+    const doc = await prisma.companyDocument.findFirst({ where: { id, companyId: company.id } });
+    if (!doc) return NextResponse.json({ error: "Document not found" }, { status: 404 });
 
-  return NextResponse.json({ success: true });
+    await prisma.companyDocument.delete({ where: { id } });
+
+    await logAction({
+      userId,
+      action: "COMPANY_DOCUMENT_DELETE",
+      entityType: "CompanyDocument",
+      entityId: id,
+      description: `Deleted company document "${doc.originalFileName}"`,
+    });
+
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    console.error("Company document DELETE failed", error);
+    return NextResponse.json({ error: "Failed to delete document" }, { status: 500 });
+  }
 }

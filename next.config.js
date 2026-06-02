@@ -9,8 +9,9 @@ function assertProductionEnv() {
   if (process.env.NODE_ENV !== "production") return;
 
   // DATABASE_URL and SESSION_SECRET are unconditionally required.
-  // The AI key requirement is "either ANTHROPIC_API_KEY or GEMINI_API_KEY"
-  // — both are accepted by lib/ai.ts (Claude preferred, Gemini fallback).
+  // AI is enabled when any supported provider is configured. The default
+  // chain is OpenAI → Gemini → Mistral → DeepSeek → Groq → Together → OpenRouter → Claude;
+  // Claude/Anthropic remains last so rate limits do not block the app.
   const required = [
     ["DATABASE_URL", "PostgreSQL connection string"],
     ["SESSION_SECRET", "HMAC session signing secret (min 32 chars)"],
@@ -34,16 +35,33 @@ function assertProductionEnv() {
     process.exit(1);
   }
 
-  // AI key requirement — at least one of the two must be present.
-  if (!process.env.ANTHROPIC_API_KEY && !process.env.GEMINI_API_KEY) {
+  const aiProviderKeys = [
+    "OPENAI_API_KEY",
+    "GEMINI_API_KEY",
+    "MISTRAL_API_KEY",
+    "DEEPSEEK_API_KEY",
+    "GROQ_API_KEY",
+    "TOGETHER_API_KEY",
+    "OPENROUTER_API_KEY",
+    "ANTHROPIC_API_KEY",
+  ];
+
+  // AI key requirement — at least one supported provider must be present.
+  if (!aiProviderKeys.some((name) => Boolean(process.env[name]))) {
     console.error(
       "\n╔══════════════════════════════════════════════════════════════╗" +
       "\n║  BUILD FAILED — No AI provider key configured.              ║" +
       "\n╚══════════════════════════════════════════════════════════════╝" +
       "\n\nSet at least one of:" +
-      "\n  ✗ ANTHROPIC_API_KEY  (preferred — Claude provider)" +
-      "\n  ✗ GEMINI_API_KEY     (fallback — Gemini provider)" +
-      "\n\nWithout either, AI proposal generation and CV/project extraction\nare disabled and imported records remain REGEX_DRAFT only.\n"
+      "\n  ✗ OPENAI_API_KEY      (first in default chain)" +
+      "\n  ✗ GEMINI_API_KEY      (analysis/extraction primary; second in proposal chain)" +
+      "\n  ✗ MISTRAL_API_KEY     (third in default chain; analysis fallback)" +
+      "\n  ✗ DEEPSEEK_API_KEY    (fourth in default chain)" +
+      "\n  ✗ GROQ_API_KEY        (fifth in default chain; fast/cheap primary)" +
+      "\n  ✗ TOGETHER_API_KEY    (sixth in default chain; fast/cheap secondary)" +
+      "\n  ✗ OPENROUTER_API_KEY  (seventh in default chain)" +
+      "\n  ✗ ANTHROPIC_API_KEY   (Claude/Anthropic last-resort provider)" +
+      "\n\nWithout any AI provider, AI proposal generation and CV/project extraction\nare disabled and imported records remain REGEX_DRAFT only.\n"
     );
     process.exit(1);
   }
@@ -74,10 +92,11 @@ const nextConfig = {
   experimental: {
     serverActions: { bodySizeLimit: "10mb" },
   },
-  // Surface missing env vars in the build output. AI is enabled when EITHER
-  // provider is configured (lib/ai.ts accepts both, Claude preferred).
+  // Surface AI availability in the build output without exposing which secrets
+  // are configured. Mirrors the six-provider server-side policy above.
   env: {
-    NEXT_PUBLIC_AI_ENABLED: (process.env.ANTHROPIC_API_KEY || process.env.GEMINI_API_KEY) ? "true" : "false",
+    NEXT_PUBLIC_AI_ENABLED: ["OPENAI_API_KEY", "GEMINI_API_KEY", "MISTRAL_API_KEY", "DEEPSEEK_API_KEY", "GROQ_API_KEY", "TOGETHER_API_KEY", "OPENROUTER_API_KEY", "ANTHROPIC_API_KEY"]
+      .some((name) => Boolean(process.env[name])) ? "true" : "false",
   },
 };
 

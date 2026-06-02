@@ -1,8 +1,11 @@
 import { NextResponse } from "next/server";
 import { Document, HeadingLevel, Packer, Paragraph, TextRun } from "docx";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
+import { logAction } from "../../../../../lib/audit";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { buildSubmissionPlan, findMissingGeneratedDocuments } from "../../../../../lib/engine/submission-plan";
+import { MUTATION_RATE_LIMIT, rateLimit } from "../../../../../lib/rate-limit";
+import { extractRequestId } from "../../../../../lib/request-id";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -27,13 +30,17 @@ function documentTypeFor(fileName: string, fallback: string) {
   const label = fileName.toLowerCase();
   if (/financial|audited|capacity|bank|turnover/.test(label)) return "FINANCIAL_EVIDENCE";
   if (/legal|eligibility|registration|licen[cs]ing|tax|certificate/.test(label)) return "LEGAL_EVIDENCE";
-  if (/form|template/.test(label)) return "FORM_OR_TEMPLATE";
+  // Submission/rules must be checked before form|template — "submission formatting" contains "form"
+  if (/submission formatting|packaging rules|submission rules|delivery instruction|submission method|submission deadline/.test(label)) return "SUBMISSION_RULES";
+  if (/\bform\b|template/.test(label)) return "FORM_OR_TEMPLATE";
   if (/submission|deadline|delivery|method|rules/.test(label)) return "SUBMISSION_RULES";
   return fallback || "TENDER_REQUIRED_FILE";
 }
 
 function needsOriginalReplacement(fileName: string, documentType: string) {
-  return /financial|audited|capacity|bank|legal|eligibility|registration|licen[cs]ing|tax|certificate|form|template/i.test(`${fileName} ${documentType}`);
+  const label = `${fileName} ${documentType}`.toLowerCase();
+  // Use \bform\b word boundary to prevent "formatting" from matching "form"
+  return /\bform\b|template|annex\s*[a-z0-9]+\s*\(?official\)?/.test(label);
 }
 
 async function replacementControlContent(tenderTitle: string, fileName: string, replaceWithOriginal: boolean) {
@@ -58,12 +65,18 @@ async function replacementControlContent(tenderTitle: string, fileName: string, 
   return buffer.toString("base64");
 }
 
-export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const requestId = extractRequestId(req);
   let actor;
   try {
     actor = await requireRole("ADMIN", "PROPOSAL_MANAGER");
   } catch (error) {
     return error instanceof Error && error.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse();
+  }
+
+  const rl = rateLimit(`generate-missing-plan-files:${actor.id}`, MUTATION_RATE_LIMIT);
+  if (!rl.allowed) {
+    return NextResponse.json({ success: false, ok: false, code: "RATE_LIMITED", error: "Too many missing-plan generation requests. Wait and retry.", retryAfter: Math.ceil((rl.resetAt - Date.now()) / 1000) }, { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } });
   }
 
   await prismaReady;
@@ -74,7 +87,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       requirements: true,
       generatedDocuments: {
         where: { generationStatus: { not: "SUPERSEDED" } },
-        select: { id: true, name: true, exactFileName: true, documentType: true, format: true, exactOrder: true, generationStatus: true, fileContent: true },
+        select: { id: true, name: true, exactFileName: true, documentType: true, format: true, exactOrder: true, generationStatus: true },
       },
     },
   });
@@ -90,27 +103,51 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   });
   const missing = findMissingGeneratedDocuments(plan, tender.generatedDocuments);
   if (missing.length === 0) {
+    await logAction({ userId: actor.id, action: "DOCUMENT_GENERATE", entityType: "Tender", entityId: id, description: `${actor.email} checked missing planned files for "${tender.title}"; none were missing.`, metadata: { tenderId: id, created: 0, updated: 0 }, requestId });
     return NextResponse.json({ success: true, created: 0, message: "No missing planned files remain." });
   }
 
   const created: string[] = [];
   const updated: string[] = [];
+  const skipped: string[] = [];
   for (const file of missing) {
     const documentType = documentTypeFor(file.exactFileName, file.documentType);
     const replaceWithOriginal = needsOriginalReplacement(file.exactFileName, documentType);
+    const isSubmissionRules = documentType === "SUBMISSION_RULES" || /submission formatting|packaging rules|submission rules|delivery instruction/i.test(file.exactFileName);
+
+    // Dedup check: skip creation if a non-superseded doc with same exactFileName
+    // OR a sufficiently similar name already exists (prevents duplicate rows).
+    const normalizedFileName = file.exactFileName.toLowerCase().trim();
+    const existingByExactName = await prisma.generatedDocument.findFirst({
+      where: {
+        tenderId: id,
+        exactFileName: { equals: file.exactFileName, mode: "insensitive" },
+        generationStatus: { not: "SUPERSEDED" },
+      },
+      select: { id: true, generationStatus: true },
+    });
+    // If a non-PLANNED doc already exists with the same file name, skip to avoid duplicates.
+    if (existingByExactName && existingByExactName.generationStatus !== "PLANNED") {
+      skipped.push(file.exactFileName);
+      continue;
+    }
+
     const fileContent = await replacementControlContent(tender.title, file.exactFileName, replaceWithOriginal);
-    const existing = await prisma.generatedDocument.findFirst({ where: { tenderId: id, exactFileName: file.exactFileName }, select: { id: true } });
+    const existing = existingByExactName ?? await prisma.generatedDocument.findFirst({ where: { tenderId: id, exactFileName: file.exactFileName }, select: { id: true } });
+    void normalizedFileName; // used above in comment
     const data = {
       name: file.exactFileName.replace(/\.[a-z0-9]{2,5}$/i, ""),
       documentType,
-      format: replaceWithOriginal ? "CONTROL" : file.format,
+      format: replaceWithOriginal || isSubmissionRules ? "CONTROL" : file.format,
       exactFileName: file.exactFileName,
       exactOrder: file.exactOrder,
       fileContent,
       generationStatus: "GENERATED",
       validationStatus: "PENDING",
-      reviewStatus: replaceWithOriginal ? "REPLACE_WITH_ORIGINAL" : "PENDING",
-      reviewNotes: replaceWithOriginal ? "DO NOT SUBMIT this generated placeholder. Replace it with the tender-issued original / signed / stamped / certified document before final export." : "Review this generated support control document before final export.",
+      reviewStatus: isSubmissionRules ? "NOT_EXPORTABLE" : (replaceWithOriginal ? "REPLACE_WITH_ORIGINAL" : "PENDING"),
+      reviewNotes: isSubmissionRules
+        ? "Submission formatting/packaging rules are internal control metadata and are excluded from export."
+        : (replaceWithOriginal ? "DO NOT SUBMIT this generated placeholder. Replace it with the tender-issued original / signed / stamped / certified document before final export." : "Review this generated support control document before final export."),
       contentSummary: replaceWithOriginal
         ? `Replacement-control record for tender-required file ${file.exactFileName}. This internal control record is intentionally non-final and must be replaced with the original before export.`
         : `Generated support-control record for tender-required file ${file.exactFileName}. Review before final export.`,
@@ -125,11 +162,53 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     }
   }
 
+  // ── Pass 2: convert any lingering PLANNED rows to control drafts ──────────
+  // Engine planned these docs but the AI provider failed to generate them.
+  // Convert them to replacement-control records so the export gate can proceed.
+  const plannedRows = await prisma.generatedDocument.findMany({
+    where: { tenderId: id, generationStatus: "PLANNED" },
+    select: { id: true, name: true, exactFileName: true, documentType: true },
+  });
+  const convertedFromPlanned: string[] = [];
+  for (const row of plannedRows) {
+    const fileName = row.exactFileName ?? row.name ?? "Unnamed document";
+    const documentType = documentTypeFor(fileName, row.documentType ?? "");
+    const replaceWithOriginal = needsOriginalReplacement(fileName, documentType);
+    const isSubmissionRules = documentType === "SUBMISSION_RULES" || /submission formatting|packaging rules|submission rules|delivery instruction/i.test(fileName);
+    const fileContent = await replacementControlContent(tender.title, fileName, replaceWithOriginal);
+    await prisma.generatedDocument.update({
+      where: { id: row.id },
+      data: {
+        fileContent,
+        generationStatus: "GENERATED",
+        validationStatus: "PENDING",
+        reviewStatus: isSubmissionRules ? "NOT_EXPORTABLE" : (replaceWithOriginal ? "REPLACE_WITH_ORIGINAL" : "PENDING"),
+        reviewNotes: isSubmissionRules
+          ? "Submission formatting/packaging rules are internal control metadata and are excluded from export."
+          : (replaceWithOriginal ? "DO NOT SUBMIT this generated placeholder. Replace it with the tender-issued original before final export." : "Review this generated support control document before final export."),
+        updatedAt: new Date(),
+      },
+    });
+    convertedFromPlanned.push(fileName);
+  }
+
+  await logAction({
+    userId: actor.id,
+    action: "DOCUMENT_GENERATE",
+    entityType: "Tender",
+    entityId: id,
+    description: `${actor.email} generated ${created.length} and updated ${updated.length} missing planned file control record(s), converted ${convertedFromPlanned.length} PLANNED rows, skipped ${skipped.length} duplicates, for "${tender.title}".`,
+    metadata: { tenderId: id, createdCount: created.length, updatedCount: updated.length, created, updated, convertedFromPlanned, skipped, warning: "Replacement-control documents are not final submission evidence." },
+    requestId,
+  });
+
   return NextResponse.json({
     success: true,
     created: created.length,
     updated: updated.length,
-    files: { created, updated },
+    convertedFromPlanned: convertedFromPlanned.length,
+    skipped: skipped.length,
+    files: { created, updated, convertedFromPlanned, skipped },
     warning: "Replacement-control documents are not final submission evidence. Replace originals before export where reviewStatus is REPLACE_WITH_ORIGINAL.",
   });
 }

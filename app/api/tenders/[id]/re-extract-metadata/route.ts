@@ -23,8 +23,10 @@ import {
   isValidReferenceNumber,
   isValidCountry,
   isValidClientContact,
+  containsMetadataPlaceholder,
 } from "../../../../../lib/engine/metadata-validators";
 import { logAction } from "../../../../../lib/audit";
+import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../../lib/rate-limit";
 
 // ─── Root-cause fix for "Re-extract from PDF" doesn't clean corruption ──
 // PRIOR BUG: tryFill used "fill-empty-only" semantics, treating any
@@ -59,6 +61,8 @@ import { logAction } from "../../../../../lib/audit";
 function isValidStoredValue(field: string, value: unknown): boolean {
   if (value === null || value === undefined) return false;
   if (typeof value === "string" && value.trim() === "") return false;
+  // Reject placeholder/Bid-Team-to-confirm strings regardless of field
+  if (typeof value === "string" && containsMetadataPlaceholder(value)) return false;
   switch (field) {
     case "clientName":         return isValidClientName(String(value));
     case "reference":          return isValidReferenceNumber(String(value));
@@ -75,6 +79,9 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   let actor;
   try { actor = await requireUser(); } catch { return unauthorizedResponse(); }
   if (!["ADMIN", "PROPOSAL_MANAGER"].includes(actor.role)) return forbiddenResponse();
+
+  const rl = rateLimit(`re-extract-metadata:${actor.id}`, MUTATION_RATE_LIMIT);
+  if (!rl.allowed) return NextResponse.json({ error: "Too many requests", retryAfter: Math.ceil((rl.resetAt - Date.now()) / 1000) }, { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } });
 
   await prismaReady;
   const { id } = await params;
@@ -139,11 +146,15 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   tryFill("clientName", metadata.clientName);
   tryFill("country", metadata.country);
   // category — only update when stored is "General" (the default)
+  fieldsBefore.category = tender.category;
   if (tender.category === "General" && metadata.category !== "General") {
     update.category = metadata.category;
     fieldsAfter.category = metadata.category;
+  } else {
+    // Always populate fieldsAfter so the audit log never shows undefined.
+    fieldsAfter.category = tender.category;
   }
-  fieldsBefore.category = tender.category;
+  tryFill("evaluationMethodology", metadata.evaluationMethodology);
   tryFill("budget", metadata.budget);
   tryFill("currency", metadata.currency);
   tryFill("deadline", metadata.deadline);
@@ -162,14 +173,19 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   tryFill("preBidMeetingDate", metadata.preBidMeetingDate);
   tryFill("preBidMeetingLocation", metadata.preBidMeetingLocation);
   // mandatorySiteVisit — only flip false→true (user may want to manually clear)
+  fieldsBefore.mandatorySiteVisit = tender.mandatorySiteVisit;
   if (tender.mandatorySiteVisit === false && metadata.mandatorySiteVisit === true) {
     update.mandatorySiteVisit = true;
     fieldsAfter.mandatorySiteVisit = true;
+  } else {
+    // Always populate fieldsAfter so the audit log never shows undefined.
+    fieldsAfter.mandatorySiteVisit = tender.mandatorySiteVisit;
   }
-  fieldsBefore.mandatorySiteVisit = tender.mandatorySiteVisit;
   tryFill("numberOfCopiesRequired", metadata.numberOfCopiesRequired);
   tryFill("technicalWeight", metadata.technicalWeight);
   tryFill("financialWeight", metadata.financialWeight);
+  tryFill("description", metadata.description);
+  tryFill("intakeSummary", metadata.intakeSummary);
 
   const updatedCount = Object.keys(update).length;
   if (updatedCount === 0) {

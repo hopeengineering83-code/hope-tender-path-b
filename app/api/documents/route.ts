@@ -15,6 +15,7 @@ export async function GET() {
       title: true,
       status: true,
       generatedDocuments: {
+        where: { generationStatus: { not: "SUPERSEDED" } },
         orderBy: [{ exactOrder: "asc" }, { createdAt: "desc" }],
         select: {
           id: true,

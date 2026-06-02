@@ -32,6 +32,7 @@ function planWith(...files: Array<{ id: string; name: string; type?: string; for
       required: true,
       exactOrder: idx + 1,
       format: f.format ?? "PDF",
+      envelope: "TECHNICAL" as const,
       sourceRequirementIds: [],
     })),
   };

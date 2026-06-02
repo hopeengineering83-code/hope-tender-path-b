@@ -66,6 +66,9 @@ export const AI_RATE_LIMIT: RateLimitConfig = { limit: 20, windowMs: 60_000 };
 /** Standard API reads: 300 per minute per user */
 export const API_RATE_LIMIT: RateLimitConfig = { limit: 300, windowMs: 60_000 };
 
+/** Mutating workflow routes: 30 calls per minute per user */
+export const MUTATION_RATE_LIMIT: RateLimitConfig = { limit: 30, windowMs: 60_000 };
+
 /** Auth routes: 10 per minute per IP */
 export const AUTH_RATE_LIMIT: RateLimitConfig = { limit: 10, windowMs: 60_000 };
 

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 
 type Priority = "HIGH" | "MEDIUM" | "LOW";
 type Owner = "TECHNICAL" | "COMPLIANCE" | "COMMERCIAL" | "PROPOSAL" | "MANAGEMENT";
@@ -37,6 +38,7 @@ const QUICK_QUESTIONS = [
 ];
 
 export function TenderAICopilotPanel({ tenderId }: { tenderId: string }) {
+  const router = useRouter();
   const [question, setQuestion] = useState("");
   const [response, setResponse] = useState<CopilotResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -111,6 +113,7 @@ export function TenderAICopilotPanel({ tenderId }: { tenderId: string }) {
         count += 1;
       }
       setRecordedCount(count);
+      router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to record controls");
     } finally {

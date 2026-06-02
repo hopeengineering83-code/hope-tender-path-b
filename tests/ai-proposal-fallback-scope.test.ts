@@ -8,6 +8,7 @@ function build(requirements: string[]) {
     requirements,
     companyName: "Hope",
     companyProfile: "Reviewed profile.",
+    serviceLines: "Design, Supervision",
     expertLines: ["Dr A | Team Lead"],
     projectLines: ["Project X | Client Y"],
     differentiators: ["Strong hospital track record"],

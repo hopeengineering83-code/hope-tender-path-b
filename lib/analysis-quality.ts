@@ -48,6 +48,10 @@ export type AnalysisQualityReport = {
   metadataIssues: string[];
   warnings: string[];
   recommendations: string[];
+  // True when analysis source is regex/deterministic fallback.
+  // When true, score is capped at REGEX_FALLBACK_SCORE_CAP (45) so the
+  // panel can never show a passing score for unreviewed fallback analysis.
+  isRegexFallback: boolean;
 };
 
 function parseStringArray(value: string | null | undefined): string[] {
@@ -86,7 +90,17 @@ export function assessTenderAnalysisQuality(params: {
   // score exists, we still penalise overall analysis quality.
   selectedReviewedExperts?: number | null;
   selectedReviewedProjects?: number | null;
+  // Optional: analysis source from tender.notes. When present and indicates
+  // regex/deterministic fallback, the score is capped at 45 so the panel
+  // cannot show a passing score for unapproved fallback analysis.
+  analysisSource?: string | null;
 }): AnalysisQualityReport {
+  const REGEX_FALLBACK_SCORE_CAP = 45;
+  const REGEX_FALLBACK_SOURCES_QA = new Set(["REGEX_FALLBACK_AI_ERROR", "REGEX_FALLBACK", "DETERMINISTIC_FALLBACK"]);
+  const isRegexFallback = Boolean(
+    params.analysisSource &&
+    REGEX_FALLBACK_SOURCES_QA.has((params.analysisSource).trim().toUpperCase()),
+  );
   const requirements = params.requirements ?? [];
   const requirementCount = requirements.length;
   const mandatoryCount = requirements.filter((req) => /mandatory|required|shall|must/i.test(req.priority ?? "")).length;
@@ -204,16 +218,30 @@ export function assessTenderAnalysisQuality(params: {
   const extractedTextLength = params.extractedTextLength ?? 0;
   const extractionQualitySub = extractedTextLength >= 5000 ? 100 : extractedTextLength >= 1000 ? 70 : extractedTextLength >= 200 ? 40 : extractedTextLength > 0 ? 20 : 0;
   const requirementExtractionSub = requirementCount === 0 ? 0 : requirementCount < 5 ? 50 : Math.min(100, 60 + requirementCount * 2);
-  // Metadata sub-score: 100 minus 25 per validation issue, floored at 0.
-  // If metadata wasn't provided at all (legacy callers), default to neutral 70.
+  // Metadata sub-score: weighted per field to match the main-score deductions
+  // (clientName −25, referenceNumber −15, country −8, contactName −6).
+  // Using a flat 25 per issue misrepresents a minor country validation failure
+  // as equally severe as a broken clientName.
   const metadataProvided = clientNameProvided || referenceProvided || countryProvided || contactProvided;
-  const metadataQualitySub = !metadataProvided ? 70 : Math.max(0, 100 - metadataIssues.length * 25);
+  const metadataIssuePenalty = metadataIssues.reduce((sum, issue) => {
+    if (issue.includes("clientName")) return sum + 25;
+    if (issue.includes("referenceNumber")) return sum + 15;
+    if (issue.includes("country")) return sum + 8;
+    if (issue.includes("clientContactName")) return sum + 6;
+    return sum + 10;
+  }, 0);
+  const metadataQualitySub = !metadataProvided ? 70 : Math.max(0, 100 - metadataIssuePenalty);
   const submissionPlanQualitySub = likelyMissingSubmissionRules ? 30 : hasExactFileNaming || hasExactFileOrder ? 100 : hasSubmissionNotes ? 75 : 50;
   const rawGrounding = requirementCount === 0 ? 0 : Math.round((sourceReferencedCount / requirementCount) * 100);
   const groundingFloor = extractedTextLength >= 5000 ? 25 : extractedTextLength >= 1000 ? 15 : 0;
   const sourceGroundingSub = Math.min(100, Math.max(rawGrounding, groundingFloor));
 
   score = Math.max(0, Math.min(100, score));
+  if (isRegexFallback && score > REGEX_FALLBACK_SCORE_CAP) {
+    score = REGEX_FALLBACK_SCORE_CAP;
+    warnings.unshift("Analysis used regex/deterministic fallback — score capped at 45. Re-run AI Analyze or approve the fallback to unblock generation.");
+    recommendations.unshift("Re-run AI Analyze when AI providers are healthy, or approve this fallback analysis with a written note via the Controls panel.");
+  }
   const severity: AnalysisQualitySeverity = score < 50 ? "POOR" : score < 75 ? "WARNING" : "GOOD";
   if (severity === "GOOD" && warnings.length === 0) recommendations.push("Tender analysis appears usable for matching, scoring, and generation.");
 
@@ -242,5 +270,6 @@ export function assessTenderAnalysisQuality(params: {
     metadataIssues,
     warnings,
     recommendations,
+    isRegexFallback,
   };
 }
