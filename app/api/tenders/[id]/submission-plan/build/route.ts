@@ -14,6 +14,8 @@ import { buildSubmissionPlan, plannedSubmissionTargetFiles } from "../../../../.
 import { logAction } from "../../../../../../lib/audit";
 import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../../../lib/rate-limit";
 import { sanitizeError } from "../../../../../../lib/sanitize-error";
+import { isExtractionAcceptableForGeneration } from "../../../../../../lib/engine/extraction-quality-gate";
+import { assessExtractionQuality } from "../../../../../../lib/extraction-quality";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 15;
@@ -43,6 +45,18 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
         exactFileNaming: true,
         exactFileOrder: true,
         pageLimit: true,
+        files: {
+          select: {
+            id: true,
+            extractedText: true,
+            originalFileName: true,
+            extractionScore: true,
+            totalPages: true,
+            extractedPages: true,
+            ocrPages: true,
+            failedPages: true,
+          },
+        },
         requirements: {
           select: {
             id: true,
@@ -71,6 +85,20 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
 
     if (!tender) {
       return NextResponse.json({ ok: false, error: "Tender not found", code: "TENDER_NOT_FOUND" }, { status: 404 });
+    }
+
+    // Block when any tender file has a critically failed extraction score (< 20).
+    // We only block on truly failed files, not just partial/weak extraction,
+    // so that tenders with partial OCR can still produce a plan.
+    const criticallyFailedFiles = tender.files.filter(
+      (f) => f.extractionScore !== null && (f.extractionScore as number) < 20,
+    );
+    if (criticallyFailedFiles.length > 0) {
+      return NextResponse.json({
+        ok: false,
+        error: "Submission plan cannot be trusted because required tender pages were not fully extracted. Re-extract or run OCR before building the plan.",
+        code: "EXTRACTION_QUALITY_INSUFFICIENT",
+      }, { status: 422 });
     }
 
     // Allow building from exactFileNaming/exactFileOrder even when no

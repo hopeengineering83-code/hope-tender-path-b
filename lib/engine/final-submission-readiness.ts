@@ -418,6 +418,9 @@ export async function getFinalSubmissionReadiness(
           restrictions: true,
           sectionReference: true,
           sourceConfidence: true,
+          sourceTenderFileId: true,
+          sourcePageNumber: true,
+          sourceExactQuote: true,
           complianceMatrixRows: {
             select: { id: true, supportLevel: true },
           },
@@ -658,6 +661,30 @@ export async function getFinalSubmissionReadiness(
       title: `${openHighObjections} unresolved HIGH evaluator objection(s) must be addressed before final export.`,
       recommendedAction: "Open the Evaluator Objections panel, resolve each HIGH objection with evidence, then re-run the export gate.",
     });
+  }
+
+  // ── Source traceability coverage (evidence gap check) ────────────────────
+  // If more than 20% of mandatory requirements lack any source traceability
+  // (no sourceConfidence > 0, no sourceTenderFileId, no sourcePageNumber,
+  // no sourceExactQuote), push a MEDIUM-severity blocker.
+  const mandatoryRequirements = tender.requirements.filter((r) => r.priority === "MANDATORY");
+  if (mandatoryRequirements.length > 0) {
+    const missingTraceability = mandatoryRequirements.filter(
+      (r) =>
+        (r.sourceConfidence ?? 0) <= 0 &&
+        !r.sourceTenderFileId &&
+        !r.sourcePageNumber &&
+        !(r.sourceExactQuote ?? "").trim(),
+    ).length;
+    const missingRatio = missingTraceability / mandatoryRequirements.length;
+    if (missingRatio > 0.2) {
+      tenderLevelBlockers.push({
+        category: "SOURCE_TRACEABILITY_MISSING",
+        severity: "MEDIUM",
+        title: `${missingTraceability} of ${mandatoryRequirements.length} mandatory requirement(s) lack source traceability (${Math.round(missingRatio * 100)}% untraced).`,
+        recommendedAction: "Re-run AI Analyze to extract source page, quote, and confidence for mandatory requirements before building the submission plan.",
+      });
+    }
   }
 
   // ── Readiness scoring (Part 3) — weighted, with hard caps. ───────────────
