@@ -41,6 +41,8 @@ type Row = {
   recommendedAction: string;
 };
 
+type PlanState = "EXPLICIT_TENDER_PLAN" | "DERIVED_DRAFT_UNCONFIRMED" | "PLAN_NOT_BUILT" | "NO_REQUIREMENTS";
+
 type Summary = {
   totalRequired: number;
   totalGenerated: number;
@@ -50,7 +52,10 @@ type Summary = {
   totalSuperseded: number;
   totalQualityFailed: number;
   envelopeBreakdown: { TECHNICAL: number; FINANCIAL: number; ADMIN: number };
+  requirementCount: number;
   hasExplicitScope: boolean;
+  planState: PlanState;
+  requiresUserConfirmation: boolean;
 };
 
 type Response = {
@@ -78,6 +83,20 @@ function toneClass(tone: "ok" | "warn" | "bad" | "neutral"): string {
   if (tone === "warn") return "bg-amber-100 text-amber-700";
   if (tone === "bad") return "bg-red-100 text-red-700";
   return "bg-slate-100 text-slate-500";
+}
+
+function planStateLabel(state: PlanState): string {
+  if (state === "EXPLICIT_TENDER_PLAN") return "Explicit tender plan";
+  if (state === "DERIVED_DRAFT_UNCONFIRMED") return "Derived draft — confirm";
+  if (state === "PLAN_NOT_BUILT") return "Plan not built";
+  return "No requirements yet";
+}
+
+function planStateTone(state: PlanState): "ok" | "warn" | "bad" | "neutral" {
+  if (state === "EXPLICIT_TENDER_PLAN") return "ok";
+  if (state === "PLAN_NOT_BUILT") return "bad";
+  if (state === "DERIVED_DRAFT_UNCONFIRMED") return "warn";
+  return "neutral";
 }
 
 function RowActionButton({ label, busy, disabled, onClick }: { label: string; busy: boolean; disabled: boolean; onClick: () => void }) {
@@ -269,11 +288,22 @@ export function SubmissionPlanCompletenessPanel({ tenderId }: { tenderId: string
         </div>
       )}
 
-      {!data.summary.hasExplicitScope && (
-        <p className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
-          No explicit submission plan detected for this tender (no exactFileNaming / exactFileOrder / per-requirement exactFileName). Outside-plan generated rows are listed below for visibility, but no missing-required check applies until the plan is extracted.
-        </p>
-      )}
+      <div className={`mt-3 rounded-lg border p-3 text-xs ${data.summary.planState === "PLAN_NOT_BUILT" ? "border-red-200 bg-red-50 text-red-800" : data.summary.requiresUserConfirmation ? "border-amber-200 bg-amber-50 text-amber-800" : "border-slate-200 bg-slate-50 text-slate-600"}`}>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="font-semibold">Plan state:</span>
+          <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${toneClass(planStateTone(data.summary.planState))}`}>{planStateLabel(data.summary.planState)}</span>
+          <span>Requirements: {data.summary.requirementCount}</span>
+        </div>
+        {data.summary.planState === "PLAN_NOT_BUILT" && (
+          <p className="mt-2">Tender requirements exist, but no exact or derived submission file plan is available yet. Use <strong>Build Plan</strong> before Generate Docs so the system can validate generated outputs against tender scope instead of showing a misleading Required 0 / Generated 0 / Missing 0 state.</p>
+        )}
+        {data.summary.requiresUserConfirmation && (
+          <p className="mt-2">This is a conservative derived draft from requirement titles/types, not a tender-issued file list. Confirm exact file names/order from the tender before final export; official forms/templates must still be attached as originals and must not be fabricated.</p>
+        )}
+        {data.summary.planState === "NO_REQUIREMENTS" && (
+          <p className="mt-2">No tender requirements are extracted yet. Run AI Analyze or add requirements manually before building the submission package.</p>
+        )}
+      </div>
 
       <div className="mt-4 overflow-x-auto">
         <table className="min-w-full border-collapse text-left text-xs">

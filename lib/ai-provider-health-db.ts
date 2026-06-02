@@ -20,7 +20,7 @@ import {
   getProviderStateSnapshot,
 } from "./ai-provider-health";
 
-const ALL_PROVIDERS: AiProviderName[] = ["anthropic", "gemini", "openai", "deepseek", "groq", "openrouter"];
+const ALL_PROVIDERS: AiProviderName[] = ["anthropic", "gemini", "openai", "mistral", "deepseek", "groq", "together", "openrouter"];
 
 // Module-level guard: only restore from DB once per instance lifetime.
 // Subsequent calls are no-ops so per-request overhead is zero after the first call.

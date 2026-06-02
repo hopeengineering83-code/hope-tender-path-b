@@ -20,6 +20,7 @@
 
 import {
   buildSubmissionPlan,
+  hasExplicitSubmissionScope,
   inferEnvelope,
   type SubmissionEnvelope,
   type SubmissionPlanFile,
@@ -68,6 +69,12 @@ export type SubmissionPlanRow = {
   recommendedAction: string;
 };
 
+export type SubmissionPlanState =
+  | "EXPLICIT_TENDER_PLAN"
+  | "DERIVED_DRAFT_UNCONFIRMED"
+  | "PLAN_NOT_BUILT"
+  | "NO_REQUIREMENTS";
+
 export type SubmissionPlanCompletenessReport = {
   totalRequired: number;
   totalGenerated: number;
@@ -77,8 +84,14 @@ export type SubmissionPlanCompletenessReport = {
   totalSuperseded: number;
   totalQualityFailed: number;
   envelopeBreakdown: Record<SubmissionEnvelope, number>;
-  /** True when the tender has explicit exactFileNaming / exactFileOrder. */
+  /** Number of extracted tender requirements available to derive a plan from. */
+  requirementCount: number;
+  /** True only when tender-issued exact file names/order or per-requirement exactFileName exist. */
   hasExplicitScope: boolean;
+  /** Current plan provenance/state so the UI never renders a misleading 0/0/0 plan. */
+  planState: SubmissionPlanState;
+  /** True when rows are derived from requirement titles and must be confirmed before final export. */
+  requiresUserConfirmation: boolean;
   rows: SubmissionPlanRow[];
   warnings: string[];
 };
@@ -187,6 +200,8 @@ export type ResolvePlanCompletenessInput = {
 export function resolveSubmissionPlanCompleteness(input: ResolvePlanCompletenessInput): SubmissionPlanCompletenessReport {
   const plan = buildSubmissionPlan(input.tender);
   const planFiles = plan.files.filter((f) => f.required);
+  const requirementCount = input.tender.requirements?.length ?? 0;
+  const explicitScope = hasExplicitSubmissionScope(input.tender);
 
   // Map every generated doc by its file-key.
   const docByKey = new Map<string, GeneratedDocSnapshot>();
@@ -276,9 +291,22 @@ export function resolveSubmissionPlanCompleteness(input: ResolvePlanCompleteness
   const totalOutsidePlan = rows.filter((r) => r.status === "OUTSIDE_PLAN").length;
   const totalSuperseded = rows.filter((r) => r.status === "SUPERSEDED").length;
   const totalQualityFailed = rows.filter((r) => r.status === "GENERATED_QUALITY_FAILED").length;
-  const hasExplicitScope = planFiles.length > 0;
+  const hasExplicitScope = explicitScope;
+  const planState: SubmissionPlanState = totalRequired > 0
+    ? (hasExplicitScope ? "EXPLICIT_TENDER_PLAN" : "DERIVED_DRAFT_UNCONFIRMED")
+    : requirementCount > 0
+      ? "PLAN_NOT_BUILT"
+      : "NO_REQUIREMENTS";
+  const requiresUserConfirmation = planState === "DERIVED_DRAFT_UNCONFIRMED";
 
-  if (hasExplicitScope && totalMissing > 0) {
+  if (planState === "PLAN_NOT_BUILT") {
+    warnings.push(`${requirementCount} tender requirement(s) exist, but no submission file plan has been built or confirmed. Build Submission Plan before Generate Docs so outputs can be validated against tender scope.`);
+  }
+  if (requiresUserConfirmation) {
+    warnings.push("Submission plan is a derived draft from requirement titles/types. Confirm tender-issued file names/order before final export; do not treat derived rows as official tender forms.");
+  }
+
+  if (totalRequired > 0 && totalMissing > 0) {
     warnings.push(`${totalMissing}/${totalRequired} required submission documents are still missing from current outputs.`);
   }
   if (totalOutsidePlan > 0) {
@@ -297,7 +325,10 @@ export function resolveSubmissionPlanCompleteness(input: ResolvePlanCompleteness
     totalSuperseded,
     totalQualityFailed,
     envelopeBreakdown,
+    requirementCount,
     hasExplicitScope,
+    planState,
+    requiresUserConfirmation,
     rows,
     warnings,
   };

@@ -24,7 +24,7 @@ function status(name: string, scope: AIEnvironmentVariableStatus["scope"], sever
 
 export function getAIEnvironmentReadiness(): AIEnvironmentReadiness {
   const variables: AIEnvironmentVariableStatus[] = [
-    status("ANTHROPIC_API_KEY", "ai", "recommended", "Last-resort provider (sixth in default chain). Placed last to avoid Anthropic rate limits blocking the app when other providers are available."),
+    status("ANTHROPIC_API_KEY", "ai", "recommended", "Last-resort provider (eighth in default chain). Placed last to avoid Anthropic rate limits blocking the app when other providers are available."),
     status("ANTHROPIC_TIER", "ai", "recommended", "Used to select Claude output-token defaults; Tier 2 supports larger proposal outputs than Tier 1."),
     status("ANTHROPIC_MAX_OUTPUT_TOKENS", "ai", "recommended", "Controls Claude proposal output budget. Use a realistic value for your Vercel timeout and Anthropic tier."),
     status("ANTHROPIC_PROPOSAL_MODELS", "ai", "recommended", "Comma-separated Claude model chain for proposal generation."),
@@ -35,11 +35,19 @@ export function getAIEnvironmentReadiness(): AIEnvironmentReadiness {
     status("GEMINI_FALLBACK_MODELS", "ai", "recommended", "Fallback Gemini model chain."),
     status("OPENAI_API_KEY", "ai", "critical", "First-tier provider for proposal generation, validation, and default chain."),
     status("OPENAI_PROPOSAL_MODEL", "ai", "optional", "OpenAI proposal model (default: gpt-4o)."),
-    status("DEEPSEEK_API_KEY", "ai", "optional", "Third-tier fallback provider via OpenAI-compatible DeepSeek endpoint."),
+    status("MISTRAL_API_KEY", "ai", "optional", "Third-tier provider via OpenAI-compatible Mistral endpoint."),
+    status("MISTRAL_PROPOSAL_MODEL", "ai", "optional", "Mistral proposal model (default: mistral-large-latest)."),
+    status("MISTRAL_ANALYSIS_MODEL", "ai", "optional", "Mistral analysis model override."),
+    status("MISTRAL_FAST_MODEL", "ai", "optional", "Mistral fast/cheap model override."),
+    status("DEEPSEEK_API_KEY", "ai", "optional", "Fourth-tier fallback provider via OpenAI-compatible DeepSeek endpoint."),
     status("DEEPSEEK_PROPOSAL_MODEL", "ai", "optional", "DeepSeek proposal model (default: deepseek-chat; deepseek-reasoner for deeper reasoning)."),
-    status("GROQ_API_KEY", "ai", "optional", "Fourth-tier fallback provider; also first in the fast/cheap use-case chain (llama-3.3-70b-versatile)."),
+    status("GROQ_API_KEY", "ai", "optional", "Fifth-tier fallback provider; also first in the fast/cheap use-case chain (llama-3.3-70b-versatile)."),
     status("GROQ_PROPOSAL_MODEL", "ai", "optional", "Groq model override (default: llama-3.3-70b-versatile)."),
-    status("OPENROUTER_API_KEY", "ai", "optional", "Fifth-tier fallback provider; aggregates many models via OpenAI-compatible API."),
+    status("TOGETHER_API_KEY", "ai", "optional", "Sixth-tier fallback provider; second in the fast/cheap use-case chain."),
+    status("TOGETHER_PROPOSAL_MODEL", "ai", "optional", "Together proposal model override."),
+    status("TOGETHER_ANALYSIS_MODEL", "ai", "optional", "Together analysis model override."),
+    status("TOGETHER_FAST_MODEL", "ai", "optional", "Together fast/cheap model override."),
+    status("OPENROUTER_API_KEY", "ai", "optional", "Seventh-tier fallback provider; aggregates many models via OpenAI-compatible API."),
     status("OPENROUTER_PROPOSAL_MODEL", "ai", "optional", "OpenRouter model pin (default: openrouter/auto — pin to a specific model for predictable costs)."),
     status("PDF_OCR_ENABLED", "ocr", "recommended", "Enables OCR path for scanned/image-heavy PDFs."),
     status("PDF_OCR_MODEL", "ocr", "recommended", "OCR reasoning model selector."),
@@ -52,20 +60,22 @@ export function getAIEnvironmentReadiness(): AIEnvironmentReadiness {
     status("PROPOSAL_SECTION_TIMEOUT_MS", "runtime", "recommended", "Section-level proposal timeout guard."),
   ];
 
-  // Reflect actual PROVIDER_CHAINS order: OpenAI → Gemini → DeepSeek → Groq → OpenRouter → Claude
+  // Reflect actual PROVIDER_CHAINS order: OpenAI → Gemini → Mistral → DeepSeek → Groq → Together → OpenRouter → Claude
   const providerChain: string[] = [];
   if (present("OPENAI_API_KEY")) providerChain.push(`OpenAI (${process.env.OPENAI_PROPOSAL_MODEL || "gpt-4o"})`);
   if (present("GEMINI_API_KEY")) providerChain.push(`Gemini (${process.env.GEMINI_MODEL || "gemini-2.5-pro"})`);
+  if (present("MISTRAL_API_KEY")) providerChain.push(`Mistral (${process.env.MISTRAL_PROPOSAL_MODEL || "mistral-large-latest"})`);
   if (present("DEEPSEEK_API_KEY")) providerChain.push(`DeepSeek (${process.env.DEEPSEEK_PROPOSAL_MODEL || "deepseek-chat"})`);
   if (present("GROQ_API_KEY")) providerChain.push(`Groq (${process.env.GROQ_PROPOSAL_MODEL || "llama-3.3-70b-versatile"})`);
+  if (present("TOGETHER_API_KEY")) providerChain.push(`Together (${process.env.TOGETHER_PROPOSAL_MODEL || "meta-llama/Llama-3.3-70B-Instruct-Turbo"})`);
   if (present("OPENROUTER_API_KEY")) providerChain.push(`OpenRouter (${process.env.OPENROUTER_PROPOSAL_MODEL || "auto"})`);
   if (present("ANTHROPIC_API_KEY")) providerChain.push("Claude (last-resort)");
 
   const blockers: string[] = [];
   const warnings: string[] = [];
 
-  if (!present("OPENAI_API_KEY") && !present("GEMINI_API_KEY") && !present("ANTHROPIC_API_KEY") && !present("DEEPSEEK_API_KEY") && !present("GROQ_API_KEY") && !present("OPENROUTER_API_KEY")) {
-    blockers.push("No AI provider is configured. Set at least one of: OPENAI_API_KEY, GEMINI_API_KEY, DEEPSEEK_API_KEY, GROQ_API_KEY, OPENROUTER_API_KEY, or ANTHROPIC_API_KEY.");
+  if (!present("OPENAI_API_KEY") && !present("GEMINI_API_KEY") && !present("ANTHROPIC_API_KEY") && !present("MISTRAL_API_KEY") && !present("DEEPSEEK_API_KEY") && !present("GROQ_API_KEY") && !present("TOGETHER_API_KEY") && !present("OPENROUTER_API_KEY")) {
+    blockers.push("No AI provider is configured. Set at least one of: OPENAI_API_KEY, GEMINI_API_KEY, MISTRAL_API_KEY, DEEPSEEK_API_KEY, GROQ_API_KEY, TOGETHER_API_KEY, OPENROUTER_API_KEY, or ANTHROPIC_API_KEY.");
   }
   if (!present("DATABASE_URL")) blockers.push("DATABASE_URL is missing.");
   if (!present("SESSION_SECRET")) blockers.push("SESSION_SECRET is missing.");

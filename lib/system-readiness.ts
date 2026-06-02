@@ -21,8 +21,10 @@ function configuredAiProviders(): string[] {
   const providers: string[] = [];
   if (has(process.env.OPENAI_API_KEY)) providers.push("OpenAI");
   if (has(process.env.GEMINI_API_KEY)) providers.push("Gemini");
+  if (has(process.env.MISTRAL_API_KEY)) providers.push("Mistral");
   if (has(process.env.DEEPSEEK_API_KEY)) providers.push("DeepSeek");
   if (has(process.env.GROQ_API_KEY)) providers.push("Groq");
+  if (has(process.env.TOGETHER_API_KEY)) providers.push("Together");
   if (has(process.env.OPENROUTER_API_KEY)) providers.push("OpenRouter");
   if (has(process.env.ANTHROPIC_API_KEY)) providers.push("Claude/Anthropic (last)");
   return providers;
@@ -35,7 +37,7 @@ function hasAnyAiProvider(): boolean {
 function aiProviderDetail(): string {
   const providers = configuredAiProviders();
   if (providers.length === 0) {
-    return "No AI provider key set. Configure at least one of OPENAI_API_KEY, GEMINI_API_KEY, DEEPSEEK_API_KEY, GROQ_API_KEY, OPENROUTER_API_KEY, or ANTHROPIC_API_KEY. Without any AI key, complex PDFs fall back to weaker regex extraction and imported records remain REGEX_DRAFT.";
+    return "No AI provider key set. Configure at least one of OPENAI_API_KEY, GEMINI_API_KEY, MISTRAL_API_KEY, DEEPSEEK_API_KEY, GROQ_API_KEY, TOGETHER_API_KEY, OPENROUTER_API_KEY, or ANTHROPIC_API_KEY. Without any AI key, complex PDFs fall back to weaker regex extraction and imported records remain REGEX_DRAFT.";
   }
   const extractionNote = has(process.env.GEMINI_API_KEY)
     ? "Gemini analysis/extraction is configured."
@@ -64,7 +66,7 @@ export function getSystemReadiness(): SystemReadiness {
       key: "ai_extraction",
       title: "AI provider chain",
       // OK when any supported provider is configured. The default proposal and
-      // validation chain is OpenAI → Gemini → DeepSeek → Groq → OpenRouter →
+      // validation chain is OpenAI → Gemini → Mistral → DeepSeek → Groq → Together → OpenRouter →
       // Claude, while analysis/extraction starts with Gemini. Claude remains
       // last so Anthropic rate limits cannot block the app when earlier
       // providers are available.

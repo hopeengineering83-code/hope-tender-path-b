@@ -109,7 +109,7 @@ export async function GET() {
   const actionItems: Array<{ severity: string; message: string }> = [];
 
   if (!dbOk) actionItems.push({ severity: "CRITICAL", message: "Database connection failed. Check DATABASE_URL/Neon connectivity in Vercel; raw database diagnostics are intentionally hidden." });
-  if (!isAIConfigured()) actionItems.push({ severity: "HIGH", message: "No AI provider key set. Configure OPENAI_API_KEY, GEMINI_API_KEY, DEEPSEEK_API_KEY, GROQ_API_KEY, OPENROUTER_API_KEY, or ANTHROPIC_API_KEY. AI extraction is disabled; all records will be REGEX_DRAFT only and cannot be promoted to trusted status." });
+  if (!isAIConfigured()) actionItems.push({ severity: "HIGH", message: "No AI provider key set. Configure OPENAI_API_KEY, GEMINI_API_KEY, MISTRAL_API_KEY, DEEPSEEK_API_KEY, GROQ_API_KEY, TOGETHER_API_KEY, OPENROUTER_API_KEY, or ANTHROPIC_API_KEY. AI extraction is disabled; all records will be REGEX_DRAFT only and cannot be promoted to trusted status." });
   if (expertsByTrust.REVIEWED === 0 && experts.length > 0) actionItems.push({ severity: "HIGH", message: `${experts.length} expert(s) imported but none reviewed. Proposals will use unverified draft data.` });
   if (projectsByTrust.REVIEWED === 0 && projects.length > 0) actionItems.push({ severity: "HIGH", message: `${projects.length} project(s) imported but none reviewed. Proposals will use unverified draft data.` });
   if (docsNoText > 0) actionItems.push({ severity: "MEDIUM", message: `${docsNoText} document(s) have no extracted text. Run repair to re-extract.` });

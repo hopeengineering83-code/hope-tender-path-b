@@ -13,6 +13,7 @@ import { NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { resolveSubmissionPlanCompleteness } from "../../../../../lib/engine/submission-plan-completeness";
+import { sanitizeError } from "../../../../../lib/sanitize-error";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 15;
@@ -95,13 +96,16 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
         totalSuperseded: report.totalSuperseded,
         totalQualityFailed: report.totalQualityFailed,
         envelopeBreakdown: report.envelopeBreakdown,
+        requirementCount: report.requirementCount,
         hasExplicitScope: report.hasExplicitScope,
+        planState: report.planState,
+        requiresUserConfirmation: report.requiresUserConfirmation,
       },
       rows: report.rows,
       warnings: report.warnings,
     });
   } catch (error) {
     console.error("submission-plan route failed", error);
-    return err("Submission-plan route failed.", 500, { code: "SUBMISSION_PLAN_RUNTIME_ERROR", detail: error instanceof Error ? error.message : String(error) });
+    return err("Submission-plan route failed.", 500, { code: "SUBMISSION_PLAN_RUNTIME_ERROR", detail: sanitizeError(error) });
   }
 }

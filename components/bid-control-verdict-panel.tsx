@@ -117,6 +117,7 @@ export async function BidControlVerdictPanel({ tenderId }: { tenderId: string })
     if (planStatus === "PLAN_MATCHED") return "Plan matched ✓";
     if (planStatus === "PLAN_MISSING_DOCS") return "Missing docs";
     if (planStatus === "PLAN_EXTRA_DOCS") return "Extra docs";
+    if (planStatus === "DERIVED_PLAN_UNCONFIRMED") return "Derived plan";
     if (planStatus === "PLAN_NAME_MISMATCH" || planStatus === "PLAN_ORDER_MISMATCH") return "Mismatch";
     if (!planStatus) return "Not detected";
     return "—";
@@ -124,6 +125,7 @@ export async function BidControlVerdictPanel({ tenderId }: { tenderId: string })
   const planLabelNote = (() => {
     if (planStatus === "NO_PLAN_WITH_ACTIVE_DOCS") return "Build submission plan — docs exist outside plan";
     if (planStatus === "NO_PLAN_NO_DOCS" || !planStatus) return "Build submission plan first";
+    if (planStatus === "DERIVED_PLAN_UNCONFIRMED") return "Confirm exact tender file names/order before export";
     return null;
   })();
   // Top reason why full proposal is blocked, for inline display
@@ -156,7 +158,7 @@ export async function BidControlVerdictPanel({ tenderId }: { tenderId: string })
           <p className="text-xs text-slate-500">Support pkg</p>
           <p className={`text-lg font-bold ${supportPackageReady ? "text-emerald-700" : "text-red-700"}`}>{supportPackageReady ? "Ready" : "Blocked"}</p>
         </div>
-        <div className="rounded-xl bg-white p-3" title="Submission plan status (NO_PLAN_NO_DOCS / NO_PLAN_WITH_ACTIVE_DOCS / PLAN_MATCHED / PLAN_MISSING_DOCS / PLAN_EXTRA_DOCS / PLAN_ORDER_MISMATCH / PLAN_NAME_MISMATCH)."><p className="text-xs text-slate-500">Plan files</p><p className={`text-lg font-bold ${planStatus === "PLAN_MATCHED" ? "text-emerald-700" : "text-slate-900"}`}>{planLabel}</p>{planLabelNote && <p className="mt-0.5 text-[10px] text-amber-600 leading-tight">{planLabelNote}</p>}</div>
+        <div className="rounded-xl bg-white p-3" title="Submission plan status (NO_PLAN_NO_DOCS / NO_PLAN_WITH_ACTIVE_DOCS / PLAN_MATCHED / PLAN_MISSING_DOCS / PLAN_EXTRA_DOCS / DERIVED_PLAN_UNCONFIRMED / PLAN_ORDER_MISMATCH / PLAN_NAME_MISMATCH)."><p className="text-xs text-slate-500">Plan files</p><p className={`text-lg font-bold ${planStatus === "PLAN_MATCHED" ? "text-emerald-700" : "text-slate-900"}`}>{planLabel}</p>{planLabelNote && <p className="mt-0.5 text-[10px] text-amber-600 leading-tight">{planLabelNote}</p>}</div>
         <div className="rounded-xl bg-white p-3" title={`Workspace rows: ${workspaceDocuments}. Final export candidates: ${finalExportCandidates}. Excluded internal/control rows: ${excludedInternalRows}.`}><p className="text-xs text-slate-500">Workspace / export</p><p className="text-lg font-bold text-slate-900">{workspaceDocuments} / {finalExportCandidates}</p>{workspaceDocuments > 0 && finalExportCandidates === 0 && <p className="mt-0.5 text-[10px] text-amber-600 leading-tight">{workspaceDocuments} workspace rows, 0 export candidates — review quality/classification</p>}</div>
         <div className="rounded-xl bg-white p-3"><p className="text-xs text-slate-500">Doc blockers</p><p className={`text-lg font-bold ${documentBlockersCount === 0 ? "text-emerald-700" : "text-red-700"}`}>{documentBlockersCount}</p></div>
         <div className="rounded-xl bg-white p-3" title="Registered critical/high compliance gaps (not the same as lifecycle blockers). Use the Recovery Command Center for full blocker list."><p className="text-xs text-slate-500">Registered gaps</p><p className={`text-lg font-bold ${criticalGaps.length + highGaps.length === 0 ? "text-emerald-700" : "text-red-700"}`}>{criticalGaps.length + highGaps.length}</p><p className="text-[10px] text-slate-400">{criticalGaps.length} critical, {highGaps.length} high</p></div>
