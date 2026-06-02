@@ -5,10 +5,10 @@
  * a clear message rather than silently degrading.
  *
  * ARCHITECTURE: at least one AI provider key is required in production:
- *   - ANTHROPIC_API_KEY (preferred — Claude provider, what the prompt is tuned for)
- *   - GEMINI_API_KEY    (fallback — used for proposal generation when Claude is
- *                        not configured, and as the primary engine for CV /
- *                        project extraction)
+ *   - OPENAI_API_KEY / GEMINI_API_KEY / MISTRAL_API_KEY / DEEPSEEK_API_KEY /
+ *     GROQ_API_KEY / TOGETHER_API_KEY / OPENROUTER_API_KEY / ANTHROPIC_API_KEY. The current default proposal
+ *     chain is OpenAI → Gemini → Mistral → DeepSeek → Groq → Together → OpenRouter → Claude, with
+ *     Claude last so Anthropic rate limits do not block the app.
  *
  * Without EITHER key:
  *   - Every imported expert/project is classified as REGEX_DRAFT
@@ -27,21 +27,37 @@ const REQUIRED_VARS: Array<{ name: string; description: string }> = [
 const AI_PROVIDER_KEYS: Array<{ name: string; description: string }> = [
   {
     name: "ANTHROPIC_API_KEY",
-    description: "Anthropic Claude API key (sk-ant-...). PREFERRED provider for proposal generation.",
+    description: "Anthropic Claude API key (sk-ant-...). Last-resort provider; Claude must remain last in the default chain.",
   },
   {
     name: "GEMINI_API_KEY",
     description:
-      "Google Gemini API key (AIza...). Fallback for proposal generation; primary engine for CV/project extraction. " +
+      "Google Gemini API key (AIza...). Primary analysis/extraction provider; second-tier proposal fallback. " +
       "Without an AI key, all imported records are REGEX_DRAFT and BLOCKED from final proposal generation.",
   },
   {
     name: "OPENAI_API_KEY",
-    description: "OpenAI API key (sk-...). Third-tier fallback for proposal generation.",
+    description: "OpenAI API key (sk-...). First-tier default provider for proposal generation/validation.",
+  },
+  {
+    name: "MISTRAL_API_KEY",
+    description: "Mistral API key. Third-tier proposal/validation provider and analysis fallback.",
   },
   {
     name: "DEEPSEEK_API_KEY",
     description: "DeepSeek API key. Fourth-tier fallback for proposal generation via OpenAI-compatible endpoint.",
+  },
+  {
+    name: "GROQ_API_KEY",
+    description: "Groq API key. Fifth-tier proposal fallback and first-tier fast/cheap provider.",
+  },
+  {
+    name: "TOGETHER_API_KEY",
+    description: "Together API key. Sixth-tier proposal fallback and second-tier fast/cheap provider.",
+  },
+  {
+    name: "OPENROUTER_API_KEY",
+    description: "OpenRouter API key. Seventh-tier proposal fallback aggregator.",
   },
 ];
 
@@ -126,8 +142,8 @@ export function evaluateEnv(env: Record<string, string | undefined> = process.en
   const hasAnyAIKey = AI_PROVIDER_KEYS.some(({ name }) => Boolean(env[name]));
   if (!hasAnyAIKey) {
     const message =
-      "At least one AI provider key is required (ANTHROPIC_API_KEY preferred, or GEMINI_API_KEY). " +
-      "Without either key, all imported records are REGEX_DRAFT and BLOCKED from final proposal generation.";
+      "At least one AI provider key is required (OPENAI_API_KEY, GEMINI_API_KEY, MISTRAL_API_KEY, DEEPSEEK_API_KEY, GROQ_API_KEY, TOGETHER_API_KEY, OPENROUTER_API_KEY, or ANTHROPIC_API_KEY). " +
+      "Without any AI key, all imported records are REGEX_DRAFT and BLOCKED from final proposal generation.";
     if (isProd) errors.push(message);
     else if (isVercelPreview && strictPreview) errors.push(message);
     else warnings.push(message);
@@ -171,7 +187,11 @@ export function isAIConfigured(): boolean {
     process.env.ANTHROPIC_API_KEY ||
     process.env.GEMINI_API_KEY ||
     process.env.OPENAI_API_KEY ||
-    process.env.DEEPSEEK_API_KEY,
+    process.env.MISTRAL_API_KEY ||
+    process.env.DEEPSEEK_API_KEY ||
+    process.env.GROQ_API_KEY ||
+    process.env.TOGETHER_API_KEY ||
+    process.env.OPENROUTER_API_KEY,
   );
 }
 

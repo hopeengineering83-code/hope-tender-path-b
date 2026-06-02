@@ -10,7 +10,7 @@ export async function ExtractionQualityPanel({ tenderId }: { tenderId: string })
   await prismaReady;
   const tender = await prisma.tender.findFirst({
     where: { id: tenderId, userId },
-    include: { files: { orderBy: { createdAt: "asc" } } },
+    include: { files: { orderBy: { createdAt: "asc" }, select: { id: true, fileName: true, originalFileName: true, extractedText: true } } },
   });
   if (!tender || tender.files.length === 0) return null;
 

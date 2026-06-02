@@ -25,7 +25,6 @@ export async function AnalysisQualityPanel({ tenderId }: { tenderId: string }) {
       where: { id: tenderId, userId },
       include: {
         requirements: { orderBy: { createdAt: "asc" } },
-        files: { select: { extractedText: true, originalFileName: true } },
         expertMatches: { include: { expert: { select: { trustLevel: true, fullName: true } } } },
         projectMatches: { include: { project: { select: { trustLevel: true, name: true } } } },
       },
@@ -33,7 +32,11 @@ export async function AnalysisQualityPanel({ tenderId }: { tenderId: string }) {
   ]);
   if (!tender) return null;
 
-  const extractedChars = tender.files.reduce((sum, file) => sum + (file.extractedText?.length ?? 0), 0);
+  const [{ extractedChars }] = await prisma.$queryRaw<Array<{ extractedChars: number }>>`
+    SELECT COALESCE(SUM(char_length("extractedText")), 0)::int AS "extractedChars"
+    FROM "TenderFile"
+    WHERE "tenderId" = ${tenderId}
+  `;
 
   // Pass vault counts so analysis-quality matching sub-score matches the
   // matching-quality panel — both should show VAULT_AWAITS_ENGINE (−18)

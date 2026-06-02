@@ -46,7 +46,7 @@ const AI_PROVIDER_KEYS = [
   {
     name: "ANTHROPIC_API_KEY",
     description:
-      "Anthropic Claude API key (sk-ant-..., 97+ chars). PREFERRED provider for proposal generation; the reference benchmark is Claude-generated so output quality is highest with Claude. Get from https://console.anthropic.com/settings/keys.",
+      "Anthropic Claude API key (sk-ant-..., 97+ chars). Last-resort provider in the current chain; keep Claude last to avoid Anthropic rate limits blocking the app when other providers are available. Get from https://console.anthropic.com/settings/keys.",
     validate: (v) => {
       if (!v.startsWith("sk-ant-")) return `Expected a Claude API key starting with "sk-ant-". Got: "${v.slice(0, 8)}..." — check you have not set a Gemini or OpenAI key here.`;
       if (v.length < 50) return `Claude API key is too short (${v.length} chars). A real key is 97+ characters.`;
@@ -56,7 +56,7 @@ const AI_PROVIDER_KEYS = [
   {
     name: "GEMINI_API_KEY",
     description:
-      "Google Gemini API key (AIza..., 39 chars). Used as a fallback for proposal generation and as the primary engine for CV/project extraction. Without this AND ANTHROPIC_API_KEY, all imported records are REGEX_DRAFT only.",
+      "Google Gemini API key (AIza..., 39 chars). Primary analysis/extraction provider and second-tier proposal fallback. Without any AI provider key, imported records remain REGEX_DRAFT only.",
     validate: (v) => {
       if (!v.startsWith("AIza")) return `Expected a Gemini API key starting with "AIza". Got: "${v.slice(0, 8)}..." — check you have not set an Anthropic or OpenAI key here.`;
       if (v.length < 35) return `Gemini API key is too short (${v.length} chars). A real key is 39 characters.`;
@@ -66,11 +66,17 @@ const AI_PROVIDER_KEYS = [
   {
     name: "OPENAI_API_KEY",
     description:
-      "OpenAI API key (sk-...). Third-tier fallback for proposal generation. At least one AI provider key is required in production.",
+      "OpenAI API key (sk-...). First-tier provider for proposal generation/validation in the default chain. At least one AI provider key is required in production.",
     validate: (v) => {
       if (!v.startsWith("sk-")) return `Expected an OpenAI API key starting with "sk-". Got: "${v.slice(0, 8)}..."`;
       return null;
     },
+  },
+  {
+    name: "MISTRAL_API_KEY",
+    description:
+      "Mistral API key. Third-tier proposal/validation provider and analysis fallback. Models override via MISTRAL_PROPOSAL_MODEL / MISTRAL_ANALYSIS_MODEL / MISTRAL_FAST_MODEL.",
+    validate: (_v) => null,
   },
   {
     name: "DEEPSEEK_API_KEY",
@@ -81,13 +87,19 @@ const AI_PROVIDER_KEYS = [
   {
     name: "GROQ_API_KEY",
     description:
-      "Groq API key (gsk_...). Fifth-tier fallback for proposal generation via OpenAI-compatible endpoint. Model overridable via GROQ_PROPOSAL_MODEL (default llama-3.3-70b-versatile).",
+      "Groq API key (gsk_...). Fifth-tier default fallback and first-tier fast/cheap provider. Model overridable via GROQ_PROPOSAL_MODEL (default llama-3.3-70b-versatile).",
+    validate: (_v) => null,
+  },
+  {
+    name: "TOGETHER_API_KEY",
+    description:
+      "Together API key. Sixth-tier default fallback and second-tier fast/cheap provider. Models override via TOGETHER_PROPOSAL_MODEL / TOGETHER_ANALYSIS_MODEL / TOGETHER_FAST_MODEL.",
     validate: (_v) => null,
   },
   {
     name: "OPENROUTER_API_KEY",
     description:
-      "OpenRouter API key (sk-or-...). Sixth-tier fallback aggregator via OpenAI-compatible endpoint. Model overridable via OPENROUTER_PROPOSAL_MODEL (default openrouter/auto).",
+      "OpenRouter API key (sk-or-...). Seventh-tier fallback aggregator via OpenAI-compatible endpoint. Model overridable via OPENROUTER_PROPOSAL_MODEL (default openrouter/auto).",
     validate: (_v) => null,
   },
 ];
@@ -102,6 +114,10 @@ const OPERATIONAL_WARNINGS = [
   {
     name: "CRON_SECRET",
     description: "Vercel-managed Cron secret. Required when Vercel Cron is wired to /api/cron/* endpoints. Set in the Vercel dashboard, not here.",
+  },
+  {
+    name: "PDF_OCR_MAX_RACES",
+    description: "Optional OCR concurrency/race guard. Recommended production value: 1, which keeps scanned-PDF OCR conservative on Vercel and avoids unnecessary provider/API races.",
   },
 ];
 
@@ -197,7 +213,7 @@ for (const spec of ALWAYS_REQUIRED) {
 const hasAnyAIKey = AI_PROVIDER_KEYS.some(({ name }) => Boolean(process.env[name]));
 if (!hasAnyAIKey) {
   const message =
-    "At least one AI provider key is required: ANTHROPIC_API_KEY (preferred), GEMINI_API_KEY, OPENAI_API_KEY, DEEPSEEK_API_KEY, GROQ_API_KEY, or OPENROUTER_API_KEY. " +
+    "At least one AI provider key is required: OPENAI_API_KEY, GEMINI_API_KEY, MISTRAL_API_KEY, DEEPSEEK_API_KEY, GROQ_API_KEY, TOGETHER_API_KEY, OPENROUTER_API_KEY, or ANTHROPIC_API_KEY. " +
     "Without any AI key, every imported expert/project is REGEX_DRAFT and BLOCKED from final proposal generation.";
   if (isProd) {
     errors.push(`  ✗ AI_PROVIDER_KEYS: ${message}`);

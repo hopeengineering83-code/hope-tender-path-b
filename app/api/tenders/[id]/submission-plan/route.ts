@@ -13,7 +13,6 @@ import { NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { resolveSubmissionPlanCompleteness } from "../../../../../lib/engine/submission-plan-completeness";
-import { assessGeneratedDocumentQuality } from "../../../../../lib/engine/document-quality-gate";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 15;
@@ -66,7 +65,6 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
             generationStatus: true,
             validationStatus: true,
             reviewStatus: true,
-            fileContent: true,
             storagePath: true,
           },
         },
@@ -74,25 +72,14 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     });
     if (!tender) return err("Tender not found", 404, { code: "TENDER_NOT_FOUND" });
 
-    // Compute quality failures for the docs we have inline content for —
-    // matches the canonical helper's behaviour: 2MB cap on inline base64.
+    // Keep this endpoint metadata-only to avoid loading GeneratedDocument.fileContent
+    // on every dashboard poll. Deep content/quality checks remain in the canonical
+    // export-readiness and admin audit routes that intentionally inspect bytes.
     const qualityFailedIds = new Set<string>();
-    for (const doc of tender.generatedDocuments) {
-      const inline = typeof doc.fileContent === "string" && doc.fileContent.length < 2_000_000 ? doc.fileContent : null;
-      if (!inline) continue;
-      const report = assessGeneratedDocumentQuality({
-        doc,
-        visibleText: inline,
-        rawFileContent: doc.fileContent,
-        hasStoragePath: Boolean(doc.storagePath && doc.storagePath.length > 0),
-        requirements: tender.requirements,
-      });
-      if (report.recommendedStatus === "QUALITY_FAILED") qualityFailedIds.add(doc.id);
-    }
 
     const report = resolveSubmissionPlanCompleteness({
       tender,
-      generatedDocuments: tender.generatedDocuments,
+      generatedDocuments: tender.generatedDocuments.map((doc) => ({ ...doc, fileContent: null })),
       qualityFailedIds,
     });
 

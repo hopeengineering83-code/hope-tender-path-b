@@ -104,7 +104,7 @@ describe("lib/ai.ts wires Groq → OpenRouter into the chain", () => {
     assert.match(source, /tryTailFallbackProviders/);
   });
   it("includes the new keys in the no-provider error", () => {
-    assert.match(source, /GROQ_API_KEY, or OPENROUTER_API_KEY/);
+    assert.match(source, /GROQ_API_KEY, TOGETHER_API_KEY, OPENROUTER_API_KEY, or ANTHROPIC_API_KEY/);
   });
 });
 
@@ -113,17 +113,18 @@ describe("/api/ai/health exposes groq + openrouter and the full chain", () => {
   it("returns groq and openrouter provider objects with fallback ranks", () => {
     assert.match(source, /groq:\s*\{/);
     assert.match(source, /openrouter:\s*\{/);
-    // Claude is last (rank 6); openrouter and groq are in the chain
+    // Claude is last (rank 8); openrouter and groq are in the chain
     assert.match(source, /fallbackRank:\s*5/);
-    assert.match(source, /fallbackRank:\s*6/);
+    assert.match(source, /fallbackRank:\s*7/);
+    assert.match(source, /fallbackRank:\s*8/);
   });
   it("advertises the extended fallback chain with Claude last", () => {
-    // DeepSeek → Groq → OpenRouter appear together before Claude
-    assert.match(source, /DeepSeek → Groq → OpenRouter → Claude → deterministic draft fallback/);
+    // DeepSeek → Groq → Together → OpenRouter appear together before Claude
+    assert.match(source, /DeepSeek → Groq → Together → OpenRouter → Claude → deterministic draft fallback/);
   });
 });
 
-describe("AI Health panel renders all six provider cards from the contract", () => {
+describe("AI Health panel renders all eight provider cards from the contract", () => {
   const source = readFileSync("components/ai-health-panel.tsx", "utf8");
   it("includes Groq + OpenRouter labels, env vars, and fallback ranks", () => {
     assert.match(source, /label: "Groq"/);
@@ -131,7 +132,7 @@ describe("AI Health panel renders all six provider cards from the contract", () 
     assert.match(source, /GROQ_API_KEY/);
     assert.match(source, /OPENROUTER_API_KEY/);
     assert.match(source, /rank: 5/);
-    assert.match(source, /rank: 6/);
+    assert.match(source, /rank: 7/);
   });
   it("renders cards by mapping the provider contract (rank + cooldown shown)", () => {
     assert.match(source, /health\.providers\.map/);
@@ -188,9 +189,11 @@ describe("/api/ai/health success + preferredProvider span the whole chain", () =
     assert.match(source, /const anyConfigured =/);
     assert.match(source, /success: anyConfigured/);
   });
-  it("preferredProvider priority includes deepseek, groq, openrouter", () => {
+  it("preferredProvider priority includes mistral, deepseek, groq, together, openrouter", () => {
+    assert.match(source, /mistralConfigured \? "mistral"/);
     assert.match(source, /deepSeekConfigured \? "deepseek"/);
     assert.match(source, /groqConfigured \? "groq"/);
+    assert.match(source, /togetherConfigured \? "together"/);
     assert.match(source, /openRouterConfigured \? "openrouter"/);
   });
   it("only blocks when NO provider is configured", () => {
@@ -199,7 +202,7 @@ describe("/api/ai/health success + preferredProvider span the whole chain", () =
   it("every provider object carries envPresent + fallbackRank + label + runtime", () => {
     assert.match(source, /envPresent:/);
     assert.match(source, /fallbackRank: 1/);
-    assert.match(source, /fallbackRank: 6/);
-    assert.match(source, /providerRuntime\.(openai|gemini|deepseek|groq|openrouter|anthropic)/);
+    assert.match(source, /fallbackRank: 8/);
+    assert.match(source, /providerRuntime\.(openai|gemini|mistral|deepseek|groq|together|openrouter|anthropic)/);
   });
 });

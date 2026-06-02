@@ -2,7 +2,7 @@
 //
 // Screenshot context: production showed "all providers exhausted, falling
 // back to regex". The existing chain in lib/ai.ts already tries Anthropic
-// → Gemini → OpenAI → DeepSeek in sequence, but without a way to:
+// → Gemini → OpenAI → Mistral → Together → DeepSeek in sequence, but without a way to:
 //   - know WHICH provider failed and WHEN
 //   - back off briefly after a transient rate-limit (HTTP 429) so the
 //     next request doesn't immediately re-hit the same throttled provider
@@ -31,7 +31,7 @@
 //     // skip Gemini for now — it 429'd N seconds ago
 //   }
 
-export type AiProviderName = "anthropic" | "gemini" | "openai" | "deepseek" | "groq" | "openrouter";
+export type AiProviderName = "anthropic" | "gemini" | "openai" | "mistral" | "deepseek" | "groq" | "together" | "openrouter";
 
 export type AiProviderFailureCategory =
   | "RATE_LIMIT"
@@ -68,6 +68,8 @@ const PROVIDER_ENV_KEY: Record<AiProviderName, string> = {
   openai: "OPENAI_API_KEY",
   deepseek: "DEEPSEEK_API_KEY",
   groq: "GROQ_API_KEY",
+  mistral: "MISTRAL_API_KEY",
+  together: "TOGETHER_API_KEY",
   openrouter: "OPENROUTER_API_KEY",
 };
 
@@ -102,8 +104,32 @@ export function getDeepSeekModel(): string {
   return process.env.DEEPSEEK_PROPOSAL_MODEL || "deepseek-chat";
 }
 
+// ─── Mistral (OpenAI-compatible) ──────────────────────────────────────────
+// Third-tier provider in the default/proposal/validation chains. Official
+// variable MISTRAL_API_KEY. Models are overridable by use-case.
+export function getMistralApiKey(): string | undefined {
+  const v = process.env.MISTRAL_API_KEY;
+  return v && v.trim().length > 0 ? v.trim() : undefined;
+}
+export function isMistralConfigured(): boolean {
+  return Boolean(getMistralApiKey());
+}
+export function getMistralProposalModel(): string {
+  return process.env.MISTRAL_PROPOSAL_MODEL || "mistral-large-latest";
+}
+export function getMistralAnalysisModel(): string {
+  return process.env.MISTRAL_ANALYSIS_MODEL || getMistralProposalModel();
+}
+export function getMistralFastModel(): string {
+  return process.env.MISTRAL_FAST_MODEL || "ministral-8b-latest";
+}
+export function getMistralBaseUrl(): string {
+  const v = process.env.MISTRAL_BASE_URL;
+  return (v && v.trim().length > 0 ? v.trim() : "https://api.mistral.ai/v1").replace(/\/+$/, "");
+}
+
 // ─── Groq (OpenAI-compatible) ─────────────────────────────────────────────
-// Fifth-tier fallback. Official variable GROQ_API_KEY. Model overridable via
+// Fast fallback provider. Official variable GROQ_API_KEY. Model overridable via
 // GROQ_PROPOSAL_MODEL (default: a current Llama 3.3 70B instruct model).
 export function getGroqApiKey(): string | undefined {
   const v = process.env.GROQ_API_KEY;
@@ -120,8 +146,31 @@ export function getGroqBaseUrl(): string {
   return (v && v.trim().length > 0 ? v.trim() : "https://api.groq.com/openai/v1").replace(/\/+$/, "");
 }
 
+// ─── Together (OpenAI-compatible) ─────────────────────────────────────────
+// Sixth-tier provider in the default chain and second in fast/cheap mode.
+export function getTogetherApiKey(): string | undefined {
+  const v = process.env.TOGETHER_API_KEY;
+  return v && v.trim().length > 0 ? v.trim() : undefined;
+}
+export function isTogetherConfigured(): boolean {
+  return Boolean(getTogetherApiKey());
+}
+export function getTogetherProposalModel(): string {
+  return process.env.TOGETHER_PROPOSAL_MODEL || "meta-llama/Llama-3.3-70B-Instruct-Turbo";
+}
+export function getTogetherAnalysisModel(): string {
+  return process.env.TOGETHER_ANALYSIS_MODEL || getTogetherProposalModel();
+}
+export function getTogetherFastModel(): string {
+  return process.env.TOGETHER_FAST_MODEL || "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo";
+}
+export function getTogetherBaseUrl(): string {
+  const v = process.env.TOGETHER_BASE_URL;
+  return (v && v.trim().length > 0 ? v.trim() : "https://api.together.xyz/v1").replace(/\/+$/, "");
+}
+
 // ─── OpenRouter (OpenAI-compatible aggregator) ────────────────────────────
-// Sixth-tier fallback. Official variable OPENROUTER_API_KEY. Model overridable
+// Aggregator fallback. Official variable OPENROUTER_API_KEY. Model overridable
 // via OPENROUTER_PROPOSAL_MODEL (default: openrouter/auto picks a live model).
 export function getOpenRouterApiKey(): string | undefined {
   const v = process.env.OPENROUTER_API_KEY;
@@ -150,7 +199,9 @@ export function getOpenRouterAppName(): string {
 
 function isProviderConfigured(provider: AiProviderName): boolean {
   if (provider === "deepseek") return isDeepSeekConfigured();
+  if (provider === "mistral") return isMistralConfigured();
   if (provider === "groq") return isGroqConfigured();
+  if (provider === "together") return isTogetherConfigured();
   if (provider === "openrouter") return isOpenRouterConfigured();
   return Boolean(process.env[PROVIDER_ENV_KEY[provider]]);
 }

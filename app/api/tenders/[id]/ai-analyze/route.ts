@@ -485,7 +485,41 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       requestId,
     });
 
-    const updated = await prisma.tender.findUnique({ where: { id }, include: { requirements: true, files: true, complianceGaps: true, generatedDocuments: true } });
+    const updated = await prisma.tender.findUnique({
+      where: { id },
+      include: {
+        requirements: true,
+        files: {
+          orderBy: { createdAt: "desc" },
+          select: { id: true, fileName: true, originalFileName: true, mimeType: true, size: true, classification: true, createdAt: true },
+        },
+        complianceGaps: true,
+        generatedDocuments: {
+          orderBy: [{ exactOrder: "asc" }, { createdAt: "desc" }],
+          select: { id: true, name: true, documentType: true, generationStatus: true, validationStatus: true, reviewStatus: true, reviewNotes: true, exactFileName: true, exactOrder: true, contentSummary: true, reviewedExpertCount: true, draftExpertCount: true, reviewedProjectCount: true, draftProjectCount: true },
+        },
+      },
+    });
+    const fileTextMetrics = updated ? await prisma.$queryRaw<Array<{ id: string; extractedTextLength: number; isScannedPlaceholder: boolean }>>`
+      SELECT
+        id,
+        COALESCE(char_length("extractedText"), 0)::int AS "extractedTextLength",
+        COALESCE("extractedText" LIKE '[Scanned%', false) AS "isScannedPlaceholder"
+      FROM "TenderFile"
+      WHERE "tenderId" = ${id}
+    ` : [];
+    const fileTextMetricById = new Map(fileTextMetrics.map((file) => [file.id, file]));
+    const updatedForResponse = updated ? {
+      ...updated,
+      files: updated.files.map((file) => {
+        const metric = fileTextMetricById.get(file.id);
+        return {
+          ...file,
+          extractedTextLength: metric?.extractedTextLength ?? 0,
+          isScannedPlaceholder: metric?.isScannedPlaceholder ?? false,
+        };
+      }),
+    } : null;
 
     void createNotification({
       userId,
@@ -519,7 +553,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         isPartial: analysisMeta.isPartial,
       } : null,
       nextAction: analysisMeta?.isPartial ? "CONTINUE_AI_ANALYSIS" : null,
-      tender: updated,
+      tender: updatedForResponse,
       extractionWarnings: extractionReports.filter((item) => item.quality.severity === "WARNING"),
     });
   } catch (error) {
