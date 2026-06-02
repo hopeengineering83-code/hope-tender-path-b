@@ -61,7 +61,7 @@ PR #544 already added snapshot guard and plan-not-built state. This follow-up ha
 
 ## L. Evidence Coverage Gaps
 
-No coverage thresholds were changed. FULL/SUBSTANTIAL coverage must continue to require confirmed compliance matrix rows with source traceability. Selected evidence and auto-links must remain PARTIAL until confirmed.
+Coverage thresholds remain strict. This follow-up prevents the Mandatory Requirement Coverage panel from bulk-confirming auto-linked vault suggestions as FULL: auto-linked suggestions are now confirmed only as PARTIAL, and the confirm endpoint caps direct FULL/SUBSTANTIAL requests to PARTIAL with audit metadata. Remaining evidence work should add the richer compliance-matrix review workflow for explicit FULL/SUBSTANTIAL confirmations with source traceability.
 
 ## M. Document Lifecycle/Export Gaps
 
