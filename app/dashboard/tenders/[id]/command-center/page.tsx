@@ -30,7 +30,21 @@ export default async function TenderCommandCenter({ params }: { params: Promise<
       complianceGaps: true,
       expertMatches: { where: { isSelected: true }, include: { expert: { select: { id: true, fullName: true, title: true } } }, orderBy: { score: "desc" } },
       projectMatches: { where: { isSelected: true }, include: { project: { select: { id: true, name: true, clientName: true } } }, orderBy: { score: "desc" } },
-      generatedDocuments: { where: { generationStatus: { not: "SUPERSEDED" } } },
+      generatedDocuments: {
+        where: { generationStatus: { not: "SUPERSEDED" } },
+        select: {
+          id: true,
+          name: true,
+          exactFileName: true,
+          exactOrder: true,
+          documentType: true,
+          format: true,
+          generationStatus: true,
+          validationStatus: true,
+          reviewStatus: true,
+          storagePath: true,
+        },
+      },
     },
   });
   if (!tender) notFound();
@@ -140,7 +154,7 @@ export default async function TenderCommandCenter({ params }: { params: Promise<
         <div className="shrink-0 text-right text-sm">
           <div className="text-xs text-slate-500">Status / Stage</div>
           <div className="font-semibold text-slate-800">{tender.status} / {tender.stage}</div>
-          <div className="text-xs text-slate-500 mt-1">Readiness: {Math.round(tender.readinessScore ?? 0)}/100</div>
+          <div className="text-xs text-slate-500 mt-1">Workflow Progress: {Math.round(tender.readinessScore ?? 0)}/100</div>
         </div>
       </div>
 
@@ -163,7 +177,7 @@ export default async function TenderCommandCenter({ params }: { params: Promise<
       <section className="grid grid-cols-2 gap-3 sm:grid-cols-4 mb-6">
         <StatCard title="Selected experts" value={tender.expertMatches.length} caption={tender.expertMatches.slice(0, 2).map((m) => m.expert.fullName).join(" · ") || "None"} />
         <StatCard title="Selected projects" value={tender.projectMatches.length} caption={tender.projectMatches.slice(0, 2).map((m) => m.project.name).join(" · ") || "None"} />
-        <StatCard title="Documents" value={tender.generatedDocuments.length} caption={`${docReadiness.failures.length} not yet ready`} />
+        <StatCard title="Documents" value={tender.generatedDocuments.length} caption={`${docReadiness.failures.length} not ready · includes all statuses`} />
         <StatCard title="Open HIGH objections" value={openHigh.length} caption={openHigh.length > 0 ? "Export gate is closed" : "Export gate clear"} highlight={openHigh.length > 0} />
       </section>
 

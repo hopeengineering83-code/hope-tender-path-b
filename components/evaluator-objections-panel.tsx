@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 
 type Objection = {
   id: string;
@@ -39,6 +40,7 @@ const STATUS_BADGE: Record<string, string> = {
 };
 
 export function EvaluatorObjectionsPanel({ tenderId }: { tenderId: string }) {
+  const router = useRouter();
   const [objections, setObjections] = useState<Objection[]>([]);
   const [summary, setSummary] = useState<Summary | null>(null);
   const [loading, setLoading] = useState(false);
@@ -81,6 +83,7 @@ export function EvaluatorObjectionsPanel({ tenderId }: { tenderId: string }) {
       if (!res.ok) throw new Error(data.error ?? `Failed to update objection (${res.status})`);
       await refresh();
       setNotes((current) => ({ ...current, [objectionId]: "" }));
+      router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to update evaluator objection");
     } finally {

@@ -28,6 +28,8 @@ export type WinProbabilityInput = {
   // Tender-level signals for budget proximity and category alignment bonuses
   tenderBudget?: number | null;
   tenderCategory?: string | null;
+  // Analysis source — used to cap scores when data comes from unreliable fallback
+  analysisSource?: string | null;
   // Selected projects with their sectors and contract values
   projects: Array<{
     clientName?: string | null;
@@ -239,8 +241,22 @@ export function computeWinProbability(input: WinProbabilityInput): WinProbabilit
   const cp = scoreCompliancePosture(input.complianceGaps);
   const ho = scoreHistoricalOutcomes(input.primarySector, input.bidOutcomes);
 
-  const total = ev.score + ts.score + cp.score + ho.score;
-  const clamped = Math.max(0, Math.min(100, total));
+  const isRegexFallback = input.analysisSource === "REGEX_FALLBACK_AI_ERROR";
+
+  // Cap evidence axis when analysis source is unreliable regex fallback —
+  // requirement list from regex is unverified, so evidence match is overstated.
+  const cappedEvScore = isRegexFallback ? Math.min(ev.score, 8) : ev.score;
+  const evNotes = isRegexFallback && ev.score > 8
+    ? [...ev.notes, "Evidence match capped at 8/30 — analysis is from regex fallback (unreliable requirement list)."]
+    : ev.notes;
+
+  const total = cappedEvScore + ts.score + cp.score + ho.score;
+  let clamped = Math.max(0, Math.min(100, total));
+
+  // If regex fallback AND no evidence links, cap total at 35
+  if (isRegexFallback && input.projects.length === 0) {
+    clamped = Math.min(clamped, 35);
+  }
 
   const label: WinProbabilityResult["label"] =
     clamped >= 85 ? "Strong"
@@ -252,12 +268,12 @@ export function computeWinProbability(input: WinProbabilityInput): WinProbabilit
     score: clamped,
     label,
     breakdown: {
-      evidenceMatch: ev.score,
+      evidenceMatch: cappedEvScore,
       teamStrength: ts.score,
       compliancePosture: cp.score,
       historicalOutcomes: ho.score,
     },
-    notes: [...ev.notes, ...ts.notes, ...cp.notes, ...ho.notes],
+    notes: [...evNotes, ...ts.notes, ...cp.notes, ...ho.notes],
   };
 }
 

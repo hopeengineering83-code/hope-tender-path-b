@@ -97,7 +97,7 @@ export function VersionActionsTable({ versions, tenderId }: { versions: VersionM
       {error && (
         <div className="mb-2 rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700">
           {error}
-          <button onClick={() => setError(null)} className="ml-2 text-red-400 hover:text-red-600">✕</button>
+          <button onClick={() => setError(null)} aria-label="Dismiss error" className="ml-2 text-red-400 hover:text-red-600">✕</button>
         </div>
       )}
 
@@ -202,7 +202,7 @@ export function VersionActionsTable({ versions, tenderId }: { versions: VersionM
           >
             {loadingDiff ? "Loading…" : "Show Diff"}
           </button>
-          <button onClick={() => setDiffBaseId(null)} className="text-indigo-400 hover:text-indigo-600">✕</button>
+          <button onClick={() => setDiffBaseId(null)} aria-label="Close diff view" className="text-indigo-400 hover:text-indigo-600">✕</button>
         </div>
       )}
 

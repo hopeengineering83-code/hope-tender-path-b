@@ -3,6 +3,7 @@ import { getSession } from "../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../lib/prisma";
 import { importCompanyKnowledgeFromDocuments } from "../../../../lib/company-knowledge-import-safe";
 import { runCompanyKnowledgeSafetyImport } from "../../../../lib/company-knowledge-safety-import";
+import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../lib/rate-limit";
 import { extractTextFromBuffer, getFileTypeLabel, isMeaningfulExtraction } from "../../../../lib/extract-text";
 import { ensureCompanyForUser } from "../../../../lib/company-workspace";
 import { getStorageAdapter } from "../../../../lib/storage";
@@ -16,6 +17,9 @@ export const dynamic = "force-dynamic";
 export async function POST() {
   const userId = await getSession();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const rl = rateLimit(`reimport:${userId}`, MUTATION_RATE_LIMIT);
+  if (!rl.allowed) return NextResponse.json({ error: "Too many requests", retryAfter: Math.ceil((rl.resetAt - Date.now()) / 1000) }, { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } });
 
   await prismaReady;
   const company = await ensureCompanyForUser(prisma, userId);

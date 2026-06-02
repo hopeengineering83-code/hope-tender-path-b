@@ -57,6 +57,7 @@ export type TenderMetadataDraft = {
   pageLimit: number | null;
   technicalWeight: number | null;
   financialWeight: number | null;
+  evaluationMethodology: string | null;
   description: string | null;
   intakeSummary: string | null;
 };
@@ -380,6 +381,30 @@ function inferPageLimit(text: string): number | null {
   return Number.isFinite(n) && n > 0 && n < 1000 ? n : null;
 }
 
+function inferEvaluationMethodology(text: string): string | null {
+  // Look for evaluation criteria / scoring section. Search for the section
+  // header and capture up to 2000 chars of following content.
+  const sectionPattern = /(?:evaluation\s+(?:criteria|methodology|framework|scoring|scheme|method)|scoring\s+(?:criteria|matrix|methodology)|award\s+criteria|proposal\s+evaluation|technical\s+evaluation)\s*[:\-]?\s*\n([\s\S]{30,2000}?)(?=\n\s*\n\s*[A-Z]|\n\s*(?:Section|SECTION|Annex|ANNEX|Appendix|APPENDIX|\d+\.?\s+[A-Z])|$)/i;
+  const m = text.match(sectionPattern);
+  if (m?.[1]) {
+    const body = m[1].replace(/\s+/g, " ").trim().slice(0, 1800);
+    if (body.length >= 30) return body;
+  }
+  // Fallback: look for lines mentioning criteria/scores near weight keywords
+  const lines = text.split(/\n/).map((l) => l.trim()).filter(Boolean);
+  const scoringLines: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i];
+    if (/(criterion|criteria|scoring|score|marks?|weight|technical.*\d+\s*%|financial.*\d+\s*%|pass\/fail|qualification|responsiveness|evaluation)/i.test(l)) {
+      scoringLines.push(l);
+      if (i + 1 < lines.length) scoringLines.push(lines[i + 1]);
+      if (scoringLines.length >= 20) break;
+    }
+  }
+  if (scoringLines.length > 0) return scoringLines.join(" ").replace(/\s+/g, " ").trim().slice(0, 1800);
+  return null;
+}
+
 function inferEvaluationWeights(text: string): { technical: number | null; financial: number | null } {
   // "Technical: 80%, Financial: 20%" or "80% technical / 20% financial"
   const patterns = [
@@ -443,6 +468,7 @@ export function inferTenderMetadata(extractedText: string, fallbackFileName: str
       pageLimit: null,
       technicalWeight: null,
       financialWeight: null,
+      evaluationMethodology: null,
       description: `Tender intake from "${fallbackFileName}" extracted only ${trimmedLen} characters of text — not enough for automatic metadata inference. Likely a scanned PDF without an OCR text layer. Set PDF_OCR_ENABLED=true and re-upload, OR use the Edit form to fill in tender details manually.`,
       intakeSummary: null,
     };
@@ -477,6 +503,7 @@ export function inferTenderMetadata(extractedText: string, fallbackFileName: str
   const numberOfCopiesRequired = inferNumberOfCopies(text);
   const pageLimit = inferPageLimit(text);
   const evalWeights = inferEvaluationWeights(text);
+  const evaluationMethodology = inferEvaluationMethodology(text);
 
   const intakeSummary = summaryFromText(text);
   const description = intakeSummary?.slice(0, 1200) ?? text.slice(0, 1200) ?? null;
@@ -508,6 +535,7 @@ export function inferTenderMetadata(extractedText: string, fallbackFileName: str
     pageLimit,
     technicalWeight: evalWeights.technical,
     financialWeight: evalWeights.financial,
+    evaluationMethodology,
     description,
     intakeSummary,
   };

@@ -9,6 +9,13 @@ import { getClientNameStatus, clientNameDisplayMessage } from "../../../../lib/e
 import { BidStrategyPanel } from "../../../../components/bid-strategy-panel";
 import { EvaluatorSimulatorPanel } from "../../../../components/evaluator-simulator-panel";
 import { AIRematchButton } from "../../../../components/ai-rematch-button";
+import { CanonicalReadinessScoreWidget } from "../../../../components/canonical-readiness-score-widget";
+import { SubmissionPlanCompletenessPanel } from "../../../../components/submission-plan-completeness-panel";
+import TenderRecoveryCommandCenter from "../../../../components/tender-recovery-command-center";
+import RequirementCoveragePanel from "../../../../components/requirement-coverage-panel";
+import TenderControlsPanel from "../../../../components/tender-controls-panel";
+import ScoreBreakdownPanel from "../../../../components/score-breakdown-panel";
+import { detectAnalysisSource } from "../../../../lib/engine/analysis-source";
 
 function renderInline(text: string): React.ReactNode[] {
   const parts = text.split(/(\*\*[^*\n]+\*\*|\*[^*\n]+\*|_[^_\n]+_)/g);
@@ -133,7 +140,8 @@ type TenderFile = {
   size: number;
   mimeType: string;
   createdAt: string | Date;
-  extractedText?: string | null;
+  extractedTextLength?: number | null;
+  isScannedPlaceholder?: boolean | null;
   classification?: string | null;
 };
 
@@ -181,10 +189,11 @@ function FileTypeBadge({ name }: { name: string }) {
   return <span className={`inline-block rounded px-1.5 py-0.5 text-[10px] font-bold uppercase ${cls}`}>{ext || "file"}</span>;
 }
 
-function ExtractionBadge({ text }: { text?: string | null }) {
-  if (!text) return <span className="text-xs text-slate-300">no text</span>;
-  if (text.startsWith("[Scanned")) return <span className="text-xs text-amber-600">⚠ scanned</span>;
-  return <span className="text-xs text-green-600">{text.length.toLocaleString()} chars</span>;
+function ExtractionBadge({ extractedTextLength, isScannedPlaceholder }: { extractedTextLength?: number | null; isScannedPlaceholder?: boolean | null }) {
+  if (isScannedPlaceholder) return <span className="text-xs text-amber-600">⚠ scanned</span>;
+  const length = extractedTextLength ?? 0;
+  if (length <= 0) return <span className="text-xs text-slate-300">no text</span>;
+  return <span className="text-xs text-green-600">{length.toLocaleString()} chars</span>;
 }
 
 function TrustBadge({ level }: { level?: string | null }) {
@@ -220,7 +229,12 @@ type GeneratedDocument = {
   reviewStatus: string;
   reviewNotes: string | null;
   exactFileName?: string | null;
+  exactOrder?: number | null;
   contentSummary?: string | null;
+  reviewedExpertCount?: number | null;
+  draftExpertCount?: number | null;
+  reviewedProjectCount?: number | null;
+  draftProjectCount?: number | null;
 };
 
 type ExpertMatch = {
@@ -289,6 +303,7 @@ type Tender = {
   notes: string | null;
   exactFileNaming: string | string[];
   exactFileOrder: string | string[];
+  stage?: string | null;
   readinessScore?: number | null;
   files: TenderFile[];
   requirements: TenderRequirement[];
@@ -327,6 +342,7 @@ const GAPS_PAGE_SIZE = 10;
 const GAPS_PAGINATION_THRESHOLD = 20; // use pagination instead of show-all when gap count exceeds this
 
 function ComplianceGapsPanel({ tenderId, initialGaps }: { tenderId: string; initialGaps: ComplianceGap[] }) {
+  const router = useRouter();
   const [gaps, setGaps] = useState<ComplianceGap[]>(initialGaps);
   const [toggling, setToggling] = useState<string | null>(null);
   const [toggleError, setToggleError] = useState<string | null>(null);
@@ -345,6 +361,7 @@ function ComplianceGapsPanel({ tenderId, initialGaps }: { tenderId: string; init
       if (res.ok) {
         const updated = await res.json() as ComplianceGap;
         setGaps((prev) => prev.map((g) => g.id === gap.id ? { ...g, isResolved: updated.isResolved } : g));
+        router.refresh();
       } else {
         const data = await res.json().catch(() => ({})) as Record<string, unknown>;
         setToggleError(typeof data.error === "string" ? data.error : `Failed to update gap (${res.status}). Please try again.`);
@@ -377,7 +394,7 @@ function ComplianceGapsPanel({ tenderId, initialGaps }: { tenderId: string; init
       {toggleError && (
         <div className="mt-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 flex items-center justify-between gap-2">
           <span>{toggleError}</span>
-          <button onClick={() => setToggleError(null)} className="text-red-400 hover:text-red-700 font-bold shrink-0">✕</button>
+          <button onClick={() => setToggleError(null)} aria-label="Dismiss error" className="text-red-400 hover:text-red-700 font-bold shrink-0">✕</button>
         </div>
       )}
       {gaps.length === 0 ? (
@@ -461,13 +478,36 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
   const [validating, setValidating] = useState(false);
   const [validationReport, setValidationReport] = useState<{ passed: boolean; issues: { code: string; severity: string; message: string }[] } | null>(null);
   const [reviewingDocId, setReviewingDocId] = useState<string | null>(null);
+  const [submittingReviewDocId, setSubmittingReviewDocId] = useState<string | null>(null);
   const [reviewNote, setReviewNote] = useState("");
+  const [togglingMatchId, setTogglingMatchId] = useState<string | null>(null);
+  const [batchApproving, setBatchApproving] = useState(false);
+  const [regeneratingCvs, setRegeneratingCvs] = useState(false);
+  const [deepReasoningReport, setDeepReasoningReport] = useState<{ markdown: string; createdAt: string } | null>(null);
+  const [loadingDeepReasoning, setLoadingDeepReasoning] = useState(false);
+  const [deepReasoningOpen, setDeepReasoningOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [fileQueue, setFileQueue] = useState<UploadItem[]>([]);
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [error, setError] = useState("");
+  const [analyzeResult, setAnalyzeResult] = useState<{
+    ai: boolean;
+    fallback: boolean;
+    jobId: string | null;
+    chunks: { total: number; completed: number; failed: number; skipped: number; isPartial: boolean } | null;
+    code: string | null;
+    nextAction: string | null;
+    extractionWarnings: string[] | null;
+    providerDiagnostics: {
+      providersCoolingDown: string[];
+      perProvider: Array<{ provider: string; configured: boolean; coolingDown: boolean; lastErrorCategory: string | null; cooldownUntil: string | null }>;
+    } | null;
+  } | null>(null);
+  const [approvingFallback, setApprovingFallback] = useState(false);
+  const [fallbackNote, setFallbackNote] = useState("");
+  const [continueJobId, setContinueJobId] = useState<string | null>(null);
   const [aiProposal, setAiProposal] = useState("");
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
   const [generationPhase, setGenerationPhase] = useState("");
@@ -614,9 +654,63 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
       const data = await res.json();
       if (!res.ok) { setError(data.error || "Analysis failed"); return; }
       if (data.tender) setTender((cur) => ({ ...cur, ...data.tender }));
+      setAnalyzeResult({
+        ai: data.ai,
+        fallback: data.fallback,
+        jobId: data.jobId ?? null,
+        chunks: data.chunks ?? null,
+        code: data.code ?? null,
+        nextAction: data.nextAction ?? null,
+        extractionWarnings: Array.isArray(data.extractionWarnings) ? data.extractionWarnings : null,
+        providerDiagnostics: data.providerDiagnostics ?? null,
+      });
+      if (data.jobId) setContinueJobId(data.jobId);
       router.refresh();
     } catch { setError("Analysis failed"); }
     finally { setAnalyzing(false); }
+  }
+
+  async function handleContinueAnalysis() {
+    if (!continueJobId) return;
+    setAnalyzing(true);
+    setError("");
+    try {
+      const res = await fetch(`/api/tenders/${tender.id}/ai-analyze?continue=${continueJobId}`, { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) { setError(data.error || "Continue analysis failed"); return; }
+      setAnalyzeResult({
+        ai: data.ai,
+        fallback: data.fallback,
+        jobId: data.jobId ?? null,
+        chunks: data.chunks ?? null,
+        code: data.code ?? null,
+        nextAction: data.nextAction ?? null,
+        extractionWarnings: Array.isArray(data.extractionWarnings) ? data.extractionWarnings : null,
+        providerDiagnostics: data.providerDiagnostics ?? null,
+      });
+      if (data.jobId) setContinueJobId(data.jobId);
+      if (data.tender) setTender((cur) => ({ ...cur, ...data.tender }));
+      router.refresh();
+    } catch { setError("Continue analysis failed"); }
+    finally { setAnalyzing(false); }
+  }
+
+  async function handleApproveFallback() {
+    setApprovingFallback(true);
+    setError("");
+    try {
+      const res = await fetch(`/api/tenders/${tender.id}/approve-analysis`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ note: fallbackNote.trim() || undefined }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setError(data.error || "Approval failed"); return; }
+      setAnalyzeResult((prev) => prev ? { ...prev, fallback: false } : null);
+      setFallbackNote("");
+      router.refresh();
+    } catch { setError("Approval failed"); }
+    finally { setApprovingFallback(false); }
   }
 
   async function handleAIProposal() {
@@ -839,20 +933,117 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
       if (!res.ok) { const d = await res.json().catch(() => ({})); setError((d as { error?: string }).error || "Failed to save bid outcome"); return; }
       const updated = await res.json() as { tender: { bidOutcome?: string | null; bidOutcomeNote?: string | null; bidOutcomeAt?: string | null } };
       setTender((prev) => ({ ...prev, bidOutcome: updated.tender.bidOutcome, bidOutcomeNote: updated.tender.bidOutcomeNote, bidOutcomeAt: updated.tender.bidOutcomeAt }));
+      setToast({ message: "Bid outcome saved", type: "success" });
     } catch { setError("Network error saving bid outcome"); }
     finally { setSavingOutcome(false); }
   }
 
   async function submitReview(docId: string, reviewStatus: string) {
-    await fetch(`/api/tenders/${tender.id}/documents/${docId}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ reviewStatus, reviewNotes: reviewNote }),
-    });
-    setReviewingDocId(null);
-    setReviewNote("");
-    const res = await fetch(`/api/tenders/${tender.id}`);
-    if (res.ok) { setTender(await res.json() as Tender); }
+    setSubmittingReviewDocId(docId);
+    try {
+      const res = await fetch(`/api/tenders/${tender.id}/documents/${docId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reviewStatus, reviewNotes: reviewNote }),
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({})) as { error?: string };
+        setToast({ message: d.error ?? "Failed to save review", type: "error" });
+        return;
+      }
+      setToast({ message: `Review saved: ${reviewStatus.replace(/_/g, " ")}`, type: "success" });
+      setReviewingDocId(null);
+      setReviewNote("");
+      const refreshed = await fetch(`/api/tenders/${tender.id}`);
+      if (refreshed.ok) { setTender(await refreshed.json() as Tender); }
+    } catch {
+      setToast({ message: "Network error saving review", type: "error" });
+    } finally {
+      setSubmittingReviewDocId(null);
+    }
+  }
+
+  async function toggleMatchSelection(matchId: string, matchType: "expert" | "project", currentSelected: boolean) {
+    setTogglingMatchId(matchId);
+    try {
+      const res = await fetch(`/api/tenders/${tender.id}/matches`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ matchId, matchType, isSelected: !currentSelected }),
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({})) as { error?: string };
+        setToast({ message: d.error ?? "Failed to update match selection", type: "error" });
+        return;
+      }
+      const refreshed = await fetch(`/api/tenders/${tender.id}`);
+      if (refreshed.ok) { setTender(await refreshed.json() as Tender); }
+    } catch {
+      setToast({ message: "Network error updating match selection", type: "error" });
+    } finally {
+      setTogglingMatchId(null);
+    }
+  }
+
+  async function handleBatchApproveAll() {
+    const pending = tender.generatedDocuments.filter((d) => d.reviewStatus !== "READY_FOR_EXPORT" && d.generationStatus === "GENERATED").length;
+    if (pending === 0) { setToast({ message: "All generated documents are already ready for export.", type: "success" }); return; }
+    if (!confirm(`Mark all ${pending} generated document(s) as Ready for Export? Use this only after reviewing the package for correctness.`)) return;
+    setBatchApproving(true);
+    try {
+      const res = await fetch(`/api/tenders/${tender.id}/documents/bulk-review`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reviewStatus: "READY_FOR_EXPORT", skipAlreadyAtTarget: true, reviewNotes: "Batch approved by bid manager." }),
+      });
+      const data = await res.json().catch(() => ({})) as { updated?: number; error?: string };
+      if (!res.ok) { setToast({ message: data.error ?? "Batch approval failed", type: "error" }); return; }
+      setToast({ message: `${data.updated ?? 0} document(s) marked Ready for Export.`, type: "success" });
+      const refreshed = await fetch(`/api/tenders/${tender.id}`);
+      if (refreshed.ok) { setTender(await refreshed.json() as Tender); }
+    } catch {
+      setToast({ message: "Network error during batch approval", type: "error" });
+    } finally {
+      setBatchApproving(false);
+    }
+  }
+
+  async function handleRegenerateCvs() {
+    const cvCount = tender.generatedDocuments.filter((d) => d.documentType === "EXPERT_CV_PACKAGE" && d.generationStatus === "GENERATED").length;
+    if (cvCount === 0) { setToast({ message: "No Expert CV documents found to regenerate.", type: "error" }); return; }
+    if (!confirm(`Regenerate all ${cvCount} Expert CV document(s) to remove any trace artifacts? This overwrites the current CVs.`)) return;
+    setRegeneratingCvs(true);
+    try {
+      const res = await fetch(`/api/tenders/${tender.id}/regenerate-cvs`, { method: "POST" });
+      const data = await res.json().catch(() => ({})) as { regenerated?: number; skipped?: number; error?: string };
+      if (!res.ok) { setToast({ message: data.error ?? "CV regeneration failed", type: "error" }); return; }
+      setToast({ message: `${data.regenerated ?? 0} CV(s) regenerated, ${data.skipped ?? 0} skipped.`, type: "success" });
+      const refreshed = await fetch(`/api/tenders/${tender.id}`);
+      if (refreshed.ok) { setTender(await refreshed.json() as Tender); }
+    } catch {
+      setToast({ message: "Network error during CV regeneration", type: "error" });
+    } finally {
+      setRegeneratingCvs(false);
+    }
+  }
+
+  async function handleLoadDeepReasoning() {
+    if (deepReasoningOpen && deepReasoningReport) { setDeepReasoningOpen(false); return; }
+    setDeepReasoningOpen(true);
+    if (deepReasoningReport) return;
+    setLoadingDeepReasoning(true);
+    try {
+      const res = await fetch(`/api/tenders/${tender.id}/deep-reasoning-summary`);
+      const data = await res.json() as { available?: boolean; reason?: string; markdown?: string; createdAt?: string; error?: string };
+      if (!res.ok) { setToast({ message: data.error ?? "Failed to load reasoning report", type: "error" }); setDeepReasoningOpen(false); return; }
+      if (!data.available) { setToast({ message: data.reason ?? "No deep-reasoning run recorded yet.", type: "error" }); setDeepReasoningOpen(false); return; }
+      setDeepReasoningReport({ markdown: data.markdown ?? "", createdAt: data.createdAt ?? "" });
+    } catch {
+      setToast({ message: "Network error loading reasoning report", type: "error" });
+      setDeepReasoningOpen(false);
+    } finally {
+      setLoadingDeepReasoning(false);
+    }
   }
 
   async function handleDelete() {
@@ -952,29 +1143,55 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
   const hasRecoverableProjectSelection = reviewedProjectMatches > 0;
   const hasReviewedExpertPath = !expertReqExists || selectedExpertCount === 0 || reviewedExpertMatches > 0;
   const hasReviewedProjectPath = !projectReqExists || selectedProjectCount === 0 || reviewedProjectMatches > 0;
-  const canGenerateDocs = tender.requirements.length > 0
+  // Block generation when analysis came from regex fallback and has not
+  // been explicitly approved — the orchestrator enforces this globally and
+  // we mirror it here so the button is visually disabled immediately.
+  // We must check BOTH the notes field AND whether a resolved
+  // ANALYSIS_APPROVAL:REGEX_FALLBACK ComplianceGap exists — the approve-
+  // analysis route stores approval as a ComplianceGap row, not in notes.
+  const analysisSourceRaw = detectAnalysisSource(tender);
+  const hasAnalysisApprovalGap = tender.complianceGaps.some(
+    (g) => g.title === "ANALYSIS_APPROVAL:REGEX_FALLBACK" && g.isResolved === true,
+  );
+  const analysisIsFallbackUnapproved = analysisSourceRaw === "REGEX_FALLBACK_AI_ERROR" && !hasAnalysisApprovalGap;
+
+  const canGenerateDocs = !analysisIsFallbackUnapproved
+    && tender.requirements.length > 0
     && (!expertReqExists || selectedExpertCount > 0 || !expertMatchesExist || hasRecoverableExpertSelection)
     && (!projectReqExists || selectedProjectCount > 0 || !projectMatchesExist || hasRecoverableProjectSelection)
     && hasReviewedExpertPath
     && hasReviewedProjectPath
     && !criticalHardBlockExists;
-  const generateDisabledReason = tender.requirements.length === 0
-    ? "Run AI Analyze or Run Engine first to extract requirements"
-    : (expertReqExists && selectedExpertCount === 0 && totalExpertMatches === 0)
-      ? "Run Engine first to generate expert matches"
-      : (projectReqExists && selectedProjectCount === 0 && totalProjectMatches === 0)
-        ? "Run Engine first to generate project matches"
-        : (expertReqExists && expertMatchesExist && selectedExpertCount === 0 && !hasRecoverableExpertSelection)
-          ? "Select at least one reviewed expert match before generating"
-          : (projectReqExists && projectMatchesExist && selectedProjectCount === 0 && !hasRecoverableProjectSelection)
-            ? "Select at least one reviewed project match before generating"
-            : (expertReqExists && selectedExpertCount > 0 && reviewedExpertMatches === 0)
-              ? "Review at least one selected expert before generating"
-              : (projectReqExists && selectedProjectCount > 0 && reviewedProjectMatches === 0)
-                ? "Review at least one selected project before generating"
-                : criticalHardBlockExists
-                  ? "Resolve critical hard blockers before generating"
-                  : "Generate proposal documents";
+  const generateDisabledReason = analysisIsFallbackUnapproved
+    ? "Analysis used regex fallback — retry AI Analyze or approve the fallback before generating"
+    : tender.requirements.length === 0
+      ? "Run AI Analyze or Run Engine first to extract requirements"
+      : (expertReqExists && selectedExpertCount === 0 && totalExpertMatches === 0)
+        ? "Run Engine first to generate expert matches"
+        : (projectReqExists && selectedProjectCount === 0 && totalProjectMatches === 0)
+          ? "Run Engine first to generate project matches"
+          : (expertReqExists && expertMatchesExist && selectedExpertCount === 0 && !hasRecoverableExpertSelection)
+            ? "Select at least one reviewed expert match before generating"
+            : (projectReqExists && projectMatchesExist && selectedProjectCount === 0 && !hasRecoverableProjectSelection)
+              ? "Select at least one reviewed project match before generating"
+              : (expertReqExists && selectedExpertCount > 0 && reviewedExpertMatches === 0)
+                ? "Review at least one selected expert before generating"
+                : (projectReqExists && selectedProjectCount > 0 && reviewedProjectMatches === 0)
+                  ? "Review at least one selected project before generating"
+                  : criticalHardBlockExists
+                    ? "Resolve critical hard blockers before generating"
+                    : "Generate proposal documents";
+
+  // ZIP is only safe when there are generated documents. The canonical
+  // export-readiness gate (Export Readiness panel) blocks the final ZIP
+  // link — this simpler guard prevents the raw ZIP endpoint from being
+  // called when no documents exist at all.
+  const hasAnyGeneratedDoc = (tender.generatedDocuments?.length ?? 0) > 0;
+  const zipDisabledReason = analysisIsFallbackUnapproved
+    ? "Analysis source is unapproved regex fallback — approve or retry AI Analyze first"
+    : !hasAnyGeneratedDoc
+      ? "No generated documents yet — generate documents before downloading"
+      : null;
   const readinessScore = tender.readinessScore ??
     (tender.requirements.length === 0 ? 0
       : Math.max(0, Math.round(((tender.requirements.length - criticalGaps) / tender.requirements.length) * 100)));
@@ -1029,9 +1246,14 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
     <div className="space-y-6">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 flex-wrap">
             <h1 className="text-2xl font-bold text-slate-900">{displayTitle}</h1>
             <StatusBadge status={tender.status} />
+            {tender.stage && (
+              <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs font-medium text-slate-600">
+                {tender.stage.replace(/_/g, " ")}
+              </span>
+            )}
           </div>
           <p className="mt-2 text-sm text-slate-500">
             {tender.reference ? `Ref ${tender.reference}` : "No reference yet"}
@@ -1039,7 +1261,7 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
           </p>
         </div>
 
-        <div className="flex flex-wrap gap-2">
+        <div id="ai-analyze-section" className="flex flex-wrap gap-2">
           {aiEnabled && (
             <button onClick={handleAIAnalyze} disabled={analyzing}
               className="rounded-lg bg-purple-600 px-3 py-2 text-sm text-white hover:bg-purple-700 disabled:opacity-50">
@@ -1072,7 +1294,9 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
             </button>
           )}
           <button onClick={downloadZip}
-            className="rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm text-emerald-800 hover:bg-emerald-100">
+            disabled={!!zipDisabledReason}
+            title={zipDisabledReason ?? "Download the final ZIP package"}
+            className="rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm text-emerald-800 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-40">
             ↓ ZIP Package
           </button>
           <button onClick={() => downloadDoc("proposal")}
@@ -1180,10 +1404,173 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
                 <p className="mt-1 text-xs text-red-600">Check your internet connection and retry.</p>
               )}
             </div>
-            <button onClick={() => setError("")} className="shrink-0 text-red-400 hover:text-red-600 text-xs">✕</button>
+            <button onClick={() => setError("")} aria-label="Dismiss error" className="shrink-0 text-red-400 hover:text-red-600 text-xs">✕</button>
           </div>
         </div>
       )}
+
+      {/* Persistent fallback-approval banner — shown whenever the stored
+          analysis came from regex fallback and has not been approved. This
+          lets the user approve without needing to re-run AI Analyze. */}
+      {analysisIsFallbackUnapproved && !analyzeResult?.fallback && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm">
+          <p className="font-semibold text-amber-800">Analysis used regex fallback — AI providers were unavailable.</p>
+          <p className="mt-1 text-xs text-amber-700">Document generation is blocked until you either retry AI Analyze (recommended) or approve the fallback analysis with a note.</p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {aiEnabled && (
+              <button
+                onClick={handleAIAnalyze}
+                disabled={analyzing}
+                className="rounded bg-purple-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-purple-700 disabled:opacity-50"
+              >
+                {analyzing ? "Analyzing…" : "✦ Retry AI Analyze"}
+              </button>
+            )}
+            <div className="flex flex-1 min-w-0 gap-1">
+              <input
+                type="text"
+                value={fallbackNote}
+                onChange={(e) => setFallbackNote(e.target.value)}
+                placeholder="Approval note (required)…"
+                className="flex-1 min-w-0 rounded border border-amber-300 bg-white px-2 py-1 text-xs text-slate-700 placeholder:text-slate-400"
+                maxLength={200}
+              />
+              <button
+                onClick={handleApproveFallback}
+                disabled={approvingFallback || !fallbackNote.trim()}
+                className="rounded bg-amber-600 px-3 py-1 text-xs font-medium text-white hover:bg-amber-700 disabled:opacity-50 shrink-0"
+              >
+                {approvingFallback ? "Approving…" : "Approve Fallback"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {analyzeResult && (
+        <div className={`rounded-xl border px-4 py-3 text-sm ${analyzeResult.fallback ? "border-amber-200 bg-amber-50" : "border-green-200 bg-green-50"}`}>
+          <div className="flex items-start justify-between gap-2">
+            <div className="flex-1">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="font-semibold text-slate-800">Analysis complete</span>
+                {analyzeResult.ai && !analyzeResult.chunks?.isPartial && (
+                  <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700">AI</span>
+                )}
+                {analyzeResult.chunks?.isPartial && (
+                  <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-700">Partial AI</span>
+                )}
+                {analyzeResult.fallback && (
+                  <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">Regex Fallback</span>
+                )}
+              </div>
+              {analyzeResult.chunks && (
+                <p className="mt-1 text-xs text-slate-600">
+                  Chunks: {analyzeResult.chunks.completed}/{analyzeResult.chunks.total} completed
+                  {analyzeResult.chunks.failed > 0 && `, ${analyzeResult.chunks.failed} failed`}
+                  {analyzeResult.chunks.skipped > 0 && `, ${analyzeResult.chunks.skipped} skipped (deadline)`}
+                </p>
+              )}
+              {analyzeResult.fallback && (
+                <div className="mt-2 space-y-2">
+                  <p className="text-xs text-amber-700">AI providers unavailable — regex fallback used. Approve the fallback to unblock document generation, or retry AI Analyze when providers recover.</p>
+                  {analyzeResult.providerDiagnostics && (() => {
+                    const configured = analyzeResult.providerDiagnostics.perProvider.filter((p) => p.configured);
+                    const notConfigured = analyzeResult.providerDiagnostics.perProvider.filter((p) => !p.configured);
+                    const cooling = configured.filter((p) => p.coolingDown);
+                    if (configured.length === 0 && notConfigured.length > 0) {
+                      return <p className="text-xs text-red-700 font-medium">No AI providers configured. Set OPENAI_API_KEY, GEMINI_API_KEY, MISTRAL_API_KEY, DEEPSEEK_API_KEY, GROQ_API_KEY, TOGETHER_API_KEY, OPENROUTER_API_KEY, or ANTHROPIC_API_KEY in Vercel environment variables.</p>;
+                    }
+                    return (
+                      <details className="text-xs">
+                        <summary className="cursor-pointer text-amber-700 hover:underline">Provider diagnostics ({cooling.length} cooling down)</summary>
+                        <ul className="mt-1 space-y-0.5 pl-2">
+                          {configured.map((p) => (
+                            <li key={p.provider} className={p.coolingDown ? "text-red-700" : "text-slate-600"}>
+                              <span className="font-medium capitalize">{p.provider}</span>:
+                              {p.coolingDown ? ` Rate-limited (${p.lastErrorCategory ?? "error"}) — cooling down until ${p.cooldownUntil ? new Date(p.cooldownUntil).toLocaleTimeString() : "?"}` : ` OK (last error: ${p.lastErrorCategory ?? "none"})`}
+                            </li>
+                          ))}
+                          {notConfigured.length > 0 && (
+                            <li className="text-slate-400">Not configured: {notConfigured.map((p) => p.provider).join(", ")}</li>
+                          )}
+                        </ul>
+                      </details>
+                    );
+                  })()}
+                  <div className="flex gap-2 flex-wrap">
+                    <input
+                      type="text"
+                      value={fallbackNote}
+                      onChange={(e) => setFallbackNote(e.target.value)}
+                      placeholder="Optional approval note…"
+                      className="flex-1 min-w-0 rounded border border-amber-300 bg-white px-2 py-1 text-xs text-slate-700 placeholder:text-slate-400"
+                      maxLength={200}
+                    />
+                    <button
+                      onClick={handleApproveFallback}
+                      disabled={approvingFallback}
+                      className="rounded bg-amber-600 px-3 py-1 text-xs font-medium text-white hover:bg-amber-700 disabled:opacity-50 shrink-0"
+                    >
+                      {approvingFallback ? "Approving…" : "Approve Fallback"}
+                    </button>
+                  </div>
+                </div>
+              )}
+              {analyzeResult.chunks?.isPartial && !analyzeResult.fallback && (
+                <div className="mt-2">
+                  <button
+                    onClick={handleContinueAnalysis}
+                    disabled={analyzing}
+                    className="rounded bg-blue-600 px-3 py-1 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+                  >
+                    {analyzing ? "Continuing…" : "Continue Analysis"}
+                  </button>
+                </div>
+              )}
+              {analyzeResult.nextAction && (
+                <p className="mt-2 text-xs text-slate-600">
+                  <span className="font-medium">Next:</span> {analyzeResult.nextAction.replace(/_/g, " ").toLowerCase()}
+                </p>
+              )}
+              {analyzeResult.extractionWarnings && analyzeResult.extractionWarnings.length > 0 && (
+                <details className="mt-2">
+                  <summary className="cursor-pointer text-xs text-amber-700 hover:underline">
+                    {analyzeResult.extractionWarnings.length} extraction warning(s)
+                  </summary>
+                  <ul className="mt-1 list-disc pl-4 text-xs text-amber-700 space-y-0.5">
+                    {analyzeResult.extractionWarnings.slice(0, 5).map((w, i) => <li key={i}>{w}</li>)}
+                  </ul>
+                </details>
+              )}
+            </div>
+            <button onClick={() => setAnalyzeResult(null)} aria-label="Dismiss" className="shrink-0 text-slate-400 hover:text-slate-600 text-xs">✕</button>
+          </div>
+        </div>
+      )}
+
+      {/* Canonical readiness score (PR audit gates) — replaces the
+          misleading "100% readiness" tile when caps apply. The legacy
+          DB-stored readiness tile below is retained but is now
+          relabelled "Workflow status" so it isn't confused with the
+          actual export-readiness score. */}
+      {/* Tender Recovery Command Center — single source of truth for
+          lifecycle state, primary next action, and global action gating.
+          Must appear before all other panels so the user sees one clear
+          next action even when multiple panels are visible. */}
+      <TenderRecoveryCommandCenter tenderId={tender.id} />
+
+      <CanonicalReadinessScoreWidget tenderId={tender.id} />
+
+      {/* Submission Plan Completeness — answers the "Docs 6/19" question
+          by listing every required file with its status and the
+          recommended next action. */}
+      <SubmissionPlanCompletenessPanel tenderId={tender.id} />
+
+      <RequirementCoveragePanel tenderId={tender.id} />
+
+      <TenderControlsPanel tenderId={tender.id} />
+
+      <ScoreBreakdownPanel tenderId={tender.id} />
 
       <div className={`grid gap-4 md:grid-cols-3 ${proposalQuality ? "xl:grid-cols-7" : "xl:grid-cols-6"}`}>
         <div className="rounded-2xl border bg-white p-5 shadow-sm">
@@ -1211,8 +1598,8 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
           <p className="mt-1 text-3xl font-bold text-slate-900">{tender.projectMatches?.filter((m) => m.isSelected).length ?? 0}</p>
           <p className="mt-1 text-xs text-slate-500">of {tender.projectMatches?.length ?? 0} matched</p>
         </div>
-        <div className="rounded-2xl border bg-white p-5 shadow-sm">
-          <p className="text-sm text-slate-500">Readiness</p>
+        <div className="rounded-2xl border bg-white p-5 shadow-sm" title="Workflow progress only — derived from requirements vs critical gaps. NOT the export-readiness score. See the Canonical Readiness Score panel above for the gated number used by the gates and the ZIP route.">
+          <p className="text-sm text-slate-500">Workflow status</p>
           <p className={`mt-1 text-3xl font-bold ${readinessScore >= 80 ? "text-green-600" : readinessScore >= 50 ? "text-amber-500" : "text-red-500"}`}>
             {readinessScore}%
           </p>
@@ -1220,6 +1607,7 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
             <div className={`h-full rounded-full ${readinessScore >= 80 ? "bg-green-500" : readinessScore >= 50 ? "bg-amber-400" : "bg-red-400"}`}
               style={{ width: `${readinessScore}%` }} />
           </div>
+          <p className="mt-1 text-[10px] text-slate-400">Workflow progress only — see canonical score above.</p>
         </div>
         {proposalQuality && (
           <div className="rounded-2xl border bg-white p-5 shadow-sm">
@@ -1236,7 +1624,7 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,2fr),minmax(360px,1fr)]">
         <div className="space-y-6">
-          <div className="rounded-2xl border bg-white p-6 shadow-sm">
+          <div id="tender-edit-form" className="rounded-2xl border bg-white p-6 shadow-sm">
             <h2 className="text-lg font-semibold text-slate-900">Tender workspace</h2>
             {editing ? (
               <div className="mt-5 space-y-4">
@@ -1324,7 +1712,7 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
             )}
           </div>
 
-          <div className="rounded-2xl border bg-white p-6 shadow-sm">
+          <div id="tender-files" className="rounded-2xl border bg-white p-6 shadow-sm">
             <div className="mb-4 flex items-center justify-between">
               <h2 className="text-lg font-semibold text-slate-900">
                 Tender files
@@ -1401,9 +1789,9 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
                           <span>·</span>
                           <span>{formatDate(file.createdAt)}</span>
                           <span>·</span>
-                          <ExtractionBadge text={file.extractedText} />
+                          <ExtractionBadge extractedTextLength={file.extractedTextLength} isScannedPlaceholder={file.isScannedPlaceholder} />
                         </div>
-                        {file.extractedText?.startsWith("[Scanned") && (
+                        {file.isScannedPlaceholder && (
                           <p className="mt-1 text-xs text-amber-700 bg-amber-50 rounded px-2 py-1">
                             ⚠ Scanned PDF — no text layer found. Run OCR or upload a text-based version for AI analysis.
                           </p>
@@ -1412,12 +1800,14 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
                       <div className="flex items-center gap-1.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
                         <button
                           onClick={() => handleDownloadFile(file.id, file.originalFileName)}
+                          aria-label={`Download ${file.originalFileName}`}
                           className="rounded border px-2 py-1 text-xs text-blue-600 hover:bg-blue-50"
                         >
                           ↓
                         </button>
                         <button
                           onClick={() => handleDeleteFile(file.id)}
+                          aria-label={`Delete ${file.originalFileName}`}
                           className="rounded border border-red-200 px-2 py-1 text-xs text-red-600 hover:bg-red-50"
                         >
                           ✕
@@ -1483,13 +1873,25 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
           <ComplianceGapsPanel tenderId={tender.id} initialGaps={tender.complianceGaps} />
 
           {(tender.expertMatches?.length ?? 0) > 0 && (
-            <div className="rounded-2xl border bg-white p-6 shadow-sm">
-              <h2 className="text-lg font-semibold text-slate-900 mb-4">
-                Expert Matches
-                <span className="ml-2 text-sm font-normal text-slate-400">
-                  ({tender.expertMatches!.filter((m) => m.isSelected).length} selected)
-                </span>
-              </h2>
+            <div id="expert-matches" className="rounded-2xl border bg-white p-6 shadow-sm">
+              <div className="flex items-center justify-between mb-4 gap-2 flex-wrap">
+                <h2 className="text-lg font-semibold text-slate-900">
+                  Expert Matches
+                  <span className="ml-2 text-sm font-normal text-slate-400">
+                    ({tender.expertMatches!.filter((m) => m.isSelected).length} selected · {reviewedExpertMatches} reviewed)
+                  </span>
+                </h2>
+                {reviewedExpertMatches === 0 && tender.expertMatches!.length > 0 && (
+                  <a
+                    href="/dashboard/company/review"
+                    className="rounded-lg bg-amber-100 px-3 py-1.5 text-xs font-medium text-amber-800 hover:bg-amber-200"
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Review experts to unblock generation →
+                  </a>
+                )}
+              </div>
               <ul className="space-y-2">
                 {tender.expertMatches!.slice(0, 8).map((match) => {
                   // Find the expert's CV document if one has been generated
@@ -1525,6 +1927,13 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
                           <div className={`h-full rounded-full ${match.score >= 0.6 ? "bg-green-500" : match.score >= 0.3 ? "bg-amber-400" : "bg-slate-300"}`}
                             style={{ width: `${Math.round(match.score * 100)}%` }} />
                         </div>
+                        <button
+                          onClick={() => toggleMatchSelection(match.id, "expert", match.isSelected)}
+                          disabled={togglingMatchId === match.id}
+                          className={`mt-1.5 rounded px-2 py-0.5 text-[10px] font-medium transition-colors ${match.isSelected ? "bg-red-100 text-red-700 hover:bg-red-200" : "bg-green-100 text-green-700 hover:bg-green-200"} disabled:opacity-50`}
+                        >
+                          {togglingMatchId === match.id ? "…" : match.isSelected ? "Deselect" : "Select"}
+                        </button>
                       </div>
                     </div>
                   </li>
@@ -1535,13 +1944,25 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
           )}
 
           {(tender.projectMatches?.length ?? 0) > 0 && (
-            <div className="rounded-2xl border bg-white p-6 shadow-sm">
-              <h2 className="text-lg font-semibold text-slate-900 mb-4">
-                Project Matches
-                <span className="ml-2 text-sm font-normal text-slate-400">
-                  ({tender.projectMatches!.filter((m) => m.isSelected).length} selected)
-                </span>
-              </h2>
+            <div id="project-matches" className="rounded-2xl border bg-white p-6 shadow-sm">
+              <div className="flex items-center justify-between mb-4 gap-2 flex-wrap">
+                <h2 className="text-lg font-semibold text-slate-900">
+                  Project Matches
+                  <span className="ml-2 text-sm font-normal text-slate-400">
+                    ({tender.projectMatches!.filter((m) => m.isSelected).length} selected · {reviewedProjectMatches} reviewed)
+                  </span>
+                </h2>
+                {reviewedProjectMatches === 0 && tender.projectMatches!.length > 0 && (
+                  <a
+                    href="/dashboard/company/review"
+                    className="rounded-lg bg-amber-100 px-3 py-1.5 text-xs font-medium text-amber-800 hover:bg-amber-200"
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Review projects to unblock generation →
+                  </a>
+                )}
+              </div>
               <ul className="space-y-2">
                 {tender.projectMatches!.slice(0, 8).map((match) => (
                   <li key={match.id} className={`rounded-xl border px-4 py-3 ${match.isSelected ? "border-blue-200 bg-blue-50" : ""}`}>
@@ -1564,6 +1985,13 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
                           <div className={`h-full rounded-full ${match.score >= 0.6 ? "bg-blue-500" : match.score >= 0.3 ? "bg-amber-400" : "bg-slate-300"}`}
                             style={{ width: `${Math.round(match.score * 100)}%` }} />
                         </div>
+                        <button
+                          onClick={() => toggleMatchSelection(match.id, "project", match.isSelected)}
+                          disabled={togglingMatchId === match.id}
+                          className={`mt-1.5 rounded px-2 py-0.5 text-[10px] font-medium transition-colors ${match.isSelected ? "bg-red-100 text-red-700 hover:bg-red-200" : "bg-blue-100 text-blue-700 hover:bg-blue-200"} disabled:opacity-50`}
+                        >
+                          {togglingMatchId === match.id ? "…" : match.isSelected ? "Deselect" : "Select"}
+                        </button>
                       </div>
                     </div>
                   </li>
@@ -1598,11 +2026,45 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
             </div>
           )}
 
-          <div className="rounded-2xl border bg-white p-6 shadow-sm">
-            <div className="flex items-center justify-between mb-3">
+          <div id="generated-documents" className="rounded-2xl border bg-white p-6 shadow-sm">
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
               <h2 className="text-lg font-semibold text-slate-900">Generated outputs</h2>
-              <button onClick={() => downloadDoc("compliance")} className="text-xs text-blue-600 hover:underline">↓ Compliance Report</button>
+              <div className="flex items-center gap-2">
+                {tender.generatedDocuments.some((d) => d.generationStatus === "GENERATED" && d.reviewStatus !== "READY_FOR_EXPORT") && (
+                  <button
+                    onClick={() => void handleBatchApproveAll()}
+                    disabled={batchApproving}
+                    className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+                    title="Mark all generated documents as Ready for Export in one action"
+                  >
+                    {batchApproving ? "Approving…" : "✓ Approve All"}
+                  </button>
+                )}
+                {tender.generatedDocuments.some((d) => d.documentType === "EXPERT_CV_PACKAGE" && d.generationStatus === "GENERATED") && (
+                  <button
+                    onClick={() => void handleRegenerateCvs()}
+                    disabled={regeneratingCvs}
+                    className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                    title="Regenerate Expert CV documents to remove any trace artifacts"
+                  >
+                    {regeneratingCvs ? "Regenerating…" : "↻ Regen CVs"}
+                  </button>
+                )}
+                <button onClick={() => void handleLoadDeepReasoning()} disabled={loadingDeepReasoning} className="text-xs text-purple-600 hover:underline disabled:opacity-50">
+                  {loadingDeepReasoning ? "Loading…" : deepReasoningOpen ? "▲ AI Reasoning" : "▼ AI Reasoning"}
+                </button>
+                <button onClick={() => downloadDoc("compliance")} className="text-xs text-blue-600 hover:underline">↓ Compliance Report</button>
+              </div>
             </div>
+            {deepReasoningOpen && deepReasoningReport && (
+              <div className="mb-4 rounded-xl border border-purple-200 bg-purple-50 px-4 py-3">
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-purple-700">AI Reasoning Report</p>
+                  <p className="text-[10px] text-purple-500">{deepReasoningReport.createdAt ? new Date(deepReasoningReport.createdAt).toLocaleString() : ""}</p>
+                </div>
+                <pre className="whitespace-pre-wrap text-xs text-purple-900 font-mono leading-relaxed max-h-64 overflow-y-auto">{deepReasoningReport.markdown}</pre>
+              </div>
+            )}
             {tender.generatedDocuments.length === 0 ? (
               <p className="text-sm text-slate-400">Run the engine then click &quot;Generate Docs&quot; to create submission-ready files.</p>
             ) : (
@@ -1613,8 +2075,22 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
                       <div className="min-w-0">
                         <p className="text-sm font-medium text-slate-900 truncate">{doc.exactFileName ?? doc.name}</p>
                         <div className="flex flex-wrap gap-2 mt-0.5">
-                          <span className={`text-xs ${doc.generationStatus === "GENERATED" ? "text-green-600" : "text-slate-400"}`}>
-                            {doc.generationStatus}
+                          <span className={`text-xs font-medium ${
+                            doc.generationStatus === "GENERATED" ? "text-green-600" :
+                            doc.generationStatus === "GENERATED_NEEDS_REVIEW" ? "text-amber-600" :
+                            doc.generationStatus === "GENERATED_QUALITY_FAILED" ? "text-red-600" :
+                            doc.generationStatus === "REPLACE_WITH_ORIGINAL" ? "text-orange-600" :
+                            doc.generationStatus === "SUPERSEDED" ? "text-slate-300" :
+                            doc.generationStatus === "PLANNED" ? "text-blue-500" :
+                            "text-slate-400"
+                          }`}>
+                            {doc.generationStatus === "GENERATED" ? "Generated" :
+                             doc.generationStatus === "GENERATED_NEEDS_REVIEW" ? "Needs review" :
+                             doc.generationStatus === "GENERATED_QUALITY_FAILED" ? "Quality failed" :
+                             doc.generationStatus === "REPLACE_WITH_ORIGINAL" ? "Needs official original" :
+                             doc.generationStatus === "SUPERSEDED" ? "Superseded" :
+                             doc.generationStatus === "PLANNED" ? "Planned (not generated)" :
+                             doc.generationStatus}
                           </span>
                           {doc.validationStatus && doc.validationStatus !== "PENDING" && (
                             <span className={`text-xs ${doc.validationStatus === "PASSED" ? "text-green-600" : "text-red-500"}`}>
@@ -1623,11 +2099,12 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
                           )}
                           {doc.reviewStatus && doc.reviewStatus !== "PENDING" && (
                             <span className={`text-xs font-medium ${
+                              doc.reviewStatus === "READY_FOR_EXPORT" ? "text-emerald-700" :
                               doc.reviewStatus === "APPROVED" ? "text-green-700" :
                               doc.reviewStatus === "REJECTED" ? "text-red-600" :
                               "text-amber-600"
                             }`}>
-                              · {doc.reviewStatus}
+                              · {doc.reviewStatus === "READY_FOR_EXPORT" ? "Export ready" : doc.reviewStatus}
                             </span>
                           )}
                         </div>
@@ -1649,6 +2126,22 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
                             </div>
                           );
                         })()}
+                        {((doc.reviewedExpertCount ?? 0) > 0 || (doc.reviewedProjectCount ?? 0) > 0 || (doc.draftExpertCount ?? 0) > 0 || (doc.draftProjectCount ?? 0) > 0) && (
+                          <div className="flex flex-wrap gap-1 mt-1">
+                            {(doc.reviewedExpertCount ?? 0) > 0 && (
+                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700">{doc.reviewedExpertCount} expert{doc.reviewedExpertCount !== 1 ? "s" : ""} reviewed</span>
+                            )}
+                            {(doc.draftExpertCount ?? 0) > 0 && (
+                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-700">{doc.draftExpertCount} expert draft{doc.draftExpertCount !== 1 ? "s" : ""}</span>
+                            )}
+                            {(doc.reviewedProjectCount ?? 0) > 0 && (
+                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700">{doc.reviewedProjectCount} project{doc.reviewedProjectCount !== 1 ? "s" : ""} reviewed</span>
+                            )}
+                            {(doc.draftProjectCount ?? 0) > 0 && (
+                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-700">{doc.draftProjectCount} project draft{doc.draftProjectCount !== 1 ? "s" : ""}</span>
+                            )}
+                          </div>
+                        )}
                         {doc.reviewNotes && (
                           <p className="mt-1 text-xs text-slate-500 italic">&ldquo;{doc.reviewNotes}&rdquo;</p>
                         )}
@@ -1670,6 +2163,7 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
                             disabled={regeneratingSection === doc.id}
                             className="text-xs text-purple-600 hover:text-purple-800 border border-purple-200 rounded px-2 py-0.5 disabled:opacity-50"
                             title="Regenerate this section only (~20s)"
+                            aria-label={`Regenerate ${doc.name}`}
                           >
                             {regeneratingSection === doc.id ? "Regenerating…" : "↺"}
                           </button>
@@ -1683,7 +2177,7 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
                           </button>
                         )}
                         {doc.generationStatus === "GENERATED" && (
-                          <button onClick={() => downloadDocById(doc.id)} className="text-xs text-blue-600 hover:underline">↓</button>
+                          <button onClick={() => downloadDocById(doc.id)} aria-label={`Download ${doc.name}`} className="text-xs text-blue-600 hover:underline">↓</button>
                         )}
                       </div>
                     </div>
@@ -1708,9 +2202,9 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
                           onChange={(e) => setReviewNote(e.target.value)}
                         />
                         <div className="flex gap-1.5">
-                          <button onClick={() => submitReview(doc.id, "APPROVED")} className="rounded bg-green-600 px-2.5 py-1 text-xs text-white hover:bg-green-700">Approve</button>
-                          <button onClick={() => submitReview(doc.id, "NEEDS_REVISION")} className="rounded bg-amber-500 px-2.5 py-1 text-xs text-white hover:bg-amber-600">Needs Revision</button>
-                          <button onClick={() => submitReview(doc.id, "REJECTED")} className="rounded bg-red-600 px-2.5 py-1 text-xs text-white hover:bg-red-700">Reject</button>
+                          <button onClick={() => { void submitReview(doc.id, "APPROVED"); }} disabled={submittingReviewDocId === doc.id} className="rounded bg-green-600 px-2.5 py-1 text-xs text-white hover:bg-green-700 disabled:opacity-50">{submittingReviewDocId === doc.id ? "Saving…" : "Approve"}</button>
+                          <button onClick={() => { void submitReview(doc.id, "NEEDS_REVISION"); }} disabled={submittingReviewDocId === doc.id} className="rounded bg-amber-500 px-2.5 py-1 text-xs text-white hover:bg-amber-600 disabled:opacity-50">Needs Revision</button>
+                          <button onClick={() => { void submitReview(doc.id, "REJECTED"); }} disabled={submittingReviewDocId === doc.id} className="rounded bg-red-600 px-2.5 py-1 text-xs text-white hover:bg-red-700 disabled:opacity-50">Reject</button>
                           <button onClick={() => setReviewingDocId(null)} className="rounded border px-2.5 py-1 text-xs">Cancel</button>
                         </div>
                       </div>
@@ -1725,23 +2219,52 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
 
       {validationReport && (
         <div className={`rounded-2xl border p-6 shadow-sm ${validationReport.passed ? "border-green-200 bg-green-50" : "border-red-200 bg-red-50"}`}>
-          <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center justify-between mb-4">
             <h2 className={`text-lg font-semibold ${validationReport.passed ? "text-green-800" : "text-red-800"}`}>
               {validationReport.passed ? "✓ Validation Passed — Ready for Export" : "✗ Validation Failed"}
             </h2>
             <button onClick={() => setValidationReport(null)} className="text-sm text-slate-400 hover:text-slate-600">Dismiss</button>
           </div>
-          {validationReport.issues.length === 0 ? (
-            <p className="text-sm text-green-700">All checks passed. This tender package is ready for export.</p>
-          ) : (
-            <ul className="space-y-2">
-              {validationReport.issues.map((issue) => (
-                <li key={issue.code} className={`rounded-lg px-3 py-2 text-sm ${issue.severity === "BLOCK" ? "bg-red-100 text-red-800" : "bg-amber-100 text-amber-800"}`}>
-                  <span className="font-medium">{issue.severity === "BLOCK" ? "BLOCKING: " : "WARNING: "}</span>
-                  {issue.message}
-                </li>
-              ))}
-            </ul>
+          {/* ── Blocking issues ───────────────────────────────────────────── */}
+          {validationReport.issues.filter((i) => i.severity === "BLOCK").length > 0 && (
+            <div className="mb-4">
+              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-red-700">
+                Blockers ({validationReport.issues.filter((i) => i.severity === "BLOCK").length})
+              </p>
+              <ul className="space-y-1.5">
+                {validationReport.issues.filter((i) => i.severity === "BLOCK").map((issue) => (
+                  <li key={issue.code} className="rounded-lg border border-red-200 bg-red-100 px-3 py-2 text-sm text-red-800">
+                    <span className="font-medium">✗ </span>{issue.message}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {/* ── Warnings ──────────────────────────────────────────────────── */}
+          {validationReport.issues.filter((i) => i.severity !== "BLOCK").length > 0 && (
+            <div className="mb-4">
+              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-amber-700">
+                Warnings ({validationReport.issues.filter((i) => i.severity !== "BLOCK").length})
+              </p>
+              <ul className="space-y-1.5">
+                {validationReport.issues.filter((i) => i.severity !== "BLOCK").map((issue) => (
+                  <li key={issue.code} className="rounded-lg border border-amber-200 bg-amber-100 px-3 py-2 text-sm text-amber-800">
+                    <span className="font-medium">⚠ </span>{issue.message}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {/* ── Passed checks ─────────────────────────────────────────────── */}
+          {validationReport.passed && validationReport.issues.length === 0 && (
+            <div className="rounded-lg border border-green-200 bg-green-100 px-3 py-2 text-sm text-green-800">
+              ✓ All checks passed. This tender package is ready for export.
+            </div>
+          )}
+          {validationReport.passed && validationReport.issues.length > 0 && (
+            <div className="rounded-lg border border-green-200 bg-green-100 px-3 py-2 text-sm text-green-700">
+              ✓ No blocking issues — {validationReport.issues.length} advisory warning(s) only.
+            </div>
           )}
         </div>
       )}
@@ -1790,7 +2313,7 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
           toast.type === "success" ? "bg-emerald-700 text-white" : "bg-red-700 text-white"
         }`}>
           {toast.type === "success" ? "✓" : "✗"} {toast.message}
-          <button onClick={() => setToast(null)} className="ml-1 opacity-70 hover:opacity-100">✕</button>
+          <button onClick={() => setToast(null)} aria-label="Dismiss notification" className="ml-1 opacity-70 hover:opacity-100">✕</button>
         </div>
       )}
     </div>

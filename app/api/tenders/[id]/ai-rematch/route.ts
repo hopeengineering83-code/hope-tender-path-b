@@ -307,6 +307,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       }
     }
 
+    await prisma.tender.update({
+      where: { id: tenderId },
+      data: {
+        status: "COMPLIANCE_REVIEW",
+        stage: "COMPLIANCE",
+        notes: appendRematchNote(tender.notes, mergedExpertIds.size, mergedProjectIds.size),
+      },
+    });
+
     return NextResponse.json({
       warning: "AI scoring unavailable — top candidates selected by existing engine score.",
       code: "AI_FALLBACK_APPLIED",

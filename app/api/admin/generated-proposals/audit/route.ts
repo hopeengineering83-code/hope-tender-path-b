@@ -73,6 +73,7 @@ import { containsPricingLeakage } from "../../../../../lib/engine/pricing-hygien
 import { inferEnvelope } from "../../../../../lib/engine/submission-plan";
 import { assessGeneratedDocumentQuality } from "../../../../../lib/engine/document-quality-gate";
 import { METADATA_PLACEHOLDER_PATTERNS } from "../../../../../lib/engine/tender-metadata-completeness";
+import { sanitizeError } from "../../../../../lib/sanitize-error";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -276,20 +277,39 @@ export async function GET(req: Request) {
         byteSignatureOk = sig.ok;
       }
 
-      // Decode DOCX visible text ONLY when the inline base64 is small enough
-      // — avoid loading 50MB strings into RAM during a bulk audit. For
-      // storage-backed docs we don't fetch from storage in this admin path;
-      // the audit reports docxVisibleTextInspectable=false and the caller
-      // can use the per-tender export-readiness route for a deep inspection.
+      // Decode DOCX visible text from inline base64 (small enough) or from
+      // storagePath for storage-backed documents (capped at 2 MB to bound RAM).
       let visibleText: string | null = null;
       let docxVisibleTextInspectable = false;
+      let storageReadable: boolean | null = hasStoragePath ? null : null;
       const inlineBase64 = d.fileContent ?? null;
       if (inlineBase64 && inlineBase64.length > 0 && inlineBase64.length < 2_000_000) {
         try {
           visibleText = await extractDocxVisibleText(inlineBase64, fileName);
           docxVisibleTextInspectable = visibleText !== null;
+          storageReadable = null; // inline path — storage not consulted
         } catch {
           docxVisibleTextInspectable = false;
+        }
+      } else if (hasStoragePath && d.storagePath) {
+        // Attempt to read from storage for docs without inline content.
+        try {
+          const { getStorageAdapter } = await import("../../../../../lib/storage");
+          const storage = getStorageAdapter();
+          const buf = await storage.getFile({ storagePath: d.storagePath, fileContent: null, fileName });
+          storageReadable = true;
+          if (buf.length < 2_000_000) {
+            const base64FromStorage = buf.toString("base64");
+            visibleText = await extractDocxVisibleText(base64FromStorage, fileName).catch(() => null);
+            docxVisibleTextInspectable = visibleText !== null;
+            if (!byteSignatureOk && byteSignatureOk !== false) {
+              byteSignatureOk = validateFileSignature(fileName, base64FromStorage).ok;
+            }
+          } else {
+            docxVisibleTextInspectable = false; // too large
+          }
+        } catch {
+          storageReadable = false;
         }
       }
 
@@ -350,9 +370,7 @@ export async function GET(req: Request) {
         excludedReason,
         hasFileContent,
         hasStoragePath,
-        // We do NOT fetch storage in the bulk audit (cost + memory). The
-        // export-readiness route exercises storage when triggered per-tender.
-        storageReadable: null,
+        storageReadable,
         byteSignatureOk,
         docxVisibleTextInspectable,
         wordCount,
@@ -433,6 +451,6 @@ export async function GET(req: Request) {
     });
   } catch (error) {
     console.error("admin generated-proposals audit failed", error);
-    return jsonError("Admin audit failed.", 500, { code: "ADMIN_AUDIT_RUNTIME_ERROR", detail: error instanceof Error ? error.message : String(error) });
+    return jsonError("Admin audit failed.", 500, { code: "ADMIN_AUDIT_RUNTIME_ERROR", detail: sanitizeError(error) });
   }
 }

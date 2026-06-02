@@ -43,6 +43,7 @@ const NAV_GROUPS_BASE = [
       { href: "/dashboard/documents", label: "Generated Docs", icon: "📄" },
       { href: "/dashboard/export", label: "Export Packages", icon: "📦" },
       { href: "/dashboard/activity", label: "Activity Logs", icon: "📝" },
+      { href: "/dashboard/analytics", label: "Analytics", icon: "📊" },
       { href: "/dashboard/search", label: "Search", icon: "🔍" },
     ],
   },

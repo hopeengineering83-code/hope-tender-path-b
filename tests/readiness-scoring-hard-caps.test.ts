@@ -69,11 +69,43 @@ describe("readiness scoring — HARD CAP: regex fallback analysis", () => {
     assert.ok(r.score <= 45, `expected ≤45, got ${r.score}`);
     assert.equal(r.appliedCap?.dimension, "analysisSource");
   });
+<<<<<<< HEAD
   it("does NOT cap when analysis source is HUMAN_APPROVED_REGEX_FALLBACK", () => {
     const r = computeReadinessScore({ ...fullyHealthyInput(), analysisSource: "HUMAN_APPROVED_REGEX_FALLBACK" });
     // Approved fallback still scores lower in the dimension but no cap kicks in.
     assert.equal(r.applicableCaps.find((c) => c.dimension === "analysisSource"), undefined);
   });
+=======
+  it("does NOT cap when analysis source is HUMAN_APPROVED_REGEX_FALLBACK and fully verified", () => {
+    const r = computeReadinessScore({ ...fullyHealthyInput(), analysisSource: "HUMAN_APPROVED_REGEX_FALLBACK" });
+    // Approved fallback still scores lower in the dimension but no cap kicks in
+    // because fullyHealthyInput() has full source/compliance/doc coverage.
+    assert.equal(r.applicableCaps.find((c) => c.dimension === "analysisSource"), undefined);
+  });
+  it("caps human-approved fallback at 70 when not fully verified", () => {
+    const r = computeReadinessScore({
+      ...fullyHealthyInput(),
+      analysisSource: "HUMAN_APPROVED_REGEX_FALLBACK",
+      sourceReferenceCoverage: 0.5, // source refs incomplete → not fully verified
+    });
+    assert.ok(r.score <= 70, `expected ≤70, got ${r.score}`);
+    const cap = r.applicableCaps.find((c) => c.dimension === "analysisSource");
+    assert.ok(cap, "expected an analysisSource cap");
+    assert.equal(cap?.capScore, 70);
+  });
+  it("caps human-approved fallback at 70 when required documents are incomplete", () => {
+    const r = computeReadinessScore({
+      ...fullyHealthyInput(),
+      analysisSource: "HUMAN_APPROVED_REGEX_FALLBACK",
+      requiredDocumentsTotal: 5,
+      requiredDocumentsSatisfied: 5,
+      complianceMatrixCoverage: 0.4, // mandatory-requirement coverage incomplete
+    });
+    const cap = r.applicableCaps.find((c) => c.dimension === "analysisSource");
+    assert.ok(cap, "expected an analysisSource cap");
+    assert.equal(cap?.capScore, 70);
+  });
+>>>>>>> origin/main
 });
 
 describe("readiness scoring — HARD CAP: critical metadata missing", () => {

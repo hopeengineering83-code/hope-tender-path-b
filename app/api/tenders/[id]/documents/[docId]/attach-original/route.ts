@@ -3,6 +3,7 @@ import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../.
 import { logAction } from "../../../../../../../lib/audit";
 import { prisma, prismaReady } from "../../../../../../../lib/prisma";
 import { getStorageAdapter } from "../../../../../../../lib/storage";
+import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../../../../lib/rate-limit";
 import { validateFileSignature } from "../../../../../../../lib/engine/export-format-policy";
 
 export const dynamic = "force-dynamic";
@@ -62,6 +63,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   } catch (error) {
     return error instanceof Error && error.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse();
   }
+
+  const rl = rateLimit(`attach-original:${actor.id}`, MUTATION_RATE_LIMIT);
+  if (!rl.allowed) return NextResponse.json({ error: "Too many requests", retryAfter: Math.ceil((rl.resetAt - Date.now()) / 1000) }, { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } });
 
   await prismaReady;
   const { id: tenderId, docId } = await params;

@@ -5,6 +5,7 @@ import { prisma, prismaReady } from "../../../../lib/prisma";
 import { ensureCompanyForUser } from "../../../../lib/company-workspace";
 import { logAction } from "../../../../lib/audit";
 import { completenessStats, deriveExpectedCounts, hasUsableText } from "./helpers";
+import { sanitizeError } from "../../../../lib/sanitize-error";
 
 // Vercel route timeout — plan-B import processes all uploaded documents.
 // 60 = Hobby max; Pro applies its own plan limit when exceeded.
@@ -281,7 +282,9 @@ async function readPayload(req: Request): Promise<PlanBPayload> {
     const text = await file.text();
     return planBPayloadSchema.parse(JSON.parse(text)) as PlanBPayload;
   }
-  return planBPayloadSchema.parse(await req.json()) as PlanBPayload;
+  const rawJson = await req.json().catch(() => null);
+  if (!rawJson) throw new Error("Request body must be valid JSON");
+  return planBPayloadSchema.parse(rawJson) as PlanBPayload;
 }
 
 function sourceLine(item: { sourceDocument?: string; sourcePages?: { start?: number; end?: number }; sourceNo?: number | string }) {
@@ -652,6 +655,6 @@ export async function POST(req: Request) {
         })),
       }, { status: 400 });
     }
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Plan-B import failed" }, { status: 400 });
+    return NextResponse.json({ error: sanitizeError(error) }, { status: 400 });
   }
 }

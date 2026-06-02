@@ -11,6 +11,9 @@ import { buildSubmissionPlan } from "../../../../../lib/engine/submission-plan";
 import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import { extractRequestId } from "../../../../../lib/request-id";
 import { logAction } from "../../../../../lib/audit";
+import { buildSevenPassGateInput, applySevenPassGateToDocumentState, summarizeSevenPassForReviewNotes, evaluateSevenPassForDocument } from "../../../../../lib/engine/seven-pass-generation-wiring";
+import { assessGeneratedDocumentQuality } from "../../../../../lib/engine/document-quality-gate";
+import { detectAnalysisSourceWithApproval } from "../../../../../lib/engine/analysis-source";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -69,9 +72,22 @@ function cleanLine(line: string, technical: boolean): string {
   return out;
 }
 
+// Per-document AI polish timeout — 18s leaves headroom for 3 docs within maxDuration=60s.
+const POLISH_TIMEOUT_MS = 18_000;
+
 async function polishWithAI(text: string, technical: boolean): Promise<string> {
   const prompt = `Rewrite this tender document content to be client-ready, factual, concise, and professional. Remove AI/meta traces and placeholders.${technical ? " Remove pricing/commercial/financial wording from technical envelope content. If a sentence mixes technical content with financial phrasing, keep the technical substance but remove the financial reference. Do not delete entire sections unless they are purely financial." : ""}\n\nCONTENT:\n${text.slice(0, 12000)}`;
-  try { return await generateWithFallback(prompt, { systemPrompt: "You are a senior tender editor. Keep facts, improve quality, no inventions." }); } catch { return text; }
+  const timeout = new Promise<string>((_, reject) =>
+    setTimeout(() => reject(new Error("polish timeout")), POLISH_TIMEOUT_MS)
+  );
+  try {
+    return await Promise.race([
+      generateWithFallback(prompt, { systemPrompt: "You are a senior tender editor. Keep facts, improve quality, no inventions." }),
+      timeout,
+    ]);
+  } catch {
+    return text;
+  }
 }
 
 function isHeadingLine(line: string): boolean {
@@ -140,6 +156,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const tender = await prisma.tender.findFirst({ where: { id: tenderId, userId: actor.id }, include: { requirements: true, generatedDocuments: { where: { generationStatus: { not: "SUPERSEDED" } }, orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }] } } });
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
 
+  // Resolve analysis source once (includes DB approval check) so the seven-pass
+  // gate correctly honours human approval of regex-fallback analyses.
+  const resolvedAnalysisSource = await detectAnalysisSourceWithApproval(prisma, tenderId, tender);
+
   const plan = buildSubmissionPlan(tender);
   const planEmpty = plan.files.length === 0;
   const plannedNames = new Set(plan.files.map((f) => (f.exactFileName ?? "").trim().toLowerCase()));
@@ -159,6 +179,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const refreshedAll = await prisma.generatedDocument.findMany({ where: { tenderId, generationStatus: { not: "SUPERSEDED" } }, orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }] });
   const candidates = filterFinalExportCandidateDocuments(refreshedAll as any[]).filter((d) => d.reviewStatus !== "READY_FOR_EXPORT" || d.validationStatus === "FAILED");
 
+  // ── Seven-pass gate: load evidence context once for the whole batch ───────
+  const [reviewedExpertCount, reviewedProjectCount] = await Promise.all([
+    prisma.tenderExpertMatch.count({ where: { tenderId, isSelected: true, expert: { trustLevel: "REVIEWED" } } }),
+    prisma.tenderProjectMatch.count({ where: { tenderId, isSelected: true, project: { trustLevel: "REVIEWED" } } }),
+  ]);
+  const requiredExpertCount = tender.requirements.filter((r) => r.requirementType === "EXPERT").length;
+  const requiredProjectCount = tender.requirements.filter((r) => r.requirementType === "PROJECT_EXPERIENCE").length;
+  const totalMandatory = tender.requirements.filter((r) => r.priority === "MANDATORY").length;
+  const sourcedMandatory = tender.requirements.filter((r) => r.priority === "MANDATORY" && ((r.sourceConfidence ?? 0) > 0 || (r.sectionReference ?? "").trim().length > 0)).length;
+
   const batch = candidates.slice(0, 3);
   let processed = 0;
   for (const doc of batch) {
@@ -176,9 +206,49 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     // Re-check pricing leakage on visible text AFTER cleaning — only mark READY_FOR_EXPORT if genuinely clean
     const stillHasPricingLeakage = technical && containsPricingLeakage(cleaned, docMeta);
     const issues = documentHygieneIssues(cleaned, docMeta);
-    const ready = issues.length === 0 && !stillHasPricingLeakage && rebuilt.length > 0;
+    const hygieneReady = issues.length === 0 && !stillHasPricingLeakage && rebuilt.length > 0;
+
+    // ── Self-review score (deterministic) ─────────────────────────────────────
+    // Run the document quality gate on the cleaned text to produce a real
+    // selfReviewScore (0–100). This replaces the null sentinel so the
+    // SELF_REVIEW_SCORING pass in the seven-pass gate actually enforces the ≥80
+    // threshold rather than skipping it.
+    const qualityReport = assessGeneratedDocumentQuality({
+      doc: { name: doc.name, exactFileName: doc.exactFileName, documentType: doc.documentType, format: "DOCX" },
+      visibleText: cleaned,
+      requirements: tender.requirements,
+    });
+    const selfReviewScore = qualityReport.score;
+
+    // ── Seven-pass gate check ───────────────────────────────────────────────
+    const gateEvaluation = evaluateSevenPassForDocument({
+      tenderNotes: tender.notes,
+      resolvedAnalysisSource,
+      tenderReference: tender.reference ?? null,
+      visibleText: cleaned,
+      reviewedExpertCount,
+      reviewedProjectCount,
+      requiredExpertCount,
+      requiredProjectCount,
+      totalMandatoryRequirements: totalMandatory,
+      sourcedMandatoryRequirements: sourcedMandatory,
+      documentType: doc.documentType,
+      documentName: doc.name,
+      exactFileName: doc.exactFileName,
+      currentReviewStatus: doc.reviewStatus,
+      selfReviewScore,
+    });
+    // A document can only be READY_FOR_EXPORT if both hygiene AND the seven-pass gate allow it.
+    const ready = hygieneReady && gateEvaluation.finalApprovalAllowed;
+
     const priorStatus = doc.reviewStatus;
-    await prisma.generatedDocument.update({ where: { id: doc.id }, data: { fileContent: rebuilt, format: "DOCX", generationStatus: "GENERATED", validationStatus: ready ? "VALIDATED" : "PENDING", reviewStatus: ready ? "READY_FOR_EXPORT" : "PENDING", reviewedBy: actor.id, reviewedAt: new Date(), reviewNotes: ready ? "Auto-finalized for print/submission." : `Auto-finalized but needs review: ${[...issues, ...(stillHasPricingLeakage ? ["pricing leakage detected"] : [])].join("; ")}` } });
+    const hygieneNotes = hygieneReady ? "" : `hygiene: ${[...issues, ...(stillHasPricingLeakage ? ["pricing leakage detected"] : [])].join("; ")}`;
+    const gateNotes = summarizeSevenPassForReviewNotes(gateEvaluation);
+    const reviewNotes = ready
+      ? `Auto-finalized for print/submission. ${gateNotes}`
+      : `Auto-finalized but needs review. ${[hygieneNotes, gateNotes].filter(Boolean).join(" | ")}`;
+
+    await prisma.generatedDocument.update({ where: { id: doc.id }, data: { fileContent: rebuilt, format: "DOCX", generationStatus: "GENERATED", validationStatus: ready ? "VALIDATED" : (gateEvaluation.recommendedValidationStatus === "DRAFT" ? "DRAFT" : "PENDING"), reviewStatus: ready ? "READY_FOR_EXPORT" : "NEEDS_REVIEW", reviewedBy: actor.id, reviewedAt: new Date(), reviewNotes: reviewNotes.slice(0, 4000) } });
     if (ready && priorStatus !== "READY_FOR_EXPORT") await prisma.documentReview.create({ data: { documentId: doc.id, reviewerId: actor.id, action: "READY_FOR_EXPORT", notes: "Auto-finalized for print/submission.", priorStatus, newStatus: "READY_FOR_EXPORT" } });
     processed += 1;
   }

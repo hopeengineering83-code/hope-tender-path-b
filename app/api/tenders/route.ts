@@ -39,7 +39,7 @@ export async function GET(req: Request) {
       // Exclude fileContent / base64 fields to keep response small
       files: {
         orderBy: { createdAt: "desc" },
-        select: { id: true, fileName: true, originalFileName: true, mimeType: true, size: true, classification: true, extractedText: true, createdAt: true },
+        select: { id: true, fileName: true, originalFileName: true, mimeType: true, size: true, classification: true, createdAt: true },
       },
       requirements: { select: { id: true, title: true, requirementType: true, priority: true, createdAt: true } },
       complianceGaps: { select: { id: true, title: true, severity: true, isResolved: true } },
@@ -74,12 +74,22 @@ export async function POST(req: Request) {
   await prismaReady;
 
   try {
-    const body = await req.json();
+    const body = await req.json().catch(() => null);
+    if (!body) return NextResponse.json({ error: "Request body must be valid JSON" }, { status: 400 });
     if (!body.title || String(body.title).trim().length === 0) {
       return NextResponse.json({ error: "title is required" }, { status: 400 });
     }
-    if (body.budget !== undefined && body.budget !== null && parseFloat(body.budget) < 0) {
-      return NextResponse.json({ error: "budget cannot be negative" }, { status: 400 });
+    if (String(body.title).trim().length > 500) {
+      return NextResponse.json({ error: "title must be 500 characters or fewer" }, { status: 400 });
+    }
+    if (body.description && String(body.description).length > 10_000) {
+      return NextResponse.json({ error: "description must be 10,000 characters or fewer" }, { status: 400 });
+    }
+    if (body.budget !== undefined && body.budget !== null) {
+      const parsedBudget = parseFloat(body.budget);
+      if (!Number.isFinite(parsedBudget) || parsedBudget < 0 || parsedBudget > 1e12) {
+        return NextResponse.json({ error: "budget must be a finite number between 0 and 1,000,000,000,000" }, { status: 400 });
+      }
     }
     const intakeSummary = body.intakeSummary || body.requirements || null;
     const cleanClient = cleanClientName(body.clientName, body.description || intakeSummary || body.title);
@@ -104,7 +114,7 @@ export async function POST(req: Request) {
         userId,
       },
       include: {
-        files: { select: { id: true, fileName: true, originalFileName: true, mimeType: true, size: true, classification: true, extractedText: true, createdAt: true } },
+        files: { select: { id: true, fileName: true, originalFileName: true, mimeType: true, size: true, classification: true, createdAt: true } },
         requirements: true,
         complianceGaps: true,
         generatedDocuments: { select: { id: true, name: true, documentType: true, generationStatus: true, validationStatus: true, reviewStatus: true, exactFileName: true, exactOrder: true } },

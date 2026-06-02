@@ -57,10 +57,28 @@ async function ensureColumn(client: PrismaClient, table: string, column: string,
 // ─── bootstrap ───────────────────────────────────────────────────────────────
 
 async function verifyConnectivity(client: PrismaClient): Promise<void> {
-  // Lightweight probe: a SELECT 1 round-trip. Throws with the underlying
-  // Postgres error when the connection is dead or auth is wrong, so the
-  // first request after a cold start fails clearly instead of timing out.
-  await client.$queryRawUnsafe(`SELECT 1`);
+  // Lightweight probe: a SELECT 1 round-trip with retry for Neon cold-start.
+  // Neon free-tier databases auto-pause after inactivity and typically take
+  // 5-15 seconds to wake. Five attempts at 3s intervals (≤15s total) covers
+  // the full wake-up window. Normal requests (DB already warm) return on
+  // the first attempt with no delay.
+  const MAX_ATTEMPTS = 5;
+  const BACKOFF_MS = 3000;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      await client.$queryRawUnsafe(`SELECT 1`);
+      return;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const isTransient = /can't reach|connection refused|ECONNREFUSED|ETIMEDOUT|connect timeout|unable to connect|network socket/i.test(msg);
+      if (isTransient && attempt < MAX_ATTEMPTS) {
+        console.warn(`[prisma] DB connectivity attempt ${attempt}/${MAX_ATTEMPTS} failed (transient) — retrying in ${BACKOFF_MS / 1000}s…`);
+        await new Promise((r) => setTimeout(r, BACKOFF_MS));
+        continue;
+      }
+      throw err;
+    }
+  }
 }
 
 async function verifySchemaPresent(client: PrismaClient): Promise<void> {
@@ -558,6 +576,44 @@ async function bootstrap(client: PrismaClient): Promise<void> {
   await ensureColumn(client, "Expert", "deletedBy", "TEXT");
   await ensureColumn(client, "Project", "deletedAt", "TIMESTAMPTZ");
   await ensureColumn(client, "Project", "deletedBy", "TEXT");
+
+  // ── Schema-drift repair: DocumentReview / DocumentComment ─────────────────
+  // Earlier bootstrap created these tables with wrong column names
+  // (generatedDocumentId, reviewStatus, reviewNotes). Prisma uses documentId,
+  // action, notes. These ensureColumn calls add the correct columns and copy
+  // existing data over so no rows are lost. All ops are idempotent.
+  await ensureColumn(client, "DocumentReview", "documentId", "TEXT");
+  await ensureColumn(client, "DocumentReview", "action", "TEXT");
+  await ensureColumn(client, "DocumentReview", "notes", "TEXT");
+  await ensureColumn(client, "DocumentReview", "priorStatus", "TEXT");
+  await ensureColumn(client, "DocumentReview", "newStatus", "TEXT");
+  await ensureColumn(client, "DocumentComment", "documentId", "TEXT");
+  await ensureColumn(client, "DocumentComment", "visibility", "TEXT NOT NULL DEFAULT 'INTERNAL'");
+  await ensureColumn(client, "DocumentComment", "resolvedAt", "TIMESTAMPTZ");
+  await ensureColumn(client, "DocumentComment", "resolvedBy", "TEXT");
+  await ensureColumn(client, "DocumentComment", "parentId", "TEXT");
+  // Copy data from old column names to new ones where the old columns exist
+  try {
+    await client.$executeRawUnsafe(
+      `UPDATE "DocumentReview" SET "documentId" = "generatedDocumentId" WHERE "documentId" IS NULL AND "generatedDocumentId" IS NOT NULL`,
+    );
+  } catch { /* old column may not exist on fresh deployments */ }
+  try {
+    await client.$executeRawUnsafe(
+      `UPDATE "DocumentReview" SET "action" = "reviewStatus" WHERE "action" IS NULL AND "reviewStatus" IS NOT NULL`,
+    );
+  } catch { /* old column may not exist on fresh deployments */ }
+  try {
+    await client.$executeRawUnsafe(
+      `UPDATE "DocumentReview" SET "notes" = "reviewNotes" WHERE "notes" IS NULL AND "reviewNotes" IS NOT NULL`,
+    );
+  } catch { /* old column may not exist on fresh deployments */ }
+  try {
+    await client.$executeRawUnsafe(
+      `UPDATE "DocumentComment" SET "documentId" = "generatedDocumentId" WHERE "documentId" IS NULL AND "generatedDocumentId" IS NOT NULL`,
+    );
+  } catch { /* old column may not exist on fresh deployments */ }
+
   // Notification table
   await client.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "Notification" (
     "id" TEXT NOT NULL PRIMARY KEY,
@@ -728,25 +784,34 @@ async function bootstrap(client: PrismaClient): Promise<void> {
 
 
   // ── DocumentReview / DocumentComment — per-document approval workflow ────
+  // Column names match the Prisma schema exactly (documentId, action, notes,
+  // priorStatus, newStatus). Earlier bootstrap versions used the wrong names
+  // (generatedDocumentId, reviewStatus, reviewNotes); those are repaired via
+  // ensureColumn + data-copy below.
   await client.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "DocumentReview" (
     "id" TEXT NOT NULL PRIMARY KEY,
-    "generatedDocumentId" TEXT NOT NULL,
-    "reviewerId" TEXT,
-    "reviewStatus" TEXT NOT NULL DEFAULT 'PENDING',
-    "reviewNotes" TEXT,
+    "documentId" TEXT NOT NULL,
+    "reviewerId" TEXT NOT NULL,
+    "action" TEXT NOT NULL,
+    "notes" TEXT,
+    "priorStatus" TEXT NOT NULL DEFAULT '',
+    "newStatus" TEXT NOT NULL DEFAULT '',
     "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    FOREIGN KEY ("generatedDocumentId") REFERENCES "GeneratedDocument"("id") ON DELETE CASCADE
+    FOREIGN KEY ("documentId") REFERENCES "GeneratedDocument"("id") ON DELETE CASCADE
   )`);
   await client.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "DocumentComment" (
     "id" TEXT NOT NULL PRIMARY KEY,
-    "generatedDocumentId" TEXT NOT NULL,
-    "authorId" TEXT,
+    "documentId" TEXT NOT NULL,
+    "authorId" TEXT NOT NULL,
+    "parentId" TEXT,
     "body" TEXT NOT NULL,
+    "visibility" TEXT NOT NULL DEFAULT 'INTERNAL',
+    "resolvedAt" TIMESTAMPTZ,
+    "resolvedBy" TEXT,
     "resolved" BOOLEAN NOT NULL DEFAULT FALSE,
     "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    FOREIGN KEY ("generatedDocumentId") REFERENCES "GeneratedDocument"("id") ON DELETE CASCADE
+    FOREIGN KEY ("documentId") REFERENCES "GeneratedDocument"("id") ON DELETE CASCADE
   )`);
 
   // ── indexes (each wrapped so one failure never blocks the rest) ──────────
@@ -788,13 +853,61 @@ async function bootstrap(client: PrismaClient): Promise<void> {
     // G9 — TenderRequirement source coords
     `CREATE INDEX IF NOT EXISTS "TenderRequirement_tenderId_idx" ON "TenderRequirement"("tenderId")`,
     `CREATE INDEX IF NOT EXISTS "TenderRequirement_sourceTenderFileId_idx" ON "TenderRequirement"("sourceTenderFileId")`,
-    // DocumentReview / DocumentComment
-    `CREATE INDEX IF NOT EXISTS "DocumentReview_generatedDocumentId_idx" ON "DocumentReview"("generatedDocumentId")`,
-    `CREATE INDEX IF NOT EXISTS "DocumentComment_generatedDocumentId_idx" ON "DocumentComment"("generatedDocumentId")`,
+    // DocumentReview / DocumentComment — correct Prisma-matching index names
+    `CREATE INDEX IF NOT EXISTS "DocumentReview_documentId_createdAt_idx" ON "DocumentReview"("documentId", "createdAt")`,
+    `CREATE INDEX IF NOT EXISTS "DocumentReview_reviewerId_idx" ON "DocumentReview"("reviewerId")`,
+    `CREATE INDEX IF NOT EXISTS "DocumentComment_documentId_idx" ON "DocumentComment"("documentId")`,
+    `CREATE INDEX IF NOT EXISTS "DocumentComment_documentId_parentId_idx" ON "DocumentComment"("documentId", "parentId")`,
+    `CREATE INDEX IF NOT EXISTS "DocumentComment_authorId_idx" ON "DocumentComment"("authorId")`,
   ];
   for (const sql of idxStatements) {
     try { await client.$executeRawUnsafe(sql); } catch (e) {
       console.warn("[bootstrap] index skipped:", e instanceof Error ? e.message : e);
+    }
+  }
+
+  // ── Add FK cascade constraints to tables created without them. ────────────
+  // These DO blocks are idempotent: they check pg_constraint before adding.
+  const fkStatements = [
+    // G3 — MatchScoreBreakdown.tenderId → Tender (CASCADE)
+    `DO $$ BEGIN
+       IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'MatchScoreBreakdown_tenderId_fkey') THEN
+         ALTER TABLE "MatchScoreBreakdown" ADD CONSTRAINT "MatchScoreBreakdown_tenderId_fkey"
+           FOREIGN KEY ("tenderId") REFERENCES "Tender"("id") ON DELETE CASCADE;
+       END IF;
+     END $$`,
+    // G4 — EvaluatorObjection.tenderId → Tender (CASCADE)
+    `DO $$ BEGIN
+       IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'EvaluatorObjection_tenderId_fkey') THEN
+         ALTER TABLE "EvaluatorObjection" ADD CONSTRAINT "EvaluatorObjection_tenderId_fkey"
+           FOREIGN KEY ("tenderId") REFERENCES "Tender"("id") ON DELETE CASCADE;
+       END IF;
+     END $$`,
+    // G5 — SectionEvidenceMap.tenderId → Tender (CASCADE)
+    `DO $$ BEGIN
+       IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'SectionEvidenceMap_tenderId_fkey') THEN
+         ALTER TABLE "SectionEvidenceMap" ADD CONSTRAINT "SectionEvidenceMap_tenderId_fkey"
+           FOREIGN KEY ("tenderId") REFERENCES "Tender"("id") ON DELETE CASCADE;
+       END IF;
+     END $$`,
+    // G6 — AiJob.tenderId → Tender (SET NULL — tenderId is nullable)
+    `DO $$ BEGIN
+       IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'AiJob_tenderId_fkey') THEN
+         ALTER TABLE "AiJob" ADD CONSTRAINT "AiJob_tenderId_fkey"
+           FOREIGN KEY ("tenderId") REFERENCES "Tender"("id") ON DELETE SET NULL;
+       END IF;
+     END $$`,
+    // G8 — PricingWorkbook.tenderId → Tender (CASCADE)
+    `DO $$ BEGIN
+       IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'PricingWorkbook_tenderId_fkey') THEN
+         ALTER TABLE "PricingWorkbook" ADD CONSTRAINT "PricingWorkbook_tenderId_fkey"
+           FOREIGN KEY ("tenderId") REFERENCES "Tender"("id") ON DELETE CASCADE;
+       END IF;
+     END $$`,
+  ];
+  for (const sql of fkStatements) {
+    try { await client.$executeRawUnsafe(sql); } catch (e) {
+      console.warn("[bootstrap] FK constraint skipped:", e instanceof Error ? e.message : e);
     }
   }
 

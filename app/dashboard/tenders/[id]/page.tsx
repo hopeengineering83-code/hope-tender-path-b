@@ -35,13 +35,13 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
     include: {
       files: {
         orderBy: { createdAt: "desc" },
-        select: { id: true, fileName: true, originalFileName: true, mimeType: true, size: true, classification: true, extractedText: true, createdAt: true },
+        select: { id: true, fileName: true, originalFileName: true, mimeType: true, size: true, classification: true, createdAt: true },
       },
       requirements: { orderBy: { createdAt: "asc" } },
       complianceGaps: { orderBy: { createdAt: "desc" } },
       generatedDocuments: {
         orderBy: { exactOrder: "asc" },
-        select: { id: true, name: true, documentType: true, generationStatus: true, validationStatus: true, reviewStatus: true, reviewNotes: true, exactFileName: true, exactOrder: true, contentSummary: true },
+        select: { id: true, name: true, documentType: true, generationStatus: true, validationStatus: true, reviewStatus: true, reviewNotes: true, exactFileName: true, exactOrder: true, contentSummary: true, reviewedExpertCount: true, draftExpertCount: true, reviewedProjectCount: true, draftProjectCount: true },
       },
       expertMatches: {
         orderBy: { score: "desc" },
@@ -57,6 +57,27 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
 
   if (!tender) notFound();
 
+  const fileTextMetrics = await prisma.$queryRaw<Array<{ id: string; extractedTextLength: number; isScannedPlaceholder: boolean }>>`
+    SELECT
+      id,
+      COALESCE(char_length("extractedText"), 0)::int AS "extractedTextLength",
+      COALESCE("extractedText" LIKE '[Scanned%', false) AS "isScannedPlaceholder"
+    FROM "TenderFile"
+    WHERE "tenderId" = ${tender.id}
+  `;
+  const fileTextMetricById = new Map(fileTextMetrics.map((file) => [file.id, file]));
+  const tenderForUi = {
+    ...tender,
+    files: tender.files.map((file) => {
+      const metric = fileTextMetricById.get(file.id);
+      return {
+        ...file,
+        extractedTextLength: metric?.extractedTextLength ?? 0,
+        isScannedPlaceholder: metric?.isScannedPlaceholder ?? false,
+      };
+    }),
+  };
+
   const ai = isAIEnabled();
   const generationReadiness = await getTenderGenerationReadiness(prisma, userId, tender.id);
 
@@ -69,7 +90,7 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
         country: tender.country,
         clientContactName: tender.clientContactName,
       }} />
-      <ExecutiveSnapshot tender={tender} />
+      <ExecutiveSnapshot tender={tenderForUi} />
       <BidControlVerdictPanel tenderId={tender.id} />
       <FinalSubmissionControlCenter tenderId={tender.id} generationReadiness={generationReadiness} />
       <AIHealthPanel />
@@ -77,15 +98,16 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
         tenderId={tender.id}
         vaultReviewedExperts={generationReadiness?.matchingQuality?.vaultReviewedExperts ?? 0}
         vaultReviewedProjects={generationReadiness?.matchingQuality?.vaultReviewedProjects ?? 0}
+        lifecycleBlockersExist={(generationReadiness?.blockers?.length ?? 0) > 0}
       /></div>
       <ExtractionQualityPanel tenderId={tender.id} />
-      <AnalysisQualityPanel tenderId={tender.id} />
-      <MatchingQualityPanel tenderId={tender.id} />
+      <div id="analysis-quality"><AnalysisQualityPanel tenderId={tender.id} /></div>
+      <div id="matching-quality"><MatchingQualityPanel tenderId={tender.id} /></div>
       <GenerationReadinessPanel tenderId={tender.id} />
       <div id="generate-docs-action"><GenerationActionPanel tenderId={tender.id} readiness={generationReadiness} /></div>
       <SubmissionPlanReconciliationPanel tenderId={tender.id} />
-      <TenderIntakeDetailPanel tender={tender} />
-      <ProposalEvidenceReadinessPanel tenderId={tender.id} />
+      <TenderIntakeDetailPanel tender={tenderForUi} />
+      <div id="proposal-evidence-readiness"><ProposalEvidenceReadinessPanel tenderId={tender.id} /></div>
       <ExportReadinessPanel tenderId={tender.id} />
       <EvaluatorObjectionsPanel tenderId={tender.id} />
       <PricingWorkbookPanel tenderId={tender.id} />
@@ -95,7 +117,7 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
       </div>
       <div id="legacy-tender-detail-actions">
         <LegacyTenderActionHider targetId="legacy-tender-detail-actions" />
-        <TenderDetail tender={tender} aiEnabled={ai} />
+        <TenderDetail tender={tenderForUi} aiEnabled={ai} />
       </div>
     </>
   );

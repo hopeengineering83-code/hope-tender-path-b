@@ -34,26 +34,48 @@ export function ComplianceDashboard({ tenders: initial }: { tenders: Tender[] })
   const [tenders, setTenders] = useState(initial);
   const [resolvingId, setResolvingId] = useState<string|null>(null);
   const [noteMap, setNoteMap] = useState<Record<string,string>>({});
+  const [mitigationMap, setMitigationMap] = useState<Record<string,string>>({});
   const [filterTender, setFilterTender] = useState("all");
   const [filterSeverity, setFilterSeverity] = useState("all");
   const [filterStatus, setFilterStatus] = useState("unresolved");
   const [subTab, setSubTab] = useState<SubTab>("gaps");
 
-  async function toggleGap(tenderId: string, gapId: string, isResolved: boolean, note: string) {
+  async function patchGap(tenderId: string, gapId: string, body: { isResolved?: boolean; resolvedNote?: string; mitigationPlan?: string }) {
     setResolvingId(gapId);
     try {
       const res = await fetch(`/api/tenders/${tenderId}/gaps/${gapId}`, {
         method:"PUT", headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({ isResolved, resolvedNote: note }),
+        body:JSON.stringify(body),
       });
       if (res.ok) {
         const updated = await res.json() as Gap;
         setTenders(prev => prev.map(t => t.id!==tenderId ? t : {
-          ...t, complianceGaps: t.complianceGaps.map(g => g.id!==gapId ? g : { ...g, isResolved:updated.isResolved, resolvedNote:updated.resolvedNote }),
+          ...t, complianceGaps: t.complianceGaps.map(g => g.id!==gapId ? g : { ...g, isResolved:updated.isResolved, resolvedNote:updated.resolvedNote, mitigationPlan:updated.mitigationPlan }),
         }));
-        setNoteMap(m => { const n={...m}; delete n[gapId]; return n; });
+        if (body.resolvedNote !== undefined) setNoteMap(m => { const n={...m}; delete n[gapId]; return n; });
+        if (body.mitigationPlan !== undefined) setMitigationMap(m => { const n={...m}; delete n[gapId]; return n; });
       }
     } finally { setResolvingId(null); }
+  }
+
+  function toggleGap(tenderId: string, gapId: string, isResolved: boolean, note: string) {
+    return patchGap(tenderId, gapId, { isResolved, resolvedNote: note });
+  }
+
+  // Part 10 — explicit mandatory-coverage actions. Each records a human
+  // decision via the existing gap fields (no fabricated evidence):
+  //   • Save mitigation        — mitigationPlan
+  //   • JV/subcontractor        — mitigationPlan prefixed so reviewers see the route
+  //   • Mark not applicable     — resolve with a NOT_APPLICABLE audit note
+  function saveMitigation(tenderId: string, gapId: string, prefix = "") {
+    const text = (mitigationMap[gapId] ?? "").trim();
+    if (text.length === 0) return;
+    return patchGap(tenderId, gapId, { mitigationPlan: `${prefix}${text}`.slice(0, 2000) });
+  }
+  function markNotApplicable(tenderId: string, gapId: string) {
+    const note = (noteMap[gapId] ?? "").trim();
+    if (note.length === 0) { window.alert("Add an audit note explaining why this requirement is not applicable."); return; }
+    return patchGap(tenderId, gapId, { isResolved: true, resolvedNote: `NOT_APPLICABLE: ${note}`.slice(0, 2000) });
   }
 
   const allGaps = tenders.flatMap(t => t.complianceGaps.map(g => ({ ...g, tenderId:t.id, tenderTitle:t.title })));
@@ -142,11 +164,27 @@ export function ComplianceDashboard({ tenders: initial }: { tenders: Tender[] })
                       {!gap.isResolved ? (
                         <>
                           <input value={noteMap[gap.id]??""} onChange={e=>setNoteMap(m=>({...m,[gap.id]:e.target.value}))}
-                            placeholder="Resolution note…" className="rounded-lg border px-2 py-1.5 text-xs w-48" />
+                            placeholder="Resolution / audit note…" className="rounded-lg border px-2 py-1.5 text-xs w-48" />
                           <button onClick={()=>toggleGap(gap.tenderId,gap.id,true,noteMap[gap.id]??"")} disabled={resolvingId===gap.id}
                             className="rounded-lg bg-green-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-700 disabled:opacity-50">
-                            {resolvingId===gap.id?"…":"Mark Resolved"}
+                            {resolvingId===gap.id?"…":"Mark covered with evidence"}
                           </button>
+                          <button onClick={()=>markNotApplicable(gap.tenderId,gap.id)} disabled={resolvingId===gap.id}
+                            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50">
+                            Mark not applicable
+                          </button>
+                          <input value={mitigationMap[gap.id]??""} onChange={e=>setMitigationMap(m=>({...m,[gap.id]:e.target.value}))}
+                            placeholder="Mitigation / JV plan…" className="rounded-lg border px-2 py-1.5 text-xs w-48" />
+                          <div className="flex gap-1">
+                            <button onClick={()=>saveMitigation(gap.tenderId,gap.id)} disabled={resolvingId===gap.id}
+                              className="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50">
+                              Add mitigation
+                            </button>
+                            <button onClick={()=>saveMitigation(gap.tenderId,gap.id,"JV/Subcontractor: ")} disabled={resolvingId===gap.id}
+                              className="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50">
+                              JV / subcontractor
+                            </button>
+                          </div>
                         </>
                       ) : (
                         <button onClick={()=>toggleGap(gap.tenderId,gap.id,false,"")} disabled={resolvingId===gap.id}

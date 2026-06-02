@@ -329,6 +329,28 @@ export function computeReadinessScore(input: ReadinessScoreInput): ReadinessScor
       reason: "Analysis came from regex fallback. Readiness is capped at 45 until AI analysis is re-run or a human explicitly approves the fallback analysis.",
     });
   }
+<<<<<<< HEAD
+=======
+  if (input.analysisSource === "HUMAN_APPROVED_REGEX_FALLBACK") {
+    // A human approved the regex-fallback analysis, so generation is allowed —
+    // but readiness stays capped at 70 unless every critical dimension that the
+    // regex fallback can get wrong is independently verified: source references,
+    // mandatory-requirement compliance coverage, and the full required-document
+    // set (file naming/order + submission method).
+    const fullyVerified =
+      (input.sourceReferenceCoverage ?? 0) >= 1 &&
+      (input.complianceMatrixCoverage ?? 0) >= 1 &&
+      (input.requiredDocumentsTotal ?? 0) > 0 &&
+      (input.requiredDocumentsSatisfied ?? 0) >= (input.requiredDocumentsTotal ?? 0);
+    if (!fullyVerified) {
+      applicableCaps.push({
+        dimension: "analysisSource",
+        capScore: 70,
+        reason: "Analysis came from a human-approved regex fallback. Readiness is capped at 70 until all source references, mandatory-requirement coverage, and the full required-document set are independently verified.",
+      });
+    }
+  }
+>>>>>>> origin/main
   if (
     (input.metadataCompletenessRatio ?? 0) < 0.6 ||
     (input.metadataInvalidCount ?? 0) > 0

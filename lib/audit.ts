@@ -45,6 +45,11 @@ export type AuditAction =
   | "TENDER_CONTROL_TASK"
   | "TENDER_CONTROL_RISK"
   | "TENDER_CONTROL_COMMERCIAL_ASSUMPTION"
+  // Suggestion accept/reject from the Controls Ledger panel (H).
+  // ACCEPTED is implicit (a new TENDER_CONTROL_* row is written when a
+  // suggestion is accepted); REJECTED records the decision so the panel
+  // can hide the suggestion on the next reload.
+  | "TENDER_CONTROL_SUGGESTION_REJECTED"
   | "TENDER_BID_OUTCOME_SET"
   // Maintenance: regenerate Expert CV DOCX files after the trace-stripper
   // fix landed in expert-cv-docx.ts. Triggered via /regenerate-cvs.
@@ -82,9 +87,38 @@ export type AuditAction =
   // analysis source was an unapproved regex fallback (see
   // lib/engine/analysis-source.ts).
   | "GENERATION_BLOCKED_REGEX_FALLBACK"
+<<<<<<< HEAD
+=======
+  // Bulk reassessment of generated documents against the quality gate.
+  // POST /api/admin/generated-proposals/reassess records this with the
+  // demoted-count + inspected-count in description.
+  | "QUALITY_REASSESSMENT"
+  // AI provider chain failed over from one provider to the next
+  // (OpenAI → Gemini → Mistral → DeepSeek → Groq → Together → OpenRouter → Claude). Tracked so
+  // an operator can confirm a fallback was attempted before regex was used.
+  | "AI_PROVIDER_FAILOVER"
+>>>>>>> origin/main
   // Knowledge vault — expert and project lifecycle events.
   | "EXPERT_CREATE" | "EXPERT_UPDATE" | "EXPERT_DELETE" | "EXPERT_REVIEW"
-  | "PROJECT_CREATE" | "PROJECT_UPDATE" | "PROJECT_DELETE" | "PROJECT_REVIEW";
+  | "PROJECT_CREATE" | "PROJECT_UPDATE" | "PROJECT_DELETE" | "PROJECT_REVIEW"
+  // Document reclassification and deduplication maintenance routes.
+  | "DOCUMENT_RECLASSIFY"
+  | "DOCUMENT_DEDUPLICATE"
+  // Per-row submission-plan recovery actions (reclassify / mark-not-exportable /
+  // supersede / exclude) from the Submission Plan Completeness panel.
+  | "SUBMISSION_PLAN_ROW_ACTION"
+  // Explicit plan and evidence-confirmation workflow actions.
+  | "SUBMISSION_PLAN_BUILT"
+  | "TENDER_PLAN_BUILT"
+  | "REQUIREMENT_EVIDENCE_CONFIRMED"
+  | "REQUIREMENT_EVIDENCE_SUGGESTION_REJECTED"
+  // Metadata repair from source text (deterministic extractor) and
+  // manual confirmation by the user via the tender edit form.
+  | "TENDER_METADATA_REPAIRED"
+  | "TENDER_METADATA_MANUAL_CONFIRMED"
+  | "LOGIN_FAILED"
+  | "COMPANY_PROFILE_UPDATED"
+  | "SETTINGS_UPDATED";
 
 export async function logAction(opts: {
   userId?: string;

@@ -143,7 +143,8 @@ export async function runTenderEngine(
       if (tenderText.length > 500) {
         try {
           progress("engine.analyze", `Analyzing ${Math.round(tenderText.length / 1000)}k chars of tender text with AI (structured requirement extraction)`);
-          const aiResult = await analyzeWithAI(tenderText);
+          const aiMeta = await analyzeWithAI(tenderText);
+          const aiResult = aiMeta.result;
           const rawRequirements = aiResult.requirements.map((req, idx) => ({
             title: req.title,
             description: req.description,

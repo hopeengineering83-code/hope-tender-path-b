@@ -87,7 +87,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       requirements: true,
       generatedDocuments: {
         where: { generationStatus: { not: "SUPERSEDED" } },
-        select: { id: true, name: true, exactFileName: true, documentType: true, format: true, exactOrder: true, generationStatus: true, fileContent: true },
+        select: { id: true, name: true, exactFileName: true, documentType: true, format: true, exactOrder: true, generationStatus: true },
       },
     },
   });
@@ -109,12 +109,32 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   const created: string[] = [];
   const updated: string[] = [];
+  const skipped: string[] = [];
   for (const file of missing) {
     const documentType = documentTypeFor(file.exactFileName, file.documentType);
     const replaceWithOriginal = needsOriginalReplacement(file.exactFileName, documentType);
     const isSubmissionRules = documentType === "SUBMISSION_RULES" || /submission formatting|packaging rules|submission rules|delivery instruction/i.test(file.exactFileName);
+
+    // Dedup check: skip creation if a non-superseded doc with same exactFileName
+    // OR a sufficiently similar name already exists (prevents duplicate rows).
+    const normalizedFileName = file.exactFileName.toLowerCase().trim();
+    const existingByExactName = await prisma.generatedDocument.findFirst({
+      where: {
+        tenderId: id,
+        exactFileName: { equals: file.exactFileName, mode: "insensitive" },
+        generationStatus: { not: "SUPERSEDED" },
+      },
+      select: { id: true, generationStatus: true },
+    });
+    // If a non-PLANNED doc already exists with the same file name, skip to avoid duplicates.
+    if (existingByExactName && existingByExactName.generationStatus !== "PLANNED") {
+      skipped.push(file.exactFileName);
+      continue;
+    }
+
     const fileContent = await replacementControlContent(tender.title, file.exactFileName, replaceWithOriginal);
-    const existing = await prisma.generatedDocument.findFirst({ where: { tenderId: id, exactFileName: file.exactFileName }, select: { id: true } });
+    const existing = existingByExactName ?? await prisma.generatedDocument.findFirst({ where: { tenderId: id, exactFileName: file.exactFileName }, select: { id: true } });
+    void normalizedFileName; // used above in comment
     const data = {
       name: file.exactFileName.replace(/\.[a-z0-9]{2,5}$/i, ""),
       documentType,
@@ -177,8 +197,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     action: "DOCUMENT_GENERATE",
     entityType: "Tender",
     entityId: id,
-    description: `${actor.email} generated ${created.length} and updated ${updated.length} missing planned file control record(s), converted ${convertedFromPlanned.length} PLANNED rows, for "${tender.title}".`,
-    metadata: { tenderId: id, createdCount: created.length, updatedCount: updated.length, created, updated, convertedFromPlanned, warning: "Replacement-control documents are not final submission evidence." },
+    description: `${actor.email} generated ${created.length} and updated ${updated.length} missing planned file control record(s), converted ${convertedFromPlanned.length} PLANNED rows, skipped ${skipped.length} duplicates, for "${tender.title}".`,
+    metadata: { tenderId: id, createdCount: created.length, updatedCount: updated.length, created, updated, convertedFromPlanned, skipped, warning: "Replacement-control documents are not final submission evidence." },
     requestId,
   });
 
@@ -187,7 +207,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     created: created.length,
     updated: updated.length,
     convertedFromPlanned: convertedFromPlanned.length,
-    files: { created, updated, convertedFromPlanned },
+    skipped: skipped.length,
+    files: { created, updated, convertedFromPlanned, skipped },
     warning: "Replacement-control documents are not final submission evidence. Replace originals before export where reviewStatus is REPLACE_WITH_ORIGINAL.",
   });
 }

@@ -15,7 +15,11 @@ import {
   isAdvisoryCode,
 } from "../lib/engine/final-submission-readiness";
 
+<<<<<<< HEAD
 const { severityForReasons, nextActionForReason, derivePlanStatus, applyAdvisoryResolutions, buildMessage, detectMessageType } = __testing__;
+=======
+const { severityForReasons, nextActionForReason, derivePlanStatus, applyAdvisoryResolutions, buildMessage, detectMessageType, mandatoryEvidenceCoverageRatio } = __testing__;
+>>>>>>> origin/main
 
 describe("final-submission-readiness — severityForReasons", () => {
   it("returns HIGH for missing-content reasons", () => {
@@ -78,6 +82,12 @@ describe("final-submission-readiness — derivePlanStatus", () => {
   it("PLAN_NAME_MISMATCH when names diverge but counts align", () => {
     assert.equal(derivePlanStatus({ requiredPlanCount: 2, finalCandidateCount: 2, missingCount: 0, extraCount: 0, nameMismatch: true, orderMismatch: false }), "PLAN_NAME_MISMATCH");
   });
+<<<<<<< HEAD
+=======
+  it("DERIVED_PLAN_UNCONFIRMED when a derived plan matches counts but lacks tender-issued scope", () => {
+    assert.equal(derivePlanStatus({ requiredPlanCount: 2, finalCandidateCount: 2, missingCount: 0, extraCount: 0, nameMismatch: false, orderMismatch: false, hasExplicitScope: false }), "DERIVED_PLAN_UNCONFIRMED");
+  });
+>>>>>>> origin/main
 });
 
 describe("final-submission-readiness — applyAdvisoryResolutions", () => {
@@ -154,3 +164,32 @@ describe("final-submission-readiness — detectMessageType", () => {
     assert.equal(out.originalRequired, 1);
   });
 });
+<<<<<<< HEAD
+=======
+
+describe("final-submission-readiness — mandatory evidence coverage truth", () => {
+  it("selected/unconfirmed evidence suggestions do not count without complianceMatrix rows", () => {
+    const ratio = mandatoryEvidenceCoverageRatio([
+      { priority: "MANDATORY", complianceMatrixRows: [] },
+    ]);
+    assert.equal(ratio, 0);
+  });
+
+  it("sourceConfidence without a complianceMatrix row does not count as FULL/SUBSTANTIAL coverage", () => {
+    const ratio = mandatoryEvidenceCoverageRatio([
+      { priority: "MANDATORY", sourceConfidence: 0.95, complianceMatrixRows: [] } as { priority: string; sourceConfidence: number; complianceMatrixRows: [] },
+    ]);
+    assert.equal(ratio, 0);
+  });
+
+  it("confirmed FULL/SUBSTANTIAL complianceMatrix rows increase coverage", () => {
+    const ratio = mandatoryEvidenceCoverageRatio([
+      { priority: "MANDATORY", complianceMatrixRows: [{ supportLevel: "FULL" }] },
+      { priority: "MANDATORY", complianceMatrixRows: [{ supportLevel: "SUBSTANTIAL" }] },
+      { priority: "MANDATORY", complianceMatrixRows: [{ supportLevel: "PARTIAL" }] },
+      { priority: "OPTIONAL", complianceMatrixRows: [{ supportLevel: "FULL" }] },
+    ]);
+    assert.equal(ratio, 2 / 3);
+  });
+});
+>>>>>>> origin/main

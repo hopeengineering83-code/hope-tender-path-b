@@ -57,6 +57,8 @@ export function GenerationActionPanel({ tenderId, readiness }: { tenderId: strin
   const [running, setRunning] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [kind, setKind] = useState<"success" | "error" | "info">("info");
+  const [repairing, setRepairing] = useState(false);
+  const [repairMsg, setRepairMsg] = useState<{ kind: "success" | "error" | "info"; text: string } | null>(null);
 
   const blockers = readiness?.blockers ?? [];
   const warnings = readiness?.warnings ?? [];
@@ -66,6 +68,114 @@ export function GenerationActionPanel({ tenderId, readiness }: { tenderId: strin
   // the legacy `ready` flag.
   const fullProposalReady = readiness?.fullProposalReady ?? readiness?.ready ?? false;
   const fullProposalBlockers = readiness?.fullProposalBlockers ?? [];
+  // Surface a one-click repair affordance when the only thing in the way of
+  // generation is missing critical metadata (see #519: deterministic, source-
+  // grounded extractor for tender.evaluationMethodology). The button is
+  // gated on the blocker actually being present; clicking it never overwrites
+  // an existing value, only repairs when the extractor finds a source quote.
+  const metadataBlockerPresent = fullProposalBlockers.some((b) => b.code === "FULL_PROPOSAL_METADATA_INCOMPLETE");
+
+  async function runRepairMetadata() {
+    setRepairing(true);
+    setRepairMsg(null);
+    try {
+      const res = await fetch(`/api/tenders/${tenderId}/repair-metadata`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fields: ["evaluationMethodology"] }),
+      });
+      const data = await res.json().catch(() => ({} as Record<string, unknown>));
+      if (!res.ok) {
+        const err = typeof data.error === "string" ? data.error : `Repair failed (${res.status})`;
+        setRepairMsg({ kind: "error", text: err });
+        return;
+      }
+      type RepairResult = { status?: string; reason?: string; confidence?: string; sourceFile?: string | null };
+      const result = (data.results as { evaluationMethodology?: RepairResult } | undefined)?.evaluationMethodology ?? {};
+      if (result.status === "REPAIRED") {
+        const sourceFile = result.sourceFile ?? "tender source";
+        const confidence = result.confidence ?? "MEDIUM";
+        setRepairMsg({ kind: "success", text: `evaluationMethodology repaired from ${sourceFile} (${confidence} confidence). Review the tender and re-check generation readiness.` });
+        startTransition(() => router.refresh());
+      } else if (result.status === "NOT_FOUND") {
+        setRepairMsg({ kind: "info", text: result.reason ?? "No evaluation methodology section detected in the uploaded tender files. Open the tender editor and confirm the value manually." });
+      } else if (result.status === "SKIPPED") {
+        setRepairMsg({ kind: "info", text: result.reason ?? "evaluationMethodology is already populated." });
+      } else {
+        setRepairMsg({ kind: "info", text: "Repair endpoint returned no actionable result." });
+      }
+    } catch (e) {
+      setRepairMsg({ kind: "error", text: e instanceof Error ? e.message : "Repair failed due to a network/runtime error." });
+    } finally {
+      setRepairing(false);
+    }
+  }
+
+  // Batch "Repair all from source" — calls the endpoint with every supported
+  // field. Skips fields the tender already has populated (the endpoint enforces
+  // the no-overwrite rule); reports REPAIRED / NOT_FOUND / SKIPPED counts so
+  // the user understands what changed and what didn't. Refresh fires only when
+  // at least one field was actually written.
+  const ALL_REPAIRABLE_FIELDS = [
+    "evaluationMethodology",
+    "reference",
+    "deadline",
+    "submissionEmails",
+    "submissionMethod",
+    "pageLimit",
+    "validityDays",
+    "bidBondAmount",
+    "numberOfCopiesRequired",
+    "mandatorySiteVisit",
+  ] as const;
+
+  async function runRepairAllMetadata() {
+    setRepairing(true);
+    setRepairMsg(null);
+    try {
+      const res = await fetch(`/api/tenders/${tenderId}/repair-metadata`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fields: ALL_REPAIRABLE_FIELDS }),
+      });
+      const data = await res.json().catch(() => ({} as Record<string, unknown>));
+      if (!res.ok) {
+        const err = typeof data.error === "string" ? data.error : `Batch repair failed (${res.status})`;
+        setRepairMsg({ kind: "error", text: err });
+        return;
+      }
+      type ResultEntry = { status?: string; reason?: string; sourceFile?: string | null; confidence?: string };
+      const results = (data.results as Record<string, ResultEntry> | undefined) ?? {};
+      const repairedFields: string[] = [];
+      const notFoundFields: string[] = [];
+      const skippedFields: string[] = [];
+      for (const field of ALL_REPAIRABLE_FIELDS) {
+        const r = results[field];
+        if (!r) continue;
+        if (r.status === "REPAIRED") repairedFields.push(field);
+        else if (r.status === "NOT_FOUND") notFoundFields.push(field);
+        else if (r.status === "SKIPPED") skippedFields.push(field);
+      }
+      const parts: string[] = [];
+      if (repairedFields.length > 0) parts.push(`${repairedFields.length} repaired (${repairedFields.join(", ")})`);
+      if (notFoundFields.length > 0) parts.push(`${notFoundFields.length} not found in source`);
+      if (skippedFields.length > 0) parts.push(`${skippedFields.length} already populated (skipped)`);
+      const summary = parts.length > 0 ? parts.join(" · ") : "no fields needed repair";
+      if (repairedFields.length > 0) {
+        setRepairMsg({ kind: "success", text: `Batch repair: ${summary}. Re-check generation readiness.` });
+        startTransition(() => router.refresh());
+      } else if (notFoundFields.length === ALL_REPAIRABLE_FIELDS.length) {
+        setRepairMsg({ kind: "info", text: "No fields could be repaired from source. Open the tender editor and confirm values manually." });
+      } else {
+        setRepairMsg({ kind: "info", text: `Batch repair: ${summary}.` });
+      }
+    } catch (e) {
+      setRepairMsg({ kind: "error", text: e instanceof Error ? e.message : "Batch repair failed due to a network/runtime error." });
+    } finally {
+      setRepairing(false);
+    }
+  }
+
   const autoPromotionAvailable = Boolean(
     readiness?.counts
     && ((readiness.counts.selectedExperts ?? 0) === 0 && (readiness.counts.reviewedExpertMatches ?? 0) > 0
@@ -114,8 +224,8 @@ export function GenerationActionPanel({ tenderId, readiness }: { tenderId: strin
   const headlineText = fullProposalReady
     ? "Full proposal generation gate: passes"
     : supportReady
-      ? "Only support-package generation is allowed — full proposal blocked"
-      : "Resolve generation blockers first";
+      ? "Support evidence available — full proposal blocked"
+      : "Generation blocked";
 
   return (
     <section className={`mb-4 rounded-2xl border p-5 shadow-sm ${panelClass}`}>
@@ -134,7 +244,7 @@ export function GenerationActionPanel({ tenderId, readiness }: { tenderId: strin
               kind of output they can produce and which they cannot. */}
           <div className="mt-3 flex flex-wrap gap-2 text-xs">
             <span className={`rounded-full px-3 py-1 font-semibold ${supportReady ? "bg-emerald-100 text-emerald-800" : "bg-red-100 text-red-800"}`}>
-              Support package: {supportReady ? "ready" : "blocked"}
+              Support evidence: {supportReady ? "available" : "blocked"}
             </span>
             <span className={`rounded-full px-3 py-1 font-semibold ${fullProposalReady ? "bg-emerald-100 text-emerald-800" : "bg-red-100 text-red-800"}`}>
               Full proposal: {fullProposalReady ? "ready" : "blocked"}
@@ -171,6 +281,37 @@ export function GenerationActionPanel({ tenderId, readiness }: { tenderId: strin
           <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-red-800">
             {fullProposalBlockers.slice(0, 6).map((item, index) => <li key={`fp-${item.code}-${index}`}>{item.message}</li>)}
           </ul>
+          {metadataBlockerPresent && (
+            <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm">
+              <p className="font-semibold text-amber-900">Try a source-grounded repair</p>
+              <p className="mt-1 text-xs text-amber-800">If the tender files already contain the values, the deterministic repair will populate them from a verbatim source quote and log the source file + confidence for each. It never invents content and never overwrites a non-empty value.</p>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={runRepairAllMetadata}
+                  disabled={repairing}
+                  className="rounded-lg bg-amber-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-900 disabled:cursor-not-allowed disabled:opacity-50"
+                  title="Run the deterministic extractor for every supported metadata field — reference, deadline, submission emails, page limit, validity, bid bond, copies, mandatory site visit, and evaluationMethodology."
+                >
+                  {repairing ? "Repairing all…" : "Repair all empty fields from source"}
+                </button>
+                <button
+                  type="button"
+                  onClick={runRepairMetadata}
+                  disabled={repairing}
+                  className="rounded-lg border border-amber-700 bg-white px-3 py-1.5 text-xs font-semibold text-amber-800 hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  title="Run only the evaluationMethodology extractor."
+                >
+                  {repairing ? "Repairing…" : "Repair evaluationMethodology only"}
+                </button>
+                {repairMsg && (
+                  <span className={`text-xs ${repairMsg.kind === "success" ? "text-emerald-800" : repairMsg.kind === "error" ? "text-red-700" : "text-slate-700"}`}>
+                    {repairMsg.text}
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       )}
       {fullProposalReady && !supportReady && blockers.length > 0 && (

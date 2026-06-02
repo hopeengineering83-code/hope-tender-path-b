@@ -100,6 +100,56 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const chunkNum = typeof body.chunk === "number" && body.chunk >= 1 && body.chunk <= 3 ? (body.chunk as 1 | 2 | 3) : undefined;
   const sectionFilter = chunkNum !== undefined ? CHUNK_MAP[chunkNum] : undefined;
 
+  // ── Per-chunk checkpoint via AiJob ────────────────────────────────────────
+  // Stores each completed chunk's markdown in AiJob.output so a resume call
+  // can skip already-generated chunks instead of restarting from scratch.
+  //
+  // Request body:
+  //   proposalJobId — ID of an existing AiJob to resume (optional).
+  //                   Omit on the first chunk=1 call; include on retries.
+  // Response always includes proposalJobId so the client can store it.
+
+  const resumeJobId = typeof body.proposalJobId === "string" && body.proposalJobId.length > 0
+    ? body.proposalJobId : null;
+
+  // Chunk output stored as { chunks: { "1": "..md..", "2": "..md..", "3": "..md.." } }
+  type ChunkOutput = { chunks: Record<string, string> };
+
+  const tenderId = id as string;
+  const uid = userId as string;
+
+  async function loadChunkOutput(jobId: string): Promise<ChunkOutput> {
+    const job = await prisma.aiJob.findFirst({ where: { id: jobId, tenderId, userId: uid }, select: { output: true } });
+    if (!job?.output) return { chunks: {} };
+    try { return JSON.parse(job.output) as ChunkOutput; } catch { return { chunks: {} }; }
+  }
+
+  async function saveChunkOutput(jobId: string, chunkKey: string, markdown: string) {
+    const current = await loadChunkOutput(jobId);
+    current.chunks[chunkKey] = markdown;
+    await prisma.aiJob.update({ where: { id: jobId }, data: { output: JSON.stringify(current), updatedAt: new Date() } });
+  }
+
+  // Create or resume an AiJob for this proposal session.
+  const proposalJob = resumeJobId
+    ? await prisma.aiJob.findFirst({ where: { id: resumeJobId, tenderId, userId: uid } })
+    : null;
+
+  const proposalJobId = proposalJob
+    ? proposalJob.id
+    : (await prisma.aiJob.create({
+        data: { tenderId, userId: uid, jobType: "PROPOSAL_GENERATION", status: "RUNNING", startedAt: new Date(), input: JSON.stringify({ chunkNum: chunkNum ?? "full" }) },
+      })).id;
+
+  // If a chunk is already cached in the job, return it immediately.
+  if (chunkNum !== undefined && proposalJob) {
+    const cached = await loadChunkOutput(proposalJobId);
+    const chunkKey = String(chunkNum);
+    if (cached.chunks[chunkKey] && !forceRefresh) {
+      return NextResponse.json({ success: true, proposal: cached.chunks[chunkKey], fallback: false, cached: true, proposalJobId });
+    }
+  }
+
   const [tender, company] = await Promise.all([
     prisma.tender.findFirst({
       where: { id, userId },
@@ -433,6 +483,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
     if (!fallback && !sectionFilter) setCachedProposal(cacheKey, proposal, false);
 
+    // ── Checkpoint: save this chunk's result to the AiJob ─────────────────
+    // Persists each successful chunk so a resume call can skip it.
+    // Never saves fallback/deterministic output as a checkpoint — the user
+    // should retry with real AI, not replay a degraded result.
+    if (!fallback && chunkNum !== undefined) {
+      void saveChunkOutput(proposalJobId, String(chunkNum), proposal).catch(() => {});
+    }
+
     // Persist the quick draft so users don't lose it on navigation.
     // Only save on the final chunk (chunk 3) or non-chunked calls — partial
     // chunk results are intermediate and should not be stored as documents.
@@ -473,12 +531,28 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       }
     }
 
+    // ── Update AiJob status ───────────────────────────────────────────────
+    // Mark SUCCEEDED when the full proposal is done (chunk 3 or non-chunked).
+    // For intermediate chunks leave status as RUNNING so resume calls know
+    // generation is still in progress.
+    if (chunkNum === undefined || chunkNum === 3) {
+      void prisma.aiJob.update({
+        where: { id: proposalJobId },
+        data: { status: fallback ? "FAILED" : "SUCCEEDED", finishedAt: new Date(), updatedAt: new Date() },
+      }).catch(() => {});
+    }
+
     // PR T FIX — see note above; intakeSummary must NOT be overwritten
     // with generated-proposal text or every regeneration feeds the
     // previous one back as input to the next.
-    return NextResponse.json({ success: true, proposal, fallback, cached: false });
+    return NextResponse.json({ success: true, proposal, fallback, cached: false, proposalJobId });
   } catch (error) {
+    // Mark the AiJob as FAILED so the client knows to offer a retry
+    void prisma.aiJob.update({
+      where: { id: proposalJobId },
+      data: { status: "FAILED", errorMessage: error instanceof Error ? error.message.slice(0, 500) : "Unknown error", finishedAt: new Date(), updatedAt: new Date() },
+    }).catch(() => {});
     console.error("Proposal generation route error:", error);
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Proposal generation failed" }, { status: 500 });
+    return NextResponse.json({ error: error instanceof Error ? error.message : "Proposal generation failed", proposalJobId }, { status: 500 });
   }
 }

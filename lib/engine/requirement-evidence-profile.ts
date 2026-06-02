@@ -40,6 +40,39 @@ export type EvidenceKind =
   | "EVIDENCE_OF_PAST_PERFORMANCE"
   | "GENERAL";
 
+// Formal support-level model. Compliance rows historically stored this as a
+// free-form string ("FULL" / "SUBSTANTIAL" / "PARTIAL" / "NONE" / etc.).
+// `normalizeSupportLevel` collapses the known spellings (incl. NOT_APPLICABLE)
+// onto this union so coverage logic and the UI agree. Only FULL / SUBSTANTIAL
+// count as strong support; NOT_APPLICABLE means the requirement does not need
+// evidence (a recorded human decision), and is never treated as strong.
+export type SupportLevel =
+  | "FULL"
+  | "SUBSTANTIAL"
+  | "PARTIAL"
+  | "NONE"
+  | "NOT_COVERED"
+  | "NOT_APPLICABLE";
+
+export function normalizeSupportLevel(value?: string | null): SupportLevel {
+  const v = (value ?? "").trim().toUpperCase().replace(/[\s/-]+/g, "_");
+  switch (v) {
+    case "FULL": return "FULL";
+    case "SUBSTANTIAL": return "SUBSTANTIAL";
+    case "PARTIAL": return "PARTIAL";
+    case "N_A":
+    case "NA":
+    case "NOT_APPLICABLE": return "NOT_APPLICABLE";
+    case "NOT_COVERED": return "NOT_COVERED";
+    case "NONE": return "NONE";
+    default: return v ? "PARTIAL" : "NONE";
+  }
+}
+
+export function isStrongSupportLevel(level: SupportLevel): boolean {
+  return level === "FULL" || level === "SUBSTANTIAL";
+}
+
 export type RequirementEvidenceProfile = {
   requirementId: string;
   title: string;
@@ -126,8 +159,7 @@ function inferEvidenceKindsFromText(text: string, requirementType: string): Evid
 // ─── Profile builder ────────────────────────────────────────────────
 
 function isStrongComplianceLink(row: { supportLevel?: string | null }): boolean {
-  const lvl = (row.supportLevel ?? "").toUpperCase();
-  return lvl === "FULL" || lvl === "SUBSTANTIAL";
+  return isStrongSupportLevel(normalizeSupportLevel(row.supportLevel));
 }
 
 /**

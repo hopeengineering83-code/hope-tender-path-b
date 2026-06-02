@@ -57,15 +57,19 @@ export function classifySubmissionPlanItem(input: ClassifierInput): ClassifierRe
     return result("COMMERCIAL_SEPARATION_RULE", "Financial/technical separation rule, not a deliverable file.");
   }
 
-  if (/email recipients|both contacts|deadline|submit before|submit by|cc both|portal address/.test(value)) {
+  // Submission method / deadline / delivery rules → SUBMISSION_RULE (not TECHNICAL_PROPOSAL)
+  if (/email recipients|both contacts|deadline|submit before|submit by|cc both|portal address|submission method|submission deadline|delivery rules|delivery instructions|how to submit|where to submit/.test(value)) {
     return result("SUBMISSION_RULE", "Submission process/timing/recipient rule, not a deliverable file.");
   }
 
-  if (/document control|formatting rules|labelling rules|file naming|internal checklist|compliance control/.test(value)) {
+  // Formatting rules → INTERNAL_COMPLIANCE_CONTROL (not TECHNICAL_PROPOSAL)
+  if (/document control|formatting rules|labelling rules|file naming|internal checklist|compliance control|page limit|font size|margin requirement|document format/.test(value)) {
     return result("INTERNAL_COMPLIANCE_CONTROL", "Internal format/control rule, not a generated file.");
   }
 
-  if (/business license|trade license|tax clearance|audited\s+(financial\s+)?statements?|financial statements?|registration\s+certificate|certificate\s+of\s+registration|incorporation\s+certificate|certificate\s+of\s+incorporation|tin certificate|vat certificate|grade certificate|good standing certificate/.test(value)) {
+  // Financial capacity / audited financial statements → ORIGINAL_EVIDENCE_ATTACHMENT (not TECHNICAL_PROPOSAL)
+  // Legal eligibility / registration / license → ORIGINAL_EVIDENCE_ATTACHMENT (not TECHNICAL_PROPOSAL)
+  if (/business license|trade license|tax clearance|audited\s+(financial\s+)?statements?|financial statements?|financial capacity|turnover statement|bank statement|annual report|registration\s+certificate|certificate\s+of\s+registration|incorporation\s+certificate|certificate\s+of\s+incorporation|tin certificate|vat certificate|grade certificate|good standing certificate|legal eligibility|eligibility certificate|company registration|license to operate|contractor registration|professional license|legal entity certificate/.test(value)) {
     return result("ORIGINAL_EVIDENCE_ATTACHMENT", "Evidence attachment must be uploaded as an original document, not generated.");
   }
 
@@ -73,7 +77,8 @@ export function classifySubmissionPlanItem(input: ClassifierInput): ClassifierRe
     return result("FORM_TEMPLATE_TO_COMPLETE", "Tender form, annex, schedule or template must be completed from the original.");
   }
 
-  if (/technical proposal|financial proposal|cover letter|executive summary|company profile|methodology|work plan|implementation plan|quality assurance plan|risk management plan|cv package|expert cv|project experience|project reference|bid bond|power of attorney|joint venture agreement|consortium agreement/.test(value)) {
+  // Expert CV package and project references → REQUIRED_OUTPUT_FILE (bidder-produced)
+  if (/technical proposal|financial proposal|cover letter|executive summary|company profile|methodology|work plan|implementation plan|quality assurance plan|risk management plan|cv package|expert cv|curriculum vitae|personnel cv|key personnel cv|staff cv|project experience|project reference|similar projects|track record|bid bond|power of attorney|joint venture agreement|consortium agreement/.test(value)) {
     return result("REQUIRED_OUTPUT_FILE", "Bidder-produced output file required by the tender.");
   }
 

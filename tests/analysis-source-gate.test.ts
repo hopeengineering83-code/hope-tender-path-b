@@ -66,3 +66,54 @@ describe("generate route — regex fallback gate", () => {
     assert.match(source, /await\s+assertAnalysisReadyForFinalGeneration\(/);
   });
 });
+<<<<<<< HEAD
+=======
+
+describe("generation-readiness route — canonical analysis-source helper", () => {
+  it("imports detectAnalysisSourceWithApproval, not a local regex", async () => {
+    const { readFileSync } = await import("node:fs");
+    const source = readFileSync("app/api/tenders/[id]/generation-readiness/route.ts", "utf8");
+    // Must use the canonical helper that checks the ComplianceGap approval row.
+    assert.match(source, /detectAnalysisSourceWithApproval/);
+    // Must NOT use the old ad-hoc regex against tender.notes only.
+    assert.doesNotMatch(source, /hasRegexFallbackSource/);
+  });
+
+  it("exposes ALLOWED_APPROVED_FALLBACK gate state for human-approved analyses", async () => {
+    const { readFileSync } = await import("node:fs");
+    const source = readFileSync("app/api/tenders/[id]/generation-readiness/route.ts", "utf8");
+    assert.match(source, /ALLOWED_APPROVED_FALLBACK/);
+  });
+
+  it("blocks only REGEX_FALLBACK_AI_ERROR, not HUMAN_APPROVED_REGEX_FALLBACK", async () => {
+    const { readFileSync } = await import("node:fs");
+    const source = readFileSync("app/api/tenders/[id]/generation-readiness/route.ts", "utf8");
+    // The full-proposal readyForFullProposal must reference isUnapprovedFallback, not a plain regex check.
+    assert.match(source, /isUnapprovedFallback/);
+    // The gate must distinguish approved from unapproved fallback.
+    assert.match(source, /isApprovedFallback/);
+  });
+
+  it("treats UNKNOWN analysis source as blocking (NOT_ANALYZED gate state)", async () => {
+    const { readFileSync } = await import("node:fs");
+    const source = readFileSync("app/api/tenders/[id]/generation-readiness/route.ts", "utf8");
+    // isUnapprovedFallback must include the UNKNOWN case, not just REGEX_FALLBACK_AI_ERROR.
+    // A tender that has never been analyzed must not be allowed through the full-proposal gate.
+    assert.match(source, /UNKNOWN/);
+    assert.match(source, /NOT_ANALYZED/);
+    // FULL_PROPOSAL_NOT_ANALYZED blocker code must be present for clarity.
+    assert.match(source, /FULL_PROPOSAL_NOT_ANALYZED/);
+  });
+
+  it("generation-readiness panel maps RETRY_AI_ANALYZE and REVIEW_ANALYSIS actions", async () => {
+    const { readFileSync } = await import("node:fs");
+    const source = readFileSync("components/generation-readiness-panel.tsx", "utf8");
+    // Panel must handle RETRY_AI_ANALYZE so users see a useful button, not "Open tender".
+    assert.match(source, /RETRY_AI_ANALYZE/);
+    // Panel must handle REVIEW_ANALYSIS so analysis quality link is shown.
+    assert.match(source, /REVIEW_ANALYSIS/);
+    // Panel must handle REPAIR_OR_EDIT_TENDER so metadata repair link is shown.
+    assert.match(source, /REPAIR_OR_EDIT_TENDER/);
+  });
+});
+>>>>>>> origin/main

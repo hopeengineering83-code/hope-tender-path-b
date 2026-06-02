@@ -17,6 +17,34 @@ import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { requireUser, unauthorizedResponse, forbiddenResponse } from "../../../../../lib/auth";
 import { computeBidStrategy } from "../../../../../lib/engine/bid-strategy";
 import { computeWinProbability } from "../../../../../lib/engine/win-probability";
+import { detectAnalysisSourceWithApproval } from "../../../../../lib/engine/analysis-source";
+
+// Confidence ceiling applied to bid-strategy win probability when the tender
+// analysis came from regex/deterministic fallback. The strategy is computed
+// from requirements/matches the fallback extractor may have gotten wrong, so
+// the headline number must not read as a confident recommendation.
+const FALLBACK_CONFIDENCE_CEILING = 50;
+const ZERO_EVIDENCE_CONFIDENCE_CEILING = 45;
+
+function isFallbackLikeAnalysisSource(value: string | null | undefined): boolean {
+  const upper = String(value ?? "").toUpperCase();
+  return upper.includes("REGEX") || upper.includes("DETERMINISTIC") || upper === "UNKNOWN";
+}
+
+function computeMandatoryEvidenceCoverageRatio(requirements: Array<{
+  priority: string;
+  complianceMatrixRows?: Array<{ supportLevel: string | null }> | null;
+}>): number {
+  const mandatory = requirements.filter((r) => String(r.priority ?? "").toUpperCase() === "MANDATORY");
+  if (mandatory.length === 0) return 0;
+  const covered = mandatory.filter((r) =>
+    (r.complianceMatrixRows ?? []).some((row) => {
+      const level = String(row.supportLevel ?? "").toUpperCase();
+      return level === "FULL" || level === "SUBSTANTIAL";
+    }),
+  ).length;
+  return covered / mandatory.length;
+}
 
 export async function GET(
   _req: Request,
@@ -38,7 +66,16 @@ export async function GET(
     prisma.tender.findFirst({
       where: { id, userId: actor.id },
       include: {
-        requirements: { select: { title: true, description: true, requirementType: true, priority: true, requiredQuantity: true } },
+        requirements: {
+          select: {
+            title: true,
+            description: true,
+            requirementType: true,
+            priority: true,
+            requiredQuantity: true,
+            complianceMatrixRows: { select: { supportLevel: true } },
+          },
+        },
         complianceGaps: { select: { severity: true, isResolved: true, title: true } },
         expertMatches: {
           where: { isSelected: true },
@@ -89,6 +126,8 @@ export async function GET(
 
   const historicalTotal = pastTenders.length;
   const historicalWins = pastTenders.filter((t) => t.bidOutcome === "WON").length;
+  const analysisSource = await detectAnalysisSourceWithApproval(prisma, id, tender).catch(() => "UNKNOWN" as const);
+  const evidenceCoverageRatio = computeMandatoryEvidenceCoverageRatio(tender.requirements);
 
   const strategy = computeBidStrategy({
     tender: {
@@ -101,6 +140,8 @@ export async function GET(
       projectMatches: tender.projectMatches,
       evaluationMethodology: tender.evaluationMethodology,
       submissionMethod: tender.submissionMethod,
+      analysisSource,
+      evidenceCoverageRatio,
     },
     company: {
       name: company.name,
@@ -118,6 +159,33 @@ export async function GET(
     },
   });
 
+  // Keep bid strategy consistent with source/evidence truth at the endpoint too.
+  // This protects older callers/tests if the pure strategy engine is invoked
+  // without the new context fields.
+  const fallbackSource = isFallbackLikeAnalysisSource(analysisSource);
+  const zeroEvidence = evidenceCoverageRatio === 0;
+  const confidenceCeiling = fallbackSource
+    ? Math.min(FALLBACK_CONFIDENCE_CEILING, zeroEvidence ? ZERO_EVIDENCE_CONFIDENCE_CEILING : FALLBACK_CONFIDENCE_CEILING)
+    : zeroEvidence
+      ? ZERO_EVIDENCE_CONFIDENCE_CEILING
+      : null;
+
+  let confidenceCapped = false;
+  if (confidenceCeiling !== null && strategy.winProbability > confidenceCeiling) {
+    strategy.winProbability = confidenceCeiling;
+    confidenceCapped = true;
+    if (strategy.recommendation === "BID_HARD") strategy.recommendation = "BID_CAREFULLY";
+  }
+
+  const confidenceNotes: string[] = [];
+  if (fallbackSource) {
+    confidenceNotes.push("Bid strategy confidence is capped because the tender analysis used regex/deterministic fallback or an unknown source. Re-run AI Analyze for full-confidence strategy.");
+  }
+  if (zeroEvidence) {
+    confidenceNotes.push("Bid strategy confidence is capped because mandatory evidence coverage is 0%. Confirm reviewed evidence links before relying on the win probability.");
+  }
+  const confidenceNote = confidenceNotes.length > 0 ? confidenceNotes.join(" ") : null;
+
   // Win-probability 4-axis breakdown (evidence match / team strength /
   // compliance posture / historical outcomes) — surfaced in the panel as
   // actionable per-axis scores with explanatory notes.
@@ -125,6 +193,7 @@ export async function GET(
     primarySector: tender.category ?? "General",
     tenderBudget: (tender as { budget?: number | null }).budget ?? null,
     tenderCategory: tender.category ?? null,
+    analysisSource,
     projects: tender.projectMatches.map((m) => ({
       sectors: m.project.sector ? JSON.stringify([m.project.sector]) : null,
       contractValue: m.project.contractValue ?? null,
@@ -142,5 +211,9 @@ export async function GET(
     strategy,
     winProbabilityBreakdown: winProbability,
     historicalBidStats: { total: historicalTotal, wins: historicalWins },
+    analysisSource,
+    evidenceCoverageRatio,
+    confidenceCapped,
+    confidenceNote,
   });
 }

@@ -25,6 +25,13 @@ function normalizeLabel(value?: string | null): string {
     .replace(/<PARSED TEXT FOR PAGE:[^>]+>/gi, " ")
     .replace(/\bPARSED TEXT FOR PAGE\b[^\n]*/gi, " ")
     .replace(/[\u0000-\u001F\u007F]/g, " ")
+    // Strip internal metadata placeholders ("Bid-Team to confirm",
+    // "TBC", "TBD", "placeholder") so they cannot leak into proposal-
+    // facing labels like the cover-letter subject. Defense in depth on
+    // top of sanitize-stored-metadata.ts.
+    .replace(/\bbid[-_\s]?team\s+to\s+confirm\b/gi, " ")
+    .replace(/\bto\s+be\s+confirmed\b/gi, " ")
+    .replace(/\bplaceholder\b/gi, " ")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -33,7 +40,10 @@ function isSuspiciousLabel(value: string): boolean {
   const text = value.toLowerCase();
   return value.length > 140
     || /\b(headquarters|full name|relationship|ref only|references where available|photos or drawings|proposed design methodology|technical approach understanding|not specified in texts)\b/i.test(value)
-    || (text.includes("pharo ventures") && text.includes("relationship"));
+    // A label that reads like a project-relationship description (a named entity
+    // followed by "relationship") is the firm's prior client, not the current
+    // procuring entity — flag it as suspicious regardless of which firm it names.
+    || (/\b[A-Z][A-Za-z0-9&.'’()\-/]+(?:\s+[A-Z][A-Za-z0-9&.'’()\-/]+)*\b/.test(value) && text.includes("relationship"));
 }
 
 export function extractLikelyClientName(...values: Array<string | null | undefined>): string | null {

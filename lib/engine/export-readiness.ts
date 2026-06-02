@@ -1,6 +1,7 @@
 import { prisma, prismaReady } from "../prisma";
 import { getStorageAdapter } from "../storage";
 import { isValidClientName } from "./metadata-validators";
+import { isExportBlockingConfidence, scanTenderForExplicitDonorRequirement } from "./donor-advisory-confidence";
 import {
   deriveDocumentOutputState,
   exportBlockReason,
@@ -38,8 +39,8 @@ export type ExportReadinessFailure = {
 export type ExportReadinessResult = {
   ok: boolean;
   failures: ExportReadinessFailure[];
-  tenderLevelBlockers?: Array<{ category: string; severity: string; title: string; recommendedAction?: string | null }>;
-  advisoryWarnings?: Array<{ category: string; severity: string; title: string; recommendedAction?: string | null }>;
+  tenderLevelBlockers?: Array<{ category: string; severity: string; title: string; recommendedAction?: string | null; confidence?: import("./donor-advisory-confidence").DonorAdvisoryConfidence; sourceQuote?: string | null }>;
+  advisoryWarnings?: Array<{ category: string; severity: string; title: string; recommendedAction?: string | null; confidence?: import("./donor-advisory-confidence").DonorAdvisoryConfidence; sourceQuote?: string | null }>;
 };
 
 function generatedFileName(name: string): string {
@@ -298,7 +299,7 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
 
   if (docs.length === 0) blockers.push(tenderBlocker("NO_ACTIVE_GENERATED_DOCUMENTS", "No active generated documents exist for export.", "Generate, validate and review the required documents before final export."));
   if (!isValidClientName(tender.clientName)) blockers.push(tenderBlocker("CLIENT_NAME_REQUIRED", "Client/procuring entity name is missing or invalid.", "Edit Tender Detail and enter the exact official procuring entity name."));
-  if ((tender.readinessScore ?? 0) <= 0 || /^(ANALYZED|DRAFT)$/i.test(tender.status) || /^(ANALYSIS|TENDER_INTAKE)$/i.test(tender.stage)) blockers.push(tenderBlocker("FULL_PROPOSAL_NOT_READY", `Tender is still at ${tender.status}/${tender.stage} with readiness score ${tender.readinessScore ?? 0}.`, "Run Engine, resolve readiness blockers, generate documents, then rerun export readiness."));
+  if ((tender.readinessScore ?? 0) <= 0 || /^(ANALYZED|AI_ANALYZED|AI_ANALYSIS_PARTIAL|FALLBACK_DRAFT_CREATED|ANALYSIS_REQUIRES_REVIEW|DRAFT)$/i.test(tender.status) || /^(ANALYSIS|TENDER_INTAKE)$/i.test(tender.stage)) blockers.push(tenderBlocker("FULL_PROPOSAL_NOT_READY", `Tender is still at ${tender.status}/${tender.stage} with workflow progress ${tender.readinessScore ?? 0}.`, "Run Engine, resolve canonical readiness blockers, generate documents, then rerun export readiness."));
   if (hasStrategyOnlySignals(tender.files)) blockers.push(tenderBlocker("OFFICIAL_SOURCE_REQUIRED", "Uploaded source appears to be strategy/market-intelligence only, not an official RFP/ToR/forms package.", "Upload the official tender source package before final export."));
 
   const requiresExperts = tender.requirements.some((r) => r.requirementType === "EXPERT");
@@ -338,19 +339,26 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
   // user is reminded before final export — they do not hard-block, since some
   // donors accept a separate ESMP/logframe delivery milestone.
   const isDonorTender =
-    /ngo|donor.?funded|world\s+bank|afdb|african\s+development|eu\s+funded|usaid|dfid|fcdo|giz|undp|unicef|wfp|unhcr|ifad|gfatm|global\s+fund/i.test(
+    /ngo|donor.?funded|world\s+bank|afdb|african\s+development|adb|asian\s+development|jica|eu\s+funded|usaid|dfid|fcdo|giz|undp|unicef|wfp|unhcr|ifad|gfatm|global\s+fund|development.*partner.*fund|bilateral.*donor/i.test(
       [tender.category, tender.description, tender.analysisSummary, tender.notes, tender.intakeSummary].filter(Boolean).join(" "),
     );
   if (isDonorTender) {
     const planText = tender.requirements.map((r) => `${r.title} ${r.description ?? ""}`).join(" ").toLowerCase();
     const docText = docs.map((d) => `${d.name} ${d.documentType ?? ""}`).join(" ").toLowerCase();
     const allText = `${planText} ${docText}`;
-    const sourceText = [tender.description, tender.analysisSummary, tender.notes, tender.intakeSummary, ...tender.requirements.map((r) => `${r.title} ${r.description ?? ""}`)].filter(Boolean).join(" ").toLowerCase();
-    const explicitlyRequired = /(?:tor|terms?\s+of\s+reference|mandatory|required|must|shall).{0,80}(?:esmp|logframe|results?\s+framework|m&e|monitoring.*evaluation|environmental|social.*safeguard)|deliverable.{0,40}(?:esmp|logframe|m&e|results?\s+framework)/i.test(sourceText);
+    const sourceText = [tender.description, tender.analysisSummary, tender.notes, tender.intakeSummary, ...tender.requirements.map((r) => `${r.title} ${r.description ?? ""}`)].filter(Boolean).join(" ");
+    // Use the formalised donor-advisory confidence model. The scanner returns
+    // the verbatim quote of the explicit ToR requirement (≤200 chars) so the
+    // readiness panel + audit log can show WHERE the requirement was found
+    // instead of an opaque "system says blocking".
+    const explicitScan = scanTenderForExplicitDonorRequirement(sourceText);
     const addDonorIssue = (code: string, title: string, action: string) => {
       const issue = tenderBlocker(code, title, action, "MEDIUM");
-      if (explicitlyRequired) blockers.push(issue);
-      else advisoryWarnings.push(issue);
+      // Hard invariant: only EXPLICIT_TOR_REQUIRED can promote to a blocker.
+      // Everything else stays in advisoryWarnings (non-export-blocking).
+      const annotated = { ...issue, confidence: explicitScan.confidence, sourceQuote: explicitScan.sourceQuote };
+      if (isExportBlockingConfidence(explicitScan.confidence)) blockers.push(annotated);
+      else advisoryWarnings.push(annotated);
     };
 
     if (!/esmp|environmental.*social.*management|esia|safeguard.*plan|environmental.*management.*plan/i.test(allText)) {
