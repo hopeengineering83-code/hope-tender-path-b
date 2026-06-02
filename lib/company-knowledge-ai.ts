@@ -207,7 +207,7 @@ export async function extractCompanyKnowledgeWithAI(params: {
   projectText: string;
 }): Promise<AIKnowledgeExtraction> {
   if (!isAIEnabled()) {
-    return { experts: [], projects: [], warnings: ["No AI provider configured; set OPENAI_API_KEY, GEMINI_API_KEY, DEEPSEEK_API_KEY, GROQ_API_KEY, OPENROUTER_API_KEY, or ANTHROPIC_API_KEY. AI extraction skipped."] };
+    return { experts: [], projects: [], warnings: ["No AI provider configured; set OPENAI_API_KEY, GEMINI_API_KEY, MISTRAL_API_KEY, DEEPSEEK_API_KEY, GROQ_API_KEY, TOGETHER_API_KEY, OPENROUTER_API_KEY, or ANTHROPIC_API_KEY. AI extraction skipped."] };
   }
 
   const expertChunks = chunkText(params.expertText).slice(0, MAX_CHUNKS).map((content, index) => ({ kind: "EXPERT_CV" as const, index, content }));

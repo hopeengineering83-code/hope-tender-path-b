@@ -73,6 +73,12 @@ const AI_PROVIDER_KEYS = [
     },
   },
   {
+    name: "MISTRAL_API_KEY",
+    description:
+      "Mistral API key. Third-tier proposal/validation provider and analysis fallback. Models override via MISTRAL_PROPOSAL_MODEL / MISTRAL_ANALYSIS_MODEL / MISTRAL_FAST_MODEL.",
+    validate: (_v) => null,
+  },
+  {
     name: "DEEPSEEK_API_KEY",
     description:
       "DeepSeek API key. Third-tier fallback for proposal generation via OpenAI-compatible endpoint (deepseek-chat / deepseek-reasoner).",
@@ -81,13 +87,19 @@ const AI_PROVIDER_KEYS = [
   {
     name: "GROQ_API_KEY",
     description:
-      "Groq API key (gsk_...). Fourth-tier fallback for proposal generation and first-tier fast/cheap provider. Model overridable via GROQ_PROPOSAL_MODEL (default llama-3.3-70b-versatile).",
+      "Groq API key (gsk_...). Fifth-tier default fallback and first-tier fast/cheap provider. Model overridable via GROQ_PROPOSAL_MODEL (default llama-3.3-70b-versatile).",
+    validate: (_v) => null,
+  },
+  {
+    name: "TOGETHER_API_KEY",
+    description:
+      "Together API key. Sixth-tier default fallback and second-tier fast/cheap provider. Models override via TOGETHER_PROPOSAL_MODEL / TOGETHER_ANALYSIS_MODEL / TOGETHER_FAST_MODEL.",
     validate: (_v) => null,
   },
   {
     name: "OPENROUTER_API_KEY",
     description:
-      "OpenRouter API key (sk-or-...). Fifth-tier fallback aggregator via OpenAI-compatible endpoint. Model overridable via OPENROUTER_PROPOSAL_MODEL (default openrouter/auto).",
+      "OpenRouter API key (sk-or-...). Seventh-tier fallback aggregator via OpenAI-compatible endpoint. Model overridable via OPENROUTER_PROPOSAL_MODEL (default openrouter/auto).",
     validate: (_v) => null,
   },
 ];
@@ -201,7 +213,7 @@ for (const spec of ALWAYS_REQUIRED) {
 const hasAnyAIKey = AI_PROVIDER_KEYS.some(({ name }) => Boolean(process.env[name]));
 if (!hasAnyAIKey) {
   const message =
-    "At least one AI provider key is required: OPENAI_API_KEY, GEMINI_API_KEY, DEEPSEEK_API_KEY, GROQ_API_KEY, OPENROUTER_API_KEY, or ANTHROPIC_API_KEY. " +
+    "At least one AI provider key is required: OPENAI_API_KEY, GEMINI_API_KEY, MISTRAL_API_KEY, DEEPSEEK_API_KEY, GROQ_API_KEY, TOGETHER_API_KEY, OPENROUTER_API_KEY, or ANTHROPIC_API_KEY. " +
     "Without any AI key, every imported expert/project is REGEX_DRAFT and BLOCKED from final proposal generation.";
   if (isProd) {
     errors.push(`  ✗ AI_PROVIDER_KEYS: ${message}`);

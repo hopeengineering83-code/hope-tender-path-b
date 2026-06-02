@@ -102,7 +102,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   }
 
   if (!isAIEnabled()) {
-    return NextResponse.json({ error: "AI is not configured. Set OPENAI_API_KEY, GEMINI_API_KEY, DEEPSEEK_API_KEY, GROQ_API_KEY, OPENROUTER_API_KEY, or ANTHROPIC_API_KEY to enable section regeneration." }, { status: 503 });
+    return NextResponse.json({ error: "AI is not configured. Set OPENAI_API_KEY, GEMINI_API_KEY, MISTRAL_API_KEY, DEEPSEEK_API_KEY, GROQ_API_KEY, TOGETHER_API_KEY, OPENROUTER_API_KEY, or ANTHROPIC_API_KEY to enable section regeneration." }, { status: 503 });
   }
 
   if (!checkRegenRateLimit(userId)) {

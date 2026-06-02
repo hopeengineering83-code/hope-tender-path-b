@@ -3,19 +3,23 @@ import {
   isDeepSeekConfigured,
   deepSeekOfficialEnvPresent,
   getDeepSeekModel,
+  isMistralConfigured,
+  getMistralProposalModel,
+  getMistralAnalysisModel,
+  getMistralFastModel,
   isGroqConfigured,
   getGroqModel,
+  isTogetherConfigured,
+  getTogetherProposalModel,
+  getTogetherAnalysisModel,
+  getTogetherFastModel,
   isOpenRouterConfigured,
   getOpenRouterModel,
-  isMistralConfigured,
-  getMistralModel,
-  isTogetherConfigured,
-  getTogetherModel,
   type ProviderRuntimeSnapshot,
 } from "../lib/ai-provider-health";
 import { AIHealthTestButton } from "./ai-health-test-button";
 
-const AI_FALLBACK_CHAIN = "OpenAI → Gemini → DeepSeek → Groq → OpenRouter → Mistral → Together → Claude → deterministic draft fallback";
+const AI_FALLBACK_CHAIN = "Default: OpenAI → Gemini → Mistral → DeepSeek → Groq → Together → OpenRouter → Claude. Analysis: Gemini → OpenAI → Mistral → Together → DeepSeek → Groq → OpenRouter → Claude. Fast: Groq → Together → DeepSeek → Mistral → Gemini → OpenAI → OpenRouter → Claude. Claude remains last.";
 
 type ProviderCardData = {
   key: string;
@@ -53,16 +57,16 @@ function getAIHealth(): AIHealthResponse {
   const geminiConfigured = present(process.env.GEMINI_API_KEY);
   const openaiConfigured = present(process.env.OPENAI_API_KEY);
   const deepseekConfigured = isDeepSeekConfigured();
-  const groqConfigured = isGroqConfigured();
-  const openRouterConfigured = isOpenRouterConfigured();
   const mistralConfigured = isMistralConfigured();
+  const groqConfigured = isGroqConfigured();
   const togetherConfigured = isTogetherConfigured();
+  const openRouterConfigured = isOpenRouterConfigured();
 
   const claudeModels = splitModels(process.env.ANTHROPIC_PROPOSAL_MODELS, ["claude-sonnet-4-5", "claude-opus-4-1", "claude-3-5-sonnet-latest", "claude-3-5-haiku-latest"]);
   const geminiModels = splitModels(process.env.GEMINI_FALLBACK_MODELS, ["gemini-2.5-flash", "gemini-2.0-flash"]);
   const openRouterModel = getOpenRouterModel();
 
-  // Provider order IS the fallback priority (rank 1..6). Claude is LAST so
+  // Provider order IS the default fallback priority (rank 1..8). Claude is LAST so
   // Anthropic rate limits do not block the app when other providers are available.
   const providers: ProviderCardData[] = [
     {
@@ -77,39 +81,35 @@ function getAIHealth(): AIHealthResponse {
       modelHint: null, runtime: getProviderRuntimeSnapshot("gemini"),
     },
     {
-      key: "deepseek", label: "DeepSeek", rank: 3, configured: deepseekConfigured, envVar: "DEEPSEEK_API_KEY",
-      model: getDeepSeekModel(), note: "Third-tier provider",
+      key: "mistral", label: "Mistral", rank: 3, configured: mistralConfigured, envVar: "MISTRAL_API_KEY",
+      model: getMistralProposalModel(), note: "Third-tier provider (also analysis/fast capable)",
+      detail: `Analysis: ${getMistralAnalysisModel()} · fast: ${getMistralFastModel()}`, modelHint: null,
+      runtime: getProviderRuntimeSnapshot("mistral"),
+    },
+    {
+      key: "deepseek", label: "DeepSeek", rank: 4, configured: deepseekConfigured, envVar: "DEEPSEEK_API_KEY",
+      model: getDeepSeekModel(), note: "Fourth-tier provider",
       detail: deepseekConfigured && !deepSeekOfficialEnvPresent() ? "Enabled via alias env var — rename to DEEPSEEK_API_KEY." : null,
       modelHint: null, runtime: getProviderRuntimeSnapshot("deepseek"),
     },
     {
-      key: "groq", label: "Groq", rank: 4, configured: groqConfigured, envVar: "GROQ_API_KEY",
-      model: getGroqModel(), note: "Fourth-tier provider", detail: null, modelHint: null,
+      key: "groq", label: "Groq", rank: 5, configured: groqConfigured, envVar: "GROQ_API_KEY",
+      model: getGroqModel(), note: "Fifth-tier default provider; first fast/cheap provider", detail: null, modelHint: null,
       runtime: getProviderRuntimeSnapshot("groq"),
     },
     {
-      key: "openrouter", label: "OpenRouter", rank: 5, configured: openRouterConfigured, envVar: "OPENROUTER_API_KEY",
+      key: "together", label: "Together", rank: 6, configured: togetherConfigured, envVar: "TOGETHER_API_KEY",
+      model: getTogetherProposalModel(), note: "Sixth-tier default provider; second fast/cheap provider",
+      detail: `Analysis: ${getTogetherAnalysisModel()} · fast: ${getTogetherFastModel()}`, modelHint: null,
+      runtime: getProviderRuntimeSnapshot("together"),
+    },
+    {
+      key: "openrouter", label: "OpenRouter", rank: 7, configured: openRouterConfigured, envVar: "OPENROUTER_API_KEY",
       model: openRouterModel, note: "Fifth-tier provider", detail: null,
       modelHint: openRouterConfigured && openRouterModel === "openrouter/auto"
         ? "Using openrouter/auto. Set OPENROUTER_PROPOSAL_MODEL to a model available in your OpenRouter account to pin it."
         : null,
       runtime: getProviderRuntimeSnapshot("openrouter"),
-    },
-    {
-      key: "mistral", label: "Mistral", rank: 6, configured: mistralConfigured, envVar: "MISTRAL_API_KEY",
-      model: getMistralModel(), note: "Sixth-tier provider — good for multilingual tenders",
-      detail: null, modelHint: mistralConfigured && !process.env.MISTRAL_PROPOSAL_MODEL
-        ? "Using mistral-small-latest. Set MISTRAL_PROPOSAL_MODEL to override (e.g. mistral-large-latest)."
-        : null,
-      runtime: getProviderRuntimeSnapshot("mistral"),
-    },
-    {
-      key: "together", label: "Together AI", rank: 7, configured: togetherConfigured, envVar: "TOGETHER_API_KEY",
-      model: getTogetherModel(), note: "Seventh-tier provider — open-source models via Together AI",
-      detail: null, modelHint: togetherConfigured && !process.env.TOGETHER_PROPOSAL_MODEL
-        ? "Using meta-llama/Llama-3.3-70B-Instruct-Turbo. Set TOGETHER_PROPOSAL_MODEL to override."
-        : null,
-      runtime: getProviderRuntimeSnapshot("together"),
     },
     {
       key: "claude", label: "Claude", rank: 8, configured: claudeConfigured, envVar: "ANTHROPIC_API_KEY",
@@ -125,7 +125,7 @@ function getAIHealth(): AIHealthResponse {
   const warnings: string[] = [];
   const blockers: string[] = [];
   if (!anyConfigured) {
-    blockers.push("No AI provider key is configured. Set OPENAI_API_KEY, GEMINI_API_KEY, DEEPSEEK_API_KEY, GROQ_API_KEY, OPENROUTER_API_KEY, or ANTHROPIC_API_KEY. Without one, only the deterministic fallback runs, which cannot be exported as final.");
+    blockers.push("No AI provider key is configured. Set OPENAI_API_KEY, GEMINI_API_KEY, MISTRAL_API_KEY, DEEPSEEK_API_KEY, GROQ_API_KEY, TOGETHER_API_KEY, OPENROUTER_API_KEY, or ANTHROPIC_API_KEY. Without one, only the deterministic fallback runs, which cannot be exported as final.");
   }
   if (claudeConfigured && claudeModels.length === 0) warnings.push("Claude is configured but no Claude model chain was resolved.");
   if (geminiConfigured && !present(process.env.GEMINI_MODEL)) warnings.push("GEMINI_MODEL is not set; the app will use its built-in Gemini default.");
@@ -216,7 +216,7 @@ export async function AIHealthPanel() {
         <div>
           <p className={`text-xs font-semibold uppercase tracking-wide ${labelTone}`}>AI provider health</p>
           <h2 className="mt-1 text-lg font-bold text-slate-900">Preferred provider: {health.preferredProvider}</h2>
-          <p className="mt-1 max-w-3xl text-sm text-slate-600">Shows whether AI provider keys are configured AND whether at least one provider has produced a successful response on this instance. Providers tested: OpenAI, Gemini, DeepSeek, Groq, OpenRouter, Mistral, Together AI, Claude. &ldquo;Configured&rdquo; alone does not guarantee runtime availability. Secret values are never displayed.</p>
+          <p className="mt-1 max-w-3xl text-sm text-slate-600">Shows whether the OpenAI, Gemini, Mistral, DeepSeek, Groq, Together, OpenRouter, and Claude keys are configured AND whether at least one provider has produced a successful response on this instance. &ldquo;Configured&rdquo; alone does not guarantee runtime availability. Secret values are never displayed.</p>
         </div>
         <span className={`rounded-full px-3 py-1 text-xs font-bold ${pillTone}`}>{health.nextAction.replace(/_/g, " ")}</span>
       </div>

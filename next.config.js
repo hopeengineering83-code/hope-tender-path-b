@@ -10,7 +10,7 @@ function assertProductionEnv() {
 
   // DATABASE_URL and SESSION_SECRET are unconditionally required.
   // AI is enabled when any supported provider is configured. The default
-  // chain is OpenAI → Gemini → DeepSeek → Groq → OpenRouter → Claude;
+  // chain is OpenAI → Gemini → Mistral → DeepSeek → Groq → Together → OpenRouter → Claude;
   // Claude/Anthropic remains last so rate limits do not block the app.
   const required = [
     ["DATABASE_URL", "PostgreSQL connection string"],
@@ -38,8 +38,10 @@ function assertProductionEnv() {
   const aiProviderKeys = [
     "OPENAI_API_KEY",
     "GEMINI_API_KEY",
+    "MISTRAL_API_KEY",
     "DEEPSEEK_API_KEY",
     "GROQ_API_KEY",
+    "TOGETHER_API_KEY",
     "OPENROUTER_API_KEY",
     "ANTHROPIC_API_KEY",
   ];
@@ -53,9 +55,11 @@ function assertProductionEnv() {
       "\n\nSet at least one of:" +
       "\n  ✗ OPENAI_API_KEY      (first in default chain)" +
       "\n  ✗ GEMINI_API_KEY      (analysis/extraction primary; second in proposal chain)" +
-      "\n  ✗ DEEPSEEK_API_KEY    (third in default chain)" +
-      "\n  ✗ GROQ_API_KEY        (fourth in default chain; fast/cheap primary)" +
-      "\n  ✗ OPENROUTER_API_KEY  (fifth in default chain)" +
+      "\n  ✗ MISTRAL_API_KEY     (third in default chain; analysis fallback)" +
+      "\n  ✗ DEEPSEEK_API_KEY    (fourth in default chain)" +
+      "\n  ✗ GROQ_API_KEY        (fifth in default chain; fast/cheap primary)" +
+      "\n  ✗ TOGETHER_API_KEY    (sixth in default chain; fast/cheap secondary)" +
+      "\n  ✗ OPENROUTER_API_KEY  (seventh in default chain)" +
       "\n  ✗ ANTHROPIC_API_KEY   (Claude/Anthropic last-resort provider)" +
       "\n\nWithout any AI provider, AI proposal generation and CV/project extraction\nare disabled and imported records remain REGEX_DRAFT only.\n"
     );
@@ -91,7 +95,7 @@ const nextConfig = {
   // Surface AI availability in the build output without exposing which secrets
   // are configured. Mirrors the six-provider server-side policy above.
   env: {
-    NEXT_PUBLIC_AI_ENABLED: ["OPENAI_API_KEY", "GEMINI_API_KEY", "DEEPSEEK_API_KEY", "GROQ_API_KEY", "OPENROUTER_API_KEY", "ANTHROPIC_API_KEY"]
+    NEXT_PUBLIC_AI_ENABLED: ["OPENAI_API_KEY", "GEMINI_API_KEY", "MISTRAL_API_KEY", "DEEPSEEK_API_KEY", "GROQ_API_KEY", "TOGETHER_API_KEY", "OPENROUTER_API_KEY", "ANTHROPIC_API_KEY"]
       .some((name) => Boolean(process.env[name])) ? "true" : "false",
   },
 };

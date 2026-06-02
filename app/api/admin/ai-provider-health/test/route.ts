@@ -13,24 +13,24 @@ import {
   isDeepSeekConfigured,
   getDeepSeekApiKey,
   getDeepSeekModel,
+  isMistralConfigured,
+  getMistralApiKey,
+  getMistralProposalModel,
+  getMistralBaseUrl,
   isGroqConfigured,
   getGroqApiKey,
   getGroqModel,
   getGroqBaseUrl,
+  isTogetherConfigured,
+  getTogetherApiKey,
+  getTogetherProposalModel,
+  getTogetherBaseUrl,
   isOpenRouterConfigured,
   getOpenRouterApiKey,
   getOpenRouterModel,
   getOpenRouterBaseUrl,
   getOpenRouterSiteUrl,
   getOpenRouterAppName,
-  getMistralApiKey,
-  isMistralConfigured,
-  getMistralModel,
-  getMistralBaseUrl,
-  getTogetherApiKey,
-  isTogetherConfigured,
-  getTogetherModel,
-  getTogetherBaseUrl,
   classifyAiError,
 } from "../../../../../lib/ai-provider-health";
 
@@ -47,7 +47,7 @@ export type ProviderTestResult = {
 };
 
 const TEST_PROMPT = "Reply with the single word: PING";
-const PER_PROVIDER_TIMEOUT_MS = 8_000;
+const PER_PROVIDER_TIMEOUT_MS = 3_000;
 
 function safeError(err: unknown): string {
   const raw = err instanceof Error ? err.message : String(err ?? "");
@@ -99,7 +99,7 @@ async function testGemini(): Promise<ProviderTestResult> {
 
 // ── OpenAI-compatible helper ──────────────────────────────────────────────────
 async function testOpenAICompat(
-  providerKey: "openai" | "deepseek" | "groq" | "openrouter" | "mistral" | "together",
+  providerKey: "openai" | "mistral" | "deepseek" | "groq" | "together" | "openrouter",
   apiKey: string,
   baseUrl: string,
   model: string,
@@ -144,6 +144,13 @@ async function testOpenAI(): Promise<ProviderTestResult> {
   return testOpenAICompat("openai", key, "https://api.openai.com/v1", process.env.OPENAI_PROPOSAL_MODEL || "gpt-4o-mini");
 }
 
+// ── Mistral ───────────────────────────────────────────────────────────────────
+async function testMistral(): Promise<ProviderTestResult> {
+  if (!isMistralConfigured()) return { provider: "mistral", status: "not_configured", model: "", durationMs: 0 };
+  const key = getMistralApiKey()!;
+  return testOpenAICompat("mistral", key, getMistralBaseUrl(), getMistralProposalModel());
+}
+
 // ── DeepSeek ──────────────────────────────────────────────────────────────────
 async function testDeepSeek(): Promise<ProviderTestResult> {
   if (!isDeepSeekConfigured()) return { provider: "deepseek", status: "not_configured", model: "", durationMs: 0 };
@@ -158,6 +165,13 @@ async function testGroq(): Promise<ProviderTestResult> {
   return testOpenAICompat("groq", key, getGroqBaseUrl(), getGroqModel());
 }
 
+// ── Together ─────────────────────────────────────────────────────────────────
+async function testTogether(): Promise<ProviderTestResult> {
+  if (!isTogetherConfigured()) return { provider: "together", status: "not_configured", model: "", durationMs: 0 };
+  const key = getTogetherApiKey()!;
+  return testOpenAICompat("together", key, getTogetherBaseUrl(), getTogetherProposalModel());
+}
+
 // ── OpenRouter ────────────────────────────────────────────────────────────────
 async function testOpenRouter(): Promise<ProviderTestResult> {
   if (!isOpenRouterConfigured()) return { provider: "openrouter", status: "not_configured", model: "", durationMs: 0 };
@@ -166,20 +180,6 @@ async function testOpenRouter(): Promise<ProviderTestResult> {
     "HTTP-Referer": getOpenRouterSiteUrl(),
     "X-Title": getOpenRouterAppName(),
   });
-}
-
-// ── Mistral ───────────────────────────────────────────────────────────────────
-async function testMistral(): Promise<ProviderTestResult> {
-  if (!isMistralConfigured()) return { provider: "mistral", status: "not_configured", model: "", durationMs: 0 };
-  const key = getMistralApiKey()!;
-  return testOpenAICompat("mistral", key, getMistralBaseUrl(), getMistralModel());
-}
-
-// ── Together AI ───────────────────────────────────────────────────────────────
-async function testTogether(): Promise<ProviderTestResult> {
-  if (!isTogetherConfigured()) return { provider: "together", status: "not_configured", model: "", durationMs: 0 };
-  const key = getTogetherApiKey()!;
-  return testOpenAICompat("together", key, getTogetherBaseUrl(), getTogetherModel());
 }
 
 // ── Anthropic (Claude) ────────────────────────────────────────────────────────
@@ -229,23 +229,21 @@ export async function POST(req: Request) {
 
   // Run tests sequentially to avoid simultaneous provider storms.
   // Order mirrors the fallback chain; Claude is last.
-  const testers: Array<() => Promise<ProviderTestResult>> = [
-    testOpenAI,
-    testGemini,
-    testDeepSeek,
-    testGroq,
-    testOpenRouter,
-    testMistral,
-    testTogether,
-    testAnthropic,
+  const testers: Array<{ provider: string; run: () => Promise<ProviderTestResult> }> = [
+    { provider: "openai", run: testOpenAI },
+    { provider: "gemini", run: testGemini },
+    { provider: "mistral", run: testMistral },
+    { provider: "deepseek", run: testDeepSeek },
+    { provider: "groq", run: testGroq },
+    { provider: "together", run: testTogether },
+    { provider: "openrouter", run: testOpenRouter },
+    { provider: "claude", run: testAnthropic },
   ];
 
   const results: ProviderTestResult[] = [];
   for (const tester of testers) {
-    const result = await tester();
-    if (!onlyProvider || result.provider === onlyProvider) {
-      results.push(result);
-    }
+    if (onlyProvider && tester.provider !== onlyProvider) continue;
+    results.push(await tester.run());
   }
 
   const testedCount = results.filter((r) => r.status === "ok" || r.status === "failed").length;
