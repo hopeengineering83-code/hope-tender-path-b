@@ -222,6 +222,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   const companyName = company?.name ?? "Our Company";
   const companyProfile = company?.profileSummary ?? (company as { description?: string | null } | null)?.description ?? "";
+  const serviceLines = safeParseArr((company as { serviceLines?: string | null } | null)?.serviceLines).join(", ");
 
   if (!isAIEnabled() || !company) {
     const requirementLines = tender.requirements.map((r) => `${r.title}: ${r.description}`);
@@ -230,6 +231,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       requirements: requirementLines,
       companyName,
       companyProfile,
+      serviceLines,
       expertLines: [],
       projectLines: [],
       differentiators: [],
@@ -470,6 +472,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         requirements: requirementLines,
         companyName,
         companyProfile,
+        serviceLines,
         expertLines,
         projectLines,
         differentiators: intelligence.differentiators,
