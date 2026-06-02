@@ -199,7 +199,16 @@ export function SubmissionPlanCompletenessPanel({ tenderId }: { tenderId: string
       const res = await fetch(`/api/tenders/${tenderId}/submission-plan/build`, { method: "POST" });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json.error ?? `Build failed (${res.status})`);
-      setActionMsg(`Submission plan built — ${json.created ?? 0} planned file(s) created, ${json.skipped ?? 0} already existed.`);
+      const created: number = json.created ?? 0;
+      const skipped: number = json.skipped ?? 0;
+      const total: number = json.total ?? 0;
+      if (total === 0) {
+        setActionMsg("Plan built — no submission files were derived from the tender requirements. Add exact file names in the tender metadata, or run AI Analyze to extract them.");
+      } else if (created === 0 && skipped > 0) {
+        setActionMsg(`Plan up to date — all ${skipped} planned file(s) already exist. No new rows created.`);
+      } else {
+        setActionMsg(`Submission plan built — ${created} planned file(s) created, ${skipped} already existed.`);
+      }
       await load();
       router.refresh();
     } catch (err) {
@@ -211,7 +220,7 @@ export function SubmissionPlanCompletenessPanel({ tenderId }: { tenderId: string
 
   useEffect(() => { void load(); /* eslint-disable-line react-hooks/exhaustive-deps */ }, [tenderId]);
 
-  if (loading) {
+  if (loading && !data) {
     return <section className="mb-4 rounded-2xl border border-slate-200 bg-white p-5 text-sm text-slate-500">Loading submission plan completeness…</section>;
   }
   if (error || !data) {

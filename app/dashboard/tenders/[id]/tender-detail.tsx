@@ -482,6 +482,7 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
   const [reviewNote, setReviewNote] = useState("");
   const [togglingMatchId, setTogglingMatchId] = useState<string | null>(null);
   const [batchApproving, setBatchApproving] = useState(false);
+  const [confirmApproveAll, setConfirmApproveAll] = useState(false);
   const [regeneratingCvs, setRegeneratingCvs] = useState(false);
   const [deepReasoningReport, setDeepReasoningReport] = useState<{ markdown: string; createdAt: string } | null>(null);
   const [loadingDeepReasoning, setLoadingDeepReasoning] = useState(false);
@@ -988,7 +989,11 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
   async function handleBatchApproveAll() {
     const pending = tender.generatedDocuments.filter((d) => d.reviewStatus !== "READY_FOR_EXPORT" && d.generationStatus === "GENERATED").length;
     if (pending === 0) { setToast({ message: "All generated documents are already ready for export.", type: "success" }); return; }
-    if (!confirm(`Mark all ${pending} generated document(s) as Ready for Export? Use this only after reviewing the package for correctness.`)) return;
+    setConfirmApproveAll(true);
+  }
+
+  async function executeBatchApproveAll() {
+    setConfirmApproveAll(false);
     setBatchApproving(true);
     try {
       const res = await fetch(`/api/tenders/${tender.id}/documents/bulk-review`, {
@@ -2027,13 +2032,30 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
           )}
 
           <div id="generated-documents" className="rounded-2xl border bg-white p-6 shadow-sm">
+            {confirmApproveAll && (
+              <div className="mb-3 rounded-lg border border-emerald-300 bg-emerald-50 px-4 py-3 flex flex-wrap items-center gap-3 text-sm">
+                <span className="text-emerald-800 font-medium">Mark all generated documents as Ready for Export?</span>
+                <button
+                  onClick={() => void executeBatchApproveAll()}
+                  className="rounded bg-emerald-600 px-3 py-1 text-xs font-medium text-white hover:bg-emerald-700"
+                >
+                  Confirm
+                </button>
+                <button
+                  onClick={() => setConfirmApproveAll(false)}
+                  className="rounded border border-slate-300 px-3 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"
+                >
+                  Cancel
+                </button>
+              </div>
+            )}
             <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
               <h2 className="text-lg font-semibold text-slate-900">Generated outputs</h2>
               <div className="flex items-center gap-2">
                 {tender.generatedDocuments.some((d) => d.generationStatus === "GENERATED" && d.reviewStatus !== "READY_FOR_EXPORT") && (
                   <button
                     onClick={() => void handleBatchApproveAll()}
-                    disabled={batchApproving}
+                    disabled={batchApproving || confirmApproveAll}
                     className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
                     title="Mark all generated documents as Ready for Export in one action"
                   >
