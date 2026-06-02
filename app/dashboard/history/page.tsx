@@ -37,7 +37,7 @@ export default async function HistoryPage({ searchParams }: { searchParams: Prom
     orderBy: { createdAt: "desc" },
   });
 
-  const STATUSES = ["ALL","DRAFT","INTAKE","ANALYZED","MATCHED","COMPLIANCE_REVIEW","GENERATED","APPROVED","EXPORTED","CLOSED"];
+  const STATUSES = ["ALL","DRAFT","INTAKE","ANALYZED","AI_ANALYZED","AI_ANALYSIS_PARTIAL","FALLBACK_DRAFT_CREATED","ANALYSIS_REQUIRES_REVIEW","MATCHED","COMPLIANCE_REVIEW","GENERATED","APPROVED","EXPORTED","CLOSED"];
 
   return (
     <div className="space-y-5">
