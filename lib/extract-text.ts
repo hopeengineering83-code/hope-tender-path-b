@@ -325,8 +325,10 @@ async function extractPdf(buffer: Buffer): Promise<string> {
     console.info(`[extract-text] PDF has no text layer (${pages} pages) — running Claude vision OCR fallback (default-on, set PDF_OCR_ENABLED=false to disable).`);
     const ocrText = await extractPdfWithClaudeVision(buffer, pages);
     if (ocrText && ocrText.length >= 20) {
-      const normalized = normalizeExtractedText(ocrText);
-      return normalizeExtractedText(`[PDF text extracted via Claude vision OCR — ${pages} page(s).]\n\n${normalized}`);
+      // Normalize once on the fully assembled string. Calling normalizeExtractedText
+      // twice (once on ocrText, once on the prefixed string) would silently truncate
+      // ~58 chars of OCR content when the output is near the 500 K char limit.
+      return normalizeExtractedText(`[PDF text extracted via Claude vision OCR — ${pages} page(s).]\n\n${ocrText.trim()}`);
     }
     console.warn("[extract-text] Claude vision OCR returned empty — returning scanned-PDF placeholder.");
   }

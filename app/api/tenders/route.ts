@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { prisma, prismaReady } from "../../../lib/prisma";
 import { getSession } from "../../../lib/auth";
+import { logAction } from "../../../lib/audit";
+import { API_RATE_LIMIT, MUTATION_RATE_LIMIT, rateLimit } from "../../../lib/rate-limit";
 import { parseTenderStatus } from "../../../lib/tender-workflow";
 import { cleanClientName, cleanTenderTitle } from "../../../lib/engine/proposal-labels";
 
@@ -8,6 +10,15 @@ export async function GET(req: Request) {
   const userId = await getSession();
   if (!userId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const rl = rateLimit(`tender-list:${userId}`, API_RATE_LIMIT);
+  if (!rl.allowed) {
+    const retryAfter = Math.ceil((rl.resetAt - Date.now()) / 1000);
+    return NextResponse.json(
+      { error: "Rate limit exceeded", retryAfter },
+      { status: 429, headers: { "Retry-After": String(retryAfter) } },
+    );
   }
 
   await prismaReady;
@@ -28,7 +39,7 @@ export async function GET(req: Request) {
       // Exclude fileContent / base64 fields to keep response small
       files: {
         orderBy: { createdAt: "desc" },
-        select: { id: true, fileName: true, originalFileName: true, mimeType: true, size: true, classification: true, extractedText: true, createdAt: true },
+        select: { id: true, fileName: true, originalFileName: true, mimeType: true, size: true, classification: true, createdAt: true },
       },
       requirements: { select: { id: true, title: true, requirementType: true, priority: true, createdAt: true } },
       complianceGaps: { select: { id: true, title: true, severity: true, isResolved: true } },
@@ -55,15 +66,30 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  const rl = rateLimit(`tender-create:${userId}`, MUTATION_RATE_LIMIT);
+  if (!rl.allowed) {
+    return NextResponse.json({ error: "Too many tender creation requests. Wait and retry.", retryAfter: Math.ceil((rl.resetAt - Date.now()) / 1000) }, { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } });
+  }
+
   await prismaReady;
 
   try {
-    const body = await req.json();
+    const body = await req.json().catch(() => null);
+    if (!body) return NextResponse.json({ error: "Request body must be valid JSON" }, { status: 400 });
     if (!body.title || String(body.title).trim().length === 0) {
       return NextResponse.json({ error: "title is required" }, { status: 400 });
     }
-    if (body.budget !== undefined && body.budget !== null && parseFloat(body.budget) < 0) {
-      return NextResponse.json({ error: "budget cannot be negative" }, { status: 400 });
+    if (String(body.title).trim().length > 500) {
+      return NextResponse.json({ error: "title must be 500 characters or fewer" }, { status: 400 });
+    }
+    if (body.description && String(body.description).length > 10_000) {
+      return NextResponse.json({ error: "description must be 10,000 characters or fewer" }, { status: 400 });
+    }
+    if (body.budget !== undefined && body.budget !== null) {
+      const parsedBudget = parseFloat(body.budget);
+      if (!Number.isFinite(parsedBudget) || parsedBudget < 0 || parsedBudget > 1e12) {
+        return NextResponse.json({ error: "budget must be a finite number between 0 and 1,000,000,000,000" }, { status: 400 });
+      }
     }
     const intakeSummary = body.intakeSummary || body.requirements || null;
     const cleanClient = cleanClientName(body.clientName, body.description || intakeSummary || body.title);
@@ -88,11 +114,20 @@ export async function POST(req: Request) {
         userId,
       },
       include: {
-        files: { select: { id: true, fileName: true, originalFileName: true, mimeType: true, size: true, classification: true, extractedText: true, createdAt: true } },
+        files: { select: { id: true, fileName: true, originalFileName: true, mimeType: true, size: true, classification: true, createdAt: true } },
         requirements: true,
         complianceGaps: true,
         generatedDocuments: { select: { id: true, name: true, documentType: true, generationStatus: true, validationStatus: true, reviewStatus: true, exactFileName: true, exactOrder: true } },
       },
+    });
+
+    await logAction({
+      userId,
+      action: "TENDER_CREATE",
+      entityType: "Tender",
+      entityId: tender.id,
+      description: `Tender "${tender.title}" created`,
+      metadata: { tenderId: tender.id, clientName: tender.clientName, category: tender.category },
     });
 
     return NextResponse.json(tender, { status: 201 });

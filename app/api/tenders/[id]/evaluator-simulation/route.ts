@@ -11,6 +11,17 @@ import { extractDeepTenderComprehension } from "../../../../../lib/engine/evalua
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
 
+function inferObjectionCategory(persona: string, detail: string): string {
+  const d = detail.toLowerCase();
+  const p = persona.toLowerCase();
+  if (/compliance|declaration|eligib|certif|missing.*form|required.*document/.test(d)) return "COMPLIANCE_GAP";
+  if (/evidence|expert|project.*reference|past.*performance|cv|qualification|experience/.test(d)) return "EVIDENCE_GAP";
+  if (/criterion|scoring|evaluation|criterion.*miss|not.*addressed|not.*covered/.test(d)) return "EVAL_CRITERION_MISS";
+  if (/price|cost|budget|financial|commercial|value/.test(d) || p === "commercial") return "PRICING_GAP";
+  if (/incorrect|wrong|inaccur|contradict|fact/.test(d)) return "FACT_ERROR";
+  return "OTHER";
+}
+
 function short(value: string | null | undefined, max = 420): string {
   const clean = (value ?? "").replace(/\s+/g, " ").trim();
   return clean.length > max ? `${clean.slice(0, max - 1)}…` : clean;
@@ -42,17 +53,25 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   const { id } = await params;
   await prismaReady;
 
-  const tender = await prisma.tender.findFirst({
-    where: { id, userId: actor.id },
-    include: {
-      requirements: { orderBy: { createdAt: "asc" } },
-      complianceGaps: { where: { isResolved: false }, orderBy: { createdAt: "desc" } },
-      expertMatches: { where: { isSelected: true }, include: { expert: true }, orderBy: { score: "desc" } },
-      projectMatches: { where: { isSelected: true }, include: { project: true }, orderBy: { score: "desc" } },
-      generatedDocuments: { where: { generationStatus: { not: "SUPERSEDED" } }, orderBy: { exactOrder: "asc" } },
-    },
-  });
+  const [tender, latestProposalVersion] = await Promise.all([
+    prisma.tender.findFirst({
+      where: { id, userId: actor.id },
+      include: {
+        requirements: { orderBy: { createdAt: "asc" } },
+        complianceGaps: { where: { isResolved: false }, orderBy: { createdAt: "desc" } },
+        expertMatches: { where: { isSelected: true }, include: { expert: true }, orderBy: { score: "desc" } },
+        projectMatches: { where: { isSelected: true }, include: { project: true }, orderBy: { score: "desc" } },
+        generatedDocuments: { where: { generationStatus: { not: "SUPERSEDED" } }, orderBy: { exactOrder: "asc" } },
+      },
+    }),
+    prisma.proposalVersion.findFirst({
+      where: { tenderId: id },
+      orderBy: { version: "desc" },
+      select: { version: true },
+    }),
+  ]);
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
+  const currentProposalVersion = latestProposalVersion?.version ?? 1;
 
   const proposalContext = generatedDocTextFromTender(tender);
   if (!proposalContext || proposalContext.trim().length < 500) {
@@ -117,7 +136,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       ...tender.projectMatches.map((match) => `Project ${match.project.name}: ${short(match.rationale, 420)}`),
     ],
     readinessSummary: [
-      `Tender readiness=${Math.round(tender.readinessScore ?? 0)}/100; open gaps=${tender.complianceGaps.length}; selected experts=${tender.expertMatches.length}; selected projects=${tender.projectMatches.length}; documents=${tender.generatedDocuments.length}`,
+      `Tender workflowProgress=${Math.round(tender.readinessScore ?? 0)}/100; open gaps=${tender.complianceGaps.length}; selected experts=${tender.expertMatches.length}; selected projects=${tender.projectMatches.length}; documents=${tender.generatedDocuments.length}`,
       weakAxesSummary,
     ].filter(Boolean).join(" | "),
     sharedCriteria,
@@ -160,6 +179,27 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       actionPlan: result.actionPlan,
       riskRegister: result.riskRegister,
     },
+  });
+
+  // Persist evaluator objections so the EvaluatorObjectionsPanel can display
+  // and resolve them. Wrapped in a transaction so a concurrent re-run can't
+  // leave the table in a partially-cleared state. RESOLVED and WAIVED
+  // objections are preserved across re-runs.
+  await prisma.$transaction(async (tx) => {
+    await tx.evaluatorObjection.deleteMany({ where: { tenderId: id, status: "OPEN" } });
+    if (result.topObjections.length > 0) {
+      await tx.evaluatorObjection.createMany({
+        data: result.topObjections.map((o) => ({
+          tenderId: id,
+          proposalVersion: currentProposalVersion,
+          severity: o.severity,
+          category: inferObjectionCategory(o.persona, o.detail),
+          title: o.title.slice(0, 300),
+          description: `[${o.persona}] ${o.detail}`.slice(0, 2000),
+          status: "OPEN",
+        })),
+      });
+    }
   });
 
   await prisma.tender.update({

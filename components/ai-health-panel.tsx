@@ -1,14 +1,46 @@
+import {
+  getProviderRuntimeSnapshot,
+  isDeepSeekConfigured,
+  deepSeekOfficialEnvPresent,
+  getDeepSeekModel,
+  isMistralConfigured,
+  getMistralProposalModel,
+  getMistralAnalysisModel,
+  getMistralFastModel,
+  isGroqConfigured,
+  getGroqModel,
+  isTogetherConfigured,
+  getTogetherProposalModel,
+  getTogetherAnalysisModel,
+  getTogetherFastModel,
+  isOpenRouterConfigured,
+  getOpenRouterModel,
+  type ProviderRuntimeSnapshot,
+} from "../lib/ai-provider-health";
+import { AIHealthTestButton } from "./ai-health-test-button";
+
+const AI_FALLBACK_CHAIN = "Default: OpenAI → Gemini → Mistral → DeepSeek → Groq → Together → OpenRouter → Claude. Analysis: Gemini → OpenAI → Mistral → Together → DeepSeek → Groq → OpenRouter → Claude. Fast: Groq → Together → DeepSeek → Mistral → Gemini → OpenAI → OpenRouter → Claude. Claude remains last.";
+
+type ProviderCardData = {
+  key: string;
+  label: string;
+  rank: number;
+  configured: boolean;
+  model: string | null;
+  envVar: string;
+  note: string;
+  detail: string | null;
+  modelHint: string | null;
+  runtime: ProviderRuntimeSnapshot;
+};
+
 type AIHealthResponse = {
   success: boolean;
   preferredProvider: string;
   nextAction: string;
   blockers: string[];
   warnings: string[];
-  providers: {
-    claude: { configured: boolean; tier: string | null; proposalModels: string[]; maxOutputTokens: number | null };
-    gemini: { configured: boolean; primaryModel: string; fallbackModels: string[]; extractionModel: string | null };
-    openai: { configured: boolean; note: string };
-  };
+  providers: ProviderCardData[];
 };
 
 function present(value: string | undefined) {
@@ -20,88 +52,182 @@ function splitModels(value: string | undefined, fallback: string[]) {
   return models.length > 0 ? models : fallback;
 }
 
-function maskModelChain(models: string[]) {
-  return models.map((model) => model.replace(/\s+/g, " ").trim()).filter(Boolean);
-}
-
 function getAIHealth(): AIHealthResponse {
   const claudeConfigured = present(process.env.ANTHROPIC_API_KEY);
   const geminiConfigured = present(process.env.GEMINI_API_KEY);
   const openaiConfigured = present(process.env.OPENAI_API_KEY);
-  const preferredProvider = claudeConfigured ? "claude" : geminiConfigured ? "gemini" : openaiConfigured ? "openai" : "none";
+  const deepseekConfigured = isDeepSeekConfigured();
+  const mistralConfigured = isMistralConfigured();
+  const groqConfigured = isGroqConfigured();
+  const togetherConfigured = isTogetherConfigured();
+  const openRouterConfigured = isOpenRouterConfigured();
+
   const claudeModels = splitModels(process.env.ANTHROPIC_PROPOSAL_MODELS, ["claude-sonnet-4-5", "claude-opus-4-1", "claude-3-5-sonnet-latest", "claude-3-5-haiku-latest"]);
   const geminiModels = splitModels(process.env.GEMINI_FALLBACK_MODELS, ["gemini-2.5-flash", "gemini-2.0-flash"]);
+  const openRouterModel = getOpenRouterModel();
+
+  // Provider order IS the default fallback priority (rank 1..8). Claude is LAST so
+  // Anthropic rate limits do not block the app when other providers are available.
+  const providers: ProviderCardData[] = [
+    {
+      key: "openai", label: "OpenAI", rank: 1, configured: openaiConfigured, envVar: "OPENAI_API_KEY",
+      model: process.env.OPENAI_PROPOSAL_MODEL || "gpt-4o", note: "First-tier provider",
+      detail: null, modelHint: null, runtime: getProviderRuntimeSnapshot("openai"),
+    },
+    {
+      key: "gemini", label: "Gemini", rank: 2, configured: geminiConfigured, envVar: "GEMINI_API_KEY",
+      model: process.env.GEMINI_MODEL || "gemini-2.5-pro", note: "Second-tier provider (first for extraction)",
+      detail: `Fallback: ${geminiModels.slice(0, 2).join(", ") || "none"}`,
+      modelHint: null, runtime: getProviderRuntimeSnapshot("gemini"),
+    },
+    {
+      key: "mistral", label: "Mistral", rank: 3, configured: mistralConfigured, envVar: "MISTRAL_API_KEY",
+      model: getMistralProposalModel(), note: "Third-tier provider (also analysis/fast capable)",
+      detail: `Analysis: ${getMistralAnalysisModel()} · fast: ${getMistralFastModel()}`, modelHint: null,
+      runtime: getProviderRuntimeSnapshot("mistral"),
+    },
+    {
+      key: "deepseek", label: "DeepSeek", rank: 4, configured: deepseekConfigured, envVar: "DEEPSEEK_API_KEY",
+      model: getDeepSeekModel(), note: "Fourth-tier provider",
+      detail: deepseekConfigured && !deepSeekOfficialEnvPresent() ? "Enabled via alias env var — rename to DEEPSEEK_API_KEY." : null,
+      modelHint: null, runtime: getProviderRuntimeSnapshot("deepseek"),
+    },
+    {
+      key: "groq", label: "Groq", rank: 5, configured: groqConfigured, envVar: "GROQ_API_KEY",
+      model: getGroqModel(), note: "Fifth-tier default provider; first fast/cheap provider", detail: null, modelHint: null,
+      runtime: getProviderRuntimeSnapshot("groq"),
+    },
+    {
+      key: "together", label: "Together", rank: 6, configured: togetherConfigured, envVar: "TOGETHER_API_KEY",
+      model: getTogetherProposalModel(), note: "Sixth-tier default provider; second fast/cheap provider",
+      detail: `Analysis: ${getTogetherAnalysisModel()} · fast: ${getTogetherFastModel()}`, modelHint: null,
+      runtime: getProviderRuntimeSnapshot("together"),
+    },
+    {
+      key: "openrouter", label: "OpenRouter", rank: 7, configured: openRouterConfigured, envVar: "OPENROUTER_API_KEY",
+      model: openRouterModel, note: "Fifth-tier provider", detail: null,
+      modelHint: openRouterConfigured && openRouterModel === "openrouter/auto"
+        ? "Using openrouter/auto. Set OPENROUTER_PROPOSAL_MODEL to a model available in your OpenRouter account to pin it."
+        : null,
+      runtime: getProviderRuntimeSnapshot("openrouter"),
+    },
+    {
+      key: "claude", label: "Claude", rank: 8, configured: claudeConfigured, envVar: "ANTHROPIC_API_KEY",
+      model: claudeModels[0] ?? null, note: "Last-resort provider (placed last to avoid Anthropic rate-limit blocking)",
+      detail: `Tier ${process.env.ANTHROPIC_TIER ?? "not set"} · models ${claudeModels.slice(0, 2).join(", ") || "none"}`,
+      modelHint: null, runtime: getProviderRuntimeSnapshot("anthropic"),
+    },
+  ];
+
+  const anyConfigured = providers.some((p) => p.configured);
+  const preferredProvider = providers.find((p) => p.configured)?.key ?? "none";
+
   const warnings: string[] = [];
   const blockers: string[] = [];
-
-  if (!claudeConfigured && !geminiConfigured) blockers.push("No Claude or Gemini API key is configured. AI analysis/proposal quality will fall back or fail.");
+  if (!anyConfigured) {
+    blockers.push("No AI provider key is configured. Set OPENAI_API_KEY, GEMINI_API_KEY, MISTRAL_API_KEY, DEEPSEEK_API_KEY, GROQ_API_KEY, TOGETHER_API_KEY, OPENROUTER_API_KEY, or ANTHROPIC_API_KEY. Without one, only the deterministic fallback runs, which cannot be exported as final.");
+  }
   if (claudeConfigured && claudeModels.length === 0) warnings.push("Claude is configured but no Claude model chain was resolved.");
   if (geminiConfigured && !present(process.env.GEMINI_MODEL)) warnings.push("GEMINI_MODEL is not set; the app will use its built-in Gemini default.");
-  if (openaiConfigured) warnings.push("OPENAI_API_KEY is present, but this app currently uses Claude/Gemini for core tender generation unless OpenAI support is explicitly implemented.");
+  if (deepseekConfigured && !deepSeekOfficialEnvPresent()) warnings.push("DeepSeek is enabled via a fallback alias env var. Rename it to DEEPSEEK_API_KEY (the official variable) in Vercel.");
+  const cooling = providers.filter((p) => p.runtime.coolingDown).map((p) => p.label);
+  if (cooling.length > 0) warnings.push(`Provider(s) in cooldown: ${cooling.join(", ")}. Requests skip cooled-down providers until the window expires.`);
+
+  // Configured ≠ verified runtime. The pill must not claim READY purely
+  // because keys exist — the screenshot bug. Reflect three new states:
+  //  • ALL_PROVIDERS_COOLING — every configured provider is in cooldown;
+  //    AI Analyze cannot proceed until at least one window expires.
+  //  • RUNTIME_NOT_VERIFIED — keys present but no provider has produced
+  //    a successful response yet on this instance, so runtime is unknown.
+  //  • READY — at least one configured provider has a recorded success
+  //    and no warnings; only state worth a green pill.
+  const configuredProviders = providers.filter((p) => p.configured);
+  const anyHasRecentSuccess = configuredProviders.some((p) => p.runtime.lastSuccessAt);
+  const allConfiguredCooling = anyConfigured && configuredProviders.every((p) => p.runtime.coolingDown);
+  if (allConfiguredCooling) warnings.push("All configured AI providers are currently in cooldown. AI Analyze will fall back to regex (UNAPPROVED) until a provider's cooldown expires.");
+  if (anyConfigured && !anyHasRecentSuccess) warnings.push("AI providers are configured but no successful response has been recorded on this instance yet — runtime availability is not verified. Run AI Analyze or Generate Docs to confirm.");
+
+  const nextAction = blockers.length > 0
+    ? "CONFIGURE_AI_KEYS"
+    : allConfiguredCooling
+      ? "ALL_PROVIDERS_COOLING"
+      : !anyHasRecentSuccess
+        ? "RUNTIME_NOT_VERIFIED"
+        : warnings.length > 0
+          ? "REVIEW_AI_CONFIGURATION"
+          : "READY";
 
   return {
-    success: blockers.length === 0,
-    providers: {
-      claude: {
-        configured: claudeConfigured,
-        tier: process.env.ANTHROPIC_TIER || null,
-        proposalModels: maskModelChain(claudeModels),
-        maxOutputTokens: Number(process.env.ANTHROPIC_MAX_OUTPUT_TOKENS || 0) || null,
-      },
-      gemini: {
-        configured: geminiConfigured,
-        primaryModel: process.env.GEMINI_MODEL || "gemini-2.5-pro",
-        fallbackModels: maskModelChain(geminiModels),
-        extractionModel: process.env.GEMINI_EXTRACTION_MODEL || process.env.GEMINI_EXTRACT_MODEL || null,
-      },
-      openai: {
-        configured: openaiConfigured,
-        note: "Detected only. OpenAI is not the primary tender engine provider in the current code path.",
-      },
-    },
+    success: anyConfigured,
+    providers,
     preferredProvider,
     blockers,
     warnings,
-    nextAction: blockers.length > 0 ? "CONFIGURE_AI_KEYS" : warnings.length > 0 ? "REVIEW_AI_CONFIGURATION" : "READY",
+    nextAction,
   };
 }
 
-function statusPill(configured: boolean) {
-  return configured
-    ? <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700">Configured</span>
-    : <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-semibold text-red-700">Missing</span>;
+function ProviderCard({ p }: { p: ProviderCardData }) {
+  const pill = !p.configured
+    ? <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-semibold text-red-700">Not configured</span>
+    : p.runtime.coolingDown
+      ? <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">Rate-limited{p.runtime.cooldownUntil ? ` until ${new Date(p.runtime.cooldownUntil).toLocaleTimeString()}` : ""}</span>
+      : p.runtime.consecutiveFailures > 0
+        ? <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">Configured · failing</span>
+        : p.runtime.lastSuccessAt
+          ? <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700">Available</span>
+          : <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">Configured — not yet tested on this instance</span>;
+  const failing = p.configured && (p.runtime.coolingDown || p.runtime.consecutiveFailures > 0);
+  return (
+    <div className="rounded-xl bg-white p-3 shadow-sm">
+      <div className="flex items-center justify-between">
+        <p className="font-semibold text-slate-900">{p.label}</p>
+        {pill}
+      </div>
+      <p className="mt-1 text-[10px] uppercase tracking-wide text-slate-400">Fallback rank {p.rank}</p>
+      {!p.configured && <p className="mt-1 text-xs text-slate-600">Not configured — set {p.envVar} in Vercel Production environment.</p>}
+      {p.configured && <p className="mt-1 text-xs text-slate-600">Model: {p.model ?? "provider default"}</p>}
+      {p.configured && p.detail && <p className="mt-1 text-xs text-slate-500">{p.detail}</p>}
+      {p.configured && failing && !p.runtime.coolingDown && (
+        <p className="mt-1 text-xs text-amber-700">
+          Last response failed or returned empty{p.runtime.lastErrorCategory ? ` (${p.runtime.lastErrorCategory})` : ""}. Check {p.label} model access or retry after cooldown.
+        </p>
+      )}
+      {p.configured && p.modelHint && <p className="mt-1 text-xs text-slate-500">{p.modelHint}</p>}
+      {p.configured && !p.runtime.lastSuccessAt && !p.runtime.coolingDown && p.runtime.consecutiveFailures === 0 && (
+        <p className="mt-1 text-xs text-slate-400">Providers are tested automatically when AI Analyze or proposal generation is first run.</p>
+      )}
+    </div>
+  );
 }
 
 export async function AIHealthPanel() {
   const health = getAIHealth();
-  const ok = health.success;
+  // Header tone follows the same trichotomy as the pill so the panel never
+  // reads "all green" while runtime is unverified or every provider is cooling.
+  const verified = health.nextAction === "READY";
+  const degraded = health.nextAction === "RUNTIME_NOT_VERIFIED" || health.nextAction === "REVIEW_AI_CONFIGURATION" || health.nextAction === "ALL_PROVIDERS_COOLING";
+  const sectionTone = verified ? "border-emerald-200 bg-emerald-50" : degraded ? "border-amber-200 bg-amber-50" : "border-red-200 bg-red-50";
+  const labelTone = verified ? "text-emerald-700" : degraded ? "text-amber-700" : "text-red-700";
+  const pillTone = verified ? "bg-emerald-100 text-emerald-800" : degraded ? "bg-amber-100 text-amber-800" : "bg-red-100 text-red-800";
   return (
-    <section className={`mb-4 rounded-2xl border p-5 shadow-sm ${ok ? "border-emerald-200 bg-emerald-50" : "border-red-200 bg-red-50"}`}>
+    <section className={`mb-4 rounded-2xl border p-5 shadow-sm ${sectionTone}`}>
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
         <div>
-          <p className={`text-xs font-semibold uppercase tracking-wide ${ok ? "text-emerald-700" : "text-red-700"}`}>AI provider health</p>
+          <p className={`text-xs font-semibold uppercase tracking-wide ${labelTone}`}>AI provider health</p>
           <h2 className="mt-1 text-lg font-bold text-slate-900">Preferred provider: {health.preferredProvider}</h2>
-          <p className="mt-1 max-w-3xl text-sm text-slate-600">Shows whether Claude/Gemini keys and model chains are available before running AI Analyze, Run Engine, or Generate Docs. Secret values are never displayed.</p>
+          <p className="mt-1 max-w-3xl text-sm text-slate-600">Shows whether the OpenAI, Gemini, Mistral, DeepSeek, Groq, Together, OpenRouter, and Claude keys are configured AND whether at least one provider has produced a successful response on this instance. &ldquo;Configured&rdquo; alone does not guarantee runtime availability. Secret values are never displayed.</p>
         </div>
-        <span className={`rounded-full px-3 py-1 text-xs font-bold ${ok ? "bg-emerald-100 text-emerald-800" : "bg-red-100 text-red-800"}`}>{health.nextAction.replace(/_/g, " ")}</span>
+        <span className={`rounded-full px-3 py-1 text-xs font-bold ${pillTone}`}>{health.nextAction.replace(/_/g, " ")}</span>
       </div>
 
-      <div className="mt-4 grid gap-3 lg:grid-cols-3">
-        <div className="rounded-xl bg-white p-3 shadow-sm">
-          <div className="flex items-center justify-between"><p className="font-semibold text-slate-900">Claude</p>{statusPill(health.providers.claude.configured)}</div>
-          <p className="mt-2 text-xs text-slate-600">Tier: {health.providers.claude.tier ?? "not set"}</p>
-          <p className="mt-1 text-xs text-slate-600">Models: {health.providers.claude.proposalModels.slice(0, 3).join(", ") || "none"}</p>
-        </div>
-        <div className="rounded-xl bg-white p-3 shadow-sm">
-          <div className="flex items-center justify-between"><p className="font-semibold text-slate-900">Gemini</p>{statusPill(health.providers.gemini.configured)}</div>
-          <p className="mt-2 text-xs text-slate-600">Primary: {health.providers.gemini.primaryModel}</p>
-          <p className="mt-1 text-xs text-slate-600">Fallback: {health.providers.gemini.fallbackModels.slice(0, 2).join(", ") || "none"}</p>
-        </div>
-        <div className="rounded-xl bg-white p-3 shadow-sm">
-          <div className="flex items-center justify-between"><p className="font-semibold text-slate-900">OpenAI</p>{statusPill(health.providers.openai.configured)}</div>
-          <p className="mt-2 text-xs text-slate-600">{health.providers.openai.note}</p>
-        </div>
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {health.providers.map((p) => <ProviderCard key={p.key} p={p} />)}
       </div>
+
+      <p className="mt-3 text-xs text-slate-500">Fallback chain: {AI_FALLBACK_CHAIN}</p>
+
+      <AIHealthTestButton />
 
       {(health.blockers.length > 0 || health.warnings.length > 0) && (
         <div className="mt-4 grid gap-3 lg:grid-cols-2">

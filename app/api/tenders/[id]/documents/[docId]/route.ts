@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma, prismaReady } from "../../../../../../lib/prisma";
 import { requireUser, unauthorizedResponse, forbiddenResponse } from "../../../../../../lib/auth";
 import { logAction } from "../../../../../../lib/audit";
+import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../../../lib/rate-limit";
 
 // Per-document review action endpoint (PR #247).
 //
@@ -34,26 +35,56 @@ export async function GET(
   const { id: tenderId, docId } = await params;
   await prismaReady;
 
-  const doc = await prisma.generatedDocument.findFirst({
-    where: { id: docId, tenderId },
-    include: {
-      reviews: {
-        orderBy: { createdAt: "desc" },
-        include: { reviewer: { select: { id: true, name: true, email: true, role: true } } },
-      },
-      comments: {
-        where: { parentId: null },
-        orderBy: { createdAt: "asc" },
-        include: {
-          author: { select: { id: true, name: true, email: true, role: true } },
-          replies: {
-            orderBy: { createdAt: "asc" },
-            include: { author: { select: { id: true, name: true, email: true, role: true } } },
+  // Attempt to fetch with full reviews + comments include. If the DB was
+  // created from the old bootstrap (which used generatedDocumentId instead of
+  // documentId), Prisma will throw a "column does not exist" error. In that
+  // case we fall back to a bare findFirst and return empty arrays so the rest
+  // of the UI still works while the admin runs ?step=schema-drift to repair
+  // the production DB.
+  let doc: Awaited<ReturnType<typeof prisma.generatedDocument.findFirst>> & {
+    reviews?: unknown[];
+    comments?: unknown[];
+  } | null = null;
+  let reviews: unknown[] = [];
+  let comments: unknown[] = [];
+
+  try {
+    const result = await prisma.generatedDocument.findFirst({
+      where: { id: docId, tenderId },
+      include: {
+        reviews: {
+          orderBy: { createdAt: "desc" },
+          include: { reviewer: { select: { id: true, name: true, email: true, role: true } } },
+        },
+        comments: {
+          where: { parentId: null },
+          orderBy: { createdAt: "asc" },
+          include: {
+            author: { select: { id: true, name: true, email: true, role: true } },
+            replies: {
+              orderBy: { createdAt: "asc" },
+              include: { author: { select: { id: true, name: true, email: true, role: true } } },
+            },
           },
         },
       },
-    },
-  });
+    });
+    if (result) {
+      doc = result;
+      reviews = (result as { reviews?: unknown[] }).reviews ?? [];
+      comments = (result as { comments?: unknown[] }).comments ?? [];
+    }
+  } catch (err) {
+    // Schema drift: old DB has generatedDocumentId column instead of documentId.
+    // Retry without the broken includes so callers still get the document fields.
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes("documentId") || msg.includes("does not exist") || msg.includes("column")) {
+      doc = await prisma.generatedDocument.findFirst({ where: { id: docId, tenderId } });
+      // reviews and comments stay as empty arrays — run ?step=schema-drift to fix
+    } else {
+      throw err;
+    }
+  }
 
   if (!doc) return NextResponse.json({ error: "Document not found" }, { status: 404 });
 
@@ -66,8 +97,8 @@ export async function GET(
       reviewedBy: doc.reviewedBy,
       reviewedAt: doc.reviewedAt,
     },
-    reviews: doc.reviews,
-    comments: doc.comments,
+    reviews,
+    comments,
   });
 }
 
@@ -86,8 +117,13 @@ export async function PUT(
   const canReview = ["ADMIN", "PROPOSAL_MANAGER", "REVIEWER"].includes(actor.role);
   if (!canReview) return forbiddenResponse();
 
+  const rl = rateLimit(`doc-review:${actor.id}`, MUTATION_RATE_LIMIT);
+  if (!rl.allowed) return NextResponse.json({ error: "Too many requests", retryAfter: Math.ceil((rl.resetAt - Date.now()) / 1000) }, { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } });
+
   const { id: tenderId, docId } = await params;
-  const { reviewStatus, reviewNotes, reviewAction } = await req.json() as {
+  const rawBody = await req.json().catch(() => null);
+  if (!rawBody) return NextResponse.json({ error: "Request body must be valid JSON" }, { status: 400 });
+  const { reviewStatus, reviewNotes, reviewAction } = rawBody as {
     reviewStatus?: string;
     reviewNotes?: string;
     // Optional explicit action label (APPROVED / REJECTED / CHANGES_REQUESTED

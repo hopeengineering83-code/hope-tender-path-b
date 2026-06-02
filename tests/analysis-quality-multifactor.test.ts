@@ -129,3 +129,68 @@ describe("analysis-quality — sub-scores are populated", () => {
     assert.ok(typeof report.subScores.sourceGrounding === "number");
   });
 });
+
+describe("analysis-quality — regex fallback score cap", () => {
+  it("caps score at 45 when analysisSource is REGEX_FALLBACK_AI_ERROR", () => {
+    const report = assessTenderAnalysisQuality({
+      requirements: goodRequirements(12),
+      evaluationMethodology: "Technical 70%, Financial 30% — full scoring matrix.",
+      submissionNotes: "Submit by email with exact filenames.",
+      clientName: "World Bank Ethiopia",
+      referenceNumber: "ETH-WB-2024-001",
+      country: "Ethiopia",
+      matchingScore: 80,
+      analysisSource: "REGEX_FALLBACK_AI_ERROR",
+    });
+    assert.ok(report.isRegexFallback, "isRegexFallback should be true");
+    assert.ok(report.score <= 45, `Expected score <= 45 for regex fallback, got ${report.score}`);
+    assert.ok(report.warnings.some((w) => /regex.*(fallback|cap)|cap.*regex/i.test(w)), `Expected regex fallback warning, got: ${JSON.stringify(report.warnings)}`);
+  });
+
+  it("caps score at 45 when analysisSource is DETERMINISTIC_FALLBACK", () => {
+    const report = assessTenderAnalysisQuality({
+      requirements: goodRequirements(12),
+      evaluationMethodology: "Technical 70%, Financial 30%",
+      submissionNotes: "Submit by email.",
+      analysisSource: "DETERMINISTIC_FALLBACK",
+    });
+    assert.ok(report.isRegexFallback, "isRegexFallback should be true for DETERMINISTIC_FALLBACK");
+    assert.ok(report.score <= 45, `Expected score <= 45, got ${report.score}`);
+  });
+
+  it("does NOT cap score when analysisSource is AI", () => {
+    const report = assessTenderAnalysisQuality({
+      requirements: goodRequirements(12),
+      evaluationMethodology: "Technical 70%, Financial 30%",
+      submissionNotes: "Submit by email.",
+      analysisSource: "AI",
+    });
+    assert.equal(report.isRegexFallback, false, "isRegexFallback should be false for AI source");
+    assert.ok(report.score > 45, `Expected score > 45 for AI-analyzed tender, got ${report.score}`);
+  });
+
+  it("does NOT cap score when analysisSource is omitted (legacy callers)", () => {
+    const report = assessTenderAnalysisQuality({
+      requirements: goodRequirements(12),
+      evaluationMethodology: "Technical 70%, Financial 30%",
+      submissionNotes: "Submit by email.",
+    });
+    assert.equal(report.isRegexFallback, false, "isRegexFallback should be false when analysisSource omitted");
+    assert.ok(report.score > 45, `Expected uncapped score for legacy callers without analysisSource, got ${report.score}`);
+  });
+
+  it("severity is POOR under regex fallback even with otherwise healthy analysis", () => {
+    const report = assessTenderAnalysisQuality({
+      requirements: goodRequirements(15),
+      evaluationMethodology: "Technical 70%, Financial 30% — full matrix.",
+      submissionNotes: "Submit via email by deadline. Exact filenames required.",
+      clientName: "World Bank",
+      referenceNumber: "WB-2024-001",
+      country: "Ethiopia",
+      matchingScore: 90,
+      analysisSource: "REGEX_FALLBACK_AI_ERROR",
+    });
+    assert.ok(report.score <= 45);
+    assert.equal(report.severity, "POOR", `Expected POOR severity under regex fallback, got ${report.severity}`);
+  });
+});

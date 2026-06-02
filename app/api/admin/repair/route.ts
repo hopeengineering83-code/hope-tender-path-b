@@ -6,6 +6,9 @@ import { importCompanyKnowledgeFromDocuments } from "../../../../lib/company-kno
 import { cleanTenderTitle, cleanClientName } from "../../../../lib/engine/proposal-labels";
 import { getStorageAdapter } from "../../../../lib/storage";
 
+export const maxDuration = 60;
+export const dynamic = "force-dynamic";
+
 /**
  * POST /api/admin/repair
  * Full repair workflow:
@@ -18,7 +21,14 @@ import { getStorageAdapter } from "../../../../lib/storage";
  *   ?step=import       — only run import (skip re-extraction)
  *   ?step=labels       — clean tender titles and client names for all tenders
  *   ?step=requirements — clear false-positive expert/project quantities (e.g. "Section 29 Expert")
- *   ?step=all (default) — extract + import (labels/requirements must be run separately)
+ *   ?step=appsettings  — ensure AppSettings row exists for every Company (safe after new DB)
+ *   ?step=prune-superseded — delete GeneratedDocument rows with generationStatus=SUPERSEDED older than
+ *                            ?cutoffDays (default 7). Frees DB transfer. Never deletes active docs.
+ *   ?step=schema-drift     — idempotent ALTER TABLE SQL that adds correct column names to DocumentReview
+ *                            and DocumentComment tables created by the old bootstrap (which used
+ *                            generatedDocumentId/reviewNotes/reviewStatus instead of documentId/notes/action).
+ *                            Safe to run multiple times. Copies data from old columns to new ones.
+ *   ?step=all (default) — extract + import + appsettings (labels/requirements/prune must be run separately)
  */
 export async function POST(req: Request) {
   let actor;
@@ -29,10 +39,11 @@ export async function POST(req: Request) {
     return msg === "Forbidden" ? forbiddenResponse() : unauthorizedResponse();
   }
 
-  await prismaReady;
-
   const { searchParams } = new URL(req.url);
   const step = searchParams.get("step") ?? "all";
+
+  try {
+  await prismaReady;
 
   const company = await prisma.company.findUnique({ where: { userId: actor.id } });
   if (!company) return NextResponse.json({ error: "Company not found. Create your company profile first." }, { status: 404 });
@@ -43,6 +54,9 @@ export async function POST(req: Request) {
     import: null as null | { docsProcessed: number; expertsCreated: number; projectsCreated: number; aiUsed: boolean; aiFailures: number },
     labels: null as null | { total: number; updated: number; details: Array<{ id: string; before: string; after: string }> },
     requirements: null as null | { scanned: number; cleared: number },
+    appsettings: null as null | { ensured: number },
+    pruneSuperseded: null as null | { deleted: number; cutoffDays: number },
+    schemaDrift: null as null | { repairs: string[] },
     timestamp: new Date().toISOString(),
   };
 
@@ -55,8 +69,13 @@ export async function POST(req: Request) {
 
     let success = 0, failed = 0, skipped = 0;
     const details: Array<{ name: string; chars: number; status: string; error?: string }> = [];
+    const deadline = Date.now() + 45_000; // leave headroom before 60s maxDuration
 
     for (const doc of docs) {
+      if (Date.now() > deadline) {
+        details.push({ name: "…aborted", chars: 0, status: "timeout", error: "Deadline reached — run again to process remaining documents" });
+        break;
+      }
       if (!doc.fileContent && !doc.storagePath) { skipped++; continue; }
       try {
         let buffer: Buffer;
@@ -161,5 +180,94 @@ export async function POST(req: Request) {
     results.requirements = { scanned: allReqs, cleared: oversized.length };
   }
 
+  // ── Step 5: Ensure AppSettings row exists for every Company ──────────────
+  // After switching to a new Neon DB, existing companies may have no AppSettings
+  // row. This creates one with safe defaults so branding/export settings work.
+  if (step === "appsettings" || step === "all") {
+    const companies = await prisma.company.findMany({ select: { id: true } });
+    let ensured = 0;
+    for (const co of companies) {
+      await prisma.appSettings.upsert({
+        where: { companyId: co.id },
+        update: {},
+        create: {
+          companyId: co.id,
+          defaultCurrency: "USD",
+          aiStrictMode: true,
+          allowBrandingDefault: true,
+          allowSignatureDefault: true,
+          allowStampDefault: true,
+          exportFormat: "DOCX",
+          pageNumbering: true,
+          includeTableOfContents: false,
+          language: "en",
+        },
+      });
+      ensured++;
+    }
+    results.appsettings = { ensured };
+  }
+
+  // ── Step 6: Schema-drift repair ──────────────────────────────────────────
+  if (step === "schema-drift") {
+    const repairs: string[] = [];
+    const sqlSteps = [
+      // DocumentReview: add correct columns if missing (old bootstrap used wrong names)
+      `ALTER TABLE "DocumentReview" ADD COLUMN IF NOT EXISTS "documentId" TEXT`,
+      `ALTER TABLE "DocumentReview" ADD COLUMN IF NOT EXISTS "reviewerId" TEXT`,
+      `ALTER TABLE "DocumentReview" ADD COLUMN IF NOT EXISTS "action" TEXT`,
+      `ALTER TABLE "DocumentReview" ADD COLUMN IF NOT EXISTS "notes" TEXT`,
+      `ALTER TABLE "DocumentReview" ADD COLUMN IF NOT EXISTS "priorStatus" TEXT`,
+      `ALTER TABLE "DocumentReview" ADD COLUMN IF NOT EXISTS "newStatus" TEXT`,
+      // Copy data from old column names to new ones (idempotent)
+      `UPDATE "DocumentReview" SET "documentId" = "generatedDocumentId" WHERE "documentId" IS NULL AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='DocumentReview' AND column_name='generatedDocumentId')`,
+      `UPDATE "DocumentReview" SET "notes" = "reviewNotes" WHERE "notes" IS NULL AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='DocumentReview' AND column_name='reviewNotes')`,
+      `UPDATE "DocumentReview" SET "action" = "reviewStatus" WHERE "action" IS NULL AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='DocumentReview' AND column_name='reviewStatus')`,
+      // DocumentComment: same fix
+      `ALTER TABLE "DocumentComment" ADD COLUMN IF NOT EXISTS "documentId" TEXT`,
+      `ALTER TABLE "DocumentComment" ADD COLUMN IF NOT EXISTS "authorId" TEXT`,
+      `UPDATE "DocumentComment" SET "documentId" = "generatedDocumentId" WHERE "documentId" IS NULL AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='DocumentComment' AND column_name='generatedDocumentId')`,
+      // Correct indexes
+      `CREATE INDEX IF NOT EXISTS "DocumentReview_documentId_createdAt_idx" ON "DocumentReview"("documentId", "createdAt")`,
+      `CREATE INDEX IF NOT EXISTS "DocumentReview_reviewerId_idx" ON "DocumentReview"("reviewerId")`,
+      `CREATE INDEX IF NOT EXISTS "DocumentComment_documentId_idx" ON "DocumentComment"("documentId")`,
+    ];
+    for (const sql of sqlSteps) {
+      try {
+        await prisma.$executeRawUnsafe(sql);
+        repairs.push(`OK: ${sql.slice(0, 80)}`);
+      } catch (err) {
+        repairs.push(`SKIP: ${sql.slice(0, 80)} — ${err instanceof Error ? err.message.slice(0, 100) : String(err)}`);
+      }
+    }
+    results.schemaDrift = { repairs };
+  }
+
+  // ── Step 7: Prune SUPERSEDED generated documents ─────────────────────────
+  if (step === "prune-superseded") {
+    const cutoffDays = Math.max(1, parseInt(searchParams.get("cutoffDays") ?? "7", 10) || 7);
+    const cutoffDate = new Date(Date.now() - cutoffDays * 24 * 60 * 60 * 1000);
+    const tenderIds = (await prisma.tender.findMany({ where: { userId: actor.id }, select: { id: true } })).map((t) => t.id);
+    const { count } = await prisma.generatedDocument.deleteMany({
+      where: {
+        tenderId: { in: tenderIds },
+        generationStatus: "SUPERSEDED",
+        updatedAt: { lt: cutoffDate },
+      },
+    });
+    results.pruneSuperseded = { deleted: count, cutoffDays };
+  }
+
   return NextResponse.json(results);
+  } catch (error) {
+    console.error("Admin repair route error:", error);
+    const raw = error instanceof Error ? error.message : "Repair failed";
+    const safe = raw
+      .replace(/sk-[a-zA-Z0-9_-]{10,}/g, "[KEY_REDACTED]")
+      .replace(/AIza[a-zA-Z0-9_-]{30,}/g, "[KEY_REDACTED]")
+      .replace(/Bearer\s+[a-zA-Z0-9._-]{10,}/gi, "Bearer [REDACTED]")
+      .replace(/postgres(?:ql)?:\/\/[^\s"']+/gi, "[DB_URL_REDACTED]")
+      .slice(0, 300);
+    return NextResponse.json({ error: safe, step }, { status: 500 });
+  }
 }

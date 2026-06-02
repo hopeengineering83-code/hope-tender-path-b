@@ -13,6 +13,7 @@
 import { NextResponse } from "next/server";
 import { getSession, requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../../lib/prisma";
+import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../../../lib/rate-limit";
 
 export const dynamic = "force-dynamic";
 
@@ -38,16 +39,16 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
   let actor;
   try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER"); }
   catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
-  const userId = actor.id;
+
+  const rl = rateLimit(`version-delete:${actor.id}`, MUTATION_RATE_LIMIT);
+  if (!rl.allowed) return NextResponse.json({ error: "Too many requests", retryAfter: Math.ceil((rl.resetAt - Date.now()) / 1000) }, { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } });
 
   await prismaReady;
   const { id, versionId } = await params;
 
-  const tender = await prisma.tender.findFirst({ where: { id, userId }, select: { id: true } });
-  if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
-
-  // PR XX-A — typed delete; deleteMany is safer than delete because it
-  // doesn't throw when the row already vanished (idempotent).
+  // ADMIN/PROPOSAL_MANAGER can delete any version; ownership check omitted for
+  // privileged roles. Still scope the delete to the correct tender to avoid
+  // cross-tenant mutations.
   await prisma.proposalVersion.deleteMany({
     where: { id: versionId, tenderId: id },
   });
@@ -63,14 +64,17 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   let actor;
   try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER"); }
   catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
-  const userId = actor.id;
+
+  const rl = rateLimit(`version-restore:${actor.id}`, MUTATION_RATE_LIMIT);
+  if (!rl.allowed) return NextResponse.json({ error: "Too many requests", retryAfter: Math.ceil((rl.resetAt - Date.now()) / 1000) }, { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } });
 
   await prismaReady;
   const { id, versionId } = await params;
   const body = await req.json().catch(() => ({} as Record<string, unknown>));
   if (body.action !== "restore") return NextResponse.json({ error: "Unsupported action. Send { action: \"restore\" }." }, { status: 400 });
 
-  const tender = await prisma.tender.findFirst({ where: { id, userId }, select: { id: true } });
+  // Verify the tender exists (no userId scope — ADMIN/PROPOSAL_MANAGER can restore any tender).
+  const tender = await prisma.tender.findFirst({ where: { id }, select: { id: true } });
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
 
   // PR XX-A — typed access via Prisma model.
@@ -96,6 +100,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         fileContent: v.fileContent ?? existing.fileContent,
         contentSummary: `[Restored from version ${v.version}] ${v.summary ?? ""}`.slice(0, 500),
         generationStatus: "GENERATED",
+        // Reset quality gate fields: restoring an old snapshot may bring back
+        // stale content, so both status fields must be re-evaluated before the
+        // document can be marked READY_FOR_EXPORT again.
         validationStatus: "PENDING",
         reviewStatus: "PENDING",
         updatedAt: new Date(),

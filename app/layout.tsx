@@ -33,7 +33,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         {children}
         <script
           dangerouslySetInnerHTML={{
-            __html: `if('serviceWorker' in navigator){window.addEventListener('load',function(){navigator.serviceWorker.register('/sw.js').catch(function(){});})}`,
+            __html: `if('serviceWorker' in navigator){window.addEventListener('load',function(){navigator.serviceWorker.getRegistrations().then(function(registrations){registrations.forEach(function(reg){reg.unregister().catch(function(){});});}).catch(function(){});if(window.caches&&caches.keys){caches.keys().then(function(keys){keys.forEach(function(key){caches.delete(key).catch(function(){});});}).catch(function(){});}})}`,
           }}
         />
       </body>

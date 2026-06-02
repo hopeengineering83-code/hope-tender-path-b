@@ -45,7 +45,23 @@ import {
   isValidReferenceNumber,
   isValidCountry,
   isValidClientContact,
+  containsMetadataPlaceholder,
 } from "./metadata-validators";
+
+/**
+ * Wraps a validator so any value containing an internal placeholder
+ * ("Bid-Team to confirm", "TBC", "placeholder", …) is rejected even if
+ * the validator would otherwise accept it. The screenshot regression
+ * showed "Bid-Team to confirm" leaking from metadata into the generated
+ * cover letter because the field passed the basic validator. This
+ * defends against that.
+ */
+function withPlaceholderRejection(validator: (v: string | null | undefined) => boolean): (v: string | null | undefined) => boolean {
+  return (value) => {
+    if (containsMetadataPlaceholder(value)) return false;
+    return validator(value);
+  };
+}
 
 export type StoredMetadataLike = {
   reference?: string | null;
@@ -65,10 +81,10 @@ export type StoredMetadataLike = {
  */
 export function sanitizeStoredMetadataForEngine<T extends StoredMetadataLike>(tender: T): StoredMetadataLike {
   return {
-    reference: validOrNull(tender.reference, isValidReferenceNumber),
-    clientName: validOrNull(tender.clientName, isValidClientName),
-    country: validOrNull(tender.country, isValidCountry),
-    clientContactName: validOrNull(tender.clientContactName, isValidClientContact),
+    reference: validOrNull(tender.reference, withPlaceholderRejection(isValidReferenceNumber)),
+    clientName: validOrNull(tender.clientName, withPlaceholderRejection(isValidClientName)),
+    country: validOrNull(tender.country, withPlaceholderRejection(isValidCountry)),
+    clientContactName: validOrNull(tender.clientContactName, withPlaceholderRejection(isValidClientContact)),
   };
 }
 
@@ -89,10 +105,10 @@ export function computeStoredMetadataPatch(tender: StoredMetadataLike): {
   clientContactName?: null;
 } {
   const patch: Record<string, null> = {};
-  if (hasInvalidValue(tender.reference, isValidReferenceNumber)) patch.reference = null;
-  if (hasInvalidValue(tender.clientName, isValidClientName)) patch.clientName = null;
-  if (hasInvalidValue(tender.country, isValidCountry)) patch.country = null;
-  if (hasInvalidValue(tender.clientContactName, isValidClientContact)) patch.clientContactName = null;
+  if (hasInvalidValue(tender.reference, withPlaceholderRejection(isValidReferenceNumber))) patch.reference = null;
+  if (hasInvalidValue(tender.clientName, withPlaceholderRejection(isValidClientName))) patch.clientName = null;
+  if (hasInvalidValue(tender.country, withPlaceholderRejection(isValidCountry))) patch.country = null;
+  if (hasInvalidValue(tender.clientContactName, withPlaceholderRejection(isValidClientContact))) patch.clientContactName = null;
   return patch;
 }
 
@@ -102,10 +118,10 @@ export function computeStoredMetadataPatch(tender: StoredMetadataLike): {
  */
 export function listInvalidStoredFields(tender: StoredMetadataLike): string[] {
   const out: string[] = [];
-  if (hasInvalidValue(tender.reference, isValidReferenceNumber)) out.push("reference");
-  if (hasInvalidValue(tender.clientName, isValidClientName)) out.push("clientName");
-  if (hasInvalidValue(tender.country, isValidCountry)) out.push("country");
-  if (hasInvalidValue(tender.clientContactName, isValidClientContact)) out.push("clientContactName");
+  if (hasInvalidValue(tender.reference, withPlaceholderRejection(isValidReferenceNumber))) out.push("reference");
+  if (hasInvalidValue(tender.clientName, withPlaceholderRejection(isValidClientName))) out.push("clientName");
+  if (hasInvalidValue(tender.country, withPlaceholderRejection(isValidCountry))) out.push("country");
+  if (hasInvalidValue(tender.clientContactName, withPlaceholderRejection(isValidClientContact))) out.push("clientContactName");
   return out;
 }
 

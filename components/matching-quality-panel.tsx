@@ -105,6 +105,15 @@ export async function MatchingQualityPanel({ tenderId }: { tenderId: string }) {
           {quality.warnings.slice(0, 5).map((warning) => <li key={warning}>{warning}</li>)}
         </ul>
       )}
+
+      {quality.recommendations.length > 0 && panelStyle.color !== "green" && (
+        <div className="mt-3 rounded-lg border border-slate-200 bg-white px-4 py-3">
+          <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Recommended actions</p>
+          <ul className="list-disc space-y-1 pl-4 text-sm text-slate-700">
+            {quality.recommendations.slice(0, 4).map((rec) => <li key={rec}>{rec}</li>)}
+          </ul>
+        </div>
+      )}
     </section>
   );
 }

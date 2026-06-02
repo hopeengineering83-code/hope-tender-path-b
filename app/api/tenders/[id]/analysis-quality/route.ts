@@ -42,7 +42,6 @@ export async function GET(
         requirements: { orderBy: { createdAt: "asc" } },
         expertMatches: { include: { expert: { select: { trustLevel: true, fullName: true } } } },
         projectMatches: { include: { project: { select: { trustLevel: true, name: true } } } },
-        files: { select: { extractedText: true } },
       },
     }),
   ]);
@@ -60,7 +59,11 @@ export async function GET(
     vaultReviewedExperts: companyReadiness.totals.reviewedExperts,
     vaultReviewedProjects: companyReadiness.totals.reviewedProjects,
   });
-  const extractedTextLength = tender.files.reduce((sum, f) => sum + (f.extractedText?.length ?? 0), 0);
+  const [{ extractedTextLength }] = await prisma.$queryRaw<Array<{ extractedTextLength: number }>>`
+    SELECT COALESCE(SUM(char_length("extractedText")), 0)::int AS "extractedTextLength"
+    FROM "TenderFile"
+    WHERE "tenderId" = ${id}
+  `;
 
   const quality = assessTenderAnalysisQuality({
     requirements: tender.requirements,
@@ -81,6 +84,7 @@ export async function GET(
     extractedTextLength,
     selectedReviewedExperts: tender.expertMatches.filter((m) => m.isSelected && m.expert.trustLevel === "REVIEWED").length,
     selectedReviewedProjects: tender.projectMatches.filter((m) => m.isSelected && m.project.trustLevel === "REVIEWED").length,
+    analysisSource: (tender.notes ?? "").split(/\n+/).map((l) => l.trim()).find((l) => /^analysis source:/i.test(l))?.replace(/^analysis source:\s*/i, "").trim() ?? null,
   });
 
   const analysisSource = analysisSourceFromNotes(tender.notes);

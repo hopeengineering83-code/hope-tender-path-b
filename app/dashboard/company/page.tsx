@@ -8,12 +8,12 @@ type CompanyDoc = {
 type Expert = {
   id: string; fullName: string; title: string | null; disciplines: string[];
   sectors: string[]; certifications: string[]; yearsExperience: number | null;
-  profile: string | null; isActive: boolean;
+  profile: string | null; isActive: boolean; trustLevel?: string | null;
 };
 type Project = {
   id: string; name: string; clientName: string | null; sector: string | null;
   country: string | null; serviceAreas: string[]; contractValue: number | null;
-  currency: string | null; summary: string | null;
+  currency: string | null; summary: string | null; trustLevel?: string | null;
 };
 type Company = {
   id?: string; name: string; legalName: string; description: string; website: string;
@@ -27,6 +27,9 @@ type Company = {
   experts?: Expert[]; projects?: Project[];
 };
 type UploadItem = { file: File; status: "queued"|"uploading"|"done"|"error"; error?: string; category: string };
+type CompanyAsset = { id: string; assetType: string; originalFileName: string; isActive: boolean };
+
+const REQUIRED_ASSET_TYPES = ["LOGO", "LETTERHEAD", "SIGNATURE", "STAMP"];
 
 const DOC_CATEGORIES = [
   "AUTO_DETECT","COMPANY_PROFILE","EXPERT_CV","PROJECT_REFERENCE","PROJECT_CONTRACT",
@@ -49,10 +52,30 @@ const CAT_COLORS: Record<string,string> = {
 const ACCEPT = ".pdf,.doc,.docx,.xls,.xlsx,.ods,.ppt,.pptx,.csv,.txt,.rtf,.jpg,.jpeg,.png,.gif,.webp";
 const empty: Company = { name:"",legalName:"",description:"",website:"",address:"",phone:"",email:"",knowledgeMode:"PROFILE_FIRST",serviceLines:[],sectors:[],profileSummary:"",gmName:"",gmTitle:"",gmLicense:"",foundingYear:null,headcount:null,licenseGrade:"",registrationNumber:"",tin:"",vat:"" };
 
+const PLACEHOLDER_PATTERNS = /^\s*(tbd|tbc|n\/a|unknown|not provided|placeholder|pending|to be confirmed|to be determined)\s*$/i;
+function isPlaceholder(v: unknown): boolean {
+  if (!v && v !== 0) return true;
+  return PLACEHOLDER_PATTERNS.test(String(v));
+}
+function hasReal(v: unknown): boolean { return !isPlaceholder(v); }
+
 function fmt(b: number) { return b<1024?`${b} B`:b<1048576?`${(b/1024).toFixed(0)} KB`:`${(b/1048576).toFixed(1)} MB`; }
 function ext(name: string) { return name.toLowerCase().split(".").pop()??""; }
 
-type Tab = "profile"|"documents"|"experts"|"projects";
+type Tab = "profile"|"documents"|"experts"|"projects"|"compliance";
+
+type ComplianceRecord = {
+  id: string; complianceType: string; title: string; status: string;
+  evidenceSummary: string | null; referenceNumber: string | null; expiryDate: string | null; createdAt: string;
+};
+type LegalRecord = {
+  id: string; recordType: string; title: string; authority: string | null;
+  referenceNumber: string | null; status: string; issueDate: string | null; expiryDate: string | null; createdAt: string;
+};
+type FinancialRecord = {
+  id: string; recordType: string; fiscalYear: number; currency: string | null;
+  amount: number | null; notes: string | null; createdAt: string;
+};
 
 export default function CompanyPage() {
   const [tab, setTab] = useState<Tab>("profile");
@@ -87,6 +110,89 @@ export default function CompanyPage() {
   const [deletingProjectId, setDeletingProjectId] = useState<string|null>(null);
   const [reimporting, setReimporting] = useState(false);
   const [reimportResult, setReimportResult] = useState<{expertsCreated:number;projectsCreated:number;docsProcessed:number}|null>(null);
+  const [assets, setAssets] = useState<CompanyAsset[]>([]);
+  const [searchExpert, setSearchExpert] = useState("");
+  const [searchProject, setSearchProject] = useState("");
+
+  // Compliance / Legal / Financial record state
+  const [complianceRecords, setComplianceRecords] = useState<ComplianceRecord[]>([]);
+  const [legalRecords, setLegalRecords] = useState<LegalRecord[]>([]);
+  const [financialRecords, setFinancialRecords] = useState<FinancialRecord[]>([]);
+  const [complianceLoading, setComplianceLoading] = useState(false);
+  const [complianceForm, setComplianceForm] = useState({ complianceType:"", title:"", status:"ACTIVE", evidenceSummary:"", referenceNumber:"", expiryDate:"" });
+  const [legalForm, setLegalForm] = useState({ recordType:"", title:"", authority:"", referenceNumber:"", status:"ACTIVE", issueDate:"", expiryDate:"" });
+  const [financialForm, setFinancialForm] = useState({ recordType:"", fiscalYear: String(new Date().getFullYear()), currency:"USD", amount:"", notes:"" });
+  const [complianceSaving, setComplianceSaving] = useState(false);
+  const [legalSaving, setLegalSaving] = useState(false);
+  const [financialSaving, setFinancialSaving] = useState(false);
+  const [deletingComplianceId, setDeletingComplianceId] = useState<string|null>(null);
+  const [deletingLegalId, setDeletingLegalId] = useState<string|null>(null);
+  const [deletingFinancialId, setDeletingFinancialId] = useState<string|null>(null);
+  const [complianceSubTab, setComplianceSubTab] = useState<"compliance"|"legal"|"financial">("compliance");
+
+  async function loadComplianceData() {
+    setComplianceLoading(true);
+    try {
+      const [cr, lr, fr] = await Promise.all([
+        fetch("/api/company/compliance-records").then(r=>r.json()),
+        fetch("/api/company/legal-records").then(r=>r.json()),
+        fetch("/api/company/financial-records").then(r=>r.json()),
+      ]);
+      setComplianceRecords(cr.records ?? []);
+      setLegalRecords(lr.records ?? []);
+      setFinancialRecords(fr.records ?? []);
+    } finally {
+      setComplianceLoading(false);
+    }
+  }
+
+  async function addComplianceRecord(e: React.FormEvent) {
+    e.preventDefault();
+    if (!complianceForm.complianceType || !complianceForm.title) return;
+    setComplianceSaving(true);
+    try {
+      const res = await fetch("/api/company/compliance-records", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(complianceForm) });
+      if (res.ok) { setComplianceForm({ complianceType:"", title:"", status:"ACTIVE", evidenceSummary:"", referenceNumber:"", expiryDate:"" }); void loadComplianceData(); }
+    } finally { setComplianceSaving(false); }
+  }
+
+  async function addLegalRecord(e: React.FormEvent) {
+    e.preventDefault();
+    if (!legalForm.recordType || !legalForm.title) return;
+    setLegalSaving(true);
+    try {
+      const res = await fetch("/api/company/legal-records", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(legalForm) });
+      if (res.ok) { setLegalForm({ recordType:"", title:"", authority:"", referenceNumber:"", status:"ACTIVE", issueDate:"", expiryDate:"" }); void loadComplianceData(); }
+    } finally { setLegalSaving(false); }
+  }
+
+  async function addFinancialRecord(e: React.FormEvent) {
+    e.preventDefault();
+    if (!financialForm.recordType || !financialForm.fiscalYear) return;
+    setFinancialSaving(true);
+    try {
+      const res = await fetch("/api/company/financial-records", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ ...financialForm, fiscalYear: Number(financialForm.fiscalYear), amount: financialForm.amount ? Number(financialForm.amount) : null }) });
+      if (res.ok) { setFinancialForm({ recordType:"", fiscalYear: String(new Date().getFullYear()), currency:"USD", amount:"", notes:"" }); void loadComplianceData(); }
+    } finally { setFinancialSaving(false); }
+  }
+
+  async function deleteComplianceRecord(id: string) {
+    setDeletingComplianceId(id);
+    try { await fetch(`/api/company/compliance-records?id=${id}`, { method:"DELETE" }); void loadComplianceData(); }
+    finally { setDeletingComplianceId(null); }
+  }
+
+  async function deleteLegalRecord(id: string) {
+    setDeletingLegalId(id);
+    try { await fetch(`/api/company/legal-records?id=${id}`, { method:"DELETE" }); void loadComplianceData(); }
+    finally { setDeletingLegalId(null); }
+  }
+
+  async function deleteFinancialRecord(id: string) {
+    setDeletingFinancialId(id);
+    try { await fetch(`/api/company/financial-records?id=${id}`, { method:"DELETE" }); void loadComplianceData(); }
+    finally { setDeletingFinancialId(null); }
+  }
 
   async function loadDocs() {
     const r = await fetch("/api/company/documents");
@@ -98,7 +204,8 @@ export default function CompanyPage() {
     Promise.all([
       fetch("/api/company").then(r=>r.json()),
       fetch("/api/company/documents").then(r=>r.json()),
-    ]).then(([c, d]: [{ company?: Company } & Company, { items?: CompanyDoc[] }]) => {
+      fetch("/api/company/assets").then(r=>r.json()),
+    ]).then(([c, d, a]: [{ company?: Company } & Company, { items?: CompanyDoc[] }, { assets?: CompanyAsset[] }]) => {
       const co = c.company ?? c;
       if (co.name !== undefined) {
         setCompany({ ...empty, ...(co as Company) });
@@ -106,6 +213,7 @@ export default function CompanyPage() {
         setSectorsTxt(((co as Company).sectors||[]).join(", "));
       }
       setDocs(d.items ?? []);
+      setAssets(a.assets ?? []);
     }).finally(() => setLoading(false));
   }, []);
 
@@ -265,6 +373,20 @@ export default function CompanyPage() {
     return ms && mc;
   });
 
+  const filteredExperts = (company.experts ?? []).filter(ex =>
+    !searchExpert ||
+    ex.fullName.toLowerCase().includes(searchExpert.toLowerCase()) ||
+    (ex.title ?? "").toLowerCase().includes(searchExpert.toLowerCase()) ||
+    (ex.disciplines ?? []).some(d => d.toLowerCase().includes(searchExpert.toLowerCase()))
+  );
+
+  const filteredProjects = (company.projects ?? []).filter(p =>
+    !searchProject ||
+    p.name.toLowerCase().includes(searchProject.toLowerCase()) ||
+    (p.clientName ?? "").toLowerCase().includes(searchProject.toLowerCase()) ||
+    (p.sector ?? "").toLowerCase().includes(searchProject.toLowerCase())
+  );
+
   if (loading) return <div className="text-sm text-slate-400 py-16 text-center">Loading…</div>;
 
   const TABS: { id: Tab; label: string; count?: number }[] = [
@@ -272,6 +394,7 @@ export default function CompanyPage() {
     { id:"documents", label:"Documents", count:docs.length },
     { id:"experts", label:"Experts", count:(company.experts||[]).length },
     { id:"projects", label:"Projects", count:(company.projects||[]).length },
+    { id:"compliance", label:"Compliance & Legal", count: complianceRecords.length + legalRecords.length + financialRecords.length || undefined },
   ];
 
   return (
@@ -280,6 +403,66 @@ export default function CompanyPage() {
         <h1 className="text-2xl font-bold text-slate-900">Company Knowledge Vault</h1>
         <p className="mt-1 text-slate-500 text-sm">Reusable company knowledge for all tender proposals.</p>
       </div>
+
+      {(() => {
+        const activeAssetTypes = new Set(assets.filter(a => a.isActive).map(a => a.assetType));
+        const allExperts = company.experts ?? [];
+        const allProjects = company.projects ?? [];
+        const reviewedExpertCount = allExperts.filter(e => e.trustLevel === "REVIEWED").length;
+        const reviewedProjectCount = allProjects.filter(p => p.trustLevel === "REVIEWED").length;
+        const draftExpertCount = allExperts.length - reviewedExpertCount;
+        const draftProjectCount = allProjects.length - reviewedProjectCount;
+        const checks = [
+          { label: "Company name", done: hasReal(company.name) },
+          { label: "Legal name", done: hasReal(company.legalName) },
+          { label: "Description", done: hasReal(company.description) },
+          { label: "Address", done: hasReal(company.address) },
+          { label: "Email", done: hasReal(company.email) },
+          { label: "Phone", done: hasReal(company.phone) },
+          { label: "Website", done: hasReal(company.website) },
+          { label: "Registration number", done: hasReal(company.registrationNumber) },
+          { label: "TIN", done: hasReal(company.tin) },
+          { label: "VAT", done: hasReal(company.vat) },
+          { label: "GM name", done: hasReal(company.gmName) },
+          { label: "GM title", done: hasReal(company.gmTitle) },
+          { label: "Founding year", done: hasReal(company.foundingYear) },
+          { label: "Headcount", done: hasReal(company.headcount) },
+          { label: "License grade", done: hasReal(company.licenseGrade) },
+          { label: "Service lines", done: (company.serviceLines||[]).length > 0 },
+          { label: "Sectors", done: (company.sectors||[]).length > 0 },
+          { label: "Profile summary", done: hasReal(company.profileSummary) },
+          { label: "At least 1 expert", done: allExperts.length > 0 },
+          { label: "At least 1 project", done: allProjects.length > 0 },
+          { label: "At least 1 document", done: docs.length > 0 },
+          ...REQUIRED_ASSET_TYPES.map(t => ({ label: `${t.charAt(0) + t.slice(1).toLowerCase()} asset`, done: activeAssetTypes.has(t) })),
+        ];
+        const done = checks.filter(c => c.done).length;
+        const pct = Math.round((done / checks.length) * 100);
+        const barColor = pct >= 80 ? "bg-green-500" : pct >= 50 ? "bg-amber-400" : "bg-red-400";
+        const textColor = pct >= 80 ? "text-green-600" : pct >= 50 ? "text-amber-600" : "text-red-600";
+        const missing = checks.filter(c => !c.done).map(c => c.label);
+        return (
+          <div className="rounded-2xl border bg-white p-5 shadow-sm space-y-3">
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-sm font-medium text-slate-700">Profile completeness</p>
+              <span className={`text-sm font-bold ${textColor}`}>{pct}%</span>
+            </div>
+            <div className="h-2 w-full rounded-full bg-slate-100 overflow-hidden">
+              <div className={`h-full rounded-full transition-all ${barColor}`} style={{ width: `${pct}%` }} />
+            </div>
+            {missing.length > 0 && (
+              <p className="mt-2 text-xs text-slate-400">Missing: {missing.join(", ")}</p>
+            )}
+            <div className="border-t pt-3">
+              <p className="text-xs font-medium text-slate-600 mb-1.5">Knowledge vault</p>
+              <div className="flex flex-wrap gap-4 text-xs text-slate-500">
+                <span>Experts: <span className="font-medium text-slate-700">{reviewedExpertCount} reviewed</span>{draftExpertCount > 0 ? `, ${draftExpertCount} draft` : ""}</span>
+                <span>Projects: <span className="font-medium text-slate-700">{reviewedProjectCount} reviewed</span>{draftProjectCount > 0 ? `, ${draftProjectCount} draft` : ""}</span>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       <div className="grid gap-4 grid-cols-2 xl:grid-cols-4">
         {[
@@ -298,7 +481,7 @@ export default function CompanyPage() {
       {/* Tabs */}
       <div className="flex gap-1 rounded-xl bg-slate-100 p-1 w-fit">
         {TABS.map(t => (
-          <button key={t.id} onClick={() => setTab(t.id)}
+          <button key={t.id} onClick={() => { setTab(t.id); if (t.id === "compliance") void loadComplianceData(); }}
             className={`rounded-lg px-4 py-2 text-sm font-medium transition-colors ${tab===t.id ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700"}`}>
             {t.label}{t.count !== undefined ? <span className="ml-1.5 rounded-full bg-slate-200 px-1.5 py-0.5 text-xs">{t.count}</span> : null}
           </button>
@@ -337,8 +520,14 @@ export default function CompanyPage() {
               <input value={company.gmTitle ?? ""} onChange={e=>setCompany({...company,gmTitle:e.target.value})} placeholder="GM title (e.g., General Manager and Founder)" className="rounded-lg border px-3 py-2 text-sm" />
               <input value={company.gmLicense ?? ""} onChange={e=>setCompany({...company,gmLicense:e.target.value})} placeholder="GM license / registration (e.g., IPSTE/6884)" className="rounded-lg border px-3 py-2 text-sm" />
               <input value={company.licenseGrade ?? ""} onChange={e=>setCompany({...company,licenseGrade:e.target.value})} placeholder="License grade / category (e.g., Grade I)" className="rounded-lg border px-3 py-2 text-sm" />
-              <input value={company.registrationNumber ?? ""} onChange={e=>setCompany({...company,registrationNumber:e.target.value})} placeholder="Business registration number" className="rounded-lg border px-3 py-2 text-sm" />
-              <input value={company.tin ?? ""} onChange={e=>setCompany({...company,tin:e.target.value})} placeholder="TIN (Tax Identification Number)" className="rounded-lg border px-3 py-2 text-sm" />
+              <div className="flex flex-col gap-1">
+                <input value={company.registrationNumber ?? ""} onChange={e=>setCompany({...company,registrationNumber:e.target.value})} placeholder="Business registration number" className="rounded-lg border px-3 py-2 text-sm" />
+                <p className="text-xs text-slate-400">Use exact value from official company registration documents.</p>
+              </div>
+              <div className="flex flex-col gap-1">
+                <input value={company.tin ?? ""} onChange={e=>setCompany({...company,tin:e.target.value})} placeholder="TIN (Tax Identification Number)" className="rounded-lg border px-3 py-2 text-sm" />
+                <p className="text-xs text-slate-400">Use exact value from official TIN documents.</p>
+              </div>
               <input value={company.vat ?? ""} onChange={e=>setCompany({...company,vat:e.target.value})} placeholder="VAT registration" className="rounded-lg border px-3 py-2 text-sm" />
               <input value={company.foundingYear ?? ""} onChange={e=>setCompany({...company,foundingYear:e.target.value?Number(e.target.value):null})} type="number" placeholder="Founding year (e.g., 2019)" className="rounded-lg border px-3 py-2 text-sm" />
               <input value={company.headcount ?? ""} onChange={e=>setCompany({...company,headcount:e.target.value?Number(e.target.value):null})} type="number" placeholder="Permanent staff headcount" className="rounded-lg border px-3 py-2 text-sm" />
@@ -419,9 +608,9 @@ export default function CompanyPage() {
                     </div>
                   </div>
                   <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100">
-                    <button onClick={()=>void reextractDoc(doc.id)} className="rounded border px-2 py-0.5 text-[10px] text-slate-500 hover:bg-slate-50 border-slate-200" title="Re-extract text">↺</button>
-                    <a href={`/api/company/documents/${doc.id}`} download={doc.originalFileName} className="rounded border px-2 py-0.5 text-[10px] text-blue-600 hover:bg-blue-50 border-blue-200">↓</a>
-                    <button onClick={()=>deleteDoc(doc.id)} className="rounded border px-2 py-0.5 text-[10px] text-red-500 hover:bg-red-50 border-red-200">✕</button>
+                    <button onClick={()=>void reextractDoc(doc.id)} aria-label={`Re-extract text from ${doc.originalFileName}`} className="rounded border px-2 py-0.5 text-[10px] text-slate-500 hover:bg-slate-50 border-slate-200" title="Re-extract text">↺</button>
+                    <a href={`/api/company/documents/${doc.id}`} download={doc.originalFileName} aria-label={`Download ${doc.originalFileName}`} className="rounded border px-2 py-0.5 text-[10px] text-blue-600 hover:bg-blue-50 border-blue-200">↓</a>
+                    <button onClick={()=>deleteDoc(doc.id)} aria-label={`Delete ${doc.originalFileName}`} className="rounded border px-2 py-0.5 text-[10px] text-red-500 hover:bg-red-50 border-red-200">✕</button>
                   </div>
                 </div>
               </div>
@@ -451,9 +640,31 @@ export default function CompanyPage() {
             </form>
           </div>
 
+          {(company.experts ?? []).length > 0 && (
+            <div className="mb-2">
+              <input
+                value={searchExpert}
+                onChange={e => setSearchExpert(e.target.value)}
+                placeholder="Search experts by name, title, or discipline…"
+                className="w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-black"
+              />
+            </div>
+          )}
           <div className="rounded-2xl border bg-white shadow-sm overflow-hidden">
             {(company.experts||[]).length===0 ? (
-              <p className="text-sm text-slate-400 py-10 text-center">No experts yet.</p>
+              <div className="flex flex-col items-center py-12 px-6 text-center">
+                <span className="text-4xl mb-3" aria-hidden="true">👤</span>
+                <h3 className="text-sm font-semibold text-slate-700 mb-1">No experts in your knowledge vault</h3>
+                <p className="text-xs text-slate-400 max-w-xs mb-4">Import CVs to add experts. They&apos;ll be automatically matched to tenders.</p>
+                <button
+                  onClick={() => setTab("documents")}
+                  className="rounded-lg bg-black px-4 py-2 text-xs text-white hover:bg-slate-800"
+                >
+                  Upload expert CVs
+                </button>
+              </div>
+            ) : filteredExperts.length === 0 ? (
+              <p className="text-sm text-slate-400 py-10 text-center">No experts match your search.</p>
             ) : (
               <table className="w-full text-sm">
                 <thead className="bg-slate-50 text-left text-slate-500 text-xs">
@@ -466,7 +677,7 @@ export default function CompanyPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y">
-                  {(company.experts||[]).map(ex => (
+                  {filteredExperts.map(ex => (
                     <tr key={ex.id} className="hover:bg-slate-50">
                       <td className="px-5 py-3 font-medium text-slate-900">{ex.fullName}</td>
                       <td className="px-5 py-3 text-slate-500 hidden md:table-cell">{ex.title??"-"}</td>
@@ -511,9 +722,31 @@ export default function CompanyPage() {
             </form>
           </div>
 
+          {(company.projects ?? []).length > 0 && (
+            <div className="mb-2">
+              <input
+                value={searchProject}
+                onChange={e => setSearchProject(e.target.value)}
+                placeholder="Search projects by name, client, or sector…"
+                className="w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-black"
+              />
+            </div>
+          )}
           <div className="rounded-2xl border bg-white shadow-sm overflow-hidden">
             {(company.projects||[]).length===0 ? (
-              <p className="text-sm text-slate-400 py-10 text-center">No projects yet.</p>
+              <div className="flex flex-col items-center py-12 px-6 text-center">
+                <span className="text-4xl mb-3" aria-hidden="true">📁</span>
+                <h3 className="text-sm font-semibold text-slate-700 mb-1">No projects in your portfolio</h3>
+                <p className="text-xs text-slate-400 max-w-xs mb-4">Add completed projects as references. They&apos;ll be matched to tender requirements.</p>
+                <button
+                  onClick={() => document.querySelector<HTMLFormElement>("form")?.scrollIntoView({ behavior: "smooth" })}
+                  className="rounded-lg bg-black px-4 py-2 text-xs text-white hover:bg-slate-800"
+                >
+                  Add your first project
+                </button>
+              </div>
+            ) : filteredProjects.length === 0 ? (
+              <p className="text-sm text-slate-400 py-10 text-center">No projects match your search.</p>
             ) : (
               <table className="w-full text-sm">
                 <thead className="bg-slate-50 text-left text-slate-500 text-xs">
@@ -526,7 +759,7 @@ export default function CompanyPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y">
-                  {(company.projects||[]).map(p => (
+                  {filteredProjects.map(p => (
                     <tr key={p.id} className="hover:bg-slate-50">
                       <td className="px-5 py-3 font-medium text-slate-900">{p.name}</td>
                       <td className="px-5 py-3 text-slate-500 hidden md:table-cell">{p.clientName??"-"}</td>
@@ -544,6 +777,172 @@ export default function CompanyPage() {
               </table>
             )}
           </div>
+        </div>
+      )}
+
+      {/* Compliance & Legal Tab */}
+      {tab==="compliance" && (
+        <div className="space-y-6">
+          {/* Sub-tabs */}
+          <div className="flex gap-1 rounded-xl bg-slate-100 p-1 w-fit text-sm">
+            {([["compliance","Compliance Records"],["legal","Legal & Registrations"],["financial","Financials"]] as const).map(([id,label]) => (
+              <button key={id} onClick={() => setComplianceSubTab(id)}
+                className={`rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${complianceSubTab===id ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700"}`}>
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {complianceLoading && <p className="text-sm text-slate-400">Loading…</p>}
+
+          {/* Compliance Records */}
+          {complianceSubTab==="compliance" && (
+            <div className="space-y-6">
+              <div className="rounded-2xl border bg-white p-6 shadow-sm max-w-3xl">
+                <h2 className="font-semibold text-slate-900 mb-1">Add Compliance Record</h2>
+                <p className="text-xs text-slate-500 mb-4">Tax clearance, professional registration, ISO certifications, and similar compliance credentials.</p>
+                <form onSubmit={addComplianceRecord} className="space-y-3">
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <input value={complianceForm.complianceType} onChange={e=>setComplianceForm({...complianceForm,complianceType:e.target.value})} placeholder="Type (e.g. TAX_CLEARANCE, ISO_9001) *" className="rounded-lg border px-3 py-2 text-sm" />
+                    <input value={complianceForm.title} onChange={e=>setComplianceForm({...complianceForm,title:e.target.value})} placeholder="Title / label *" className="rounded-lg border px-3 py-2 text-sm" />
+                    <input value={complianceForm.referenceNumber} onChange={e=>setComplianceForm({...complianceForm,referenceNumber:e.target.value})} placeholder="Reference number" className="rounded-lg border px-3 py-2 text-sm" />
+                    <div className="flex gap-2 items-center">
+                      <label className="text-xs text-slate-500 shrink-0">Expiry</label>
+                      <input type="date" value={complianceForm.expiryDate} onChange={e=>setComplianceForm({...complianceForm,expiryDate:e.target.value})} className="flex-1 rounded-lg border px-3 py-2 text-sm" />
+                    </div>
+                  </div>
+                  <select value={complianceForm.status} onChange={e=>setComplianceForm({...complianceForm,status:e.target.value})} className="rounded-lg border px-3 py-2 text-sm bg-white">
+                    {["ACTIVE","EXPIRED","PENDING","REVOKED"].map(s=><option key={s}>{s}</option>)}
+                  </select>
+                  <textarea value={complianceForm.evidenceSummary} onChange={e=>setComplianceForm({...complianceForm,evidenceSummary:e.target.value})} rows={2} placeholder="Evidence summary (optional)" className="w-full rounded-lg border px-3 py-2 text-sm" />
+                  <button disabled={complianceSaving||!complianceForm.complianceType||!complianceForm.title} className="rounded-lg bg-black px-4 py-2 text-sm text-white hover:bg-slate-800 disabled:opacity-50">
+                    {complianceSaving?"Adding…":"Add Record"}
+                  </button>
+                </form>
+              </div>
+              {complianceRecords.length > 0 && (
+                <div className="rounded-2xl border bg-white shadow-sm overflow-hidden max-w-3xl">
+                  <table className="w-full text-sm">
+                    <thead className="bg-slate-50 text-xs text-slate-500">
+                      <tr><th className="px-4 py-2 text-left">Type</th><th className="px-4 py-2 text-left">Title</th><th className="px-4 py-2 text-left hidden md:table-cell">Ref.</th><th className="px-4 py-2 text-left hidden md:table-cell">Expiry</th><th className="px-4 py-2 text-left">Status</th><th className="px-4 py-2"></th></tr>
+                    </thead>
+                    <tbody className="divide-y">
+                      {complianceRecords.map(r => (
+                        <tr key={r.id} className="hover:bg-slate-50">
+                          <td className="px-4 py-2 text-xs text-slate-500">{r.complianceType}</td>
+                          <td className="px-4 py-2 font-medium text-slate-900">{r.title}</td>
+                          <td className="px-4 py-2 text-slate-500 hidden md:table-cell">{r.referenceNumber??"-"}</td>
+                          <td className="px-4 py-2 text-slate-500 hidden md:table-cell">{r.expiryDate ? new Date(r.expiryDate).toLocaleDateString("en-GB") : "-"}</td>
+                          <td className="px-4 py-2"><span className={`rounded px-1.5 py-0.5 text-xs font-medium ${r.status==="ACTIVE"?"bg-green-100 text-green-700":r.status==="EXPIRED"?"bg-red-100 text-red-700":"bg-gray-100 text-gray-600"}`}>{r.status}</span></td>
+                          <td className="px-4 py-2 text-right"><button onClick={()=>deleteComplianceRecord(r.id)} disabled={deletingComplianceId===r.id} className="rounded border border-red-200 px-2 py-0.5 text-xs text-red-600 hover:bg-red-50 disabled:opacity-40">{deletingComplianceId===r.id?"…":"Delete"}</button></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              {complianceRecords.length === 0 && !complianceLoading && <p className="text-sm text-slate-400">No compliance records yet.</p>}
+            </div>
+          )}
+
+          {/* Legal Records */}
+          {complianceSubTab==="legal" && (
+            <div className="space-y-6">
+              <div className="rounded-2xl border bg-white p-6 shadow-sm max-w-3xl">
+                <h2 className="font-semibold text-slate-900 mb-1">Add Legal / Registration Record</h2>
+                <p className="text-xs text-slate-500 mb-4">Business registration, trade licences, professional memberships, and similar legal credentials.</p>
+                <form onSubmit={addLegalRecord} className="space-y-3">
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <input value={legalForm.recordType} onChange={e=>setLegalForm({...legalForm,recordType:e.target.value})} placeholder="Type (e.g. BUSINESS_REGISTRATION, TRADE_LICENCE) *" className="rounded-lg border px-3 py-2 text-sm" />
+                    <input value={legalForm.title} onChange={e=>setLegalForm({...legalForm,title:e.target.value})} placeholder="Title / label *" className="rounded-lg border px-3 py-2 text-sm" />
+                    <input value={legalForm.authority} onChange={e=>setLegalForm({...legalForm,authority:e.target.value})} placeholder="Issuing authority" className="rounded-lg border px-3 py-2 text-sm" />
+                    <input value={legalForm.referenceNumber} onChange={e=>setLegalForm({...legalForm,referenceNumber:e.target.value})} placeholder="Reference number" className="rounded-lg border px-3 py-2 text-sm" />
+                    <div className="flex gap-2 items-center">
+                      <label className="text-xs text-slate-500 shrink-0">Issue</label>
+                      <input type="date" value={legalForm.issueDate} onChange={e=>setLegalForm({...legalForm,issueDate:e.target.value})} className="flex-1 rounded-lg border px-3 py-2 text-sm" />
+                    </div>
+                    <div className="flex gap-2 items-center">
+                      <label className="text-xs text-slate-500 shrink-0">Expiry</label>
+                      <input type="date" value={legalForm.expiryDate} onChange={e=>setLegalForm({...legalForm,expiryDate:e.target.value})} className="flex-1 rounded-lg border px-3 py-2 text-sm" />
+                    </div>
+                  </div>
+                  <select value={legalForm.status} onChange={e=>setLegalForm({...legalForm,status:e.target.value})} className="rounded-lg border px-3 py-2 text-sm bg-white">
+                    {["ACTIVE","EXPIRED","PENDING","REVOKED"].map(s=><option key={s}>{s}</option>)}
+                  </select>
+                  <button disabled={legalSaving||!legalForm.recordType||!legalForm.title} className="rounded-lg bg-black px-4 py-2 text-sm text-white hover:bg-slate-800 disabled:opacity-50">
+                    {legalSaving?"Adding…":"Add Record"}
+                  </button>
+                </form>
+              </div>
+              {legalRecords.length > 0 && (
+                <div className="rounded-2xl border bg-white shadow-sm overflow-hidden max-w-3xl">
+                  <table className="w-full text-sm">
+                    <thead className="bg-slate-50 text-xs text-slate-500">
+                      <tr><th className="px-4 py-2 text-left">Type</th><th className="px-4 py-2 text-left">Title</th><th className="px-4 py-2 text-left hidden md:table-cell">Authority</th><th className="px-4 py-2 text-left hidden md:table-cell">Expiry</th><th className="px-4 py-2 text-left">Status</th><th className="px-4 py-2"></th></tr>
+                    </thead>
+                    <tbody className="divide-y">
+                      {legalRecords.map(r => (
+                        <tr key={r.id} className="hover:bg-slate-50">
+                          <td className="px-4 py-2 text-xs text-slate-500">{r.recordType}</td>
+                          <td className="px-4 py-2 font-medium text-slate-900">{r.title}</td>
+                          <td className="px-4 py-2 text-slate-500 hidden md:table-cell">{r.authority??"-"}</td>
+                          <td className="px-4 py-2 text-slate-500 hidden md:table-cell">{r.expiryDate ? new Date(r.expiryDate).toLocaleDateString("en-GB") : "-"}</td>
+                          <td className="px-4 py-2"><span className={`rounded px-1.5 py-0.5 text-xs font-medium ${r.status==="ACTIVE"?"bg-green-100 text-green-700":r.status==="EXPIRED"?"bg-red-100 text-red-700":"bg-gray-100 text-gray-600"}`}>{r.status}</span></td>
+                          <td className="px-4 py-2 text-right"><button onClick={()=>deleteLegalRecord(r.id)} disabled={deletingLegalId===r.id} className="rounded border border-red-200 px-2 py-0.5 text-xs text-red-600 hover:bg-red-50 disabled:opacity-40">{deletingLegalId===r.id?"…":"Delete"}</button></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              {legalRecords.length === 0 && !complianceLoading && <p className="text-sm text-slate-400">No legal records yet.</p>}
+            </div>
+          )}
+
+          {/* Financial Records */}
+          {complianceSubTab==="financial" && (
+            <div className="space-y-6">
+              <div className="rounded-2xl border bg-white p-6 shadow-sm max-w-3xl">
+                <h2 className="font-semibold text-slate-900 mb-1">Add Financial Record</h2>
+                <p className="text-xs text-slate-500 mb-4">Annual turnover, audited financial statements, and other financial capacity evidence by fiscal year.</p>
+                <form onSubmit={addFinancialRecord} className="space-y-3">
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <input value={financialForm.recordType} onChange={e=>setFinancialForm({...financialForm,recordType:e.target.value})} placeholder="Type (e.g. ANNUAL_TURNOVER, AUDITED_ACCOUNTS) *" className="rounded-lg border px-3 py-2 text-sm" />
+                    <input value={financialForm.fiscalYear} onChange={e=>setFinancialForm({...financialForm,fiscalYear:e.target.value})} type="number" min="1990" max="2100" placeholder="Fiscal year *" className="rounded-lg border px-3 py-2 text-sm" />
+                    <input value={financialForm.amount} onChange={e=>setFinancialForm({...financialForm,amount:e.target.value})} type="number" placeholder="Amount" className="rounded-lg border px-3 py-2 text-sm" />
+                    <select value={financialForm.currency} onChange={e=>setFinancialForm({...financialForm,currency:e.target.value})} className="rounded-lg border px-3 py-2 text-sm bg-white">
+                      {["USD","EUR","GBP","ETB","AED","SAR","KWD","EGP","ZAR"].map(c=><option key={c}>{c}</option>)}
+                    </select>
+                  </div>
+                  <textarea value={financialForm.notes} onChange={e=>setFinancialForm({...financialForm,notes:e.target.value})} rows={2} placeholder="Notes (optional)" className="w-full rounded-lg border px-3 py-2 text-sm" />
+                  <button disabled={financialSaving||!financialForm.recordType||!financialForm.fiscalYear} className="rounded-lg bg-black px-4 py-2 text-sm text-white hover:bg-slate-800 disabled:opacity-50">
+                    {financialSaving?"Adding…":"Add Record"}
+                  </button>
+                </form>
+              </div>
+              {financialRecords.length > 0 && (
+                <div className="rounded-2xl border bg-white shadow-sm overflow-hidden max-w-3xl">
+                  <table className="w-full text-sm">
+                    <thead className="bg-slate-50 text-xs text-slate-500">
+                      <tr><th className="px-4 py-2 text-left">Type</th><th className="px-4 py-2 text-left">Year</th><th className="px-4 py-2 text-left hidden md:table-cell">Amount</th><th className="px-4 py-2 text-left hidden md:table-cell">Notes</th><th className="px-4 py-2"></th></tr>
+                    </thead>
+                    <tbody className="divide-y">
+                      {financialRecords.map(r => (
+                        <tr key={r.id} className="hover:bg-slate-50">
+                          <td className="px-4 py-2 text-xs text-slate-500">{r.recordType}</td>
+                          <td className="px-4 py-2 font-medium text-slate-900">{r.fiscalYear}</td>
+                          <td className="px-4 py-2 text-slate-500 hidden md:table-cell">{r.amount != null ? `${r.currency ?? ""} ${r.amount.toLocaleString()}` : "-"}</td>
+                          <td className="px-4 py-2 text-slate-500 hidden md:table-cell truncate max-w-xs">{r.notes??"-"}</td>
+                          <td className="px-4 py-2 text-right"><button onClick={()=>deleteFinancialRecord(r.id)} disabled={deletingFinancialId===r.id} className="rounded border border-red-200 px-2 py-0.5 text-xs text-red-600 hover:bg-red-50 disabled:opacity-40">{deletingFinancialId===r.id?"…":"Delete"}</button></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              {financialRecords.length === 0 && !complianceLoading && <p className="text-sm text-slate-400">No financial records yet.</p>}
+            </div>
+          )}
         </div>
       )}
 

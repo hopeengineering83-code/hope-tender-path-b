@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
-import { checkFullExportReadiness, exportReadinessError } from "../../../../../lib/engine/export-readiness";
-import { filterFinalExportCandidateDocuments } from "../../../../../lib/engine/document-output-state";
+import { getFinalSubmissionReadiness } from "../../../../../lib/engine/final-submission-readiness";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 10;
@@ -10,34 +9,6 @@ export const maxDuration = 10;
 function jsonError(message: string, status = 500, extra: Record<string, unknown> = {}) {
   const code = typeof extra.code === "string" ? extra.code : "EXPORT_READINESS_ERROR";
   return NextResponse.json({ ok: false, success: false, code, message, error: message, ...extra }, { status });
-}
-
-function nextActionForReason(reason: string): string {
-  if (/ORIGINAL_REQUIRED|REPLACE_WITH_ORIGINAL|tender-issued original/i.test(reason)) {
-    return "Attach or upload the exact tender-issued original form/template for this file. Do not use Repair safe document gaps for official-original rows.";
-  }
-  if (/NOT_EXPORTABLE/i.test(reason)) {
-    return "Manual review required: this row is marked NOT_EXPORTABLE and must not be included in the final package unless replaced by the official source file.";
-  }
-  if (/PLANNED|CONTROL_RECORD_ONLY|control, placeholder, or text-only/i.test(reason)) {
-    return "Generate the actual final file or attach the official original. Planned/control rows are not exportable files.";
-  }
-  if (/PDF_CONVERSION_REQUIRED|not a real PDF/i.test(reason)) {
-    return "Upload the final PDF required by the tender or provide a real PDF file before export.";
-  }
-  if (/NO_ACTIVE_GENERATED_DOCUMENTS/i.test(reason)) return "Generate the required documents before exporting.";
-  if (/generationStatus/i.test(reason)) return "Regenerate this document or reconcile the submission plan.";
-  if (/validationStatus/i.test(reason)) return "Run validation and fix reported document validation issues.";
-  if (/reviewStatus/i.test(reason)) return "Complete human review and mark the document READY_FOR_EXPORT.";
-  if (/fileContent|MISSING_CONTENT/i.test(reason)) return "Regenerate or upload the missing DOCX/PDF file content.";
-  if (/MARKDOWN|QUICK_DRAFT|DRAFT_ONLY|CONTROL|not a final export/i.test(reason)) return "Use Generate Docs or attach the tender-issued original; quick drafts, placeholders and control rows cannot be exported.";
-  return "Review and resolve this blocker before final export.";
-}
-
-function severityForReasons(reasons: string[]): "HIGH" | "MEDIUM" | "LOW" {
-  if (reasons.some((r) => /NO_ACTIVE_GENERATED_DOCUMENTS|fileContent|generationStatus|CONTROL|ORIGINAL_REQUIRED|PDF_CONVERSION_REQUIRED|NOT_EXPORTABLE|REPLACE_WITH_ORIGINAL|PLANNED/i.test(r))) return "HIGH";
-  if (reasons.some((r) => /validationStatus|reviewStatus|MARKDOWN|QUICK_DRAFT|DRAFT_ONLY/i.test(r))) return "MEDIUM";
-  return "LOW";
 }
 
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -52,80 +23,50 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 
     await prismaReady;
     const { id } = await params;
-    const tender = await prisma.tender.findFirst({
-      where: { id, userId: actor.id },
-      select: {
-        id: true,
-        title: true,
-        status: true,
-        stage: true,
-        readinessScore: true,
-        generatedDocuments: {
-          where: { generationStatus: { not: "SUPERSEDED" } },
-          orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }],
-          select: {
-            id: true,
-            name: true,
-            exactFileName: true,
-            exactOrder: true,
-            documentType: true,
-            format: true,
-            generationStatus: true,
-            validationStatus: true,
-            reviewStatus: true,
-            fileContent: true,
-            storagePath: true,
-          },
-        },
-      },
-    });
+    const readiness = await getFinalSubmissionReadiness(prisma, { tenderId: id, userId: actor.id, requireFileContent: false });
+    if (!readiness) return jsonError("Tender not found", 404, { code: "TENDER_NOT_FOUND" });
 
-    if (!tender) return jsonError("Tender not found", 404, { code: "TENDER_NOT_FOUND" });
-
-    const finalCandidateDocs = filterFinalExportCandidateDocuments(tender.generatedDocuments);
-
-    const seenKeys = new Set<string>();
-    const dedupedDocs = finalCandidateDocs
-      .slice()
-      .sort((a, b) => (a.exactOrder ?? 9999) - (b.exactOrder ?? 9999))
-      .filter((doc) => {
-        const key = (doc.exactFileName ?? doc.name ?? "").trim().toLowerCase();
-        if (seenKeys.has(key)) return false;
-        seenKeys.add(key);
-        return true;
-      });
-
-    const readiness = await checkFullExportReadiness({ tenderId: id, docs: dedupedDocs, requireFileContent: false });
-    const documentBlockers = readiness.failures.map((failure) => ({
-      ...failure,
-      severity: severityForReasons(failure.reasons),
-      nextActions: Array.from(new Set(failure.reasons.map(nextActionForReason))),
-    }));
-    const tenderLevelBlockers = readiness.tenderLevelBlockers ?? [];
-    const totalBlockers = documentBlockers.length + tenderLevelBlockers.length;
-
+    // Canonical shape — Bid Control, Export Readiness Panel, Final Submission
+    // Control Center, and the download route all read from this exact payload.
     return NextResponse.json({
       success: true,
       exportReadiness: {
         ok: readiness.ok,
-        tender: {
-          id: tender.id,
-          title: tender.title,
-          status: tender.status,
-          stage: tender.stage,
-          readinessScore: tender.readinessScore ?? 0,
-        },
+        tender: readiness.tender,
         summary: {
-          activeDocuments: finalCandidateDocs.length,
-          workspaceDocuments: tender.generatedDocuments.length,
-          excludedInternalDrafts: tender.generatedDocuments.length - finalCandidateDocs.length,
-          documentBlockers: documentBlockers.length,
-          tenderLevelBlockers: tenderLevelBlockers.length,
-          totalBlockers,
+          // Legacy fields kept for backwards compatibility with consumers that
+          // still read `activeDocuments` / `workspaceDocuments` /
+          // `excludedInternalDrafts` from the old shape.
+          activeDocuments: readiness.summary.finalExportCandidates,
+          workspaceDocuments: readiness.summary.workspaceDocuments,
+          excludedInternalDrafts: readiness.summary.excludedInternalRows,
+          documentBlockers: readiness.summary.documentBlockers,
+          tenderLevelBlockers: readiness.summary.tenderLevelBlockers,
+          advisoryWarnings: readiness.summary.advisoryWarnings,
+          totalBlockers: readiness.summary.totalBlockers,
+          // Canonical extension — used by Bid Control + audit endpoint.
+          finalExportCandidates: readiness.summary.finalExportCandidates,
+          excludedInternalRows: readiness.summary.excludedInternalRows,
+          missingContentCount: readiness.summary.missingContentCount,
+          invalidSignatureCount: readiness.summary.invalidSignatureCount,
+          hygieneIssueCount: readiness.summary.hygieneIssueCount,
+          officialOriginalBlockers: readiness.summary.officialOriginalBlockers,
+          envelopeBreakdown: readiness.summary.envelopeBreakdown,
+          strictTwoEnvelope: readiness.summary.strictTwoEnvelope,
+          packageMode: readiness.summary.packageMode,
+          planStatus: readiness.summary.planStatus,
+          // Analysis-source gate — consumed by Export Readiness Panel to warn
+          // when analysis is regex fallback or unapproved.
+          analysisSource: readiness.summary.analysisSource,
+          readinessScore: readiness.summary.readinessScore,
+          missingRequiredDocuments: readiness.summary.missingRequiredDocuments,
+          ungeneratedPlannedRequired: readiness.summary.ungeneratedPlannedRequired,
+          qualityFailedDocuments: readiness.summary.qualityFailedDocuments,
         },
-        documentBlockers,
-        tenderLevelBlockers,
-        message: readiness.ok ? "Export gate passed. All final-package documents and tender-level controls are ready." : exportReadinessError(readiness.failures, tenderLevelBlockers),
+        documentBlockers: readiness.documentBlockers,
+        tenderLevelBlockers: readiness.tenderLevelBlockers,
+        advisoryWarnings: readiness.advisoryWarnings,
+        message: readiness.message,
       },
     });
   } catch (error) {

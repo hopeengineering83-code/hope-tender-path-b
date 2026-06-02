@@ -106,10 +106,14 @@ export function EngineActionPanel({
   tenderId,
   vaultReviewedExperts = 0,
   vaultReviewedProjects = 0,
+  lifecycleBlockersExist = false,
 }: {
   tenderId: string;
   vaultReviewedExperts?: number;
   vaultReviewedProjects?: number;
+  /** When true, the success message notes that readiness blockers remain so the
+   *  user doesn't mistake "engine completed" for "ready to generate". */
+  lifecycleBlockersExist?: boolean;
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -153,7 +157,19 @@ export function EngineActionPanel({
         setResult(data);
         return;
       }
-      setResult({ ...data, success: true, error: "Engine completed successfully." });
+      // "Engine succeeded" here means the engine HTTP run passed its
+       // postconditions — it does NOT mean tender readiness is green. Downstream
+       // blockers (regex fallback unapproved, metadata incomplete, submission
+       // plan not built, evidence uncoverage) still apply. Make the label honest
+       // so the user is steered to the readiness panels below.
+      const warningCount = Array.isArray(data?.extractionWarnings) ? data.extractionWarnings.length : 0;
+      setResult({
+        ...data,
+        success: true,
+        error: warningCount > 0
+          ? `Engine run completed with ${warningCount} extraction warning(s). Review the readiness panels below — remaining blockers (analysis source, metadata, submission plan, evidence) still apply.`
+          : "Engine run completed. Review the readiness panels below — any remaining blockers (analysis source, metadata, submission plan, evidence) still apply before Generate Docs.",
+      });
       startTransition(() => router.refresh());
     } catch (error) {
       setResult({
@@ -221,7 +237,7 @@ export function EngineActionPanel({
       }
 
       if (finalStatus === "SUCCEEDED") {
-        setResult({ success: true, async: true, jobId, error: "Engine completed successfully (background)." });
+        setResult({ success: true, async: true, jobId, error: lifecycleBlockersExist ? "Engine run completed; blockers remain — review readiness panels." : "Engine completed successfully (background)." });
         startTransition(() => router.refresh());
       } else if (finalStatus === "FAILED") {
         const jobOutput = finalJob?.output as Record<string, unknown> | null | undefined;
@@ -393,7 +409,7 @@ export function EngineActionPanel({
                   const jobStatus = j?.job?.status ?? j?.status;
                   const jobError = j?.job?.errorMessage ?? j?.errorMessage;
                   if (jobStatus === "SUCCEEDED") {
-                    setResult({ success: true, async: true, jobId: result.jobId, error: "Engine completed successfully (background)." });
+                    setResult({ success: true, async: true, jobId: result.jobId, error: lifecycleBlockersExist ? "Engine run completed; blockers remain — review readiness panels." : "Engine completed successfully (background)." });
                     startTransition(() => router.refresh());
                   } else if (jobStatus === "FAILED") {
                     setResult({

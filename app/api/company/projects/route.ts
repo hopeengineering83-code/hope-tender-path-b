@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { prisma, prismaReady } from "../../../../lib/prisma";
-import { getSession } from "../../../../lib/auth";
+import { requireRole, forbiddenResponse, unauthorizedResponse, getSession } from "../../../../lib/auth";
+import { logAction } from "../../../../lib/audit";
+import { MUTATION_RATE_LIMIT, rateLimit } from "../../../../lib/rate-limit";
 import { ensureCompanyForUser } from "../../../../lib/company-workspace";
 
 function toJsonArray(value: unknown): string {
@@ -51,27 +53,41 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
-  const userId = await getSession();
-  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  await prismaReady;
+  let actor;
+  try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER"); }
+  catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
 
-  const company = await ensureCompanyForUser(prisma, userId);
+  const rl = rateLimit(`project-create:${actor.id}`, MUTATION_RATE_LIMIT);
+  if (!rl.allowed) {
+    return NextResponse.json({ error: "Too many project creation requests. Wait and retry.", retryAfter: Math.ceil((rl.resetAt - Date.now()) / 1000) }, { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } });
+  }
+
+  await prismaReady;
+  const company = await ensureCompanyForUser(prisma, actor.id);
 
   try {
-    const body = await req.json();
+    const body = await req.json().catch(() => null);
+    if (!body) return NextResponse.json({ error: "Request body must be valid JSON" }, { status: 400 });
+    if (!body.name || String(body.name).trim().length < 2) {
+      return NextResponse.json({ error: "Project name is required (min 2 characters)" }, { status: 400 });
+    }
+    const contractValue = body.contractValue ? Number(body.contractValue) : null;
+    if (contractValue !== null && (!Number.isFinite(contractValue) || contractValue < 0 || contractValue > 1e12)) {
+      return NextResponse.json({ error: "contractValue must be a finite non-negative number up to 1,000,000,000,000" }, { status: 400 });
+    }
     const project = await prisma.project.create({
       data: {
         companyId: company.id,
-        name: body.name,
+        name: String(body.name).trim(),
         clientName: body.clientName || null,
         country: body.country || null,
         sector: body.sector || null,
         serviceAreas: toJsonArray(body.serviceAreas),
         summary: body.summary || null,
-        contractValue: body.contractValue ? Number(body.contractValue) : null,
+        contractValue,
         currency: body.currency || null,
         trustLevel: "REVIEWED",
-        reviewedBy: userId,
+        reviewedBy: actor.id,
         reviewedAt: new Date(),
         reviewNotes: "Manual project record created by authenticated user.",
       },
@@ -98,6 +114,16 @@ export async function POST(req: Request) {
     }
 
     const refreshed = await prisma.project.findUnique({ where: { id: project.id } });
+
+    await logAction({
+      userId: actor.id,
+      action: "PROJECT_CREATE",
+      entityType: "Project",
+      entityId: project.id,
+      description: `Project "${project.name}" created`,
+      metadata: { projectId: project.id, name: project.name, companyId: company.id },
+    });
+
     return NextResponse.json(normalizeProject((refreshed ?? project) as unknown as Record<string, unknown>), { status: 201 });
   } catch (error) {
     console.error(error);

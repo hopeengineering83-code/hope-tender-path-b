@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { buildSubmissionPlan, findExtraGeneratedDocuments, findMissingGeneratedDocuments, submissionPlanFileCount } from "@/lib/engine/submission-plan";
 import { computeEvidenceCoverage } from "@/lib/engine/requirement-evidence-profile";
 
@@ -35,13 +36,14 @@ type TenderLike = {
   exactFileNaming?: string | null;
   exactFileOrder?: string | null;
   pageLimit?: number | null;
+  bidOutcome?: string | null;
   requirements?: TenderRequirementLike[];
   complianceGaps?: Array<{ severity: string; isResolved: boolean }>;
   generatedDocuments?: GeneratedDocLike[];
   expertMatches?: Array<{ isSelected: boolean; score: number; expert?: { trustLevel?: string | null } }>;
   projectMatches?: Array<{ isSelected: boolean; score: number; project?: { trustLevel?: string | null } }>;
   complianceMatrix?: Array<{ id: string; requirementId?: string | null; supportLevel: string }>;
-  files?: Array<{ extractedText?: string | null }>;
+  files?: Array<{ extractedTextLength?: number | null }>;
 };
 
 function pct(value: number, total: number) {
@@ -82,6 +84,13 @@ function visiblePackageDocs(docs: GeneratedDocLike[]): GeneratedDocLike[] {
   return Array.from(byKey.values());
 }
 
+function bidOutcomeBadgeClass(outcome: string): string {
+  if (outcome === "WON") return "bg-green-100 text-green-700 border-green-200";
+  if (outcome === "LOST") return "bg-red-100 text-red-700 border-red-200";
+  if (outcome === "WITHDRAWN") return "bg-slate-100 text-slate-600 border-slate-200";
+  return "bg-amber-100 text-amber-700 border-amber-200";
+}
+
 export function ExecutiveSnapshot({ tender }: { tender: TenderLike }) {
   const requirements = tender.requirements ?? [];
   const gaps = tender.complianceGaps ?? [];
@@ -115,7 +124,7 @@ export function ExecutiveSnapshot({ tender }: { tender: TenderLike }) {
   const generatedCount = generatedDocs.filter((d) => statusValue(d.generationStatus) === "GENERATED").length;
   const validatedCount = generatedDocs.filter((d) => ["PASSED", "VALIDATED", "APPROVED"].includes(statusValue(d.validationStatus))).length;
   const approvedCount = generatedDocs.filter((d) => ["APPROVED", "ACCEPTED", "SIGNED_OFF", "SIGNED OFF"].includes(statusValue(d.reviewStatus))).length;
-  const extractedFiles = files.filter((f) => (f.extractedText ?? "").length > 80).length;
+  const extractedFiles = files.filter((f) => (f.extractedTextLength ?? 0) > 80).length;
 
   // Legacy evidence score — lenient counting (PARTIAL counts), kept for
   // backward-compat with the readiness score the engine writes to
@@ -146,18 +155,37 @@ export function ExecutiveSnapshot({ tender }: { tender: TenderLike }) {
     })),
   );
   const evidenceScore = evidenceCoverage.strongCoveragePercent;
-  const readiness = tender.readinessScore ?? evidenceScore;
+  // Legacy DB readiness is displayed as workflow progress only. It must not
+  // drive the GO/REVIEW decision because it can drift from canonical gates.
+  const workflowProgress = tender.readinessScore ?? evidenceScore;
+  const canonicalDecisionScore = evidenceScore;
 
   const hasPlanMismatch = missingPlannedDocs.length > 0 || extraGeneratedDocs.length > 0;
+  const hasRequirements = requirements.length > 0;
+  const hasSelectedEvidence = selectedExperts.length + selectedProjects.length > 0;
+  const hasConfirmedEvidenceRows = matrix.length > 0;
+  const hasStrongEvidenceGap = hasRequirements && evidenceCoverage.requirementsWithStrongEvidence < evidenceCoverage.totalRequirements;
+  const hasNoDocsForWorkflow = hasRequirements && dashboardDocTotal === 0 && generatedDocs.length === 0;
+  const hasNoGeneratedDocs = dashboardDocTotal > 0 && dashboardGeneratedCount === 0;
+
   const decision: "GO" | "REVIEW" | "NO_GO" = unresolvedCritical > 0
     ? "NO_GO"
-    : readiness >= 85 && unresolvedHigh === 0 && dashboardGeneratedCount > 0 && !hasPlanMismatch
-      ? "GO"
-      : "REVIEW";
+    : canonicalDecisionScore >= 85
+      && unresolvedHigh === 0
+      && dashboardGeneratedCount > 0
+      && !hasPlanMismatch
+      && !hasStrongEvidenceGap
+        ? "GO"
+        : "REVIEW";
 
   const nextActions = [
     unresolvedCritical > 0 ? `Resolve ${unresolvedCritical} critical blocker(s) before final export.` : null,
     unresolvedCritical === 0 && unresolvedHigh > 0 ? `Senior review ${unresolvedHigh} high-priority item(s).` : null,
+    hasRequirements && !hasConfirmedEvidenceRows ? `Confirm reviewed vault evidence for ${requirements.length} requirement(s); selected matches alone do not count as final evidence.` : null,
+    hasRequirements && hasConfirmedEvidenceRows && hasStrongEvidenceGap ? `Strengthen evidence coverage: ${evidenceCoverage.totalRequirements - evidenceCoverage.requirementsWithStrongEvidence} requirement(s) still lack FULL/SUBSTANTIAL evidence.` : null,
+    hasRequirements && !hasSelectedEvidence ? "Run matching and select reviewed expert/project evidence before final generation." : null,
+    hasNoDocsForWorkflow ? "Build the submission plan and generate the required proposal documents before export." : null,
+    hasNoGeneratedDocs ? `Generate ${dashboardDocTotal} planned document(s); planned rows are not export-ready documents.` : null,
     missingPlannedDocs.length > 0 ? `Generate or reconcile ${missingPlannedDocs.length} tender-required planned document(s).` : null,
     extraGeneratedDocs.length > 0 ? `Remove or justify ${extraGeneratedDocs.length} generated document(s) not found in the submission plan.` : null,
     selectedExperts.length > reviewedExperts ? `Review ${selectedExperts.length - reviewedExperts} selected expert draft record(s) or deselect them.` : null,
@@ -169,6 +197,15 @@ export function ExecutiveSnapshot({ tender }: { tender: TenderLike }) {
     submissionPlan.warnings.length > 0 ? submissionPlan.warnings[0] : null,
   ].filter(Boolean) as string[];
 
+  // Belt-and-suspenders: never show green "No major blockers" when evidence
+  // rows = 0 and requirements exist, or when no expert/project evidence is
+  // selected and requirements exist. The nextActions check above should catch
+  // these, but this guard prevents edge cases where the conditions slip through.
+  const clearForHumanReview = decision === "GO"
+    && nextActions.length === 0
+    && !(hasRequirements && !hasConfirmedEvidenceRows)   // never green with 0 evidence rows
+    && !(hasRequirements && !hasSelectedEvidence);        // never green with 0 selected evidence
+
   return (
     <section className="mb-6 rounded-2xl border bg-white p-5 shadow-sm">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
@@ -179,11 +216,24 @@ export function ExecutiveSnapshot({ tender }: { tender: TenderLike }) {
             One proposal-management view for readiness, critical gaps, evidence coverage, selected experts/projects, submission-plan documents, validation, review status, and extraction health.
           </p>
         </div>
-        <span className={`w-fit rounded-full border px-4 py-2 text-sm font-bold ${badgeClass(decision)}`}>{decision}</span>
+        <div className="flex flex-wrap items-center gap-2">
+          {tender.bidOutcome && (
+            <span className={`rounded-full border px-3 py-1.5 text-xs font-semibold ${bidOutcomeBadgeClass(tender.bidOutcome)}`}>
+              Bid: {tender.bidOutcome}
+            </span>
+          )}
+          <span className={`rounded-full border px-4 py-2 text-sm font-bold ${badgeClass(decision)}`}>{decision}</span>
+          <Link
+            href={`/dashboard/tenders/${tender.id}/command-center`}
+            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+          >
+            Full Command Center →
+          </Link>
+        </div>
       </div>
 
       <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-6">
-        <div className="rounded-xl bg-slate-50 p-4"><p className="text-xs text-slate-400">Readiness</p><p className="mt-1 text-2xl font-bold text-slate-900">{readiness}%</p></div>
+        <div className="rounded-xl bg-slate-50 p-4" title="Workflow progress score from tender DB — not the canonical final submission readiness. Use the Canonical Readiness panel for export gating."><p className="text-xs text-slate-400">Workflow Progress</p><p className="mt-1 text-2xl font-bold text-slate-900">{workflowProgress}%</p><p className="text-[10px] text-slate-400">(workflow, not final)</p></div>
         <div className="rounded-xl bg-slate-50 p-4" title={`Strong evidence coverage: ${evidenceCoverage.requirementsWithStrongEvidence}/${evidenceCoverage.totalRequirements} requirement(s) linked to FULL or SUBSTANTIAL evidence. Lenient (any link, including PARTIAL): ${evidenceScoreLegacy}%.`}><p className="text-xs text-slate-400">Evidence coverage</p><p className="mt-1 text-2xl font-bold text-slate-900">{evidenceScore}%</p><p className="text-xs text-slate-500">{evidenceCoverage.requirementsWithStrongEvidence}/{evidenceCoverage.totalRequirements} strong</p></div>
         <div className="rounded-xl bg-slate-50 p-4"><p className="text-xs text-slate-400">Critical / High</p><p className="mt-1 text-2xl font-bold text-slate-900">{unresolvedCritical}/{unresolvedHigh}</p></div>
         <div className="rounded-xl bg-slate-50 p-4"><p className="text-xs text-slate-400">Experts ≥90%</p><p className="mt-1 text-2xl font-bold text-slate-900">{strongExperts}</p><p className="text-xs text-slate-500">{reviewedExperts}/{selectedExperts.length} reviewed selected</p></div>
@@ -205,7 +255,11 @@ export function ExecutiveSnapshot({ tender }: { tender: TenderLike }) {
             <ol className="mt-2 list-decimal space-y-1 pl-5 text-sm text-slate-600">
               {nextActions.slice(0, 6).map((action) => <li key={action}>{action}</li>)}
             </ol>
-          ) : <p className="mt-2 text-sm text-green-700">No major blockers detected. Proceed to final human review and export package.</p>}
+          ) : clearForHumanReview ? (
+            <p className="mt-2 text-sm text-green-700">No major snapshot blockers detected. Continue to canonical final submission/export readiness before releasing the package.</p>
+          ) : (
+            <p className="mt-2 text-sm text-amber-700">Readiness is not final. Open the Full Command Center and resolve canonical readiness/export blockers before final submission.</p>
+          )}
         </div>
         <div className="rounded-xl border border-slate-100 p-4">
           <p className="text-sm font-semibold text-slate-900">Tender intelligence</p>

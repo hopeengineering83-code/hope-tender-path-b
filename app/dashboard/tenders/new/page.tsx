@@ -2,7 +2,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 
-const CATEGORIES = ["General","IT","Construction","Services","Consulting","Supply","Healthcare","Education","Infrastructure","Urban Planning","Environmental","Other"];
+const CATEGORIES = ["General","IT","Construction","Services","Consulting","Supply","Healthcare","Education","Infrastructure","Urban Planning","Environmental","Feasibility Study","NGO/Donor-Funded","Other"];
 const CURRENCIES = ["USD","EUR","GBP","ZAR","AUD","CAD","AED","SAR","KWD","EGP","ETB","NGN"];
 
 export default function NewTenderPage() {

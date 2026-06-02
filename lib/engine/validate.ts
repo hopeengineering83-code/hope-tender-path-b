@@ -2,6 +2,7 @@ import { prisma } from "../prisma";
 import { exactSelectionLimit } from "./scope-policy";
 import { buildDeterministicComprehension } from "./deterministic-prohibition-extractor";
 import { validateConstraints } from "./constraint-validator";
+import { filterFinalExportCandidateDocuments } from "./document-output-state";
 
 export interface ValidationIssue {
   code: string;
@@ -85,8 +86,10 @@ export async function validateTender(tenderId: string): Promise<ValidationReport
     if (aiDraft.length > 0) issues.push({ code: "AI_DRAFT_PROJECT_NOT_REVIEWED", severity: "BLOCK", message: `${aiDraft.length} selected project(s) are AI_DRAFT but not yet reviewed. Verify each project against source documents and mark REVIEWED before final validation. Affected: ${aiDraft.map((p) => p.name).join(", ")}.` });
   }
 
-  // Sort by exactOrder then updatedAt descending so dedup keeps the most-recently-updated record per filename.
-  const allGenerated = tender.generatedDocuments
+  // Validate only final-export candidates. Internal control rows, original-replacement placeholders,
+  // planned rows, superseded rows, quick drafts, and non-exportable records are handled by the
+  // export gate and must not create false validation blockers.
+  const allGenerated = filterFinalExportCandidateDocuments(tender.generatedDocuments as any[])
     .filter((d) => d.generationStatus === "GENERATED")
     .sort((a, b) => {
       const orderDiff = (a.exactOrder ?? Number.MAX_SAFE_INTEGER) - (b.exactOrder ?? Number.MAX_SAFE_INTEGER);
@@ -116,11 +119,6 @@ export async function validateTender(tenderId: string): Promise<ValidationReport
   if (generatedDocs.length === 0) issues.push({ code: "NO_GENERATED_DOCUMENTS", severity: "BLOCK", message: "No documents have been generated yet. Run document generation first." });
 
   for (const doc of generatedDocs) {
-    // Skip documents that are already flagged for original replacement — the export gate
-    // handles them as ORIGINAL_REQUIRED. Adding a separate BLOCKING placeholder message
-    // here would be a false positive: these docs intentionally contain placeholder text
-    // as a stub until the user attaches the tender-issued original.
-    if (doc.reviewStatus === "REPLACE_WITH_ORIGINAL") continue;
     const textToCheck = [doc.contentSummary ?? "", doc.name, doc.exactFileName ?? ""].join(" ");
     if (hasPlaceholder(textToCheck)) issues.push({ code: "PLACEHOLDER_IN_DOCUMENT", severity: "BLOCK", message: `Document "${doc.name}" contains placeholder text that must be replaced.` });
   }
@@ -203,6 +201,6 @@ export async function validateTender(tenderId: string): Promise<ValidationReport
 
   const blockCount = issues.filter((i) => i.severity === "BLOCK").length;
   const newStatus = blockCount === 0 ? "PASSED" : "FAILED";
-  await prisma.generatedDocument.updateMany({ where: { tenderId, generationStatus: "GENERATED" }, data: { validationStatus: newStatus } });
+  await prisma.generatedDocument.updateMany({ where: { id: { in: generatedDocs.map((d) => d.id) } }, data: { validationStatus: newStatus } });
   return { passed: blockCount === 0, issues, checkedAt: new Date().toISOString() };
 }

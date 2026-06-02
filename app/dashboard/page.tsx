@@ -11,7 +11,9 @@ export default async function DashboardPage() {
   if (!userId) redirect("/login");
   await prismaReady;
 
-  const [tenders, company, recentActivity] = await Promise.all([
+  const tenderIds = await prisma.tender.findMany({ where: { userId }, select: { id: true } }).then((r) => r.map((t) => t.id));
+
+  const [tenders, company, recentActivity, generatedDocStats] = await Promise.all([
     prisma.tender.findMany({
       where: { userId },
       select: {
@@ -29,6 +31,11 @@ export default async function DashboardPage() {
       orderBy: { createdAt: "desc" },
       take: 8,
     }),
+    tenderIds.length > 0 ? prisma.generatedDocument.groupBy({
+      by: ["reviewStatus"],
+      where: { tenderId: { in: tenderIds }, generationStatus: { not: "SUPERSEDED" } },
+      _count: { _all: true },
+    }) : Promise.resolve([]),
   ]);
 
   const now = new Date();
@@ -63,8 +70,15 @@ export default async function DashboardPage() {
     total: tenders.length,
     inProgress: tenders.filter((t) => !["DRAFT", "EXPORTED", "CLOSED"].includes(t.status)).length,
     criticalGaps: tenders.reduce((sum, t) => sum + t.complianceGaps.filter((g: { isResolved: boolean; severity: string }) => !g.isResolved && g.severity === "CRITICAL").length, 0),
+    highGaps: tenders.reduce((sum, t) => sum + t.complianceGaps.filter((g: { isResolved: boolean; severity: string }) => !g.isResolved && g.severity === "HIGH").length, 0),
     dueSoon: dueSoon7.length,
+    overdue: overdue.length,
   };
+
+  const totalGenDocs = generatedDocStats.reduce((s, g) => s + g._count._all, 0);
+  const exportReadyDocs = generatedDocStats
+    .filter((g) => g.reviewStatus === "READY_FOR_EXPORT" || g.reviewStatus === "APPROVED")
+    .reduce((s, g) => s + g._count._all, 0);
 
   const aiEnabled = isAIEnabled();
 
@@ -73,9 +87,13 @@ export default async function DashboardPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Dashboard</h1>
-          <p className="mt-0.5 text-slate-500">
-            {company ? `${company.name} · ` : ""}
-            {aiEnabled ? "✦ AI-powered" : ""}
+          <p className="mt-0.5 text-slate-500 flex items-center gap-2">
+            {company ? `${company.name}` : ""}
+            {company && <span className="text-slate-300">·</span>}
+            {aiEnabled
+              ? <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-2 py-0.5">✦ AI enabled</span>
+              : <span className="inline-flex items-center gap-1 text-xs font-medium text-slate-500 bg-slate-100 border border-slate-200 rounded-full px-2 py-0.5">AI offline — rule-based mode</span>
+            }
           </p>
         </div>
         <Link href="/dashboard/tenders/new" className="rounded-lg bg-black px-4 py-2 text-sm text-white hover:bg-slate-800">
@@ -106,12 +124,14 @@ export default async function DashboardPage() {
       )}
 
       {/* Stats */}
-      <div className="grid gap-4 grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-4 grid-cols-2 xl:grid-cols-6">
         {[
           { label: "Total Tenders", value: stats.total, color: "text-slate-900" },
           { label: "In Progress", value: stats.inProgress, color: "text-blue-600" },
           { label: "Critical Gaps", value: stats.criticalGaps, color: stats.criticalGaps > 0 ? "text-red-600" : "text-green-600" },
-          { label: "Due ≤ 7 Days", value: stats.dueSoon, color: stats.dueSoon > 0 ? "text-amber-600" : "text-slate-900" },
+          { label: "High Gaps", value: stats.highGaps, color: stats.highGaps > 0 ? "text-orange-600" : "text-slate-400" },
+          { label: "Due ≤ 7 Days", value: stats.dueSoon, color: stats.dueSoon > 0 ? "text-amber-600" : "text-slate-400" },
+          { label: "Overdue", value: stats.overdue, color: stats.overdue > 0 ? "text-red-700" : "text-slate-400" },
         ].map((s) => (
           <div key={s.label} className="rounded-2xl border bg-white p-5 shadow-sm">
             <p className="text-sm text-slate-500">{s.label}</p>
@@ -121,7 +141,7 @@ export default async function DashboardPage() {
       </div>
 
       {/* Analytics strip */}
-      {(winRate !== null || pipelineValue > 0 || avgReadiness !== null) && (
+      {(winRate !== null || pipelineValue > 0 || avgReadiness !== null || totalGenDocs > 0) && (
         <div className="grid gap-4 grid-cols-2 xl:grid-cols-4">
           {winRate !== null && (
             <div className="rounded-2xl border bg-white p-5 shadow-sm">
@@ -148,6 +168,13 @@ export default async function DashboardPage() {
               <p className="text-sm text-slate-500">Avg Readiness</p>
               <p className={`mt-1 text-3xl font-bold ${avgReadiness >= 80 ? "text-green-600" : avgReadiness >= 50 ? "text-amber-600" : "text-red-500"}`}>{avgReadiness}%</p>
               <p className="mt-1 text-xs text-slate-400">across {scoredTenders.length} scored tender(s)</p>
+            </div>
+          )}
+          {totalGenDocs > 0 && (
+            <div className="rounded-2xl border bg-white p-5 shadow-sm">
+              <p className="text-sm text-slate-500">Docs Export-Ready</p>
+              <p className={`mt-1 text-3xl font-bold ${exportReadyDocs === totalGenDocs ? "text-green-600" : exportReadyDocs > 0 ? "text-amber-600" : "text-slate-400"}`}>{exportReadyDocs}</p>
+              <p className="mt-1 text-xs text-slate-400">of {totalGenDocs} generated document{totalGenDocs !== 1 ? "s" : ""}</p>
             </div>
           )}
           <div className="rounded-2xl border bg-white p-5 shadow-sm">
@@ -185,7 +212,7 @@ export default async function DashboardPage() {
                   <th className="px-6 py-3 font-medium">Title</th>
                   <th className="px-6 py-3 font-medium">Deadline</th>
                   <th className="px-6 py-3 font-medium">Status</th>
-                  <th className="px-6 py-3 font-medium">Readiness</th>
+                  <th className="px-6 py-3 font-medium">Workflow Progress</th>
                 </tr>
               </thead>
               <tbody className="divide-y">
@@ -214,7 +241,7 @@ export default async function DashboardPage() {
                               <div className={`h-full rounded-full ${readiness >= 80 ? "bg-green-500" : readiness >= 50 ? "bg-amber-400" : "bg-red-400"}`}
                                 style={{ width: `${readiness}%` }} />
                             </div>
-                            <span className="text-xs text-slate-500">{readiness}%</span>
+                            <span className="text-xs text-slate-500">{readiness}% <span className="text-slate-300">(workflow)</span></span>
                           </div>
                         ) : (
                           <span className="text-xs text-slate-400">No analysis</span>

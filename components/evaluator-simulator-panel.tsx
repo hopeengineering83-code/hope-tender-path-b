@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 
 type Persona = "TECHNICAL" | "COMPLIANCE" | "END_USER" | "COMMERCIAL";
 type Owner = "TECHNICAL" | "COMPLIANCE" | "COMMERCIAL" | "PROPOSAL" | "MANAGEMENT";
@@ -74,6 +75,7 @@ function scoreColor(score: number): string {
 }
 
 export function EvaluatorSimulatorPanel({ tenderId }: EvaluatorSimulatorPanelProps) {
+  const router = useRouter();
   const [simulation, setSimulation] = useState<SimulationResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -90,6 +92,7 @@ export function EvaluatorSimulatorPanel({ tenderId }: EvaluatorSimulatorPanelPro
       }
       const data = await res.json();
       setSimulation(data.simulation);
+      router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Simulation failed");
     } finally {

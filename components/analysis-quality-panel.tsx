@@ -5,14 +5,13 @@ import { assessTenderAnalysisQuality } from "../lib/analysis-quality";
 import { assessMatchingQuality } from "../lib/matching-quality";
 import { ensureCompanyForUser } from "../lib/company-workspace";
 import { getCompanyIngestionReadiness } from "../lib/company-ingestion-readiness";
+import { detectAnalysisSourceWithApproval } from "../lib/engine/analysis-source";
 
-function analysisSourceFromNotes(notes?: string | null) {
-  const text = notes ?? "";
-  const line = text.split(/\n+/).find((item) => item.toLowerCase().startsWith("analysis source:"));
-  if (!line) return { label: "Unknown", risk: "MEDIUM", detail: "No persisted analysis-source line was found. Re-run Engine after this update if needed." };
-  if (/analysis source:\s*ai/i.test(line)) return { label: "AI", risk: "LOW", detail: line.replace(/^Analysis source:\s*/i, "") };
-  if (/regex fallback/i.test(line)) return { label: "Regex fallback", risk: "HIGH", detail: line.replace(/^Analysis source:\s*/i, "") };
-  return { label: "Unknown", risk: "MEDIUM", detail: line };
+function analysisSourceSummary(source: Awaited<ReturnType<typeof detectAnalysisSourceWithApproval>>) {
+  if (source === "AI") return { label: "AI", risk: "LOW" as const, detail: "Analysis produced by AI provider." };
+  if (source === "HUMAN_APPROVED_REGEX_FALLBACK") return { label: "Regex fallback (approved)", risk: "MEDIUM" as const, detail: "Regex fallback was used, but a human reviewer has approved it as sufficient." };
+  if (source === "REGEX_FALLBACK_AI_ERROR") return { label: "Regex fallback", risk: "HIGH" as const, detail: "AI providers failed or were unavailable — regex extraction was used. Review carefully before submission." };
+  return { label: "Unknown", risk: "MEDIUM" as const, detail: "Analysis source not yet determined. Run AI Analyze to classify the source." };
 }
 
 export async function AnalysisQualityPanel({ tenderId }: { tenderId: string }) {
@@ -26,7 +25,6 @@ export async function AnalysisQualityPanel({ tenderId }: { tenderId: string }) {
       where: { id: tenderId, userId },
       include: {
         requirements: { orderBy: { createdAt: "asc" } },
-        files: { select: { extractedText: true, originalFileName: true } },
         expertMatches: { include: { expert: { select: { trustLevel: true, fullName: true } } } },
         projectMatches: { include: { project: { select: { trustLevel: true, name: true } } } },
       },
@@ -34,7 +32,11 @@ export async function AnalysisQualityPanel({ tenderId }: { tenderId: string }) {
   ]);
   if (!tender) return null;
 
-  const extractedChars = tender.files.reduce((sum, file) => sum + (file.extractedText?.length ?? 0), 0);
+  const [{ extractedChars }] = await prisma.$queryRaw<Array<{ extractedChars: number }>>`
+    SELECT COALESCE(SUM(char_length("extractedText")), 0)::int AS "extractedChars"
+    FROM "TenderFile"
+    WHERE "tenderId" = ${tenderId}
+  `;
 
   // Pass vault counts so analysis-quality matching sub-score matches the
   // matching-quality panel — both should show VAULT_AWAITS_ENGINE (−18)
@@ -68,7 +70,8 @@ export async function AnalysisQualityPanel({ tenderId }: { tenderId: string }) {
     selectedReviewedProjects: tender.projectMatches.filter((m) => m.isSelected && m.project?.trustLevel === "REVIEWED").length,
   });
 
-  const analysisSource = analysisSourceFromNotes(tender.notes);
+  const rawSource = await detectAnalysisSourceWithApproval(prisma, tenderId, tender).catch(() => "UNKNOWN" as const);
+  const analysisSource = analysisSourceSummary(rawSource);
   const ready = quality.severity !== "POOR" && analysisSource.risk !== "HIGH";
   const sourceRiskClass = analysisSource.risk === "LOW" ? "bg-emerald-100 text-emerald-700" : analysisSource.risk === "HIGH" ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-700";
 
@@ -86,7 +89,11 @@ export async function AnalysisQualityPanel({ tenderId }: { tenderId: string }) {
       </div>
 
       <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-        <div className="rounded-xl bg-white p-3"><p className="text-xs text-slate-500">Score</p><p className="text-xl font-bold text-slate-900">{quality.score}/100</p></div>
+        <div className="rounded-xl bg-white p-3">
+          <p className="text-xs text-slate-500">Score</p>
+          <p className="text-xl font-bold text-slate-900">{quality.score}/100</p>
+          {quality.isRegexFallback && <p className="text-[10px] text-amber-700 leading-tight">Score capped — regex fallback</p>}
+        </div>
         <div className="rounded-xl bg-white p-3"><p className="text-xs text-slate-500">Requirements</p><p className="text-xl font-bold text-slate-900">{quality.requirementCount}</p></div>
         <div className="rounded-xl bg-white p-3"><p className="text-xs text-slate-500">Mandatory</p><p className="text-xl font-bold text-slate-900">{quality.mandatoryCount}</p></div>
         <div className="rounded-xl bg-white p-3"><p className="text-xs text-slate-500">Source refs</p><p className="text-xl font-bold text-slate-900">{quality.sourceReferencedCount}</p></div>

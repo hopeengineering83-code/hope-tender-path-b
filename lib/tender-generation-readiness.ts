@@ -4,6 +4,8 @@ import { getCompanyIngestionReadiness, type CompanyIngestionReadiness } from "./
 import { assessTenderAnalysisQuality, type AnalysisQualityReport } from "./analysis-quality";
 import { assessMatchingQuality, type MatchingQualityReport } from "./matching-quality";
 import { isValidClientName, getClientNameStatus } from "./engine/metadata-validators";
+import { assertAnalysisReadyForFinalGeneration } from "./engine/analysis-source";
+import { assessTenderMetadataCompleteness } from "./engine/tender-metadata-completeness";
 // Round follow-up to PR #424/#425 — surface PDF-required + branding/
 // signature/stamp policy in the readiness panel BEFORE the user
 // clicks Download. Operators see the conflict early and fix it
@@ -169,6 +171,7 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
     matchingScore: matchingQuality.score,
     selectedReviewedExperts: tender.expertMatches.filter((m) => m.isSelected && m.expert.trustLevel === "REVIEWED").length,
     selectedReviewedProjects: tender.projectMatches.filter((m) => m.isSelected && m.project.trustLevel === "REVIEWED").length,
+    analysisSource: (tender.notes ?? "").split(/\n+/).map((l) => l.trim()).find((l) => /^analysis source:/i.test(l))?.replace(/^analysis source:\s*/i, "").trim() ?? null,
   });
 
   const blockers: GenerationReadinessItem[] = companyReadiness.blockers.map((message) => ({ code: "COMPANY_INGESTION_NOT_READY", message, nextAction: "OPEN_COMPANY_READINESS" }));
@@ -324,6 +327,64 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
       nextAction: "OPEN_ANALYSIS_QUALITY",
     });
   }
+  // Mirror the server-side generate-route gate so the panel can never show
+  // "Full proposal generation gate: passes" / a green button while the
+  // analysis came from an unapproved regex/deterministic fallback. The
+  // generate route returns 409 in that state; the UI must reflect the same
+  // truth instead of contradicting it. Defensive try/catch: test fakes may
+  // not implement complianceGap.findFirst.
+  const analysisGate = await assertAnalysisReadyForFinalGeneration(client, tenderId, tender).catch(() => ({ ok: true as const }));
+  if (!analysisGate.ok) {
+    fullProposalBlockers.push({
+      code: analysisGate.code,
+      message: `Full proposal generation is blocked: ${analysisGate.message}`,
+      nextAction: analysisGate.nextAction,
+    });
+  }
+
+  // Mirror the POST /generate metadata-completeness gate so the panel can
+  // never show "Full proposal generation gate: passes" while the same POST
+  // would return 422 with METADATA_INCOMPLETE_FOR_GENERATION. The two paths
+  // call the same helper with the same inputs so they agree byte-for-byte.
+  const metadataReport = assessTenderMetadataCompleteness({
+    clientName: tender.clientName,
+    title: tender.title,
+    reference: tender.reference ?? null,
+    country: tender.country ?? null,
+    submissionMethod: tender.submissionMethod ?? null,
+    submissionAddress: tender.submissionAddress ?? null,
+    submissionEmails: tender.submissionEmails ?? null,
+    deadline: tender.deadline ?? null,
+    clientContactName: tender.clientContactName ?? null,
+    clientContactEmail: tender.clientContactEmail ?? null,
+    clientContactPhone: tender.clientContactPhone ?? null,
+    pageLimit: tender.pageLimit ?? null,
+    budget: tender.budget ?? null,
+    currency: tender.currency ?? null,
+    validityDays: tender.validityDays ?? null,
+    bidBondAmount: tender.bidBondAmount ?? null,
+    bidBondCurrency: tender.bidBondCurrency ?? null,
+    mandatorySiteVisit: tender.mandatorySiteVisit ?? null,
+    numberOfCopiesRequired: tender.numberOfCopiesRequired ?? null,
+    preBidMeetingDate: tender.preBidMeetingDate ?? null,
+    preBidMeetingLocation: tender.preBidMeetingLocation ?? null,
+    requirementCount: tender.requirements.length,
+    hasEvaluationMethodology: Boolean((tender.evaluationMethodology ?? "").trim()),
+    hasSubmissionRules: Boolean(tender.submissionMethod || tender.submissionEmails || tender.submissionAddress),
+  });
+  if (metadataReport.blockingForGeneration) {
+    const missingCount = metadataReport.missingCritical.length;
+    const placeholderCount = metadataReport.invalidFields.length;
+    const parts: string[] = [];
+    if (missingCount > 0) parts.push(`${missingCount} critical metadata field(s) missing (${metadataReport.missingCritical.slice(0, 4).map((f) => f.field).join(", ")})`);
+    if (placeholderCount > 0) parts.push(`${placeholderCount} field(s) contain placeholder language`);
+    fullProposalBlockers.push({
+      code: "FULL_PROPOSAL_METADATA_INCOMPLETE",
+      message: `Full proposal generation is blocked: ${parts.join("; ")}. Try the "Repair all empty fields from source" button first — the deterministic extractor will populate any value that's actually in the uploaded tender file. If the field is genuinely absent from the tender source, edit the tender to confirm it manually.`,
+      nextAction: "REPAIR_OR_EDIT_TENDER",
+    });
+  }
+
   // Full proposal also requires reviewed selected evidence when the tender
   // demands experts/projects — not just vault fallback availability.
   // Skip these when the engine hasn't run yet (VAULT_AWAITS_ENGINE) — the
@@ -377,6 +438,8 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
     FULL_PROPOSAL_MATCHES_WEAK: "MATCHING",
     FULL_PROPOSAL_ENGINE_NOT_RUN: "MATCHING",
     FULL_PROPOSAL_NO_VAULT: "MATCHING",
+    // Metadata completeness
+    FULL_PROPOSAL_METADATA_INCOMPLETE: "METADATA",
     // Expert match availability
     NO_EXPERT_MATCHES_FOUND: "EXPERT_MATCHES",
     NO_REVIEWED_EXPERT_MATCHES: "EXPERT_MATCHES",

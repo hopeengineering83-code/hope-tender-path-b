@@ -10,6 +10,7 @@
 
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
+import { readFileSync } from "node:fs";
 import { computeEvidenceCoverage } from "../lib/engine/requirement-evidence-profile";
 
 // Mirror the shape ExecutiveSnapshot constructs from the Prisma tender
@@ -65,5 +66,16 @@ describe("ExecutiveSnapshot canonical evidence coverage", () => {
     ]));
     assert.equal(report.strongCoveragePercent, 0, "Strong coverage must reject PARTIAL-only requirements");
     assert.equal(report.anyCoveragePercent, 100);
+  });
+});
+
+
+describe("ExecutiveSnapshot stale workflow progress isolation", () => {
+  it("uses canonical evidence score for GO/REVIEW decision, not tender.readinessScore", () => {
+    const source = readFileSync("app/dashboard/tenders/[id]/executive-snapshot.tsx", "utf8");
+    assert.match(source, /const workflowProgress = tender\.readinessScore \?\? evidenceScore/);
+    assert.match(source, /const canonicalDecisionScore = evidenceScore/);
+    assert.match(source, /canonicalDecisionScore >= 85/);
+    assert.doesNotMatch(source, /readiness >= 85/);
   });
 });

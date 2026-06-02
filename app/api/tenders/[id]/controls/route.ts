@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { logAction } from "../../../../../lib/audit";
+import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import {
   appendControlNote,
   auditLogToControlRecord,
@@ -10,8 +11,85 @@ import {
   controlSummary,
   normalizeTenderControlPayload,
 } from "../../../../../lib/engine/tender-control-ledger";
+import { computeTenderLifecycle } from "../../../../../lib/engine/tender-lifecycle-orchestrator";
+import { deriveControlSuggestions, type SuggestedControl } from "../../../../../lib/engine/tender-control-suggestions";
+import { classifyWeakMatches } from "../../../../../lib/engine/weak-match-classifier";
 
 export const dynamic = "force-dynamic";
+
+// ── Suggested controls derived from lifecycle state (read-only, no DB writes) ─
+//
+// Delegates to the pure lib/engine/tender-control-suggestions module so the
+// derivation is unit-testable and covers every blocker category from the
+// audit task (metadata, regex fallback, source refs, mandatory coverage,
+// outside-plan, planned-not-generated, no-export-candidates, AI providers,
+// official originals, quality-failed, plan-not-built).
+
+async function deriveSuggestedControls(tenderId: string): Promise<SuggestedControl[]> {
+  try {
+    const lifecycle = await computeTenderLifecycle(prisma, tenderId);
+    if (!lifecycle) return [];
+    // Fetch match rows for the weak-match classifier (I). Bounded — at most
+    // 200 of each — so we never load thousands of rows for an extreme tender.
+    const tenderForMatches = await prisma.tender.findFirst({
+      where: { id: tenderId },
+      select: {
+        requirements: { select: { requirementType: true, description: true } },
+        expertMatches: { take: 200, select: { id: true, score: true, isSelected: true, expert: { select: { fullName: true, trustLevel: true } } } },
+        projectMatches: { take: 200, select: { id: true, score: true, isSelected: true, project: { select: { name: true, trustLevel: true } } } },
+      },
+    });
+    const expertRequirementsCount = tenderForMatches?.requirements.filter(
+      (r) => r.requirementType === "EXPERT" || /technical|methodology|expertise/i.test(r.description ?? ""),
+    ).length ?? 0;
+    const projectRequirementsCount = tenderForMatches?.requirements.filter(
+      (r) => r.requirementType === "PROJECT_EXPERIENCE" || /similar\s+(project|experience|assignment)|past\s+performance|reference/i.test(r.description ?? ""),
+    ).length ?? 0;
+    const weakMatchReport = classifyWeakMatches({
+      expertMatches: (tenderForMatches?.expertMatches ?? []).map((m) => ({
+        id: m.id, score: m.score, isSelected: m.isSelected,
+        trustLevel: m.expert.trustLevel, label: m.expert.fullName,
+      })),
+      projectMatches: (tenderForMatches?.projectMatches ?? []).map((m) => ({
+        id: m.id, score: m.score, isSelected: m.isSelected,
+        trustLevel: m.project.trustLevel, label: m.project.name,
+      })),
+      expertRequirementsCount,
+      projectRequirementsCount,
+    });
+    const all = deriveControlSuggestions({
+      metadataStatus: lifecycle.metadataStatus,
+      analysisStatus: lifecycle.analysisStatus,
+      sourceReferenceStatus: lifecycle.sourceReferenceStatus,
+      planStatus: lifecycle.planStatus,
+      evidenceStatus: lifecycle.evidenceStatus,
+      counts: lifecycle.counts,
+      providerStatus: lifecycle.providerStatus,
+      officialOriginalStatus: lifecycle.officialOriginalStatus,
+      weakMatchReport,
+    });
+    // Hide suggestions the user has explicitly rejected. Lookup the audit log
+    // for TENDER_CONTROL_SUGGESTION_REJECTED entries on this tender; the
+    // suggestionCode lives in the metadata blob.
+    const rejectedLogs = await prisma.auditLog.findMany({
+      where: { entityType: "Tender", entityId: tenderId, action: "TENDER_CONTROL_SUGGESTION_REJECTED" },
+      select: { metadata: true },
+    });
+    const rejectedCodes = new Set<string>();
+    for (const row of rejectedLogs) {
+      const raw = row.metadata;
+      const parsed = typeof raw === "string" ? (() => { try { return JSON.parse(raw); } catch { return null; } })() : raw;
+      const code = parsed && typeof parsed === "object" && "suggestionCode" in (parsed as Record<string, unknown>)
+        ? String((parsed as Record<string, unknown>).suggestionCode)
+        : null;
+      if (code) rejectedCodes.add(code);
+    }
+    return all.filter((s) => !rejectedCodes.has(s.code));
+  } catch {
+    // Never block the main controls response if suggestion derivation fails.
+    return [];
+  }
+}
 
 function stageForControl(type: string, currentStage: string): string {
   if (["ADDENDUM", "CLARIFICATION", "QUESTION"].includes(type)) return "COMPLIANCE";
@@ -40,13 +118,16 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   const tender = await prisma.tender.findFirst({ where: { id, userId: actor.id }, select: { id: true } });
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
 
-  const logs = await prisma.auditLog.findMany({
-    where: { entityType: "Tender", entityId: id, action: { startsWith: "TENDER_CONTROL_" } },
-    orderBy: { createdAt: "desc" },
-    take: 300,
-  });
+  const [logs, suggested] = await Promise.all([
+    prisma.auditLog.findMany({
+      where: { entityType: "Tender", entityId: id, action: { startsWith: "TENDER_CONTROL_" } },
+      orderBy: { createdAt: "desc" },
+      take: 300,
+    }),
+    deriveSuggestedControls(id),
+  ]);
   const records = logs.map(auditLogToControlRecord).filter((r): r is NonNullable<typeof r> => r !== null);
-  return NextResponse.json({ success: true, controls: records, summary: controlSummary(records) });
+  return NextResponse.json({ success: true, controls: records, suggestedControls: suggested, summary: controlSummary(records) });
 }
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -57,6 +138,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const msg = e instanceof Error ? e.message : "";
     return msg === "Forbidden" ? forbiddenResponse() : unauthorizedResponse();
   }
+
+  const rl = rateLimit(`controls:${actor.id}`, MUTATION_RATE_LIMIT);
+  if (!rl.allowed) return NextResponse.json({ error: "Too many requests", retryAfter: Math.ceil((rl.resetAt - Date.now()) / 1000) }, { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } });
 
   await prismaReady;
   const { id } = await params;

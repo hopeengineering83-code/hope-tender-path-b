@@ -171,6 +171,13 @@ export default function KnowledgeReviewPage() {
   const draftProjects = projects.filter((project) => isDraftTrust(project.trustLevel));
   const reviewedExperts = experts.length - draftExperts.length;
   const reviewedProjects = projects.length - draftProjects.length;
+  const expertSourceDocs = diagnostics?.totals.expertSourceDocuments ?? 0;
+  const projectSourceDocs = diagnostics?.totals.projectSourceDocuments ?? 0;
+  const sourceStatus = expertSourceDocs + projectSourceDocs > 0
+    ? `${expertSourceDocs} CV docs · ${projectSourceDocs} project docs`
+    : reviewedExperts + reviewedProjects > 0
+      ? "Reviewed records available; dedicated source docs optional"
+      : "0 CV docs · 0 project docs";
 
   if (loading) return <div className="py-16 text-center text-sm text-slate-400">Loading review data and diagnostics…</div>;
 
@@ -198,14 +205,14 @@ export default function KnowledgeReviewPage() {
 
       <div className="rounded-2xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-800">
         <p className="font-semibold">Document meaning</p>
-        <p className="mt-1">Your company profile, legal registration, financial statement, and manuals are usable tender support evidence. The warnings only mean the app did not find dedicated CV/expert-source documents or project-reference-source documents for rebuilding expert/project records.</p>
+        <p className="mt-1">Your company profile, legal registration, financial statement, and manuals are usable tender support evidence. The source-document warnings only affect rebuilding expert/project records from uploaded CV or project-reference files; already reviewed expert/project records remain usable for matching and proposal generation.</p>
       </div>
 
       <div className="grid gap-4 md:grid-cols-4">
         <div className="rounded-2xl border bg-white p-5 shadow-sm"><p className="text-xs font-medium uppercase tracking-wide text-slate-400">Documents</p><p className="mt-1 text-3xl font-bold text-blue-600">{docs.length}</p><p className="mt-1 text-xs text-slate-400">{diagnostics?.totals.extractedDocuments ?? 0} extracted support/source docs</p></div>
         <div className="rounded-2xl border bg-white p-5 shadow-sm"><p className="text-xs font-medium uppercase tracking-wide text-slate-400">Experts</p><p className="mt-1 text-3xl font-bold text-purple-600">{company.expertCount ?? experts.length}</p><p className="mt-1 text-xs text-slate-400">{reviewedExperts} reviewed · {draftExperts.length} draft</p></div>
         <div className="rounded-2xl border bg-white p-5 shadow-sm"><p className="text-xs font-medium uppercase tracking-wide text-slate-400">Projects</p><p className="mt-1 text-3xl font-bold text-green-600">{company.projectCount ?? projects.length}</p><p className="mt-1 text-xs text-slate-400">{reviewedProjects} reviewed · {draftProjects.length} draft</p></div>
-        <div className="rounded-2xl border bg-white p-5 shadow-sm"><p className="text-xs font-medium uppercase tracking-wide text-slate-400">CV/Project extraction</p><p className="mt-2 text-sm text-slate-700">{diagnostics?.totals.aiEnabled ? "Enabled" : "Not enabled"}</p><p className="text-sm text-slate-700">{diagnostics?.totals.expertSourceDocuments ?? 0} CV docs · {diagnostics?.totals.projectSourceDocuments ?? 0} project docs</p></div>
+        <div className="rounded-2xl border bg-white p-5 shadow-sm"><p className="text-xs font-medium uppercase tracking-wide text-slate-400">CV/Project sources</p><p className="mt-2 text-sm text-slate-700">{diagnostics?.totals.aiEnabled ? "AI extraction enabled" : "AI extraction not enabled"}</p><p className="text-sm text-slate-700">{sourceStatus}</p></div>
       </div>
 
       <section className="rounded-2xl border bg-white p-6 shadow-sm">
@@ -269,35 +276,28 @@ export default function KnowledgeReviewPage() {
           {experts.map((expert) => {
             const badge = trustBadge(expert.trustLevel);
             const isDraft = isDraftTrust(expert.trustLevel);
-            const isSelected = selectedExperts.has(expert.id);
             return (
-              <details key={expert.id} className="rounded-xl border p-4 open:bg-slate-50">
-                <summary className="cursor-pointer list-none">
-                  <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-                    <div className="flex items-center gap-2">
-                      {isDraft && (
-                        <input
-                          type="checkbox"
-                          checked={isSelected}
-                          onChange={(e) => {
-                            const next = new Set(selectedExperts);
-                            if (e.target.checked) next.add(expert.id); else next.delete(expert.id);
-                            setSelectedExperts(next);
-                          }}
-                          onClick={(e) => e.stopPropagation()}
-                          className="h-4 w-4 rounded border-slate-300"
-                        />
-                      )}
-                      <div><p className="font-semibold text-slate-900">{expert.fullName}</p><p className="text-xs text-slate-500">{expert.title || "No reviewed title yet"}</p></div>
-                    </div>
-                    <span className={`w-fit rounded-full px-3 py-1 text-xs font-medium ${badge.cls}`}>{badge.label}</span>
+              <article key={expert.id} className="rounded-xl border p-4">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <p className="font-semibold text-slate-900">{expert.fullName}</p>
+                    <p className="text-sm text-slate-500">{expert.title ?? "No title"} · {expert.yearsExperience ?? "—"} yrs</p>
                   </div>
-                </summary>
-                <div className="mt-4 grid gap-3 md:grid-cols-2"><div className="rounded-lg bg-white p-3 text-sm"><p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Structured fields</p><dl className="mt-2 space-y-1 text-xs text-slate-600"><div><dt className="inline font-medium">Years:</dt> <dd className="inline">{expert.yearsExperience ?? "Not reviewed"}</dd></div><div><dt className="inline font-medium">Disciplines:</dt> <dd className="inline">{arr(expert.disciplines).join(", ") || "Not reviewed"}</dd></div><div><dt className="inline font-medium">Sectors:</dt> <dd className="inline">{arr(expert.sectors).join(", ") || "Not reviewed"}</dd></div><div><dt className="inline font-medium">Certifications:</dt> <dd className="inline">{arr(expert.certifications).join(", ") || "Not reviewed"}</dd></div></dl></div><div className="rounded-lg bg-white p-3 text-sm"><p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Source evidence</p><p className="mt-2 max-h-48 overflow-y-auto whitespace-pre-wrap text-xs leading-5 text-slate-600">{sourceSnippet(expert.profile)}</p></div></div>
-              </details>
+                  <div className="flex items-center gap-2">
+                    {isDraft && <input type="checkbox" checked={selectedExperts.has(expert.id)} onChange={(e) => {
+                      const next = new Set(selectedExperts); if (e.target.checked) next.add(expert.id); else next.delete(expert.id); setSelectedExperts(next);
+                    }} />}
+                    <span className={`rounded-full px-3 py-1 text-xs font-medium ${badge.cls}`}>{badge.label}</span>
+                  </div>
+                </div>
+                <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-500">
+                  {arr(expert.disciplines).slice(0, 6).map((value) => <span key={value} className="rounded-full bg-slate-100 px-2 py-1">{value}</span>)}
+                </div>
+                <p className="mt-2 text-xs text-slate-500">{sourceSnippet(expert.profile)}</p>
+              </article>
             );
           })}
-          {experts.length === 0 && <p className="text-sm text-slate-400">No experts returned by `/api/company`.</p>}
+          {!experts.length && <p className="text-sm text-slate-400">No expert records found.</p>}
         </div>
       </section>
 
@@ -309,55 +309,37 @@ export default function KnowledgeReviewPage() {
           </div>
           {draftProjects.length > 0 && (
             <div className="flex gap-2">
-              <button
-                onClick={() => setSelectedProjects(new Set(draftProjects.map((p) => p.id)))}
-                className="rounded-lg border px-3 py-1.5 text-xs hover:bg-slate-50"
-              >
-                Select all drafts ({draftProjects.length})
-              </button>
-              <button
-                onClick={() => void batchReviewProjects()}
-                disabled={selectedProjects.size === 0 || batchingProjects}
-                className="rounded-lg bg-green-600 px-3 py-1.5 text-xs text-white hover:bg-green-700 disabled:opacity-50"
-              >
-                {batchingProjects ? "Marking..." : `Mark ${selectedProjects.size} as Reviewed`}
-              </button>
+              <button onClick={() => setSelectedProjects(new Set(draftProjects.map((p) => p.id)))} className="rounded-lg border px-3 py-1.5 text-xs hover:bg-slate-50">Select all drafts ({draftProjects.length})</button>
+              <button onClick={() => void batchReviewProjects()} disabled={selectedProjects.size === 0 || batchingProjects} className="rounded-lg bg-green-600 px-3 py-1.5 text-xs text-white hover:bg-green-700 disabled:opacity-50">{batchingProjects ? "Marking..." : `Mark ${selectedProjects.size} as Reviewed`}</button>
             </div>
           )}
         </div>
-        <div className="mt-4 space-y-3">
+        <div className="mt-4 grid gap-3 md:grid-cols-2">
           {projects.map((project) => {
             const badge = trustBadge(project.trustLevel);
             const isDraft = isDraftTrust(project.trustLevel);
-            const isSelected = selectedProjects.has(project.id);
             return (
-              <details key={project.id} className="rounded-xl border p-4 open:bg-slate-50">
-                <summary className="cursor-pointer list-none">
-                  <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-                    <div className="flex items-center gap-2">
-                      {isDraft && (
-                        <input
-                          type="checkbox"
-                          checked={isSelected}
-                          onChange={(e) => {
-                            const next = new Set(selectedProjects);
-                            if (e.target.checked) next.add(project.id); else next.delete(project.id);
-                            setSelectedProjects(next);
-                          }}
-                          onClick={(e) => e.stopPropagation()}
-                          className="h-4 w-4 rounded border-slate-300"
-                        />
-                      )}
-                      <div><p className="font-semibold text-slate-900">{project.name}</p><p className="text-xs text-slate-500">{project.clientName || "No reviewed client yet"}{project.sector ? ` · ${project.sector}` : ""}</p></div>
-                    </div>
-                    <span className={`w-fit rounded-full px-3 py-1 text-xs font-medium ${badge.cls}`}>{badge.label}</span>
+              <article key={project.id} className="rounded-xl border p-4">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <p className="font-semibold text-slate-900">{project.name}</p>
+                    <p className="text-sm text-slate-500">{project.clientName ?? "No client"} · {project.country ?? "—"}</p>
                   </div>
-                </summary>
-                <div className="mt-4 grid gap-3 md:grid-cols-2"><div className="rounded-lg bg-white p-3 text-sm"><p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Structured fields</p><dl className="mt-2 space-y-1 text-xs text-slate-600"><div><dt className="inline font-medium">Country:</dt> <dd className="inline">{project.country || "Not reviewed"}</dd></div><div><dt className="inline font-medium">Sector:</dt> <dd className="inline">{project.sector || "Not reviewed"}</dd></div><div><dt className="inline font-medium">Services:</dt> <dd className="inline">{arr(project.serviceAreas).join(", ") || "Not reviewed"}</dd></div><div><dt className="inline font-medium">Value:</dt> <dd className="inline">{project.contractValue ? `${project.currency ?? ""} ${project.contractValue.toLocaleString()}` : "Not reviewed"}</dd></div></dl></div><div className="rounded-lg bg-white p-3 text-sm"><p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Source evidence</p><p className="mt-2 max-h-48 overflow-y-auto whitespace-pre-wrap text-xs leading-5 text-slate-600">{sourceSnippet(project.summary)}</p></div></div>
-              </details>
+                  <div className="flex items-center gap-2">
+                    {isDraft && <input type="checkbox" checked={selectedProjects.has(project.id)} onChange={(e) => {
+                      const next = new Set(selectedProjects); if (e.target.checked) next.add(project.id); else next.delete(project.id); setSelectedProjects(next);
+                    }} />}
+                    <span className={`rounded-full px-3 py-1 text-xs font-medium ${badge.cls}`}>{badge.label}</span>
+                  </div>
+                </div>
+                <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-500">
+                  {arr(project.serviceAreas).slice(0, 6).map((value) => <span key={value} className="rounded-full bg-slate-100 px-2 py-1">{value}</span>)}
+                </div>
+                <p className="mt-2 text-xs text-slate-500">{sourceSnippet(project.summary)}</p>
+              </article>
             );
           })}
-          {projects.length === 0 && <p className="text-sm text-slate-400">No projects returned by `/api/company`.</p>}
+          {!projects.length && <p className="text-sm text-slate-400">No project records found.</p>}
         </div>
       </section>
     </div>

@@ -60,6 +60,10 @@ export function assessExtractionQuality(text: string | null | undefined, fileNam
   if (averageCharsPerPage !== null && averageCharsPerPage < 300) score -= 20;
   if (tableHeavyLikely) score -= 10;
   if (characterCount < 1000) score -= 10;
+  // A completely empty extraction must score below the WARNING threshold (45).
+  // Without this, 0 chars → scannedPdfLikely(−45) + charCount<1000(−10) = 45
+  // exactly, which misclassifies as WARNING instead of POOR.
+  if (characterCount === 0) score -= 6;
   score = Math.max(0, Math.min(100, score));
 
   const severity: ExtractionQualitySeverity = hasExtractionFailure
