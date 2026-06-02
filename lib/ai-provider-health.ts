@@ -66,9 +66,9 @@ const PROVIDER_ENV_KEY: Record<AiProviderName, string> = {
   anthropic: "ANTHROPIC_API_KEY",
   gemini: "GEMINI_API_KEY",
   openai: "OPENAI_API_KEY",
+  mistral: "MISTRAL_API_KEY",
   deepseek: "DEEPSEEK_API_KEY",
   groq: "GROQ_API_KEY",
-  mistral: "MISTRAL_API_KEY",
   together: "TOGETHER_API_KEY",
   openrouter: "OPENROUTER_API_KEY",
 };
@@ -127,6 +127,12 @@ export function getMistralBaseUrl(): string {
   const v = process.env.MISTRAL_BASE_URL;
   return (v && v.trim().length > 0 ? v.trim() : "https://api.mistral.ai/v1").replace(/\/+$/, "");
 }
+/** Back-compat alias for the Mistral model getter. Returns MISTRAL_PROPOSAL_MODEL env if set,
+ * otherwise the compact default "mistral-small-latest". Use getMistralProposalModel() for
+ * the full-quality default (mistral-large-latest). */
+export function getMistralModel(): string {
+  return process.env.MISTRAL_PROPOSAL_MODEL || "mistral-small-latest";
+}
 
 // ─── Groq (OpenAI-compatible) ─────────────────────────────────────────────
 // Fast fallback provider. Official variable GROQ_API_KEY. Model overridable via
@@ -167,6 +173,10 @@ export function getTogetherFastModel(): string {
 export function getTogetherBaseUrl(): string {
   const v = process.env.TOGETHER_BASE_URL;
   return (v && v.trim().length > 0 ? v.trim() : "https://api.together.xyz/v1").replace(/\/+$/, "");
+}
+/** Back-compat alias: returns the proposal model (was getTogetherModel in older code). */
+export function getTogetherModel(): string {
+  return getTogetherProposalModel();
 }
 
 // ─── OpenRouter (OpenAI-compatible aggregator) ────────────────────────────

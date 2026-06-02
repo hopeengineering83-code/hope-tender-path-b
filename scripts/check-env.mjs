@@ -81,7 +81,7 @@ const AI_PROVIDER_KEYS = [
   {
     name: "DEEPSEEK_API_KEY",
     description:
-      "DeepSeek API key. Fourth-tier fallback for proposal generation via OpenAI-compatible endpoint (deepseek-chat / deepseek-reasoner).",
+      "DeepSeek API key. Third-tier fallback for proposal generation via OpenAI-compatible endpoint (deepseek-chat / deepseek-reasoner).",
     validate: (_v) => null, // no canonical prefix to validate
   },
   {

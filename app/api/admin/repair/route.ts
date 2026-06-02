@@ -39,10 +39,11 @@ export async function POST(req: Request) {
     return msg === "Forbidden" ? forbiddenResponse() : unauthorizedResponse();
   }
 
-  await prismaReady;
-
   const { searchParams } = new URL(req.url);
   const step = searchParams.get("step") ?? "all";
+
+  try {
+  await prismaReady;
 
   const company = await prisma.company.findUnique({ where: { userId: actor.id } });
   if (!company) return NextResponse.json({ error: "Company not found. Create your company profile first." }, { status: 404 });
@@ -258,4 +259,15 @@ export async function POST(req: Request) {
   }
 
   return NextResponse.json(results);
+  } catch (error) {
+    console.error("Admin repair route error:", error);
+    const raw = error instanceof Error ? error.message : "Repair failed";
+    const safe = raw
+      .replace(/sk-[a-zA-Z0-9_-]{10,}/g, "[KEY_REDACTED]")
+      .replace(/AIza[a-zA-Z0-9_-]{30,}/g, "[KEY_REDACTED]")
+      .replace(/Bearer\s+[a-zA-Z0-9._-]{10,}/gi, "Bearer [REDACTED]")
+      .replace(/postgres(?:ql)?:\/\/[^\s"']+/gi, "[DB_URL_REDACTED]")
+      .slice(0, 300);
+    return NextResponse.json({ error: safe, step }, { status: 500 });
+  }
 }

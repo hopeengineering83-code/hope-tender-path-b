@@ -221,6 +221,17 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         .filter((line) => !/^Analysis source:/i.test(line.trim()) && !/^Analysis fallback diagnostics:/i.test(line.trim()));
       const notes = [...previousNotes, `Analysis source: Regex fallback (${fallbackDiagnostics.category}).`, diagnosticsLine].filter(Boolean).join("\n").trim() || null;
 
+      // When no AI chunks succeeded at all the analysis needs human review
+      // before it can be trusted. When AI was partially involved (e.g. some
+      // chunks succeeded before a timeout and then the fallback covered the
+      // rest) we use the lighter FALLBACK_DRAFT_CREATED status instead.
+      // calledWithAiChunks is only true when the error came from the catch
+      // block of the AI path — i.e. at least the AI path was attempted.
+      // In the non-AI path (isAIEnabled() === false) no chunks ran at all.
+      const tenderStatus = errorMessage
+        ? "ANALYSIS_REQUIRES_REVIEW"
+        : "FALLBACK_DRAFT_CREATED";
+
       await tx.tender.update({
         where: { id },
         data: {
@@ -228,7 +239,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           exactFileNaming: JSON.stringify(result.exactFileNaming),
           exactFileOrder: JSON.stringify(result.exactFileOrder),
           notes,
-          status: "ANALYZED",
+          status: tenderStatus,
           stage: "ANALYSIS",
         },
       });
@@ -237,10 +248,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     return {
       ai: false,
       fallback: Boolean(errorMessage),
+      analysisSource: "REGEX_FALLBACK" as const,
       summary: result.summary,
       requirementCount: result.requirements.length,
       fallbackDiagnostics,
       providerDiagnostics,
+      nextAction: "RETRY_AI_ANALYZE_OR_APPROVE_FALLBACK",
     };
   }
 
@@ -248,10 +261,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     let analysisResult: {
       ai: boolean;
       fallback: boolean;
+      analysisSource?: "AI" | "PARTIAL_AI" | "REGEX_FALLBACK";
       summary: string;
       requirementCount: number;
       fallbackDiagnostics?: AnalysisFallbackDiagnostics;
       providerDiagnostics?: ReturnType<typeof buildProviderDiagnosticsSnapshot>;
+      nextAction?: string;
     };
     let analysisJobId: string | null = null;
     let analysisMeta: AnalysisWithMeta | null = null;
@@ -389,6 +404,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
             .concat([analysisSourceNote]);
           const updatedNotes = updatedNotesLines.join("\n").trim() || null;
 
+          // Reflect the actual analysis source in the tender status so the UI
+          // and downstream gates can distinguish AI success from partial AI and
+          // regex fallback without parsing the notes field.
+          //   AI full success   → "AI_ANALYZED"
+          //   Partial (deadline) → "AI_ANALYSIS_PARTIAL"
+          const tenderStatus = aiMeta.isPartial ? "AI_ANALYSIS_PARTIAL" : "AI_ANALYZED";
+
           await tx.tender.update({
             where: { id },
             data: {
@@ -396,8 +418,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
               evaluationMethodology: aiResult.evaluationMethodology || null,
               exactFileNaming: JSON.stringify(aiResult.exactFileNaming),
               exactFileOrder: JSON.stringify(aiResult.exactFileOrder),
+              // Tender-driven classification: when the analysis detected a
+              // category, store it on the existing Tender.category column so
+              // section planning / readiness / matching adapt to the actual
+              // tender type instead of a fixed default. Detection is best-effort
+              // — leave the prior value untouched when undetermined.
+              ...(aiResult.tenderCategory ? { category: aiResult.tenderCategory } : {}),
               notes: updatedNotes,
-              status: "ANALYZED",
+              status: tenderStatus,
               stage: "ANALYSIS",
             },
           });
@@ -451,6 +479,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         analysisResult = {
           ai: true,
           fallback: false,
+          analysisSource: (aiMeta.isPartial ? "PARTIAL_AI" : "AI") as "AI" | "PARTIAL_AI",
           summary: aiResult.summary,
           requirementCount: aiResult.requirements.length,
           providerDiagnostics: buildProviderDiagnosticsSnapshot(),
@@ -464,7 +493,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         analysisResult = await runRegexFallback(msg, diagnostics);
       }
     } else {
-      analysisResult = await runRegexFallback("No AI provider configured", buildAnalysisFallbackDiagnostics("No AI provider configured"));
+      analysisResult = await runRegexFallback(undefined, buildAnalysisFallbackDiagnostics("No AI provider configured"));
     }
 
     await logAction({
@@ -540,10 +569,21 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           : "AI_PROVIDERS_EXHAUSTED")
       : null;
 
+    // Determine the machine-readable nextAction for the UI:
+    //   - Partial AI result → user can continue to get remaining chunks
+    //   - Fallback (regex) → user should retry AI analyze or approve fallback
+    //   - Full AI success → no action needed
+    const responseNextAction = analysisMeta?.isPartial
+      ? "CONTINUE_AI_ANALYSIS"
+      : analysisResult.fallback
+        ? "RETRY_AI_ANALYZE_OR_APPROVE_FALLBACK"
+        : null;
+
     return NextResponse.json({
       success: true,
       ...analysisResult,
       code: fallbackCode,
+      analysisSource: analysisResult.analysisSource ?? null,
       jobId: analysisJobId,
       chunks: analysisMeta ? {
         total: analysisMeta.totalChunks,
@@ -552,7 +592,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         skipped: analysisMeta.skippedChunks,
         isPartial: analysisMeta.isPartial,
       } : null,
-      nextAction: analysisMeta?.isPartial ? "CONTINUE_AI_ANALYSIS" : null,
+      nextAction: responseNextAction,
       tender: updatedForResponse,
       extractionWarnings: extractionReports.filter((item) => item.quality.severity === "WARNING"),
     });
