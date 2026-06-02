@@ -13,8 +13,12 @@
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
 
+import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
 import { documentHygieneIssues } from "../lib/engine/export-readiness";
 import { isFinalExportCandidateDocument } from "../lib/engine/document-output-state";
+import { RECOVERY_COMMAND_ACTIONS, getRecoveryCommandActionSpec, renderRecoveryActionPath } from "../lib/recovery-command-actions";
 
 // ─── 1. Action routing: no window.location navigation to missing routes ──────
 
@@ -27,10 +31,74 @@ const KNOWN_SAFE_NAVIGATE_TARGETS = new Set([
   // and must never appear in the component.
 ]);
 
+
+const REQUIRED_EXECUTE_ACTIONS = [
+  "LINK_VAULT_EVIDENCE",
+  "REPAIR_SOURCE_REFERENCES",
+  "BUILD_SUBMISSION_PLAN",
+  "COMPLETE_METADATA",
+  "EXCLUDE_OUTSIDE_PLAN_DOCS",
+  "GENERATE_MISSING_PLANNED_DOCS",
+  "VALIDATE_DOCS",
+  "EXPORT_READINESS",
+  "RE_CHECK",
+  "RETRY_AI_ANALYZE",
+];
+
+function routeFileForApiPath(path: string): string {
+  const withoutTender = path.replace("/api/tenders/{tenderId}", "app/api/tenders/[id]").replace(/^\//, "");
+  return resolve(process.cwd(), withoutTender, "route.ts");
+}
+
+describe("Recovery Command Center — action registry coverage", () => {
+  it("covers every required Execute action from the production audit", () => {
+    for (const action of REQUIRED_EXECUTE_ACTIONS) {
+      assert.ok(getRecoveryCommandActionSpec(action), `${action} must have an action spec`);
+    }
+  });
+
+  it("every API action points at an existing route.ts file", () => {
+    for (const [action, spec] of Object.entries(RECOVERY_COMMAND_ACTIONS)) {
+      if (spec.kind !== "api" && !(spec.kind === "custom" && spec.path?.startsWith("/api/"))) continue;
+      assert.ok(spec.path, `${action} must define an API path`);
+      const file = routeFileForApiPath(spec.path!);
+      assert.ok(existsSync(file), `${action} points at missing API route ${file}`);
+    }
+  });
+
+  it("every scroll action targets a known tender-detail panel id", () => {
+    const knownPanelIds = new Set(["tender-files", "tender-edit-form", "generated-documents"]);
+    for (const [action, spec] of Object.entries(RECOVERY_COMMAND_ACTIONS)) {
+      if (spec.kind !== "scroll") continue;
+      assert.ok(spec.anchorId, `${action} must define an anchor id`);
+      assert.ok(knownPanelIds.has(spec.anchorId!), `${action} scrolls to unknown panel #${spec.anchorId}`);
+    }
+  });
+
+  it("every navigation action points at a known existing page", () => {
+    for (const [action, spec] of Object.entries(RECOVERY_COMMAND_ACTIONS)) {
+      if (spec.kind !== "navigate") continue;
+      assert.ok(spec.path, `${action} must define a navigation path`);
+      assert.ok(KNOWN_SAFE_NAVIGATE_TARGETS.has(spec.path!), `${action} navigates to an unverified page ${spec.path}`);
+    }
+  });
+
+  it("aliases route to the same safe API specs used by lifecycle names", () => {
+    assert.equal(getRecoveryCommandActionSpec("GENERATE_DOCS")?.path, "/api/tenders/{tenderId}/generate-missing-plan-files");
+    assert.equal(getRecoveryCommandActionSpec("REPAIR_DOCS")?.path, "/api/tenders/{tenderId}/repair-export-gaps");
+    assert.equal(getRecoveryCommandActionSpec("DOWNLOAD_ZIP")?.path, "/api/tenders/{tenderId}/download");
+  });
+
+  it("path rendering substitutes tender id without guessing routes", () => {
+    assert.equal(
+      renderRecoveryActionPath("/api/tenders/{tenderId}/export-readiness", "tender-123"),
+      "/api/tenders/tender-123/export-readiness",
+    );
+  });
+});
+
 describe("Recovery Command Center — no 404-causing navigation", () => {
   it("component source does not contain a navigation to /dashboard/vault", async () => {
-    const { readFileSync } = await import("node:fs");
-    const { resolve } = await import("node:path");
     const src = readFileSync(
       resolve(process.cwd(), "components/tender-recovery-command-center.tsx"),
       "utf8",
@@ -42,8 +110,6 @@ describe("Recovery Command Center — no 404-causing navigation", () => {
   });
 
   it("LINK_VAULT_EVIDENCE handler calls the API route, not window.location", async () => {
-    const { readFileSync } = await import("node:fs");
-    const { resolve } = await import("node:path");
     const src = readFileSync(
       resolve(process.cwd(), "components/tender-recovery-command-center.tsx"),
       "utf8",
@@ -56,8 +122,6 @@ describe("Recovery Command Center — no 404-causing navigation", () => {
   });
 
   it("component has an else fallback for unknown actions", async () => {
-    const { readFileSync } = await import("node:fs");
-    const { resolve } = await import("node:path");
     const src = readFileSync(
       resolve(process.cwd(), "components/tender-recovery-command-center.tsx"),
       "utf8",
