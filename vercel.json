@@ -1,6 +1,6 @@
 {
   "framework": "nextjs",
-  "buildCommand": "node scripts/check-env.mjs && prisma generate && next build",
+  "buildCommand": "node scripts/check-env.mjs && prisma generate && prisma db push --accept-data-loss=false && next build",
   "installCommand": "npm install",
   "crons": [
     {
