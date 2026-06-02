@@ -346,12 +346,26 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const parts: string[] = [];
     if (missingNames.length > 0) parts.push(`${missingNames.length} critical field(s) missing (${missingNames.join(", ")})`);
     if (placeholderNames.length > 0) parts.push(`${placeholderNames.length} field(s) contain placeholder language (${placeholderNames.join(", ")})`);
+    const contaminatedExtra = (tender as { metadataContaminated?: boolean }).metadataContaminated ? " Client/procuring entity metadata is flagged as contaminated — correct it before generating." : "";
     return NextResponse.json({
-      error: `Generation blocked: ${parts.join("; ")}. First try the "Repair all empty fields from source" button — the deterministic extractor pulls verifiable values from the uploaded tender files when present. If a field is genuinely absent from the tender source, edit the tender and confirm it manually.`,
+      error: `Generation blocked: ${parts.join("; ")}.${contaminatedExtra} First try the "Repair all empty fields from source" button — the deterministic extractor pulls verifiable values from the uploaded tender files when present. If a field is genuinely absent from the tender source, edit the tender and confirm it manually.`,
       code: "METADATA_INCOMPLETE_FOR_GENERATION",
       missingCritical: metadataReport.missingCritical.map((f) => ({ field: f.field, reason: f.reason })),
       invalidFields: metadataReport.invalidFields.map((f) => ({ field: f.field, reason: f.reason })),
       overallRatio: metadataReport.overallRatio,
+      metadataContaminated: Boolean((tender as { metadataContaminated?: boolean }).metadataContaminated),
+      nextAction: "REPAIR_OR_EDIT_TENDER",
+    }, { status: 422 });
+  }
+
+  // ── Metadata contamination gate ───────────────────────────────────────────
+  // Block when client metadata is contaminated by portal scraping even if
+  // the metadata-completeness gate did not fire (contaminated but "present").
+  if ((tender as { metadataContaminated?: boolean }).metadataContaminated) {
+    return NextResponse.json({
+      ok: false,
+      error: "Generation blocked: client/procuring entity metadata is contaminated with tender-portal navigation text. Correct the Client Name field before generating proposal documents.",
+      code: "METADATA_CONTAMINATED",
       nextAction: "REPAIR_OR_EDIT_TENDER",
     }, { status: 422 });
   }
@@ -396,6 +410,33 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       details: "Re-run AI Analyze with healthy providers, or POST /api/tenders/[id]/approve-analysis to explicitly approve the current regex-fallback analysis.",
     }, { status: 409 });
   }
+  // ── Source traceability gate ──────────────────────────────────────────────
+  // Block when ALL mandatory requirements completely lack source traceability
+  // (none of: sourceConfidence, sourceTenderFileId, sourcePageNumber,
+  // sourceExactQuote). This means AI Analyze has never been run or failed to
+  // attach any source signal. Only fires when ≥ 3 mandatory requirements exist
+  // so it does not block small manually-entered tenders.
+  {
+    const mandatoryReqs = tender.requirements.filter((req) => req.priority === "MANDATORY");
+    if (mandatoryReqs.length >= 3) {
+      const fullyUntracedCount = mandatoryReqs.filter(
+        (req) =>
+          (req.sourceConfidence ?? 0) <= 0 &&
+          req.sourceTenderFileId == null &&
+          req.sourcePageNumber == null &&
+          (!req.sourceExactQuote || req.sourceExactQuote.trim().length === 0),
+      ).length;
+      if (fullyUntracedCount === mandatoryReqs.length) {
+        return NextResponse.json({
+          ok: false,
+          error: "Cannot generate documents: no mandatory requirements have source page/quote traceability. Run AI Analyze first to extract requirements from the tender.",
+          code: "REQUIREMENTS_NO_SOURCE_TRACEABILITY",
+          nextAction: "RUN_ENGINE",
+        }, { status: 422 });
+      }
+    }
+  }
+
   const untracedInitial = tender.requirements.filter((req) => req.priority === "MANDATORY" && ((req.sourceConfidence ?? 0) <= 0));
   if (untracedInitial.length > 0) {
     // Attempt one automatic repair pass using uploaded tender file text before hard-blocking.
