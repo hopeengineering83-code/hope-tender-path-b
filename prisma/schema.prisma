@@ -328,18 +328,29 @@ model Tender {
   numberOfCopiesRequired Int?
   technicalWeight       Int?
   financialWeight       Int?
-  // ─── Extraction quality fields (gap analysis) ────────────────────────────
-  // Rich client/procuring entity metadata derived from tender PDF body.
-  procuringEntityName     String?
-  legalClientName         String?
-  donorAgency             String?
-  implementingAgency      String?
-  // Set to true when the extracted client name appears contaminated by
-  // unrelated tender portal text, navigation text, or other noise.
-  metadataContaminated    Boolean              @default(false)
-  // Machine-readable status of the last AI Analyze run relative to extraction quality.
-  // Values: FULL_EXTRACTION_AI_ANALYZED | PARTIAL_EXTRACTION_AI_ANALYZED |
-  //         EXTRACTION_WEAK_REVIEW_REQUIRED | REGEX_FALLBACK_FROM_WEAK_EXTRACTION
+  // ─── Extended client/procuring-entity extraction ────────────────────────
+  // Populated by AI Analyze when the tender contains multiple entity names.
+  // procuringEntityName: the official procuring entity / contracting authority.
+  // legalClientName: full legal name if different from the display clientName.
+  // donorAgency: any donor/funding agency (World Bank, UNDP, KfW, etc.).
+  // implementingAgency: project owner / implementing agency when different
+  //   from the procuring entity.
+  // metadataContaminated: true when detectMetadataContamination() found portal
+  //   nav-text, status banners, or related-alert noise inside clientName.
+  //   Blocks final export until the field is corrected.
+  // clientNameSourcePage / clientNameSourceQuote: page-level audit trail for
+  //   the extracted client name so reviewers can verify the source.
+  // submissionEmailSourcePage: page where the submission email was found.
+  // analysisExtractionStatus: FULL_EXTRACTION_AI_ANALYZED | PARTIAL_EXTRACTION_AI_ANALYZED |
+  //   OCR_REQUIRED | EXTRACTION_WEAK_REVIEW_REQUIRED | REGEX_FALLBACK_FROM_WEAK_EXTRACTION
+  procuringEntityName      String?
+  legalClientName          String?
+  donorAgency              String?
+  implementingAgency       String?
+  metadataContaminated     Boolean              @default(false)
+  clientNameSourcePage     Int?
+  clientNameSourceQuote    String?
+  submissionEmailSourcePage Int?
   analysisExtractionStatus String?
   createdAt             DateTime             @default(now())
   updatedAt             DateTime             @updatedAt

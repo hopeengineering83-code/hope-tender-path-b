@@ -10,6 +10,7 @@ import { extractRequestId } from "../../../../../lib/request-id";
 import { createNotification } from "../../../../../lib/notifications";
 import { assessExtractionQuality } from "../../../../../lib/extraction-quality";
 import { deriveExtractionStatus, type TenderFileQuality } from "../../../../../lib/engine/extraction-quality-gate";
+import { detectMetadataContamination } from "../../../../../lib/engine/tender-metadata-completeness";
 import { buildAnalysisFallbackDiagnostics, formatFallbackDiagnosticsLine, type AnalysisFallbackDiagnostics } from "../../../../../lib/engine/analysis-fallback-diagnostics";
 import { buildProviderDiagnosticsSnapshot } from "../../../../../lib/ai-provider-health";
 import { restoreHealthFromDb, persistAllHealthToDb } from "../../../../../lib/ai-provider-health-db";
@@ -424,6 +425,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           //   Partial (deadline) → "AI_ANALYSIS_PARTIAL"
           const tenderStatus = aiMeta.isPartial ? "AI_ANALYSIS_PARTIAL" : "AI_ANALYZED";
 
+          // Contamination check on the extracted client name
+          const clientNameForContaminationCheck = aiResult.procuringEntityName || tenderRecord.clientName;
+          const contamination = detectMetadataContamination(clientNameForContaminationCheck);
+
           await tx.tender.update({
             where: { id },
             data: {
@@ -440,6 +445,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
               notes: updatedNotes,
               status: tenderStatus,
               stage: "ANALYSIS",
+              // Extended client/procuring-entity extraction fields
+              ...(aiResult.procuringEntityName !== undefined ? { procuringEntityName: aiResult.procuringEntityName } : {}),
+              ...(aiResult.legalClientName !== undefined ? { legalClientName: aiResult.legalClientName } : {}),
+              ...(aiResult.donorAgency !== undefined ? { donorAgency: aiResult.donorAgency } : {}),
+              ...(aiResult.implementingAgency !== undefined ? { implementingAgency: aiResult.implementingAgency } : {}),
+              ...(aiResult.clientNameSourcePage !== undefined ? { clientNameSourcePage: aiResult.clientNameSourcePage } : {}),
+              ...(aiResult.clientNameSourceQuote !== undefined ? { clientNameSourceQuote: aiResult.clientNameSourceQuote } : {}),
+              ...(aiResult.submissionEmailSourcePage !== undefined ? { submissionEmailSourcePage: aiResult.submissionEmailSourcePage } : {}),
+              // Flag contaminated client name so the export gate can block
+              metadataContaminated: contamination.contaminated,
             },
           });
         });

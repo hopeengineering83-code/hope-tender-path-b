@@ -942,6 +942,16 @@ export type AIAnalysisResult = {
   clientType?: ClientType;
   // submissionFormat — the document set's overall format expectation.
   submissionFormat?: SubmissionFormat;
+  // ─── Extended client/procuring-entity fields (PR XX-CLIENT) ─────────────
+  // Extracted by AI Analyze to surface multi-party tender structures and
+  // provide source traceability for every extracted client detail.
+  procuringEntityName?: string | null;
+  legalClientName?: string | null;
+  donorAgency?: string | null;
+  implementingAgency?: string | null;
+  clientNameSourcePage?: number | null;
+  clientNameSourceQuote?: string | null;
+  submissionEmailSourcePage?: number | null;
 };
 
 // Allowed enum values for the classification fields. Exported so analysis
@@ -1207,6 +1217,14 @@ function mergeAnalysisResults(parts: AIAnalysisResult[]): AIAnalysisResult {
   const envelopeMode = firstDefined((p) => p.envelopeMode);
   const clientType = firstDefined((p) => p.clientType);
   const submissionFormat = firstDefined((p) => p.submissionFormat);
+  // Extended client fields — first non-null value wins across chunks
+  const procuringEntityName = firstDefined((p) => p.procuringEntityName ?? undefined);
+  const legalClientName = firstDefined((p) => p.legalClientName ?? undefined);
+  const donorAgency = firstDefined((p) => p.donorAgency ?? undefined);
+  const implementingAgency = firstDefined((p) => p.implementingAgency ?? undefined);
+  const clientNameSourcePage = firstDefined((p) => p.clientNameSourcePage ?? undefined);
+  const clientNameSourceQuote = firstDefined((p) => p.clientNameSourceQuote ?? undefined);
+  const submissionEmailSourcePage = firstDefined((p) => p.submissionEmailSourcePage ?? undefined);
 
   return {
     summary,
@@ -1219,6 +1237,13 @@ function mergeAnalysisResults(parts: AIAnalysisResult[]): AIAnalysisResult {
     envelopeMode,
     clientType,
     submissionFormat,
+    procuringEntityName: procuringEntityName ?? null,
+    legalClientName: legalClientName ?? null,
+    donorAgency: donorAgency ?? null,
+    implementingAgency: implementingAgency ?? null,
+    clientNameSourcePage: clientNameSourcePage ?? null,
+    clientNameSourceQuote: clientNameSourceQuote ?? null,
+    submissionEmailSourcePage: submissionEmailSourcePage ?? null,
   };
 }
 
@@ -1229,7 +1254,7 @@ async function analyzeOneChunk(tenderContent: string, chunkIndex: number, totalC
 Analyze the tender and return ONLY a valid JSON object — no explanation, no markdown fences, no code blocks.
 
 ## ANALYSIS PROCESS (think step by step before writing JSON):
-Step 1 — Identify: client name, tender title, tender reference, deadline, submission method, email recipients, exact subject line required, country/location.
+Step 1 — Identify: client/procuring entity name, legal client name (if different), donor/funding agency (if any), implementing agency (if different from procuring entity), tender title, tender reference, deadline, submission method, email recipients, exact subject line required, country/location. For each client entity found, note the page number where it appears and a short verbatim quote.
 Step 2 — Detect: is financial proposal excluded? Is this technical-only? Are there shortlisting stages?
 Step 3 — Extract SECTIONS: what sections must the proposal contain (Company Profile, Relevant Experience, Technical Approach, Additional Information, etc.)?
 Step 4 — Extract EVALUATION CRITERIA: what will evaluators score and how? IMPORTANT — capture numeric WEIGHTS (e.g., "Technical 70%, Financial 30%", "Relevant Experience 25 points", sub-criteria weights). If a weight is stated anywhere in the document (criteria table, scoring matrix, or prose), include it verbatim in evaluationMethodology and in the per-criterion weights array.
@@ -1280,7 +1305,14 @@ JSON structure required:
   "clientType": "GOVERNMENT | DONOR_MULTILATERAL | DONOR_BILATERAL | NGO | PRIVATE, or null",
   "submissionFormat": "GOVERNMENT_RFP | DONOR_RFP | EOI | VENDOR_REGISTRATION | COMBINED, or null",
   "evaluationMethodology": "Detailed scoring guidance: for each evaluation criterion, explain what evidence to present, what to emphasise, and what the evaluator is looking for. Include criterion weights verbatim if specified (e.g., 'Technical 70% / Financial 30%; Relevant Experience 25 points; Methodology 20 points').",
-  "submissionNotes": "Complete submission instructions: deadline with time and timezone, email recipients (all), exact subject line (verbatim), file format requirements, financial proposal restriction (yes/no), appendix lettering, and any other document-control notes. ALSO include when stated: bid bond amount and form, performance guarantee percentage, bid validity period in days, clarification / pre-bid question deadline, site visit or pre-bid meeting date and venue, contract duration, currency, payment terms, eligibility jurisdictions, consortia / joint-venture rules, local-content requirement."
+  "submissionNotes": "Complete submission instructions: deadline with time and timezone, email recipients (all), exact subject line (verbatim), file format requirements, financial proposal restriction (yes/no), appendix lettering, and any other document-control notes. ALSO include when stated: bid bond amount and form, performance guarantee percentage, bid validity period in days, clarification / pre-bid question deadline, site visit or pre-bid meeting date and venue, contract duration, currency, payment terms, eligibility jurisdictions, consortia / joint-venture rules, local-content requirement.",
+  "procuringEntityName": "official name of the procuring entity / contracting authority, or null",
+  "legalClientName": "full legal name if explicitly stated and different from procuringEntityName, or null",
+  "donorAgency": "donor or funding agency if mentioned (e.g. World Bank, UNDP, KfW, AfDB), or null",
+  "implementingAgency": "project owner or implementing agency if different from procuring entity, or null",
+  "clientNameSourcePage": page_number_integer_or_null,
+  "clientNameSourceQuote": "verbatim 1-2 sentence snippet from which the client name was extracted, or null",
+  "submissionEmailSourcePage": page_number_integer_or_null
 }
 
 TENDER DOCUMENT${chunkLabel} (${tenderContent.length.toLocaleString()} chars):
@@ -1317,6 +1349,14 @@ ${tenderContent}`;
         envelopeMode: sanitizeEnvelopeMode(parsed.envelopeMode),
         clientType: sanitizeClientType(parsed.clientType),
         submissionFormat: sanitizeSubmissionFormat(parsed.submissionFormat),
+        // Extended client fields — validated and capped to safe lengths
+        procuringEntityName: typeof parsed.procuringEntityName === "string" ? parsed.procuringEntityName.trim().slice(0, 240) || null : null,
+        legalClientName: typeof parsed.legalClientName === "string" ? parsed.legalClientName.trim().slice(0, 240) || null : null,
+        donorAgency: typeof parsed.donorAgency === "string" ? parsed.donorAgency.trim().slice(0, 240) || null : null,
+        implementingAgency: typeof parsed.implementingAgency === "string" ? parsed.implementingAgency.trim().slice(0, 240) || null : null,
+        clientNameSourcePage: typeof parsed.clientNameSourcePage === "number" && Number.isInteger(parsed.clientNameSourcePage) && parsed.clientNameSourcePage > 0 ? parsed.clientNameSourcePage : null,
+        clientNameSourceQuote: typeof parsed.clientNameSourceQuote === "string" ? parsed.clientNameSourceQuote.trim().slice(0, 500) || null : null,
+        submissionEmailSourcePage: typeof parsed.submissionEmailSourcePage === "number" && Number.isInteger(parsed.submissionEmailSourcePage) && parsed.submissionEmailSourcePage > 0 ? parsed.submissionEmailSourcePage : null,
       };
     } catch {
       return null;

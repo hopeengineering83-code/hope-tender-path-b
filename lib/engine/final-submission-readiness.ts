@@ -391,6 +391,8 @@ export async function getFinalSubmissionReadiness(
       clientContactName: true,
       clientContactEmail: true,
       clientContactPhone: true,
+      // Contamination flag — set by AI Analyze when client name is polluted
+      metadataContaminated: true,
       budget: true,
       currency: true,
       validityDays: true,
@@ -607,6 +609,16 @@ export async function getFinalSubmissionReadiness(
       severity: "HIGH",
       title: `Tender metadata is incomplete (${metadata.missingCritical.length} critical field(s) missing${metadata.placeholderCount > 0 ? `, ${metadata.placeholderCount} "Bid-Team to confirm" placeholder(s)` : ""}).`,
       recommendedAction: "Fill the missing critical tender metadata fields before final proposal generation.",
+    });
+  }
+  // Contamination gate — a polluted client name (portal nav text, status
+  // banners, unrelated tender alerts) must block export until corrected.
+  if (tender.metadataContaminated === true) {
+    tenderLevelBlockers.push({
+      category: "METADATA_CONTAMINATED",
+      severity: "HIGH",
+      title: "Client/procuring entity name may be contaminated by unrelated portal text.",
+      recommendedAction: "Review and correct the client name in tender settings before exporting.",
     });
   }
   if (qualityFailed > 0) {

@@ -315,6 +315,15 @@ type Tender = {
   bidOutcome?: string | null;
   bidOutcomeNote?: string | null;
   bidOutcomeAt?: string | Date | null;
+  // Extended client/procuring-entity fields (PR XX-CLIENT)
+  procuringEntityName?: string | null;
+  legalClientName?: string | null;
+  donorAgency?: string | null;
+  implementingAgency?: string | null;
+  metadataContaminated?: boolean | null;
+  clientNameSourcePage?: number | null;
+  clientNameSourceQuote?: string | null;
+  submissionEmailSourcePage?: number | null;
 };
 
 const CATEGORIES = ["General", "IT", "Construction", "Services", "Consulting", "Supply", "Healthcare", "Education", "Other"];
@@ -1664,13 +1673,41 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
               </div>
             ) : (
               <dl className="mt-5 grid gap-4 md:grid-cols-2">
-                <div><dt className="text-sm text-slate-500">Client</dt><dd className={`mt-1 font-medium ${clientStatus === "GARBAGE" ? "text-red-700" : "text-slate-900"}`}>{
-                  clientStatus === "VALID" && displayClient && displayClient !== "Client"
-                    ? displayClient
-                    : clientStatus === "GARBAGE"
-                      ? clientDisplay.text
-                      : "—"
-                }</dd></div>
+                <div>
+                  <dt className="text-sm text-slate-500">Client</dt>
+                  <dd className={`mt-1 font-medium ${clientStatus === "GARBAGE" ? "text-red-700" : "text-slate-900"}`}>
+                    {clientStatus === "VALID" && displayClient && displayClient !== "Client"
+                      ? displayClient
+                      : clientStatus === "GARBAGE"
+                        ? clientDisplay.text
+                        : "—"}
+                    {tender.clientNameSourcePage && (
+                      <span className="ml-2 text-xs text-slate-400 font-normal">(p.{tender.clientNameSourcePage})</span>
+                    )}
+                    {tender.metadataContaminated && (
+                      <span className="ml-2 inline-flex items-center rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">⚠ Contaminated</span>
+                    )}
+                  </dd>
+                  {tender.clientNameSourceQuote && (
+                    <p className="mt-0.5 text-xs text-slate-400 italic line-clamp-2">&ldquo;{tender.clientNameSourceQuote}&rdquo;</p>
+                  )}
+                  {(tender.procuringEntityName || tender.legalClientName || tender.donorAgency || tender.implementingAgency) && (
+                    <dl className="mt-1 space-y-0.5 text-xs">
+                      {tender.procuringEntityName && (
+                        <div><span className="text-slate-400">Procuring entity: </span><span className="text-slate-700">{tender.procuringEntityName}</span></div>
+                      )}
+                      {tender.legalClientName && (
+                        <div><span className="text-slate-400">Legal name: </span><span className="text-slate-700">{tender.legalClientName}</span></div>
+                      )}
+                      {tender.donorAgency && (
+                        <div><span className="text-slate-400">Donor/funder: </span><span className="text-slate-700">{tender.donorAgency}</span></div>
+                      )}
+                      {tender.implementingAgency && (
+                        <div><span className="text-slate-400">Implementing agency: </span><span className="text-slate-700">{tender.implementingAgency}</span></div>
+                      )}
+                    </dl>
+                  )}
+                </div>
                 <div><dt className="text-sm text-slate-500">Deadline</dt><dd className="mt-1 font-medium text-slate-900">{formatDate(tender.deadline)}</dd></div>
                 <div><dt className="text-sm text-slate-500">Category</dt><dd className="mt-1 font-medium text-slate-900">{tender.category}</dd></div>
                 <div><dt className="text-sm text-slate-500">Submission</dt><dd className="mt-1 font-medium text-slate-900">{tender.submissionMethod || "—"}</dd></div>
