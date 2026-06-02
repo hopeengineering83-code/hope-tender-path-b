@@ -267,7 +267,13 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
   const tender = await prisma.tender.findUnique({
     where: { id: tenderId },
     include: {
-      files: { select: { originalFileName: true, extractedText: true, classification: true } },
+      files: {
+        select: {
+          originalFileName: true, extractedText: true, classification: true,
+          extractionScore: true, totalPages: true, extractedPages: true,
+          ocrPages: true, failedPages: true,
+        },
+      },
       requirements: true,
       expertMatches: { where: { isSelected: true }, include: { expert: { select: { trustLevel: true } } } },
       projectMatches: { where: { isSelected: true }, include: { project: { select: { trustLevel: true } } } },
@@ -299,6 +305,26 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
 
   if (docs.length === 0) blockers.push(tenderBlocker("NO_ACTIVE_GENERATED_DOCUMENTS", "No active generated documents exist for export.", "Generate, validate and review the required documents before final export."));
   if (!isValidClientName(tender.clientName)) blockers.push(tenderBlocker("CLIENT_NAME_REQUIRED", "Client/procuring entity name is missing or invalid.", "Edit Tender Detail and enter the exact official procuring entity name."));
+
+  // ── Extraction quality blocker ────────────────────────────────────────────
+  if (tender.files && tender.files.some(f => (f as { extractionScore?: number | null }).extractionScore !== null && ((f as { extractionScore: number }).extractionScore) < 20)) {
+    blockers.push(tenderBlocker(
+      "EXTRACTION_QUALITY_INSUFFICIENT",
+      "One or more tender files have very poor text extraction. The submission package may be based on incomplete tender information.",
+      "Re-upload the tender file with better quality or run OCR extraction before exporting.",
+      "HIGH",
+    ));
+  }
+
+  // ── Metadata contamination blocker ───────────────────────────────────────
+  if ((tender as { metadataContaminated?: boolean }).metadataContaminated) {
+    blockers.push(tenderBlocker(
+      "METADATA_CONTAMINATED",
+      "The procuring entity/client name may be contaminated by unrelated tender portal text.",
+      "Correct the client name in tender metadata before exporting.",
+      "HIGH",
+    ));
+  }
   if ((tender.readinessScore ?? 0) <= 0 || /^(ANALYZED|AI_ANALYZED|AI_ANALYSIS_PARTIAL|FALLBACK_DRAFT_CREATED|ANALYSIS_REQUIRES_REVIEW|DRAFT)$/i.test(tender.status) || /^(ANALYSIS|TENDER_INTAKE)$/i.test(tender.stage)) blockers.push(tenderBlocker("FULL_PROPOSAL_NOT_READY", `Tender is still at ${tender.status}/${tender.stage} with workflow progress ${tender.readinessScore ?? 0}.`, "Run Engine, resolve canonical readiness blockers, generate documents, then rerun export readiness."));
   if (hasStrategyOnlySignals(tender.files)) blockers.push(tenderBlocker("OFFICIAL_SOURCE_REQUIRED", "Uploaded source appears to be strategy/market-intelligence only, not an official RFP/ToR/forms package.", "Upload the official tender source package before final export."));
 

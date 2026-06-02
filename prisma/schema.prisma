@@ -328,6 +328,30 @@ model Tender {
   numberOfCopiesRequired Int?
   technicalWeight       Int?
   financialWeight       Int?
+  // ─── Extended client/procuring-entity extraction ────────────────────────
+  // Populated by AI Analyze when the tender contains multiple entity names.
+  // procuringEntityName: the official procuring entity / contracting authority.
+  // legalClientName: full legal name if different from the display clientName.
+  // donorAgency: any donor/funding agency (World Bank, UNDP, KfW, etc.).
+  // implementingAgency: project owner / implementing agency when different
+  //   from the procuring entity.
+  // metadataContaminated: true when detectMetadataContamination() found portal
+  //   nav-text, status banners, or related-alert noise inside clientName.
+  //   Blocks final export until the field is corrected.
+  // clientNameSourcePage / clientNameSourceQuote: page-level audit trail for
+  //   the extracted client name so reviewers can verify the source.
+  // submissionEmailSourcePage: page where the submission email was found.
+  // analysisExtractionStatus: FULL_EXTRACTION_AI_ANALYZED | PARTIAL_EXTRACTION_AI_ANALYZED |
+  //   OCR_REQUIRED | EXTRACTION_WEAK_REVIEW_REQUIRED | REGEX_FALLBACK_FROM_WEAK_EXTRACTION
+  procuringEntityName      String?
+  legalClientName          String?
+  donorAgency              String?
+  implementingAgency       String?
+  metadataContaminated     Boolean              @default(false)
+  clientNameSourcePage     Int?
+  clientNameSourceQuote    String?
+  submissionEmailSourcePage Int?
+  analysisExtractionStatus String?
   createdAt             DateTime             @default(now())
   updatedAt             DateTime             @updatedAt
   userId                String
@@ -360,6 +384,13 @@ model TenderFile {
   fileContent      String?
   classification   String?
   extractedText    String?
+  // ─── Extraction quality metrics (gap analysis) ───────────────────────────
+  totalPages       Int?
+  extractedPages   Int?
+  ocrPages         Int?
+  failedPages      Int?
+  extractionScore  Float?   // 0-100
+  extractionMethod String?  // "text" | "ocr" | "mixed" | "failed"
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 

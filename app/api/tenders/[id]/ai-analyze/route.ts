@@ -9,6 +9,8 @@ import { rateLimit, AI_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import { extractRequestId } from "../../../../../lib/request-id";
 import { createNotification } from "../../../../../lib/notifications";
 import { assessExtractionQuality } from "../../../../../lib/extraction-quality";
+import { deriveExtractionStatus, type TenderFileQuality } from "../../../../../lib/engine/extraction-quality-gate";
+import { detectMetadataContamination } from "../../../../../lib/engine/tender-metadata-completeness";
 import { buildAnalysisFallbackDiagnostics, formatFallbackDiagnosticsLine, type AnalysisFallbackDiagnostics } from "../../../../../lib/engine/analysis-fallback-diagnostics";
 import { buildProviderDiagnosticsSnapshot } from "../../../../../lib/ai-provider-health";
 import { restoreHealthFromDb, persistAllHealthToDb } from "../../../../../lib/ai-provider-health-db";
@@ -176,7 +178,19 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   }
 
   const [tender, company] = await Promise.all([
-    prisma.tender.findFirst({ where: { id, userId }, include: { files: true } }),
+    prisma.tender.findFirst({
+      where: { id, userId },
+      include: {
+        files: {
+          select: {
+            id: true, fileName: true, originalFileName: true, mimeType: true, size: true,
+            classification: true, extractedText: true, createdAt: true,
+            totalPages: true, extractedPages: true, ocrPages: true, failedPages: true,
+            extractionScore: true, extractionMethod: true,
+          },
+        },
+      },
+    }),
     prisma.company.findUnique({
       where: { userId },
       include: { documents: { select: { category: true, originalFileName: true, extractedText: true }, take: 5, orderBy: { createdAt: "desc" } } },
@@ -411,6 +425,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           //   Partial (deadline) → "AI_ANALYSIS_PARTIAL"
           const tenderStatus = aiMeta.isPartial ? "AI_ANALYSIS_PARTIAL" : "AI_ANALYZED";
 
+          // Contamination check on the extracted client name
+          const clientNameForContaminationCheck = aiResult.procuringEntityName || tenderRecord.clientName;
+          const contamination = detectMetadataContamination(clientNameForContaminationCheck);
+
           await tx.tender.update({
             where: { id },
             data: {
@@ -427,6 +445,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
               notes: updatedNotes,
               status: tenderStatus,
               stage: "ANALYSIS",
+              // Extended client/procuring-entity extraction fields
+              ...(aiResult.procuringEntityName !== undefined ? { procuringEntityName: aiResult.procuringEntityName } : {}),
+              ...(aiResult.legalClientName !== undefined ? { legalClientName: aiResult.legalClientName } : {}),
+              ...(aiResult.donorAgency !== undefined ? { donorAgency: aiResult.donorAgency } : {}),
+              ...(aiResult.implementingAgency !== undefined ? { implementingAgency: aiResult.implementingAgency } : {}),
+              ...(aiResult.clientNameSourcePage !== undefined ? { clientNameSourcePage: aiResult.clientNameSourcePage } : {}),
+              ...(aiResult.clientNameSourceQuote !== undefined ? { clientNameSourceQuote: aiResult.clientNameSourceQuote } : {}),
+              ...(aiResult.submissionEmailSourcePage !== undefined ? { submissionEmailSourcePage: aiResult.submissionEmailSourcePage } : {}),
+              // Flag contaminated client name so the export gate can block
+              metadataContaminated: contamination.contaminated,
             },
           });
         });
@@ -475,6 +503,21 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         // Persist updated provider health to DB after analysis completes.
         // Fire-and-forget — never blocks the response.
         void persistAllHealthToDb().catch(() => {});
+
+        // Compute and persist the extraction status so downstream gates
+        // (Generate Docs, Export) can inspect it without re-deriving.
+        const fileQualitySnapshots = tenderRecord.files.map((f) => ({
+          totalPages: (f as { totalPages?: number | null }).totalPages ?? null,
+          extractedPages: (f as { extractedPages?: number | null }).extractedPages ?? null,
+          ocrPages: (f as { ocrPages?: number | null }).ocrPages ?? null,
+          failedPages: (f as { failedPages?: number | null }).failedPages ?? null,
+          extractionScore: (f as { extractionScore?: number | null }).extractionScore ?? null,
+        }));
+        const extractionStatus = deriveExtractionStatus(fileQualitySnapshots);
+        void prisma.tender.update({
+          where: { id },
+          data: { analysisExtractionStatus: extractionStatus },
+        }).catch(() => {});
 
         analysisResult = {
           ai: true,
