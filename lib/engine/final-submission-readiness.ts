@@ -674,7 +674,8 @@ export async function getFinalSubmissionReadiness(
         (r.sourceConfidence ?? 0) <= 0 &&
         !r.sourceTenderFileId &&
         !r.sourcePageNumber &&
-        !(r.sourceExactQuote ?? "").trim(),
+        !(r.sourceExactQuote ?? "").trim() &&
+        !(r.sectionReference ?? "").trim(),
     ).length;
     const missingRatio = missingTraceability / mandatoryRequirements.length;
     if (missingRatio > 0.2) {

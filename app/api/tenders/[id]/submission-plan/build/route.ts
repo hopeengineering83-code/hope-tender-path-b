@@ -87,13 +87,10 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       return NextResponse.json({ ok: false, error: "Tender not found", code: "TENDER_NOT_FOUND" }, { status: 404 });
     }
 
-    // Block when any tender file has a critically failed extraction score (< 20).
-    // We only block on truly failed files, not just partial/weak extraction,
-    // so that tenders with partial OCR can still produce a plan.
-    const criticallyFailedFiles = tender.files.filter(
-      (f) => f.extractionScore !== null && (f.extractionScore as number) < 20,
-    );
-    if (criticallyFailedFiles.length > 0) {
+    // Block when extraction quality is too poor to trust the plan.
+    // Uses the shared gate (threshold: score < 40) so Build Plan, Generate
+    // Docs, and Export all apply the same quality bar.
+    if (!isExtractionAcceptableForGeneration(tender.files)) {
       return NextResponse.json({
         ok: false,
         error: "Submission plan cannot be trusted because required tender pages were not fully extracted. Re-extract or run OCR before building the plan.",
