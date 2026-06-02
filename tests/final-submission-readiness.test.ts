@@ -78,6 +78,9 @@ describe("final-submission-readiness — derivePlanStatus", () => {
   it("PLAN_NAME_MISMATCH when names diverge but counts align", () => {
     assert.equal(derivePlanStatus({ requiredPlanCount: 2, finalCandidateCount: 2, missingCount: 0, extraCount: 0, nameMismatch: true, orderMismatch: false }), "PLAN_NAME_MISMATCH");
   });
+  it("DERIVED_PLAN_UNCONFIRMED when a derived plan matches counts but lacks tender-issued scope", () => {
+    assert.equal(derivePlanStatus({ requiredPlanCount: 2, finalCandidateCount: 2, missingCount: 0, extraCount: 0, nameMismatch: false, orderMismatch: false, hasExplicitScope: false }), "DERIVED_PLAN_UNCONFIRMED");
+  });
 });
 
 describe("final-submission-readiness — applyAdvisoryResolutions", () => {

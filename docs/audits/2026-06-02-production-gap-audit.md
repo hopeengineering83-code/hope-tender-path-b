@@ -57,7 +57,7 @@ No readiness gate was weakened. The remaining audit focus for later PRs is visua
 
 ## K. Submission Plan Gaps
 
-PR #544 already added snapshot guard and plan-not-built state. Later PRs should continue improving derived draft-plan confirmation and explicit distinction among tender-issued plan, derived draft plan, user-confirmed plan, official-original rows, control rows, optional annexes, duplicates, wrong-scope rows, and superseded/historical rows.
+PR #544 already added snapshot guard and plan-not-built state. This follow-up hardens the remaining misleading all-zero case by surfacing explicit plan provenance (`PLAN_NOT_BUILT`, `DERIVED_DRAFT_UNCONFIRMED`, `EXPLICIT_TENDER_PLAN`, `NO_REQUIREMENTS`) in the submission-plan API/UI and by blocking final export when a derived draft plan has not been confirmed from tender-issued file/order instructions. Later PRs should add a dedicated user-confirm-plan workflow and continue improving explicit distinction among tender-issued plan, user-confirmed plan, official-original rows, control rows, optional annexes, duplicates, wrong-scope rows, and superseded/historical rows.
 
 ## L. Evidence Coverage Gaps
 

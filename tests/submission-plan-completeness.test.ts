@@ -123,6 +123,67 @@ describe("submission-plan completeness — historical (SUPERSEDED) rows excluded
   });
 });
 
+describe("submission-plan completeness — plan provenance", () => {
+  it("reports PLAN_NOT_BUILT when requirements exist but no file plan rows can be derived", () => {
+    const tender = {
+      id: "t-plan-missing",
+      title: "Tender",
+      exactFileNaming: "[]",
+      exactFileOrder: "[]",
+      pageLimit: null,
+      requirements: [{
+        id: "req-control",
+        title: "Submission rule",
+        description: "Submit one original and two copies at the address stated in the tender.",
+        requirementType: "SUBMISSION_RULE",
+        priority: "MANDATORY",
+        exactFileName: null,
+        exactOrder: null,
+        requiredQuantity: null,
+        pageLimit: null,
+        restrictions: null,
+        sectionReference: null,
+      }],
+    };
+    const report = resolveSubmissionPlanCompleteness({ tender, generatedDocuments: [] });
+    assert.equal(report.totalRequired, 0);
+    assert.equal(report.requirementCount, 1);
+    assert.equal(report.hasExplicitScope, false);
+    assert.equal(report.planState, "PLAN_NOT_BUILT");
+    assert.ok(report.warnings.some((w) => /Build Submission Plan/i.test(w)));
+  });
+
+  it("marks requirement-derived file rows as an unconfirmed draft plan", () => {
+    const tender = {
+      id: "t-derived",
+      title: "Tender",
+      exactFileNaming: "[]",
+      exactFileOrder: "[]",
+      pageLimit: null,
+      requirements: [{
+        id: "req-technical",
+        title: "Technical proposal",
+        description: "Prepare a technical methodology for the services.",
+        requirementType: "TECHNICAL",
+        priority: "MANDATORY",
+        exactFileName: null,
+        exactOrder: null,
+        requiredQuantity: null,
+        pageLimit: null,
+        restrictions: null,
+        sectionReference: null,
+      }],
+    };
+    const report = resolveSubmissionPlanCompleteness({ tender, generatedDocuments: [] });
+    assert.equal(report.totalRequired, 1);
+    assert.equal(report.hasExplicitScope, false);
+    assert.equal(report.planState, "DERIVED_DRAFT_UNCONFIRMED");
+    assert.equal(report.requiresUserConfirmation, true);
+    assert.ok(report.warnings.some((w) => /derived draft/i.test(w)));
+  });
+});
+
+
 describe("submission-plan completeness — helpers", () => {
   it("looksLikeOfficialOriginal detects the standard official-original labels", () => {
     const { looksLikeOfficialOriginal } = __testing__;

@@ -42,6 +42,7 @@ import {
 } from "./document-output-state";
 import {
   buildSubmissionPlan,
+  hasExplicitSubmissionScope,
   findExtraGeneratedDocuments,
   findMissingGeneratedDocuments,
   inferEnvelope,
@@ -85,6 +86,7 @@ export type FinalReadinessPlanStatus =
   | "PLAN_MATCHED"
   | "PLAN_MISSING_DOCS"
   | "PLAN_EXTRA_DOCS"
+  | "DERIVED_PLAN_UNCONFIRMED"
   | "PLAN_ORDER_MISMATCH"
   | "PLAN_NAME_MISMATCH";
 
@@ -234,6 +236,7 @@ function derivePlanStatus(opts: {
   extraCount: number;
   nameMismatch: boolean;
   orderMismatch: boolean;
+  hasExplicitScope?: boolean;
 }): FinalReadinessPlanStatus {
   const { requiredPlanCount, finalCandidateCount, missingCount, extraCount, nameMismatch, orderMismatch } = opts;
   if (requiredPlanCount === 0 && finalCandidateCount === 0) return "NO_PLAN_NO_DOCS";
@@ -242,6 +245,7 @@ function derivePlanStatus(opts: {
   if (extraCount > 0) return "PLAN_EXTRA_DOCS";
   if (nameMismatch) return "PLAN_NAME_MISMATCH";
   if (orderMismatch) return "PLAN_ORDER_MISMATCH";
+  if (requiredPlanCount > 0 && opts.hasExplicitScope === false) return "DERIVED_PLAN_UNCONFIRMED";
   return "PLAN_MATCHED";
 }
 
@@ -493,6 +497,14 @@ export async function getFinalSubmissionReadiness(
     requirements: tender.requirements,
   });
   const requiredPlanCount = submissionPlanFileCount(plan);
+  const hasExplicitPlanScope = hasExplicitSubmissionScope({
+    id: tender.id,
+    title: tender.title,
+    exactFileNaming: tender.exactFileNaming,
+    exactFileOrder: tender.exactFileOrder,
+    pageLimit: tender.pageLimit,
+    requirements: tender.requirements,
+  });
   const missingPlan = findMissingGeneratedDocuments(plan, finalCandidates);
   const extraPlan = findExtraGeneratedDocuments(plan, finalCandidates);
   const planNames = new Set(plan.files.map((f) => f.exactFileName.toLowerCase().trim()));
@@ -605,6 +617,14 @@ export async function getFinalSubmissionReadiness(
       recommendedAction: "Review the flagged documents in the Export Readiness panel; rewrite or attach official originals before export.",
     });
   }
+  if (requiredPlanCount > 0 && !hasExplicitPlanScope) {
+    tenderLevelBlockers.push({
+      category: "SUBMISSION_PLAN_DERIVED_UNCONFIRMED",
+      severity: "HIGH",
+      title: "Submission plan is a derived draft and has not been confirmed from tender-issued file/order instructions.",
+      recommendedAction: "Review the Submission Plan Completeness panel, then confirm exact file names/order from the tender before final export. Do not treat derived rows as official tender forms.",
+    });
+  }
   if (analysisSource === "REGEX_FALLBACK_AI_ERROR") {
     tenderLevelBlockers.push({
       category: "ANALYSIS_REGEX_FALLBACK_UNAPPROVED",
@@ -673,6 +693,7 @@ export async function getFinalSubmissionReadiness(
       extraCount: extraPlan.length,
       nameMismatch,
       orderMismatch,
+      hasExplicitScope: hasExplicitPlanScope,
     }),
     // ── Gate extensions ───────────────────────────────────────────────────
     qualityFailedDocuments: qualityFailed,
