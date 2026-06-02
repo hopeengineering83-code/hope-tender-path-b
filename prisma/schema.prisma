@@ -328,6 +328,19 @@ model Tender {
   numberOfCopiesRequired Int?
   technicalWeight       Int?
   financialWeight       Int?
+  // ─── Extraction quality fields (gap analysis) ────────────────────────────
+  // Rich client/procuring entity metadata derived from tender PDF body.
+  procuringEntityName     String?
+  legalClientName         String?
+  donorAgency             String?
+  implementingAgency      String?
+  // Set to true when the extracted client name appears contaminated by
+  // unrelated tender portal text, navigation text, or other noise.
+  metadataContaminated    Boolean              @default(false)
+  // Machine-readable status of the last AI Analyze run relative to extraction quality.
+  // Values: FULL_EXTRACTION_AI_ANALYZED | PARTIAL_EXTRACTION_AI_ANALYZED |
+  //         EXTRACTION_WEAK_REVIEW_REQUIRED | REGEX_FALLBACK_FROM_WEAK_EXTRACTION
+  analysisExtractionStatus String?
   createdAt             DateTime             @default(now())
   updatedAt             DateTime             @updatedAt
   userId                String
@@ -360,6 +373,13 @@ model TenderFile {
   fileContent      String?
   classification   String?
   extractedText    String?
+  // ─── Extraction quality metrics (gap analysis) ───────────────────────────
+  totalPages       Int?
+  extractedPages   Int?
+  ocrPages         Int?
+  failedPages      Int?
+  extractionScore  Float?   // 0-100
+  extractionMethod String?  // "text" | "ocr" | "mixed" | "failed"
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 

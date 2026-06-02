@@ -9,6 +9,46 @@ import { extractRequestId } from "../../../../lib/request-id";
 import { getStorageAdapter } from "../../../../lib/storage";
 import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../lib/rate-limit";
 import { sanitizeError } from "../../../../lib/sanitize-error";
+import { assessExtractionQuality } from "../../../../lib/extraction-quality";
+
+/** Derive per-file extraction quality metrics from extracted text. */
+function deriveFileExtractionMetrics(extractedText: string, mimeType: string): {
+  totalPages: number | null;
+  extractedPages: number | null;
+  ocrPages: number | null;
+  failedPages: number | null;
+  extractionScore: number | null;
+  extractionMethod: string | null;
+} {
+  const quality = assessExtractionQuality(extractedText);
+  // Count [Page N] markers as page indicators
+  const pageMarkers = (extractedText.match(/\[Page\s+\d+\]/gi) ?? []).length;
+  const ocrPageMarkers = (extractedText.match(/\[OCR text[^\]]*\]/gi) ?? []).length;
+  const failedPageMarkers = (extractedText.match(/\[Extraction failed for[^\]]*\]/gi) ?? []).length;
+  const totalPages = pageMarkers > 0 ? pageMarkers : null;
+  const ocrPages = ocrPageMarkers > 0 ? ocrPageMarkers : null;
+  const failedPages = failedPageMarkers > 0 ? failedPageMarkers : null;
+  const extractedPages = totalPages !== null
+    ? Math.max(0, totalPages - (failedPages ?? 0))
+    : null;
+  // Derive extraction method
+  let extractionMethod: string | null = null;
+  if (quality.hasExtractionFailure && quality.score < 20) {
+    extractionMethod = "failed";
+  } else if (quality.hasOcrPlaceholder || (ocrPages !== null && ocrPages > 0)) {
+    extractionMethod = extractedPages !== null && ocrPages !== null && ocrPages < extractedPages ? "mixed" : "ocr";
+  } else if (extractedText.trim().length > 0) {
+    extractionMethod = "text";
+  }
+  return {
+    totalPages,
+    extractedPages,
+    ocrPages,
+    failedPages,
+    extractionScore: quality.score,
+    extractionMethod,
+  };
+}
 
 // Vercel route timeout — full intake pipeline (PDF extraction + tender
 // engine analysis). 60 = Hobby max; Pro applies its own plan limit.
@@ -164,6 +204,7 @@ export async function POST(req: Request) {
     });
 
     for (const item of extracted) {
+      const fileMetrics = deriveFileExtractionMetrics(item.extractedText ?? "", item.mimeType);
       const fileRecord = await prisma.tenderFile.create({
         data: {
           tenderId: tender.id,
@@ -175,6 +216,12 @@ export async function POST(req: Request) {
           fileContent: item.base64Content ?? null,
           classification: "Tender Document",
           extractedText: item.extractedText || null,
+          totalPages: fileMetrics.totalPages,
+          extractedPages: fileMetrics.extractedPages,
+          ocrPages: fileMetrics.ocrPages,
+          failedPages: fileMetrics.failedPages,
+          extractionScore: fileMetrics.extractionScore,
+          extractionMethod: fileMetrics.extractionMethod,
         },
       });
       await logAction({

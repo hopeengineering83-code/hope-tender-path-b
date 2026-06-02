@@ -22,6 +22,7 @@ import { isValidClientName } from "../../../../../lib/engine/metadata-validators
 import { repairSourceGrounding } from "../../../../../lib/engine/repair-source-grounding";
 import { assertAnalysisReadyForFinalGeneration } from "../../../../../lib/engine/analysis-source";
 import { assessTenderMetadataCompleteness } from "../../../../../lib/engine/tender-metadata-completeness";
+import { isExtractionAcceptableForGeneration } from "../../../../../lib/engine/extraction-quality-gate";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -235,7 +236,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   await prismaReady;
   const { id } = await params;
-  const tender = await prisma.tender.findFirst({ where: { id, userId }, include: { requirements: true } });
+  const tender = await prisma.tender.findFirst({
+    where: { id, userId },
+    include: {
+      requirements: true,
+      files: {
+        select: { id: true, extractionScore: true, totalPages: true, extractedPages: true, ocrPages: true, failedPages: true },
+      },
+    },
+  });
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
 
   const invalidFields = listInvalidStoredFields(tender);
@@ -255,6 +264,19 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const readiness = await getCompanyIngestionReadiness(company.id, { requireDocuments: true, requireReviewedExperts: requiresExperts, requireReviewedProjects: requiresProjects });
   if (!readiness.ingestionReady) return NextResponse.json({ error: "Generation blocked: company knowledge is not ready.", code: "INGESTION_NOT_READY", blockers: readiness.blockers, warnings: readiness.warnings, totals: readiness.totals, nextAction: "OPEN_COMPANY_READINESS" }, { status: 422 });
   if (!hasRealClientName(tender.clientName)) return NextResponse.json({ error: "Generation blocked: client name is not set. Edit the tender and fill the Client Name field before generating proposal documents.", code: "CLIENT_NAME_REQUIRED", nextAction: "EDIT_TENDER" }, { status: 422 });
+
+  // ── Extraction quality gate ───────────────────────────────────────────────
+  // Block generation when extraction quality is too poor to produce reliable
+  // documents (REGEX_FALLBACK_FROM_WEAK_EXTRACTION — average score < 45 with
+  // failed pages). Partial extraction is allowed with a warning.
+  if (!isExtractionAcceptableForGeneration(tender.files)) {
+    return NextResponse.json({
+      ok: false,
+      error: "Page extraction quality is too poor to generate reliable documents. Re-upload the tender file or run OCR before generating.",
+      code: "EXTRACTION_QUALITY_INSUFFICIENT",
+    }, { status: 422 });
+  }
+
   if (tender.status === "NO_BID") return NextResponse.json({ error: "Generation blocked: this tender is marked NO_BID. Apply a BID or BID_WITH_CONDITIONS decision before generating proposal documents.", code: "NO_BID_BLOCK" }, { status: 409 });
   if (tender.requirements.length === 0) {
     return NextResponse.json({
@@ -262,6 +284,27 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       code: "NO_REQUIREMENTS",
       nextAction: "RUN_ENGINE",
     }, { status: 422 });
+  }
+
+  // ── Submission plan gate ──────────────────────────────────────────────────
+  // When requirements exist (≥ 5) but there are no generated/planned documents
+  // at all, block generation and ask the user to build the submission plan first.
+  // This prevents the "empty submission plan" regression.
+  {
+    const reqUrl = new URL(req.url);
+    if (reqUrl.searchParams.get("planOnly") !== "true" && tender.requirements.length >= 5) {
+      const activeDocCount = await prisma.generatedDocument.count({
+        where: { tenderId: id, generationStatus: { not: "SUPERSEDED" } },
+      });
+      if (activeDocCount === 0) {
+        return NextResponse.json({
+          ok: false,
+          error: "No submission plan exists. Build the submission plan before generating documents.",
+          code: "NO_SUBMISSION_PLAN",
+          nextAction: "BUILD_SUBMISSION_PLAN",
+        }, { status: 422 });
+      }
+    }
   }
 
   // ── Metadata completeness gate ────────────────────────────────────────────
