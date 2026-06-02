@@ -127,8 +127,8 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
           requirementId,
           evidenceType: link.evidenceType,
           evidenceReference: link.evidenceReference,
-          supportLevel: "FULL",
-          notes: "Confirmed auto-linked vault evidence by reviewer.",
+          supportLevel: "PARTIAL",
+          notes: "Confirmed auto-linked vault evidence as PARTIAL. FULL/SUBSTANTIAL requires compliance-matrix traceability review.",
         }),
       });
       const json = await res.json() as { ok?: boolean; error?: string; code?: string };
@@ -186,7 +186,7 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
         const res = await fetch(`/api/tenders/${tenderId}/requirement-coverage/confirm`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ requirementId, evidenceType: link.evidenceType, evidenceReference: link.evidenceReference, supportLevel: "FULL", notes: "Bulk-confirmed auto-linked vault evidence." }),
+          body: JSON.stringify({ requirementId, evidenceType: link.evidenceType, evidenceReference: link.evidenceReference, supportLevel: "PARTIAL", notes: "Bulk-confirmed auto-linked vault evidence as PARTIAL. FULL/SUBSTANTIAL requires compliance-matrix traceability review." }),
         });
         const json = await res.json() as { ok?: boolean };
         if (res.ok && json.ok) {
@@ -280,7 +280,7 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
               disabled={confirmingAll}
               className="rounded border border-green-300 bg-green-50 px-2 py-1 text-xs font-medium text-green-800 hover:bg-green-100 disabled:opacity-50"
             >
-              {confirmingAll ? "Confirming…" : "Confirm all auto-linked"}
+              {confirmingAll ? "Confirming…" : "Confirm all as partial"}
             </button>
           )}
           <button onClick={() => void loadTraceability()} disabled={traceLoading} className="rounded px-2 py-1 text-xs text-gray-500 hover:bg-gray-100 disabled:opacity-50">
@@ -295,6 +295,10 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
       {confirmAllResult && (
         <div className="border-b border-green-100 bg-green-50 px-5 py-2 text-xs text-green-800">{confirmAllResult}</div>
       )}
+
+      <div className="border-b border-amber-100 bg-amber-50 px-5 py-2 text-xs text-amber-800">
+        Auto-linked vault suggestions can only be confirmed as PARTIAL in this panel. FULL/SUBSTANTIAL coverage requires a compliance-matrix confirmation with traceable source support.
+      </div>
 
       {/* Traceability summary */}
       {traceOpen && traceability && (
@@ -452,7 +456,7 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
                                           disabled={confirmState?.pending || rejectState?.pending}
                                           className="rounded bg-green-100 px-2 py-0.5 text-[10px] font-medium text-green-800 hover:bg-green-200 disabled:opacity-50"
                                         >
-                                          {confirmState?.pending ? "…" : "✓ Confirm evidence"}
+                                          {confirmState?.pending ? "…" : "✓ Confirm partial evidence"}
                                         </button>
                                         <button
                                           onClick={() => void rejectEvidence(row.id, link)}

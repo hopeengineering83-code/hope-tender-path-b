@@ -9,7 +9,7 @@ const diagnosticsRoute = fs.readFileSync("app/api/admin/diagnostics/route.ts", "
 describe("company knowledge repair safety copy and diagnostics", () => {
   it("does not claim Gemini is the only knowledge extraction provider", () => {
     assert.ok(!/GEMINI_API_KEY is required/.test(repairRoute));
-    assert.match(repairRoute, /OPENAI_API_KEY, GEMINI_API_KEY, DEEPSEEK_API_KEY, GROQ_API_KEY, OPENROUTER_API_KEY, or ANTHROPIC_API_KEY/);
+    assert.match(repairRoute, /OPENAI_API_KEY, GEMINI_API_KEY, MISTRAL_API_KEY, DEEPSEEK_API_KEY, GROQ_API_KEY, TOGETHER_API_KEY, OPENROUTER_API_KEY, or ANTHROPIC_API_KEY/);
     assert.match(repairRoute, /Claude\/Anthropic remains last-resort/);
   });
 

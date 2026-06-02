@@ -16,10 +16,22 @@ type Body = {
   notes?: string;
 };
 
-function supportLevel(value: unknown): string {
+function requestedSupportLevel(value: unknown): string {
   const normalized = String(value ?? "PARTIAL").toUpperCase();
   if (["FULL", "SUBSTANTIAL", "PARTIAL", "NONE", "NOT_APPLICABLE"].includes(normalized)) return normalized;
   return "PARTIAL";
+}
+
+function safeAutoLinkSupportLevel(value: unknown): { level: string; capped: boolean; reason: string | null } {
+  const requested = requestedSupportLevel(value);
+  if (requested === "FULL" || requested === "SUBSTANTIAL") {
+    return {
+      level: "PARTIAL",
+      capped: true,
+      reason: "Auto-linked vault evidence is reviewer-confirmed only as PARTIAL here. Mark FULL/SUBSTANTIAL only through the compliance matrix with traceable source support.",
+    };
+  }
+  return { level: requested, capped: false, reason: null };
 }
 
 async function resolveReviewedEvidence(companyId: string, body: Body) {
@@ -89,17 +101,22 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     return NextResponse.json({ ok: false, code: "REVIEWED_EVIDENCE_NOT_FOUND", error: "Only REVIEWED vault experts/projects can be confirmed as requirement evidence." }, { status: 422 });
   }
 
-  const level = supportLevel(body.supportLevel);
+  const requestedLevel = requestedSupportLevel(body.supportLevel);
+  const supportPolicy = safeAutoLinkSupportLevel(body.supportLevel);
+  const level = supportPolicy.level;
+  const confirmationNote = supportPolicy.capped
+    ? `${body.notes ?? "Confirmed reviewed vault evidence."} Strong-support request (${requestedLevel}) capped to PARTIAL: ${supportPolicy.reason}`
+    : body.notes ?? "Confirmed reviewed vault evidence.";
   const existing = await prisma.complianceMatrix.findFirst({
     where: { tenderId: id, requirementId: requirement.id, evidenceType: evidence.evidenceType, evidenceReference: evidence.evidenceReference },
     select: { id: true },
   });
 
   const row = existing
-    ? await prisma.complianceMatrix.update({ where: { id: existing.id }, data: { evidenceSource: evidence.evidenceSource, supportLevel: level, notes: body.notes ?? "Confirmed reviewed vault evidence.", updatedAt: new Date() } })
-    : await prisma.complianceMatrix.create({ data: { tenderId: id, requirementId: requirement.id, evidenceType: evidence.evidenceType, evidenceSource: evidence.evidenceSource, evidenceReference: evidence.evidenceReference, supportLevel: level, notes: body.notes ?? "Confirmed reviewed vault evidence." } });
+    ? await prisma.complianceMatrix.update({ where: { id: existing.id }, data: { evidenceSource: evidence.evidenceSource, supportLevel: level, notes: confirmationNote, updatedAt: new Date() } })
+    : await prisma.complianceMatrix.create({ data: { tenderId: id, requirementId: requirement.id, evidenceType: evidence.evidenceType, evidenceSource: evidence.evidenceSource, evidenceReference: evidence.evidenceReference, supportLevel: level, notes: confirmationNote } });
 
-  await logAction({ userId: actor.id, action: "REQUIREMENT_EVIDENCE_CONFIRMED", entityType: "Tender", entityId: id, description: `Confirmed ${evidence.evidenceType.toLowerCase()} evidence for requirement: ${requirement.title}`, metadata: { requirementId: requirement.id, complianceMatrixId: row.id, evidenceId: evidence.evidenceId, supportLevel: level }, requestId });
+  await logAction({ userId: actor.id, action: "REQUIREMENT_EVIDENCE_CONFIRMED", entityType: "Tender", entityId: id, description: `Confirmed ${evidence.evidenceType.toLowerCase()} evidence for requirement: ${requirement.title}`, metadata: { requirementId: requirement.id, complianceMatrixId: row.id, evidenceId: evidence.evidenceId, requestedSupportLevel: requestedLevel, supportLevel: level, supportLevelCapped: supportPolicy.capped }, requestId });
 
-  return NextResponse.json({ ok: true, success: true, row });
+  return NextResponse.json({ ok: true, success: true, row, requestedSupportLevel: requestedLevel, effectiveSupportLevel: level, supportLevelCapped: supportPolicy.capped, supportLevelPolicy: supportPolicy.reason });
 }
