@@ -7,7 +7,7 @@
 
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 type Status =
@@ -148,6 +148,8 @@ export function SubmissionPlanCompletenessPanel({ tenderId }: { tenderId: string
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [actionMsg, setActionMsg] = useState<string | null>(null);
   const [building, setBuilding] = useState(false);
+  const [classifying, setClassifying] = useState(false);
+  const autoRunDone = useRef(false);
 
   async function load() {
     setLoading(true);
@@ -192,9 +194,37 @@ export function SubmissionPlanCompletenessPanel({ tenderId }: { tenderId: string
     }
   }
 
-  async function buildPlan() {
+  async function autoClassify(rows: Row[]) {
+    const outsidePlanIds = rows
+      .filter((r) => r.status === "OUTSIDE_PLAN" && r.documentId)
+      .map((r) => r.documentId as string);
+    if (outsidePlanIds.length === 0) return;
+
+    setClassifying(true);
+    try {
+      const res = await fetch(`/api/tenders/${tenderId}/submission-plan/auto-classify`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ docIds: outsidePlanIds }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error ?? `Auto-classify failed (${res.status})`);
+      const classified: number = json.classified ?? 0;
+      if (classified > 0) {
+        setActionMsg(`Auto-classified ${classified} outside-plan document(s) by type. Review the updated rows below.`);
+        await load();
+        router.refresh();
+      }
+    } catch {
+      // auto-classify is best-effort; don't overwrite a build success message
+    } finally {
+      setClassifying(false);
+    }
+  }
+
+  async function buildPlan(silent = false) {
     setBuilding(true);
-    setActionMsg(null);
+    if (!silent) setActionMsg(null);
     try {
       const res = await fetch(`/api/tenders/${tenderId}/submission-plan/build`, { method: "POST" });
       const json = await res.json().catch(() => ({}));
@@ -220,8 +250,47 @@ export function SubmissionPlanCompletenessPanel({ tenderId }: { tenderId: string
 
   useEffect(() => { void load(); /* eslint-disable-line react-hooks/exhaustive-deps */ }, [tenderId]);
 
+  // Auto-run once after the first successful data load:
+  // 1. Build plan if requirements exist but plan hasn't been built yet.
+  // 2. Auto-classify any outside-plan documents by normalizing their document type.
+  useEffect(() => {
+    if (!data || autoRunDone.current) return;
+    autoRunDone.current = true;
+
+    const needsBuild = data.summary.planState === "PLAN_NOT_BUILT" && data.summary.requirementCount > 0;
+    const outsidePlanRows = data.rows.filter((r) => r.status === "OUTSIDE_PLAN" && r.documentId);
+
+    async function runAuto() {
+      if (needsBuild) {
+        // Build plan first; after load() the outside-plan docs may change,
+        // so reload then classify from fresh state.
+        await buildPlan(true);
+        // After build, re-fetch to get the updated rows and classify what remains.
+        setLoading(true);
+        try {
+          const res = await fetch(`/api/tenders/${tenderId}/submission-plan`, { method: "GET" });
+          const json: Response | null = await res.json().catch(() => null);
+          if (res.ok && json) {
+            setData(json);
+            await autoClassify(json.rows);
+          }
+        } finally {
+          setLoading(false);
+        }
+      } else if (outsidePlanRows.length > 0) {
+        await autoClassify(outsidePlanRows.length > 0 ? data!.rows : []);
+      }
+    }
+
+    void runAuto();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data]);
+
   if (loading && !data) {
     return <section className="mb-4 rounded-2xl border border-slate-200 bg-white p-5 text-sm text-slate-500">Loading submission plan completeness…</section>;
+  }
+  if (building && !data) {
+    return <section className="mb-4 rounded-2xl border border-slate-200 bg-white p-5 text-sm text-slate-500">Building submission plan…</section>;
   }
   if (error || !data) {
     return <section className="mb-4 rounded-2xl border border-red-200 bg-red-50 p-5 text-sm text-red-700">Could not load submission plan: {error ?? "no data"}</section>;
@@ -239,8 +308,8 @@ export function SubmissionPlanCompletenessPanel({ tenderId }: { tenderId: string
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2 text-xs">
-          <button type="button" onClick={() => void buildPlan()} className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50" disabled={loading || building}>
-            {building ? "Building…" : "⚡ Build Plan"}
+          <button type="button" onClick={() => void buildPlan()} className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50" disabled={loading || building || classifying}>
+            {building ? "Building…" : classifying ? "Classifying…" : "⚡ Build Plan"}
           </button>
           <button type="button" onClick={() => void load()} className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-medium text-white hover:bg-slate-800 disabled:opacity-50" disabled={loading}>
             Re-check
