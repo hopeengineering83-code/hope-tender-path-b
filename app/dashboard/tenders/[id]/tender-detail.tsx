@@ -324,6 +324,14 @@ type Tender = {
   clientNameSourcePage?: number | null;
   clientNameSourceQuote?: string | null;
   submissionEmailSourcePage?: number | null;
+  // Contact & location fields extracted by AI Analyze
+  country?: string | null;
+  clientAddress?: string | null;
+  clientContactName?: string | null;
+  clientContactTitle?: string | null;
+  clientContactEmail?: string | null;
+  clientContactPhone?: string | null;
+  contactDetailsSourceJson?: string | null;
 };
 
 const CATEGORIES = ["General", "IT", "Construction", "Services", "Consulting", "Supply", "Healthcare", "Education", "Other"];
@@ -1708,6 +1716,42 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
                     </dl>
                   )}
                 </div>
+                {(() => {
+                  const src: Record<string, { page: number | null; quote: string | null }> = (() => {
+                    try { return tender.contactDetailsSourceJson ? JSON.parse(tender.contactDetailsSourceJson) : {}; } catch { return {}; }
+                  })();
+                  const contactRows: Array<{ label: string; key: string; value: string | null | undefined }> = [
+                    { label: "Country", key: "country", value: tender.country },
+                    { label: "Client address", key: "clientAddress", value: tender.clientAddress },
+                    { label: "Submission address", key: "submissionAddress", value: tender.submissionAddress },
+                    { label: "Contact person", key: "clientContactName", value: tender.clientContactName },
+                    { label: "Contact title", key: "clientContactTitle", value: tender.clientContactTitle },
+                    { label: "Contact email", key: "clientContactEmail", value: tender.clientContactEmail },
+                    { label: "Contact phone", key: "clientContactPhone", value: tender.clientContactPhone },
+                  ];
+                  const populated = contactRows.filter((r) => r.value);
+                  if (!populated.length) return null;
+                  return (
+                    <div className="md:col-span-2">
+                      <dt className="text-sm font-medium text-slate-700 mb-2">Contact &amp; location details</dt>
+                      <dl className="grid gap-x-6 gap-y-2 md:grid-cols-2">
+                        {populated.map(({ label, key, value }) => {
+                          const s = src[key];
+                          return (
+                            <div key={key}>
+                              <dt className="text-xs text-slate-400">{label}</dt>
+                              <dd className="text-sm font-medium text-slate-900">
+                                {value}
+                                {s?.page && <span className="ml-1.5 text-xs text-slate-400 font-normal">(p.{s.page})</span>}
+                              </dd>
+                              {s?.quote && <p className="mt-0.5 text-xs text-slate-400 italic line-clamp-2">&ldquo;{s.quote}&rdquo;</p>}
+                            </div>
+                          );
+                        })}
+                      </dl>
+                    </div>
+                  );
+                })()}
                 <div><dt className="text-sm text-slate-500">Deadline</dt><dd className="mt-1 font-medium text-slate-900">{formatDate(tender.deadline)}</dd></div>
                 <div><dt className="text-sm text-slate-500">Category</dt><dd className="mt-1 font-medium text-slate-900">{tender.category}</dd></div>
                 <div><dt className="text-sm text-slate-500">Submission</dt><dd className="mt-1 font-medium text-slate-900">{tender.submissionMethod || "—"}</dd></div>
