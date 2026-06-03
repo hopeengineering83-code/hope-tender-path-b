@@ -104,6 +104,21 @@ export async function ExtractionQualityPanel({ tenderId }: { tenderId: string })
         </div>
       </div>
 
+      {!ready && !isCorruptionBlocked && (
+        <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5 text-xs text-amber-900">
+          <span className="font-semibold">Recommended action: </span>
+          {anyOcrMissing
+            ? "Set PDF_OCR_ENABLED=true and re-extract — the document requires OCR."
+            : reports.some((r) => r.quality.severity === "FAILED")
+              ? "Re-upload the file or convert it to a clean, searchable PDF before running AI Analyze."
+              : reports.some((r) => r.quality.scannedPdfLikely)
+                ? "Enable OCR and re-import, or upload a clearer scan. AI Analyze may produce unreliable results on this file."
+                : reports.some((r) => r.quality.averageCharsPerPage !== null && r.quality.averageCharsPerPage < 300)
+                  ? "Review the file page-by-page; some pages may need manual transcription or a higher-quality scan."
+                  : "Continue only if extraction quality is acceptable for your use case, or re-upload a better-quality version."}
+        </div>
+      )}
+
       {isCorruptionBlocked && (
         <div className="mt-3 rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800">
           <strong>Extraction corrupted / OCR required</strong> — text quality is too low for reliable analysis. The extracted text contains garbage characters (symbol runs, broken spacing, or icon-font glyphs) rather than readable document content. AI Analyze is blocked until the extraction quality issue is resolved.
@@ -217,6 +232,14 @@ export async function ExtractionQualityPanel({ tenderId }: { tenderId: string })
                 <ul className="mt-2 list-disc space-y-1 pl-5 text-xs text-slate-700">
                   {item.quality.warnings.slice(0, 3).map((warning) => <li key={warning}>{warning}</li>)}
                 </ul>
+              )}
+              {item.quality.recommendations.length > 0 && (
+                <div className="mt-2">
+                  <p className="text-xs font-semibold text-slate-600">Recommended action:</p>
+                  <ul className="mt-0.5 list-disc space-y-0.5 pl-5 text-xs text-slate-600">
+                    {item.quality.recommendations.slice(0, 2).map((rec) => <li key={rec}>{rec}</li>)}
+                  </ul>
+                </div>
               )}
             </div>
           );
