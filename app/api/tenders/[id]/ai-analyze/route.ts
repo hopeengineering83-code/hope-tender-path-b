@@ -9,7 +9,7 @@ import { rateLimit, AI_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import { extractRequestId } from "../../../../../lib/request-id";
 import { createNotification } from "../../../../../lib/notifications";
 import { assessExtractionQuality } from "../../../../../lib/extraction-quality";
-import { deriveExtractionStatus, type TenderFileQuality } from "../../../../../lib/engine/extraction-quality-gate";
+import { deriveExtractionStatus, isExtractionCorrupted, type TenderFileQuality } from "../../../../../lib/engine/extraction-quality-gate";
 import { detectMetadataContamination } from "../../../../../lib/engine/tender-metadata-completeness";
 import { buildAnalysisFallbackDiagnostics, formatFallbackDiagnosticsLine, type AnalysisFallbackDiagnostics } from "../../../../../lib/engine/analysis-fallback-diagnostics";
 import { buildProviderDiagnosticsSnapshot } from "../../../../../lib/ai-provider-health";
@@ -212,6 +212,24 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       blockers: extractionBlockers,
       hint: "Re-import/OCR/review the file, or retry with ?force=true only when you intentionally accept degraded analysis quality.",
     }, { status: 422 });
+  }
+
+  // Check for corrupted extracted text — catches the case where extractors
+  // returned thousands of garbage characters (GGG symbols, black squares,
+  // broken spacing) that pass the old length-only gate but contain no
+  // usable content for AI analysis.
+  const textSamples = tenderRecord.files
+    .map((f) => f.extractedText)
+    .filter((t): t is string => Boolean(t && t.trim().length > 20));
+  const isTextCorrupted =
+    textSamples.length > 0 && textSamples.every((t) => isExtractionCorrupted(t));
+  if (!force && isTextCorrupted) {
+    return NextResponse.json({
+      error: "AI analysis blocked — extracted text is corrupted",
+      code: "EXTRACTION_CORRUPTED_AI_SKIPPED",
+      nextAction: "Run OCR extraction or upload a clearer PDF before AI Analyze",
+      hint: "The extracted text contains garbage characters (symbol runs, broken spacing, or icon-font glyphs). Set PDF_OCR_ENABLED=true to enable automatic OCR fallback, or retry with ?force=true to proceed with degraded analysis.",
+    }, { status: 400 });
   }
 
   async function runRegexFallback(errorMessage?: string, diagnostics?: AnalysisFallbackDiagnostics) {

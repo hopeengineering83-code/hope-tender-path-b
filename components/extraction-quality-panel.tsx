@@ -2,6 +2,7 @@ import Link from "next/link";
 import { getSession } from "../lib/auth";
 import { prisma, prismaReady } from "../lib/prisma";
 import { assessExtractionQuality } from "../lib/extraction-quality";
+import { isExtractionCorrupted } from "../lib/engine/extraction-quality-gate";
 
 const EXTRACTION_STATUS_LABELS: Record<string, string> = {
   FULL_EXTRACTION_AI_ANALYZED: "Full extraction",
@@ -9,6 +10,7 @@ const EXTRACTION_STATUS_LABELS: Record<string, string> = {
   OCR_REQUIRED: "OCR required",
   EXTRACTION_WEAK_REVIEW_REQUIRED: "Weak — review required",
   REGEX_FALLBACK_FROM_WEAK_EXTRACTION: "Very poor — regex fallback",
+  EXTRACTION_CORRUPTED_AI_SKIPPED: "Corrupted — AI blocked",
 };
 
 export async function ExtractionQualityPanel({ tenderId }: { tenderId: string }) {
@@ -33,22 +35,43 @@ export async function ExtractionQualityPanel({ tenderId }: { tenderId: string })
   });
   if (!tender || tender.files.length === 0) return null;
 
-  const reports = tender.files.map((file) => ({
-    id: file.id,
-    fileName: file.originalFileName || file.fileName,
-    quality: assessExtractionQuality(file.extractedText, file.originalFileName || file.fileName),
-    totalPages: file.totalPages,
-    extractedPages: file.extractedPages,
-    ocrPages: file.ocrPages,
-    failedPages: file.failedPages,
-    extractionScore: file.extractionScore,
-    extractionMethod: file.extractionMethod,
-  }));
+  const reports = tender.files.map((file) => {
+    const extractedText = file.extractedText ?? "";
+    const isCorrupted = extractedText.length > 20 && isExtractionCorrupted(extractedText);
+    // Detect whether OCR was run due to corruption vs no text layer
+    const ocrReason = /ocrReason=CORRUPTED_TEXT/i.test(extractedText)
+      ? "CORRUPTED_TEXT"
+      : /ocrReason=NO_TEXT_LAYER/i.test(extractedText)
+        ? "NO_TEXT_LAYER"
+        : null;
+    const ocrConfigMissing =
+      isCorrupted &&
+      !ocrReason &&
+      /OCR required but not configured|set PDF_OCR_ENABLED=true/i.test(extractedText);
+    return {
+      id: file.id,
+      fileName: file.originalFileName || file.fileName,
+      quality: assessExtractionQuality(file.extractedText, file.originalFileName || file.fileName),
+      totalPages: file.totalPages,
+      extractedPages: file.extractedPages,
+      ocrPages: file.ocrPages,
+      failedPages: file.failedPages,
+      extractionScore: file.extractionScore,
+      extractionMethod: file.extractionMethod,
+      isCorrupted,
+      ocrReason,
+      ocrConfigMissing,
+    };
+  });
   const blockers = reports.filter((item) => item.quality.severity === "FAILED" || item.quality.severity === "POOR");
   const warnings = reports.filter((item) => item.quality.severity === "WARNING");
-  const ready = blockers.length === 0;
+  const anyCorrupted = reports.some((item) => item.isCorrupted);
+  const anyOcrRanForCorruption = reports.some((item) => item.ocrReason === "CORRUPTED_TEXT");
+  const anyOcrMissing = reports.some((item) => item.ocrConfigMissing);
+  const ready = blockers.length === 0 && !anyCorrupted;
   const analysisStatus = tender.analysisExtractionStatus;
   const isContaminated = tender.metadataContaminated;
+  const isCorruptionBlocked = analysisStatus === "EXTRACTION_CORRUPTED_AI_SKIPPED" || anyCorrupted;
 
   return (
     <section className={`mb-4 rounded-2xl border p-5 shadow-sm ${ready ? "border-green-200 bg-green-50" : "border-red-200 bg-red-50"}`}>
@@ -82,6 +105,24 @@ export async function ExtractionQualityPanel({ tenderId }: { tenderId: string })
       {isContaminated && (
         <div className="mt-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800">
           <strong>Metadata contamination warning:</strong> The procuring entity / client name may be polluted by unrelated tender portal text or navigation content. Review and correct before generating documents or exporting.
+        </div>
+      )}
+
+      {isCorruptionBlocked && (
+        <div className="mt-3 rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800">
+          <strong>Extraction corrupted / OCR required</strong> — text quality is too low for reliable analysis. The extracted text contains garbage characters (symbol runs, broken spacing, or icon-font glyphs) rather than readable document content. AI Analyze is blocked until the extraction quality issue is resolved.
+        </div>
+      )}
+
+      {anyOcrRanForCorruption && (
+        <div className="mt-3 rounded-lg border border-blue-300 bg-blue-50 px-4 py-3 text-sm text-blue-800">
+          <strong>OCR was run to improve quality</strong> — the original text layer was detected as corrupted (ocrReason=CORRUPTED_TEXT), so Claude vision OCR was applied automatically.
+        </div>
+      )}
+
+      {anyOcrMissing && (
+        <div className="mt-3 rounded-lg border border-orange-300 bg-orange-50 px-4 py-3 text-sm text-orange-800">
+          <strong>OCR required but not configured</strong> — the extracted text is corrupted and OCR would improve it, but OCR is currently disabled. Set <code>PDF_OCR_ENABLED=true</code> in your environment variables to enable automatic OCR fallback.
         </div>
       )}
 
