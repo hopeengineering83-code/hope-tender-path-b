@@ -339,3 +339,58 @@ export const __testing__ = { looksLikeOfficialOriginal, fileKey };
 // Pure-helper alias also re-export the existing canonical filter so test
 // consumers can confirm the panel uses the same source of truth.
 export { filterFinalExportCandidateDocuments };
+
+// ── Submission plan existence gate ────────────────────────────────────────────
+// Used by the Generate Docs route to hard-block generation before a valid
+// submission plan has been explicitly built. A "valid" plan means at least
+// one GeneratedDocument row exists with a non-SUPERSEDED generationStatus
+// AND a reviewStatus that indicates it was placed there by the Build Plan
+// step (PLANNED, PENDING, APPROVED, CONFIRMED, READY_FOR_EXPORT, or
+// REPLACE_WITH_ORIGINAL).
+//
+// The check is intentionally permissive about the exact review status so
+// it catches both the happy path (PLANNED rows created by Build Plan) and
+// manually-confirmed rows.
+
+export type SubmissionPlanCheckResult = {
+  valid: boolean;
+  reason?: string;
+  plannedCount: number;
+  confirmedCount: number;
+};
+
+export async function hasValidSubmissionPlan(
+  // Accept `any` prisma client so the helper can be called with either the
+  // singleton prisma import or a test mock without import-side-effects.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  prismaClient: any,
+  tenderId: string,
+): Promise<SubmissionPlanCheckResult> {
+  const planned: number = await prismaClient.generatedDocument.count({
+    where: {
+      tenderId,
+      generationStatus: { not: "SUPERSEDED" },
+      reviewStatus: {
+        in: [
+          "PLANNED",
+          "PENDING",
+          "APPROVED",
+          "CONFIRMED",
+          "READY_FOR_EXPORT",
+          "REPLACE_WITH_ORIGINAL",
+        ],
+      },
+    },
+  });
+
+  if (planned === 0) {
+    return {
+      valid: false,
+      reason: "NO_SUBMISSION_PLAN",
+      plannedCount: 0,
+      confirmedCount: 0,
+    };
+  }
+
+  return { valid: true, plannedCount: planned, confirmedCount: planned };
+}
