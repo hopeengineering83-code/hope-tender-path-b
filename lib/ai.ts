@@ -960,6 +960,9 @@ export type AIAnalysisResult = {
   clientContactEmail?: string | null;
   clientContactPhone?: string | null;
   submissionAddress?: string | null;
+  // Per-field source provenance for the contact/location fields above.
+  // Stored as JSON in DB column contactDetailsSourceJson.
+  contactDetailsSource?: Record<string, { page: number | null; quote: string | null }> | null;
 };
 
 // Allowed enum values for the classification fields. Exported so analysis
@@ -1240,6 +1243,15 @@ function mergeAnalysisResults(parts: AIAnalysisResult[]): AIAnalysisResult {
   const clientNameSourcePage = firstDefined((p) => p.clientNameSourcePage ?? undefined);
   const clientNameSourceQuote = firstDefined((p) => p.clientNameSourceQuote ?? undefined);
   const submissionEmailSourcePage = firstDefined((p) => p.submissionEmailSourcePage ?? undefined);
+  // Merge contactDetailsSource: combine all keys, first-non-null wins per key
+  const contactDetailsSource: Record<string, { page: number | null; quote: string | null }> = {};
+  for (const part of parts) {
+    if (part.contactDetailsSource) {
+      for (const [key, val] of Object.entries(part.contactDetailsSource)) {
+        if (!(key in contactDetailsSource)) contactDetailsSource[key] = val;
+      }
+    }
+  }
 
   return {
     summary,
@@ -1263,6 +1275,7 @@ function mergeAnalysisResults(parts: AIAnalysisResult[]): AIAnalysisResult {
     clientContactEmail: clientContactEmail ?? null,
     clientContactPhone: clientContactPhone ?? null,
     submissionAddress: submissionAddress ?? null,
+    contactDetailsSource: Object.keys(contactDetailsSource).length > 0 ? contactDetailsSource : null,
     clientNameSourcePage: clientNameSourcePage ?? null,
     clientNameSourceQuote: clientNameSourceQuote ?? null,
     submissionEmailSourcePage: submissionEmailSourcePage ?? null,
@@ -1347,7 +1360,16 @@ JSON structure required:
   "submissionAddress": "physical address where hard-copy bids must be delivered (distinct from submission email), or null",
   "clientNameSourcePage": page_number_integer_or_null,
   "clientNameSourceQuote": "verbatim 1-2 sentence snippet from which the client name was extracted, or null",
-  "submissionEmailSourcePage": page_number_integer_or_null
+  "submissionEmailSourcePage": page_number_integer_or_null,
+  "contactDetailsSource": {
+    "country": {"page": page_number_or_null, "quote": "verbatim snippet or null"},
+    "clientAddress": {"page": page_number_or_null, "quote": "verbatim snippet or null"},
+    "clientContactName": {"page": page_number_or_null, "quote": "verbatim snippet or null"},
+    "clientContactTitle": {"page": page_number_or_null, "quote": "verbatim snippet or null"},
+    "clientContactEmail": {"page": page_number_or_null, "quote": "verbatim snippet or null"},
+    "clientContactPhone": {"page": page_number_or_null, "quote": "verbatim snippet or null"},
+    "submissionAddress": {"page": page_number_or_null, "quote": "verbatim snippet or null"}
+  }
 }
 
 TENDER DOCUMENT${chunkLabel} (${tenderContent.length.toLocaleString()} chars):
@@ -1399,6 +1421,22 @@ ${tenderContent}`;
         clientNameSourcePage: typeof parsed.clientNameSourcePage === "number" && Number.isInteger(parsed.clientNameSourcePage) && parsed.clientNameSourcePage > 0 ? parsed.clientNameSourcePage : null,
         clientNameSourceQuote: typeof parsed.clientNameSourceQuote === "string" ? parsed.clientNameSourceQuote.trim().slice(0, 500) || null : null,
         submissionEmailSourcePage: typeof parsed.submissionEmailSourcePage === "number" && Number.isInteger(parsed.submissionEmailSourcePage) && parsed.submissionEmailSourcePage > 0 ? parsed.submissionEmailSourcePage : null,
+        contactDetailsSource: (() => {
+          const src = parsed.contactDetailsSource;
+          if (!src || typeof src !== "object") return null;
+          const result: Record<string, { page: number | null; quote: string | null }> = {};
+          for (const key of ["country", "clientAddress", "clientContactName", "clientContactTitle", "clientContactEmail", "clientContactPhone", "submissionAddress"]) {
+            const entry = (src as Record<string, unknown>)[key];
+            if (entry && typeof entry === "object") {
+              const e = entry as Record<string, unknown>;
+              result[key] = {
+                page: typeof e.page === "number" && Number.isInteger(e.page) && e.page > 0 ? e.page : null,
+                quote: typeof e.quote === "string" ? e.quote.trim().slice(0, 300) || null : null,
+              };
+            }
+          }
+          return Object.keys(result).length > 0 ? result : null;
+        })(),
       };
     } catch {
       return null;
