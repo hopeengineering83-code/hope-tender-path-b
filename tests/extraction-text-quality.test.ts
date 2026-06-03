@@ -94,3 +94,58 @@ describe("scorePageTextQuality", () => {
     assert.ok(result.score < 40, `score should be < 40, got ${result.score}`);
   });
 });
+
+import { assessExtractionQualityPerPage } from "../lib/extraction-quality";
+
+describe("assessExtractionQualityPerPage", () => {
+  const sampleText = `
+[Page 1] Ministry of Public Works. Procurement Reference: TND-2026-001. Contact: procurement@mpw.gov. PO Box 123, Capital City.
+[Page 2] Evaluation Criteria: Technical Score (70 points) | Financial Score (30 points) | scoring matrix below.
+[Page 3] Required Documents: Company registration, Tax clearance, Annex 1 mandatory document, Form 3 checklist.
+[Page 4] Submission Instructions: Submit via email to submit@mpw.gov by 15 July 2026. Hand delivery accepted at drop box, 4th Floor.
+[Page 5]
+[Page 6] This page contains a small amount of text.
+`.trim();
+
+  it("detects total pages from [Page N] markers", () => {
+    const report = assessExtractionQualityPerPage(sampleText);
+    assert.equal(report.totalDetectedPages, 6);
+  });
+
+  it("flags blank pages (very short text)", () => {
+    const report = assessExtractionQualityPerPage(sampleText);
+    assert.ok(report.blankPages.includes(5), "page 5 is blank");
+  });
+
+  it("flags low-density pages", () => {
+    const report = assessExtractionQualityPerPage(sampleText);
+    assert.ok(report.lowDensityPages.includes(6), "page 6 is low-density");
+  });
+
+  it("identifies submission instruction pages", () => {
+    const report = assessExtractionQualityPerPage(sampleText);
+    assert.ok(report.submissionInstructionPages.includes(4), "page 4 has submission instructions");
+  });
+
+  it("identifies evaluation criteria pages", () => {
+    const report = assessExtractionQualityPerPage(sampleText);
+    assert.ok(report.evaluationCriteriaPages.includes(2), "page 2 has evaluation criteria");
+  });
+
+  it("identifies required document pages", () => {
+    const report = assessExtractionQualityPerPage(sampleText);
+    assert.ok(report.requiredDocumentPages.includes(3), "page 3 has required documents");
+  });
+
+  it("identifies client detail pages", () => {
+    const report = assessExtractionQualityPerPage(sampleText);
+    assert.ok(report.clientDetailPages.includes(1), "page 1 has client/contact details");
+  });
+
+  it("returns 0 pages and 0% coverage on empty text", () => {
+    const report = assessExtractionQualityPerPage(null);
+    assert.equal(report.totalDetectedPages, 0);
+    assert.equal(report.coveragePercent, 0);
+    assert.deepEqual(report.pages, []);
+  });
+});

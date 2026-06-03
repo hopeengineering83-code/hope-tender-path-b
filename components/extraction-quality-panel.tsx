@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { getSession } from "../lib/auth";
 import { prisma, prismaReady } from "../lib/prisma";
-import { assessExtractionQuality } from "../lib/extraction-quality";
+import { assessExtractionQuality, assessExtractionQualityPerPage } from "../lib/extraction-quality";
 import { isExtractionCorrupted } from "../lib/engine/extraction-quality-gate";
 
 const EXTRACTION_STATUS_LABELS: Record<string, string> = {
@@ -52,6 +52,7 @@ export async function ExtractionQualityPanel({ tenderId }: { tenderId: string })
       id: file.id,
       fileName: file.originalFileName || file.fileName,
       quality: assessExtractionQuality(file.extractedText, file.originalFileName || file.fileName),
+      perPage: assessExtractionQualityPerPage(file.extractedText),
       totalPages: file.totalPages,
       extractedPages: file.extractedPages,
       ocrPages: file.ocrPages,
@@ -127,13 +128,18 @@ export async function ExtractionQualityPanel({ tenderId }: { tenderId: string })
         </div>
       )}
 
-      {(blockers.length > 0 || warnings.length > 0) && (
-        <div className="mt-4 grid gap-3 lg:grid-cols-2">
-          {[...blockers, ...warnings].slice(0, 6).map((item) => (
+      <div className="mt-4 grid gap-3 lg:grid-cols-2">
+        {reports.map((item) => {
+          const pp = item.perPage;
+          const totalDetected = pp.totalDetectedPages;
+          const perfectCount = pp.perfectPages.length;
+          const coveragePct = pp.coveragePercent;
+          const hasProblemPages = pp.blankPages.length > 0 || pp.failedPages.length > 0 || pp.lowDensityPages.length > 0;
+          return (
             <div key={item.id} className="rounded-xl border bg-white p-3 text-sm">
               <div className="flex items-center justify-between gap-2">
-                <p className="font-medium text-slate-900">{item.fileName}</p>
-                <div className="flex items-center gap-1">
+                <p className="font-medium text-slate-900 truncate">{item.fileName}</p>
+                <div className="flex items-center gap-1 flex-shrink-0">
                   {item.extractionMethod && (
                     <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600">
                       {item.extractionMethod}
@@ -144,24 +150,78 @@ export async function ExtractionQualityPanel({ tenderId }: { tenderId: string })
                   </span>
                 </div>
               </div>
-              {(item.totalPages !== null || item.extractedPages !== null) && (
+
+              {/* Page coverage summary */}
+              {totalDetected > 0 ? (
+                <div className="mt-2 space-y-1">
+                  <div className="flex items-center justify-between text-xs text-slate-500">
+                    <span>Extraction coverage</span>
+                    <span className={`font-medium ${coveragePct >= 80 ? "text-green-700" : coveragePct >= 50 ? "text-amber-700" : "text-red-700"}`}>
+                      {perfectCount}/{totalDetected} pages ({coveragePct}%)
+                    </span>
+                  </div>
+                  <div className="h-1.5 rounded-full bg-slate-100 overflow-hidden">
+                    <div className={`h-full rounded-full ${coveragePct >= 80 ? "bg-green-500" : coveragePct >= 50 ? "bg-amber-500" : "bg-red-500"}`} style={{ width: `${coveragePct}%` }} />
+                  </div>
+                  <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 text-xs text-slate-500 mt-1">
+                    {pp.ocrPages.length > 0 && <span>OCR pages: {pp.ocrPages.length}</span>}
+                    {pp.blankPages.length > 0 && <span className="text-amber-700">Blank: {pp.blankPages.length}</span>}
+                    {pp.lowDensityPages.length > 0 && <span className="text-amber-700">Low-density: {pp.lowDensityPages.length}</span>}
+                    {pp.failedPages.length > 0 && <span className="text-red-700">Failed: {pp.failedPages.length}</span>}
+                    {pp.tableHeavyPages.length > 0 && <span>Table-heavy: {pp.tableHeavyPages.length}</span>}
+                  </div>
+                  {/* Key content pages */}
+                  {(pp.submissionInstructionPages.length > 0 || pp.evaluationCriteriaPages.length > 0 || pp.clientDetailPages.length > 0 || pp.requiredDocumentPages.length > 0) && (
+                    <div className="mt-1.5 space-y-0.5 text-xs text-slate-500 border-t pt-1.5">
+                      {pp.submissionInstructionPages.length > 0 && (
+                        <div>Submission instructions: pp.{pp.submissionInstructionPages.slice(0, 5).join(", ")}{pp.submissionInstructionPages.length > 5 ? "…" : ""}</div>
+                      )}
+                      {pp.evaluationCriteriaPages.length > 0 && (
+                        <div>Evaluation criteria: pp.{pp.evaluationCriteriaPages.slice(0, 5).join(", ")}{pp.evaluationCriteriaPages.length > 5 ? "…" : ""}</div>
+                      )}
+                      {pp.clientDetailPages.length > 0 && (
+                        <div>Client/contact details: pp.{pp.clientDetailPages.slice(0, 5).join(", ")}{pp.clientDetailPages.length > 5 ? "…" : ""}</div>
+                      )}
+                      {pp.requiredDocumentPages.length > 0 && (
+                        <div>Required documents: pp.{pp.requiredDocumentPages.slice(0, 5).join(", ")}{pp.requiredDocumentPages.length > 5 ? "…" : ""}</div>
+                      )}
+                    </div>
+                  )}
+                  {/* Problem page numbers */}
+                  {hasProblemPages && (
+                    <div className="mt-1.5 border-t pt-1.5 space-y-0.5 text-xs">
+                      {pp.failedPages.length > 0 && (
+                        <p className="text-red-700">Failed pages: {pp.failedPages.slice(0, 10).join(", ")}{pp.failedPages.length > 10 ? "…" : ""}</p>
+                      )}
+                      {pp.blankPages.length > 0 && (
+                        <p className="text-amber-700">Blank pages: {pp.blankPages.slice(0, 10).join(", ")}{pp.blankPages.length > 10 ? "…" : ""}</p>
+                      )}
+                      {pp.lowDensityPages.length > 0 && (
+                        <p className="text-amber-700">Low-density pages: {pp.lowDensityPages.slice(0, 10).join(", ")}{pp.lowDensityPages.length > 10 ? "…" : ""}</p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ) : (
                 <p className="mt-1 text-xs text-slate-500">
-                  {item.totalPages !== null && `${item.totalPages} pages total`}
-                  {item.extractedPages !== null && ` · ${item.extractedPages} extracted`}
-                  {item.ocrPages !== null && item.ocrPages > 0 && ` · ${item.ocrPages} OCR`}
-                  {item.failedPages !== null && item.failedPages > 0 && ` · ${item.failedPages} failed`}
+                  {(item.totalPages !== null) && `${item.totalPages} pages total`}
+                  {(item.extractedPages !== null) && ` · ${item.extractedPages} extracted`}
+                  {(item.ocrPages !== null && item.ocrPages > 0) && ` · ${item.ocrPages} OCR`}
+                  {(item.failedPages !== null && item.failedPages > 0) && ` · ${item.failedPages} failed`}
                 </p>
               )}
-              <p className="mt-1 text-xs text-slate-500">{item.quality.characterCount.toLocaleString()} characters{item.quality.averageCharsPerPage ? ` · ~${item.quality.averageCharsPerPage} chars/page` : ""}</p>
+
+              <p className="mt-1 text-xs text-slate-400">{item.quality.characterCount.toLocaleString()} chars{item.quality.averageCharsPerPage ? ` · ~${item.quality.averageCharsPerPage}/page` : ""}</p>
+
               {item.quality.warnings.length > 0 && (
                 <ul className="mt-2 list-disc space-y-1 pl-5 text-xs text-slate-700">
                   {item.quality.warnings.slice(0, 3).map((warning) => <li key={warning}>{warning}</li>)}
                 </ul>
               )}
             </div>
-          ))}
-        </div>
-      )}
+          );
+        })}
+      </div>
     </section>
   );
 }
