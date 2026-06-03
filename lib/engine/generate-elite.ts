@@ -78,6 +78,7 @@ import { generateExpertCvDocx, expertCvFileName } from "./expert-cv-docx";
 import { computeBidStrategy } from "./bid-strategy";
 import { applyAIWriterContractPrompt } from "./ai-writer-contract-prompt";
 import type { TenderSourceDocument } from "./source-grounded-requirement-map";
+import { getTenderDomainInstructions } from "./tender-domain-instructions";
 
 const BRAND_BLUE = "1F4E79";
 const BRAND_GRAY = "595959";
@@ -1523,6 +1524,12 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
           // rubric (e.g., SV 01, EXP 01, PER 01). Empty when the
           // tender has no extracted weights — prompt unchanged.
           buildRubricPromptDirective(intelligence.evaluationWeights),
+          // Tender-domain instructions — sector-specific writing guidance
+          // injected when the tender title or category identifies a
+          // recognisable domain (road, water, healthcare, EOI, donor-funded,
+          // etc.). Returns empty string for generic tenders, filtered out
+          // below, so the prompt is unchanged when no domain is detected.
+          getTenderDomainInstructions(cleanedTenderTitle, (tender as { category?: string | null }).category ?? ""),
         ].filter(Boolean).join("\n"),
         submissionNotes: [BENCHMARK_CONTEXT_LINES.join("\n"), submissionNotes].filter(Boolean).join("\n"),
         requirements: [...BENCHMARK_CONTEXT_LINES, ...requirementLines].join("\n"),
