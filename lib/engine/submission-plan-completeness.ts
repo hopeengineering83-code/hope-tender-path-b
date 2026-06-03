@@ -135,6 +135,29 @@ function looksLikeOfficialOriginal(label: string): boolean {
   return OFFICIAL_ORIGINAL_NAME_PATTERNS.some((rx) => rx.test(label));
 }
 
+// Patterns for documents that describe submission rules/formatting — these are
+// reference/control docs and must not appear as missing items in the proposal package.
+const CONTROL_DOCUMENT_PATTERNS: RegExp[] = [
+  /submission\s+(formatting|rules|instructions|guidelines)/i,
+  /packaging\s+rules/i,
+  /file\s+and\s+packaging/i,
+  /submission\s+control/i,
+  /cover\s+sheet\s+template/i,
+  /submission\s+checklist/i,
+];
+
+/**
+ * Returns true when the document name/type identifies it as a submission-rules
+ * control document that should be classified NOT_EXPORTABLE rather than treated
+ * as a missing plan item.
+ */
+function isControlDocument(name: string | null | undefined, documentType?: string | null): boolean {
+  const label = name ?? "";
+  return CONTROL_DOCUMENT_PATTERNS.some((p) => p.test(label)) ||
+    documentType === "CONTROL" ||
+    documentType === "SUBMISSION_RULES";
+}
+
 function fileKey(value: string | null | undefined): string {
   return (value ?? "").toLowerCase().replace(/\.[a-z0-9]+$/, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
 }
@@ -247,13 +270,22 @@ export function resolveSubmissionPlanCompleteness(input: ResolvePlanCompleteness
   for (const doc of input.generatedDocuments) {
     if (usedDocIds.has(doc.id)) continue;
     const gen = (doc.generationStatus ?? "").toUpperCase();
-    const status: SubmissionPlanRowStatus = gen === "SUPERSEDED" ? "SUPERSEDED" : "OUTSIDE_PLAN";
+    let status: SubmissionPlanRowStatus = gen === "SUPERSEDED" ? "SUPERSEDED" : "OUTSIDE_PLAN";
     const envelope = inferEnvelope(doc.documentType ?? "TECHNICAL", doc.exactFileName ?? doc.name ?? "");
     const officialOriginal = looksLikeOfficialOriginal(`${doc.name} ${doc.exactFileName ?? ""} ${doc.documentType ?? ""}`);
     const storedQualityFailed = [doc.generationStatus, doc.validationStatus, doc.reviewStatus]
       .map((status) => (status ?? "").toUpperCase())
       .some((status) => status === "GENERATED_QUALITY_FAILED" || status === "QUALITY_FAILED" || status === "NEEDS_REWRITE");
     const qualityFailed = Boolean(input.qualityFailedIds?.has(doc.id)) || storedQualityFailed;
+
+    // Submission-formatting and packaging-rules docs are control/reference material —
+    // they must not appear as missing plan items or outside-plan warnings.
+    // Classify them as SUPERSEDED (excluded from the plan count) so they don't
+    // inflate totalOutsidePlan and don't count against "Missing" in the summary.
+    if (status === "OUTSIDE_PLAN" && isControlDocument(doc.name, doc.documentType)) {
+      status = "SUPERSEDED";
+    }
+
     const effectiveStatus = qualityFailed && status === "OUTSIDE_PLAN" ? "GENERATED_QUALITY_FAILED" : status;
     rows.push({
       key: `doc:${doc.id}`,

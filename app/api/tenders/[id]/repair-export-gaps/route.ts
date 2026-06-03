@@ -241,12 +241,13 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
 
   const letterheadAppliedCount = await applyActiveUploadedLetterheadToTenderDocuments(tenderId, actor.id);
 
+  // Metadata-only re-fetch after repair — fileContent is not needed for readiness checks.
   const repairedDocs = await prisma.generatedDocument.findMany({
     where: { tenderId, generationStatus: { not: "SUPERSEDED" } },
     orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }],
-    select: { id: true, name: true, exactFileName: true, exactOrder: true, documentType: true, format: true, generationStatus: true, validationStatus: true, reviewStatus: true, fileContent: true, storagePath: true },
+    select: { id: true, name: true, exactFileName: true, exactOrder: true, documentType: true, format: true, generationStatus: true, validationStatus: true, reviewStatus: true, storagePath: true },
   });
-  const readiness = await checkFullExportReadiness({ tenderId, docs: repairedDocs, requireFileContent: false });
+  const readiness = await checkFullExportReadiness({ tenderId, docs: repairedDocs as any[], requireFileContent: false });
 
   await logAction({
     userId: actor.id,
