@@ -174,3 +174,42 @@ describe("command center avoids stale workflow progress contradiction", () => {
     assert.doesNotMatch(source, /Workflow Progress:/);
   });
 });
+
+describe("bid strategy unavailable on unsafe extraction/analysis", () => {
+  const source = readFileSync("app/api/tenders/[id]/bid-strategy/route.ts", "utf8");
+  const panelSource = readFileSync("components/bid-strategy-panel.tsx", "utf8");
+
+  it("returns an unavailable blocker instead of computing strategy for unsafe analysis", () => {
+    assert.match(source, /BID_STRATEGY_UNAVAILABLE_ANALYSIS_UNRELIABLE/);
+    assert.match(source, /hasExtractionUnsafeStatus/);
+    assert.match(source, /isUnapprovedFallbackOrUnknown/);
+    assert.match(source, /EXTRACTION_CORRUPTED\|OCR_REQUIRED/);
+    assert.match(source, /sourceRefCount/);
+  });
+
+  it("checks unsafe blockers before computeBidStrategy is invoked", () => {
+    const blockerIndex = source.indexOf("BID_STRATEGY_UNAVAILABLE_ANALYSIS_UNRELIABLE");
+    const computeIndex = source.indexOf("computeBidStrategy({");
+    assert.ok(blockerIndex > -1, "missing unavailable blocker code");
+    assert.ok(computeIndex > -1, "missing computeBidStrategy call");
+    assert.ok(blockerIndex < computeIndex, "bid-strategy unsafe gate must run before score computation");
+  });
+
+  it("panel renders the server blocker list in the unavailable state", () => {
+    assert.match(panelSource, /unavailableBlockers/);
+    assert.match(panelSource, /errBody\.blockers/);
+    assert.match(panelSource, /Bid Strategy unavailable/);
+  });
+});
+
+describe("command center avoids stale workflow progress contradiction", () => {
+  const source = readFileSync("app/dashboard/tenders/[id]/command-center/page.tsx", "utf8");
+
+  it("labels canonical export readiness instead of presenting legacy readinessScore as readiness", () => {
+    assert.match(source, /canonicalReadinessLabel/);
+    assert.match(source, /Export readiness: BLOCKED/);
+    assert.match(source, /Legacy workflow score:/);
+    assert.match(source, /not an export gate/);
+    assert.doesNotMatch(source, /Workflow Progress:/);
+  });
+});
