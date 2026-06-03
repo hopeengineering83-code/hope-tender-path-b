@@ -58,7 +58,7 @@ export async function ExtractionQualityPanel({ tenderId }: { tenderId: string })
       extractedPages: file.extractedPages,
       ocrPages: file.ocrPages,
       failedPages: file.failedPages,
-      extractionScore: file.extractionScore,
+      extractionScore: Math.min(file.extractionScore ?? quality.score, quality.score),
       extractionMethod: file.extractionMethod,
       ocrModel: file.ocrModel,
       ocrUsed: file.extractionMethod === "ocr" || (file.ocrPages !== null && file.ocrPages > 0) || ocrReason !== null,

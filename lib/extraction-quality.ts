@@ -38,12 +38,70 @@ export type ExtractionQualityReport = {
   tableHeavyLikely: boolean;
   hasExtractionFailure: boolean;
   hasOcrPlaceholder: boolean;
+  corrupted: boolean;
+  corruptionSignals: string[];
   warnings: string[];
   recommendations: string[];
 };
 
 function countMatches(text: string, pattern: RegExp): number {
   return text.match(pattern)?.length ?? 0;
+}
+
+const COMMON_TENDER_WORDS = new Set([
+  "the", "and", "for", "shall", "proposal", "tender", "bid", "submission", "technical", "financial",
+  "consultant", "consultancy", "services", "project", "requirements", "criteria", "evaluation", "deadline",
+  "client", "procuring", "entity", "contract", "document", "documents", "experience", "methodology",
+  "work", "plan", "qualification", "form", "envelope", "address", "email", "date", "reference", "scope",
+]);
+
+export type ExtractionCorruptionReport = {
+  corrupted: boolean;
+  signals: string[];
+  symbolRatio: number;
+  isolatedLetterRatio: number;
+  commonWordRatio: number;
+  brokenSpacingRatio: number;
+};
+
+export function isExtractionCorrupted(text: string | null | undefined): ExtractionCorruptionReport {
+  const raw = text ?? "";
+  const normalized = raw.replace(/\s+/g, " ").trim();
+  const length = normalized.length;
+  const signals: string[] = [];
+  if (length < 250) return { corrupted: false, signals, symbolRatio: 0, isolatedLetterRatio: 0, commonWordRatio: 0, brokenSpacingRatio: 0 };
+
+  const symbols = countMatches(normalized, /[■□�⬛⬜◆◇●○▲▼▶◀→←↔↕☐☑✓✗×÷≠≤≥≈~`^_={}\[\]<>|\\]/g);
+  const symbolRatio = symbols / Math.max(1, length);
+  const replacementCount = countMatches(normalized, /[■□�⬛⬜]/g);
+  const repeatedGlyphRuns = countMatches(normalized, /\b([A-Za-z])\1{3,}\b|([■□�⬛⬜◆◇●○▲▼▶◀])\2{2,}/g);
+  const isolatedLetters = countMatches(normalized, /(?:^|\s)[A-Za-z](?=\s|$)/g);
+  const wordTokens = normalized.match(/[A-Za-z]{2,}/g) ?? [];
+  const isolatedLetterRatio = isolatedLetters / Math.max(1, wordTokens.length + isolatedLetters);
+  const commonWordHits = wordTokens.filter((token) => COMMON_TENDER_WORDS.has(token.toLowerCase())).length;
+  const commonWordRatio = commonWordHits / Math.max(1, wordTokens.length);
+  const brokenSpacing = countMatches(raw, /(?:[A-Za-z]\s){5,}[A-Za-z]/g);
+  const brokenSpacingRatio = brokenSpacing / Math.max(1, raw.split(/\n+/).length);
+  const sentenceLike = countMatches(normalized, /[A-Z][a-z]{2,}[^.!?]{15,}[.!?]/g);
+  const normalWords = wordTokens.filter((token) => token.length >= 4).length;
+  const arrowOrBoxNoise = countMatches(normalized, /(?:[→←↔↕■□�⬛⬜◆◇●○▲▼▶◀]\s*){4,}/g);
+
+  if (replacementCount >= 8 || symbolRatio > 0.08) signals.push("excessive replacement symbols or black squares");
+  if (repeatedGlyphRuns >= 3) signals.push("excessive repeated glyph runs");
+  if (isolatedLetterRatio > 0.35 && isolatedLetters >= 30) signals.push("too many isolated single letters");
+  if (brokenSpacingRatio > 0.18 || brokenSpacing >= 8) signals.push("abnormal broken character spacing");
+  if (arrowOrBoxNoise >= 2) signals.push("too many non-word symbols/arrows");
+  if (wordTokens.length >= 80 && commonWordRatio < 0.015) signals.push("low common tender-word ratio");
+  if (length > 1500 && sentenceLike < 2 && normalWords < 40) signals.push("text lacks normal sentence/word patterns");
+
+  return {
+    corrupted: signals.length >= 2 || replacementCount >= 20 || symbolRatio > 0.12 || (length > 1500 && isolatedLetterRatio > 0.45),
+    signals,
+    symbolRatio,
+    isolatedLetterRatio,
+    commonWordRatio,
+    brokenSpacingRatio,
+  };
 }
 
 export function assessExtractionQuality(text: string | null | undefined, fileName?: string | null): ExtractionQualityReport {
@@ -55,6 +113,7 @@ export function assessExtractionQuality(text: string | null | undefined, fileNam
   const hasExtractionFailure = /\[Extraction failed for/i.test(raw);
   const hasOcrPlaceholder = /scanned pdf|needs OCR|OCR skipped|\[Image:/i.test(raw);
   const scannedPdfLikely = characterCount < 250 || hasOcrPlaceholder;
+  const corruption = isExtractionCorrupted(raw);
   const tableDelimiters = countMatches(raw, /\||\t| {3,}/g);
   const tableHeavyLikely = tableDelimiters > 30 || /evaluation\s+criteria|scoring\s+matrix|price\s+schedule|financial\s+form|boq|bill\s+of\s+quantities/i.test(raw);
 
@@ -77,6 +136,10 @@ export function assessExtractionQuality(text: string | null | undefined, fileNam
     warnings.push("Table-heavy content detected. Some evaluation matrices, BOQs, and forms may need manual review.");
     recommendations.push("Cross-check extracted tables against the original tender document before relying on scoring/generation.");
   }
+  if (corruption.corrupted) {
+    warnings.push(`Extraction corrupted / OCR required: ${corruption.signals.join("; ")}.`);
+    recommendations.push("Run OCR or upload a cleaner PDF before AI Analyze, Build Plan, or Generate Docs.");
+  }
   if (/\.doc$/i.test(fileName ?? "")) {
     warnings.push("Legacy .doc file detected. Extraction may be incomplete compared with .docx.");
     recommendations.push("Convert the file to .docx and re-upload when possible.");
@@ -87,6 +150,8 @@ export function assessExtractionQuality(text: string | null | undefined, fileNam
   if (scannedPdfLikely) score -= 45;
   if (averageCharsPerPage !== null && averageCharsPerPage < 300) score -= 20;
   if (tableHeavyLikely) score -= 10;
+  if (corruption.corrupted) score -= 75;
+  if (corruption.signals.length > 0 && !corruption.corrupted) score -= Math.min(35, corruption.signals.length * 10);
   if (characterCount < 1000) score -= 10;
   // A completely empty extraction must score below the WARNING threshold (45).
   // Without this, 0 chars → scannedPdfLikely(−45) + charCount<1000(−10) = 45
@@ -94,7 +159,7 @@ export function assessExtractionQuality(text: string | null | undefined, fileNam
   if (characterCount === 0) score -= 6;
   score = Math.max(0, Math.min(100, score));
 
-  const severity: ExtractionQualitySeverity = hasExtractionFailure
+  const severity: ExtractionQualitySeverity = hasExtractionFailure || corruption.corrupted
     ? "FAILED"
     : score < 45
       ? "POOR"
@@ -116,6 +181,8 @@ export function assessExtractionQuality(text: string | null | undefined, fileNam
     tableHeavyLikely,
     hasExtractionFailure,
     hasOcrPlaceholder,
+    corrupted: corruption.corrupted,
+    corruptionSignals: corruption.signals,
     warnings,
     recommendations,
   };

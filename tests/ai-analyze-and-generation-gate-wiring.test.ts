@@ -99,3 +99,30 @@ describe("bid strategy confidence cap under unapproved fallback (Part 12)", () =
     assert.match(source, /confidenceNote,/);
   });
 });
+
+describe("corrupted extraction blocks pipeline before stale-score bypasses", () => {
+  const analyzeRoute = readFileSync("app/api/tenders/[id]/ai-analyze/route.ts", "utf8");
+  const buildPlanRoute = readFileSync("app/api/tenders/[id]/submission-plan/build/route.ts", "utf8");
+  const generateRoute = readFileSync("app/api/tenders/[id]/generate/route.ts", "utf8");
+
+  it("AI Analyze marks corrupted extraction as skipped, not provider failure", () => {
+    assert.match(analyzeRoute, /EXTRACTION_CORRUPTED_AI_SKIPPED/);
+    assert.match(analyzeRoute, /analysisExtractionStatus:\s*"OCR_REQUIRED"/);
+    assert.match(analyzeRoute, /not an AI provider failure/);
+  });
+
+  it("Build Plan recomputes quality from extracted text instead of trusting stored extractionScore", () => {
+    assert.match(buildPlanRoute, /assessExtractionQuality\(file\.extractedText/);
+    assert.match(buildPlanRoute, /Math\.min\(file\.extractionScore \?\? quality\.score, quality\.score\)/);
+    assert.match(buildPlanRoute, /EXTRACTION_CORRUPTED_BUILD_PLAN_SKIPPED/);
+  });
+
+  it("Generate Docs recomputes quality before any generatedDocument rows are created", () => {
+    const gateIndex = generateRoute.indexOf("EXTRACTION_CORRUPTED_GENERATION_BLOCKED");
+    const createIndex = generateRoute.indexOf("generateTenderDocuments(");
+    assert.ok(gateIndex > -1, "missing corrupted generation blocker");
+    assert.ok(createIndex > -1, "missing generation call");
+    assert.ok(gateIndex < createIndex, "corrupted extraction gate must run before document generation");
+    assert.match(generateRoute, /assessExtractionQuality\(file\.extractedText/);
+  });
+});

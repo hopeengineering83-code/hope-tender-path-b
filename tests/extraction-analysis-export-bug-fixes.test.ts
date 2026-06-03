@@ -285,3 +285,36 @@ describe("buildFinalZipEntries — null exactOrder sorts after high exactOrder",
     assert.ok(idxD < idxC, `D (exactOrder=99) should sort before C (null), but got [${names.join(", ")}]`);
   });
 });
+
+describe("assessExtractionQuality — corrupted PDF text", () => {
+  it("marks repeated glyph / black-square gibberish as corrupted and OCR-required", () => {
+    const gibberish = Array.from({ length: 60 }, (_, i) => `[Page ${i + 1}] GGGG □□□■ → → x y z a b c GGGGGG`).join("\n");
+    const report = assessExtractionQuality(gibberish, "path-tender.pdf");
+    assert.equal(report.corrupted, true);
+    assert.equal(report.severity, "FAILED");
+    assert.ok(report.recommendations.some((item) => /Run OCR|cleaner PDF/i.test(item)));
+  });
+
+  it("does not mark readable tender prose as corrupted", () => {
+    const readable = `
+      [Page 1]
+      Request for Proposal for architectural and engineering consultancy services.
+      The procuring entity invites technical and financial proposals for design review,
+      construction supervision, and project management services. Bidders shall submit
+      a technical proposal, financial proposal, company registration documents, CVs,
+      project experience references, and a compliance matrix before the submission deadline.
+      Evaluation criteria include methodology, personnel experience, similar assignments,
+      work plan, and financial proposal.
+    `.repeat(12);
+    const report = assessExtractionQuality(readable, "building-design-rfp.pdf");
+    assert.equal(report.corrupted, false);
+    assert.notEqual(report.severity, "FAILED");
+  });
+
+  it("does not let high character count alone pass unreadable extraction", () => {
+    const noisy = `${"G G G G G G G G G G □ □ □ → → → ".repeat(250)}\n${"ZZZZ ZZZZ ■■■ GGGG ".repeat(200)}`;
+    const report = assessExtractionQuality(noisy, "long-noisy.pdf");
+    assert.equal(report.corrupted, true);
+    assert.ok(report.score < 45, `expected score below POOR threshold, got ${report.score}`);
+  });
+});

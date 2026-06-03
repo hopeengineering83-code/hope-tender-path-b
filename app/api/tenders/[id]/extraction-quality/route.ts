@@ -42,7 +42,7 @@ export async function GET(
       extractedPages: file.extractedPages,
       ocrPages: file.ocrPages,
       failedPages: file.failedPages,
-      extractionScore: file.extractionScore ?? quality.score,
+      extractionScore: Math.min(file.extractionScore ?? quality.score, quality.score),
       extractionMethod: file.extractionMethod,
       extractedCharacterCount: quality.characterCount,
       ocrUsed: (file.ocrPages ?? 0) > 0 || quality.hasOcrPlaceholder,

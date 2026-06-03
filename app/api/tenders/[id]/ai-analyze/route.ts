@@ -203,6 +203,21 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     fileName: file.originalFileName || file.fileName,
     quality: assessExtractionQuality(file.extractedText, file.originalFileName || file.fileName),
   }));
+  const corruptedExtractionReports = extractionReports.filter((item) => item.quality.corrupted);
+  if (corruptedExtractionReports.length > 0) {
+    await prisma.tender.update({
+      where: { id },
+      data: { status: "EXTRACTION_CORRUPTED_AI_SKIPPED", analysisExtractionStatus: "OCR_REQUIRED" },
+    }).catch(() => {});
+    return NextResponse.json({
+      error: "AI analysis skipped: extracted tender text is corrupted/gibberish and requires OCR or re-upload before reliable analysis.",
+      code: "EXTRACTION_CORRUPTED_AI_SKIPPED",
+      nextAction: "RUN_OCR_OR_UPLOAD_CLEARER_SCAN",
+      blockers: corruptedExtractionReports,
+      hint: "Do not retry providers until the extracted text is readable; this is an extraction problem, not an AI provider failure.",
+    }, { status: 422 });
+  }
+
   const extractionBlockers = extractionReports.filter((item) => item.quality.severity === "FAILED" || item.quality.severity === "POOR");
   if (!force && extractionBlockers.length > 0) {
     return NextResponse.json({
