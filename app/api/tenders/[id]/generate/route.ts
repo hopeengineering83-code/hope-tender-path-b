@@ -23,6 +23,7 @@ import { repairSourceGrounding } from "../../../../../lib/engine/repair-source-g
 import { assertAnalysisReadyForFinalGeneration } from "../../../../../lib/engine/analysis-source";
 import { assessTenderMetadataCompleteness } from "../../../../../lib/engine/tender-metadata-completeness";
 import { isExtractionAcceptableForGeneration } from "../../../../../lib/engine/extraction-quality-gate";
+import { hasValidSubmissionPlan } from "../../../../../lib/engine/submission-plan-completeness";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -258,12 +259,32 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   }
 
   const company = await prisma.company.findUnique({ where: { userId }, select: { id: true } });
-  if (!company) return NextResponse.json({ error: "Company profile required before generation.", code: "COMPANY_PROFILE_REQUIRED", nextAction: "OPEN_COMPANY_READINESS" }, { status: 422 });
+  if (!company) return NextResponse.json({
+    errorCode: "COMPANY_PROFILE_REQUIRED",
+    error: "Company profile required before generation.",
+    blockers: ["Company profile has not been created."],
+    nextAction: "OPEN_COMPANY_READINESS",
+    diagnosticId: `no-company-${id}`,
+  }, { status: 422 });
   const requiresExperts = tender.requirements.some((req) => req.requirementType === "EXPERT");
   const requiresProjects = tender.requirements.some((req) => req.requirementType === "PROJECT_EXPERIENCE");
   const readiness = await getCompanyIngestionReadiness(company.id, { requireDocuments: true, requireReviewedExperts: requiresExperts, requireReviewedProjects: requiresProjects });
-  if (!readiness.ingestionReady) return NextResponse.json({ error: "Generation blocked: company knowledge is not ready.", code: "INGESTION_NOT_READY", blockers: readiness.blockers, warnings: readiness.warnings, totals: readiness.totals, nextAction: "OPEN_COMPANY_READINESS" }, { status: 422 });
-  if (!hasRealClientName(tender.clientName)) return NextResponse.json({ error: "Generation blocked: client name is not set. Edit the tender and fill the Client Name field before generating proposal documents.", code: "CLIENT_NAME_REQUIRED", nextAction: "EDIT_TENDER" }, { status: 422 });
+  if (!readiness.ingestionReady) return NextResponse.json({
+    errorCode: "INGESTION_NOT_READY",
+    error: "Generation blocked: company knowledge is not ready.",
+    blockers: readiness.blockers,
+    warnings: readiness.warnings,
+    totals: readiness.totals,
+    nextAction: "OPEN_COMPANY_READINESS",
+    diagnosticId: `ingestion-not-ready-${id}`,
+  }, { status: 422 });
+  if (!hasRealClientName(tender.clientName)) return NextResponse.json({
+    errorCode: "CLIENT_NAME_REQUIRED",
+    error: "Generation blocked: client name is not set. Edit the tender and fill the Client Name field before generating proposal documents.",
+    blockers: ["Client name is missing or invalid."],
+    nextAction: "EDIT_TENDER",
+    diagnosticId: `no-client-name-${id}`,
+  }, { status: 422 });
 
   // ── Extraction quality gate ───────────────────────────────────────────────
   // Block generation when extraction quality is too poor to produce reliable
@@ -271,38 +292,50 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // failed pages). Partial extraction is allowed with a warning.
   if (!isExtractionAcceptableForGeneration(tender.files)) {
     return NextResponse.json({
-      ok: false,
+      errorCode: "EXTRACTION_NOT_READY",
       error: "Page extraction quality is too poor to generate reliable documents. Re-upload the tender file or run OCR before generating.",
-      code: "EXTRACTION_QUALITY_INSUFFICIENT",
+      blockers: ["Tender file extraction quality is below the minimum threshold for generation."],
+      nextAction: "RE_EXTRACT_OR_OCR",
+      diagnosticId: `extraction-insufficient-${id}`,
     }, { status: 422 });
   }
 
-  if (tender.status === "NO_BID") return NextResponse.json({ error: "Generation blocked: this tender is marked NO_BID. Apply a BID or BID_WITH_CONDITIONS decision before generating proposal documents.", code: "NO_BID_BLOCK" }, { status: 409 });
+  if (tender.status === "NO_BID") return NextResponse.json({
+    errorCode: "NO_BID_BLOCK",
+    error: "Generation blocked: this tender is marked NO_BID. Apply a BID or BID_WITH_CONDITIONS decision before generating proposal documents.",
+    blockers: ["Tender is marked NO_BID."],
+    nextAction: "CHANGE_BID_DECISION",
+    diagnosticId: `no-bid-${id}`,
+  }, { status: 409 });
   if (tender.requirements.length === 0) {
     return NextResponse.json({
+      errorCode: "NO_REQUIREMENTS",
       error: "Generation blocked: no tender requirements were extracted yet. Run AI Analyze / Run Engine first, or add requirements manually before generating documents.",
-      code: "NO_REQUIREMENTS",
+      blockers: ["No tender requirements have been extracted."],
       nextAction: "RUN_ENGINE",
+      diagnosticId: `no-requirements-${id}`,
     }, { status: 422 });
   }
 
   // ── Submission plan gate ──────────────────────────────────────────────────
-  // When requirements exist (≥ 5) but there are no generated/planned documents
-  // at all, block generation and ask the user to build the submission plan first.
-  // This prevents the "empty submission plan" regression.
+  // A valid submission plan (at least one non-SUPERSEDED GeneratedDocument row
+  // with a recognised reviewStatus) MUST exist before any full generation run.
+  // This gate runs unconditionally — regardless of requirement count — so it is
+  // impossible to bypass it by having fewer than 5 requirements.
+  // planOnly requests are exempt because they ARE the plan-building step itself.
   {
     const reqUrl = new URL(req.url);
-    if (reqUrl.searchParams.get("planOnly") !== "true" && tender.requirements.length >= 5) {
-      const activeDocCount = await prisma.generatedDocument.count({
-        where: { tenderId: id, generationStatus: { not: "SUPERSEDED" } },
-      });
-      if (activeDocCount === 0) {
+    if (reqUrl.searchParams.get("planOnly") !== "true") {
+      const planCheck = await hasValidSubmissionPlan(prisma, tender.id);
+      if (!planCheck.valid) {
         return NextResponse.json({
-          ok: false,
+          errorCode: "NO_SUBMISSION_PLAN",
           error: "No submission plan exists. Build the submission plan before generating documents.",
-          code: "NO_SUBMISSION_PLAN",
+          blockers: ["Submission plan has not been built. Run Build Plan before generating documents."],
           nextAction: "BUILD_SUBMISSION_PLAN",
-        }, { status: 422 });
+          diagnosticId: `no-plan-${tender.id}`,
+          plannedCount: planCheck.plannedCount,
+        }, { status: 400 });
       }
     }
   }
@@ -348,25 +381,18 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     if (placeholderNames.length > 0) parts.push(`${placeholderNames.length} field(s) contain placeholder language (${placeholderNames.join(", ")})`);
     const contaminatedExtra = (tender as { metadataContaminated?: boolean }).metadataContaminated ? " Client/procuring entity metadata is flagged as contaminated — correct it before generating." : "";
     return NextResponse.json({
+      errorCode: "METADATA_INCOMPLETE",
       error: `Generation blocked: ${parts.join("; ")}.${contaminatedExtra} First try the "Repair all empty fields from source" button — the deterministic extractor pulls verifiable values from the uploaded tender files when present. If a field is genuinely absent from the tender source, edit the tender and confirm it manually.`,
-      code: "METADATA_INCOMPLETE_FOR_GENERATION",
+      blockers: [
+        ...metadataReport.missingCritical.map((f) => `Critical field missing: ${f.field}`),
+        ...metadataReport.invalidFields.map((f) => `Field contains placeholder: ${f.field}`),
+      ].slice(0, 10),
+      nextAction: "REPAIR_OR_EDIT_TENDER",
+      diagnosticId: `metadata-incomplete-${id}`,
       missingCritical: metadataReport.missingCritical.map((f) => ({ field: f.field, reason: f.reason })),
       invalidFields: metadataReport.invalidFields.map((f) => ({ field: f.field, reason: f.reason })),
       overallRatio: metadataReport.overallRatio,
       metadataContaminated: Boolean((tender as { metadataContaminated?: boolean }).metadataContaminated),
-      nextAction: "REPAIR_OR_EDIT_TENDER",
-    }, { status: 422 });
-  }
-
-  // ── Metadata contamination gate ───────────────────────────────────────────
-  // Block when client metadata is contaminated by portal scraping even if
-  // the metadata-completeness gate did not fire (contaminated but "present").
-  if ((tender as { metadataContaminated?: boolean }).metadataContaminated) {
-    return NextResponse.json({
-      ok: false,
-      error: "Generation blocked: client/procuring entity metadata is contaminated with tender-portal navigation text. Correct the Client Name field before generating proposal documents.",
-      code: "METADATA_CONTAMINATED",
-      nextAction: "REPAIR_OR_EDIT_TENDER",
     }, { status: 422 });
   }
 

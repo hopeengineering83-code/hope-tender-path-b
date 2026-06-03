@@ -48,15 +48,25 @@ export async function GenerationReadinessPanel({ tenderId }: { tenderId: string 
   const readiness = await getTenderGenerationReadiness(prisma, userId, tenderId);
   if (!readiness) return null;
 
-  const { ready, blockers, warnings } = readiness;
+  const { ready, blockers, fullProposalBlockers, warnings } = readiness;
+  // Use fullProposalReady for the headline label — it is the stricter gate.
+  // ready / supportPackageReady only covers blockers; fullProposalReady also
+  // covers fullProposalBlockers (e.g. missing client details, weak extraction).
+  const fullProposalReady = readiness.fullProposalReady ?? ready;
+  const isFullyReady = fullProposalReady;
 
   return (
-    <section className={`mb-4 rounded-2xl border p-5 shadow-sm ${ready ? "border-green-200 bg-green-50" : "border-red-200 bg-red-50"}`}>
+    <section className={`mb-4 rounded-2xl border p-5 shadow-sm ${isFullyReady ? "border-green-200 bg-green-50" : ready ? "border-amber-200 bg-amber-50" : "border-red-200 bg-red-50"}`}>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <p className={`text-xs font-semibold uppercase tracking-wide ${ready ? "text-green-700" : "text-red-700"}`}>Generation readiness</p>
-          <h2 className="mt-1 text-lg font-bold text-slate-900">{ready ? "Ready to generate" : "Generation blockers found"}</h2>
+          <p className={`text-xs font-semibold uppercase tracking-wide ${isFullyReady ? "text-green-700" : ready ? "text-amber-700" : "text-red-700"}`}>Generation readiness</p>
+          <h2 className="mt-1 text-lg font-bold text-slate-900">{isFullyReady ? "Ready to generate full proposal" : "Generation blockers found"}</h2>
           <p className="mt-1 text-sm text-slate-600">Preflight check for company knowledge, tender analysis, matching quality, compliance blockers, client metadata, and selected reviewed evidence.</p>
+          {ready && !fullProposalReady && (
+            <p className="mt-1 text-sm text-amber-700">
+              Support packages may generate, but full proposal is blocked. Resolve blockers below.
+            </p>
+          )}
         </div>
         <Link href={`/api/tenders/${tenderId}/generation-readiness`} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50">
           Open JSON
@@ -70,6 +80,20 @@ export async function GenerationReadinessPanel({ tenderId }: { tenderId: string 
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <span>{item.message}</span>
                 <Link href={actionHref(tenderId, item.nextAction)} className="text-xs font-semibold text-red-700 underline">{buildActionLabel(item.nextAction)}</Link>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {fullProposalBlockers && fullProposalBlockers.length > 0 && (
+        <div className="mt-4 space-y-2">
+          <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">Full proposal blockers</p>
+          {fullProposalBlockers.map((item, index) => (
+            <div key={`fp-${item.code}-${index}`} className="rounded-xl border border-amber-200 bg-white px-3 py-2 text-sm text-amber-800">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span>{item.message}</span>
+                <Link href={actionHref(tenderId, item.nextAction)} className="text-xs font-semibold text-amber-700 underline">{buildActionLabel(item.nextAction)}</Link>
               </div>
             </div>
           ))}

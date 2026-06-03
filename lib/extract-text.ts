@@ -2,6 +2,8 @@
 // is immediately searchable and usable by the analysis engine.
 // Supports: PDF, DOCX/DOC, XLSX/XLS, PPTX/PPT, CSV, TXT, RTF, ODS, ODP + images.
 
+import { isExtractionCorrupted } from "./engine/extraction-quality-gate";
+
 const MAX_EXTRACTED_TEXT_CHARS = 500_000;
 const LEGACY_TEXT_LIMIT = 80_000;
 
@@ -321,14 +323,36 @@ async function extractPdf(buffer: Buffer): Promise<string> {
   const ocrFlag = (process.env.PDF_OCR_ENABLED || "").toLowerCase();
   const hasAnthropicKey = Boolean(process.env.ANTHROPIC_API_KEY);
   const ocrEnabled = ocrFlag === "true" || (ocrFlag !== "false" && hasAnthropicKey);
-  if ((!best?.text || best.text.length < 20) && ocrEnabled) {
-    console.info(`[extract-text] PDF has no text layer (${pages} pages) — running Claude vision OCR fallback (default-on, set PDF_OCR_ENABLED=false to disable).`);
+
+  // Determine OCR trigger reason:
+  //   1. No text layer — traditional case (< 20 chars)
+  //   2. Corrupted text — pdf2json / pdf-parse returned garbage characters
+  const hasNoTextLayer = !best?.text || best.text.length < 20;
+  const hasCorruptedText =
+    !hasNoTextLayer &&
+    best != null &&
+    best.text.length > 20 &&
+    isExtractionCorrupted(best.text);
+
+  if ((hasNoTextLayer || hasCorruptedText) && ocrEnabled) {
+    const ocrReason = hasCorruptedText ? "CORRUPTED_TEXT" : "NO_TEXT_LAYER";
+    if (hasNoTextLayer) {
+      console.info(`[extract-text] PDF has no text layer (${pages} pages) — running Claude vision OCR fallback (default-on, set PDF_OCR_ENABLED=false to disable).`);
+    } else {
+      console.info(`[extract-text] PDF text layer detected as corrupted (${best!.text.length} chars, garbage content) — running Claude vision OCR fallback. ocrReason=${ocrReason}`);
+    }
     const ocrText = await extractPdfWithClaudeVision(buffer, pages);
     if (ocrText && ocrText.length >= 20) {
       // Normalize once on the fully assembled string. Calling normalizeExtractedText
       // twice (once on ocrText, once on the prefixed string) would silently truncate
       // ~58 chars of OCR content when the output is near the 500 K char limit.
-      return normalizeExtractedText(`[PDF text extracted via Claude vision OCR — ${pages} page(s).]\n\n${ocrText.trim()}`);
+      return normalizeExtractedText(`[PDF text extracted via Claude vision OCR — ${pages} page(s). ocrReason=${ocrReason}]\n\n${ocrText.trim()}`);
+    }
+    if (hasCorruptedText) {
+      console.warn("[extract-text] Claude vision OCR returned empty for corrupted text — falling back to corrupted extraction.");
+      // Return the corrupted text with a warning prefix so downstream
+      // quality gates can still detect and flag it.
+      return normalizeExtractedText(`[PDF text extracted but detected as corrupted — ocrReason=${ocrReason} — OCR returned empty. Review extraction quality before AI Analyze.]\n\n${best!.text}`);
     }
     console.warn("[extract-text] Claude vision OCR returned empty — returning scanned-PDF placeholder.");
   }
@@ -339,6 +363,14 @@ async function extractPdf(buffer: Buffer): Promise<string> {
     }
     return `[Scanned PDF — ${pages} page(s). Text layer not found and Claude vision OCR returned empty. The PDF may be image-only with very low resolution, password-protected, or otherwise unreadable. Try uploading a higher-resolution scan or a digital PDF.]`;
   }
+
+  // If OCR was not enabled but text is corrupted, surface a warning prefix
+  // so the quality panel and AI gate can detect it.
+  if (!ocrEnabled && isExtractionCorrupted(best.text)) {
+    console.warn(`[extract-text] PDF text layer is corrupted but OCR is disabled — returning corrupted text with warning prefix. Set PDF_OCR_ENABLED=true to enable OCR fallback.`);
+    return normalizeExtractedText(`[PDF text extracted but detected as corrupted — ocrReason=CORRUPTED_TEXT — OCR required but not configured (set PDF_OCR_ENABLED=true). Review extraction quality before AI Analyze.]\n\n${best.text}`);
+  }
+
   if (best.text.length <= LEGACY_TEXT_LIMIT && Number(pages) > 1) return normalizeExtractedText(`[PDF text extracted from ${pages} page(s) using ${best.source}.]\n\n${best.text}`);
   return best.text;
 }

@@ -9,7 +9,7 @@ import { rateLimit, AI_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import { extractRequestId } from "../../../../../lib/request-id";
 import { createNotification } from "../../../../../lib/notifications";
 import { assessExtractionQuality } from "../../../../../lib/extraction-quality";
-import { deriveExtractionStatus, type TenderFileQuality } from "../../../../../lib/engine/extraction-quality-gate";
+import { deriveExtractionStatus, isExtractionCorrupted, type TenderFileQuality } from "../../../../../lib/engine/extraction-quality-gate";
 import { detectMetadataContamination } from "../../../../../lib/engine/tender-metadata-completeness";
 import { buildAnalysisFallbackDiagnostics, formatFallbackDiagnosticsLine, type AnalysisFallbackDiagnostics } from "../../../../../lib/engine/analysis-fallback-diagnostics";
 import { buildProviderDiagnosticsSnapshot } from "../../../../../lib/ai-provider-health";
@@ -212,6 +212,24 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       blockers: extractionBlockers,
       hint: "Re-import/OCR/review the file, or retry with ?force=true only when you intentionally accept degraded analysis quality.",
     }, { status: 422 });
+  }
+
+  // Check for corrupted extracted text — catches the case where extractors
+  // returned thousands of garbage characters (GGG symbols, black squares,
+  // broken spacing) that pass the old length-only gate but contain no
+  // usable content for AI analysis.
+  const textSamples = tenderRecord.files
+    .map((f) => f.extractedText)
+    .filter((t): t is string => Boolean(t && t.trim().length > 20));
+  const isTextCorrupted =
+    textSamples.length > 0 && textSamples.every((t) => isExtractionCorrupted(t));
+  if (!force && isTextCorrupted) {
+    return NextResponse.json({
+      error: "AI analysis blocked — extracted text is corrupted",
+      code: "EXTRACTION_CORRUPTED_AI_SKIPPED",
+      nextAction: "Run OCR extraction or upload a clearer PDF before AI Analyze",
+      hint: "The extracted text contains garbage characters (symbol runs, broken spacing, or icon-font glyphs). Set PDF_OCR_ENABLED=true to enable automatic OCR fallback, or retry with ?force=true to proceed with degraded analysis.",
+    }, { status: 400 });
   }
 
   async function runRegexFallback(errorMessage?: string, diagnostics?: AnalysisFallbackDiagnostics) {
@@ -622,11 +640,53 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         ? "RETRY_AI_ANALYZE_OR_APPROVE_FALLBACK"
         : null;
 
+    // Build provider attempt chain log for observability.
+    // Derives which providers were skipped (cooling down), which were tried,
+    // and which succeeded per chunk. This helps operators understand why the
+    // chain fell through to regex fallback on a cold start.
+    const providerChainLog: Array<{
+      provider: string;
+      status: "SUCCESS" | "FAILED" | "SKIPPED_COOLDOWN" | "SKIPPED_NOT_CONFIGURED" | "REGEX_FALLBACK";
+      durationMs: number;
+    }> = [];
+    let analysisProvider: string | null = null;
+    let analysisProviderStatus: string | null = null;
+
+    if (analysisMeta) {
+      // Collect unique providers from chunkProviders (first non-null = dominant)
+      const succeededProviders = analysisMeta.chunkProviders.filter((p): p is string => p !== null);
+      analysisProvider = succeededProviders[0] ?? null;
+
+      if (analysisProvider) {
+        analysisProviderStatus = `AI_ANALYZED_BY_${analysisProvider.toUpperCase()}`;
+      }
+
+      // Log skipped (cooling down) providers from the diagnostics snapshot
+      const diagnosticsSnap = analysisResult.providerDiagnostics;
+      if (diagnosticsSnap) {
+        for (const p of diagnosticsSnap.perProvider) {
+          if (!p.configured) {
+            providerChainLog.push({ provider: p.provider, status: "SKIPPED_NOT_CONFIGURED", durationMs: 0 });
+          } else if (p.coolingDown) {
+            providerChainLog.push({ provider: p.provider, status: "SKIPPED_COOLDOWN", durationMs: 0 });
+          } else if (succeededProviders.includes(p.provider)) {
+            providerChainLog.push({ provider: p.provider, status: "SUCCESS", durationMs: 0 });
+          }
+        }
+      }
+    } else if (analysisResult.fallback) {
+      analysisProviderStatus = "REGEX_FALLBACK";
+      providerChainLog.push({ provider: "regex", status: "REGEX_FALLBACK", durationMs: 0 });
+    }
+
     return NextResponse.json({
       success: true,
       ...analysisResult,
       code: fallbackCode,
       analysisSource: analysisResult.analysisSource ?? null,
+      analysisProvider,
+      analysisProviderStatus,
+      providerChainLog,
       jobId: analysisJobId,
       chunks: analysisMeta ? {
         total: analysisMeta.totalChunks,

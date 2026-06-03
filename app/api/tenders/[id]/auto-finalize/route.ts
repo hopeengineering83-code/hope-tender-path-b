@@ -153,7 +153,19 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (!rl.allowed) return NextResponse.json({ error: "Rate limit exceeded", retryAfter: Math.ceil((rl.resetAt - Date.now()) / 1000) }, { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } });
   await prismaReady;
   const { id: tenderId } = await params;
-  const tender = await prisma.tender.findFirst({ where: { id: tenderId, userId: actor.id }, include: { requirements: true, generatedDocuments: { where: { generationStatus: { not: "SUPERSEDED" } }, orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }] } } });
+  // generatedDocuments select excludes fileContent — the reconcile loop only
+  // needs id, name, exactFileName to mark rows as CONTROL/NOT_EXPORTABLE or SUPERSEDED.
+  const tender = await prisma.tender.findFirst({
+    where: { id: tenderId, userId: actor.id },
+    include: {
+      requirements: true,
+      generatedDocuments: {
+        where: { generationStatus: { not: "SUPERSEDED" } },
+        orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }],
+        select: { id: true, name: true, exactFileName: true, generationStatus: true, validationStatus: true, reviewStatus: true, documentType: true, format: true, exactOrder: true, storagePath: true },
+      },
+    },
+  });
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
 
   // Resolve analysis source once (includes DB approval check) so the seven-pass
@@ -176,7 +188,29 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }
   }
 
-  const refreshedAll = await prisma.generatedDocument.findMany({ where: { tenderId, generationStatus: { not: "SUPERSEDED" } }, orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }] });
+  // Explicit select — fileContent is included here because the finalization loop
+  // calls extractDocxVisibleText(doc.fileContent, ...) to read the existing content
+  // before rebuilding the DOCX. All other batch fetches exclude fileContent.
+  const refreshedAll = await prisma.generatedDocument.findMany({
+    where: { tenderId, generationStatus: { not: "SUPERSEDED" } },
+    orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }],
+    select: {
+      id: true,
+      tenderId: true,
+      name: true,
+      documentType: true,
+      format: true,
+      exactFileName: true,
+      exactOrder: true,
+      generationStatus: true,
+      validationStatus: true,
+      reviewStatus: true,
+      storagePath: true,
+      contentSummary: true,
+      // fileContent included — needed to read existing bytes before DOCX rebuild
+      fileContent: true,
+    },
+  });
   const candidates = filterFinalExportCandidateDocuments(refreshedAll as any[]).filter((d) => d.reviewStatus !== "READY_FOR_EXPORT" || d.validationStatus === "FAILED");
 
   // ── Seven-pass gate: load evidence context once for the whole batch ───────
@@ -254,7 +288,31 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   }
 
   await applyActiveUploadedLetterheadToTenderDocuments(tenderId, actor.id);
-  const finalAll = await prisma.generatedDocument.findMany({ where: { tenderId, generationStatus: { not: "SUPERSEDED" } }, orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }] });
+  // Metadata-only fetch for final readiness check — fileContent not needed (requireFileContent: false).
+  const finalAll = await prisma.generatedDocument.findMany({
+    where: { tenderId, generationStatus: { not: "SUPERSEDED" } },
+    orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }],
+    select: {
+      id: true,
+      tenderId: true,
+      name: true,
+      documentType: true,
+      format: true,
+      exactFileName: true,
+      exactOrder: true,
+      generationStatus: true,
+      reviewStatus: true,
+      validationStatus: true,
+      contentSummary: true,
+      storagePath: true,
+      reviewedBy: true,
+      reviewedAt: true,
+      reviewNotes: true,
+      createdAt: true,
+      updatedAt: true,
+      // fileContent: excluded — not needed for finalization metadata or readiness checks
+    },
+  });
   const finalDocs = filterFinalExportCandidateDocuments(finalAll as any[]);
   const readiness = await checkFullExportReadiness({ tenderId, docs: finalDocs as any[], requireFileContent: false });
 

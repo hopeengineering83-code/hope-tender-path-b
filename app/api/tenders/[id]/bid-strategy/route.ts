@@ -18,6 +18,7 @@ import { requireUser, unauthorizedResponse, forbiddenResponse } from "../../../.
 import { computeBidStrategy } from "../../../../../lib/engine/bid-strategy";
 import { computeWinProbability } from "../../../../../lib/engine/win-probability";
 import { detectAnalysisSourceWithApproval } from "../../../../../lib/engine/analysis-source";
+import { isExtractionAcceptableForGeneration } from "../../../../../lib/engine/extraction-quality-gate";
 
 // Confidence ceiling applied to bid-strategy win probability when the tender
 // analysis came from regex/deterministic fallback. The strategy is computed
@@ -93,6 +94,9 @@ export async function GET(
             project: { select: { name: true, trustLevel: true, sector: true, serviceAreas: true, contractValue: true } },
           },
         },
+        files: {
+          select: { id: true, extractionScore: true, totalPages: true, extractedPages: true, ocrPages: true, failedPages: true },
+        },
       },
     }),
     prisma.company.findUnique({
@@ -127,6 +131,27 @@ export async function GET(
   const historicalTotal = pastTenders.length;
   const historicalWins = pastTenders.filter((t) => t.bidOutcome === "WON").length;
   const analysisSource = await detectAnalysisSourceWithApproval(prisma, id, tender).catch(() => "UNKNOWN" as const);
+
+  // ── Bid Strategy extraction gate ─────────────────────────────────────────
+  // Block bid strategy when extraction or analysis is unreliable. Bid strategy
+  // is computed from requirements that may be wrong if the tender file was not
+  // properly extracted, so we must not present a confident recommendation in
+  // that case. Return 200 (not 4xx) so the UI can render a graceful message.
+  const extractionStatus = (tender as { analysisExtractionStatus?: string | null }).analysisExtractionStatus;
+  const extractionBlocked =
+    !isExtractionAcceptableForGeneration(tender.files) ||
+    extractionStatus === "EXTRACTION_CORRUPTED_AI_SKIPPED" ||
+    extractionStatus === "REGEX_FALLBACK_FROM_WEAK_EXTRACTION";
+  if (extractionBlocked) {
+    return NextResponse.json({
+      strategy: null,
+      blocked: true,
+      reason: "BID_STRATEGY_UNAVAILABLE_EXTRACTION_WEAK",
+      message:
+        "Bid strategy unavailable — extraction or analysis is unreliable. Run OCR extraction or re-run AI Analyze before requesting bid strategy.",
+    }, { status: 200 });
+  }
+
   const evidenceCoverageRatio = computeMandatoryEvidenceCoverageRatio(tender.requirements);
 
   const strategy = computeBidStrategy({

@@ -376,6 +376,129 @@ export function submissionPlanFileKey(fileName?: string | null): string {
   return fileKey(fileName ?? "");
 }
 
+// ── Derived draft plan ───────────────────────────────────────────────────────
+//
+// Creates a heuristic submission plan when the primary plan produces 0 files.
+// Uses keyword analysis of requirements to infer the most likely submission
+// documents. All entries are tagged DERIVED_DRAFT_UNCONFIRMED and must be
+// confirmed by the user before export.
+
+export type DerivedDraftEntry = {
+  name: string;
+  documentType: string;
+  required: boolean;
+  derivedFrom: string;
+  confidence: "HIGH" | "MEDIUM" | "LOW";
+};
+
+export function buildDerivedDraftPlan(tender: {
+  requirements?: Array<{ text?: string; title?: string; description?: string | null; mandatory?: boolean; priority?: string; category?: string; requirementType?: string }>;
+  submissionMethod?: string | null;
+  title?: string | null;
+  analysisExtractionStatus?: string | null;
+}): DerivedDraftEntry[] {
+  const requirements = tender.requirements ?? [];
+  if (requirements.length === 0) return [];
+
+  // Build a single searchable text block from all requirements
+  const reqText = requirements
+    .map((r) => [r.text ?? "", r.title ?? "", r.description ?? ""].join(" "))
+    .join("\n")
+    .toLowerCase();
+
+  const entries: DerivedDraftEntry[] = [];
+
+  // ── Technical Proposal ───────────────────────────────────────────────────
+  if (/technical|methodology|approach|scope[\s-]+of[\s-]+work|sow|technical[\s-]+section|technical[\s-]+offer|technical[\s-]+proposal/.test(reqText)) {
+    entries.push({
+      name: "Technical Proposal",
+      documentType: "TECHNICAL_PROPOSAL",
+      required: true,
+      derivedFrom: "DERIVED_DRAFT_UNCONFIRMED — derived from technical/methodology keywords in requirements",
+      confidence: "HIGH",
+    });
+  }
+
+  // ── Financial Proposal ───────────────────────────────────────────────────
+  if (/price|cost|budget|financial|commercial|fee|rate|boq|bill[\s-]+of[\s-]+quantit|pricing|lump[\s-]+sum|financial[\s-]+offer|financial[\s-]+proposal/.test(reqText)) {
+    entries.push({
+      name: "Financial Proposal",
+      documentType: "FINANCIAL",
+      required: true,
+      derivedFrom: "DERIVED_DRAFT_UNCONFIRMED — derived from financial/pricing keywords in requirements",
+      confidence: "HIGH",
+    });
+  }
+
+  // ── Company Profile / Eligibility Package ───────────────────────────────
+  if (/registration|legal|eligibility|incorporation|company[\s-]+profile|business[\s-]+licen|tax[\s-]+clearance|vat|tin\b|certificate[\s-]+of[\s-]+registration|statutory/.test(reqText)) {
+    entries.push({
+      name: "Company Profile / Eligibility Package",
+      documentType: "ELIGIBILITY",
+      required: true,
+      derivedFrom: "DERIVED_DRAFT_UNCONFIRMED — derived from registration/eligibility keywords in requirements",
+      confidence: "MEDIUM",
+    });
+  }
+
+  // ── CV Package ───────────────────────────────────────────────────────────
+  if (/\bstaff\b|personnel|expert|qualification|cv\b|curriculum[\s-]+vitae|key[\s-]+personnel|team[\s-]+member|professional[\s-]+profile/.test(reqText)) {
+    entries.push({
+      name: "CV Package",
+      documentType: "EXPERT",
+      required: true,
+      derivedFrom: "DERIVED_DRAFT_UNCONFIRMED — derived from personnel/expert keywords in requirements",
+      confidence: "MEDIUM",
+    });
+  }
+
+  // ── Project Experience / References ─────────────────────────────────────
+  if (/experience|similar[\s-]+project|reference|past[\s-]+project|track[\s-]+record|relevant[\s-]+project|prior[\s-]+project/.test(reqText)) {
+    entries.push({
+      name: "Project Experience / References",
+      documentType: "PROJECT_REFERENCE",
+      required: true,
+      derivedFrom: "DERIVED_DRAFT_UNCONFIRMED — derived from experience/project reference keywords in requirements",
+      confidence: "MEDIUM",
+    });
+  }
+
+  // ── Financial Capacity Package ───────────────────────────────────────────
+  if (/financial[\s-]+statement|audit|turnover|annual[\s-]+report|financial[\s-]+capacity|bank[\s-]+statement|balance[\s-]+sheet/.test(reqText)) {
+    entries.push({
+      name: "Financial Capacity Package",
+      documentType: "FINANCIAL",
+      required: true,
+      derivedFrom: "DERIVED_DRAFT_UNCONFIRMED — derived from financial statements/capacity keywords in requirements",
+      confidence: "MEDIUM",
+    });
+  }
+
+  // ── Work Plan / Methodology ───────────────────────────────────────────────
+  if (/work[\s-]+plan|timeline|schedule|milestone|gantt|implementation[\s-]+plan|activity[\s-]+schedule/.test(reqText)) {
+    entries.push({
+      name: "Work Plan / Methodology",
+      documentType: "METHODOLOGY",
+      required: true,
+      derivedFrom: "DERIVED_DRAFT_UNCONFIRMED — derived from work plan/timeline keywords in requirements",
+      confidence: "MEDIUM",
+    });
+  }
+
+  // ── Compliance Matrix ─────────────────────────────────────────────────────
+  if (/compliance|checklist|compliance[\s-]+matrix|requirement[\s-]+checklist/.test(reqText)) {
+    entries.push({
+      name: "Compliance Matrix",
+      documentType: "FORM",
+      required: true,
+      derivedFrom: "DERIVED_DRAFT_UNCONFIRMED — derived from compliance/checklist keywords in requirements",
+      confidence: "LOW",
+    });
+  }
+
+  return entries;
+}
+
 export function plannedSubmissionTargetKeys(plan: SubmissionPlan): Set<string> {
   return new Set(plannedSubmissionTargetFiles(plan).map((file) => submissionPlanFileKey(file.exactFileName)));
 }

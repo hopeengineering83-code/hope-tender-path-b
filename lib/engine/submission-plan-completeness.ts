@@ -135,6 +135,29 @@ function looksLikeOfficialOriginal(label: string): boolean {
   return OFFICIAL_ORIGINAL_NAME_PATTERNS.some((rx) => rx.test(label));
 }
 
+// Patterns for documents that describe submission rules/formatting — these are
+// reference/control docs and must not appear as missing items in the proposal package.
+const CONTROL_DOCUMENT_PATTERNS: RegExp[] = [
+  /submission\s+(formatting|rules|instructions|guidelines)/i,
+  /packaging\s+rules/i,
+  /file\s+and\s+packaging/i,
+  /submission\s+control/i,
+  /cover\s+sheet\s+template/i,
+  /submission\s+checklist/i,
+];
+
+/**
+ * Returns true when the document name/type identifies it as a submission-rules
+ * control document that should be classified NOT_EXPORTABLE rather than treated
+ * as a missing plan item.
+ */
+function isControlDocument(name: string | null | undefined, documentType?: string | null): boolean {
+  const label = name ?? "";
+  return CONTROL_DOCUMENT_PATTERNS.some((p) => p.test(label)) ||
+    documentType === "CONTROL" ||
+    documentType === "SUBMISSION_RULES";
+}
+
 function fileKey(value: string | null | undefined): string {
   return (value ?? "").toLowerCase().replace(/\.[a-z0-9]+$/, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
 }
@@ -247,13 +270,22 @@ export function resolveSubmissionPlanCompleteness(input: ResolvePlanCompleteness
   for (const doc of input.generatedDocuments) {
     if (usedDocIds.has(doc.id)) continue;
     const gen = (doc.generationStatus ?? "").toUpperCase();
-    const status: SubmissionPlanRowStatus = gen === "SUPERSEDED" ? "SUPERSEDED" : "OUTSIDE_PLAN";
+    let status: SubmissionPlanRowStatus = gen === "SUPERSEDED" ? "SUPERSEDED" : "OUTSIDE_PLAN";
     const envelope = inferEnvelope(doc.documentType ?? "TECHNICAL", doc.exactFileName ?? doc.name ?? "");
     const officialOriginal = looksLikeOfficialOriginal(`${doc.name} ${doc.exactFileName ?? ""} ${doc.documentType ?? ""}`);
     const storedQualityFailed = [doc.generationStatus, doc.validationStatus, doc.reviewStatus]
       .map((status) => (status ?? "").toUpperCase())
       .some((status) => status === "GENERATED_QUALITY_FAILED" || status === "QUALITY_FAILED" || status === "NEEDS_REWRITE");
     const qualityFailed = Boolean(input.qualityFailedIds?.has(doc.id)) || storedQualityFailed;
+
+    // Submission-formatting and packaging-rules docs are control/reference material —
+    // they must not appear as missing plan items or outside-plan warnings.
+    // Classify them as SUPERSEDED (excluded from the plan count) so they don't
+    // inflate totalOutsidePlan and don't count against "Missing" in the summary.
+    if (status === "OUTSIDE_PLAN" && isControlDocument(doc.name, doc.documentType)) {
+      status = "SUPERSEDED";
+    }
+
     const effectiveStatus = qualityFailed && status === "OUTSIDE_PLAN" ? "GENERATED_QUALITY_FAILED" : status;
     rows.push({
       key: `doc:${doc.id}`,
@@ -339,3 +371,58 @@ export const __testing__ = { looksLikeOfficialOriginal, fileKey };
 // Pure-helper alias also re-export the existing canonical filter so test
 // consumers can confirm the panel uses the same source of truth.
 export { filterFinalExportCandidateDocuments };
+
+// ── Submission plan existence gate ────────────────────────────────────────────
+// Used by the Generate Docs route to hard-block generation before a valid
+// submission plan has been explicitly built. A "valid" plan means at least
+// one GeneratedDocument row exists with a non-SUPERSEDED generationStatus
+// AND a reviewStatus that indicates it was placed there by the Build Plan
+// step (PLANNED, PENDING, APPROVED, CONFIRMED, READY_FOR_EXPORT, or
+// REPLACE_WITH_ORIGINAL).
+//
+// The check is intentionally permissive about the exact review status so
+// it catches both the happy path (PLANNED rows created by Build Plan) and
+// manually-confirmed rows.
+
+export type SubmissionPlanCheckResult = {
+  valid: boolean;
+  reason?: string;
+  plannedCount: number;
+  confirmedCount: number;
+};
+
+export async function hasValidSubmissionPlan(
+  // Accept `any` prisma client so the helper can be called with either the
+  // singleton prisma import or a test mock without import-side-effects.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  prismaClient: any,
+  tenderId: string,
+): Promise<SubmissionPlanCheckResult> {
+  const planned: number = await prismaClient.generatedDocument.count({
+    where: {
+      tenderId,
+      generationStatus: { not: "SUPERSEDED" },
+      reviewStatus: {
+        in: [
+          "PLANNED",
+          "PENDING",
+          "APPROVED",
+          "CONFIRMED",
+          "READY_FOR_EXPORT",
+          "REPLACE_WITH_ORIGINAL",
+        ],
+      },
+    },
+  });
+
+  if (planned === 0) {
+    return {
+      valid: false,
+      reason: "NO_SUBMISSION_PLAN",
+      plannedCount: 0,
+      confirmedCount: 0,
+    };
+  }
+
+  return { valid: true, plannedCount: planned, confirmedCount: planned };
+}
