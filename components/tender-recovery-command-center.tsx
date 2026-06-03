@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
+import { getRecoveryCommandActionSpec, recoveryCommandLabel, renderRecoveryActionPath } from "../lib/recovery-command-actions";
 
 // ─── Types (mirror lib/engine/tender-lifecycle-orchestrator.ts) ───────────────
 
@@ -100,26 +101,9 @@ const STATE_LABELS: Record<LifecycleState, string> = {
   CLOSED: "Closed (WON/LOST/WITHDRAWN)",
 };
 
-const ACTION_LABELS: Record<string, string> = {
-  UPLOAD_TENDER_DOCUMENT: "Upload Tender Document",
-  CONFIGURE_AI_PROVIDER: "Configure AI Provider",
-  RUN_AI_ANALYZE: "Run AI Analyze",
-  RETRY_AI_ANALYZE: "Retry AI Analyze",
-  APPROVE_FALLBACK_WITH_NOTE: "Approve Fallback Analysis (with note)",
-  REVIEW_ANALYSIS: "Review Analysis",
-  COMPLETE_METADATA: "Complete Metadata",
-  REPAIR_SOURCE_REFERENCES: "Repair Source References",
-  BUILD_SUBMISSION_PLAN: "Build Submission Plan",
-  RUN_ENGINE: "Run Engine",
-  LINK_VAULT_EVIDENCE: "Link Vault Evidence",
-  GENERATE_REQUIRED_DOCUMENTS: "Generate Required Documents",
-  ATTACH_OFFICIAL_ORIGINALS: "Attach Official Originals",
-  REPAIR_DOCUMENT_QUALITY: "Repair Document Quality",
-  AUTO_FINALIZE: "Auto-Finalize",
-  RESOLVE_EXPORT_BLOCKERS: "Resolve Export Blockers",
-  DOWNLOAD_FINAL_ZIP: "Download Final ZIP",
-  RECONCILE_OUTSIDE_PLAN_DOCS: "Reconcile Outside-Plan Documents",
-};
+const ACTION_LABELS = new Proxy({} as Record<string, string>, {
+  get: (_target, prop: string | symbol) => typeof prop === "string" ? recoveryCommandLabel(prop) : undefined,
+});
 
 function stateColor(state: LifecycleState): string {
   if (state === "EXPORT_READY" || state === "ZIP_READY") return "bg-green-100 text-green-800 border-green-300";
@@ -147,34 +131,45 @@ export default function TenderRecoveryCommandCenter({ tenderId }: { tenderId: st
   const [actionMsg, setActionMsg] = useState<string | null>(null);
   const [approvalNote, setApprovalNote] = useState("");
 
+  function scrollToPanel(anchorId: string, fallbackMessage: string) {
+    const el = document.getElementById(anchorId);
+    if (!el) {
+      setActionMsg(`${fallbackMessage} Panel #${anchorId} is not visible on this page; use the tender detail tabs manually.`);
+      return;
+    }
+    el.scrollIntoView({ behavior: "smooth" });
+    setActionMsg(fallbackMessage);
+  }
+
+  function messageForApiAction(action: string, json: Record<string, unknown>) {
+    if (action === "RUN_AI_ANALYZE" || action === "RETRY_AI_ANALYZE" || action === "REVIEW_ANALYSIS") {
+      return json.fallback ? "Regex fallback used — approve below or retry when providers recover." : "Analysis complete.";
+    }
+    if (action === "BUILD_SUBMISSION_PLAN") return `Plan built — ${json.created ?? 0} file(s) created, ${json.skipped ?? 0} already existed.`;
+    if (action === "RUN_ENGINE") return "Engine ran. Review lifecycle, generation readiness, and export readiness before proceeding.";
+    if (action === "REPAIR_SOURCE_REFERENCES") return `Source repair complete — ${json.repairedCount ?? 0} requirement(s) updated.`;
+    if (action === "GENERATE_REQUIRED_DOCUMENTS" || action === "GENERATE_DOCS" || action === "GENERATE_MISSING_PLANNED_DOCS") return `Missing planned document generation finished — ${json.generated ?? json.created ?? json.count ?? 0} row(s) updated. Review and validate before export.`;
+    if (action === "VALIDATE_DOCS") return "Validation completed. Review validation results and remaining blockers.";
+    if (action === "REPAIR_DOCUMENT_QUALITY" || action === "REPAIR_DOCS") return `Export-gap repair completed — ${json.repaired ?? json.updated ?? 0} document(s) updated. Re-check readiness before export.`;
+    if (action === "AUTO_FINALIZE") return `Auto-finalize completed — ${json.finalized ?? json.updated ?? 0} document(s) updated. Re-check export readiness before download.`;
+    if (action === "RESOLVE_EXPORT_BLOCKERS" || action === "EXPORT_READINESS") return "Export readiness re-checked. Review the Export Readiness panel for canonical blockers.";
+    if (action === "RECONCILE_OUTSIDE_PLAN_DOCS" || action === "EXCLUDE_OUTSIDE_PLAN_DOCS") return `Outside-plan reconciliation completed — ${json.superseded ?? 0} document(s) excluded/superseded.`;
+    return `${recoveryCommandLabel(action)} completed.`;
+  }
+
   async function executeAction(action: string) {
     setActioning(true);
     setActionMsg(null);
     try {
-      if (action === "RETRY_AI_ANALYZE" || action === "REVIEW_ANALYSIS") {
-        const res = await fetch(`/api/tenders/${tenderId}/ai-analyze`, { method: "POST" });
-        const json = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(json.error ?? "AI Analyze failed");
-        setActionMsg(json.fallback ? "Regex fallback used — approve below or retry when providers recover." : "Analysis complete.");
-        await load();
-        router.refresh();
-      } else if (action === "BUILD_SUBMISSION_PLAN") {
-        const res = await fetch(`/api/tenders/${tenderId}/submission-plan/build`, { method: "POST" });
-        const json = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(json.error ?? "Build plan failed");
-        setActionMsg(`Plan built — ${json.created ?? 0} file(s) created, ${json.skipped ?? 0} already existed.`);
-        await load();
-        router.refresh();
-      } else if (action === "RUN_ENGINE") {
-        const res = await fetch(`/api/tenders/${tenderId}/engine`, { method: "POST" });
-        const json = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(json.error ?? "Engine run failed");
-        setActionMsg("Engine ran successfully.");
-        await load();
-        router.refresh();
-      } else if (action === "APPROVE_FALLBACK_WITH_NOTE") {
+      const spec = getRecoveryCommandActionSpec(action);
+      if (!spec) {
+        setActionMsg("Action not available yet — open the relevant panel manually.");
+        return;
+      }
+
+      if (action === "APPROVE_FALLBACK_WITH_NOTE") {
         const note = approvalNote.trim();
-        if (!note) { setActionMsg("An approval note is required."); setActioning(false); return; }
+        if (!note) { setActionMsg("An approval note is required."); return; }
         const res = await fetch(`/api/tenders/${tenderId}/approve-analysis`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -186,9 +181,10 @@ export default function TenderRecoveryCommandCenter({ tenderId }: { tenderId: st
         setApprovalNote("");
         await load();
         router.refresh();
-      } else if (action === "DOWNLOAD_FINAL_ZIP") {
-        window.location.href = `/api/tenders/${tenderId}/download`;
-      } else if (action === "LINK_VAULT_EVIDENCE") {
+        return;
+      }
+
+      if (action === "LINK_VAULT_EVIDENCE") {
         // Step 1: fetch candidates from the existing backend route.
         const getRes = await fetch(`/api/tenders/${tenderId}/link-vault-evidence`);
         const getJson = await getRes.json().catch(() => ({}));
@@ -226,33 +222,41 @@ export default function TenderRecoveryCommandCenter({ tenderId }: { tenderId: st
         }
         await load();
         router.refresh();
-      } else if (action === "COMPLETE_METADATA") {
-        document.getElementById("tender-edit-form")?.scrollIntoView({ behavior: "smooth" });
-      } else if (action === "GENERATE_REQUIRED_DOCUMENTS" || action === "REPAIR_DOCUMENT_QUALITY" || action === "AUTO_FINALIZE" || action === "RESOLVE_EXPORT_BLOCKERS" || action === "RECONCILE_OUTSIDE_PLAN_DOCS") {
-        document.getElementById("submission-plan-completeness")?.scrollIntoView({ behavior: "smooth" });
-      } else if (action === "ATTACH_OFFICIAL_ORIGINALS") {
-        document.getElementById("generated-documents")?.scrollIntoView({ behavior: "smooth" });
-      } else if (action === "CONFIGURE_AI_PROVIDER") {
-        window.location.href = `/dashboard/analytics`;
-      } else if (action === "REPAIR_SOURCE_REFERENCES") {
-        const res = await fetch(`/api/tenders/${tenderId}/repair-source-grounding`, { method: "POST" });
-        const json = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(json.error ?? "Source repair failed");
-        setActionMsg(`Source repair complete — ${json.repairedCount ?? 0} requirement(s) updated.`);
-        await load();
-        router.refresh();
-      } else if (action === "UPLOAD_TENDER_DOCUMENT") {
-        document.getElementById("tender-files")?.scrollIntoView({ behavior: "smooth" });
-      } else if (action === "RUN_AI_ANALYZE") {
-        const res = await fetch(`/api/tenders/${tenderId}/ai-analyze`, { method: "POST" });
-        const json = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(json.error ?? "AI Analyze failed");
-        setActionMsg(json.fallback ? "Regex fallback used — approve below or retry when providers recover." : "Analysis complete.");
-        await load();
-        router.refresh();
-      } else {
-        setActionMsg("Action not available yet — open the relevant panel manually.");
+        return;
       }
+
+      if (spec.kind === "download" && spec.path) {
+        window.location.href = renderRecoveryActionPath(spec.path, tenderId);
+        return;
+      }
+      if (spec.kind === "navigate" && spec.path) {
+        window.location.href = renderRecoveryActionPath(spec.path, tenderId);
+        return;
+      }
+      if (spec.kind === "scroll" && spec.anchorId) {
+        scrollToPanel(spec.anchorId, spec.message ?? `Open ${spec.label}.`);
+        return;
+      }
+      if (spec.kind === "refresh") {
+        await load();
+        router.refresh();
+        setActionMsg("Readiness re-checked. Review the command center and export-readiness panels for current blockers.");
+        return;
+      }
+      if (spec.kind === "api" && spec.path) {
+        const res = await fetch(renderRecoveryActionPath(spec.path, tenderId), { method: spec.method ?? "POST" });
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(json.error ?? json.message ?? `${spec.label} failed`);
+        setActionMsg(messageForApiAction(action, json));
+        await load();
+        router.refresh();
+        if (action === "RESOLVE_EXPORT_BLOCKERS" || action === "EXPORT_READINESS") {
+          document.getElementById("export-readiness")?.scrollIntoView({ behavior: "smooth" });
+        }
+        return;
+      }
+
+      setActionMsg("Action not available yet — open the relevant panel manually.");
     } catch (e) {
       setActionMsg(e instanceof Error ? e.message : "Action failed");
     } finally {
