@@ -29,8 +29,7 @@ export async function GET(req: Request) {
     ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
     select: {
       id: true, fileName: true, originalFileName: true, mimeType: true,
-      size: true, category: true, createdAt: true,
-      extractedText: true,
+      size: true, category: true, createdAt: true, storagePath: true,
     },
   });
 
@@ -38,7 +37,24 @@ export async function GET(req: Request) {
   const items = hasMore ? documents.slice(0, limit) : documents;
   const nextCursor = hasMore ? items[items.length - 1].id : null;
 
-  return NextResponse.json({ items, nextCursor, hasMore });
+  // Return text length (not the full text) so UI can show extraction status
+  // without loading MB-scale blobs over the network.
+  const ids = items.map((d) => d.id);
+  const textLengths =
+    ids.length > 0
+      ? await prisma.$queryRaw<Array<{ id: string; len: number }>>`
+          SELECT id, COALESCE(char_length("extractedText"), 0)::int AS len
+          FROM "CompanyDocument"
+          WHERE id = ANY(${ids}::text[])
+        `
+      : [];
+  const lengthById = Object.fromEntries(textLengths.map((r) => [r.id, r.len]));
+  const itemsWithLength = items.map((doc) => ({
+    ...doc,
+    extractedTextLength: lengthById[doc.id] ?? 0,
+  }));
+
+  return NextResponse.json({ items: itemsWithLength, nextCursor, hasMore });
 }
 
 export async function DELETE(req: Request) {

@@ -196,7 +196,7 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
     });
   }
 
-  if (analysisQuality.severity === "POOR") {
+  if (analysisQuality.severity === "POOR" || analysisQuality.severity === "UNSAFE") {
     blockers.push({ code: "ANALYSIS_QUALITY_POOR", message: `Tender analysis quality is poor (${analysisQuality.score}/100). Re-run AI Analyze / Run Engine and verify evaluation criteria, submission rules, and source references before generation.`, nextAction: "OPEN_ANALYSIS_QUALITY" });
   } else if (analysisQuality.severity === "WARNING") {
     warnings.push({ code: "ANALYSIS_QUALITY_WARNING", message: `Tender analysis quality has warnings (${analysisQuality.score}/100). Review before final generation/export.`, nextAction: "OPEN_ANALYSIS_QUALITY" });
@@ -320,7 +320,7 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
       nextAction: "EDIT_TENDER",
     });
   }
-  if (analysisQuality.severity === "POOR") {
+  if (analysisQuality.severity === "POOR" || analysisQuality.severity === "UNSAFE") {
     fullProposalBlockers.push({
       code: "FULL_PROPOSAL_ANALYSIS_POOR",
       message: `Full proposal generation is blocked: analysis quality is poor (${analysisQuality.score}/100).`,

@@ -5,7 +5,7 @@ import {
   isValidClientContact,
 } from "./engine/metadata-validators";
 
-export type AnalysisQualitySeverity = "GOOD" | "WARNING" | "POOR";
+export type AnalysisQualitySeverity = "GOOD" | "WARNING" | "POOR" | "UNSAFE";
 
 export type AnalysisRequirementLike = {
   title?: string | null;
@@ -94,6 +94,10 @@ export function assessTenderAnalysisQuality(params: {
   // regex/deterministic fallback, the score is capped at 45 so the panel
   // cannot show a passing score for unapproved fallback analysis.
   analysisSource?: string | null;
+  // Optional: total page count of the tender (max across all files). Used
+  // to apply UNSAFE caps when analysis returns very few results from a
+  // multi-page tender.
+  totalPageCount?: number | null;
 }): AnalysisQualityReport {
   const REGEX_FALLBACK_SCORE_CAP = 45;
   const REGEX_FALLBACK_SOURCES_QA = new Set(["REGEX_FALLBACK_AI_ERROR", "REGEX_FALLBACK", "DETERMINISTIC_FALLBACK"]);
@@ -236,13 +240,34 @@ export function assessTenderAnalysisQuality(params: {
   const groundingFloor = extractedTextLength >= 5000 ? 25 : extractedTextLength >= 1000 ? 15 : 0;
   const sourceGroundingSub = Math.min(100, Math.max(rawGrounding, groundingFloor));
 
+  // ─── Hard safety caps (UNSAFE severity) ────────────────────────────
+  // When a multi-page tender produces suspiciously few results, cap the
+  // score and mark severity as UNSAFE so downstream gates treat it as
+  // definitively blocking (same as POOR / FAILED).
+  const pageCount = params.totalPageCount ?? 0;
+  let isUnsafe = false;
+  if (pageCount >= 5) {
+    if (requirementCount < 3) {
+      warnings.push('Analysis extracted fewer than 3 requirements from a multi-page tender — result is unreliable.');
+      score = Math.min(score, 25);
+      isUnsafe = true;
+    }
+    if (sourceReferencedCount === 0 && requirementCount > 0) {
+      warnings.push('No requirements have source page or quote references — analysis cannot be verified.');
+      score = Math.min(score, 30);
+      if (!isUnsafe) {
+        // POOR is set below; only escalate to UNSAFE when combined with other hard failures
+      }
+    }
+  }
+
   score = Math.max(0, Math.min(100, score));
   if (isRegexFallback && score > REGEX_FALLBACK_SCORE_CAP) {
     score = REGEX_FALLBACK_SCORE_CAP;
     warnings.unshift("Analysis used regex/deterministic fallback — score capped at 45. Re-run AI Analyze or approve the fallback to unblock generation.");
     recommendations.unshift("Re-run AI Analyze when AI providers are healthy, or approve this fallback analysis with a written note via the Controls panel.");
   }
-  const severity: AnalysisQualitySeverity = score < 50 ? "POOR" : score < 75 ? "WARNING" : "GOOD";
+  const severity: AnalysisQualitySeverity = isUnsafe ? "UNSAFE" : score < 50 ? "POOR" : score < 75 ? "WARNING" : "GOOD";
   if (severity === "GOOD" && warnings.length === 0) recommendations.push("Tender analysis appears usable for matching, scoring, and generation.");
 
   return {

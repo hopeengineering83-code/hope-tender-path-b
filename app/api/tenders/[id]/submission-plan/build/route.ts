@@ -42,6 +42,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       select: {
         id: true,
         title: true,
+        category: true,
         exactFileNaming: true,
         exactFileOrder: true,
         pageLimit: true,
@@ -147,6 +148,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
         })),
         submissionMethod: tender.submissionMethod,
         title: tender.title,
+        tenderCategory: tender.category,
         analysisExtractionStatus: tender.analysisExtractionStatus,
       });
 

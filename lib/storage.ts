@@ -19,9 +19,8 @@ import { randomUUID } from "crypto";
  *
  *   - "local"     — STORAGE_ROOT is writable; large files OK.
  *   - "blob"      — BLOB_READ_WRITE_TOKEN (Vercel Blob) is configured.
- *                   NOTE: the actual @vercel/blob SDK is not bundled; the
- *                   adapter falls back to "db-base64" with a small cap
- *                   when no blob backend is wired up.
+ *                   Uses the @vercel/blob SDK for real uploads/downloads.
+ *                   Falls back to "db-base64" when token is absent (dev/CI).
  *   - "db-base64" — small files only; fileContent stored on the row.
  *
  * Legacy rows (storagePath="" + fileContent populated) read transparently
@@ -124,28 +123,45 @@ class DbBase64Storage implements StorageAdapter {
 }
 
 /**
- * Stub blob adapter — without the @vercel/blob SDK we can't actually
- * upload; instead, fall back to db-base64 for the put but still allow
- * reads from a `https://` storagePath URL if one was ever written by
- * an external system.
+ * Real Vercel Blob adapter using the @vercel/blob SDK.
+ * Falls back to db-base64 when BLOB_READ_WRITE_TOKEN is not set
+ * (keeps local dev and CI working without credentials).
  */
 class BlobStorage implements StorageAdapter {
   private readonly fallback = new DbBase64Storage();
+
   async putFile(
     buffer: Buffer,
     metadata: { fileName: string; mimeType: string; tenderId?: string },
   ): Promise<{ storagePath: string; fileContent?: string; provider: StorageProvider }> {
-    // The @vercel/blob client is not bundled with this build. We delegate
-    // to db-base64 (with its 5 MB cap) so the call still completes safely
-    // and large uploads still error out clearly. Operators who need real
-    // blob storage should add the @vercel/blob SDK + a real upload here.
-    const result = await this.fallback.putFile(buffer, metadata);
-    return { ...result, provider: "blob" };
+    const token = process.env.BLOB_READ_WRITE_TOKEN;
+    if (!token) {
+      // No token configured — fall back to db-base64 so dev/CI still works.
+      const result = await this.fallback.putFile(buffer, metadata);
+      return { ...result, provider: "blob" };
+    }
+
+    const { put } = await import("@vercel/blob");
+    const ext = path.extname(metadata.fileName) || "";
+    const scope = metadata.tenderId ? "tender" : "company";
+    const key = `${scope}/${randomUUID()}${ext}`;
+
+    const result = await put(key, buffer, {
+      access: "private",
+      token,
+    });
+
+    return { storagePath: result.url, provider: "blob" };
   }
 
   async getFile(record: { storagePath?: string | null; fileContent?: string | null; fileName: string }): Promise<Buffer> {
     if (record.storagePath && /^https?:\/\//.test(record.storagePath)) {
-      const res = await fetch(record.storagePath);
+      const token = process.env.BLOB_READ_WRITE_TOKEN;
+      const headers: Record<string, string> = {};
+      if (token) {
+        headers["Authorization"] = `Bearer ${token}`;
+      }
+      const res = await fetch(record.storagePath, { headers });
       if (!res.ok) throw new Error(`blob fetch failed: ${res.status} ${res.statusText}`);
       const ab = await res.arrayBuffer();
       return Buffer.from(ab);

@@ -81,15 +81,20 @@ async function verifyConnectivity(client: PrismaClient): Promise<void> {
   }
 }
 
+const CORE_TABLES = ['User', 'Company', 'Tender', 'TenderFile', 'GeneratedDocument', 'Expert', 'Project'];
+
 async function verifySchemaPresent(client: PrismaClient): Promise<void> {
-  // Confirms the core tables exist. When the schema is missing this throws
-  // with a message that tells the operator to run their migration tool.
+  // Confirms that User and Tender (proxy for full schema) exist. When either
+  // is missing this throws with a message that tells the operator to run
+  // their migration tool.
   const rows = await client.$queryRawUnsafe<Array<{ table_name: string }>>(
-    `SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'User' LIMIT 1`,
+    `SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_name IN ('User', 'Tender')`,
   );
-  if (rows.length === 0) {
+  const found = new Set(rows.map((r) => r.table_name));
+  const missing = ['User', 'Tender'].filter((t) => !found.has(t));
+  if (missing.length > 0) {
     throw new Error(
-      'Database schema is missing the "User" table. Run "prisma migrate deploy" (or set ENABLE_RUNTIME_SCHEMA_BOOTSTRAP=true to allow runtime schema bootstrap, which is NOT recommended for production).',
+      `Database schema is missing table(s): ${missing.join(', ')}. Run "prisma migrate deploy" (or set ENABLE_RUNTIME_SCHEMA_BOOTSTRAP=true to allow runtime schema bootstrap, which is NOT recommended for production). Core tables expected: ${CORE_TABLES.join(', ')}.`,
     );
   }
 }

@@ -396,15 +396,28 @@ export function buildDerivedDraftPlan(tender: {
   submissionMethod?: string | null;
   title?: string | null;
   analysisExtractionStatus?: string | null;
+  tenderCategory?: string | null;  // tender-type-aware section routing
 }): DerivedDraftEntry[] {
   const requirements = tender.requirements ?? [];
   if (requirements.length === 0) return [];
 
   // Build a single searchable text block from all requirements
-  const reqText = requirements
+  const requirementsText = requirements
     .map((r) => [r.text ?? "", r.title ?? "", r.description ?? ""].join(" "))
-    .join("\n")
-    .toLowerCase();
+    .join("\n");
+
+  // Combined search corpus: title + tenderCategory + all requirement text (lowercase).
+  // Used for tender-type-aware section routing so domain keywords in the title or
+  // category field (e.g. "road construction", "water supply") trigger the right
+  // sector-specific derived entries even when the requirements themselves are sparse.
+  const combinedText = [
+    tender.title ?? "",
+    tender.tenderCategory ?? "",
+    requirementsText,
+  ].join(" ").toLowerCase();
+
+  // reqText kept as a lowercase alias for the existing keyword checks below
+  const reqText = requirementsText.toLowerCase();
 
   const entries: DerivedDraftEntry[] = [];
 
@@ -420,7 +433,10 @@ export function buildDerivedDraftPlan(tender: {
   }
 
   // ── Financial Proposal ───────────────────────────────────────────────────
-  if (/price|cost|budget|financial|commercial|fee|rate|boq|bill[\s-]+of[\s-]+quantit|pricing|lump[\s-]+sum|financial[\s-]+offer|financial[\s-]+proposal/.test(reqText)) {
+  // Omitted for EOI tenders — Expression of Interest documents are pre-qualification
+  // submissions; they do not include a financial proposal.
+  const isEOI = /eoi\b|expression[\s-]+of[\s-]+interest/.test(combinedText);
+  if (!isEOI && /price|cost|budget|financial|commercial|fee|rate|boq|bill[\s-]+of[\s-]+quantit|pricing|lump[\s-]+sum|financial[\s-]+offer|financial[\s-]+proposal/.test(reqText)) {
     entries.push({
       name: "Financial Proposal",
       documentType: "FINANCIAL",
@@ -493,6 +509,106 @@ export function buildDerivedDraftPlan(tender: {
       required: true,
       derivedFrom: "DERIVED_DRAFT_UNCONFIRMED — derived from compliance/checklist keywords in requirements",
       confidence: "LOW",
+    });
+  }
+
+  // ── Tender-type-aware section routing ────────────────────────────────────
+  // Uses combinedText (title + tenderCategory + requirementsText) so that even
+  // sparse requirements yield the correct domain-specific derived entries when
+  // the tender title or category identifies the sector.
+
+  // EOI — add Expression of Interest Letter; Financial Proposal already excluded above
+  if (isEOI) {
+    entries.push({
+      name: "Expression of Interest Letter",
+      documentType: "TECHNICAL_PROPOSAL",
+      required: true,
+      derivedFrom: "DERIVED_DRAFT_UNCONFIRMED — EOI detected; Expression of Interest letter is the primary deliverable",
+      confidence: "HIGH",
+    });
+  }
+
+  // Building / architectural design
+  if (/building|design|architect|interior/.test(combinedText)) {
+    entries.push({
+      name: "Design Statement / Approach",
+      documentType: "METHODOLOGY",
+      required: true,
+      derivedFrom: "DERIVED_DRAFT_UNCONFIRMED — building/architectural design tender; design statement is expected",
+      confidence: "MEDIUM",
+    });
+  }
+
+  // Road / highway / civil infrastructure
+  if (/road|highway|infrastructure|civil/.test(combinedText)) {
+    entries.push({
+      name: "Technical Approach: Road Design and Construction Method",
+      documentType: "METHODOLOGY",
+      required: true,
+      derivedFrom: "DERIVED_DRAFT_UNCONFIRMED — road/infrastructure tender; construction methodology statement required",
+      confidence: "HIGH",
+    });
+  }
+
+  // Water / sanitation / WASH / drainage
+  if (/water|sanitation|wash\b|drainage/.test(combinedText)) {
+    entries.push({
+      name: "Technical Approach: Water/Sanitation Works",
+      documentType: "METHODOLOGY",
+      required: true,
+      derivedFrom: "DERIVED_DRAFT_UNCONFIRMED — water/sanitation/WASH tender; technical water works approach required",
+      confidence: "HIGH",
+    });
+  }
+
+  // Geotechnical investigation
+  if (/geotechnical|soil|investigation|borehole/.test(combinedText)) {
+    entries.push({
+      name: "Geotechnical Investigation Methodology",
+      documentType: "METHODOLOGY",
+      required: true,
+      derivedFrom: "DERIVED_DRAFT_UNCONFIRMED — geotechnical/soil investigation tender; investigation methodology required",
+      confidence: "HIGH",
+    });
+  }
+
+  // Urban planning / master plan
+  if (/urban|planning|master.?plan|land.?use/.test(combinedText)) {
+    entries.push({
+      name: "Urban Planning Methodology",
+      documentType: "METHODOLOGY",
+      required: true,
+      derivedFrom: "DERIVED_DRAFT_UNCONFIRMED — urban/planning tender; planning methodology statement required",
+      confidence: "HIGH",
+    });
+  }
+
+  // Healthcare / hospital facility
+  if (/hospital|medical|health.?facilit/.test(combinedText)) {
+    entries.push({
+      name: "Healthcare Infrastructure Technical Proposal",
+      documentType: "METHODOLOGY",
+      required: true,
+      derivedFrom: "DERIVED_DRAFT_UNCONFIRMED — healthcare/hospital tender; sector-specific technical proposal required",
+      confidence: "HIGH",
+    });
+  }
+
+  // Donor / bank-funded project
+  if (/donor|bank\b|ida\b|adb\b|afdb\b|world.?bank|eu.?fund|usaid|dfid|giz\b/.test(combinedText)) {
+    entries.push({
+      name: "Donor Compliance Package",
+      documentType: "ELIGIBILITY",
+      required: true,
+      derivedFrom: "DERIVED_DRAFT_UNCONFIRMED — donor/bank-funded tender; compliance with donor procurement rules required",
+      confidence: "HIGH",
+    });
+    entries.push({
+      name: "Procurement Compliance Declaration",
+      documentType: "DECLARATION",
+      required: true,
+      derivedFrom: "DERIVED_DRAFT_UNCONFIRMED — donor/bank-funded tender; procurement compliance declaration required",
+      confidence: "MEDIUM",
     });
   }
 

@@ -3,7 +3,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 
 type CompanyDoc = {
   id: string; originalFileName: string; mimeType: string; category: string;
-  size: number; extractedText?: string | null; createdAt: string;
+  size: number; extractedTextLength?: number | null; createdAt: string;
 };
 type Expert = {
   id: string; fullName: string; title: string | null; disciplines: string[];
@@ -604,7 +604,7 @@ export default function CompanyPage() {
                     <div className="flex flex-wrap items-center gap-1.5 mt-1">
                       <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${CAT_COLORS[doc.category]??"bg-slate-100 text-slate-500"}`}>{CATEGORY_LABELS[doc.category]??doc.category}</span>
                       <span className="text-[10px] text-slate-400">{fmt(doc.size)}</span>
-                      {doc.extractedText ? <span className="text-[10px] text-green-600">✓ {doc.extractedText.length.toLocaleString()} chars</span> : <span className="text-[10px] text-slate-400">no text</span>}
+                      {(doc.extractedTextLength ?? 0) > 0 ? <span className="text-[10px] text-green-600">✓ {(doc.extractedTextLength ?? 0).toLocaleString()} chars</span> : <span className="text-[10px] text-slate-400">no text</span>}
                     </div>
                   </div>
                   <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100">
