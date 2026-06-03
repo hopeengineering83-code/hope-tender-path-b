@@ -125,15 +125,18 @@ export function BidStrategyPanel({ tenderId, defaultExpanded = true }: BidStrate
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(defaultExpanded);
   const [confidenceNote, setConfidenceNote] = useState<string | null>(null);
+  const [unavailableBlockers, setUnavailableBlockers] = useState<string[]>([]);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     setBlocked(null);
+    setUnavailableBlockers([]);
     try {
       const res = await fetch(`/api/tenders/${tenderId}/bid-strategy`);
       if (!res.ok) {
-        const errBody = await res.json().catch(() => ({} as { error?: string }));
+        const errBody = await res.json().catch(() => ({} as { error?: string; blockers?: string[] }));
+        if (Array.isArray(errBody.blockers)) setUnavailableBlockers(errBody.blockers);
         throw new Error(errBody.error ?? `Strategy fetch failed (${res.status})`);
       }
       const data = await res.json();
@@ -186,6 +189,13 @@ export function BidStrategyPanel({ tenderId, defaultExpanded = true }: BidStrate
       <div className="rounded-2xl border border-red-200 bg-red-50 p-5">
         <h3 className="text-sm font-semibold text-red-900">Bid Strategy unavailable</h3>
         <p className="mt-1.5 text-xs text-red-700">{error ?? "Strategy could not be computed"}</p>
+        {unavailableBlockers.length > 0 && (
+          <ul className="mt-2 list-disc space-y-1 pl-4 text-xs text-red-700">
+            {unavailableBlockers.slice(0, 5).map((blocker) => (
+              <li key={blocker}>{blocker}</li>
+            ))}
+          </ul>
+        )}
         <button onClick={() => void load()} className="mt-2 rounded border border-red-300 bg-white px-2.5 py-1 text-xs text-red-700 hover:bg-red-100">
           Retry
         </button>

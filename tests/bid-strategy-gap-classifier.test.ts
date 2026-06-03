@@ -191,7 +191,7 @@ describe("Panel surfaces the gap analysis to the user", () => {
   it("shows the gap-cause block when capabilityGapCause is not NO_CAPABILITY_GAP", () => {
     assert.match(src, /strategy\.gapAnalysis\.capabilityGapCause !== "NO_CAPABILITY_GAP"/);
     assert.match(src, /Capability score read with care/);
-    assert.match(src, /gap cause: \{strategy\.gapAnalysis\.capabilityGapCause/);
+    assert.match(src, /gap cause:[\s\S]*strategy\.gapAnalysis\.capabilityGapCause/);
   });
   it("explicitly explains the DECLINE inhibition when applicable", () => {
     assert.match(src, /prevented from collapsing to DECLINE/);

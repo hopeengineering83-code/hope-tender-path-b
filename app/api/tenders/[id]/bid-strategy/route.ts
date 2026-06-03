@@ -32,6 +32,21 @@ function isFallbackLikeAnalysisSource(value: string | null | undefined): boolean
   return upper.includes("REGEX") || upper.includes("DETERMINISTIC") || upper === "UNKNOWN";
 }
 
+function isUnapprovedFallbackOrUnknown(value: string | null | undefined): boolean {
+  const upper = String(value ?? "").toUpperCase();
+  if (upper === "HUMAN_APPROVED_REGEX_FALLBACK") return false;
+  return upper === "UNKNOWN" || upper.includes("REGEX_FALLBACK") || upper.includes("DETERMINISTIC_FALLBACK");
+}
+
+function extractedPageTotal(files: Array<{ totalPages: number | null }>): number {
+  return files.reduce((sum, file) => sum + (file.totalPages ?? 0), 0);
+}
+
+function hasExtractionUnsafeStatus(status: string | null | undefined, analysisExtractionStatus: string | null | undefined): boolean {
+  const combined = `${status ?? ""} ${analysisExtractionStatus ?? ""}`.toUpperCase();
+  return /EXTRACTION_CORRUPTED|OCR_REQUIRED|EXTRACTION_WEAK_REVIEW_REQUIRED|REGEX_FALLBACK_FROM_WEAK_EXTRACTION/.test(combined);
+}
+
 function computeMandatoryEvidenceCoverageRatio(requirements: Array<{
   priority: string;
   complianceMatrixRows?: Array<{ supportLevel: string | null }> | null;
@@ -74,7 +89,18 @@ export async function GET(
             requirementType: true,
             priority: true,
             requiredQuantity: true,
+            exactFileName: true,
+            sourceConfidence: true,
             complianceMatrixRows: { select: { supportLevel: true } },
+          },
+        },
+        files: {
+          select: {
+            totalPages: true,
+            extractionScore: true,
+            extractedPages: true,
+            failedPages: true,
+            ocrPages: true,
           },
         },
         complianceGaps: { select: { severity: true, isResolved: true, title: true } },
@@ -153,6 +179,51 @@ export async function GET(
   }
 
   const evidenceCoverageRatio = computeMandatoryEvidenceCoverageRatio(tender.requirements);
+  const totalPages = extractedPageTotal(tender.files);
+  const mandatoryCount = tender.requirements.filter((req) => String(req.priority ?? "").toUpperCase() === "MANDATORY").length;
+  const sourceRefCount = tender.requirements.filter((req) => (req.sourceConfidence ?? 0) > 0).length;
+  const requiredDocsKnown = Boolean(
+    (tender.exactFileNaming ?? "").trim() ||
+      (tender.exactFileOrder ?? "").trim() ||
+      tender.requirements.some((req) => Boolean(req.exactFileName)),
+  );
+  const unsafeBlockers: string[] = [];
+  if (hasExtractionUnsafeStatus(tender.status, tender.analysisExtractionStatus)) {
+    unsafeBlockers.push("Extraction is corrupted, OCR-required, or weak; bid strategy is unavailable until extraction is readable.");
+  }
+  if (isUnapprovedFallbackOrUnknown(analysisSource)) {
+    unsafeBlockers.push("AI Analyze is missing, unapproved regex/deterministic fallback, or unknown; re-run AI Analyze before using bid strategy.");
+  }
+  if (tender.requirements.length === 0) unsafeBlockers.push("No tender requirements have been extracted yet.");
+  if (totalPages > 5 && tender.requirements.length < 3) {
+    unsafeBlockers.push("Large/multi-page tender has fewer than 3 extracted requirements; analysis is likely incomplete.");
+  }
+  if (totalPages > 5 && mandatoryCount === 0) {
+    unsafeBlockers.push("Large/multi-page tender has zero mandatory requirements extracted.");
+  }
+  if (tender.requirements.length > 0 && sourceRefCount === 0) unsafeBlockers.push("Extracted requirements have no source traceability.");
+  if (totalPages > 5 && !tender.deadline) unsafeBlockers.push("Deadline is missing from extracted/manual metadata.");
+  if (totalPages > 5 && !tender.submissionMethod) unsafeBlockers.push("Submission method is missing from extracted/manual metadata.");
+  if (totalPages > 5 && !tender.evaluationMethodology) unsafeBlockers.push("Evaluation criteria/methodology are missing from analysis.");
+  if (totalPages > 5 && !requiredDocsKnown) unsafeBlockers.push("Required documents/forms are not known from explicit or derived plan inputs.");
+
+  if (unsafeBlockers.length > 0) {
+    return NextResponse.json(
+      {
+        unavailable: true,
+        error: "Bid strategy unavailable — extraction/analysis is unreliable.",
+        code: "BID_STRATEGY_UNAVAILABLE_ANALYSIS_UNRELIABLE",
+        nextAction: hasExtractionUnsafeStatus(tender.status, tender.analysisExtractionStatus) ? "RUN_OCR_OR_UPLOAD_CLEARER_SCAN" : "RETRY_AI_ANALYZE",
+        blockers: unsafeBlockers,
+        analysisSource,
+        extractionStatus: tender.analysisExtractionStatus ?? null,
+        requirementCount: tender.requirements.length,
+        mandatoryCount,
+        sourceRefCount,
+      },
+      { status: 422 },
+    );
+  }
 
   const strategy = computeBidStrategy({
     tender: {
