@@ -640,11 +640,53 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         ? "RETRY_AI_ANALYZE_OR_APPROVE_FALLBACK"
         : null;
 
+    // Build provider attempt chain log for observability.
+    // Derives which providers were skipped (cooling down), which were tried,
+    // and which succeeded per chunk. This helps operators understand why the
+    // chain fell through to regex fallback on a cold start.
+    const providerChainLog: Array<{
+      provider: string;
+      status: "SUCCESS" | "FAILED" | "SKIPPED_COOLDOWN" | "SKIPPED_NOT_CONFIGURED" | "REGEX_FALLBACK";
+      durationMs: number;
+    }> = [];
+    let analysisProvider: string | null = null;
+    let analysisProviderStatus: string | null = null;
+
+    if (analysisMeta) {
+      // Collect unique providers from chunkProviders (first non-null = dominant)
+      const succeededProviders = analysisMeta.chunkProviders.filter((p): p is string => p !== null);
+      analysisProvider = succeededProviders[0] ?? null;
+
+      if (analysisProvider) {
+        analysisProviderStatus = `AI_ANALYZED_BY_${analysisProvider.toUpperCase()}`;
+      }
+
+      // Log skipped (cooling down) providers from the diagnostics snapshot
+      const diagnosticsSnap = analysisResult.providerDiagnostics;
+      if (diagnosticsSnap) {
+        for (const p of diagnosticsSnap.perProvider) {
+          if (!p.configured) {
+            providerChainLog.push({ provider: p.provider, status: "SKIPPED_NOT_CONFIGURED", durationMs: 0 });
+          } else if (p.coolingDown) {
+            providerChainLog.push({ provider: p.provider, status: "SKIPPED_COOLDOWN", durationMs: 0 });
+          } else if (succeededProviders.includes(p.provider)) {
+            providerChainLog.push({ provider: p.provider, status: "SUCCESS", durationMs: 0 });
+          }
+        }
+      }
+    } else if (analysisResult.fallback) {
+      analysisProviderStatus = "REGEX_FALLBACK";
+      providerChainLog.push({ provider: "regex", status: "REGEX_FALLBACK", durationMs: 0 });
+    }
+
     return NextResponse.json({
       success: true,
       ...analysisResult,
       code: fallbackCode,
       analysisSource: analysisResult.analysisSource ?? null,
+      analysisProvider,
+      analysisProviderStatus,
+      providerChainLog,
       jobId: analysisJobId,
       chunks: analysisMeta ? {
         total: analysisMeta.totalChunks,
