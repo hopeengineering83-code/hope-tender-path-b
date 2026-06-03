@@ -49,6 +49,38 @@ describe("generation-readiness mirrors the analysis-source gate (Part 5)", () =>
   });
 });
 
+describe("metadataContaminated blocks generation-readiness and generate route", () => {
+  const readinessSource = readFileSync("lib/tender-generation-readiness.ts", "utf8");
+  const generateSource = readFileSync("app/api/tenders/[id]/generate/route.ts", "utf8");
+
+  it("getTenderGenerationReadiness pushes METADATA_CONTAMINATED blocker", () => {
+    assert.match(readinessSource, /METADATA_CONTAMINATED/);
+    assert.match(readinessSource, /metadataContaminated/);
+    assert.match(readinessSource, /blockers\.push/);
+  });
+
+  it("generate route hard-blocks with METADATA_CONTAMINATED errorCode", () => {
+    assert.match(generateSource, /METADATA_CONTAMINATED/);
+    assert.match(generateSource, /metadataContaminated/);
+    assert.match(generateSource, /status:\s*422/);
+  });
+
+  it("AI Analyze writes contamination flag when portal noise detected", () => {
+    const analyzeSource = readFileSync("app/api/tenders/[id]/ai-analyze/route.ts", "utf8");
+    assert.match(analyzeSource, /detectMetadataContamination/);
+    assert.match(analyzeSource, /metadataContaminated.*contamination\.contaminated/);
+  });
+
+  it("AI Analyze extracts full contact fields (Phase 7) and writes them to DB", () => {
+    const analyzeSource = readFileSync("app/api/tenders/[id]/ai-analyze/route.ts", "utf8");
+    assert.match(analyzeSource, /clientContactName/);
+    assert.match(analyzeSource, /clientContactEmail/);
+    assert.match(analyzeSource, /clientContactPhone/);
+    assert.match(analyzeSource, /submissionAddress/);
+    assert.match(analyzeSource, /clientAddress/);
+  });
+});
+
 describe("bid strategy confidence cap under unapproved fallback (Part 12)", () => {
   const source = readFileSync("app/api/tenders/[id]/bid-strategy/route.ts", "utf8");
 
