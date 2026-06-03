@@ -15,7 +15,7 @@ import { logAction } from "../../../../../../lib/audit";
 import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../../../lib/rate-limit";
 import { sanitizeError } from "../../../../../../lib/sanitize-error";
 import { isExtractionAcceptableForGeneration } from "../../../../../../lib/engine/extraction-quality-gate";
-import { assessExtractionQuality } from "../../../../../../lib/extraction-quality";
+import { assessExtractionQuality, assessExtractionQualityPerPage } from "../../../../../../lib/extraction-quality";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 15;
@@ -231,6 +231,29 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       tender.analysisExtractionStatus === "EXTRACTION_CORRUPTED_AI_SKIPPED" ||
       tender.analysisExtractionStatus === "EXTRACTION_WEAK_REVIEW_REQUIRED";
 
+    // Per-page content warnings: detect whether key content types were found
+    // in the extracted text. If submission/eval/required-doc pages are absent,
+    // the plan should warn that critical tender sections may have been missed.
+    const contentPageWarnings: string[] = [];
+    if (tender.files.length > 0) {
+      let anySubmission = false;
+      let anyEvaluation = false;
+      let anyRequiredDocs = false;
+      let totalDetected = 0;
+      for (const file of tender.files) {
+        const pp = assessExtractionQualityPerPage(file.extractedText);
+        totalDetected += pp.totalDetectedPages;
+        if (pp.submissionInstructionPages.length > 0) anySubmission = true;
+        if (pp.evaluationCriteriaPages.length > 0) anyEvaluation = true;
+        if (pp.requiredDocumentPages.length > 0) anyRequiredDocs = true;
+      }
+      if (totalDetected > 0) {
+        if (!anySubmission) contentPageWarnings.push("No submission instruction pages were detected in the extracted text. Submission deadlines, addresses, and methods may be missing.");
+        if (!anyEvaluation) contentPageWarnings.push("No evaluation criteria pages were detected. The plan may not reflect the correct scoring weights and technical requirements.");
+        if (!anyRequiredDocs) contentPageWarnings.push("No required documents/forms pages were detected. The submission plan may be missing mandatory annexures or official forms.");
+      }
+    }
+
     await logAction({
       userId: actor.id,
       action: "SUBMISSION_PLAN_BUILT",
@@ -240,15 +263,18 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       metadata: { created, skipped, total: plannedFiles.length, isDerivedDraft },
     });
 
+    const baseWarning = isDerivedDraft
+      ? `Derived draft plan created — requires user confirmation. ${isWeakExtraction ? "Extraction quality was weak; re-run AI Analyze after OCR for a more reliable plan." : "Re-run AI Analyze or manually confirm required submission documents."}`
+      : undefined;
+
     return NextResponse.json({
       ok: true,
       created,
       skipped,
       total: plannedFiles.length,
       isDerivedDraft,
-      warning: isDerivedDraft
-        ? `Derived draft plan created — requires user confirmation. ${isWeakExtraction ? "Extraction quality was weak; re-run AI Analyze after OCR for a more reliable plan." : "Re-run AI Analyze or manually confirm required submission documents."}`
-        : undefined,
+      warning: baseWarning,
+      contentPageWarnings: contentPageWarnings.length > 0 ? contentPageWarnings : undefined,
       files: fileStatuses,
     });
   } catch (error) {
