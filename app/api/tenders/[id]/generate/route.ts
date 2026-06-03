@@ -286,6 +286,22 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     diagnosticId: `no-client-name-${id}`,
   }, { status: 422 });
 
+  // ── Contaminated metadata hard block ─────────────────────────────────────
+  // metadataContaminated is set by detectMetadataContamination() during AI
+  // Analyze when portal navigation text, status banners, or unrelated tender
+  // alerts were detected inside the extracted client/procuring entity name.
+  // Generating a proposal with a contaminated client name produces cover pages,
+  // addressing blocks, and reference letters with garbage in the "To:" field.
+  if (tender.metadataContaminated) {
+    return NextResponse.json({
+      errorCode: "METADATA_CONTAMINATED",
+      error: "Generation blocked: client/procuring entity metadata is contaminated with portal navigation text, status banners, or unrelated tender alerts. Open the tender, correct the Client Name field, and re-run AI Analyze before generating documents.",
+      blockers: ["metadataContaminated: client name was extracted from portal noise — requires manual correction before generation is allowed"],
+      nextAction: "EDIT_TENDER_METADATA",
+      diagnosticId: `metadata-contaminated-${id}`,
+    }, { status: 422 });
+  }
+
   // ── Extraction quality gate ───────────────────────────────────────────────
   // Block generation when extraction quality is too poor to produce reliable
   // documents (REGEX_FALLBACK_FROM_WEAK_EXTRACTION — average score < 45 with
