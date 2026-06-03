@@ -72,7 +72,7 @@ export async function AnalysisQualityPanel({ tenderId }: { tenderId: string }) {
 
   const rawSource = await detectAnalysisSourceWithApproval(prisma, tenderId, tender).catch(() => "UNKNOWN" as const);
   const analysisSource = analysisSourceSummary(rawSource);
-  const ready = quality.severity !== "POOR" && analysisSource.risk !== "HIGH";
+  const ready = quality.severity !== "POOR" && quality.severity !== "UNSAFE" && analysisSource.risk !== "HIGH";
   const sourceRiskClass = analysisSource.risk === "LOW" ? "bg-emerald-100 text-emerald-700" : analysisSource.risk === "HIGH" ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-700";
 
   return (

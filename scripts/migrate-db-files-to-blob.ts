@@ -127,11 +127,13 @@ async function main() {
     throw new Error("BLOB_READ_WRITE_TOKEN not set");
   }
 
+  let totalErrors = 0;
+
   // ── TenderFile ────────────────────────────────────────────────────────────
   // Rows with storagePath = "" and fileContent populated are legacy db-base64
   // rows that need migrating. (TenderFile.storagePath is String @default(""),
   // so it cannot be null — we only filter on empty string here.)
-  await migrateModel(
+  const tfResult = await migrateModel(
     "TenderFile",
     () =>
       prisma.tenderFile.findMany({
@@ -152,9 +154,10 @@ async function main() {
         .update({ where: { id }, data: { storagePath: blobUrl } })
         .then(() => undefined),
   );
+  totalErrors += tfResult.errors;
 
   // ── CompanyDocument ───────────────────────────────────────────────────────
-  await migrateModel(
+  const cdResult = await migrateModel(
     "CompanyDocument",
     () =>
       prisma.companyDocument.findMany({
@@ -175,17 +178,20 @@ async function main() {
         .update({ where: { id }, data: { storagePath: blobUrl } })
         .then(() => undefined),
   );
+  totalErrors += cdResult.errors;
 
   // ── GeneratedDocument ─────────────────────────────────────────────────────
-  // GeneratedDocument uses storagePath (nullable String) rather than
-  // storagePath String @default(""), so the query filters on null only.
-  await migrateModel(
+  // GeneratedDocument.storagePath is nullable. Legacy db-base64 rows may have
+  // storagePath = null OR storagePath = "" (empty string written by the adapter).
+  // Both must be included so those rows are eligible for blob migration and
+  // the follow-up null-legacy-file-content script.
+  const gdResult = await migrateModel(
     "GeneratedDocument",
     () =>
       prisma.generatedDocument.findMany({
         where: {
           fileContent: { not: null },
-          storagePath: null,
+          OR: [{ storagePath: null }, { storagePath: "" }],
         },
         select: {
           id: true,
@@ -201,10 +207,19 @@ async function main() {
         .then(() => undefined),
   );
 
+  totalErrors += gdResult.errors;
   await prisma.$disconnect();
+  return { errors: totalErrors };
 }
 
-main().catch((e) => {
-  console.error(e);
-  process.exit(1);
-});
+main()
+  .then((totals) => {
+    if (totals && totals.errors > 0) {
+      console.error(`\nMigration completed with ${totals.errors} error(s). Review logs above.`);
+      process.exit(1);
+    }
+  })
+  .catch((e) => {
+    console.error(e);
+    process.exit(1);
+  });

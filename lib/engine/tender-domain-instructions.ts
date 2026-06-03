@@ -27,6 +27,22 @@
 export function getTenderDomainInstructions(title: string, category: string): string {
   const combined = `${title} ${category}`.toLowerCase();
 
+  // EOI/RFQ/RFP document-type signals must be checked FIRST — before any
+  // sector keyword, because "EOI for architectural design services" must
+  // produce EOI guidance, not full architectural-proposal guidance.
+  if (/\beoi\b|expression.?of.?interest/.test(combined)) {
+    return `TENDER DOCUMENT TYPE — EXPRESSION OF INTEREST (EOI):
+This is a pre-qualification Expression of Interest, NOT a full technical proposal. The EOI must:
+- Be concise — evaluators score on eligibility and relevance, not volume
+- Lead with: firm credentials, legal standing, relevant sector experience summary
+- Present team composition at overview level (names + roles only — no full CVs)
+- Demonstrate understanding of the assignment scope in 1–2 focused paragraphs
+- State motivation for interest and any unique positioning clearly
+- List 3–5 most relevant comparable projects (name, client, value, year, your role)
+- Confirm availability and capacity to mobilise within the stated timeline
+DO NOT include a full Technical Proposal, Financial Proposal, or detailed methodology at EOI stage — it wastes evaluator time and signals poor bid process literacy.`;
+  }
+
   if (/building|design|architect|interior/.test(combined)) {
     return `TENDER DOMAIN — BUILDING / ARCHITECTURAL DESIGN:
 This is a building/architectural design tender. The proposal must explicitly address:
@@ -108,19 +124,6 @@ This is a healthcare facility construction, design, or supervision tender. The p
 - Compliance with healthcare facility regulations and standards (e.g., FGI Guidelines, SANS/ISO applicable standards, national health facility standards)
 - Biomedical systems integration: medical gas, nurse-call, patient monitoring rough-ins
 Do NOT write generic building methodology for a healthcare facility tender.`;
-  }
-
-  if (/\beoi\b|expression.?of.?interest/.test(combined)) {
-    return `TENDER DOCUMENT TYPE — EXPRESSION OF INTEREST (EOI):
-This is a pre-qualification Expression of Interest, NOT a full technical proposal. The EOI must:
-- Be concise — evaluators score on eligibility and relevance, not volume
-- Lead with: firm credentials, legal standing, relevant sector experience summary
-- Present team composition at overview level (names + roles only — no full CVs)
-- Demonstrate understanding of the assignment scope in 1–2 focused paragraphs
-- State motivation for interest and any unique positioning clearly
-- List 3–5 most relevant comparable projects (name, client, value, year, your role)
-- Confirm availability and capacity to mobilise within the stated timeline
-DO NOT include a full Technical Proposal, Financial Proposal, or detailed methodology at EOI stage — it wastes evaluator time and signals poor bid process literacy.`;
   }
 
   if (/\bdonor\b|\bida\b|\badb\b|\bafdb\b|world.?bank|eu.?fund|usaid|dfid|giz\b/.test(combined)) {

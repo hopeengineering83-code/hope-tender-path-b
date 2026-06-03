@@ -59,8 +59,10 @@ export async function GET(
     vaultReviewedExperts: companyReadiness.totals.reviewedExperts,
     vaultReviewedProjects: companyReadiness.totals.reviewedProjects,
   });
-  const [{ extractedTextLength }] = await prisma.$queryRaw<Array<{ extractedTextLength: number }>>`
-    SELECT COALESCE(SUM(char_length("extractedText")), 0)::int AS "extractedTextLength"
+  const [{ extractedTextLength, totalPageCount }] = await prisma.$queryRaw<Array<{ extractedTextLength: number; totalPageCount: number }>>`
+    SELECT
+      COALESCE(SUM(char_length("extractedText")), 0)::int AS "extractedTextLength",
+      COALESCE(SUM(COALESCE("totalPages", 0)), 0)::int AS "totalPageCount"
     FROM "TenderFile"
     WHERE "tenderId" = ${id}
   `;
@@ -82,6 +84,7 @@ export async function GET(
     clientContactName: tender.clientContactName,
     matchingScore: matchingQuality.score,
     extractedTextLength,
+    totalPageCount,
     selectedReviewedExperts: tender.expertMatches.filter((m) => m.isSelected && m.expert.trustLevel === "REVIEWED").length,
     selectedReviewedProjects: tender.projectMatches.filter((m) => m.isSelected && m.project.trustLevel === "REVIEWED").length,
     analysisSource: (tender.notes ?? "").split(/\n+/).map((l) => l.trim()).find((l) => /^analysis source:/i.test(l))?.replace(/^analysis source:\s*/i, "").trim() ?? null,
@@ -97,7 +100,7 @@ export async function GET(
 
   return NextResponse.json({
     tenderId: id,
-    readyForMatching: quality.severity !== "POOR" && analysisSource.risk !== "HIGH",
+    readyForMatching: quality.severity !== "POOR" && quality.severity !== "UNSAFE" && analysisSource.risk !== "HIGH",
     analysisSource,
     quality: {
       ...quality,
