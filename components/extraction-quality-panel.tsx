@@ -68,10 +68,11 @@ export async function ExtractionQualityPanel({ tenderId }: { tenderId: string })
   const anyCorrupted = reports.some((item) => item.isCorrupted);
   const anyOcrRanForCorruption = reports.some((item) => item.ocrReason === "CORRUPTED_TEXT");
   const anyOcrMissing = reports.some((item) => item.ocrConfigMissing);
-  const ready = blockers.length === 0 && !anyCorrupted;
   const analysisStatus = tender.analysisExtractionStatus;
-  const isContaminated = tender.metadataContaminated;
   const isCorruptionBlocked = analysisStatus === "EXTRACTION_CORRUPTED_AI_SKIPPED" || anyCorrupted;
+  // Never show "Extracted text appears usable" when extraction is confirmed corrupted.
+  const ready = blockers.length === 0 && !anyCorrupted && analysisStatus !== "EXTRACTION_CORRUPTED_AI_SKIPPED";
+  const isContaminated = tender.metadataContaminated;
 
   return (
     <section className={`mb-4 rounded-2xl border p-5 shadow-sm ${ready ? "border-green-200 bg-green-50" : "border-red-200 bg-red-50"}`}>
@@ -102,15 +103,15 @@ export async function ExtractionQualityPanel({ tenderId }: { tenderId: string })
         </div>
       </div>
 
-      {isContaminated && (
-        <div className="mt-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-          <strong>Metadata contamination warning:</strong> The procuring entity / client name may be polluted by unrelated tender portal text or navigation content. Review and correct before generating documents or exporting.
-        </div>
-      )}
-
       {isCorruptionBlocked && (
         <div className="mt-3 rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800">
           <strong>Extraction corrupted / OCR required</strong> — text quality is too low for reliable analysis. The extracted text contains garbage characters (symbol runs, broken spacing, or icon-font glyphs) rather than readable document content. AI Analyze is blocked until the extraction quality issue is resolved.
+        </div>
+      )}
+
+      {isContaminated && (
+        <div className="mt-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          <strong>Metadata contamination warning:</strong> The procuring entity / client name may be polluted by unrelated tender portal text or navigation content. Review and correct before generating documents or exporting.
         </div>
       )}
 

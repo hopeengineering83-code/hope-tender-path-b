@@ -108,8 +108,17 @@ function dimensionBarColor(score: number): string {
   return "bg-red-500";
 }
 
+// API may return a blocked response when extraction quality is too low.
+type BlockedStrategyResponse = {
+  strategy: null;
+  blocked: true;
+  reason: string;
+  message: string;
+};
+
 export function BidStrategyPanel({ tenderId, defaultExpanded = true }: BidStrategyPanelProps) {
   const [strategy, setStrategy] = useState<BidStrategy | null>(null);
+  const [blocked, setBlocked] = useState<BlockedStrategyResponse | null>(null);
   const [winBreakdown, setWinBreakdown] = useState<WinProbabilityBreakdown | null>(null);
   const [historicalStats, setHistoricalStats] = useState<HistoricalBidStats | null>(null);
   const [loading, setLoading] = useState(true);
@@ -120,6 +129,7 @@ export function BidStrategyPanel({ tenderId, defaultExpanded = true }: BidStrate
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
+    setBlocked(null);
     try {
       const res = await fetch(`/api/tenders/${tenderId}/bid-strategy`);
       if (!res.ok) {
@@ -127,6 +137,11 @@ export function BidStrategyPanel({ tenderId, defaultExpanded = true }: BidStrate
         throw new Error(errBody.error ?? `Strategy fetch failed (${res.status})`);
       }
       const data = await res.json();
+      // Handle the blocked response added in PR 3 — extraction is unreliable.
+      if (data.blocked === true) {
+        setBlocked(data as BlockedStrategyResponse);
+        return;
+      }
       setStrategy(data.strategy);
       if (data.winProbabilityBreakdown) setWinBreakdown(data.winProbabilityBreakdown);
       if (data.historicalBidStats) setHistoricalStats(data.historicalBidStats);
@@ -147,6 +162,21 @@ export function BidStrategyPanel({ tenderId, defaultExpanded = true }: BidStrate
       <div className="rounded-2xl border bg-white p-5 shadow-sm">
         <h3 className="text-sm font-semibold text-slate-900">Bid Strategy</h3>
         <p className="mt-1.5 text-xs text-slate-400">Computing win probability…</p>
+      </div>
+    );
+  }
+
+  // Blocked state — API explicitly flagged extraction as too unreliable for strategy.
+  if (blocked) {
+    return (
+      <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
+        <p className="font-semibold text-amber-800">Bid Strategy Unavailable</p>
+        <p className="text-sm text-amber-700 mt-1">
+          {blocked.message || "Bid strategy requires reliable extraction and analysis. Run OCR or re-run AI Analyze first."}
+        </p>
+        <button onClick={() => void load()} className="mt-3 rounded border border-amber-300 bg-white px-2.5 py-1 text-xs text-amber-700 hover:bg-amber-100">
+          Retry
+        </button>
       </div>
     );
   }
