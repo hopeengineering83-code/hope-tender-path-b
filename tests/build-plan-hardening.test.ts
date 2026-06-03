@@ -252,3 +252,69 @@ describe("Build Plan route logic (unit-level reproduction)", () => {
     assert.ok(warning!.includes("Extraction quality was weak"), "Warning should note weak extraction");
   });
 });
+
+import { assessExtractionQualityPerPage } from "../lib/extraction-quality";
+
+describe("submission plan build route — contentPageWarnings logic", () => {
+  function computeContentWarnings(extractedTexts: (string | null)[]): string[] {
+    const warnings: string[] = [];
+    let anySubmission = false;
+    let anyEvaluation = false;
+    let anyRequiredDocs = false;
+    let totalDetected = 0;
+
+    for (const text of extractedTexts) {
+      const pp = assessExtractionQualityPerPage(text);
+      totalDetected += pp.totalDetectedPages;
+      if (pp.submissionInstructionPages.length > 0) anySubmission = true;
+      if (pp.evaluationCriteriaPages.length > 0) anyEvaluation = true;
+      if (pp.requiredDocumentPages.length > 0) anyRequiredDocs = true;
+    }
+
+    if (totalDetected > 0) {
+      if (!anySubmission) warnings.push("No submission instruction pages were detected in the extracted text. Submission deadlines, addresses, and methods may be missing.");
+      if (!anyEvaluation) warnings.push("No evaluation criteria pages were detected. The plan may not reflect the correct scoring weights and technical requirements.");
+      if (!anyRequiredDocs) warnings.push("No required documents/forms pages were detected. The submission plan may be missing mandatory annexures or official forms.");
+    }
+    return warnings;
+  }
+
+  it("produces no warnings when all key content types are present", () => {
+    const text = `
+[Page 1] Submit via email to submit@gov.org by 30 July 2026. Drop box at 4th Floor.
+[Page 2] Evaluation Criteria: Technical Score 70 points. scoring matrix.
+[Page 3] Required Documents: Annex 1. Form 3 checklist. mandatory document.
+    `.trim();
+    const warnings = computeContentWarnings([text]);
+    assert.equal(warnings.length, 0, "no warnings expected when all pages present");
+  });
+
+  it("warns about missing submission instructions when absent", () => {
+    const text = `
+[Page 1] Ministry of Works. Evaluation Criteria: Technical merit.
+[Page 2] Required Documents: Annex 1.
+    `.trim();
+    const warnings = computeContentWarnings([text]);
+    assert.ok(warnings.some((w) => w.includes("submission instruction")), "should warn about missing submission instructions");
+  });
+
+  it("warns about missing evaluation criteria when absent", () => {
+    const text = `
+[Page 1] Submit to submit@gov.org. Drop box delivery.
+[Page 2] Required Documents: Annex 1. Form 3.
+    `.trim();
+    const warnings = computeContentWarnings([text]);
+    assert.ok(warnings.some((w) => w.includes("evaluation criteria")), "should warn about missing evaluation criteria");
+  });
+
+  it("produces no warnings when document has no [Page N] markers", () => {
+    const text = "Just some plain text with no page markers at all.";
+    const warnings = computeContentWarnings([text]);
+    assert.equal(warnings.length, 0, "no warnings when no pages detected — can't tell what's missing");
+  });
+
+  it("produces no warnings when text is null", () => {
+    const warnings = computeContentWarnings([null]);
+    assert.equal(warnings.length, 0);
+  });
+});
