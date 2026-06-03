@@ -480,6 +480,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
               ...(aiResult.clientNameSourcePage !== undefined ? { clientNameSourcePage: aiResult.clientNameSourcePage } : {}),
               ...(aiResult.clientNameSourceQuote !== undefined ? { clientNameSourceQuote: aiResult.clientNameSourceQuote } : {}),
               ...(aiResult.submissionEmailSourcePage !== undefined ? { submissionEmailSourcePage: aiResult.submissionEmailSourcePage } : {}),
+              // Per-field source provenance for contact/location fields (CLAUDE.md requirement)
+              ...(aiResult.contactDetailsSource != null
+                ? { contactDetailsSourceJson: JSON.stringify(aiResult.contactDetailsSource) }
+                : {}),
               // Flag contaminated client name so the export gate can block
               metadataContaminated: contamination.contaminated,
             },

@@ -351,6 +351,11 @@ model Tender {
   clientNameSourcePage     Int?
   clientNameSourceQuote    String?
   submissionEmailSourcePage Int?
+  // JSON map of per-field source provenance for contact/location fields extracted
+  // by AI Analyze. Shape: { [fieldName]: { page: number|null, quote: string|null } }
+  // Covers: clientContactName, clientContactTitle, clientContactEmail,
+  //         clientContactPhone, clientAddress, submissionAddress, country.
+  contactDetailsSourceJson String?
   analysisExtractionStatus String?
   createdAt             DateTime             @default(now())
   updatedAt             DateTime             @updatedAt
