@@ -468,6 +468,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
               ...(aiResult.legalClientName !== undefined ? { legalClientName: aiResult.legalClientName } : {}),
               ...(aiResult.donorAgency !== undefined ? { donorAgency: aiResult.donorAgency } : {}),
               ...(aiResult.implementingAgency !== undefined ? { implementingAgency: aiResult.implementingAgency } : {}),
+              // Full contact/location fields — only update when AI returned a value
+              // to avoid overwriting manually-confirmed data with null on re-runs.
+              ...(aiResult.country != null ? { country: aiResult.country } : {}),
+              ...(aiResult.clientAddress != null ? { clientAddress: aiResult.clientAddress } : {}),
+              ...(aiResult.clientContactName != null ? { clientContactName: aiResult.clientContactName } : {}),
+              ...(aiResult.clientContactTitle != null ? { clientContactTitle: aiResult.clientContactTitle } : {}),
+              ...(aiResult.clientContactEmail != null ? { clientContactEmail: aiResult.clientContactEmail } : {}),
+              ...(aiResult.clientContactPhone != null ? { clientContactPhone: aiResult.clientContactPhone } : {}),
+              ...(aiResult.submissionAddress != null ? { submissionAddress: aiResult.submissionAddress } : {}),
               ...(aiResult.clientNameSourcePage !== undefined ? { clientNameSourcePage: aiResult.clientNameSourcePage } : {}),
               ...(aiResult.clientNameSourceQuote !== undefined ? { clientNameSourceQuote: aiResult.clientNameSourceQuote } : {}),
               ...(aiResult.submissionEmailSourcePage !== undefined ? { submissionEmailSourcePage: aiResult.submissionEmailSourcePage } : {}),

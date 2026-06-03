@@ -952,6 +952,14 @@ export type AIAnalysisResult = {
   clientNameSourcePage?: number | null;
   clientNameSourceQuote?: string | null;
   submissionEmailSourcePage?: number | null;
+  // Additional client/contact fields for full CLAUDE.md coverage
+  country?: string | null;
+  clientAddress?: string | null;
+  clientContactName?: string | null;
+  clientContactTitle?: string | null;
+  clientContactEmail?: string | null;
+  clientContactPhone?: string | null;
+  submissionAddress?: string | null;
 };
 
 // Allowed enum values for the classification fields. Exported so analysis
@@ -1222,6 +1230,13 @@ function mergeAnalysisResults(parts: AIAnalysisResult[]): AIAnalysisResult {
   const legalClientName = firstDefined((p) => p.legalClientName ?? undefined);
   const donorAgency = firstDefined((p) => p.donorAgency ?? undefined);
   const implementingAgency = firstDefined((p) => p.implementingAgency ?? undefined);
+  const country = firstDefined((p) => p.country ?? undefined);
+  const clientAddress = firstDefined((p) => p.clientAddress ?? undefined);
+  const clientContactName = firstDefined((p) => p.clientContactName ?? undefined);
+  const clientContactTitle = firstDefined((p) => p.clientContactTitle ?? undefined);
+  const clientContactEmail = firstDefined((p) => p.clientContactEmail ?? undefined);
+  const clientContactPhone = firstDefined((p) => p.clientContactPhone ?? undefined);
+  const submissionAddress = firstDefined((p) => p.submissionAddress ?? undefined);
   const clientNameSourcePage = firstDefined((p) => p.clientNameSourcePage ?? undefined);
   const clientNameSourceQuote = firstDefined((p) => p.clientNameSourceQuote ?? undefined);
   const submissionEmailSourcePage = firstDefined((p) => p.submissionEmailSourcePage ?? undefined);
@@ -1241,6 +1256,13 @@ function mergeAnalysisResults(parts: AIAnalysisResult[]): AIAnalysisResult {
     legalClientName: legalClientName ?? null,
     donorAgency: donorAgency ?? null,
     implementingAgency: implementingAgency ?? null,
+    country: country ?? null,
+    clientAddress: clientAddress ?? null,
+    clientContactName: clientContactName ?? null,
+    clientContactTitle: clientContactTitle ?? null,
+    clientContactEmail: clientContactEmail ?? null,
+    clientContactPhone: clientContactPhone ?? null,
+    submissionAddress: submissionAddress ?? null,
     clientNameSourcePage: clientNameSourcePage ?? null,
     clientNameSourceQuote: clientNameSourceQuote ?? null,
     submissionEmailSourcePage: submissionEmailSourcePage ?? null,
@@ -1254,7 +1276,13 @@ async function analyzeOneChunk(tenderContent: string, chunkIndex: number, totalC
 Analyze the tender and return ONLY a valid JSON object — no explanation, no markdown fences, no code blocks.
 
 ## ANALYSIS PROCESS (think step by step before writing JSON):
-Step 1 — Identify: client/procuring entity name, legal client name (if different), donor/funding agency (if any), implementing agency (if different from procuring entity), tender title, tender reference, deadline, submission method, email recipients, exact subject line required, country/location. For each client entity found, note the page number where it appears and a short verbatim quote.
+Step 1 — Identify ALL client/contact details:
+  • Procuring entity name (official contracting authority), legal client name if explicitly different, donor/funding agency, implementing agency if separate.
+  • Country and project location/city.
+  • Client postal/mailing address.
+  • Contact person: full name, job title/role, email address, phone/mobile.
+  • Submission address (physical address where bids must be delivered, if stated).
+  For each entity or contact found, note the page number and a verbatim 1–2 sentence quote proving the extraction.
 Step 2 — Detect: is financial proposal excluded? Is this technical-only? Are there shortlisting stages?
 Step 3 — Extract SECTIONS: what sections must the proposal contain (Company Profile, Relevant Experience, Technical Approach, Additional Information, etc.)?
 Step 4 — Extract EVALUATION CRITERIA: what will evaluators score and how? IMPORTANT — capture numeric WEIGHTS (e.g., "Technical 70%, Financial 30%", "Relevant Experience 25 points", sub-criteria weights). If a weight is stated anywhere in the document (criteria table, scoring matrix, or prose), include it verbatim in evaluationMethodology and in the per-criterion weights array.
@@ -1310,6 +1338,13 @@ JSON structure required:
   "legalClientName": "full legal name if explicitly stated and different from procuringEntityName, or null",
   "donorAgency": "donor or funding agency if mentioned (e.g. World Bank, UNDP, KfW, AfDB), or null",
   "implementingAgency": "project owner or implementing agency if different from procuring entity, or null",
+  "country": "country where the project is located or the procuring entity is based, or null",
+  "clientAddress": "postal/mailing address of the procuring entity, or null",
+  "clientContactName": "full name of the named contact person at the procuring entity, or null",
+  "clientContactTitle": "job title or role of the contact person, or null",
+  "clientContactEmail": "email address of the contact person (NOT the submission email), or null",
+  "clientContactPhone": "phone or mobile number of the contact person, or null",
+  "submissionAddress": "physical address where hard-copy bids must be delivered (distinct from submission email), or null",
   "clientNameSourcePage": page_number_integer_or_null,
   "clientNameSourceQuote": "verbatim 1-2 sentence snippet from which the client name was extracted, or null",
   "submissionEmailSourcePage": page_number_integer_or_null
@@ -1354,6 +1389,13 @@ ${tenderContent}`;
         legalClientName: typeof parsed.legalClientName === "string" ? parsed.legalClientName.trim().slice(0, 240) || null : null,
         donorAgency: typeof parsed.donorAgency === "string" ? parsed.donorAgency.trim().slice(0, 240) || null : null,
         implementingAgency: typeof parsed.implementingAgency === "string" ? parsed.implementingAgency.trim().slice(0, 240) || null : null,
+        country: typeof parsed.country === "string" ? parsed.country.trim().slice(0, 100) || null : null,
+        clientAddress: typeof parsed.clientAddress === "string" ? parsed.clientAddress.trim().slice(0, 500) || null : null,
+        clientContactName: typeof parsed.clientContactName === "string" ? parsed.clientContactName.trim().slice(0, 200) || null : null,
+        clientContactTitle: typeof parsed.clientContactTitle === "string" ? parsed.clientContactTitle.trim().slice(0, 200) || null : null,
+        clientContactEmail: typeof parsed.clientContactEmail === "string" ? parsed.clientContactEmail.trim().slice(0, 300) || null : null,
+        clientContactPhone: typeof parsed.clientContactPhone === "string" ? parsed.clientContactPhone.trim().slice(0, 100) || null : null,
+        submissionAddress: typeof parsed.submissionAddress === "string" ? parsed.submissionAddress.trim().slice(0, 500) || null : null,
         clientNameSourcePage: typeof parsed.clientNameSourcePage === "number" && Number.isInteger(parsed.clientNameSourcePage) && parsed.clientNameSourcePage > 0 ? parsed.clientNameSourcePage : null,
         clientNameSourceQuote: typeof parsed.clientNameSourceQuote === "string" ? parsed.clientNameSourceQuote.trim().slice(0, 500) || null : null,
         submissionEmailSourcePage: typeof parsed.submissionEmailSourcePage === "number" && Number.isInteger(parsed.submissionEmailSourcePage) && parsed.submissionEmailSourcePage > 0 ? parsed.submissionEmailSourcePage : null,
