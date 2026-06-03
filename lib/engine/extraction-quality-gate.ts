@@ -13,10 +13,10 @@
 //   REGEX_FALLBACK_FROM_WEAK_EXTRACTION
 //   EXTRACTION_CORRUPTED_AI_SKIPPED
 //
-// The TenderFile fields consumed here (extractionScore, totalPages,
-// extractedPages, ocrPages, failedPages) may be null when the app has
-// not yet recorded per-file extraction metrics — in that case the gate
-// treats the file as partially extracted but not critically failed.
+// Unknown page counts are intentionally treated as weak for generation/export:
+// production cannot prove which tender pages were extracted when totalPages is
+// null. The UI can still show a partial/legacy status, but server-side final
+// generation must not silently proceed on unknown extraction coverage.
 
 export type ExtractionStatus =
   | "FULL_EXTRACTION_AI_ANALYZED"
@@ -172,6 +172,36 @@ export type ExtractionFileMetrics = {
   failedPages: number | null;
 };
 
+export type ExtractionFileForCoverage = ExtractionFileMetrics & {
+  id?: string | null;
+  fileName?: string | null;
+  extractionMethod?: string | null;
+  characterCount?: number | null;
+};
+
+export type ExtractionPageIssue = {
+  fileName: string;
+  page: number | null;
+  reason: string;
+  score: number | null;
+};
+
+export type ExtractionCoverageReport = {
+  totalPagesKnown: boolean;
+  totalPages: number;
+  perfectlyExtractedPages: number;
+  ocrPages: number;
+  failedPages: number;
+  weakPages: number;
+  extractedPages: number;
+  extractionCoveragePercent: number;
+  lowConfidencePages: ExtractionPageIssue[];
+  failedPageList: ExtractionPageIssue[];
+  recommendedActions: string[];
+  blockingReasons: string[];
+  partiallyExtracted: boolean;
+};
+
 // Backwards-compatible alias used by ai-analyze route
 export type TenderFileQuality = ExtractionFileMetrics;
 
@@ -197,37 +227,161 @@ function hasFailedPages(files: ExtractionFileMetrics[]): boolean {
   return files.some((f) => f.failedPages !== null && (f.failedPages as number) > 0);
 }
 
+function hasUnknownPageCount(files: ExtractionFileMetrics[]): boolean {
+  return files.some((f) => f.totalPages === null || f.totalPages === undefined || f.totalPages <= 0);
+}
+
+function hasIncompletePageCoverage(files: ExtractionFileMetrics[]): boolean {
+  return files.some((f) => {
+    if (f.totalPages === null || f.totalPages === undefined || f.extractedPages === null || f.extractedPages === undefined) return true;
+    return f.extractedPages < f.totalPages;
+  });
+}
+
+function clampCount(value: number | null | undefined): number {
+  if (!Number.isFinite(value ?? NaN)) return 0;
+  return Math.max(0, Math.floor(value as number));
+}
+
+function fileLabel(file: ExtractionFileForCoverage, index: number): string {
+  return file.fileName?.trim() || file.id?.trim() || `Tender file ${index + 1}`;
+}
+
+function pushPageRange(list: ExtractionPageIssue[], fileName: string, start: number, count: number, reason: string, score: number | null) {
+  for (let i = 0; i < Math.min(count, 25); i++) list.push({ fileName, page: start + i, reason, score });
+  if (count > 25) list.push({ fileName, page: null, reason: `${reason} (${count - 25} additional page(s) not listed)`, score });
+}
+
 export function deriveExtractionStatus(
   files: ExtractionFileMetrics[],
   textSamples?: (string | null | undefined)[],
 ): ExtractionStatus {
   if (files.length === 0) return "EXTRACTION_WEAK_REVIEW_REQUIRED";
 
-  // If text samples are provided and every non-empty sample is corrupted,
-  // the extraction cannot be trusted regardless of score metrics.
+  // If text samples are provided and any non-empty sample is corrupted,
+  // block regardless of score metrics (a single corrupted file contaminates).
   if (textSamples && textSamples.length > 0) {
     const nonEmpty = textSamples.filter((t): t is string => Boolean(t && t.trim().length > 20));
-    if (nonEmpty.length > 0 && nonEmpty.every((t) => isExtractionCorrupted(t))) {
+    if (nonEmpty.length > 0 && nonEmpty.some((t) => isExtractionCorrupted(t))) {
       return "EXTRACTION_CORRUPTED_AI_SKIPPED";
     }
   }
 
+  if (hasUnknownPageCount(files)) return "EXTRACTION_WEAK_REVIEW_REQUIRED";
   const avg = averageScore(files);
-  if (avg === null) return "PARTIAL_EXTRACTION_AI_ANALYZED";
+  if (avg === null) return "EXTRACTION_WEAK_REVIEW_REQUIRED";
   if (avg < WEAK_MIN_SCORE) return "REGEX_FALLBACK_FROM_WEAK_EXTRACTION";
   if (avg < PARTIAL_EXTRACTION_MIN_SCORE) return "EXTRACTION_WEAK_REVIEW_REQUIRED";
-  if (avg >= FULL_EXTRACTION_MIN_SCORE && !hasOcrPages(files) && !hasFailedPages(files)) {
+  if (avg >= FULL_EXTRACTION_MIN_SCORE && !hasOcrPages(files) && !hasFailedPages(files) && !hasIncompletePageCoverage(files)) {
     return "FULL_EXTRACTION_AI_ANALYZED";
   }
   return "PARTIAL_EXTRACTION_AI_ANALYZED";
 }
 
+export function summarizeExtractionCoverage(files: ExtractionFileForCoverage[]): ExtractionCoverageReport {
+  let totalPages = 0;
+  let perfectlyExtractedPages = 0;
+  let ocrPages = 0;
+  let failedPages = 0;
+  let extractedPages = 0;
+  const lowConfidencePages: ExtractionPageIssue[] = [];
+  const failedPageList: ExtractionPageIssue[] = [];
+  const recommendedActions = new Set<string>();
+  const blockingReasons = new Set<string>();
+  let totalPagesKnown = files.length > 0;
+
+  files.forEach((file, index) => {
+    const name = fileLabel(file, index);
+    const score = file.extractionScore ?? null;
+    const fileTotal = clampCount(file.totalPages);
+    const fileExtracted = clampCount(file.extractedPages);
+    const fileOcr = clampCount(file.ocrPages);
+    const fileFailed = clampCount(file.failedPages);
+
+    if (fileTotal <= 0) {
+      totalPagesKnown = false;
+      lowConfidencePages.push({ fileName: name, page: null, reason: "Total page count unknown", score });
+      blockingReasons.add("Total page count is unknown for one or more tender files.");
+      recommendedActions.add("Re-extract PDF");
+      recommendedActions.add("Run OCR");
+      return;
+    }
+
+    totalPages += fileTotal;
+    extractedPages += Math.min(fileExtracted, fileTotal);
+    ocrPages += Math.min(fileOcr, fileTotal);
+    failedPages += Math.min(fileFailed, fileTotal);
+
+    const missingPages = Math.max(0, fileTotal - fileExtracted);
+    const weakByScore = score === null || score < FULL_EXTRACTION_MIN_SCORE;
+    const filePerfect = Math.max(0, Math.min(fileTotal, fileExtracted) - fileOcr - fileFailed - (weakByScore ? missingPages : 0));
+    if (!weakByScore && fileFailed === 0 && missingPages === 0) perfectlyExtractedPages += filePerfect;
+
+    if (score === null) {
+      lowConfidencePages.push({ fileName: name, page: null, reason: "Extraction score unknown", score });
+      recommendedActions.add("Re-extract PDF");
+      blockingReasons.add("Extraction confidence score is unknown for one or more tender files.");
+    } else if (score < PARTIAL_EXTRACTION_MIN_SCORE) {
+      pushPageRange(lowConfidencePages, name, 1, fileTotal, "Low extraction confidence", score);
+      recommendedActions.add("Run OCR");
+      recommendedActions.add("Upload clearer scan");
+      blockingReasons.add("Extraction score is weak for one or more tender files.");
+    } else if (score < FULL_EXTRACTION_MIN_SCORE) {
+      pushPageRange(lowConfidencePages, name, 1, Math.max(1, fileTotal - filePerfect), "Review partial extraction confidence", score);
+      recommendedActions.add("Continue only if extraction is acceptable");
+    }
+
+    if (fileFailed > 0) {
+      pushPageRange(failedPageList, name, Math.max(1, fileExtracted - fileFailed + 1), fileFailed, "Page extraction failed or blank", score);
+      recommendedActions.add("Re-extract PDF");
+      recommendedActions.add("Run OCR");
+      blockingReasons.add("One or more tender pages failed extraction.");
+    }
+    if (missingPages > 0) {
+      pushPageRange(failedPageList, name, fileExtracted + 1, missingPages, "Page not text-extracted", score);
+      recommendedActions.add("Re-extract PDF");
+      recommendedActions.add("Run OCR");
+      blockingReasons.add("One or more tender pages were not extracted.");
+    }
+    if (fileOcr > 0) recommendedActions.add("Continue only if extraction is acceptable");
+  });
+
+  const weakPages = Math.max(0, totalPages - perfectlyExtractedPages - failedPages);
+  const extractionCoveragePercent = totalPages > 0 ? Math.round((perfectlyExtractedPages / totalPages) * 100) : 0;
+  if (files.length === 0) {
+    totalPagesKnown = false;
+    blockingReasons.add("No tender files are available for extraction quality review.");
+    recommendedActions.add("Upload clearer scan");
+  }
+  if (recommendedActions.size === 0) recommendedActions.add("Continue only if extraction is acceptable");
+
+  return {
+    totalPagesKnown,
+    totalPages,
+    perfectlyExtractedPages,
+    ocrPages,
+    failedPages,
+    weakPages,
+    extractedPages,
+    extractionCoveragePercent,
+    lowConfidencePages,
+    failedPageList,
+    recommendedActions: [...recommendedActions],
+    blockingReasons: [...blockingReasons],
+    partiallyExtracted: !totalPagesKnown || weakPages > 0 || failedPages > 0 || ocrPages > 0,
+  };
+}
+
 export function isExtractionAcceptableForGeneration(files: ExtractionFileMetrics[]): boolean {
-  if (files.length === 0) return true;
-  return !files.some((f) => f.extractionScore !== null && (f.extractionScore as number) < CRITICALLY_FAILED_SCORE);
+  if (files.length === 0) return false;
+  if (hasUnknownPageCount(files)) return false;
+  if (hasIncompletePageCoverage(files)) return false;
+  return !files.some((f) => f.extractionScore === null || (f.extractionScore as number) < CRITICALLY_FAILED_SCORE || clampCount(f.failedPages) > 0);
 }
 
 export function isExtractionAcceptableForExport(files: ExtractionFileMetrics[]): boolean {
   if (files.length === 0) return false;
-  return !files.some((f) => f.extractionScore !== null && (f.extractionScore as number) < EXPORT_BLOCK_SCORE);
+  if (hasUnknownPageCount(files)) return false;
+  if (hasIncompletePageCoverage(files)) return false;
+  return !files.some((f) => f.extractionScore === null || (f.extractionScore as number) < EXPORT_BLOCK_SCORE || clampCount(f.failedPages) > 0);
 }

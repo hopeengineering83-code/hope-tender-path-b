@@ -2,7 +2,7 @@ import Link from "next/link";
 import { getSession } from "../lib/auth";
 import { prisma, prismaReady } from "../lib/prisma";
 import { assessExtractionQuality, assessExtractionQualityPerPage } from "../lib/extraction-quality";
-import { isExtractionCorrupted } from "../lib/engine/extraction-quality-gate";
+import { isExtractionCorrupted, summarizeExtractionCoverage } from "../lib/engine/extraction-quality-gate";
 
 const EXTRACTION_STATUS_LABELS: Record<string, string> = {
   FULL_EXTRACTION_AI_ANALYZED: "Full extraction",
@@ -48,10 +48,11 @@ export async function ExtractionQualityPanel({ tenderId }: { tenderId: string })
       isCorrupted &&
       !ocrReason &&
       /OCR required but not configured|set PDF_OCR_ENABLED=true/i.test(extractedText);
+    const quality = assessExtractionQuality(file.extractedText, file.originalFileName || file.fileName);
     return {
       id: file.id,
       fileName: file.originalFileName || file.fileName,
-      quality: assessExtractionQuality(file.extractedText, file.originalFileName || file.fileName),
+      quality,
       perPage: assessExtractionQualityPerPage(file.extractedText),
       totalPages: file.totalPages,
       extractedPages: file.extractedPages,
@@ -64,8 +65,22 @@ export async function ExtractionQualityPanel({ tenderId }: { tenderId: string })
       isCorrupted,
       ocrReason,
       ocrConfigMissing,
+      extractedCharacterCount: quality.characterCount,
     };
   });
+
+  const coverage = summarizeExtractionCoverage(reports.map((item) => ({
+    id: item.id,
+    fileName: item.fileName,
+    totalPages: item.totalPages,
+    extractedPages: item.extractedPages,
+    ocrPages: item.ocrPages,
+    failedPages: item.failedPages,
+    extractionScore: item.extractionScore,
+    extractionMethod: item.extractionMethod,
+    characterCount: item.extractedCharacterCount,
+  })));
+
   const blockers = reports.filter((item) => item.quality.severity === "FAILED" || item.quality.severity === "POOR");
   const warnings = reports.filter((item) => item.quality.severity === "WARNING");
   const anyCorrupted = reports.some((item) => item.isCorrupted);
@@ -74,7 +89,7 @@ export async function ExtractionQualityPanel({ tenderId }: { tenderId: string })
   const analysisStatus = tender.analysisExtractionStatus;
   const isCorruptionBlocked = analysisStatus === "EXTRACTION_CORRUPTED_AI_SKIPPED" || anyCorrupted;
   // Never show "Extracted text appears usable" when extraction is confirmed corrupted.
-  const ready = blockers.length === 0 && !anyCorrupted && analysisStatus !== "EXTRACTION_CORRUPTED_AI_SKIPPED";
+  const ready = blockers.length === 0 && !anyCorrupted && analysisStatus !== "EXTRACTION_CORRUPTED_AI_SKIPPED" && coverage.totalPagesKnown && coverage.failedPages === 0;
   const isContaminated = tender.metadataContaminated;
 
   return (
@@ -84,6 +99,7 @@ export async function ExtractionQualityPanel({ tenderId }: { tenderId: string })
           <p className={`text-xs font-semibold uppercase tracking-wide ${ready ? "text-green-700" : "text-red-700"}`}>Extraction quality</p>
           <h2 className="mt-1 text-lg font-bold text-slate-900">{ready ? "Extracted text appears usable" : "Extraction quality blockers found"}</h2>
           <p className="mt-1 text-sm text-slate-600">Preflight check for scanned PDFs, failed extraction, low text density, legacy DOC files, and table-heavy tender documents.</p>
+          <p className="mt-1 text-xs text-slate-500">Extraction coverage: {coverage.perfectlyExtractedPages}/{coverage.totalPagesKnown ? coverage.totalPages : "?"} perfectly extracted page(s) · {coverage.extractionCoveragePercent}% coverage</p>
         </div>
         <div className="flex items-center gap-2">
           {analysisStatus && (
@@ -105,6 +121,45 @@ export async function ExtractionQualityPanel({ tenderId }: { tenderId: string })
           </Link>
         </div>
       </div>
+
+      {/* Coverage stats grid */}
+      <div className="mt-4 grid gap-3 md:grid-cols-5">
+        <div className="rounded-xl border bg-white p-3 text-sm"><p className="text-xs uppercase text-slate-500">Total pages</p><p className="mt-1 text-xl font-bold text-slate-900">{coverage.totalPagesKnown ? coverage.totalPages : "Unknown"}</p></div>
+        <div className="rounded-xl border bg-white p-3 text-sm"><p className="text-xs uppercase text-slate-500">Perfect pages</p><p className="mt-1 text-xl font-bold text-slate-900">{coverage.perfectlyExtractedPages}</p></div>
+        <div className="rounded-xl border bg-white p-3 text-sm"><p className="text-xs uppercase text-slate-500">OCR pages</p><p className="mt-1 text-xl font-bold text-slate-900">{coverage.ocrPages}</p></div>
+        <div className="rounded-xl border bg-white p-3 text-sm"><p className="text-xs uppercase text-slate-500">Weak pages</p><p className="mt-1 text-xl font-bold text-slate-900">{coverage.weakPages}</p></div>
+        <div className="rounded-xl border bg-white p-3 text-sm"><p className="text-xs uppercase text-slate-500">Failed pages</p><p className="mt-1 text-xl font-bold text-slate-900">{coverage.failedPages}</p></div>
+      </div>
+
+      {(coverage.lowConfidencePages.length > 0 || coverage.failedPageList.length > 0 || coverage.recommendedActions.length > 0) && (
+        <div className="mt-4 rounded-xl border border-amber-200 bg-white p-4 text-sm">
+          <p className="font-semibold text-slate-900">Extraction review list and recommended action</p>
+          <div className="mt-3 grid gap-4 lg:grid-cols-3">
+            <div>
+              <p className="text-xs font-semibold uppercase text-amber-700">Low-confidence pages</p>
+              {coverage.lowConfidencePages.length === 0 ? <p className="mt-1 text-xs text-slate-500">None reported.</p> : (
+                <ul className="mt-1 list-disc space-y-1 pl-5 text-xs text-slate-700">
+                  {coverage.lowConfidencePages.slice(0, 8).map((page, index) => <li key={`${page.fileName}-${page.page ?? "file"}-${index}`}>{page.fileName}{page.page ? ` p.${page.page}` : ""}: {page.reason}</li>)}
+                </ul>
+              )}
+            </div>
+            <div>
+              <p className="text-xs font-semibold uppercase text-red-700">Failed / missing pages</p>
+              {coverage.failedPageList.length === 0 ? <p className="mt-1 text-xs text-slate-500">None reported.</p> : (
+                <ul className="mt-1 list-disc space-y-1 pl-5 text-xs text-slate-700">
+                  {coverage.failedPageList.slice(0, 8).map((page, index) => <li key={`${page.fileName}-${page.page ?? "file"}-${index}`}>{page.fileName}{page.page ? ` p.${page.page}` : ""}: {page.reason}</li>)}
+                </ul>
+              )}
+            </div>
+            <div>
+              <p className="text-xs font-semibold uppercase text-slate-700">Recommended action</p>
+              <ul className="mt-1 list-disc space-y-1 pl-5 text-xs text-slate-700">
+                {coverage.recommendedActions.map((action) => <li key={action}>{action}</li>)}
+              </ul>
+            </div>
+          </div>
+        </div>
+      )}
 
       {!ready && !isCorruptionBlocked && (
         <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5 text-xs text-amber-900">
