@@ -196,6 +196,19 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
     });
   }
 
+  // Contaminated client name — portal navigation text, status banners, or
+  // unrelated tender alerts ended up in the extracted client name.
+  // Generating with a contaminated name produces cover pages and addressing
+  // blocks with portal garbage. The /generate route hard-blocks on this too;
+  // surface it here so the panel shows blocked before the user tries to generate.
+  if ((tender as { metadataContaminated?: boolean | null }).metadataContaminated) {
+    blockers.push({
+      code: "METADATA_CONTAMINATED",
+      message: "Client/procuring entity metadata is contaminated with portal navigation text or unrelated tender alerts. Correct the Client Name field and re-run AI Analyze before generating documents.",
+      nextAction: "EDIT_TENDER_METADATA",
+    });
+  }
+
   if (analysisQuality.severity === "POOR" || analysisQuality.severity === "UNSAFE") {
     blockers.push({ code: "ANALYSIS_QUALITY_POOR", message: `Tender analysis quality is poor (${analysisQuality.score}/100). Re-run AI Analyze / Run Engine and verify evaluation criteria, submission rules, and source references before generation.`, nextAction: "OPEN_ANALYSIS_QUALITY" });
   } else if (analysisQuality.severity === "WARNING") {
