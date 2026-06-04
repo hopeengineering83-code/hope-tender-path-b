@@ -963,6 +963,13 @@ export type AIAnalysisResult = {
   // Per-field source provenance for the contact/location fields above.
   // Stored as JSON in DB column contactDetailsSourceJson.
   contactDetailsSource?: Record<string, { page: number | null; quote: string | null }> | null;
+  // Source traceability for submission method and address
+  submissionMethodSourcePage?: number | null;
+  submissionMethodSourceQuote?: string | null;
+  submissionAddressSourcePage?: number | null;
+  submissionAddressSourceQuote?: string | null;
+  // Per-criterion evaluation source
+  evaluationCriteriaSource?: Array<{ criterion: string; weight: string | null; sourcePage: number | null; sourceQuote: string | null }> | null;
 };
 
 // Allowed enum values for the classification fields. Exported so analysis
@@ -1279,6 +1286,19 @@ function mergeAnalysisResults(parts: AIAnalysisResult[]): AIAnalysisResult {
     clientNameSourcePage: clientNameSourcePage ?? null,
     clientNameSourceQuote: clientNameSourceQuote ?? null,
     submissionEmailSourcePage: submissionEmailSourcePage ?? null,
+    submissionMethodSourcePage: firstDefined((p) => p.submissionMethodSourcePage ?? undefined) ?? null,
+    submissionMethodSourceQuote: firstDefined((p) => p.submissionMethodSourceQuote ?? undefined) ?? null,
+    submissionAddressSourcePage: firstDefined((p) => p.submissionAddressSourcePage ?? undefined) ?? null,
+    submissionAddressSourceQuote: firstDefined((p) => p.submissionAddressSourceQuote ?? undefined) ?? null,
+    evaluationCriteriaSource: (() => {
+      const map = new Map<string, { criterion: string; weight: string | null; sourcePage: number | null; sourceQuote: string | null }>();
+      for (const p of parts) {
+        for (const entry of (p.evaluationCriteriaSource ?? [])) {
+          if (!map.has(entry.criterion)) map.set(entry.criterion, entry);
+        }
+      }
+      return map.size > 0 ? [...map.values()] : null;
+    })(),
   };
 }
 
@@ -1369,7 +1389,14 @@ JSON structure required:
     "clientContactEmail": {"page": page_number_or_null, "quote": "verbatim snippet or null"},
     "clientContactPhone": {"page": page_number_or_null, "quote": "verbatim snippet or null"},
     "submissionAddress": {"page": page_number_or_null, "quote": "verbatim snippet or null"}
-  }
+  },
+  "submissionMethodSourcePage": page_number_integer_or_null,
+  "submissionMethodSourceQuote": "verbatim snippet showing the submission method, or null",
+  "submissionAddressSourcePage": page_number_integer_or_null,
+  "submissionAddressSourceQuote": "verbatim snippet showing the submission address/portal, or null",
+  "evaluationCriteriaSource": [
+    { "criterion": "criterion name", "weight": "weight string or null", "sourcePage": page_or_null, "sourceQuote": "verbatim snippet or null" }
+  ]
 }
 
 TENDER DOCUMENT${chunkLabel} (${tenderContent.length.toLocaleString()} chars):
@@ -1436,6 +1463,23 @@ ${tenderContent}`;
             }
           }
           return Object.keys(result).length > 0 ? result : null;
+        })(),
+        submissionMethodSourcePage: typeof parsed.submissionMethodSourcePage === "number" && Number.isInteger(parsed.submissionMethodSourcePage) && parsed.submissionMethodSourcePage > 0 ? parsed.submissionMethodSourcePage : null,
+        submissionMethodSourceQuote: typeof parsed.submissionMethodSourceQuote === "string" ? parsed.submissionMethodSourceQuote.trim().slice(0, 400) || null : null,
+        submissionAddressSourcePage: typeof parsed.submissionAddressSourcePage === "number" && Number.isInteger(parsed.submissionAddressSourcePage) && parsed.submissionAddressSourcePage > 0 ? parsed.submissionAddressSourcePage : null,
+        submissionAddressSourceQuote: typeof parsed.submissionAddressSourceQuote === "string" ? parsed.submissionAddressSourceQuote.trim().slice(0, 400) || null : null,
+        evaluationCriteriaSource: (() => {
+          if (!Array.isArray(parsed.evaluationCriteriaSource)) return null;
+          const criteria = parsed.evaluationCriteriaSource
+            .filter((c: unknown) => c && typeof c === "object")
+            .map((c: Record<string, unknown>) => ({
+              criterion: typeof c.criterion === "string" ? c.criterion.trim().slice(0, 200) : "",
+              weight: typeof c.weight === "string" ? c.weight.trim().slice(0, 100) : null,
+              sourcePage: typeof c.sourcePage === "number" && Number.isInteger(c.sourcePage) && c.sourcePage > 0 ? c.sourcePage : null,
+              sourceQuote: typeof c.sourceQuote === "string" ? c.sourceQuote.trim().slice(0, 300) || null : null,
+            }))
+            .filter((c: { criterion: string }) => c.criterion.length > 0);
+          return criteria.length > 0 ? criteria : null;
         })(),
       };
     } catch {

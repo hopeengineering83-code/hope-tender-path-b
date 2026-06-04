@@ -171,7 +171,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
         required: entry.required,
         exactOrder: index + 1,
         format: "DOCX" as const,
-        envelope: "TECHNICAL" as const,
+        envelope: (entry.documentType === "FINANCIAL" ? "FINANCIAL" : "TECHNICAL") as "TECHNICAL" | "FINANCIAL",
         sourceRequirementIds: [],
         pageLimit: null,
         templateRequired: false,
