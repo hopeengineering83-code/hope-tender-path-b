@@ -19,6 +19,7 @@ import {
   isValidCountry,
   canonicalizeCountry,
   isValidClientContact,
+  containsMetadataPlaceholder,
 } from "../lib/engine/metadata-validators";
 
 describe("metadata-validators — client name", () => {
@@ -157,5 +158,14 @@ describe("metadata-validators — client contact", () => {
     assert.equal(isValidClientContact("Dr. Hassan"), true);
     assert.equal(isValidClientContact("Eng. Otieno"), true);
     assert.equal(isValidClientContact("Mr. Smith"), true);
+  });
+});
+
+describe("metadata-validators — placeholders anywhere", () => {
+  it("rejects all production placeholder terms", () => {
+    for (const value of ["Bid-Team to confirm", "TBD", "TBC", "TBA", "N/A", "unknown", "not specified", "pending", "blank"]) {
+      assert.equal(containsMetadataPlaceholder(value), true, `${value} should be treated as placeholder`);
+      assert.equal(isValidClientName(value), false, `${value} should not be a valid client name`);
+    }
   });
 });

@@ -16,6 +16,8 @@ import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../../../lib/rate-limit
 import { sanitizeError } from "../../../../../../lib/sanitize-error";
 import { isExtractionAcceptableForGeneration } from "../../../../../../lib/engine/extraction-quality-gate";
 import { assessExtractionQuality, assessExtractionQualityPerPage } from "../../../../../../lib/extraction-quality";
+import { assessTenderAnalysisQuality } from "../../../../../../lib/analysis-quality";
+import { detectAnalysisSourceWithApproval } from "../../../../../../lib/engine/analysis-source";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 15;
@@ -48,6 +50,17 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
         pageLimit: true,
         analysisExtractionStatus: true,
         submissionMethod: true,
+        submissionAddress: true,
+        submissionEmails: true,
+        deadline: true,
+        notes: true,
+        intakeSummary: true,
+        analysisSummary: true,
+        evaluationMethodology: true,
+        clientName: true,
+        reference: true,
+        country: true,
+        clientContactName: true,
         files: {
           select: {
             id: true,
@@ -135,6 +148,41 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       (tender.exactFileOrder ?? "").trim().length > 2;
     if (tender.requirements.length === 0 && !hasExplicitFiles) {
       return NextResponse.json({ ok: false, error: "Tender has no requirements or explicit file lists — run AI Analyze first, or manually add requirements/exact file names.", code: "NO_REQUIREMENTS" }, { status: 422 });
+    }
+
+    const approvedAnalysisSource = await detectAnalysisSourceWithApproval(prisma, id, tender).catch(() => null);
+    if (tender.requirements.length > 0) {
+      const analysisQuality = assessTenderAnalysisQuality({
+      requirements: tender.requirements,
+      analysisSummary: tender.analysisSummary,
+      evaluationMethodology: tender.evaluationMethodology,
+      submissionNotes: [tender.notes, tender.intakeSummary].filter(Boolean).join("\n\n"),
+      exactFileNaming: tender.exactFileNaming,
+      exactFileOrder: tender.exactFileOrder,
+      clientName: tender.clientName,
+      referenceNumber: tender.reference,
+      country: tender.country,
+      clientContactName: tender.clientContactName,
+      extractedTextLength: tender.files.reduce((sum, file) => sum + (file.extractedText?.length ?? 0), 0),
+      totalPageCount: tender.files.reduce((sum, file) => sum + (file.totalPages ?? 0), 0),
+      deadline: tender.deadline,
+      submissionMethod: tender.submissionMethod,
+      submissionAddress: tender.submissionAddress,
+      submissionEmails: tender.submissionEmails,
+      analysisExtractionStatus: tender.analysisExtractionStatus,
+      analysisSource: approvedAnalysisSource === "HUMAN_APPROVED_REGEX_FALLBACK"
+        ? "HUMAN_APPROVED_REGEX_FALLBACK"
+        : (tender.notes ?? "").split(/\n+/).map((line) => line.trim()).find((line) => /^analysis source:/i.test(line))?.replace(/^analysis source:\s*/i, "").trim() ?? null,
+    });
+      if (analysisQuality.severity === "POOR" || analysisQuality.severity === "UNSAFE") {
+        return NextResponse.json({
+          ok: false,
+          errorCode: "BUILD_PLAN_BLOCKED_UNSAFE_ANALYSIS",
+          error: `Cannot build a trusted submission plan: tender analysis is ${analysisQuality.severity.toLowerCase()} (${analysisQuality.score}/100).`,
+          blockers: analysisQuality.warnings.slice(0, 10),
+          nextAction: "RERUN_AI_ANALYZE",
+        }, { status: 422 });
+      }
     }
 
     const plan = buildSubmissionPlan(tender);

@@ -98,6 +98,11 @@ export function assessTenderAnalysisQuality(params: {
   // to apply UNSAFE caps when analysis returns very few results from a
   // multi-page tender.
   totalPageCount?: number | null;
+  deadline?: Date | string | null;
+  submissionMethod?: string | null;
+  submissionAddress?: string | null;
+  submissionEmails?: string | null;
+  analysisExtractionStatus?: string | null;
 }): AnalysisQualityReport {
   const REGEX_FALLBACK_SCORE_CAP = 45;
   const REGEX_FALLBACK_SOURCES_QA = new Set(["REGEX_FALLBACK_AI_ERROR", "REGEX_FALLBACK", "DETERMINISTIC_FALLBACK"]);
@@ -118,6 +123,11 @@ export function assessTenderAnalysisQuality(params: {
   const hasSubmissionNotes = Boolean((params.submissionNotes ?? "").trim());
   const hasExactFileNaming = exactFileNaming.length > 0;
   const hasExactFileOrder = exactFileOrder.length > 0;
+  const hasRequiredDocumentsOrForms = hasExactFileNaming || exactFileNameCount > 0 || requirements.some((req) => /form|annex|schedule|certificate|declaration|document|file|envelope|technical|financial/i.test(`${req.title ?? ""} ${req.description ?? ""} ${req.requirementType ?? ""}`));
+  const hasDeadline = Boolean(params.deadline);
+  const hasSubmissionMethodOrEndpoint = Boolean((params.submissionMethod ?? "").trim() || (params.submissionAddress ?? "").trim() || (params.submissionEmails ?? "").trim());
+  const extractionStatusText = String(params.analysisExtractionStatus ?? "").toUpperCase();
+  const extractionUnsafe = /EXTRACTION_CORRUPTED|OCR_REQUIRED|EXTRACTION_WEAK_REVIEW_REQUIRED|REGEX_FALLBACK_FROM_WEAK_EXTRACTION/.test(extractionStatusText);
   const allAnalysisText = `${params.analysisSummary ?? ""}\n${params.evaluationMethodology ?? ""}\n${params.submissionNotes ?? ""}\n${requirements.map((req) => `${req.title ?? ""} ${req.description ?? ""} ${req.restrictions ?? ""}`).join("\n")}`;
 
   const likelyHasEvaluationLanguage = textIncludesAny(allAnalysisText, [/evaluation/i, /scor/i, /points?/i, /weight/i, /technical\s+score/i, /financial\s+score/i]);
@@ -248,17 +258,53 @@ export function assessTenderAnalysisQuality(params: {
   let isUnsafe = false;
   if (pageCount >= 5) {
     if (requirementCount < 3) {
-      warnings.push('Analysis extracted fewer than 3 requirements from a multi-page tender — result is unreliable.');
+      warnings.push("Analysis extracted fewer than 3 requirements from a multi-page tender — result is unreliable.");
       score = Math.min(score, 25);
       isUnsafe = true;
     }
-    if (sourceReferencedCount === 0 && requirementCount > 0) {
-      warnings.push('No requirements have source page or quote references — analysis cannot be verified.');
+    if (mandatoryCount === 0) {
+      warnings.push("Analysis extracted zero mandatory requirements from a multi-page tender.");
       score = Math.min(score, 30);
-      if (!isUnsafe) {
-        // POOR is set below; only escalate to UNSAFE when combined with other hard failures
-      }
+      isUnsafe = true;
     }
+    if (sourceReferencedCount === 0) {
+      warnings.push("No requirements have source page or quote references — analysis cannot be verified.");
+      score = Math.min(score, 30);
+      isUnsafe = true;
+    }
+    if (!isValidClientName(params.clientName)) {
+      warnings.push("No valid client/procuring entity is available for this multi-page tender.");
+      score = Math.min(score, 35);
+      isUnsafe = true;
+    }
+    if (!hasDeadline) {
+      warnings.push("Deadline is missing from extracted/manual metadata for this multi-page tender.");
+      score = Math.min(score, 40);
+      isUnsafe = true;
+    }
+    if (!hasSubmissionMethodOrEndpoint) {
+      warnings.push("Submission method or endpoint/address/email is missing for this multi-page tender.");
+      score = Math.min(score, 40);
+      isUnsafe = true;
+    }
+    if (!hasEvaluationMethodology) {
+      warnings.push("Evaluation criteria/weights are missing for this multi-page tender.");
+      score = Math.min(score, 40);
+      isUnsafe = true;
+    }
+    if (!hasRequiredDocumentsOrForms) {
+      warnings.push("Required documents/forms are not known from exact file names or extracted requirements.");
+      score = Math.min(score, 40);
+      isUnsafe = true;
+    }
+  }
+  if (extractionUnsafe) {
+    warnings.push("Extraction status is weak/corrupted/OCR-required; analysis cannot be trusted for downstream gates.");
+    score = Math.min(score, 25);
+    isUnsafe = true;
+  }
+  if (isRegexFallback) {
+    isUnsafe = true;
   }
 
   score = Math.max(0, Math.min(100, score));

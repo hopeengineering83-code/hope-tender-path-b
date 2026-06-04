@@ -143,6 +143,17 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
 
   if (!tender) return null;
 
+  const queryRaw = (client as unknown as { $queryRaw?: <T = unknown>(strings: TemplateStringsArray, ...values: unknown[]) => Promise<T> }).$queryRaw;
+  const [{ extractedTextLength, totalPageCount }] = queryRaw
+    ? await queryRaw<Array<{ extractedTextLength: number; totalPageCount: number }>>`
+        SELECT
+          COALESCE(SUM(char_length("extractedText")), 0)::int AS "extractedTextLength",
+          COALESCE(SUM(COALESCE("totalPages", 0)), 0)::int AS "totalPageCount"
+        FROM "TenderFile"
+        WHERE "tenderId" = ${tenderId}
+      `.catch(() => [{ extractedTextLength: 0, totalPageCount: 0 }])
+    : [{ extractedTextLength: 0, totalPageCount: 0 }];
+
   // Check derived-draft plan state (generatedDocuments not in main query).
   // Defensive: test mocks may not implement generatedDocument — default to 0 on any error.
   const genDocModel = (client as unknown as Record<string, unknown>).generatedDocument as undefined | { count: (q: unknown) => Promise<number> };
@@ -188,6 +199,13 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
     country: tender.country,
     clientContactName: tender.clientContactName,
     matchingScore: matchingQuality.score,
+    extractedTextLength,
+    totalPageCount,
+    deadline: tender.deadline,
+    submissionMethod: tender.submissionMethod,
+    submissionAddress: tender.submissionAddress,
+    submissionEmails: tender.submissionEmails,
+    analysisExtractionStatus: tender.analysisExtractionStatus,
     selectedReviewedExperts: tender.expertMatches.filter((m) => m.isSelected && m.expert.trustLevel === "REVIEWED").length,
     selectedReviewedProjects: tender.projectMatches.filter((m) => m.isSelected && m.project.trustLevel === "REVIEWED").length,
     analysisSource: (tender.notes ?? "").split(/\n+/).map((l) => l.trim()).find((l) => /^analysis source:/i.test(l))?.replace(/^analysis source:\s*/i, "").trim() ?? null,

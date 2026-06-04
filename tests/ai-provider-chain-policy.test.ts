@@ -3,30 +3,38 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 const source = readFileSync("lib/ai.ts", "utf8");
+const canonical = ["gemini", "openai", "mistral", "together", "deepseek", "groq", "openrouter", "anthropic"];
 
-function chainFor(useCase: string): string[] {
-  const match = source.match(new RegExp(`${useCase}:\\s*\\[([^\\]]+)\\]`));
-  assert.ok(match, `Missing ${useCase} provider chain`);
+function canonicalChain(): string[] {
+  const match = source.match(/CANONICAL_PROVIDER_CHAIN[^=]*=\s*\[([^\]]+)\]/);
+  assert.ok(match, "Missing CANONICAL_PROVIDER_CHAIN");
   return Array.from(match[1].matchAll(/"([^"]+)"/g)).map((m) => m[1]);
 }
 
+function chainFor(useCase: string): string[] {
+  const direct = source.match(new RegExp(`${useCase}:\\s*\\[([^\\]]+)\\]`));
+  if (direct) return Array.from(direct[1].matchAll(/"([^"]+)"/g)).map((m) => m[1]);
+  const spread = source.match(new RegExp(`${useCase}:\\s*\\[\\.\\.\\.CANONICAL_PROVIDER_CHAIN\\]`));
+  assert.ok(spread, `Missing ${useCase} provider chain`);
+  return canonicalChain();
+}
+
 describe("AI provider chain policy", () => {
-  it("keeps Claude/Anthropic last and matches the approved default chain", () => {
-    assert.deepEqual(chainFor("default"), ["openai", "gemini", "mistral", "deepseek", "groq", "together", "openrouter", "anthropic"]);
+  it("keeps the required canonical provider chain with Claude/Anthropic last", () => {
+    assert.deepEqual(canonicalChain(), canonical);
   });
 
-  it("matches the approved extraction/analyze chain", () => {
-    assert.deepEqual(chainFor("extraction"), ["gemini", "openai", "mistral", "together", "deepseek", "groq", "openrouter", "anthropic"]);
+  it("uses the canonical chain for every use case", () => {
+    for (const useCase of ["default", "extraction", "proposal", "validation", "fast"]) {
+      assert.deepEqual(chainFor(useCase), canonical, `${useCase} chain mismatch`);
+    }
   });
 
-  it("matches the approved proposal and validation chains", () => {
-    const expected = ["openai", "gemini", "mistral", "deepseek", "together", "groq", "openrouter", "anthropic"];
-    assert.deepEqual(chainFor("proposal"), expected);
-    assert.deepEqual(chainFor("validation"), expected);
-  });
-
-  it("matches the approved fast/cheap chain", () => {
-    assert.deepEqual(chainFor("fast"), ["groq", "together", "deepseek", "mistral", "gemini", "openai", "openrouter", "anthropic"]);
+  it("documents and implements proposal/section generation in the required order", () => {
+    assert.match(source, /Provider chain for proposal generation: gemini → openai → mistral → together → deepseek → groq → openrouter → anthropic/);
+    assert.match(source, /Provider chain for sections: gemini → openai → mistral → together → deepseek → groq → openrouter → anthropic/);
+    assert.ok(source.indexOf("// Claude (Anthropic) — last resort") > source.indexOf("// Groq/OpenRouter tail"));
+    assert.ok(source.indexOf("// Claude — last resort") > source.indexOf("// Groq/OpenRouter section tail"));
   });
 });
 

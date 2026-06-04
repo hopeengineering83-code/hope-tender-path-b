@@ -32,8 +32,10 @@ export async function AnalysisQualityPanel({ tenderId }: { tenderId: string }) {
   ]);
   if (!tender) return null;
 
-  const [{ extractedChars }] = await prisma.$queryRaw<Array<{ extractedChars: number }>>`
-    SELECT COALESCE(SUM(char_length("extractedText")), 0)::int AS "extractedChars"
+  const [{ extractedChars, totalPageCount }] = await prisma.$queryRaw<Array<{ extractedChars: number; totalPageCount: number }>>`
+    SELECT
+      COALESCE(SUM(char_length("extractedText")), 0)::int AS "extractedChars",
+      COALESCE(SUM(COALESCE("totalPages", 0)), 0)::int AS "totalPageCount"
     FROM "TenderFile"
     WHERE "tenderId" = ${tenderId}
   `;
@@ -66,6 +68,13 @@ export async function AnalysisQualityPanel({ tenderId }: { tenderId: string }) {
     clientContactName: tender.clientContactName,
     matchingScore: matchingQuality.score,
     extractedTextLength: extractedChars,
+    totalPageCount,
+    deadline: tender.deadline,
+    submissionMethod: tender.submissionMethod,
+    submissionAddress: tender.submissionAddress,
+    submissionEmails: tender.submissionEmails,
+    analysisExtractionStatus: tender.analysisExtractionStatus,
+    analysisSource: (tender.notes ?? "").split(/\n+/).map((l) => l.trim()).find((l) => /^analysis source:/i.test(l))?.replace(/^analysis source:\s*/i, "").trim() ?? null,
     selectedReviewedExperts: tender.expertMatches.filter((m) => m.isSelected && m.expert?.trustLevel === "REVIEWED").length,
     selectedReviewedProjects: tender.projectMatches.filter((m) => m.isSelected && m.project?.trustLevel === "REVIEWED").length,
   });

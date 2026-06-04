@@ -179,7 +179,7 @@ describe("analysis-quality — regex fallback score cap", () => {
     assert.ok(report.score > 45, `Expected uncapped score for legacy callers without analysisSource, got ${report.score}`);
   });
 
-  it("severity is POOR under regex fallback even with otherwise healthy analysis", () => {
+  it("severity is UNSAFE under regex fallback even with otherwise healthy analysis", () => {
     const report = assessTenderAnalysisQuality({
       requirements: goodRequirements(15),
       evaluationMethodology: "Technical 70%, Financial 30% — full matrix.",
@@ -191,6 +191,54 @@ describe("analysis-quality — regex fallback score cap", () => {
       analysisSource: "REGEX_FALLBACK_AI_ERROR",
     });
     assert.ok(report.score <= 45);
-    assert.equal(report.severity, "POOR", `Expected POOR severity under regex fallback, got ${report.severity}`);
+    assert.equal(report.severity, "UNSAFE", `Expected UNSAFE severity under regex fallback, got ${report.severity}`);
+  });
+});
+
+describe("analysis-quality — production hard unsafe gates", () => {
+  it("marks multi-page analysis unsafe when critical tender facts are missing", () => {
+    const report = assessTenderAnalysisQuality({
+      requirements: goodRequirements(2),
+      evaluationMethodology: "",
+      submissionNotes: "",
+      clientName: null,
+      totalPageCount: 12,
+      extractedTextLength: 20000,
+    });
+    assert.equal(report.severity, "UNSAFE");
+    assert.ok(report.warnings.some((w) => /fewer than 3 requirements/i.test(w)));
+    assert.ok(report.warnings.some((w) => /deadline is missing/i.test(w)));
+    assert.ok(report.warnings.some((w) => /submission method/i.test(w)));
+  });
+
+  it("marks unapproved regex fallback as unsafe even when the requirement list looks strong", () => {
+    const report = assessTenderAnalysisQuality({
+      requirements: goodRequirements(10),
+      evaluationMethodology: "Technical 70%, Financial 30%",
+      submissionNotes: "Submit by email before deadline.",
+      clientName: "Ministry of Water and Energy",
+      deadline: new Date("2026-07-01T00:00:00Z"),
+      submissionMethod: "Email submission",
+      totalPageCount: 10,
+      extractedTextLength: 20000,
+      analysisSource: "REGEX_FALLBACK_AI_ERROR",
+    });
+    assert.equal(report.severity, "UNSAFE");
+    assert.ok(report.score <= 45);
+  });
+
+  it("marks weak/corrupted extraction status unsafe", () => {
+    const report = assessTenderAnalysisQuality({
+      requirements: goodRequirements(10),
+      evaluationMethodology: "Technical 70%, Financial 30%",
+      submissionNotes: "Submit by email before deadline.",
+      clientName: "Ministry of Roads",
+      deadline: new Date("2026-07-01T00:00:00Z"),
+      submissionMethod: "Portal submission",
+      totalPageCount: 8,
+      extractedTextLength: 20000,
+      analysisExtractionStatus: "OCR_REQUIRED",
+    });
+    assert.equal(report.severity, "UNSAFE");
   });
 });

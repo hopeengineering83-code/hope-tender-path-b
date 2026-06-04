@@ -352,12 +352,14 @@ async function generate(prompt: string, modelName = DEFAULT_GEMINI_MODEL): Promi
 // cooled-down or unconfigured providers are skipped automatically.
 export type AiUseCase = "default" | "extraction" | "proposal" | "validation" | "fast";
 
+export const CANONICAL_PROVIDER_CHAIN: readonly AiProviderName[] = ["gemini", "openai", "mistral", "together", "deepseek", "groq", "openrouter", "anthropic"] as const;
+
 const PROVIDER_CHAINS: Record<AiUseCase, AiProviderName[]> = {
-  default:    ["openai", "gemini", "mistral", "deepseek", "groq", "together", "openrouter", "anthropic"],
+  default:    ["gemini", "openai", "mistral", "together", "deepseek", "groq", "openrouter", "anthropic"],
   extraction: ["gemini", "openai", "mistral", "together", "deepseek", "groq", "openrouter", "anthropic"],
-  proposal:   ["openai", "gemini", "mistral", "deepseek", "together", "groq", "openrouter", "anthropic"],
-  validation: ["openai", "gemini", "mistral", "deepseek", "together", "groq", "openrouter", "anthropic"],
-  fast:       ["groq", "together", "deepseek", "mistral", "gemini", "openai", "openrouter", "anthropic"],
+  proposal:   ["gemini", "openai", "mistral", "together", "deepseek", "groq", "openrouter", "anthropic"],
+  validation: ["gemini", "openai", "mistral", "together", "deepseek", "groq", "openrouter", "anthropic"],
+  fast:       ["gemini", "openai", "mistral", "together", "deepseek", "groq", "openrouter", "anthropic"],
 };
 
 function isProviderEnabled(name: AiProviderName): boolean {
@@ -856,8 +858,8 @@ async function generateWithOpenRouter(prompt: string, systemPrompt: string = DEF
 // OpenRouter. Honours per-provider
 // cooldown and records health so the AI Health panel and AI Analyze
 // diagnostics stay accurate. Returns the text + which provider produced it.
-async function tryTailFallbackProviders(prompt: string, systemPrompt?: string): Promise<{ text: string; provider: "together" | "groq" | "openrouter" } | null> {
-  if (isTogetherEnabled() && !isProviderCooledDown("together")) {
+async function tryTailFallbackProviders(prompt: string, systemPrompt?: string, opts?: { skipTogether?: boolean }): Promise<{ text: string; provider: "together" | "groq" | "openrouter" } | null> {
+  if (!opts?.skipTogether && isTogetherEnabled() && !isProviderCooledDown("together")) {
     const r = await generateWithTogether(prompt, systemPrompt).catch((err) => { recordProviderFailure("together", err); return null; });
     if (r) { recordProviderSuccess("together"); return { text: r, provider: "together" }; }
   }
@@ -3076,21 +3078,11 @@ ${params.doNotUseAsClient.slice(0, 12).map((c) => `- ${c}`).join("\n")}`
 
 Now write the complete technical proposal. Start with the Cover Letter. The evaluator must feel — after the first two pages — that this firm has already delivered this exact project and is simply repeating a proven capability.`;
 
-  // Provider chain for proposal generation: openai → gemini → deepseek → groq → openrouter → anthropic.
+  // Provider chain for proposal generation: gemini → openai → mistral → together → deepseek → groq → openrouter → anthropic.
   // Claude is placed last so Anthropic rate limits do not block proposal generation.
   // lastProposalProvider is set so callers can surface which provider was used.
 
-  // OpenAI — first tier
-  if (isOpenAIEnabled() && !isProviderCooledDown("openai")) {
-    const openAiResult = await generateWithOpenAI(prompt).catch((e) => {
-      console.warn(`[ai] OpenAI failed for proposal: ${e instanceof Error ? e.message : String(e)}`);
-      recordProviderFailure("openai", e);
-      return null;
-    });
-    if (openAiResult) { recordProviderSuccess("openai"); lastProposalProvider = "openai"; return openAiResult; }
-  }
-
-  // Gemini — second tier
+  // Gemini — first tier
   if (apiKey && !isProviderCooledDown("gemini")) {
     try {
       const geminiResult = await generateWithBestModel(prompt);
@@ -3103,6 +3095,16 @@ Now write the complete technical proposal. Start with the Cover Letter. The eval
     }
   }
 
+  // OpenAI — second tier
+  if (isOpenAIEnabled() && !isProviderCooledDown("openai")) {
+    const openAiResult = await generateWithOpenAI(prompt).catch((e) => {
+      console.warn(`[ai] OpenAI failed for proposal: ${e instanceof Error ? e.message : String(e)}`);
+      recordProviderFailure("openai", e);
+      return null;
+    });
+    if (openAiResult) { recordProviderSuccess("openai"); lastProposalProvider = "openai"; return openAiResult; }
+  }
+
   // Mistral — third tier
   if (isMistralEnabled() && !isProviderCooledDown("mistral")) {
     const mistralResult = await generateWithMistral(prompt).catch((e) => {
@@ -3113,7 +3115,13 @@ Now write the complete technical proposal. Start with the Cover Letter. The eval
     if (mistralResult) { recordProviderSuccess("mistral"); lastProposalProvider = "mistral"; return mistralResult; }
   }
 
-  // DeepSeek — fourth tier
+  // Together — fourth tier
+  if (isTogetherEnabled() && !isProviderCooledDown("together")) {
+    const togetherResult = await generateWithTogether(prompt).catch((e) => { recordProviderFailure("together", e); return null; });
+    if (togetherResult) { recordProviderSuccess("together"); lastProposalProvider = "together"; return togetherResult; }
+  }
+
+  // DeepSeek — fifth tier
   if (isDeepSeekEnabled() && !isProviderCooledDown("deepseek")) {
     const deepSeekResult = await generateWithDeepSeek(prompt).catch((e) => {
       console.warn(`[ai] DeepSeek failed for proposal: ${e instanceof Error ? e.message : String(e)}`);
@@ -3123,11 +3131,7 @@ Now write the complete technical proposal. Start with the Cover Letter. The eval
     if (deepSeekResult) { recordProviderSuccess("deepseek"); lastProposalProvider = "deepseek"; return deepSeekResult; }
   }
 
-  // Together/Groq/OpenRouter tail — Claude remains last
-  if (isTogetherEnabled() && !isProviderCooledDown("together")) {
-    const togetherResult = await generateWithTogether(prompt).catch((e) => { recordProviderFailure("together", e); return null; });
-    if (togetherResult) { recordProviderSuccess("together"); lastProposalProvider = "together"; return togetherResult; }
-  }
+  // Groq/OpenRouter tail — Claude remains last
   if (isGroqEnabled() && !isProviderCooledDown("groq")) {
     const groqResult = await generateWithGroq(prompt).catch((e) => { recordProviderFailure("groq", e); return null; });
     if (groqResult) { recordProviderSuccess("groq"); lastProposalProvider = "groq"; return groqResult; }
@@ -3173,7 +3177,7 @@ Now write the complete technical proposal. Start with the Cover Letter. The eval
   }
 
   lastProposalProvider = null;
-  const configured = [isOpenAIEnabled(), Boolean(apiKey), isMistralEnabled(), isDeepSeekEnabled(), isGroqEnabled(), isTogetherEnabled(), isOpenRouterEnabled(), isClaudeEnabled()];
+  const configured = [Boolean(apiKey), isOpenAIEnabled(), isMistralEnabled(), isTogetherEnabled(), isDeepSeekEnabled(), isGroqEnabled(), isOpenRouterEnabled(), isClaudeEnabled()];
   if (!configured.some(Boolean)) {
     throw new Error("No AI provider configured — set OPENAI_API_KEY, GEMINI_API_KEY, MISTRAL_API_KEY, DEEPSEEK_API_KEY, GROQ_API_KEY, TOGETHER_API_KEY, OPENROUTER_API_KEY, or ANTHROPIC_API_KEY in environment variables.");
   }
@@ -3248,25 +3252,10 @@ async function generateOneSection(spec: ProposalSectionSpec): Promise<SectionRes
     );
   }
 
-  // Provider chain for sections: openai → gemini → deepseek → groq → openrouter → anthropic
+  // Provider chain for sections: gemini → openai → mistral → together → deepseek → groq → openrouter → anthropic
   // Claude is tried last so Anthropic rate limits don't block parallel section generation.
 
-  // OpenAI — first tier
-  if (isOpenAIEnabled() && !isProviderCooledDown("openai")) {
-    try {
-      const text = await Promise.race([
-        generateWithOpenAI(spec.userPrompt, spec.systemPrompt, spec.maxOutputTokens ?? 4096),
-        makeSectionTimeout(),
-      ]);
-      if (text && text.trim().length > 0) {
-        return { id: spec.id, title: spec.title, markdown: text, source: "openai", durationMs: Date.now() - t0 };
-      }
-    } catch (err) {
-      console.warn(`[ai] section "${spec.id}" OpenAI failed (${err instanceof Error ? err.message : String(err)}) — trying Gemini.`);
-    }
-  }
-
-  // Gemini — second tier
+  // Gemini — first tier
   if (apiKey && !isProviderCooledDown("gemini")) {
     try {
       // Prepend the section's system-prompt persona to the user prompt so
@@ -3280,7 +3269,22 @@ async function generateOneSection(spec: ProposalSectionSpec): Promise<SectionRes
         return { id: spec.id, title: spec.title, markdown: text, source: "gemini", durationMs: Date.now() - t0 };
       }
     } catch (err) {
-      console.warn(`[ai] section "${spec.id}" Gemini failed (${err instanceof Error ? err.message : String(err)}) — trying DeepSeek.`);
+      console.warn(`[ai] section "${spec.id}" Gemini failed (${err instanceof Error ? err.message : String(err)}) — trying OpenAI.`);
+    }
+  }
+
+  // OpenAI — second tier
+  if (isOpenAIEnabled() && !isProviderCooledDown("openai")) {
+    try {
+      const text = await Promise.race([
+        generateWithOpenAI(spec.userPrompt, spec.systemPrompt, spec.maxOutputTokens ?? 4096),
+        makeSectionTimeout(),
+      ]);
+      if (text && text.trim().length > 0) {
+        return { id: spec.id, title: spec.title, markdown: text, source: "openai", durationMs: Date.now() - t0 };
+      }
+    } catch (err) {
+      console.warn(`[ai] section "${spec.id}" OpenAI failed (${err instanceof Error ? err.message : String(err)}) — trying Mistral.`);
     }
   }
 
@@ -3299,7 +3303,22 @@ async function generateOneSection(spec: ProposalSectionSpec): Promise<SectionRes
     }
   }
 
-  // DeepSeek — fourth tier
+  // Together — fourth tier
+  if (isTogetherEnabled() && !isProviderCooledDown("together")) {
+    try {
+      const text = await Promise.race([
+        generateWithTogether(spec.userPrompt, spec.systemPrompt, spec.maxOutputTokens ?? 4096, "proposal"),
+        makeSectionTimeout(),
+      ]);
+      if (text && text.trim().length > 0) {
+        return { id: spec.id, title: spec.title, markdown: text, source: "together", durationMs: Date.now() - t0 };
+      }
+    } catch (err) {
+      console.warn(`[ai] section "${spec.id}" Together failed (${err instanceof Error ? err.message : String(err)}) — trying DeepSeek.`);
+    }
+  }
+
+  // DeepSeek — fifth tier
   if (isDeepSeekEnabled() && !isProviderCooledDown("deepseek")) {
     try {
       const text = await Promise.race([
@@ -3314,18 +3333,18 @@ async function generateOneSection(spec: ProposalSectionSpec): Promise<SectionRes
     }
   }
 
-  // Together/Groq/OpenRouter section tail.
-  if (!isProviderCooledDown("together") || !isProviderCooledDown("groq") || !isProviderCooledDown("openrouter")) {
+  // Groq/OpenRouter section tail.
+  if (!isProviderCooledDown("groq") || !isProviderCooledDown("openrouter")) {
     try {
       const tail = await Promise.race([
-        tryTailFallbackProviders(spec.userPrompt, spec.systemPrompt),
+        tryTailFallbackProviders(spec.userPrompt, spec.systemPrompt, { skipTogether: true }),
         makeSectionTimeout(),
       ]);
       if (tail && tail.text.trim().length > 0) {
         return { id: spec.id, title: spec.title, markdown: tail.text, source: tail.provider, durationMs: Date.now() - t0 };
       }
     } catch (err) {
-      console.warn(`[ai] section "${spec.id}" Together/Groq/OpenRouter failed (${err instanceof Error ? err.message : String(err)}) — trying Claude.`);
+      console.warn(`[ai] section "${spec.id}" Groq/OpenRouter failed (${err instanceof Error ? err.message : String(err)}) — trying Claude.`);
     }
   }
 

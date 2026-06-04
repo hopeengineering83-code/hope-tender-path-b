@@ -20,11 +20,12 @@ import { mapGenerationError } from "../../../../../lib/engine/structured-generat
 import { computeStoredMetadataPatch, listInvalidStoredFields } from "../../../../../lib/engine/sanitize-stored-metadata";
 import { isValidClientName } from "../../../../../lib/engine/metadata-validators";
 import { repairSourceGrounding } from "../../../../../lib/engine/repair-source-grounding";
-import { assertAnalysisReadyForFinalGeneration } from "../../../../../lib/engine/analysis-source";
+import { assertAnalysisReadyForFinalGeneration, detectAnalysisSourceWithApproval } from "../../../../../lib/engine/analysis-source";
 import { assessTenderMetadataCompleteness } from "../../../../../lib/engine/tender-metadata-completeness";
 import { isExtractionAcceptableForGeneration } from "../../../../../lib/engine/extraction-quality-gate";
 import { hasValidSubmissionPlan } from "../../../../../lib/engine/submission-plan-completeness";
 import { assessExtractionQuality } from "../../../../../lib/extraction-quality";
+import { assessTenderAnalysisQuality } from "../../../../../lib/analysis-quality";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -342,6 +343,40 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }, { status: 422 });
   }
 
+  const approvedAnalysisSource = await detectAnalysisSourceWithApproval(prisma, id, tender).catch(() => null);
+  const analysisQuality = assessTenderAnalysisQuality({
+    requirements: tender.requirements,
+    analysisSummary: tender.analysisSummary,
+    evaluationMethodology: tender.evaluationMethodology,
+    submissionNotes: [tender.notes, tender.intakeSummary].filter(Boolean).join("\n\n"),
+    exactFileNaming: tender.exactFileNaming,
+    exactFileOrder: tender.exactFileOrder,
+    clientName: tender.clientName,
+    referenceNumber: tender.reference,
+    country: tender.country,
+    clientContactName: tender.clientContactName,
+    extractedTextLength: effectiveExtractionFiles.reduce((sum, file) => sum + (file.extractedText?.length ?? 0), 0),
+    totalPageCount: effectiveExtractionFiles.reduce((sum, file) => sum + (file.totalPages ?? 0), 0),
+    deadline: tender.deadline,
+    submissionMethod: tender.submissionMethod,
+    submissionAddress: tender.submissionAddress,
+    submissionEmails: tender.submissionEmails,
+    analysisExtractionStatus: tender.analysisExtractionStatus,
+    analysisSource: approvedAnalysisSource === "HUMAN_APPROVED_REGEX_FALLBACK"
+      ? "HUMAN_APPROVED_REGEX_FALLBACK"
+      : (tender.notes ?? "").split(/\n+/).map((line) => line.trim()).find((line) => /^analysis source:/i.test(line))?.replace(/^analysis source:\s*/i, "").trim() ?? null,
+  });
+  if (analysisQuality.severity === "POOR" || analysisQuality.severity === "UNSAFE") {
+    return NextResponse.json({
+      errorCode: "ANALYSIS_QUALITY_NOT_READY",
+      error: `Generation blocked: tender analysis is ${analysisQuality.severity.toLowerCase()} (${analysisQuality.score}/100).`,
+      blockers: analysisQuality.warnings.slice(0, 10),
+      nextAction: "OPEN_ANALYSIS_QUALITY",
+      diagnosticId: `analysis-quality-${id}`,
+      quality: { severity: analysisQuality.severity, score: analysisQuality.score },
+    }, { status: 422 });
+  }
+
   // ── Submission plan gate ──────────────────────────────────────────────────
   // A valid submission plan (at least one non-SUPERSEDED GeneratedDocument row
   // with a recognised reviewStatus) MUST exist before any full generation run.
@@ -493,9 +528,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       requestId,
     });
     return NextResponse.json({
+      errorCode: analysisGate.code,
       error: analysisGate.message,
       code: analysisGate.code,
+      blockers: [analysisGate.message],
       nextAction: analysisGate.nextAction,
+      diagnosticId: `analysis-source-${id}`,
       details: "Re-run AI Analyze with healthy providers, or POST /api/tenders/[id]/approve-analysis to explicitly approve the current regex-fallback analysis.",
     }, { status: 409 });
   }
@@ -556,6 +594,24 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const plannedTargetFiles = explicitSubmissionScope ? plannedSubmissionTargetFiles(submissionPlan) : [];
   const plannedFileKeys = explicitSubmissionScope ? plannedSubmissionTargetKeys(submissionPlan) : undefined;
 
+  if (explicitSubmissionScope) {
+    const generatedDocsForPlanGate = await prisma.generatedDocument.findMany({
+      where: { tenderId: id, generationStatus: { not: "SUPERSEDED" } },
+      select: { id: true, name: true, exactFileName: true, exactOrder: true, documentType: true, format: true, generationStatus: true },
+    });
+    const missingPlanFilesForGate = findMissingGeneratedDocuments(submissionPlan, generatedDocsForPlanGate);
+    if (missingPlanFilesForGate.length > 0) {
+      return NextResponse.json({
+        errorCode: "SUBMISSION_PLAN_INCOMPLETE",
+        error: "Generation blocked: the built submission plan is incomplete. Re-run Build Plan and confirm all tender-required files before generating.",
+        blockers: missingPlanFilesForGate.slice(0, 20).map((file) => `Missing planned file: ${file.exactFileName}`),
+        nextAction: "BUILD_SUBMISSION_PLAN",
+        diagnosticId: `plan-incomplete-${id}`,
+        missing: missingPlanFilesForGate.map((file) => file.exactFileName),
+      }, { status: 422 });
+    }
+  }
+
   const criticalGaps = await prisma.complianceGap.findMany({ where: { tenderId: id, severity: "CRITICAL", isResolved: false }, select: { title: true, description: true, mitigationPlan: true } });
   const hardBlocks = criticalGaps.filter(criticalGapIsHardBlock);
   const seniorReviewCriticals = criticalGaps.filter((gap) => !criticalGapIsHardBlock(gap));
@@ -601,8 +657,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   advanceJob(job.id, "FETCH");
 
   try {
-    const plannedRecordCount = explicitSubmissionScope ? await time("generate.plan_records", () => ensurePlannedGeneratedDocumentRecords(id, plannedTargetFiles), { tenderId: id }) : 0;
-    if (plannedRecordCount > 0) warnings.push(`${plannedRecordCount} missing tender-required file target(s) were added to the Generated outputs plan before generation.`);
+    const plannedRecordCount = 0;
+    // Full Generate Docs is not allowed to mutate the submission plan. Missing
+    // plan rows are blocked above so repeated generation cannot create duplicate
+    // active document records or silently expand the final-export scope.
     advanceJob(job.id, "AI_GENERATE");
     await time("generate.tender_documents", () => generateTenderDocuments(id, userId), { tenderId: id });
     advanceJob(job.id, "SAVE");
