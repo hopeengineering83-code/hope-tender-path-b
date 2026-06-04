@@ -55,6 +55,7 @@ import { assessTenderMetadataCompleteness } from "./tender-metadata-completeness
 import { detectAnalysisSourceWithApproval, type AnalysisSource } from "./analysis-source";
 import { computeReadinessScore } from "./readiness-scoring";
 import { isStrongSupportLevel, normalizeSupportLevel } from "./requirement-evidence-profile";
+import { isExtractionAcceptableForExport } from "./extraction-quality-gate";
 
 export type FinalReadinessSeverity = "HIGH" | "MEDIUM" | "LOW";
 
@@ -443,6 +444,17 @@ export async function getFinalSubmissionReadiness(
           storagePath: true,
         },
       },
+      // Extraction metrics — needed by isExtractionAcceptableForExport in the
+      // export readiness gate so the panel shows the blocker before export.
+      files: {
+        select: {
+          extractionScore: true,
+          totalPages: true,
+          extractedPages: true,
+          ocrPages: true,
+          failedPages: true,
+        },
+      },
     },
   });
   if (!tender) return null;
@@ -646,6 +658,17 @@ export async function getFinalSubmissionReadiness(
       severity: "HIGH",
       title: "Tender analysis came from the regex fallback (AI providers failed) and has not been human-approved.",
       recommendedAction: "Re-run AI Analyze with healthy providers, or POST /api/tenders/[id]/approve-analysis if you have manually verified the fallback analysis is correct.",
+    });
+  }
+
+  // Extraction quality gate — mirrors the POST /export enforcement so the panel
+  // shows the blocker before the user tries to export, not just after.
+  if (!isExtractionAcceptableForExport(tender.files ?? [])) {
+    tenderLevelBlockers.push({
+      category: "EXTRACTION_QUALITY_INSUFFICIENT",
+      severity: "HIGH",
+      title: "Page extraction quality is insufficient for export (poor coverage, unknown page count, or failed pages).",
+      recommendedAction: "Re-upload a clearer document or run OCR, then re-run AI Analyze before attempting export.",
     });
   }
 
