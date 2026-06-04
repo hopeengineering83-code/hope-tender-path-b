@@ -71,7 +71,12 @@ export type NonCriticalMetadataField =
   | "currency"
   | "numberOfCopiesRequired"
   | "preBidMeetingDate"
-  | "preBidMeetingLocation";
+  | "preBidMeetingLocation"
+  | "clientCity"
+  | "clientWebsite"
+  | "submissionEmailSubject"
+  | "preBidChannel"
+  | "clientRepresentative";
 
 export type MetadataCompletenessInput = {
   // Top-level tender fields
@@ -98,6 +103,12 @@ export type MetadataCompletenessInput = {
   preBidMeetingLocation?: string | null;
   technicalWeight?: number | null;
   financialWeight?: number | null;
+  // Extended client fields (CLAUDE.md items 8–19)
+  clientCity?: string | null;
+  clientWebsite?: string | null;
+  submissionEmailSubject?: string | null;
+  preBidChannel?: string | null;
+  clientRepresentative?: string | null;
 
   // Derived inputs (so we don't need to redo SQL)
   /** Total number of requirement rows extracted from the tender. */
@@ -289,6 +300,11 @@ export function assessTenderMetadataCompleteness(input: MetadataCompletenessInpu
   checkNonCritical("numberOfCopiesRequired", input.numberOfCopiesRequired, "Number of submission copies informs the package handout count.");
   checkNonCritical("preBidMeetingDate", input.preBidMeetingDate, "Pre-bid meeting date informs the bid schedule.");
   checkNonCritical("preBidMeetingLocation", input.preBidMeetingLocation, "Pre-bid meeting location informs the bid schedule.");
+  checkNonCritical("clientCity", input.clientCity, "City/location of the procuring entity improves address blocks.");
+  checkNonCritical("clientWebsite", input.clientWebsite, "Procuring entity website is useful for portal submission links.");
+  checkNonCritical("submissionEmailSubject", input.submissionEmailSubject, "Required email subject line must appear verbatim in the submission email.");
+  checkNonCritical("preBidChannel", input.preBidChannel, "Pre-bid clarification channel informs the questions submission process.");
+  checkNonCritical("clientRepresentative", input.clientRepresentative, "Authorized client representative name may be required in declarations.");
 
   // Page limit, bid bond, site visit, validity — track per spec.
   if (!isPresent(input.pageLimit)) {
@@ -321,6 +337,11 @@ export function assessTenderMetadataCompleteness(input: MetadataCompletenessInpu
     ["currency", input.currency],
     ["bidBondCurrency", input.bidBondCurrency],
     ["preBidMeetingLocation", input.preBidMeetingLocation],
+    ["clientCity", input.clientCity],
+    ["clientWebsite", input.clientWebsite],
+    ["submissionEmailSubject", input.submissionEmailSubject],
+    ["preBidChannel", input.preBidChannel],
+    ["clientRepresentative", input.clientRepresentative],
   ];
   let placeholderCount = 0;
   for (const [field, raw] of stringFieldsForScan) {
