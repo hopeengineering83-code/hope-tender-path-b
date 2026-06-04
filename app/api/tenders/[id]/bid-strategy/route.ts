@@ -94,15 +94,6 @@ export async function GET(
             complianceMatrixRows: { select: { supportLevel: true } },
           },
         },
-        files: {
-          select: {
-            totalPages: true,
-            extractionScore: true,
-            extractedPages: true,
-            failedPages: true,
-            ocrPages: true,
-          },
-        },
         complianceGaps: { select: { severity: true, isResolved: true, title: true } },
         expertMatches: {
           where: { isSelected: true },
