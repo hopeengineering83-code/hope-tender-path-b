@@ -46,13 +46,13 @@ const PROPOSAL_SECTION_NOISE_PATTERN = /\b(references?\b|photos?\b|drawings?\b|t
  * "bid[-_\s]?team\s+to\s+confirm" was the most common production
  * regression (the screenshots showed it in 11/16 metadata fields and
  * leaking straight into generated proposals). */
-const PLACEHOLDER_CLIENT_PATTERN = /^(the\s+client|client|unknown|n\/a|na|none|-+|tbd|tba|tbc|to\s+be\s+(determined|confirmed|advised|set)|bid[-_\s]?team\s+to\s+confirm|bid\s+team\s+to\s+confirm|placeholder|fill[-_\s]?in)$/i;
+const PLACEHOLDER_CLIENT_PATTERN = /^(the\s+client|client|unknown|n\/a|na|none|-+|tbd|tba|tbc|to\s+be\s+(determined|confirmed|advised|set)|bid[-_\s]?team\s+to\s+confirm|bid\s+team\s+to\s+confirm|not\s+specified|not\s+provided|pending|blank|placeholder|fill[-_\s]?in)$/i;
 
 /** Generic-anywhere placeholder pattern. Returns true if the value
  * contains a "Bid-Team to confirm" / "TBC" / "TBD" / "placeholder" string
  * anywhere — not just as the whole value. Used by sanitize-stored-metadata
  * so the engine never reads internal placeholder text from any column. */
-export const ANYWHERE_PLACEHOLDER_PATTERN = /\b(bid[-_\s]?team\s+to\s+confirm|to\s+be\s+confirmed|placeholder)\b|^(tbc|tbd|tba|n\/a)$/i;
+export const ANYWHERE_PLACEHOLDER_PATTERN = /\b(bid[-_\s]?team\s+to\s+confirm|to\s+be\s+confirmed|to\s+be\s+determined|not\s+specified|not\s+provided|unknown|pending|placeholder)\b|^(tbc|tbd|tba|n\/a|na|none|-+|blank)$/i;
 
 export function containsMetadataPlaceholder(value: string | null | undefined): boolean {
   if (!value || typeof value !== "string") return false;
