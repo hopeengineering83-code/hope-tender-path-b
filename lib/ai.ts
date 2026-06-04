@@ -1411,11 +1411,16 @@ JSON structure required:
   "contactDetailsSource": {
     "country": {"page": page_number_or_null, "quote": "verbatim snippet or null"},
     "clientAddress": {"page": page_number_or_null, "quote": "verbatim snippet or null"},
+    "clientCity": {"page": page_number_or_null, "quote": "verbatim snippet or null"},
+    "clientWebsite": {"page": page_number_or_null, "quote": "verbatim snippet or null"},
     "clientContactName": {"page": page_number_or_null, "quote": "verbatim snippet or null"},
     "clientContactTitle": {"page": page_number_or_null, "quote": "verbatim snippet or null"},
     "clientContactEmail": {"page": page_number_or_null, "quote": "verbatim snippet or null"},
     "clientContactPhone": {"page": page_number_or_null, "quote": "verbatim snippet or null"},
-    "submissionAddress": {"page": page_number_or_null, "quote": "verbatim snippet or null"}
+    "submissionAddress": {"page": page_number_or_null, "quote": "verbatim snippet or null"},
+    "submissionEmailSubject": {"page": page_number_or_null, "quote": "verbatim snippet or null"},
+    "preBidChannel": {"page": page_number_or_null, "quote": "verbatim snippet or null"},
+    "clientRepresentative": {"page": page_number_or_null, "quote": "verbatim snippet or null"}
   },
   "submissionMethodSourcePage": page_number_integer_or_null,
   "submissionMethodSourceQuote": "verbatim snippet showing the submission method, or null",
@@ -1492,7 +1497,7 @@ ${tenderContent}`;
           const src = parsed.contactDetailsSource;
           if (!src || typeof src !== "object") return null;
           const result: Record<string, { page: number | null; quote: string | null }> = {};
-          for (const key of ["country", "clientAddress", "clientContactName", "clientContactTitle", "clientContactEmail", "clientContactPhone", "submissionAddress"]) {
+          for (const key of ["country", "clientAddress", "clientCity", "clientWebsite", "clientContactName", "clientContactTitle", "clientContactEmail", "clientContactPhone", "submissionAddress", "submissionEmailSubject", "preBidChannel", "clientRepresentative"]) {
             const entry = (src as Record<string, unknown>)[key];
             if (entry && typeof entry === "object") {
               const e = entry as Record<string, unknown>;
