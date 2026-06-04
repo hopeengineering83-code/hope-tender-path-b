@@ -93,11 +93,18 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     // Block when extraction quality is too poor to trust the plan.
     // Uses the shared gate (threshold: score < 40) so Build Plan, Generate
     // Docs, and Export all apply the same quality bar.
-    if (!isExtractionAcceptableForGeneration(tender.files)) {
+    const effectiveExtractionFiles = tender.files.map((file) => {
+      const quality = assessExtractionQuality(file.extractedText, file.originalFileName);
+      return { ...file, extractionScore: Math.min(file.extractionScore ?? quality.score, quality.score) };
+    });
+    if (!isExtractionAcceptableForGeneration(effectiveExtractionFiles)) {
+      const corruptedFiles = effectiveExtractionFiles.filter((file) => assessExtractionQuality(file.extractedText, file.originalFileName).corrupted).map((file) => file.originalFileName ?? file.id);
       return NextResponse.json({
         ok: false,
         error: "Submission plan cannot be trusted because required tender pages were not fully extracted. Re-extract or run OCR before building the plan.",
-        code: "EXTRACTION_QUALITY_INSUFFICIENT",
+        code: corruptedFiles.length > 0 ? "EXTRACTION_CORRUPTED_BUILD_PLAN_SKIPPED" : "EXTRACTION_QUALITY_INSUFFICIENT",
+        nextAction: corruptedFiles.length > 0 ? "RUN_OCR_OR_UPLOAD_CLEARER_SCAN" : "OPEN_EXTRACTION_QUALITY",
+        corruptedFiles,
       }, { status: 422 });
     }
 

@@ -59,6 +59,8 @@ export default async function TenderCommandCenter({ params }: { params: Promise<
   };
   const tenderBlockers = canonical?.tenderLevelBlockers ?? [];
   const advisoryWarnings = canonical?.advisoryWarnings ?? [];
+  const canonicalBlockedCount = tenderBlockers.length + docReadiness.failures.length;
+  const canonicalReadinessLabel = canonical?.ok ? "Export readiness: OPEN" : `Export readiness: BLOCKED (${canonicalBlockedCount})`;
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const objections: any[] = await (prisma as any).evaluatorObjection.findMany({
@@ -154,7 +156,8 @@ export default async function TenderCommandCenter({ params }: { params: Promise<
         <div className="shrink-0 text-right text-sm">
           <div className="text-xs text-slate-500">Status / Stage</div>
           <div className="font-semibold text-slate-800">{tender.status} / {tender.stage}</div>
-          <div className="text-xs text-slate-500 mt-1">Workflow Progress: {Math.round(tender.readinessScore ?? 0)}/100</div>
+          <div className={`text-xs mt-1 ${canonical?.ok ? "text-emerald-700" : "text-red-700"}`}>{canonicalReadinessLabel}</div>
+          <div className="text-[10px] text-slate-400">Legacy workflow score: {Math.round(tender.readinessScore ?? 0)}/100 (not an export gate)</div>
         </div>
       </div>
 

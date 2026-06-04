@@ -24,6 +24,7 @@ import { assertAnalysisReadyForFinalGeneration } from "../../../../../lib/engine
 import { assessTenderMetadataCompleteness } from "../../../../../lib/engine/tender-metadata-completeness";
 import { isExtractionAcceptableForGeneration } from "../../../../../lib/engine/extraction-quality-gate";
 import { hasValidSubmissionPlan } from "../../../../../lib/engine/submission-plan-completeness";
+import { assessExtractionQuality } from "../../../../../lib/extraction-quality";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -242,7 +243,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     include: {
       requirements: true,
       files: {
-        select: { id: true, extractionScore: true, totalPages: true, extractedPages: true, ocrPages: true, failedPages: true },
+        select: { id: true, originalFileName: true, extractedText: true, extractionScore: true, totalPages: true, extractedPages: true, ocrPages: true, failedPages: true },
       },
     },
   });
@@ -306,12 +307,20 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // Block generation when extraction quality is too poor to produce reliable
   // documents (REGEX_FALLBACK_FROM_WEAK_EXTRACTION — average score < 45 with
   // failed pages). Partial extraction is allowed with a warning.
-  if (!isExtractionAcceptableForGeneration(tender.files)) {
+  const effectiveExtractionFiles = tender.files.map((file) => {
+    const quality = assessExtractionQuality(file.extractedText, file.originalFileName);
+    return { ...file, extractionScore: Math.min(file.extractionScore ?? quality.score, quality.score), quality };
+  });
+  const corruptedExtractionFiles = effectiveExtractionFiles.filter((file) => file.quality.corrupted).map((file) => file.originalFileName ?? file.id);
+  if (!isExtractionAcceptableForGeneration(effectiveExtractionFiles)) {
     return NextResponse.json({
       errorCode: "EXTRACTION_NOT_READY",
       error: "Page extraction quality is too poor to generate reliable documents. Re-upload the tender file or run OCR before generating.",
-      blockers: ["Tender file extraction quality is below the minimum threshold for generation."],
-      nextAction: "RE_EXTRACT_OR_OCR",
+      code: corruptedExtractionFiles.length > 0 ? "EXTRACTION_CORRUPTED_GENERATION_BLOCKED" : "EXTRACTION_QUALITY_INSUFFICIENT",
+      blockers: corruptedExtractionFiles.length > 0
+        ? corruptedExtractionFiles.map((fileName) => `Extraction corrupted / OCR required: ${fileName}`)
+        : ["Tender file extraction quality is below the minimum threshold for generation."],
+      nextAction: corruptedExtractionFiles.length > 0 ? "RUN_OCR_OR_UPLOAD_CLEARER_SCAN" : "OPEN_EXTRACTION_QUALITY",
       diagnosticId: `extraction-insufficient-${id}`,
     }, { status: 422 });
   }
