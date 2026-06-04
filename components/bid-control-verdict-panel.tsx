@@ -44,8 +44,8 @@ export async function BidControlVerdictPanel({ tenderId }: { tenderId: string })
   // reads the canonical answer so the same tender cannot show
   // inconsistent counts across panels.
   const [generationReadiness, canonical, tender] = await Promise.all([
-    getTenderGenerationReadiness(prisma, userId, tenderId),
-    getFinalSubmissionReadiness(prisma, { tenderId, userId, requireFileContent: false }),
+    getTenderGenerationReadiness(prisma, userId, tenderId).catch(() => null),
+    getFinalSubmissionReadiness(prisma, { tenderId, userId, requireFileContent: false }).catch(() => null),
     prisma.tender.findFirst({
       where: { id: tenderId, userId },
       select: {

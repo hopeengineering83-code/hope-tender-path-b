@@ -52,7 +52,7 @@ export default async function TenderCommandCenter({ params }: { params: Promise<
   // ─── Readiness, blockers, evaluator state ───────────────────────────
   // Use the canonical readiness helper so this page can NEVER show
   // counts that disagree with Export Gate / Bid Control / FSCC.
-  const canonical = await getFinalSubmissionReadiness(prisma, { tenderId: id, userId, requireFileContent: false });
+  const canonical = await getFinalSubmissionReadiness(prisma, { tenderId: id, userId, requireFileContent: false }).catch(() => null);
   const docReadiness = {
     ok: canonical ? canonical.summary.documentBlockers === 0 : false,
     failures: canonical?.documentBlockers ?? [],

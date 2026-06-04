@@ -32,7 +32,7 @@ export async function ExtractionQualityPanel({ tenderId }: { tenderId: string })
         },
       },
     },
-  });
+  }).catch(() => null);
   if (!tender || tender.files.length === 0) return null;
 
   const reports = tender.files.map((file) => {
