@@ -84,6 +84,12 @@ export async function AnalysisQualityPanel({ tenderId }: { tenderId: string }) {
   const analysisSource = analysisSourceSummary(rawSource);
   const ready = quality.severity !== "POOR" && quality.severity !== "UNSAFE" && analysisSource.risk !== "HIGH";
   const sourceRiskClass = analysisSource.risk === "LOW" ? "bg-emerald-100 text-emerald-700" : analysisSource.risk === "HIGH" ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-700";
+  const severityClass: Record<string, string> = {
+    GOOD: "bg-emerald-100 text-emerald-700",
+    WARNING: "bg-amber-100 text-amber-700",
+    POOR: "bg-red-100 text-red-700",
+    UNSAFE: "bg-red-200 text-red-800",
+  };
 
   return (
     <section className={`mb-4 rounded-2xl border p-5 shadow-sm ${ready ? "border-green-200 bg-green-50" : "border-red-200 bg-red-50"}`}>
@@ -102,12 +108,34 @@ export async function AnalysisQualityPanel({ tenderId }: { tenderId: string }) {
         <div className="rounded-xl bg-white p-3">
           <p className="text-xs text-slate-500">Score</p>
           <p className="text-xl font-bold text-slate-900">{quality.score}/100</p>
-          {quality.isRegexFallback && <p className="text-[10px] text-amber-700 leading-tight">Score capped — regex fallback</p>}
+          <span className={`mt-1 inline-block rounded-full px-2 py-0.5 text-[10px] font-bold ${severityClass[quality.severity] ?? "bg-slate-100 text-slate-600"}`}>{quality.severity}</span>
+          {quality.isRegexFallback && <p className="mt-0.5 text-[10px] text-amber-700 leading-tight">Score capped — regex fallback</p>}
         </div>
         <div className="rounded-xl bg-white p-3"><p className="text-xs text-slate-500">Requirements</p><p className="text-xl font-bold text-slate-900">{quality.requirementCount}</p></div>
         <div className="rounded-xl bg-white p-3"><p className="text-xs text-slate-500">Mandatory</p><p className="text-xl font-bold text-slate-900">{quality.mandatoryCount}</p></div>
         <div className="rounded-xl bg-white p-3"><p className="text-xs text-slate-500">Source refs</p><p className="text-xl font-bold text-slate-900">{quality.sourceReferencedCount}</p></div>
         <div className="rounded-xl bg-white p-3"><p className="text-xs text-slate-500">Extracted text</p><p className="text-xl font-bold text-slate-900">{extractedChars.toLocaleString()}</p></div>
+      </div>
+
+      {/* Sub-scores breakdown */}
+      <div className="mt-3 grid gap-2 sm:grid-cols-3 lg:grid-cols-6">
+        {(Object.entries(quality.subScores) as [string, number][]).map(([key, val]) => {
+          const label: Record<string, string> = {
+            extractionQuality: "Extraction",
+            requirementExtraction: "Requirements",
+            metadataQuality: "Metadata",
+            submissionPlanQuality: "Submission",
+            matchingReadiness: "Matching",
+            sourceGrounding: "Grounding",
+          };
+          const color = val >= 70 ? "text-emerald-700" : val >= 40 ? "text-amber-700" : "text-red-700";
+          return (
+            <div key={key} className="rounded-lg bg-white/70 px-2 py-1.5 text-center">
+              <p className="text-[10px] text-slate-500">{label[key] ?? key}</p>
+              <p className={`text-sm font-bold ${color}`}>{val}</p>
+            </div>
+          );
+        })}
       </div>
 
       <div className="mt-4 rounded-xl border border-white/70 bg-white p-3 text-sm">
@@ -120,6 +148,15 @@ export async function AnalysisQualityPanel({ tenderId }: { tenderId: string }) {
           <p className="mt-2 text-red-700">High risk: regex fallback can miss exact forms, evaluation scoring, file names, submission instructions, and expert/project requirements. Re-check extraction quality and AI provider health, then re-run Engine.</p>
         )}
       </div>
+
+      {quality.metadataIssues.length > 0 && (
+        <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3">
+          <p className="text-xs font-semibold text-amber-800 mb-1">Metadata issues ({quality.metadataIssues.length})</p>
+          <ul className="list-disc space-y-0.5 pl-4 text-xs text-amber-700">
+            {quality.metadataIssues.map((issue) => <li key={issue}>{issue}</li>)}
+          </ul>
+        </div>
+      )}
 
       {quality.warnings.length > 0 && (
         <ul className="mt-4 list-disc space-y-1 pl-5 text-sm text-slate-700">

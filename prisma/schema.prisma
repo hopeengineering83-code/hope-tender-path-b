@@ -365,6 +365,14 @@ model Tender {
   // JSON array: [{ criterion, weight, sourcePage, sourceQuote }]
   evaluationCriteriaSourceJson  String?
   analysisExtractionStatus      String?
+  // ─── Extended client fields (Gap A — CLAUDE.md items 8–20) ─────────────────
+  // Populated by AI Analyze to cover all procuring-entity contact details
+  // required by CLAUDE.md.  All nullable so legacy rows are unaffected.
+  clientCity            String?
+  clientWebsite         String?
+  submissionEmailSubject String?
+  preBidChannel         String?
+  clientRepresentative  String?
   createdAt             DateTime             @default(now())
   updatedAt             DateTime             @updatedAt
   userId                String

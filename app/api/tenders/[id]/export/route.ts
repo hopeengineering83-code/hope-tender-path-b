@@ -7,6 +7,7 @@ import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import { filterFinalExportCandidateDocuments } from "../../../../../lib/engine/document-output-state";
 import { logAction } from "../../../../../lib/audit";
 import { getCompanyIngestionReadiness } from "../../../../../lib/company-ingestion-readiness";
+import { isExtractionAcceptableForExport } from "../../../../../lib/engine/extraction-quality-gate";
 
 export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   let actor;
@@ -27,6 +28,15 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
         complianceGaps: true,
         requirements: true,
         generatedDocuments: true,
+        files: {
+          select: {
+            extractionScore: true,
+            totalPages: true,
+            extractedPages: true,
+            ocrPages: true,
+            failedPages: true,
+          },
+        },
       },
     });
 
@@ -38,6 +48,18 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     if (!company) return NextResponse.json({ error: "Company profile required before export." }, { status: 422 });
     const ingestion = await getCompanyIngestionReadiness(company.id, { requireDocuments: true, requireReviewedExperts: tender.requirements.some((r) => r.requirementType === "EXPERT"), requireReviewedProjects: tender.requirements.some((r) => r.requirementType === "PROJECT_EXPERIENCE") });
     if (!ingestion.ingestionReady) return NextResponse.json({ error: "Export blocked: company knowledge ingestion is not ready.", code: "INGESTION_NOT_READY", blockers: ingestion.blockers, totals: ingestion.totals }, { status: 422 });
+
+    // Block export when page extraction is too poor to trust the submitted documents.
+    // CLAUDE.md Export/ZIP gate: poor extraction, unknown page count, or failed pages.
+    if (!isExtractionAcceptableForExport(tender.files)) {
+      return NextResponse.json(
+        {
+          error: "Export blocked: tender document extraction quality is insufficient. Re-upload a clearer document or run OCR before exporting.",
+          code: "EXTRACTION_QUALITY_INSUFFICIENT",
+        },
+        { status: 422 },
+      );
+    }
 
     const blockingGaps = tender.complianceGaps.filter(
       (gap) => !gap.isResolved && gap.severity === "CRITICAL",
