@@ -377,6 +377,15 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
       nextAction: "OPEN_ANALYSIS_QUALITY",
     });
   }
+  // Block when extraction was detected as corrupted/unreadable — distinct from
+  // ANALYSIS_POOR so operators know the root cause is PDF extraction, not AI quality.
+  if (tender.analysisExtractionStatus === "EXTRACTION_CORRUPTED_AI_SKIPPED") {
+    fullProposalBlockers.push({
+      code: "FULL_PROPOSAL_EXTRACTION_CORRUPTED",
+      message: "Full proposal generation is blocked: the tender document extraction was corrupted or unreadable and AI analysis was skipped. Re-upload the document or upload a clearer scan before generating.",
+      nextAction: "RE_UPLOAD_TENDER",
+    });
+  }
   // Mirror the server-side generate-route gate so the panel can never show
   // "Full proposal generation gate: passes" / a green button while the
   // analysis came from an unapproved regex/deterministic fallback. The
@@ -487,6 +496,8 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
     CLIENT_NAME_REQUIRED: "CLIENT_NAME",
     CLIENT_NAME_INVALID: "CLIENT_NAME",
     FULL_PROPOSAL_CLIENT_INVALID: "CLIENT_NAME",
+    // Extraction quality / corruption
+    FULL_PROPOSAL_EXTRACTION_CORRUPTED: "EXTRACTION",
     // Analysis quality
     ANALYSIS_QUALITY_POOR: "ANALYSIS_QUALITY",
     ANALYSIS_QUALITY_WARNING: "ANALYSIS_QUALITY",

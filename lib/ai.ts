@@ -962,6 +962,12 @@ export type AIAnalysisResult = {
   clientContactEmail?: string | null;
   clientContactPhone?: string | null;
   submissionAddress?: string | null;
+  // Extended client fields — CLAUDE.md items 8–20
+  clientCity?: string | null;
+  clientWebsite?: string | null;
+  submissionEmailSubject?: string | null;
+  preBidChannel?: string | null;
+  clientRepresentative?: string | null;
   // Per-field source provenance for the contact/location fields above.
   // Stored as JSON in DB column contactDetailsSourceJson.
   contactDetailsSource?: Record<string, { page: number | null; quote: string | null }> | null;
@@ -1249,6 +1255,11 @@ function mergeAnalysisResults(parts: AIAnalysisResult[]): AIAnalysisResult {
   const clientContactEmail = firstDefined((p) => p.clientContactEmail ?? undefined);
   const clientContactPhone = firstDefined((p) => p.clientContactPhone ?? undefined);
   const submissionAddress = firstDefined((p) => p.submissionAddress ?? undefined);
+  const clientCity = firstDefined((p) => p.clientCity ?? undefined);
+  const clientWebsite = firstDefined((p) => p.clientWebsite ?? undefined);
+  const submissionEmailSubject = firstDefined((p) => p.submissionEmailSubject ?? undefined);
+  const preBidChannel = firstDefined((p) => p.preBidChannel ?? undefined);
+  const clientRepresentative = firstDefined((p) => p.clientRepresentative ?? undefined);
   const clientNameSourcePage = firstDefined((p) => p.clientNameSourcePage ?? undefined);
   const clientNameSourceQuote = firstDefined((p) => p.clientNameSourceQuote ?? undefined);
   const submissionEmailSourcePage = firstDefined((p) => p.submissionEmailSourcePage ?? undefined);
@@ -1284,6 +1295,11 @@ function mergeAnalysisResults(parts: AIAnalysisResult[]): AIAnalysisResult {
     clientContactEmail: clientContactEmail ?? null,
     clientContactPhone: clientContactPhone ?? null,
     submissionAddress: submissionAddress ?? null,
+    clientCity: clientCity ?? null,
+    clientWebsite: clientWebsite ?? null,
+    submissionEmailSubject: submissionEmailSubject ?? null,
+    preBidChannel: preBidChannel ?? null,
+    clientRepresentative: clientRepresentative ?? null,
     contactDetailsSource: Object.keys(contactDetailsSource).length > 0 ? contactDetailsSource : null,
     clientNameSourcePage: clientNameSourcePage ?? null,
     clientNameSourceQuote: clientNameSourceQuote ?? null,
@@ -1380,6 +1396,11 @@ JSON structure required:
   "clientContactEmail": "email address of the contact person (NOT the submission email), or null",
   "clientContactPhone": "phone or mobile number of the contact person, or null",
   "submissionAddress": "physical address where hard-copy bids must be delivered (distinct from submission email), or null",
+  "clientCity": "city or town where the procuring entity's office is located, or null",
+  "clientWebsite": "official website or tender-portal URL of the procuring entity, or null",
+  "submissionEmailSubject": "required email subject line verbatim if specified for bid submission, or null",
+  "preBidChannel": "channel for pre-bid questions or clarifications (email address, fax, or described method), or null",
+  "clientRepresentative": "name of the authorized officer or client representative signing the tender notice, or null",
   "clientNameSourcePage": page_number_integer_or_null,
   "clientNameSourceQuote": "verbatim 1-2 sentence snippet from which the client name was extracted, or null",
   "submissionEmailSourcePage": page_number_integer_or_null,
@@ -1447,6 +1468,11 @@ ${tenderContent}`;
         clientContactEmail: typeof parsed.clientContactEmail === "string" ? parsed.clientContactEmail.trim().slice(0, 300) || null : null,
         clientContactPhone: typeof parsed.clientContactPhone === "string" ? parsed.clientContactPhone.trim().slice(0, 100) || null : null,
         submissionAddress: typeof parsed.submissionAddress === "string" ? parsed.submissionAddress.trim().slice(0, 500) || null : null,
+        clientCity: typeof parsed.clientCity === "string" ? parsed.clientCity.trim().slice(0, 200) || null : null,
+        clientWebsite: typeof parsed.clientWebsite === "string" ? parsed.clientWebsite.trim().slice(0, 500) || null : null,
+        submissionEmailSubject: typeof parsed.submissionEmailSubject === "string" ? parsed.submissionEmailSubject.trim().slice(0, 500) || null : null,
+        preBidChannel: typeof parsed.preBidChannel === "string" ? parsed.preBidChannel.trim().slice(0, 500) || null : null,
+        clientRepresentative: typeof parsed.clientRepresentative === "string" ? parsed.clientRepresentative.trim().slice(0, 300) || null : null,
         clientNameSourcePage: typeof parsed.clientNameSourcePage === "number" && Number.isInteger(parsed.clientNameSourcePage) && parsed.clientNameSourcePage > 0 ? parsed.clientNameSourcePage : null,
         clientNameSourceQuote: typeof parsed.clientNameSourceQuote === "string" ? parsed.clientNameSourceQuote.trim().slice(0, 500) || null : null,
         submissionEmailSourcePage: typeof parsed.submissionEmailSourcePage === "number" && Number.isInteger(parsed.submissionEmailSourcePage) && parsed.submissionEmailSourcePage > 0 ? parsed.submissionEmailSourcePage : null,

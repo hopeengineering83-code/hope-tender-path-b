@@ -327,10 +327,15 @@ type Tender = {
   // Contact & location fields extracted by AI Analyze
   country?: string | null;
   clientAddress?: string | null;
+  clientCity?: string | null;
+  clientWebsite?: string | null;
   clientContactName?: string | null;
   clientContactTitle?: string | null;
   clientContactEmail?: string | null;
   clientContactPhone?: string | null;
+  submissionEmailSubject?: string | null;
+  preBidChannel?: string | null;
+  clientRepresentative?: string | null;
   contactDetailsSourceJson?: string | null;
   // Submission source traceability
   submissionMethodSourcePage?: number | null;
@@ -1729,12 +1734,17 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
                   })();
                   const contactRows: Array<{ label: string; key: string; value: string | null | undefined }> = [
                     { label: "Country", key: "country", value: tender.country },
+                    { label: "City / location", key: "clientCity", value: tender.clientCity },
                     { label: "Client address", key: "clientAddress", value: tender.clientAddress },
+                    { label: "Client website / portal", key: "clientWebsite", value: tender.clientWebsite },
                     { label: "Submission address", key: "submissionAddress", value: tender.submissionAddress },
+                    { label: "Submission email subject", key: "submissionEmailSubject", value: tender.submissionEmailSubject },
+                    { label: "Pre-bid channel", key: "preBidChannel", value: tender.preBidChannel },
                     { label: "Contact person", key: "clientContactName", value: tender.clientContactName },
                     { label: "Contact title", key: "clientContactTitle", value: tender.clientContactTitle },
                     { label: "Contact email", key: "clientContactEmail", value: tender.clientContactEmail },
                     { label: "Contact phone", key: "clientContactPhone", value: tender.clientContactPhone },
+                    { label: "Client representative", key: "clientRepresentative", value: tender.clientRepresentative },
                   ];
                   const populated = contactRows.filter((r) => r.value);
                   if (!populated.length) return null;
