@@ -914,6 +914,8 @@ export type AIRequirement = {
   pageLimit?: number | null;
   restrictions?: string | null;
   sectionReference?: string | null;
+  sourcePage?: number | null;
+  sourceQuote?: string | null;
 };
 
 export type AIAnalysisResult = {
@@ -1374,7 +1376,9 @@ JSON structure required:
       "requiredQuantity": number_or_null,
       "pageLimit": number_or_null,
       "restrictions": "branding/signature/file/page/format restrictions or null",
-      "sectionReference": "section/clause/annex reference or null"
+      "sectionReference": "section/clause/annex reference or null",
+      "sourcePage": page_number_integer_or_null,
+      "sourceQuote": "verbatim 1-2 sentence snippet from the tender that this requirement is drawn from, or null"
     }
   ],
   "exactFileNaming": ["exact filenames required by the tender"],
@@ -1443,7 +1447,15 @@ ${tenderContent}`;
       // A missing or wrong-type field should never crash downstream consumers.
       return {
         summary: typeof parsed.summary === "string" ? parsed.summary : "",
-        requirements: Array.isArray(parsed.requirements) ? parsed.requirements.filter((r: unknown) => r && typeof r === "object") : [],
+        requirements: Array.isArray(parsed.requirements)
+          ? parsed.requirements
+              .filter((r: unknown) => r && typeof r === "object")
+              .map((r: Record<string, unknown>) => ({
+                ...r,
+                sourcePage: typeof r.sourcePage === "number" && Number.isInteger(r.sourcePage) && r.sourcePage > 0 ? r.sourcePage : null,
+                sourceQuote: typeof r.sourceQuote === "string" ? r.sourceQuote.trim().slice(0, 500) || null : null,
+              }))
+          : [],
         exactFileNaming: Array.isArray(parsed.exactFileNaming) ? parsed.exactFileNaming.filter((s: unknown) => typeof s === "string") : [],
         exactFileOrder: Array.isArray(parsed.exactFileOrder) ? parsed.exactFileOrder.filter((s: unknown) => typeof s === "string") : [],
         evaluationMethodology: typeof parsed.evaluationMethodology === "string" ? parsed.evaluationMethodology : "",
