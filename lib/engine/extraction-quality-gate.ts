@@ -67,8 +67,10 @@ export function scorePageTextQuality(text: string): PageTextQuality {
     };
   }
 
-  // symbolNoiseRatio: chars outside a-zA-Z0-9 and common punctuation
-  const allowedCharsPattern = /[a-zA-Z0-9\s.,;:()\-'"!?/]/g;
+  // symbolNoiseRatio: chars outside alphanumeric (Unicode-aware) and common punctuation.
+  // \p{L} matches letters in any script (Latin, Arabic, Cyrillic, CJK, Amharic, etc.),
+  // \p{N} matches digits, so non-Latin tenders are not misclassified as corrupted.
+  const allowedCharsPattern = /[\p{L}\p{N}\s.,;:()\-'"!?/]/gu;
   const allowedCount = (raw.match(allowedCharsPattern) ?? []).length;
   const totalChars = raw.length;
   const symbolNoiseRatio = totalChars > 0 ? (totalChars - allowedCount) / totalChars : 0;
@@ -85,8 +87,9 @@ export function scorePageTextQuality(text: string): PageTextQuality {
     spacedRepeatMatches.reduce((sum, m) => sum + m.length, 0);
   const repeatedGlyphRatio = totalChars > 0 ? repeatedGlyphChars / totalChars : 0;
 
-  // dictionaryWordRatio: words with only alphabetic chars and length >= 3
-  const dictWords = words.filter((w) => w.length >= 3 && /^[a-zA-Z]+$/.test(w));
+  // dictionaryWordRatio: words consisting entirely of Unicode letters (any script), length >= 3.
+  // Using \p{L} so Arabic, Cyrillic, CJK, Amharic words count as valid dictionary words.
+  const dictWords = words.filter((w) => w.length >= 3 && /^\p{L}+$/u.test(w));
   const dictionaryWordRatio = totalWords > 0 ? dictWords.length / totalWords : 0;
 
   // brokenSpacingScore: single-character tokens

@@ -221,8 +221,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const textSamples = tenderRecord.files
     .map((f) => f.extractedText)
     .filter((t): t is string => Boolean(t && t.trim().length > 20));
+  // Block when ANY file has corrupted text — a single corrupted source contaminates
+  // the analysis even when other files extract cleanly (multi-file tender case).
   const isTextCorrupted =
-    textSamples.length > 0 && textSamples.every((t) => isExtractionCorrupted(t));
+    textSamples.length > 0 && textSamples.some((t) => isExtractionCorrupted(t));
   if (!force && isTextCorrupted) {
     return NextResponse.json({
       error: "AI analysis blocked — extracted text is corrupted",
@@ -484,6 +486,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
               ...(aiResult.contactDetailsSource != null
                 ? { contactDetailsSourceJson: JSON.stringify(aiResult.contactDetailsSource) }
                 : {}),
+              // Source traceability for submission method and address
+              ...(aiResult.submissionMethodSourcePage !== undefined ? { submissionMethodSourcePage: aiResult.submissionMethodSourcePage } : {}),
+              ...(aiResult.submissionMethodSourceQuote !== undefined ? { submissionMethodSourceQuote: aiResult.submissionMethodSourceQuote } : {}),
+              ...(aiResult.submissionAddressSourcePage !== undefined ? { submissionAddressSourcePage: aiResult.submissionAddressSourcePage } : {}),
+              ...(aiResult.submissionAddressSourceQuote !== undefined ? { submissionAddressSourceQuote: aiResult.submissionAddressSourceQuote } : {}),
+              // Per-criterion evaluation criteria source
+              ...(aiResult.evaluationCriteriaSource !== undefined ? { evaluationCriteriaSourceJson: aiResult.evaluationCriteriaSource ? JSON.stringify(aiResult.evaluationCriteriaSource) : null } : {}),
               // Flag contaminated client name so the export gate can block
               metadataContaminated: contamination.contaminated,
             },

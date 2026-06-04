@@ -143,6 +143,25 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
 
   if (!tender) return null;
 
+  // Check derived-draft plan state (generatedDocuments not in main query).
+  // Defensive: test mocks may not implement generatedDocument — default to 0 on any error.
+  const genDocModel = (client as unknown as Record<string, unknown>).generatedDocument as undefined | { count: (q: unknown) => Promise<number> };
+  const derivedDraftCount = genDocModel ? await genDocModel.count({
+    where: {
+      tenderId,
+      generationStatus: { not: "SUPERSEDED" },
+      reviewStatus: { in: ["PLANNED", "PENDING", "APPROVED", "CONFIRMED", "READY_FOR_EXPORT", "REPLACE_WITH_ORIGINAL"] },
+      contentSummary: { contains: "DERIVED_DRAFT_UNCONFIRMED" },
+    },
+  }).catch(() => 0) : 0;
+  const totalPlannedCount = genDocModel ? await genDocModel.count({
+    where: {
+      tenderId,
+      generationStatus: { not: "SUPERSEDED" },
+      reviewStatus: { in: ["PLANNED", "PENDING", "APPROVED", "CONFIRMED", "READY_FOR_EXPORT", "REPLACE_WITH_ORIGINAL"] },
+    },
+  }).catch(() => 0) : 0;
+
   const companyReadiness = await getCompanyIngestionReadiness(company.id, {}, client);
   // Matching quality first so we can feed its score into analysis quality —
   // that closes the "analysis says 100/100 while matching says 0/100" bug.
@@ -398,6 +417,15 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
     });
   }
 
+  // Block when all planned docs are unconfirmed derived-draft heuristics.
+  if (derivedDraftCount > 0 && derivedDraftCount === totalPlannedCount && totalPlannedCount > 0) {
+    fullProposalBlockers.push({
+      code: "FULL_PROPOSAL_DERIVED_PLAN_UNCONFIRMED",
+      message: "Full proposal generation is blocked: the submission plan was automatically derived from requirement keywords and has not been confirmed against the actual tender document. Review the plan, verify each required document, and confirm before generating.",
+      nextAction: "CONFIRM_SUBMISSION_PLAN",
+    });
+  }
+
   // Full proposal also requires reviewed selected evidence when the tender
   // demands experts/projects — not just vault fallback availability.
   // Skip these when the engine hasn't run yet (VAULT_AWAITS_ENGINE) — the
@@ -453,6 +481,8 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
     FULL_PROPOSAL_NO_VAULT: "MATCHING",
     // Metadata completeness
     FULL_PROPOSAL_METADATA_INCOMPLETE: "METADATA",
+    DERIVED_PLAN_UNCONFIRMED: "SUBMISSION_PLAN",
+    FULL_PROPOSAL_DERIVED_PLAN_UNCONFIRMED: "SUBMISSION_PLAN",
     // Expert match availability
     NO_EXPERT_MATCHES_FOUND: "EXPERT_MATCHES",
     NO_REVIEWED_EXPERT_MATCHES: "EXPERT_MATCHES",

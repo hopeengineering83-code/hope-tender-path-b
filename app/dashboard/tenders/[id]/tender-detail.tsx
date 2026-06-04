@@ -332,6 +332,13 @@ type Tender = {
   clientContactEmail?: string | null;
   clientContactPhone?: string | null;
   contactDetailsSourceJson?: string | null;
+  // Submission source traceability
+  submissionMethodSourcePage?: number | null;
+  submissionMethodSourceQuote?: string | null;
+  submissionAddressSourcePage?: number | null;
+  submissionAddressSourceQuote?: string | null;
+  // Evaluation criteria source traceability
+  evaluationCriteriaSourceJson?: string | null;
 };
 
 const CATEGORIES = ["General", "IT", "Construction", "Services", "Consulting", "Supply", "Healthcare", "Education", "Other"];
@@ -1754,7 +1761,24 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
                 })()}
                 <div><dt className="text-sm text-slate-500">Deadline</dt><dd className="mt-1 font-medium text-slate-900">{formatDate(tender.deadline)}</dd></div>
                 <div><dt className="text-sm text-slate-500">Category</dt><dd className="mt-1 font-medium text-slate-900">{tender.category}</dd></div>
-                <div><dt className="text-sm text-slate-500">Submission</dt><dd className="mt-1 font-medium text-slate-900">{tender.submissionMethod || "—"}</dd></div>
+                <div>
+                  <dt className="text-sm text-slate-500">Submission Method</dt>
+                  <dd className="mt-1 font-medium text-slate-900">
+                    {tender.submissionMethod || "—"}
+                    {tender.submissionMethodSourcePage && <span className="ml-2 text-xs text-slate-400 font-normal">(p.{tender.submissionMethodSourcePage})</span>}
+                    {tender.submissionMethodSourceQuote && <p className="mt-0.5 text-xs text-slate-400 italic line-clamp-2">&ldquo;{tender.submissionMethodSourceQuote}&rdquo;</p>}
+                  </dd>
+                </div>
+                {(tender.submissionAddress || tender.submissionAddressSourcePage) && (
+                  <div className="md:col-span-2">
+                    <dt className="text-sm text-slate-500">Submission Address / Portal</dt>
+                    <dd className="mt-1 font-medium text-slate-900">
+                      {tender.submissionAddress || "—"}
+                      {tender.submissionAddressSourcePage && <span className="ml-2 text-xs text-slate-400 font-normal">(p.{tender.submissionAddressSourcePage})</span>}
+                      {tender.submissionAddressSourceQuote && <p className="mt-0.5 text-xs text-slate-400 italic line-clamp-2">&ldquo;{tender.submissionAddressSourceQuote}&rdquo;</p>}
+                    </dd>
+                  </div>
+                )}
                 <div className="md:col-span-2"><dt className="text-sm text-slate-500">Description</dt><dd className="mt-1 whitespace-pre-wrap text-slate-900">{tender.description || "—"}</dd></div>
                 <div className="md:col-span-2"><dt className="text-sm text-slate-500">Intake Summary</dt><dd className="mt-1 text-slate-900">{tender.intakeSummary ? <ProposalMarkdown markdown={tender.intakeSummary} /> : "—"}</dd></div>
                 <div className="md:col-span-2"><dt className="text-sm text-slate-500">Analysis Summary</dt><dd className="mt-1 whitespace-pre-wrap text-slate-900">{tender.analysisSummary || "—"}</dd></div>

@@ -355,8 +355,16 @@ model Tender {
   // by AI Analyze. Shape: { [fieldName]: { page: number|null, quote: string|null } }
   // Covers: clientContactName, clientContactTitle, clientContactEmail,
   //         clientContactPhone, clientAddress, submissionAddress, country.
-  contactDetailsSourceJson String?
-  analysisExtractionStatus String?
+  contactDetailsSourceJson      String?
+  // Source traceability for submission method and submission address
+  submissionMethodSourcePage    Int?
+  submissionMethodSourceQuote   String?
+  submissionAddressSourcePage   Int?
+  submissionAddressSourceQuote  String?
+  // Per-criterion source traceability for evaluation criteria
+  // JSON array: [{ criterion, weight, sourcePage, sourceQuote }]
+  evaluationCriteriaSourceJson  String?
+  analysisExtractionStatus      String?
   createdAt             DateTime             @default(now())
   updatedAt             DateTime             @updatedAt
   userId                String
@@ -396,6 +404,10 @@ model TenderFile {
   failedPages      Int?
   extractionScore  Float?   // 0-100
   extractionMethod String?  // "text" | "ocr" | "mixed" | "failed"
+  // Per-page status snapshot as JSON array (populated by AI Analyze).
+  // Shape: [{ page, charCount, status, hasSubmissionInstructions, ... }]
+  pageStatusJson   String?
+  ocrModel         String?  // OCR model used if OCR was run, e.g. "claude-3-5-sonnet"
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 

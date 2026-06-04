@@ -353,6 +353,27 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           plannedCount: planCheck.plannedCount,
         }, { status: 400 });
       }
+
+      // Advisory block: all planned rows are unconfirmed derived-draft heuristics.
+      const allDerivedUnconfirmed = await prisma.generatedDocument.count({
+        where: {
+          tenderId: tender.id,
+          generationStatus: { not: "SUPERSEDED" },
+          reviewStatus: { in: ["PLANNED", "PENDING", "APPROVED", "CONFIRMED", "READY_FOR_EXPORT", "REPLACE_WITH_ORIGINAL"] },
+          contentSummary: { contains: "DERIVED_DRAFT_UNCONFIRMED" },
+        },
+      });
+      const totalPlanned = planCheck.plannedCount;
+      if (allDerivedUnconfirmed > 0 && allDerivedUnconfirmed === totalPlanned && totalPlanned > 0) {
+        return NextResponse.json({
+          errorCode: "DERIVED_PLAN_UNCONFIRMED",
+          error: "The submission plan was automatically derived from requirement keywords and has not been confirmed against the actual tender document. Review the plan, verify each required document, and confirm before generating.",
+          blockers: ["All submission plan rows are unconfirmed derived drafts — confirm file names/order against the tender before generating."],
+          nextAction: "CONFIRM_SUBMISSION_PLAN",
+          diagnosticId: `derived-plan-${tender.id}`,
+          isDerivedDraft: true,
+        }, { status: 422 });
+      }
     }
   }
 
@@ -409,6 +430,23 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       invalidFields: metadataReport.invalidFields.map((f) => ({ field: f.field, reason: f.reason })),
       overallRatio: metadataReport.overallRatio,
       metadataContaminated: Boolean((tender as { metadataContaminated?: boolean }).metadataContaminated),
+    }, { status: 422 });
+  }
+
+  // ── Standalone contamination gate ─────────────────────────────────────────
+  // metadataReport.blockingForGeneration only fires when required fields are
+  // missing or placeholder-filled. A contaminated client name can pass that
+  // check (the field is non-empty and not a placeholder) yet still be wrong.
+  // Block unconditionally when contamination is flagged, regardless of whether
+  // other metadata is present.
+  if ((tender as { metadataContaminated?: boolean }).metadataContaminated) {
+    return NextResponse.json({
+      errorCode: "METADATA_CONTAMINATED",
+      error: "Generation blocked: client/procuring entity metadata is flagged as contaminated. The extracted client name may be polluted by unrelated tender portal text or navigation content. Correct the client name before generating documents.",
+      blockers: ["Client/procuring entity name is contaminated — review and correct before generating."],
+      nextAction: "REPAIR_OR_EDIT_TENDER",
+      diagnosticId: `metadata-contaminated-${id}`,
+      metadataContaminated: true,
     }, { status: 422 });
   }
 

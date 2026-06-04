@@ -28,7 +28,7 @@ export async function ExtractionQualityPanel({ tenderId }: { tenderId: string })
         select: {
           id: true, fileName: true, originalFileName: true, extractedText: true,
           totalPages: true, extractedPages: true, ocrPages: true, failedPages: true,
-          extractionScore: true, extractionMethod: true,
+          extractionScore: true, extractionMethod: true, ocrModel: true,
         },
       },
     },
@@ -59,6 +59,8 @@ export async function ExtractionQualityPanel({ tenderId }: { tenderId: string })
       failedPages: file.failedPages,
       extractionScore: file.extractionScore,
       extractionMethod: file.extractionMethod,
+      ocrModel: file.ocrModel,
+      ocrUsed: file.extractionMethod === "ocr" || (file.ocrPages !== null && file.ocrPages > 0) || ocrReason !== null,
       isCorrupted,
       ocrReason,
       ocrConfigMissing,
@@ -226,7 +228,14 @@ export async function ExtractionQualityPanel({ tenderId }: { tenderId: string })
                 </p>
               )}
 
-              <p className="mt-1 text-xs text-slate-400">{item.quality.characterCount.toLocaleString()} chars{item.quality.averageCharsPerPage ? ` · ~${item.quality.averageCharsPerPage}/page` : ""}</p>
+              <p className="mt-1 text-xs text-slate-400">
+                {item.quality.characterCount.toLocaleString()} chars{item.quality.averageCharsPerPage ? ` · ~${item.quality.averageCharsPerPage}/page` : ""}
+                {" · "}
+                <span className={item.ocrUsed ? "text-blue-600 font-medium" : ""}>
+                  OCR: {item.extractionMethod === "ocr" ? "Yes (full)" : (item.ocrPages !== null && item.ocrPages > 0) ? `Yes (${item.ocrPages} pages)` : item.ocrReason ? "Yes (auto)" : "No"}
+                </span>
+                {item.ocrModel && <span> · {item.ocrModel}</span>}
+              </p>
 
               {item.quality.warnings.length > 0 && (
                 <ul className="mt-2 list-disc space-y-1 pl-5 text-xs text-slate-700">
