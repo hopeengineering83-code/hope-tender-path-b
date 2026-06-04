@@ -1,6 +1,6 @@
 // AI provider fallback chain tests.
 //
-// Verifies that the multi-provider fallback chain (Claude → Gemini → OpenAI → Mistral → Together → DeepSeek)
+// Verifies that the multi-provider fallback chain (Gemini → OpenAI → Mistral → Together → DeepSeek → Groq → OpenRouter → Claude)
 // behaves correctly under various failure modes, and that env-check logic
 // accepts any single provider key as sufficient.
 

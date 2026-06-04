@@ -242,3 +242,41 @@ describe("analysis-quality — production hard unsafe gates", () => {
     assert.equal(report.severity, "UNSAFE");
   });
 });
+
+// Follow-up regression: callers often pass the persisted note detail
+// ("regex fallback (REGEX_FALLBACK_AI_DISABLED)") rather than the
+// normalized enum. The scorer must still block it unless the approval helper
+// resolved HUMAN_APPROVED_REGEX_FALLBACK.
+describe("analysis-quality — source normalization", () => {
+  it("treats raw regex-fallback notes as unsafe", () => {
+    const report = assessTenderAnalysisQuality({
+      requirements: goodRequirements(12),
+      evaluationMethodology: "Technical 70%, Financial 30%",
+      submissionNotes: "Submit by email before deadline.",
+      clientName: "Ministry of Urban Development",
+      deadline: new Date("2026-07-01T00:00:00Z"),
+      submissionMethod: "Email submission",
+      totalPageCount: 9,
+      analysisSource: "regex fallback (REGEX_FALLBACK_AI_DISABLED). AI disabled by operator.",
+    });
+    assert.equal(report.isRegexFallback, true);
+    assert.equal(report.severity, "UNSAFE");
+    assert.ok(report.score <= 45);
+  });
+
+  it("does not cap a human-approved regex fallback solely because the source contains regex fallback", () => {
+    const report = assessTenderAnalysisQuality({
+      requirements: goodRequirements(12),
+      evaluationMethodology: "Technical 70%, Financial 30%",
+      submissionNotes: "Submit by email before deadline.",
+      clientName: "Ministry of Urban Development",
+      deadline: new Date("2026-07-01T00:00:00Z"),
+      submissionMethod: "Email submission",
+      totalPageCount: 4,
+      analysisSource: "HUMAN_APPROVED_REGEX_FALLBACK",
+    });
+    assert.equal(report.isRegexFallback, false);
+    assert.notEqual(report.severity, "UNSAFE");
+    assert.ok(report.score > 45);
+  });
+});

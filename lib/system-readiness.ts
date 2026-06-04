@@ -66,8 +66,8 @@ export function getSystemReadiness(): SystemReadiness {
       key: "ai_extraction",
       title: "AI provider chain",
       // OK when any supported provider is configured. The default proposal and
-      // validation chain is OpenAI → Gemini → Mistral → DeepSeek → Groq → Together → OpenRouter →
-      // Claude, while analysis/extraction starts with Gemini. Claude remains
+      // validation chain is Gemini → OpenAI → Mistral → Together → DeepSeek → Groq → OpenRouter →
+      // Claude. Claude remains
       // last so Anthropic rate limits cannot block the app when earlier
       // providers are available.
       severity: hasAnyAiProvider() ? "OK" : "CRITICAL",

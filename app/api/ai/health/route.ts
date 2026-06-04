@@ -23,8 +23,8 @@ import { restoreHealthFromDb } from "../../../../lib/ai-provider-health-db";
 
 // Canonical fallback order surfaced to operators. Must match lib/ai.ts PROVIDER_CHAINS.
 // Claude is placed LAST so Anthropic rate limits do not block other providers.
-const AI_FALLBACK_CHAIN = "OpenAI → Gemini → Mistral → DeepSeek → Groq → Together → OpenRouter → Claude → deterministic draft fallback";
-const AI_FALLBACK_CHAIN_EXTRACTION = "Gemini → OpenAI → Mistral → Together → DeepSeek → Groq → OpenRouter → Claude → deterministic draft fallback";
+const AI_FALLBACK_CHAIN = "Gemini → OpenAI → Mistral → Together → DeepSeek → Groq → OpenRouter → Claude → deterministic draft fallback";
+const AI_FALLBACK_CHAIN_EXTRACTION = AI_FALLBACK_CHAIN;
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 10;
@@ -83,12 +83,12 @@ export async function GET() {
     claudeConfigured || geminiConfigured || openaiConfigured || mistralConfigured || deepSeekConfigured || groqConfigured || togetherConfigured || openRouterConfigured;
   // preferredProvider reflects the actual default chain order (Claude is last)
   const preferredProvider =
-    openaiConfigured ? "openai"
-    : geminiConfigured ? "gemini"
+    geminiConfigured ? "gemini"
+    : openaiConfigured ? "openai"
     : mistralConfigured ? "mistral"
+    : togetherConfigured ? "together"
     : deepSeekConfigured ? "deepseek"
     : groqConfigured ? "groq"
-    : togetherConfigured ? "together"
     : openRouterConfigured ? "openrouter"
     : claudeConfigured ? "claude"
     : "none";
@@ -108,7 +108,7 @@ export async function GET() {
   if (deepSeekConfigured && !deepSeekOfficialEnvPresent()) warnings.push("DeepSeek is enabled via a fallback alias env var. Rename it to DEEPSEEK_API_KEY (the official variable) in Vercel.");
 
   // Cooldown notice — purely advisory; the chain skips cooled-down providers.
-  const allProviderNames: AiProviderName[] = ["openai", "gemini", "mistral", "deepseek", "groq", "together", "openrouter", "anthropic"];
+  const allProviderNames: AiProviderName[] = ["gemini", "openai", "mistral", "together", "deepseek", "groq", "openrouter", "anthropic"];
   const cooling = allProviderNames.filter(isProviderCooledDown);
   if (cooling.length > 0) {
     warnings.push(`Provider(s) in cooldown: ${cooling.join(", ")}. Requests skip cooled-down providers until the window expires.`);
@@ -142,18 +142,18 @@ export async function GET() {
         configured: openaiConfigured,
         envPresent: openaiConfigured,
         model: openaiModel,
-        fallbackRank: 1,
+        fallbackRank: 2,
         label: "OpenAI",
-        note: "First-tier provider (default chain)",
+        note: "Second-tier provider (canonical chain)",
         runtime: providerRuntime.openai,
       },
       gemini: {
         configured: geminiConfigured,
         envPresent: geminiConfigured,
         model: process.env.GEMINI_MODEL || "gemini-2.5-pro",
-        fallbackRank: 2,
+        fallbackRank: 1,
         label: "Gemini",
-        note: "Second-tier provider (first for extraction/analysis)",
+        note: "First-tier provider (canonical chain for analysis, extraction, proposal, validation, and fast use cases)",
         primaryModel: process.env.GEMINI_MODEL || "gemini-2.5-pro",
         fallbackModels: maskModelChain(geminiModels),
         extractionModel: process.env.GEMINI_EXTRACTION_MODEL || process.env.GEMINI_EXTRACT_MODEL || null,
@@ -173,27 +173,27 @@ export async function GET() {
         configured: deepSeekConfigured,
         envPresent: deepSeekOfficialEnvPresent(),
         model: getDeepSeekModel(),
-        fallbackRank: 4,
+        fallbackRank: 5,
         label: "DeepSeek",
-        note: "Fourth-tier fallback provider",
+        note: "Fifth-tier fallback provider",
         runtime: providerRuntime.deepseek,
       },
       groq: {
         configured: groqConfigured,
         envPresent: groqConfigured,
         model: getGroqModel(),
-        fallbackRank: 5,
+        fallbackRank: 6,
         label: "Groq",
-        note: "Fifth-tier fallback provider and first fast/cheap provider",
+        note: "Sixth-tier fallback provider",
         runtime: providerRuntime.groq,
       },
       together: {
         configured: togetherConfigured,
         envPresent: togetherConfigured,
         model: getTogetherProposalModel(),
-        fallbackRank: 6,
+        fallbackRank: 4,
         label: "Together",
-        note: "Sixth-tier fallback provider and second fast/cheap provider",
+        note: "Fourth-tier fallback provider",
         analysisModel: getTogetherAnalysisModel(),
         fastModel: getTogetherFastModel(),
         runtime: providerRuntime.together,

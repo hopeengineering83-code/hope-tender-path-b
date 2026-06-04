@@ -5,18 +5,20 @@ import { assessTenderAnalysisQuality } from "../../../../../lib/analysis-quality
 import { assessMatchingQuality } from "../../../../../lib/matching-quality";
 import { ensureCompanyForUser } from "../../../../../lib/company-workspace";
 import { getCompanyIngestionReadiness } from "../../../../../lib/company-ingestion-readiness";
+import { detectAnalysisSourceWithApproval, type AnalysisSource } from "../../../../../lib/engine/analysis-source";
 
 export const dynamic = "force-dynamic";
 
 type AnalysisSourceRisk = "LOW" | "MEDIUM" | "HIGH";
 
-function analysisSourceFromNotes(notes?: string | null): { label: string; risk: AnalysisSourceRisk; detail: string } {
+function analysisSourceFromResolved(source: AnalysisSource, notes?: string | null): { label: string; risk: AnalysisSourceRisk; detail: string } {
   const text = notes ?? "";
   const line = text.split(/\n+/).find((item) => item.toLowerCase().startsWith("analysis source:"));
-  if (!line) return { label: "Unknown", risk: "MEDIUM", detail: "No persisted analysis-source line was found. Re-run Engine if the tender was analyzed before source tracking was added." };
-  if (/analysis source:\s*ai/i.test(line)) return { label: "AI", risk: "LOW", detail: line.replace(/^Analysis source:\s*/i, "") };
-  if (/regex fallback/i.test(line)) return { label: "Regex fallback", risk: "HIGH", detail: line.replace(/^Analysis source:\s*/i, "") };
-  return { label: "Unknown", risk: "MEDIUM", detail: line };
+  const detail = line ? line.replace(/^Analysis source:\s*/i, "") : "No persisted analysis-source line was found. Re-run Engine if the tender was analyzed before source tracking was added.";
+  if (source === "AI") return { label: "AI", risk: "LOW", detail };
+  if (source === "HUMAN_APPROVED_REGEX_FALLBACK") return { label: "Regex fallback (approved)", risk: "MEDIUM", detail };
+  if (source === "REGEX_FALLBACK_AI_ERROR") return { label: "Regex fallback", risk: "HIGH", detail };
+  return { label: "Unknown", risk: "MEDIUM", detail };
 }
 
 export async function GET(
@@ -67,6 +69,8 @@ export async function GET(
     WHERE "tenderId" = ${id}
   `;
 
+  const resolvedAnalysisSource = await detectAnalysisSourceWithApproval(prisma, id, tender).catch(() => "UNKNOWN" as const);
+
   const quality = assessTenderAnalysisQuality({
     requirements: tender.requirements,
     analysisSummary: tender.analysisSummary,
@@ -92,10 +96,10 @@ export async function GET(
     analysisExtractionStatus: tender.analysisExtractionStatus,
     selectedReviewedExperts: tender.expertMatches.filter((m) => m.isSelected && m.expert.trustLevel === "REVIEWED").length,
     selectedReviewedProjects: tender.projectMatches.filter((m) => m.isSelected && m.project.trustLevel === "REVIEWED").length,
-    analysisSource: (tender.notes ?? "").split(/\n+/).map((l) => l.trim()).find((l) => /^analysis source:/i.test(l))?.replace(/^analysis source:\s*/i, "").trim() ?? null,
+    analysisSource: resolvedAnalysisSource,
   });
 
-  const analysisSource = analysisSourceFromNotes(tender.notes);
+  const analysisSource = analysisSourceFromResolved(resolvedAnalysisSource, tender.notes);
   const sourceWarnings = analysisSource.risk === "HIGH"
     ? ["Analysis used regex fallback because AI providers failed or were exhausted. Regex fallback can miss official forms, evaluation scoring, exact file names, submission instructions, and expert/project requirements."]
     : [];
