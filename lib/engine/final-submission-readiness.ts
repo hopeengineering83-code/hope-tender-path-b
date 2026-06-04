@@ -405,6 +405,11 @@ export async function getFinalSubmissionReadiness(
       preBidMeetingLocation: true,
       technicalWeight: true,
       financialWeight: true,
+      clientCity: true,
+      clientWebsite: true,
+      submissionEmailSubject: true,
+      preBidChannel: true,
+      clientRepresentative: true,
       requirements: {
         select: {
           id: true,
@@ -603,6 +608,11 @@ export async function getFinalSubmissionReadiness(
     preBidMeetingLocation: tender.preBidMeetingLocation,
     technicalWeight: tender.technicalWeight,
     financialWeight: tender.financialWeight,
+    clientCity: tender.clientCity,
+    clientWebsite: tender.clientWebsite,
+    submissionEmailSubject: tender.submissionEmailSubject,
+    preBidChannel: tender.preBidChannel,
+    clientRepresentative: tender.clientRepresentative,
     requirementCount: tender.requirements.length,
     hasEvaluationMethodology: Boolean((tender.evaluationMethodology ?? "").trim()),
     hasSubmissionRules: Boolean((tender.submissionMethod ?? "").trim()) || Boolean((tender.submissionEmails ?? "").trim()) || Boolean((tender.submissionAddress ?? "").trim()),
