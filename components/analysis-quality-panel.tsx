@@ -32,13 +32,14 @@ export async function AnalysisQualityPanel({ tenderId }: { tenderId: string }) {
   ]);
   if (!tender) return null;
 
-  const [{ extractedChars, totalPageCount }] = await prisma.$queryRaw<Array<{ extractedChars: number; totalPageCount: number }>>`
+  const rawMetrics = await prisma.$queryRaw<Array<{ extractedChars: number; totalPageCount: number }>>`
     SELECT
       COALESCE(SUM(char_length("extractedText")), 0)::int AS "extractedChars",
       COALESCE(SUM(COALESCE("totalPages", 0)), 0)::int AS "totalPageCount"
     FROM "TenderFile"
     WHERE "tenderId" = ${tenderId}
-  `;
+  `.catch(() => [{ extractedChars: 0, totalPageCount: 0 }]);
+  const [{ extractedChars, totalPageCount }] = rawMetrics.length > 0 ? rawMetrics : [{ extractedChars: 0, totalPageCount: 0 }];
 
   // Pass vault counts so analysis-quality matching sub-score matches the
   // matching-quality panel — both should show VAULT_AWAITS_ENGINE (−18)

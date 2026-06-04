@@ -64,7 +64,7 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
       COALESCE("extractedText" LIKE '[Scanned%', false) AS "isScannedPlaceholder"
     FROM "TenderFile"
     WHERE "tenderId" = ${tender.id}
-  `;
+  `.catch(() => [] as Array<{ id: string; extractedTextLength: number; isScannedPlaceholder: boolean }>);
   const fileTextMetricById = new Map(fileTextMetrics.map((file) => [file.id, file]));
   const tenderForUi = {
     ...tender,
@@ -79,7 +79,7 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
   };
 
   const ai = isAIEnabled();
-  const generationReadiness = await getTenderGenerationReadiness(prisma, userId, tender.id);
+  const generationReadiness = await getTenderGenerationReadiness(prisma, userId, tender.id).catch(() => null);
 
   return (
     <>
