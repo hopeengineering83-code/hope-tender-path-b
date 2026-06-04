@@ -56,7 +56,7 @@ const AI_PROVIDER_KEYS = [
   {
     name: "GEMINI_API_KEY",
     description:
-      "Google Gemini API key (AIza... legacy or AQ... new format). Primary analysis/extraction provider and second-tier proposal fallback. Without any AI provider key, imported records remain REGEX_DRAFT only.",
+      "Google Gemini API key (AIza... legacy or AQ... new format). First-tier provider in the canonical chain for analysis, extraction, proposal, validation, and fast use cases. Without any AI provider key, imported records remain REGEX_DRAFT only.",
     validate: (v) => {
       // Google AI Studio keys have historically started with "AIza" (39 chars).
       // Newer projects issue keys starting with "AQ" — accept both formats.
@@ -70,7 +70,7 @@ const AI_PROVIDER_KEYS = [
   {
     name: "OPENAI_API_KEY",
     description:
-      "OpenAI API key (sk-...). First-tier provider for proposal generation/validation in the default chain. At least one AI provider key is required in production.",
+      "OpenAI API key (sk-...). Second-tier provider in the canonical chain after Gemini. At least one AI provider key is required in production.",
     validate: (v) => {
       if (!v.startsWith("sk-")) return `Expected an OpenAI API key starting with "sk-". Got: "${v.slice(0, 8)}..."`;
       return null;
@@ -85,19 +85,19 @@ const AI_PROVIDER_KEYS = [
   {
     name: "DEEPSEEK_API_KEY",
     description:
-      "DeepSeek API key. Third-tier fallback for proposal generation via OpenAI-compatible endpoint (deepseek-chat / deepseek-reasoner).",
+      "DeepSeek API key. Fifth-tier fallback for proposal generation via OpenAI-compatible endpoint (deepseek-chat / deepseek-reasoner).",
     validate: (_v) => null, // no canonical prefix to validate
   },
   {
     name: "GROQ_API_KEY",
     description:
-      "Groq API key (gsk_...). Fifth-tier default fallback and first-tier fast/cheap provider. Model overridable via GROQ_PROPOSAL_MODEL (default llama-3.3-70b-versatile).",
+      "Groq API key (gsk_...). Sixth-tier fallback provider. Model overridable via GROQ_PROPOSAL_MODEL (default llama-3.3-70b-versatile).",
     validate: (_v) => null,
   },
   {
     name: "TOGETHER_API_KEY",
     description:
-      "Together API key. Sixth-tier default fallback and second-tier fast/cheap provider. Models override via TOGETHER_PROPOSAL_MODEL / TOGETHER_ANALYSIS_MODEL / TOGETHER_FAST_MODEL.",
+      "Together API key. Fourth-tier fallback provider. Models override via TOGETHER_PROPOSAL_MODEL / TOGETHER_ANALYSIS_MODEL / TOGETHER_FAST_MODEL.",
     validate: (_v) => null,
   },
   {

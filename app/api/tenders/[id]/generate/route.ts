@@ -362,9 +362,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     submissionAddress: tender.submissionAddress,
     submissionEmails: tender.submissionEmails,
     analysisExtractionStatus: tender.analysisExtractionStatus,
-    analysisSource: approvedAnalysisSource === "HUMAN_APPROVED_REGEX_FALLBACK"
-      ? "HUMAN_APPROVED_REGEX_FALLBACK"
-      : (tender.notes ?? "").split(/\n+/).map((line) => line.trim()).find((line) => /^analysis source:/i.test(line))?.replace(/^analysis source:\s*/i, "").trim() ?? null,
+    analysisSource: approvedAnalysisSource,
   });
   if (analysisQuality.severity === "POOR" || analysisQuality.severity === "UNSAFE") {
     return NextResponse.json({

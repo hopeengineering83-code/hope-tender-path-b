@@ -14,8 +14,8 @@ const FALLBACK_GEMINI_MODELS = (process.env.GEMINI_FALLBACK_MODELS || "gemini-2.
 const PROPOSAL_MODELS = ["gemini-2.5-pro", "gemini-2.0-flash", "gemini-1.5-pro"];
 
 // Claude models in preference order when the last-resort Anthropic provider
-// is reached. The overall proposal provider chain is OpenAI → Gemini →
-// Mistral → DeepSeek → Together → Groq → OpenRouter → Claude for proposals, keeping Anthropic last so rate
+// is reached. The overall proposal provider chain is Gemini → OpenAI →
+// Mistral → Together → DeepSeek → Groq → OpenRouter → Claude for proposals, keeping Anthropic last so rate
 // limits do not block the app when earlier providers are available.
 //
 // The default chain prefers stable, widely-available aliases so it works
@@ -484,7 +484,7 @@ export async function generateWithFallback(
 }
 
 // ─── OpenAI (GPT-4o) provider ──────────────────────────────────────────────────
-// First-tier provider in the default/proposal/validation chains.
+// Second-tier provider in the canonical default/proposal/validation chains.
 // Uses fetch() directly (no SDK dependency) so it works in any serverless runtime.
 // Returns null when OPENAI_API_KEY is not configured, so callers can proceed to
 // the next tier without throwing.
@@ -579,7 +579,7 @@ export function isTogetherEnabled() {
 }
 
 // ─── DeepSeek provider ─────────────────────────────────────────────────────────
-// DeepSeek provider in the default chain (OpenAI → Gemini → Mistral → DeepSeek → Groq → Together → OpenRouter → Claude).
+// DeepSeek provider in the default chain (Gemini → OpenAI → Mistral → Together → DeepSeek → Groq → OpenRouter → Claude).
 // Uses the OpenAI-compatible REST endpoint (no SDK needed).
 // Returns null when DEEPSEEK_API_KEY is not configured.
 // 20s per-provider cap — Vercel Hobby has a 60s function limit so each

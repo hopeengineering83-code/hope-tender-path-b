@@ -7,7 +7,7 @@
  * ARCHITECTURE: at least one AI provider key is required in production:
  *   - OPENAI_API_KEY / GEMINI_API_KEY / MISTRAL_API_KEY / DEEPSEEK_API_KEY /
  *     GROQ_API_KEY / TOGETHER_API_KEY / OPENROUTER_API_KEY / ANTHROPIC_API_KEY. The current default proposal
- *     chain is OpenAI → Gemini → Mistral → DeepSeek → Groq → Together → OpenRouter → Claude, with
+ *     chain is Gemini → OpenAI → Mistral → Together → DeepSeek → Groq → OpenRouter → Claude, with
  *     Claude last so Anthropic rate limits do not block the app.
  *
  * Without EITHER key:
@@ -32,12 +32,12 @@ const AI_PROVIDER_KEYS: Array<{ name: string; description: string }> = [
   {
     name: "GEMINI_API_KEY",
     description:
-      "Google Gemini API key (AIza...). Primary analysis/extraction provider; second-tier proposal fallback. " +
+      "Google Gemini API key (AIza...). First-tier provider in the canonical chain for analysis, extraction, proposal, validation, and fast use cases. " +
       "Without an AI key, all imported records are REGEX_DRAFT and BLOCKED from final proposal generation.",
   },
   {
     name: "OPENAI_API_KEY",
-    description: "OpenAI API key (sk-...). First-tier default provider for proposal generation/validation.",
+    description: "OpenAI API key (sk-...). Second-tier provider in the canonical chain after Gemini.",
   },
   {
     name: "MISTRAL_API_KEY",
@@ -49,11 +49,11 @@ const AI_PROVIDER_KEYS: Array<{ name: string; description: string }> = [
   },
   {
     name: "GROQ_API_KEY",
-    description: "Groq API key. Fifth-tier proposal fallback and first-tier fast/cheap provider.",
+    description: "Groq API key. Sixth-tier proposal fallback provider.",
   },
   {
     name: "TOGETHER_API_KEY",
-    description: "Together API key. Sixth-tier proposal fallback and second-tier fast/cheap provider.",
+    description: "Together API key. Fourth-tier proposal fallback provider.",
   },
   {
     name: "OPENROUTER_API_KEY",

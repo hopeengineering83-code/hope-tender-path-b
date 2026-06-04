@@ -53,6 +53,8 @@ export async function AnalysisQualityPanel({ tenderId }: { tenderId: string }) {
     vaultReviewedProjects: companyReadiness.totals.reviewedProjects,
   });
 
+  const rawSource = await detectAnalysisSourceWithApproval(prisma, tenderId, tender).catch(() => "UNKNOWN" as const);
+
   const quality = assessTenderAnalysisQuality({
     requirements: tender.requirements,
     analysisSummary: tender.analysisSummary,
@@ -74,12 +76,11 @@ export async function AnalysisQualityPanel({ tenderId }: { tenderId: string }) {
     submissionAddress: tender.submissionAddress,
     submissionEmails: tender.submissionEmails,
     analysisExtractionStatus: tender.analysisExtractionStatus,
-    analysisSource: (tender.notes ?? "").split(/\n+/).map((l) => l.trim()).find((l) => /^analysis source:/i.test(l))?.replace(/^analysis source:\s*/i, "").trim() ?? null,
+    analysisSource: rawSource,
     selectedReviewedExperts: tender.expertMatches.filter((m) => m.isSelected && m.expert?.trustLevel === "REVIEWED").length,
     selectedReviewedProjects: tender.projectMatches.filter((m) => m.isSelected && m.project?.trustLevel === "REVIEWED").length,
   });
 
-  const rawSource = await detectAnalysisSourceWithApproval(prisma, tenderId, tender).catch(() => "UNKNOWN" as const);
   const analysisSource = analysisSourceSummary(rawSource);
   const ready = quality.severity !== "POOR" && quality.severity !== "UNSAFE" && analysisSource.risk !== "HIGH";
   const sourceRiskClass = analysisSource.risk === "LOW" ? "bg-emerald-100 text-emerald-700" : analysisSource.risk === "HIGH" ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-700";

@@ -19,7 +19,7 @@ import {
 } from "../lib/ai-provider-health";
 import { AIHealthTestButton } from "./ai-health-test-button";
 
-const AI_FALLBACK_CHAIN = "Default: OpenAI → Gemini → Mistral → DeepSeek → Groq → Together → OpenRouter → Claude. Analysis: Gemini → OpenAI → Mistral → Together → DeepSeek → Groq → OpenRouter → Claude. Fast: Groq → Together → DeepSeek → Mistral → Gemini → OpenAI → OpenRouter → Claude. Claude remains last.";
+const AI_FALLBACK_CHAIN = "Canonical: Gemini → OpenAI → Mistral → Together → DeepSeek → Groq → OpenRouter → Claude. Claude remains last.";
 
 type ProviderCardData = {
   key: string;
@@ -70,15 +70,15 @@ function getAIHealth(): AIHealthResponse {
   // Anthropic rate limits do not block the app when other providers are available.
   const providers: ProviderCardData[] = [
     {
-      key: "openai", label: "OpenAI", rank: 1, configured: openaiConfigured, envVar: "OPENAI_API_KEY",
-      model: process.env.OPENAI_PROPOSAL_MODEL || "gpt-4o", note: "First-tier provider",
-      detail: null, modelHint: null, runtime: getProviderRuntimeSnapshot("openai"),
-    },
-    {
-      key: "gemini", label: "Gemini", rank: 2, configured: geminiConfigured, envVar: "GEMINI_API_KEY",
-      model: process.env.GEMINI_MODEL || "gemini-2.5-pro", note: "Second-tier provider (first for extraction)",
+      key: "gemini", label: "Gemini", rank: 1, configured: geminiConfigured, envVar: "GEMINI_API_KEY",
+      model: process.env.GEMINI_MODEL || "gemini-2.5-pro", note: "First-tier provider",
       detail: `Fallback: ${geminiModels.slice(0, 2).join(", ") || "none"}`,
       modelHint: null, runtime: getProviderRuntimeSnapshot("gemini"),
+    },
+    {
+      key: "openai", label: "OpenAI", rank: 2, configured: openaiConfigured, envVar: "OPENAI_API_KEY",
+      model: process.env.OPENAI_PROPOSAL_MODEL || "gpt-4o", note: "Second-tier provider",
+      detail: null, modelHint: null, runtime: getProviderRuntimeSnapshot("openai"),
     },
     {
       key: "mistral", label: "Mistral", rank: 3, configured: mistralConfigured, envVar: "MISTRAL_API_KEY",
@@ -87,25 +87,25 @@ function getAIHealth(): AIHealthResponse {
       runtime: getProviderRuntimeSnapshot("mistral"),
     },
     {
-      key: "deepseek", label: "DeepSeek", rank: 4, configured: deepseekConfigured, envVar: "DEEPSEEK_API_KEY",
-      model: getDeepSeekModel(), note: "Fourth-tier provider",
-      detail: deepseekConfigured && !deepSeekOfficialEnvPresent() ? "Enabled via alias env var — rename to DEEPSEEK_API_KEY." : null,
-      modelHint: null, runtime: getProviderRuntimeSnapshot("deepseek"),
-    },
-    {
-      key: "groq", label: "Groq", rank: 5, configured: groqConfigured, envVar: "GROQ_API_KEY",
-      model: getGroqModel(), note: "Fifth-tier default provider; first fast/cheap provider", detail: null, modelHint: null,
-      runtime: getProviderRuntimeSnapshot("groq"),
-    },
-    {
-      key: "together", label: "Together", rank: 6, configured: togetherConfigured, envVar: "TOGETHER_API_KEY",
-      model: getTogetherProposalModel(), note: "Sixth-tier default provider; second fast/cheap provider",
+      key: "together", label: "Together", rank: 4, configured: togetherConfigured, envVar: "TOGETHER_API_KEY",
+      model: getTogetherProposalModel(), note: "Fourth-tier provider",
       detail: `Analysis: ${getTogetherAnalysisModel()} · fast: ${getTogetherFastModel()}`, modelHint: null,
       runtime: getProviderRuntimeSnapshot("together"),
     },
     {
+      key: "deepseek", label: "DeepSeek", rank: 5, configured: deepseekConfigured, envVar: "DEEPSEEK_API_KEY",
+      model: getDeepSeekModel(), note: "Fifth-tier provider",
+      detail: deepseekConfigured && !deepSeekOfficialEnvPresent() ? "Enabled via alias env var — rename to DEEPSEEK_API_KEY." : null,
+      modelHint: null, runtime: getProviderRuntimeSnapshot("deepseek"),
+    },
+    {
+      key: "groq", label: "Groq", rank: 6, configured: groqConfigured, envVar: "GROQ_API_KEY",
+      model: getGroqModel(), note: "Sixth-tier provider", detail: null, modelHint: null,
+      runtime: getProviderRuntimeSnapshot("groq"),
+    },
+    {
       key: "openrouter", label: "OpenRouter", rank: 7, configured: openRouterConfigured, envVar: "OPENROUTER_API_KEY",
-      model: openRouterModel, note: "Fifth-tier provider", detail: null,
+      model: openRouterModel, note: "Seventh-tier provider", detail: null,
       modelHint: openRouterConfigured && openRouterModel === "openrouter/auto"
         ? "Using openrouter/auto. Set OPENROUTER_PROPOSAL_MODEL to a model available in your OpenRouter account to pin it."
         : null,

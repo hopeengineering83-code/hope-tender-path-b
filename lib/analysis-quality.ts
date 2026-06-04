@@ -105,10 +105,12 @@ export function assessTenderAnalysisQuality(params: {
   analysisExtractionStatus?: string | null;
 }): AnalysisQualityReport {
   const REGEX_FALLBACK_SCORE_CAP = 45;
-  const REGEX_FALLBACK_SOURCES_QA = new Set(["REGEX_FALLBACK_AI_ERROR", "REGEX_FALLBACK", "DETERMINISTIC_FALLBACK"]);
+  const analysisSourceText = (params.analysisSource ?? "").trim();
+  const isHumanApprovedRegexFallback = /HUMAN_APPROVED_REGEX_FALLBACK/i.test(analysisSourceText);
   const isRegexFallback = Boolean(
-    params.analysisSource &&
-    REGEX_FALLBACK_SOURCES_QA.has((params.analysisSource).trim().toUpperCase()),
+    analysisSourceText &&
+    !isHumanApprovedRegexFallback &&
+    /REGEX_FALLBACK|DETERMINISTIC_FALLBACK|regex\s+fallback/i.test(analysisSourceText),
   );
   const requirements = params.requirements ?? [];
   const requirementCount = requirements.length;

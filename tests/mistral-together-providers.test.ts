@@ -1,4 +1,4 @@
-// Mistral AI (6th-tier) + Together AI (7th-tier) fallback providers.
+// Mistral AI (3rd-tier) + Together AI (4th-tier) fallback providers.
 //
 // The actual HTTP calls need live keys, so chain WIRING is asserted at the
 // source level and the provider-health plumbing (configured detection, model

@@ -51,3 +51,20 @@ describe("admin provider-chain ping budget", () => {
     assert.match(route, /results\.push\(await tester\.run\(\)\)/);
   });
 });
+
+describe("AI provider status surfaces stay aligned with canonical chain", () => {
+  const healthRoute = readFileSync("app/api/ai/health/route.ts", "utf8");
+  const envReadiness = readFileSync("lib/ai-environment-readiness.ts", "utf8");
+
+  it("surfaces Gemini-first order in the AI health route", () => {
+    assert.match(healthRoute, /Gemini → OpenAI → Mistral → Together → DeepSeek → Groq → OpenRouter → Claude/);
+    assert.ok(healthRoute.indexOf('geminiConfigured ? "gemini"') < healthRoute.indexOf(': openaiConfigured ? "openai"'));
+    assert.ok(healthRoute.indexOf('fallbackRank: 1,\n        label: "Gemini"') < healthRoute.indexOf('fallbackRank: 8,\n        label: "Claude"'));
+  });
+
+  it("surfaces Gemini-first order in environment readiness", () => {
+    assert.match(envReadiness, /Gemini → OpenAI → Mistral → Together → DeepSeek → Groq → OpenRouter → Claude/);
+    assert.ok(envReadiness.indexOf('present("GEMINI_API_KEY")') < envReadiness.indexOf('present("OPENAI_API_KEY")'));
+    assert.ok(envReadiness.indexOf('present("ANTHROPIC_API_KEY")') > envReadiness.indexOf('present("OPENROUTER_API_KEY")'));
+  });
+});

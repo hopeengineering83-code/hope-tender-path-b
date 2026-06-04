@@ -1,4 +1,4 @@
-// Groq (5th-tier) + OpenRouter (6th-tier) fallback providers.
+// Groq (6th-tier) + OpenRouter (7th-tier) fallback providers.
 //
 // The actual HTTP calls need live keys, so the chain WIRING is asserted at the
 // source level and the provider-health plumbing (configured detection, model
@@ -114,13 +114,13 @@ describe("/api/ai/health exposes groq + openrouter and the full chain", () => {
     assert.match(source, /groq:\s*\{/);
     assert.match(source, /openrouter:\s*\{/);
     // Claude is last (rank 8); openrouter and groq are in the chain
-    assert.match(source, /fallbackRank:\s*5/);
+    assert.match(source, /fallbackRank:\s*6/);
     assert.match(source, /fallbackRank:\s*7/);
     assert.match(source, /fallbackRank:\s*8/);
   });
   it("advertises the extended fallback chain with Claude last", () => {
-    // DeepSeek → Groq → Together → OpenRouter appear together before Claude
-    assert.match(source, /DeepSeek → Groq → Together → OpenRouter → Claude → deterministic draft fallback/);
+    // Together → DeepSeek → Groq → OpenRouter appear together before Claude
+    assert.match(source, /Together → DeepSeek → Groq → OpenRouter → Claude → deterministic draft fallback/);
   });
 });
 
@@ -131,7 +131,7 @@ describe("AI Health panel renders all eight provider cards from the contract", (
     assert.match(source, /label: "OpenRouter"/);
     assert.match(source, /GROQ_API_KEY/);
     assert.match(source, /OPENROUTER_API_KEY/);
-    assert.match(source, /rank: 5/);
+    assert.match(source, /rank: 6/);
     assert.match(source, /rank: 7/);
   });
   it("renders cards by mapping the provider contract (rank + cooldown shown)", () => {

@@ -4,7 +4,7 @@ import { getCompanyIngestionReadiness, type CompanyIngestionReadiness } from "./
 import { assessTenderAnalysisQuality, type AnalysisQualityReport } from "./analysis-quality";
 import { assessMatchingQuality, type MatchingQualityReport } from "./matching-quality";
 import { isValidClientName, getClientNameStatus } from "./engine/metadata-validators";
-import { assertAnalysisReadyForFinalGeneration } from "./engine/analysis-source";
+import { assertAnalysisReadyForFinalGeneration, detectAnalysisSourceWithApproval } from "./engine/analysis-source";
 import { assessTenderMetadataCompleteness } from "./engine/tender-metadata-completeness";
 // Round follow-up to PR #424/#425 — surface PDF-required + branding/
 // signature/stamp policy in the readiness panel BEFORE the user
@@ -186,6 +186,8 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
     vaultReviewedExperts: companyReadiness.totals.reviewedExperts,
     vaultReviewedProjects: companyReadiness.totals.reviewedProjects,
   });
+  const resolvedAnalysisSource = await detectAnalysisSourceWithApproval(client, tenderId, tender).catch(() => "UNKNOWN" as const);
+
   const analysisQuality = assessTenderAnalysisQuality({
     requirements: tender.requirements,
     analysisSummary: tender.analysisSummary,
@@ -208,7 +210,7 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
     analysisExtractionStatus: tender.analysisExtractionStatus,
     selectedReviewedExperts: tender.expertMatches.filter((m) => m.isSelected && m.expert.trustLevel === "REVIEWED").length,
     selectedReviewedProjects: tender.projectMatches.filter((m) => m.isSelected && m.project.trustLevel === "REVIEWED").length,
-    analysisSource: (tender.notes ?? "").split(/\n+/).map((l) => l.trim()).find((l) => /^analysis source:/i.test(l))?.replace(/^analysis source:\s*/i, "").trim() ?? null,
+    analysisSource: resolvedAnalysisSource,
   });
 
   const blockers: GenerationReadinessItem[] = companyReadiness.blockers.map((message) => ({ code: "COMPANY_INGESTION_NOT_READY", message, nextAction: "OPEN_COMPANY_READINESS" }));

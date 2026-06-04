@@ -153,7 +153,7 @@ export function getGroqBaseUrl(): string {
 }
 
 // ─── Together (OpenAI-compatible) ─────────────────────────────────────────
-// Sixth-tier provider in the default chain and second in fast/cheap mode.
+// Fourth-tier provider in the canonical default chain.
 export function getTogetherApiKey(): string | undefined {
   const v = process.env.TOGETHER_API_KEY;
   return v && v.trim().length > 0 ? v.trim() : undefined;
