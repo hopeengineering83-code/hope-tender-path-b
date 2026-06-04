@@ -27,7 +27,7 @@ export async function ExtractionQualityPanel({ tenderId }: { tenderId: string })
         orderBy: { createdAt: "asc" },
         select: {
           id: true, fileName: true, originalFileName: true, extractedText: true,
-          totalPages: true, extractedPages: true, ocrPages: true, failedPages: true,
+          mimeType: true, totalPages: true, extractedPages: true, ocrPages: true, failedPages: true,
           extractionScore: true, extractionMethod: true, ocrModel: true,
         },
       },
@@ -52,6 +52,7 @@ export async function ExtractionQualityPanel({ tenderId }: { tenderId: string })
     return {
       id: file.id,
       fileName: file.originalFileName || file.fileName,
+      mimeType: file.mimeType,
       quality,
       perPage: assessExtractionQualityPerPage(file.extractedText),
       totalPages: file.totalPages,
@@ -210,7 +211,10 @@ export async function ExtractionQualityPanel({ tenderId }: { tenderId: string })
           return (
             <div key={item.id} className="rounded-xl border bg-white p-3 text-sm">
               <div className="flex items-center justify-between gap-2">
-                <p className="font-medium text-slate-900 truncate">{item.fileName}</p>
+                <div className="min-w-0">
+                  <p className="font-medium text-slate-900 truncate">{item.fileName}</p>
+                  {item.mimeType && <p className="text-[10px] text-slate-400 truncate">{item.mimeType}</p>}
+                </div>
                 <div className="flex items-center gap-1 flex-shrink-0">
                   {item.extractionMethod && (
                     <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600">

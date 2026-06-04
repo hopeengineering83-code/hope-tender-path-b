@@ -2,8 +2,8 @@
 //
 // Shows every field inferTenderMetadata() captured from the uploaded
 // tender body in a structured 2-column layout. Fields that came back
-// empty are shown as "Bid-Team to confirm" so the user knows what
-// needs manual review before submission.
+// empty are flagged as missing so the user knows what needs manual
+// review before submission.
 //
 // Server component — pure presentation. The "Re-extract from PDF"
 // button is a small client island.
@@ -56,7 +56,7 @@ function fmtNumber(value: number | null | undefined, currency?: string | null): 
   return currency ? `${currency} ${formatted}` : formatted;
 }
 
-const REVIEW_NOTE = "Bid-Team to confirm";
+const MISSING_NOTE = "Not extracted — confirm manually";
 
 export function TenderIntakeDetailPanel({ tender }: { tender: TenderDetailLike }) {
   const deadline = formatDeadline(tender.deadline);
@@ -147,8 +147,8 @@ function Detail({ label, value, highlight }: { label: string; value: string | nu
   return (
     <div className="flex items-start gap-3 border-b border-slate-100 pb-2">
       <div className="w-44 shrink-0 text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</div>
-      <div className={`flex-1 text-sm ${empty ? "italic text-slate-400" : highlight ? "font-semibold text-amber-700" : "text-slate-800"}`}>
-        {empty ? REVIEW_NOTE : value}
+      <div className={`flex-1 text-sm ${empty ? "italic text-amber-700" : highlight ? "font-semibold text-amber-700" : "text-slate-800"}`}>
+        {empty ? MISSING_NOTE : value}
       </div>
     </div>
   );
