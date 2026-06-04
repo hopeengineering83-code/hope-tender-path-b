@@ -1749,21 +1749,32 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
                     { label: "Client representative", key: "clientRepresentative", value: tender.clientRepresentative },
                   ];
                   const populated = contactRows.filter((r) => r.value);
-                  if (!populated.length) return null;
+                  // Show MISSING_SOURCE for null fields only after AI Analyze has run
+                  // (indicated by an analysis summary or any populated contact field).
+                  const aiHasRun = !!tender.analysisSummary || populated.length > 0;
+                  const rowsToShow = aiHasRun ? contactRows : populated;
+                  if (!rowsToShow.length) return null;
                   return (
                     <div className="md:col-span-2">
                       <dt className="text-sm font-medium text-slate-700 mb-2">Contact &amp; location details</dt>
                       <dl className="grid gap-x-6 gap-y-2 md:grid-cols-2">
-                        {populated.map(({ label, key, value }) => {
+                        {rowsToShow.map(({ label, key, value }) => {
                           const s = src[key];
+                          const missing = !value;
                           return (
                             <div key={key}>
                               <dt className="text-xs text-slate-400">{label}</dt>
-                              <dd className="text-sm font-medium text-slate-900">
-                                {value}
-                                {s?.page && <span className="ml-1.5 text-xs text-slate-400 font-normal">(p.{s.page})</span>}
-                              </dd>
-                              {s?.quote && <p className="mt-0.5 text-xs text-slate-400 italic line-clamp-2">&ldquo;{s.quote}&rdquo;</p>}
+                              {missing ? (
+                                <dd className="text-sm font-medium text-amber-700 italic">MISSING_SOURCE — not found in tender document</dd>
+                              ) : (
+                                <>
+                                  <dd className="text-sm font-medium text-slate-900">
+                                    {value}
+                                    {s?.page && <span className="ml-1.5 text-xs text-slate-400 font-normal">(p.{s.page})</span>}
+                                  </dd>
+                                  {s?.quote && <p className="mt-0.5 text-xs text-slate-400 italic line-clamp-2">&ldquo;{s.quote}&rdquo;</p>}
+                                </>
+                              )}
                             </div>
                           );
                         })}
