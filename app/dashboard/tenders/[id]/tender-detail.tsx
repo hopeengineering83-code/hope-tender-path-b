@@ -324,6 +324,7 @@ type Tender = {
   clientNameSourcePage?: number | null;
   clientNameSourceQuote?: string | null;
   submissionEmailSourcePage?: number | null;
+  submissionEmails?: string | null;
   // Contact & location fields extracted by AI Analyze
   country?: string | null;
   clientAddress?: string | null;
@@ -1738,6 +1739,7 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
                     { label: "Client address", key: "clientAddress", value: tender.clientAddress },
                     { label: "Client website / portal", key: "clientWebsite", value: tender.clientWebsite },
                     { label: "Submission address", key: "submissionAddress", value: tender.submissionAddress },
+                    { label: "Submission email(s)", key: "submissionEmails", value: tender.submissionEmails },
                     { label: "Submission email subject", key: "submissionEmailSubject", value: tender.submissionEmailSubject },
                     { label: "Pre-bid channel", key: "preBidChannel", value: tender.preBidChannel },
                     { label: "Contact person", key: "clientContactName", value: tender.clientContactName },
