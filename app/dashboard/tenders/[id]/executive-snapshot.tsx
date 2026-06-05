@@ -211,7 +211,7 @@ export function ExecutiveSnapshot({ tender }: { tender: TenderLike }) {
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
         <div>
           <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Executive Tender Command Center</p>
-          <h2 className="mt-1 text-xl font-bold text-slate-900">Senior proposal decision snapshot</h2>
+          <h2 className="mt-1 text-xl font-bold text-slate-900 break-words line-clamp-3">Senior proposal decision snapshot</h2>
           <p className="mt-1 max-w-3xl text-sm text-slate-500">
             One proposal-management view for readiness, critical gaps, evidence coverage, selected experts/projects, submission-plan documents, validation, review status, and extraction health.
           </p>

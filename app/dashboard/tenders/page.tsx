@@ -69,6 +69,27 @@ function DeadlineCell({ deadline }: { deadline: Date | null }) {
   return <span className="text-slate-500">{formatDate(deadline)}</span>;
 }
 
+/** Returns JSX for a mobile deadline with pulsing red dot when ≤ 3 days. */
+function MobileDeadlineCell({ deadline }: { deadline: Date | null }) {
+  if (!deadline) {
+    return <span className="text-slate-400">No deadline</span>;
+  }
+  const daysLeft = Math.ceil((new Date(deadline).getTime() - Date.now()) / 86_400_000);
+  if (daysLeft < 0) {
+    return <span className="font-medium text-red-600"><span className="inline-block h-2 w-2 rounded-full bg-red-500 animate-pulse mr-1" />Overdue ({formatDate(deadline)})</span>;
+  }
+  if (daysLeft <= 3) {
+    return <span className="font-medium text-red-500"><span className="inline-block h-2 w-2 rounded-full bg-red-500 animate-pulse mr-1" />{daysLeft}d left ({formatDate(deadline)})</span>;
+  }
+  if (daysLeft <= 7) {
+    return <span className="font-medium text-red-500">⚠ {daysLeft}d left ({formatDate(deadline)})</span>;
+  }
+  if (daysLeft <= 14) {
+    return <span className="text-amber-500">⏰ {daysLeft}d left ({formatDate(deadline)})</span>;
+  }
+  return <span className="text-slate-500">{formatDate(deadline)}</span>;
+}
+
 // Pipeline stage order and display config
 const STAGE_ORDER = [
   "TENDER_INTAKE",
@@ -417,7 +438,7 @@ export default async function TendersPage({
             </table>
 
             {/* Mobile card list — hidden on md+ */}
-            <div className="md:hidden divide-y">
+            <div className="md:hidden divide-y gap-y-0">
               {tenders.map((tender) => {
                 const unresolvedGaps = tender.complianceGaps.filter((gap) => !gap.isResolved).length;
                 const criticalGaps = tender.complianceGaps.filter((gap) => !gap.isResolved && gap.severity === "CRITICAL").length;
@@ -452,12 +473,7 @@ export default async function TendersPage({
                     </div>
 
                     <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
-                      <DeadlineCell deadline={tender.deadline} />
-                      {tender.readinessScore != null ? (
-                        <span className="text-slate-500">
-                          Workflow: <span className="font-medium text-slate-700">{tender.readinessScore}%</span>
-                        </span>
-                      ) : null}
+                      <MobileDeadlineCell deadline={tender.deadline} />
                       {unresolvedGaps > 0 && (
                         <span className={`text-xs ${criticalGaps > 0 ? "text-red-500" : "text-amber-500"}`}>
                           {unresolvedGaps} gaps
@@ -465,12 +481,20 @@ export default async function TendersPage({
                       )}
                     </div>
 
-                    <div className="flex items-center gap-3 pt-1">
+                    {/* Readiness bar */}
+                    {tender.readinessScore != null && (
+                      <div className="h-1 rounded-full bg-slate-100">
+                        <div className="h-1 rounded-full bg-emerald-400" style={{ width: `${tender.readinessScore}%` }} />
+                      </div>
+                    )}
+
+                    {/* Bottom action row */}
+                    <div className="flex items-center gap-2 pt-1">
                       <Link
                         href={`/dashboard/tenders/${tender.id}`}
-                        className="rounded-lg bg-black px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-800"
+                        className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white"
                       >
-                        Open workspace
+                        Open
                       </Link>
                       <DuplicateButton tenderId={tender.id} />
                     </div>
