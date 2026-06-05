@@ -19,7 +19,7 @@ async function withDashboardFileMetrics<T extends { id: string; files: any[] }>(
       COALESCE("extractedText" LIKE '[Scanned%', false) AS "isScannedPlaceholder"
     FROM "TenderFile"
     WHERE "tenderId" = ${tender.id}
-  `;
+  `.catch(() => [] as Array<{ id: string; extractedTextLength: number; isScannedPlaceholder: boolean }>);
   const metricById = new Map(fileTextMetrics.map((file) => [file.id, file]));
   return {
     ...tender,
@@ -67,21 +67,26 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   await prismaReady;
   const { id } = await params;
 
-  const tender = await prisma.tender.findFirst({
-    where: { id, userId },
-    include: {
-      files: {
-        orderBy: { createdAt: "desc" },
-        select: { id: true, fileName: true, originalFileName: true, mimeType: true, size: true, classification: true, createdAt: true },
+  try {
+    const tender = await prisma.tender.findFirst({
+      where: { id, userId },
+      include: {
+        files: {
+          orderBy: { createdAt: "desc" },
+          select: { id: true, fileName: true, originalFileName: true, mimeType: true, size: true, classification: true, createdAt: true },
+        },
+        requirements: { orderBy: { createdAt: "asc" } },
+        complianceGaps: { orderBy: { createdAt: "desc" } },
+        generatedDocuments: { orderBy: generatedDocumentOrder, select: generatedDocumentDashboardSelect },
       },
-      requirements: { orderBy: { createdAt: "asc" } },
-      complianceGaps: { orderBy: { createdAt: "desc" } },
-      generatedDocuments: { orderBy: generatedDocumentOrder, select: generatedDocumentDashboardSelect },
-    },
-  });
+    });
 
-  if (!tender) return NextResponse.json({ error: "Not found" }, { status: 404 });
-  return NextResponse.json(await withDashboardPayload(tender));
+    if (!tender) return NextResponse.json({ error: "Not found" }, { status: 404 });
+    return NextResponse.json(await withDashboardPayload(tender));
+  } catch (error) {
+    console.error("[GET /api/tenders/[id]] failed:", error);
+    return NextResponse.json({ error: "Failed to load tender" }, { status: 500 });
+  }
 }
 
 export async function PUT(req: Request, { params }: { params: Promise<{ id: string }> }) {
