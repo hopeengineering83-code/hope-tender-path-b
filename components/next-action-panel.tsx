@@ -16,6 +16,7 @@ import { prisma, prismaReady } from "../lib/prisma";
 import { assessExtractionQuality } from "../lib/extraction-quality";
 import { isExtractionCorrupted } from "../lib/engine/extraction-quality-gate";
 import { assessTenderMetadataCompleteness } from "../lib/engine/tender-metadata-completeness";
+import { safeParseJsonArray } from "../lib/safe-json";
 
 const STEPS = [
   "Upload Tender",
@@ -160,7 +161,7 @@ export async function NextActionPanel({ tenderId }: { tenderId: string }) {
   const requirementsOk = tender.requirements.length > 0 &&
     (mandatoryReqs.length === 0 || tracedReqs.length > 0);
 
-  const planFiles = JSON.parse(tender.exactFileNaming || "[]") as unknown[];
+  const planFiles = safeParseJsonArray(tender.exactFileNaming);
   const hasPlan = Array.isArray(planFiles) && planFiles.length > 0;
 
   const generatedDocs = tender.generatedDocuments.filter((d) => d.generationStatus === "GENERATED");

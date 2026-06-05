@@ -11,6 +11,7 @@ import { prisma, prismaReady } from "../lib/prisma";
 import { assessExtractionQuality } from "../lib/extraction-quality";
 import { isExtractionCorrupted } from "../lib/engine/extraction-quality-gate";
 import { assessTenderMetadataCompleteness } from "../lib/engine/tender-metadata-completeness";
+import { safeParseJsonArray } from "../lib/safe-json";
 
 type Dimension = {
   label: string;
@@ -43,6 +44,7 @@ export async function TenderHealthScorePanel({ tenderId }: { tenderId: string })
   const userId = await getSession();
   if (!userId) return null;
 
+  try {
   await prismaReady;
 
   const tender = await prisma.tender.findFirst({
@@ -188,7 +190,7 @@ export async function TenderHealthScorePanel({ tenderId }: { tenderId: string })
   });
 
   // ── 5. Submission plan (10 pts) ──────────────────────────────────────────
-  const planFiles = JSON.parse(tender.exactFileNaming || "[]") as unknown[];
+  const planFiles = safeParseJsonArray(tender.exactFileNaming);
   const hasPlan = Array.isArray(planFiles) && planFiles.length > 0;
   dimensions.push({
     label: "Submission Plan",
@@ -273,4 +275,12 @@ export async function TenderHealthScorePanel({ tenderId }: { tenderId: string })
       )}
     </section>
   );
+  } catch (err) {
+    console.error("[TenderHealthScorePanel] render error:", err);
+    return (
+      <section className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 p-4 shadow-sm">
+        <p className="text-xs font-semibold text-amber-700">Panel failed to load — data may be incomplete. Refresh to retry.</p>
+      </section>
+    );
+  }
 }

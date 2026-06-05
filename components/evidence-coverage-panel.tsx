@@ -24,6 +24,7 @@ export async function EvidenceCoveragePanel({ tenderId }: { tenderId: string }) 
   const userId = await getSession();
   if (!userId) return null;
 
+  try {
   await prismaReady;
 
   const ownsTender = await prisma.tender.findFirst({ where: { id: tenderId, userId }, select: { id: true } }).catch(() => null);
@@ -195,4 +196,12 @@ export async function EvidenceCoveragePanel({ tenderId }: { tenderId: string }) 
       )}
     </section>
   );
+  } catch (err) {
+    console.error("[EvidenceCoveragePanel] render error:", err);
+    return (
+      <section className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 p-4 shadow-sm">
+        <p className="text-xs font-semibold text-amber-700">Panel failed to load — data may be incomplete. Refresh to retry.</p>
+      </section>
+    );
+  }
 }

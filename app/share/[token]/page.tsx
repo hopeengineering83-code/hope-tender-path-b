@@ -15,7 +15,7 @@ export default async function SharePage({ params }: { params: Promise<{ token: s
           deadline: true,
           status: true,
           analysisSummary: true,
-          requirements: { select: { title: true, priority: true, category: true }, take: 30 },
+          requirements: { select: { title: true, priority: true, requirementType: true }, take: 30 },
           generatedDocuments: {
             where: { generationStatus: { not: "SUPERSEDED" } },
             select: { documentType: true, generationStatus: true, validationStatus: true },
@@ -158,8 +158,8 @@ export default async function SharePage({ params }: { params: Promise<{ token: s
                   </span>
                   <div className="min-w-0">
                     <p className="text-sm text-slate-800">{req.title}</p>
-                    {req.category && (
-                      <p className="text-xs text-slate-400 mt-0.5">{req.category}</p>
+                    {req.requirementType && (
+                      <p className="text-xs text-slate-400 mt-0.5">{req.requirementType}</p>
                     )}
                   </div>
                 </div>
