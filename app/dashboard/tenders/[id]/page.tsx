@@ -18,6 +18,7 @@ import { BidControlVerdictPanel } from "../../../../components/bid-control-verdi
 import { EngineActionPanel } from "../../../../components/engine-action-panel";
 import { AIHealthPanel } from "../../../../components/ai-health-panel";
 import { ExtractionQualityPanel } from "../../../../components/extraction-quality-panel";
+import { ExtractionQualityDashboard } from "../../../../components/extraction-quality-dashboard";
 import { AnalysisQualityPanel } from "../../../../components/analysis-quality-panel";
 import { MatchingQualityPanel } from "../../../../components/matching-quality-panel";
 import { LegacyTenderActionHider } from "../../../../components/legacy-tender-action-hider";
@@ -102,6 +103,7 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
         clientContactName: tender.clientContactName,
       }} />
       <ExecutiveSnapshot tender={tenderForUi} />
+      <ExtractionQualityDashboard tenderId={tender.id} />
       <NextActionPanel tenderId={tender.id} />
       <TenderHealthScorePanel tenderId={tender.id} />
       <AICopilotSuggestionsPanel tenderId={tender.id} />
