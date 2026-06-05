@@ -393,6 +393,7 @@ model Tender {
   proposalVersions      ProposalVersion[]
   pricingWorkbook       PricingWorkbook?
   shares                TenderShare[]
+  copilotMessages       TenderCopilotMessage[]
 }
 
 model TenderShare {
@@ -928,4 +929,25 @@ model CostLine {
   updatedAt       DateTime        @updatedAt
 
   @@index([workbookId])
+}
+
+// ─── TenderCopilotMessage ─────────────────────────────────────────────────────
+// Persistent chat history for the per-tender AI Copilot workbench.
+// Each row stores one turn (user question or assistant answer) so the
+// conversation survives page reloads and can be reviewed in the UI.
+// citations: JSON array of { page, quote, field } from the AI answer.
+model TenderCopilotMessage {
+  id        String   @id @default(cuid())
+  tenderId  String
+  userId    String
+  role      String   // "user" | "assistant"
+  content   String   @db.Text
+  citations Json?    // array of { page, quote, field } from answer
+
+  tender    Tender   @relation(fields: [tenderId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@index([tenderId, userId, createdAt])
+  @@index([tenderId, userId])
 }
