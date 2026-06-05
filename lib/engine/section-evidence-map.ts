@@ -39,6 +39,17 @@ export interface SectionEvidenceInput {
   projectIds?: string[];
 }
 
+// ─── Phase 6: Evidence States ──────────────────────────────────────────────
+// SUGGESTED | AUTO_LINKED_PARTIAL | USER_CONFIRMED | COMPLIANCE_SUPPORTED | FULLY_ACCEPTED | REJECTED
+export type EvidenceReviewStatus =
+  | "PENDING"
+  | "SUGGESTED"
+  | "AUTO_LINKED_PARTIAL"
+  | "USER_CONFIRMED"
+  | "COMPLIANCE_SUPPORTED"
+  | "FULLY_ACCEPTED"
+  | "REJECTED";
+
 export async function writeSectionEvidence(input: SectionEvidenceInput): Promise<void> {
   await prismaReady;
   const text = (input.text || "").trim();

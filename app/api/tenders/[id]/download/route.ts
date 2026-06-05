@@ -157,6 +157,30 @@ async function zipPackage(userId: string, tender: any, envelopeFilter: EnvelopeF
     );
   }
 
+  // ── Phase 4: Server-enforced quality validation check for ALL docs ─────────
+  const { validateDocumentQuality } = await import("../../../../../lib/engine/document-quality-validator");
+  const blockedDocs = tender.generatedDocuments.filter((doc: any) => {
+    if (!isFinalExportCandidateDocument(doc)) return false;
+    const quality = validateDocumentQuality({
+      name: doc.name,
+      documentType: doc.documentType,
+      fileContent: doc.fileContent, // Note: may be base64 if not text, validator handles this
+      storagePath: doc.storagePath,
+    });
+    return quality.status === "BLOCKED";
+  });
+
+  if (blockedDocs.length > 0) {
+    return err(
+      `${blockedDocs.length} document(s) have blocking quality issues (placeholders, AI traces, or envelope mismatches). Fix these before export.`,
+      409,
+      {
+        code: "QUALITY_VALIDATION_BLOCKED",
+        blockedDocuments: blockedDocs.map((d: any) => d.exactFileName ?? d.name),
+      }
+    );
+  }
+
   // Strict two-envelope tenders: the canonical helper sets
   // summary.strictTwoEnvelope when the tender requires SEPARATE technical
   // and financial envelopes. In that case we MUST NOT produce one mixed
