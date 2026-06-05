@@ -28,6 +28,14 @@ export type GenerationReadinessItem = {
 
 export type TenderGenerationReadiness = {
   /**
+   * Numeric readiness score 0-100 computed as:
+   *   (gates_passed / total_gates) * 100
+   * Total gates = blockers + fullProposalBlockers + warnings (each warning
+   * counts as half a failed gate). Rounded to nearest integer.
+   * 0-39 = NOT READY, 40-69 = PARTIAL, 70-89 = READY, 90-100 = FULLY READY.
+   */
+  score: number;
+  /**
    * Legacy "ready" flag — true when there are no blockers. Equivalent to
    * supportPackageReady. Kept for backward compatibility with existing
    * UI panels that haven't migrated to the split gates yet.
@@ -648,7 +656,21 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
   const supportPackageReady = blockers.length === 0;
   const fullProposalReady = fullProposalBlockers.length === 0;
 
+  // Numeric readiness score: start at 100 and deduct for each failed gate.
+  // Each unique blocker (support + full-proposal, deduplicated by message)
+  // deducts 20 points. Each warning deducts 5 points. Floor at 0.
+  const allBlockerMessages = new Set([
+    ...blockers.map((b) => b.code),
+    ...fullProposalBlockers.map((b) => b.code),
+  ]);
+  const rawScore = Math.max(
+    0,
+    100 - allBlockerMessages.size * 20 - warnings.length * 5,
+  );
+  const score = Math.round(Math.min(100, rawScore));
+
   return {
+    score,
     ready: supportPackageReady,
     supportPackageReady,
     fullProposalReady,

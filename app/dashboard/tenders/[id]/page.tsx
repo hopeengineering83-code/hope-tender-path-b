@@ -28,6 +28,9 @@ import { FinalPackageManifestPanel } from "../../../../components/final-package-
 import { DocumentValidatorPanel } from "../../../../components/document-validator-panel";
 import { AIAnalyzeRecoveryPanel } from "../../../../components/ai-analyze-recovery-panel";
 import { EvidenceCoveragePanel } from "../../../../components/evidence-coverage-panel";
+import { ComplianceHeatmapPanel } from "../../../../components/compliance-heatmap-panel";
+import { TenderHealthScorePanel } from "../../../../components/tender-health-score-panel";
+import VaultEvidenceSearchPanel from "../../../../components/vault-evidence-search-panel";
 
 export default async function TenderPage({ params }: { params: Promise<{ id: string }> }) {
   const userId = await getSession();
@@ -97,6 +100,7 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
       }} />
       <ExecutiveSnapshot tender={tenderForUi} />
       <NextActionPanel tenderId={tender.id} />
+      <TenderHealthScorePanel tenderId={tender.id} />
       <BidControlVerdictPanel tenderId={tender.id} />
       <FinalSubmissionControlCenter tenderId={tender.id} generationReadiness={generationReadiness} />
       <AIHealthPanel />
@@ -116,11 +120,13 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
       <TenderIntakeDetailPanel tender={tenderForUi} />
       <div id="proposal-evidence-readiness"><ProposalEvidenceReadinessPanel tenderId={tender.id} /></div>
       <EvidenceCoveragePanel tenderId={tender.id} />
+      <VaultEvidenceSearchPanel tenderId={tender.id} />
 
       <DocumentValidatorPanel tenderId={tender.id} />
       <FinalPackageManifestPanel tenderId={tender.id} />
       <ExportReadinessPanel tenderId={tender.id} />
       <EvaluatorObjectionsPanel tenderId={tender.id} />
+      <ComplianceHeatmapPanel tenderId={tender.id} />
       <PricingWorkbookPanel tenderId={tender.id} />
       {ai && <TenderAICopilotPanel tenderId={tender.id} />}
       <div className="mb-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">

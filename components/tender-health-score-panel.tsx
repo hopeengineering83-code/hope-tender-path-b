@@ -1,0 +1,276 @@
+// Tender Health Score Panel — server component.
+//
+// Shows a 0-100 composite health score derived from:
+//   extraction quality · AI analysis quality · metadata completeness ·
+//   requirement coverage · submission plan · document readiness · export gates
+//
+// This is the single "trust this bid package" indicator before export.
+
+import { getSession } from "../lib/auth";
+import { prisma, prismaReady } from "../lib/prisma";
+import { assessExtractionQuality } from "../lib/extraction-quality";
+import { isExtractionCorrupted } from "../lib/engine/extraction-quality-gate";
+import { assessTenderMetadataCompleteness } from "../lib/engine/tender-metadata-completeness";
+
+type Dimension = {
+  label: string;
+  score: number;
+  max: number;
+  detail: string;
+  status: "PASS" | "WARN" | "FAIL";
+};
+
+function scoreBar(score: number, max: number) {
+  const pct = max === 0 ? 0 : Math.round((score / max) * 100);
+  const color = pct >= 80 ? "bg-emerald-500" : pct >= 50 ? "bg-amber-400" : "bg-red-400";
+  return (
+    <div className="flex items-center gap-2">
+      <div className="flex-1 h-2 rounded-full bg-slate-100">
+        <div className={`h-2 rounded-full ${color}`} style={{ width: `${Math.min(pct, 100)}%` }} />
+      </div>
+      <span className="text-xs font-medium text-slate-600 w-12 text-right">{score}/{max}</span>
+    </div>
+  );
+}
+
+function statusIcon(status: "PASS" | "WARN" | "FAIL") {
+  if (status === "PASS") return <span className="text-emerald-600">✓</span>;
+  if (status === "WARN") return <span className="text-amber-600">⚠</span>;
+  return <span className="text-red-600">✗</span>;
+}
+
+export async function TenderHealthScorePanel({ tenderId }: { tenderId: string }) {
+  const userId = await getSession();
+  if (!userId) return null;
+
+  await prismaReady;
+
+  const tender = await prisma.tender.findFirst({
+    where: { id: tenderId, userId },
+    select: {
+      id: true,
+      status: true,
+      analysisSummary: true,
+      analysisExtractionStatus: true,
+      metadataContaminated: true,
+      readinessScore: true,
+      clientName: true,
+      country: true,
+      clientContactName: true,
+      clientContactEmail: true,
+      submissionAddress: true,
+      submissionEmails: true,
+      submissionMethod: true,
+      deadline: true,
+      currency: true,
+      exactFileNaming: true,
+      files: {
+        select: {
+          extractedText: true,
+          originalFileName: true,
+          fileName: true,
+          extractionScore: true,
+          totalPages: true,
+          extractedPages: true,
+          ocrPages: true,
+          failedPages: true,
+        },
+      },
+      requirements: {
+        select: {
+          id: true,
+          priority: true,
+          sourceConfidence: true,
+          sourcePageNumber: true,
+          sourceExactQuote: true,
+        },
+      },
+      generatedDocuments: {
+        where: { generationStatus: { not: "SUPERSEDED" } },
+        select: {
+          id: true,
+          generationStatus: true,
+          validationStatus: true,
+          reviewStatus: true,
+        },
+      },
+      complianceGaps: {
+        where: { isResolved: false },
+        select: { severity: true },
+      },
+    },
+  }).catch(() => null);
+
+  if (!tender) return null;
+
+  const dimensions: Dimension[] = [];
+
+  // ── 1. Extraction quality (20 pts) ───────────────────────────────────────
+  const hasFiles = tender.files.length > 0;
+  if (!hasFiles) {
+    dimensions.push({ label: "Extraction", score: 0, max: 20, detail: "No tender files uploaded", status: "FAIL" });
+  } else {
+    const fileScores = tender.files.map((f) => {
+      const q = assessExtractionQuality(f.extractedText, f.originalFileName || f.fileName);
+      const corrupted = f.extractedText ? isExtractionCorrupted(f.extractedText) : false;
+      return { score: Math.min(f.extractionScore ?? q.score, q.score), corrupted };
+    });
+    const avg = Math.round(fileScores.reduce((s, f) => s + f.score, 0) / fileScores.length);
+    const anyCorrupted = fileScores.some((f) => f.corrupted);
+    const dimScore = anyCorrupted ? 0 : Math.round((avg / 100) * 20);
+    dimensions.push({
+      label: "Extraction",
+      score: dimScore,
+      max: 20,
+      detail: anyCorrupted ? "Extraction corrupted" : `Avg score ${avg}/100`,
+      status: anyCorrupted ? "FAIL" : avg >= 70 ? "PASS" : avg >= 45 ? "WARN" : "FAIL",
+    });
+  }
+
+  // ── 2. AI Analysis (15 pts) ──────────────────────────────────────────────
+  const hasAnalysis = Boolean(tender.analysisSummary);
+  const analysisStatus = tender.analysisExtractionStatus ?? "";
+  const analysisScore = !hasAnalysis ? 0
+    : analysisStatus === "FULL_EXTRACTION_AI_ANALYZED" ? 15
+    : analysisStatus === "PARTIAL_EXTRACTION_AI_ANALYZED" ? 10
+    : analysisStatus.includes("CORRUPTED") ? 0
+    : 7;
+  dimensions.push({
+    label: "AI Analysis",
+    score: analysisScore,
+    max: 15,
+    detail: !hasAnalysis ? "Not run" : analysisStatus || "Analyzed",
+    status: analysisScore >= 12 ? "PASS" : analysisScore >= 7 ? "WARN" : "FAIL",
+  });
+
+  // ── 3. Metadata completeness (15 pts) ────────────────────────────────────
+  const meta = assessTenderMetadataCompleteness({
+    clientName: tender.clientName ?? null,
+    country: tender.country ?? null,
+    clientContactName: tender.clientContactName ?? null,
+    clientContactEmail: tender.clientContactEmail ?? null,
+    submissionAddress: tender.submissionAddress ?? null,
+    submissionEmails: tender.submissionEmails ?? null,
+    submissionMethod: tender.submissionMethod ?? null,
+    deadline: tender.deadline ?? null,
+    currency: tender.currency ?? null,
+    hasSubmissionRules: Boolean(tender.submissionMethod || tender.submissionEmails || tender.submissionAddress),
+    requirementCount: tender.requirements.length,
+  });
+  const metaScore = meta.blockingForGeneration || tender.metadataContaminated ? 0
+    : Math.round(meta.overallRatio * 15);
+  dimensions.push({
+    label: "Metadata",
+    score: metaScore,
+    max: 15,
+    detail: meta.missingCritical.length > 0
+      ? `${meta.missingCritical.length} critical fields missing`
+      : tender.metadataContaminated ? "Contaminated client name"
+      : `${Math.round(meta.overallRatio * 100)}% filled`,
+    status: metaScore >= 12 ? "PASS" : metaScore >= 8 ? "WARN" : "FAIL",
+  });
+
+  // ── 4. Requirements (15 pts) ─────────────────────────────────────────────
+  const mandatoryReqs = tender.requirements.filter((r) => r.priority === "MANDATORY");
+  const tracedReqs = mandatoryReqs.filter(
+    (r) => (r.sourceConfidence ?? 0) > 0 || r.sourcePageNumber != null || (r.sourceExactQuote ?? "").trim().length > 0,
+  );
+  const reqScore = tender.requirements.length === 0 ? 0
+    : mandatoryReqs.length === 0 ? 10
+    : Math.round((tracedReqs.length / mandatoryReqs.length) * 15);
+  dimensions.push({
+    label: "Requirements",
+    score: reqScore,
+    max: 15,
+    detail: tender.requirements.length === 0 ? "None extracted"
+      : `${tracedReqs.length}/${mandatoryReqs.length} mandatory traced`,
+    status: reqScore >= 12 ? "PASS" : reqScore >= 7 ? "WARN" : "FAIL",
+  });
+
+  // ── 5. Submission plan (10 pts) ──────────────────────────────────────────
+  const planFiles = JSON.parse(tender.exactFileNaming || "[]") as unknown[];
+  const hasPlan = Array.isArray(planFiles) && planFiles.length > 0;
+  dimensions.push({
+    label: "Submission Plan",
+    score: hasPlan ? 10 : 0,
+    max: 10,
+    detail: hasPlan ? `${planFiles.length} files planned` : "Not built",
+    status: hasPlan ? "PASS" : "FAIL",
+  });
+
+  // ── 6. Document readiness (15 pts) ──────────────────────────────────────
+  const activeDocs = tender.generatedDocuments;
+  const generatedDocs = activeDocs.filter((d) => d.generationStatus === "GENERATED");
+  const validatedDocs = generatedDocs.filter((d) =>
+    d.validationStatus === "PASSED" || d.validationStatus === "VALIDATED",
+  );
+  const docScore = activeDocs.length === 0 ? 0
+    : generatedDocs.length === 0 ? 2
+    : Math.round((validatedDocs.length / Math.max(generatedDocs.length, 1)) * 15);
+  dimensions.push({
+    label: "Documents",
+    score: docScore,
+    max: 15,
+    detail: activeDocs.length === 0 ? "Not generated"
+      : `${validatedDocs.length}/${generatedDocs.length} validated`,
+    status: docScore >= 12 ? "PASS" : docScore >= 7 ? "WARN" : "FAIL",
+  });
+
+  // ── 7. Compliance gaps (10 pts) ──────────────────────────────────────────
+  const criticalGaps = tender.complianceGaps.filter((g) => g.severity === "CRITICAL").length;
+  const totalGaps = tender.complianceGaps.length;
+  const gapScore = criticalGaps > 0 ? 0 : totalGaps === 0 ? 10 : 5;
+  dimensions.push({
+    label: "Compliance",
+    score: gapScore,
+    max: 10,
+    detail: criticalGaps > 0 ? `${criticalGaps} critical gap(s)` : totalGaps === 0 ? "No open gaps" : `${totalGaps} non-critical gap(s)`,
+    status: criticalGaps > 0 ? "FAIL" : totalGaps === 0 ? "PASS" : "WARN",
+  });
+
+  const totalScore = dimensions.reduce((s, d) => s + d.score, 0);
+  const maxScore = dimensions.reduce((s, d) => s + d.max, 0);
+  const healthPct = Math.round((totalScore / maxScore) * 100);
+
+  const healthColor = healthPct >= 80 ? "text-emerald-700" : healthPct >= 50 ? "text-amber-700" : "text-red-700";
+  const healthBg = healthPct >= 80 ? "border-emerald-200 bg-emerald-50" : healthPct >= 50 ? "border-amber-200 bg-amber-50" : "border-red-200 bg-red-50";
+  const healthLabel = healthPct >= 80 ? "Strong" : healthPct >= 60 ? "Acceptable" : healthPct >= 40 ? "Needs Work" : "Critical Issues";
+
+  return (
+    <section className={`mb-4 rounded-2xl border p-5 shadow-sm ${healthBg}`}>
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Tender Health Score</p>
+          <div className="mt-1 flex items-baseline gap-2">
+            <span className={`text-4xl font-extrabold ${healthColor}`}>{healthPct}</span>
+            <span className="text-lg text-slate-400">/100</span>
+            <span className={`rounded-full px-3 py-0.5 text-sm font-semibold ${healthColor} bg-white border`}>{healthLabel}</span>
+          </div>
+          <p className="mt-1 text-sm text-slate-600">Composite score across {dimensions.length} quality dimensions. Fix FAIL dimensions before exporting.</p>
+        </div>
+        <div className="text-right">
+          <p className="text-xs text-slate-500">Raw points</p>
+          <p className="text-xl font-bold text-slate-900">{totalScore}<span className="text-sm text-slate-400">/{maxScore}</span></p>
+        </div>
+      </div>
+
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        {dimensions.map((d) => (
+          <div key={d.label} className="rounded-xl border bg-white/80 p-3">
+            <div className="flex items-center justify-between mb-1">
+              <p className="text-xs font-semibold text-slate-700">{statusIcon(d.status)} {d.label}</p>
+            </div>
+            {scoreBar(d.score, d.max)}
+            <p className="mt-1 text-[10px] text-slate-500 truncate">{d.detail}</p>
+          </div>
+        ))}
+      </div>
+
+      {dimensions.some((d) => d.status === "FAIL") && (
+        <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-xs text-red-800">
+          <strong>Failing dimensions block export.</strong> Address each FAIL item above before attempting final export.
+        </div>
+      )}
+    </section>
+  );
+}

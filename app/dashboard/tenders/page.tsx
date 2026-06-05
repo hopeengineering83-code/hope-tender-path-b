@@ -66,6 +66,54 @@ function DeadlineCell({ deadline }: { deadline: Date | null }) {
   return <span className="text-slate-500">{formatDate(deadline)}</span>;
 }
 
+// Pipeline stage order and display config
+const STAGE_ORDER = [
+  "TENDER_INTAKE",
+  "ANALYSIS_COMPLETE",
+  "PLAN_CONFIRMED",
+  "DOCUMENTS_GENERATED",
+  "EXPORT_READY",
+  "EXPORTED",
+] as const;
+
+type PipelineStage = (typeof STAGE_ORDER)[number];
+
+const STAGE_LABELS: Record<PipelineStage, string> = {
+  TENDER_INTAKE: "Intake",
+  ANALYSIS_COMPLETE: "Analysed",
+  PLAN_CONFIRMED: "Plan Confirmed",
+  DOCUMENTS_GENERATED: "Docs Generated",
+  EXPORT_READY: "Export Ready",
+  EXPORTED: "Exported",
+};
+
+const STAGE_COLORS: Record<PipelineStage, string> = {
+  TENDER_INTAKE: "bg-slate-100 text-slate-600",
+  ANALYSIS_COMPLETE: "bg-blue-100 text-blue-700",
+  PLAN_CONFIRMED: "bg-violet-100 text-violet-700",
+  DOCUMENTS_GENERATED: "bg-amber-100 text-amber-700",
+  EXPORT_READY: "bg-emerald-100 text-emerald-700",
+  EXPORTED: "bg-green-100 text-green-700",
+};
+
+function StageBadge({ stage }: { stage: string | null }) {
+  if (!stage) return null;
+  const label = STAGE_LABELS[stage as PipelineStage] ?? stage.replace(/_/g, " ");
+  const color = STAGE_COLORS[stage as PipelineStage] ?? "bg-slate-100 text-slate-600";
+  return (
+    <span className={`inline-block rounded px-1.5 py-0.5 text-[10px] font-semibold ${color}`}>
+      {label}
+    </span>
+  );
+}
+
+function isUrgentRow(deadline: Date | null, tenderStatus: string): boolean {
+  if (!deadline) return false;
+  if (tenderStatus === "EXPORTED" || tenderStatus === "CLOSED") return false;
+  const daysLeft = Math.ceil((new Date(deadline).getTime() - Date.now()) / 86_400_000);
+  return daysLeft >= 0 && daysLeft <= 7;
+}
+
 function parseAnalysisSource(notes?: string | null): "AI" | "PARTIAL" | "REGEX" | null {
   if (!notes) return null;
   for (const line of notes.split("\n")) {
@@ -94,39 +142,125 @@ export default async function TendersPage({
   const regexOnlyFilter = status === "REGEX_FALLBACK";
   const isFiltered = status !== "ALL" || q !== "";
 
-  const tenders = await prisma.tender.findMany({
-    where: {
-      userId,
-      ...(statusFilter && !regexOnlyFilter ? { status: statusFilter } : {}),
-      ...(q ? { title: { contains: q } } : {}),
-      // REGEX_FALLBACK filter: notes contains "Analysis source: Regex fallback"
-      ...(regexOnlyFilter ? { notes: { contains: "Analysis source: Regex fallback" } } : {}),
-    },
-    select: {
-      id: true, title: true, reference: true, clientName: true,
-      deadline: true, status: true, category: true, budget: true, currency: true,
-      readinessScore: true,
-      notes: true,
-      stage: true,
-      createdAt: true, updatedAt: true,
-      // Only counts — never fetch fileContent, extractedText, or base64 data
-      _count: { select: { files: true, requirements: true } },
-      complianceGaps: { select: { id: true, isResolved: true, severity: true } },
-    },
-    orderBy: buildOrderBy(sort),
-  });
+  const [tenders, allTenders] = await Promise.all([
+    prisma.tender.findMany({
+      where: {
+        userId,
+        ...(statusFilter && !regexOnlyFilter ? { status: statusFilter } : {}),
+        ...(q ? { title: { contains: q } } : {}),
+        ...(regexOnlyFilter ? { notes: { contains: "Analysis source: Regex fallback" } } : {}),
+      },
+      select: {
+        id: true, title: true, reference: true, clientName: true,
+        deadline: true, status: true, category: true, budget: true, currency: true,
+        readinessScore: true,
+        notes: true,
+        stage: true,
+        createdAt: true, updatedAt: true,
+        _count: { select: { files: true, requirements: true } },
+        complianceGaps: { select: { id: true, isResolved: true, severity: true } },
+      },
+      orderBy: buildOrderBy(sort),
+    }),
+    // Always load all tenders for KPI summary (no filter, small payload)
+    prisma.tender.findMany({
+      where: { userId },
+      select: { id: true, status: true, stage: true, deadline: true, readinessScore: true },
+    }),
+  ]);
+
+  // KPI derivations
+  const now = new Date();
+  const kpi = {
+    total: allTenders.length,
+    draft: allTenders.filter((t) => t.status === "DRAFT").length,
+    exported: allTenders.filter((t) => t.status === "EXPORTED").length,
+    generated: allTenders.filter((t) => t.status === "GENERATED" || t.status === "IN_REVIEW" || t.status === "APPROVED").length,
+    inProgress: allTenders.filter((t) => !["EXPORTED", "CLOSED", "DRAFT"].includes(t.status)).length,
+    urgentDeadlines: allTenders.filter((t) => {
+      if (!t.deadline || t.status === "EXPORTED" || t.status === "CLOSED") return false;
+      const daysLeft = Math.ceil((new Date(t.deadline).getTime() - now.getTime()) / 86_400_000);
+      return daysLeft >= 0 && daysLeft <= 7;
+    }).length,
+    overdue: allTenders.filter((t) => {
+      if (!t.deadline || t.status === "EXPORTED" || t.status === "CLOSED") return false;
+      return new Date(t.deadline) < now;
+    }).length,
+  };
+
+  // Stage counts for pipeline visualization
+  const stageCounts = STAGE_ORDER.reduce<Record<string, number>>((acc, s) => {
+    acc[s] = allTenders.filter((t) => t.stage === s).length;
+    return acc;
+  }, {});
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Tenders</h1>
-          <p className="mt-1 text-slate-500">{tenders.length} tender{tenders.length !== 1 ? "s" : ""}</p>
+          <p className="mt-1 text-slate-500">{kpi.total} total · {tenders.length} shown</p>
         </div>
         <Link href="/dashboard/tenders/new" className="rounded-lg bg-black px-4 py-2 text-sm text-white hover:bg-slate-800">
           + New Tender
         </Link>
       </div>
+
+      {/* Status summary bar + pipeline stage strip */}
+      {kpi.total > 0 && (
+        <div className="rounded-2xl border bg-white shadow-sm overflow-hidden">
+          <div className="grid grid-cols-3 divide-x sm:grid-cols-6">
+            <div className="p-4 text-center">
+              <p className="text-2xl font-bold text-slate-900">{kpi.total}</p>
+              <p className="text-xs text-slate-500 mt-0.5">Total</p>
+            </div>
+            <div className="p-4 text-center">
+              <p className="text-2xl font-bold text-slate-400">{kpi.draft}</p>
+              <p className="text-xs text-slate-400 mt-0.5">Draft</p>
+            </div>
+            <div className="p-4 text-center">
+              <p className="text-2xl font-bold text-blue-700">{kpi.inProgress}</p>
+              <p className="text-xs text-slate-500 mt-0.5">In Progress</p>
+            </div>
+            <div className="p-4 text-center">
+              <p className="text-2xl font-bold text-amber-700">{kpi.generated}</p>
+              <p className="text-xs text-slate-500 mt-0.5">Generated</p>
+            </div>
+            <div className="p-4 text-center bg-emerald-50">
+              <p className="text-2xl font-bold text-emerald-700">{kpi.exported}</p>
+              <p className="text-xs text-emerald-600 mt-0.5">Exported</p>
+            </div>
+            <div className={`p-4 text-center ${kpi.overdue > 0 ? "bg-red-50" : kpi.urgentDeadlines > 0 ? "bg-amber-50" : ""}`}>
+              {kpi.overdue > 0 ? (
+                <>
+                  <p className="text-2xl font-bold text-red-700">{kpi.overdue}</p>
+                  <p className="text-xs text-red-600 mt-0.5">Overdue</p>
+                </>
+              ) : (
+                <>
+                  <p className={`text-2xl font-bold ${kpi.urgentDeadlines > 0 ? "text-amber-700" : "text-slate-400"}`}>{kpi.urgentDeadlines}</p>
+                  <p className={`text-xs mt-0.5 ${kpi.urgentDeadlines > 0 ? "text-amber-600" : "text-slate-400"}`}>Due &le;7d</p>
+                </>
+              )}
+            </div>
+          </div>
+          {/* Pipeline stage strip */}
+          <div className="border-t bg-slate-50 px-4 py-3">
+            <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">Pipeline stages</p>
+            <div className="flex flex-wrap gap-2">
+              {STAGE_ORDER.map((stage) => {
+                const count = stageCounts[stage] ?? 0;
+                return (
+                  <div key={stage} className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-medium ${STAGE_COLORS[stage]}`}>
+                    <span>{STAGE_LABELS[stage]}</span>
+                    <span className="font-bold">{count}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="rounded-2xl border bg-white shadow-sm">
         {/* Filter bar */}
@@ -213,15 +347,20 @@ export default async function TendersPage({
                 {tenders.map((tender) => {
                   const unresolvedGaps = tender.complianceGaps.filter((gap) => !gap.isResolved).length;
                   const criticalGaps = tender.complianceGaps.filter((gap) => !gap.isResolved && gap.severity === "CRITICAL").length;
+                  const urgent = isUrgentRow(tender.deadline, tender.status);
                   return (
-                    <tr key={tender.id} className="hover:bg-slate-50">
+                    <tr key={tender.id} className={`hover:bg-slate-50 ${urgent ? "bg-amber-50/60 hover:bg-amber-50" : ""}`}>
                       <td className="px-6 py-4">
                         <p className="font-medium text-slate-900">{cleanTenderTitle(tender.title, { clientName: tender.clientName })}</p>
                         {(() => {
                           const c = cleanClientName(tender.clientName);
                           return c && c !== "Client" ? <p className="text-xs text-slate-400">{c}</p> : null;
                         })()}
-                        {tender.stage && <p className="text-[10px] text-slate-400 mt-0.5">{tender.stage.replace(/_/g, " ")}</p>}
+                        {tender.stage && (
+                          <div className="mt-1">
+                            <StageBadge stage={tender.stage} />
+                          </div>
+                        )}
                       </td>
                       <td className="px-6 py-4 text-slate-500">{tender.reference || "—"}</td>
                       <td className="px-6 py-4">
@@ -271,8 +410,9 @@ export default async function TendersPage({
                 const unresolvedGaps = tender.complianceGaps.filter((gap) => !gap.isResolved).length;
                 const criticalGaps = tender.complianceGaps.filter((gap) => !gap.isResolved && gap.severity === "CRITICAL").length;
                 const clientName = cleanClientName(tender.clientName);
+                const mobileUrgent = isUrgentRow(tender.deadline, tender.status);
                 return (
-                  <div key={tender.id} className="p-4 flex flex-col gap-2 bg-white">
+                  <div key={tender.id} className={`p-4 flex flex-col gap-2 ${mobileUrgent ? "bg-amber-50/60" : "bg-white"}`}>
                     <div className="flex items-start justify-between gap-2">
                       <div className="flex-1 min-w-0">
                         <p className="font-semibold text-slate-900 leading-snug">
@@ -280,6 +420,11 @@ export default async function TendersPage({
                         </p>
                         {clientName && clientName !== "Client" && (
                           <p className="text-xs text-slate-400 mt-0.5">{clientName}</p>
+                        )}
+                        {tender.stage && (
+                          <div className="mt-1">
+                            <StageBadge stage={tender.stage} />
+                          </div>
                         )}
                       </div>
                       <div className="flex items-center gap-1">
