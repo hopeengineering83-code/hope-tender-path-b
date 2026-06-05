@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
+import { GenerationProgressPanel } from "./generation-progress-panel";
 
 // Gap 16 fix — accepts the split-readiness flags from
 // TenderGenerationReadiness so the panel can render two distinct
@@ -29,6 +30,7 @@ type GenerationReadiness = {
 };
 
 type GenerateResponse = {
+  jobId?: string;
   error?: string;
   code?: string;
   nextAction?: string;
@@ -59,6 +61,7 @@ export function GenerationActionPanel({ tenderId, readiness }: { tenderId: strin
   const [kind, setKind] = useState<"success" | "error" | "info">("info");
   const [repairing, setRepairing] = useState(false);
   const [repairMsg, setRepairMsg] = useState<{ kind: "success" | "error" | "info"; text: string } | null>(null);
+  const [jobId, setJobId] = useState<string | null>(null);
 
   const blockers = readiness?.blockers ?? [];
   const warnings = readiness?.warnings ?? [];
@@ -185,6 +188,7 @@ export function GenerationActionPanel({ tenderId, readiness }: { tenderId: strin
   async function runGenerate() {
     setRunning(true);
     setMessage(null);
+    setJobId(null);
     try {
       const res = await fetch(`/api/tenders/${tenderId}/generate`, { method: "POST" });
       const data = await res.json().catch(() => ({})) as GenerateResponse;
@@ -194,6 +198,9 @@ export function GenerationActionPanel({ tenderId, readiness }: { tenderId: strin
         setKind("error");
         setMessage(`${data.error || "Generation failed."}${hint}${diag}`.trim());
         return;
+      }
+      if (data.jobId) {
+        setJobId(data.jobId);
       }
       const warningText = Array.isArray(data.warnings) && data.warnings.length > 0 ? ` Warnings: ${data.warnings.slice(0, 2).join(" ")}` : "";
       setKind("success");
@@ -228,6 +235,7 @@ export function GenerationActionPanel({ tenderId, readiness }: { tenderId: strin
       : "Generation blocked";
 
   return (
+    <>
     <section className={`mb-4 rounded-2xl border p-5 shadow-sm ${panelClass}`}>
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <div>
@@ -330,5 +338,7 @@ export function GenerationActionPanel({ tenderId, readiness }: { tenderId: strin
         </div>
       )}
     </section>
+    <GenerationProgressPanel tenderId={tenderId} jobId={jobId} />
+    </>
   );
 }
