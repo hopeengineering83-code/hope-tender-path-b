@@ -37,17 +37,35 @@ export default async function SharePage({ params }: { params: Promise<{ token: s
     );
   }
 
-  if (share.expiresAt && share.expiresAt < new Date()) {
+  if ((share.expiresAt && share.expiresAt < new Date()) || share.revokedAt) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50">
         <div className="max-w-md w-full text-center p-8 rounded-xl border border-slate-200 bg-white shadow-sm">
-          <div className="text-4xl mb-4">⏰</div>
-          <h1 className="text-xl font-semibold text-slate-800 mb-2">Link Expired</h1>
-          <p className="text-slate-500">This link is invalid or has expired.</p>
+          <div className="text-4xl mb-4">{share.revokedAt ? "🚫" : "⏰"}</div>
+          <h1 className="text-xl font-semibold text-slate-800 mb-2">Link {share.revokedAt ? "Revoked" : "Expired"}</h1>
+          <p className="text-slate-500">This link is invalid or has {share.revokedAt ? "been revoked" : "expired"}.</p>
         </div>
       </div>
     );
   }
+
+  if (share.maxDownloads && share.downloadCount >= share.maxDownloads) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50">
+        <div className="max-w-md w-full text-center p-8 rounded-xl border border-slate-200 bg-white shadow-sm">
+          <div className="text-4xl mb-4">🛑</div>
+          <h1 className="text-xl font-semibold text-slate-800 mb-2">Download Limit Reached</h1>
+          <p className="text-slate-500">This link has reached its maximum download limit.</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Record access/download count increment
+  await prisma.tenderShare.update({
+    where: { id: share.id },
+    data: { downloadCount: { increment: 1 } },
+  });
 
   const tender = share.tender;
   const summary = tender.analysisSummary

@@ -402,6 +402,9 @@ model TenderShare {
   label       String?
   createdAt   DateTime @default(now())
   expiresAt   DateTime?
+  revokedAt   DateTime?
+  maxDownloads Int?
+  downloadCount Int      @default(0)
   createdById String
   tender      Tender   @relation(fields: [tenderId], references: [id], onDelete: Cascade)
   createdBy   User     @relation(fields: [createdById], references: [id])
@@ -793,6 +796,13 @@ model SectionEvidenceMap {
   wordCount       Int      @default(0)
   reviewerStatus  String   @default("PENDING")
   reviewerNote    String?
+  // ─── Section Generation State (Phase 2 Upgrade) ───────────────────────────
+  // PLANNED | GENERATING | GENERATED | FAILED | NEEDS_REVIEW | APPROVED | SUPERSEDED
+  status          String   @default("PLANNED")
+  content         String?
+  aiProvider      String?
+  lastGeneratedAt DateTime?
+  generationAttemptId String?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 

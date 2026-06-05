@@ -14,6 +14,7 @@ import { logAction } from "../../../../../lib/audit";
 import { buildSevenPassGateInput, applySevenPassGateToDocumentState, summarizeSevenPassForReviewNotes, evaluateSevenPassForDocument } from "../../../../../lib/engine/seven-pass-generation-wiring";
 import { assessGeneratedDocumentQuality } from "../../../../../lib/engine/document-quality-gate";
 import { detectAnalysisSourceWithApproval } from "../../../../../lib/engine/analysis-source";
+import { validateDocumentQuality } from "../../../../../lib/engine/document-quality-validator";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -237,10 +238,22 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     // Second pass: apply phrase rewrites after AI polish to catch anything AI missed
     const cleaned = polished.split(/\n+/).map((line) => cleanLine(line, technical)).filter(Boolean).join("\n");
     const rebuilt = await toDocx(fileName, cleaned || `${fileName}\nPrepared for submission.`);
+
+    // ── Phase 3: Server-enforced quality validation ───────────────────────────
+    const qualityValidation = validateDocumentQuality({
+      name: doc.name,
+      documentType: doc.documentType,
+      fileContent: cleaned,
+      storagePath: doc.storagePath,
+    });
+
     // Re-check pricing leakage on visible text AFTER cleaning — only mark READY_FOR_EXPORT if genuinely clean
     const stillHasPricingLeakage = technical && containsPricingLeakage(cleaned, docMeta);
     const issues = documentHygieneIssues(cleaned, docMeta);
-    const hygieneReady = issues.length === 0 && !stillHasPricingLeakage && rebuilt.length > 0;
+    const hygieneReady = issues.length === 0 &&
+                  !stillHasPricingLeakage &&
+                  rebuilt.length > 0 &&
+                  qualityValidation.status !== "BLOCKED";
 
     // ── Self-review score (deterministic) ─────────────────────────────────────
     // Run the document quality gate on the cleaned text to produce a real
