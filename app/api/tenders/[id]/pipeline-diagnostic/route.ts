@@ -14,6 +14,7 @@ import { assessExtractionQuality } from "../../../../../lib/extraction-quality";
 import { isExtractionCorrupted } from "../../../../../lib/engine/extraction-quality-gate";
 import { assessTenderMetadataCompleteness } from "../../../../../lib/engine/tender-metadata-completeness";
 import { getFinalSubmissionReadiness } from "../../../../../lib/engine/final-submission-readiness";
+import { safeParseJsonArray } from "../../../../../lib/safe-json";
 
 export const dynamic = "force-dynamic";
 
@@ -22,6 +23,8 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER"); } catch (e) {
     return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse();
   }
+
+  try {
 
   const { id } = await params;
   await prismaReady;
@@ -158,8 +161,8 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     : 100;
 
   // ── Step 6: Build Plan ────────────────────────────────────────────────────
-  const planFiles = JSON.parse(tender.exactFileNaming || "[]") as unknown[];
-  const hasPlan = Array.isArray(planFiles) && planFiles.length > 0;
+  const planFiles = safeParseJsonArray(tender.exactFileNaming);
+  const hasPlan = planFiles.length > 0;
 
   // ── Step 7: Generated documents ───────────────────────────────────────────
   const activeDocs = tender.generatedDocuments;
@@ -260,4 +263,9 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     },
     nextAction,
   });
+
+  } catch (err) {
+    console.error("[pipeline-diagnostic] unexpected error:", err);
+    return NextResponse.json({ error: "Internal error" }, { status: 500 });
+  }
 }
