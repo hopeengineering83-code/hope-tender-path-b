@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { Suspense } from "react";
 import { getSession } from "../../../lib/auth";
 import { prisma, prismaReady } from "../../../lib/prisma";
 import { StatusBadge } from "../../../components/status-badge";
@@ -7,6 +8,8 @@ import { formatDate, formatTenderStatus, parseTenderStatus } from "../../../lib/
 import { cleanClientName, cleanTenderTitle } from "../../../lib/engine/proposal-labels";
 import { DuplicateButton } from "../history/duplicate-button";
 import { SortSelect } from "./sort-select";
+import { TenderSearchBar } from "../../../components/tender-search-bar";
+import { TenderNotificationsBanner } from "../../../components/tender-notifications-banner";
 
 const STATUS_FILTERS = [
   "ALL",
@@ -196,6 +199,7 @@ export default async function TendersPage({
 
   return (
     <div className="space-y-6">
+      <TenderNotificationsBanner />
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Tenders</h1>
@@ -300,6 +304,14 @@ export default async function TendersPage({
               Needs re-analysis
             </Link>
           </div>
+        </div>
+
+        {/* Live search bar + result count */}
+        <div className="border-b px-4 pt-3">
+          <Suspense fallback={null}>
+            <TenderSearchBar />
+          </Suspense>
+          <p className="mb-2 text-xs text-slate-500">{tenders.length} tender{tenders.length !== 1 ? "s" : ""}{q ? ` matching "${q}"` : ""}</p>
         </div>
 
         {/* Empty states */}
