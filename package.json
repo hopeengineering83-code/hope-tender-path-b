@@ -19,7 +19,10 @@
     "build:desktop": "electron-builder --config electron/electron-builder.json --win --mac --linux",
     "build:desktop:win": "electron-builder --config electron/electron-builder.json --win",
     "build:desktop:mac": "electron-builder --config electron/electron-builder.json --mac",
-    "build:desktop:linux": "electron-builder --config electron/electron-builder.json --linux"
+    "build:desktop:linux": "electron-builder --config electron/electron-builder.json --linux",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui",
+    "test:e2e:report": "playwright show-report"
   },
   "main": "electron/main.js",
   "dependencies": {
@@ -32,6 +35,7 @@
     "jszip": "^3.10.1",
     "mammoth": "^1.12.0",
     "next": "15.5.15",
+    "next-intl": "^4.13.0",
     "pdf-parse": "^2.4.5",
     "pdf2json": "^3.2.0",
     "pdfjs-dist": "^5.4.394",
@@ -41,6 +45,7 @@
     "zod": "^3.22.4"
   },
   "devDependencies": {
+    "@playwright/test": "^1.60.0",
     "@types/bcryptjs": "^2.4.6",
     "@types/node": "^22.0.0",
     "@types/react": "19.2.14",
