@@ -1,0 +1,42 @@
+{
+  "nav": {
+    "tenders": "Tenders",
+    "company": "Company",
+    "settings": "Settings",
+    "signOut": "Sign out"
+  },
+  "tenderList": {
+    "title": "My Tenders",
+    "newTender": "New Tender",
+    "searchPlaceholder": "Search tenders…",
+    "allStatuses": "All statuses",
+    "statusDraft": "Draft",
+    "statusInProgress": "In Progress",
+    "statusGenerated": "Generated",
+    "statusExported": "Exported",
+    "statusClosed": "Closed",
+    "noTenders": "No tenders yet",
+    "noTendersHint": "Upload your first tender document to get started.",
+    "result": "{count, plural, one {# tender} other {# tenders}}",
+    "resultMatching": "matching \"{query}\""
+  },
+  "tender": {
+    "openWorkspace": "Open workspace",
+    "duplicate": "Duplicate",
+    "pdfReport": "PDF Report"
+  },
+  "common": {
+    "loading": "Loading…",
+    "error": "Something went wrong",
+    "retry": "Retry",
+    "save": "Save",
+    "cancel": "Cancel",
+    "delete": "Delete",
+    "confirm": "Confirm",
+    "back": "Back"
+  },
+  "notifications": {
+    "deadlineIn": "deadline in {days, plural, one {# day} other {# days}}",
+    "criticalGaps": "{count, plural, one {# critical compliance gap} other {# critical compliance gaps}}"
+  }
+}
