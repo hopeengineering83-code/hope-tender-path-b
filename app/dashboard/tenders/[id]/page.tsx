@@ -25,6 +25,7 @@ import { CorruptedMetadataBanner } from "../../../../components/corrupted-metada
 import { FinalSubmissionControlCenter } from "../../../../components/final-submission-control-center";
 import { NextActionPanel } from "../../../../components/next-action-panel";
 import { FinalPackageManifestPanel } from "../../../../components/final-package-manifest-panel";
+import { DocumentValidatorPanel } from "../../../../components/document-validator-panel";
 
 export default async function TenderPage({ params }: { params: Promise<{ id: string }> }) {
   const userId = await getSession();
@@ -112,6 +113,7 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
       <TenderIntakeDetailPanel tender={tenderForUi} />
       <div id="proposal-evidence-readiness"><ProposalEvidenceReadinessPanel tenderId={tender.id} /></div>
 
+      <DocumentValidatorPanel tenderId={tender.id} />
       <FinalPackageManifestPanel tenderId={tender.id} />
       <ExportReadinessPanel tenderId={tender.id} />
       <EvaluatorObjectionsPanel tenderId={tender.id} />
