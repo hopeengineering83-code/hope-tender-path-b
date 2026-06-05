@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { requireUser, unauthorizedResponse, forbiddenResponse } from "../../../../../lib/auth";
 import { answerTenderCopilotQuestion } from "../../../../../lib/engine/tender-ai-copilot";
@@ -97,6 +98,41 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     description: `${actor.email} asked Tender AI Copilot: ${short(question, 180)}`,
     metadata: { tenderId: id, question, confidence: response.confidence, riskCount: response.risks.length, actionCount: response.nextActions.length, verifiedEvidenceCount: response.evidenceUsed.length, droppedEvidenceCount: response.evidenceDropped?.length ?? 0 },
   });
+
+  // Persist the conversation turn. Failures are non-blocking — the answer is
+  // always returned even if the DB write fails (e.g. cold-start lag, migration
+  // not yet applied on the current environment).
+  try {
+    // Build a compact citations array from the verified evidence nodes.
+    const citations = response.evidenceUsed.length > 0
+      ? response.evidenceUsed.map((ev) => ({
+          page: (ev as { page?: number }).page ?? null,
+          quote: (ev as { snippet?: string }).snippet ?? null,
+          field: ev.id,
+        }))
+      : null;
+
+    await prisma.tenderCopilotMessage.createMany({
+      data: [
+        {
+          tenderId: id,
+          userId: actor.id,
+          role: "user",
+          content: question,
+          citations: Prisma.JsonNull,
+        },
+        {
+          tenderId: id,
+          userId: actor.id,
+          role: "assistant",
+          content: response.answer,
+          citations: citations !== null ? (citations as Prisma.InputJsonValue) : Prisma.JsonNull,
+        },
+      ],
+    });
+  } catch (saveErr) {
+    console.warn("[copilot] Failed to persist chat history — answer still returned:", saveErr instanceof Error ? saveErr.message : saveErr);
+  }
 
   return NextResponse.json({ success: true, response });
 }
