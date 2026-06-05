@@ -1,4 +1,6 @@
 // @ts-check
+const createNextIntlPlugin = require("next-intl/plugin");
+const withNextIntl = createNextIntlPlugin("./i18n/request.ts");
 
 /**
  * Production environment guard.
@@ -100,4 +102,4 @@ const nextConfig = {
   },
 };
 
-module.exports = nextConfig;
+module.exports = withNextIntl(nextConfig);
