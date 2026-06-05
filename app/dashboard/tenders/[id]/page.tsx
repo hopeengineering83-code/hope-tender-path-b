@@ -31,6 +31,7 @@ import { EvidenceCoveragePanel } from "../../../../components/evidence-coverage-
 import { ComplianceHeatmapPanel } from "../../../../components/compliance-heatmap-panel";
 import { TenderHealthScorePanel } from "../../../../components/tender-health-score-panel";
 import VaultEvidenceSearchPanel from "../../../../components/vault-evidence-search-panel";
+import { TenderSharePanel } from "../../../../components/tender-share-panel";
 
 export default async function TenderPage({ params }: { params: Promise<{ id: string }> }) {
   const userId = await getSession();
@@ -127,6 +128,7 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
       <ExportReadinessPanel tenderId={tender.id} />
       <EvaluatorObjectionsPanel tenderId={tender.id} />
       <ComplianceHeatmapPanel tenderId={tender.id} />
+      <TenderSharePanel tenderId={tender.id} />
       <PricingWorkbookPanel tenderId={tender.id} />
       {ai && <TenderAICopilotPanel tenderId={tender.id} />}
       <div className="mb-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">

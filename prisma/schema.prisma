@@ -22,6 +22,7 @@ model User {
   documentReviews  DocumentReview[]
   documentComments DocumentComment[]
   notifications    Notification[]
+  tenderShares TenderShare[]
   createdAt    DateTime    @default(now())
   updatedAt    DateTime    @updatedAt
 }
@@ -391,6 +392,21 @@ model Tender {
   sectionEvidenceMaps   SectionEvidenceMap[]
   proposalVersions      ProposalVersion[]
   pricingWorkbook       PricingWorkbook?
+  shares                TenderShare[]
+}
+
+model TenderShare {
+  id          String   @id @default(cuid())
+  tenderId    String
+  token       String   @unique @default(cuid())
+  label       String?
+  createdAt   DateTime @default(now())
+  expiresAt   DateTime?
+  createdById String
+  tender      Tender   @relation(fields: [tenderId], references: [id], onDelete: Cascade)
+  createdBy   User     @relation(fields: [createdById], references: [id])
+  @@index([tenderId])
+  @@index([token])
 }
 
 model TenderFile {
