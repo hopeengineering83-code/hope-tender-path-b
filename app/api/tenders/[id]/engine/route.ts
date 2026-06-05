@@ -4,6 +4,7 @@ import { rateLimit, AI_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { runTenderEngine, type EngineRunOptions } from "../../../../../lib/engine/run-tender-engine";
 import { assessExtractionQuality } from "../../../../../lib/extraction-quality";
+import { isExtractionAcceptableForGeneration } from "../../../../../lib/engine/extraction-quality-gate";
 import { actionableEngineError } from "../../../../../lib/engine/actionable-engine-error";
 import { enqueueJob, findActiveEngineRunForTender } from "../../../../../lib/ai-jobs";
 import { computeStoredMetadataPatch, listInvalidStoredFields } from "../../../../../lib/engine/sanitize-stored-metadata";
@@ -29,13 +30,22 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     await prismaReady;
     const { id } = await params;
     const url = new URL(req.url);
-    const force = url.searchParams.get("force") === "true";
     const isAsync = url.searchParams.get("async") === "true";
     const isSafe = url.searchParams.get("safe") === "true";
     const skipAiRematch = url.searchParams.get("skipAiRematch") === "true";
     const maxCharsRaw = Number(url.searchParams.get("maxChars"));
     const maxChars = Number.isFinite(maxCharsRaw) && maxCharsRaw >= 1000 ? maxCharsRaw : undefined;
-    const tender = await prisma.tender.findFirst({ where: { id, userId }, include: { files: { select: { id: true, originalFileName: true, fileName: true, extractedText: true } } } });
+    const tender = await prisma.tender.findFirst({
+      where: { id, userId },
+      include: {
+        files: {
+          select: {
+            id: true, originalFileName: true, fileName: true, extractedText: true,
+            extractionScore: true, totalPages: true, extractedPages: true, ocrPages: true, failedPages: true,
+          },
+        },
+      },
+    });
     if (!tender) return NextResponse.json({ error: "Tender not found", code: "TENDER_NOT_FOUND", diagnosticId }, { status: 404 });
 
     const totalChars = tender.files.reduce((s, f) => s + (f.extractedText?.length ?? 0), 0);
@@ -61,9 +71,35 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       console.info(`[engine] tender=${tender.id} auto-filled ${metadataAutoFill.filled.length} metadata field(s): ${metadataAutoFill.filled.join(", ")}`);
     }
 
-    const extractionReports = tender.files.map((file) => ({ fileName: file.originalFileName || file.fileName, quality: assessExtractionQuality(file.extractedText, file.originalFileName || file.fileName) }));
+    const effectiveExtractionFiles = tender.files.map((file) => {
+      const quality = assessExtractionQuality(file.extractedText, file.originalFileName || file.fileName);
+      return {
+        ...file,
+        extractionScore: Math.min(file.extractionScore ?? quality.score, quality.score),
+        quality,
+      };
+    });
+    const extractionReports = effectiveExtractionFiles.map((file) => ({
+      fileName: file.originalFileName || file.fileName,
+      quality: file.quality,
+      totalPages: file.totalPages,
+      extractedPages: file.extractedPages,
+      failedPages: file.failedPages,
+    }));
     const blockers = extractionReports.filter((item) => item.quality.severity === "FAILED" || item.quality.severity === "POOR");
-    if (!force && blockers.length > 0) return NextResponse.json({ error: "Engine run blocked: one or more tender files have poor extraction quality.", code: "EXTRACTION_NOT_READY", nextAction: "OPEN_EXTRACTION_QUALITY", blockers, hint: "Re-import/OCR/review the file, or retry with ?force=true only when you intentionally accept degraded analysis quality.", diagnosticId }, { status: 422 });
+    if (!isExtractionAcceptableForGeneration(effectiveExtractionFiles)) {
+      const corruptedFiles = effectiveExtractionFiles.filter((file) => file.quality.corrupted).map((file) => file.originalFileName || file.fileName || file.id);
+      return NextResponse.json({
+        error: "Engine run blocked: tender extraction is not reliable enough for matching or AI work.",
+        code: corruptedFiles.length > 0 ? "EXTRACTION_CORRUPTED_ENGINE_SKIPPED" : "EXTRACTION_QUALITY_ENGINE_BLOCKED",
+        nextAction: corruptedFiles.length > 0 ? "RUN_OCR_OR_UPLOAD_CLEARER_SCAN" : "OPEN_EXTRACTION_QUALITY",
+        blockers,
+        corruptedFiles,
+        hint: "Run OCR/re-extract the tender first. Run Engine cannot be forced through corrupted, unknown-page, or incomplete extraction.",
+        diagnosticId,
+        inputStats,
+      }, { status: 422 });
+    }
 
     // ─── Server-side large-vault guard ───────────────────────────────────
     // Vaults with >30 reviewed records typically exceed Vercel's 60s cap
