@@ -287,6 +287,12 @@ export async function NextActionPanel({ tenderId }: { tenderId: string }) {
           <strong>Export ready.</strong> Review the Final Package Manifest below, then click Export to create the submission ZIP.
         </div>
       )}
+
+      {metaReport.deadlinePassed && (
+        <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-800">
+          <strong>Submission deadline has passed.</strong> {metaReport.notes.find((n) => n.includes("deadline has passed")) ?? "Confirm with the client whether an extension has been granted before proceeding."}
+        </div>
+      )}
     </section>
   );
 }

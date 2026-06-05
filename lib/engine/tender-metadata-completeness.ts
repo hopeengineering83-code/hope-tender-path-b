@@ -138,6 +138,8 @@ export type MetadataCompletenessReport = {
   blockingForExport: boolean;
   /** Total placeholder hits across all string fields. */
   placeholderCount: number;
+  /** True when the submission deadline is in the past. Warning only — does not block generation. */
+  deadlinePassed: boolean;
   /** Free-form list of explainer notes for the readiness panel. */
   notes: string[];
 };
@@ -394,6 +396,15 @@ export function assessTenderMetadataCompleteness(input: MetadataCompletenessInpu
     notes.push(`Tender metadata auto-fill coverage is ${Math.round(overallRatio * 100)}% — below the 60% threshold required for senior-grade generation.`);
   }
 
+  const dl = input.deadline;
+  const deadlinePassed =
+    dl instanceof Date &&
+    !isNaN(dl.getTime()) &&
+    dl < new Date();
+  if (deadlinePassed && dl) {
+    notes.push(`Submission deadline has passed (${dl.toLocaleDateString()}). Confirm with the client whether an extension has been granted before proceeding.`);
+  }
+
   return {
     overallRatio,
     missingCritical,
@@ -402,6 +413,7 @@ export function assessTenderMetadataCompleteness(input: MetadataCompletenessInpu
     blockingForGeneration: missingCritical.length > 0 || invalidFields.length > 0,
     blockingForExport: missingCritical.length > 0 || invalidFields.length > 0,
     placeholderCount,
+    deadlinePassed,
     notes,
   };
 }
