@@ -7,6 +7,7 @@ const tenderApi = fs.readFileSync("app/api/tenders/[id]/route.ts", "utf8");
 const tenderListApi = fs.readFileSync("app/api/tenders/route.ts", "utf8");
 const analysisPanel = fs.readFileSync("components/analysis-quality-panel.tsx", "utf8");
 const extractionPanel = fs.readFileSync("components/extraction-quality-panel.tsx", "utf8");
+const extractionQualityApi = fs.readFileSync("app/api/tenders/[id]/extraction-quality/route.ts", "utf8");
 
 describe("DB transfer query shape — dashboard metadata views", () => {
   it("tender detail page uses extracted-text metrics instead of selecting full extractedText", () => {
@@ -37,5 +38,12 @@ describe("DB transfer query shape — dashboard metadata views", () => {
     assert.ok(!/fileContent:\s*true/.test(extractionPanel));
     assert.match(extractionPanel, /LEFT\(COALESCE\("extractedText", ''\), 6000\)/);
     assert.match(extractionPanel, /char_length\("extractedText"\)/);
+  });
+
+  it("extraction-quality API samples extracted text without selecting full text or fileContent", () => {
+    assert.ok(!/extractedText:\s*true/.test(extractionQualityApi));
+    assert.ok(!/fileContent:\s*true/.test(extractionQualityApi));
+    assert.match(extractionQualityApi, /LEFT\(COALESCE\("extractedText", ''\), 6000\)/);
+    assert.match(extractionQualityApi, /char_length\("extractedText"\)/);
   });
 });
