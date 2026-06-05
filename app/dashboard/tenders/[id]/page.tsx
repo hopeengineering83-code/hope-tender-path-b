@@ -23,6 +23,8 @@ import { MatchingQualityPanel } from "../../../../components/matching-quality-pa
 import { LegacyTenderActionHider } from "../../../../components/legacy-tender-action-hider";
 import { CorruptedMetadataBanner } from "../../../../components/corrupted-metadata-banner";
 import { FinalSubmissionControlCenter } from "../../../../components/final-submission-control-center";
+import { NextActionPanel } from "../../../../components/next-action-panel";
+import { FinalPackageManifestPanel } from "../../../../components/final-package-manifest-panel";
 
 export default async function TenderPage({ params }: { params: Promise<{ id: string }> }) {
   const userId = await getSession();
@@ -91,6 +93,7 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
         clientContactName: tender.clientContactName,
       }} />
       <ExecutiveSnapshot tender={tenderForUi} />
+      <NextActionPanel tenderId={tender.id} />
       <BidControlVerdictPanel tenderId={tender.id} />
       <FinalSubmissionControlCenter tenderId={tender.id} generationReadiness={generationReadiness} />
       <AIHealthPanel />
@@ -108,6 +111,8 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
       <SubmissionPlanReconciliationPanel tenderId={tender.id} />
       <TenderIntakeDetailPanel tender={tenderForUi} />
       <div id="proposal-evidence-readiness"><ProposalEvidenceReadinessPanel tenderId={tender.id} /></div>
+
+      <FinalPackageManifestPanel tenderId={tender.id} />
       <ExportReadinessPanel tenderId={tender.id} />
       <EvaluatorObjectionsPanel tenderId={tender.id} />
       <PricingWorkbookPanel tenderId={tender.id} />
