@@ -34,6 +34,7 @@ import { AICopilotSuggestionsPanel } from "../../../../components/ai-copilot-sug
 import VaultEvidenceSearchPanel from "../../../../components/vault-evidence-search-panel";
 import { TenderSharePanel } from "../../../../components/tender-share-panel";
 import { AuditTrailPanel } from "../../../../components/audit-trail-panel";
+import { TenderChatPanelWrapper } from "../../../../components/tender-chat-panel-wrapper";
 
 export default async function TenderPage({ params }: { params: Promise<{ id: string }> }) {
   const userId = await getSession();
@@ -103,6 +104,7 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
       }} />
       <ExecutiveSnapshot tender={tenderForUi} />
       <NextActionPanel tenderId={tender.id} />
+      {ai && <TenderChatPanelWrapper tenderId={tender.id} />}
       <TenderHealthScorePanel tenderId={tender.id} />
       <AICopilotSuggestionsPanel tenderId={tender.id} />
       <BidControlVerdictPanel tenderId={tender.id} />
