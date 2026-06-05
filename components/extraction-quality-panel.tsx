@@ -13,6 +13,12 @@ const EXTRACTION_STATUS_LABELS: Record<string, string> = {
   EXTRACTION_CORRUPTED_AI_SKIPPED: "Corrupted — AI blocked",
 };
 
+type ExtractedTextSampleRow = {
+  id: string;
+  extractedCharacterCount: number;
+  extractedTextSample: string;
+};
+
 export async function ExtractionQualityPanel({ tenderId }: { tenderId: string }) {
   const userId = await getSession();
   if (!userId) return null;
@@ -182,6 +188,7 @@ export async function ExtractionQualityPanel({ tenderId }: { tenderId: string })
           <strong>Extraction corrupted / OCR required</strong> — text quality is too low for reliable analysis. The extracted text contains garbage characters (symbol runs, broken spacing, or icon-font glyphs) rather than readable document content. AI Analyze is blocked until the extraction quality issue is resolved.
         </div>
       )}
+
 
       {isContaminated && (
         <div className="mt-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800">

@@ -32,8 +32,10 @@ describe("DB transfer query shape — dashboard metadata views", () => {
     assert.match(analysisPanel, /SUM\(char_length\("extractedText"\)\)/);
   });
 
-  it("extraction quality panel selects extracted text only, not binary fileContent", () => {
-    assert.match(extractionPanel, /select:\s*\{[^}]*extractedText:\s*true[^}]*\}/s);
+  it("extraction quality panel samples extracted text without selecting full dashboard text or fileContent", () => {
+    assert.ok(!/extractedText:\s*true/.test(extractionPanel));
     assert.ok(!/fileContent:\s*true/.test(extractionPanel));
+    assert.match(extractionPanel, /LEFT\(COALESCE\("extractedText", ''\), 6000\)/);
+    assert.match(extractionPanel, /char_length\("extractedText"\)/);
   });
 });
