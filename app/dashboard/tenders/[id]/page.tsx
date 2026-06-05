@@ -30,6 +30,7 @@ import { AIAnalyzeRecoveryPanel } from "../../../../components/ai-analyze-recove
 import { EvidenceCoveragePanel } from "../../../../components/evidence-coverage-panel";
 import { ComplianceHeatmapPanel } from "../../../../components/compliance-heatmap-panel";
 import { TenderHealthScorePanel } from "../../../../components/tender-health-score-panel";
+import { AICopilotSuggestionsPanel } from "../../../../components/ai-copilot-suggestions-panel";
 import VaultEvidenceSearchPanel from "../../../../components/vault-evidence-search-panel";
 import { TenderSharePanel } from "../../../../components/tender-share-panel";
 import { AuditTrailPanel } from "../../../../components/audit-trail-panel";
@@ -103,6 +104,7 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
       <ExecutiveSnapshot tender={tenderForUi} />
       <NextActionPanel tenderId={tender.id} />
       <TenderHealthScorePanel tenderId={tender.id} />
+      <AICopilotSuggestionsPanel tenderId={tender.id} />
       <BidControlVerdictPanel tenderId={tender.id} />
       <FinalSubmissionControlCenter tenderId={tender.id} generationReadiness={generationReadiness} />
       <AIHealthPanel />
