@@ -19,7 +19,10 @@
     "build:desktop": "electron-builder --config electron/electron-builder.json --win --mac --linux",
     "build:desktop:win": "electron-builder --config electron/electron-builder.json --win",
     "build:desktop:mac": "electron-builder --config electron/electron-builder.json --mac",
-    "build:desktop:linux": "electron-builder --config electron/electron-builder.json --linux"
+    "build:desktop:linux": "electron-builder --config electron/electron-builder.json --linux",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui",
+    "test:e2e:report": "playwright show-report"
   },
   "main": "electron/main.js",
   "dependencies": {
@@ -53,6 +56,7 @@
     "prisma": "6.19.3",
     "tailwindcss": "^3.4.1",
     "tsx": "^4.0.0",
-    "typescript": "6.0.3"
+    "typescript": "6.0.3",
+    "@playwright/test": "^1.53.0"
   }
 }
