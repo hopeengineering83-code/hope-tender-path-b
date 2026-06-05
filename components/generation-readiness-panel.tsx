@@ -40,6 +40,46 @@ function buildActionLabel(action?: string): string {
   return "Open tender";
 }
 
+function ScoreGauge({ score }: { score: number }) {
+  // Clamp score to [0, 100]
+  const s = Math.max(0, Math.min(100, score));
+
+  // Determine color tier
+  let colorClass: string;
+  let labelText: string;
+  if (s >= 90) {
+    colorClass = "bg-emerald-500";
+    labelText = "FULLY READY";
+  } else if (s >= 70) {
+    colorClass = "bg-green-500";
+    labelText = "READY";
+  } else if (s >= 40) {
+    colorClass = "bg-amber-500";
+    labelText = "PARTIAL";
+  } else {
+    colorClass = "bg-red-500";
+    labelText = "NOT READY";
+  }
+
+  const textColor = s >= 90 ? "text-emerald-700" : s >= 70 ? "text-green-700" : s >= 40 ? "text-amber-700" : "text-red-700";
+
+  return (
+    <div className="flex flex-col items-center gap-1 min-w-[96px]">
+      <div className="relative w-24 h-3 rounded-full bg-slate-200 overflow-hidden">
+        <div
+          className={`absolute left-0 top-0 h-full rounded-full transition-all duration-300 ${colorClass}`}
+          style={{ width: `${s}%` }}
+        />
+      </div>
+      <div className="flex items-baseline gap-1.5">
+        <span className={`text-2xl font-extrabold leading-none ${textColor}`}>{s}</span>
+        <span className="text-xs text-slate-400 font-medium">/100</span>
+      </div>
+      <span className={`text-[10px] font-bold uppercase tracking-wide ${textColor}`}>{labelText}</span>
+    </div>
+  );
+}
+
 export async function GenerationReadinessPanel({ tenderId }: { tenderId: string }) {
   const userId = await getSession();
   if (!userId) return null;
@@ -48,7 +88,7 @@ export async function GenerationReadinessPanel({ tenderId }: { tenderId: string 
   const readiness = await getTenderGenerationReadiness(prisma, userId, tenderId);
   if (!readiness) return null;
 
-  const { ready, blockers, fullProposalBlockers, warnings } = readiness;
+  const { ready, blockers, fullProposalBlockers, warnings, score } = readiness;
   // Use fullProposalReady for the headline label — it is the stricter gate.
   // ready / supportPackageReady only covers blockers; fullProposalReady also
   // covers fullProposalBlockers (e.g. missing client details, weak extraction).
@@ -68,9 +108,12 @@ export async function GenerationReadinessPanel({ tenderId }: { tenderId: string 
             </p>
           )}
         </div>
-        <Link href={`/api/tenders/${tenderId}/generation-readiness`} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50">
-          Open JSON
-        </Link>
+        <div className="flex items-center gap-3">
+          <ScoreGauge score={score} />
+          <Link href={`/api/tenders/${tenderId}/generation-readiness`} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50">
+            Open JSON
+          </Link>
+        </div>
       </div>
 
       {blockers.length > 0 && (

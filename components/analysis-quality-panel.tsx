@@ -6,6 +6,7 @@ import { assessMatchingQuality } from "../lib/matching-quality";
 import { ensureCompanyForUser } from "../lib/company-workspace";
 import { getCompanyIngestionReadiness } from "../lib/company-ingestion-readiness";
 import { detectAnalysisSourceWithApproval } from "../lib/engine/analysis-source";
+import { inferSector } from "../lib/engine/proposal-intelligence";
 
 function analysisSourceSummary(source: Awaited<ReturnType<typeof detectAnalysisSourceWithApproval>>) {
   if (source === "AI") return { label: "AI", risk: "LOW" as const, detail: "Analysis produced by AI provider." };
@@ -84,6 +85,8 @@ export async function AnalysisQualityPanel({ tenderId }: { tenderId: string }) {
 
   const analysisSource = analysisSourceSummary(rawSource);
   const ready = quality.severity !== "POOR" && quality.severity !== "UNSAFE" && analysisSource.risk !== "HIGH";
+  const sectorProbeText = [tender.analysisSummary, tender.intakeSummary, tender.notes, tender.title, tender.description].filter(Boolean).join("\n\n");
+  const detectedSector = sectorProbeText.trim().length > 20 ? inferSector(sectorProbeText) : null;
   const sourceRiskClass = analysisSource.risk === "LOW" ? "bg-emerald-100 text-emerald-700" : analysisSource.risk === "HIGH" ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-700";
   const severityClass: Record<string, string> = {
     GOOD: "bg-emerald-100 text-emerald-700",
@@ -143,12 +146,25 @@ export async function AnalysisQualityPanel({ tenderId }: { tenderId: string }) {
         <div className="flex flex-wrap items-center gap-2">
           <p className="font-semibold text-slate-900">Analysis source:</p>
           <span className={`rounded-full px-2 py-0.5 text-xs font-bold ${sourceRiskClass}`}>{analysisSource.label}</span>
+          {tender.analysisExtractionStatus && (
+            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">{tender.analysisExtractionStatus}</span>
+          )}
         </div>
         <p className="mt-1 text-slate-600">{analysisSource.detail}</p>
         {analysisSource.risk === "HIGH" && (
           <p className="mt-2 text-red-700">High risk: regex fallback can miss exact forms, evaluation scoring, file names, submission instructions, and expert/project requirements. Re-check extraction quality and AI provider health, then re-run Engine.</p>
         )}
       </div>
+
+      {detectedSector && (
+        <div className="mt-3 rounded-xl border border-slate-200 bg-white p-3 text-sm">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="font-semibold text-slate-900">Detected sector:</p>
+            <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-700">{detectedSector}</span>
+          </div>
+          <p className="mt-1 text-xs text-slate-500">Inferred from tender summary. If incorrect, update the tender title/description — sector detection influences proposal methodology framing.</p>
+        </div>
+      )}
 
       {quality.metadataIssues.length > 0 && (
         <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3">

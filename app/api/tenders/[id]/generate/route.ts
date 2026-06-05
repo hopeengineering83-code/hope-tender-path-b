@@ -173,7 +173,7 @@ async function fillPlannedSupportDocuments(tenderId: string, plannedFileKeys?: S
   const requirements = tender.requirements.map((r) => formatRequirementLine(r, 380));
   const experts = tender.expertMatches.filter((m) => m.expert && m.expert.trustLevel === "REVIEWED").map((m) => `${m.expert.fullName}${m.expert.title ? ` — ${m.expert.title}` : ""}${m.expert.yearsExperience ? ` | ${m.expert.yearsExperience}+ years` : ""}${m.expert.profile ? ` | ${shortText(m.expert.profile, 260)}` : ""}`);
   const projects = tender.projectMatches.filter((m) => m.project && m.project.trustLevel === "REVIEWED").map((m) => `${m.project.name}${m.project.clientName ? ` — ${m.project.clientName}` : ""}${m.project.country ? ` | ${m.project.country}` : ""}${m.project.summary ? ` | ${shortText(m.project.summary, 300)}` : ""}`);
-  const docs = await prisma.generatedDocument.findMany({ where: { tenderId, generationStatus: { not: "SUPERSEDED" } }, select: { id: true, name: true, exactFileName: true, documentType: true, generationStatus: true, fileContent: true } });
+  const docs = await prisma.generatedDocument.findMany({ where: { tenderId, generationStatus: { not: "SUPERSEDED" } }, select: { id: true, name: true, exactFileName: true, documentType: true, generationStatus: true, storagePath: true } });
   // Deduplicate by filename before filling: if multiple non-superseded records share the same
   // exactFileName (from prior generation runs), only fill the first one encountered to avoid
   // generating duplicate support documents for the same logical file.
@@ -184,7 +184,7 @@ async function fillPlannedSupportDocuments(tenderId: string, plannedFileKeys?: S
     seenFillKeys.add(key);
     return true;
   });
-  const incomplete = dedupedDocs.filter((doc) => !isMainProposalLike(doc) && !(doc.generationStatus === "GENERATED" && doc.fileContent) && (!plannedFileKeys || plannedFileKeys.has(generatedDocumentSubmissionKey(doc))));
+  const incomplete = dedupedDocs.filter((doc) => !isMainProposalLike(doc) && !(doc.generationStatus === "GENERATED" && generatedDocumentHasContent(doc)) && (!plannedFileKeys || plannedFileKeys.has(generatedDocumentSubmissionKey(doc))));
   let filled = 0;
   for (const doc of incomplete) {
     const title = clean(doc.exactFileName || doc.name);
@@ -210,7 +210,7 @@ async function fillPlannedSupportDocuments(tenderId: string, plannedFileKeys?: S
       // Placeholder / form / legal / financial / declaration / annex / submission-rules / generic:
       // Do NOT generate a fake DOCX. Mark as PLANNED stub so the user knows to attach the real document.
       // Only update if the record is not already in the correct placeholder state.
-      if (doc.generationStatus !== "PLANNED" || !doc.fileContent) {
+      if (doc.generationStatus !== "PLANNED" || !generatedDocumentHasContent(doc)) {
         await prisma.generatedDocument.update({
           where: { id: doc.id },
           data: {
@@ -477,6 +477,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       invalidFields: metadataReport.invalidFields.map((f) => ({ field: f.field, reason: f.reason })),
       overallRatio: metadataReport.overallRatio,
       metadataContaminated: Boolean((tender as { metadataContaminated?: boolean }).metadataContaminated),
+      deadlinePassed: metadataReport.deadlinePassed,
     }, { status: 422 });
   }
 
