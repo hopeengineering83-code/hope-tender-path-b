@@ -973,6 +973,9 @@ export type AIAnalysisResult = {
   // Procurement / tender reference number (CLAUDE.md item #5).
   // E.g. "ITT/2025/001", "RFP-ETH-24-003", "PPMO/NCB/001/2025".
   procurementReferenceNumber?: string | null;
+  // Critical submission fields extracted by AI (regex at upload often misses these)
+  submissionMethod?: string | null;
+  submissionEmails?: string | null;
   // Per-field source provenance for the contact/location fields above.
   // Stored as JSON in DB column contactDetailsSourceJson.
   contactDetailsSource?: Record<string, { page: number | null; quote: string | null }> | null;
@@ -1266,6 +1269,8 @@ function mergeAnalysisResults(parts: AIAnalysisResult[]): AIAnalysisResult {
   const preBidChannel = firstDefined((p) => p.preBidChannel ?? undefined);
   const clientRepresentative = firstDefined((p) => p.clientRepresentative ?? undefined);
   const procurementReferenceNumber = firstDefined((p) => p.procurementReferenceNumber ?? undefined);
+  const submissionMethod = firstDefined((p) => p.submissionMethod ?? undefined);
+  const submissionEmails = firstDefined((p) => p.submissionEmails ?? undefined);
   const clientNameSourcePage = firstDefined((p) => p.clientNameSourcePage ?? undefined);
   const clientNameSourceQuote = firstDefined((p) => p.clientNameSourceQuote ?? undefined);
   const submissionEmailSourcePage = firstDefined((p) => p.submissionEmailSourcePage ?? undefined);
@@ -1307,6 +1312,8 @@ function mergeAnalysisResults(parts: AIAnalysisResult[]): AIAnalysisResult {
     preBidChannel: preBidChannel ?? null,
     clientRepresentative: clientRepresentative ?? null,
     procurementReferenceNumber: procurementReferenceNumber ?? null,
+    submissionMethod: submissionMethod ?? null,
+    submissionEmails: submissionEmails ?? null,
     contactDetailsSource: Object.keys(contactDetailsSource).length > 0 ? contactDetailsSource : null,
     clientNameSourcePage: clientNameSourcePage ?? null,
     clientNameSourceQuote: clientNameSourceQuote ?? null,
@@ -1412,6 +1419,8 @@ JSON structure required:
   "preBidChannel": "channel for pre-bid questions or clarifications (email address, fax, or described method), or null",
   "clientRepresentative": "name of the authorized officer or client representative signing the tender notice, or null",
   "procurementReferenceNumber": "procurement or tender reference number as printed on the document (e.g. ITT/2025/001, RFP-ETH-24-003), or null if absent",
+  "submissionMethod": "how bids must be submitted — one of: 'Email', 'Portal', 'Hard copy', 'Sealed envelope', 'Hand delivery', 'Courier', or a short verbatim phrase from the document (max 80 chars). null if not stated.",
+  "submissionEmails": "all email addresses for bid submission as a comma-separated string (NOT the contact/clarification email), or null if none specified",
   "clientNameSourcePage": page_number_integer_or_null,
   "clientNameSourceQuote": "verbatim 1-2 sentence snippet from which the client name was extracted, or null",
   "submissionEmailSourcePage": page_number_integer_or_null,
@@ -1497,6 +1506,9 @@ ${tenderContent}`;
         submissionEmailSubject: typeof parsed.submissionEmailSubject === "string" ? parsed.submissionEmailSubject.trim().slice(0, 500) || null : null,
         preBidChannel: typeof parsed.preBidChannel === "string" ? parsed.preBidChannel.trim().slice(0, 500) || null : null,
         clientRepresentative: typeof parsed.clientRepresentative === "string" ? parsed.clientRepresentative.trim().slice(0, 300) || null : null,
+        submissionMethod: typeof parsed.submissionMethod === "string" ? parsed.submissionMethod.trim().slice(0, 80) || null : null,
+        submissionEmails: typeof parsed.submissionEmails === "string" ? parsed.submissionEmails.trim().slice(0, 500) || null : null,
+        procurementReferenceNumber: typeof parsed.procurementReferenceNumber === "string" ? parsed.procurementReferenceNumber.trim().slice(0, 200) || null : null,
         clientNameSourcePage: typeof parsed.clientNameSourcePage === "number" && Number.isInteger(parsed.clientNameSourcePage) && parsed.clientNameSourcePage > 0 ? parsed.clientNameSourcePage : null,
         clientNameSourceQuote: typeof parsed.clientNameSourceQuote === "string" ? parsed.clientNameSourceQuote.trim().slice(0, 500) || null : null,
         submissionEmailSourcePage: typeof parsed.submissionEmailSourcePage === "number" && Number.isInteger(parsed.submissionEmailSourcePage) && parsed.submissionEmailSourcePage > 0 ? parsed.submissionEmailSourcePage : null,
