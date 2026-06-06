@@ -369,13 +369,39 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
   if (requiresExperts && reviewedSelectedExperts === 0) blockers.push(tenderBlocker("NO_SELECTED_REVIEWED_EXPERTS", "Tender requires experts but no selected reviewed expert matches exist.", "Run Engine and select/review expert matches before export."));
   if (requiresProjects && reviewedSelectedProjects === 0) blockers.push(tenderBlocker("NO_SELECTED_REVIEWED_PROJECTS", "Tender requires project references but no selected reviewed project matches exist.", "Run Engine and select/review project matches before export."));
 
-  const [complianceRows, totalExpertMatches, totalProjectMatches, plannedDocCount] = await Promise.all([
+  const mandatoryReqIds = tender.requirements.filter((r) => String(r.priority ?? "").toUpperCase() === "MANDATORY").map((r) => r.id);
+  const [complianceRows, totalExpertMatches, totalProjectMatches, plannedDocCount, coveredMandatoryIds] = await Promise.all([
     prisma.complianceMatrix.count({ where: { tenderId } }),
     prisma.tenderExpertMatch.count({ where: { tenderId } }),
     prisma.tenderProjectMatch.count({ where: { tenderId } }),
     prisma.generatedDocument.count({ where: { tenderId, generationStatus: "PLANNED" } }),
+    mandatoryReqIds.length > 0
+      ? prisma.complianceMatrix.findMany({
+          where: { tenderId, requirementId: { in: mandatoryReqIds }, supportLevel: { in: ["FULL", "SUBSTANTIAL"] } },
+          select: { requirementId: true },
+          distinct: ["requirementId"],
+        })
+      : Promise.resolve([]),
   ]);
   if (tender.requirements.length > 0 && complianceRows === 0) blockers.push(tenderBlocker("EVIDENCE_NOT_ASSESSED", "Compliance/evidence matrix is empty.", "Run Engine successfully so requirement-linked evidence rows are created."));
+
+  // ── Mandatory evidence coverage blocker ──────────────────────────────────
+  // Block (MEDIUM) when fewer than half of mandatory requirements have FULL
+  // or SUBSTANTIAL compliance coverage — the export package is likely missing
+  // key proof documents for the most critical requirements.
+  const mandatoryCount = mandatoryReqIds.length;
+  if (mandatoryCount > 0 && complianceRows > 0) {
+    const coveredCount = coveredMandatoryIds.length;
+    const coveragePercent = Math.round((coveredCount / mandatoryCount) * 100);
+    if (coveragePercent < 50) {
+      blockers.push(tenderBlocker(
+        "MANDATORY_EVIDENCE_INCOMPLETE",
+        `Only ${coveragePercent}% of mandatory requirements (${coveredCount}/${mandatoryCount}) have strong evidence coverage (FULL/SUBSTANTIAL). The export package may be missing critical proof documents.`,
+        "Run Engine to link requirement evidence, or manually add compliance matrix rows with FULL or SUBSTANTIAL support levels before exporting.",
+        "MEDIUM",
+      ));
+    }
+  }
   if (requiresExperts && totalExpertMatches === 0) blockers.push(tenderBlocker("NO_TENDER_SPECIFIC_EXPERT_MATCHES", "No tender-specific expert match rows exist.", "Run Engine to create expert matches from the reviewed vault."));
   if (requiresProjects && totalProjectMatches === 0) blockers.push(tenderBlocker("NO_TENDER_SPECIFIC_PROJECT_MATCHES", "No tender-specific project match rows exist.", "Run Engine to create project matches from the reviewed vault."));
   if (plannedDocCount > 0) blockers.push(tenderBlocker("UNGENERATED_PLANNED_DOCUMENTS", `${plannedDocCount} required submission document(s) are planned but not yet generated — the ZIP package would be incomplete.`, "Click 'Generate missing planned documents' to convert PLANNED rows into draft documents. For official-original rows (bid forms, tender templates) you must upload the real file via 'Attach official original'.", "HIGH"));
