@@ -508,6 +508,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
               ...(aiResult.clientWebsite != null ? { clientWebsite: aiResult.clientWebsite } : {}),
               ...(aiResult.submissionEmailSubject != null ? { submissionEmailSubject: aiResult.submissionEmailSubject } : {}),
               ...(aiResult.preBidChannel != null ? { preBidChannel: aiResult.preBidChannel } : {}),
+              ...(aiResult.preBidMeetingDate != null ? { preBidMeetingDate: new Date(aiResult.preBidMeetingDate) } : {}),
+              ...(aiResult.preBidMeetingLocation != null ? { preBidMeetingLocation: aiResult.preBidMeetingLocation } : {}),
               ...(aiResult.clientRepresentative != null ? { clientRepresentative: aiResult.clientRepresentative } : {}),
               // Procurement reference number mapped to the legacy `reference` field
               ...(aiResult.procurementReferenceNumber != null ? { reference: aiResult.procurementReferenceNumber } : {}),

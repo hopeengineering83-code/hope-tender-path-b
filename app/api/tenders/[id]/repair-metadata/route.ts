@@ -152,9 +152,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       }
       // PERCENT-only matches are reported but not persisted — needs the budget
       // to compute the absolute amount, which we will not invent.
-    } else if (field === "deadline") {
+    } else if (field === "deadline" || field === "preBidMeetingDate") {
       const dt = extraction.value as Date;
-      (updates as Record<string, unknown>).deadline = dt;
+      (updates as Record<string, unknown>)[field] = dt;
     } else {
       (updates as Record<string, unknown>)[field] = extraction.value;
       // When we repair clientName, also sync procuringEntityName if it's empty —
