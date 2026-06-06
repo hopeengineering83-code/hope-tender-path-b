@@ -335,3 +335,43 @@ describe("analysis-quality — reviewed evidence selection", () => {
     assert.ok(!report.warnings.some((w) => /unreviewed/i.test(w)), "Should not warn when reviewed project is selected");
   });
 });
+
+describe("analysis-quality — source-grounding credits sourcePageNumber and sourceExactQuote", () => {
+  it("requirements with sourcePageNumber count as grounded even without sectionReference", () => {
+    const pagedReqs: AnalysisRequirementLike[] = Array.from({ length: 8 }, (_, i) => ({
+      title: `Req ${i + 1}`,
+      description: "A requirement description for the tender.",
+      priority: "MANDATORY",
+      sourcePageNumber: i + 1,
+    }));
+    const report = assessTenderAnalysisQuality({ requirements: pagedReqs, extractedTextLength: 8000 });
+    assert.ok(report.subScores.sourceGrounding > 0, "sourceGrounding must be > 0 when requirements have sourcePageNumber");
+  });
+
+  it("requirements with sourceExactQuote count as grounded even without sectionReference", () => {
+    const quotedReqs: AnalysisRequirementLike[] = Array.from({ length: 6 }, (_, i) => ({
+      title: `Req ${i + 1}`,
+      description: "Requirement text.",
+      priority: "SCORED",
+      sourceExactQuote: `"Verbatim quote from section ${i + 1} of the tender document."`,
+    }));
+    const report = assessTenderAnalysisQuality({ requirements: quotedReqs, extractedTextLength: 6000 });
+    assert.ok(report.subScores.sourceGrounding > 0, "sourceGrounding must be > 0 when requirements have sourceExactQuote");
+  });
+
+  it("requirements without any source traceability score lower than those with quotes", () => {
+    const traced: AnalysisRequirementLike[] = Array.from({ length: 8 }, (_, i) => ({
+      title: `Req ${i + 1}`, description: "text.", priority: "MANDATORY",
+      sourceExactQuote: `"Quote ${i + 1} from the document."`,
+    }));
+    const untraced: AnalysisRequirementLike[] = Array.from({ length: 8 }, (_, i) => ({
+      title: `Req ${i + 1}`, description: "text.", priority: "MANDATORY",
+    }));
+    const tracedReport = assessTenderAnalysisQuality({ requirements: traced, extractedTextLength: 8000 });
+    const untracedReport = assessTenderAnalysisQuality({ requirements: untraced, extractedTextLength: 8000 });
+    assert.ok(
+      tracedReport.subScores.sourceGrounding >= untracedReport.subScores.sourceGrounding,
+      `Traced requirements (${tracedReport.subScores.sourceGrounding}) should not score lower than untraced (${untracedReport.subScores.sourceGrounding})`,
+    );
+  });
+});
