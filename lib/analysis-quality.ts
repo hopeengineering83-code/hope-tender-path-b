@@ -176,7 +176,9 @@ export function assessTenderAnalysisQuality(params: {
   if (sourceReferencedCount === 0 && requirementCount > 0) {
     warnings.push("Requirements do not contain section/page references.");
     recommendations.push("Add or re-run analysis with source references for evaluator-grade traceability.");
-    score -= 10;
+    // Zero source traceability is a critical gap — raise from -10 to -25 so tenders
+    // with 0% grounding cannot score WARNING (75+) and slip through export gates.
+    score -= mandatoryCount > 0 ? 25 : 15;
   }
   if (exactFileNameCount === 0 && hasExactFileNaming) {
     warnings.push("Tender-level file naming exists, but individual requirements are not mapped to exact file names.");

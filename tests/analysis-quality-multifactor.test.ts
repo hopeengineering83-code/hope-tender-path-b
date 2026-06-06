@@ -375,3 +375,47 @@ describe("analysis-quality — source-grounding credits sourcePageNumber and sou
     );
   });
 });
+
+describe("analysis-quality — zero source grounding penalty (increased to -25/-15)", () => {
+  it("zero grounding with mandatory requirements deducts at least 25 points vs full grounding", () => {
+    const groundedReqs: AnalysisRequirementLike[] = Array.from({ length: 6 }, (_, i) => ({
+      title: `Req ${i + 1}`, description: "text.", priority: "MANDATORY",
+      sectionReference: `Section ${i + 1}`,
+    }));
+    const ungoundedReqs: AnalysisRequirementLike[] = Array.from({ length: 6 }, (_, i) => ({
+      title: `Req ${i + 1}`, description: "text.", priority: "MANDATORY",
+    }));
+    const grounded = assessTenderAnalysisQuality({
+      requirements: groundedReqs,
+      extractedTextLength: 8000,
+      analysisSummary: "full analysis",
+      evaluationMethodology: "Technical 70%, Financial 30%.",
+    });
+    const ungrounded = assessTenderAnalysisQuality({
+      requirements: ungoundedReqs,
+      extractedTextLength: 8000,
+      analysisSummary: "full analysis",
+      evaluationMethodology: "Technical 70%, Financial 30%.",
+    });
+    assert.ok(
+      grounded.score - ungrounded.score >= 20,
+      `Expected at least 20 point gap between grounded (${grounded.score}) and ungrounded (${ungrounded.score}) mandatory requirements`,
+    );
+  });
+
+  it("zero grounding without mandatory requirements deducts at least 10 points vs grounded", () => {
+    const groundedReqs: AnalysisRequirementLike[] = Array.from({ length: 6 }, (_, i) => ({
+      title: `Req ${i + 1}`, description: "text.", priority: "SCORED",
+      sectionReference: `Section ${i + 1}`,
+    }));
+    const ungoundedReqs: AnalysisRequirementLike[] = Array.from({ length: 6 }, (_, i) => ({
+      title: `Req ${i + 1}`, description: "text.", priority: "SCORED",
+    }));
+    const grounded = assessTenderAnalysisQuality({ requirements: groundedReqs, extractedTextLength: 8000 });
+    const ungrounded = assessTenderAnalysisQuality({ requirements: ungoundedReqs, extractedTextLength: 8000 });
+    assert.ok(
+      grounded.score > ungrounded.score,
+      `Grounded (${grounded.score}) must score higher than ungrounded (${ungrounded.score}) even without mandatory requirements`,
+    );
+  });
+});

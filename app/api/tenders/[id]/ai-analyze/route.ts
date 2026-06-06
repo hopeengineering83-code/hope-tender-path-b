@@ -443,7 +443,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
                 sourceSectionHeading: req.sectionReference ?? null,
                 sourcePageNumber: req.sourcePage ?? null,
                 sourceExactQuote: req.sourceQuote ?? null,
-                sourceConfidence: typeof req.sourcePage === "number" && req.sourcePage > 0 ? 0.8 : 0,
+                sourceConfidence: typeof req.sourcePage === "number" && req.sourcePage > 0 ? 0.8 : (typeof req.sourceQuote === "string" && req.sourceQuote.trim().length > 10 ? 0.7 : 0),
               },
             });
           }
