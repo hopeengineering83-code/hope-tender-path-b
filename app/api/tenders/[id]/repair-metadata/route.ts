@@ -157,6 +157,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       (updates as Record<string, unknown>).deadline = dt;
     } else {
       (updates as Record<string, unknown>)[field] = extraction.value;
+      // When we repair clientName, also sync procuringEntityName if it's empty —
+      // the two fields are conceptually the same; keeping them in sync avoids
+      // the need for || fallback patterns in every consumer.
+      if (field === "clientName") {
+        const current = (tender as unknown as Record<string, unknown>).procuringEntityName;
+        if (!current) {
+          (updates as Record<string, unknown>).procuringEntityName = extraction.value;
+        }
+      }
     }
     results[field] = {
       status: "REPAIRED",
