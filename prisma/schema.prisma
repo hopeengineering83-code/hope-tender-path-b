@@ -950,4 +950,5 @@ model TenderCopilotMessage {
 
   @@index([tenderId, userId, createdAt])
   @@index([tenderId, userId])
+  @@index([createdAt])
 }

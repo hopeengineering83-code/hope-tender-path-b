@@ -34,8 +34,8 @@ type DocRow = {
   generationStatus: string | null;
   validationStatus: string | null;
   reviewStatus: string | null;
-  fileContent: string | null;
   storagePath: string | null;
+  fileContent: string | null;
   format: string | null;
 };
 
@@ -86,8 +86,8 @@ export async function FinalPackageManifestPanel({ tenderId }: { tenderId: string
           generationStatus: true,
           validationStatus: true,
           reviewStatus: true,
-          fileContent: true,
           storagePath: true,
+          fileContent: true,
           format: true,
         },
       },
@@ -123,7 +123,6 @@ export async function FinalPackageManifestPanel({ tenderId }: { tenderId: string
       exactFileName: doc.exactFileName,
       documentType: doc.documentType,
       format: doc.format,
-      fileContent: doc.fileContent,
       storagePath: doc.storagePath,
       generationStatus: doc.generationStatus,
       validationStatus: doc.validationStatus,
