@@ -362,7 +362,7 @@ const PROVIDER_CHAINS: Record<AiUseCase, AiProviderName[]> = {
   proposal:   ["gemini", "openai", "mistral", "together", "deepseek", "groq", "openrouter", "anthropic"],
   validation: ["gemini", "openai", "mistral", "together", "deepseek", "groq", "openrouter", "anthropic"],
   fast:       ["gemini", "openai", "mistral", "together", "deepseek", "groq", "openrouter", "anthropic"],
-  reasoning:  ["openai", "anthropic", "deepseek", "gemini"],
+  reasoning:  ["openai", "deepseek", "gemini", "anthropic"],
 };
 
 function isProviderEnabled(name: AiProviderName): boolean {
