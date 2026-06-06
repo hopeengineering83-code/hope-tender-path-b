@@ -95,13 +95,7 @@ export async function GET(
           },
         },
         files: {
-          select: {
-            totalPages: true,
-            extractionScore: true,
-            extractedPages: true,
-            failedPages: true,
-            ocrPages: true,
-          },
+          select: { id: true, totalPages: true, extractionScore: true, extractedPages: true, failedPages: true, ocrPages: true },
         },
         complianceGaps: { select: { severity: true, isResolved: true, title: true } },
         expertMatches: {
@@ -119,9 +113,6 @@ export async function GET(
             isSelected: true,
             project: { select: { name: true, trustLevel: true, sector: true, serviceAreas: true, contractValue: true } },
           },
-        },
-        files: {
-          select: { id: true, extractionScore: true, totalPages: true, extractedPages: true, ocrPages: true, failedPages: true },
         },
       },
     }),
