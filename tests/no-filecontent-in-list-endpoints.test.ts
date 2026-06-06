@@ -53,4 +53,24 @@ describe("Large fields excluded from list/dashboard endpoints", () => {
       );
     }
   });
+  it("final submission readiness conditionally loads document content only when explicitly required", () => {
+    const src = readRoute("lib/engine/final-submission-readiness.ts");
+    assert.ok(src.length > 0, "final submission readiness helper must exist");
+    assert.match(src, /const shouldLoadFileContent = opts\.requireFileContent \?\? false/);
+    assert.match(src, /fileContent:\s*shouldLoadFileContent/);
+    assert.doesNotMatch(
+      src,
+      /fileContent:\s*true/,
+      "final submission readiness must not unconditionally select generatedDocument.fileContent",
+    );
+  });
+
+  it("tender detail page reuses precomputed generation readiness instead of rendering a second DB query", () => {
+    const pageSrc = readRoute("app/dashboard/tenders/[id]/page.tsx");
+    const panelSrc = readRoute("components/generation-readiness-panel.tsx");
+    assert.match(pageSrc, /<GenerationReadinessPanel tenderId=\{tender\.id\} readiness=\{generationReadiness\} \/>/);
+    assert.match(panelSrc, /readiness:\s*providedReadiness/);
+    assert.match(panelSrc, /providedReadiness \?\? await/);
+  });
+
 });

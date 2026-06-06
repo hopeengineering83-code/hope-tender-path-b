@@ -122,7 +122,7 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
       <div id="analysis-quality"><AnalysisQualityPanel tenderId={tender.id} /></div>
       <AIAnalyzeRecoveryPanel tenderId={tender.id} />
       <div id="matching-quality"><MatchingQualityPanel tenderId={tender.id} /></div>
-      <GenerationReadinessPanel tenderId={tender.id} />
+      <GenerationReadinessPanel tenderId={tender.id} readiness={generationReadiness} />
       <div id="generate-docs-action"><GenerationActionPanel tenderId={tender.id} readiness={generationReadiness} /></div>
       <SubmissionPlanReconciliationPanel tenderId={tender.id} />
       <TenderIntakeDetailPanel tender={tenderForUi} />
