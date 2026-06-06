@@ -24,17 +24,14 @@ export async function GET(req: NextRequest) {
       },
     });
 
-    // Delete old TenderCopilotMessage rows using raw SQL because the model
-    // may not yet be present in the generated Prisma client (schema-ahead-of-client).
-    const copilotResult = await prisma.$executeRaw`
-      DELETE FROM "TenderCopilotMessage"
-      WHERE "createdAt" < ${ninetyDaysAgo}
-    `;
+    const deletedCopilotMessages = await prisma.tenderCopilotMessage.deleteMany({
+      where: { createdAt: { lt: ninetyDaysAgo } },
+    });
 
     return NextResponse.json({
       deleted: {
         aiJobs: deletedAiJobs.count,
-        copilotMessages: copilotResult,
+        copilotMessages: deletedCopilotMessages.count,
       },
     });
   } catch (error) {
