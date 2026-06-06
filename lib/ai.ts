@@ -1444,6 +1444,8 @@ JSON structure required:
     "submissionAddress": {"page": page_number_or_null, "quote": "verbatim snippet or null"},
     "submissionEmailSubject": {"page": page_number_or_null, "quote": "verbatim snippet or null"},
     "preBidChannel": {"page": page_number_or_null, "quote": "verbatim snippet or null"},
+    "preBidMeetingDate": {"page": page_number_or_null, "quote": "verbatim snippet or null"},
+    "preBidMeetingLocation": {"page": page_number_or_null, "quote": "verbatim snippet or null"},
     "clientRepresentative": {"page": page_number_or_null, "quote": "verbatim snippet or null"}
   },
   "submissionMethodSourcePage": page_number_integer_or_null,
@@ -1526,7 +1528,7 @@ ${tenderContent}`;
           const src = parsed.contactDetailsSource;
           if (!src || typeof src !== "object") return null;
           const result: Record<string, { page: number | null; quote: string | null }> = {};
-          for (const key of ["country", "clientAddress", "clientCity", "clientWebsite", "clientContactName", "clientContactTitle", "clientContactEmail", "clientContactPhone", "submissionAddress", "submissionEmailSubject", "preBidChannel", "clientRepresentative"]) {
+          for (const key of ["country", "clientAddress", "clientCity", "clientWebsite", "clientContactName", "clientContactTitle", "clientContactEmail", "clientContactPhone", "submissionAddress", "submissionEmailSubject", "preBidChannel", "preBidMeetingDate", "preBidMeetingLocation", "clientRepresentative"]) {
             const entry = (src as Record<string, unknown>)[key];
             if (entry && typeof entry === "object") {
               const e = entry as Record<string, unknown>;
