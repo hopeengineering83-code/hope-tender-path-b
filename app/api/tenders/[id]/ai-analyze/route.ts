@@ -485,10 +485,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
               status: tenderStatus,
               stage: "ANALYSIS",
               // Extended client/procuring-entity extraction fields
-              ...(aiResult.procuringEntityName !== undefined ? { procuringEntityName: aiResult.procuringEntityName } : {}),
-              ...(aiResult.legalClientName !== undefined ? { legalClientName: aiResult.legalClientName } : {}),
-              ...(aiResult.donorAgency !== undefined ? { donorAgency: aiResult.donorAgency } : {}),
-              ...(aiResult.implementingAgency !== undefined ? { implementingAgency: aiResult.implementingAgency } : {}),
+              // Use != null (not !== undefined) so a null AI result never overwrites user-entered data.
+              // Also back-fill the legacy clientName when it's blank — procuringEntityName is
+              // the authoritative AI-extracted value; clientName drives generation gating.
+              ...(aiResult.procuringEntityName != null ? {
+                procuringEntityName: aiResult.procuringEntityName,
+                ...(!tenderRecord.clientName ? { clientName: aiResult.procuringEntityName } : {}),
+              } : {}),
+              ...(aiResult.legalClientName != null ? { legalClientName: aiResult.legalClientName } : {}),
+              ...(aiResult.donorAgency != null ? { donorAgency: aiResult.donorAgency } : {}),
+              ...(aiResult.implementingAgency != null ? { implementingAgency: aiResult.implementingAgency } : {}),
               // Full contact/location fields — only update when AI returned a value
               // to avoid overwriting manually-confirmed data with null on re-runs.
               ...(aiResult.country != null ? { country: aiResult.country } : {}),
