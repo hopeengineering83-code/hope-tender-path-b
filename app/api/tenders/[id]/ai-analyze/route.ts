@@ -486,6 +486,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
               stage: "ANALYSIS",
               // Extended client/procuring-entity extraction fields
               ...(aiResult.procuringEntityName !== undefined ? { procuringEntityName: aiResult.procuringEntityName } : {}),
+              // Back-fill clientName from procuringEntityName when clientName is not
+              // set — older code and downstream consumers read clientName directly,
+              // so keeping it in sync avoids spreading the || fallback everywhere.
+              // Only write when clientName is currently empty to preserve any value
+              // the user manually entered before running AI Analyze.
+              ...(aiResult.procuringEntityName && !tenderRecord.clientName ? { clientName: aiResult.procuringEntityName } : {}),
               ...(aiResult.legalClientName !== undefined ? { legalClientName: aiResult.legalClientName } : {}),
               ...(aiResult.donorAgency !== undefined ? { donorAgency: aiResult.donorAgency } : {}),
               ...(aiResult.implementingAgency !== undefined ? { implementingAgency: aiResult.implementingAgency } : {}),
