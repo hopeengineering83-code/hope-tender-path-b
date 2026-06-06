@@ -48,6 +48,11 @@ function shortAction(action?: string): string {
   if (action === "OPEN_ANALYSIS_QUALITY") return "Review Analysis Quality.";
   if (action === "OPEN_MATCHING_QUALITY") return "Review Matching Quality.";
   if (action === "EDIT_TENDER") return "Edit the tender details.";
+  if (action === "EDIT_TENDER_METADATA") return "Open Tender Detail and fill the missing metadata fields.";
+  if (action === "BUILD_SUBMISSION_PLAN") return "Run Build Plan first.";
+  if (action === "RUN_OCR_OR_UPLOAD_CLEARER_SCAN") return "Enable OCR or upload a clearer scan.";
+  if (action === "OPEN_EXTRACTION_QUALITY") return "Check the Extraction Quality panel.";
+  if (action === "CHANGE_BID_DECISION") return "Change the bid decision to BID before generating.";
   if (action === "RETRY_AS_BACKGROUND_JOB") return "Retry as a background job.";
   if (action === "RETRY_AFTER_BACKOFF") return "Wait a minute and retry.";
   return "Review the tender readiness panels.";
