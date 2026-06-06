@@ -503,6 +503,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
               ...(aiResult.submissionEmailSubject != null ? { submissionEmailSubject: aiResult.submissionEmailSubject } : {}),
               ...(aiResult.preBidChannel != null ? { preBidChannel: aiResult.preBidChannel } : {}),
               ...(aiResult.clientRepresentative != null ? { clientRepresentative: aiResult.clientRepresentative } : {}),
+              // Procurement reference number mapped to the legacy `reference` field
+              ...(aiResult.procurementReferenceNumber != null ? { reference: aiResult.procurementReferenceNumber } : {}),
               ...(aiResult.clientNameSourcePage !== undefined ? { clientNameSourcePage: aiResult.clientNameSourcePage } : {}),
               ...(aiResult.clientNameSourceQuote !== undefined ? { clientNameSourceQuote: aiResult.clientNameSourceQuote } : {}),
               ...(aiResult.submissionEmailSourcePage !== undefined ? { submissionEmailSourcePage: aiResult.submissionEmailSourcePage } : {}),
