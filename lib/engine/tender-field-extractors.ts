@@ -455,12 +455,46 @@ export function extractClientName(input: ExtractorInput): ExtractedFieldOrMissin
   return pickBest(cands);
 }
 
+// ─── 11. Submission address ───────────────────────────────────────────────
+const SUBMISSION_ADDRESS_PATTERNS: Array<{ rx: RegExp; confidence: "HIGH" | "MEDIUM" }> = [
+  // Explicit label: "Submission address: 123 Main St"
+  { rx: /\b(?:submission|proposal|tender|bid)\s+(?:physical\s+)?address\s*[:\-]\s*([^\n\r]{5,200})/i, confidence: "HIGH" },
+  // "Submit to / Deliver to: <org> <address>"
+  { rx: /\b(?:submit(?:ted)?\s+to|deliver(?:ed)?\s+to|drop\s+off\s+at|hand\s+deliver\s+to)\s*[:\-]\s*([^\n\r]{5,200})/i, confidence: "HIGH" },
+  // "Physical address" / "Office address" in submission context
+  { rx: /\b(?:physical|mailing|postal|office)\s+address\s*[:\-]\s*([^\n\r]{5,200})/i, confidence: "MEDIUM" },
+];
+
+export function extractSubmissionAddress(input: ExtractorInput): ExtractedFieldOrMissing<string> {
+  const cands: ExtractedField<string>[] = [];
+  for (const file of input.files ?? []) {
+    const text = (file?.extractedText ?? "").toString();
+    if (text.length < SOURCE_MIN) continue;
+    for (const p of SUBMISSION_ADDRESS_PATTERNS) {
+      const m = p.rx.exec(text);
+      if (!m) continue;
+      const raw = m[1].trim().replace(/\s+/g, " ");
+      if (raw.length < 5) continue;
+      cands.push({
+        found: true,
+        value: raw.slice(0, 300),
+        sourceQuote: captureAround(text, m.index, m[0].length),
+        sourceFile: file?.fileName ?? null,
+        confidence: p.confidence,
+      });
+      break;
+    }
+  }
+  return pickBest(cands);
+}
+
 // ─── Public manifest — which fields the extractor framework supports. ──
 export type ExtractorFieldName =
   | "reference"
   | "deadline"
   | "submissionEmails"
   | "submissionMethod"
+  | "submissionAddress"
   | "pageLimit"
   | "validityDays"
   | "bidBondAmount"
@@ -473,6 +507,7 @@ export const SUPPORTED_EXTRACTORS: readonly ExtractorFieldName[] = [
   "deadline",
   "submissionEmails",
   "submissionMethod",
+  "submissionAddress",
   "pageLimit",
   "validityDays",
   "bidBondAmount",
@@ -492,6 +527,7 @@ export function runExtractorByField(field: ExtractorFieldName, input: ExtractorI
     case "deadline": return extractDeadline(input);
     case "submissionEmails": return extractSubmissionEmails(input);
     case "submissionMethod": return extractSubmissionMethod(input);
+    case "submissionAddress": return extractSubmissionAddress(input);
     case "pageLimit": return extractPageLimit(input);
     case "validityDays": return extractValidityDays(input);
     case "bidBondAmount": return extractBidBondAmount(input);
