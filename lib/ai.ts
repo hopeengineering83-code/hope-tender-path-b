@@ -1609,47 +1609,52 @@ export async function analyzeWithAI(
     return { result, isPartial: false, totalChunks: 1, completedChunks: 1, failedChunks: 0, skippedChunks: 0, chunkProviders: [chunkProvider] };
   }
 
-  console.info(`[ai] tender content is ${tenderContent.length.toLocaleString()} chars — chunking into ${chunks.length} sequential analysis calls.`);
-  const successes: AIAnalysisResult[] = [];
+  console.info(`[ai] tender content is ${tenderContent.length.toLocaleString()} chars — chunking into ${chunks.length} concurrent analysis calls (limit=3).`);
+  const successesWithIdx: Array<{ index: number; result: AIAnalysisResult }> = [];
   const failures: string[] = [];
   const chunkProviders: Array<string | null> = Array(chunks.length).fill(null);
   let completedChunks = 0;
   let failedChunks = 0;
+  let skippedChunks = 0;
 
-  for (let i = 0; i < chunks.length; i++) {
-    // Skip chunks before startFromChunk (resume support)
-    if (opts?.startFromChunk !== undefined && i < opts.startFromChunk) {
-      continue;
-    }
+  const startIndex = opts?.startFromChunk ?? 0;
+  const queue = chunks
+    .map((content, index) => ({ content, index }))
+    .filter((c) => c.index >= startIndex);
 
-    // Deadline check: stop before starting this chunk if not enough time remains
-    if (opts?.deadlineAt !== undefined && Date.now() + CHUNK_DEADLINE_MARGIN_MS > opts.deadlineAt) {
-      console.warn(`[ai] deadline approaching — stopping before chunk ${i + 1}/${chunks.length}. Completed: ${completedChunks}, Failed: ${failedChunks}`);
-      break;
-    }
+  // Limited concurrency: process up to 3 chunks in parallel.
+  // This balances speed with provider rate-limit safety.
+  const CONCURRENCY_LIMIT = 3;
 
-    try {
-      const chunkIdx = i;
-      successes.push(await analyzeOneChunkWithRetry(chunks[i], i, chunks.length, (p) => { chunkProviders[chunkIdx] = p; }));
-      completedChunks++;
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      failures.push(`chunk ${i + 1}: ${msg}`);
-      failedChunks++;
-      console.warn(`[ai] chunk ${i + 1}/${chunks.length} failed — continuing with remaining chunks. Error: ${msg}`);
-      // Brief inter-chunk delay after a transient failure (rate-limit, timeout)
-      // so cooled-down providers have more recovery time before the next chunk.
-      // Skip the delay when the deadline is near (< 15s remaining) to avoid
-      // burning the remaining window on a sleep.
-      const isTransient = isTransientChunkError(err);
-      const hasDeadlineRoom = opts?.deadlineAt === undefined || Date.now() + 15_000 < opts.deadlineAt;
-      if (isTransient && hasDeadlineRoom && i < chunks.length - 1) {
-        await new Promise((r) => setTimeout(r, 3_000));
+  const worker = async () => {
+    while (queue.length > 0) {
+      // Deadline check: stop if not enough time remains
+      if (opts?.deadlineAt !== undefined && Date.now() + CHUNK_DEADLINE_MARGIN_MS > opts.deadlineAt) {
+        skippedChunks += queue.length;
+        queue.length = 0;
+        break;
+      }
+
+      const item = queue.shift();
+      if (!item) break;
+
+      try {
+        const res = await analyzeOneChunkWithRetry(item.content, item.index, chunks.length, (p) => {
+          chunkProviders[item.index] = p;
+        });
+        successesWithIdx.push({ index: item.index, result: res });
+        completedChunks++;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        failures.push(`chunk ${item.index + 1}: ${msg}`);
+        failedChunks++;
+        console.warn(`[ai] chunk ${item.index + 1}/${chunks.length} failed: ${msg}`);
       }
     }
-  }
+  };
 
-  const skippedChunks = chunks.length - (completedChunks + failedChunks);
+  // Launch workers
+  await Promise.all(Array(Math.min(CONCURRENCY_LIMIT, queue.length)).fill(null).map(worker));
 
   if (completedChunks === 0) {
     if (skippedChunks === chunks.length) {
@@ -1659,11 +1664,18 @@ export async function analyzeWithAI(
   }
 
   if (failures.length > 0) {
-    console.warn(`[ai] ${failures.length} of ${chunks.length} chunks failed — merging the ${successes.length} that succeeded. Errors: ${failures.join(" | ")}`);
+    console.warn(`[ai] ${failures.length} of ${chunks.length} chunks failed — merging the ${completedChunks} that succeeded. Errors: ${failures.join(" | ")}`);
   }
 
-  const isPartial = skippedChunks > 0 || (failedChunks > 0 && completedChunks > 0);
-  const result = mergeAnalysisResults(successes);
+  const isPartial = skippedChunks > 0 || failedChunks > 0;
+
+  // IMPORTANT: Sort by index before merging so mergeAnalysisResults merge rules
+  // (like first-chunk-wins for classification) remain deterministic.
+  const sortedSuccesses = successesWithIdx
+    .sort((a, b) => a.index - b.index)
+    .map((s) => s.result);
+
+  const result = mergeAnalysisResults(sortedSuccesses);
   return { result, isPartial, totalChunks: chunks.length, completedChunks, failedChunks, skippedChunks, chunkProviders };
 }
 
