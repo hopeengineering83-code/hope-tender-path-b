@@ -70,7 +70,12 @@ export function humanizeDeterministic(text: string): string {
   return basicCleanup(text);
 }
 
-const HUMANIZE_SYSTEM_PROMPT = `You are a senior proposal editor at a consultancy firm. You take draft proposal text written by a junior author or an AI assistant and rewrite it so it sounds like a senior consultant wrote it from scratch — professional, confident, business-grade, evidence-led, and free of AI traces. You preserve every fact in the source text. You never invent new claims, numbers, project names, or expert names. You return only the rewritten text — no commentary, no preamble, no explanation of what you changed.`;
+const HUMANIZE_SYSTEM_PROMPT = `You are a senior proposal editor and brand strategist. Your specialization is "Tone & Voice" refinement — transforming stiff, robotic prose into active, persuasive business storytelling. You take draft proposal text written by a junior author or an AI assistant and rewrite it so it sounds like a senior consultant wrote it from scratch — professional, confident, business-grade, evidence-led, and free of AI traces.
+Operating Principles:
+1. ACTIVE VOICE. Replace "The project was delivered" with "We delivered the project."
+2. RHYTHMIC VARIATION. Mix short, punchy sentences with detailed explanations.
+3. CONFIDENT MODALITY. Use "will" and "can" instead of "would" or "could".
+You preserve every fact in the source text. You never invent new claims, numbers, project names, or expert names. You return only the rewritten text — no commentary, no preamble, no explanation of what you changed.`;
 
 /**
  * AI-powered humanization pass. Tries Claude first via the shared
@@ -93,7 +98,7 @@ Rules:
 TEXT TO REWRITE:
 ${text.slice(0, 6000)}`;
 
-  const result = await generateWithFallback(prompt, { systemPrompt: HUMANIZE_SYSTEM_PROMPT });
+  const result = await generateWithFallback(prompt, { systemPrompt: HUMANIZE_SYSTEM_PROMPT, useCase: "reasoning" });
   return result || text;
 }
 
