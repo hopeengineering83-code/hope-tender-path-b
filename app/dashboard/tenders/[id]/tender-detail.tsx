@@ -336,6 +336,8 @@ type Tender = {
   clientContactPhone?: string | null;
   submissionEmailSubject?: string | null;
   preBidChannel?: string | null;
+  preBidMeetingDate?: Date | string | null;
+  preBidMeetingLocation?: string | null;
   clientRepresentative?: string | null;
   contactDetailsSourceJson?: string | null;
   // Submission source traceability
@@ -1917,6 +1919,8 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
                     { label: "Submission email(s)", key: "submissionEmails", value: tender.submissionEmails },
                     { label: "Submission email subject", key: "submissionEmailSubject", value: tender.submissionEmailSubject },
                     { label: "Pre-bid channel", key: "preBidChannel", value: tender.preBidChannel },
+                    { label: "Pre-bid meeting date", key: "preBidMeetingDate", value: tender.preBidMeetingDate ? (typeof tender.preBidMeetingDate === "string" ? tender.preBidMeetingDate.slice(0, 10) : new Date(tender.preBidMeetingDate).toLocaleDateString()) : null },
+                    { label: "Pre-bid meeting location", key: "preBidMeetingLocation", value: tender.preBidMeetingLocation },
                     { label: "Contact person", key: "clientContactName", value: tender.clientContactName },
                     { label: "Contact title", key: "clientContactTitle", value: tender.clientContactTitle },
                     { label: "Contact email", key: "clientContactEmail", value: tender.clientContactEmail },
