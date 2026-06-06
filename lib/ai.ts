@@ -1649,6 +1649,12 @@ export async function analyzeWithAI(
         failures.push(`chunk ${item.index + 1}: ${msg}`);
         failedChunks++;
         console.warn(`[ai] chunk ${item.index + 1}/${chunks.length} failed: ${msg}`);
+        // Brief backoff after transient failure so a rate-limited provider
+        // has recovery time before the next chunk. Skip when deadline is near.
+        const hasDeadlineRoom = opts?.deadlineAt === undefined || Date.now() + 15_000 < opts.deadlineAt;
+        if (isTransientChunkError(err) && hasDeadlineRoom) {
+          await new Promise((r) => setTimeout(r, 3_000));
+        }
       }
     }
   };
