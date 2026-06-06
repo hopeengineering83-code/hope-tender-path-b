@@ -26,6 +26,7 @@ import { isExtractionAcceptableForGeneration } from "../../../../../lib/engine/e
 import { hasValidSubmissionPlan } from "../../../../../lib/engine/submission-plan-completeness";
 import { assessExtractionQuality } from "../../../../../lib/extraction-quality";
 import { assessTenderAnalysisQuality } from "../../../../../lib/analysis-quality";
+import { assessExtractionQualityPerPage } from "../../../../../lib/extraction-quality";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -341,6 +342,43 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       nextAction: "RUN_ENGINE",
       diagnosticId: `no-requirements-${id}`,
     }, { status: 422 });
+  }
+
+  // ── Critical content-page gate ────────────────────────────────────────────
+  // Per CLAUDE.md: generation is blocked unless submission instructions AND
+  // required documents were detected in the extracted text. Evaluation criteria
+  // absence is a warning only (documents can still be generated without it, but
+  // the plan may under-score sections).
+  {
+    const reqUrl = new URL(req.url);
+    if (reqUrl.searchParams.get("planOnly") !== "true") {
+      let anySubmission = false;
+      let anyRequiredDocs = false;
+      let anyEvaluation = false;
+      let totalDetected = 0;
+      for (const file of effectiveExtractionFiles) {
+        const pp = assessExtractionQualityPerPage(file.extractedText);
+        totalDetected += pp.totalDetectedPages;
+        if (pp.submissionInstructionPages.length > 0) anySubmission = true;
+        if (pp.requiredDocumentPages.length > 0) anyRequiredDocs = true;
+        if (pp.evaluationCriteriaPages.length > 0) anyEvaluation = true;
+      }
+      if (totalDetected > 0) {
+        const contentBlockers: string[] = [];
+        if (!anySubmission) contentBlockers.push("No submission instruction pages were detected in the extracted text. Submission deadlines, addresses, and methods cannot be verified.");
+        if (!anyRequiredDocs) contentBlockers.push("No required documents/forms pages were detected. The generated proposal may be missing mandatory annexures or official forms.");
+        if (contentBlockers.length > 0) {
+          return NextResponse.json({
+            errorCode: "CRITICAL_CONTENT_PAGES_MISSING",
+            error: "Generation blocked: critical tender sections (submission instructions or required documents) were not found in the extracted text. Re-extract the PDF or run OCR to ensure these sections are readable before generating documents.",
+            blockers: contentBlockers,
+            evaluationCriteriaMissing: !anyEvaluation,
+            nextAction: "OPEN_EXTRACTION_QUALITY",
+            diagnosticId: `content-pages-missing-${id}`,
+          }, { status: 422 });
+        }
+      }
+    }
   }
 
   const approvedAnalysisSource = await detectAnalysisSourceWithApproval(prisma, id, tender).catch(() => null);
