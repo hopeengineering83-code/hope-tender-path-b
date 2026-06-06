@@ -198,6 +198,11 @@ export type EvidenceCoverageReport = {
   anyCoveragePercent: number;
   /** Per-requirement profile array for UI consumption. */
   profiles: RequirementEvidenceProfile[];
+  /** Mandatory-requirement-only stats (priority === "MANDATORY"). */
+  totalMandatory: number;
+  fullyCoveredMandatory: number;
+  /** 0–1 ratio of mandatory requirements with strong evidence coverage. */
+  coverageRatio: number;
 };
 
 /**
@@ -214,6 +219,9 @@ export function computeEvidenceCoverage(requirements: RequirementLikeForEvidence
   const total = profiles.length;
   const withAny = profiles.filter((p) => p.linkedEvidenceIds.length > 0).length;
   const withStrong = profiles.filter((p) => p.hasStrongEvidence).length;
+  const mandatoryProfiles = profiles.filter((p) => p.priority?.toUpperCase() === "MANDATORY");
+  const totalMandatory = mandatoryProfiles.length;
+  const fullyCoveredMandatory = mandatoryProfiles.filter((p) => p.hasStrongEvidence).length;
   return {
     totalRequirements: total,
     requirementsWithLinkedEvidence: withAny,
@@ -221,5 +229,8 @@ export function computeEvidenceCoverage(requirements: RequirementLikeForEvidence
     strongCoveragePercent: total === 0 ? 0 : Math.round((withStrong / total) * 100),
     anyCoveragePercent: total === 0 ? 0 : Math.round((withAny / total) * 100),
     profiles,
+    totalMandatory,
+    fullyCoveredMandatory,
+    coverageRatio: totalMandatory === 0 ? 0 : fullyCoveredMandatory / totalMandatory,
   };
 }
