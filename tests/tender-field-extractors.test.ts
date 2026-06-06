@@ -168,6 +168,7 @@ describe("Hard safety — sourceQuote is always present on found:true", () => {
         bidBondAmount: "Bid security in the amount of USD 25,000 is required and shall be valid for 30 days beyond proposal validity.",
         numberOfCopiesRequired: "Submit 3 hard copies of the proposal in separate sealed envelopes. Labels must be clearly visible and dated.",
         mandatorySiteVisit: "A mandatory site visit will be held on 5 Aug 2026. Failure to attend disqualifies the bid from evaluation.",
+        clientName: "Procuring Entity: Federal Ministry of Health and Sanitation, Procurement Directorate, Addis Ababa, Ethiopia. Reference RFP-MOH-2026-014.",
       };
       const text = inputs[field];
       const r = runExtractorByField(field as typeof SUPPORTED_EXTRACTORS[number], { files: [{ fileName: "rfp.pdf", extractedText: text }] });

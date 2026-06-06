@@ -392,6 +392,69 @@ export function extractMandatorySiteVisit(input: ExtractorInput): ExtractedField
   return pickBest(cands);
 }
 
+// ─── 10. Client / procuring entity name ──────────────────────────────────────
+const CLIENT_NAME_PATTERNS: Array<{ rx: RegExp; confidence: "HIGH" | "MEDIUM" }> = [
+  // Explicit label: "Procuring Entity: Ministry of Health"
+  { rx: /\b(?:name\s+of\s+)?(?:procuring\s+entity|procurement\s+entity|contracting\s+authority|client|employer|owner|beneficiary|issuing\s+authority)\s*[:\-]\s*([^\n\r]{3,120})/i, confidence: "HIGH" },
+  // "Issued by / Prepared by / Invitation by: <org>"
+  { rx: /\b(?:issued|prepared|invitation)\s+by\s*[:\-]\s*([^\n\r]{3,120})/i, confidence: "HIGH" },
+  // "On behalf of: <org>"
+  { rx: /\bon\s+behalf\s+of\s*[:\-]\s*([^\n\r]{3,120})/i, confidence: "MEDIUM" },
+];
+
+// Validate that a candidate looks like an organization name, not a sentence.
+function looksLikeOrgName(s: string): boolean {
+  const t = s.trim();
+  // Reject if too short, too long, or ends with common non-org tokens
+  if (t.length < 4 || t.length > 150) return false;
+  // Must start with a capital letter or common org prefix
+  if (!/^[A-Z"']/.test(t)) return false;
+  // Reject if it looks like a sentence (contains a verb pattern mid-string)
+  if (/\b(?:shall|must|will|does|are|is|has|been|were|was|have|had|can|could|would|should)\b/i.test(t)) return false;
+  return true;
+}
+
+export function extractClientName(input: ExtractorInput): ExtractedFieldOrMissing<string> {
+  const cands: ExtractedField<string>[] = [];
+  for (const file of input.files ?? []) {
+    const text = (file?.extractedText ?? "").toString();
+    if (text.length < SOURCE_MIN) continue;
+    for (const p of CLIENT_NAME_PATTERNS) {
+      const m = p.rx.exec(text);
+      if (!m) continue;
+      const raw = m[1].trim().replace(/\s+/g, " ");
+      const value = raw.split(/[,;]/)[0].trim(); // take up to first comma (address often follows)
+      if (!looksLikeOrgName(value)) continue;
+      cands.push({
+        found: true,
+        value: value.slice(0, 200),
+        sourceQuote: captureAround(text, m.index, m[0].length),
+        sourceFile: file?.fileName ?? null,
+        confidence: p.confidence,
+      });
+      break;
+    }
+    // Letterhead fallback: org-type keyword in a standalone header line near top
+    if (cands.length === 0) {
+      const top = text.slice(0, 3000);
+      const m2 = /^([A-Z][^\n\r]{5,100}(?:ministry|authority|agency|council|commission|department|institute|corporation|limited|ltd\.?|plc\.?|llc\.?|gmbh|s\.a\.|inc\.?)[^\n\r]{0,60})\s*$/im.exec(top);
+      if (m2) {
+        const value = m2[1].trim().replace(/\s+/g, " ");
+        if (looksLikeOrgName(value)) {
+          cands.push({
+            found: true,
+            value: value.slice(0, 200),
+            sourceQuote: trimQuote(m2[1]),
+            sourceFile: file?.fileName ?? null,
+            confidence: "MEDIUM",
+          });
+        }
+      }
+    }
+  }
+  return pickBest(cands);
+}
+
 // ─── Public manifest — which fields the extractor framework supports. ──
 export type ExtractorFieldName =
   | "reference"
@@ -402,7 +465,8 @@ export type ExtractorFieldName =
   | "validityDays"
   | "bidBondAmount"
   | "numberOfCopiesRequired"
-  | "mandatorySiteVisit";
+  | "mandatorySiteVisit"
+  | "clientName";
 
 export const SUPPORTED_EXTRACTORS: readonly ExtractorFieldName[] = [
   "reference",
@@ -414,6 +478,7 @@ export const SUPPORTED_EXTRACTORS: readonly ExtractorFieldName[] = [
   "bidBondAmount",
   "numberOfCopiesRequired",
   "mandatorySiteVisit",
+  "clientName",
 ];
 
 /**
@@ -432,5 +497,6 @@ export function runExtractorByField(field: ExtractorFieldName, input: ExtractorI
     case "bidBondAmount": return extractBidBondAmount(input);
     case "numberOfCopiesRequired": return extractNumberOfCopies(input);
     case "mandatorySiteVisit": return extractMandatorySiteVisit(input);
+    case "clientName": return extractClientName(input);
   }
 }
