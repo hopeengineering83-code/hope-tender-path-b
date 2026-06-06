@@ -151,3 +151,20 @@ describe("document-output-state — resolution order (regression)", () => {
     assert.equal(deriveDocumentOutputState(d), "ORIGINAL_REQUIRED");
   });
 });
+
+describe("document-output-state — metadata-only byte hints", () => {
+  it("treats inline bytes as present without loading fileContent", () => {
+    const d = doc({ exactFileName: "Cover Letter.docx", hasInlineFileContent: true });
+    assert.equal(deriveDocumentOutputState(d), "DOCX_GENERATED");
+  });
+
+  it("can surface ready status from metadata-only inline bytes after validation and review", () => {
+    const d = doc({
+      exactFileName: "Cover Letter.docx",
+      hasInlineFileContent: true,
+      validationStatus: "VALIDATED",
+      reviewStatus: "READY_FOR_EXPORT",
+    });
+    assert.equal(deriveDocumentOutputState(d), "READY_FOR_EXPORT");
+  });
+});

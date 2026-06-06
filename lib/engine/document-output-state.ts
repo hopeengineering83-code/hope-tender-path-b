@@ -16,6 +16,12 @@ export type DocumentLike = {
   documentType?: string | null;
   format?: string | null;
   fileContent?: string | null;
+  /**
+   * Metadata-only hint for dashboard/list surfaces that need to know bytes
+   * exist without selecting the full inline fileContent blob. Export/download
+   * paths should still pass fileContent or storagePath for byte validation.
+   */
+  hasInlineFileContent?: boolean | null;
   storagePath?: string | null;
   generationStatus?: string | null;
   validationStatus?: string | null;
@@ -133,15 +139,19 @@ export function deriveDocumentOutputState(doc: DocumentLike): DocumentOutputStat
   if (gen === "PLANNED" || want === "markdown" || want === "control") return "CONTROL_RECORD_ONLY";
 
   const content = (doc.fileContent ?? "").trim();
+  const hasInlineContent = content.length > 0 || doc.hasInlineFileContent === true;
   const hasStorageContent = (doc.storagePath ?? "").trim().length > 0;
 
-  if (content.length === 0 && !hasStorageContent) return "CONTROL_RECORD_ONLY";
+  if (!hasInlineContent && !hasStorageContent) return "CONTROL_RECORD_ONLY";
 
-  // Storage-backed docs: trust validation/review status without content-type inspection.
-  // Validation historically used both PASSED and VALIDATED. Treat both as the
-  // same successful validation state so older generated documents do not stay
-  // blocked after deterministic validation already passed.
-  if (content.length === 0 && hasStorageContent) {
+  // Metadata-only callers may intentionally omit fileContent to avoid loading
+  // large DB blobs. When bytes exist but are not loaded, trust validation/review
+  // status for dashboard state; download/export routes still validate actual
+  // bytes before packaging. Validation historically used both PASSED and
+  // VALIDATED. Treat both as the same successful validation state so older
+  // generated documents do not stay blocked after deterministic validation
+  // already passed.
+  if (content.length === 0 && (hasStorageContent || doc.hasInlineFileContent === true)) {
     if (validationPassed && reviewReady) return "READY_FOR_EXPORT";
     if (validationPassed) return "VALIDATED";
     return want === "pdf" ? "PDF_GENERATED" : "DOCX_GENERATED";
