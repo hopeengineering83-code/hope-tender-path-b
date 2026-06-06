@@ -547,6 +547,8 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
   const [generationPhase, setGenerationPhase] = useState("");
   const [generationProgress, setGenerationProgress] = useState(0);
+  const [analyzePhase, setAnalyzePhase] = useState("");
+  const [analyzeProgress, setAnalyzeProgress] = useState(0);
   const [regeneratingSection, setRegeneratingSection] = useState<string | null>(null);
   const [previewDocId, setPreviewDocId] = useState<string | null>(null);
   const [bidOutcome, setBidOutcome] = useState(initial.bidOutcome ?? "");
@@ -729,6 +731,7 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
   async function handleAIAnalyze() {
     setAnalyzing(true);
     setError("");
+    startAnalyzeProgress();
     try {
       const res = await fetch(`/api/tenders/${tender.id}/ai-analyze`, { method: "POST" });
       const data = await res.json();
@@ -747,13 +750,14 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
       if (data.jobId) setContinueJobId(data.jobId);
       router.refresh();
     } catch { setError("Analysis failed"); }
-    finally { setAnalyzing(false); }
+    finally { setAnalyzing(false); stopAnalyzeProgress(); }
   }
 
   async function handleContinueAnalysis() {
     if (!continueJobId) return;
     setAnalyzing(true);
     setError("");
+    startAnalyzeProgress();
     try {
       const res = await fetch(`/api/tenders/${tender.id}/ai-analyze?continue=${continueJobId}`, { method: "POST" });
       const data = await res.json();
@@ -772,7 +776,7 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
       if (data.tender) setTender((cur) => ({ ...cur, ...data.tender }));
       router.refresh();
     } catch { setError("Continue analysis failed"); }
-    finally { setAnalyzing(false); }
+    finally { setAnalyzing(false); stopAnalyzeProgress(); }
   }
 
   async function handleApproveFallback() {
@@ -852,6 +856,7 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
     { label: "Saving documents…", pct: 97 },
   ];
   const progressCreepRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const analyzeCreepRef = useRef<ReturnType<typeof setInterval> | null>(null);
   function startGenerationProgress() {
     const durations = [6000, 14000, 35000, 10000, 5000];
     let cumulative = 0;
@@ -877,6 +882,38 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
     if (progressCreepRef.current) { clearInterval(progressCreepRef.current); progressCreepRef.current = null; }
     setGenerationPhase("");
     setGenerationProgress(0);
+  }
+
+  const ANALYZE_PHASES = [
+    { label: "Reading tender document…", pct: 8 },
+    { label: "Extracting client and procuring entity details…", pct: 22 },
+    { label: "Identifying requirements and evaluation criteria…", pct: 45 },
+    { label: "Mapping submission instructions and deadlines…", pct: 65 },
+    { label: "Building compliance gap analysis…", pct: 82 },
+    { label: "Finalizing analysis…", pct: 95 },
+  ];
+  function startAnalyzeProgress() {
+    const durations = [3000, 7000, 10000, 8000, 7000, 5000];
+    let cumulative = 0;
+    ANALYZE_PHASES.forEach((phase, i) => {
+      const delay = cumulative;
+      setTimeout(() => {
+        setAnalyzePhase(phase.label);
+        setAnalyzeProgress(phase.pct);
+        if (i === ANALYZE_PHASES.length - 1) {
+          if (analyzeCreepRef.current) clearInterval(analyzeCreepRef.current);
+          analyzeCreepRef.current = setInterval(() => {
+            setAnalyzeProgress((prev) => (prev < 99 ? Math.min(99, prev + 0.1) : prev));
+          }, 1000);
+        }
+      }, delay);
+      cumulative += durations[i];
+    });
+  }
+  function stopAnalyzeProgress() {
+    if (analyzeCreepRef.current) { clearInterval(analyzeCreepRef.current); analyzeCreepRef.current = null; }
+    setAnalyzePhase("");
+    setAnalyzeProgress(0);
   }
 
   async function handleGenerateDocs() {
@@ -1366,8 +1403,9 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
         <div id="ai-analyze-section" className="flex flex-wrap gap-2">
           {aiEnabled && (
             <button onClick={handleAIAnalyze} disabled={analyzing}
+              title={analyzing && analyzePhase ? analyzePhase : undefined}
               className="rounded-lg bg-purple-600 px-3 py-2 text-sm text-white hover:bg-purple-700 disabled:opacity-50">
-              {analyzing ? "Analyzing..." : "✦ AI Analyze"}
+              {analyzing ? (analyzePhase ? `${analyzePhase.slice(0, 28)}…` : "Analyzing…") : "✦ AI Analyze"}
             </button>
           )}
           {aiEnabled && (
@@ -1448,6 +1486,22 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
             <p>Projects zero-family-coverage: {matchingDiagnostics.projects.lowCoverage.length}</p>
             <p>Experts hard-excluded: {matchingDiagnostics.experts.hardExcluded.length}</p>
             <p>Projects hard-excluded: {matchingDiagnostics.projects.hardExcluded.length}</p>
+          </div>
+        </div>
+      )}
+
+      {/* AI Analyze progress bar */}
+      {analyzing && analyzePhase && (
+        <div className="rounded-xl border border-purple-200 bg-purple-50 px-4 py-3">
+          <div className="flex items-center justify-between mb-1.5">
+            <p className="text-sm font-medium text-purple-800">{analyzePhase}</p>
+            <p className="text-xs text-purple-600">{Math.round(analyzeProgress)}%</p>
+          </div>
+          <div className="h-1.5 w-full overflow-hidden rounded-full bg-purple-100">
+            <div
+              className="h-full rounded-full bg-purple-500 transition-all duration-1000 ease-in-out"
+              style={{ width: `${analyzeProgress}%` }}
+            />
           </div>
         </div>
       )}
@@ -1630,6 +1684,48 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
                   >
                     {analyzing ? "Continuing…" : "Continue Analysis"}
                   </button>
+                </div>
+              )}
+              {/* Extracted data summary — shown after AI Analyze so users see what was captured */}
+              {analyzeResult.ai && (
+                <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 text-xs sm:grid-cols-3">
+                  <div className="flex items-center gap-1">
+                    <span className="text-slate-500">Requirements:</span>
+                    <span className={`font-semibold ${tender.requirements.length > 0 ? "text-green-700" : "text-amber-600"}`}>
+                      {tender.requirements.length > 0 ? `${tender.requirements.length} extracted` : "None found"}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <span className="text-slate-500">Client:</span>
+                    <span className={`font-semibold truncate max-w-[120px] ${getClientNameStatus(tender.clientName) === "VALID" ? "text-green-700" : "text-amber-600"}`}
+                      title={tender.clientName ?? undefined}>
+                      {getClientNameStatus(tender.clientName) === "VALID" ? (tender.clientName?.slice(0, 22) ?? "—") : "Not extracted"}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <span className="text-slate-500">Reference:</span>
+                    <span className={`font-semibold ${tender.reference ? "text-green-700" : "text-slate-400"}`}>
+                      {tender.reference ? tender.reference.slice(0, 20) : "—"}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <span className="text-slate-500">Deadline:</span>
+                    <span className={`font-semibold ${tender.deadline ? "text-green-700" : "text-amber-600"}`}>
+                      {tender.deadline ? new Date(tender.deadline).toLocaleDateString() : "Not found"}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <span className="text-slate-500">Gaps:</span>
+                    <span className={`font-semibold ${criticalGaps > 0 ? "text-red-600" : "text-green-700"}`}>
+                      {criticalGaps > 0 ? `${criticalGaps} critical` : `${unresolvedGaps} open`}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <span className="text-slate-500">Method:</span>
+                    <span className={`font-semibold ${tender.submissionMethod ? "text-green-700" : "text-amber-600"}`}>
+                      {tender.submissionMethod ? tender.submissionMethod.replace(/_/g, " ") : "Not found"}
+                    </span>
+                  </div>
                 </div>
               )}
               {analyzeResult.nextAction && (
