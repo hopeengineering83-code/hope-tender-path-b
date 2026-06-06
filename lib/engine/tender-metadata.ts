@@ -280,10 +280,24 @@ function inferDeadline(text: string): Date | null {
 }
 
 function inferSubmissionMethod(text: string): string | null {
-  if (/e-?mail|email/i.test(text)) return "Email";
+  // Check for explicit submission-method declarations first (most reliable)
+  const explicit = firstMatch(text, [
+    /submission\s+method\s*[:\-]?\s*([^\n\r]{3,80})/i,
+    /(?:bids?|proposals?|tenders?)\s+(?:must|shall|should)\s+be\s+submitted\s+(?:via|by|through|using)\s*[:\-]?\s*([^\n\r]{3,80})/i,
+  ]);
+  if (explicit) {
+    const e = explicit.trim().toLowerCase();
+    if (/email|e-?mail/i.test(e)) return "Email";
+    if (/portal|e-procurement|online|electronic/i.test(e)) return "Portal";
+    if (/hard\s+copy|sealed|physical|hand\s+deliv|courier/i.test(e)) return "Hard copy";
+    return explicit.trim().slice(0, 80);
+  }
+  // Submission-specific email context (not just any "email" mention)
+  if (/(?:submit|send|forward|email)\s+.*?bid|bid.*?(?:submit|send|forward|email)|submission.*?email|email.*?submission/i.test(text)) return "Email";
   if (/portal|e-procurement|electronic\s+procurement|online\s+submission/i.test(text)) return "Portal";
-  if (/hard\s+copy|sealed\s+envelope|physical\s+submission|deliver\s+to/i.test(text)) return "Hard copy";
-  return firstMatch(text, [/submission\s+method\s*[:\-]?\s*([^\n\r]{3,120})/i]);
+  if (/sealed\s+envelope|hard\s+copy|physical\s+submission|hand\s+deliver/i.test(text)) return "Hard copy";
+  if (/courier/i.test(text)) return "Courier";
+  return null;
 }
 
 function inferSubmissionAddress(text: string): string | null {
