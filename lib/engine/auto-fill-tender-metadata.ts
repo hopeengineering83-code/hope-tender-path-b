@@ -40,6 +40,8 @@ type TenderForAutoFill = {
   clientContactTitle?: string | null;
   clientContactEmail?: string | null;
   clientContactPhone?: string | null;
+  preBidMeetingDate?: Date | null;
+  preBidMeetingLocation?: string | null;
   validityDays?: number | null;
   pageLimit?: number | null;
   bidBondAmount?: number | null;
@@ -114,6 +116,14 @@ export async function autoFillTenderMetadata(
   tryFill("clientContactTitle", tender.clientContactTitle, draft.clientContactTitle);
   tryFill("clientContactEmail", tender.clientContactEmail, draft.clientContactEmail);
   tryFill("clientContactPhone", tender.clientContactPhone, draft.clientContactPhone);
+  // Auto-fill pre-bid meeting date and location when extracted from the tender document
+  if ((tender.preBidMeetingDate === null || tender.preBidMeetingDate === undefined) && draft.preBidMeetingDate) {
+    patch["preBidMeetingDate"] = draft.preBidMeetingDate;
+    filled.push("preBidMeetingDate");
+  } else {
+    skipped.push("preBidMeetingDate");
+  }
+  tryFill("preBidMeetingLocation", tender.preBidMeetingLocation, draft.preBidMeetingLocation);
 
   // The fields below are inferred by inferTenderMetadata but were not being
   // patched — they were the source of "Bid-Team to confirm" placeholders the
