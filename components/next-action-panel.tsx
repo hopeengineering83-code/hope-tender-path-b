@@ -85,7 +85,7 @@ export async function NextActionPanel({ tenderId }: { tenderId: string }) {
       id: true, title: true, status: true,
       analysisSummary: true, analysisExtractionStatus: true,
       metadataContaminated: true,
-      clientName: true, country: true,
+      clientName: true, procuringEntityName: true, country: true,
       clientContactName: true, clientContactEmail: true,
       submissionAddress: true, submissionEmails: true,
       submissionMethod: true, deadline: true, currency: true,
@@ -138,7 +138,7 @@ export async function NextActionPanel({ tenderId }: { tenderId: string }) {
   const aiAnalyzeOk = aiAnalyzed && tender.analysisExtractionStatus !== "EXTRACTION_CORRUPTED_AI_SKIPPED";
 
   const metaReport = assessTenderMetadataCompleteness({
-    clientName: tender.clientName ?? null,
+    clientName: (tender.clientName || tender.procuringEntityName) ?? null,
     country: tender.country ?? null,
     clientContactName: tender.clientContactName ?? null,
     clientContactEmail: tender.clientContactEmail ?? null,

@@ -66,7 +66,7 @@ export async function AICopilotSuggestionsPanel({ tenderId }: { tenderId: string
     }
 
     // 3. Missing/contaminated metadata
-    if (tender.metadataContaminated || !tender.clientName || !tender.country || !tender.deadline) {
+    if (tender.metadataContaminated || !(tender.clientName || (tender as Record<string, unknown>).procuringEntityName) || !tender.country || !tender.deadline) {
       suggestions.push({
         icon: "📋",
         title: "Complete missing metadata",

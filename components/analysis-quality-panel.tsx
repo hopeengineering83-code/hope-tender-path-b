@@ -66,7 +66,7 @@ export async function AnalysisQualityPanel({ tenderId }: { tenderId: string }) {
     exactFileOrder: tender.exactFileOrder,
     // Gap 4 — metadata + matching state. Now this panel matches the
     // readiness gate instead of disagreeing with it.
-    clientName: tender.clientName,
+    clientName: tender.clientName || (tender as Record<string, unknown>).procuringEntityName as string | null | undefined,
     referenceNumber: tender.reference,
     country: tender.country,
     clientContactName: tender.clientContactName,
