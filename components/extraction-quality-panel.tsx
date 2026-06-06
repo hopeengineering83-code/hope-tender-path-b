@@ -32,7 +32,7 @@ export async function ExtractionQualityPanel({ tenderId }: { tenderId: string })
       files: {
         orderBy: { createdAt: "asc" },
         select: {
-          id: true, fileName: true, originalFileName: true, extractedText: true,
+          id: true, fileName: true, originalFileName: true,
           mimeType: true, totalPages: true, extractedPages: true, ocrPages: true, failedPages: true,
           extractionScore: true, extractionMethod: true, ocrModel: true,
         },
@@ -41,8 +41,24 @@ export async function ExtractionQualityPanel({ tenderId }: { tenderId: string })
   }).catch(() => null);
   if (!tender || tender.files.length === 0) return null;
 
+  // Sample extractedText via raw SQL — avoids loading full blobs into memory.
+  // 6 000 chars is enough for corruption detection, quality heuristics, and per-page analysis.
+  const fileIds = tender.files.map((f) => f.id);
+  type SampleRow = { id: string; extractedTextSample: string; extractedCharacterCount: number };
+  const samples: SampleRow[] = fileIds.length > 0
+    ? await prisma.$queryRaw<SampleRow[]>`
+        SELECT id,
+               LEFT(COALESCE("extractedText", ''), 6000) AS "extractedTextSample",
+               char_length("extractedText")              AS "extractedCharacterCount"
+        FROM "TenderFile"
+        WHERE id = ANY(${fileIds}::text[])
+      `.catch(() => [])
+    : [];
+  const sampleById = new Map(samples.map((s) => [s.id, s]));
+
   const reports = tender.files.map((file) => {
-    const extractedText = file.extractedText ?? "";
+    const sample = sampleById.get(file.id);
+    const extractedText = sample?.extractedTextSample ?? "";
     const isCorrupted = extractedText.length > 20 && isExtractionCorrupted(extractedText);
     // Detect whether OCR was run due to corruption vs no text layer
     const ocrReason = /ocrReason=CORRUPTED_TEXT/i.test(extractedText)
@@ -54,13 +70,13 @@ export async function ExtractionQualityPanel({ tenderId }: { tenderId: string })
       isCorrupted &&
       !ocrReason &&
       /OCR required but not configured|set PDF_OCR_ENABLED=true/i.test(extractedText);
-    const quality = assessExtractionQuality(file.extractedText, file.originalFileName || file.fileName);
+    const quality = assessExtractionQuality(extractedText, file.originalFileName || file.fileName);
     return {
       id: file.id,
       fileName: file.originalFileName || file.fileName,
       mimeType: file.mimeType,
       quality,
-      perPage: assessExtractionQualityPerPage(file.extractedText),
+      perPage: assessExtractionQualityPerPage(extractedText),
       totalPages: file.totalPages,
       extractedPages: file.extractedPages,
       ocrPages: file.ocrPages,
@@ -72,7 +88,7 @@ export async function ExtractionQualityPanel({ tenderId }: { tenderId: string })
       isCorrupted,
       ocrReason,
       ocrConfigMissing,
-      extractedCharacterCount: quality.characterCount,
+      extractedCharacterCount: sample?.extractedCharacterCount ?? quality.characterCount,
     };
   });
 
