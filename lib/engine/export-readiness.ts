@@ -304,7 +304,9 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
   }
 
   if (docs.length === 0) blockers.push(tenderBlocker("NO_ACTIVE_GENERATED_DOCUMENTS", "No active generated documents exist for export.", "Generate, validate and review the required documents before final export."));
-  if (!isValidClientName(tender.clientName)) blockers.push(tenderBlocker("CLIENT_NAME_REQUIRED", "Client/procuring entity name is missing or invalid.", "Edit Tender Detail and enter the exact official procuring entity name."));
+  // Accept procuringEntityName as fallback — older tenders may have it set without clientName.
+  const effectiveExportClientName = tender.clientName || (tender as Record<string, unknown>).procuringEntityName as string | null | undefined;
+  if (!isValidClientName(effectiveExportClientName)) blockers.push(tenderBlocker("CLIENT_NAME_REQUIRED", "Client/procuring entity name is missing or invalid.", "Edit Tender Detail and enter the exact official procuring entity name."));
 
   // ── Extraction quality blocker ────────────────────────────────────────────
   if (tender.files && tender.files.some(f => (f as { extractionScore?: number | null }).extractionScore !== null && ((f as { extractionScore: number }).extractionScore) < 20)) {
