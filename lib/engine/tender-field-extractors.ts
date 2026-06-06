@@ -488,7 +488,75 @@ export function extractSubmissionAddress(input: ExtractorInput): ExtractedFieldO
   return pickBest(cands);
 }
 
-// ─── Public manifest — which fields the extractor framework supports. ──
+// ─── 12. Client contact email ─────────────────────────────────────────────────
+// Captures an email address when it appears in a contact/inquiry context.
+// Deliberately stricter than extractSubmissionEmails: only fires when the
+// email is explicitly labelled as a contact/clarification email, not just
+// any email in the document (which avoids capturing portal spam addresses).
+const CLIENT_CONTACT_EMAIL_PATTERNS: Array<{ rx: RegExp; confidence: "HIGH" | "MEDIUM" }> = [
+  // "Contact email: someone@org.org" or "For inquiries, email: …"
+  { rx: /\b(?:contact|inquiry|enquiry|clarification|question|queries?)\s+(?:e-?mail|address)\s*[:\-]\s*([\w.+%-]{2,64}@[\w.-]{2,128}\.[a-zA-Z]{2,10})/i, confidence: "HIGH" },
+  // Labelled "E-mail: someone@org.org" or "Email: …"
+  { rx: /\be-?mail\s*[:\-]\s*([\w.+%-]{2,64}@[\w.-]{2,128}\.[a-zA-Z]{2,10})/i, confidence: "HIGH" },
+  // "Contact Person … email address …@…"
+  { rx: /\b(?:contact\s+person|focal\s+point|project\s+manager|procurement\s+officer)\b[^@]{0,120}([\w.+%-]{2,64}@[\w.-]{2,128}\.[a-zA-Z]{2,10})/i, confidence: "MEDIUM" },
+];
+
+export function extractClientContactEmail(input: ExtractorInput): ExtractedFieldOrMissing<string> {
+  const EMAIL_RE = /[\w.+%-]{2,64}@[\w.-]{2,128}\.[a-zA-Z]{2,10}/;
+  const cands: ExtractedField<string>[] = [];
+  for (const file of input.files ?? []) {
+    const text = (file?.extractedText ?? "").toString();
+    if (text.length < SOURCE_MIN) continue;
+    for (const p of CLIENT_CONTACT_EMAIL_PATTERNS) {
+      const m = p.rx.exec(text);
+      if (!m) continue;
+      const value = (m[1] ?? m[0].match(EMAIL_RE)?.[0] ?? "").trim().toLowerCase();
+      if (!value.includes("@")) continue;
+      cands.push({
+        found: true,
+        value,
+        sourceQuote: captureAround(text, m.index, m[0].length),
+        sourceFile: file?.fileName ?? null,
+        confidence: p.confidence,
+      });
+      break;
+    }
+  }
+  return pickBest(cands);
+}
+
+// ─── 13. Pre-bid meeting date ──────────────────────────────────────────────────
+const PRE_BID_DATE_PATTERNS: Array<{ rx: RegExp; confidence: "HIGH" | "MEDIUM" }> = [
+  // "Pre-bid meeting: 15 August 2026 at 10:00"
+  { rx: /\b(?:pre-?bid\s+(?:conference|meeting|site\s+visit)|mandatory\s+(?:pre-?bid|site)\s+(?:meeting|conference|visit))\s*[:\-]?\s*(?:will\s+be\s+held\s+on\s*)?(\d{1,2}[\s/-][A-Za-z]{3,9}[\s/-]\d{4}|\d{4}[-/]\d{1,2}[-/]\d{1,2}|[A-Za-z]{3,9}\s+\d{1,2},?\s*\d{4})/i, confidence: "HIGH" },
+  // "Site briefing date: 2026-08-15"
+  { rx: /\b(?:site\s+briefing|briefing\s+session|pre-?proposal\s+(?:conference|meeting))\s*[:\-]?\s*(?:on\s+)?(\d{1,2}[\s/-][A-Za-z]{3,9}[\s/-]\d{4}|\d{4}[-/]\d{1,2}[-/]\d{1,2})/i, confidence: "MEDIUM" },
+];
+
+export function extractPreBidMeetingDate(input: ExtractorInput): ExtractedFieldOrMissing<Date> {
+  for (const file of input.files ?? []) {
+    const text = (file?.extractedText ?? "").toString();
+    if (text.length < SOURCE_MIN) continue;
+    for (const p of PRE_BID_DATE_PATTERNS) {
+      const m = p.rx.exec(text);
+      if (!m) continue;
+      const raw = m[1].trim();
+      const d = new Date(raw);
+      if (Number.isNaN(d.getTime())) continue;
+      return {
+        found: true,
+        value: d,
+        sourceQuote: captureAround(text, m.index, m[0].length),
+        sourceFile: file?.fileName ?? null,
+        confidence: p.confidence,
+      };
+    }
+  }
+  return { found: false, reason: "No pre-bid meeting date pattern found in tender text." };
+}
+
+
 export type ExtractorFieldName =
   | "reference"
   | "deadline"
@@ -500,7 +568,9 @@ export type ExtractorFieldName =
   | "bidBondAmount"
   | "numberOfCopiesRequired"
   | "mandatorySiteVisit"
-  | "clientName";
+  | "clientName"
+  | "clientContactEmail"
+  | "preBidMeetingDate";
 
 export const SUPPORTED_EXTRACTORS: readonly ExtractorFieldName[] = [
   "reference",
@@ -514,6 +584,8 @@ export const SUPPORTED_EXTRACTORS: readonly ExtractorFieldName[] = [
   "numberOfCopiesRequired",
   "mandatorySiteVisit",
   "clientName",
+  "clientContactEmail",
+  "preBidMeetingDate",
 ];
 
 /**
@@ -534,5 +606,7 @@ export function runExtractorByField(field: ExtractorFieldName, input: ExtractorI
     case "numberOfCopiesRequired": return extractNumberOfCopies(input);
     case "mandatorySiteVisit": return extractMandatorySiteVisit(input);
     case "clientName": return extractClientName(input);
+    case "clientContactEmail": return extractClientContactEmail(input);
+    case "preBidMeetingDate": return extractPreBidMeetingDate(input);
   }
 }
