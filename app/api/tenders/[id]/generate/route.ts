@@ -169,7 +169,7 @@ const COMPANY_PRODUCED_KINDS: ReadonlySet<SupportDocKind> = new Set<SupportDocKi
 ]);
 
 async function fillPlannedSupportDocuments(tenderId: string, plannedFileKeys?: Set<string>): Promise<number> {
-  const tender = await prisma.tender.findUnique({ where: { id: tenderId }, include: { requirements: true, expertMatches: { where: { isSelected: true }, include: { expert: true }, orderBy: { score: "desc" } }, projectMatches: { where: { isSelected: true }, include: { project: true }, orderBy: { score: "desc" } } } });
+  const tender = await prisma.tender.findUnique({ where: { id: tenderId }, select: { title: true, clientName: true, procuringEntityName: true, description: true, requirements: true, expertMatches: { where: { isSelected: true }, include: { expert: true }, orderBy: { score: "desc" } }, projectMatches: { where: { isSelected: true }, include: { project: true }, orderBy: { score: "desc" } } } });
   if (!tender) return 0;
   const requirements = tender.requirements.map((r) => formatRequirementLine(r, 380));
   const experts = tender.expertMatches.filter((m) => m.expert && m.expert.trustLevel === "REVIEWED").map((m) => `${m.expert.fullName}${m.expert.title ? ` — ${m.expert.title}` : ""}${m.expert.yearsExperience ? ` | ${m.expert.yearsExperience}+ years` : ""}${m.expert.profile ? ` | ${shortText(m.expert.profile, 260)}` : ""}`);
@@ -190,7 +190,7 @@ async function fillPlannedSupportDocuments(tenderId: string, plannedFileKeys?: S
   for (const doc of incomplete) {
     const title = clean(doc.exactFileName || doc.name);
     const kind = classifySupportDoc(title);
-    const cleanTitle = cleanTenderTitle(tender.title, { clientName: cleanClientName(tender.clientName, tender.description), description: tender.description });
+    const cleanTitle = cleanTenderTitle(tender.title, { clientName: cleanClientName(tender.clientName || tender.procuringEntityName, tender.description), description: tender.description });
 
     if (COMPANY_PRODUCED_KINDS.has(kind)) {
       // Company-produced deliverable: generate a real DOCX with company evidence content.
@@ -392,7 +392,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     submissionNotes: [tender.notes, tender.intakeSummary].filter(Boolean).join("\n\n"),
     exactFileNaming: tender.exactFileNaming,
     exactFileOrder: tender.exactFileOrder,
-    clientName: tender.clientName,
+    clientName: effectiveClientName,
     referenceNumber: tender.reference,
     country: tender.country,
     clientContactName: tender.clientContactName,
@@ -465,7 +465,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // (e.g. client name "Bid-Team to confirm", no submission endpoint, no deadline).
   // overallRatio < 0.3 is a hard block; missingCritical / invalidFields always block.
   const metadataReport = assessTenderMetadataCompleteness({
-    clientName: tender.clientName,
+    clientName: effectiveClientName,
+    procuringEntityName: (tender as Record<string, unknown>).procuringEntityName as string | null | undefined,
     title: tender.title,
     reference: tender.reference ?? null,
     country: tender.country ?? null,
