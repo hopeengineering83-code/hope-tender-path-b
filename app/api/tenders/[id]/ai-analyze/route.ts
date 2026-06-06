@@ -485,10 +485,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
               status: tenderStatus,
               stage: "ANALYSIS",
               // Extended client/procuring-entity extraction fields
-              ...(aiResult.procuringEntityName !== undefined ? { procuringEntityName: aiResult.procuringEntityName } : {}),
-              ...(aiResult.legalClientName !== undefined ? { legalClientName: aiResult.legalClientName } : {}),
-              ...(aiResult.donorAgency !== undefined ? { donorAgency: aiResult.donorAgency } : {}),
-              ...(aiResult.implementingAgency !== undefined ? { implementingAgency: aiResult.implementingAgency } : {}),
+              // Use != null (not !== undefined) so a null AI result never overwrites user-entered data.
+              // Also back-fill the legacy clientName when it's blank — procuringEntityName is
+              // the authoritative AI-extracted value; clientName drives generation gating.
+              ...(aiResult.procuringEntityName != null ? {
+                procuringEntityName: aiResult.procuringEntityName,
+                ...(!tenderRecord.clientName ? { clientName: aiResult.procuringEntityName } : {}),
+              } : {}),
+              ...(aiResult.legalClientName != null ? { legalClientName: aiResult.legalClientName } : {}),
+              ...(aiResult.donorAgency != null ? { donorAgency: aiResult.donorAgency } : {}),
+              ...(aiResult.implementingAgency != null ? { implementingAgency: aiResult.implementingAgency } : {}),
               // Full contact/location fields — only update when AI returned a value
               // to avoid overwriting manually-confirmed data with null on re-runs.
               ...(aiResult.country != null ? { country: aiResult.country } : {}),
@@ -505,6 +511,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
               ...(aiResult.clientRepresentative != null ? { clientRepresentative: aiResult.clientRepresentative } : {}),
               // Procurement reference number mapped to the legacy `reference` field
               ...(aiResult.procurementReferenceNumber != null ? { reference: aiResult.procurementReferenceNumber } : {}),
+              // Submission method and emails — only set when AI extracted a value
+              // and the DB field is currently blank (preserve user-corrected data)
+              ...(aiResult.submissionMethod != null && !tenderRecord.submissionMethod ? { submissionMethod: aiResult.submissionMethod } : {}),
+              ...(aiResult.submissionEmails != null && !tenderRecord.submissionEmails ? { submissionEmails: aiResult.submissionEmails } : {}),
               ...(aiResult.clientNameSourcePage !== undefined ? { clientNameSourcePage: aiResult.clientNameSourcePage } : {}),
               ...(aiResult.clientNameSourceQuote !== undefined ? { clientNameSourceQuote: aiResult.clientNameSourceQuote } : {}),
               ...(aiResult.submissionEmailSourcePage !== undefined ? { submissionEmailSourcePage: aiResult.submissionEmailSourcePage } : {}),
