@@ -1265,7 +1265,10 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
   // a clean label on the dashboard without requiring an admin DB cleanup.
   // The raw tender.title / tender.clientName are still in the DB and can
   // be edited via the tender Edit page if the user wants to change them.
-  const displayTitle = cleanTenderTitle(tender.title, { clientName: tender.clientName, description: tender.description });
+  // Use procuringEntityName as a fallback when clientName is null/invalid —
+  // AI Analyze may set procuringEntityName without back-filling clientName.
+  const effectiveTenderClientName = tender.clientName || tender.procuringEntityName;
+  const displayTitle = cleanTenderTitle(tender.title, { clientName: effectiveTenderClientName, description: tender.description });
   // Use the canonical client-name validator FIRST so a TOC-fragment
   // extraction (production-screenshot scenario where clientName captured
   // "references (where available) Photos or drawings of completed
@@ -1273,10 +1276,10 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
   // were a real client. cleanClientName-only falls through to raw
   // tender.clientName when its own heuristic returns "Client", which is
   // what produced the bug.
-  const clientStatus = getClientNameStatus(tender.clientName);
-  const clientDisplay = clientNameDisplayMessage(tender.clientName);
+  const clientStatus = getClientNameStatus(effectiveTenderClientName);
+  const clientDisplay = clientNameDisplayMessage(effectiveTenderClientName);
   const displayClient = clientStatus === "VALID"
-    ? cleanClientName(tender.clientName, tender.description)
+    ? cleanClientName(effectiveTenderClientName, tender.description)
     : null;
   const displayClientLine = displayClient && displayClient !== "Client" ? ` · ${displayClient}` : "";
 
