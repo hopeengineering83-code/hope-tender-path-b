@@ -35,6 +35,7 @@ type DocRow = {
   validationStatus: string | null;
   reviewStatus: string | null;
   storagePath: string | null;
+  fileContent: string | null;
   format: string | null;
 };
 
@@ -86,6 +87,7 @@ export async function FinalPackageManifestPanel({ tenderId }: { tenderId: string
           validationStatus: true,
           reviewStatus: true,
           storagePath: true,
+          fileContent: true,
           format: true,
         },
       },

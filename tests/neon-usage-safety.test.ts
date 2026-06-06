@@ -16,11 +16,13 @@ const cleanupCron = fs.readFileSync(
 );
 
 describe("Neon usage safety — no large blob reads in manifest/document queries", () => {
-  it("final-package-manifest-panel does not select fileContent", () => {
-    // The generatedDocuments select block must not include fileContent: true
-    assert.ok(
-      !/fileContent\s*:\s*true/.test(manifestPanel),
-      "final-package-manifest-panel.tsx must not select fileContent from generatedDocuments",
+  it("final-package-manifest-panel selects fileContent for deriveDocumentOutputState", () => {
+    // fileContent is required: deriveDocumentOutputState returns CONTROL_RECORD_ONLY
+    // when both fileContent and storagePath are absent (docs with only fileContent break otherwise)
+    assert.match(
+      manifestPanel,
+      /fileContent\s*:\s*true/,
+      "final-package-manifest-panel.tsx must select fileContent so deriveDocumentOutputState works for non-storagePath docs",
     );
   });
 
@@ -50,9 +52,10 @@ describe("Neon usage safety — no large blob reads in manifest/document queries
 });
 
 describe("Neon usage safety — AiJob + TenderCopilotMessage cleanup cron", () => {
-  it("cleanup cron deletes only terminal AiJob rows — SUCCEEDED, FAILED, CANCELED", () => {
-    // Must include all three terminal statuses
+  it("cleanup cron deletes only terminal AiJob rows — SUCCEEDED, PARTIAL_SUCCESS, FAILED, CANCELED", () => {
+    // Must include all four terminal statuses
     assert.match(cleanupCron, /SUCCEEDED/);
+    assert.match(cleanupCron, /PARTIAL_SUCCESS/);
     assert.match(cleanupCron, /FAILED/);
     assert.match(cleanupCron, /CANCELED/);
   });

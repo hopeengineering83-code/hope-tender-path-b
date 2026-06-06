@@ -20,7 +20,7 @@ export async function GET(req: NextRequest) {
     const deletedAiJobs = await prisma.aiJob.deleteMany({
       where: {
         createdAt: { lt: thirtyDaysAgo },
-        status: { in: ["SUCCEEDED", "FAILED", "CANCELED"] },
+        status: { in: ["SUCCEEDED", "PARTIAL_SUCCESS", "FAILED", "CANCELED"] },
       },
     });
 

@@ -74,7 +74,6 @@ export default async function CompanyDocumentCategoriesPage() {
       category: true,
       storagePath: true,
       aiExtractionStatus: true,
-      extractedText: true,
       createdAt: true,
       updatedAt: true,
     },
@@ -139,7 +138,7 @@ export default async function CompanyDocumentCategoriesPage() {
                         <p className="truncate text-sm font-semibold text-slate-900">{doc.originalFileName}</p>
                         <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-500">
                           <span>{formatBytes(doc.size)}</span>
-                          {doc.extractedText ? <span className="text-green-600">✓ {doc.extractedText.length.toLocaleString()} chars extracted</span> : <span>No extracted text</span>}
+                          {doc.aiExtractionStatus === "EXTRACTED" ? <span className="text-green-600">✓ Text extracted</span> : <span className="text-slate-400">No extracted text</span>}
                           <span>{new Date(doc.createdAt).toLocaleDateString()}</span>
                         </div>
                       </div>
