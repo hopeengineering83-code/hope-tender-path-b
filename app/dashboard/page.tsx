@@ -226,7 +226,7 @@ export default async function DashboardPage() {
                     <tr key={tender.id} className="hover:bg-slate-50">
                       <td className="px-6 py-4">
                         <Link href={`/dashboard/tenders/${tender.id}`} className="font-medium text-slate-900 hover:underline">{tender.title}</Link>
-                        {tender.clientName && <p className="text-xs text-slate-400">{tender.clientName}</p>}
+                        {(tender.clientName || (tender as Record<string, unknown>).procuringEntityName as string | null | undefined) && <p className="text-xs text-slate-400">{tender.clientName || (tender as Record<string, unknown>).procuringEntityName as string}</p>}
                       </td>
                       <td className="px-6 py-4">
                         <span className={isLate ? "text-red-600 font-medium" : "text-slate-500"}>

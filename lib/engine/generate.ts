@@ -398,7 +398,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   const coverAllowed = !forbidsCoverPage(tender.requirements);
   const coverRequired = coverAllowed && requiresCoverPage(tender.requirements);
   const signatureOrStampRequired = requiresSignatureOrStamp(tender.requirements);
-  const coverParas = coverRequired ? buildCoverSection(tender.title, tender.reference, tender.clientName, brandingAllowed ? company.name : undefined) : [];
+  const coverParas = coverRequired ? buildCoverSection(tender.title, tender.reference, tender.clientName || (tender as Record<string, unknown>).procuringEntityName as string | null | undefined, brandingAllowed ? company.name : undefined) : [];
 
   let expertIdx = 0;
   let projectIdx = 0;

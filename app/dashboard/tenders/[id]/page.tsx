@@ -100,6 +100,7 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
         id: tender.id,
         reference: tender.reference,
         clientName: tender.clientName,
+        procuringEntityName: (tender as Record<string, unknown>).procuringEntityName as string | null | undefined,
         country: tender.country,
         clientContactName: tender.clientContactName,
       }} />

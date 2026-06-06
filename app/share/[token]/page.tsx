@@ -11,6 +11,7 @@ export default async function SharePage({ params }: { params: Promise<{ token: s
         select: {
           title: true,
           clientName: true,
+          procuringEntityName: true,
           country: true,
           deadline: true,
           status: true,
@@ -104,10 +105,10 @@ export default async function SharePage({ params }: { params: Promise<{ token: s
         <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
           <h1 className="text-2xl font-bold text-slate-800 mb-4">{tender.title}</h1>
           <div className="grid grid-cols-2 gap-3 text-sm">
-            {tender.clientName && (
+            {(tender.clientName || tender.procuringEntityName) && (
               <div>
                 <span className="text-slate-500 font-medium">Client</span>
-                <p className="text-slate-800">{tender.clientName}</p>
+                <p className="text-slate-800">{tender.clientName || tender.procuringEntityName}</p>
               </div>
             )}
             {tender.country && (

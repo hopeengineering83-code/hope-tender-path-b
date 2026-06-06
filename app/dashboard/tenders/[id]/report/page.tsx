@@ -49,6 +49,7 @@ export default async function TenderReportPage({ params }: { params: Promise<{ i
       id: true,
       title: true,
       clientName: true,
+      procuringEntityName: true,
       country: true,
       deadline: true,
       currency: true,
@@ -110,7 +111,7 @@ export default async function TenderReportPage({ params }: { params: Promise<{ i
           {tender.title ?? "—"}
         </h1>
         <div className="mt-3 flex flex-wrap gap-4 text-sm text-slate-600">
-          <span><span className="font-medium">Client:</span> {tender.clientName ?? "—"}</span>
+          <span><span className="font-medium">Client:</span> {(tender.clientName || tender.procuringEntityName) ?? "—"}</span>
           <span><span className="font-medium">Country:</span> {tender.country ?? "—"}</span>
           <span><span className="font-medium">Deadline:</span> {fmt(tender.deadline)}</span>
           <span><span className="font-medium">Currency:</span> {tender.currency ?? "—"}</span>
