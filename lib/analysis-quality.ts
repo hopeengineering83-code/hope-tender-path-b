@@ -17,6 +17,9 @@ export type AnalysisRequirementLike = {
   pageLimit?: number | null;
   restrictions?: string | null;
   sectionReference?: string | null;
+  sourcePageNumber?: number | null;
+  sourceExactQuote?: string | null;
+  sourceConfidence?: number | null;
 };
 
 export type AnalysisQualityReport = {
@@ -117,7 +120,11 @@ export function assessTenderAnalysisQuality(params: {
   const mandatoryCount = requirements.filter((req) => /mandatory|required|shall|must/i.test(req.priority ?? "")).length;
   const scoredCount = requirements.filter((req) => textIncludesAny(`${req.title ?? ""} ${req.description ?? ""} ${req.restrictions ?? ""}`, [/score/i, /weight/i, /points?/i, /evaluation/i, /criteria/i])).length;
   const exactFileNameCount = requirements.filter((req) => Boolean((req.exactFileName ?? "").trim())).length;
-  const sourceReferencedCount = requirements.filter((req) => Boolean((req.sectionReference ?? "").trim())).length;
+  const sourceReferencedCount = requirements.filter((req) =>
+    Boolean((req.sectionReference ?? "").trim()) ||
+    (req.sourcePageNumber != null && req.sourcePageNumber > 0) ||
+    Boolean((req.sourceExactQuote ?? "").trim())
+  ).length;
 
   const exactFileNaming = parseStringArray(params.exactFileNaming);
   const exactFileOrder = parseStringArray(params.exactFileOrder);
