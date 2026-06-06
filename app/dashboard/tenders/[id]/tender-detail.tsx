@@ -1284,11 +1284,14 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
   // Mirror hasRealClientName() from lib/engine/metadata-validators.ts
   const clientNameInvalid = getClientNameStatus(tender.clientName) !== "VALID";
   const metadataContaminatedBlock = tender.metadataContaminated === true;
+  // Mirror server-side hasValidSubmissionPlan gate: at least one non-SUPERSEDED doc row must exist.
+  const hasValidPlan = tender.generatedDocuments.some((d) => d.generationStatus !== "SUPERSEDED");
 
   const canGenerateDocs = !analysisIsFallbackUnapproved
     && !extractionCorrupted
     && !clientNameInvalid
     && !metadataContaminatedBlock
+    && hasValidPlan
     && tender.requirements.length > 0
     && (!expertReqExists || selectedExpertCount > 0 || !expertMatchesExist || hasRecoverableExpertSelection)
     && (!projectReqExists || selectedProjectCount > 0 || !projectMatchesExist || hasRecoverableProjectSelection)
@@ -1305,21 +1308,23 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
           ? "Analysis used regex fallback — retry AI Analyze or approve the fallback before generating"
           : tender.requirements.length === 0
             ? "Run AI Analyze or Run Engine first to extract requirements"
-            : (expertReqExists && selectedExpertCount === 0 && totalExpertMatches === 0)
-              ? "Run Engine first to generate expert matches"
-              : (projectReqExists && selectedProjectCount === 0 && totalProjectMatches === 0)
-                ? "Run Engine first to generate project matches"
-                : (expertReqExists && expertMatchesExist && selectedExpertCount === 0 && !hasRecoverableExpertSelection)
-                  ? "Select at least one reviewed expert match before generating"
-                  : (projectReqExists && projectMatchesExist && selectedProjectCount === 0 && !hasRecoverableProjectSelection)
-                    ? "Select at least one reviewed project match before generating"
-                    : (expertReqExists && selectedExpertCount > 0 && reviewedExpertMatches === 0)
-                      ? "Review at least one selected expert before generating"
-                      : (projectReqExists && selectedProjectCount > 0 && reviewedProjectMatches === 0)
-                        ? "Review at least one selected project before generating"
-                        : criticalHardBlockExists
-                          ? "Resolve critical hard blockers before generating"
-                          : "Generate proposal documents";
+            : !hasValidPlan
+              ? "Build the submission plan first (click Build Plan or Run Engine) before generating documents"
+              : (expertReqExists && selectedExpertCount === 0 && totalExpertMatches === 0)
+                ? "Run Engine first to generate expert matches"
+                : (projectReqExists && selectedProjectCount === 0 && totalProjectMatches === 0)
+                  ? "Run Engine first to generate project matches"
+                  : (expertReqExists && expertMatchesExist && selectedExpertCount === 0 && !hasRecoverableExpertSelection)
+                    ? "Select at least one reviewed expert match before generating"
+                    : (projectReqExists && projectMatchesExist && selectedProjectCount === 0 && !hasRecoverableProjectSelection)
+                      ? "Select at least one reviewed project match before generating"
+                      : (expertReqExists && selectedExpertCount > 0 && reviewedExpertMatches === 0)
+                        ? "Review at least one selected expert before generating"
+                        : (projectReqExists && selectedProjectCount > 0 && reviewedProjectMatches === 0)
+                          ? "Review at least one selected project before generating"
+                          : criticalHardBlockExists
+                            ? "Resolve critical hard blockers before generating"
+                            : "Generate proposal documents";
 
   // ZIP is only safe when there are generated documents. The canonical
   // export-readiness gate (Export Readiness panel) blocks the final ZIP
