@@ -5,7 +5,10 @@ import { getTenderGenerationReadiness, type TenderGenerationReadiness } from "..
 
 function actionHref(tenderId: string, action?: string): string {
   if (action === "EDIT_TENDER") return `/dashboard/tenders/${tenderId}#legacy-tender-detail-actions`;
+  if (action === "EDIT_TENDER_METADATA") return `/dashboard/tenders/${tenderId}#legacy-tender-detail-actions`;
   if (action === "OPEN_COMPANY_READINESS") return "/dashboard/company/readiness";
+  if (action === "OPEN_EXTRACTION_QUALITY") return `/dashboard/tenders/${tenderId}#extraction-quality`;
+  if (action === "BUILD_SUBMISSION_PLAN") return `/dashboard/tenders/${tenderId}#submission-plan`;
   if (action === "OPEN_ANALYSIS_QUALITY") return `/dashboard/tenders/${tenderId}#analysis-quality`;
   if (action === "OPEN_MATCHING_QUALITY") return `/dashboard/tenders/${tenderId}#matching-quality`;
   if (action === "RUN_ENGINE") return `/dashboard/tenders/${tenderId}#run-engine-action`;
@@ -24,7 +27,10 @@ function actionHref(tenderId: string, action?: string): string {
 
 function buildActionLabel(action?: string): string {
   if (action === "EDIT_TENDER") return "Edit client name";
+  if (action === "EDIT_TENDER_METADATA") return "Fill missing metadata";
   if (action === "OPEN_COMPANY_READINESS") return "Open company readiness";
+  if (action === "OPEN_EXTRACTION_QUALITY") return "Check extraction quality";
+  if (action === "BUILD_SUBMISSION_PLAN") return "Build submission plan";
   if (action === "OPEN_ANALYSIS_QUALITY") return "Open analysis quality";
   if (action === "OPEN_MATCHING_QUALITY") return "Open matching quality";
   if (action === "RUN_ENGINE") return "Run engine";
