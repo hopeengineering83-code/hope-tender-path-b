@@ -2381,6 +2381,34 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
                 <pre className="whitespace-pre-wrap text-xs text-purple-900 font-mono leading-relaxed max-h-64 overflow-y-auto">{deepReasoningReport.markdown}</pre>
               </div>
             )}
+            {/* Document quality summary — shown when docs exist */}
+            {tender.generatedDocuments.length > 0 && (() => {
+              const activeDocs = tender.generatedDocuments.filter((d) => d.generationStatus !== "SUPERSEDED" && d.generationStatus !== "PLANNED");
+              const readyDocs = activeDocs.filter((d) => d.reviewStatus === "READY_FOR_EXPORT");
+              const failedDocs = activeDocs.filter((d) => d.validationStatus === "FAILED" || d.generationStatus === "QUALITY_FAILED");
+              const awaitingReview = activeDocs.filter((d) => d.reviewStatus !== "READY_FOR_EXPORT" && d.reviewStatus !== "NOT_EXPORTABLE" && d.generationStatus === "GENERATED");
+              const passRate = activeDocs.length > 0 ? Math.round((readyDocs.length / activeDocs.length) * 100) : 0;
+              return (
+                <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-4 text-center text-xs">
+                  <div className="rounded-lg border bg-slate-50 py-2 px-3">
+                    <div className="text-lg font-bold text-slate-800">{activeDocs.length}</div>
+                    <div className="text-slate-500">Total docs</div>
+                  </div>
+                  <div className={`rounded-lg border py-2 px-3 ${readyDocs.length === activeDocs.length && activeDocs.length > 0 ? "bg-emerald-50 border-emerald-200" : "bg-slate-50"}`}>
+                    <div className={`text-lg font-bold ${readyDocs.length === activeDocs.length && activeDocs.length > 0 ? "text-emerald-700" : "text-slate-800"}`}>{readyDocs.length}/{activeDocs.length}</div>
+                    <div className="text-slate-500">Ready ({passRate}%)</div>
+                  </div>
+                  <div className={`rounded-lg border py-2 px-3 ${awaitingReview.length > 0 ? "bg-amber-50 border-amber-200" : "bg-slate-50"}`}>
+                    <div className={`text-lg font-bold ${awaitingReview.length > 0 ? "text-amber-700" : "text-slate-800"}`}>{awaitingReview.length}</div>
+                    <div className="text-slate-500">Awaiting review</div>
+                  </div>
+                  <div className={`rounded-lg border py-2 px-3 ${failedDocs.length > 0 ? "bg-red-50 border-red-200" : "bg-slate-50"}`}>
+                    <div className={`text-lg font-bold ${failedDocs.length > 0 ? "text-red-700" : "text-slate-800"}`}>{failedDocs.length}</div>
+                    <div className="text-slate-500">Quality failed</div>
+                  </div>
+                </div>
+              );
+            })()}
             {tender.generatedDocuments.length === 0 ? (
               <p className="text-sm text-slate-400">Run the engine then click &quot;Generate Docs&quot; to create submission-ready files.</p>
             ) : (
