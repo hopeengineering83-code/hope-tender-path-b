@@ -341,7 +341,7 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
     ));
   }
 
-  // ── Submission method completeness blocker ───────────────────────────────
+  // ── Submission method + endpoint completeness blockers ──────────────────
   if (!tender.submissionMethod) {
     blockers.push(tenderBlocker(
       "SUBMISSION_METHOD_MISSING",
@@ -349,6 +349,44 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
       "Run AI Analyze or manually enter the submission method in Tender Detail before exporting.",
       "HIGH",
     ));
+  } else {
+    const method = tender.submissionMethod.toUpperCase();
+    const needsEmail = /email/i.test(method) || method === "EMAIL";
+    const needsAddress = /sealed|hand|courier/i.test(method) || /SEALED_ENVELOPE|HAND_DELIVERY|COURIER/.test(method);
+    if (needsEmail && !tender.submissionEmails) {
+      blockers.push(tenderBlocker(
+        "SUBMISSION_EMAIL_MISSING",
+        "Submission method is EMAIL but no submission email address has been extracted. The package cannot be delivered.",
+        "Run AI Analyze or manually add the submission email in Tender Detail before exporting.",
+        "HIGH",
+      ));
+    }
+    if (needsAddress && !tender.submissionAddress) {
+      advisoryWarnings.push({
+        category: "SUBMISSION_ADDRESS_MISSING",
+        severity: "MEDIUM" as const,
+        title: `Submission method is ${tender.submissionMethod} but no submission address was extracted.`,
+        recommendedAction: "Add the physical submission address in Tender Detail to ensure correct package delivery.",
+      });
+    }
+  }
+
+  // ── Deadline freshness advisory ───────────────────────────────────────────
+  // Warn when the tender deadline has already passed — exporting after
+  // deadline does not make sense operationally and may indicate the wrong
+  // tender is open.
+  if (tender.deadline) {
+    const now = new Date();
+    const deadlineDate = tender.deadline instanceof Date ? tender.deadline : new Date(tender.deadline);
+    if (!Number.isNaN(deadlineDate.getTime()) && deadlineDate < now) {
+      const daysAgo = Math.round((now.getTime() - deadlineDate.getTime()) / (1000 * 60 * 60 * 24));
+      advisoryWarnings.push({
+        category: "DEADLINE_PASSED",
+        severity: "HIGH" as const,
+        title: `Submission deadline passed ${daysAgo} day${daysAgo === 1 ? "" : "s"} ago (${deadlineDate.toISOString().slice(0, 10)}). Exporting after deadline has no practical use unless an extension was granted.`,
+        recommendedAction: "Confirm whether a deadline extension was granted. If the tender closed, mark it as lost/withdrawn rather than exporting.",
+      });
+    }
   }
 
   // ── Evaluation criteria advisory warning ─────────────────────────────────
