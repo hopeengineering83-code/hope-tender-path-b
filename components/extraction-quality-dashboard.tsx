@@ -1,5 +1,5 @@
 import { prisma, prismaReady } from "../lib/prisma";
-import { assessExtractionQuality } from "../lib/extraction-quality";
+import { assessExtractionQuality, assessExtractionQualityPerPage } from "../lib/extraction-quality";
 import { isExtractionCorrupted } from "../lib/engine/extraction-quality-gate";
 
 type FileStatus = "GOOD" | "ACCEPTABLE" | "POOR";
@@ -112,6 +112,8 @@ export async function ExtractionQualityDashboard({ tenderId }: { tenderId: strin
                 ? file.mimeType.split("/").pop()?.toUpperCase() ?? null
                 : file.fileName?.split(".").pop()?.toUpperCase() ?? null;
 
+      const perPage = text ? assessExtractionQualityPerPage(text) : null;
+
       return {
         id: file.id,
         name,
@@ -126,6 +128,9 @@ export async function ExtractionQualityDashboard({ tenderId }: { tenderId: strin
         status,
         quality,
         notYetExtracted,
+        submissionPages: perPage?.submissionInstructionPages.length ?? null,
+        evaluationPages: perPage?.evaluationCriteriaPages.length ?? null,
+        requiredDocPages: perPage?.requiredDocumentPages.length ?? null,
       };
     });
 
@@ -261,6 +266,24 @@ export async function ExtractionQualityDashboard({ tenderId }: { tenderId: strin
                     ) : null}
                   </div>
 
+                  {/* Content page detection */}
+                  {(file.submissionPages !== null || file.evaluationPages !== null || file.requiredDocPages !== null) && (
+                    <div className="mt-3 grid grid-cols-3 gap-1.5 text-center text-xs">
+                      {[
+                        ["Submission", file.submissionPages],
+                        ["Eval Criteria", file.evaluationPages],
+                        ["Req. Docs", file.requiredDocPages],
+                      ].map(([label, count]) => (
+                        <div key={label as string} className={`rounded-lg border px-1.5 py-1.5 ${(count as number) > 0 ? "border-green-200 bg-green-50" : "border-red-200 bg-red-50"}`}>
+                          <p className="text-[9px] uppercase text-slate-400 leading-tight">{label as string}</p>
+                          <p className={`mt-0.5 font-bold ${(count as number) > 0 ? "text-green-700" : "text-red-600"}`}>
+                            {(count as number) > 0 ? `${count}p` : "0"}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
                   {/* Inline warnings */}
                   <div className="mt-2 space-y-1">
                     {file.corrupted && (
@@ -283,6 +306,16 @@ export async function ExtractionQualityDashboard({ tenderId }: { tenderId: strin
                           instructions may be missing
                         </p>
                       )}
+                    {!file.corrupted && !file.notYetExtracted && file.submissionPages === 0 && file.score >= 45 && (
+                      <p className="text-xs text-amber-700">
+                        ⚠ No submission instruction pages detected — deadline and submission method may be missing
+                      </p>
+                    )}
+                    {!file.corrupted && !file.notYetExtracted && file.evaluationPages === 0 && file.score >= 45 && (
+                      <p className="text-xs text-slate-400 italic">
+                        No evaluation criteria pages detected
+                      </p>
+                    )}
                   </div>
                 </>
               )}

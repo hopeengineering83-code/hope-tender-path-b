@@ -280,3 +280,98 @@ describe("analysis-quality — source normalization", () => {
     assert.ok(report.score > 45);
   });
 });
+
+describe("analysis-quality — reviewed evidence selection", () => {
+  const baseParams = {
+    requirements: goodRequirements(10),
+    evaluationMethodology: "Technical 70%, Financial 30%",
+    submissionNotes: "Submit sealed envelope by deadline.",
+    clientName: "Ministry of Health",
+    deadline: new Date("2026-09-01T00:00:00Z"),
+    submissionMethod: "Sealed envelope",
+    totalPageCount: 8,
+    extractedTextLength: 18000,
+  };
+
+  it("does not penalise when no matching score is present (vault not yet run)", () => {
+    const report = assessTenderAnalysisQuality({
+      ...baseParams,
+      matchingScore: undefined,
+      selectedReviewedExperts: 0,
+      selectedReviewedProjects: 0,
+    });
+    assert.ok(
+      !report.warnings.some((w) => /reviewed/i.test(w)),
+      "Should not warn about reviewed evidence when matchingScore is absent",
+    );
+  });
+
+  it("penalises when matching score is > 0 but all selected evidence is unreviewed", () => {
+    const report = assessTenderAnalysisQuality({
+      ...baseParams,
+      matchingScore: 60,
+      selectedReviewedExperts: 0,
+      selectedReviewedProjects: 0,
+    });
+    assert.ok(
+      report.warnings.some((w) => /unreviewed/i.test(w) || /reviewed/i.test(w)),
+      `Expected an unreviewed-evidence warning, got: ${report.warnings.join("; ")}`,
+    );
+    assert.ok(report.score < 100, `Expected score penalty for unreviewed evidence, got ${report.score}`);
+  });
+
+  it("does not penalise when at least one reviewed expert is selected", () => {
+    const withReviewed = assessTenderAnalysisQuality({ ...baseParams, matchingScore: 60, selectedReviewedExperts: 2, selectedReviewedProjects: 0 });
+    const withoutReviewed = assessTenderAnalysisQuality({ ...baseParams, matchingScore: 60, selectedReviewedExperts: 0, selectedReviewedProjects: 0 });
+    assert.ok(
+      withReviewed.score > withoutReviewed.score,
+      `Reviewed-evidence score (${withReviewed.score}) should exceed all-unreviewed score (${withoutReviewed.score})`,
+    );
+    assert.ok(!withReviewed.warnings.some((w) => /unreviewed/i.test(w)), "Should not warn when reviewed expert is selected");
+  });
+
+  it("does not penalise when at least one reviewed project is selected", () => {
+    const report = assessTenderAnalysisQuality({ ...baseParams, matchingScore: 65, selectedReviewedExperts: 0, selectedReviewedProjects: 1 });
+    assert.ok(!report.warnings.some((w) => /unreviewed/i.test(w)), "Should not warn when reviewed project is selected");
+  });
+});
+
+describe("analysis-quality — source-grounding credits sourcePageNumber and sourceExactQuote", () => {
+  it("requirements with sourcePageNumber count as grounded even without sectionReference", () => {
+    const pagedReqs: AnalysisRequirementLike[] = Array.from({ length: 8 }, (_, i) => ({
+      title: `Req ${i + 1}`,
+      description: "A requirement description for the tender.",
+      priority: "MANDATORY",
+      sourcePageNumber: i + 1,
+    }));
+    const report = assessTenderAnalysisQuality({ requirements: pagedReqs, extractedTextLength: 8000 });
+    assert.ok(report.subScores.sourceGrounding > 0, "sourceGrounding must be > 0 when requirements have sourcePageNumber");
+  });
+
+  it("requirements with sourceExactQuote count as grounded even without sectionReference", () => {
+    const quotedReqs: AnalysisRequirementLike[] = Array.from({ length: 6 }, (_, i) => ({
+      title: `Req ${i + 1}`,
+      description: "Requirement text.",
+      priority: "SCORED",
+      sourceExactQuote: `"Verbatim quote from section ${i + 1} of the tender document."`,
+    }));
+    const report = assessTenderAnalysisQuality({ requirements: quotedReqs, extractedTextLength: 6000 });
+    assert.ok(report.subScores.sourceGrounding > 0, "sourceGrounding must be > 0 when requirements have sourceExactQuote");
+  });
+
+  it("requirements without any source traceability score lower than those with quotes", () => {
+    const traced: AnalysisRequirementLike[] = Array.from({ length: 8 }, (_, i) => ({
+      title: `Req ${i + 1}`, description: "text.", priority: "MANDATORY",
+      sourceExactQuote: `"Quote ${i + 1} from the document."`,
+    }));
+    const untraced: AnalysisRequirementLike[] = Array.from({ length: 8 }, (_, i) => ({
+      title: `Req ${i + 1}`, description: "text.", priority: "MANDATORY",
+    }));
+    const tracedReport = assessTenderAnalysisQuality({ requirements: traced, extractedTextLength: 8000 });
+    const untracedReport = assessTenderAnalysisQuality({ requirements: untraced, extractedTextLength: 8000 });
+    assert.ok(
+      tracedReport.subScores.sourceGrounding >= untracedReport.subScores.sourceGrounding,
+      `Traced requirements (${tracedReport.subScores.sourceGrounding}) should not score lower than untraced (${untracedReport.subScores.sourceGrounding})`,
+    );
+  });
+});

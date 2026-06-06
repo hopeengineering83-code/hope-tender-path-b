@@ -144,6 +144,11 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   tryFill("title", metadata.title.startsWith("[REVIEW NEEDED]") ? null : metadata.title);
   tryFill("reference", metadata.reference);
   tryFill("clientName", metadata.clientName);
+  // Sync procuringEntityName when clientName was (re-)extracted — keeps both
+  // fields consistent without a separate extractor for procuringEntityName.
+  if (update.clientName && !(tender as Record<string, unknown>).procuringEntityName) {
+    (update as Record<string, unknown>).procuringEntityName = update.clientName;
+  }
   tryFill("country", metadata.country);
   // category — only update when stored is "General" (the default)
   fieldsBefore.category = tender.category;

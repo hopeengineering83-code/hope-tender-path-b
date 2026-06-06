@@ -40,6 +40,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       analysisExtractionStatus: true,
       metadataContaminated: true,
       clientName: true,
+      procuringEntityName: true,
       submissionMethod: true,
       deadline: true,
       exactFileNaming: true,
@@ -133,7 +134,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 
   // ── Step 4: Metadata completeness ─────────────────────────────────────────
   const metadataReport = assessTenderMetadataCompleteness({
-    clientName: tender.clientName ?? null,
+    clientName: (tender.clientName || (tender as Record<string, unknown>).procuringEntityName as string | null | undefined) ?? null,
     country: tender.country ?? null,
     clientContactName: tender.clientContactName ?? null,
     clientContactEmail: tender.clientContactEmail ?? null,

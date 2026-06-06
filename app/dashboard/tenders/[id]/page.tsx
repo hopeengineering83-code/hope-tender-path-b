@@ -100,11 +100,12 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
         id: tender.id,
         reference: tender.reference,
         clientName: tender.clientName,
+        procuringEntityName: (tender as Record<string, unknown>).procuringEntityName as string | null | undefined,
         country: tender.country,
         clientContactName: tender.clientContactName,
       }} />
       <ExecutiveSnapshot tender={tenderForUi} />
-      <ExtractionQualityDashboard tenderId={tender.id} />
+      <div id="extraction-quality"><ExtractionQualityDashboard tenderId={tender.id} /></div>
       <NextActionPanel tenderId={tender.id} />
       {ai && <TenderChatPanelWrapper tenderId={tender.id} />}
       <TenderHealthScorePanel tenderId={tender.id} />
@@ -118,7 +119,7 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
         vaultReviewedProjects={generationReadiness?.matchingQuality?.vaultReviewedProjects ?? 0}
         lifecycleBlockersExist={(generationReadiness?.blockers?.length ?? 0) > 0}
       /></div>
-      <ExtractionQualityPanel tenderId={tender.id} />
+      <div id="extraction-quality-detail"><ExtractionQualityPanel tenderId={tender.id} /></div>
       <div id="analysis-quality"><AnalysisQualityPanel tenderId={tender.id} /></div>
       <AIAnalyzeRecoveryPanel tenderId={tender.id} />
       <div id="matching-quality"><MatchingQualityPanel tenderId={tender.id} /></div>

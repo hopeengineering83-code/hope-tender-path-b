@@ -57,6 +57,7 @@ export async function TenderHealthScorePanel({ tenderId }: { tenderId: string })
       metadataContaminated: true,
       readinessScore: true,
       clientName: true,
+      procuringEntityName: true,
       country: true,
       clientContactName: true,
       clientContactEmail: true,
@@ -147,7 +148,7 @@ export async function TenderHealthScorePanel({ tenderId }: { tenderId: string })
 
   // ── 3. Metadata completeness (15 pts) ────────────────────────────────────
   const meta = assessTenderMetadataCompleteness({
-    clientName: tender.clientName ?? null,
+    clientName: (tender.clientName || tender.procuringEntityName) ?? null,
     country: tender.country ?? null,
     clientContactName: tender.clientContactName ?? null,
     clientContactEmail: tender.clientContactEmail ?? null,

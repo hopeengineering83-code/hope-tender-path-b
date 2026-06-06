@@ -387,6 +387,7 @@ export async function getFinalSubmissionReadiness(
       notes: true,
       // Metadata-completeness signals consumed by the gate (Part 5).
       clientName: true,
+      procuringEntityName: true,
       reference: true,
       country: true,
       deadline: true,
@@ -590,6 +591,7 @@ export async function getFinalSubmissionReadiness(
   // ── Metadata completeness gate (Part 5) ──────────────────────────────────
   const metadata = assessTenderMetadataCompleteness({
     clientName: tender.clientName,
+    procuringEntityName: (tender as Record<string, unknown>).procuringEntityName as string | null | undefined,
     title: tender.title,
     reference: tender.reference,
     country: tender.country,

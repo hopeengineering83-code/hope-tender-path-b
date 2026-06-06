@@ -67,7 +67,14 @@ describe("Recovery Command Center — action registry coverage", () => {
   });
 
   it("every scroll action targets a known tender-detail panel id", () => {
-    const knownPanelIds = new Set(["tender-files", "tender-edit-form", "generated-documents"]);
+    const knownPanelIds = new Set([
+      "tender-files",
+      "tender-edit-form",
+      "generated-documents",
+      "extraction-quality",
+      "extraction-quality-detail",
+      "analysis-quality",
+    ]);
     for (const [action, spec] of Object.entries(RECOVERY_COMMAND_ACTIONS)) {
       if (spec.kind !== "scroll") continue;
       assert.ok(spec.anchorId, `${action} must define an anchor id`);

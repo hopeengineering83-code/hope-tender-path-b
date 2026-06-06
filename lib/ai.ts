@@ -969,6 +969,8 @@ export type AIAnalysisResult = {
   clientWebsite?: string | null;
   submissionEmailSubject?: string | null;
   preBidChannel?: string | null;
+  preBidMeetingDate?: string | null;
+  preBidMeetingLocation?: string | null;
   clientRepresentative?: string | null;
   // Procurement / tender reference number (CLAUDE.md item #5).
   // E.g. "ITT/2025/001", "RFP-ETH-24-003", "PPMO/NCB/001/2025".
@@ -1267,6 +1269,8 @@ function mergeAnalysisResults(parts: AIAnalysisResult[]): AIAnalysisResult {
   const clientWebsite = firstDefined((p) => p.clientWebsite ?? undefined);
   const submissionEmailSubject = firstDefined((p) => p.submissionEmailSubject ?? undefined);
   const preBidChannel = firstDefined((p) => p.preBidChannel ?? undefined);
+  const preBidMeetingDate = firstDefined((p) => p.preBidMeetingDate ?? undefined);
+  const preBidMeetingLocation = firstDefined((p) => p.preBidMeetingLocation ?? undefined);
   const clientRepresentative = firstDefined((p) => p.clientRepresentative ?? undefined);
   const procurementReferenceNumber = firstDefined((p) => p.procurementReferenceNumber ?? undefined);
   const submissionMethod = firstDefined((p) => p.submissionMethod ?? undefined);
@@ -1310,6 +1314,8 @@ function mergeAnalysisResults(parts: AIAnalysisResult[]): AIAnalysisResult {
     clientWebsite: clientWebsite ?? null,
     submissionEmailSubject: submissionEmailSubject ?? null,
     preBidChannel: preBidChannel ?? null,
+    preBidMeetingDate: preBidMeetingDate ?? null,
+    preBidMeetingLocation: preBidMeetingLocation ?? null,
     clientRepresentative: clientRepresentative ?? null,
     procurementReferenceNumber: procurementReferenceNumber ?? null,
     submissionMethod: submissionMethod ?? null,
@@ -1417,6 +1423,8 @@ JSON structure required:
   "clientWebsite": "official website or tender-portal URL of the procuring entity, or null",
   "submissionEmailSubject": "required email subject line verbatim if specified for bid submission, or null",
   "preBidChannel": "channel for pre-bid questions or clarifications (email address, fax, or described method), or null",
+  "preBidMeetingDate": "ISO-8601 date string (YYYY-MM-DD) for the pre-bid conference / site briefing / mandatory site visit, or null if not stated",
+  "preBidMeetingLocation": "venue or location of the pre-bid meeting (address or room name), or null",
   "clientRepresentative": "name of the authorized officer or client representative signing the tender notice, or null",
   "procurementReferenceNumber": "procurement or tender reference number as printed on the document (e.g. ITT/2025/001, RFP-ETH-24-003), or null if absent",
   "submissionMethod": "how bids must be submitted — one of: 'Email', 'Portal', 'Hard copy', 'Sealed envelope', 'Hand delivery', 'Courier', or a short verbatim phrase from the document (max 80 chars). null if not stated.",
@@ -1436,6 +1444,8 @@ JSON structure required:
     "submissionAddress": {"page": page_number_or_null, "quote": "verbatim snippet or null"},
     "submissionEmailSubject": {"page": page_number_or_null, "quote": "verbatim snippet or null"},
     "preBidChannel": {"page": page_number_or_null, "quote": "verbatim snippet or null"},
+    "preBidMeetingDate": {"page": page_number_or_null, "quote": "verbatim snippet or null"},
+    "preBidMeetingLocation": {"page": page_number_or_null, "quote": "verbatim snippet or null"},
     "clientRepresentative": {"page": page_number_or_null, "quote": "verbatim snippet or null"}
   },
   "submissionMethodSourcePage": page_number_integer_or_null,
@@ -1505,6 +1515,8 @@ ${tenderContent}`;
         clientWebsite: typeof parsed.clientWebsite === "string" ? parsed.clientWebsite.trim().slice(0, 500) || null : null,
         submissionEmailSubject: typeof parsed.submissionEmailSubject === "string" ? parsed.submissionEmailSubject.trim().slice(0, 500) || null : null,
         preBidChannel: typeof parsed.preBidChannel === "string" ? parsed.preBidChannel.trim().slice(0, 500) || null : null,
+        preBidMeetingDate: (() => { const raw = parsed.preBidMeetingDate; if (typeof raw !== "string" || !raw.trim()) return null; const d = raw.trim().slice(0, 50); return /^\d{4}-\d{2}-\d{2}/.test(d) ? d : null; })(),
+        preBidMeetingLocation: typeof parsed.preBidMeetingLocation === "string" ? parsed.preBidMeetingLocation.trim().slice(0, 300) || null : null,
         clientRepresentative: typeof parsed.clientRepresentative === "string" ? parsed.clientRepresentative.trim().slice(0, 300) || null : null,
         submissionMethod: typeof parsed.submissionMethod === "string" ? parsed.submissionMethod.trim().slice(0, 80) || null : null,
         submissionEmails: typeof parsed.submissionEmails === "string" ? parsed.submissionEmails.trim().slice(0, 500) || null : null,
@@ -1516,7 +1528,7 @@ ${tenderContent}`;
           const src = parsed.contactDetailsSource;
           if (!src || typeof src !== "object") return null;
           const result: Record<string, { page: number | null; quote: string | null }> = {};
-          for (const key of ["country", "clientAddress", "clientCity", "clientWebsite", "clientContactName", "clientContactTitle", "clientContactEmail", "clientContactPhone", "submissionAddress", "submissionEmailSubject", "preBidChannel", "clientRepresentative"]) {
+          for (const key of ["country", "clientAddress", "clientCity", "clientWebsite", "clientContactName", "clientContactTitle", "clientContactEmail", "clientContactPhone", "submissionAddress", "submissionEmailSubject", "preBidChannel", "preBidMeetingDate", "preBidMeetingLocation", "clientRepresentative"]) {
             const entry = (src as Record<string, unknown>)[key];
             if (entry && typeof entry === "object") {
               const e = entry as Record<string, unknown>;

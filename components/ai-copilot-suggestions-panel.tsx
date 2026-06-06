@@ -26,6 +26,7 @@ export async function AICopilotSuggestionsPanel({ tenderId }: { tenderId: string
         currency: true,
         submissionMethod: true,
         submissionEmails: true,
+        submissionAddress: true,
         exactFileNaming: true,
         status: true,
         requirements: { select: { priority: true, sourceConfidence: true, sourcePageNumber: true }, take: 100 },
@@ -66,13 +67,34 @@ export async function AICopilotSuggestionsPanel({ tenderId }: { tenderId: string
     }
 
     // 3. Missing/contaminated metadata
-    if (tender.metadataContaminated || !tender.clientName || !tender.country || !tender.deadline) {
+    if (tender.metadataContaminated || !(tender.clientName || (tender as Record<string, unknown>).procuringEntityName) || !tender.country || !tender.deadline) {
       suggestions.push({
         icon: "📋",
         title: "Complete missing metadata",
         detail: "Client name, country, or deadline is missing or contaminated. Fill these before building the submission plan.",
         priority: "HIGH",
       });
+    }
+
+    // 3b. Missing submission method or endpoint (email/address) — blocks export
+    if (suggestions.length < 6 && tender.analysisSummary) {
+      const noMethod = !tender.submissionMethod;
+      const hasEmailMethod = /email/i.test(tender.submissionMethod ?? "");
+      const hasPhysicalMethod = /sealed|hand|courier/i.test(tender.submissionMethod ?? "");
+      const emailMissing = hasEmailMethod && !tender.submissionEmails;
+      const addressMissing = hasPhysicalMethod && !tender.submissionAddress;
+      if (noMethod || emailMissing || addressMissing) {
+        suggestions.push({
+          icon: "📤",
+          title: "Add missing submission details",
+          detail: noMethod
+            ? "Submission method not set — this blocks the final export. Run Repair Metadata or enter it manually."
+            : emailMissing
+            ? "Submission email is missing for email-based submission — the package cannot be sent. Use Repair Metadata to extract it."
+            : "Submission address is missing for physical submission — required before export.",
+          priority: "HIGH",
+        });
+      }
     }
 
     // 4. Mandatory requirements without source traceability > 30%

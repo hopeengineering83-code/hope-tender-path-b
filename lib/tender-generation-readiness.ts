@@ -204,7 +204,8 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
     exactFileNaming: tender.exactFileNaming,
     exactFileOrder: tender.exactFileOrder,
     // Gap 4 fix — pass metadata + matching state so the score reflects reality.
-    clientName: tender.clientName,
+    // Use procuringEntityName as fallback when clientName is null (AI Analyze tenders).
+    clientName: tender.clientName || (tender as Record<string, unknown>).procuringEntityName as string | null | undefined,
     referenceNumber: tender.reference,
     country: tender.country,
     clientContactName: tender.clientContactName,
@@ -228,7 +229,8 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
   // need to render different messages: "Client name not set" is fixable
   // by EDIT_TENDER; "Invalid client name extracted" usually means OCR
   // captured a TOC entry and the tender needs re-extraction.
-  const clientNameStatus = getClientNameStatus(tender.clientName);
+  const effectiveClientNameForReadiness = tender.clientName || (tender as Record<string, unknown>).procuringEntityName as string | null | undefined;
+  const clientNameStatus = getClientNameStatus(effectiveClientNameForReadiness);
   if (clientNameStatus === "EMPTY" || clientNameStatus === "PLACEHOLDER") {
     blockers.push({
       code: "CLIENT_NAME_REQUIRED",

@@ -26,6 +26,7 @@ import { isExtractionAcceptableForGeneration } from "../../../../../lib/engine/e
 import { hasValidSubmissionPlan } from "../../../../../lib/engine/submission-plan-completeness";
 import { assessExtractionQuality } from "../../../../../lib/extraction-quality";
 import { assessTenderAnalysisQuality } from "../../../../../lib/analysis-quality";
+import { assessExtractionQualityPerPage } from "../../../../../lib/extraction-quality";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -168,7 +169,7 @@ const COMPANY_PRODUCED_KINDS: ReadonlySet<SupportDocKind> = new Set<SupportDocKi
 ]);
 
 async function fillPlannedSupportDocuments(tenderId: string, plannedFileKeys?: Set<string>): Promise<number> {
-  const tender = await prisma.tender.findUnique({ where: { id: tenderId }, include: { requirements: true, expertMatches: { where: { isSelected: true }, include: { expert: true }, orderBy: { score: "desc" } }, projectMatches: { where: { isSelected: true }, include: { project: true }, orderBy: { score: "desc" } } } });
+  const tender = await prisma.tender.findUnique({ where: { id: tenderId }, select: { title: true, clientName: true, procuringEntityName: true, description: true, requirements: true, expertMatches: { where: { isSelected: true }, include: { expert: true }, orderBy: { score: "desc" } }, projectMatches: { where: { isSelected: true }, include: { project: true }, orderBy: { score: "desc" } } } });
   if (!tender) return 0;
   const requirements = tender.requirements.map((r) => formatRequirementLine(r, 380));
   const experts = tender.expertMatches.filter((m) => m.expert && m.expert.trustLevel === "REVIEWED").map((m) => `${m.expert.fullName}${m.expert.title ? ` — ${m.expert.title}` : ""}${m.expert.yearsExperience ? ` | ${m.expert.yearsExperience}+ years` : ""}${m.expert.profile ? ` | ${shortText(m.expert.profile, 260)}` : ""}`);
@@ -189,7 +190,7 @@ async function fillPlannedSupportDocuments(tenderId: string, plannedFileKeys?: S
   for (const doc of incomplete) {
     const title = clean(doc.exactFileName || doc.name);
     const kind = classifySupportDoc(title);
-    const cleanTitle = cleanTenderTitle(tender.title, { clientName: cleanClientName(tender.clientName, tender.description), description: tender.description });
+    const cleanTitle = cleanTenderTitle(tender.title, { clientName: cleanClientName(tender.clientName || tender.procuringEntityName, tender.description), description: tender.description });
 
     if (COMPANY_PRODUCED_KINDS.has(kind)) {
       // Company-produced deliverable: generate a real DOCX with company evidence content.
@@ -280,7 +281,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     nextAction: "OPEN_COMPANY_READINESS",
     diagnosticId: `ingestion-not-ready-${id}`,
   }, { status: 422 });
-  if (!hasRealClientName(tender.clientName)) return NextResponse.json({
+  // Accept procuringEntityName as a fallback for clientName — AI Analyze may set
+  // procuringEntityName without back-filling clientName on older tenders.
+  const effectiveClientName = tender.clientName || (tender as Record<string, unknown>).procuringEntityName as string | null | undefined;
+  if (!hasRealClientName(effectiveClientName)) return NextResponse.json({
     errorCode: "CLIENT_NAME_REQUIRED",
     error: "Generation blocked: client name is not set. Edit the tender and fill the Client Name field before generating proposal documents.",
     blockers: ["Client name is missing or invalid."],
@@ -343,6 +347,43 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }, { status: 422 });
   }
 
+  // ── Critical content-page gate ────────────────────────────────────────────
+  // Per CLAUDE.md: generation is blocked unless submission instructions AND
+  // required documents were detected in the extracted text. Evaluation criteria
+  // absence is a warning only (documents can still be generated without it, but
+  // the plan may under-score sections).
+  {
+    const reqUrl = new URL(req.url);
+    if (reqUrl.searchParams.get("planOnly") !== "true") {
+      let anySubmission = false;
+      let anyRequiredDocs = false;
+      let anyEvaluation = false;
+      let totalDetected = 0;
+      for (const file of effectiveExtractionFiles) {
+        const pp = assessExtractionQualityPerPage(file.extractedText);
+        totalDetected += pp.totalDetectedPages;
+        if (pp.submissionInstructionPages.length > 0) anySubmission = true;
+        if (pp.requiredDocumentPages.length > 0) anyRequiredDocs = true;
+        if (pp.evaluationCriteriaPages.length > 0) anyEvaluation = true;
+      }
+      if (totalDetected > 0) {
+        const contentBlockers: string[] = [];
+        if (!anySubmission) contentBlockers.push("No submission instruction pages were detected in the extracted text. Submission deadlines, addresses, and methods cannot be verified.");
+        if (!anyRequiredDocs) contentBlockers.push("No required documents/forms pages were detected. The generated proposal may be missing mandatory annexures or official forms.");
+        if (contentBlockers.length > 0) {
+          return NextResponse.json({
+            errorCode: "CRITICAL_CONTENT_PAGES_MISSING",
+            error: "Generation blocked: critical tender sections (submission instructions or required documents) were not found in the extracted text. Re-extract the PDF or run OCR to ensure these sections are readable before generating documents.",
+            blockers: contentBlockers,
+            evaluationCriteriaMissing: !anyEvaluation,
+            nextAction: "OPEN_EXTRACTION_QUALITY",
+            diagnosticId: `content-pages-missing-${id}`,
+          }, { status: 422 });
+        }
+      }
+    }
+  }
+
   const approvedAnalysisSource = await detectAnalysisSourceWithApproval(prisma, id, tender).catch(() => null);
   const analysisQuality = assessTenderAnalysisQuality({
     requirements: tender.requirements,
@@ -351,7 +392,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     submissionNotes: [tender.notes, tender.intakeSummary].filter(Boolean).join("\n\n"),
     exactFileNaming: tender.exactFileNaming,
     exactFileOrder: tender.exactFileOrder,
-    clientName: tender.clientName,
+    clientName: effectiveClientName,
     referenceNumber: tender.reference,
     country: tender.country,
     clientContactName: tender.clientContactName,
@@ -424,7 +465,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // (e.g. client name "Bid-Team to confirm", no submission endpoint, no deadline).
   // overallRatio < 0.3 is a hard block; missingCritical / invalidFields always block.
   const metadataReport = assessTenderMetadataCompleteness({
-    clientName: tender.clientName,
+    clientName: effectiveClientName,
+    procuringEntityName: (tender as Record<string, unknown>).procuringEntityName as string | null | undefined,
     title: tender.title,
     reference: tender.reference ?? null,
     country: tender.country ?? null,

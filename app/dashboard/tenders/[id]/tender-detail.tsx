@@ -336,6 +336,8 @@ type Tender = {
   clientContactPhone?: string | null;
   submissionEmailSubject?: string | null;
   preBidChannel?: string | null;
+  preBidMeetingDate?: Date | string | null;
+  preBidMeetingLocation?: string | null;
   clientRepresentative?: string | null;
   contactDetailsSourceJson?: string | null;
   // Submission source traceability
@@ -1281,8 +1283,9 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
   const extractionCorrupted =
     tender.analysisExtractionStatus === "EXTRACTION_CORRUPTED_AI_SKIPPED" ||
     tender.analysisExtractionStatus === "REGEX_FALLBACK_FROM_WEAK_EXTRACTION";
-  // Mirror hasRealClientName() from lib/engine/metadata-validators.ts
-  const clientNameInvalid = getClientNameStatus(tender.clientName) !== "VALID";
+  // Mirror hasRealClientName() from lib/engine/metadata-validators.ts.
+  // Use clientName || procuringEntityName to match the server-side gate.
+  const clientNameInvalid = getClientNameStatus(tender.clientName || tender.procuringEntityName) !== "VALID";
   const metadataContaminatedBlock = tender.metadataContaminated === true;
   // Mirror server-side hasValidSubmissionPlan gate: at least one non-SUPERSEDED doc row must exist.
   const hasValidPlan = tender.generatedDocuments.some((d) => d.generationStatus !== "SUPERSEDED");
@@ -1354,7 +1357,10 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
   // a clean label on the dashboard without requiring an admin DB cleanup.
   // The raw tender.title / tender.clientName are still in the DB and can
   // be edited via the tender Edit page if the user wants to change them.
-  const displayTitle = cleanTenderTitle(tender.title, { clientName: tender.clientName, description: tender.description });
+  // Use procuringEntityName as a fallback when clientName is null/invalid —
+  // AI Analyze may set procuringEntityName without back-filling clientName.
+  const effectiveTenderClientName = tender.clientName || tender.procuringEntityName;
+  const displayTitle = cleanTenderTitle(tender.title, { clientName: effectiveTenderClientName, description: tender.description });
   // Use the canonical client-name validator FIRST so a TOC-fragment
   // extraction (production-screenshot scenario where clientName captured
   // "references (where available) Photos or drawings of completed
@@ -1362,10 +1368,10 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
   // were a real client. cleanClientName-only falls through to raw
   // tender.clientName when its own heuristic returns "Client", which is
   // what produced the bug.
-  const clientStatus = getClientNameStatus(tender.clientName);
-  const clientDisplay = clientNameDisplayMessage(tender.clientName);
+  const clientStatus = getClientNameStatus(effectiveTenderClientName);
+  const clientDisplay = clientNameDisplayMessage(effectiveTenderClientName);
   const displayClient = clientStatus === "VALID"
-    ? cleanClientName(tender.clientName, tender.description)
+    ? cleanClientName(effectiveTenderClientName, tender.description)
     : null;
   const displayClientLine = displayClient && displayClient !== "Client" ? ` · ${displayClient}` : "";
 
@@ -1913,6 +1919,8 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
                     { label: "Submission email(s)", key: "submissionEmails", value: tender.submissionEmails },
                     { label: "Submission email subject", key: "submissionEmailSubject", value: tender.submissionEmailSubject },
                     { label: "Pre-bid channel", key: "preBidChannel", value: tender.preBidChannel },
+                    { label: "Pre-bid meeting date", key: "preBidMeetingDate", value: tender.preBidMeetingDate ? (typeof tender.preBidMeetingDate === "string" ? tender.preBidMeetingDate.slice(0, 10) : new Date(tender.preBidMeetingDate).toLocaleDateString()) : null },
+                    { label: "Pre-bid meeting location", key: "preBidMeetingLocation", value: tender.preBidMeetingLocation },
                     { label: "Contact person", key: "clientContactName", value: tender.clientContactName },
                     { label: "Contact title", key: "clientContactTitle", value: tender.clientContactTitle },
                     { label: "Contact email", key: "clientContactEmail", value: tender.clientContactEmail },
@@ -1930,7 +1938,12 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
                       <dt className="text-sm font-medium text-slate-700 mb-2">Contact &amp; location details</dt>
                       <dl className="grid gap-x-6 gap-y-2 md:grid-cols-2">
                         {rowsToShow.map(({ label, key, value }) => {
-                          const s = src[key];
+                          // submissionEmails has its own source-page field rather
+                          // than being in contactDetailsSourceJson.
+                          const s: { page: number | null; quote: string | null } | undefined =
+                            key === "submissionEmails" && tender.submissionEmailSourcePage
+                              ? { page: tender.submissionEmailSourcePage, quote: null }
+                              : src[key];
                           const missing = !value;
                           return (
                             <div key={key}>

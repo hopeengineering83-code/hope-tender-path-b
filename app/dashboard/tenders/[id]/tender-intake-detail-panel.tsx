@@ -70,7 +70,7 @@ export function TenderIntakeDetailPanel({ tender }: { tender: TenderDetailLike }
 
   // Count how many fields were auto-filled vs need review
   const fields = [
-    tender.reference, tender.clientName, tender.clientContactName, tender.clientContactEmail,
+    tender.reference, tender.clientName || (tender as Record<string, unknown>).procuringEntityName as string | null | undefined, tender.clientContactName, tender.clientContactEmail,
     tender.clientContactPhone, tender.clientAddress, tender.country, deadline, tender.submissionMethod,
     budget, tender.validityDays, bond, preBid, tender.numberOfCopiesRequired, tender.pageLimit,
     evaluation, tender.description, tender.evaluationMethodology, tender.intakeSummary, tender.analysisSummary,
@@ -99,7 +99,7 @@ export function TenderIntakeDetailPanel({ tender }: { tender: TenderDetailLike }
       <div className="grid grid-cols-1 gap-x-6 gap-y-3 md:grid-cols-2 text-sm">
         <Detail label="Reference number" value={tender.reference} />
         <Detail label="Country" value={tender.country} />
-        <Detail label="Client / Procuring entity" value={tender.clientName} />
+        <Detail label="Client / Procuring entity" value={tender.clientName || (tender as Record<string, unknown>).procuringEntityName as string | null | undefined} />
         <Detail label="Client address" value={tender.clientAddress} />
         <Detail label="Client contact" value={tender.clientContactName ? `${tender.clientContactName}${tender.clientContactTitle ? ` — ${tender.clientContactTitle}` : ""}` : null} />
         <Detail label="Contact email" value={tender.clientContactEmail} />

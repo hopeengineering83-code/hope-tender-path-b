@@ -175,7 +175,7 @@ export default async function TendersPage({
         ...(regexOnlyFilter ? { notes: { contains: "Analysis source: Regex fallback" } } : {}),
       },
       select: {
-        id: true, title: true, reference: true, clientName: true,
+        id: true, title: true, reference: true, clientName: true, procuringEntityName: true,
         deadline: true, status: true, category: true, budget: true, currency: true,
         readinessScore: true,
         notes: true,
@@ -384,9 +384,9 @@ export default async function TendersPage({
                   return (
                     <tr key={tender.id} className={`hover:bg-slate-50 ${urgent ? "bg-amber-50/60 hover:bg-amber-50" : ""}`}>
                       <td className="px-6 py-4">
-                        <p className="font-medium text-slate-900">{cleanTenderTitle(tender.title, { clientName: tender.clientName })}</p>
+                        <p className="font-medium text-slate-900">{cleanTenderTitle(tender.title, { clientName: tender.clientName || tender.procuringEntityName })}</p>
                         {(() => {
-                          const c = cleanClientName(tender.clientName);
+                          const c = cleanClientName(tender.clientName || tender.procuringEntityName);
                           return c && c !== "Client" ? <p className="text-xs text-slate-400">{c}</p> : null;
                         })()}
                         {tender.stage && (
@@ -442,14 +442,14 @@ export default async function TendersPage({
               {tenders.map((tender) => {
                 const unresolvedGaps = tender.complianceGaps.filter((gap) => !gap.isResolved).length;
                 const criticalGaps = tender.complianceGaps.filter((gap) => !gap.isResolved && gap.severity === "CRITICAL").length;
-                const clientName = cleanClientName(tender.clientName);
+                const clientName = cleanClientName(tender.clientName || tender.procuringEntityName);
                 const mobileUrgent = isUrgentRow(tender.deadline, tender.status);
                 return (
                   <div key={tender.id} className={`p-4 flex flex-col gap-2 ${mobileUrgent ? "bg-amber-50/60" : "bg-white"}`}>
                     <div className="flex items-start justify-between gap-2">
                       <div className="flex-1 min-w-0">
                         <p className="font-semibold text-slate-900 leading-snug">
-                          {cleanTenderTitle(tender.title, { clientName: tender.clientName })}
+                          {cleanTenderTitle(tender.title, { clientName: tender.clientName || tender.procuringEntityName })}
                         </p>
                         {clientName && clientName !== "Client" && (
                           <p className="text-xs text-slate-400 mt-0.5">{clientName}</p>

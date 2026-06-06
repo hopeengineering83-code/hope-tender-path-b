@@ -154,6 +154,11 @@ export default function TenderRecoveryCommandCenter({ tenderId }: { tenderId: st
     if (action === "AUTO_FINALIZE") return `Auto-finalize completed — ${json.finalized ?? json.updated ?? 0} document(s) updated. Re-check export readiness before download.`;
     if (action === "RESOLVE_EXPORT_BLOCKERS" || action === "EXPORT_READINESS") return "Export readiness re-checked. Review the Export Readiness panel for canonical blockers.";
     if (action === "RECONCILE_OUTSIDE_PLAN_DOCS" || action === "EXCLUDE_OUTSIDE_PLAN_DOCS") return `Outside-plan reconciliation completed — ${json.superseded ?? 0} document(s) excluded/superseded.`;
+    if (action === "REPAIR_METADATA") {
+      const repaired: string[] = Array.isArray(json.repaired) ? json.repaired as string[] : [];
+      return repaired.length > 0 ? `Metadata repaired — ${repaired.join(", ")} updated from tender source text.` : "Metadata repair ran — no missing fields could be extracted from the tender source text.";
+    }
+    if (action === "RE_EXTRACT_METADATA") return "Metadata re-extraction complete. Review the tender detail panel to confirm updated fields.";
     return `${recoveryCommandLabel(action)} completed.`;
   }
 
@@ -383,6 +388,29 @@ export default function TenderRecoveryCommandCenter({ tenderId }: { tenderId: st
               <li key={b.code} className="rounded border border-red-200 bg-red-50 px-3 py-1.5">
                 <p className="text-xs font-medium text-red-800">{b.message}</p>
                 <p className="mt-0.5 text-xs text-red-600">Action: {b.action}</p>
+                {/* Quick-action shortcuts for specific blocker codes */}
+                {b.code === "METADATA_INCOMPLETE" && (
+                  <div className="mt-1.5 flex flex-wrap gap-1.5">
+                    <button onClick={() => void executeAction("REPAIR_METADATA")} disabled={actioning} className="rounded bg-red-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50">Repair Metadata</button>
+                    <button onClick={() => void executeAction("RE_EXTRACT_METADATA")} disabled={actioning} className="rounded border border-red-400 px-2 py-0.5 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-50">Re-extract</button>
+                    <button onClick={() => scrollToPanel("tender-edit-form", "Open the Tender Metadata form to fill missing fields.")} className="rounded border border-red-300 px-2 py-0.5 text-xs text-red-600 hover:bg-red-100">Edit Manually</button>
+                  </div>
+                )}
+                {b.code === "ANALYSIS_REGEX_FALLBACK_UNAPPROVED" && (
+                  <div className="mt-1.5 flex flex-wrap gap-1.5">
+                    <button onClick={() => void executeAction("RETRY_AI_ANALYZE")} disabled={actioning} className="rounded bg-red-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50">Retry AI Analyze</button>
+                  </div>
+                )}
+                {b.code === "EVIDENCE_NOT_ASSESSED" && (
+                  <div className="mt-1.5">
+                    <button onClick={() => void executeAction("RUN_ENGINE")} disabled={actioning} className="rounded bg-red-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50">Run Engine</button>
+                  </div>
+                )}
+                {b.code === "MANDATORY_EVIDENCE_WEAK" && (
+                  <div className="mt-1.5">
+                    <button onClick={() => void executeAction("LINK_VAULT_EVIDENCE")} disabled={actioning} className="rounded bg-red-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50">Link Vault Evidence</button>
+                  </div>
+                )}
               </li>
             ))}
           </ul>

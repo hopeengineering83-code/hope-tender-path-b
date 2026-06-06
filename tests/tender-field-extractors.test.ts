@@ -169,6 +169,9 @@ describe("Hard safety — sourceQuote is always present on found:true", () => {
         numberOfCopiesRequired: "Submit 3 hard copies of the proposal in separate sealed envelopes. Labels must be clearly visible and dated.",
         mandatorySiteVisit: "A mandatory site visit will be held on 5 Aug 2026. Failure to attend disqualifies the bid from evaluation.",
         clientName: "Procuring Entity: Federal Ministry of Health and Sanitation, Procurement Directorate, Addis Ababa, Ethiopia. Reference RFP-MOH-2026-014.",
+        submissionAddress: "Submission address: Room 412, Ministry of Health Building, Churchill Avenue, Addis Ababa, Ethiopia. Open Mon-Fri 08:00-17:00.",
+        clientContactEmail: "For inquiries, contact the procurement officer. Contact e-mail: procurement.officer@ministry.gov.et. Clarifications must be submitted in writing.",
+        preBidMeetingDate: "A pre-bid conference will be held on 15 July 2026 at 10:00 at the Ministry boardroom. Attendance is encouraged.",
       };
       const text = inputs[field];
       const r = runExtractorByField(field as typeof SUPPORTED_EXTRACTORS[number], { files: [{ fileName: "rfp.pdf", extractedText: text }] });

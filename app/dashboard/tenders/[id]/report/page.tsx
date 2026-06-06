@@ -49,6 +49,7 @@ export default async function TenderReportPage({ params }: { params: Promise<{ i
       id: true,
       title: true,
       clientName: true,
+      procuringEntityName: true,
       country: true,
       deadline: true,
       currency: true,
@@ -56,9 +57,13 @@ export default async function TenderReportPage({ params }: { params: Promise<{ i
       stage: true,
       clientContactName: true,
       clientContactEmail: true,
+      clientContactPhone: true,
       submissionMethod: true,
       submissionAddress: true,
       submissionEmails: true,
+      preBidChannel: true,
+      preBidMeetingDate: true,
+      preBidMeetingLocation: true,
       analysisSummary: true,
       requirements: {
         select: { id: true, title: true, priority: true, requirementType: true },
@@ -110,7 +115,7 @@ export default async function TenderReportPage({ params }: { params: Promise<{ i
           {tender.title ?? "—"}
         </h1>
         <div className="mt-3 flex flex-wrap gap-4 text-sm text-slate-600">
-          <span><span className="font-medium">Client:</span> {tender.clientName ?? "—"}</span>
+          <span><span className="font-medium">Client:</span> {(tender.clientName || tender.procuringEntityName) ?? "—"}</span>
           <span><span className="font-medium">Country:</span> {tender.country ?? "—"}</span>
           <span><span className="font-medium">Deadline:</span> {fmt(tender.deadline)}</span>
           <span><span className="font-medium">Currency:</span> {tender.currency ?? "—"}</span>
@@ -144,6 +149,9 @@ export default async function TenderReportPage({ params }: { params: Promise<{ i
                 : "—"],
               ["Contact Person", tender.clientContactName ?? "—"],
               ["Contact Email", tender.clientContactEmail ?? "—"],
+              ...(tender.clientContactPhone ? [["Contact Phone", tender.clientContactPhone]] : []),
+              ...(tender.preBidChannel ? [["Pre-bid Channel", tender.preBidChannel]] : []),
+              ...(tender.preBidMeetingDate ? [["Pre-bid Meeting", new Date(tender.preBidMeetingDate).toLocaleDateString() + (tender.preBidMeetingLocation ? ` — ${tender.preBidMeetingLocation}` : "")]] : []),
             ].map(([label, value]) => (
               <tr key={label} className="border-b border-slate-100">
                 <td className="py-1.5 pr-4 font-medium text-slate-500 w-44 align-top">{label}</td>

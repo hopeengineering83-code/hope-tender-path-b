@@ -17,6 +17,9 @@ export type AnalysisRequirementLike = {
   pageLimit?: number | null;
   restrictions?: string | null;
   sectionReference?: string | null;
+  sourcePageNumber?: number | null;
+  sourceExactQuote?: string | null;
+  sourceConfidence?: number | null;
 };
 
 export type AnalysisQualityReport = {
@@ -117,7 +120,11 @@ export function assessTenderAnalysisQuality(params: {
   const mandatoryCount = requirements.filter((req) => /mandatory|required|shall|must/i.test(req.priority ?? "")).length;
   const scoredCount = requirements.filter((req) => textIncludesAny(`${req.title ?? ""} ${req.description ?? ""} ${req.restrictions ?? ""}`, [/score/i, /weight/i, /points?/i, /evaluation/i, /criteria/i])).length;
   const exactFileNameCount = requirements.filter((req) => Boolean((req.exactFileName ?? "").trim())).length;
-  const sourceReferencedCount = requirements.filter((req) => Boolean((req.sectionReference ?? "").trim())).length;
+  const sourceReferencedCount = requirements.filter((req) =>
+    Boolean((req.sectionReference ?? "").trim()) ||
+    (req.sourcePageNumber != null && req.sourcePageNumber > 0) ||
+    Boolean((req.sourceExactQuote ?? "").trim())
+  ).length;
 
   const exactFileNaming = parseStringArray(params.exactFileNaming);
   const exactFileOrder = parseStringArray(params.exactFileOrder);
@@ -228,6 +235,21 @@ export function assessTenderAnalysisQuality(params: {
     } else {
       matchingReadinessSub = params.matchingScore;
     }
+  }
+
+  // ─── Evidence quality: reviewed vs unreviewed selection ────────────
+  // A non-zero matching score with zero REVIEWED experts/projects selected
+  // means only unreviewed candidates were matched. Unreviewed CVs and project
+  // refs have not been QA'd — proposals built from them are high-risk.
+  const reviewedExperts = params.selectedReviewedExperts ?? null;
+  const reviewedProjects = params.selectedReviewedProjects ?? null;
+  const hasAnyReviewedEvidence = (reviewedExperts !== null && reviewedExperts > 0) || (reviewedProjects !== null && reviewedProjects > 0);
+  const hasMatchingScore = typeof params.matchingScore === "number" && params.matchingScore > 0;
+  if (hasMatchingScore && reviewedExperts !== null && reviewedProjects !== null && !hasAnyReviewedEvidence) {
+    warnings.push("Matching score is non-zero but no REVIEWED experts or projects are selected. Proposals built from unreviewed evidence carry higher evaluator-rejection risk.");
+    recommendations.push("Review and approve at least one expert CV and one comparable project reference in the Vault before generating documents.");
+    score -= 12;
+    matchingReadinessSub = Math.max(0, matchingReadinessSub - 20);
   }
 
   // ─── Sub-score breakdown ───────────────────────────────────────────

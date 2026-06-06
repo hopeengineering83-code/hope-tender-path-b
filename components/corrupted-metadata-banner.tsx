@@ -30,6 +30,7 @@ type TenderShape = {
   id: string;
   reference: string | null;
   clientName: string | null;
+  procuringEntityName?: string | null;
   country: string | null;
   clientContactName: string | null;
 };
@@ -39,8 +40,9 @@ function badFieldsFor(tender: TenderShape): Array<{ field: string; label: string
   if (tender.reference && tender.reference.trim() !== "" && !isValidReferenceNumber(tender.reference)) {
     bad.push({ field: "reference", label: "Reference Number", stored: tender.reference });
   }
-  if (tender.clientName && tender.clientName.trim() !== "" && !isValidClientName(tender.clientName)) {
-    bad.push({ field: "clientName", label: "Client / Procuring Entity", stored: tender.clientName });
+  const effectiveClientName = tender.clientName || tender.procuringEntityName || null;
+  if (effectiveClientName && effectiveClientName.trim() !== "" && !isValidClientName(effectiveClientName)) {
+    bad.push({ field: "clientName", label: "Client / Procuring Entity", stored: effectiveClientName });
   }
   if (tender.country && tender.country.trim() !== "" && !isValidCountry(tender.country)) {
     bad.push({ field: "country", label: "Country", stored: tender.country });

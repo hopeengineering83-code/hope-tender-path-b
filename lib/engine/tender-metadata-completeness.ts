@@ -81,6 +81,10 @@ export type NonCriticalMetadataField =
 export type MetadataCompletenessInput = {
   // Top-level tender fields
   clientName?: string | null;
+  /** Canonical procuring-entity name extracted by AI. Used as fallback for
+   *  the clientName gate so a tender with procuringEntityName set (but
+   *  clientName not yet back-filled) is not incorrectly blocked. */
+  procuringEntityName?: string | null;
   title?: string | null;
   reference?: string | null;
   country?: string | null;
@@ -271,7 +275,10 @@ export function assessTenderMetadataCompleteness(input: MetadataCompletenessInpu
     if (!isValidPresent(value)) missingCritical.push({ field, reason });
   };
 
-  checkCritical("clientName", input.clientName, "Client / procuring entity name is required for cover letter and declarations.");
+  // Accept either clientName or procuringEntityName — if the AI set procuringEntityName
+  // but the back-fill into clientName hasn't run yet, do not block generation.
+  const effectiveClientName = input.clientName || input.procuringEntityName;
+  checkCritical("clientName", effectiveClientName, "Client / procuring entity name is required for cover letter and declarations.");
   checkCritical("title", input.title, "Tender title is required throughout the proposal.");
   checkCritical("submissionMethod", input.submissionMethod, "Submission method (portal / sealed envelope / email) drives package mode and final ZIP behaviour.");
   // submissionEndpoint = either an email list, a submission address, or a portal URL

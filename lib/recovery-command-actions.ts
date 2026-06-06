@@ -168,6 +168,56 @@ export const RECOVERY_COMMAND_ACTIONS: Record<string, RecoveryCommandActionSpec>
     label: "Re-check readiness",
     kind: "refresh",
   },
+  // Scroll targets for API gate error nextAction codes ──────────────────────
+  OPEN_EXTRACTION_QUALITY: {
+    label: "Open Extraction Quality",
+    kind: "scroll",
+    anchorId: "extraction-quality",
+    message: "Open the Extraction Quality panel to review page extraction coverage and OCR status.",
+  },
+  OPEN_ANALYSIS_QUALITY: {
+    label: "Open Analysis Quality",
+    kind: "scroll",
+    anchorId: "analysis-quality",
+    message: "Open the Analysis Quality panel to review tender analysis completeness and warnings.",
+  },
+  EDIT_TENDER: {
+    label: "Edit Tender",
+    kind: "scroll",
+    anchorId: "tender-edit-form",
+    message: "Open the Tender Metadata form and fill in missing critical fields.",
+  },
+  EDIT_TENDER_METADATA: {
+    label: "Edit Tender Metadata",
+    kind: "scroll",
+    anchorId: "tender-edit-form",
+    message: "Open the Tender Metadata form and correct the client/procuring entity details.",
+  },
+  CHANGE_BID_DECISION: {
+    label: "Change Bid Decision",
+    kind: "scroll",
+    anchorId: "tender-edit-form",
+    message: "Open the Tender edit form and change the bid decision from NO_BID to BID or BID_WITH_CONDITIONS.",
+  },
+  RUN_OCR_OR_UPLOAD_CLEARER_SCAN: {
+    label: "Re-upload or Run OCR",
+    kind: "scroll",
+    anchorId: "tender-files",
+    message: "Open the Tender Files panel to re-upload a clearer scan or trigger OCR on the current file.",
+  },
+  // Metadata repair / re-extraction ─────────────────────────────────────────
+  REPAIR_METADATA: {
+    label: "Repair Metadata",
+    kind: "api",
+    method: "POST",
+    path: "/api/tenders/{tenderId}/repair-metadata",
+  },
+  RE_EXTRACT_METADATA: {
+    label: "Re-extract Metadata",
+    kind: "api",
+    method: "POST",
+    path: "/api/tenders/{tenderId}/re-extract-metadata",
+  },
 };
 
 export function getRecoveryCommandActionSpec(action: string): RecoveryCommandActionSpec | null {
