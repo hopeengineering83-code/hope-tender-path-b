@@ -68,38 +68,61 @@ export async function POST(req: Request) {
   const { searchParams } = new URL(req.url);
   const jobTypeFilter = searchParams.get("jobType") as JobType | null;
 
-  const claimed = await claimNextJob({ jobType: jobTypeFilter ?? undefined });
-  if (!claimed) {
+  const startTime = Date.now();
+  // Hobby function timeout is 60s. Stop claiming new jobs if we've been running
+  // for more than 40s, leaving enough headroom for the last job to finish or
+  // for clean shutdown.
+  const MAX_RUN_MS = 40_000;
+  const processedJobs: Array<{ jobId: string; jobType: string; status: string; error?: string }> = [];
+
+  while (Date.now() - startTime < MAX_RUN_MS) {
+    const claimed = await claimNextJob({ jobType: jobTypeFilter ?? undefined });
+    if (!claimed) break;
+
+    // When not using an automated caller (worker secret or Vercel cron),
+    // enforce userId match — a user can only run their own jobs.
+    if (!isAutomatedCaller && claimed.userId !== userId) {
+      await failJob(claimed.id, "Job belongs to a different user; released back to queue. Trigger the correct user's worker.");
+      // Stop the loop if we hit a job for another user to avoid thrashing.
+      break;
+    }
+
+    const handler = getHandler(claimed.jobType);
+    if (!handler) {
+      await failJob(claimed.id, `No handler registered for jobType=${claimed.jobType}`);
+      processedJobs.push({ jobId: claimed.id, jobType: claimed.jobType, status: "FAILED", error: "No handler" });
+      continue;
+    }
+
+    try {
+      const output = await handler({
+        jobId: claimed.id,
+        userId: claimed.userId,
+        tenderId: claimed.tenderId,
+        input: claimed.input,
+      });
+      await completeJob(claimed.id, output);
+      processedJobs.push({ jobId: claimed.id, jobType: claimed.jobType, status: "SUCCEEDED" });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      await failJob(claimed.id, msg);
+      processedJobs.push({ jobId: claimed.id, jobType: claimed.jobType, status: "FAILED", error: msg });
+    }
+
+    // Heavy jobs should probably run solo per invocation to stay within the 60s cap.
+    if (["ENGINE_RUN", "PROPOSAL_GENERATION", "AI_REMATCH", "EVALUATOR_SIM"].includes(claimed.jobType)) {
+      break;
+    }
+  }
+
+  if (processedJobs.length === 0) {
     return NextResponse.json({ ran: 0, message: "queue empty" });
   }
 
-  // When not using an automated caller (worker secret or Vercel cron),
-  // enforce userId match — a user can only run their own jobs.
-  if (!isAutomatedCaller && claimed.userId !== userId) {
-    // Release the job back to QUEUED for the correct user's worker to pick up
-    // (rare race condition — usually shouldn't happen)
-    await failJob(claimed.id, "Job belongs to a different user; released back to queue. Trigger the correct user's worker.");
-    return NextResponse.json({ ran: 0, message: "claimed job belongs to another user — released" });
-  }
-
-  const handler = getHandler(claimed.jobType);
-  if (!handler) {
-    await failJob(claimed.id, `No handler registered for jobType=${claimed.jobType}`);
-    return NextResponse.json({ ran: 0, jobId: claimed.id, error: `No handler for jobType=${claimed.jobType}` }, { status: 500 });
-  }
-
-  try {
-    const output = await handler({
-      jobId: claimed.id,
-      userId: claimed.userId,
-      tenderId: claimed.tenderId,
-      input: claimed.input,
-    });
-    await completeJob(claimed.id, output);
-    return NextResponse.json({ ran: 1, jobId: claimed.id, jobType: claimed.jobType, output });
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    await failJob(claimed.id, msg);
-    return NextResponse.json({ ran: 0, jobId: claimed.id, jobType: claimed.jobType, error: msg }, { status: 500 });
-  }
+  // Return a summary of all processed jobs.
+  return NextResponse.json({
+    ran: processedJobs.length,
+    processedJobs,
+    durationMs: Date.now() - startTime
+  });
 }

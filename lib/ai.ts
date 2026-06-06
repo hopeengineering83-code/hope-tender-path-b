@@ -973,6 +973,9 @@ export type AIAnalysisResult = {
   // Procurement / tender reference number (CLAUDE.md item #5).
   // E.g. "ITT/2025/001", "RFP-ETH-24-003", "PPMO/NCB/001/2025".
   procurementReferenceNumber?: string | null;
+  // Critical submission fields extracted by AI (regex at upload often misses these)
+  submissionMethod?: string | null;
+  submissionEmails?: string | null;
   // Per-field source provenance for the contact/location fields above.
   // Stored as JSON in DB column contactDetailsSourceJson.
   contactDetailsSource?: Record<string, { page: number | null; quote: string | null }> | null;
@@ -1266,6 +1269,8 @@ function mergeAnalysisResults(parts: AIAnalysisResult[]): AIAnalysisResult {
   const preBidChannel = firstDefined((p) => p.preBidChannel ?? undefined);
   const clientRepresentative = firstDefined((p) => p.clientRepresentative ?? undefined);
   const procurementReferenceNumber = firstDefined((p) => p.procurementReferenceNumber ?? undefined);
+  const submissionMethod = firstDefined((p) => p.submissionMethod ?? undefined);
+  const submissionEmails = firstDefined((p) => p.submissionEmails ?? undefined);
   const clientNameSourcePage = firstDefined((p) => p.clientNameSourcePage ?? undefined);
   const clientNameSourceQuote = firstDefined((p) => p.clientNameSourceQuote ?? undefined);
   const submissionEmailSourcePage = firstDefined((p) => p.submissionEmailSourcePage ?? undefined);
@@ -1307,6 +1312,8 @@ function mergeAnalysisResults(parts: AIAnalysisResult[]): AIAnalysisResult {
     preBidChannel: preBidChannel ?? null,
     clientRepresentative: clientRepresentative ?? null,
     procurementReferenceNumber: procurementReferenceNumber ?? null,
+    submissionMethod: submissionMethod ?? null,
+    submissionEmails: submissionEmails ?? null,
     contactDetailsSource: Object.keys(contactDetailsSource).length > 0 ? contactDetailsSource : null,
     clientNameSourcePage: clientNameSourcePage ?? null,
     clientNameSourceQuote: clientNameSourceQuote ?? null,
@@ -1412,6 +1419,8 @@ JSON structure required:
   "preBidChannel": "channel for pre-bid questions or clarifications (email address, fax, or described method), or null",
   "clientRepresentative": "name of the authorized officer or client representative signing the tender notice, or null",
   "procurementReferenceNumber": "procurement or tender reference number as printed on the document (e.g. ITT/2025/001, RFP-ETH-24-003), or null if absent",
+  "submissionMethod": "how bids must be submitted — one of: 'Email', 'Portal', 'Hard copy', 'Sealed envelope', 'Hand delivery', 'Courier', or a short verbatim phrase from the document (max 80 chars). null if not stated.",
+  "submissionEmails": "all email addresses for bid submission as a comma-separated string (NOT the contact/clarification email), or null if none specified",
   "clientNameSourcePage": page_number_integer_or_null,
   "clientNameSourceQuote": "verbatim 1-2 sentence snippet from which the client name was extracted, or null",
   "submissionEmailSourcePage": page_number_integer_or_null,
@@ -1497,6 +1506,9 @@ ${tenderContent}`;
         submissionEmailSubject: typeof parsed.submissionEmailSubject === "string" ? parsed.submissionEmailSubject.trim().slice(0, 500) || null : null,
         preBidChannel: typeof parsed.preBidChannel === "string" ? parsed.preBidChannel.trim().slice(0, 500) || null : null,
         clientRepresentative: typeof parsed.clientRepresentative === "string" ? parsed.clientRepresentative.trim().slice(0, 300) || null : null,
+        submissionMethod: typeof parsed.submissionMethod === "string" ? parsed.submissionMethod.trim().slice(0, 80) || null : null,
+        submissionEmails: typeof parsed.submissionEmails === "string" ? parsed.submissionEmails.trim().slice(0, 500) || null : null,
+        procurementReferenceNumber: typeof parsed.procurementReferenceNumber === "string" ? parsed.procurementReferenceNumber.trim().slice(0, 200) || null : null,
         clientNameSourcePage: typeof parsed.clientNameSourcePage === "number" && Number.isInteger(parsed.clientNameSourcePage) && parsed.clientNameSourcePage > 0 ? parsed.clientNameSourcePage : null,
         clientNameSourceQuote: typeof parsed.clientNameSourceQuote === "string" ? parsed.clientNameSourceQuote.trim().slice(0, 500) || null : null,
         submissionEmailSourcePage: typeof parsed.submissionEmailSourcePage === "number" && Number.isInteger(parsed.submissionEmailSourcePage) && parsed.submissionEmailSourcePage > 0 ? parsed.submissionEmailSourcePage : null,
@@ -1609,47 +1621,58 @@ export async function analyzeWithAI(
     return { result, isPartial: false, totalChunks: 1, completedChunks: 1, failedChunks: 0, skippedChunks: 0, chunkProviders: [chunkProvider] };
   }
 
-  console.info(`[ai] tender content is ${tenderContent.length.toLocaleString()} chars — chunking into ${chunks.length} sequential analysis calls.`);
-  const successes: AIAnalysisResult[] = [];
+  console.info(`[ai] tender content is ${tenderContent.length.toLocaleString()} chars — chunking into ${chunks.length} concurrent analysis calls (limit=3).`);
+  const successesWithIdx: Array<{ index: number; result: AIAnalysisResult }> = [];
   const failures: string[] = [];
   const chunkProviders: Array<string | null> = Array(chunks.length).fill(null);
   let completedChunks = 0;
   let failedChunks = 0;
+  let skippedChunks = 0;
 
-  for (let i = 0; i < chunks.length; i++) {
-    // Skip chunks before startFromChunk (resume support)
-    if (opts?.startFromChunk !== undefined && i < opts.startFromChunk) {
-      continue;
-    }
+  const startIndex = opts?.startFromChunk ?? 0;
+  const queue = chunks
+    .map((content, index) => ({ content, index }))
+    .filter((c) => c.index >= startIndex);
 
-    // Deadline check: stop before starting this chunk if not enough time remains
-    if (opts?.deadlineAt !== undefined && Date.now() + CHUNK_DEADLINE_MARGIN_MS > opts.deadlineAt) {
-      console.warn(`[ai] deadline approaching — stopping before chunk ${i + 1}/${chunks.length}. Completed: ${completedChunks}, Failed: ${failedChunks}`);
-      break;
-    }
+  // Limited concurrency: process up to 3 chunks in parallel.
+  // This balances speed with provider rate-limit safety.
+  const CONCURRENCY_LIMIT = 3;
 
-    try {
-      const chunkIdx = i;
-      successes.push(await analyzeOneChunkWithRetry(chunks[i], i, chunks.length, (p) => { chunkProviders[chunkIdx] = p; }));
-      completedChunks++;
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      failures.push(`chunk ${i + 1}: ${msg}`);
-      failedChunks++;
-      console.warn(`[ai] chunk ${i + 1}/${chunks.length} failed — continuing with remaining chunks. Error: ${msg}`);
-      // Brief inter-chunk delay after a transient failure (rate-limit, timeout)
-      // so cooled-down providers have more recovery time before the next chunk.
-      // Skip the delay when the deadline is near (< 15s remaining) to avoid
-      // burning the remaining window on a sleep.
-      const isTransient = isTransientChunkError(err);
-      const hasDeadlineRoom = opts?.deadlineAt === undefined || Date.now() + 15_000 < opts.deadlineAt;
-      if (isTransient && hasDeadlineRoom && i < chunks.length - 1) {
-        await new Promise((r) => setTimeout(r, 3_000));
+  const worker = async () => {
+    while (queue.length > 0) {
+      // Deadline check: stop if not enough time remains
+      if (opts?.deadlineAt !== undefined && Date.now() + CHUNK_DEADLINE_MARGIN_MS > opts.deadlineAt) {
+        skippedChunks += queue.length;
+        queue.length = 0;
+        break;
+      }
+
+      const item = queue.shift();
+      if (!item) break;
+
+      try {
+        const res = await analyzeOneChunkWithRetry(item.content, item.index, chunks.length, (p) => {
+          chunkProviders[item.index] = p;
+        });
+        successesWithIdx.push({ index: item.index, result: res });
+        completedChunks++;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        failures.push(`chunk ${item.index + 1}: ${msg}`);
+        failedChunks++;
+        console.warn(`[ai] chunk ${item.index + 1}/${chunks.length} failed: ${msg}`);
+        // Brief backoff after transient failure so a rate-limited provider
+        // has recovery time before the next chunk. Skip when deadline is near.
+        const hasDeadlineRoom = opts?.deadlineAt === undefined || Date.now() + 15_000 < opts.deadlineAt;
+        if (isTransientChunkError(err) && hasDeadlineRoom) {
+          await new Promise((r) => setTimeout(r, 3_000));
+        }
       }
     }
-  }
+  };
 
-  const skippedChunks = chunks.length - (completedChunks + failedChunks);
+  // Launch workers
+  await Promise.all(Array(Math.min(CONCURRENCY_LIMIT, queue.length)).fill(null).map(worker));
 
   if (completedChunks === 0) {
     if (skippedChunks === chunks.length) {
@@ -1659,11 +1682,18 @@ export async function analyzeWithAI(
   }
 
   if (failures.length > 0) {
-    console.warn(`[ai] ${failures.length} of ${chunks.length} chunks failed — merging the ${successes.length} that succeeded. Errors: ${failures.join(" | ")}`);
+    console.warn(`[ai] ${failures.length} of ${chunks.length} chunks failed — merging the ${completedChunks} that succeeded. Errors: ${failures.join(" | ")}`);
   }
 
-  const isPartial = skippedChunks > 0 || (failedChunks > 0 && completedChunks > 0);
-  const result = mergeAnalysisResults(successes);
+  const isPartial = skippedChunks > 0 || failedChunks > 0;
+
+  // IMPORTANT: Sort by index before merging so mergeAnalysisResults merge rules
+  // (like first-chunk-wins for classification) remain deterministic.
+  const sortedSuccesses = successesWithIdx
+    .sort((a, b) => a.index - b.index)
+    .map((s) => s.result);
+
+  const result = mergeAnalysisResults(sortedSuccesses);
   return { result, isPartial, totalChunks: chunks.length, completedChunks, failedChunks, skippedChunks, chunkProviders };
 }
 

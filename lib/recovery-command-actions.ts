@@ -9,7 +9,7 @@ export type RecoveryCommandActionKind = "api" | "scroll" | "navigate" | "downloa
 export type RecoveryCommandActionSpec = {
   label: string;
   kind: RecoveryCommandActionKind;
-  method?: "GET" | "POST";
+  method?: "GET" | "POST" | "DELETE";
   path?: string;
   anchorId?: string;
   message?: string;
@@ -50,6 +50,20 @@ export const RECOVERY_COMMAND_ACTIONS: Record<string, RecoveryCommandActionSpec>
     label: "Approve Fallback Analysis (with note)",
     kind: "custom",
     path: "/api/tenders/{tenderId}/approve-analysis",
+    aliases: ["APPROVE_FALLBACK"],
+  },
+  REVOKE_FALLBACK_APPROVAL: {
+    label: "Revoke Fallback Approval",
+    kind: "api",
+    method: "DELETE",
+    path: "/api/tenders/{tenderId}/approve-analysis",
+  },
+  AI_ANALYZE: {
+    label: "Run AI Analyze",
+    kind: "api",
+    method: "POST",
+    path: "/api/tenders/{tenderId}/ai-analyze",
+    aliases: ["REVIEW_ANALYSIS"],
   },
   COMPLETE_METADATA: {
     label: "Complete Metadata",
