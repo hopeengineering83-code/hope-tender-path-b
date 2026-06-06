@@ -210,6 +210,10 @@ type TenderRequirement = {
   requirementType: string;
   exactFileName: string | null;
   exactOrder: number | null;
+  sectionReference: string | null;
+  sourcePageNumber: number | null;
+  sourceExactQuote: string | null;
+  sourceConfidence: number | null;
 };
 
 type ComplianceGap = {
@@ -2145,13 +2149,30 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
               <p className="mt-3 text-sm text-slate-400">Tender analysis has not created structured requirements yet.</p>
             ) : (
               <ul className="mt-4 space-y-3">
-                {tender.requirements.slice(0, 5).map((req) => (
-                  <li key={req.id} className="rounded-xl border px-4 py-3">
-                    <p className="text-sm font-medium text-slate-900">{req.title}</p>
-                    <p className="mt-1 text-xs text-slate-500">{req.priority} · {req.requirementType}</p>
-                    <p className="mt-2 text-sm text-slate-600">{req.description}</p>
-                  </li>
-                ))}
+                {tender.requirements.slice(0, 5).map((req) => {
+                  const hasSource = req.sourcePageNumber || req.sectionReference || req.sourceExactQuote;
+                  return (
+                    <li key={req.id} className="rounded-xl border px-4 py-3">
+                      <div className="flex items-start justify-between gap-2">
+                        <p className="text-sm font-medium text-slate-900">{req.title}</p>
+                        {hasSource ? (
+                          <span className="flex-shrink-0 rounded-full bg-green-100 px-2 py-0.5 text-[10px] font-semibold text-green-700">Sourced</span>
+                        ) : (
+                          <span className="flex-shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700">No source</span>
+                        )}
+                      </div>
+                      <p className="mt-1 text-xs text-slate-500">{req.priority} · {req.requirementType}</p>
+                      <p className="mt-2 text-sm text-slate-600">{req.description}</p>
+                      {hasSource && (
+                        <p className="mt-1.5 text-[11px] text-slate-400">
+                          {req.sourcePageNumber ? `p.${req.sourcePageNumber}` : null}
+                          {req.sectionReference ? (req.sourcePageNumber ? ` · ${req.sectionReference}` : req.sectionReference) : null}
+                          {req.sourceExactQuote ? <span className="ml-1 italic">&ldquo;{req.sourceExactQuote.slice(0, 80)}{req.sourceExactQuote.length > 80 ? "…" : ""}&rdquo;</span> : null}
+                        </p>
+                      )}
+                    </li>
+                  );
+                })}
               </ul>
             )}
           </div>
