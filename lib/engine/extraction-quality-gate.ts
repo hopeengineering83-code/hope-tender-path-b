@@ -267,7 +267,6 @@ export function deriveExtractionStatus(
     }
   }
 
-
   if (hasUnknownPageCount(files)) return "EXTRACTION_WEAK_REVIEW_REQUIRED";
   const avg = averageScore(files);
   if (avg === null) return "EXTRACTION_WEAK_REVIEW_REQUIRED";
