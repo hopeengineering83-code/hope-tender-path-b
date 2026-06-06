@@ -33,6 +33,7 @@ export type TenderCopilotContext = {
   generatedDocuments: string[];
   controls: string[];
   recentAudit: string[];
+  gateWarnings?: string[];
 };
 
 export type TenderCopilotResponse = {
@@ -77,6 +78,9 @@ function buildContextText(context: TenderCopilotContext): string {
   return [
     `Tender: ${context.tenderTitle}`,
     `Summary: ${context.tenderSummary}`,
+    ...(context.gateWarnings && context.gateWarnings.length > 0
+      ? ["\n⚠️ GATE WARNINGS (answer based on these constraints):", ...context.gateWarnings.map((w) => `- ${w}`)]
+      : []),
     "\nRequirements:",
     ...(context.requirements.length ? context.requirements.map((x) => `- ${x}`) : ["- None available"]),
     "\nCompliance gaps:",
