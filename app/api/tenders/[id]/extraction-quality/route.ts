@@ -6,6 +6,12 @@ import { summarizeExtractionCoverage, isExtractionAcceptableForGeneration } from
 
 export const dynamic = "force-dynamic";
 
+type ExtractedTextSampleRow = {
+  id: string;
+  extractedCharacterCount: number;
+  extractedTextSample: string;
+};
+
 export async function GET(
   _req: Request,
   { params }: { params: Promise<{ id: string }> },
@@ -22,7 +28,7 @@ export async function GET(
       files: {
         orderBy: { createdAt: "asc" },
         select: {
-          id: true, fileName: true, originalFileName: true, mimeType: true, extractedText: true,
+          id: true, fileName: true, originalFileName: true, mimeType: true,
           totalPages: true, extractedPages: true, ocrPages: true, failedPages: true,
           extractionScore: true, extractionMethod: true,
         },
@@ -31,9 +37,28 @@ export async function GET(
   });
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
 
+  const textSamples = await prisma.$queryRaw<ExtractedTextSampleRow[]>`
+    SELECT
+      id,
+      COALESCE(char_length("extractedText"), 0)::int AS "extractedCharacterCount",
+      LEFT(COALESCE("extractedText", ''), 6000) AS "extractedTextSample"
+    FROM "TenderFile"
+    WHERE "tenderId" = ${id}
+  `;
+  const textSampleById = new Map(textSamples.map((row) => [row.id, row]));
+
   const files = tender.files.map((file) => {
     const fileName = file.originalFileName || file.fileName;
-    const quality = assessExtractionQuality(file.extractedText, fileName);
+    const textSample = textSampleById.get(file.id);
+    const qualityFromSample = assessExtractionQuality(textSample?.extractedTextSample ?? "", fileName);
+    const extractedCharacterCount = textSample?.extractedCharacterCount ?? qualityFromSample.characterCount;
+    const quality = {
+      ...qualityFromSample,
+      characterCount: extractedCharacterCount,
+      averageCharsPerPage: file.totalPages && file.totalPages > 0
+        ? Math.round(extractedCharacterCount / file.totalPages)
+        : qualityFromSample.averageCharsPerPage,
+    };
     return {
       id: file.id,
       fileName,
@@ -44,7 +69,7 @@ export async function GET(
       failedPages: file.failedPages,
       extractionScore: Math.min(file.extractionScore ?? quality.score, quality.score),
       extractionMethod: file.extractionMethod,
-      extractedCharacterCount: quality.characterCount,
+      extractedCharacterCount,
       ocrUsed: (file.ocrPages ?? 0) > 0 || quality.hasOcrPlaceholder,
       quality,
     };

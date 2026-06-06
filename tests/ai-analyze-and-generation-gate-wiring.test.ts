@@ -125,6 +125,15 @@ describe("corrupted extraction blocks pipeline before stale-score bypasses", () 
     assert.ok(gateIndex < createIndex, "corrupted extraction gate must run before document generation");
     assert.match(generateRoute, /assessExtractionQuality\(file\.extractedText/);
   });
+
+  it("Run Engine uses the shared extraction gate and cannot be force-bypassed", () => {
+    const engineRoute = readFileSync("app/api/tenders/[id]/engine/route.ts", "utf8");
+    assert.match(engineRoute, /isExtractionAcceptableForGeneration/);
+    assert.match(engineRoute, /EXTRACTION_CORRUPTED_ENGINE_SKIPPED/);
+    assert.match(engineRoute, /EXTRACTION_QUALITY_ENGINE_BLOCKED/);
+    assert.match(engineRoute, /cannot be forced through corrupted, unknown-page, or incomplete extraction/);
+    assert.doesNotMatch(engineRoute, /searchParams\.get\("force"\)/);
+  });
 });
 
 describe("bid strategy unavailable on unsafe extraction/analysis", () => {
