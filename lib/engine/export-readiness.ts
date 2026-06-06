@@ -372,6 +372,17 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
   }
 
   // ── Deadline freshness advisory ───────────────────────────────────────────
+  // Block when deadline is not set — per CLAUDE.md deadline is a critical field
+  // that must be present before export.
+  if (!tender.deadline) {
+    blockers.push(tenderBlocker(
+      "DEADLINE_MISSING",
+      "Submission deadline has not been extracted or confirmed — the cover letter and package label cannot carry the correct date.",
+      "Run AI Analyze or manually enter the deadline in Tender Detail before exporting.",
+      "HIGH",
+    ));
+  }
+
   // Warn when the tender deadline has already passed — exporting after
   // deadline does not make sense operationally and may indicate the wrong
   // tender is open.
