@@ -970,6 +970,9 @@ export type AIAnalysisResult = {
   submissionEmailSubject?: string | null;
   preBidChannel?: string | null;
   clientRepresentative?: string | null;
+  // Procurement / tender reference number (CLAUDE.md item #5).
+  // E.g. "ITT/2025/001", "RFP-ETH-24-003", "PPMO/NCB/001/2025".
+  procurementReferenceNumber?: string | null;
   // Per-field source provenance for the contact/location fields above.
   // Stored as JSON in DB column contactDetailsSourceJson.
   contactDetailsSource?: Record<string, { page: number | null; quote: string | null }> | null;
@@ -1262,6 +1265,7 @@ function mergeAnalysisResults(parts: AIAnalysisResult[]): AIAnalysisResult {
   const submissionEmailSubject = firstDefined((p) => p.submissionEmailSubject ?? undefined);
   const preBidChannel = firstDefined((p) => p.preBidChannel ?? undefined);
   const clientRepresentative = firstDefined((p) => p.clientRepresentative ?? undefined);
+  const procurementReferenceNumber = firstDefined((p) => p.procurementReferenceNumber ?? undefined);
   const clientNameSourcePage = firstDefined((p) => p.clientNameSourcePage ?? undefined);
   const clientNameSourceQuote = firstDefined((p) => p.clientNameSourceQuote ?? undefined);
   const submissionEmailSourcePage = firstDefined((p) => p.submissionEmailSourcePage ?? undefined);
@@ -1302,6 +1306,7 @@ function mergeAnalysisResults(parts: AIAnalysisResult[]): AIAnalysisResult {
     submissionEmailSubject: submissionEmailSubject ?? null,
     preBidChannel: preBidChannel ?? null,
     clientRepresentative: clientRepresentative ?? null,
+    procurementReferenceNumber: procurementReferenceNumber ?? null,
     contactDetailsSource: Object.keys(contactDetailsSource).length > 0 ? contactDetailsSource : null,
     clientNameSourcePage: clientNameSourcePage ?? null,
     clientNameSourceQuote: clientNameSourceQuote ?? null,
@@ -1331,6 +1336,7 @@ Analyze the tender and return ONLY a valid JSON object — no explanation, no ma
 ## ANALYSIS PROCESS (think step by step before writing JSON):
 Step 1 — Identify ALL client/contact details:
   • Procuring entity name (official contracting authority), legal client name if explicitly different, donor/funding agency, implementing agency if separate.
+  • Procurement / tender reference number (e.g. "ITT/2025/001", "RFP-ETH-24-003", "PPMO/NCB/001/2025") — look in the header, footer, cover page, or subject line.
   • Country and project location/city.
   • Client postal/mailing address.
   • Contact person: full name, job title/role, email address, phone/mobile.
@@ -1405,6 +1411,7 @@ JSON structure required:
   "submissionEmailSubject": "required email subject line verbatim if specified for bid submission, or null",
   "preBidChannel": "channel for pre-bid questions or clarifications (email address, fax, or described method), or null",
   "clientRepresentative": "name of the authorized officer or client representative signing the tender notice, or null",
+  "procurementReferenceNumber": "procurement or tender reference number as printed on the document (e.g. ITT/2025/001, RFP-ETH-24-003), or null if absent",
   "clientNameSourcePage": page_number_integer_or_null,
   "clientNameSourceQuote": "verbatim 1-2 sentence snippet from which the client name was extracted, or null",
   "submissionEmailSourcePage": page_number_integer_or_null,

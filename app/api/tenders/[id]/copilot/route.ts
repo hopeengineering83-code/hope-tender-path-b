@@ -38,7 +38,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     where: { id, userId: actor.id },
     include: {
       requirements: { orderBy: { createdAt: "asc" } },
-      complianceGaps: { where: { isResolved: false }, orderBy: { createdAt: "desc" } },
+      complianceGaps: { where: { isResolved: false }, orderBy: { createdAt: "desc" }, select: { severity: true, title: true, description: true, mitigationPlan: true } },
       expertMatches: { where: { isSelected: true }, include: { expert: true }, orderBy: { score: "desc" } },
       projectMatches: { where: { isSelected: true }, include: { project: true }, orderBy: { score: "desc" } },
       generatedDocuments: { where: { generationStatus: { not: "SUPERSEDED" } }, orderBy: { exactOrder: "asc" } },
@@ -63,6 +63,27 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const company = await prisma.company.findFirst({ where: { userId: actor.id }, select: { id: true } });
   const evidenceGraph = await buildEvidenceGraph(id, company?.id ?? null);
 
+  // Gate warnings — injected into the AI context so the copilot answers
+  // with awareness of extraction/analysis deficiencies rather than
+  // producing confident advice from incomplete data.
+  const gateWarnings: string[] = [];
+  if (tender.requirements.length === 0) {
+    gateWarnings.push("NO_REQUIREMENTS: No tender requirements have been extracted yet. Do not give specific compliance or bid advice — instruct the user to run AI Analyze first.");
+  }
+  if (!(tender as { clientName?: string | null }).clientName) {
+    gateWarnings.push("MISSING_CLIENT: Procuring entity / client name has not been extracted or confirmed. Do not assume a client name — instruct the user to run AI Analyze or enter it manually.");
+  }
+  const unresolvedCritical = tender.complianceGaps.filter((g) => g.severity === "CRITICAL").length;
+  if (unresolvedCritical > 0) {
+    gateWarnings.push(`CRITICAL_COMPLIANCE_GAPS: ${unresolvedCritical} unresolved CRITICAL compliance gap(s) exist. Flag these prominently in your answer and recommend immediate remediation before proceeding.`);
+  }
+  const extractionStatus = (tender as { analysisExtractionStatus?: string | null }).analysisExtractionStatus;
+  if (extractionStatus === "REGEX_FALLBACK_FROM_WEAK_EXTRACTION" || extractionStatus === "EXTRACTION_WEAK_REVIEW_REQUIRED") {
+    gateWarnings.push(`WEAK_EXTRACTION: Tender analysis used fallback/weak extraction (${extractionStatus}). Treat all extracted requirements and metadata as potentially incomplete. Recommend re-running AI Analyze after OCR extraction.`);
+  } else if (extractionStatus === "EXTRACTION_CORRUPTED_AI_SKIPPED") {
+    gateWarnings.push("EXTRACTION_CORRUPTED: Tender file extraction is corrupted; AI Analyze was skipped. The copilot has very limited context — instruct the user to re-upload or run OCR before asking bid strategy questions.");
+  }
+
   let response;
   try {
     response = await answerTenderCopilotQuestion({
@@ -83,6 +104,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         generatedDocuments: tender.generatedDocuments.map((doc) => `${doc.name} (${doc.documentType}) generation=${doc.generationStatus}, validation=${doc.validationStatus}, review=${doc.reviewStatus}; ${short(doc.contentSummary, 320)}`),
         controls,
         recentAudit: recentAudit.map((log) => `${log.action}: ${short(log.description, 360)}`),
+        gateWarnings: gateWarnings.length > 0 ? gateWarnings : undefined,
       },
     });
   } catch (err) {
@@ -96,7 +118,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     entityType: "Tender",
     entityId: id,
     description: `${actor.email} asked Tender AI Copilot: ${short(question, 180)}`,
-    metadata: { tenderId: id, question, confidence: response.confidence, riskCount: response.risks.length, actionCount: response.nextActions.length, verifiedEvidenceCount: response.evidenceUsed.length, droppedEvidenceCount: response.evidenceDropped?.length ?? 0 },
+    metadata: { tenderId: id, question, confidence: response.confidence, riskCount: response.risks.length, actionCount: response.nextActions.length, verifiedEvidenceCount: response.evidenceUsed.length, droppedEvidenceCount: response.evidenceDropped?.length ?? 0, gateWarningCount: gateWarnings.length },
   });
 
   // Persist the conversation turn. Failures are non-blocking — the answer is

@@ -345,6 +345,8 @@ type Tender = {
   submissionAddressSourceQuote?: string | null;
   // Evaluation criteria source traceability
   evaluationCriteriaSourceJson?: string | null;
+  // Extraction/analysis quality signals used by generation gate
+  analysisExtractionStatus?: string | null;
 };
 
 const CATEGORIES = ["General", "IT", "Construction", "Services", "Consulting", "Supply", "Healthcare", "Education", "Other"];
@@ -1189,33 +1191,51 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
     (g) => g.title === "ANALYSIS_APPROVAL:REGEX_FALLBACK" && g.isResolved === true,
   );
   const analysisIsFallbackUnapproved = analysisSourceRaw === "REGEX_FALLBACK_AI_ERROR" && !hasAnalysisApprovalGap;
+  // Mirror the server-side generate gate: block when extraction is corrupted or
+  // analysis ran on a weak/fallback extraction (client name check below is
+  // separate — both must pass before enabling the button).
+  const extractionCorrupted =
+    tender.analysisExtractionStatus === "EXTRACTION_CORRUPTED_AI_SKIPPED" ||
+    tender.analysisExtractionStatus === "REGEX_FALLBACK_FROM_WEAK_EXTRACTION";
+  // Mirror hasRealClientName() from lib/engine/metadata-validators.ts
+  const clientNameInvalid = getClientNameStatus(tender.clientName) !== "VALID";
+  const metadataContaminatedBlock = tender.metadataContaminated === true;
 
   const canGenerateDocs = !analysisIsFallbackUnapproved
+    && !extractionCorrupted
+    && !clientNameInvalid
+    && !metadataContaminatedBlock
     && tender.requirements.length > 0
     && (!expertReqExists || selectedExpertCount > 0 || !expertMatchesExist || hasRecoverableExpertSelection)
     && (!projectReqExists || selectedProjectCount > 0 || !projectMatchesExist || hasRecoverableProjectSelection)
     && hasReviewedExpertPath
     && hasReviewedProjectPath
     && !criticalHardBlockExists;
-  const generateDisabledReason = analysisIsFallbackUnapproved
-    ? "Analysis used regex fallback — retry AI Analyze or approve the fallback before generating"
-    : tender.requirements.length === 0
-      ? "Run AI Analyze or Run Engine first to extract requirements"
-      : (expertReqExists && selectedExpertCount === 0 && totalExpertMatches === 0)
-        ? "Run Engine first to generate expert matches"
-        : (projectReqExists && selectedProjectCount === 0 && totalProjectMatches === 0)
-          ? "Run Engine first to generate project matches"
-          : (expertReqExists && expertMatchesExist && selectedExpertCount === 0 && !hasRecoverableExpertSelection)
-            ? "Select at least one reviewed expert match before generating"
-            : (projectReqExists && projectMatchesExist && selectedProjectCount === 0 && !hasRecoverableProjectSelection)
-              ? "Select at least one reviewed project match before generating"
-              : (expertReqExists && selectedExpertCount > 0 && reviewedExpertMatches === 0)
-                ? "Review at least one selected expert before generating"
-                : (projectReqExists && selectedProjectCount > 0 && reviewedProjectMatches === 0)
-                  ? "Review at least one selected project before generating"
-                  : criticalHardBlockExists
-                    ? "Resolve critical hard blockers before generating"
-                    : "Generate proposal documents";
+  const generateDisabledReason = extractionCorrupted
+    ? "Extraction is corrupted or too weak — run OCR extraction or re-upload a clearer scan before generating"
+    : metadataContaminatedBlock
+      ? "Tender metadata is contaminated — review and correct the client name and critical fields before generating"
+      : clientNameInvalid
+        ? "Client/procuring entity name is missing or invalid — run AI Analyze or enter it manually before generating"
+        : analysisIsFallbackUnapproved
+          ? "Analysis used regex fallback — retry AI Analyze or approve the fallback before generating"
+          : tender.requirements.length === 0
+            ? "Run AI Analyze or Run Engine first to extract requirements"
+            : (expertReqExists && selectedExpertCount === 0 && totalExpertMatches === 0)
+              ? "Run Engine first to generate expert matches"
+              : (projectReqExists && selectedProjectCount === 0 && totalProjectMatches === 0)
+                ? "Run Engine first to generate project matches"
+                : (expertReqExists && expertMatchesExist && selectedExpertCount === 0 && !hasRecoverableExpertSelection)
+                  ? "Select at least one reviewed expert match before generating"
+                  : (projectReqExists && projectMatchesExist && selectedProjectCount === 0 && !hasRecoverableProjectSelection)
+                    ? "Select at least one reviewed project match before generating"
+                    : (expertReqExists && selectedExpertCount > 0 && reviewedExpertMatches === 0)
+                      ? "Review at least one selected expert before generating"
+                      : (projectReqExists && selectedProjectCount > 0 && reviewedProjectMatches === 0)
+                        ? "Review at least one selected project before generating"
+                        : criticalHardBlockExists
+                          ? "Resolve critical hard blockers before generating"
+                          : "Generate proposal documents";
 
   // ZIP is only safe when there are generated documents. The canonical
   // export-readiness gate (Export Readiness panel) blocks the final ZIP
