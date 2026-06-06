@@ -388,6 +388,29 @@ export default function TenderRecoveryCommandCenter({ tenderId }: { tenderId: st
               <li key={b.code} className="rounded border border-red-200 bg-red-50 px-3 py-1.5">
                 <p className="text-xs font-medium text-red-800">{b.message}</p>
                 <p className="mt-0.5 text-xs text-red-600">Action: {b.action}</p>
+                {/* Quick-action shortcuts for specific blocker codes */}
+                {b.code === "METADATA_INCOMPLETE" && (
+                  <div className="mt-1.5 flex flex-wrap gap-1.5">
+                    <button onClick={() => void executeAction("REPAIR_METADATA")} disabled={actioning} className="rounded bg-red-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50">Repair Metadata</button>
+                    <button onClick={() => void executeAction("RE_EXTRACT_METADATA")} disabled={actioning} className="rounded border border-red-400 px-2 py-0.5 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-50">Re-extract</button>
+                    <button onClick={() => scrollToPanel("tender-edit-form", "Open the Tender Metadata form to fill missing fields.")} className="rounded border border-red-300 px-2 py-0.5 text-xs text-red-600 hover:bg-red-100">Edit Manually</button>
+                  </div>
+                )}
+                {b.code === "ANALYSIS_REGEX_FALLBACK_UNAPPROVED" && (
+                  <div className="mt-1.5 flex flex-wrap gap-1.5">
+                    <button onClick={() => void executeAction("RETRY_AI_ANALYZE")} disabled={actioning} className="rounded bg-red-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50">Retry AI Analyze</button>
+                  </div>
+                )}
+                {b.code === "EVIDENCE_NOT_ASSESSED" && (
+                  <div className="mt-1.5">
+                    <button onClick={() => void executeAction("RUN_ENGINE")} disabled={actioning} className="rounded bg-red-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50">Run Engine</button>
+                  </div>
+                )}
+                {b.code === "MANDATORY_EVIDENCE_WEAK" && (
+                  <div className="mt-1.5">
+                    <button onClick={() => void executeAction("LINK_VAULT_EVIDENCE")} disabled={actioning} className="rounded bg-red-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50">Link Vault Evidence</button>
+                  </div>
+                )}
               </li>
             ))}
           </ul>

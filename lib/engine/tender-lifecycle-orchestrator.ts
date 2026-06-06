@@ -521,7 +521,7 @@ export async function computeTenderLifecycle(
     blockers.push({
       code: "METADATA_INCOMPLETE",
       message: `${meta.missingCritical.length} critical metadata field(s) are missing: ${meta.missingCritical.slice(0, 4).map((f) => f.field).join(", ")}.`,
-      action: "Edit Tender Detail and fill in the missing fields.",
+      action: "Try 'Re-extract Metadata' or 'Repair Metadata' to auto-fill missing fields from the tender text. If those do not help, edit the Tender Detail form and fill the missing fields manually.",
     });
   }
   // 7. Source references missing for mandatory requirements
