@@ -1197,8 +1197,9 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
   const extractionCorrupted =
     tender.analysisExtractionStatus === "EXTRACTION_CORRUPTED_AI_SKIPPED" ||
     tender.analysisExtractionStatus === "REGEX_FALLBACK_FROM_WEAK_EXTRACTION";
-  // Mirror hasRealClientName() from lib/engine/metadata-validators.ts
-  const clientNameInvalid = getClientNameStatus(tender.clientName) !== "VALID";
+  // Mirror hasRealClientName() from lib/engine/metadata-validators.ts.
+  // Use clientName || procuringEntityName to match the server-side gate.
+  const clientNameInvalid = getClientNameStatus(tender.clientName || tender.procuringEntityName) !== "VALID";
   const metadataContaminatedBlock = tender.metadataContaminated === true;
 
   const canGenerateDocs = !analysisIsFallbackUnapproved
