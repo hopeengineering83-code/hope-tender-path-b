@@ -325,6 +325,40 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
       "HIGH",
     ));
   }
+
+  // ── Analysis extraction quality blocker ──────────────────────────────────
+  // Block when AI Analyze ran on a weak or regex-fallback extraction — the
+  // generated documents may be missing key requirements or metadata.
+  const analysisExtractionStatus = (tender as { analysisExtractionStatus?: string | null }).analysisExtractionStatus;
+  if (analysisExtractionStatus === "REGEX_FALLBACK_FROM_WEAK_EXTRACTION") {
+    blockers.push(tenderBlocker(
+      "ANALYSIS_FROM_WEAK_EXTRACTION",
+      "Tender analysis used regex/deterministic fallback because extraction was too weak. Generated documents may be based on incomplete requirements.",
+      "Run OCR extraction on the tender file, then re-run AI Analyze before exporting.",
+      "HIGH",
+    ));
+  }
+
+  // ── Submission method completeness blocker ───────────────────────────────
+  if (!tender.submissionMethod) {
+    blockers.push(tenderBlocker(
+      "SUBMISSION_METHOD_MISSING",
+      "Submission method has not been extracted or confirmed — the package may be submitted incorrectly.",
+      "Run AI Analyze or manually enter the submission method in Tender Detail before exporting.",
+      "HIGH",
+    ));
+  }
+
+  // ── Evaluation criteria advisory warning ─────────────────────────────────
+  if (!tender.evaluationMethodology) {
+    advisoryWarnings.push({
+      category: "EVALUATION_CRITERIA_MISSING",
+      severity: "MEDIUM" as const,
+      title: "Evaluation criteria/methodology were not extracted from the tender document.",
+      recommendedAction: "Run AI Analyze to extract evaluation criteria, or manually review scoring weights before exporting.",
+    });
+  }
+
   if ((tender.readinessScore ?? 0) <= 0 || /^(ANALYZED|AI_ANALYZED|AI_ANALYSIS_PARTIAL|FALLBACK_DRAFT_CREATED|ANALYSIS_REQUIRES_REVIEW|DRAFT)$/i.test(tender.status) || /^(ANALYSIS|TENDER_INTAKE)$/i.test(tender.stage)) blockers.push(tenderBlocker("FULL_PROPOSAL_NOT_READY", `Tender is still at ${tender.status}/${tender.stage} with workflow progress ${tender.readinessScore ?? 0}.`, "Run Engine, resolve canonical readiness blockers, generate documents, then rerun export readiness."));
   if (hasStrategyOnlySignals(tender.files)) blockers.push(tenderBlocker("OFFICIAL_SOURCE_REQUIRED", "Uploaded source appears to be strategy/market-intelligence only, not an official RFP/ToR/forms package.", "Upload the official tender source package before final export."));
 

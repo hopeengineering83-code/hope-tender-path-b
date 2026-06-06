@@ -61,6 +61,19 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       );
     }
 
+    // Block export when AI Analyze ran on weak/corrupted extraction — the
+    // generated documents may be based on incomplete requirement extraction.
+    const analysisExtractionStatus = (tender as { analysisExtractionStatus?: string | null }).analysisExtractionStatus;
+    if (analysisExtractionStatus === "REGEX_FALLBACK_FROM_WEAK_EXTRACTION" || analysisExtractionStatus === "EXTRACTION_CORRUPTED_AI_SKIPPED") {
+      return NextResponse.json(
+        {
+          error: `Export blocked: tender analysis was based on ${analysisExtractionStatus === "EXTRACTION_CORRUPTED_AI_SKIPPED" ? "corrupted extraction (AI Analyze was skipped)" : "weak/regex-fallback extraction"}. Re-run AI Analyze after OCR extraction before exporting.`,
+          code: "ANALYSIS_FROM_WEAK_EXTRACTION",
+        },
+        { status: 422 },
+      );
+    }
+
     const blockingGaps = tender.complianceGaps.filter(
       (gap) => !gap.isResolved && gap.severity === "CRITICAL",
     );
