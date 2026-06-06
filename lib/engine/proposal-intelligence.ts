@@ -1113,7 +1113,7 @@ export function buildProposalIntelligence(params: {
   }
 
   const tenderText = textOf(
-    tender.title, tender.reference, tender.clientName, tender.country,
+    tender.title, tender.reference, tender.clientName || tender.procuringEntityName, tender.country,
     tender.description, cleanIntake, cleanAnalysis,
     tender.evaluationMethodology, tender.submissionAddress, tender.submissionMethod,
     ...requirements.map((r) => `${r.title} ${r.description} ${r.requirementType} ${r.priority}`),
