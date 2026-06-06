@@ -109,3 +109,53 @@ describe("assessTenderMetadataCompleteness — screenshot regression (5/16 auto-
     assert.ok(report.overallRatio >= 0.85);
   });
 });
+
+describe("assessTenderMetadataCompleteness — procuringEntityName fallback for clientName", () => {
+  it("does NOT block when procuringEntityName is set but clientName is null", () => {
+    const report = assessTenderMetadataCompleteness({
+      clientName: null,
+      procuringEntityName: "Federal Ministry of Health and Sanitation",
+      title: "RFP for Consultancy Services",
+      submissionMethod: "Sealed envelope",
+      submissionEmails: "procurement@fmoh.gov",
+      deadline: new Date(),
+      requirementCount: 10,
+      hasEvaluationMethodology: true,
+      technicalWeight: 70,
+    });
+    assert.equal(report.missingCritical.some((f) => f.field === "clientName"), false,
+      "clientName should not appear as missing when procuringEntityName is set");
+    assert.equal(report.blockingForGeneration, false);
+  });
+
+  it("DOES block when both clientName and procuringEntityName are null", () => {
+    const report = assessTenderMetadataCompleteness({
+      clientName: null,
+      procuringEntityName: null,
+      title: "RFP for Consultancy Services",
+      submissionMethod: "Sealed envelope",
+      submissionEmails: "procurement@example.com",
+      deadline: new Date(),
+      requirementCount: 10,
+      hasEvaluationMethodology: true,
+    });
+    assert.equal(report.missingCritical.some((f) => f.field === "clientName"), true,
+      "clientName must appear as missing when neither clientName nor procuringEntityName is set");
+    assert.equal(report.blockingForGeneration, true);
+  });
+
+  it("still blocks when procuringEntityName is a placeholder", () => {
+    const report = assessTenderMetadataCompleteness({
+      clientName: null,
+      procuringEntityName: "Bid-Team to confirm",
+      title: "RFP for Consultancy Services",
+      submissionMethod: "Sealed envelope",
+      submissionEmails: "procurement@example.com",
+      deadline: new Date(),
+      requirementCount: 10,
+      hasEvaluationMethodology: true,
+    });
+    assert.equal(report.blockingForGeneration, true,
+      "placeholder procuringEntityName must not unblock the gate");
+  });
+});
