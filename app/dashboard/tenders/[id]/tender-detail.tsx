@@ -504,6 +504,8 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [engineRunning, setEngineRunning] = useState(false);
+  const [engineJobId, setEngineJobId] = useState<string | null>(null);
+  const [engineStepMessage, setEngineStepMessage] = useState("");
   const [analyzing, setAnalyzing] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [generatingDocs, setGeneratingDocs] = useState(false);
@@ -652,30 +654,75 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
 
   async function handleRunEngine() {
     setEngineRunning(true);
+    setEngineJobId(null);
+    setEngineStepMessage("Queuing engine run…");
     setError("");
     try {
-      const res = await fetch(`/api/tenders/${tender.id}/engine`, { method: "POST" });
+      // Step 1: enqueue async job
+      const res = await fetch(`/api/tenders/${tender.id}/engine?async=true`, { method: "POST" });
       const data = await res.json();
-      if (!res.ok) {
-        setError(data.error || "Engine run failed");
-        return;
-      }
-      if (data.tender) {
-        setTender((current) => ({
-          ...current,
-          ...data.tender,
-        }));
-        setForm((current) => ({
-          ...current,
-          analysisSummary: data.tender.analysisSummary || current.analysisSummary,
-          evaluationMethodology: data.tender.evaluationMethodology || current.evaluationMethodology,
-        }));
-      }
-      router.refresh();
+      if (!res.ok) { setError(data.error || "Engine run failed"); return; }
+
+      const jobId: string = data.jobId;
+      setEngineJobId(jobId);
+      setEngineStepMessage("Starting worker…");
+
+      // Step 2: kick off the worker (non-blocking — don't await response)
+      fetch("/api/ai-jobs/run-next", { method: "POST" }).catch(() => {});
+
+      // Step 3: poll GET /api/ai-jobs/[id] every 2s until terminal status
+      let attempts = 0;
+      const maxAttempts = 75; // ~150s max poll window
+      await new Promise<void>((resolve) => {
+        const interval = setInterval(async () => {
+          attempts++;
+          try {
+            const pollRes = await fetch(`/api/ai-jobs/${jobId}`);
+            if (!pollRes.ok) return;
+            const pollData = await pollRes.json() as { job?: { status: string; steps?: Array<{ stepName: string; message: string; status: string }>; errorMessage?: string } };
+            const job = pollData.job;
+            if (!job) return;
+
+            // Show the latest step message
+            const steps = job.steps ?? [];
+            const latestStep = steps[steps.length - 1];
+            if (latestStep?.message) setEngineStepMessage(latestStep.message);
+
+            const terminal = job.status === "SUCCEEDED" || job.status === "PARTIAL_SUCCESS" || job.status === "FAILED" || job.status === "CANCELED";
+            if (terminal || attempts >= maxAttempts) {
+              clearInterval(interval);
+              if (job.status === "SUCCEEDED" || job.status === "PARTIAL_SUCCESS") {
+                setEngineStepMessage("Engine complete — refreshing…");
+                // Re-fetch tender data to pick up all changes
+                const tenderRes = await fetch(`/api/tenders/${tender.id}`);
+                if (tenderRes.ok) {
+                  const updated = await tenderRes.json();
+                  setTender(updated);
+                  setForm((cur) => ({
+                    ...cur,
+                    analysisSummary: updated.analysisSummary || cur.analysisSummary,
+                    evaluationMethodology: updated.evaluationMethodology || cur.evaluationMethodology,
+                  }));
+                }
+                router.refresh();
+                showToast("Engine run complete", "success");
+              } else if (attempts >= maxAttempts) {
+                setError("Engine run is taking longer than expected — check status in Recovery Command Center.");
+              } else {
+                const failMsg = latestStep?.message || job.errorMessage || "Engine run failed";
+                setError(failMsg.length > 200 ? `${failMsg.slice(0, 200)}…` : failMsg);
+              }
+              resolve();
+            }
+          } catch { /* poll errors are transient — keep polling */ }
+        }, 2000);
+      });
     } catch {
       setError("Engine run failed");
     } finally {
       setEngineRunning(false);
+      setEngineStepMessage("");
+      setEngineJobId(null);
     }
   }
 
@@ -1330,8 +1377,11 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
             </button>
           )}
           <button onClick={handleRunEngine} disabled={engineRunning}
+            title={engineRunning && engineStepMessage ? engineStepMessage : undefined}
             className="rounded-lg bg-black px-3 py-2 text-sm text-white hover:bg-slate-800 disabled:opacity-50">
-            {engineRunning ? "Running…" : "Run Engine"}
+            {engineRunning
+              ? (engineStepMessage ? `${engineStepMessage.slice(0, 32)}${engineStepMessage.length > 32 ? "…" : ""}` : "Running…")
+              : "Run Engine"}
           </button>
           <button onClick={handleGenerateDocs} disabled={generatingDocs || !canGenerateDocs}
             title={generateDisabledReason}
