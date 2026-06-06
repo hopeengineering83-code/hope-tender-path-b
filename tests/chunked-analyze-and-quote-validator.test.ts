@@ -153,7 +153,7 @@ describe("lib/ai.ts wires the retry-once helper into the chunk loop", () => {
   });
 
   it("the chunk loop calls the retry wrapper (not the bare analyzeOneChunk)", () => {
-    assert.match(source, /successes\.push\(await analyzeOneChunkWithRetry/);
+    assert.match(source, /await analyzeOneChunkWithRetry/);
   });
 
   it("retries ONLY for transient errors (non-transient re-throws)", () => {

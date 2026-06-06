@@ -12,6 +12,8 @@ const FALLBACK_GEMINI_MODELS = (process.env.GEMINI_FALLBACK_MODELS || "gemini-2.
 
 // Model chain for proposal generation — tried in order until one succeeds.
 const PROPOSAL_MODELS = ["gemini-2.5-pro", "gemini-2.0-flash", "gemini-1.5-pro"];
+const REASONING_MODELS = ["o3-mini", "o1-preview", "gpt-4o"];
+const CLAUDE_REASONING_MODELS = ["claude-3-7-sonnet-latest", "claude-3-5-sonnet-latest"];
 
 // Claude models in preference order when the last-resort Anthropic provider
 // is reached. The overall proposal provider chain is Gemini → OpenAI →
@@ -180,7 +182,7 @@ Operating principles, in priority order:
 
 You are not the original author. You are a senior pair of eyes adding the discipline that makes the proposal evaluator-ready.`;
 
-async function generateWithClaude(prompt: string, systemPrompt: string = DEFAULT_PROPOSAL_SYSTEM_PROMPT, maxTokensOverride?: number): Promise<string | null> {
+async function generateWithClaude(prompt: string, systemPrompt: string = DEFAULT_PROPOSAL_SYSTEM_PROMPT, maxTokensOverride?: number, modelOverride?: string): Promise<string | null> {
   if (!anthropicApiKey) return null;
 
   let Anthropic: { new (config: { apiKey: string }): unknown };
@@ -206,7 +208,7 @@ async function generateWithClaude(prompt: string, systemPrompt: string = DEFAULT
     : CLAUDE_MAX_OUTPUT_TOKENS;
 
   const errors: string[] = [];
-  for (const modelName of CLAUDE_PROPOSAL_MODELS) {
+  for (const modelName of (modelOverride ? [modelOverride] : CLAUDE_PROPOSAL_MODELS)) {
     // Per-model rate-limit retry: Free Tier accounts hit 429 frequently. Try
     // each model up to 3 times with exponential backoff (2s, 4s, 8s) before
     // moving on to the next model in the chain.
@@ -350,7 +352,7 @@ async function generate(prompt: string, modelName = DEFAULT_GEMINI_MODEL): Promi
 // Claude is placed LAST so that Anthropic rate limits do not block the app
 // while other providers are available. Providers are tried in sequence;
 // cooled-down or unconfigured providers are skipped automatically.
-export type AiUseCase = "default" | "extraction" | "proposal" | "validation" | "fast";
+export type AiUseCase = "default" | "extraction" | "proposal" | "validation" | "fast" | "reasoning";
 
 export const CANONICAL_PROVIDER_CHAIN: readonly AiProviderName[] = ["gemini", "openai", "mistral", "together", "deepseek", "groq", "openrouter", "anthropic"] as const;
 
@@ -360,6 +362,7 @@ const PROVIDER_CHAINS: Record<AiUseCase, AiProviderName[]> = {
   proposal:   ["gemini", "openai", "mistral", "together", "deepseek", "groq", "openrouter", "anthropic"],
   validation: ["gemini", "openai", "mistral", "together", "deepseek", "groq", "openrouter", "anthropic"],
   fast:       ["gemini", "openai", "mistral", "together", "deepseek", "groq", "openrouter", "anthropic"],
+  reasoning:  ["openai", "anthropic", "deepseek", "gemini"],
 };
 
 function isProviderEnabled(name: AiProviderName): boolean {
@@ -382,6 +385,14 @@ async function callProvider(
 ): Promise<string | null> {
   switch (name) {
     case "anthropic": {
+      if (opts?.useCase === "reasoning") {
+        for (const m of CLAUDE_REASONING_MODELS) {
+          const r = await generateWithClaude(prompt, opts?.systemPrompt, undefined, m).catch(() => null);
+          if (r) { recordProviderSuccess("anthropic"); return r; }
+        }
+        return null;
+      }
+
       const r = await generateWithClaude(prompt, opts?.systemPrompt).catch((err) => {
         recordProviderFailure("anthropic", err);
         return null;
@@ -391,6 +402,14 @@ async function callProvider(
       return null;
     }
     case "gemini": {
+      if (opts?.useCase === "reasoning") {
+        try {
+          const r = await generate(prompt, "gemini-2.0-flash-thinking-exp");
+          recordProviderSuccess("gemini");
+          return r;
+        } catch { return null; }
+      }
+
       try {
         const r = await generate(prompt, opts?.geminiModel);
         recordProviderSuccess("gemini");
@@ -402,6 +421,14 @@ async function callProvider(
       }
     }
     case "openai": {
+      if (opts?.useCase === "reasoning") {
+        for (const m of REASONING_MODELS) {
+          const r = await generateWithOpenAI(prompt, opts?.systemPrompt, 16000, m).catch(() => null);
+          if (r) { recordProviderSuccess("openai"); return r; }
+        }
+        return null;
+      }
+
       const r = await generateWithOpenAI(prompt, opts?.systemPrompt).catch((err) => {
         recordProviderFailure("openai", err);
         return null; // never re-throw — always continue the fallback chain
@@ -418,6 +445,12 @@ async function callProvider(
       return null;
     }
     case "deepseek": {
+      if (opts?.useCase === "reasoning") {
+        const r = await generateWithDeepSeek(prompt, opts?.systemPrompt, 16000, "deepseek-reasoner").catch(() => null);
+        if (r) { recordProviderSuccess("deepseek"); return r; }
+        return null;
+      }
+
       const r = await generateWithDeepSeek(prompt, opts?.systemPrompt).catch((err) => {
         console.warn(`[ai] DeepSeek failed: ${err instanceof Error ? err.message : String(err)}`);
         recordProviderFailure("deepseek", err);
@@ -492,14 +525,15 @@ async function generateWithOpenAI(
   prompt: string,
   systemPrompt: string = DEFAULT_PROPOSAL_SYSTEM_PROMPT,
   maxTokens = 16000,
+  modelOverride?: string,
 ): Promise<string | null> {
   const openAiKey = process.env.OPENAI_API_KEY;
   if (!openAiKey) return null;
 
-  const model = process.env.OPENAI_PROPOSAL_MODEL || "gpt-4o";
+  const model = modelOverride || process.env.OPENAI_PROPOSAL_MODEL || "gpt-4o";
 
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 20_000);
+  const timeoutId = setTimeout(() => controller.abort(), (model.includes("o1") || model.includes("o3")) ? 90_000 : 20_000);
   try {
     const res = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
@@ -590,11 +624,12 @@ async function generateWithDeepSeek(
   prompt: string,
   systemPrompt: string = DEFAULT_PROPOSAL_SYSTEM_PROMPT,
   maxTokens = 16000,
+  modelOverride?: string,
 ): Promise<string | null> {
   const deepSeekKey = getDeepSeekApiKey();
   if (!deepSeekKey) return null;
 
-  const model = getDeepSeekModel();
+  const model = modelOverride || getDeepSeekModel();
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), DEEPSEEK_DEFAULT_TIMEOUT_MS);
 
@@ -1844,7 +1879,7 @@ export async function generateWithClaudeTools(
   systemPrompt: string,
   tools: Array<{ name: string; description: string; input_schema: Record<string, unknown> }>,
   executor: (toolName: string, input: Record<string, unknown>) => Record<string, unknown> | Promise<Record<string, unknown>>,
-  maxTokensOverride?: number,
+  maxTokensOverride?: number, modelOverride?: string,
 ): Promise<string | null> {
   if (!anthropicApiKey) return null;
 
@@ -1871,7 +1906,7 @@ export async function generateWithClaudeTools(
   // tool_use blocks.
   const messages: AnthropicMessage[] = [{ role: "user", content: prompt }];
 
-  for (const modelName of CLAUDE_PROPOSAL_MODELS) {
+  for (const modelName of (modelOverride ? [modelOverride] : CLAUDE_PROPOSAL_MODELS)) {
     let attemptError: string | null = null;
     let aborted = false;
 
@@ -2134,7 +2169,7 @@ Return the COMPLETE revised proposal markdown with every defect repaired. Drop-i
 export async function critiqueProposalWithTools(
   input: DeepCritiqueInput,
   tools: Array<{ name: string; description: string; input_schema: Record<string, unknown> }>,
-  executor: (toolName: string, toolInput: Record<string, unknown>) => Record<string, unknown> | Promise<Record<string, unknown>>,
+  executor: (toolName: string, toolInput: Record<string, unknown>) => Record<string, unknown> | Promise<Record<string, unknown>>, useCase: AiUseCase = "proposal",
 ): Promise<string | null> {
   if (!isClaudeEnabled()) return null;
   if (tools.length === 0) return null;
@@ -2143,6 +2178,9 @@ export async function critiqueProposalWithTools(
     return null;
   }
   const prompt = buildCritiquePrompt(input);
+  if (useCase === "reasoning") {
+    return generateWithFallback(prompt, { systemPrompt: CRITIC_SYSTEM_PROMPT, useCase: "reasoning" }).catch(() => null);
+  }
   try {
     return await withRefinementTimeout(
       generateWithClaudeTools(prompt, CRITIC_SYSTEM_PROMPT, tools, executor),
@@ -2159,7 +2197,7 @@ export async function critiqueProposalWithTools(
  * envelope as `refineProposalWithAI` so the per-call budget is
  * predictable.
  */
-export async function critiqueProposalWithAI(input: DeepCritiqueInput): Promise<string | null> {
+export async function critiqueProposalWithAI(input: DeepCritiqueInput, useCase: AiUseCase = "proposal"): Promise<string | null> {
   if (!isAIEnabled()) return null;
   if (input.currentMarkdown.length > REFINEMENT_MAX_INPUT_CHARS) {
     console.warn(`[ai] critiqueProposalWithAI: skipping critique — proposal is ${input.currentMarkdown.length} chars, exceeds ${REFINEMENT_MAX_INPUT_CHARS}-char budget.`);
@@ -2167,6 +2205,9 @@ export async function critiqueProposalWithAI(input: DeepCritiqueInput): Promise<
   }
 
   const prompt = buildCritiquePrompt(input);
+  if (useCase === "reasoning") {
+    return generateWithFallback(prompt, { systemPrompt: CRITIC_SYSTEM_PROMPT, useCase: "reasoning" }).catch(() => null);
+  }
   try {
     if (isOpenAIEnabled() && !isProviderCooledDown("openai")) {
       const r = await withRefinementTimeout(
@@ -2207,7 +2248,7 @@ export async function critiqueProposalWithAI(input: DeepCritiqueInput): Promise<
  * Run the rewrite pass — takes the critique from the previous step
  * and applies it. Returns the revised markdown or null on failure.
  */
-export async function rewriteProposalWithCritique(input: DeepRewriteInput): Promise<string | null> {
+export async function rewriteProposalWithCritique(input: DeepRewriteInput, useCase: AiUseCase = "proposal"): Promise<string | null> {
   if (!isAIEnabled()) return null;
   if (input.currentMarkdown.length > REFINEMENT_MAX_INPUT_CHARS) {
     console.warn(`[ai] rewriteProposalWithCritique: skipping rewrite — proposal is ${input.currentMarkdown.length} chars, exceeds ${REFINEMENT_MAX_INPUT_CHARS}-char budget.`);
@@ -2215,6 +2256,10 @@ export async function rewriteProposalWithCritique(input: DeepRewriteInput): Prom
   }
 
   const prompt = buildRewritePrompt(input);
+  if (useCase === "reasoning") {
+    const r = await generateWithFallback(prompt, { systemPrompt: REWRITER_SYSTEM_PROMPT, useCase: "reasoning" }).catch(() => null);
+    if (r) { lastProposalProvider = "openai"; return r; }
+  }
   try {
     if (isOpenAIEnabled() && !isProviderCooledDown("openai")) {
       const r = await withRefinementTimeout(

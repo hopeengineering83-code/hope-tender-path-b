@@ -29,6 +29,7 @@
     "@anthropic-ai/sdk": "^0.65.0",
     "@google/generative-ai": "^0.24.1",
     "@prisma/client": "6.19.3",
+    "@swc/helpers": "^0.5.23",
     "@vercel/blob": "^2.4.0",
     "bcryptjs": "^2.4.3",
     "docx": "^9.5.1",

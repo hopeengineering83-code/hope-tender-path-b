@@ -198,11 +198,11 @@ export async function runDeepRefinement(input: DeepRefinementInput): Promise<Dee
         critique = await critiqueProposalWithTools(
           critiqueInput,
           PROPOSAL_TOOL_DEFS,
-          (toolName, toolInput) => executeProposalTool(toolName, toolInput, input.toolEvidence!),
+          (toolName, toolInput) => executeProposalTool(toolName, toolInput, input.toolEvidence!), "reasoning",
         );
       }
       if (!critique || critique.trim().length < 50) {
-        critique = await critiqueProposalWithAI(critiqueInput);
+        critique = await critiqueProposalWithAI(critiqueInput, "reasoning");
       }
     } catch (err) {
       console.warn(`[deep-reasoning-refiner] Critique iteration ${iteration} threw: ${err instanceof Error ? err.message : String(err)}`);
@@ -245,7 +245,7 @@ export async function runDeepRefinement(input: DeepRefinementInput): Promise<Dee
         topProjectNames: input.topProjectNames,
         topExpertNames: input.topExpertNames,
         noFinancial: input.noFinancial === true,
-      });
+      },  "reasoning");
     } catch (err) {
       console.warn(`[deep-reasoning-refiner] Rewrite iteration ${iteration} threw: ${err instanceof Error ? err.message : String(err)}`);
       attempts.push({

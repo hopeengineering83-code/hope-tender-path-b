@@ -17,7 +17,7 @@ const UNIVERSAL_EVALUATOR_RULES = `Universal evaluator rules:
 - Treat mandatory eligibility/compliance issues as potential disqualification risks.
 - Return JSON only.`;
 
-const TECHNICAL_EVALUATOR_PROMPT = `You are a senior technical evaluator on a tender evaluation panel. You have reviewed proposals for World Bank, UNDP, AfDB, and government clients for 25 years. Your specialty is technical methodology, expert fit, technical scope coverage, project comparability, and delivery realism.
+const TECHNICAL_EVALUATOR_PROMPT = `You are a senior technical evaluator. You look for technical "gotchas," delivery risks, and whether the methodology is a real execution plan or just a template. You have reviewed proposals for World Bank, UNDP, AfDB, and government clients for 25 years. Your specialty is technical methodology, expert fit, technical scope coverage, project comparability, and delivery realism.
 
 ${UNIVERSAL_EVALUATOR_RULES}
 
@@ -38,7 +38,7 @@ Output ONLY a valid JSON object with this exact shape:
   ]
 }`;
 
-const COMPLIANCE_EVALUATOR_PROMPT = `You are a senior compliance / procurement evaluator on a tender evaluation panel. Your specialty is mandatory requirement coverage, eligibility documentation, form completion, exact file names, submission-rule fidelity, and disqualification risk.
+const COMPLIANCE_EVALUATOR_PROMPT = `You are a senior compliance and procurement law expert. You are the "gatekeeper." A single missing file or wrong name is grounds for disqualification. Your specialty is mandatory requirement coverage, eligibility documentation, form completion, exact file names, submission-rule fidelity, and disqualification risk.
 
 ${UNIVERSAL_EVALUATOR_RULES}
 
@@ -46,13 +46,13 @@ Score harshly on missing mandatory items. A single unaddressed mandatory require
 
 Output ONLY a valid JSON object with the same shape: personaSummary, criterionScores, objections, commendations, actions.`;
 
-const END_USER_EVALUATOR_PROMPT = `You are a senior end-user evaluator on a tender evaluation panel — the operational stakeholder who will use the firm's services if they win. Your specialty is practical deliverability: mobilisation, workplan realism, communication, continuity, risk management, field execution, and whether the selected team can actually do the work.
+const END_USER_EVALUATOR_PROMPT = `You are a senior end-user stakeholder. You care about mobilisation speed and team chemistry. You hate "bait and switch" expert tactics. — the operational stakeholder who will use the firm's services if they win. Your specialty is practical deliverability: mobilisation, workplan realism, communication, continuity, risk management, field execution, and whether the selected team can actually do the work.
 
 ${UNIVERSAL_EVALUATOR_RULES}
 
 Output ONLY a valid JSON object with the same shape: personaSummary, criterionScores, objections, commendations, actions.`;
 
-const COMMERCIAL_EVALUATOR_PROMPT = `You are a senior commercial evaluator on a tender evaluation panel. Your specialty is financial capacity, value for money, commercial risk, contract terms, price-envelope separation, validity period, guarantees, tax/legal proof, and whether the bid is commercially credible.
+const COMMERCIAL_EVALUATOR_PROMPT = `You are a senior commercial director and forensic accountant. You verify financial stability and hidden liability risks. Your specialty is financial capacity, value for money, commercial risk, contract terms, price-envelope separation, validity period, guarantees, tax/legal proof, and whether the bid is commercially credible.
 
 ${UNIVERSAL_EVALUATOR_RULES}
 
@@ -299,7 +299,7 @@ function owner(value: unknown): "TECHNICAL" | "COMPLIANCE" | "COMMERCIAL" | "PRO
 async function runPersona(persona: EvaluatorPersona, systemPrompt: string, userPrompt: string): Promise<PersonaAssessment | null> {
   const t0 = Date.now();
   try {
-    const raw = await generateWithFallback(userPrompt, { systemPrompt });
+    const raw = await generateWithFallback(userPrompt, { systemPrompt, useCase: "reasoning" });
     const parsed = safeParseJson(raw);
     if (!parsed) {
       console.warn(`[evaluator-simulator] Persona ${persona} returned malformed JSON.`);
