@@ -6,6 +6,10 @@
     {
       "path": "/api/ai-jobs/run-next",
       "schedule": "0 0 * * *"
+    },
+    {
+      "path": "/api/cron/cleanup-old-records",
+      "schedule": "0 3 * * 0"
     }
   ]
 }

@@ -65,6 +65,19 @@ export default async function CompanyDocumentCategoriesPage() {
   const documents = await prisma.companyDocument.findMany({
     where: { companyId: company.id },
     orderBy: [{ category: "asc" }, { createdAt: "desc" }],
+    select: {
+      id: true,
+      fileName: true,
+      originalFileName: true,
+      mimeType: true,
+      size: true,
+      category: true,
+      storagePath: true,
+      aiExtractionStatus: true,
+      extractedText: true,
+      createdAt: true,
+      updatedAt: true,
+    },
   });
 
   const grouped = documents.reduce<Record<string, typeof documents>>((acc, doc) => {
