@@ -7,7 +7,7 @@
  */
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
-import { assessExtractionQuality } from "../lib/extraction-quality";
+import { assessExtractionQuality, assessExtractionQualityPerPage } from "../lib/extraction-quality";
 import { isExtractionCorrupted } from "../lib/engine/extraction-quality-gate";
 
 // ── Helpers mirroring the component logic ────────────────────────────────────
@@ -231,6 +231,111 @@ describe("ExtractionQualityDashboard — status computation", () => {
 
     const result = computeFileData(file);
     assert.equal(result.coverage, null);
+  });
+});
+
+describe("ExtractionQualityDashboard — content-page detection (assessExtractionQualityPerPage)", () => {
+  // assessExtractionQualityPerPage splits on [Page N] markers — fixtures must include them.
+  const submissionText =
+    "[Page 5] SECTION 5 — SUBMISSION INSTRUCTIONS\n" +
+    "Bidders must submit their proposals no later than 15 July 2026 at 17:00 local time.\n" +
+    "Submissions shall be delivered to: Procurement Office, 4th Floor, Ministry Building.\n" +
+    "Alternatively email to: procurement@example.gov with subject 'Tender 2026-001 Submission'.\n" +
+    "Late submissions will be rejected. All envelopes must be sealed and labelled.\n" +
+    "The deadline for submission of clarification questions is 30 June 2026 at 12:00.\n";
+
+  const evaluationText =
+    "[Page 6] SECTION 6 — EVALUATION CRITERIA\n" +
+    "Technical proposals will be evaluated against the following weighted criteria:\n" +
+    "- Methodology and approach: 30 points\n" +
+    "- Relevant experience: 25 points\n" +
+    "- Key personnel qualifications: 25 points\n" +
+    "- Implementation plan / timeline: 20 points\n" +
+    "Only technically qualified firms (scoring >= 70/100) will have their financial\n" +
+    "proposals opened. Financial proposals score on the lowest evaluated cost basis.\n";
+
+  const requiredDocText =
+    "[Page 7] SECTION 7 — REQUIRED DOCUMENTS AND FORMS\n" +
+    "Bidders must submit the following mandatory documents:\n" +
+    "- Form A: Bidder Information Sheet (attached as Annex A)\n" +
+    "- Form B: Technical Proposal Format (attached as Annex B)\n" +
+    "- Certificate of incorporation / business registration\n" +
+    "- Tax compliance certificate valid at date of submission\n" +
+    "- Audited financial statements for the last three years\n" +
+    "- List of similar projects completed in the last five years with references\n" +
+    "Failure to include any mandatory document will result in disqualification.\n";
+
+  it("detects submission instruction pages from text", () => {
+    const result = assessExtractionQualityPerPage(submissionText);
+    assert.ok(
+      result.submissionInstructionPages.length > 0,
+      "Should detect at least one submission instruction page",
+    );
+  });
+
+  it("detects evaluation criteria pages from text", () => {
+    const result = assessExtractionQualityPerPage(evaluationText);
+    assert.ok(
+      result.evaluationCriteriaPages.length > 0,
+      "Should detect at least one evaluation criteria page",
+    );
+  });
+
+  it("detects required document pages from text", () => {
+    const result = assessExtractionQualityPerPage(requiredDocText);
+    assert.ok(
+      result.requiredDocumentPages.length > 0,
+      "Should detect at least one required document page",
+    );
+  });
+
+  it("returns zero pages for all categories when text is blank", () => {
+    const result = assessExtractionQualityPerPage("");
+    // No [Page N] markers → no pages parsed at all
+    assert.equal(result.submissionInstructionPages.length, 0);
+    assert.equal(result.evaluationCriteriaPages.length, 0);
+    assert.equal(result.requiredDocumentPages.length, 0);
+  });
+
+  it("returns zero submission pages when text has no submission language", () => {
+    const unrelatedText =
+      "[Page 1] This document describes the technical specifications for road construction.\n" +
+      "Materials must comply with ASTM standards. Bitumen grade 60/70 is required.\n" +
+      "Subgrade compaction must achieve 95% proctor density. CBR must exceed 30%.\n";
+    const result = assessExtractionQualityPerPage(unrelatedText);
+    assert.equal(
+      result.submissionInstructionPages.length,
+      0,
+      "No submission instruction pages should be detected in unrelated text",
+    );
+  });
+
+  it("detects multiple content types from a combined multi-section tender", () => {
+    const combined = submissionText + "\n\n" + evaluationText + "\n\n" + requiredDocText;
+    const result = assessExtractionQualityPerPage(combined);
+    assert.ok(result.submissionInstructionPages.length > 0, "Should detect submission pages");
+    assert.ok(result.evaluationCriteriaPages.length > 0, "Should detect evaluation pages");
+    assert.ok(result.requiredDocumentPages.length > 0, "Should detect required-doc pages");
+  });
+
+  it("dashboard fileData correctly maps perPage results — submissionPages is null when text is null", () => {
+    // Mirror the component logic: perPage = text ? assessExtractionQualityPerPage(text) : null
+    const text: string | null = null;
+    const perPage = text ? assessExtractionQualityPerPage(text) : null;
+    const submissionPages = perPage?.submissionInstructionPages.length ?? null;
+    const evaluationPages = perPage?.evaluationCriteriaPages.length ?? null;
+    const requiredDocPages = perPage?.requiredDocumentPages.length ?? null;
+    assert.equal(submissionPages, null);
+    assert.equal(evaluationPages, null);
+    assert.equal(requiredDocPages, null);
+  });
+
+  it("dashboard fileData correctly maps perPage results — submissionPages is a number when text is present", () => {
+    const text = submissionText;
+    const perPage = text ? assessExtractionQualityPerPage(text) : null;
+    const submissionPages = perPage?.submissionInstructionPages.length ?? null;
+    assert.ok(typeof submissionPages === "number", "submissionPages should be a number when text is present");
+    assert.ok(submissionPages !== null, "submissionPages should not be null when text is present");
   });
 });
 
