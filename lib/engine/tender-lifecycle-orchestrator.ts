@@ -295,6 +295,7 @@ export async function computeTenderLifecycle(
           stage: true,
           readinessScore: true,
           clientName: true,
+          procuringEntityName: true,
           deadline: true,
           title: true,
           category: true,
@@ -374,6 +375,7 @@ export async function computeTenderLifecycle(
   const metaInput: MetadataCompletenessInput = {
     title: tender.title,
     clientName: tender.clientName,
+    procuringEntityName: tender.procuringEntityName,
     deadline: tender.deadline,
     budget: tender.budget,
     currency: tender.currency,
