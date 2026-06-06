@@ -547,6 +547,8 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
   const [generationPhase, setGenerationPhase] = useState("");
   const [generationProgress, setGenerationProgress] = useState(0);
+  const [analyzePhase, setAnalyzePhase] = useState("");
+  const [analyzeProgress, setAnalyzeProgress] = useState(0);
   const [regeneratingSection, setRegeneratingSection] = useState<string | null>(null);
   const [previewDocId, setPreviewDocId] = useState<string | null>(null);
   const [bidOutcome, setBidOutcome] = useState(initial.bidOutcome ?? "");
@@ -729,6 +731,7 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
   async function handleAIAnalyze() {
     setAnalyzing(true);
     setError("");
+    startAnalyzeProgress();
     try {
       const res = await fetch(`/api/tenders/${tender.id}/ai-analyze`, { method: "POST" });
       const data = await res.json();
@@ -747,13 +750,14 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
       if (data.jobId) setContinueJobId(data.jobId);
       router.refresh();
     } catch { setError("Analysis failed"); }
-    finally { setAnalyzing(false); }
+    finally { setAnalyzing(false); stopAnalyzeProgress(); }
   }
 
   async function handleContinueAnalysis() {
     if (!continueJobId) return;
     setAnalyzing(true);
     setError("");
+    startAnalyzeProgress();
     try {
       const res = await fetch(`/api/tenders/${tender.id}/ai-analyze?continue=${continueJobId}`, { method: "POST" });
       const data = await res.json();
@@ -772,7 +776,7 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
       if (data.tender) setTender((cur) => ({ ...cur, ...data.tender }));
       router.refresh();
     } catch { setError("Continue analysis failed"); }
-    finally { setAnalyzing(false); }
+    finally { setAnalyzing(false); stopAnalyzeProgress(); }
   }
 
   async function handleApproveFallback() {
@@ -852,6 +856,7 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
     { label: "Saving documents…", pct: 97 },
   ];
   const progressCreepRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const analyzeCreepRef = useRef<ReturnType<typeof setInterval> | null>(null);
   function startGenerationProgress() {
     const durations = [6000, 14000, 35000, 10000, 5000];
     let cumulative = 0;
@@ -877,6 +882,38 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
     if (progressCreepRef.current) { clearInterval(progressCreepRef.current); progressCreepRef.current = null; }
     setGenerationPhase("");
     setGenerationProgress(0);
+  }
+
+  const ANALYZE_PHASES = [
+    { label: "Reading tender document…", pct: 8 },
+    { label: "Extracting client and procuring entity details…", pct: 22 },
+    { label: "Identifying requirements and evaluation criteria…", pct: 45 },
+    { label: "Mapping submission instructions and deadlines…", pct: 65 },
+    { label: "Building compliance gap analysis…", pct: 82 },
+    { label: "Finalizing analysis…", pct: 95 },
+  ];
+  function startAnalyzeProgress() {
+    const durations = [3000, 7000, 10000, 8000, 7000, 5000];
+    let cumulative = 0;
+    ANALYZE_PHASES.forEach((phase, i) => {
+      const delay = cumulative;
+      setTimeout(() => {
+        setAnalyzePhase(phase.label);
+        setAnalyzeProgress(phase.pct);
+        if (i === ANALYZE_PHASES.length - 1) {
+          if (analyzeCreepRef.current) clearInterval(analyzeCreepRef.current);
+          analyzeCreepRef.current = setInterval(() => {
+            setAnalyzeProgress((prev) => (prev < 99 ? Math.min(99, prev + 0.1) : prev));
+          }, 1000);
+        }
+      }, delay);
+      cumulative += durations[i];
+    });
+  }
+  function stopAnalyzeProgress() {
+    if (analyzeCreepRef.current) { clearInterval(analyzeCreepRef.current); analyzeCreepRef.current = null; }
+    setAnalyzePhase("");
+    setAnalyzeProgress(0);
   }
 
   async function handleGenerateDocs() {
@@ -1247,11 +1284,14 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
   // Mirror hasRealClientName() from lib/engine/metadata-validators.ts
   const clientNameInvalid = getClientNameStatus(tender.clientName) !== "VALID";
   const metadataContaminatedBlock = tender.metadataContaminated === true;
+  // Mirror server-side hasValidSubmissionPlan gate: at least one non-SUPERSEDED doc row must exist.
+  const hasValidPlan = tender.generatedDocuments.some((d) => d.generationStatus !== "SUPERSEDED");
 
   const canGenerateDocs = !analysisIsFallbackUnapproved
     && !extractionCorrupted
     && !clientNameInvalid
     && !metadataContaminatedBlock
+    && hasValidPlan
     && tender.requirements.length > 0
     && (!expertReqExists || selectedExpertCount > 0 || !expertMatchesExist || hasRecoverableExpertSelection)
     && (!projectReqExists || selectedProjectCount > 0 || !projectMatchesExist || hasRecoverableProjectSelection)
@@ -1268,21 +1308,23 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
           ? "Analysis used regex fallback — retry AI Analyze or approve the fallback before generating"
           : tender.requirements.length === 0
             ? "Run AI Analyze or Run Engine first to extract requirements"
-            : (expertReqExists && selectedExpertCount === 0 && totalExpertMatches === 0)
-              ? "Run Engine first to generate expert matches"
-              : (projectReqExists && selectedProjectCount === 0 && totalProjectMatches === 0)
-                ? "Run Engine first to generate project matches"
-                : (expertReqExists && expertMatchesExist && selectedExpertCount === 0 && !hasRecoverableExpertSelection)
-                  ? "Select at least one reviewed expert match before generating"
-                  : (projectReqExists && projectMatchesExist && selectedProjectCount === 0 && !hasRecoverableProjectSelection)
-                    ? "Select at least one reviewed project match before generating"
-                    : (expertReqExists && selectedExpertCount > 0 && reviewedExpertMatches === 0)
-                      ? "Review at least one selected expert before generating"
-                      : (projectReqExists && selectedProjectCount > 0 && reviewedProjectMatches === 0)
-                        ? "Review at least one selected project before generating"
-                        : criticalHardBlockExists
-                          ? "Resolve critical hard blockers before generating"
-                          : "Generate proposal documents";
+            : !hasValidPlan
+              ? "Build the submission plan first (click Build Plan or Run Engine) before generating documents"
+              : (expertReqExists && selectedExpertCount === 0 && totalExpertMatches === 0)
+                ? "Run Engine first to generate expert matches"
+                : (projectReqExists && selectedProjectCount === 0 && totalProjectMatches === 0)
+                  ? "Run Engine first to generate project matches"
+                  : (expertReqExists && expertMatchesExist && selectedExpertCount === 0 && !hasRecoverableExpertSelection)
+                    ? "Select at least one reviewed expert match before generating"
+                    : (projectReqExists && projectMatchesExist && selectedProjectCount === 0 && !hasRecoverableProjectSelection)
+                      ? "Select at least one reviewed project match before generating"
+                      : (expertReqExists && selectedExpertCount > 0 && reviewedExpertMatches === 0)
+                        ? "Review at least one selected expert before generating"
+                        : (projectReqExists && selectedProjectCount > 0 && reviewedProjectMatches === 0)
+                          ? "Review at least one selected project before generating"
+                          : criticalHardBlockExists
+                            ? "Resolve critical hard blockers before generating"
+                            : "Generate proposal documents";
 
   // ZIP is only safe when there are generated documents. The canonical
   // export-readiness gate (Export Readiness panel) blocks the final ZIP
@@ -1366,8 +1408,9 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
         <div id="ai-analyze-section" className="flex flex-wrap gap-2">
           {aiEnabled && (
             <button onClick={handleAIAnalyze} disabled={analyzing}
+              title={analyzing && analyzePhase ? analyzePhase : undefined}
               className="rounded-lg bg-purple-600 px-3 py-2 text-sm text-white hover:bg-purple-700 disabled:opacity-50">
-              {analyzing ? "Analyzing..." : "✦ AI Analyze"}
+              {analyzing ? (analyzePhase ? `${analyzePhase.slice(0, 28)}…` : "Analyzing…") : "✦ AI Analyze"}
             </button>
           )}
           {aiEnabled && (
@@ -1448,6 +1491,22 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
             <p>Projects zero-family-coverage: {matchingDiagnostics.projects.lowCoverage.length}</p>
             <p>Experts hard-excluded: {matchingDiagnostics.experts.hardExcluded.length}</p>
             <p>Projects hard-excluded: {matchingDiagnostics.projects.hardExcluded.length}</p>
+          </div>
+        </div>
+      )}
+
+      {/* AI Analyze progress bar */}
+      {analyzing && analyzePhase && (
+        <div className="rounded-xl border border-purple-200 bg-purple-50 px-4 py-3">
+          <div className="flex items-center justify-between mb-1.5">
+            <p className="text-sm font-medium text-purple-800">{analyzePhase}</p>
+            <p className="text-xs text-purple-600">{Math.round(analyzeProgress)}%</p>
+          </div>
+          <div className="h-1.5 w-full overflow-hidden rounded-full bg-purple-100">
+            <div
+              className="h-full rounded-full bg-purple-500 transition-all duration-1000 ease-in-out"
+              style={{ width: `${analyzeProgress}%` }}
+            />
           </div>
         </div>
       )}
@@ -1630,6 +1689,48 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
                   >
                     {analyzing ? "Continuing…" : "Continue Analysis"}
                   </button>
+                </div>
+              )}
+              {/* Extracted data summary — shown after AI Analyze so users see what was captured */}
+              {analyzeResult.ai && (
+                <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 text-xs sm:grid-cols-3">
+                  <div className="flex items-center gap-1">
+                    <span className="text-slate-500">Requirements:</span>
+                    <span className={`font-semibold ${tender.requirements.length > 0 ? "text-green-700" : "text-amber-600"}`}>
+                      {tender.requirements.length > 0 ? `${tender.requirements.length} extracted` : "None found"}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <span className="text-slate-500">Client:</span>
+                    <span className={`font-semibold truncate max-w-[120px] ${getClientNameStatus(tender.clientName) === "VALID" ? "text-green-700" : "text-amber-600"}`}
+                      title={tender.clientName ?? undefined}>
+                      {getClientNameStatus(tender.clientName) === "VALID" ? (tender.clientName?.slice(0, 22) ?? "—") : "Not extracted"}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <span className="text-slate-500">Reference:</span>
+                    <span className={`font-semibold ${tender.reference ? "text-green-700" : "text-slate-400"}`}>
+                      {tender.reference ? tender.reference.slice(0, 20) : "—"}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <span className="text-slate-500">Deadline:</span>
+                    <span className={`font-semibold ${tender.deadline ? "text-green-700" : "text-amber-600"}`}>
+                      {tender.deadline ? new Date(tender.deadline).toLocaleDateString() : "Not found"}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <span className="text-slate-500">Gaps:</span>
+                    <span className={`font-semibold ${criticalGaps > 0 ? "text-red-600" : "text-green-700"}`}>
+                      {criticalGaps > 0 ? `${criticalGaps} critical` : `${unresolvedGaps} open`}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <span className="text-slate-500">Method:</span>
+                    <span className={`font-semibold ${tender.submissionMethod ? "text-green-700" : "text-amber-600"}`}>
+                      {tender.submissionMethod ? tender.submissionMethod.replace(/_/g, " ") : "Not found"}
+                    </span>
+                  </div>
                 </div>
               )}
               {analyzeResult.nextAction && (
@@ -2285,6 +2386,34 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
                 <pre className="whitespace-pre-wrap text-xs text-purple-900 font-mono leading-relaxed max-h-64 overflow-y-auto">{deepReasoningReport.markdown}</pre>
               </div>
             )}
+            {/* Document quality summary — shown when docs exist */}
+            {tender.generatedDocuments.length > 0 && (() => {
+              const activeDocs = tender.generatedDocuments.filter((d) => d.generationStatus !== "SUPERSEDED" && d.generationStatus !== "PLANNED");
+              const readyDocs = activeDocs.filter((d) => d.reviewStatus === "READY_FOR_EXPORT");
+              const failedDocs = activeDocs.filter((d) => d.validationStatus === "FAILED" || d.generationStatus === "QUALITY_FAILED");
+              const awaitingReview = activeDocs.filter((d) => d.reviewStatus !== "READY_FOR_EXPORT" && d.reviewStatus !== "NOT_EXPORTABLE" && d.generationStatus === "GENERATED");
+              const passRate = activeDocs.length > 0 ? Math.round((readyDocs.length / activeDocs.length) * 100) : 0;
+              return (
+                <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-4 text-center text-xs">
+                  <div className="rounded-lg border bg-slate-50 py-2 px-3">
+                    <div className="text-lg font-bold text-slate-800">{activeDocs.length}</div>
+                    <div className="text-slate-500">Total docs</div>
+                  </div>
+                  <div className={`rounded-lg border py-2 px-3 ${readyDocs.length === activeDocs.length && activeDocs.length > 0 ? "bg-emerald-50 border-emerald-200" : "bg-slate-50"}`}>
+                    <div className={`text-lg font-bold ${readyDocs.length === activeDocs.length && activeDocs.length > 0 ? "text-emerald-700" : "text-slate-800"}`}>{readyDocs.length}/{activeDocs.length}</div>
+                    <div className="text-slate-500">Ready ({passRate}%)</div>
+                  </div>
+                  <div className={`rounded-lg border py-2 px-3 ${awaitingReview.length > 0 ? "bg-amber-50 border-amber-200" : "bg-slate-50"}`}>
+                    <div className={`text-lg font-bold ${awaitingReview.length > 0 ? "text-amber-700" : "text-slate-800"}`}>{awaitingReview.length}</div>
+                    <div className="text-slate-500">Awaiting review</div>
+                  </div>
+                  <div className={`rounded-lg border py-2 px-3 ${failedDocs.length > 0 ? "bg-red-50 border-red-200" : "bg-slate-50"}`}>
+                    <div className={`text-lg font-bold ${failedDocs.length > 0 ? "text-red-700" : "text-slate-800"}`}>{failedDocs.length}</div>
+                    <div className="text-slate-500">Quality failed</div>
+                  </div>
+                </div>
+              );
+            })()}
             {tender.generatedDocuments.length === 0 ? (
               <p className="text-sm text-slate-400">Run the engine then click &quot;Generate Docs&quot; to create submission-ready files.</p>
             ) : (

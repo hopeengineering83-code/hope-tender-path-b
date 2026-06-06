@@ -165,6 +165,21 @@ export function CanonicalReadinessScoreWidget({ tenderId }: { tenderId: string }
         </p>
       )}
 
+      {data.summary.missingCriticalMetadataFields && data.summary.missingCriticalMetadataFields.length > 0 && (
+        <div className="mt-2 rounded-lg border border-red-200 bg-white px-3 py-2">
+          <p className="text-xs font-semibold text-red-700 mb-1">
+            {data.summary.missingCriticalMetadataFields.length} critical field{data.summary.missingCriticalMetadataFields.length > 1 ? "s" : ""} missing:
+          </p>
+          <div className="flex flex-wrap gap-1">
+            {data.summary.missingCriticalMetadataFields.map((f) => (
+              <span key={f} className="rounded-full border border-red-200 bg-red-50 px-2 py-0.5 text-[10px] font-medium text-red-700">
+                {f.replace(/_/g, " ").toLowerCase()}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
       {(data.summary.outsidePlanDocuments > 0 || data.summary.staleRowCount > 0) && (
         <p className="mt-2 text-[11px] text-slate-500">
           {data.summary.outsidePlanDocuments > 0 && <>{data.summary.outsidePlanDocuments} outside-plan doc(s); </>}
