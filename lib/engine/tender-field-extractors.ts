@@ -557,6 +557,7 @@ export function extractPreBidMeetingDate(input: ExtractorInput): ExtractedFieldO
 }
 
 
+// ─── Public manifest — which fields the extractor framework supports. ──
 export type ExtractorFieldName =
   | "reference"
   | "deadline"
