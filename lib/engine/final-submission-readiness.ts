@@ -212,7 +212,7 @@ function asReadyDoc(doc: {
   generationStatus: string;
   validationStatus: string;
   reviewStatus: string;
-  fileContent: string | null;
+  fileContent?: string | null;
   storagePath: string | null;
 }): ExportReadyDocument {
   return {
@@ -367,6 +367,7 @@ export async function getFinalSubmissionReadiness(
   client: PrismaClient,
   opts: GetFinalSubmissionReadinessOptions,
 ): Promise<FinalSubmissionReadiness | null> {
+  const shouldLoadFileContent = opts.requireFileContent ?? false;
   const tender = await client.tender.findFirst({
     where: { id: opts.tenderId, userId: opts.userId },
     select: {
@@ -445,7 +446,10 @@ export async function getFinalSubmissionReadiness(
           generationStatus: true,
           validationStatus: true,
           reviewStatus: true,
-          fileContent: true,
+          // Inline document bytes are large. Readiness-style callers pass
+          // requireFileContent=false and should rely on storagePath/status
+          // metadata instead of loading the full blob from Neon.
+          fileContent: shouldLoadFileContent,
           storagePath: true,
         },
       },

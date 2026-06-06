@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { getSession } from "../lib/auth";
 import { prisma, prismaReady } from "../lib/prisma";
-import { getTenderGenerationReadiness } from "../lib/tender-generation-readiness";
+import { getTenderGenerationReadiness, type TenderGenerationReadiness } from "../lib/tender-generation-readiness";
 
 function actionHref(tenderId: string, action?: string): string {
   if (action === "EDIT_TENDER") return `/dashboard/tenders/${tenderId}#legacy-tender-detail-actions`;
@@ -80,13 +80,21 @@ function ScoreGauge({ score }: { score: number }) {
   );
 }
 
-export async function GenerationReadinessPanel({ tenderId }: { tenderId: string }) {
+export async function GenerationReadinessPanel({
+  tenderId,
+  readiness: providedReadiness,
+}: {
+  tenderId: string;
+  readiness?: TenderGenerationReadiness | null;
+}) {
   const userId = await getSession();
   if (!userId) return null;
 
   try {
-  await prismaReady;
-  const readiness = await getTenderGenerationReadiness(prisma, userId, tenderId);
+  const readiness = providedReadiness ?? await (async () => {
+    await prismaReady;
+    return getTenderGenerationReadiness(prisma, userId, tenderId);
+  })();
   if (!readiness) return null;
 
   const { ready, blockers, fullProposalBlockers, warnings, score } = readiness;
