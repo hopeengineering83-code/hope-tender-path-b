@@ -17,7 +17,7 @@ export default async function DashboardPage() {
     prisma.tender.findMany({
       where: { userId },
       select: {
-        id: true, title: true, clientName: true, status: true, deadline: true,
+        id: true, title: true, clientName: true, procuringEntityName: true, status: true, deadline: true,
         readinessScore: true, budget: true, currency: true, createdAt: true,
         bidOutcome: true,
         _count: { select: { requirements: true } },
