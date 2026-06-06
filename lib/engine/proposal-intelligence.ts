@@ -1,5 +1,5 @@
 export type TenderRequirementLite = { title: string; description: string; priority: string; requirementType: string };
-export type TenderLite = { title: string; reference?: string | null; clientName?: string | null; country?: string | null; description?: string | null; intakeSummary?: string | null; analysisSummary?: string | null; evaluationMethodology?: string | null; deadline?: Date | string | null; submissionMethod?: string | null; submissionAddress?: string | null };
+export type TenderLite = { title: string; reference?: string | null; clientName?: string | null; procuringEntityName?: string | null; country?: string | null; description?: string | null; intakeSummary?: string | null; analysisSummary?: string | null; evaluationMethodology?: string | null; deadline?: Date | string | null; submissionMethod?: string | null; submissionAddress?: string | null };
 export type CompanyLite = { name: string; legalName?: string | null; description?: string | null; profileSummary?: string | null; serviceLines: string; sectors: string; email?: string | null; phone?: string | null; website?: string | null; address?: string | null };
 export type ExpertLite = { fullName: string; title?: string | null; yearsExperience?: number | null; disciplines: string; sectors: string; certifications: string; profile?: string | null };
 export type ProjectLite = { name: string; clientName?: string | null; country?: string | null; sector?: string | null; serviceAreas: string; contractValue?: number | null; currency?: string | null; summary?: string | null };
@@ -1274,7 +1274,7 @@ export function buildProposalIntelligence(params: {
   // Path tenders generated proposals addressed to Pharo Ventures.
   // Now: trust the cleanClientName output. When the client cannot be
   // determined, use a neutral placeholder the bid team must fill in.
-  const detectedClient = cleanClientName(tender.clientName, tender.description);
+  const detectedClient = cleanClientName(tender.clientName || tender.procuringEntityName, tender.description);
   const finalClientName = detectedClient !== "Client"
     ? detectedClient
     : "The Client";
