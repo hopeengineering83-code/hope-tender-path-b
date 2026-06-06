@@ -280,3 +280,58 @@ describe("analysis-quality — source normalization", () => {
     assert.ok(report.score > 45);
   });
 });
+
+describe("analysis-quality — reviewed evidence selection", () => {
+  const baseParams = {
+    requirements: goodRequirements(10),
+    evaluationMethodology: "Technical 70%, Financial 30%",
+    submissionNotes: "Submit sealed envelope by deadline.",
+    clientName: "Ministry of Health",
+    deadline: new Date("2026-09-01T00:00:00Z"),
+    submissionMethod: "Sealed envelope",
+    totalPageCount: 8,
+    extractedTextLength: 18000,
+  };
+
+  it("does not penalise when no matching score is present (vault not yet run)", () => {
+    const report = assessTenderAnalysisQuality({
+      ...baseParams,
+      matchingScore: undefined,
+      selectedReviewedExperts: 0,
+      selectedReviewedProjects: 0,
+    });
+    assert.ok(
+      !report.warnings.some((w) => /reviewed/i.test(w)),
+      "Should not warn about reviewed evidence when matchingScore is absent",
+    );
+  });
+
+  it("penalises when matching score is > 0 but all selected evidence is unreviewed", () => {
+    const report = assessTenderAnalysisQuality({
+      ...baseParams,
+      matchingScore: 60,
+      selectedReviewedExperts: 0,
+      selectedReviewedProjects: 0,
+    });
+    assert.ok(
+      report.warnings.some((w) => /unreviewed/i.test(w) || /reviewed/i.test(w)),
+      `Expected an unreviewed-evidence warning, got: ${report.warnings.join("; ")}`,
+    );
+    assert.ok(report.score < 100, `Expected score penalty for unreviewed evidence, got ${report.score}`);
+  });
+
+  it("does not penalise when at least one reviewed expert is selected", () => {
+    const withReviewed = assessTenderAnalysisQuality({ ...baseParams, matchingScore: 60, selectedReviewedExperts: 2, selectedReviewedProjects: 0 });
+    const withoutReviewed = assessTenderAnalysisQuality({ ...baseParams, matchingScore: 60, selectedReviewedExperts: 0, selectedReviewedProjects: 0 });
+    assert.ok(
+      withReviewed.score > withoutReviewed.score,
+      `Reviewed-evidence score (${withReviewed.score}) should exceed all-unreviewed score (${withoutReviewed.score})`,
+    );
+    assert.ok(!withReviewed.warnings.some((w) => /unreviewed/i.test(w)), "Should not warn when reviewed expert is selected");
+  });
+
+  it("does not penalise when at least one reviewed project is selected", () => {
+    const report = assessTenderAnalysisQuality({ ...baseParams, matchingScore: 65, selectedReviewedExperts: 0, selectedReviewedProjects: 1 });
+    assert.ok(!report.warnings.some((w) => /unreviewed/i.test(w)), "Should not warn when reviewed project is selected");
+  });
+});

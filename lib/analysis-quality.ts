@@ -230,6 +230,21 @@ export function assessTenderAnalysisQuality(params: {
     }
   }
 
+  // ─── Evidence quality: reviewed vs unreviewed selection ────────────
+  // A non-zero matching score with zero REVIEWED experts/projects selected
+  // means only unreviewed candidates were matched. Unreviewed CVs and project
+  // refs have not been QA'd — proposals built from them are high-risk.
+  const reviewedExperts = params.selectedReviewedExperts ?? null;
+  const reviewedProjects = params.selectedReviewedProjects ?? null;
+  const hasAnyReviewedEvidence = (reviewedExperts !== null && reviewedExperts > 0) || (reviewedProjects !== null && reviewedProjects > 0);
+  const hasMatchingScore = typeof params.matchingScore === "number" && params.matchingScore > 0;
+  if (hasMatchingScore && reviewedExperts !== null && reviewedProjects !== null && !hasAnyReviewedEvidence) {
+    warnings.push("Matching score is non-zero but no REVIEWED experts or projects are selected. Proposals built from unreviewed evidence carry higher evaluator-rejection risk.");
+    recommendations.push("Review and approve at least one expert CV and one comparable project reference in the Vault before generating documents.");
+    score -= 12;
+    matchingReadinessSub = Math.max(0, matchingReadinessSub - 20);
+  }
+
   // ─── Sub-score breakdown ───────────────────────────────────────────
   const extractedTextLength = params.extractedTextLength ?? 0;
   const extractionQualitySub = extractedTextLength >= 5000 ? 100 : extractedTextLength >= 1000 ? 70 : extractedTextLength >= 200 ? 40 : extractedTextLength > 0 ? 20 : 0;
