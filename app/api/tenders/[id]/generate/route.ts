@@ -281,7 +281,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     nextAction: "OPEN_COMPANY_READINESS",
     diagnosticId: `ingestion-not-ready-${id}`,
   }, { status: 422 });
-  if (!hasRealClientName(tender.clientName)) return NextResponse.json({
+  // Accept procuringEntityName as a fallback for clientName — AI Analyze may set
+  // procuringEntityName without back-filling clientName on older tenders.
+  const effectiveClientName = tender.clientName || (tender as Record<string, unknown>).procuringEntityName as string | null | undefined;
+  if (!hasRealClientName(effectiveClientName)) return NextResponse.json({
     errorCode: "CLIENT_NAME_REQUIRED",
     error: "Generation blocked: client name is not set. Edit the tender and fill the Client Name field before generating proposal documents.",
     blockers: ["Client name is missing or invalid."],
