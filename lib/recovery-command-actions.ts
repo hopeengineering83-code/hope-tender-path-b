@@ -191,6 +191,19 @@ export const RECOVERY_COMMAND_ACTIONS: Record<string, RecoveryCommandActionSpec>
     anchorId: "tender-files",
     message: "Open the Tender Files panel to re-upload a clearer scan or trigger OCR on the current file.",
   },
+  // Metadata repair / re-extraction ─────────────────────────────────────────
+  REPAIR_METADATA: {
+    label: "Repair Metadata",
+    kind: "api",
+    method: "POST",
+    path: "/api/tenders/{tenderId}/repair-metadata",
+  },
+  RE_EXTRACT_METADATA: {
+    label: "Re-extract Metadata",
+    kind: "api",
+    method: "POST",
+    path: "/api/tenders/{tenderId}/re-extract-metadata",
+  },
 };
 
 export function getRecoveryCommandActionSpec(action: string): RecoveryCommandActionSpec | null {

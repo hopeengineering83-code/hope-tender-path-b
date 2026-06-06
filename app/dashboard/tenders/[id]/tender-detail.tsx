@@ -1779,7 +1779,12 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
                       <dt className="text-sm font-medium text-slate-700 mb-2">Contact &amp; location details</dt>
                       <dl className="grid gap-x-6 gap-y-2 md:grid-cols-2">
                         {rowsToShow.map(({ label, key, value }) => {
-                          const s = src[key];
+                          // submissionEmails has its own source-page field rather
+                          // than being in contactDetailsSourceJson.
+                          const s: { page: number | null; quote: string | null } | undefined =
+                            key === "submissionEmails" && tender.submissionEmailSourcePage
+                              ? { page: tender.submissionEmailSourcePage, quote: null }
+                              : src[key];
                           const missing = !value;
                           return (
                             <div key={key}>
