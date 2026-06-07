@@ -29,7 +29,7 @@ export async function GET(req: Request) {
     ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
     select: {
       id: true, fileName: true, originalFileName: true, mimeType: true,
-      size: true, category: true, createdAt: true, storagePath: true,
+      size: true, category: true, createdAt: true, storagePath: true, aiExtractionStatus: true,
     },
   });
 

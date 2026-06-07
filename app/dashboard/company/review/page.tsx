@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
-type CompanyDoc = { id: string; originalFileName: string; category: string; extractedText?: string | null };
+type CompanyDoc = { id: string; originalFileName: string; category: string; aiExtractionStatus?: string | null };
 type Expert = { id: string; fullName: string; title?: string | null; yearsExperience?: number | null; disciplines?: string[]; sectors?: string[]; certifications?: string[]; profile?: string | null; trustLevel?: string | null };
 type Project = { id: string; name: string; clientName?: string | null; country?: string | null; sector?: string | null; serviceAreas?: string[]; contractValue?: number | null; currency?: string | null; summary?: string | null; trustLevel?: string | null };
 type Company = { experts?: Expert[]; projects?: Project[]; expertCount?: number; projectCount?: number };

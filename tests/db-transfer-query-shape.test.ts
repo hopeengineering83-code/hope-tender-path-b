@@ -9,6 +9,10 @@ const analysisPanel = fs.readFileSync("components/analysis-quality-panel.tsx", "
 const extractionPanel = fs.readFileSync("components/extraction-quality-panel.tsx", "utf8");
 const extractionQualityApi = fs.readFileSync("app/api/tenders/[id]/extraction-quality/route.ts", "utf8");
 
+const companyDocumentsApi = fs.readFileSync("app/api/company/documents/route.ts", "utf8");
+const companyDocumentsPage = fs.readFileSync("app/dashboard/company/documents/page.tsx", "utf8");
+const companyDashboardPage = fs.readFileSync("app/dashboard/company/page.tsx", "utf8");
+
 describe("DB transfer query shape — dashboard metadata views", () => {
   it("tender detail page uses extracted-text metrics instead of selecting full extractedText", () => {
     assert.ok(!/select:\s*\{[^}]*extractedText:\s*true[^}]*\}/s.test(tenderPage));
@@ -46,4 +50,13 @@ describe("DB transfer query shape — dashboard metadata views", () => {
     assert.match(extractionQualityApi, /LEFT\(COALESCE\("extractedText", ''\), 6000\)/);
     assert.match(extractionQualityApi, /char_length\("extractedText"\)/);
   });
+
+  it("company document list views do not select or render full extractedText", () => {
+    assert.ok(!/extractedText:\s*true/.test(companyDocumentsApi));
+    assert.ok(!/extractedText:\s*true/.test(companyDocumentsPage));
+    assert.ok(!/doc\.extractedText/.test(companyDashboardPage));
+    assert.match(companyDocumentsApi, /aiExtractionStatus:\s*true/);
+    assert.match(companyDocumentsPage, /aiExtractionStatus:\s*true/);
+  });
+
 });

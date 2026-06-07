@@ -163,6 +163,32 @@ export default function TenderRecoveryCommandCenter({ tenderId }: { tenderId: st
     return `${recoveryCommandLabel(action)} completed.`;
   }
 
+  function scrollToPanel(anchorId: string, fallbackMessage: string) {
+    const el = document.getElementById(anchorId);
+    if (!el) {
+      setActionMsg(`${fallbackMessage} Panel #${anchorId} is not visible on this page; use the tender detail tabs manually.`);
+      return;
+    }
+    el.scrollIntoView({ behavior: "smooth" });
+    setActionMsg(fallbackMessage);
+  }
+
+  function messageForApiAction(action: string, json: Record<string, unknown>) {
+    if (action === "RUN_AI_ANALYZE" || action === "RETRY_AI_ANALYZE" || action === "REVIEW_ANALYSIS") {
+      return json.fallback ? "Regex fallback used — approve below or retry when providers recover." : "Analysis complete.";
+    }
+    if (action === "BUILD_SUBMISSION_PLAN") return `Plan built — ${json.created ?? 0} file(s) created, ${json.skipped ?? 0} already existed.`;
+    if (action === "RUN_ENGINE") return "Engine ran. Review lifecycle, generation readiness, and export readiness before proceeding.";
+    if (action === "REPAIR_SOURCE_REFERENCES") return `Source repair complete — ${json.repairedCount ?? 0} requirement(s) updated.`;
+    if (action === "GENERATE_REQUIRED_DOCUMENTS" || action === "GENERATE_DOCS" || action === "GENERATE_MISSING_PLANNED_DOCS") return `Missing planned document generation finished — ${json.generated ?? json.created ?? json.count ?? 0} row(s) updated. Review and validate before export.`;
+    if (action === "VALIDATE_DOCS") return "Validation completed. Review validation results and remaining blockers.";
+    if (action === "REPAIR_DOCUMENT_QUALITY" || action === "REPAIR_DOCS") return `Export-gap repair completed — ${json.repaired ?? json.updated ?? 0} document(s) updated. Re-check readiness before export.`;
+    if (action === "AUTO_FINALIZE") return `Auto-finalize completed — ${json.finalized ?? json.updated ?? 0} document(s) updated. Re-check export readiness before download.`;
+    if (action === "RESOLVE_EXPORT_BLOCKERS" || action === "EXPORT_READINESS") return "Export readiness re-checked. Review the Export Readiness panel for canonical blockers.";
+    if (action === "RECONCILE_OUTSIDE_PLAN_DOCS" || action === "EXCLUDE_OUTSIDE_PLAN_DOCS") return `Outside-plan reconciliation completed — ${json.superseded ?? 0} document(s) excluded/superseded.`;
+    return `${recoveryCommandLabel(action)} completed.`;
+  }
+
   async function executeAction(action: string) {
     setActioning(true);
     setActionMsg(null);
