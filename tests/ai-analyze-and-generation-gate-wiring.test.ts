@@ -213,3 +213,38 @@ describe("command center avoids stale workflow progress contradiction", () => {
     assert.doesNotMatch(source, /Workflow Progress:/);
   });
 });
+
+describe("SSE streaming wiring — AI Analyze endpoint and UI progress display", () => {
+  const routeSource = readFileSync("app/api/tenders/[id]/ai-analyze/route.ts", "utf8");
+  const uiSource = readFileSync("app/dashboard/tenders/[id]/tender-detail.tsx", "utf8");
+
+  it("route has handleStreamingAnalyze function", () => {
+    assert.match(routeSource, /handleStreamingAnalyze/);
+  });
+
+  it("route responds with text/event-stream content type and no-cache", () => {
+    assert.match(routeSource, /text\/event-stream/);
+    assert.match(routeSource, /Cache-Control.*no-cache/);
+  });
+
+  it("route branches on Accept: text/event-stream header", () => {
+    assert.match(routeSource, /wantsStream/);
+  });
+
+  it("route emits all required phase events", () => {
+    for (const phase of ["starting", "extracting", "analyzing", "saving", "complete", "error"]) {
+      assert.match(routeSource, new RegExp(`phase:\\s*"${phase}"`), `missing phase: ${phase}`);
+    }
+  });
+
+  it("UI sends Accept: text/event-stream and falls back to non-streaming", () => {
+    assert.match(uiSource, /handleAnalyzeStreaming/);
+    assert.match(uiSource, /"Accept":\s*"text\/event-stream"/);
+    assert.match(uiSource, /handleAIAnalyze\(\)/);
+  });
+
+  it("UI tracks analyzePhase and analyzeProgress", () => {
+    assert.match(uiSource, /analyzePhase/);
+    assert.match(uiSource, /analyzeProgress/);
+  });
+});
