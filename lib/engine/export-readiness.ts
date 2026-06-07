@@ -244,6 +244,21 @@ export function filePlanBlockersFromLists(docs: ExportReadyDocument[], exactFile
     if (mismatches.length > 0) blockers.push({ category: "FILE_ORDER", severity: "HIGH", title: `Generated file order does not match tender order near: ${mismatches.slice(0, 3).map((m) => m.name).join(", ")}`, recommendedAction: "Reorder the generated documents/export package to match the tender's required attachment order." });
   }
 
+  // Duplicate exactOrder detection — two documents with the same position
+  // value would produce an undefined submission order for the evaluator.
+  const orderValues = docs.map((d) => d.exactOrder).filter((v): v is number => v != null);
+  const orderSeen = new Map<number, number>();
+  for (const v of orderValues) orderSeen.set(v, (orderSeen.get(v) ?? 0) + 1);
+  const duplicateOrders = [...orderSeen.entries()].filter(([, count]) => count > 1).map(([v]) => v);
+  if (duplicateOrders.length > 0) {
+    blockers.push({
+      category: "DUPLICATE_EXACT_ORDER",
+      severity: "HIGH",
+      title: `Duplicate document order values: position(s) ${duplicateOrders.join(", ")} are assigned to more than one document.`,
+      recommendedAction: "Fix exactOrder values in Final Package Manifest so each document has a unique position.",
+    });
+  }
+
   return blockers;
 }
 

@@ -184,4 +184,38 @@ describe("filePlanBlockersFromLists", () => {
     ], null, JSON.stringify(["Technical-Proposal.docx", "Financial-Proposal.docx"]));
     assert.ok(blockers.some((b) => b.category === "FILE_ORDER" && b.severity === "HIGH"));
   });
+
+  it("flags duplicate exactOrder values as DUPLICATE_EXACT_ORDER HIGH blocker", () => {
+    const blockers = filePlanBlockersFromLists([
+      { ...READY, exactOrder: 1, exactFileName: "Technical-Proposal.docx" },
+      { ...READY, id: "doc-2", exactOrder: 1, exactFileName: "Financial-Proposal.docx" },
+      { ...READY, id: "doc-3", exactOrder: 2, exactFileName: "CV-Lead-Expert.docx" },
+    ], null, null);
+    assert.ok(
+      blockers.some((b) => b.category === "DUPLICATE_EXACT_ORDER" && b.severity === "HIGH"),
+      "Expected DUPLICATE_EXACT_ORDER HIGH blocker when two docs share exactOrder=1",
+    );
+  });
+
+  it("does not flag DUPLICATE_EXACT_ORDER when all exactOrder values are unique", () => {
+    const blockers = filePlanBlockersFromLists([
+      { ...READY, exactOrder: 1, exactFileName: "Technical-Proposal.docx" },
+      { ...READY, id: "doc-2", exactOrder: 2, exactFileName: "Financial-Proposal.docx" },
+    ], null, null);
+    assert.ok(
+      !blockers.some((b) => b.category === "DUPLICATE_EXACT_ORDER"),
+      "Should not flag DUPLICATE_EXACT_ORDER when all positions are unique",
+    );
+  });
+
+  it("does not flag DUPLICATE_EXACT_ORDER when exactOrder is null/undefined", () => {
+    const blockers = filePlanBlockersFromLists([
+      { ...READY, exactOrder: null, exactFileName: "Technical-Proposal.docx" },
+      { ...READY, id: "doc-2", exactOrder: null, exactFileName: "Financial-Proposal.docx" },
+    ], null, null);
+    assert.ok(
+      !blockers.some((b) => b.category === "DUPLICATE_EXACT_ORDER"),
+      "Null exactOrder values should not be flagged as duplicates",
+    );
+  });
 });

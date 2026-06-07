@@ -115,6 +115,35 @@ async function singleDocument(userId: string, tender: any, docId: string) {
   const readiness = checkExportReadiness([doc], { requireFileContent: false });
   if (!readiness.ok) return err(exportReadinessError(readiness.failures), 409, { code: "DOCUMENT_NOT_READY", failures: readiness.failures });
 
+  // Run authority review on this single document before serving it.
+  // Pass empty manifestEntries and requiredSections since we are only
+  // checking content quality on the individual document.
+  const singleAuthorityResult = runAuthorityReview(
+    [{
+      id: String(raw.id),
+      name: String(raw.name ?? raw.exactFileName ?? raw.id),
+      documentType: String(raw.documentType ?? ""),
+      contentSummary: raw.contentSummary ?? null,
+      reviewNotes: raw.reviewNotes ?? null,
+      exactFileName: raw.exactFileName ?? null,
+    }],
+    [],
+    [],
+  );
+  if (singleAuthorityResult.status === "BLOCKED") {
+    return err(
+      `Single-document download blocked by Authority Review: ${singleAuthorityResult.blockers.length} critical issue(s) must be resolved.`,
+      422,
+      {
+        code: "AUTHORITY_REVIEW_BLOCKED",
+        blockers: singleAuthorityResult.blockers,
+        overallScore: singleAuthorityResult.overallScore,
+        affectedDocumentIds: singleAuthorityResult.affectedDocumentIds,
+        recommendedFixes: singleAuthorityResult.recommendedFixes,
+      },
+    );
+  }
+
   const contentResult = await readContentOrError(doc);
   if (!contentResult.ok) return contentResult.response;
   const content = contentResult.content;
@@ -189,6 +218,7 @@ async function zipPackage(userId: string, tender: any, envelopeFilter: EnvelopeF
   // Additional to the Phase 4 quality validation check above.
   // Detects AI traces, placeholders, Bid-Team stubs, envelope cross-contamination,
   // and documents not in the Final Package Manifest.
+  let zipAuthorityNeedsReview = false;
   {
     const authorityDocs = tender.generatedDocuments
       .filter((doc: any) => isFinalExportCandidateDocument(doc) && doc.generationStatus === "GENERATED")
@@ -251,7 +281,11 @@ async function zipPackage(userId: string, tender: any, envelopeFilter: EnvelopeF
         },
       );
     }
+    // Capture NEEDS_REVIEW status so we can annotate the ZIP response header.
+    zipAuthorityNeedsReview = authorityResult.status === "NEEDS_REVIEW";
   }
+  // (zipAuthorityNeedsReview is set inside the block above; it propagates to
+  //  the response headers at the end of zipPackage.)
 
   // Strict two-envelope tenders: the canonical helper sets
   // summary.strictTwoEnvelope when the tender requires SEPARATE technical
@@ -392,6 +426,9 @@ async function zipPackage(userId: string, tender: any, envelopeFilter: EnvelopeF
   if (hasFinancialDocs && !envelopeFilter) {
     responseHeaders["X-Envelope-Note"] =
       "FINANCIAL documents are included. If this tender requires separate technical and financial envelopes, submit the financial files in a separate sealed package per the tender instructions.";
+  }
+  if (zipAuthorityNeedsReview) {
+    responseHeaders["X-Authority-Review-Status"] = "NEEDS_REVIEW";
   }
   return new NextResponse(new Uint8Array(zipBuffer), { headers: responseHeaders });
 }

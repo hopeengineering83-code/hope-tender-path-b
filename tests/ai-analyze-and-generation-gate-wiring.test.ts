@@ -305,3 +305,39 @@ describe("authority review gate blocks download route", () => {
   it("returns AUTHORITY_REVIEW_BLOCKED on blocked status", () => { assert.match(source, /AUTHORITY_REVIEW_BLOCKED/); });
   it("does not remove METADATA_CONTAMINATED check", () => { assert.match(source, /METADATA_CONTAMINATED/); });
 });
+
+describe("deferred gap fixes — post-618 hardening", () => {
+  it("final-submission-readiness blocks on empty clientName", () => {
+    const source = readFileSync("lib/engine/final-submission-readiness.ts", "utf8");
+    assert.match(source, /CLIENT_NAME_MISSING/);
+    assert.match(source, /clientName/);
+  });
+  it("export-readiness checks for duplicate exactOrder", () => {
+    const source = readFileSync("lib/engine/export-readiness.ts", "utf8");
+    assert.match(source, /DUPLICATE_EXACT_ORDER/);
+  });
+  it("download route runs authority review on single-document path", () => {
+    const source = readFileSync("app/api/tenders/[id]/download/route.ts", "utf8");
+    assert.match(source, /runAuthorityReview/);
+    // single-doc path also calls it
+    assert.match(source, /AUTHORITY_REVIEW_BLOCKED/);
+  });
+  it("document-quality-validator FINANCIAL_IN_TECHNICAL_RE requires numeric follow-on", () => {
+    const source = readFileSync("lib/engine/document-quality-validator.ts", "utf8");
+    // Pattern must require digit/currency after "total price" — the raw source
+    // must contain the tightened regex with [\d,] follow-on so that prose like
+    // "the total price of the contract was fair" does NOT trigger the rule.
+    // We use assert.ok + includes() because the source contains literal
+    // backslash characters (\s, \d) that make regex-based matching tricky.
+    assert.ok(
+      source.includes("total\\s+price\\s*(?:[:\\$€£]|is\\b)?\\s*[\\$€£]?\\s*[\\d,]"),
+      "FINANCIAL_IN_TECHNICAL_RE must require a numeric/currency follow-on after 'total price'",
+    );
+    // Double-check: the old bare "total\s+price" pattern (without numeric guard)
+    // must not appear as its own leading alternative in FINANCIAL_IN_TECHNICAL_RE.
+    assert.ok(
+      !source.match(/FINANCIAL_IN_TECHNICAL_RE\s*=\s*\/total\\s\+price\|/),
+      "FINANCIAL_IN_TECHNICAL_RE must not start with bare 'total price' as its own alternative",
+    );
+  });
+});
