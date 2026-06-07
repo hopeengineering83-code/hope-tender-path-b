@@ -26,7 +26,7 @@ function renderInline(text: string): React.ReactNode[] {
   });
 }
 
-function parseDocumentQuality(contentSummary: string | null | undefined): { qualityScore: number; benchmarkScore: number; verdict: string } | null {
+function parseDocumentQuality(contentSummary: string | null | undefined): { qualityScore: number; benchmarkScore: number; verdict: string; repairAddendaApplied: boolean } | null {
   if (!contentSummary) return null;
   const qMatch = contentSummary.match(/Quality score: (\d+)\/100/);
   const bMatch = contentSummary.match(/Benchmark audit (\d+)\/100 \(([A-Z_]+)\)/);
@@ -35,6 +35,7 @@ function parseDocumentQuality(contentSummary: string | null | undefined): { qual
     qualityScore: qMatch ? parseInt(qMatch[1], 10) : 0,
     benchmarkScore: bMatch ? parseInt(bMatch[1], 10) : 0,
     verdict: bMatch?.[2] ?? "PENDING",
+    repairAddendaApplied: /Repair addenda applied/i.test(contentSummary),
   };
 }
 
@@ -1943,6 +1944,11 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
             <p className={`mt-1 text-xs font-medium ${proposalQuality.verdict === "BENCHMARK_READY" ? "text-green-600" : "text-amber-600"}`}>
               {proposalQuality.verdict === "BENCHMARK_READY" ? "Benchmark ready ✓" : proposalQuality.benchmarkScore > 0 ? `Benchmark ${proposalQuality.benchmarkScore}/100` : "Generate docs to score"}
             </p>
+            {proposalQuality.repairAddendaApplied && (
+              <span className="mt-1.5 inline-block rounded bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-700" title="One or more critical sections (Compliance Matrix, Evaluator Mirror, Win Themes, Self-Score) were auto-injected by the quality repair engine because they were missing from the generated draft.">
+                Auto-repaired ↑
+              </span>
+            )}
             {axisScores && (() => {
               const AXIS_LABELS: Record<string, string> = {
                 structure: "Structure", evidence: "Evidence", tables: "Tables",
