@@ -499,6 +499,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // Blocks generation when critical metadata is missing or placeholder-filled
   // (e.g. client name "Bid-Team to confirm", no submission endpoint, no deadline).
   // overallRatio < 0.3 is a hard block; missingCritical / invalidFields always block.
+  // Load any user overrides — these allow NOT_APPLICABLE / USER_CONFIRMED /
+  // USER_EDITED / IGNORED_WITH_REASON to unblock specific missing fields.
+  const metadataOverrides = await prisma.tenderMetadataOverride.findMany({
+    where: { tenderId: id },
+    select: { field: true, fieldState: true, overrideValue: true },
+  });
   const metadataReport = assessTenderMetadataCompleteness({
     clientName: effectiveClientName,
     procuringEntityName: (tender as Record<string, unknown>).procuringEntityName as string | null | undefined,
@@ -530,7 +536,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     requirementCount: tender.requirements.length,
     hasEvaluationMethodology: Boolean((tender.evaluationMethodology ?? "").trim()),
     hasSubmissionRules: Boolean(tender.submissionMethod || tender.submissionEmails || tender.submissionAddress),
-  });
+  }, metadataOverrides);
   if (metadataReport.blockingForGeneration) {
     // Name the actual missing fields so the user knows exactly what's wrong,
     // and nudge them to the one-click repair button. The endpoint behind that

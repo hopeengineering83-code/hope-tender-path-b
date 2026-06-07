@@ -28,7 +28,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.65.0",
     "@google/generative-ai": "^0.24.1",
-    "@prisma/client": "6.19.3",
+    "@prisma/client": "^6.19.3",
     "@swc/helpers": "^0.5.23",
     "@vercel/blob": "^2.4.0",
     "bcryptjs": "^2.4.3",
@@ -55,7 +55,7 @@
     "autoprefixer": "^10.4.19",
     "eslint": "^8.57.1",
     "eslint-config-next": "^15.5.18",
-    "prisma": "6.19.3",
+    "prisma": "^6.19.3",
     "tailwindcss": "^3.4.1",
     "tsx": "^4.0.0",
     "typescript": "6.0.3"

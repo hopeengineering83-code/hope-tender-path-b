@@ -64,6 +64,7 @@ const REQ_TYPE_LABELS: Record<string, string> = {
 };
 
 type ActionState = { pending: boolean; error: string | null; success: string | null };
+type CoverageActionType = "CONFIRM_FULL" | "CONFIRM_SUBSTANTIAL" | "MARK_NA";
 
 type TraceabilitySummary = {
   requirements: number;
@@ -86,6 +87,9 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
   const [traceOpen, setTraceOpen] = useState(false);
   const [confirmingAll, setConfirmingAll] = useState(false);
   const [confirmAllResult, setConfirmAllResult] = useState<string | null>(null);
+  const [coverageActionStates, setCoverageActionStates] = useState<Record<string, ActionState>>({});
+  const [naReasonPrompt, setNaReasonPrompt] = useState<{ requirementId: string; title: string } | null>(null);
+  const [naReasonValue, setNaReasonValue] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -199,6 +203,57 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
     setConfirmAllResult(`Confirmed ${confirmed} of ${autoLinks.length} auto-linked suggestion(s).`);
     void load();
     router.refresh();
+  };
+
+  const applyCoverageAction = async (requirementId: string, action: CoverageActionType, reason?: string) => {
+    const key = `${requirementId}:${action}`;
+    setCoverageActionStates((prev) => ({ ...prev, [key]: { pending: true, error: null, success: null } }));
+    try {
+      let supportLevel: string;
+      let notes: string;
+      if (action === "CONFIRM_FULL") {
+        supportLevel = "FULL";
+        notes = "Manually confirmed as FULL coverage by reviewer.";
+      } else if (action === "CONFIRM_SUBSTANTIAL") {
+        supportLevel = "SUBSTANTIAL";
+        notes = "Manually confirmed as SUBSTANTIAL coverage by reviewer.";
+      } else {
+        supportLevel = "NOT_APPLICABLE";
+        notes = reason ? `Marked N/A: ${reason}` : "Marked as NOT_APPLICABLE by reviewer.";
+      }
+      // Use the compliance matrix update endpoint via the confirm route
+      // with a special evidence type indicating manual reviewer confirmation.
+      const res = await fetch(`/api/tenders/${tenderId}/requirement-coverage/confirm`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          requirementId,
+          evidenceType: "MANUAL_REVIEWER_CONFIRMATION",
+          evidenceReference: `manual-${action}-${Date.now()}`,
+          supportLevel,
+          notes,
+        }),
+      });
+      const json = await res.json() as { ok?: boolean; error?: string; code?: string };
+      if (!res.ok || !json.ok) {
+        // Fallback: try direct compliance matrix update
+        const res2 = await fetch(`/api/tenders/${tenderId}/requirement-coverage/set-support-level`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ requirementId, supportLevel, notes }),
+        });
+        const json2 = await res2.json() as { ok?: boolean; error?: string };
+        if (!res2.ok || !json2.ok) {
+          setCoverageActionStates((prev) => ({ ...prev, [key]: { pending: false, error: json.error ?? json2.error ?? "Failed to update coverage", success: null } }));
+          return;
+        }
+      }
+      setCoverageActionStates((prev) => ({ ...prev, [key]: { pending: false, error: null, success: `Set to ${supportLevel}` } }));
+      void load();
+      router.refresh();
+    } catch {
+      setCoverageActionStates((prev) => ({ ...prev, [key]: { pending: false, error: "Network error", success: null } }));
+    }
   };
 
   const loadTraceability = async () => {
@@ -483,11 +538,94 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
                     <div className="rounded border border-blue-100 bg-blue-50 px-3 py-2 text-xs text-blue-800">
                       <span className="font-medium">Next action: </span>{row.nextAction}
                     </div>
+
+                    {/* Coverage confirmation actions for PARTIAL/NONE mandatory requirements */}
+                    {row.priority === "MANDATORY" && (row.supportLevel === "PARTIAL" || row.supportLevel === "NONE") && (
+                      <div className="rounded border border-slate-100 bg-slate-50 px-3 py-2">
+                        <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-slate-500">Confirm coverage level</p>
+                        <div className="flex flex-wrap gap-1.5">
+                          {(["CONFIRM_FULL", "CONFIRM_SUBSTANTIAL", "MARK_NA"] as CoverageActionType[]).map((action) => {
+                            const key = `${row.id}:${action}`;
+                            const state = coverageActionStates[key];
+                            if (state?.success) {
+                              return <span key={action} className="text-[10px] text-green-700 font-medium">{state.success} ✓</span>;
+                            }
+                            return (
+                              <button
+                                key={action}
+                                type="button"
+                                disabled={state?.pending}
+                                onClick={() => {
+                                  if (action === "MARK_NA") {
+                                    setNaReasonPrompt({ requirementId: row.id, title: row.title });
+                                    setNaReasonValue("");
+                                  } else {
+                                    void applyCoverageAction(row.id, action);
+                                  }
+                                }}
+                                className={`rounded px-2 py-0.5 text-[10px] font-medium disabled:opacity-50 ${
+                                  action === "CONFIRM_FULL"
+                                    ? "bg-green-100 text-green-800 hover:bg-green-200"
+                                    : action === "CONFIRM_SUBSTANTIAL"
+                                    ? "bg-blue-100 text-blue-800 hover:bg-blue-200"
+                                    : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                                }`}
+                              >
+                                {state?.pending ? "…" : action === "CONFIRM_FULL" ? "Confirm FULL" : action === "CONFIRM_SUBSTANTIAL" ? "Confirm SUBSTANTIAL" : "Mark N/A"}
+                              </button>
+                            );
+                          })}
+                          {Object.entries(coverageActionStates)
+                            .filter(([k]) => k.startsWith(`${row.id}:`))
+                            .map(([k, s]) => s.error ? <span key={k} className="text-[10px] text-red-600">{s.error}</span> : null)}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
             );
           })}
+        </div>
+      )}
+
+      {/* N/A reason inline prompt */}
+      {naReasonPrompt && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-sm rounded-xl bg-white p-5 shadow-xl">
+            <h4 className="mb-2 text-sm font-semibold text-gray-900">Mark as Not Applicable</h4>
+            <p className="mb-3 text-xs text-gray-600">Requirement: <strong>{naReasonPrompt.title}</strong></p>
+            <label className="mb-1 block text-xs font-medium text-gray-700">Reason (required)</label>
+            <textarea
+              value={naReasonValue}
+              onChange={(e) => setNaReasonValue(e.target.value)}
+              rows={3}
+              className="w-full rounded border border-gray-300 p-2 text-xs focus:border-blue-500 focus:outline-none"
+              placeholder="e.g. This requirement is covered by a separate compliance attestation outside this tender scope."
+              autoFocus
+            />
+            <div className="mt-3 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => { setNaReasonPrompt(null); setNaReasonValue(""); }}
+                className="rounded border border-gray-200 px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={!naReasonValue.trim()}
+                onClick={() => {
+                  const { requirementId } = naReasonPrompt;
+                  setNaReasonPrompt(null);
+                  void applyCoverageAction(requirementId, "MARK_NA", naReasonValue.trim());
+                }}
+                className="rounded bg-gray-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-gray-800 disabled:opacity-50"
+              >
+                Confirm N/A
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

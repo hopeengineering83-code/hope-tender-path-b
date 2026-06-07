@@ -135,6 +135,8 @@ export type MetadataCompletenessReport = {
   missingCritical: MetadataFieldFinding[];
   /** Non-critical fields that are missing — surfaced as warnings only. */
   missingNonCritical: MetadataFieldFinding[];
+  /** Fields explicitly marked NOT_APPLICABLE by user override. */
+  notApplicableFields: MetadataFieldFinding[];
   /** Fields containing "Bid-Team to confirm" or similar placeholders. */
   invalidFields: MetadataFieldFinding[];
   /** Convenience flags. */
@@ -252,11 +254,36 @@ export function stripMetadataPlaceholders(value: string): string {
   return out.replace(/\s{2,}/g, " ").replace(/\s*[,;:.]\s*[,;:.]/g, ".").trim();
 }
 
-export function assessTenderMetadataCompleteness(input: MetadataCompletenessInput): MetadataCompletenessReport {
+export function assessTenderMetadataCompleteness(
+  input: MetadataCompletenessInput,
+  overrides?: Array<{ field: string; fieldState: string; overrideValue?: string | null }>,
+): MetadataCompletenessReport {
   const missingCritical: MetadataFieldFinding[] = [];
   const missingNonCritical: MetadataFieldFinding[] = [];
+  const notApplicableFields: MetadataFieldFinding[] = [];
   const invalidFields: MetadataFieldFinding[] = [];
   const notes: string[] = [];
+
+  // Build a fast override lookup by field name.
+  const overrideByField = new Map<string, { fieldState: string; overrideValue?: string | null }>();
+  if (overrides) {
+    for (const o of overrides) {
+      overrideByField.set(o.field, o);
+    }
+  }
+
+  // Returns true when a field has a user-override that resolves it (not blocking).
+  const isOverrideResolved = (field: string): boolean => {
+    const o = overrideByField.get(field);
+    if (!o) return false;
+    return ["NOT_APPLICABLE", "USER_CONFIRMED", "USER_EDITED", "IGNORED_WITH_REASON"].includes(o.fieldState);
+  };
+
+  // Returns true when a field has a NOT_APPLICABLE override specifically.
+  const isNotApplicable = (field: string): boolean => {
+    const o = overrideByField.get(field);
+    return o?.fieldState === "NOT_APPLICABLE";
+  };
 
   const isValidPresent = (value: unknown): boolean => {
     if (!isPresent(value)) return false;
@@ -272,7 +299,14 @@ export function assessTenderMetadataCompleteness(input: MetadataCompletenessInpu
     value: unknown,
     reason: string,
   ) => {
-    if (!isValidPresent(value)) missingCritical.push({ field, reason });
+    if (!isValidPresent(value)) {
+      if (isNotApplicable(field)) {
+        notApplicableFields.push({ field, reason });
+      } else if (!isOverrideResolved(field)) {
+        missingCritical.push({ field, reason });
+      }
+      // USER_CONFIRMED / USER_EDITED / IGNORED_WITH_REASON → not blocking, not in any list
+    }
   };
 
   // Accept either clientName or procuringEntityName — if the AI set procuringEntityName
@@ -283,18 +317,35 @@ export function assessTenderMetadataCompleteness(input: MetadataCompletenessInpu
   checkCritical("submissionMethod", input.submissionMethod, "Submission method (portal / sealed envelope / email) drives package mode and final ZIP behaviour.");
   // submissionEndpoint = either an email list, a submission address, or a portal URL
   const hasAnyEndpoint = isValidPresent(input.submissionEmails) || isValidPresent(input.submissionAddress);
-  if (!hasAnyEndpoint) missingCritical.push({ field: "submissionEndpoint", reason: "Submission endpoint (email or address) is required for the cover letter and submission package label." });
+  if (!hasAnyEndpoint) {
+    const endpointField = "submissionEndpoint";
+    if (isNotApplicable(endpointField)) {
+      notApplicableFields.push({ field: endpointField, reason: "Submission endpoint (email or address) is required for the cover letter and submission package label." });
+    } else if (!isOverrideResolved(endpointField)) {
+      missingCritical.push({ field: endpointField, reason: "Submission endpoint (email or address) is required for the cover letter and submission package label." });
+    }
+  }
   checkCritical("deadline", input.deadline, "Submission deadline is required for scheduling and final approval rules.");
   if ((input.requirementCount ?? 0) === 0) {
-    missingCritical.push({ field: "requiredDocuments", reason: "No tender requirements extracted yet — required-document list is empty." });
+    const reqField = "requiredDocuments";
+    if (!isOverrideResolved(reqField)) {
+      missingCritical.push({ field: reqField, reason: "No tender requirements extracted yet — required-document list is empty." });
+    }
   }
   if (input.hasEvaluationMethodology !== true && (input.technicalWeight === null || input.technicalWeight === undefined)) {
-    missingCritical.push({ field: "evaluationCriteria", reason: "Evaluation criteria / scoring weights are not extracted — needed for scored tenders." });
+    const evalField = "evaluationCriteria";
+    if (isNotApplicable(evalField)) {
+      notApplicableFields.push({ field: evalField, reason: "Evaluation criteria / scoring weights are not extracted — needed for scored tenders." });
+    } else if (!isOverrideResolved(evalField)) {
+      missingCritical.push({ field: evalField, reason: "Evaluation criteria / scoring weights are not extracted — needed for scored tenders." });
+    }
   }
 
   // ── Non-critical fields (surfaced as warnings, not blockers). ───────────
   const checkNonCritical = (field: NonCriticalMetadataField, value: unknown, reason: string) => {
-    if (!isValidPresent(value)) missingNonCritical.push({ field, reason });
+    if (!isValidPresent(value) && !isOverrideResolved(field)) {
+      missingNonCritical.push({ field, reason });
+    }
   };
 
   checkNonCritical("reference", input.reference, "Tender reference number improves identification on the cover letter.");
@@ -316,16 +367,16 @@ export function assessTenderMetadataCompleteness(input: MetadataCompletenessInpu
   checkNonCritical("clientRepresentative", input.clientRepresentative, "Authorized client representative name may be required in declarations.");
 
   // Page limit, bid bond, site visit, validity — track per spec.
-  if (!isPresent(input.pageLimit)) {
+  if (!isPresent(input.pageLimit) && !isOverrideResolved("pageLimit")) {
     missingNonCritical.push({ field: "pageLimit", reason: "Page limit is useful when the tender restricts proposal length." });
   }
-  if (!isPresent(input.bidBondAmount)) {
+  if (!isPresent(input.bidBondAmount) && !isOverrideResolved("bidBond")) {
     missingNonCritical.push({ field: "bidBond", reason: "Bid bond amount is useful when a bid security is required." });
   }
-  if (input.mandatorySiteVisit === null || input.mandatorySiteVisit === undefined) {
+  if ((input.mandatorySiteVisit === null || input.mandatorySiteVisit === undefined) && !isOverrideResolved("siteVisit")) {
     missingNonCritical.push({ field: "siteVisit", reason: "Site visit flag is useful when a mandatory site visit is part of the bid timeline." });
   }
-  if (!isPresent(input.validityDays)) {
+  if (!isPresent(input.validityDays) && !isOverrideResolved("proposalValidity")) {
     missingNonCritical.push({ field: "proposalValidity", reason: "Proposal validity period is useful for the cover letter and declarations." });
   }
 
@@ -416,6 +467,7 @@ export function assessTenderMetadataCompleteness(input: MetadataCompletenessInpu
     overallRatio,
     missingCritical,
     missingNonCritical,
+    notApplicableFields,
     invalidFields,
     blockingForGeneration: missingCritical.length > 0 || invalidFields.length > 0,
     blockingForExport: missingCritical.length > 0 || invalidFields.length > 0,
