@@ -2880,6 +2880,16 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   if (repairAddendaApplied) {
     console.info("[generate-elite] Quality repair addenda applied — one or more critical sections were missing.");
     workingMarkdown = repairedMarkdown;
+    // Re-score after repair so contentSummary reflects the improved proposal.
+    const repairedScore = scoreProposalQuality({
+      markdown: workingMarkdown,
+      primarySector: intelligence.primarySector,
+      topProjects: (projects as ProjectRecord[]).slice(0, 2),
+    });
+    if (repairedScore.total > qualityScore.total) {
+      console.info(`[generate-elite] Post-repair quality lift: ${qualityScore.total} → ${repairedScore.total} (+${repairedScore.total - qualityScore.total}).`);
+      qualityScore = repairedScore;
+    }
   }
 
   // Re-render the DOCX from the (possibly refined) markdown.
