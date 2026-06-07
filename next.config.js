@@ -99,6 +99,12 @@ const nextConfig = {
   env: {
     NEXT_PUBLIC_AI_ENABLED: ["OPENAI_API_KEY", "GEMINI_API_KEY", "MISTRAL_API_KEY", "DEEPSEEK_API_KEY", "GROQ_API_KEY", "TOGETHER_API_KEY", "OPENROUTER_API_KEY", "ANTHROPIC_API_KEY"]
       .some((name) => Boolean(process.env[name])) ? "true" : "false",
+    // Build-time deployment markers — baked into the client bundle so the UI
+    // can show which commit is running and detect stale browser cache.
+    // Sources: Vercel system env vars (safe, not secret).
+    NEXT_PUBLIC_BUILD_SHA: (process.env.VERCEL_GIT_COMMIT_SHA ?? process.env.GIT_COMMIT_SHA ?? "").slice(0, 8) || "dev",
+    NEXT_PUBLIC_BUILD_ENV: process.env.VERCEL_ENV ?? process.env.NODE_ENV ?? "development",
+    NEXT_PUBLIC_BUILD_TIME: new Date().toISOString(),
   },
 };
 
