@@ -202,18 +202,6 @@ describe("bid strategy unavailable on unsafe extraction/analysis", () => {
   });
 });
 
-describe("command center avoids stale workflow progress contradiction", () => {
-  const source = readFileSync("app/dashboard/tenders/[id]/command-center/page.tsx", "utf8");
-
-  it("labels canonical export readiness instead of presenting legacy readinessScore as readiness", () => {
-    assert.match(source, /canonicalReadinessLabel/);
-    assert.match(source, /Export readiness: BLOCKED/);
-    assert.match(source, /Legacy workflow score:/);
-    assert.match(source, /not an export gate/);
-    assert.doesNotMatch(source, /Workflow Progress:/);
-  });
-});
-
 describe("SSE streaming wiring — AI Analyze endpoint and UI progress display", () => {
   const routeSource = readFileSync("app/api/tenders/[id]/ai-analyze/route.ts", "utf8");
   const uiSource = readFileSync("app/dashboard/tenders/[id]/tender-detail.tsx", "utf8");

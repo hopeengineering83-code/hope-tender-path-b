@@ -586,6 +586,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       return NextResponse.json({ error: "Generation already in progress — cannot build plan while documents are generating.", code: "GENERATION_IN_PROGRESS" }, { status: 409 });
     }
     const plannedFiles = plannedSubmissionTargetFiles(plan);
+    if (plannedFiles.length === 0) {
+      return NextResponse.json({
+        ok: false,
+        planBuilt: false,
+        error: "Submission plan build produced zero required files. Review extraction/analysis output or manually confirm required submission documents before generation.",
+        code: "SUBMISSION_PLAN_EMPTY_REVIEW_REQUIRED",
+        nextAction: "REVIEW_REQUIREMENTS_OR_ADD_MANUAL_PLAN",
+        blockers: plan.warnings.length > 0 ? plan.warnings : ["No required submission files could be derived from tender requirements or exact file naming instructions."],
+      }, { status: 422 });
+    }
     const planRowsCreated = await ensurePlannedGeneratedDocumentRecords(id, plannedFiles);
     await logAction({ userId, action: "TENDER_PLAN_BUILT", entityType: "Tender", entityId: id, description: `Submission plan built: ${planRowsCreated} planned document stub(s) created.`, metadata: { tenderId: id, planRowsCreated, plannedFileCount: plannedFiles.length } });
     return NextResponse.json({ planBuilt: true, planRowsCreated, plannedFileCount: plannedFiles.length, message: `Submission plan built — ${planRowsCreated} planned document stub(s) created from ${plannedFiles.length} required file(s).` });

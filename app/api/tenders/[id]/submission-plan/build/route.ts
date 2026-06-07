@@ -238,6 +238,14 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       }));
 
       isDerivedDraft = true;
+    } else if (plannedFiles.length === 0) {
+      return NextResponse.json({
+        ok: false,
+        error: "Submission plan build produced zero required files. Review extraction/analysis output or manually confirm required submission documents before generation.",
+        code: "SUBMISSION_PLAN_EMPTY_REVIEW_REQUIRED",
+        nextAction: "REVIEW_REQUIREMENTS_OR_ADD_MANUAL_PLAN",
+        blockers: plan.warnings.length > 0 ? plan.warnings : ["No required submission files could be derived from tender requirements or exact file naming instructions."],
+      }, { status: 422 });
     }
 
     // Build a set of already-existing exactFileNames (case-insensitive)

@@ -13,12 +13,6 @@ const EXTRACTION_STATUS_LABELS: Record<string, string> = {
   EXTRACTION_CORRUPTED_AI_SKIPPED: "Corrupted — AI blocked",
 };
 
-type ExtractedTextSampleRow = {
-  id: string;
-  extractedCharacterCount: number;
-  extractedTextSample: string;
-};
-
 export async function ExtractionQualityPanel({ tenderId }: { tenderId: string }) {
   const userId = await getSession();
   if (!userId) return null;
@@ -91,6 +85,7 @@ export async function ExtractionQualityPanel({ tenderId }: { tenderId: string })
       extractedCharacterCount: sample?.extractedCharacterCount ?? quality.characterCount,
     };
   });
+
 
   const coverage = summarizeExtractionCoverage(reports.map((item) => ({
     id: item.id,
