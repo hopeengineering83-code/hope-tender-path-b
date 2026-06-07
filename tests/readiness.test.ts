@@ -335,3 +335,111 @@ test("tender generation readiness does NOT emit BEST-AVAILABLE warning when matc
   const warning = readiness.warnings.find((w) => w.code === "BEST_AVAILABLE_MATCHES_FLAGGED");
   assert.equal(warning, undefined, "BEST_AVAILABLE_MATCHES_FLAGGED should not fire when scores were above the safe floor");
 });
+
+test("tender generation readiness warns EVAL_WEIGHTS_INCOMPLETE when extracted criteria weights sum outside 80-120%", async () => {
+  const readiness = await getTenderGenerationReadiness(fakeClient({
+    documents: [usefulDocument],
+    experts: [{ trustLevel: "REVIEWED" }],
+    projects: [{ trustLevel: "REVIEWED" }],
+    tender: {
+      id: "tender-1",
+      status: "ANALYZED",
+      ...goodAnalysisFields,
+      // Only two criteria extracted (30% + 20% = 50%) — clearly incomplete
+      evaluationCriteriaSourceJson: JSON.stringify([
+        { criterion: "Technical approach", weight: "30%", sourcePage: 5, sourceQuote: null },
+        { criterion: "Personnel", weight: "20%", sourcePage: 6, sourceQuote: null },
+      ]),
+      requirements: [expertRequirement, projectRequirement],
+      complianceGaps: [],
+      expertMatches: [{ isSelected: true, expert: { trustLevel: "REVIEWED", fullName: "Sr. Engineer" }, rationale: "≥75%" }],
+      projectMatches: [{ isSelected: true, project: { trustLevel: "REVIEWED", name: "Road Project" }, rationale: "≥75%" }],
+    },
+  }), "user-1", "tender-1");
+
+  assert.ok(readiness);
+  const w = readiness.warnings.find((w) => w.code === "EVAL_WEIGHTS_INCOMPLETE");
+  assert.ok(w, `expected EVAL_WEIGHTS_INCOMPLETE warning; got ${JSON.stringify(readiness.warnings.map((w) => w.code))}`);
+  assert.match(w!.message, /50%/);
+  assert.equal(w!.nextAction, "RETRY_AI_ANALYZE");
+});
+
+test("tender generation readiness does NOT warn EVAL_WEIGHTS_INCOMPLETE when weights sum to ~100%", async () => {
+  const readiness = await getTenderGenerationReadiness(fakeClient({
+    documents: [usefulDocument],
+    experts: [{ trustLevel: "REVIEWED" }],
+    projects: [{ trustLevel: "REVIEWED" }],
+    tender: {
+      id: "tender-1",
+      status: "ANALYZED",
+      ...goodAnalysisFields,
+      evaluationCriteriaSourceJson: JSON.stringify([
+        { criterion: "Technical approach", weight: "40%", sourcePage: 5, sourceQuote: null },
+        { criterion: "Personnel", weight: "30%", sourcePage: 6, sourceQuote: null },
+        { criterion: "Methodology", weight: "20%", sourcePage: 7, sourceQuote: null },
+        { criterion: "Price", weight: "10%", sourcePage: 8, sourceQuote: null },
+      ]),
+      requirements: [expertRequirement, projectRequirement],
+      complianceGaps: [],
+      expertMatches: [{ isSelected: true, expert: { trustLevel: "REVIEWED", fullName: "Sr. Engineer" }, rationale: "≥75%" }],
+      projectMatches: [{ isSelected: true, project: { trustLevel: "REVIEWED", name: "Road Project" }, rationale: "≥75%" }],
+    },
+  }), "user-1", "tender-1");
+
+  assert.ok(readiness);
+  const w = readiness.warnings.find((w) => w.code === "EVAL_WEIGHTS_INCOMPLETE");
+  assert.equal(w, undefined, "should NOT warn when weights sum to 100%");
+});
+
+test("tender generation readiness warns EVAL_WEIGHTS_MISSING when evaluation methodology exists but no criteria JSON was extracted", async () => {
+  const readiness = await getTenderGenerationReadiness(fakeClient({
+    documents: [usefulDocument],
+    experts: [{ trustLevel: "REVIEWED" }],
+    projects: [{ trustLevel: "REVIEWED" }],
+    tender: {
+      id: "tender-1",
+      status: "ANALYZED",
+      ...goodAnalysisFields,
+      evaluationMethodology: "Technical 80 points; price 20 points.",
+      evaluationCriteriaSourceJson: null,
+      requirements: [expertRequirement, projectRequirement],
+      complianceGaps: [],
+      expertMatches: [{ isSelected: true, expert: { trustLevel: "REVIEWED", fullName: "Sr. Engineer" }, rationale: "≥75%" }],
+      projectMatches: [{ isSelected: true, project: { trustLevel: "REVIEWED", name: "Road Project" }, rationale: "≥75%" }],
+    },
+  }), "user-1", "tender-1");
+
+  assert.ok(readiness);
+  const w = readiness.warnings.find((w) => w.code === "EVAL_WEIGHTS_MISSING");
+  assert.ok(w, `expected EVAL_WEIGHTS_MISSING warning; got ${JSON.stringify(readiness.warnings.map((w) => w.code))}`);
+  assert.equal(w!.nextAction, "RETRY_AI_ANALYZE");
+});
+
+test("tender generation readiness warns MANDATORY_EVIDENCE_NOT_ASSESSED when compliance matrix has no rows for mandatory requirements", async () => {
+  // Fake client returns count=0 for complianceMatrix
+  const client = {
+    ...fakeClient({
+      documents: [usefulDocument],
+      experts: [{ trustLevel: "REVIEWED" }],
+      projects: [{ trustLevel: "REVIEWED" }],
+      tender: {
+        id: "tender-1",
+        status: "ANALYZED",
+        ...goodAnalysisFields,
+        requirements: [{ ...expertRequirement, id: "req-1", priority: "MANDATORY" }, { ...projectRequirement, id: "req-2", priority: "MANDATORY" }],
+        complianceGaps: [],
+        expertMatches: [{ isSelected: true, expert: { trustLevel: "REVIEWED", fullName: "Sr. Engineer" }, rationale: "≥75%" }],
+        projectMatches: [{ isSelected: true, project: { trustLevel: "REVIEWED", name: "Road Project" }, rationale: "≥75%" }],
+      },
+    }),
+    complianceMatrix: { count: async () => 0 },
+  };
+
+  const readiness = await getTenderGenerationReadiness(client as unknown as import("@prisma/client").PrismaClient, "user-1", "tender-1");
+
+  assert.ok(readiness);
+  const w = readiness.warnings.find((w) => w.code === "MANDATORY_EVIDENCE_NOT_ASSESSED");
+  assert.ok(w, `expected MANDATORY_EVIDENCE_NOT_ASSESSED warning; got ${JSON.stringify(readiness.warnings.map((w) => w.code))}`);
+  assert.match(w!.message, /2 mandatory requirement/);
+  assert.equal(w!.nextAction, "RUN_ENGINE");
+});
