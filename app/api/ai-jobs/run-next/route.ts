@@ -42,12 +42,12 @@ export async function POST(req: Request) {
   //   2. X-Worker-Secret header matching AI_JOBS_WORKER_SECRET (manual/external cron)
   //   3. Authorization: Bearer ${CRON_SECRET} (Vercel Cron — see vercel.json)
   const workerSecret = req.headers.get("x-worker-secret");
-  const aiJobsSecret = process.env.AI_JOBS_WORKER_SECRET;
-  const isWorkerSecret = Boolean(aiJobsSecret && workerSecret === aiJobsSecret);
+  const aiJobsSecret = process.env.AI_JOBS_WORKER_SECRET; const isWorkerSecret = Boolean(aiJobsSecret && aiJobsSecret.length >= 16 && workerSecret === aiJobsSecret);
+
 
   const authHeader = req.headers.get("authorization") ?? "";
-  const cronSecret = process.env.CRON_SECRET;
-  const isVercelCron = Boolean(cronSecret && authHeader === `Bearer ${cronSecret}`);
+  const cronSecret = process.env.CRON_SECRET; const isVercelCron = Boolean(cronSecret && cronSecret.length >= 16 && authHeader === `Bearer ${cronSecret}`);
+
 
   const isAutomatedCaller = isWorkerSecret || isVercelCron;
 

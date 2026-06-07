@@ -75,8 +75,8 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
           orderBy: { createdAt: "desc" },
           select: { id: true, fileName: true, originalFileName: true, mimeType: true, size: true, classification: true, createdAt: true },
         },
-        requirements: { orderBy: { createdAt: "asc" } },
-        complianceGaps: { orderBy: { createdAt: "desc" } },
+        requirements: { orderBy: { createdAt: "asc" }, select: { id: true, title: true, description: true, requirementType: true, priority: true, category: true, sourceConfidence: true, sourcePageNumber: true, sourceExactQuote: true, sourceTenderFileId: true, exactFileName: true, createdAt: true, updatedAt: true } },
+        complianceGaps: { orderBy: { createdAt: "desc" }, select: { id: true, tenderId: true, category: true, title: true, description: true, severity: true, mitigationPlan: true, isResolved: true, resolvedAt: true, resolvedBy: true, createdAt: true, updatedAt: true } },
         generatedDocuments: { orderBy: generatedDocumentOrder, select: generatedDocumentDashboardSelect },
       },
     });
@@ -148,8 +148,8 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
           orderBy: { createdAt: "desc" },
           select: { id: true, fileName: true, originalFileName: true, mimeType: true, size: true, classification: true, createdAt: true },
         },
-        requirements: { orderBy: { createdAt: "asc" } },
-        complianceGaps: { orderBy: { createdAt: "desc" } },
+        requirements: { orderBy: { createdAt: "asc" }, select: { id: true, title: true, description: true, requirementType: true, priority: true, category: true, sourceConfidence: true, sourcePageNumber: true, sourceExactQuote: true, sourceTenderFileId: true, exactFileName: true, createdAt: true, updatedAt: true } },
+        complianceGaps: { orderBy: { createdAt: "desc" }, select: { id: true, tenderId: true, category: true, title: true, description: true, severity: true, mitigationPlan: true, isResolved: true, resolvedAt: true, resolvedBy: true, createdAt: true, updatedAt: true } },
         generatedDocuments: { orderBy: generatedDocumentOrder, select: generatedDocumentDashboardSelect },
       },
     });
