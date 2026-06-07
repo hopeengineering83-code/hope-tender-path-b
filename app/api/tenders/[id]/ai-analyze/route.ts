@@ -11,6 +11,7 @@ import { createNotification } from "../../../../../lib/notifications";
 import { assessExtractionQuality } from "../../../../../lib/extraction-quality";
 import { deriveExtractionStatus, isExtractionCorrupted, type TenderFileQuality } from "../../../../../lib/engine/extraction-quality-gate";
 import { detectMetadataContamination } from "../../../../../lib/engine/tender-metadata-completeness";
+import { isValidClientContact } from "../../../../../lib/engine/metadata-validators";
 import { buildAnalysisFallbackDiagnostics, formatFallbackDiagnosticsLine, type AnalysisFallbackDiagnostics } from "../../../../../lib/engine/analysis-fallback-diagnostics";
 import { buildProviderDiagnosticsSnapshot } from "../../../../../lib/ai-provider-health";
 import { restoreHealthFromDb, persistAllHealthToDb } from "../../../../../lib/ai-provider-health-db";
@@ -403,7 +404,7 @@ async function handleStreamingAnalyze(
                   ...(aiResult.implementingAgency != null ? { implementingAgency: aiResult.implementingAgency } : {}),
                   ...(aiResult.country != null ? { country: aiResult.country } : {}),
                   ...(aiResult.clientAddress != null ? { clientAddress: aiResult.clientAddress } : {}),
-                  ...(aiResult.clientContactName != null ? { clientContactName: aiResult.clientContactName } : {}),
+                  ...(aiResult.clientContactName != null && isValidClientContact(aiResult.clientContactName) ? { clientContactName: aiResult.clientContactName } : {}),
                   ...(aiResult.clientContactTitle != null ? { clientContactTitle: aiResult.clientContactTitle } : {}),
                   ...(aiResult.clientContactEmail != null ? { clientContactEmail: aiResult.clientContactEmail } : {}),
                   ...(aiResult.clientContactPhone != null ? { clientContactPhone: aiResult.clientContactPhone } : {}),

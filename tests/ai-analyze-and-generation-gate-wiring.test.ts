@@ -248,3 +248,53 @@ describe("SSE streaming wiring — AI Analyze endpoint and UI progress display",
     assert.match(uiSource, /analyzeProgress/);
   });
 });
+
+describe("clientContactName validation in AI Analyze save path", () => {
+  const analyzeSource = readFileSync("app/api/tenders/[id]/ai-analyze/route.ts", "utf8");
+
+  it("imports isValidClientContact validator", () => {
+    assert.match(analyzeSource, /isValidClientContact/);
+  });
+
+  it("validates clientContactName before writing to DB (both streaming and non-streaming paths)", () => {
+    // The route must not write clientContactName unconditionally —
+    // it must call isValidClientContact() to reject fragments like "s Contact Person".
+    assert.match(analyzeSource, /isValidClientContact\(aiResult\.clientContactName\)/);
+  });
+});
+
+describe("clientContactName propagates into AI cover letter prompt", () => {
+  const aiSource = readFileSync("lib/ai.ts", "utf8");
+  const sectionsSource = readFileSync("lib/engine/proposal-sections.ts", "utf8");
+  const generateSource = readFileSync("lib/engine/generate-elite.ts", "utf8");
+
+  it("AIBidWriterInput type includes clientContactName", () => {
+    assert.match(aiSource, /clientContactName\?.*string.*null/);
+  });
+
+  it("buildCoverAndSummaryPrompt includes CLIENT CONTACT line in prompt when name provided", () => {
+    assert.match(sectionsSource, /CLIENT CONTACT/);
+    assert.match(sectionsSource, /clientContactName/);
+    assert.match(sectionsSource, /Dear.*clientContactName/);
+  });
+
+  it("generate-elite passes clientContactName from intelligence into aiInputBase", () => {
+    assert.match(generateSource, /clientContactName:\s*intelligence\.clientContactName/);
+  });
+});
+
+describe("proposal quality score improvement — Bid-Team stubs penalised on aiTraceFreedom", () => {
+  const scorerSource = readFileSync("lib/engine/proposal-quality-scorer.ts", "utf8");
+
+  it("FORBIDDEN_PHRASES includes Bid-Team to confirm pattern", () => {
+    assert.match(scorerSource, /Bid-Team to confirm/i);
+  });
+
+  it("FORBIDDEN_PHRASES includes MISSING_SOURCE pattern", () => {
+    assert.match(scorerSource, /MISSING_SOURCE/);
+  });
+
+  it("FORBIDDEN_PHRASES includes Bid-Team bracket variant", () => {
+    assert.match(scorerSource, /\[Bid-Team/);
+  });
+});
