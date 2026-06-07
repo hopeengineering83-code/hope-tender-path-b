@@ -298,3 +298,10 @@ describe("proposal quality score improvement — Bid-Team stubs penalised on aiT
     assert.match(scorerSource, /\[Bid-Team/);
   });
 });
+
+describe("authority review gate blocks download route", () => {
+  const source = readFileSync("app/api/tenders/[id]/download/route.ts", "utf8");
+  it("imports runAuthorityReview", () => { assert.match(source, /runAuthorityReview/); });
+  it("returns AUTHORITY_REVIEW_BLOCKED on blocked status", () => { assert.match(source, /AUTHORITY_REVIEW_BLOCKED/); });
+  it("does not remove METADATA_CONTAMINATED check", () => { assert.match(source, /METADATA_CONTAMINATED/); });
+});

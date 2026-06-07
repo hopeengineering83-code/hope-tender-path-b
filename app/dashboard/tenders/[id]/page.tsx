@@ -26,6 +26,7 @@ import { CorruptedMetadataBanner } from "../../../../components/corrupted-metada
 import { FinalSubmissionControlCenter } from "../../../../components/final-submission-control-center";
 import { NextActionPanel } from "../../../../components/next-action-panel";
 import { FinalPackageManifestPanel } from "../../../../components/final-package-manifest-panel";
+import { AuthorityReviewPanel } from "../../../../components/authority-review-panel";
 import { DocumentValidatorPanel } from "../../../../components/document-validator-panel";
 import { AIAnalyzeRecoveryPanel } from "../../../../components/ai-analyze-recovery-panel";
 import { EvidenceCoveragePanel } from "../../../../components/evidence-coverage-panel";
@@ -136,6 +137,7 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
       <EvidenceCoveragePanel tenderId={tender.id} />
       <VaultEvidenceSearchPanel tenderId={tender.id} />
 
+      <AuthorityReviewPanel tenderId={tender.id} />
       <DocumentValidatorPanel tenderId={tender.id} />
       <FinalPackageManifestPanel tenderId={tender.id} />
       <ExportReadinessPanel tenderId={tender.id} />
