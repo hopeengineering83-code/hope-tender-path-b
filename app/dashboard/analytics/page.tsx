@@ -43,6 +43,29 @@ function statusLabel(status: string): string {
   return status.replace(/_/g, " ");
 }
 
+function parseQualityScore(contentSummary: string | null): number | null {
+  const m = contentSummary?.match(/QUALITY_SCORE:\s*(\d+)/);
+  return m ? parseInt(m[1], 10) : null;
+}
+
+function qualityColor(score: number): string {
+  if (score >= 80) return "bg-green-500";
+  if (score >= 60) return "bg-amber-400";
+  return "bg-red-400";
+}
+
+function qualityTextColor(score: number): string {
+  if (score >= 80) return "text-green-600";
+  if (score >= 60) return "text-amber-600";
+  return "text-red-500";
+}
+
+function qualityLabel(score: number): string {
+  if (score >= 80) return "Excellent";
+  if (score >= 60) return "Good";
+  return "Needs work";
+}
+
 // ─── page ─────────────────────────────────────────────────────────────────
 
 export default async function AnalyticsPage() {
@@ -51,7 +74,7 @@ export default async function AnalyticsPage() {
   await prismaReady;
 
   // ── Fetch all tenders for this user (lean select) ────────────────────────
-  const [tenders, auditLogs, company] = await Promise.all([
+  const [tenders, auditLogs, company, bidOutcomeTenders, technicalProposals] = await Promise.all([
     prisma.tender.findMany({
       where: { userId },
       select: {
@@ -90,6 +113,20 @@ export default async function AnalyticsPage() {
           },
         },
       },
+    }),
+    prisma.tender.findMany({
+      where: { userId, bidOutcome: { not: null } },
+      select: { id: true, title: true, bidOutcome: true, bidOutcomeAt: true },
+      orderBy: { bidOutcomeAt: "desc" },
+    }),
+    prisma.generatedDocument.findMany({
+      where: {
+        tender: { userId },
+        documentType: "TECHNICAL_PROPOSAL",
+        contentSummary: { contains: "QUALITY_SCORE:" },
+      },
+      select: { id: true, contentSummary: true, createdAt: true },
+      orderBy: { createdAt: "desc" },
     }),
   ]);
 
@@ -143,6 +180,34 @@ export default async function AnalyticsPage() {
 
   // ── Last AI analysis info from audit logs ─────────────────────────────────
   const lastAiLog = auditLogs.find((l) => l.action === "TENDER_ANALYZED" || l.action === "AI_ANALYZE");
+
+  // ── Bid outcome summary ───────────────────────────────────────────────────
+  const winCount = bidOutcomeTenders.filter((t) => t.bidOutcome === "WIN").length;
+  const lostCount = bidOutcomeTenders.filter((t) => t.bidOutcome === "LOST").length;
+  const noBidCount = bidOutcomeTenders.filter((t) => t.bidOutcome === "NO_BID").length;
+  const winRateDenominator = winCount + lostCount;
+  const winRate =
+    winRateDenominator > 0 ? Math.round((winCount / winRateDenominator) * 100) : null;
+
+  // ── Proposal quality distribution ────────────────────────────────────────
+  const proposalScores = technicalProposals
+    .map((d) => parseQualityScore(d.contentSummary))
+    .filter((s): s is number => s !== null);
+
+  const excellentCount = proposalScores.filter((s) => s >= 80).length;
+  const goodCount = proposalScores.filter((s) => s >= 60 && s < 80).length;
+  const needsWorkCount = proposalScores.filter((s) => s < 60).length;
+  const avgQualityScore =
+    proposalScores.length > 0
+      ? Math.round(proposalScores.reduce((sum, s) => sum + s, 0) / proposalScores.length)
+      : null;
+
+  // ── Recent quality trend (last 10) ───────────────────────────────────────
+  const recentProposals = technicalProposals.slice(0, 10).map((d) => ({
+    id: d.id,
+    score: parseQualityScore(d.contentSummary),
+    createdAt: d.createdAt,
+  }));
 
   return (
     <div className="space-y-8">
@@ -439,6 +504,285 @@ export default async function AnalyticsPage() {
           </div>
         </section>
       </div>
+
+      {/* ── 7. Bid Outcome Summary ── */}
+      <section>
+        <h2 className="mb-4 text-sm font-semibold uppercase tracking-wider text-slate-400">
+          Bid Outcomes
+        </h2>
+        {bidOutcomeTenders.length === 0 ? (
+          <div className="rounded-lg border bg-white p-6 shadow-sm">
+            <p className="text-sm text-slate-400">No bid outcomes recorded yet.</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3 xl:grid-cols-4">
+            <div className="rounded-lg border bg-white p-6 shadow-sm">
+              <p className="text-sm font-medium text-slate-500">Wins</p>
+              <p className="mt-2 text-3xl font-bold text-green-600">{winCount}</p>
+              <p className="mt-1 text-xs text-slate-400">bids won</p>
+            </div>
+            <div className="rounded-lg border bg-white p-6 shadow-sm">
+              <p className="text-sm font-medium text-slate-500">Losses</p>
+              <p className="mt-2 text-3xl font-bold text-red-500">{lostCount}</p>
+              <p className="mt-1 text-xs text-slate-400">bids lost</p>
+            </div>
+            <div className="rounded-lg border bg-white p-6 shadow-sm">
+              <p className="text-sm font-medium text-slate-500">No Bid</p>
+              <p className="mt-2 text-3xl font-bold text-slate-500">{noBidCount}</p>
+              <p className="mt-1 text-xs text-slate-400">decided not to bid</p>
+            </div>
+            <div className="rounded-lg border bg-white p-6 shadow-sm">
+              <p className="text-sm font-medium text-slate-500">Win Rate</p>
+              {winRate !== null ? (
+                <>
+                  <p
+                    className={`mt-2 text-3xl font-bold ${
+                      winRate >= 50 ? "text-green-600" : winRate >= 30 ? "text-amber-600" : "text-red-500"
+                    }`}
+                  >
+                    {winRate}%
+                  </p>
+                  <p className="mt-1 text-xs text-slate-400">
+                    {winCount}/{winRateDenominator} contested bids
+                  </p>
+                  <div className="mt-2 overflow-hidden rounded-full bg-slate-100" style={{ height: 6 }}>
+                    <div
+                      className={`h-full rounded-full transition-all ${
+                        winRate >= 50 ? "bg-green-500" : winRate >= 30 ? "bg-amber-400" : "bg-red-400"
+                      }`}
+                      style={{ width: `${winRate}%` }}
+                    />
+                  </div>
+                </>
+              ) : (
+                <p className="mt-2 text-3xl font-bold text-slate-400">—</p>
+              )}
+            </div>
+          </div>
+        )}
+      </section>
+
+      {/* ── 8 + 9. Proposal quality distribution + recent quality trend ── */}
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        {/* Proposal quality distribution */}
+        <section>
+          <h2 className="mb-4 text-sm font-semibold uppercase tracking-wider text-slate-400">
+            Proposal Quality Distribution
+          </h2>
+          <div className="rounded-lg border bg-white p-6 shadow-sm">
+            {proposalScores.length === 0 ? (
+              <p className="text-sm text-slate-400">
+                No technical proposals with quality scores yet.
+              </p>
+            ) : (
+              <>
+                <div className="mb-5 flex items-baseline gap-2">
+                  <span
+                    className={`text-4xl font-bold ${
+                      avgQualityScore !== null
+                        ? qualityTextColor(avgQualityScore)
+                        : "text-slate-400"
+                    }`}
+                  >
+                    {avgQualityScore ?? "—"}
+                  </span>
+                  <span className="text-sm text-slate-500">avg quality score</span>
+                  <span className="ml-auto text-xs text-slate-400">
+                    {proposalScores.length} proposal{proposalScores.length !== 1 ? "s" : ""}
+                  </span>
+                </div>
+                <div className="space-y-3">
+                  {(
+                    [
+                      { label: "Excellent (≥80)", count: excellentCount, color: "bg-green-500", textColor: "text-green-700", bgLight: "bg-green-50" },
+                      { label: "Good (60–79)", count: goodCount, color: "bg-amber-400", textColor: "text-amber-700", bgLight: "bg-amber-50" },
+                      { label: "Needs work (<60)", count: needsWorkCount, color: "bg-red-400", textColor: "text-red-700", bgLight: "bg-red-50" },
+                    ] as const
+                  ).map(({ label, count, color, textColor, bgLight }) => {
+                    const pct =
+                      proposalScores.length > 0
+                        ? Math.round((count / proposalScores.length) * 100)
+                        : 0;
+                    return (
+                      <div key={label}>
+                        <div className="mb-1 flex items-center justify-between text-xs">
+                          <span className={`font-medium ${textColor}`}>{label}</span>
+                          <span className="text-slate-500">
+                            {count} ({pct}%)
+                          </span>
+                        </div>
+                        <div className={`overflow-hidden rounded-full ${bgLight}`} style={{ height: 10 }}>
+                          <div
+                            className={`h-full rounded-full transition-all ${color}`}
+                            style={{ width: `${pct}%` }}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
+            )}
+          </div>
+        </section>
+
+        {/* Recent quality trend */}
+        <section>
+          <h2 className="mb-4 text-sm font-semibold uppercase tracking-wider text-slate-400">
+            Recent Quality Trend
+          </h2>
+          <div className="rounded-lg border bg-white p-6 shadow-sm">
+            {recentProposals.length === 0 ? (
+              <p className="text-sm text-slate-400">
+                No recent technical proposals with quality scores.
+              </p>
+            ) : (
+              <>
+                <p className="mb-4 text-xs text-slate-400">
+                  Last {recentProposals.length} technical proposal
+                  {recentProposals.length !== 1 ? "s" : ""} — oldest to newest
+                </p>
+                {/* Sparkline: colored blocks */}
+                <div className="flex items-end gap-1.5">
+                  {[...recentProposals].reverse().map((p) => {
+                    if (p.score === null) {
+                      return (
+                        <div
+                          key={p.id}
+                          className="flex flex-1 flex-col items-center gap-1"
+                          title="Score unavailable"
+                        >
+                          <div
+                            className="w-full rounded-sm bg-slate-200"
+                            style={{ height: 32 }}
+                          />
+                          <span className="text-[10px] text-slate-400">—</span>
+                        </div>
+                      );
+                    }
+                    const barHeight = Math.max(8, Math.round((p.score / 100) * 64));
+                    return (
+                      <div
+                        key={p.id}
+                        className="flex flex-1 flex-col items-center gap-1"
+                        title={`Score: ${p.score} — ${fmtRelative(p.createdAt)}`}
+                      >
+                        <div
+                          className={`w-full rounded-sm ${qualityColor(p.score)}`}
+                          style={{ height: barHeight }}
+                        />
+                        <span
+                          className={`text-[10px] font-medium ${qualityTextColor(p.score)}`}
+                        >
+                          {p.score}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+                {/* Legend */}
+                <div className="mt-4 flex flex-wrap gap-3 border-t pt-3 text-xs text-slate-500">
+                  <span className="flex items-center gap-1">
+                    <span className="inline-block h-2.5 w-2.5 rounded-sm bg-green-500" />
+                    Excellent ≥80
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <span className="inline-block h-2.5 w-2.5 rounded-sm bg-amber-400" />
+                    Good 60–79
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <span className="inline-block h-2.5 w-2.5 rounded-sm bg-red-400" />
+                    Needs work &lt;60
+                  </span>
+                </div>
+              </>
+            )}
+          </div>
+        </section>
+      </div>
+
+      {/* ── 10. Readiness score distribution — all tenders ── */}
+      <section>
+        <h2 className="mb-4 text-sm font-semibold uppercase tracking-wider text-slate-400">
+          Readiness Score — All Tenders
+        </h2>
+        <div className="rounded-lg border bg-white shadow-sm">
+          {tenders.length === 0 ? (
+            <p className="p-6 text-sm text-slate-400">No tenders yet.</p>
+          ) : (
+            <ol className="divide-y">
+              {tenders.map((tender) => {
+                const score = Math.round(tender.readinessScore ?? 0);
+                const daysLeft = tender.deadline
+                  ? Math.ceil((new Date(tender.deadline).getTime() - now) / 86_400_000)
+                  : null;
+                return (
+                  <li key={tender.id} className="flex items-center gap-3 px-5 py-2.5">
+                    {/* Score bar */}
+                    <div className="flex w-14 shrink-0 flex-col items-end gap-0.5">
+                      <span
+                        className={`text-xs font-bold ${
+                          score >= 70
+                            ? "text-green-600"
+                            : score >= 40
+                              ? "text-amber-600"
+                              : "text-red-500"
+                        }`}
+                      >
+                        {score}%
+                      </span>
+                      <div
+                        className="w-full overflow-hidden rounded-full bg-slate-100"
+                        style={{ height: 4 }}
+                      >
+                        <div
+                          className={`h-full rounded-full ${
+                            score >= 70
+                              ? "bg-green-500"
+                              : score >= 40
+                                ? "bg-amber-400"
+                                : "bg-red-400"
+                          }`}
+                          style={{ width: `${score}%` }}
+                        />
+                      </div>
+                    </div>
+                    {/* Tender info */}
+                    <div className="min-w-0 flex-1">
+                      <Link
+                        href={`/dashboard/tenders/${tender.id}`}
+                        className="block truncate text-sm font-medium text-slate-900 hover:text-blue-600"
+                      >
+                        {tender.title}
+                      </Link>
+                      <div className="mt-0.5 flex flex-wrap items-center gap-2">
+                        <span
+                          className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${statusColor(tender.status)}`}
+                        >
+                          {statusLabel(tender.status)}
+                        </span>
+                        {tender.deadline && (
+                          <span
+                            className={`text-[10px] ${
+                              daysLeft !== null && daysLeft <= 7
+                                ? "text-amber-600"
+                                : "text-slate-400"
+                            }`}
+                          >
+                            {daysLeft !== null && daysLeft < 0
+                              ? "Overdue"
+                              : `Due ${formatDate(tender.deadline)}`}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </li>
+                );
+              })}
+            </ol>
+          )}
+        </div>
+      </section>
     </div>
   );
 }
