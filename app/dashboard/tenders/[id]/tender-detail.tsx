@@ -578,7 +578,7 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
   const [autoSavedAt, setAutoSavedAt] = useState<Date | null>(null);
 
   // Collapsible diagnostic panel state — persisted per tender in localStorage.
-  const PANEL_IDS = ["metadata", "submission-plan", "requirements", "controls", "score"] as const;
+  const PANEL_IDS = ["metadata", "submission-plan", "requirements", "controls", "score", "workspace", "files", "expert-matches", "project-matches", "generated-docs"] as const;
   type PanelId = (typeof PANEL_IDS)[number];
   const PANEL_DEFAULTS: Record<PanelId, boolean> = {
     "metadata": true,
@@ -586,6 +586,11 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
     "requirements": true,
     "controls": false,
     "score": false,
+    "workspace": true,
+    "files": false,
+    "expert-matches": false,
+    "project-matches": false,
+    "generated-docs": true,
   };
   const [panels, setPanels] = useState<Record<PanelId, boolean>>(PANEL_DEFAULTS);
   useEffect(() => {
@@ -2117,8 +2122,12 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,2fr),minmax(360px,1fr)]">
         <div className="space-y-6">
+          <CollapsiblePanel
+            title="Tender workspace"
+            isOpen={panels["workspace"]}
+            onToggle={() => togglePanel("workspace")}
+          >
           <div id="tender-edit-form" className="rounded-2xl border bg-white p-6 shadow-sm">
-            <h2 className="text-lg font-semibold text-slate-900">Tender workspace</h2>
             {editing ? (
               <div className="mt-5 space-y-4">
                 <div className="grid gap-4 md:grid-cols-2">
@@ -2363,13 +2372,15 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
               </dl>
             )}
           </div>
+          </CollapsiblePanel>
 
+          <CollapsiblePanel
+            title={`Tender files${tender.files.length > 0 ? ` (${tender.files.length})` : ""}`}
+            isOpen={panels["files"]}
+            onToggle={() => togglePanel("files")}
+          >
           <div id="tender-files" className="rounded-2xl border bg-white p-6 shadow-sm">
-            <div className="mb-4 flex items-center justify-between">
-              <h2 className="text-lg font-semibold text-slate-900">
-                Tender files
-                {tender.files.length > 0 && <span className="ml-2 text-sm font-normal text-slate-400">({tender.files.length})</span>}
-              </h2>
+            <div className="mb-4 flex justify-end">
               <button
                 onClick={() => fileInputRef.current?.click()}
                 disabled={uploading}
@@ -2494,6 +2505,7 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
               </ul>
             )}
           </div>
+          </CollapsiblePanel>
         </div>
 
         <div className="space-y-6">
@@ -2565,14 +2577,13 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
           <ComplianceGapsPanel tenderId={tender.id} initialGaps={tender.complianceGaps} />
 
           {(tender.expertMatches?.length ?? 0) > 0 && (
+            <CollapsiblePanel
+              title={`Expert Matches (${tender.expertMatches!.filter((m) => m.isSelected).length} selected · ${reviewedExpertMatches} reviewed)`}
+              isOpen={panels["expert-matches"]}
+              onToggle={() => togglePanel("expert-matches")}
+            >
             <div id="expert-matches" className="rounded-2xl border bg-white p-6 shadow-sm">
               <div className="flex items-center justify-between mb-4 gap-2 flex-wrap">
-                <h2 className="text-lg font-semibold text-slate-900">
-                  Expert Matches
-                  <span className="ml-2 text-sm font-normal text-slate-400">
-                    ({tender.expertMatches!.filter((m) => m.isSelected).length} selected · {reviewedExpertMatches} reviewed)
-                  </span>
-                </h2>
                 {reviewedExpertMatches === 0 && tender.expertMatches!.length > 0 && (
                   <a
                     href="/dashboard/company/review"
@@ -2633,17 +2644,17 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
                 })}
               </ul>
             </div>
+            </CollapsiblePanel>
           )}
 
           {(tender.projectMatches?.length ?? 0) > 0 && (
+            <CollapsiblePanel
+              title={`Project Matches (${tender.projectMatches!.filter((m) => m.isSelected).length} selected · ${reviewedProjectMatches} reviewed)`}
+              isOpen={panels["project-matches"]}
+              onToggle={() => togglePanel("project-matches")}
+            >
             <div id="project-matches" className="rounded-2xl border bg-white p-6 shadow-sm">
               <div className="flex items-center justify-between mb-4 gap-2 flex-wrap">
-                <h2 className="text-lg font-semibold text-slate-900">
-                  Project Matches
-                  <span className="ml-2 text-sm font-normal text-slate-400">
-                    ({tender.projectMatches!.filter((m) => m.isSelected).length} selected · {reviewedProjectMatches} reviewed)
-                  </span>
-                </h2>
                 {reviewedProjectMatches === 0 && tender.projectMatches!.length > 0 && (
                   <a
                     href="/dashboard/company/review"
@@ -2690,6 +2701,7 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
                 ))}
               </ul>
             </div>
+            </CollapsiblePanel>
           )}
 
           {(tender.complianceMatrix?.length ?? 0) > 0 && (
@@ -2718,6 +2730,11 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
             </div>
           )}
 
+          <CollapsiblePanel
+            title="Generated outputs"
+            isOpen={panels["generated-docs"]}
+            onToggle={() => togglePanel("generated-docs")}
+          >
           <div id="generated-documents" className="rounded-2xl border bg-white p-6 shadow-sm">
             {confirmApproveAll && (
               <div className="mb-3 rounded-lg border border-emerald-300 bg-emerald-50 px-4 py-3 flex flex-wrap items-center gap-3 text-sm">
@@ -2736,8 +2753,7 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
                 </button>
               </div>
             )}
-            <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
-              <h2 className="text-lg font-semibold text-slate-900">Generated outputs</h2>
+            <div className="flex flex-wrap items-center justify-end gap-2 mb-3">
               <div className="flex items-center gap-2">
                 {tender.generatedDocuments.some((d) => d.generationStatus === "GENERATED" && d.reviewStatus !== "READY_FOR_EXPORT") && (
                   <button
@@ -2951,6 +2967,7 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
               </ul>
             )}
           </div>
+          </CollapsiblePanel>
         </div>
       </div>
 
