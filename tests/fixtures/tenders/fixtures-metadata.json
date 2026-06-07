@@ -1,0 +1,42 @@
+{
+  "water-sanitation-tender": {
+    "type": "Tender",
+    "client": "National Water Authority",
+    "deadline": "2026-12-15",
+    "submissionMethod": "Electronic Portal (https://portal.water.gov)",
+    "expectedOutputs": ["Technical Design", "EIA Approval", "Work Plan", "H&S Plan"],
+    "mandatoryRequirements": ["W1", "W2", "W3", "W4"],
+    "blockers": ["Missing EIA approval", "No H&S plan"],
+    "allowedOutputs": ["Methodology Statement", "CVs of Engineers"],
+    "forbiddenOutputs": ["Pricing in technical section"]
+  },
+  "hospital-expansion": {
+    "type": "RFP",
+    "client": "St. Jude Hospital",
+    "deadline": "2026-10-01",
+    "submissionEmail": "tenders@stjudehospital.org",
+    "expectedOutputs": ["Construction Plan", "Bio-medical Integration Plan", "ISO Certificates"],
+    "mandatoryRequirements": ["H1", "H2", "H3"],
+    "blockers": ["Missing ISO 9001 certification"]
+  },
+  "two-envelope-tender": {
+    "type": "Two-Envelope Tender",
+    "client": "Regional Bridge Authority",
+    "technicalRequirements": ["Bridge Engineering Design", "Geotechnical Survey", "Traffic Management Plan"],
+    "financialRequirements": ["BOQ", "Price Schedule"],
+    "separationRequired": true,
+    "blockers": ["Pricing in Technical Envelope"]
+  },
+  "scanned-extraction": {
+    "type": "Scanned Tender",
+    "extractionQuality": "low",
+    "expectedBlockers": ["EXTRACT_CONFIDENCE_LOW"],
+    "manualVerificationRequired": true
+  },
+  "corrupted-extraction": {
+    "type": "Corrupted PDF",
+    "extractionQuality": "failed",
+    "expectedBlockers": ["EXTRACTION_FAILED"],
+    "stopWorkflow": true
+  }
+}

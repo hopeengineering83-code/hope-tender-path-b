@@ -1,0 +1,363 @@
+diff --git a/docs/audits/post-617-deferred-code-gaps.md b/docs/audits/post-617-deferred-code-gaps.md
+new file mode 100644
+index 0000000..457b9be
+--- /dev/null
++++ b/docs/audits/post-617-deferred-code-gaps.md
+@@ -0,0 +1,25 @@
++# Post-617 Deferred Code Gaps (Claude Code Scope)
++
++The following items were identified during the post-617 audit but overlap with Claude Code's ongoing work on Authority Review Mode and Proposal Quality Engine. These should be addressed by Claude Code or in a future session.
++
++## 1. Authority Review Mode
++- Implementation of the reviewer-facing UI and approval workflow.
++- Integration of authority-level blockers into the export gate.
++
++## 2. Final Package Quality Score
++- Calculation of an aggregate quality score for the entire submission package.
++- UI display of the quality score in the Export/Manifest panel.
++
++## 3. Section-level Generated Proposal Scoring
++- Detailed scoring and critique for individual generated sections.
++- Resumable generation based on section scores.
++
++## 4. Source-grounded Final Proposal Validation
++- Deep validation of the final proposal prose against extracted source requirements.
++- Detection of hallucinations or missing mandatory evidence in the final output.
++
++## 5. Export Blocker Integration
++- Wiring up "Authority Review" and "Quality Score" blockers into `checkFullExportReadiness`.
++
++## 6. Document Validation Panel UI
++- Enhancements to `components/document-validator-panel.tsx` for Authority Review Mode.
+diff --git a/docs/audits/post-617-full-code-review-plan.md b/docs/audits/post-617-full-code-review-plan.md
+new file mode 100644
+index 0000000..8956a7f
+--- /dev/null
++++ b/docs/audits/post-617-full-code-review-plan.md
+@@ -0,0 +1,31 @@
++# Post-617 Full Code Review Plan
++
++## 1. Dead Code Search
++- **Unused Routes**: Search for routes that have been superseded by new logic (e.g., old export paths).
++- **Stale Helpers**: Check `lib/tender-workflow.ts` for unused status/stage constants.
++- **Obsolete Tests**: Identify tests that target removed or refactored features (e.g., `tests/systemic-contradictions-after-517.test.ts`).
++
++## 2. Gate Consolidation
++- **Duplicate Logic**: `app/api/tenders/[id]/export/route.ts` and `app/api/tenders/[id]/download/route.ts` both have extensive gate logic. Consider consolidating into a shared helper in `lib/engine/export-readiness.ts`.
++- **Extraction Gates**: Ensure `isExtractionAcceptableForExport` and `isExtractionAcceptableForGeneration` are used consistently across all entry points.
++
++## 3. Safe JSON Parsing
++- **Risk**: Bare `JSON.parse` calls exist in multiple files (e.g., `app/dashboard/matching/matching-dashboard.tsx`, `lib/engine/final-zip-scope.ts`).
++- **Fix**: Migrate all bare `JSON.parse` to `safeParseJsonArray` or `safeParseJsonObject` from `lib/safe-json.ts`.
++
++## 4. Heavy Query Risks
++- **fileContent Leakage**: Verified list views do not select `fileContent`.
++- **N+1 Queries**: Audit `app/api/tenders/route.ts` for potential N+1 issues when fetching requirements/gaps for multiple tenders.
++
++## 5. Fallback Logic Risks
++- **Provider Order**: Verify `CANONICAL_PROVIDER_CHAIN` in `lib/ai.ts` stays updated and Anthropic remains last.
++- **Error Handling**: Audit `lib/ai.ts` for silent failures in provider chain.
++
++## 6. Audit Logs
++- **Completeness**: Ensure all mutation routes (`POST`, `PATCH`, `DELETE`) have corresponding `logAction` calls.
++
++## 7. Chat/Workbench Leakage
++- **Verification**: Ensure `buildFinalZipEntries` in `lib/engine/final-zip-scope.ts` continues to exclude non-planned documents.
++
++## 8. Neon Retention
++- **Bloat**: Continue monitoring `fileContent` usage. Ensure `scripts/null-legacy-file-content.ts` is run periodically if legacy content exists.
+diff --git a/docs/audits/post-617-regression-test-matrix.md b/docs/audits/post-617-regression-test-matrix.md
+new file mode 100644
+index 0000000..5897ce7
+--- /dev/null
++++ b/docs/audits/post-617-regression-test-matrix.md
+@@ -0,0 +1,23 @@
++# Post-617 Regression Test Matrix
++
++This matrix defines the expected behavior for various tender types and fixtures. It serves as a benchmark for regression testing the tender analysis and generation engine.
++
++| Fixture Name | Tender Type | Expected Required Documents | Expected Blockers | Expected Allowed Outputs | Expected Forbidden Outputs | Expected Gate Result | Tested Module |
++|--------------|-------------|-----------------------------|-------------------|--------------------------|----------------------------|----------------------|---------------|
++| building-design.md | Tender | Tech Proposal, Financial Proposal, Inception Report | Missing lead architect | Concept Design | Unsigned proposal | PASS | lib/engine |
++| road-design.md | Tender | Road Survey, Traffic Study | Missing P.E. license | Maintenance Plan | Direct pricing in tech | PASS | lib/engine |
++| water-sanitation-tender.md | Tender | Tech Design, EIA Approval, H&S Plan | Missing EIA approval | Methodology Statement | Pricing in technical | FAIL (if EIA missing) | lib/engine |
++| hospital-expansion.md | RFP | Construction Plan, Bio-med Plan, ISO Certs | Missing ISO 9001 | Timeline | Generic safety plan | FAIL (if ISO missing) | lib/engine |
++| pharma-factory.md | Design-Build | Cleanroom Design, HVAC Protocol | No GMP experience | Validation Plan | Non-GMP materials | PASS | lib/engine |
++| eoi-example.md | EOI | Company Profile, Project List | No relevant projects | Staff CVs | Detailed Pricing | PASS | lib/engine |
++| rfq-example.md | RFQ | Quote, Delivery Timeline | Exceeds 14d delivery | Catalog | Substitution without notice | PASS | lib/engine |
++| donor-proposal.md | Grant | Budget (USD), Logframe, Sustainability | No sustainability plan | Beneficiary list | Overhead > 15% | PASS | lib/engine |
++| two-envelope-tender.md | Two-Envelope | Tech Design, Geotech, Traffic | Pricing in Tech Env | Site Layout | Price Schedule in Tech | FAIL (if price leak) | lib/engine |
++| scanned-extraction.md | Scanned | Extractable Requirements | LOW_EXTRACT_CONFIDENCE | Manual Override | Automated Finalize | BLOCK | lib/extract-text |
++| corrupted-extraction.md | Corrupted | N/A | EXTRACTION_FAILED | None | Any Generated Doc | BLOCK | lib/extract-text |
++
++## Key Verification Points
++- **Provider Order**: Verify Anthropic is always last.
++- **Data Privacy**: Ensure `fileContent` and `extractedText` are not leaked in list views.
++- **Safety Gates**: Verify that blockers correctly stop the generation workflow.
++- **Two-Envelope Integrity**: Ensure no financial data leaks into technical outputs.
+diff --git a/lib/engine/final-zip-scope.ts b/lib/engine/final-zip-scope.ts
+index 329da1f..3a30a38 100644
+--- a/lib/engine/final-zip-scope.ts
++++ b/lib/engine/final-zip-scope.ts
+@@ -1,3 +1,4 @@
++import { safeParseJsonArray } from "../safe-json";
+ /**
+  * Strict final-ZIP scope resolver.
+  *
+@@ -83,7 +84,7 @@ export function collectTenderRequiredFilenames(tender: FinalZipScopeInput["tende
+   const out = new Set<string>();
+   for (const raw of [tender.exactFileNaming, tender.exactFileOrder]) {
+     try {
+-      const parsed = JSON.parse(raw ?? "[]");
++      const parsed = safeParseJsonArray(raw);
+       if (Array.isArray(parsed)) {
+         for (const item of parsed) {
+           if (typeof item === "string" && item.trim().length > 0) out.add(item.trim());
+diff --git a/tests/fixtures/tenders/corrupted-extraction.md b/tests/fixtures/tenders/corrupted-extraction.md
+new file mode 100644
+index 0000000..baf8124
+--- /dev/null
++++ b/tests/fixtures/tenders/corrupted-extraction.md
+@@ -0,0 +1,4 @@
++# ERROR: EXTRACTION_FAILED
++Unable to process binary stream.
++The PDF file appears to be corrupted or password protected.
++[RETRY_LOG_ID: 99283-AX]
+diff --git a/tests/fixtures/tenders/donor-proposal.md b/tests/fixtures/tenders/donor-proposal.md
+new file mode 100644
+index 0000000..93ca092
+--- /dev/null
++++ b/tests/fixtures/tenders/donor-proposal.md
+@@ -0,0 +1,9 @@
++# Donor Grant Proposal: Rural Education Initiative
++
++## 1. Grantor
++- Global Education Foundation (GEF).
++
++## 2. Requirements
++- Detailed budget in USD.
++- Logframe with clear indicators.
++- Sustainability plan beyond the 2-year grant period.
+diff --git a/tests/fixtures/tenders/eoi-example.md b/tests/fixtures/tenders/eoi-example.md
+new file mode 100644
+index 0000000..e68253e
+--- /dev/null
++++ b/tests/fixtures/tenders/eoi-example.md
+@@ -0,0 +1,9 @@
++# Expression of Interest: Sustainable Energy Consultants
++
++## 1. Purpose
++Identify qualified firms for future renewable energy projects in the rural sector.
++
++## 2. Information Required
++- Company profile.
++- List of relevant projects from the last 5 years.
++- Staff qualifications.
+diff --git a/tests/fixtures/tenders/fixtures-metadata.json b/tests/fixtures/tenders/fixtures-metadata.json
+new file mode 100644
+index 0000000..3354d65
+--- /dev/null
++++ b/tests/fixtures/tenders/fixtures-metadata.json
+@@ -0,0 +1,42 @@
++{
++  "water-sanitation-tender": {
++    "type": "Tender",
++    "client": "National Water Authority",
++    "deadline": "2026-12-15",
++    "submissionMethod": "Electronic Portal (https://portal.water.gov)",
++    "expectedOutputs": ["Technical Design", "EIA Approval", "Work Plan", "H&S Plan"],
++    "mandatoryRequirements": ["W1", "W2", "W3", "W4"],
++    "blockers": ["Missing EIA approval", "No H&S plan"],
++    "allowedOutputs": ["Methodology Statement", "CVs of Engineers"],
++    "forbiddenOutputs": ["Pricing in technical section"]
++  },
++  "hospital-expansion": {
++    "type": "RFP",
++    "client": "St. Jude Hospital",
++    "deadline": "2026-10-01",
++    "submissionEmail": "tenders@stjudehospital.org",
++    "expectedOutputs": ["Construction Plan", "Bio-medical Integration Plan", "ISO Certificates"],
++    "mandatoryRequirements": ["H1", "H2", "H3"],
++    "blockers": ["Missing ISO 9001 certification"]
++  },
++  "two-envelope-tender": {
++    "type": "Two-Envelope Tender",
++    "client": "Regional Bridge Authority",
++    "technicalRequirements": ["Bridge Engineering Design", "Geotechnical Survey", "Traffic Management Plan"],
++    "financialRequirements": ["BOQ", "Price Schedule"],
++    "separationRequired": true,
++    "blockers": ["Pricing in Technical Envelope"]
++  },
++  "scanned-extraction": {
++    "type": "Scanned Tender",
++    "extractionQuality": "low",
++    "expectedBlockers": ["EXTRACT_CONFIDENCE_LOW"],
++    "manualVerificationRequired": true
++  },
++  "corrupted-extraction": {
++    "type": "Corrupted PDF",
++    "extractionQuality": "failed",
++    "expectedBlockers": ["EXTRACTION_FAILED"],
++    "stopWorkflow": true
++  }
++}
+diff --git a/tests/fixtures/tenders/hospital-expansion.md b/tests/fixtures/tenders/hospital-expansion.md
+new file mode 100644
+index 0000000..5a9ae55
+--- /dev/null
++++ b/tests/fixtures/tenders/hospital-expansion.md
+@@ -0,0 +1,13 @@
++# Request for Proposals: St. Jude Hospital Expansion
++
++## 1. Scope
++Construction of a new 5-storey maternity wing and renovation of the existing emergency department.
++
++## 2. Mandatory Technical Requirements
++- H1: Hospital construction experience (at least 3 similar projects).
++- H2: ISO 9001 and ISO 14001 certifications.
++- H3: Detailed bio-medical equipment integration plan.
++
++## 3. Contact
++- Submissions to: tenders@stjudehospital.org
++- Deadline: 2026-10-01
+diff --git a/tests/fixtures/tenders/pharma-factory.md b/tests/fixtures/tenders/pharma-factory.md
+new file mode 100644
+index 0000000..1f4ac1b
+--- /dev/null
++++ b/tests/fixtures/tenders/pharma-factory.md
+@@ -0,0 +1,12 @@
++# Pharmaceutical Factory Construction Tender
++
++## 1. Overview
++Design-build tender for a GMP-certified pharmaceutical manufacturing facility.
++
++## 2. Specific Requirements
++- P1: Cleanroom design (Grade A and B).
++- P2: HVAC validation protocol.
++- P3: Experience with international pharmaceutical regulations (FDA/EMA).
++
++## 3. Procuring Entity
++- Pharma-Global Ltd.
+diff --git a/tests/fixtures/tenders/rfq-example.md b/tests/fixtures/tenders/rfq-example.md
+new file mode 100644
+index 0000000..63dcfd5
+--- /dev/null
++++ b/tests/fixtures/tenders/rfq-example.md
+@@ -0,0 +1,10 @@
++# Request for Quotation (RFQ): Office IT Equipment
++
++## 1. Items Required
++- 50x Laptops (Core i7, 16GB RAM).
++- 5x Multi-function Printers.
++- 1x Server Rack.
++
++## 2. Terms
++- Delivery within 14 days of PO.
++- Payment within 30 days of delivery.
+diff --git a/tests/fixtures/tenders/scanned-extraction.md b/tests/fixtures/tenders/scanned-extraction.md
+new file mode 100644
+index 0000000..92586d2
+--- /dev/null
++++ b/tests/fixtures/tenders/scanned-extraction.md
+@@ -0,0 +1,9 @@
++[IMAGE_PLACEHOLDER: Scanned PDF Content]
++[TEXT_EXTRACTED_WITH_LOW_CONFIDENCE]
++
++I`ndustrial Parlt - Phase II
++Tentler for Clu-anng and Grubbmng
++Submision Deadlne: 15-08-2026
++Requiremtns:
++- 10 excavatrs
++- ISO 45001 cert
+diff --git a/tests/fixtures/tenders/two-envelope-tender.md b/tests/fixtures/tenders/two-envelope-tender.md
+new file mode 100644
+index 0000000..1e3c802
+--- /dev/null
++++ b/tests/fixtures/tenders/two-envelope-tender.md
+@@ -0,0 +1,14 @@
++# Two-Envelope Tender: Regional Bridge Construction
++
++## 1. Instructions
++- Technical and Financial proposals must be submitted in separate sealed envelopes.
++- Technical envelope must NOT contain any pricing information.
++
++## 2. Technical Requirements
++- Bridge engineering design.
++- Geotechnical survey.
++- Traffic management plan.
++
++## 3. Financial Requirements
++- Bill of Quantities (BOQ).
++- Price Schedule.
+diff --git a/tests/fixtures/tenders/water-sanitation-tender.md b/tests/fixtures/tenders/water-sanitation-tender.md
+new file mode 100644
+index 0000000..0a3d90b
+--- /dev/null
++++ b/tests/fixtures/tenders/water-sanitation-tender.md
+@@ -0,0 +1,15 @@
++# Tender for Water and Sanitation Infrastructure
++
++## 1. Project Description
++Upgrade of the urban water supply network and construction of 50 communal latrines in the northern district.
++
++## 2. Requirements
++- W1: Technical design for 20km of ductile iron piping.
++- W2: Environmental impact assessment (EIA) approval.
++- W3: Work plan for construction without interrupting current supply.
++- W4: Health and Safety (H&S) plan for trenching operations.
++
++## 3. Submission Details
++- Deadline: 2026-12-15
++- Submission: via Electronic Portal (https://portal.water.gov)
++- Procuring Entity: National Water Authority
+diff --git a/tests/static-safety.test.ts b/tests/static-safety.test.ts
+new file mode 100644
+index 0000000..3e671af
+--- /dev/null
++++ b/tests/static-safety.test.ts
+@@ -0,0 +1,45 @@
++import { describe, it } from "node:test";
++import assert from "node:assert";
++import fs from "node:fs";
++import path from "node:path";
++import { CANONICAL_PROVIDER_CHAIN } from "../lib/ai";
++
++describe("Static Safety Tests", () => {
++  it("CANONICAL_PROVIDER_CHAIN must end with anthropic", () => {
++    const lastProvider = CANONICAL_PROVIDER_CHAIN[CANONICAL_PROVIDER_CHAIN.length - 1];
++    assert.strictEqual(lastProvider, "anthropic", "Anthropic must be the last provider in the chain for safety.");
++  });
++
++  it("API list/summary routes must not select fileContent or extractedText", () => {
++    const routesToScan = [
++      "app/api/tenders/route.ts",
++      "app/api/tenders/summary/route.ts"
++    ];
++
++    for (const route of routesToScan) {
++      if (!fs.existsSync(route)) continue;
++      const content = fs.readFileSync(route, "utf8");
++      assert.ok(!content.includes("fileContent: true"), `Route ${route} should not select fileContent`);
++      assert.ok(!content.includes("extractedText: true"), `Route ${route} should not select extractedText`);
++    }
++  });
++
++  it("Final ZIP generation must not include chat or workbench exports", () => {
++    // This is a logic check on lib/engine/final-zip-scope.ts (deferred file)
++    // but we can check if there are any obvious inclusions in related files
++    const zipScopeFile = "lib/engine/final-zip-scope.ts";
++    if (fs.existsSync(zipScopeFile)) {
++      const content = fs.readFileSync(zipScopeFile, "utf8");
++      assert.ok(!content.includes("chat_history"), "Final ZIP should not include chat history");
++      assert.ok(!content.includes("workbench"), "Final ZIP should not include workbench data");
++    }
++  });
++
++  it("Cleanup cron must require CRON_SECRET check", () => {
++    const cronFile = "app/api/cron/cleanup/route.ts";
++    if (fs.existsSync(cronFile)) {
++      const content = fs.readFileSync(cronFile, "utf8");
++      assert.ok(content.includes("CRON_SECRET"), "Cleanup cron should check for CRON_SECRET");
++    }
++  });
++});

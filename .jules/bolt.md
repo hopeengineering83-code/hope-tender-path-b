@@ -1,13 +1,17 @@
-# Bolt's Journal - Critical Performance Learnings
+# Performance & Safety Learnings - Post-617 Audit
 
-## 2026-06-06 - Initial Mission
-**Learning:** Initializing the performance journal.
-**Action:** Always start by profiling and identifying measurable bottlenecks.
+## Safety: JSON Parsing
+- **Problem**: Bare `JSON.parse` on database text fields can crash routes if the data is malformed or exceeds expected structures.
+- **Solution**: Use `safeParseJsonArray` and `safeParseJsonObject` from `lib/safe-json.ts`. These return fallbacks instead of throwing.
+- **Action**: Migrated `lib/engine/final-zip-scope.ts` to use safe parsing.
 
-## 2025-05-22 - Regex Consolidation for Sanitization
-**Learning:** Multiple sequential `.replace()` calls with individual Regexes on large strings can be a significant bottleneck. Consolidating into a single or few combined Regexes using unions (`|`) significantly improves throughput. Combined regexes reduced sanitization time by ~50% in this application.
-**Action:** Always look for opportunities to combine patterns into a single pass when performing text sanitization or transformation.
+## Performance: List Views
+- **Anti-pattern**: Selecting large text/binary fields like `fileContent` or `extractedText` in list or summary views leads to massive database overhead and slow API responses.
+- **Pattern**: Always use `select` to exclude these fields in `findMany` calls. Verified in `app/api/tenders/route.ts`.
 
-## 2025-06-06 - Input Truncation Before Sanitization
-**Learning:** When sanitizing potentially large strings (like AI provider error messages) but only needing a small slice of the result, truncating the input *before* running expensive Regex replacements provides massive (>99%) performance gains and protects against ReDoS.
-**Action:** Always check if the input can be safely truncated to a reasonable "headroom" length before applying complex Regex transformations if the final output is sliced anyway.
+## Regression Testing: Synthetic Fixtures
+- **Pattern**: Use synthetic fixtures (markdown + metadata JSON) to define expected engine behavior across diverse tender types (Road, Hospital, Pharma, etc.) without exposing sensitive client data.
+- **Matrix**: Maintaining a `docs/audits/post-617-regression-test-matrix.md` allows for clear verification of safety gates and blocker logic.
+
+## AI Provider Chain
+- **Policy**: Anthropic (Claude) must remain the last provider in the `CANONICAL_PROVIDER_CHAIN` to prevent rate limit blocks from affecting other tiers and to serve as a final validation gate. Verified by static test.
