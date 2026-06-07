@@ -420,6 +420,7 @@ function fallbackProposalMarkdown(params: {
   lines.push(emailLine);
   lines.push(`Subject: ${exactSubject}`);
   if (params.noFinancialProposal) lines.push("Note: This is a TECHNICAL PROPOSAL ONLY. No financial offer or pricing is included, as required by the tender instructions.");
+  lines.push(params.clientContactName ? `Dear ${params.clientContactName},` : "Dear Evaluation Committee,");
   // Project-anchored opener (replaces the prior generic "we are pleased to submit"
   // boilerplate). When reviewed projects exist, the opener names the top 1–2 with
   // ETB values and same-team continuity language, matching the benchmark pattern.

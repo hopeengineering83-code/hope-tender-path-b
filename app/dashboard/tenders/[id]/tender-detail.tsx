@@ -1940,15 +1940,45 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
             <p className={`mt-1 text-xs font-medium ${proposalQuality.verdict === "BENCHMARK_READY" ? "text-green-600" : "text-amber-600"}`}>
               {proposalQuality.verdict === "BENCHMARK_READY" ? "Benchmark ready ✓" : proposalQuality.benchmarkScore > 0 ? `Benchmark ${proposalQuality.benchmarkScore}/100` : "Generate docs to score"}
             </p>
-            {axisScores && (
-              <div className="mt-3 flex flex-wrap gap-1.5">
-                {Object.entries(axisScores).map(([axis, score]) => (
-                  <span key={axis} className={`inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] font-medium ${score >= 8 ? "bg-green-50 text-green-700" : score >= 6 ? "bg-amber-50 text-amber-700" : "bg-red-50 text-red-600"}`}>
-                    {axis}: {score}/10
-                  </span>
-                ))}
-              </div>
-            )}
+            {axisScores && (() => {
+              const AXIS_LABELS: Record<string, string> = {
+                structure: "Structure", evidence: "Evidence", tables: "Tables",
+                vocabulary: "Vocabulary", throughline: "Throughline", "ai-free": "AI-Free",
+                compliance: "Compliance", mirror: "Eval Mirror", "win-themes": "Win Themes", "self-score": "Self-Score",
+              };
+              const AXIS_HINTS: Record<string, string> = {
+                structure: "Add missing sections (Cover Letter, Company Profile, Team, Methodology, Compliance, Self-Score)",
+                evidence: "Add specific project names, ETB values, dates, and measurable outcomes",
+                tables: "Add phase/activity/deliverable tables and team qualification tables",
+                vocabulary: "Use sector-specific terminology matching the tender domain",
+                throughline: "Repeat win themes across Cover Letter, Methodology, and Compliance sections",
+                "ai-free": "Remove AI phrases, boilerplate, and 'Bid-Team to confirm' stubs",
+                compliance: "Add a compliance matrix table (Requirement | Status | Evidence)",
+                mirror: "Add an evaluator response mirror table (Criterion | Weight | Response)",
+                "win-themes": "Add a dedicated win themes section stating 3+ discriminators",
+                "self-score": "Add a proposal self-score section with per-criterion estimates",
+              };
+              const weak = Object.entries(axisScores).filter(([, s]) => (s as number) < 7);
+              return (
+                <div className="mt-3 space-y-2">
+                  <div className="flex flex-wrap gap-1">
+                    {Object.entries(axisScores).map(([axis, score]) => (
+                      <span key={axis} title={AXIS_HINTS[axis]} className={`inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] font-medium cursor-help ${(score as number) >= 8 ? "bg-green-50 text-green-700" : (score as number) >= 6 ? "bg-amber-50 text-amber-700" : "bg-red-50 text-red-600"}`}>
+                        {AXIS_LABELS[axis] ?? axis}: {score as number}/10
+                      </span>
+                    ))}
+                  </div>
+                  {weak.length > 0 && (
+                    <div className="rounded border border-amber-100 bg-amber-50/60 px-2 py-1.5 text-[10px] text-amber-800 space-y-0.5">
+                      <p className="font-semibold">Weak axes — regenerate to improve:</p>
+                      {weak.map(([axis]) => (
+                        <p key={axis}>• <span className="font-medium">{AXIS_LABELS[axis] ?? axis}:</span> {AXIS_HINTS[axis]}</p>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
           </div>
         )}
       </div>
