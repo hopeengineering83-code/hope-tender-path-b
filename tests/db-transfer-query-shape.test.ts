@@ -54,7 +54,7 @@ describe("DB transfer query shape — dashboard metadata views", () => {
   it("company document list views do not select or render full extractedText", () => {
     assert.ok(!/extractedText:\s*true/.test(companyDocumentsApi));
     assert.ok(!/extractedText:\s*true/.test(companyDocumentsPage));
-    assert.ok(!/doc\.extractedText/.test(companyDashboardPage));
+    assert.ok(!/doc\.extractedText(?!Length)/.test(companyDashboardPage));
     assert.match(companyDocumentsApi, /aiExtractionStatus:\s*true/);
     assert.match(companyDocumentsPage, /aiExtractionStatus:\s*true/);
   });
