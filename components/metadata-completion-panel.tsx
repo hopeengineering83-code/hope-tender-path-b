@@ -367,7 +367,7 @@ export function MetadataCompletionPanel({ tenderId }: { tenderId: string }) {
                 <div key={o.id} className="flex flex-wrap items-center gap-2 px-3 py-2 text-xs">
                   <span className="font-medium text-slate-800">{o.field}</span>
                   <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${badge.classes}`}>{badge.label}</span>
-                  {o.overrideValue && <span className="text-slate-600">"{o.overrideValue}"</span>}
+                  {o.overrideValue && <span className="text-slate-600">&ldquo;{o.overrideValue}&rdquo;</span>}
                   {o.reason && <span className="text-slate-500">— {o.reason}</span>}
                 </div>
               );
