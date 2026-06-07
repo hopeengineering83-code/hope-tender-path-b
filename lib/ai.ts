@@ -1134,6 +1134,10 @@ export type AIBidWriterInput = {
   // cover letter "To:" line just because the firm has prior Pharo
   // projects in the vault.
   doNotUseAsClient?: string[];
+  // Named procurement contact at the client organisation. When present,
+  // the cover letter prompt instructs the AI to open with "Dear [name],"
+  // rather than the generic "Dear Evaluation Committee," fallback.
+  clientContactName?: string | null;
   // Per-criterion evidence map — built by buildCriterionEvidenceMap()
   // in proposal-intelligence.ts. Maps each evaluation criterion (with
   // its numeric weight) to the best-matching projects and experts from
