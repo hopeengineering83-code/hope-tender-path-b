@@ -760,6 +760,87 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
     finally { setAnalyzing(false); stopAnalyzeProgress(); }
   }
 
+  async function handleAnalyzeStreaming() {
+    setAnalyzing(true);
+    setError("");
+    setAnalyzePhase("Connecting…");
+    setAnalyzeProgress(5);
+    try {
+      const res = await fetch(`/api/tenders/${tender.id}/ai-analyze`, {
+        method: "POST",
+        headers: { "Accept": "text/event-stream" },
+      });
+      if (!res.ok || !res.body) {
+        // Fall back to non-streaming path
+        setAnalyzePhase("");
+        setAnalyzeProgress(0);
+        setAnalyzing(false);
+        return handleAIAnalyze();
+      }
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let done = false;
+      while (!done) {
+        const { done: streamDone, value } = await reader.read();
+        if (streamDone) break;
+        buffer += decoder.decode(value, { stream: true });
+        const parts = buffer.split("\n\n");
+        buffer = parts.pop() ?? "";
+        for (const part of parts) {
+          if (!part.startsWith("data: ")) continue;
+          try {
+            const event = JSON.parse(part.slice(6)) as {
+              phase: string;
+              message?: string;
+              chunk?: number;
+              totalChunks?: number;
+              requirementCount?: number;
+              status?: string;
+              jobId?: string;
+            };
+            if (event.phase === "analyzing" && event.chunk !== undefined) {
+              const total = event.totalChunks ?? "?";
+              setAnalyzePhase(`Analyzing chunk ${event.chunk}/${total}`);
+              const pct = event.totalChunks ? Math.round(20 + (event.chunk / event.totalChunks) * 55) : 50;
+              setAnalyzeProgress(pct);
+            } else if (event.phase === "extracting") {
+              setAnalyzePhase(event.message?.slice(0, 50) ?? "Extracting…");
+              setAnalyzeProgress(15);
+            } else if (event.phase === "saving") {
+              setAnalyzePhase("Saving analysis results…");
+              setAnalyzeProgress(90);
+            } else if (event.phase === "starting") {
+              setAnalyzePhase("Preparing tender content…");
+              setAnalyzeProgress(8);
+            } else if (event.phase === "complete") {
+              setAnalyzePhase(`Analysis complete — ${event.requirementCount ?? 0} requirements extracted`);
+              setAnalyzeProgress(100);
+              if (event.jobId) setContinueJobId(event.jobId);
+              done = true;
+            } else if (event.phase === "error") {
+              setError(event.message ?? "Analysis failed");
+              done = true;
+            }
+          } catch { /* ignore SSE parse errors */ }
+        }
+      }
+      // Reload page data after successful streaming completion
+      if (!done || !error) {
+        router.refresh();
+        window.location.reload();
+      }
+    } catch {
+      setAnalyzePhase("");
+      setAnalyzeProgress(0);
+      setError("Analysis failed");
+    } finally {
+      setAnalyzing(false);
+      setAnalyzePhase("");
+      setAnalyzeProgress(0);
+    }
+  }
+
   async function handleContinueAnalysis() {
     if (!continueJobId) return;
     setAnalyzing(true);
@@ -1430,7 +1511,7 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
 
         <div id="ai-analyze-section" className="flex flex-wrap gap-2">
           {aiEnabled && (
-            <button onClick={handleAIAnalyze} disabled={analyzing}
+            <button onClick={handleAnalyzeStreaming} disabled={analyzing}
               title={analyzing && analyzePhase ? analyzePhase : undefined}
               className="rounded-lg bg-purple-600 px-3 py-2 text-sm text-white hover:bg-purple-700 disabled:opacity-50">
               {analyzing ? (analyzePhase ? `${analyzePhase.slice(0, 28)}…` : "Analyzing…") : "✦ AI Analyze"}
@@ -1519,18 +1600,25 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
       )}
 
       {/* AI Analyze progress bar */}
-      {analyzing && analyzePhase && (
+      {analyzing && (
         <div className="rounded-xl border border-purple-200 bg-purple-50 px-4 py-3">
           <div className="flex items-center justify-between mb-1.5">
-            <p className="text-sm font-medium text-purple-800">{analyzePhase}</p>
-            <p className="text-xs text-purple-600">{Math.round(analyzeProgress)}%</p>
+            <p className="text-sm font-medium text-purple-800">
+              {analyzePhase || "Analyzing…"}
+            </p>
+            {analyzeProgress > 0 && (
+              <p className="text-xs text-purple-600">{Math.round(analyzeProgress)}%</p>
+            )}
           </div>
           <div className="h-1.5 w-full overflow-hidden rounded-full bg-purple-100">
             <div
-              className="h-full rounded-full bg-purple-500 transition-all duration-1000 ease-in-out"
-              style={{ width: `${analyzeProgress}%` }}
+              className={`h-full rounded-full bg-purple-500 transition-all duration-700 ease-in-out ${analyzeProgress === 0 ? "animate-pulse" : ""}`}
+              style={{ width: analyzeProgress > 0 ? `${analyzeProgress}%` : "15%" }}
             />
           </div>
+          {analyzePhase?.includes("chunk") || analyzePhase?.includes("Chunk") ? (
+            <p className="mt-1 text-xs text-purple-500">AI is processing the tender in sections — this may take up to a minute.</p>
+          ) : null}
         </div>
       )}
 
