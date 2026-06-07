@@ -1425,15 +1425,26 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
                             : "Generate proposal documents";
 
   // ZIP is only safe when there are generated documents. The canonical
-  // export-readiness gate (Export Readiness panel) blocks the final ZIP
-  // link — this simpler guard prevents the raw ZIP endpoint from being
-  // called when no documents exist at all.
+  // export-readiness gate (Export Readiness panel) is the canonical final gate,
+  // but these pre-flight checks surface the most common blockers before the API
+  // call, avoiding a round-trip to discover obvious issues.
   const hasAnyGeneratedDoc = (tender.generatedDocuments?.length ?? 0) > 0;
+  const hasCriticalGapBlock = (tender.complianceGaps ?? []).some((g) => g.severity === "CRITICAL");
+  const clientNameMissing = !tender.clientName && !tender.procuringEntityName;
+  const submissionEndpointMissing = !tender.submissionMethod && !tender.submissionEmails && !tender.submissionAddress;
   const zipDisabledReason = analysisIsFallbackUnapproved
     ? "Analysis source is unapproved regex fallback — approve or retry AI Analyze first"
     : !hasAnyGeneratedDoc
       ? "No generated documents yet — generate documents before downloading"
-      : null;
+      : (tender.metadataContaminated ?? false)
+        ? "Client name is contaminated — review and correct the client name before exporting"
+        : clientNameMissing
+          ? "Client/procuring entity name is missing — run AI Analyze or enter it manually"
+          : submissionEndpointMissing
+            ? "Submission method/endpoint is missing — extract or enter submission details"
+            : hasCriticalGapBlock
+              ? "Critical compliance gaps must be resolved before export"
+              : null;
   const readinessScore = tender.readinessScore ??
     (tender.requirements.length === 0 ? 0
       : Math.max(0, Math.round(((tender.requirements.length - criticalGaps) / tender.requirements.length) * 100)));
