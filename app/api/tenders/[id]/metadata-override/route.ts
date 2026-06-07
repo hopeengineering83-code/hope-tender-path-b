@@ -38,10 +38,22 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   });
   if (!tender) return err("Tender not found", 404, "TENDER_NOT_FOUND");
 
-  const overrides = await prisma.tenderMetadataOverride.findMany({
-    where: { tenderId: id },
-    orderBy: { createdAt: "asc" },
-  });
+  let overrides;
+  try {
+    overrides = await prisma.tenderMetadataOverride.findMany({
+      where: { tenderId: id },
+      orderBy: { createdAt: "asc" },
+    });
+  } catch (lookupErr) {
+    const code = (lookupErr as { code?: string })?.code;
+    if (code === "P2021" || code === "P2010") {
+      return NextResponse.json(
+        { error: "Database migration required — TenderMetadataOverride table is not yet available.", code: "DB_MIGRATION_REQUIRED" },
+        { status: 503 },
+      );
+    }
+    throw lookupErr;
+  }
 
   return NextResponse.json({ ok: true, overrides });
 }
@@ -107,26 +119,39 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const previousValue = typeof body.previousValue === "string" ? body.previousValue.trim() || null : null;
 
   // Upsert: update if exists, create if not.
-  const upserted = await prisma.tenderMetadataOverride.upsert({
-    where: { tenderId_field: { tenderId: id, field } },
-    update: {
-      fieldState,
-      overrideValue,
-      reason,
-      previousValue,
-      overriddenBy: actor.id,
-      updatedAt: new Date(),
-    },
-    create: {
-      tenderId: id,
-      field,
-      fieldState,
-      overrideValue,
-      reason,
-      previousValue,
-      overriddenBy: actor.id,
-    },
-  });
+  // Guarded against P2021/P2010 in case the migration hasn't been applied yet.
+  let upserted;
+  try {
+    upserted = await prisma.tenderMetadataOverride.upsert({
+      where: { tenderId_field: { tenderId: id, field } },
+      update: {
+        fieldState,
+        overrideValue,
+        reason,
+        previousValue,
+        overriddenBy: actor.id,
+        updatedAt: new Date(),
+      },
+      create: {
+        tenderId: id,
+        field,
+        fieldState,
+        overrideValue,
+        reason,
+        previousValue,
+        overriddenBy: actor.id,
+      },
+    });
+  } catch (upsertErr) {
+    const code = (upsertErr as { code?: string })?.code;
+    if (code === "P2021" || code === "P2010") {
+      return NextResponse.json(
+        { error: "Database migration required — TenderMetadataOverride table is not yet available.", code: "DB_MIGRATION_REQUIRED" },
+        { status: 503 },
+      );
+    }
+    throw upsertErr;
+  }
 
   await logAction({
     userId: actor.id,
