@@ -177,3 +177,35 @@ describe("export gate — email vs physical method detection logic", () => {
     assert.ok(emailIdx > elseIdx, "email/address checks must be inside the else branch (only when method is set)");
   });
 });
+
+// ── 5. DEADLINE_MISSING blocker ────────────────────────────────────────────────
+
+describe("export gate — DEADLINE_MISSING blocker", () => {
+  it("DEADLINE_MISSING source string exists in export-readiness.ts", () => {
+    assert.ok(
+      SRC.includes('"DEADLINE_MISSING"'),
+      "DEADLINE_MISSING blocker must be defined in export-readiness.ts",
+    );
+  });
+
+  it("DEADLINE_MISSING blocker fires when deadline is null (before the deadline-passed check)", () => {
+    const deadlineMissingIdx = SRC.indexOf('"DEADLINE_MISSING"');
+    const deadlinePassedIdx = SRC.indexOf('"DEADLINE_PASSED"');
+    assert.ok(deadlineMissingIdx !== -1, "DEADLINE_MISSING must be present");
+    assert.ok(deadlinePassedIdx !== -1, "DEADLINE_PASSED must be present");
+    // DEADLINE_MISSING check (!tender.deadline) must come before DEADLINE_PASSED (deadline < now)
+    assert.ok(
+      deadlineMissingIdx < deadlinePassedIdx,
+      "DEADLINE_MISSING blocker must appear before DEADLINE_PASSED advisory in source",
+    );
+  });
+
+  it("DEADLINE_MISSING is a HIGH severity blocker (not just advisory)", () => {
+    const idx = SRC.indexOf('"DEADLINE_MISSING"');
+    const snippet = SRC.slice(idx, idx + 400);
+    assert.ok(
+      snippet.includes('"HIGH"'),
+      "DEADLINE_MISSING must be a HIGH severity blocker",
+    );
+  });
+});

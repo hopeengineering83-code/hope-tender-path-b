@@ -146,9 +146,20 @@ export async function AnalysisQualityPanel({ tenderId }: { tenderId: string }) {
         <div className="flex flex-wrap items-center gap-2">
           <p className="font-semibold text-slate-900">Analysis source:</p>
           <span className={`rounded-full px-2 py-0.5 text-xs font-bold ${sourceRiskClass}`}>{analysisSource.label}</span>
-          {tender.analysisExtractionStatus && (
-            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">{tender.analysisExtractionStatus}</span>
-          )}
+          {tender.analysisExtractionStatus && (() => {
+            const statusLabels: Record<string, { label: string; cls: string }> = {
+              FULL_EXTRACTION_AI_ANALYZED:        { label: "Full extraction", cls: "bg-green-100 text-green-700" },
+              PARTIAL_EXTRACTION_AI_ANALYZED:     { label: "Partial extraction", cls: "bg-amber-100 text-amber-700" },
+              OCR_REQUIRED:                       { label: "OCR required", cls: "bg-amber-100 text-amber-700" },
+              EXTRACTION_WEAK_REVIEW_REQUIRED:    { label: "Weak — review required", cls: "bg-red-100 text-red-700" },
+              REGEX_FALLBACK_FROM_WEAK_EXTRACTION:{ label: "Regex fallback (weak)", cls: "bg-red-100 text-red-700" },
+              EXTRACTION_CORRUPTED_AI_SKIPPED:    { label: "Extraction corrupted", cls: "bg-red-100 text-red-700" },
+              AI_ANALYZED:                        { label: "AI analyzed", cls: "bg-green-100 text-green-700" },
+              AI_ANALYSIS_PARTIAL:                { label: "AI (partial)", cls: "bg-amber-100 text-amber-700" },
+            };
+            const s = statusLabels[tender.analysisExtractionStatus] ?? { label: tender.analysisExtractionStatus, cls: "bg-slate-100 text-slate-600" };
+            return <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${s.cls}`}>{s.label}</span>;
+          })()}
         </div>
         <p className="mt-1 text-slate-600">{analysisSource.detail}</p>
         {analysisSource.risk === "HIGH" && (
