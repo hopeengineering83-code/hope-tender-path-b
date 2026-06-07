@@ -2930,7 +2930,19 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     return parts.length > 0 ? ` Deep-reasoning (TENDER_DEEP_REASONING): ${parts.join("; ")}.` : "";
   })();
 
-  const summary = `${mode}${refinementLabel} technical proposal generated. ${finalized.internalSummary}. ${auditSummary}. ${formatQualityScoreSummary(qualityScore)}. ${formatWinProbability(winProb)}. Inputs: ${intelligence.requiredSections.length} section group(s), ${intelligence.themes.length} tender theme(s), ${experts.length} reviewed expert(s), ${projects.length} reviewed project(s), ${companyEvidenceLines.length} company evidence item(s), ${projectEvidenceLines.length} project evidence attachment(s).${deepReasoningSummary}${aiError ? ` AI fallback reason: ${aiError}` : ""}`;
+  const axisScoresJson = JSON.stringify({
+    structure: qualityScore.axes.structureCompleteness,
+    evidence: qualityScore.axes.evidenceDensity,
+    tables: qualityScore.axes.tableCoverage,
+    vocabulary: qualityScore.axes.sectorVocabulary,
+    throughline: qualityScore.axes.throughlineConsistency,
+    "ai-free": qualityScore.axes.aiTraceFreedom,
+    compliance: qualityScore.axes.complianceMatrixCoverage,
+    mirror: qualityScore.axes.evaluatorMirrorCoverage,
+    "win-themes": qualityScore.axes.winThemesPresence,
+    "self-score": qualityScore.axes.selfScorePresence,
+  });
+  const summary = `${mode}${refinementLabel} technical proposal generated. ${finalized.internalSummary}. ${auditSummary}. ${formatQualityScoreSummary(qualityScore)}. AXIS_SCORES: ${axisScoresJson}. ${formatWinProbability(winProb)}. Inputs: ${intelligence.requiredSections.length} section group(s), ${intelligence.themes.length} tender theme(s), ${experts.length} reviewed expert(s), ${projects.length} reviewed project(s), ${companyEvidenceLines.length} company evidence item(s), ${projectEvidenceLines.length} project evidence attachment(s).${deepReasoningSummary}${aiError ? ` AI fallback reason: ${aiError}` : ""}`;
 
   // Log the structured deep-reasoning telemetry summary — empty
   // string when nothing was tracked (flag off + no deep-reasoning
