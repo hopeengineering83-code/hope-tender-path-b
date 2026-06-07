@@ -7,6 +7,7 @@ import { NavLinks } from "../../components/nav-links";
 import { MobileSidebarToggle } from "../../components/mobile-sidebar-toggle";
 import type { ReactNode } from "react";
 import { NotificationBell } from "../components/notification-bell";
+import { BuildVersionBadge } from "../../components/build-version-badge";
 
 const NAV_GROUPS_BASE = [
   {
@@ -114,6 +115,7 @@ export default async function DashboardLayout({ children }: { children: ReactNod
           <div className="mt-3">
             <LogoutButton />
           </div>
+          <BuildVersionBadge />
         </div>
       </aside>
 
