@@ -1508,6 +1508,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
       const aiInputBase = {
         tenderTitle: cleanedTenderTitle,
         clientName: intelligence.clientName,
+        clientContactName: intelligence.clientContactName,
         tenderText: [BENCHMARK_CONTEXT_LINES.join("\n"), tenderText].join("\n\n"),
         analysisSummary: clean(tender.analysisSummary) || intelligence.tenderText.slice(0, 2000),
         evaluationMethodology: [
@@ -2959,7 +2960,8 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     "win-themes": qualityScore.axes.winThemesPresence,
     "self-score": qualityScore.axes.selfScorePresence,
   });
-  const summary = `${mode}${refinementLabel} technical proposal generated. ${finalized.internalSummary}. ${auditSummary}. ${formatQualityScoreSummary(qualityScore)}. AXIS_SCORES: ${axisScoresJson}. ${formatWinProbability(winProb)}. Inputs: ${intelligence.requiredSections.length} section group(s), ${intelligence.themes.length} tender theme(s), ${experts.length} reviewed expert(s), ${projects.length} reviewed project(s), ${companyEvidenceLines.length} company evidence item(s), ${projectEvidenceLines.length} project evidence attachment(s).${deepReasoningSummary}${aiError ? ` AI fallback reason: ${aiError}` : ""}`;
+  const repairLabel = repairAddendaApplied ? " Repair addenda applied (missing critical sections were auto-injected)." : "";
+  const summary = `${mode}${refinementLabel} technical proposal generated.${repairLabel} ${finalized.internalSummary}. ${auditSummary}. ${formatQualityScoreSummary(qualityScore)}. AXIS_SCORES: ${axisScoresJson}. ${formatWinProbability(winProb)}. Inputs: ${intelligence.requiredSections.length} section group(s), ${intelligence.themes.length} tender theme(s), ${experts.length} reviewed expert(s), ${projects.length} reviewed project(s), ${companyEvidenceLines.length} company evidence item(s), ${projectEvidenceLines.length} project evidence attachment(s).${deepReasoningSummary}${aiError ? ` AI fallback reason: ${aiError}` : ""}`;
 
   // Log the structured deep-reasoning telemetry summary — empty
   // string when nothing was tracked (flag off + no deep-reasoning

@@ -1,5 +1,5 @@
 export type TenderRequirementLite = { title: string; description: string; priority: string; requirementType: string };
-export type TenderLite = { title: string; reference?: string | null; clientName?: string | null; procuringEntityName?: string | null; country?: string | null; description?: string | null; intakeSummary?: string | null; analysisSummary?: string | null; evaluationMethodology?: string | null; deadline?: Date | string | null; submissionMethod?: string | null; submissionAddress?: string | null };
+export type TenderLite = { title: string; reference?: string | null; clientName?: string | null; procuringEntityName?: string | null; country?: string | null; description?: string | null; intakeSummary?: string | null; analysisSummary?: string | null; evaluationMethodology?: string | null; deadline?: Date | string | null; submissionMethod?: string | null; submissionAddress?: string | null; clientContactName?: string | null };
 export type CompanyLite = { name: string; legalName?: string | null; description?: string | null; profileSummary?: string | null; serviceLines: string; sectors: string; email?: string | null; phone?: string | null; website?: string | null; address?: string | null };
 export type ExpertLite = { fullName: string; title?: string | null; yearsExperience?: number | null; disciplines: string; sectors: string; certifications: string; profile?: string | null };
 export type ProjectLite = { name: string; clientName?: string | null; country?: string | null; sector?: string | null; serviceAreas: string; contractValue?: number | null; currency?: string | null; summary?: string | null };
@@ -18,6 +18,7 @@ export type CommercialTerms = {
 export type ProposalIntelligence = {
   tenderText: string;
   clientName: string;
+  clientContactName: string | null;
   assignmentName: string;
   primarySector: string;
   requiredSections: string[];
@@ -1286,6 +1287,7 @@ export function buildProposalIntelligence(params: {
   return {
     tenderText,
     clientName: finalClientName,
+    clientContactName: tender.clientContactName ?? null,
     assignmentName: finalAssignmentName,
     primarySector: inferSector(tenderText),
     requiredSections: detectRequiredSections(tenderText),
