@@ -643,6 +643,18 @@ export async function getFinalSubmissionReadiness(
       recommendedAction: "Fill the missing critical tender metadata fields before final proposal generation.",
     });
   }
+  // Client name gate — an empty/whitespace-only clientName (and no
+  // procuringEntityName fallback) must block export so a proposal is
+  // never sent without knowing who the procuring entity is.
+  const effectiveClientName = (tender.clientName ?? "").trim() || ((tender as Record<string, unknown>).procuringEntityName as string | null | undefined ?? "").trim();
+  if (!effectiveClientName) {
+    tenderLevelBlockers.push({
+      category: "CLIENT_NAME_MISSING",
+      severity: "HIGH",
+      title: "Client/procuring entity name is missing or blank.",
+      recommendedAction: "Enter the official procuring entity name in Tender Detail before final export.",
+    });
+  }
   // Contamination gate — a polluted client name (portal nav text, status
   // banners, unrelated tender alerts) must block export until corrected.
   if (tender.metadataContaminated === true) {

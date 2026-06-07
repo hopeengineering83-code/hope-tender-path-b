@@ -7,6 +7,7 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import {
   __testing__,
   ADVISORY_GAP_PREFIX,
@@ -181,5 +182,25 @@ describe("final-submission-readiness — mandatory evidence coverage truth", () 
       { priority: "OPTIONAL", complianceMatrixRows: [{ supportLevel: "FULL" }] },
     ]);
     assert.equal(ratio, 2 / 3);
+  });
+});
+
+describe("final-submission-readiness — CLIENT_NAME_MISSING blocker (source-level)", () => {
+  const source = readFileSync("lib/engine/final-submission-readiness.ts", "utf8");
+
+  it("source contains CLIENT_NAME_MISSING blocker code", () => {
+    assert.match(source, /CLIENT_NAME_MISSING/);
+  });
+
+  it("source checks clientName for empty/whitespace condition", () => {
+    assert.match(source, /effectiveClientName/);
+    assert.match(source, /CLIENT_NAME_MISSING/);
+  });
+
+  it("CLIENT_NAME_MISSING uses HIGH severity matching the contamination blocker pattern", () => {
+    // The blocker must use "HIGH" severity (same as METADATA_CONTAMINATED)
+    const blockIndex = source.indexOf("CLIENT_NAME_MISSING");
+    const blockContext = source.slice(blockIndex, blockIndex + 200);
+    assert.ok(blockContext.includes("HIGH"), "CLIENT_NAME_MISSING blocker must use HIGH severity");
   });
 });

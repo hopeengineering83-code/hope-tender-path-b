@@ -68,5 +68,30 @@ describe("Tender Regression Tests (Phase 7)", () => {
       assert.equal(result.status, "GOOD");
       assert.equal(result.score, 100);
     });
+
+    it("FINANCIAL_IN_TECHNICAL_RE false-positive fix: prose 'total price of the contract was fair' does NOT trigger", () => {
+      const doc = {
+        name: "Technical Proposal",
+        documentType: "TECHNICAL_PROPOSAL",
+        fileContent: "The methodology was sound and the total price of the contract was fair given the scope of work. " +
+                     "Our approach focuses on quality deliverables and stakeholder engagement throughout the engagement. " +
+                     "We will deploy qualified experts with relevant experience to ensure successful project delivery.",
+        storagePath: null,
+      };
+      const result = validateDocumentQuality(doc);
+      assert.equal(result.envelopeMismatch, null, "Prose 'total price of the contract was fair' must not trigger PRICING_IN_TECHNICAL false positive");
+      assert.notEqual(result.status, "BLOCKED", "Document should not be BLOCKED on a prose reference to price");
+    });
+
+    it("FINANCIAL_IN_TECHNICAL_RE: 'total price: $50,000' in a TECHNICAL doc DOES trigger", () => {
+      const doc = {
+        name: "Technical Proposal",
+        documentType: "TECHNICAL_PROPOSAL",
+        fileContent: "Our team has strong methodology. Total price: $50,000 for the full scope.",
+        storagePath: null,
+      };
+      const result = validateDocumentQuality(doc);
+      assert.ok(result.envelopeMismatch?.includes("Financial pricing content"), "Numeric total price must still flag envelope mismatch");
+    });
   });
 });

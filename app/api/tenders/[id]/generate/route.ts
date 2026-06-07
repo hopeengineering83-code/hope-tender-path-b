@@ -552,6 +552,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       diagnosticId: `metadata-incomplete-${id}`,
       missingCritical: metadataReport.missingCritical.map((f) => ({ field: f.field, reason: f.reason })),
       invalidFields: metadataReport.invalidFields.map((f) => ({ field: f.field, reason: f.reason })),
+      // missingFields is a flat list of field names for convenient client-side
+      // rendering of per-field guidance without needing to merge two arrays.
+      missingFields: [
+        ...metadataReport.missingCritical.map((f) => f.field),
+        ...metadataReport.invalidFields.map((f) => f.field),
+      ],
       overallRatio: metadataReport.overallRatio,
       metadataContaminated: Boolean((tender as { metadataContaminated?: boolean }).metadataContaminated),
       deadlinePassed: metadataReport.deadlinePassed,

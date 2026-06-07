@@ -42,7 +42,7 @@ const AI_TRACE_RE = [
 ];
 
 const EMPTY_SECTION_RE = /^#+\s+.+\n+(?:\n|$)/m;
-const FINANCIAL_IN_TECHNICAL_RE = /total\s+price|unit\s+price|rate\s+card|price\s+schedule|BOQ|bill\s+of\s+quantities|tax.*rate|vat.*\d/i;
+const FINANCIAL_IN_TECHNICAL_RE = /total\s+price\s*(?:[:\$€£]|is\b)?\s*[\$€£]?\s*[\d,]|unit\s+price|rate\s+card|price\s+schedule|BOQ|bill\s+of\s+quantities|tax.*rate|vat.*\d/i;
 const TECHNICAL_IN_FINANCIAL_RE = /methodology|work\s+plan|staffing\s+plan|technical\s+approach/i;
 
 export function validateDocumentQuality(doc: {
@@ -55,7 +55,7 @@ export function validateDocumentQuality(doc: {
     (doc.fileContent ?? "").trim().length > 0 || (doc.storagePath ?? "").trim().length > 0,
   );
 
-  const isBase64Like = /^[A-Za-z0-9+/]{40,}={0,2}$/.test((doc.fileContent ?? "").slice(0, 100));
+  const isBase64Like = /^[A-Za-z0-9+/]{40,}={0,2}$/.test((doc.fileContent ?? "").slice(0, 500));
   const text = isBase64Like ? "" : (doc.fileContent ?? "");
 
   const placeholders = hasContent && text
