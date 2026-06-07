@@ -75,6 +75,7 @@ import { injectCoverPageAndRfpMeta } from "./cover-page-injector";
 import { injectJvDisclosure } from "./jv-disclosure";
 import { deduplicateTables, injectQaThresholds, injectAppendixReadinessRegister } from "./advanced-quality-passes";
 import { generateExpertCvDocx, expertCvFileName } from "./expert-cv-docx";
+import { applyProposalQualityRepairAddenda } from "./proposal-quality-repair";
 import { computeBidStrategy } from "./bid-strategy";
 import { applyAIWriterContractPrompt } from "./ai-writer-contract-prompt";
 import type { TenderSourceDocument } from "./source-grounded-requirement-map";
@@ -356,6 +357,7 @@ function repairSectionC2SubSections(markdown: string, requirements: string, tend
 function fallbackProposalMarkdown(params: {
   tenderTitle: string;
   clientName: string;
+  clientContactName?: string | null;
   companyName: string;
   companyLegalName?: string | null;
   companyAddress?: string | null;
@@ -403,7 +405,12 @@ function fallbackProposalMarkdown(params: {
   const gaps = params.gapsToAddressInNarrative ?? [];
   const sections = params.requiredSections ?? [];
   const exactSubject = params.exactSubjectLine ?? `Technical Proposal for ${params.tenderTitle}`;
-  const emailLine = params.exactEmails?.length ? `To: ${params.exactEmails.join("; ")}` : `To: ${params.clientName}`;
+  const toRecipient = params.exactEmails?.length
+    ? params.exactEmails.join("; ")
+    : params.clientContactName
+      ? `${params.clientContactName}\n${params.clientName}`
+      : params.clientName;
+  const emailLine = `To: ${toRecipient}`;
   const reviewedProjects = params.projects ?? [];
   const reviewedExperts = params.experts ?? [];
   const lines: string[] = [];
@@ -413,6 +420,7 @@ function fallbackProposalMarkdown(params: {
   lines.push(emailLine);
   lines.push(`Subject: ${exactSubject}`);
   if (params.noFinancialProposal) lines.push("Note: This is a TECHNICAL PROPOSAL ONLY. No financial offer or pricing is included, as required by the tender instructions.");
+  lines.push(params.clientContactName ? `Dear ${params.clientContactName},` : "Dear Evaluation Committee,");
   // Project-anchored opener (replaces the prior generic "we are pleased to submit"
   // boilerplate). When reviewed projects exist, the opener names the top 1–2 with
   // ETB values and same-team continuity language, matching the benchmark pattern.
@@ -1500,6 +1508,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
       const aiInputBase = {
         tenderTitle: cleanedTenderTitle,
         clientName: intelligence.clientName,
+        clientContactName: intelligence.clientContactName,
         tenderText: [BENCHMARK_CONTEXT_LINES.join("\n"), tenderText].join("\n\n"),
         analysisSummary: clean(tender.analysisSummary) || intelligence.tenderText.slice(0, 2000),
         evaluationMethodology: [
@@ -1703,11 +1712,11 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
       mode = `${provider === "claude" ? "Claude" : provider === "gemini" ? "Gemini" : provider === "openai" ? "GPT-4o" : "AI"} ${pathLabel} bid-writer + evaluator response matrix + full evidence library + client-ready benchmark finalizer + professional DOCX polish`;
     } catch (error) {
       aiError = error instanceof Error ? error.message : String(error);
-      sourceMarkdown = fallbackProposalMarkdown({ tenderTitle: cleanedTenderTitle, clientName: intelligence.clientName, companyName: company.name, companyLegalName: company.legalName, companyAddress: company.address, companyTIN: company.tin, companyVAT: company.vat, companyGM: company.gmName, companyGMLicense: company.gmLicense, primarySector: intelligence.primarySector, requirements: requirementLines, differentiators: intelligence.differentiators, submissionRules: intelligence.submissionRules, expertLines, projectLines, experts: experts as ExpertRecord[], projects: projects as ProjectRecord[], reviewedExpertCount: experts.length, companyEvidenceLines, projectEvidenceLines, complianceLines, expertRequired, projectRequired, themes: intelligence.themes, evaluationCriteria: intelligence.evaluationCriteria, appendixList: intelligence.appendixList, noFinancialProposal: intelligence.noFinancialProposal, exactEmails: intelligence.exactEmails, exactSubjectLine: intelligence.exactSubjectLine, gapsToAddressInNarrative: intelligence.gapsToAddressInNarrative, requiredSections: intelligence.requiredSections, tenderDeadline: tender.deadline, companyLicenseGrade: company.licenseGrade, companyHeadcount: company.headcount, companyServiceLines: safeParseArr(company.serviceLines), companySectors: safeParseArr(company.sectors), companyProfileSummary: company.profileSummary ?? company.description, companyLegalRecords: company.legalRecords ?? [], companyComplianceRecords: company.complianceRecords ?? [] });
+      sourceMarkdown = fallbackProposalMarkdown({ tenderTitle: cleanedTenderTitle, clientName: intelligence.clientName, clientContactName: tender.clientContactName, companyName: company.name, companyLegalName: company.legalName, companyAddress: company.address, companyTIN: company.tin, companyVAT: company.vat, companyGM: company.gmName, companyGMLicense: company.gmLicense, primarySector: intelligence.primarySector, requirements: requirementLines, differentiators: intelligence.differentiators, submissionRules: intelligence.submissionRules, expertLines, projectLines, experts: experts as ExpertRecord[], projects: projects as ProjectRecord[], reviewedExpertCount: experts.length, companyEvidenceLines, projectEvidenceLines, complianceLines, expertRequired, projectRequired, themes: intelligence.themes, evaluationCriteria: intelligence.evaluationCriteria, appendixList: intelligence.appendixList, noFinancialProposal: intelligence.noFinancialProposal, exactEmails: intelligence.exactEmails, exactSubjectLine: intelligence.exactSubjectLine, gapsToAddressInNarrative: intelligence.gapsToAddressInNarrative, requiredSections: intelligence.requiredSections, tenderDeadline: tender.deadline, companyLicenseGrade: company.licenseGrade, companyHeadcount: company.headcount, companyServiceLines: safeParseArr(company.serviceLines), companySectors: safeParseArr(company.sectors), companyProfileSummary: company.profileSummary ?? company.description, companyLegalRecords: company.legalRecords ?? [], companyComplianceRecords: company.complianceRecords ?? [] });
       mode = "deterministic benchmark fallback + evaluator response matrix + client-ready benchmark finalizer + professional DOCX polish";
     }
   } else {
-    sourceMarkdown = fallbackProposalMarkdown({ tenderTitle: cleanedTenderTitle, clientName: intelligence.clientName, companyName: company.name, companyLegalName: company.legalName, companyAddress: company.address, companyTIN: company.tin, companyVAT: company.vat, companyGM: company.gmName, companyGMLicense: company.gmLicense, primarySector: intelligence.primarySector, requirements: requirementLines, differentiators: intelligence.differentiators, submissionRules: intelligence.submissionRules, expertLines, projectLines, experts: experts as ExpertRecord[], projects: projects as ProjectRecord[], reviewedExpertCount: experts.length, companyEvidenceLines, projectEvidenceLines, complianceLines, expertRequired, projectRequired, themes: intelligence.themes, evaluationCriteria: intelligence.evaluationCriteria, appendixList: intelligence.appendixList, noFinancialProposal: intelligence.noFinancialProposal, exactEmails: intelligence.exactEmails, exactSubjectLine: intelligence.exactSubjectLine, gapsToAddressInNarrative: intelligence.gapsToAddressInNarrative, requiredSections: intelligence.requiredSections, tenderDeadline: tender.deadline, companyLicenseGrade: company.licenseGrade, companyHeadcount: company.headcount, companyServiceLines: safeParseArr(company.serviceLines), companySectors: safeParseArr(company.sectors), companyProfileSummary: company.profileSummary ?? company.description, companyLegalRecords: company.legalRecords ?? [], companyComplianceRecords: company.complianceRecords ?? [] });
+    sourceMarkdown = fallbackProposalMarkdown({ tenderTitle: cleanedTenderTitle, clientName: intelligence.clientName, clientContactName: tender.clientContactName, companyName: company.name, companyLegalName: company.legalName, companyAddress: company.address, companyTIN: company.tin, companyVAT: company.vat, companyGM: company.gmName, companyGMLicense: company.gmLicense, primarySector: intelligence.primarySector, requirements: requirementLines, differentiators: intelligence.differentiators, submissionRules: intelligence.submissionRules, expertLines, projectLines, experts: experts as ExpertRecord[], projects: projects as ProjectRecord[], reviewedExpertCount: experts.length, companyEvidenceLines, projectEvidenceLines, complianceLines, expertRequired, projectRequired, themes: intelligence.themes, evaluationCriteria: intelligence.evaluationCriteria, appendixList: intelligence.appendixList, noFinancialProposal: intelligence.noFinancialProposal, exactEmails: intelligence.exactEmails, exactSubjectLine: intelligence.exactSubjectLine, gapsToAddressInNarrative: intelligence.gapsToAddressInNarrative, requiredSections: intelligence.requiredSections, tenderDeadline: tender.deadline, companyLicenseGrade: company.licenseGrade, companyHeadcount: company.headcount, companyServiceLines: safeParseArr(company.serviceLines), companySectors: safeParseArr(company.sectors), companyProfileSummary: company.profileSummary ?? company.description, companyLegalRecords: company.legalRecords ?? [], companyComplianceRecords: company.complianceRecords ?? [] });
   }
 
   // PR NN: Strip any AI-produced Section H (Proposal Self-Score) from the raw AI
@@ -2872,9 +2881,28 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     workingMarkdown = reStripPlaceholders.markdown;
   }
 
+  // Apply deterministic quality repair addenda (compliance matrix, evaluator mirror,
+  // win themes, self-score) if any are missing from the final markdown.
+  const repairedMarkdown = applyProposalQualityRepairAddenda(workingMarkdown, evaluatorMatrixInput);
+  const repairAddendaApplied = repairedMarkdown !== workingMarkdown;
+  if (repairAddendaApplied) {
+    console.info("[generate-elite] Quality repair addenda applied — one or more critical sections were missing.");
+    workingMarkdown = repairedMarkdown;
+    // Re-score after repair so contentSummary reflects the improved proposal.
+    const repairedScore = scoreProposalQuality({
+      markdown: workingMarkdown,
+      primarySector: intelligence.primarySector,
+      topProjects: (projects as ProjectRecord[]).slice(0, 2),
+    });
+    if (repairedScore.total > qualityScore.total) {
+      console.info(`[generate-elite] Post-repair quality lift: ${qualityScore.total} → ${repairedScore.total} (+${repairedScore.total - qualityScore.total}).`);
+      qualityScore = repairedScore;
+    }
+  }
+
   // Re-render the DOCX from the (possibly refined) markdown.
-  const finalChildren = refinementApplied ? markdownToDocx(workingMarkdown) : children;
-  const finalDoc = refinementApplied
+  const finalChildren = (refinementApplied || repairAddendaApplied) ? markdownToDocx(workingMarkdown) : children;
+  const finalDoc = (refinementApplied || repairAddendaApplied)
     ? buildProfessionalDocument({
         tenderTitle: cleanedTenderTitle,
         clientName: intelligence.clientName,
@@ -2884,7 +2912,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
         children: finalChildren,
         suppressCoverBlock: tenderForbidsCoverPage,
         suppressBrandedHeader: tenderForbidsBranding,
-        coverVault, // PR #259 — same vault on the refined re-render
+        coverVault,
       })
     : doc;
   const fileContent = (await Packer.toBuffer(finalDoc)).toString("base64");
@@ -2920,7 +2948,20 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     return parts.length > 0 ? ` Deep-reasoning (TENDER_DEEP_REASONING): ${parts.join("; ")}.` : "";
   })();
 
-  const summary = `${mode}${refinementLabel} technical proposal generated. ${finalized.internalSummary}. ${auditSummary}. ${formatQualityScoreSummary(qualityScore)}. ${formatWinProbability(winProb)}. Inputs: ${intelligence.requiredSections.length} section group(s), ${intelligence.themes.length} tender theme(s), ${experts.length} reviewed expert(s), ${projects.length} reviewed project(s), ${companyEvidenceLines.length} company evidence item(s), ${projectEvidenceLines.length} project evidence attachment(s).${deepReasoningSummary}${aiError ? ` AI fallback reason: ${aiError}` : ""}`;
+  const axisScoresJson = JSON.stringify({
+    structure: qualityScore.axes.structureCompleteness,
+    evidence: qualityScore.axes.evidenceDensity,
+    tables: qualityScore.axes.tableCoverage,
+    vocabulary: qualityScore.axes.sectorVocabulary,
+    throughline: qualityScore.axes.throughlineConsistency,
+    "ai-free": qualityScore.axes.aiTraceFreedom,
+    compliance: qualityScore.axes.complianceMatrixCoverage,
+    mirror: qualityScore.axes.evaluatorMirrorCoverage,
+    "win-themes": qualityScore.axes.winThemesPresence,
+    "self-score": qualityScore.axes.selfScorePresence,
+  });
+  const repairLabel = repairAddendaApplied ? " Repair addenda applied (missing critical sections were auto-injected)." : "";
+  const summary = `${mode}${refinementLabel} technical proposal generated.${repairLabel} ${finalized.internalSummary}. ${auditSummary}. ${formatQualityScoreSummary(qualityScore)}. AXIS_SCORES: ${axisScoresJson}. ${formatWinProbability(winProb)}. Inputs: ${intelligence.requiredSections.length} section group(s), ${intelligence.themes.length} tender theme(s), ${experts.length} reviewed expert(s), ${projects.length} reviewed project(s), ${companyEvidenceLines.length} company evidence item(s), ${projectEvidenceLines.length} project evidence attachment(s).${deepReasoningSummary}${aiError ? ` AI fallback reason: ${aiError}` : ""}`;
 
   // Log the structured deep-reasoning telemetry summary — empty
   // string when nothing was tracked (flag off + no deep-reasoning

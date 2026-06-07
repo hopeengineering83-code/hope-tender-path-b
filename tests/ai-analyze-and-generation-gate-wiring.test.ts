@@ -213,3 +213,100 @@ describe("command center avoids stale workflow progress contradiction", () => {
     assert.doesNotMatch(source, /Workflow Progress:/);
   });
 });
+
+describe("SSE streaming wiring — AI Analyze endpoint and UI progress display", () => {
+  const routeSource = readFileSync("app/api/tenders/[id]/ai-analyze/route.ts", "utf8");
+  const uiSource = readFileSync("app/dashboard/tenders/[id]/tender-detail.tsx", "utf8");
+
+  it("route has handleStreamingAnalyze function", () => {
+    assert.match(routeSource, /handleStreamingAnalyze/);
+  });
+
+  it("route responds with text/event-stream content type and no-cache", () => {
+    assert.match(routeSource, /text\/event-stream/);
+    assert.match(routeSource, /Cache-Control.*no-cache/);
+  });
+
+  it("route branches on Accept: text/event-stream header", () => {
+    assert.match(routeSource, /wantsStream/);
+  });
+
+  it("route emits all required phase events", () => {
+    for (const phase of ["starting", "extracting", "analyzing", "saving", "complete", "error"]) {
+      assert.match(routeSource, new RegExp(`phase:\\s*"${phase}"`), `missing phase: ${phase}`);
+    }
+  });
+
+  it("UI sends Accept: text/event-stream and falls back to non-streaming", () => {
+    assert.match(uiSource, /handleAnalyzeStreaming/);
+    assert.match(uiSource, /"Accept":\s*"text\/event-stream"/);
+    assert.match(uiSource, /handleAIAnalyze\(\)/);
+  });
+
+  it("UI tracks analyzePhase and analyzeProgress", () => {
+    assert.match(uiSource, /analyzePhase/);
+    assert.match(uiSource, /analyzeProgress/);
+  });
+});
+
+describe("clientContactName validation in AI Analyze save path", () => {
+  const analyzeSource = readFileSync("app/api/tenders/[id]/ai-analyze/route.ts", "utf8");
+
+  it("imports isValidClientContact validator", () => {
+    assert.match(analyzeSource, /isValidClientContact/);
+  });
+
+  it("validates clientContactName before writing to DB (both streaming and non-streaming paths)", () => {
+    // The route must not write clientContactName unconditionally —
+    // it must call isValidClientContact() to reject fragments like "s Contact Person".
+    assert.match(analyzeSource, /isValidClientContact\(aiResult\.clientContactName\)/);
+  });
+});
+
+describe("clientContactName propagates into AI cover letter prompt", () => {
+  const aiSource = readFileSync("lib/ai.ts", "utf8");
+  const sectionsSource = readFileSync("lib/engine/proposal-sections.ts", "utf8");
+  const generateSource = readFileSync("lib/engine/generate-elite.ts", "utf8");
+
+  it("AIBidWriterInput type includes clientContactName", () => {
+    assert.match(aiSource, /clientContactName\?.*string.*null/);
+  });
+
+  it("buildCoverAndSummaryPrompt includes CLIENT CONTACT line in prompt when name provided", () => {
+    assert.match(sectionsSource, /CLIENT CONTACT/);
+    assert.match(sectionsSource, /clientContactName/);
+    assert.match(sectionsSource, /Dear.*clientContactName/);
+  });
+
+  it("generate-elite passes clientContactName from intelligence into aiInputBase", () => {
+    assert.match(generateSource, /clientContactName:\s*intelligence\.clientContactName/);
+  });
+});
+
+describe("regenerate-section route passes clientContactName to AIBidWriterInput", () => {
+  const source = readFileSync("app/api/tenders/[id]/regenerate-section/route.ts", "utf8");
+
+  it("includes clientContactName in the aiInput object", () => {
+    assert.match(source, /clientContactName:\s*tender\.clientContactName/);
+  });
+
+  it("covers the null fallback so the type contract is met", () => {
+    assert.match(source, /clientContactName:\s*tender\.clientContactName\s*\?\?\s*null/);
+  });
+});
+
+describe("proposal quality score improvement — Bid-Team stubs penalised on aiTraceFreedom", () => {
+  const scorerSource = readFileSync("lib/engine/proposal-quality-scorer.ts", "utf8");
+
+  it("FORBIDDEN_PHRASES includes Bid-Team to confirm pattern", () => {
+    assert.match(scorerSource, /Bid-Team to confirm/i);
+  });
+
+  it("FORBIDDEN_PHRASES includes MISSING_SOURCE pattern", () => {
+    assert.match(scorerSource, /MISSING_SOURCE/);
+  });
+
+  it("FORBIDDEN_PHRASES includes Bid-Team bracket variant", () => {
+    assert.match(scorerSource, /\[Bid-Team/);
+  });
+});

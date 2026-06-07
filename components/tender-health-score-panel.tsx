@@ -19,6 +19,8 @@ type Dimension = {
   max: number;
   detail: string;
   status: "PASS" | "WARN" | "FAIL";
+  actionLabel?: string;
+  actionHref?: string;
 };
 
 function scoreBar(score: number, max: number) {
@@ -111,7 +113,7 @@ export async function TenderHealthScorePanel({ tenderId }: { tenderId: string })
   // ── 1. Extraction quality (20 pts) ───────────────────────────────────────
   const hasFiles = tender.files.length > 0;
   if (!hasFiles) {
-    dimensions.push({ label: "Extraction", score: 0, max: 20, detail: "No tender files uploaded", status: "FAIL" });
+    dimensions.push({ label: "Extraction", score: 0, max: 20, detail: "No tender files uploaded", status: "FAIL", actionLabel: "Upload files", actionHref: `#tender-files` });
   } else {
     const fileScores = tender.files.map((f) => {
       const q = assessExtractionQuality(f.extractedText, f.originalFileName || f.fileName);
@@ -121,12 +123,14 @@ export async function TenderHealthScorePanel({ tenderId }: { tenderId: string })
     const avg = Math.round(fileScores.reduce((s, f) => s + f.score, 0) / fileScores.length);
     const anyCorrupted = fileScores.some((f) => f.corrupted);
     const dimScore = anyCorrupted ? 0 : Math.round((avg / 100) * 20);
+    const extStatus: Dimension["status"] = anyCorrupted ? "FAIL" : avg >= 70 ? "PASS" : avg >= 45 ? "WARN" : "FAIL";
     dimensions.push({
       label: "Extraction",
       score: dimScore,
       max: 20,
       detail: anyCorrupted ? "Extraction corrupted" : `Avg score ${avg}/100`,
-      status: anyCorrupted ? "FAIL" : avg >= 70 ? "PASS" : avg >= 45 ? "WARN" : "FAIL",
+      status: extStatus,
+      ...(extStatus !== "PASS" ? { actionLabel: "Re-extract / Upload clearer scan", actionHref: "#tender-files" } : {}),
     });
   }
 
@@ -138,12 +142,14 @@ export async function TenderHealthScorePanel({ tenderId }: { tenderId: string })
     : analysisStatus === "PARTIAL_EXTRACTION_AI_ANALYZED" ? 10
     : analysisStatus.includes("CORRUPTED") ? 0
     : 7;
+  const analysisStatusLabel: Dimension["status"] = analysisScore >= 12 ? "PASS" : analysisScore >= 7 ? "WARN" : "FAIL";
   dimensions.push({
     label: "AI Analysis",
     score: analysisScore,
     max: 15,
     detail: !hasAnalysis ? "Not run" : analysisStatus || "Analyzed",
-    status: analysisScore >= 12 ? "PASS" : analysisScore >= 7 ? "WARN" : "FAIL",
+    status: analysisStatusLabel,
+    ...(analysisStatusLabel !== "PASS" ? { actionLabel: "Run AI Analyze", actionHref: "#ai-analyze-section" } : {}),
   });
 
   // ── 3. Metadata completeness (15 pts) ────────────────────────────────────
@@ -162,15 +168,18 @@ export async function TenderHealthScorePanel({ tenderId }: { tenderId: string })
   });
   const metaScore = meta.blockingForGeneration || tender.metadataContaminated ? 0
     : Math.round(meta.overallRatio * 15);
+  const metaStatusLabel: Dimension["status"] = metaScore >= 12 ? "PASS" : metaScore >= 8 ? "WARN" : "FAIL";
+  const metaDetail = meta.missingCritical.length > 0
+    ? `Missing: ${meta.missingCritical.slice(0, 3).join(", ")}${meta.missingCritical.length > 3 ? " …" : ""}`
+    : tender.metadataContaminated ? "Contaminated client name"
+    : `${Math.round(meta.overallRatio * 100)}% filled`;
   dimensions.push({
     label: "Metadata",
     score: metaScore,
     max: 15,
-    detail: meta.missingCritical.length > 0
-      ? `${meta.missingCritical.length} critical fields missing`
-      : tender.metadataContaminated ? "Contaminated client name"
-      : `${Math.round(meta.overallRatio * 100)}% filled`,
-    status: metaScore >= 12 ? "PASS" : metaScore >= 8 ? "WARN" : "FAIL",
+    detail: metaDetail,
+    status: metaStatusLabel,
+    ...(metaStatusLabel !== "PASS" ? { actionLabel: "Edit metadata", actionHref: "#tender-edit-form" } : {}),
   });
 
   // ── 4. Requirements (15 pts) ─────────────────────────────────────────────
@@ -181,13 +190,15 @@ export async function TenderHealthScorePanel({ tenderId }: { tenderId: string })
   const reqScore = tender.requirements.length === 0 ? 0
     : mandatoryReqs.length === 0 ? 10
     : Math.round((tracedReqs.length / mandatoryReqs.length) * 15);
+  const reqStatusLabel: Dimension["status"] = reqScore >= 12 ? "PASS" : reqScore >= 7 ? "WARN" : "FAIL";
   dimensions.push({
     label: "Requirements",
     score: reqScore,
     max: 15,
     detail: tender.requirements.length === 0 ? "None extracted"
       : `${tracedReqs.length}/${mandatoryReqs.length} mandatory traced`,
-    status: reqScore >= 12 ? "PASS" : reqScore >= 7 ? "WARN" : "FAIL",
+    status: reqStatusLabel,
+    ...(reqStatusLabel !== "PASS" ? { actionLabel: "Run AI Analyze to extract", actionHref: "#ai-analyze-section" } : {}),
   });
 
   // ── 5. Submission plan (10 pts) ──────────────────────────────────────────
@@ -199,6 +210,7 @@ export async function TenderHealthScorePanel({ tenderId }: { tenderId: string })
     max: 10,
     detail: hasPlan ? `${planFiles.length} files planned` : "Not built",
     status: hasPlan ? "PASS" : "FAIL",
+    ...(!hasPlan ? { actionLabel: "Build submission plan", actionHref: "#ai-analyze-section" } : {}),
   });
 
   // ── 6. Document readiness (15 pts) ──────────────────────────────────────
@@ -210,13 +222,15 @@ export async function TenderHealthScorePanel({ tenderId }: { tenderId: string })
   const docScore = activeDocs.length === 0 ? 0
     : generatedDocs.length === 0 ? 2
     : Math.round((validatedDocs.length / Math.max(generatedDocs.length, 1)) * 15);
+  const docStatusLabel: Dimension["status"] = docScore >= 12 ? "PASS" : docScore >= 7 ? "WARN" : "FAIL";
   dimensions.push({
     label: "Documents",
     score: docScore,
     max: 15,
     detail: activeDocs.length === 0 ? "Not generated"
       : `${validatedDocs.length}/${generatedDocs.length} validated`,
-    status: docScore >= 12 ? "PASS" : docScore >= 7 ? "WARN" : "FAIL",
+    status: docStatusLabel,
+    ...(docStatusLabel !== "PASS" ? { actionLabel: activeDocs.length === 0 ? "Generate documents" : "View documents", actionHref: "#generated-documents" } : {}),
   });
 
   // ── 7. Compliance gaps (10 pts) ──────────────────────────────────────────
@@ -259,19 +273,24 @@ export async function TenderHealthScorePanel({ tenderId }: { tenderId: string })
 
       <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {dimensions.map((d) => (
-          <div key={d.label} className="rounded-xl border bg-white/80 p-3">
+          <div key={d.label} className={`rounded-xl border bg-white/80 p-3 ${d.status === "FAIL" ? "border-red-200" : d.status === "WARN" ? "border-amber-200" : "border-slate-200"}`}>
             <div className="flex items-center justify-between mb-1">
               <p className="text-xs font-semibold text-slate-700">{statusIcon(d.status)} {d.label}</p>
             </div>
             {scoreBar(d.score, d.max)}
-            <p className="mt-1 text-[10px] text-slate-500 truncate">{d.detail}</p>
+            <p className="mt-1 text-[10px] text-slate-500 truncate" title={d.detail}>{d.detail}</p>
+            {d.actionLabel && d.actionHref && (
+              <a href={d.actionHref} className={`mt-1.5 inline-block text-[10px] font-medium underline ${d.status === "FAIL" ? "text-red-600 hover:text-red-800" : "text-amber-600 hover:text-amber-800"}`}>
+                {d.actionLabel} →
+              </a>
+            )}
           </div>
         ))}
       </div>
 
       {dimensions.some((d) => d.status === "FAIL") && (
         <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-xs text-red-800">
-          <strong>Failing dimensions block export.</strong> Address each FAIL item above before attempting final export.
+          <strong>Failing dimensions block export.</strong> Use the links above to address each FAIL item before attempting final export.
         </div>
       )}
     </section>

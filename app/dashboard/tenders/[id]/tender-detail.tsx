@@ -26,7 +26,7 @@ function renderInline(text: string): React.ReactNode[] {
   });
 }
 
-function parseDocumentQuality(contentSummary: string | null | undefined): { qualityScore: number; benchmarkScore: number; verdict: string } | null {
+function parseDocumentQuality(contentSummary: string | null | undefined): { qualityScore: number; benchmarkScore: number; verdict: string; repairAddendaApplied: boolean } | null {
   if (!contentSummary) return null;
   const qMatch = contentSummary.match(/Quality score: (\d+)\/100/);
   const bMatch = contentSummary.match(/Benchmark audit (\d+)\/100 \(([A-Z_]+)\)/);
@@ -35,6 +35,7 @@ function parseDocumentQuality(contentSummary: string | null | undefined): { qual
     qualityScore: qMatch ? parseInt(qMatch[1], 10) : 0,
     benchmarkScore: bMatch ? parseInt(bMatch[1], 10) : 0,
     verdict: bMatch?.[2] ?? "PENDING",
+    repairAddendaApplied: /Repair addenda applied/i.test(contentSummary),
   };
 }
 
@@ -143,6 +144,11 @@ type TenderFile = {
   extractedTextLength?: number | null;
   isScannedPlaceholder?: boolean | null;
   classification?: string | null;
+  extractionScore?: number | null;
+  totalPages?: number | null;
+  extractedPages?: number | null;
+  ocrPages?: number | null;
+  failedPages?: number | null;
 };
 
 type UploadItem = {
@@ -527,6 +533,8 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
   const [deepReasoningReport, setDeepReasoningReport] = useState<{ markdown: string; createdAt: string } | null>(null);
   const [loadingDeepReasoning, setLoadingDeepReasoning] = useState(false);
   const [deepReasoningOpen, setDeepReasoningOpen] = useState(false);
+  const [evalCriteriaOpen, setEvalCriteriaOpen] = useState(false);
+  const [lowQualityBanner, setLowQualityBanner] = useState<{ score: number } | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [fileQueue, setFileQueue] = useState<UploadItem[]>([]);
@@ -759,6 +767,87 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
     finally { setAnalyzing(false); stopAnalyzeProgress(); }
   }
 
+  async function handleAnalyzeStreaming() {
+    setAnalyzing(true);
+    setError("");
+    setAnalyzePhase("Connecting…");
+    setAnalyzeProgress(5);
+    try {
+      const res = await fetch(`/api/tenders/${tender.id}/ai-analyze`, {
+        method: "POST",
+        headers: { "Accept": "text/event-stream" },
+      });
+      if (!res.ok || !res.body) {
+        // Fall back to non-streaming path
+        setAnalyzePhase("");
+        setAnalyzeProgress(0);
+        setAnalyzing(false);
+        return handleAIAnalyze();
+      }
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let done = false;
+      while (!done) {
+        const { done: streamDone, value } = await reader.read();
+        if (streamDone) break;
+        buffer += decoder.decode(value, { stream: true });
+        const parts = buffer.split("\n\n");
+        buffer = parts.pop() ?? "";
+        for (const part of parts) {
+          if (!part.startsWith("data: ")) continue;
+          try {
+            const event = JSON.parse(part.slice(6)) as {
+              phase: string;
+              message?: string;
+              chunk?: number;
+              totalChunks?: number;
+              requirementCount?: number;
+              status?: string;
+              jobId?: string;
+            };
+            if (event.phase === "analyzing" && event.chunk !== undefined) {
+              const total = event.totalChunks ?? "?";
+              setAnalyzePhase(`Analyzing chunk ${event.chunk}/${total}`);
+              const pct = event.totalChunks ? Math.round(20 + (event.chunk / event.totalChunks) * 55) : 50;
+              setAnalyzeProgress(pct);
+            } else if (event.phase === "extracting") {
+              setAnalyzePhase(event.message?.slice(0, 50) ?? "Extracting…");
+              setAnalyzeProgress(15);
+            } else if (event.phase === "saving") {
+              setAnalyzePhase("Saving analysis results…");
+              setAnalyzeProgress(90);
+            } else if (event.phase === "starting") {
+              setAnalyzePhase("Preparing tender content…");
+              setAnalyzeProgress(8);
+            } else if (event.phase === "complete") {
+              setAnalyzePhase(`Analysis complete — ${event.requirementCount ?? 0} requirements extracted`);
+              setAnalyzeProgress(100);
+              if (event.jobId) setContinueJobId(event.jobId);
+              done = true;
+            } else if (event.phase === "error") {
+              setError(event.message ?? "Analysis failed");
+              done = true;
+            }
+          } catch { /* ignore SSE parse errors */ }
+        }
+      }
+      // Reload page data after successful streaming completion
+      if (!done || !error) {
+        router.refresh();
+        window.location.reload();
+      }
+    } catch {
+      setAnalyzePhase("");
+      setAnalyzeProgress(0);
+      setError("Analysis failed");
+    } finally {
+      setAnalyzing(false);
+      setAnalyzePhase("");
+      setAnalyzeProgress(0);
+    }
+  }
+
   async function handleContinueAnalysis() {
     if (!continueJobId) return;
     setAnalyzing(true);
@@ -928,7 +1017,7 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
     startGenerationProgress();
     try {
       const res = await fetch(`/api/tenders/${tender.id}/generate`, { method: "POST" });
-      const data = await res.json() as { error?: string; code?: string; nextAction?: string; totalExpertMatches?: number; totalProjectMatches?: number; tender?: Tender };
+      const data = await res.json() as { error?: string; code?: string; nextAction?: string; totalExpertMatches?: number; totalProjectMatches?: number; tender?: Tender; qualityScore?: number; axisScores?: Record<string, number> };
       if (!res.ok) {
         if (data.code === "NO_EXPERT_MATCHES_SELECTED" || data.code === "NO_EXPERT_MATCHES_FOUND") {
           setError(`${data.error || "Generation failed"} ${typeof data.totalExpertMatches === "number" ? `(${data.totalExpertMatches} expert match(es) found in total.)` : ""}`.trim());
@@ -948,8 +1037,15 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
       }
       if (data.tender) setTender((cur) => ({ ...cur, ...data.tender }));
       router.refresh();
-      const q = data.tender?.generatedDocuments?.[0]?.contentSummary?.match(/Quality score: (\d+)\/100/);
-      showToast(`Documents generated${q ? ` — Quality ${q[1]}/100` : ""}`, "success");
+      // Prefer structured qualityScore from API; fall back to parsing contentSummary.
+      const score: number | null = typeof data.qualityScore === "number"
+        ? data.qualityScore
+        : (() => {
+            const q = data.tender?.generatedDocuments?.[0]?.contentSummary?.match(/Quality score: (\d+)\/100/);
+            return q ? parseInt(q[1], 10) : null;
+          })();
+      showToast(`Documents generated${score !== null ? ` — Quality ${score}/100` : ""}`, "success");
+      if (score !== null && score < 70) setLowQualityBanner({ score });
     } catch { setError("Document generation failed"); }
     finally { setGeneratingDocs(false); stopGenerationProgress(); }
   }
@@ -1334,15 +1430,26 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
                             : "Generate proposal documents";
 
   // ZIP is only safe when there are generated documents. The canonical
-  // export-readiness gate (Export Readiness panel) blocks the final ZIP
-  // link — this simpler guard prevents the raw ZIP endpoint from being
-  // called when no documents exist at all.
+  // export-readiness gate (Export Readiness panel) is the canonical final gate,
+  // but these pre-flight checks surface the most common blockers before the API
+  // call, avoiding a round-trip to discover obvious issues.
   const hasAnyGeneratedDoc = (tender.generatedDocuments?.length ?? 0) > 0;
+  const hasCriticalGapBlock = (tender.complianceGaps ?? []).some((g) => g.severity === "CRITICAL");
+  const clientNameMissing = !tender.clientName && !tender.procuringEntityName;
+  const submissionEndpointMissing = !tender.submissionMethod && !tender.submissionEmails && !tender.submissionAddress;
   const zipDisabledReason = analysisIsFallbackUnapproved
     ? "Analysis source is unapproved regex fallback — approve or retry AI Analyze first"
     : !hasAnyGeneratedDoc
       ? "No generated documents yet — generate documents before downloading"
-      : null;
+      : (tender.metadataContaminated ?? false)
+        ? "Client name is contaminated — review and correct the client name before exporting"
+        : clientNameMissing
+          ? "Client/procuring entity name is missing — run AI Analyze or enter it manually"
+          : submissionEndpointMissing
+            ? "Submission method/endpoint is missing — extract or enter submission details"
+            : hasCriticalGapBlock
+              ? "Critical compliance gaps must be resolved before export"
+              : null;
   const readinessScore = tender.readinessScore ??
     (tender.requirements.length === 0 ? 0
       : Math.max(0, Math.round(((tender.requirements.length - criticalGaps) / tender.requirements.length) * 100)));
@@ -1350,6 +1457,18 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
   const proposalQuality = (() => {
     const proposal = tender.generatedDocuments.find((d) => d.documentType === "TECHNICAL_PROPOSAL" && d.contentSummary);
     return parseDocumentQuality(proposal?.contentSummary);
+  })();
+
+  const axisScores = (() => {
+    const proposal = tender.generatedDocuments.find((d) => d.documentType === "TECHNICAL_PROPOSAL" && d.contentSummary);
+    const axisMatch = proposal?.contentSummary?.match(/AXIS_SCORES:\s*(\{[^}]+\})/);
+    if (!axisMatch) return null;
+    try { return JSON.parse(axisMatch[1]) as Record<string, number>; } catch { return null; }
+  })();
+
+  const evalCriteria = (() => {
+    if (!tender.evaluationCriteriaSourceJson) return [];
+    try { return JSON.parse(tender.evaluationCriteriaSourceJson) as Array<{criterion: string; weight: string | null; sourcePage: number | null; sourceQuote: string | null}>; } catch { return []; }
   })();
 
   // Apply the same label-sanitization helpers that proposal generation uses,
@@ -1417,7 +1536,7 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
 
         <div id="ai-analyze-section" className="flex flex-wrap gap-2">
           {aiEnabled && (
-            <button onClick={handleAIAnalyze} disabled={analyzing}
+            <button onClick={handleAnalyzeStreaming} disabled={analyzing}
               title={analyzing && analyzePhase ? analyzePhase : undefined}
               className="rounded-lg bg-purple-600 px-3 py-2 text-sm text-white hover:bg-purple-700 disabled:opacity-50">
               {analyzing ? (analyzePhase ? `${analyzePhase.slice(0, 28)}…` : "Analyzing…") : "✦ AI Analyze"}
@@ -1506,18 +1625,25 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
       )}
 
       {/* AI Analyze progress bar */}
-      {analyzing && analyzePhase && (
+      {analyzing && (
         <div className="rounded-xl border border-purple-200 bg-purple-50 px-4 py-3">
           <div className="flex items-center justify-between mb-1.5">
-            <p className="text-sm font-medium text-purple-800">{analyzePhase}</p>
-            <p className="text-xs text-purple-600">{Math.round(analyzeProgress)}%</p>
+            <p className="text-sm font-medium text-purple-800">
+              {analyzePhase || "Analyzing…"}
+            </p>
+            {analyzeProgress > 0 && (
+              <p className="text-xs text-purple-600">{Math.round(analyzeProgress)}%</p>
+            )}
           </div>
           <div className="h-1.5 w-full overflow-hidden rounded-full bg-purple-100">
             <div
-              className="h-full rounded-full bg-purple-500 transition-all duration-1000 ease-in-out"
-              style={{ width: `${analyzeProgress}%` }}
+              className={`h-full rounded-full bg-purple-500 transition-all duration-700 ease-in-out ${analyzeProgress === 0 ? "animate-pulse" : ""}`}
+              style={{ width: analyzeProgress > 0 ? `${analyzeProgress}%` : "15%" }}
             />
           </div>
+          {analyzePhase?.includes("chunk") || analyzePhase?.includes("Chunk") ? (
+            <p className="mt-1 text-xs text-purple-500">AI is processing the tender in sections — this may take up to a minute.</p>
+          ) : null}
         </div>
       )}
 
@@ -1834,9 +1960,71 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
             <p className={`mt-1 text-xs font-medium ${proposalQuality.verdict === "BENCHMARK_READY" ? "text-green-600" : "text-amber-600"}`}>
               {proposalQuality.verdict === "BENCHMARK_READY" ? "Benchmark ready ✓" : proposalQuality.benchmarkScore > 0 ? `Benchmark ${proposalQuality.benchmarkScore}/100` : "Generate docs to score"}
             </p>
+            {proposalQuality.repairAddendaApplied && (
+              <span className="mt-1.5 inline-block rounded bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-700" title="One or more critical sections (Compliance Matrix, Evaluator Mirror, Win Themes, Self-Score) were auto-injected by the quality repair engine because they were missing from the generated draft.">
+                Auto-repaired ↑
+              </span>
+            )}
+            {axisScores && (() => {
+              const AXIS_LABELS: Record<string, string> = {
+                structure: "Structure", evidence: "Evidence", tables: "Tables",
+                vocabulary: "Vocabulary", throughline: "Throughline", "ai-free": "AI-Free",
+                compliance: "Compliance", mirror: "Eval Mirror", "win-themes": "Win Themes", "self-score": "Self-Score",
+              };
+              const AXIS_HINTS: Record<string, string> = {
+                structure: "Add missing sections (Cover Letter, Company Profile, Team, Methodology, Compliance, Self-Score)",
+                evidence: "Add specific project names, ETB values, dates, and measurable outcomes",
+                tables: "Add phase/activity/deliverable tables and team qualification tables",
+                vocabulary: "Use sector-specific terminology matching the tender domain",
+                throughline: "Repeat win themes across Cover Letter, Methodology, and Compliance sections",
+                "ai-free": "Remove AI phrases, boilerplate, and 'Bid-Team to confirm' stubs",
+                compliance: "Add a compliance matrix table (Requirement | Status | Evidence)",
+                mirror: "Add an evaluator response mirror table (Criterion | Weight | Response)",
+                "win-themes": "Add a dedicated win themes section stating 3+ discriminators",
+                "self-score": "Add a proposal self-score section with per-criterion estimates",
+              };
+              const weak = Object.entries(axisScores).filter(([, s]) => (s as number) < 7);
+              return (
+                <div className="mt-3 space-y-2">
+                  <div className="flex flex-wrap gap-1">
+                    {Object.entries(axisScores).map(([axis, score]) => (
+                      <span key={axis} title={AXIS_HINTS[axis]} className={`inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] font-medium cursor-help ${(score as number) >= 8 ? "bg-green-50 text-green-700" : (score as number) >= 6 ? "bg-amber-50 text-amber-700" : "bg-red-50 text-red-600"}`}>
+                        {AXIS_LABELS[axis] ?? axis}: {score as number}/10
+                      </span>
+                    ))}
+                  </div>
+                  {weak.length > 0 && (
+                    <div className="rounded border border-amber-100 bg-amber-50/60 px-2 py-1.5 text-[10px] text-amber-800 space-y-0.5">
+                      <p className="font-semibold">Weak axes — regenerate to improve:</p>
+                      {weak.map(([axis]) => (
+                        <p key={axis}>• <span className="font-medium">{AXIS_LABELS[axis] ?? axis}:</span> {AXIS_HINTS[axis]}</p>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
           </div>
         )}
       </div>
+
+      {lowQualityBanner && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 flex items-start gap-3">
+          <span className="mt-0.5 text-amber-500 text-lg">⚠</span>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold text-amber-800">Proposal quality is low ({lowQualityBanner.score}/100)</p>
+            <p className="mt-1 text-xs text-amber-700">Add more expert CVs or project references, ensure all requirements are extracted, then regenerate to improve the score.</p>
+            <button
+              onClick={() => { setLowQualityBanner(null); handleGenerateDocs(); }}
+              disabled={generatingDocs}
+              className="mt-2 rounded-lg bg-amber-600 px-3 py-1 text-xs font-medium text-white hover:bg-amber-700 disabled:opacity-50"
+            >
+              {generatingDocs ? "Regenerating…" : "Regenerate now"}
+            </button>
+          </div>
+          <button onClick={() => setLowQualityBanner(null)} className="shrink-0 text-amber-400 hover:text-amber-600 text-lg leading-none">&times;</button>
+        </div>
+      )}
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,2fr),minmax(360px,1fr)]">
         <div className="space-y-6">
@@ -1994,6 +2182,60 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
                 <div className="md:col-span-2"><dt className="text-sm text-slate-500">Intake Summary</dt><dd className="mt-1 text-slate-900">{tender.intakeSummary ? <ProposalMarkdown markdown={tender.intakeSummary} /> : "—"}</dd></div>
                 <div className="md:col-span-2"><dt className="text-sm text-slate-500">Analysis Summary</dt><dd className="mt-1 whitespace-pre-wrap text-slate-900">{tender.analysisSummary || "—"}</dd></div>
                 <div className="md:col-span-2"><dt className="text-sm text-slate-500">Evaluation Methodology</dt><dd className="mt-1 whitespace-pre-wrap text-slate-900">{tender.evaluationMethodology || "—"}</dd></div>
+                {evalCriteria.length > 0 && (
+                  <div className="md:col-span-2">
+                    <dt className="text-sm text-slate-500">
+                      <button
+                        type="button"
+                        onClick={() => setEvalCriteriaOpen((v) => !v)}
+                        className="inline-flex items-center gap-1.5 text-sm text-slate-600 hover:text-slate-900 font-medium"
+                      >
+                        <span>{evalCriteriaOpen ? "▾" : "▸"}</span>
+                        Evaluation Criteria Confidence
+                        <span className="ml-1 rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-semibold text-blue-700">
+                          {evalCriteria.length} criteria · {evalCriteria.filter((c) => c.weight).length}/{evalCriteria.length} have weights
+                        </span>
+                      </button>
+                    </dt>
+                    {evalCriteriaOpen && (
+                      <dd className="mt-2">
+                        <div className="overflow-x-auto rounded-lg border border-slate-200">
+                          <table className="w-full text-xs">
+                            <thead>
+                              <tr className="bg-slate-50 text-left text-slate-500">
+                                <th className="px-3 py-2 font-medium">Criterion</th>
+                                <th className="px-3 py-2 font-medium">Weight</th>
+                                <th className="px-3 py-2 font-medium">Source page</th>
+                                <th className="px-3 py-2 font-medium">Source quote</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {evalCriteria.map((c, idx) => (
+                                <tr key={idx} className={idx % 2 === 0 ? "bg-white" : "bg-slate-50"}>
+                                  <td className="px-3 py-2 text-slate-900 font-medium max-w-xs">{c.criterion}</td>
+                                  <td className="px-3 py-2">
+                                    {c.weight
+                                      ? <span className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold bg-green-50 text-green-700">{c.weight}</span>
+                                      : <span className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold bg-amber-50 text-amber-600">—</span>
+                                    }
+                                  </td>
+                                  <td className="px-3 py-2 text-slate-500">{c.sourcePage != null ? `p.${c.sourcePage}` : "—"}</td>
+                                  <td className="px-3 py-2 text-slate-500 max-w-[220px] truncate" title={c.sourceQuote ?? undefined}>
+                                    {c.sourceQuote ? `"${c.sourceQuote.slice(0, 80)}${c.sourceQuote.length > 80 ? "…" : ""}"` : "—"}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                        <p className="mt-1 text-[10px] text-slate-400">
+                          {evalCriteria.filter((c) => c.weight).length} of {evalCriteria.length} criteria have weights extracted.
+                          {evalCriteria.some((c) => !c.weight) && " Amber rows indicate missing weight — verify against source document."}
+                        </p>
+                      </dd>
+                    )}
+                  </div>
+                )}
                 <div className="md:col-span-2"><dt className="text-sm text-slate-500">Notes</dt><dd className="mt-1 whitespace-pre-wrap text-slate-900">{tender.notes || "—"}</dd></div>
                 <div className="md:col-span-2 pt-2 border-t">
                   <dt className="text-sm font-medium text-slate-700 mb-2">Bid Outcome</dt>
@@ -2105,16 +2347,39 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
                             </span>
                           )}
                         </div>
-                        <div className="mt-1 flex items-center gap-2 text-xs text-slate-500">
+                        <div className="mt-1 flex items-center gap-2 text-xs text-slate-500 flex-wrap">
                           <span>{formatBytes(file.size)}</span>
                           <span>·</span>
                           <span>{formatDate(file.createdAt)}</span>
                           <span>·</span>
                           <ExtractionBadge extractedTextLength={file.extractedTextLength} isScannedPlaceholder={file.isScannedPlaceholder} />
+                          {file.extractionScore != null && (
+                            <>
+                              <span>·</span>
+                              <span className={`font-medium ${file.extractionScore >= 70 ? "text-green-600" : file.extractionScore >= 45 ? "text-amber-600" : "text-red-600"}`}>
+                                Extraction {Math.round(file.extractionScore)}/100
+                              </span>
+                            </>
+                          )}
+                          {file.totalPages != null && file.totalPages > 0 && (
+                            <>
+                              <span>·</span>
+                              <span title={`Total: ${file.totalPages} pages, Extracted: ${file.extractedPages ?? "?"}, OCR: ${file.ocrPages ?? 0}, Failed: ${file.failedPages ?? 0}`}>
+                                {file.extractedPages ?? "?"}/{file.totalPages} pages
+                                {(file.ocrPages ?? 0) > 0 && <span className="ml-1 text-blue-500">(+{file.ocrPages} OCR)</span>}
+                                {(file.failedPages ?? 0) > 0 && <span className="ml-1 text-red-500">({file.failedPages} failed)</span>}
+                              </span>
+                            </>
+                          )}
                         </div>
                         {file.isScannedPlaceholder && (
                           <p className="mt-1 text-xs text-amber-700 bg-amber-50 rounded px-2 py-1">
                             ⚠ Scanned PDF — no text layer found. Run OCR or upload a text-based version for AI analysis.
+                          </p>
+                        )}
+                        {!file.isScannedPlaceholder && file.extractionScore != null && file.extractionScore < 45 && (
+                          <p className="mt-1 text-xs text-red-700 bg-red-50 rounded px-2 py-1">
+                            ✗ Low extraction quality ({Math.round(file.extractionScore)}/100) — re-upload or run OCR before AI Analysis.
                           </p>
                         )}
                       </div>

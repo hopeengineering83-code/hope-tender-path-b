@@ -412,6 +412,7 @@ export async function getFinalSubmissionReadiness(
       submissionEmailSubject: true,
       preBidChannel: true,
       clientRepresentative: true,
+      evaluationCriteriaSourceJson: true,
       requirements: {
         select: {
           id: true,
@@ -699,6 +700,24 @@ export async function getFinalSubmissionReadiness(
       severity: "HIGH",
       title: `${openHighObjections} unresolved HIGH evaluator objection(s) must be addressed before final export.`,
       recommendedAction: "Open the Evaluator Objections panel, resolve each HIGH objection with evidence, then re-run the export gate.",
+    });
+  }
+
+  // ── Evaluation criteria extraction check (advisory) ─────────────────────
+  // When evaluationMethodology is empty/null and no evaluation criteria source
+  // JSON is stored, the generated proposal cannot mirror the evaluation
+  // criteria — a significant proposal-quality risk. Push as MEDIUM advisory
+  // rather than a hard blocker because some tenders genuinely have no criteria.
+  const hasEvalCriteria = Boolean(
+    (tender.evaluationMethodology ?? "").trim().length > 20 ||
+    tender.evaluationCriteriaSourceJson,
+  );
+  if (!hasEvalCriteria) {
+    tenderLevelBlockers.push({
+      category: "EVALUATION_CRITERIA_NOT_EXTRACTED",
+      severity: "MEDIUM",
+      title: "Evaluation criteria were not extracted from the tender — the generated proposal cannot mirror the scoring rubric.",
+      recommendedAction: "Re-run AI Analyze or manually enter evaluation criteria weights so the proposal targets the scoring rubric directly.",
     });
   }
 

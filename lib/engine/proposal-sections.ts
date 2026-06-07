@@ -257,12 +257,16 @@ function buildCoverAndSummaryPrompt(input: AIBidWriterInput): string {
     ? `\n## CLIENT NAMES TO NEVER USE AS THE CLIENT OF THIS TENDER\n\nThe following names appear in the FIRM's project history (Section B project cards reference them, which is correct). They are the firm's PREVIOUS clients — they are NOT the client of THIS tender. NEVER use any of these as the client name in the cover letter "To:" line, the subject line, or the executive summary's first paragraph. Use ONLY the CLIENT field above.\n\n${avoidClients.slice(0, 12).map((c) => `- ${c}`).join("\n")}\n`
     : `\n## IMPORTANT: USE ONLY THE CLIENT FIELD ABOVE\nThe ONLY correct client name for this tender's cover letter "To:" line, subject line, and executive summary opening is the CLIENT shown above ("${input.clientName}"). Do NOT substitute any prior-project client name from Section B in its place. The firm history project cards reference PREVIOUS clients — they are NOT the client of this tender.\n`;
 
+  const contactLine = input.clientContactName
+    ? `CLIENT CONTACT: ${input.clientContactName} (address the cover letter "Dear ${input.clientContactName}," — NOT "Dear Evaluation Committee,")`
+    : "";
+
   return `Write the Cover Letter and Executive Summary for this technical proposal.
 
 ## TENDER
 TITLE: ${input.tenderTitle}
 CLIENT: ${input.clientName}
-${vaultContactBlock}${avoidBlock}
+${contactLine ? `${contactLine}\n` : ""}${vaultContactBlock}${avoidBlock}
 ## SUBMISSION RULES
 ${input.submissionNotes.slice(0, 2_500)}
 

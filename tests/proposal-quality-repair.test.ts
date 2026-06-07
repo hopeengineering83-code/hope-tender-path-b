@@ -31,6 +31,19 @@ describe("applyProposalQualityRepairAddenda", () => {
     assert.match(repaired, /\d+\/10/i);
   });
 
+  it("returns markdown unchanged when all required sections are already present", () => {
+    const complete = [
+      "# Cover Letter\n\nDear Evaluation Committee,\n\nWe submit this proposal.\n\n# Executive Summary\n\nHospital project response.",
+      "## Section E: Compliance Matrix\n\n| Requirement | Status |\n| --- | --- |\n| Design | FULLY MET |",
+      "## Section F: Evaluation Criteria Response Mirror\n\n| Criterion | Score |\n| --- | --- |\n| Technical | 8/10 |",
+      "## Section G: Win Themes & Discriminators\n\nKey win themes...",
+      "## Section H: Proposal Self-Score\n\nOverall: 85/100",
+    ].join("\n\n");
+
+    const repaired = applyProposalQualityRepairAddenda(complete, input);
+    assert.equal(repaired, complete);
+  });
+
   it("improves deterministic quality scoring axes for sparse drafts", () => {
     const sparse = "# Cover Letter\n\nWe submit this proposal.\n\n# Executive Summary\n\nHospital project response.";
     const before = scoreProposalQuality({ markdown: sparse, primarySector: "Healthcare / Medical Facility Design", topProjects: [] });

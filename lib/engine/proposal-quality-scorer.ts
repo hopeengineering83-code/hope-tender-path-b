@@ -177,6 +177,12 @@ const FORBIDDEN_PHRASES = [
   /__(?:INSERT|NAME|DATE|COMPANY|PLACEHOLDER|YOUR)[A-Z_]{0,40}__/,
   /\bI cannot\b/i,
   /\bI'm unable\b/i,
+  // Bid-team stubs and metadata placeholders left unresolved in final output
+  /\bBid-Team to confirm\b/i,
+  /\bBid-team confirmation\b/i,
+  /\bMISSING_SOURCE\b/,
+  /\bSource-evidence action\b/i,
+  /\[Bid-Team[^\]]*\]/i,
 ];
 
 function detectSector(primarySector: string): string {
