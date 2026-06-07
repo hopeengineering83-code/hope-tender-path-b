@@ -428,7 +428,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       const missingCritical: string[] = [];
       if (!tender.deadline) missingCritical.push("Submission deadline is not set.");
       if (!tender.submissionMethod) missingCritical.push("Submission method is not set.");
-      if (tender.submissionMethod && /email/i.test(tender.submissionMethod) && !tender.submissionEmails) {
+      // Only require submissionEmails when the method clearly indicates email
+      // delivery — not when "email" appears in a prohibition phrase like
+      // "no email submissions" or "hard copy only; email not accepted".
+      if (
+        tender.submissionMethod &&
+        /email/i.test(tender.submissionMethod) &&
+        !/no.{0,30}email|email.{0,30}not.{0,10}(accepted|allowed)|hard.{0,10}copy.{0,30}only/i.test(tender.submissionMethod) &&
+        !tender.submissionEmails
+      ) {
         missingCritical.push("Submission email address is missing for email-based submission.");
       }
       if (missingCritical.length > 0) {

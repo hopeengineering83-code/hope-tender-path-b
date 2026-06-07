@@ -339,7 +339,14 @@ export function assessTenderAnalysisQuality(params: {
     warnings.unshift("Analysis used regex/deterministic fallback — score capped at 45. Re-run AI Analyze or approve the fallback to unblock generation.");
     recommendations.unshift("Re-run AI Analyze when AI providers are healthy, or approve this fallback analysis with a written note via the Controls panel.");
   }
-  const severity: AnalysisQualitySeverity = isUnsafe ? "UNSAFE" : score < 50 ? "POOR" : score < 75 ? "WARNING" : "GOOD";
+  // Zero source grounding cannot score GOOD regardless of other signals —
+  // a proposal built on untraced requirements can silently miss evaluator
+  // criteria. Cap at WARNING (max 74) when no requirement has source
+  // traceability so this case cannot slip through export/generation gates.
+  const zeroGrounding = sourceReferencedCount === 0 && requirementCount > 0;
+  const rawSeverity: AnalysisQualitySeverity = isUnsafe ? "UNSAFE" : score < 50 ? "POOR" : score < 75 ? "WARNING" : "GOOD";
+  const severity: AnalysisQualitySeverity = zeroGrounding && rawSeverity === "GOOD" ? "WARNING" : rawSeverity;
+  if (zeroGrounding && severity === "WARNING") score = Math.min(score, 74);
   if (severity === "GOOD" && warnings.length === 0) recommendations.push("Tender analysis appears usable for matching, scoring, and generation.");
 
   return {

@@ -418,4 +418,31 @@ describe("analysis-quality — zero source grounding penalty (increased to -25/-
       `Grounded (${grounded.score}) must score higher than ungrounded (${ungrounded.score}) even without mandatory requirements`,
     );
   });
+
+  it("zero grounding can never produce GOOD severity — even with otherwise complete analysis", () => {
+    // This is the regression case from the Codex P2 review: with full
+    // metadata + eval criteria + submission rules but 0 source references,
+    // the -25 penalty was leaving the score at exactly 75 (GOOD threshold).
+    // The severity cap now forces it to WARNING and clamps score to ≤74.
+    const ungoundedMandatory: AnalysisRequirementLike[] = Array.from({ length: 6 }, (_, i) => ({
+      title: `Req ${i + 1}`, description: "text.", priority: "MANDATORY",
+    }));
+    const report = assessTenderAnalysisQuality({
+      requirements: ungoundedMandatory,
+      analysisSummary: "Detailed AI analysis with evaluation criteria and submission rules.",
+      evaluationMethodology: "Technical 70%, Financial 30% — full criteria matrix.",
+      submissionNotes: "Email submission; exact file naming required.",
+      clientName: "Addis Ababa Water and Sewerage Authority",
+      referenceNumber: "AAWSA/2026/001",
+      country: "Ethiopia",
+      clientContactName: "Procurement Officer",
+      deadline: new Date("2026-08-01"),
+      submissionMethod: "email",
+      submissionEmails: "tenders@aawsa.gov.et",
+      extractedTextLength: 12000,
+      totalPageCount: 40,
+    });
+    assert.notEqual(report.severity, "GOOD", `Zero-grounded mandatory requirements must not score GOOD (got ${report.severity} at ${report.score}/100)`);
+    assert.ok(report.score <= 74, `Score must be ≤74 when zero grounding is forced to WARNING; got ${report.score}`);
+  });
 });
