@@ -527,6 +527,7 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
   const [deepReasoningReport, setDeepReasoningReport] = useState<{ markdown: string; createdAt: string } | null>(null);
   const [loadingDeepReasoning, setLoadingDeepReasoning] = useState(false);
   const [deepReasoningOpen, setDeepReasoningOpen] = useState(false);
+  const [evalCriteriaOpen, setEvalCriteriaOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [fileQueue, setFileQueue] = useState<UploadItem[]>([]);
@@ -1352,6 +1353,18 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
     return parseDocumentQuality(proposal?.contentSummary);
   })();
 
+  const axisScores = (() => {
+    const proposal = tender.generatedDocuments.find((d) => d.documentType === "TECHNICAL_PROPOSAL" && d.contentSummary);
+    const axisMatch = proposal?.contentSummary?.match(/AXIS_SCORES:\s*(\{[^}]+\})/);
+    if (!axisMatch) return null;
+    try { return JSON.parse(axisMatch[1]) as Record<string, number>; } catch { return null; }
+  })();
+
+  const evalCriteria = (() => {
+    if (!tender.evaluationCriteriaSourceJson) return [];
+    try { return JSON.parse(tender.evaluationCriteriaSourceJson) as Array<{criterion: string; weight: string | null; sourcePage: number | null; sourceQuote: string | null}>; } catch { return []; }
+  })();
+
   // Apply the same label-sanitization helpers that proposal generation uses,
   // at display time. The intake stage sometimes captures multi-line garbage
   // from the tender PDF (e.g., "discipline and long-term commitment
@@ -1834,6 +1847,15 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
             <p className={`mt-1 text-xs font-medium ${proposalQuality.verdict === "BENCHMARK_READY" ? "text-green-600" : "text-amber-600"}`}>
               {proposalQuality.verdict === "BENCHMARK_READY" ? "Benchmark ready ✓" : proposalQuality.benchmarkScore > 0 ? `Benchmark ${proposalQuality.benchmarkScore}/100` : "Generate docs to score"}
             </p>
+            {axisScores && (
+              <div className="mt-3 flex flex-wrap gap-1.5">
+                {Object.entries(axisScores).map(([axis, score]) => (
+                  <span key={axis} className={`inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] font-medium ${score >= 8 ? "bg-green-50 text-green-700" : score >= 6 ? "bg-amber-50 text-amber-700" : "bg-red-50 text-red-600"}`}>
+                    {axis}: {score}/10
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -1994,6 +2016,60 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
                 <div className="md:col-span-2"><dt className="text-sm text-slate-500">Intake Summary</dt><dd className="mt-1 text-slate-900">{tender.intakeSummary ? <ProposalMarkdown markdown={tender.intakeSummary} /> : "—"}</dd></div>
                 <div className="md:col-span-2"><dt className="text-sm text-slate-500">Analysis Summary</dt><dd className="mt-1 whitespace-pre-wrap text-slate-900">{tender.analysisSummary || "—"}</dd></div>
                 <div className="md:col-span-2"><dt className="text-sm text-slate-500">Evaluation Methodology</dt><dd className="mt-1 whitespace-pre-wrap text-slate-900">{tender.evaluationMethodology || "—"}</dd></div>
+                {evalCriteria.length > 0 && (
+                  <div className="md:col-span-2">
+                    <dt className="text-sm text-slate-500">
+                      <button
+                        type="button"
+                        onClick={() => setEvalCriteriaOpen((v) => !v)}
+                        className="inline-flex items-center gap-1.5 text-sm text-slate-600 hover:text-slate-900 font-medium"
+                      >
+                        <span>{evalCriteriaOpen ? "▾" : "▸"}</span>
+                        Evaluation Criteria Confidence
+                        <span className="ml-1 rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-semibold text-blue-700">
+                          {evalCriteria.length} criteria · {evalCriteria.filter((c) => c.weight).length}/{evalCriteria.length} have weights
+                        </span>
+                      </button>
+                    </dt>
+                    {evalCriteriaOpen && (
+                      <dd className="mt-2">
+                        <div className="overflow-x-auto rounded-lg border border-slate-200">
+                          <table className="w-full text-xs">
+                            <thead>
+                              <tr className="bg-slate-50 text-left text-slate-500">
+                                <th className="px-3 py-2 font-medium">Criterion</th>
+                                <th className="px-3 py-2 font-medium">Weight</th>
+                                <th className="px-3 py-2 font-medium">Source page</th>
+                                <th className="px-3 py-2 font-medium">Source quote</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {evalCriteria.map((c, idx) => (
+                                <tr key={idx} className={idx % 2 === 0 ? "bg-white" : "bg-slate-50"}>
+                                  <td className="px-3 py-2 text-slate-900 font-medium max-w-xs">{c.criterion}</td>
+                                  <td className="px-3 py-2">
+                                    {c.weight
+                                      ? <span className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold bg-green-50 text-green-700">{c.weight}</span>
+                                      : <span className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold bg-amber-50 text-amber-600">—</span>
+                                    }
+                                  </td>
+                                  <td className="px-3 py-2 text-slate-500">{c.sourcePage != null ? `p.${c.sourcePage}` : "—"}</td>
+                                  <td className="px-3 py-2 text-slate-500 max-w-[220px] truncate" title={c.sourceQuote ?? undefined}>
+                                    {c.sourceQuote ? `"${c.sourceQuote.slice(0, 80)}${c.sourceQuote.length > 80 ? "…" : ""}"` : "—"}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                        <p className="mt-1 text-[10px] text-slate-400">
+                          {evalCriteria.filter((c) => c.weight).length} of {evalCriteria.length} criteria have weights extracted.
+                          {evalCriteria.some((c) => !c.weight) && " Amber rows indicate missing weight — verify against source document."}
+                        </p>
+                      </dd>
+                    )}
+                  </div>
+                )}
                 <div className="md:col-span-2"><dt className="text-sm text-slate-500">Notes</dt><dd className="mt-1 whitespace-pre-wrap text-slate-900">{tender.notes || "—"}</dd></div>
                 <div className="md:col-span-2 pt-2 border-t">
                   <dt className="text-sm font-medium text-slate-700 mb-2">Bid Outcome</dt>
