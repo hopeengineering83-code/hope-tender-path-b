@@ -124,7 +124,7 @@ describe("submission-plan completeness — historical (SUPERSEDED) rows excluded
 });
 
 describe("submission-plan completeness — plan provenance", () => {
-  it("reports PLAN_NOT_BUILT when requirements exist but no file plan rows can be derived", () => {
+  it("reports REQUIREMENTS_FOUND_PLAN_NOT_BUILT when requirements exist but no file plan rows can be derived", () => {
     const tender = {
       id: "t-plan-missing",
       title: "Tender",
@@ -149,7 +149,9 @@ describe("submission-plan completeness — plan provenance", () => {
     assert.equal(report.totalRequired, 0);
     assert.equal(report.requirementCount, 1);
     assert.equal(report.hasExplicitScope, false);
-    assert.equal(report.planState, "PLAN_NOT_BUILT");
+    // PLAN_NOT_BUILT was renamed to REQUIREMENTS_FOUND_PLAN_NOT_BUILT to distinguish
+    // "requirements exist but no plan built" from legacy PLAN_NOT_BUILT (backward compat kept in type).
+    assert.equal(report.planState, "REQUIREMENTS_FOUND_PLAN_NOT_BUILT");
     assert.ok(report.warnings.some((w) => /Build Submission Plan/i.test(w)));
   });
 

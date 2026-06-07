@@ -24,6 +24,7 @@ import {
   inferEnvelope,
   type SubmissionEnvelope,
   type SubmissionPlanFile,
+  type SubmissionPlanFormat,
   type TenderLike,
 } from "./submission-plan";
 import {
@@ -73,6 +74,7 @@ export type SubmissionPlanState =
   | "EXPLICIT_TENDER_PLAN"
   | "DERIVED_DRAFT_UNCONFIRMED"
   | "PLAN_NOT_BUILT"
+  | "REQUIREMENTS_FOUND_PLAN_NOT_BUILT"
   | "NO_REQUIREMENTS";
 
 export type SubmissionPlanCompletenessReport = {
@@ -108,6 +110,7 @@ export type GeneratedDocSnapshot = DocumentLike & {
   reviewStatus: string;
   fileContent: string | null;
   storagePath: string | null;
+  contentSummary?: string | null;
 };
 
 // Regex accept both "bid bond" (with whitespace) and "bid-bond" /
@@ -222,9 +225,37 @@ export type ResolvePlanCompletenessInput = {
  */
 export function resolveSubmissionPlanCompleteness(input: ResolvePlanCompletenessInput): SubmissionPlanCompletenessReport {
   const plan = buildSubmissionPlan(input.tender);
-  const planFiles = plan.files.filter((f) => f.required);
+  let planFiles = plan.files.filter((f) => f.required);
   const requirementCount = input.tender.requirements?.length ?? 0;
   const explicitScope = hasExplicitSubmissionScope(input.tender);
+
+  // When buildSubmissionPlan() returns 0 required files (requirements exist but none
+  // have exactFileName set), check for active GeneratedDocument rows and adopt them
+  // as the effective plan so the UI never shows a contradicting "Plan up to date" +
+  // "Plan state: Plan not built" simultaneously.
+  let adoptedFromDocs = false;
+  if (planFiles.length === 0 && input.generatedDocuments.length > 0) {
+    const activeDocs = input.generatedDocuments.filter((doc) => {
+      const gen = (doc.generationStatus ?? "").toUpperCase();
+      const rev = (doc.reviewStatus ?? "").toUpperCase();
+      return gen !== "SUPERSEDED" && rev !== "NOT_EXPORTABLE";
+    });
+    if (activeDocs.length > 0) {
+      // Adopt each active doc as a required plan file so they match in the main loop.
+      planFiles = activeDocs.map((doc, idx) => ({
+        canonicalId: fileKey(doc.exactFileName ?? doc.name),
+        exactFileName: doc.exactFileName ?? doc.name,
+        documentType: doc.documentType ?? "TENDER_REQUIRED_FILE",
+        format: (doc.format ?? "DOCX") as SubmissionPlanFormat,
+        required: true,
+        envelope: inferEnvelope(doc.documentType ?? "TECHNICAL", doc.exactFileName ?? doc.name ?? ""),
+        exactOrder: doc.exactOrder ?? idx + 1,
+        sourceRequirementIds: [],
+        pageLimit: null,
+      }));
+      adoptedFromDocs = true;
+    }
+  }
 
   // Map every generated doc by its file-key.
   const docByKey = new Map<string, GeneratedDocSnapshot>();
@@ -324,14 +355,36 @@ export function resolveSubmissionPlanCompleteness(input: ResolvePlanCompleteness
   const totalSuperseded = rows.filter((r) => r.status === "SUPERSEDED").length;
   const totalQualityFailed = rows.filter((r) => r.status === "GENERATED_QUALITY_FAILED").length;
   const hasExplicitScope = explicitScope;
-  const planState: SubmissionPlanState = totalRequired > 0
-    ? (hasExplicitScope ? "EXPLICIT_TENDER_PLAN" : "DERIVED_DRAFT_UNCONFIRMED")
-    : requirementCount > 0
-      ? "PLAN_NOT_BUILT"
-      : "NO_REQUIREMENTS";
+
+  // Determine plan state.
+  // When docs were adopted (planFiles built from existing GeneratedDocument rows),
+  // check contentSummary markers to determine whether those docs were themselves
+  // derived-draft or explicit.
+  let planState: SubmissionPlanState;
+  if (totalRequired > 0) {
+    if (adoptedFromDocs) {
+      // Adopted rows: look at contentSummary to decide state.
+      const activeDocs = input.generatedDocuments.filter((doc) => {
+        const gen = (doc.generationStatus ?? "").toUpperCase();
+        const rev = (doc.reviewStatus ?? "").toUpperCase();
+        return gen !== "SUPERSEDED" && rev !== "NOT_EXPORTABLE";
+      });
+      const anyDerived = activeDocs.some((doc) =>
+        typeof doc.contentSummary === "string" && doc.contentSummary.includes("DERIVED_DRAFT_UNCONFIRMED"),
+      );
+      planState = anyDerived ? "DERIVED_DRAFT_UNCONFIRMED" : "EXPLICIT_TENDER_PLAN";
+    } else {
+      planState = hasExplicitScope ? "EXPLICIT_TENDER_PLAN" : "DERIVED_DRAFT_UNCONFIRMED";
+    }
+  } else if (requirementCount > 0) {
+    planState = "REQUIREMENTS_FOUND_PLAN_NOT_BUILT";
+  } else {
+    planState = "NO_REQUIREMENTS";
+  }
+
   const requiresUserConfirmation = planState === "DERIVED_DRAFT_UNCONFIRMED";
 
-  if (planState === "PLAN_NOT_BUILT") {
+  if ((planState as string) === "REQUIREMENTS_FOUND_PLAN_NOT_BUILT" || (planState as string) === "PLAN_NOT_BUILT") {
     warnings.push(`${requirementCount} tender requirement(s) exist, but no submission file plan has been built or confirmed. Build Submission Plan before Generate Docs so outputs can be validated against tender scope.`);
   }
   if (requiresUserConfirmation) {

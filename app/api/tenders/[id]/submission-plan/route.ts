@@ -67,6 +67,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
             validationStatus: true,
             reviewStatus: true,
             storagePath: true,
+            contentSummary: true,
           },
         },
       },

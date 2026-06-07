@@ -41,7 +41,7 @@ type Row = {
   recommendedAction: string;
 };
 
-type PlanState = "EXPLICIT_TENDER_PLAN" | "DERIVED_DRAFT_UNCONFIRMED" | "PLAN_NOT_BUILT" | "NO_REQUIREMENTS";
+type PlanState = "EXPLICIT_TENDER_PLAN" | "DERIVED_DRAFT_UNCONFIRMED" | "PLAN_NOT_BUILT" | "REQUIREMENTS_FOUND_PLAN_NOT_BUILT" | "NO_REQUIREMENTS";
 
 type Summary = {
   totalRequired: number;
@@ -89,12 +89,14 @@ function planStateLabel(state: PlanState): string {
   if (state === "EXPLICIT_TENDER_PLAN") return "Explicit tender plan";
   if (state === "DERIVED_DRAFT_UNCONFIRMED") return "Derived draft — confirm";
   if (state === "PLAN_NOT_BUILT") return "Plan not built";
+  if (state === "REQUIREMENTS_FOUND_PLAN_NOT_BUILT") return "Requirements found — build plan";
   return "No requirements yet";
 }
 
 function planStateTone(state: PlanState): "ok" | "warn" | "bad" | "neutral" {
   if (state === "EXPLICIT_TENDER_PLAN") return "ok";
   if (state === "PLAN_NOT_BUILT") return "bad";
+  if (state === "REQUIREMENTS_FOUND_PLAN_NOT_BUILT") return "bad";
   if (state === "DERIVED_DRAFT_UNCONFIRMED") return "warn";
   return "neutral";
 }
@@ -257,7 +259,7 @@ export function SubmissionPlanCompletenessPanel({ tenderId }: { tenderId: string
     if (!data || autoRunDone.current) return;
     autoRunDone.current = true;
 
-    const needsBuild = data.summary.planState === "PLAN_NOT_BUILT" && data.summary.requirementCount > 0;
+    const needsBuild = (data.summary.planState === "PLAN_NOT_BUILT" || data.summary.planState === "REQUIREMENTS_FOUND_PLAN_NOT_BUILT") && data.summary.requirementCount > 0;
     const outsidePlanRows = data.rows.filter((r) => r.status === "OUTSIDE_PLAN" && r.documentId);
 
     async function runAuto() {
@@ -366,7 +368,7 @@ export function SubmissionPlanCompletenessPanel({ tenderId }: { tenderId: string
         </div>
       )}
 
-      <div className={`mt-3 rounded-lg border p-3 text-xs ${data.summary.planState === "PLAN_NOT_BUILT" ? "border-red-200 bg-red-50 text-red-800" : data.summary.requiresUserConfirmation ? "border-amber-200 bg-amber-50 text-amber-800" : "border-slate-200 bg-slate-50 text-slate-600"}`}>
+      <div className={`mt-3 rounded-lg border p-3 text-xs ${(data.summary.planState === "PLAN_NOT_BUILT" || data.summary.planState === "REQUIREMENTS_FOUND_PLAN_NOT_BUILT") ? "border-red-200 bg-red-50 text-red-800" : data.summary.requiresUserConfirmation ? "border-amber-200 bg-amber-50 text-amber-800" : "border-slate-200 bg-slate-50 text-slate-600"}`}>
         <div className="flex flex-wrap items-center gap-2">
           <span className="font-semibold">Plan state:</span>
           <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${toneClass(planStateTone(data.summary.planState))}`}>{planStateLabel(data.summary.planState)}</span>
@@ -374,6 +376,9 @@ export function SubmissionPlanCompletenessPanel({ tenderId }: { tenderId: string
         </div>
         {data.summary.planState === "PLAN_NOT_BUILT" && (
           <p className="mt-2">Tender requirements exist, but no exact or derived submission file plan is available yet. Use <strong>Build Plan</strong> before Generate Docs so the system can validate generated outputs against tender scope instead of showing a misleading Required 0 / Generated 0 / Missing 0 state.</p>
+        )}
+        {data.summary.planState === "REQUIREMENTS_FOUND_PLAN_NOT_BUILT" && (
+          <p className="mt-2">Tender requirements have been extracted, but the submission file plan has not been built yet. Use <strong>Build Plan</strong> to derive the submission file list from the extracted requirements before generating documents.</p>
         )}
         {data.summary.requiresUserConfirmation && (
           <p className="mt-2">This is a conservative derived draft from requirement titles/types, not a tender-issued file list. Confirm exact file names/order from the tender before final export; official forms/templates must still be attached as originals and must not be fabricated.</p>

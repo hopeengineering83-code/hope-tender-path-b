@@ -116,7 +116,10 @@ export type AuditAction =
   | "TENDER_METADATA_MANUAL_CONFIRMED"
   | "LOGIN_FAILED"
   | "COMPANY_PROFILE_UPDATED"
-  | "SETTINGS_UPDATED";
+  | "SETTINGS_UPDATED"
+  // Metadata field override — user marks a field NOT_APPLICABLE, USER_CONFIRMED,
+  // USER_EDITED, or IGNORED_WITH_REASON via the metadata completion panel.
+  | "TENDER_METADATA_OVERRIDE";
 
 export async function logAction(opts: {
   userId?: string;

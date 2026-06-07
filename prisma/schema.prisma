@@ -23,6 +23,7 @@ model User {
   documentComments DocumentComment[]
   notifications    Notification[]
   tenderShares TenderShare[]
+  metadataOverrides TenderMetadataOverride[]
   createdAt    DateTime    @default(now())
   updatedAt    DateTime    @updatedAt
 }
@@ -394,6 +395,7 @@ model Tender {
   pricingWorkbook       PricingWorkbook?
   shares                TenderShare[]
   copilotMessages       TenderCopilotMessage[]
+  metadataOverrides     TenderMetadataOverride[]
 }
 
 model TenderShare {
@@ -951,4 +953,28 @@ model TenderCopilotMessage {
   @@index([tenderId, userId, createdAt])
   @@index([tenderId, userId])
   @@index([createdAt])
+}
+
+// ─── TenderMetadataOverride ───────────────────────────────────────────────────
+// Stores user-confirmed field states for tender metadata fields that are
+// missing or require manual completion. Allows users to mark fields as
+// NOT_APPLICABLE, USER_CONFIRMED, USER_EDITED, or IGNORED_WITH_REASON so
+// the generation gate can proceed without hard-blocking on genuinely absent
+// metadata that the user has reviewed.
+model TenderMetadataOverride {
+  id            String   @id @default(uuid())
+  tenderId      String
+  tender        Tender   @relation(fields: [tenderId], references: [id], onDelete: Cascade)
+  field         String
+  fieldState    String
+  overrideValue String?
+  reason        String?
+  previousValue String?
+  overriddenBy  String
+  user          User     @relation(fields: [overriddenBy], references: [id])
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([tenderId, field])
+  @@index([tenderId])
 }
