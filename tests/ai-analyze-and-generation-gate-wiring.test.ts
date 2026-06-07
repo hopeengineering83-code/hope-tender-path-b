@@ -283,6 +283,18 @@ describe("clientContactName propagates into AI cover letter prompt", () => {
   });
 });
 
+describe("regenerate-section route passes clientContactName to AIBidWriterInput", () => {
+  const source = readFileSync("app/api/tenders/[id]/regenerate-section/route.ts", "utf8");
+
+  it("includes clientContactName in the aiInput object", () => {
+    assert.match(source, /clientContactName:\s*tender\.clientContactName/);
+  });
+
+  it("covers the null fallback so the type contract is met", () => {
+    assert.match(source, /clientContactName:\s*tender\.clientContactName\s*\?\?\s*null/);
+  });
+});
+
 describe("proposal quality score improvement — Bid-Team stubs penalised on aiTraceFreedom", () => {
   const scorerSource = readFileSync("lib/engine/proposal-quality-scorer.ts", "utf8");
 

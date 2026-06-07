@@ -234,6 +234,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const aiInput: AIBidWriterInput = {
     tenderTitle: tender.title,
     clientName: intelligence.clientName,
+    clientContactName: tender.clientContactName ?? null,
     tenderText: [BENCHMARK_CONTEXT_LINES.join("\n"), tenderText].join("\n\n"),
     analysisSummary: clean(tender.analysisSummary) || intelligence.tenderText.slice(0, 2000),
     evaluationMethodology: [
