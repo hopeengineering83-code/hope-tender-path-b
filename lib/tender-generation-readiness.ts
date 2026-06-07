@@ -96,6 +96,7 @@ export type TenderGenerationReadiness = {
    */
   exportAssetStatus: ExportAssetStatus;
   generatedAt: string;
+  metadataReport: import("./engine/tender-metadata-completeness").MetadataCompletenessReport;
 };
 
 /**
@@ -752,6 +753,7 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
     fullProposalBlockers,
     tenderId,
     blockers,
+    metadataReport,
     warnings,
     counts: {
       requirements: tender.requirements.length,
