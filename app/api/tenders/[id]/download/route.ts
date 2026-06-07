@@ -13,6 +13,7 @@ import { getTenderGenerationReadiness } from "../../../../../lib/tender-generati
 import { generatedDocumentHasContent, readGeneratedDocumentContent } from "../../../../../lib/generated-document-content";
 import { inferEnvelope, type SubmissionEnvelope } from "../../../../../lib/engine/submission-plan";
 import { getFinalSubmissionReadiness } from "../../../../../lib/engine/final-submission-readiness";
+import { runAuthorityReview } from "../../../../../lib/engine/authority-review";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -141,6 +142,9 @@ async function zipPackage(userId: string, tender: any, envelopeFilter: EnvelopeF
   // Bid Control, and Final Submission Control Center. Backend MUST reject
   // direct ZIP downloads when canonical ok === false so a user cannot
   // bypass blockers by hitting /download?type=zip directly.
+  // METADATA_CONTAMINATED is enforced inside getFinalSubmissionReadiness (see
+  // lib/engine/final-submission-readiness.ts). It is not duplicated here
+  // because the canonical readiness gate already surfaces it as a blocker.
   const canonical = await getFinalSubmissionReadiness(prisma, { tenderId: tender.id, userId, requireFileContent: false });
   if (!canonical) return err("Tender not found", 404, { code: "TENDER_NOT_FOUND" });
   if (!canonical.ok) {
@@ -179,6 +183,74 @@ async function zipPackage(userId: string, tender: any, envelopeFilter: EnvelopeF
         blockedDocuments: blockedDocs.map((d: any) => d.exactFileName ?? d.name),
       }
     );
+  }
+
+  // ── Phase 4b: Authority Review gate ──────────────────────────────────────
+  // Additional to the Phase 4 quality validation check above.
+  // Detects AI traces, placeholders, Bid-Team stubs, envelope cross-contamination,
+  // and documents not in the Final Package Manifest.
+  {
+    const authorityDocs = tender.generatedDocuments
+      .filter((doc: any) => isFinalExportCandidateDocument(doc) && doc.generationStatus === "GENERATED")
+      .map((doc: any) => ({
+        id: String(doc.id),
+        name: String(doc.name ?? doc.exactFileName ?? doc.id),
+        documentType: String(doc.documentType ?? ""),
+        contentSummary: doc.contentSummary ?? null,
+        reviewNotes: doc.reviewNotes ?? null,
+        exactFileName: doc.exactFileName ?? null,
+      }));
+
+    // Build manifest entries from requirements with exactFileName
+    const manifestEntries: Array<{ exactFileName: string; documentType: string }> = [];
+    for (const req of (tender.requirements ?? [])) {
+      if ((req as any).exactFileName) {
+        manifestEntries.push({ exactFileName: (req as any).exactFileName, documentType: "TENDER_REQUIRED_FILE" });
+      }
+    }
+    // Also include entries from exactFileNaming JSON
+    try {
+      const parsed = JSON.parse(tender.exactFileNaming ?? "[]");
+      if (Array.isArray(parsed)) {
+        for (const entry of parsed) {
+          if (typeof entry === "string" && entry.trim()) {
+            manifestEntries.push({ exactFileName: entry.trim(), documentType: "TENDER_REQUIRED_FILE" });
+          } else if (entry && typeof entry === "object" && typeof entry.name === "string") {
+            manifestEntries.push({ exactFileName: entry.name.trim(), documentType: entry.documentType ?? "TENDER_REQUIRED_FILE" });
+          }
+        }
+      }
+    } catch { /* ignore invalid JSON */ }
+
+    // Derive required sections from exactFileNaming / exactFileOrder
+    const requiredSections: string[] = [];
+    for (const raw of [tender.exactFileNaming, tender.exactFileOrder]) {
+      if (!raw) continue;
+      try {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          for (const entry of parsed) {
+            if (typeof entry === "string" && entry.trim()) requiredSections.push(entry.trim());
+            else if (entry && typeof entry === "object" && typeof entry.name === "string") requiredSections.push(entry.name.trim());
+          }
+        }
+      } catch { /* ignore */ }
+    }
+
+    const authorityResult = runAuthorityReview(authorityDocs, manifestEntries, requiredSections);
+    if (authorityResult.status === "BLOCKED") {
+      return err(
+        `Export blocked by Authority Review: ${authorityResult.blockers.length} critical issue(s) must be resolved before export.`,
+        422,
+        {
+          code: "AUTHORITY_REVIEW_BLOCKED",
+          blockers: authorityResult.blockers,
+          overallScore: authorityResult.overallScore,
+          affectedDocumentIds: authorityResult.affectedDocumentIds,
+          recommendedFixes: authorityResult.recommendedFixes,
+        },
+      );
+    }
   }
 
   // Strict two-envelope tenders: the canonical helper sets
