@@ -1011,7 +1011,7 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
     startGenerationProgress();
     try {
       const res = await fetch(`/api/tenders/${tender.id}/generate`, { method: "POST" });
-      const data = await res.json() as { error?: string; code?: string; nextAction?: string; totalExpertMatches?: number; totalProjectMatches?: number; tender?: Tender };
+      const data = await res.json() as { error?: string; code?: string; nextAction?: string; totalExpertMatches?: number; totalProjectMatches?: number; tender?: Tender; qualityScore?: number; axisScores?: Record<string, number> };
       if (!res.ok) {
         if (data.code === "NO_EXPERT_MATCHES_SELECTED" || data.code === "NO_EXPERT_MATCHES_FOUND") {
           setError(`${data.error || "Generation failed"} ${typeof data.totalExpertMatches === "number" ? `(${data.totalExpertMatches} expert match(es) found in total.)` : ""}`.trim());
@@ -1031,12 +1031,15 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
       }
       if (data.tender) setTender((cur) => ({ ...cur, ...data.tender }));
       router.refresh();
-      const q = data.tender?.generatedDocuments?.[0]?.contentSummary?.match(/Quality score: (\d+)\/100/);
-      showToast(`Documents generated${q ? ` — Quality ${q[1]}/100` : ""}`, "success");
-      if (q) {
-        const score = parseInt(q[1], 10);
-        if (score < 70) setLowQualityBanner({ score });
-      }
+      // Prefer structured qualityScore from API; fall back to parsing contentSummary.
+      const score: number | null = typeof data.qualityScore === "number"
+        ? data.qualityScore
+        : (() => {
+            const q = data.tender?.generatedDocuments?.[0]?.contentSummary?.match(/Quality score: (\d+)\/100/);
+            return q ? parseInt(q[1], 10) : null;
+          })();
+      showToast(`Documents generated${score !== null ? ` — Quality ${score}/100` : ""}`, "success");
+      if (score !== null && score < 70) setLowQualityBanner({ score });
     } catch { setError("Document generation failed"); }
     finally { setGeneratingDocs(false); stopGenerationProgress(); }
   }
@@ -1988,7 +1991,14 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
           <span className="mt-0.5 text-amber-500 text-lg">⚠</span>
           <div className="flex-1 min-w-0">
             <p className="text-sm font-semibold text-amber-800">Proposal quality is low ({lowQualityBanner.score}/100)</p>
-            <p className="mt-1 text-xs text-amber-700">Consider regenerating weak sections, adding more expert CVs or project references, or ensuring all requirements are extracted before regenerating.</p>
+            <p className="mt-1 text-xs text-amber-700">Add more expert CVs or project references, ensure all requirements are extracted, then regenerate to improve the score.</p>
+            <button
+              onClick={() => { setLowQualityBanner(null); handleGenerateDocs(); }}
+              disabled={generatingDocs}
+              className="mt-2 rounded-lg bg-amber-600 px-3 py-1 text-xs font-medium text-white hover:bg-amber-700 disabled:opacity-50"
+            >
+              {generatingDocs ? "Regenerating…" : "Regenerate now"}
+            </button>
           </div>
           <button onClick={() => setLowQualityBanner(null)} className="shrink-0 text-amber-400 hover:text-amber-600 text-lg leading-none">&times;</button>
         </div>

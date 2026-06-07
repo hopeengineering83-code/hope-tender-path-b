@@ -774,7 +774,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const jobResult = { warnings, supportDocumentCount, letterheadAppliedCount, promotedExpertCount: promotion.promotedExpertCount, promotedProjectCount: promotion.promotedProjectCount };
     completeJob(job.id, jobResult);
     void createNotification({ userId, type: "TENDER_GENERATED", title: `Documents generated for "${tender.title}"`, body: `${(updatedTender?.generatedDocuments ?? []).length} document(s) ready for review.`, entityType: "Tender", entityId: id, link: `/dashboard/tenders/${id}` });
-    return NextResponse.json({ success: true, jobId: job.id, tender: updatedTender, warnings, readiness: readiness.totals, plannedRecordCount, supportDocumentCount, letterheadAppliedCount, promotedExpertCount: promotion.promotedExpertCount, promotedProjectCount: promotion.promotedProjectCount, submissionPlan: explicitSubmissionScope ? { plannedTargetCount: plannedTargetFiles.length, missing: missingPlanFiles.map((file) => file.exactFileName), extras: extraGeneratedDocs.map((doc) => doc.exactFileName ?? doc.name ?? doc.documentType ?? doc.id ?? "document") } : null });
+    // Extract quality score and axis scores from contentSummary so the UI
+    // doesn't need to parse a text string — structured fields are more reliable.
+    const proposalDoc = updatedTender?.generatedDocuments?.find((d) => d.documentType === "TECHNICAL_PROPOSAL");
+    const qMatch = proposalDoc?.contentSummary?.match(/Quality score:\s*(\d+)\/100/);
+    const aMatch = proposalDoc?.contentSummary?.match(/AXIS_SCORES:\s*(\{[^}]+\})/);
+    const qualityScoreValue = qMatch ? parseInt(qMatch[1], 10) : null;
+    let axisScoresValue: Record<string, number> | null = null;
+    try { axisScoresValue = aMatch ? JSON.parse(aMatch[1]) as Record<string, number> : null; } catch { axisScoresValue = null; }
+    return NextResponse.json({ success: true, jobId: job.id, tender: updatedTender, warnings, readiness: readiness.totals, plannedRecordCount, supportDocumentCount, letterheadAppliedCount, promotedExpertCount: promotion.promotedExpertCount, promotedProjectCount: promotion.promotedProjectCount, qualityScore: qualityScoreValue, axisScores: axisScoresValue, submissionPlan: explicitSubmissionScope ? { plannedTargetCount: plannedTargetFiles.length, missing: missingPlanFiles.map((file) => file.exactFileName), extras: extraGeneratedDocs.map((doc) => doc.exactFileName ?? doc.name ?? doc.documentType ?? doc.id ?? "document") } : null });
   } catch (error) {
     failJob(job.id, error instanceof Error ? error.message : String(error));
     void reportError(error, { tenderId: id, userId, route: "/api/tenders/[id]/generate" });
