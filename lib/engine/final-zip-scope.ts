@@ -1,3 +1,4 @@
+import { safeParseJsonArray } from "../safe-json";
 /**
  * Strict final-ZIP scope resolver.
  *
@@ -83,7 +84,7 @@ export function collectTenderRequiredFilenames(tender: FinalZipScopeInput["tende
   const out = new Set<string>();
   for (const raw of [tender.exactFileNaming, tender.exactFileOrder]) {
     try {
-      const parsed = JSON.parse(raw ?? "[]");
+      const parsed = safeParseJsonArray(raw);
       if (Array.isArray(parsed)) {
         for (const item of parsed) {
           if (typeof item === "string" && item.trim().length > 0) out.add(item.trim());
