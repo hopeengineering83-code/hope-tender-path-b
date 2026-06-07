@@ -75,6 +75,7 @@ import { injectCoverPageAndRfpMeta } from "./cover-page-injector";
 import { injectJvDisclosure } from "./jv-disclosure";
 import { deduplicateTables, injectQaThresholds, injectAppendixReadinessRegister } from "./advanced-quality-passes";
 import { generateExpertCvDocx, expertCvFileName } from "./expert-cv-docx";
+import { applyProposalQualityRepairAddenda } from "./proposal-quality-repair";
 import { computeBidStrategy } from "./bid-strategy";
 import { applyAIWriterContractPrompt } from "./ai-writer-contract-prompt";
 import type { TenderSourceDocument } from "./source-grounded-requirement-map";
@@ -2872,9 +2873,18 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     workingMarkdown = reStripPlaceholders.markdown;
   }
 
+  // Apply deterministic quality repair addenda (compliance matrix, evaluator mirror,
+  // win themes, self-score) if any are missing from the final markdown.
+  const repairedMarkdown = applyProposalQualityRepairAddenda(workingMarkdown, evaluatorMatrixInput);
+  const repairAddendaApplied = repairedMarkdown !== workingMarkdown;
+  if (repairAddendaApplied) {
+    console.info("[generate-elite] Quality repair addenda applied — one or more critical sections were missing.");
+    workingMarkdown = repairedMarkdown;
+  }
+
   // Re-render the DOCX from the (possibly refined) markdown.
-  const finalChildren = refinementApplied ? markdownToDocx(workingMarkdown) : children;
-  const finalDoc = refinementApplied
+  const finalChildren = (refinementApplied || repairAddendaApplied) ? markdownToDocx(workingMarkdown) : children;
+  const finalDoc = (refinementApplied || repairAddendaApplied)
     ? buildProfessionalDocument({
         tenderTitle: cleanedTenderTitle,
         clientName: intelligence.clientName,
@@ -2884,7 +2894,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
         children: finalChildren,
         suppressCoverBlock: tenderForbidsCoverPage,
         suppressBrandedHeader: tenderForbidsBranding,
-        coverVault, // PR #259 — same vault on the refined re-render
+        coverVault,
       })
     : doc;
   const fileContent = (await Packer.toBuffer(finalDoc)).toString("base64");

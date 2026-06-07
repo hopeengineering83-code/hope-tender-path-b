@@ -528,6 +528,7 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
   const [loadingDeepReasoning, setLoadingDeepReasoning] = useState(false);
   const [deepReasoningOpen, setDeepReasoningOpen] = useState(false);
   const [evalCriteriaOpen, setEvalCriteriaOpen] = useState(false);
+  const [lowQualityBanner, setLowQualityBanner] = useState<{ score: number } | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [fileQueue, setFileQueue] = useState<UploadItem[]>([]);
@@ -1032,6 +1033,10 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
       router.refresh();
       const q = data.tender?.generatedDocuments?.[0]?.contentSummary?.match(/Quality score: (\d+)\/100/);
       showToast(`Documents generated${q ? ` — Quality ${q[1]}/100` : ""}`, "success");
+      if (q) {
+        const score = parseInt(q[1], 10);
+        if (score < 70) setLowQualityBanner({ score });
+      }
     } catch { setError("Document generation failed"); }
     finally { setGeneratingDocs(false); stopGenerationProgress(); }
   }
@@ -1947,6 +1952,17 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
           </div>
         )}
       </div>
+
+      {lowQualityBanner && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 flex items-start gap-3">
+          <span className="mt-0.5 text-amber-500 text-lg">⚠</span>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold text-amber-800">Proposal quality is low ({lowQualityBanner.score}/100)</p>
+            <p className="mt-1 text-xs text-amber-700">Consider regenerating weak sections, adding more expert CVs or project references, or ensuring all requirements are extracted before regenerating.</p>
+          </div>
+          <button onClick={() => setLowQualityBanner(null)} className="shrink-0 text-amber-400 hover:text-amber-600 text-lg leading-none">&times;</button>
+        </div>
+      )}
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,2fr),minmax(360px,1fr)]">
         <div className="space-y-6">
