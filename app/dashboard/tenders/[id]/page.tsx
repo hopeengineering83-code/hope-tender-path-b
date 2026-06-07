@@ -48,7 +48,7 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
     include: {
       files: {
         orderBy: { createdAt: "desc" },
-        select: { id: true, fileName: true, originalFileName: true, mimeType: true, size: true, classification: true, createdAt: true },
+        select: { id: true, fileName: true, originalFileName: true, mimeType: true, size: true, classification: true, createdAt: true, extractionScore: true, totalPages: true, extractedPages: true, ocrPages: true, failedPages: true },
       },
       requirements: { orderBy: { createdAt: "asc" } },
       complianceGaps: { orderBy: { createdAt: "desc" } },
@@ -87,6 +87,11 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
         ...file,
         extractedTextLength: metric?.extractedTextLength ?? 0,
         isScannedPlaceholder: metric?.isScannedPlaceholder ?? false,
+        extractionScore: file.extractionScore ?? null,
+        totalPages: file.totalPages ?? null,
+        extractedPages: file.extractedPages ?? null,
+        ocrPages: file.ocrPages ?? null,
+        failedPages: file.failedPages ?? null,
       };
     }),
   };

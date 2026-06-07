@@ -144,6 +144,11 @@ type TenderFile = {
   extractedTextLength?: number | null;
   isScannedPlaceholder?: boolean | null;
   classification?: string | null;
+  extractionScore?: number | null;
+  totalPages?: number | null;
+  extractedPages?: number | null;
+  ocrPages?: number | null;
+  failedPages?: number | null;
 };
 
 type UploadItem = {
@@ -2342,16 +2347,39 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
                             </span>
                           )}
                         </div>
-                        <div className="mt-1 flex items-center gap-2 text-xs text-slate-500">
+                        <div className="mt-1 flex items-center gap-2 text-xs text-slate-500 flex-wrap">
                           <span>{formatBytes(file.size)}</span>
                           <span>·</span>
                           <span>{formatDate(file.createdAt)}</span>
                           <span>·</span>
                           <ExtractionBadge extractedTextLength={file.extractedTextLength} isScannedPlaceholder={file.isScannedPlaceholder} />
+                          {file.extractionScore != null && (
+                            <>
+                              <span>·</span>
+                              <span className={`font-medium ${file.extractionScore >= 70 ? "text-green-600" : file.extractionScore >= 45 ? "text-amber-600" : "text-red-600"}`}>
+                                Extraction {Math.round(file.extractionScore)}/100
+                              </span>
+                            </>
+                          )}
+                          {file.totalPages != null && file.totalPages > 0 && (
+                            <>
+                              <span>·</span>
+                              <span title={`Total: ${file.totalPages} pages, Extracted: ${file.extractedPages ?? "?"}, OCR: ${file.ocrPages ?? 0}, Failed: ${file.failedPages ?? 0}`}>
+                                {file.extractedPages ?? "?"}/{file.totalPages} pages
+                                {(file.ocrPages ?? 0) > 0 && <span className="ml-1 text-blue-500">(+{file.ocrPages} OCR)</span>}
+                                {(file.failedPages ?? 0) > 0 && <span className="ml-1 text-red-500">({file.failedPages} failed)</span>}
+                              </span>
+                            </>
+                          )}
                         </div>
                         {file.isScannedPlaceholder && (
                           <p className="mt-1 text-xs text-amber-700 bg-amber-50 rounded px-2 py-1">
                             ⚠ Scanned PDF — no text layer found. Run OCR or upload a text-based version for AI analysis.
+                          </p>
+                        )}
+                        {!file.isScannedPlaceholder && file.extractionScore != null && file.extractionScore < 45 && (
+                          <p className="mt-1 text-xs text-red-700 bg-red-50 rounded px-2 py-1">
+                            ✗ Low extraction quality ({Math.round(file.extractionScore)}/100) — re-upload or run OCR before AI Analysis.
                           </p>
                         )}
                       </div>
