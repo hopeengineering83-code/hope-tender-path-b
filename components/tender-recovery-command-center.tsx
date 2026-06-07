@@ -130,6 +130,7 @@ export default function TenderRecoveryCommandCenter({ tenderId }: { tenderId: st
   const [actioning, setActioning] = useState(false);
   const [actionMsg, setActionMsg] = useState<string | null>(null);
   const [approvalNote, setApprovalNote] = useState("");
+  const [ocrProvider, setOcrProvider] = useState<string>("auto");
 
   function scrollToPanel(anchorId: string, fallbackMessage: string) {
     const el = document.getElementById(anchorId);
@@ -249,7 +250,14 @@ export default function TenderRecoveryCommandCenter({ tenderId }: { tenderId: st
         return;
       }
       if (spec.kind === "api" && spec.path) {
-        const res = await fetch(renderRecoveryActionPath(spec.path, tenderId), { method: spec.method ?? "POST" });
+        const isReExtract = action === "RE_EXTRACT_METADATA";
+        const fetchOptions: RequestInit = {
+          method: spec.method ?? "POST",
+          ...(isReExtract && ocrProvider !== "auto"
+            ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ocrProvider }) }
+            : {}),
+        };
+        const res = await fetch(renderRecoveryActionPath(spec.path, tenderId), fetchOptions);
         const json = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(json.error ?? json.message ?? `${spec.label} failed`);
         setActionMsg(messageForApiAction(action, json));
@@ -392,6 +400,12 @@ export default function TenderRecoveryCommandCenter({ tenderId }: { tenderId: st
                 {b.code === "METADATA_INCOMPLETE" && (
                   <div className="mt-1.5 flex flex-wrap gap-1.5">
                     <button onClick={() => void executeAction("REPAIR_METADATA")} disabled={actioning} className="rounded bg-red-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50">Repair Metadata</button>
+                    <select value={ocrProvider} onChange={(e) => setOcrProvider(e.target.value)} className="rounded border border-red-300 bg-white px-1.5 py-0.5 text-xs text-red-700" title="OCR provider for re-extraction">
+                      <option value="auto">Auto OCR</option>
+                      <option value="tesseract">Tesseract</option>
+                      <option value="google">Google Vision</option>
+                      <option value="azure">Azure Read</option>
+                    </select>
                     <button onClick={() => void executeAction("RE_EXTRACT_METADATA")} disabled={actioning} className="rounded border border-red-400 px-2 py-0.5 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-50">Re-extract</button>
                     <button onClick={() => scrollToPanel("tender-edit-form", "Open the Tender Metadata form to fill missing fields.")} className="rounded border border-red-300 px-2 py-0.5 text-xs text-red-600 hover:bg-red-100">Edit Manually</button>
                   </div>

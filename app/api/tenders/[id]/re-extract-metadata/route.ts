@@ -75,13 +75,19 @@ function isValidStoredValue(field: string, value: unknown): boolean {
 export const maxDuration = 30;
 export const dynamic = "force-dynamic";
 
-export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   let actor;
   try { actor = await requireUser(); } catch { return unauthorizedResponse(); }
   if (!["ADMIN", "PROPOSAL_MANAGER"].includes(actor.role)) return forbiddenResponse();
 
   const rl = rateLimit(`re-extract-metadata:${actor.id}`, MUTATION_RATE_LIMIT);
   if (!rl.allowed) return NextResponse.json({ error: "Too many requests", retryAfter: Math.ceil((rl.resetAt - Date.now()) / 1000) }, { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } });
+
+  // Optional ocrProvider hint — logged for observability, not yet wired to a runtime OCR call
+  // (the actual OCR re-run requires file re-upload; this records the user's preferred provider
+  // so it can be used in a future OCR retry pipeline).
+  const body = await req.json().catch(() => ({})) as Record<string, unknown>;
+  const ocrProvider = typeof body.ocrProvider === "string" ? body.ocrProvider : null;
 
   await prismaReady;
   const { id } = await params;
@@ -210,7 +216,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     entityType: "Tender",
     entityId: id,
     description: `${actor.email} re-extracted metadata on "${tender.title}" — auto-filled ${updatedCount} field(s)${overwrittenInvalid.length > 0 ? `; OVERWROTE ${overwrittenInvalid.length} invalid value(s): ${overwrittenInvalid.join(", ")}` : ""}`,
-    metadata: { tenderId: id, updatedCount, fields: Object.keys(update), overwrittenInvalid },
+    metadata: { tenderId: id, updatedCount, fields: Object.keys(update), overwrittenInvalid, ...(ocrProvider ? { ocrProvider } : {}) },
   });
 
   const overwriteSuffix = overwrittenInvalid.length > 0
@@ -224,5 +230,6 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     fieldsBefore,
     fieldsAfter,
     message: `Auto-filled ${updatedCount} field(s) from the tender body.${overwriteSuffix} Refresh the page to see the changes.`,
+    ...(ocrProvider ? { ocrProvider } : {}),
   });
 }
