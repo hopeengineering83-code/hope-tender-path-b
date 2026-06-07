@@ -501,10 +501,27 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // overallRatio < 0.3 is a hard block; missingCritical / invalidFields always block.
   // Load any user overrides — these allow NOT_APPLICABLE / USER_CONFIRMED /
   // USER_EDITED / IGNORED_WITH_REASON to unblock specific missing fields.
-  const metadataOverrides = await prisma.tenderMetadataOverride.findMany({
-    where: { tenderId: id },
-    select: { field: true, fieldState: true, overrideValue: true },
-  });
+  // Load metadata overrides — wrapped in a guard so an unmigrated DB (missing
+  // TenderMetadataOverride table) falls back to an empty list instead of 500-ing.
+  // Only P2021 (table does not exist) and P2010 (raw query / missing relation)
+  // are swallowed; all other errors re-throw so real DB failures are visible.
+  let metadataOverrides: Array<{ field: string; fieldState: string; overrideValue: string | null }> = [];
+  let metadataOverrideLookupFailed = false;
+  try {
+    metadataOverrides = await prisma.tenderMetadataOverride.findMany({
+      where: { tenderId: id },
+      select: { field: true, fieldState: true, overrideValue: true },
+    });
+  } catch (overrideErr) {
+    const code = (overrideErr as { code?: string })?.code;
+    if (code === "P2021" || code === "P2010") {
+      console.warn(`[generate] TenderMetadataOverride table not available (${code}) — proceeding with empty overrides. Run database migration to resolve.`);
+      metadataOverrides = [];
+      metadataOverrideLookupFailed = true;
+    } else {
+      throw overrideErr;
+    }
+  }
   const metadataReport = assessTenderMetadataCompleteness({
     clientName: effectiveClientName,
     procuringEntityName: (tender as Record<string, unknown>).procuringEntityName as string | null | undefined,
@@ -804,7 +821,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const qualityScoreValue = qMatch ? parseInt(qMatch[1], 10) : null;
     let axisScoresValue: Record<string, number> | null = null;
     try { axisScoresValue = aMatch ? JSON.parse(aMatch[1]) as Record<string, number> : null; } catch { axisScoresValue = null; }
-    return NextResponse.json({ success: true, jobId: job.id, tender: updatedTender, warnings, readiness: readiness.totals, plannedRecordCount, supportDocumentCount, letterheadAppliedCount, promotedExpertCount: promotion.promotedExpertCount, promotedProjectCount: promotion.promotedProjectCount, qualityScore: qualityScoreValue, axisScores: axisScoresValue, submissionPlan: explicitSubmissionScope ? { plannedTargetCount: plannedTargetFiles.length, missing: missingPlanFiles.map((file) => file.exactFileName), extras: extraGeneratedDocs.map((doc) => doc.exactFileName ?? doc.name ?? doc.documentType ?? doc.id ?? "document") } : null });
+    return NextResponse.json({ success: true, jobId: job.id, tender: updatedTender, warnings, readiness: readiness.totals, plannedRecordCount, supportDocumentCount, letterheadAppliedCount, promotedExpertCount: promotion.promotedExpertCount, promotedProjectCount: promotion.promotedProjectCount, qualityScore: qualityScoreValue, axisScores: axisScoresValue, submissionPlan: explicitSubmissionScope ? { plannedTargetCount: plannedTargetFiles.length, missing: missingPlanFiles.map((file) => file.exactFileName), extras: extraGeneratedDocs.map((doc) => doc.exactFileName ?? doc.name ?? doc.documentType ?? doc.id ?? "document") } : null, ...(metadataOverrideLookupFailed ? { metadataOverrideLookupFailed: true, metadataOverrideLookupWarning: "TenderMetadataOverride table is not yet available — run database migration." } : {}) });
   } catch (error) {
     failJob(job.id, error instanceof Error ? error.message : String(error));
     void reportError(error, { tenderId: id, userId, route: "/api/tenders/[id]/generate" });
