@@ -15,6 +15,8 @@ import TenderRecoveryCommandCenter from "../../../../components/tender-recovery-
 import RequirementCoveragePanel from "../../../../components/requirement-coverage-panel";
 import TenderControlsPanel from "../../../../components/tender-controls-panel";
 import ScoreBreakdownPanel from "../../../../components/score-breakdown-panel";
+import { MetadataCompletionPanel } from "../../../../components/metadata-completion-panel";
+import { CollapsiblePanel } from "../../../../components/collapsible-panel";
 import { detectAnalysisSource } from "../../../../lib/engine/analysis-source";
 
 function renderInline(text: string): React.ReactNode[] {
@@ -574,6 +576,45 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
   const [matchingDiagnostics, setMatchingDiagnostics] = useState<MatchingDiagnostics | null>(null);
   const [diagnosticsLoading, setDiagnosticsLoading] = useState(false);
   const [autoSavedAt, setAutoSavedAt] = useState<Date | null>(null);
+
+  // Collapsible diagnostic panel state — persisted per tender in localStorage.
+  const PANEL_IDS = ["metadata", "submission-plan", "requirements", "controls", "score"] as const;
+  type PanelId = (typeof PANEL_IDS)[number];
+  const PANEL_DEFAULTS: Record<PanelId, boolean> = {
+    "metadata": true,
+    "submission-plan": true,
+    "requirements": true,
+    "controls": false,
+    "score": false,
+  };
+  const [panels, setPanels] = useState<Record<PanelId, boolean>>(PANEL_DEFAULTS);
+  useEffect(() => {
+    const next = { ...PANEL_DEFAULTS };
+    for (const id of PANEL_IDS) {
+      const stored = localStorage.getItem(`tender-panel-${initial.id}:${id}`);
+      if (stored !== null) next[id] = stored === "true";
+    }
+    setPanels(next);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initial.id]);
+  function togglePanel(id: PanelId) {
+    setPanels((prev) => {
+      const next = { ...prev, [id]: !prev[id] };
+      localStorage.setItem(`tender-panel-${initial.id}:${id}`, String(next[id]));
+      return next;
+    });
+  }
+  function collapseAllPanels() {
+    const next = Object.fromEntries(PANEL_IDS.map((id) => [id, false])) as Record<PanelId, boolean>;
+    setPanels(next);
+    for (const id of PANEL_IDS) localStorage.setItem(`tender-panel-${initial.id}:${id}`, "false");
+  }
+  function expandAllPanels() {
+    const next = Object.fromEntries(PANEL_IDS.map((id) => [id, true])) as Record<PanelId, boolean>;
+    setPanels(next);
+    for (const id of PANEL_IDS) localStorage.setItem(`tender-panel-${initial.id}:${id}`, "true");
+  }
+
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isFirstRender = useRef(true);
   const [form, setForm] = useState({
@@ -1903,16 +1944,64 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
 
       <CanonicalReadinessScoreWidget tenderId={tender.id} />
 
-      {/* Submission Plan Completeness — answers the "Docs 6/19" question
-          by listing every required file with its status and the
-          recommended next action. */}
-      <SubmissionPlanCompletenessPanel tenderId={tender.id} />
+      {/* Collapsible diagnostic panels — expand/collapse all control */}
+      <div className="flex items-center justify-end gap-3 -mb-2">
+        <button
+          type="button"
+          onClick={expandAllPanels}
+          className="text-xs text-slate-500 hover:text-slate-800 min-h-[36px] px-2 touch-manipulation"
+        >
+          Expand all
+        </button>
+        <span className="text-slate-300 select-none">|</span>
+        <button
+          type="button"
+          onClick={collapseAllPanels}
+          className="text-xs text-slate-500 hover:text-slate-800 min-h-[36px] px-2 touch-manipulation"
+        >
+          Collapse all
+        </button>
+      </div>
 
-      <RequirementCoveragePanel tenderId={tender.id} />
+      <CollapsiblePanel
+        title="Metadata Completion"
+        isOpen={panels["metadata"]}
+        onToggle={() => togglePanel("metadata")}
+      >
+        <MetadataCompletionPanel tenderId={tender.id} />
+      </CollapsiblePanel>
 
-      <TenderControlsPanel tenderId={tender.id} />
+      <CollapsiblePanel
+        title="Submission Plan"
+        isOpen={panels["submission-plan"]}
+        onToggle={() => togglePanel("submission-plan")}
+      >
+        <SubmissionPlanCompletenessPanel tenderId={tender.id} />
+      </CollapsiblePanel>
 
-      <ScoreBreakdownPanel tenderId={tender.id} />
+      <CollapsiblePanel
+        title="Requirement Coverage"
+        isOpen={panels["requirements"]}
+        onToggle={() => togglePanel("requirements")}
+      >
+        <RequirementCoveragePanel tenderId={tender.id} />
+      </CollapsiblePanel>
+
+      <CollapsiblePanel
+        title="Tender Controls"
+        isOpen={panels["controls"]}
+        onToggle={() => togglePanel("controls")}
+      >
+        <TenderControlsPanel tenderId={tender.id} />
+      </CollapsiblePanel>
+
+      <CollapsiblePanel
+        title="Score Breakdown"
+        isOpen={panels["score"]}
+        onToggle={() => togglePanel("score")}
+      >
+        <ScoreBreakdownPanel tenderId={tender.id} />
+      </CollapsiblePanel>
 
       <div className={`grid gap-4 md:grid-cols-3 ${proposalQuality ? "xl:grid-cols-7" : "xl:grid-cols-6"}`}>
         <div className="rounded-2xl border bg-white p-5 shadow-sm">
