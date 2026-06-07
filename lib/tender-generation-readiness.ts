@@ -98,6 +98,31 @@ export type TenderGenerationReadiness = {
   generatedAt: string;
 };
 
+/**
+ * Parse numeric weights from evaluationCriteriaSourceJson.
+ * Handles "30%", "30 points", "30 marks", "30", "Technical 30%" etc.
+ * Returns { sum, covered, total } where covered = entries with a parseable weight.
+ */
+function parseEvalWeights(json: string | null | undefined): { sum: number; covered: number; total: number } | null {
+  if (!json) return null;
+  let parsed: unknown;
+  try { parsed = JSON.parse(json); } catch { return null; }
+  if (!Array.isArray(parsed) || parsed.length === 0) return null;
+  let sum = 0;
+  let covered = 0;
+  for (const entry of parsed) {
+    const raw = typeof entry === "object" && entry !== null ? (entry as Record<string, unknown>).weight : null;
+    const str = typeof raw === "string" ? raw : typeof raw === "number" ? String(raw) : null;
+    if (!str) continue;
+    const match = str.match(/(\d+(?:\.\d+)?)/);
+    if (match) {
+      sum += parseFloat(match[1]);
+      covered++;
+    }
+  }
+  return { sum, covered, total: parsed.length };
+}
+
 function criticalGapIsHardBlock(gap: { title: string; description: string; mitigationPlan: string | null }) {
   const text = `${gap.title} ${gap.description} ${gap.mitigationPlan ?? ""}`;
   return /(ineligible|debarred|blacklisted|deadline.*passed|late submission|missing required file name|missing exact file|tender not found|company profile required|no documents? have been generated|signature prohibited|branding prohibited)/i.test(text);
@@ -537,6 +562,11 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
     // Project match availability
     NO_PROJECT_MATCHES_FOUND: "PROJECT_MATCHES",
     NO_REVIEWED_PROJECT_MATCHES: "PROJECT_MATCHES",
+    // Evaluation weights
+    EVAL_WEIGHTS_INCOMPLETE: "EVAL_WEIGHTS",
+    EVAL_WEIGHTS_MISSING: "EVAL_WEIGHTS",
+    // Compliance matrix / evidence coverage
+    MANDATORY_EVIDENCE_NOT_ASSESSED: "EVIDENCE_COVERAGE",
     ALL_PROJECTS_UNREVIEWED: "PROJECT_MATCHES",
     FULL_PROPOSAL_NO_REVIEWED_PROJECTS: "PROJECT_MATCHES",
   };
@@ -653,6 +683,49 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
       message: `Tender prohibits stamps/seals. Final export will block with BRANDING_POLICY_CONFLICT. Toggle Stamp OFF in Settings.`,
       nextAction: "OPEN_SETTINGS",
     });
+  }
+
+  // ── Evaluation scoring weights validation ───────────────────────────────
+  // When evaluation criteria have been extracted with weights, verify they
+  // sum to approximately 100%. A sum far outside 80-120 usually means some
+  // criteria were missed or weights are in different units (points vs %).
+  // We only warn — the user may need to run AI Analyze again to get complete
+  // criteria, or the tender may express weights in a non-standard format.
+  const evalWeights = parseEvalWeights((tender as Record<string, unknown>).evaluationCriteriaSourceJson as string | null | undefined);
+  if (evalWeights && evalWeights.covered > 0) {
+    if (evalWeights.sum < 80 || evalWeights.sum > 120) {
+      warnings.push({
+        code: "EVAL_WEIGHTS_INCOMPLETE",
+        message: `Evaluation scoring weights extracted from the tender sum to ${Math.round(evalWeights.sum)}% (${evalWeights.covered} of ${evalWeights.total} criteria have weights). The proposal may not be correctly weighted — re-run AI Analyze to extract missing criteria weights before generating the technical proposal.`,
+        nextAction: "RETRY_AI_ANALYZE",
+      });
+    }
+  } else if (tender.evaluationMethodology && !(evalWeights && evalWeights.total > 0)) {
+    warnings.push({
+      code: "EVAL_WEIGHTS_MISSING",
+      message: "Evaluation methodology was extracted but individual scoring weights were not captured. Re-run AI Analyze to extract per-criterion weights so the technical proposal can be correctly weighted against each evaluation dimension.",
+      nextAction: "RETRY_AI_ANALYZE",
+    });
+  }
+
+  // ── Compliance matrix coverage at generation time ────────────────────────
+  // The export gate already hard-blocks when compliance coverage is <50%,
+  // but by that point the user has already generated documents. Surface the
+  // warning here (generation readiness) so the team knows to run Engine
+  // before generating — not after.
+  const mandatoryReqIds = tender.requirements.filter((r) => String(r.priority ?? "").toUpperCase() === "MANDATORY").map((r) => r.id);
+  if (mandatoryReqIds.length > 0) {
+    const cmModel = (client as unknown as Record<string, unknown>).complianceMatrix as undefined | { count: (q: unknown) => Promise<number> };
+    const complianceCount = cmModel
+      ? await cmModel.count({ where: { tenderId, requirementId: { in: mandatoryReqIds } } }).catch(() => -1)
+      : -1;
+    if (complianceCount === 0) {
+      warnings.push({
+        code: "MANDATORY_EVIDENCE_NOT_ASSESSED",
+        message: `${mandatoryReqIds.length} mandatory requirement(s) have no compliance matrix rows — evidence has not been linked. Run Engine to assess evidence coverage before generating documents.`,
+        nextAction: "RUN_ENGINE",
+      });
+    }
   }
 
   const supportPackageReady = blockers.length === 0;

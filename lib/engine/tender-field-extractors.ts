@@ -556,7 +556,7 @@ export function extractPreBidMeetingDate(input: ExtractorInput): ExtractedFieldO
   return { found: false, reason: "No pre-bid meeting date pattern found in tender text." };
 }
 
-
+// ─── Public manifest — which fields the extractor framework supports. ──
 export type ExtractorFieldName =
   | "reference"
   | "deadline"
