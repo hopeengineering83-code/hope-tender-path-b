@@ -1,28 +1,8 @@
 // Section evidence map (G5 fix)
 //
-// THE PROBLEM
-// ───────────
-// The latest engine emits a criterion evidence map at the proposal level
-// but does NOT trace each generated section back to:
-//   • the tender requirements it covers
-//   • the evidence IDs (experts, projects, evidences) it cites
-//   • a text hash so we can detect when a section has been edited
-//   • a reviewer status so we know who approved what
-//
-// Without this, the proposal-defensibility chain (auditor: "where in
-// the source did this claim come from?") breaks at the section level.
-//
-// THE FIX
-// ───────
-// `writeSectionEvidence()` records each section into SectionEvidenceMap.
-// `detectWeakSections()` reads the map back and flags sections with
-// low evidence count, no requirement coverage, or low word count.
-// `detectMissingCriterionDepth()` flags evaluation criteria that no
-// section addresses with material depth.
-//
-// Writes are idempotent: the unique index on
-// (tenderId, proposalVersion, sectionId) means a section can be
-// regenerated without orphaning its prior row.
+// Records each generated proposal section and the tender requirements / vault
+// evidence it supports. The evidence coverage panel reads these rows to show
+// whether mandatory requirements are covered, partially covered, or uncovered.
 
 import { createHash } from "node:crypto";
 import { prisma, prismaReady } from "../prisma";
@@ -30,17 +10,15 @@ import { prisma, prismaReady } from "../prisma";
 export interface SectionEvidenceInput {
   tenderId: string;
   proposalVersion: number;
-  sectionId: string;       // canonical, e.g. "cover-letter", "section-a-1"
+  sectionId: string;
   sectionTitle: string;
-  text: string;            // the rendered Markdown of the section
+  text: string;
   requirementIds?: string[];
   evidenceIds?: string[];
   expertIds?: string[];
   projectIds?: string[];
 }
 
-// ─── Phase 6: Evidence States ──────────────────────────────────────────────
-// SUGGESTED | AUTO_LINKED_PARTIAL | USER_CONFIRMED | COMPLIANCE_SUPPORTED | FULLY_ACCEPTED | REJECTED
 export type EvidenceReviewStatus =
   | "PENDING"
   | "SUGGESTED"
@@ -50,16 +28,110 @@ export type EvidenceReviewStatus =
   | "FULLY_ACCEPTED"
   | "REJECTED";
 
+export type RequirementForEvidenceMap = {
+  id: string;
+  title: string;
+  description?: string | null;
+  requirementType?: string | null;
+  priority?: string | null;
+};
+
+function unique(values: string[]): string[] {
+  return Array.from(new Set(values.filter(Boolean)));
+}
+
+function words(text: string): Set<string> {
+  return new Set(
+    text
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, " ")
+      .split(/\s+/)
+      .filter((word) => word.length >= 4),
+  );
+}
+
+function keywordHit(text: string, keywords: string[]): boolean {
+  const haystack = text.toLowerCase();
+  return keywords.some((keyword) => haystack.includes(keyword));
+}
+
+function sectionFamily(sectionId: string, sectionTitle: string): "OPENING" | "COMPANY" | "TECHNICAL" | "CLOSING" | "GENERIC" {
+  const text = `${sectionId} ${sectionTitle}`.toLowerCase();
+  if (keywordHit(text, ["cover", "summary", "opening"])) return "OPENING";
+  if (keywordHit(text, ["company", "experience", "profile", "section-a", "section-b"])) return "COMPANY";
+  if (keywordHit(text, ["technical", "methodology", "approach", "work plan", "section-c"])) return "TECHNICAL";
+  if (keywordHit(text, ["additional", "declaration", "appendix", "submission", "section-d"])) return "CLOSING";
+  return "GENERIC";
+}
+
+function familyKeywords(family: ReturnType<typeof sectionFamily>): string[] {
+  switch (family) {
+    case "OPENING":
+      return ["submission", "deadline", "delivery", "client", "subject", "email", "portal", "validity", "cover letter", "executive summary"];
+    case "COMPANY":
+      return ["company", "profile", "experience", "project", "similar", "reference", "expert", "personnel", "team", "qualification", "license", "registration", "legal", "eligibility", "financial", "audited", "capacity", "statement"];
+    case "TECHNICAL":
+      return ["technical", "methodology", "approach", "scope", "work plan", "deliverable", "solar", "pumping", "electro", "mechanical", "design", "survey", "supervision", "implementation", "quality"];
+    case "CLOSING":
+      return ["declaration", "appendix", "submission", "deadline", "delivery", "legal", "eligibility", "financial", "audited", "registration", "license", "compliance", "form"];
+    default:
+      return [];
+  }
+}
+
+function scoreRequirement(sectionId: string, sectionTitle: string, sectionText: string, requirement: RequirementForEvidenceMap): number {
+  const family = sectionFamily(sectionId, sectionTitle);
+  const reqText = `${requirement.title} ${requirement.description ?? ""} ${requirement.requirementType ?? ""}`.toLowerCase();
+  const sectionTextLower = `${sectionTitle} ${sectionText}`.toLowerCase();
+  let score = 0;
+
+  const reqWords = words(reqText);
+  const sectionWords = words(sectionTextLower);
+  for (const word of reqWords) {
+    if (sectionWords.has(word)) score += 2;
+  }
+
+  for (const keyword of familyKeywords(family)) {
+    if (reqText.includes(keyword)) score += 4;
+  }
+
+  if (keywordHit(reqText, ["submission", "deadline", "delivery", "email", "portal", "subject"]) && (family === "OPENING" || family === "CLOSING")) score += 8;
+  if (keywordHit(reqText, ["expert", "personnel", "team", "qualification", "electro", "mechanical", "solar pumping"]) && (family === "COMPANY" || family === "TECHNICAL")) score += 8;
+  if (keywordHit(reqText, ["financial", "audited", "capacity", "turnover", "bank"]) && (family === "COMPANY" || family === "CLOSING")) score += 8;
+  if (keywordHit(reqText, ["legal", "registration", "license", "eligibility", "tax", "vat", "tin"]) && (family === "COMPANY" || family === "CLOSING")) score += 8;
+  if (keywordHit(reqText, ["methodology", "technical", "scope", "deliverable", "work plan"]) && family === "TECHNICAL") score += 8;
+
+  return score;
+}
+
+export function inferSectionRequirementIds(opts: {
+  sectionId: string;
+  sectionTitle: string;
+  sectionText?: string | null;
+  requirements: RequirementForEvidenceMap[];
+}): string[] {
+  const scored = opts.requirements
+    .map((requirement) => ({ requirement, score: scoreRequirement(opts.sectionId, opts.sectionTitle, opts.sectionText ?? "", requirement) }))
+    .filter((entry) => entry.score >= 4)
+    .sort((a, b) => b.score - a.score);
+
+  if (scored.length > 0) return unique(scored.map((entry) => entry.requirement.id));
+
+  const highPriority = opts.requirements.filter((requirement) => ["MANDATORY", "CRITICAL", "HIGH"].includes((requirement.priority ?? "").toUpperCase()));
+  if (highPriority.length === 1) return [highPriority[0].id];
+  return [];
+}
+
 export async function writeSectionEvidence(input: SectionEvidenceInput): Promise<void> {
   await prismaReady;
   const text = (input.text || "").trim();
   const wordCount = text.split(/\s+/).filter(Boolean).length;
   const textHash = createHash("sha256").update(text).digest("hex").slice(0, 32);
 
-  const reqIds = (input.requirementIds ?? []).filter(Boolean).join("|");
-  const evdIds = (input.evidenceIds ?? []).filter(Boolean).join("|");
-  const expIds = (input.expertIds ?? []).filter(Boolean).join("|");
-  const prjIds = (input.projectIds ?? []).filter(Boolean).join("|");
+  const reqIds = unique(input.requirementIds ?? []).join("|");
+  const evdIds = unique(input.evidenceIds ?? []).join("|");
+  const expIds = unique(input.expertIds ?? []).join("|");
+  const prjIds = unique(input.projectIds ?? []).join("|");
 
   try {
     await prisma.sectionEvidenceMap.upsert({
@@ -155,19 +227,10 @@ export async function detectMissingCriterionDepth(tenderId: string, proposalVers
   return findings;
 }
 
-/**
- * Convenience: split a stitched proposal markdown into top-level sections
- * and write each one to the SectionEvidenceMap. Used at the end of
- * proposal generation when we want a one-shot record without changing
- * how individual sections are produced upstream.
- */
 export async function writeSectionEvidenceFromMarkdown(opts: {
   tenderId: string;
   proposalVersion: number;
   markdown: string;
-  // optional global lists; the function will associate ALL of these
-  // with each section. Per-section attribution can be added later by
-  // re-calling writeSectionEvidence() with finer grouping.
   requirementIds?: string[];
   expertIds?: string[];
   projectIds?: string[];
@@ -176,6 +239,13 @@ export async function writeSectionEvidenceFromMarkdown(opts: {
   const sectionRegex = /^# +(.+)$/gm;
   const matches = Array.from(markdown.matchAll(sectionRegex));
   if (matches.length === 0) return { sectionsWritten: 0 };
+
+  const requirements = opts.requirementIds && opts.requirementIds.length > 0
+    ? []
+    : await prisma.tenderRequirement.findMany({
+        where: { tenderId: opts.tenderId },
+        select: { id: true, title: true, description: true, requirementType: true, priority: true },
+      }).catch(() => [] as RequirementForEvidenceMap[]);
 
   let written = 0;
   for (let i = 0; i < matches.length; i += 1) {
@@ -186,13 +256,16 @@ export async function writeSectionEvidenceFromMarkdown(opts: {
     const text = markdown.slice(start, end).trim();
     const title = m[1].trim();
     const sectionId = title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 80) || `section-${i}`;
+    const inferredRequirementIds = opts.requirementIds && opts.requirementIds.length > 0
+      ? opts.requirementIds
+      : inferSectionRequirementIds({ sectionId, sectionTitle: title, sectionText: text, requirements });
     await writeSectionEvidence({
       tenderId: opts.tenderId,
       proposalVersion: opts.proposalVersion,
       sectionId,
       sectionTitle: title,
       text,
-      requirementIds: opts.requirementIds,
+      requirementIds: inferredRequirementIds,
       expertIds: opts.expertIds,
       projectIds: opts.projectIds,
     });
