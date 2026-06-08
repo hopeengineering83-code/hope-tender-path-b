@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { getSession } from "../lib/auth";
 import { prisma, prismaReady } from "../lib/prisma";
-import { assessExtractionQuality, assessExtractionQualityPerPage } from "../lib/extraction-quality";
+import { assessExtractionQuality, assessExtractionQualityPerPage, buildReportFromStoredPages, type PageQualityEntry } from "../lib/extraction-quality";
 import { isExtractionCorrupted, summarizeExtractionCoverage } from "../lib/engine/extraction-quality-gate";
 
 const EXTRACTION_STATUS_LABELS: Record<string, string> = {
@@ -28,7 +28,7 @@ export async function ExtractionQualityPanel({ tenderId }: { tenderId: string })
         select: {
           id: true, fileName: true, originalFileName: true,
           mimeType: true, totalPages: true, extractedPages: true, ocrPages: true, failedPages: true,
-          extractionScore: true, extractionMethod: true, ocrModel: true,
+          extractionScore: true, extractionMethod: true, ocrModel: true, pageStatusJson: true,
         },
       },
     },
@@ -65,12 +65,26 @@ export async function ExtractionQualityPanel({ tenderId }: { tenderId: string })
       !ocrReason &&
       /OCR required but not configured|set PDF_OCR_ENABLED=true/i.test(extractedText);
     const quality = assessExtractionQuality(extractedText, file.originalFileName || file.fileName);
+    // Prefer the stored per-page report (computed during AI Analyze on the full text)
+    // over re-computing from the 6000-char sample which only covers the first few pages.
+    let perPage;
+    const rawPageStatus = (file as { pageStatusJson?: string | null }).pageStatusJson;
+    if (rawPageStatus) {
+      try {
+        const stored = JSON.parse(rawPageStatus) as PageQualityEntry[];
+        perPage = buildReportFromStoredPages(Array.isArray(stored) ? stored : []);
+      } catch {
+        perPage = assessExtractionQualityPerPage(extractedText);
+      }
+    } else {
+      perPage = assessExtractionQualityPerPage(extractedText);
+    }
     return {
       id: file.id,
       fileName: file.originalFileName || file.fileName,
       mimeType: file.mimeType,
       quality,
-      perPage: assessExtractionQualityPerPage(extractedText),
+      perPage,
       totalPages: file.totalPages,
       extractedPages: file.extractedPages,
       ocrPages: file.ocrPages,

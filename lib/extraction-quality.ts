@@ -190,6 +190,22 @@ export function assessExtractionQuality(text: string | null | undefined, fileNam
 
 const LOW_DENSITY_THRESHOLD = 150; // chars per page below which we flag as low-density
 
+export function buildReportFromStoredPages(pages: PageQualityEntry[]): PerPageExtractionReport {
+  const perfectPages = pages.filter((p) => p.status === "GOOD").map((p) => p.page);
+  const lowDensityPages = pages.filter((p) => p.status === "LOW_DENSITY").map((p) => p.page);
+  const blankPages = pages.filter((p) => p.status === "BLANK").map((p) => p.page);
+  const failedPages = pages.filter((p) => p.status === "FAILED").map((p) => p.page);
+  const ocrPages = pages.filter((p) => p.status === "OCR").map((p) => p.page);
+  const tableHeavyPages = pages.filter((p) => p.status === "TABLE_HEAVY").map((p) => p.page);
+  const submissionInstructionPages = pages.filter((p) => p.hasSubmissionInstructions).map((p) => p.page);
+  const evaluationCriteriaPages = pages.filter((p) => p.hasEvaluationCriteria).map((p) => p.page);
+  const requiredDocumentPages = pages.filter((p) => p.hasRequiredDocuments).map((p) => p.page);
+  const clientDetailPages = pages.filter((p) => p.hasClientDetails).map((p) => p.page);
+  const totalDetectedPages = pages.length;
+  const coveragePercent = totalDetectedPages > 0 ? Math.round((perfectPages.length / totalDetectedPages) * 100) : 0;
+  return { totalDetectedPages, perfectPages, lowDensityPages, blankPages, failedPages, ocrPages, tableHeavyPages, submissionInstructionPages, evaluationCriteriaPages, requiredDocumentPages, clientDetailPages, coveragePercent, pages };
+}
+
 export function assessExtractionQualityPerPage(text: string | null | undefined): PerPageExtractionReport {
   const raw = text ?? "";
 
