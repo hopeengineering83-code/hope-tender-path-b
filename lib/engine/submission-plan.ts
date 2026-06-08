@@ -74,6 +74,9 @@ export type TenderLike = {
   exactFileOrder?: string | null;
   pageLimit?: number | null;
   requirements?: TenderRequirementLike[];
+  submissionMethod?: string | null;
+  tenderCategory?: string | null;
+  analysisExtractionStatus?: string | null;
 };
 
 export type GeneratedDocumentLike = {
@@ -316,6 +319,47 @@ function buildQuantityRules(requirements: TenderRequirementLike[]): SubmissionPl
   return Array.from(grouped.values());
 }
 
+export function buildSubmissionPlanWithDerivedFallback(tender: TenderLike): SubmissionPlan {
+  const plan = buildSubmissionPlan(tender);
+  if (plan.files.length > 0 || (tender.requirements ?? []).length === 0) return plan;
+
+  const derivedEntries = buildDerivedDraftPlan({
+    requirements: (tender.requirements ?? []).map((r) => ({
+      title: r.title,
+      description: r.description,
+      requirementType: r.requirementType,
+      priority: r.priority,
+    })),
+    submissionMethod: tender.submissionMethod,
+    title: tender.title,
+    tenderCategory: tender.tenderCategory,
+    analysisExtractionStatus: tender.analysisExtractionStatus,
+  });
+
+  if (derivedEntries.length === 0) return plan;
+
+  const derivedFiles = derivedEntries.map((entry, index): SubmissionPlanFile => ({
+    canonicalId: `derived-${index + 1}`,
+    exactFileName: fileNameWithExtension(entry.name, "DOCX"),
+    documentType: entry.documentType,
+    required: entry.required,
+    exactOrder: index + 1,
+    format: "DOCX",
+    envelope: (entry.documentType === "FINANCIAL" ? "FINANCIAL" : "TECHNICAL"),
+    sourceRequirementIds: [],
+    pageLimit: null,
+    templateRequired: false,
+    templateSourceFileId: null,
+    brandingAllowed: true,
+    signatureAllowed: true,
+    stampAllowed: true,
+    grouping: null,
+    notes: entry.derivedFrom,
+  }));
+
+  return { ...plan, files: derivedFiles, warnings: [...plan.warnings, "Submission plan is a derived draft; confirm exact file names/order before export."] };
+}
+
 export function buildSubmissionPlan(tender: TenderLike): SubmissionPlan {
   const requirements = tender.requirements ?? [];
   const files = new Map<string, SubmissionPlanFile>();
@@ -365,7 +409,8 @@ export function submissionPlanFileCount(plan: SubmissionPlan): number {
 export function hasExplicitSubmissionScope(tender: TenderLike): boolean {
   return parseStringArray(tender.exactFileNaming).length > 0
     || parseStringArray(tender.exactFileOrder).length > 0
-    || (tender.requirements ?? []).some((requirement) => Boolean(requirement.exactFileName));
+    || (tender.requirements ?? []).some((requirement) => Boolean(requirement.exactFileName))
+    || (tender.requirements ?? []).length > 0;
 }
 
 export function plannedSubmissionTargetFiles(plan: SubmissionPlan): SubmissionPlanFile[] {

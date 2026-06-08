@@ -2,7 +2,7 @@ import type { PrismaClient } from "@prisma/client";
 import { getTenderGenerationReadiness } from "./tender-generation-readiness";
 import { assessMatchingQuality } from "./matching-quality";
 import { getCompanyIngestionReadiness } from "./company-ingestion-readiness";
-import { buildSubmissionPlan, findMissingGeneratedDocuments } from "./engine/submission-plan";
+import { buildSubmissionPlan, buildSubmissionPlanWithDerivedFallback, findMissingGeneratedDocuments } from "./engine/submission-plan";
 
 export type CanonicalTenderReadiness = {
   readyForAnalysis: boolean;
@@ -55,7 +55,7 @@ export async function getCanonicalTenderReadiness(client: PrismaClient, userId: 
     vaultReviewedExperts: companyReadiness.totals.reviewedExperts,
     vaultReviewedProjects: companyReadiness.totals.reviewedProjects,
   });
-  const plan = buildSubmissionPlan(tender);
+  const plan = buildSubmissionPlanWithDerivedFallback(tender);
   const missing = findMissingGeneratedDocuments(plan, tender.generatedDocuments);
   const expertRequirementExists = tender.requirements.some((r) => r.requirementType === "EXPERT");
   const projectRequirementExists = tender.requirements.some((r) => r.requirementType === "PROJECT_EXPERIENCE");

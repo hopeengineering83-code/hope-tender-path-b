@@ -3,7 +3,7 @@ import { Document, HeadingLevel, Packer, Paragraph, TextRun } from "docx";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { logAction } from "../../../../../lib/audit";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
-import { buildSubmissionPlan, findMissingGeneratedDocuments } from "../../../../../lib/engine/submission-plan";
+import { buildSubmissionPlan, buildSubmissionPlanWithDerivedFallback, findMissingGeneratedDocuments } from "../../../../../lib/engine/submission-plan";
 import { MUTATION_RATE_LIMIT, rateLimit } from "../../../../../lib/rate-limit";
 import { extractRequestId } from "../../../../../lib/request-id";
 
@@ -172,12 +172,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   });
   if (!tender) return NextResponse.json({ error: "Tender not found", code: "TENDER_NOT_FOUND" }, { status: 404 });
 
-  const plan = buildSubmissionPlan({
+  const plan = buildSubmissionPlanWithDerivedFallback({
     id: tender.id,
     title: tender.title,
     exactFileNaming: tender.exactFileNaming,
     exactFileOrder: tender.exactFileOrder,
     pageLimit: tender.pageLimit,
+    submissionMethod: tender.submissionMethod,
+    tenderCategory: (tender as any).category,
+    analysisExtractionStatus: (tender as any).analysisExtractionStatus,
     requirements: tender.requirements,
   });
   const missing = findMissingGeneratedDocuments(plan, tender.generatedDocuments);
@@ -219,9 +222,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       exactOrder: file.exactOrder,
       fileContent: generated.fileContent,
       generationStatus: "GENERATED",
-      validationStatus: generated.validationStatus,
+      validationStatus: "PENDING",
       reviewStatus: generated.reviewStatus,
-      contentSummary: generated.contentSummary,
+      contentSummary: [generated.contentSummary, file.notes?.includes("DERIVED_DRAFT_UNCONFIRMED") ? "DERIVED_DRAFT_UNCONFIRMED" : ""].filter(Boolean).join(" ").trim(),
       updatedAt: new Date(),
     };
     if (existing) {

@@ -18,7 +18,7 @@
 import { NextResponse } from "next/server";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
-import { buildSubmissionPlan } from "../../../../../lib/engine/submission-plan";
+import { buildSubmissionPlan, buildSubmissionPlanWithDerivedFallback } from "../../../../../lib/engine/submission-plan";
 import { reconcileGeneratedDocuments, applyReconcileDecisions } from "../../../../../lib/engine/reconcile-generated-docs";
 import { logAction } from "../../../../../lib/audit";
 import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../../lib/rate-limit";
@@ -62,7 +62,10 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     );
   }
 
-  const plan = buildSubmissionPlan({
+  const plan = buildSubmissionPlanWithDerivedFallback({
+    submissionMethod: (tender as any).submissionMethod,
+    tenderCategory: (tender as any).category,
+    analysisExtractionStatus: (tender as any).analysisExtractionStatus,
     id: tender.id,
     title: tender.title,
     exactFileNaming: tender.exactFileNaming,

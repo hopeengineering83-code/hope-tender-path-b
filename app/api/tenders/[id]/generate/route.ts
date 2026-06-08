@@ -6,7 +6,7 @@ import { generateTenderDocuments } from "../../../../../lib/engine/generate-elit
 import { promoteBestAvailableReviewedMatchesForGeneration } from "../../../../../lib/engine/best-available-selection";
 import { applyActiveUploadedLetterheadToTenderDocuments } from "../../../../../lib/engine/apply-active-letterhead";
 import { rateLimit, AI_RATE_LIMIT } from "../../../../../lib/rate-limit";
-import { buildSubmissionPlan, findExtraGeneratedDocuments, findMissingGeneratedDocuments, generatedDocumentSubmissionKey, hasExplicitSubmissionScope, plannedSubmissionTargetFiles, plannedSubmissionTargetKeys, type SubmissionPlanFile } from "../../../../../lib/engine/submission-plan";
+import { buildSubmissionPlan, buildSubmissionPlanWithDerivedFallback, findExtraGeneratedDocuments, findMissingGeneratedDocuments, generatedDocumentSubmissionKey, hasExplicitSubmissionScope, plannedSubmissionTargetFiles, plannedSubmissionTargetKeys, type SubmissionPlanFile } from "../../../../../lib/engine/submission-plan";
 import { getCompanyIngestionReadiness } from "../../../../../lib/company-ingestion-readiness";
 import { polishBenchmarkOutput } from "../../../../../lib/engine/benchmark-output-polisher";
 import { cleanTenderTitle, cleanClientName, formatRequirementLine } from "../../../../../lib/engine/proposal-labels";
@@ -362,6 +362,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   {
     const reqUrl = new URL(req.url);
     if (reqUrl.searchParams.get("planOnly") !== "true") {
+      const explicitScope = hasExplicitSubmissionScope(tender);
       let anySubmission = false;
       let anyRequiredDocs = false;
       let anyEvaluation = false;
@@ -432,6 +433,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   {
     const reqUrl = new URL(req.url);
     if (reqUrl.searchParams.get("planOnly") !== "true") {
+      const explicitScope = hasExplicitSubmissionScope(tender);
       const missingCritical: string[] = [];
       if (!tender.deadline) missingCritical.push("Submission deadline is not set.");
       if (!tender.submissionMethod) missingCritical.push("Submission method is not set.");
@@ -467,6 +469,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   {
     const reqUrl = new URL(req.url);
     if (reqUrl.searchParams.get("planOnly") !== "true") {
+      const explicitScope = hasExplicitSubmissionScope(tender);
       const planCheck = await hasValidSubmissionPlan(prisma, tender.id);
       if (!planCheck.valid) {
         return NextResponse.json({
@@ -489,7 +492,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         },
       });
       const totalPlanned = planCheck.plannedCount;
-      if (allDerivedUnconfirmed > 0 && allDerivedUnconfirmed === totalPlanned && totalPlanned > 0) {
+      if (allDerivedUnconfirmed > 0 && allDerivedUnconfirmed === totalPlanned && totalPlanned > 0 && explicitScope) {
         return NextResponse.json({
           errorCode: "DERIVED_PLAN_UNCONFIRMED",
           error: "The submission plan was automatically derived from requirement keywords and has not been confirmed against the actual tender document. Review the plan, verify each required document, and confirm before generating.",
@@ -718,7 +721,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }
   }
 
-  const submissionPlan = buildSubmissionPlan({ id: tender.id, title: tender.title, exactFileNaming: tender.exactFileNaming, exactFileOrder: tender.exactFileOrder, pageLimit: tender.pageLimit, requirements: tender.requirements });
+  const submissionPlan = buildSubmissionPlanWithDerivedFallback({ id: tender.id, title: tender.title, exactFileNaming: tender.exactFileNaming, exactFileOrder: tender.exactFileOrder, pageLimit: tender.pageLimit, requirements: tender.requirements, submissionMethod: tender.submissionMethod, tenderCategory: tender.category, analysisExtractionStatus: tender.analysisExtractionStatus });
   const explicitSubmissionScope = hasExplicitSubmissionScope(tender);
   const plannedTargetFiles = explicitSubmissionScope ? plannedSubmissionTargetFiles(submissionPlan) : [];
   const plannedFileKeys = explicitSubmissionScope ? plannedSubmissionTargetKeys(submissionPlan) : undefined;

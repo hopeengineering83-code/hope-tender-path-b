@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { getSession } from "../lib/auth";
 import { prisma, prismaReady } from "../lib/prisma";
-import { buildSubmissionPlan, findExtraGeneratedDocuments, findMissingGeneratedDocuments, submissionPlanFileCount, submissionPlanFileKey, type SubmissionEnvelope } from "../lib/engine/submission-plan";
+import { buildSubmissionPlan, buildSubmissionPlanWithDerivedFallback, findExtraGeneratedDocuments, findMissingGeneratedDocuments, submissionPlanFileCount, submissionPlanFileKey, type SubmissionEnvelope } from "../lib/engine/submission-plan";
 import { BuildSubmissionPlanButton } from "./build-submission-plan-button";
 import { GenerateMissingPlanFilesButton } from "./generate-missing-plan-files-button";
 import { ReconcileStaleFilesButton } from "./reconcile-stale-files-button";
@@ -39,9 +39,12 @@ export async function SubmissionPlanReconciliationPanel({ tenderId }: { tenderId
   });
   if (!tender) return null;
 
-  const plan = buildSubmissionPlan({
+  const plan = buildSubmissionPlanWithDerivedFallback({
     id: tender.id,
     title: tender.title,
+    submissionMethod: tender.submissionMethod,
+    tenderCategory: tender.category,
+    analysisExtractionStatus: tender.analysisExtractionStatus,
     exactFileNaming: tender.exactFileNaming,
     exactFileOrder: tender.exactFileOrder,
     pageLimit: tender.pageLimit,
