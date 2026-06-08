@@ -392,3 +392,61 @@ describe("ExtractionQualityDashboard — fileContent NOT selected", () => {
     );
   });
 });
+
+describe("ExtractionQualityDashboard — clientDetailPages shown in content grid", () => {
+  it("assessExtractionQualityPerPage returns clientDetailPages array", () => {
+    const { assessExtractionQualityPerPage } = require("../lib/extraction-quality");
+    // Text with clear client/contact section markers
+    const text = [
+      "[Page 1]",
+      "INVITATION TO TENDER",
+      "Procurement Authority: Ministry of Health",
+      "[Page 2]",
+      "Contact Person: John Smith, Procurement Officer",
+      "Tel: +1 555-000-1234",
+      "Email: procurement@ministry.gov",
+      "Address: 12 Government St, Capital City",
+      "[Page 3]",
+      "SECTION 2: SCOPE OF WORK",
+      "The contractor shall provide services...",
+    ].join("\n");
+    const report = assessExtractionQualityPerPage(text);
+    assert.ok(Array.isArray(report.clientDetailPages), "clientDetailPages must be an array");
+    assert.ok(report.clientDetailPages.length > 0, "client/contact page should be detected");
+  });
+
+  it("clientDetailPages is empty for text with no client/contact markers", () => {
+    const { assessExtractionQualityPerPage } = require("../lib/extraction-quality");
+    const text = [
+      "[Page 1]",
+      "SECTION 3: TECHNICAL SPECIFICATIONS",
+      "The equipment shall comply with ISO 9001.",
+      "[Page 2]",
+      "SECTION 4: EVALUATION CRITERIA",
+      "Technical score: 70 points. Financial score: 30 points.",
+    ].join("\n");
+    const report = assessExtractionQualityPerPage(text);
+    assert.ok(Array.isArray(report.clientDetailPages), "clientDetailPages must be an array");
+  });
+
+  it("dashboard component source shows clientDetailPages in the content-page grid", async () => {
+    const { readFileSync } = require("node:fs");
+    const { resolve } = require("node:path");
+    const src = readFileSync(
+      resolve(process.cwd(), "components/extraction-quality-dashboard.tsx"),
+      "utf8",
+    );
+    assert.ok(
+      src.includes("clientDetailPages"),
+      "dashboard must show clientDetailPages in the content-page detection grid",
+    );
+    assert.ok(
+      src.includes("Client Details"),
+      "dashboard must label the clientDetailPages column as 'Client Details'",
+    );
+    assert.ok(
+      src.includes("client/contact detail pages"),
+      "dashboard must warn when no client/contact detail pages are detected",
+    );
+  });
+});
