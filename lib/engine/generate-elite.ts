@@ -1712,6 +1712,22 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
           sourceMarkdown = repairSectionC2SubSections(sourceMarkdown, aiInput.requirements, aiInput.tenderTitle, aiInput.clientName);
         }
       }
+      // Log which of the four mandatory scored sections were absent in the raw AI output.
+      // Deterministic builders always inject E/F/G/H regardless, but this gives
+      // observability into AI model quality — if sections are routinely missing,
+      // the prompt or model needs attention.
+      const mandatoryCheck: Array<[string, RegExp]> = [
+        ["E (Compliance Matrix)", /compliance matrix|section e/i],
+        ["F (Evaluator Mirror)", /evaluation criteria response mirror|evaluator response mirror|section f/i],
+        ["G (Win Themes)", /win themes|discriminators|section g/i],
+        ["H (Proposal Self-Score)", /proposal self.score|self.?score|section h/i],
+        ["Submission Control Sheet", /submission control sheet/i],
+      ];
+      const missingSections = mandatoryCheck.filter(([, re]) => !re.test(sourceMarkdown)).map(([name]) => name);
+      if (missingSections.length > 0) {
+        console.warn(`[generate-elite] AI output missing mandatory sections (deterministic builders will inject): ${missingSections.join(", ")}`);
+      }
+
       const provider = getLastProposalProvider() ?? "ai";
       const pathLabel = useParallel ? "section-parallel" : "single-call";
       mode = `${provider === "claude" ? "Claude" : provider === "gemini" ? "Gemini" : provider === "openai" ? "GPT-4o" : "AI"} ${pathLabel} bid-writer + evaluator response matrix + full evidence library + client-ready benchmark finalizer + professional DOCX polish`;

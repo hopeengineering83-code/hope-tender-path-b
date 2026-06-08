@@ -22,6 +22,8 @@
  *
  * Returns score (0–100) and a list of weak axes for transparency. Total is
  * normalised: 10 axes × 10 max = 100 raw, so the score IS the percentage.
+ * Required sections (structureCompleteness): Cover Letter, Executive Summary,
+ * A–D, Declaration, Submission Control Sheet (8 sections).
  *
  * The four new axes (complianceMatrixCoverage, evaluatorMirrorCoverage,
  * winThemesPresence, selfScorePresence) verify that the four mandatory
@@ -63,6 +65,7 @@ const REQUIRED_SECTIONS = [
   /(section c|technical approach|methodology)/i,
   /(section d|additional information|value)/i,
   /declaration/i,
+  /submission control sheet/i,
 ];
 
 // ─── Sector vocabulary with word-boundary-safe abbreviations ────────
