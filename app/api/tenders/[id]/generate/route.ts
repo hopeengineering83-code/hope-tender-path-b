@@ -281,9 +281,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     nextAction: "OPEN_COMPANY_READINESS",
     diagnosticId: `ingestion-not-ready-${id}`,
   }, { status: 422 });
-  // Accept procuringEntityName as a fallback for clientName — AI Analyze may set
-  // procuringEntityName without back-filling clientName on older tenders.
-  const effectiveClientName = tender.clientName || (tender as Record<string, unknown>).procuringEntityName as string | null | undefined;
+  // Accept procuringEntityName / legalClientName / donorAgency / implementingAgency as
+  // fallbacks for clientName — AI Analyze may set procuringEntityName without
+  // back-filling clientName on older tenders, and some tenders only have a donor/
+  // implementing agency as the contracting entity.
+  const t = tender as Record<string, unknown>;
+  const effectiveClientName = (tender.clientName
+    || t.procuringEntityName
+    || t.legalClientName
+    || t.donorAgency
+    || t.implementingAgency) as string | null | undefined;
   if (!hasRealClientName(effectiveClientName)) return NextResponse.json({
     errorCode: "CLIENT_NAME_REQUIRED",
     error: "Generation blocked: client name is not set. Edit the tender and fill the Client Name field before generating proposal documents.",

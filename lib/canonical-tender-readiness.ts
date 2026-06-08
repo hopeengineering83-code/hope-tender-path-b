@@ -27,7 +27,21 @@ export async function getCanonicalTenderReadiness(client: PrismaClient, userId: 
       requirements: true,
       expertMatches: { include: { expert: { select: { trustLevel: true } } } },
       projectMatches: { include: { project: { select: { trustLevel: true } } } },
-      generatedDocuments: { where: { generationStatus: { not: "SUPERSEDED" } } },
+      generatedDocuments: {
+        where: { generationStatus: { not: "SUPERSEDED" } },
+        select: {
+          id: true,
+          name: true,
+          exactFileName: true,
+          exactOrder: true,
+          documentType: true,
+          format: true,
+          generationStatus: true,
+          validationStatus: true,
+          reviewStatus: true,
+          contentSummary: true,
+        },
+      },
     },
   });
   if (!tender) return null;
