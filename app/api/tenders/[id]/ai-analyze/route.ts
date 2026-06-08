@@ -8,7 +8,7 @@ import { logAction } from "../../../../../lib/audit";
 import { rateLimit, AI_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import { extractRequestId } from "../../../../../lib/request-id";
 import { createNotification } from "../../../../../lib/notifications";
-import { assessExtractionQuality } from "../../../../../lib/extraction-quality";
+import { assessExtractionQuality, assessExtractionQualityPerPage } from "../../../../../lib/extraction-quality";
 import { deriveExtractionStatus, isExtractionCorrupted, type TenderFileQuality } from "../../../../../lib/engine/extraction-quality-gate";
 import { detectMetadataContamination } from "../../../../../lib/engine/tender-metadata-completeness";
 import { isValidClientContact } from "../../../../../lib/engine/metadata-validators";
@@ -506,6 +506,17 @@ async function handleStreamingAnalyze(
             }));
             const extractionStatus = deriveExtractionStatus(fileQualitySnapshots);
             void prisma.tender.update({ where: { id }, data: { analysisExtractionStatus: extractionStatus } }).catch(() => {});
+
+            // Persist per-page classification to TenderFile.pageStatusJson
+            for (const file of tenderRecord.files) {
+              const pageReport = assessExtractionQualityPerPage((file as { extractedText?: string | null }).extractedText);
+              if (pageReport.totalDetectedPages > 0) {
+                void prisma.tenderFile.update({
+                  where: { id: (file as { id: string }).id },
+                  data: { pageStatusJson: JSON.stringify(pageReport.pages) },
+                }).catch(() => {});
+              }
+            }
 
             analysisResult = {
               ai: true, fallback: false,
@@ -1070,6 +1081,19 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           where: { id },
           data: { analysisExtractionStatus: extractionStatus },
         }).catch(() => {});
+
+        // Persist per-page classification (submission/eval/required-docs/client pages)
+        // to TenderFile.pageStatusJson so the Extraction Quality panel and downstream
+        // gates can read structured page metadata without re-parsing extractedText.
+        for (const file of tenderRecord.files) {
+          const pageReport = assessExtractionQualityPerPage((file as { extractedText?: string | null }).extractedText);
+          if (pageReport.totalDetectedPages > 0) {
+            void prisma.tenderFile.update({
+              where: { id: (file as { id: string }).id },
+              data: { pageStatusJson: JSON.stringify(pageReport.pages) },
+            }).catch(() => {});
+          }
+        }
 
         analysisResult = {
           ai: true,
