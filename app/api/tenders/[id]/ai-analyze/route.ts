@@ -173,9 +173,10 @@ async function handleStreamingAnalyze(
         const { id } = params;
         const reqUrl = new URL(req.url);
         const force = reqUrl.searchParams.get("force") === "true";
-        const continueJobId = reqUrl.searchParams.get("continue");
+        let continueJobId = reqUrl.searchParams.get("continue");
         let startFromChunk: number | undefined;
         let existingContentHash: string | undefined;
+        let previousChunkResults: Array<{ index: number; result: any; provider?: string | null }> = [];
 
         await prismaReady;
 
@@ -185,9 +186,14 @@ async function handleStreamingAnalyze(
           });
           if (existingJob?.output) {
             try {
-              const savedOutput = JSON.parse(existingJob.output) as { completedChunks?: number; contentHash?: string };
-              startFromChunk = savedOutput.completedChunks ?? 0;
-              existingContentHash = savedOutput.contentHash;
+               const savedOutput = JSON.parse(existingJob.output);
+               if (savedOutput) {
+                 previousChunkResults = savedOutput.chunkResults || [];
+                 startFromChunk = previousChunkResults.length > 0
+                   ? Math.max(...previousChunkResults.map((entry: any) => entry.index)) + 1
+                   : (typeof savedOutput.completedChunks === "number" ? savedOutput.completedChunks : 0);
+                 existingContentHash = typeof savedOutput.contentHash === "string" ? savedOutput.contentHash : undefined;
+               }
             } catch { /* ignore parse errors — do a full re-run */ }
           }
         }
@@ -340,7 +346,7 @@ async function handleStreamingAnalyze(
             const deadlineAt = Date.now() + SAFE_DEADLINE_MS;
             try {
               aiMeta = await withTimeout(
-                analyzeWithAI(tenderContent, { deadlineAt, startFromChunk }),
+                analyzeWithAI(tenderContent, { deadlineAt, startFromChunk, previousChunkResults }),
                 AI_ANALYSIS_TIMEOUT_MS,
               );
             } catch (aiErr) {
@@ -440,7 +446,7 @@ async function handleStreamingAnalyze(
                 data: {
                   status: aiMeta.isPartial ? "PARTIAL_SUCCESS" : "SUCCEEDED",
                   finishedAt: new Date(),
-                  output: JSON.stringify({ isPartial: aiMeta.isPartial, totalChunks: aiMeta.totalChunks, completedChunks: aiMeta.completedChunks, failedChunks: aiMeta.failedChunks, skippedChunks: aiMeta.skippedChunks, chunkProviders: aiMeta.chunkProviders, contentHash, analysisSource: "AI", nextAction: aiMeta.isPartial ? "CONTINUE_AI_ANALYSIS" : null }),
+                  output: JSON.stringify({ isPartial: aiMeta.isPartial, totalChunks: aiMeta.totalChunks, completedChunks: aiMeta.completedChunks, failedChunks: aiMeta.failedChunks, skippedChunks: aiMeta.skippedChunks, chunkProviders: aiMeta.chunkProviders, chunkResults: aiMeta.chunkResults, contentHash, resumedFromJobId: continueJobId, analysisSource: "AI", nextAction: aiMeta.isPartial ? "CONTINUE_AI_ANALYSIS" : null }),
                 },
               }).catch(() => {});
 
@@ -574,18 +580,24 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const { id } = await params;
   const reqUrl = new URL(req.url);
   const force = reqUrl.searchParams.get("force") === "true";
-  const continueJobId = reqUrl.searchParams.get("continue");
+  let continueJobId = reqUrl.searchParams.get("continue");
   let startFromChunk: number | undefined;
   let existingContentHash: string | undefined;
+  let previousChunkResults: Array<{ index: number; result: any; provider?: string | null }> = [];
   if (continueJobId) {
     const existingJob = await prisma.aiJob.findFirst({
       where: { id: continueJobId, tenderId: id, userId },
     });
     if (existingJob?.output) {
       try {
-        const savedOutput = JSON.parse(existingJob.output) as { completedChunks?: number; contentHash?: string };
-        startFromChunk = savedOutput.completedChunks ?? 0;
-        existingContentHash = savedOutput.contentHash;
+        const savedOutput = JSON.parse(existingJob.output);
+        if (savedOutput) {
+          previousChunkResults = savedOutput.chunkResults || [];
+          startFromChunk = previousChunkResults.length > 0
+            ? Math.max(...previousChunkResults.map((entry: any) => entry.index)) + 1
+            : (typeof savedOutput.completedChunks === "number" ? savedOutput.completedChunks : 0);
+          existingContentHash = typeof savedOutput.contentHash === "string" ? savedOutput.contentHash : undefined;
+        }
       } catch { /* ignore parse errors — do a full re-run */ }
     }
   }
@@ -813,7 +825,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         let aiMeta: AnalysisWithMeta;
         try {
           aiMeta = await withTimeout(
-            analyzeWithAI(tenderContent, { deadlineAt, startFromChunk }),
+            analyzeWithAI(tenderContent, { deadlineAt, startFromChunk, previousChunkResults }),
             AI_ANALYSIS_TIMEOUT_MS,
           );
         } catch (aiErr) {
