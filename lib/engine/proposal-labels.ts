@@ -115,7 +115,7 @@ export function cleanTenderTitle(value?: string | null, context?: { clientName?:
  * Intended call sites:
  *   const requirements = tender.requirements.map(formatRequirementLine)
  */
-export function formatRequirementLine(req: { title?: string | null; description?: string | null }, maxDescriptionChars = 380): string {
+export function formatRequirementLine(req: { title?: string | null; description?: string | null; sourcePageNumber?: number | null }, maxDescriptionChars = 380): string {
   const title = normalizeLabel(req.title);
   let desc = normalizeLabel(req.description);
 
@@ -149,7 +149,12 @@ export function formatRequirementLine(req: { title?: string | null; description?
 
   // Truncate long descriptions.
   const shortDesc = desc.length > maxDescriptionChars ? `${desc.slice(0, maxDescriptionChars - 1).trim()}…` : desc;
-  return title ? `${title} — ${shortDesc}` : shortDesc;
+  const base = title ? `${title} — ${shortDesc}` : shortDesc;
+  // Append source page citation when available — helps AI and fallback prose
+  // write "as specified on page N" and aids compliance reviewers tracing
+  // each requirement back to the source tender document.
+  const pageTag = req.sourcePageNumber != null ? ` [p.${req.sourcePageNumber}]` : "";
+  return `${base}${pageTag}`;
 }
 
 export function safeFileBaseName(value?: string | null, fallback = "submission-package"): string {

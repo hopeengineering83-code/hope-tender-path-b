@@ -64,6 +64,27 @@ describe("formatRequirementLine", () => {
     assert.ok(out.startsWith("Mandatory licence"));
     assert.ok(out.includes("must be valid for 12 months"));
   });
+
+  it("appends source page citation when sourcePageNumber is provided", () => {
+    const out = formatRequirementLine({ title: "Technical Proposal", description: "Submit sealed technical proposal", sourcePageNumber: 12 });
+    assert.ok(out.includes("[p.12]"), `expected [p.12] in output, got: ${out}`);
+    assert.ok(out.startsWith("Technical Proposal"), "title must come first");
+  });
+
+  it("does not append page tag when sourcePageNumber is null", () => {
+    const out = formatRequirementLine({ title: "Financial Statement", description: "Last 3 years audited", sourcePageNumber: null });
+    assert.ok(!out.includes("[p."), `must not include page tag when null, got: ${out}`);
+  });
+
+  it("does not append page tag when sourcePageNumber is undefined (old call sites unaffected)", () => {
+    const out = formatRequirementLine({ title: "Experience", description: "5 years minimum" });
+    assert.ok(!out.includes("[p."), `must not include page tag when undefined, got: ${out}`);
+  });
+
+  it("page tag appears at the end of the formatted string", () => {
+    const out = formatRequirementLine({ title: "Bid Bond", description: "2% of contract value", sourcePageNumber: 7 });
+    assert.ok(out.endsWith("[p.7]"), `expected string to end with [p.7], got: ${out}`);
+  });
 });
 
 describe("safeFileBaseName", () => {
