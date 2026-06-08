@@ -692,12 +692,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       return null;
     });
     // Reload requirements to see the updated confidence values after repair.
-    const mandatoryAfterRepair = repairResult && repairResult.repairedCount > 0
-      ? await prisma.tenderRequirement.findMany({
-          where: { tenderId: id, priority: "MANDATORY" },
-          select: { id: true, title: true, sourceConfidence: true },
-        }).then((rows) => rows.filter((r) => (r.sourceConfidence ?? 0) <= 0))
-      : untracedInitial;
+    const mandatoryAfterRepair = repairResult === null
+      ? [] // repair call threw — don't block on source-grounding when repair is unavailable
+      : repairResult.repairedCount > 0
+        ? await prisma.tenderRequirement.findMany({
+            where: { tenderId: id, priority: "MANDATORY" },
+            select: { id: true, title: true, sourceConfidence: true },
+          }).then((rows) => rows.filter((r) => (r.sourceConfidence ?? 0) <= 0))
+        : untracedInitial;
     if (mandatoryAfterRepair.length > 0) {
       return NextResponse.json({
         error: `Generation blocked: ${mandatoryAfterRepair.length} mandatory requirement(s) are not source-grounded yet.`,

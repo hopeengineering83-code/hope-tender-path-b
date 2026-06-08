@@ -144,10 +144,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       fileContent,
       generationStatus: "GENERATED",
       validationStatus: "PENDING",
-      reviewStatus: isSubmissionRules ? "NOT_EXPORTABLE" : (replaceWithOriginal ? "REPLACE_WITH_ORIGINAL" : "PENDING"),
-      reviewNotes: isSubmissionRules
-        ? "Submission formatting/packaging rules are internal control metadata and are excluded from export."
-        : (replaceWithOriginal ? "DO NOT SUBMIT this generated placeholder. Replace it with the tender-issued original / signed / stamped / certified document before final export." : "Review this generated support control document before final export."),
+      reviewStatus: replaceWithOriginal ? "REPLACE_WITH_ORIGINAL" : "PENDING",
       contentSummary: replaceWithOriginal
         ? `Replacement-control record for tender-required file ${file.exactFileName}. This internal control record is intentionally non-final and must be replaced with the original before export.`
         : `Generated support-control record for tender-required file ${file.exactFileName}. Review before final export.`,
@@ -182,10 +179,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         fileContent,
         generationStatus: "GENERATED",
         validationStatus: "PENDING",
-        reviewStatus: isSubmissionRules ? "NOT_EXPORTABLE" : (replaceWithOriginal ? "REPLACE_WITH_ORIGINAL" : "PENDING"),
-        reviewNotes: isSubmissionRules
-          ? "Submission formatting/packaging rules are internal control metadata and are excluded from export."
-          : (replaceWithOriginal ? "DO NOT SUBMIT this generated placeholder. Replace it with the tender-issued original before final export." : "Review this generated support control document before final export."),
+        reviewStatus: replaceWithOriginal ? "REPLACE_WITH_ORIGINAL" : "PENDING",
         updatedAt: new Date(),
       },
     });

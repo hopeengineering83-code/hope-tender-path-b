@@ -443,8 +443,10 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
   // never show "Full proposal generation gate: passes" while the same POST
   // would return 422 with METADATA_INCOMPLETE_FOR_GENERATION. The two paths
   // call the same helper with the same inputs so they agree byte-for-byte.
+  const effectiveClientName = tender.clientName || (tender as Record<string, unknown>).procuringEntityName as string | null | undefined;
   const metadataReport = assessTenderMetadataCompleteness({
-    clientName: tender.clientName,
+    clientName: effectiveClientName,
+    procuringEntityName: (tender as Record<string, unknown>).procuringEntityName as string | null | undefined,
     title: tender.title,
     reference: tender.reference ?? null,
     country: tender.country ?? null,
