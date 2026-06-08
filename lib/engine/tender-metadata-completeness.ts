@@ -85,6 +85,9 @@ export type MetadataCompletenessInput = {
    *  the clientName gate so a tender with procuringEntityName set (but
    *  clientName not yet back-filled) is not incorrectly blocked. */
   procuringEntityName?: string | null;
+  legalClientName?: string | null;
+  donorAgency?: string | null;
+  implementingAgency?: string | null;
   title?: string | null;
   reference?: string | null;
   country?: string | null;
