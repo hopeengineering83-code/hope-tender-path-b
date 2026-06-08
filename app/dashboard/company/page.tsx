@@ -129,6 +129,12 @@ export default function CompanyPage() {
   const [deletingLegalId, setDeletingLegalId] = useState<string|null>(null);
   const [deletingFinancialId, setDeletingFinancialId] = useState<string|null>(null);
   const [complianceSubTab, setComplianceSubTab] = useState<"compliance"|"legal"|"financial">("compliance");
+  const [showAllExperts, setShowAllExperts] = useState(false);
+  const [showAllProjects, setShowAllProjects] = useState(false);
+  const [showAllCompliance, setShowAllCompliance] = useState(false);
+  const [showAllLegal, setShowAllLegal] = useState(false);
+  const [showAllFinancial, setShowAllFinancial] = useState(false);
+  const ROWS_PREVIEW = 5;
 
   async function loadComplianceData() {
     setComplianceLoading(true);
@@ -666,6 +672,7 @@ export default function CompanyPage() {
             ) : filteredExperts.length === 0 ? (
               <p className="text-sm text-slate-400 py-10 text-center">No experts match your search.</p>
             ) : (
+              <>
               <table className="w-full text-sm">
                 <thead className="bg-slate-50 text-left text-slate-500 text-xs">
                   <tr>
@@ -677,7 +684,7 @@ export default function CompanyPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y">
-                  {filteredExperts.map(ex => (
+                  {(showAllExperts ? filteredExperts : filteredExperts.slice(0, ROWS_PREVIEW)).map(ex => (
                     <tr key={ex.id} className="hover:bg-slate-50">
                       <td className="px-5 py-3 font-medium text-slate-900">{ex.fullName}</td>
                       <td className="px-5 py-3 text-slate-500 hidden md:table-cell">{ex.title??"-"}</td>
@@ -693,6 +700,14 @@ export default function CompanyPage() {
                   ))}
                 </tbody>
               </table>
+              {filteredExperts.length > ROWS_PREVIEW && (
+                <div className="border-t px-5 py-2.5 text-center">
+                  <button onClick={() => setShowAllExperts(v => !v)} className="text-xs text-slate-500 hover:text-slate-700 font-medium">
+                    {showAllExperts ? `Show fewer` : `Show all ${filteredExperts.length} experts ▼`}
+                  </button>
+                </div>
+              )}
+              </>
             )}
           </div>
         </div>
@@ -748,6 +763,7 @@ export default function CompanyPage() {
             ) : filteredProjects.length === 0 ? (
               <p className="text-sm text-slate-400 py-10 text-center">No projects match your search.</p>
             ) : (
+              <>
               <table className="w-full text-sm">
                 <thead className="bg-slate-50 text-left text-slate-500 text-xs">
                   <tr>
@@ -759,7 +775,7 @@ export default function CompanyPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y">
-                  {filteredProjects.map(p => (
+                  {(showAllProjects ? filteredProjects : filteredProjects.slice(0, ROWS_PREVIEW)).map(p => (
                     <tr key={p.id} className="hover:bg-slate-50">
                       <td className="px-5 py-3 font-medium text-slate-900">{p.name}</td>
                       <td className="px-5 py-3 text-slate-500 hidden md:table-cell">{p.clientName??"-"}</td>
@@ -775,6 +791,14 @@ export default function CompanyPage() {
                   ))}
                 </tbody>
               </table>
+              {filteredProjects.length > ROWS_PREVIEW && (
+                <div className="border-t px-5 py-2.5 text-center">
+                  <button onClick={() => setShowAllProjects(v => !v)} className="text-xs text-slate-500 hover:text-slate-700 font-medium">
+                    {showAllProjects ? `Show fewer` : `Show all ${filteredProjects.length} projects ▼`}
+                  </button>
+                </div>
+              )}
+              </>
             )}
           </div>
         </div>
@@ -827,7 +851,7 @@ export default function CompanyPage() {
                       <tr><th className="px-4 py-2 text-left">Type</th><th className="px-4 py-2 text-left">Title</th><th className="px-4 py-2 text-left hidden md:table-cell">Ref.</th><th className="px-4 py-2 text-left hidden md:table-cell">Expiry</th><th className="px-4 py-2 text-left">Status</th><th className="px-4 py-2"></th></tr>
                     </thead>
                     <tbody className="divide-y">
-                      {complianceRecords.map(r => (
+                      {(showAllCompliance ? complianceRecords : complianceRecords.slice(0, ROWS_PREVIEW)).map(r => (
                         <tr key={r.id} className="hover:bg-slate-50">
                           <td className="px-4 py-2 text-xs text-slate-500">{r.complianceType}</td>
                           <td className="px-4 py-2 font-medium text-slate-900">{r.title}</td>
@@ -839,6 +863,13 @@ export default function CompanyPage() {
                       ))}
                     </tbody>
                   </table>
+                  {complianceRecords.length > ROWS_PREVIEW && (
+                    <div className="border-t px-4 py-2 text-center">
+                      <button onClick={() => setShowAllCompliance(v => !v)} className="text-xs text-slate-500 hover:text-slate-700 font-medium">
+                        {showAllCompliance ? "Show fewer" : `Show all ${complianceRecords.length} records ▼`}
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
               {complianceRecords.length === 0 && !complianceLoading && <p className="text-sm text-slate-400">No compliance records yet.</p>}
@@ -881,7 +912,7 @@ export default function CompanyPage() {
                       <tr><th className="px-4 py-2 text-left">Type</th><th className="px-4 py-2 text-left">Title</th><th className="px-4 py-2 text-left hidden md:table-cell">Authority</th><th className="px-4 py-2 text-left hidden md:table-cell">Expiry</th><th className="px-4 py-2 text-left">Status</th><th className="px-4 py-2"></th></tr>
                     </thead>
                     <tbody className="divide-y">
-                      {legalRecords.map(r => (
+                      {(showAllLegal ? legalRecords : legalRecords.slice(0, ROWS_PREVIEW)).map(r => (
                         <tr key={r.id} className="hover:bg-slate-50">
                           <td className="px-4 py-2 text-xs text-slate-500">{r.recordType}</td>
                           <td className="px-4 py-2 font-medium text-slate-900">{r.title}</td>
@@ -893,6 +924,13 @@ export default function CompanyPage() {
                       ))}
                     </tbody>
                   </table>
+                  {legalRecords.length > ROWS_PREVIEW && (
+                    <div className="border-t px-4 py-2 text-center">
+                      <button onClick={() => setShowAllLegal(v => !v)} className="text-xs text-slate-500 hover:text-slate-700 font-medium">
+                        {showAllLegal ? "Show fewer" : `Show all ${legalRecords.length} records ▼`}
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
               {legalRecords.length === 0 && !complianceLoading && <p className="text-sm text-slate-400">No legal records yet.</p>}
@@ -927,7 +965,7 @@ export default function CompanyPage() {
                       <tr><th className="px-4 py-2 text-left">Type</th><th className="px-4 py-2 text-left">Year</th><th className="px-4 py-2 text-left hidden md:table-cell">Amount</th><th className="px-4 py-2 text-left hidden md:table-cell">Notes</th><th className="px-4 py-2"></th></tr>
                     </thead>
                     <tbody className="divide-y">
-                      {financialRecords.map(r => (
+                      {(showAllFinancial ? financialRecords : financialRecords.slice(0, ROWS_PREVIEW)).map(r => (
                         <tr key={r.id} className="hover:bg-slate-50">
                           <td className="px-4 py-2 text-xs text-slate-500">{r.recordType}</td>
                           <td className="px-4 py-2 font-medium text-slate-900">{r.fiscalYear}</td>
@@ -938,6 +976,13 @@ export default function CompanyPage() {
                       ))}
                     </tbody>
                   </table>
+                  {financialRecords.length > ROWS_PREVIEW && (
+                    <div className="border-t px-4 py-2 text-center">
+                      <button onClick={() => setShowAllFinancial(v => !v)} className="text-xs text-slate-500 hover:text-slate-700 font-medium">
+                        {showAllFinancial ? "Show fewer" : `Show all ${financialRecords.length} records ▼`}
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
               {financialRecords.length === 0 && !complianceLoading && <p className="text-sm text-slate-400">No financial records yet.</p>}

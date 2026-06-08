@@ -34,6 +34,10 @@ export function MatchingDashboard({ tenders: initial }: { tenders: Tender[] }) {
   const [tenders, setTenders] = useState(initial);
   const [togglingId, setTogglingId] = useState<string | null>(null);
   const [expandedTender, setExpandedTender] = useState<string | null>(initial[0]?.id ?? null);
+  const [expandedMatches, setExpandedMatches] = useState<Set<string>>(new Set());
+  function toggleMatch_(id: string) {
+    setExpandedMatches((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  }
 
   async function toggleMatch(tenderId: string, matchId: string, matchType: "expert" | "project", isSelected: boolean) {
     setTogglingId(matchId);
@@ -133,27 +137,28 @@ export function MatchingDashboard({ tenders: initial }: { tenders: Tender[] }) {
                         {tender.expertMatches.map((match) => {
                           const disciplines = (() => { try { return JSON.parse(match.expert.disciplines) as string[]; } catch { return []; } })();
                           const isBusy = togglingId === match.id;
+                          const isExpanded = expandedMatches.has(match.id);
                           return (
                             <div key={match.id} className={`rounded-xl border px-4 py-3 transition-colors ${match.isSelected ? "border-green-300 bg-green-50" : "hover:bg-slate-50"}`}>
-                              <div className="flex items-start justify-between gap-2">
-                                <div className="min-w-0 flex-1">
-                                  <div className="flex items-center gap-2 flex-wrap">
-                                    <p className="font-medium text-slate-900">{match.expert.fullName}</p>
-                                    <TrustBadge level={match.expert.trustLevel} />
+                              <div className="flex items-center justify-between gap-2">
+                                <button
+                                  onClick={() => toggleMatch_(match.id)}
+                                  className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                                >
+                                  <svg className={`h-3 w-3 shrink-0 text-slate-400 transition-transform ${isExpanded ? "rotate-180" : ""}`} fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                                  </svg>
+                                  <div className="min-w-0 flex-1">
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                      <p className="font-medium text-slate-900">{match.expert.fullName}</p>
+                                      <TrustBadge level={match.expert.trustLevel} />
+                                    </div>
+                                    {match.expert.title && <p className="text-xs text-slate-500">{match.expert.title}</p>}
+                                    <div className="mt-1.5">
+                                      <ScoreBar score={match.score} />
+                                    </div>
                                   </div>
-                                  {match.expert.title && <p className="text-xs text-slate-500">{match.expert.title}</p>}
-                                  <div className="mt-1.5 flex flex-wrap gap-1">
-                                    {disciplines.slice(0, 3).map((d) => (
-                                      <span key={d} className="rounded bg-blue-100 px-1.5 py-0.5 text-[10px] text-blue-700">{d}</span>
-                                    ))}
-                                  </div>
-                                  <div className="mt-2">
-                                    <ScoreBar score={match.score} />
-                                  </div>
-                                  {match.rationale && (
-                                    <p className="mt-1.5 text-xs text-slate-600 leading-relaxed">{match.rationale}</p>
-                                  )}
-                                </div>
+                                </button>
                                 <button
                                   onClick={() => toggleMatch(tender.id, match.id, "expert", !match.isSelected)}
                                   disabled={isBusy}
@@ -166,6 +171,20 @@ export function MatchingDashboard({ tenders: initial }: { tenders: Tender[] }) {
                                   {isBusy ? "…" : match.isSelected ? "✓ Selected" : "Select"}
                                 </button>
                               </div>
+                              {isExpanded && (
+                                <div className="mt-2 pl-5 space-y-1.5">
+                                  {disciplines.length > 0 && (
+                                    <div className="flex flex-wrap gap-1">
+                                      {disciplines.map((d) => (
+                                        <span key={d} className="rounded bg-blue-100 px-1.5 py-0.5 text-[10px] text-blue-700">{d}</span>
+                                      ))}
+                                    </div>
+                                  )}
+                                  {match.rationale && (
+                                    <p className="text-xs text-slate-600 leading-relaxed">{match.rationale}</p>
+                                  )}
+                                </div>
+                              )}
                             </div>
                           );
                         })}
@@ -183,25 +202,28 @@ export function MatchingDashboard({ tenders: initial }: { tenders: Tender[] }) {
                         )}
                         {tender.projectMatches.map((match) => {
                           const isBusy = togglingId === match.id;
+                          const isExpanded = expandedMatches.has(match.id);
                           return (
                             <div key={match.id} className={`rounded-xl border px-4 py-3 transition-colors ${match.isSelected ? "border-green-300 bg-green-50" : "hover:bg-slate-50"}`}>
-                              <div className="flex items-start justify-between gap-2">
-                                <div className="min-w-0 flex-1">
-                                  <div className="flex items-center gap-2 flex-wrap">
-                                    <p className="font-medium text-slate-900">{match.project.name}</p>
-                                    <TrustBadge level={match.project.trustLevel} />
+                              <div className="flex items-center justify-between gap-2">
+                                <button
+                                  onClick={() => toggleMatch_(match.id)}
+                                  className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                                >
+                                  <svg className={`h-3 w-3 shrink-0 text-slate-400 transition-transform ${isExpanded ? "rotate-180" : ""}`} fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                                  </svg>
+                                  <div className="min-w-0 flex-1">
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                      <p className="font-medium text-slate-900">{match.project.name}</p>
+                                      <TrustBadge level={match.project.trustLevel} />
+                                    </div>
+                                    {match.project.clientName && <p className="text-xs text-slate-500">{match.project.clientName}</p>}
+                                    <div className="mt-1.5">
+                                      <ScoreBar score={match.score} />
+                                    </div>
                                   </div>
-                                  {match.project.clientName && <p className="text-xs text-slate-500">{match.project.clientName}</p>}
-                                  {match.project.sector && (
-                                    <span className="mt-1 inline-block rounded bg-purple-100 px-1.5 py-0.5 text-[10px] text-purple-700">{match.project.sector}</span>
-                                  )}
-                                  <div className="mt-2">
-                                    <ScoreBar score={match.score} />
-                                  </div>
-                                  {match.rationale && (
-                                    <p className="mt-1.5 text-xs text-slate-600 leading-relaxed">{match.rationale}</p>
-                                  )}
-                                </div>
+                                </button>
                                 <button
                                   onClick={() => toggleMatch(tender.id, match.id, "project", !match.isSelected)}
                                   disabled={isBusy}
@@ -214,6 +236,16 @@ export function MatchingDashboard({ tenders: initial }: { tenders: Tender[] }) {
                                   {isBusy ? "…" : match.isSelected ? "✓ Selected" : "Select"}
                                 </button>
                               </div>
+                              {isExpanded && (
+                                <div className="mt-2 pl-5 space-y-1.5">
+                                  {match.project.sector && (
+                                    <span className="inline-block rounded bg-purple-100 px-1.5 py-0.5 text-[10px] text-purple-700">{match.project.sector}</span>
+                                  )}
+                                  {match.rationale && (
+                                    <p className="text-xs text-slate-600 leading-relaxed">{match.rationale}</p>
+                                  )}
+                                </div>
+                              )}
                             </div>
                           );
                         })}
