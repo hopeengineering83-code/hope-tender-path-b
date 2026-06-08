@@ -140,6 +140,7 @@ export async function FinalPackageManifestPanel({ tenderId }: { tenderId: string
             validationStatus: true,
             reviewStatus: true,
             storagePath: true,
+            fileContent: true,
             format: true,
           },
         },
@@ -164,7 +165,7 @@ export async function FinalPackageManifestPanel({ tenderId }: { tenderId: string
     const docs: DocRow[] = tender.generatedDocuments.map((d) => ({
       ...d,
       name: d.name ?? "Untitled",
-      envelope: envelopeLabel(d as DocRow),
+      envelope: envelopeLabel(d as unknown as DocRow),
     }));
 
     const rows: ManifestRow[] = docs.map((doc) => {

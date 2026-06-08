@@ -7,7 +7,7 @@
  */
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
-import { assessExtractionQuality, assessExtractionQualityPerPage } from "../lib/extraction-quality";
+import { assessExtractionQuality, assessExtractionQualityPerPage, buildReportFromStoredPages, type PageQualityEntry } from "../lib/extraction-quality";
 import { isExtractionCorrupted } from "../lib/engine/extraction-quality-gate";
 
 // ── Helpers mirroring the component logic ────────────────────────────────────
@@ -336,6 +336,36 @@ describe("ExtractionQualityDashboard — content-page detection (assessExtractio
     const submissionPages = perPage?.submissionInstructionPages.length ?? null;
     assert.ok(typeof submissionPages === "number", "submissionPages should be a number when text is present");
     assert.ok(submissionPages !== null, "submissionPages should not be null when text is present");
+  });
+});
+
+describe("buildReportFromStoredPages — reconstructs PerPageExtractionReport from stored PageQualityEntry[]", () => {
+  const pages: PageQualityEntry[] = [
+    { page: 1, charCount: 800, status: "GOOD", hasSubmissionInstructions: false, hasEvaluationCriteria: false, hasRequiredDocuments: false, hasClientDetails: true },
+    { page: 2, charCount: 50, status: "LOW_DENSITY", hasSubmissionInstructions: false, hasEvaluationCriteria: true, hasRequiredDocuments: false, hasClientDetails: false },
+    { page: 3, charCount: 0, status: "BLANK", hasSubmissionInstructions: false, hasEvaluationCriteria: false, hasRequiredDocuments: false, hasClientDetails: false },
+    { page: 4, charCount: 1200, status: "GOOD", hasSubmissionInstructions: true, hasEvaluationCriteria: false, hasRequiredDocuments: true, hasClientDetails: false },
+    { page: 5, charCount: 200, status: "OCR", hasSubmissionInstructions: false, hasEvaluationCriteria: false, hasRequiredDocuments: false, hasClientDetails: false },
+    { page: 6, charCount: 0, status: "FAILED", hasSubmissionInstructions: false, hasEvaluationCriteria: false, hasRequiredDocuments: false, hasClientDetails: false },
+  ];
+
+  const report = buildReportFromStoredPages(pages);
+
+  it("counts total pages correctly", () => assert.equal(report.totalDetectedPages, 6));
+  it("identifies perfect (GOOD) pages", () => { assert.deepEqual(report.perfectPages, [1, 4]); });
+  it("identifies low-density pages", () => { assert.deepEqual(report.lowDensityPages, [2]); });
+  it("identifies blank pages", () => { assert.deepEqual(report.blankPages, [3]); });
+  it("identifies failed pages", () => { assert.deepEqual(report.failedPages, [6]); });
+  it("identifies OCR pages", () => { assert.deepEqual(report.ocrPages, [5]); });
+  it("identifies submission instruction pages", () => { assert.deepEqual(report.submissionInstructionPages, [4]); });
+  it("identifies evaluation criteria pages", () => { assert.deepEqual(report.evaluationCriteriaPages, [2]); });
+  it("identifies required document pages", () => { assert.deepEqual(report.requiredDocumentPages, [4]); });
+  it("identifies client detail pages", () => { assert.deepEqual(report.clientDetailPages, [1]); });
+  it("computes coverage percent (2 GOOD out of 6)", () => { assert.equal(report.coveragePercent, 33); });
+  it("returns empty report for empty array", () => {
+    const empty = buildReportFromStoredPages([]);
+    assert.equal(empty.totalDetectedPages, 0);
+    assert.equal(empty.coveragePercent, 0);
   });
 });
 

@@ -224,14 +224,13 @@ const AI_ANALYSIS_TIMEOUT_MS = (() => {`,
     "route helper insertion",
   );
 
-  const originalBootstrap = `  const reqUrl = new URL(req.url);
+  const originalBootstrap = `  await prismaReady;
+  const { id } = await params;
+  const reqUrl = new URL(req.url);
   const force = reqUrl.searchParams.get("force") === "true";
   const continueJobId = reqUrl.searchParams.get("continue");
   let startFromChunk: number | undefined;
   let existingContentHash: string | undefined;
-
-  await prismaReady;
-
   if (continueJobId) {
     const existingJob = await prisma.aiJob.findFirst({
       where: { id: continueJobId, tenderId: id, userId },
@@ -248,9 +247,9 @@ const AI_ANALYSIS_TIMEOUT_MS = (() => {`,
   source = replaceOnce(
     source,
     originalBootstrap,
-`  ${resumeBootstrapBlock().trimStart()}
-
-  await prismaReady;`,
+`  await prismaReady;
+  const { id } = await params;
+  ${resumeBootstrapBlock().trimStart()}`,
     "streaming resume bootstrap",
   );
 
@@ -334,30 +333,30 @@ ${contentHashResumeBlock().replace(/^/gm, "        ").trimEnd()}`,
 
   source = replaceOnce(
     source,
-`                  output: JSON.stringify({
-                    isPartial: aiMeta.isPartial,
-                    totalChunks: aiMeta.totalChunks,
-                    completedChunks: aiMeta.completedChunks,
-                    failedChunks: aiMeta.failedChunks,
-                    skippedChunks: aiMeta.skippedChunks,
-                    chunkProviders: aiMeta.chunkProviders,
-                    contentHash,
-                    analysisSource: "AI",
-                    nextAction: aiMeta.isPartial ? "CONTINUE_AI_ANALYSIS" : null,
-                  }),`,
-`                  output: JSON.stringify({
-                    isPartial: aiMeta.isPartial,
-                    totalChunks: aiMeta.totalChunks,
-                    completedChunks: aiMeta.completedChunks,
-                    failedChunks: aiMeta.failedChunks,
-                    skippedChunks: aiMeta.skippedChunks,
-                    chunkProviders: aiMeta.chunkProviders,
-                    chunkResults: aiMeta.chunkResults,
-                    contentHash,
-                    resumedFromJobId: continueJobId,
-                    analysisSource: "AI",
-                    nextAction: aiMeta.isPartial ? "CONTINUE_AI_ANALYSIS" : null,
-                  }),`,
+`              output: JSON.stringify({
+                isPartial: aiMeta.isPartial,
+                totalChunks: aiMeta.totalChunks,
+                completedChunks: aiMeta.completedChunks,
+                failedChunks: aiMeta.failedChunks,
+                skippedChunks: aiMeta.skippedChunks,
+                chunkProviders: aiMeta.chunkProviders,
+                contentHash,
+                analysisSource: "AI",
+                nextAction: aiMeta.isPartial ? "CONTINUE_AI_ANALYSIS" : null,
+              }),`,
+`              output: JSON.stringify({
+                isPartial: aiMeta.isPartial,
+                totalChunks: aiMeta.totalChunks,
+                completedChunks: aiMeta.completedChunks,
+                failedChunks: aiMeta.failedChunks,
+                skippedChunks: aiMeta.skippedChunks,
+                chunkProviders: aiMeta.chunkProviders,
+                chunkResults: aiMeta.chunkResults,
+                contentHash,
+                resumedFromJobId: continueJobId,
+                analysisSource: "AI",
+                nextAction: aiMeta.isPartial ? "CONTINUE_AI_ANALYSIS" : null,
+              }),`,
     "non-streaming output stores chunk results",
   );
 

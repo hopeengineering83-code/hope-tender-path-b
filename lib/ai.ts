@@ -78,7 +78,7 @@ function getModel(modelName = DEFAULT_GEMINI_MODEL) {
 }
 
 export function isAIEnabled() {
-  return Boolean(apiKey || anthropicApiKey || process.env.OPENAI_API_KEY || isMistralConfigured() || isDeepSeekConfigured() || isGroqConfigured() || isTogetherConfigured() || isOpenRouterConfigured());
+  return Boolean(apiKey || anthropicApiKey || process.env.ANTHROPIC_API_KEY || process.env.OPENAI_API_KEY || isMistralConfigured() || isDeepSeekConfigured() || isGroqConfigured() || isTogetherConfigured() || isOpenRouterConfigured());
 }
 
 export function isClaudeEnabled() {
@@ -1646,6 +1646,12 @@ async function analyzeOneChunkWithRetry(content: string, index: number, total: n
   }
 }
 
+export type AnalysisChunkCacheEntry = {
+  index: number;
+  result: AIAnalysisResult;
+  provider?: string | null;
+};
+
 export type AnalysisWithMeta = {
   result: AIAnalysisResult;
   isPartial: boolean;
@@ -1654,11 +1660,12 @@ export type AnalysisWithMeta = {
   failedChunks: number;
   skippedChunks: number; // stopped by deadline
   chunkProviders: Array<string | null>; // provider that succeeded per chunk (null = failed/skipped)
+  chunkResults: AnalysisChunkCacheEntry[]; // successful per-chunk results, persisted for resume
 };
 
 export async function analyzeWithAI(
   tenderContent: string,
-  opts?: { deadlineAt?: number; startFromChunk?: number },
+  opts?: { deadlineAt?: number; startFromChunk?: number; previousChunkResults?: AnalysisChunkCacheEntry[] },
 ): Promise<AnalysisWithMeta> {
   // For tenders within the soft limit, run a single call (faster path).
   // For larger tenders, chunk into overlapping pieces and analyze sequentially.
@@ -1669,21 +1676,32 @@ export async function analyzeWithAI(
   if (chunks.length === 1) {
     let chunkProvider: string | null = null;
     const result = await analyzeOneChunk(chunks[0], 0, 1, (p) => { chunkProvider = p; });
-    return { result, isPartial: false, totalChunks: 1, completedChunks: 1, failedChunks: 0, skippedChunks: 0, chunkProviders: [chunkProvider] };
+    return { result, isPartial: false, totalChunks: 1, completedChunks: 1, failedChunks: 0, skippedChunks: 0, chunkProviders: [chunkProvider], chunkResults: [{ index: 0, result, provider: chunkProvider }] };
   }
 
   console.info(`[ai] tender content is ${tenderContent.length.toLocaleString()} chars — chunking into ${chunks.length} concurrent analysis calls (limit=3).`);
-  const successesWithIdx: Array<{ index: number; result: AIAnalysisResult }> = [];
+  const previousChunkResults = (opts?.previousChunkResults ?? [])
+    .filter((entry): entry is AnalysisChunkCacheEntry => {
+      return Number.isInteger(entry?.index)
+        && entry.index >= 0
+        && entry.index < chunks.length
+        && Boolean(entry.result?.summary)
+        && Array.isArray(entry.result?.requirements);
+    })
+    .sort((a, b) => a.index - b.index);
+  const previousIndexes = new Set(previousChunkResults.map((entry) => entry.index));
+  const successesWithIdx: Array<{ index: number; result: AIAnalysisResult }> = previousChunkResults.map((entry) => ({ index: entry.index, result: entry.result }));
   const failures: string[] = [];
   const chunkProviders: Array<string | null> = Array(chunks.length).fill(null);
-  let completedChunks = 0;
+  for (const entry of previousChunkResults) chunkProviders[entry.index] = entry.provider ?? null;
+  let completedChunks = previousChunkResults.length;
   let failedChunks = 0;
   let skippedChunks = 0;
 
-  const startIndex = opts?.startFromChunk ?? 0;
+  const startIndex = Math.max(opts?.startFromChunk ?? 0, previousChunkResults.length > 0 ? Math.max(...previousChunkResults.map((entry) => entry.index)) + 1 : 0);
   const queue = chunks
     .map((content, index) => ({ content, index }))
-    .filter((c) => c.index >= startIndex);
+    .filter((c) => c.index >= startIndex && !previousIndexes.has(c.index));
 
   // Limited concurrency: process up to 3 chunks in parallel.
   // This balances speed with provider rate-limit safety.
@@ -1740,12 +1758,13 @@ export async function analyzeWithAI(
 
   // IMPORTANT: Sort by index before merging so mergeAnalysisResults merge rules
   // (like first-chunk-wins for classification) remain deterministic.
-  const sortedSuccesses = successesWithIdx
+  const chunkResults: AnalysisChunkCacheEntry[] = successesWithIdx
     .sort((a, b) => a.index - b.index)
-    .map((s) => s.result);
+    .map((s) => ({ index: s.index, result: s.result, provider: chunkProviders[s.index] ?? null }));
+  const sortedSuccesses = chunkResults.map((s) => s.result);
 
   const result = mergeAnalysisResults(sortedSuccesses);
-  return { result, isPartial, totalChunks: chunks.length, completedChunks, failedChunks, skippedChunks, chunkProviders };
+  return { result, isPartial, totalChunks: chunks.length, completedChunks, failedChunks, skippedChunks, chunkProviders, chunkResults };
 }
 
 // ─── CV / Expert extraction ───────────────────────────────────────────────────

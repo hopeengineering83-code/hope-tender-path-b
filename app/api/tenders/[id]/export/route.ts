@@ -8,6 +8,7 @@ import { filterFinalExportCandidateDocuments } from "../../../../../lib/engine/d
 import { logAction } from "../../../../../lib/audit";
 import { getCompanyIngestionReadiness } from "../../../../../lib/company-ingestion-readiness";
 import { isExtractionAcceptableForExport } from "../../../../../lib/engine/extraction-quality-gate";
+import { runAuthorityReview, type ManifestEntry, type DocumentInput } from "../../../../../lib/engine/authority-review";
 
 export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   let actor;
@@ -124,6 +125,49 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
           tenderLevelBlockers: readiness.tenderLevelBlockers ?? [],
         },
         { status: 409 },
+      );
+    }
+
+    // Authority Review hard gate — export is blocked unless the review passes.
+    const t = tender as Record<string, unknown>;
+    const manifestEntries: ManifestEntry[] = [];
+    for (const req of tender.requirements) {
+      if ((req as Record<string, unknown>).exactFileName) {
+        manifestEntries.push({ exactFileName: (req as Record<string, unknown>).exactFileName as string, documentType: "TENDER_REQUIRED_FILE" });
+      }
+    }
+    for (const raw of [t.exactFileNaming, t.exactFileOrder]) {
+      if (typeof raw !== "string" || !raw) continue;
+      try {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          for (const entry of parsed) {
+            if (typeof entry === "string" && entry.trim()) manifestEntries.push({ exactFileName: entry.trim(), documentType: "TENDER_REQUIRED_FILE" });
+            else if (entry && typeof entry === "object" && typeof entry.name === "string") manifestEntries.push({ exactFileName: entry.name.trim(), documentType: (entry as Record<string, unknown>).documentType as string ?? "TENDER_REQUIRED_FILE" });
+          }
+        }
+      } catch { /* ignore */ }
+    }
+    const authorityDocuments: DocumentInput[] = generatedDocuments.map((d) => ({
+      id: d.id,
+      name: d.name ?? "",
+      documentType: d.documentType ?? "TENDER_REQUIRED_FILE",
+      contentSummary: d.contentSummary ?? undefined,
+      reviewNotes: (d as Record<string, unknown>).reviewNotes as string | undefined,
+      exactFileName: d.exactFileName ?? undefined,
+    }));
+    const authorityRequiredSections = (typeof t.title === "string" ? [t.title] : []);
+    const authorityResult = runAuthorityReview(authorityDocuments, manifestEntries, authorityRequiredSections);
+    if (authorityResult.status !== "AUTHORITY_READY") {
+      return NextResponse.json(
+        {
+          error: `Export blocked: Authority Review status is ${authorityResult.status}. Resolve all critical blockers and raise the authority score to ≥85 before export.`,
+          code: "AUTHORITY_REVIEW_NOT_READY",
+          authorityStatus: authorityResult.status,
+          authorityScore: authorityResult.overallScore,
+          blockers: authorityResult.blockers.filter((b) => b.severity === "CRITICAL").map((b) => b.detail),
+        },
+        { status: 422 },
       );
     }
 
