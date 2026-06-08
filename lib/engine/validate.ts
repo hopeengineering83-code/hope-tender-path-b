@@ -3,6 +3,7 @@ import { exactSelectionLimit } from "./scope-policy";
 import { buildDeterministicComprehension } from "./deterministic-prohibition-extractor";
 import { validateConstraints } from "./constraint-validator";
 import { filterFinalExportCandidateDocuments } from "./document-output-state";
+import { documentHygieneIssues } from "./export-readiness";
 
 export interface ValidationIssue {
   code: string;
@@ -121,6 +122,20 @@ export async function validateTender(tenderId: string): Promise<ValidationReport
   for (const doc of generatedDocs) {
     const textToCheck = [doc.contentSummary ?? "", doc.name, doc.exactFileName ?? ""].join(" ");
     if (hasPlaceholder(textToCheck)) issues.push({ code: "PLACEHOLDER_IN_DOCUMENT", severity: "BLOCK", message: `Document "${doc.name}" contains placeholder text that must be replaced.` });
+
+    // Document hygiene: catch pricing leakage in technical envelopes, AI disclosure
+    // phrases, and unresolved placeholder instructions. These are the same checks the
+    // export-readiness gate runs, but surfacing them at validation time means problems
+    // are caught one step earlier — before the user tries to export.
+    const hygieneIssues = documentHygieneIssues(doc.contentSummary, {
+      name: doc.name,
+      exactFileName: doc.exactFileName ?? null,
+      documentType: (doc as { documentType?: string | null }).documentType ?? null,
+      format: (doc as { format?: string | null }).format ?? null,
+    });
+    for (const hygieneIssue of hygieneIssues) {
+      issues.push({ code: "DOCUMENT_HYGIENE_FAILURE", severity: "BLOCK", message: `Document "${doc.name}": ${hygieneIssue}` });
+    }
   }
 
   // ─── Deterministic prohibition check (PR #397) ─────────────────────
