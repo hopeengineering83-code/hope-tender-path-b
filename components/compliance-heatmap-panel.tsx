@@ -1,14 +1,21 @@
 // Compliance Requirement Heatmap Panel — server component.
-//
-// Shows a visual heatmap table of requirements with their compliance matrix status.
-// Color-codes rows: green=FULLY_MET, amber=PARTIALLY_MET, red=NOT_MET, gray=UNKNOWN.
-// Maps ComplianceMatrix.supportLevel (SUPPORTED / PARTIAL / UNSUPPORTED / EVIDENCE_PENDING_REVIEW)
-// to the display-level compliance status used in the heatmap.
+// Shows summary counts first. Large partial / fully met rows are collapsed by default.
 
 import { getSession } from "../lib/auth";
 import { prisma, prismaReady } from "../lib/prisma";
 
 type HeatmapStatus = "FULLY_MET" | "PARTIALLY_MET" | "NOT_MET" | "UNKNOWN";
+
+type HeatmapRow = {
+  id: string;
+  title: string;
+  requirementType: string;
+  priority: string;
+  status: HeatmapStatus;
+  risk: "HIGH" | "MEDIUM" | "LOW" | "NONE";
+  evidenceSource: string;
+  notes: string | null;
+};
 
 function toHeatmapStatus(supportLevel: string): HeatmapStatus {
   const s = (supportLevel ?? "").toUpperCase();
@@ -42,177 +49,146 @@ const RISK_STYLES: Record<string, string> = {
   NONE:   "bg-emerald-100 text-emerald-700",
 };
 
+function HeatmapRows({ rows }: { rows: HeatmapRow[] }) {
+  if (rows.length === 0) return null;
+  return (
+    <div className="space-y-2">
+      {rows.map((row) => {
+        const style = STATUS_STYLES[row.status];
+        return (
+          <div key={row.id} className={`rounded-xl border p-3 ${style.row}`}>
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-medium text-slate-900">{row.title}</p>
+                <p className="mt-0.5 text-xs text-slate-500">{row.requirementType} · Evidence: {row.evidenceSource}</p>
+                {row.notes && <p className="mt-1 text-xs italic text-slate-600">{row.notes}</p>}
+              </div>
+              <div className="flex flex-shrink-0 flex-wrap items-center gap-1.5">
+                <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${row.priority === "MANDATORY" ? "bg-red-100 text-red-700" : row.priority === "PREFERRED" ? "bg-blue-100 text-blue-700" : "bg-slate-100 text-slate-500"}`}>{row.priority}</span>
+                <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${style.badge}`}>{style.label}</span>
+                {row.risk !== "NONE" ? (
+                  <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${RISK_STYLES[row.risk]}`}>{row.risk} RISK</span>
+                ) : (
+                  <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${RISK_STYLES.NONE}`}>LOW RISK</span>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export async function ComplianceHeatmapPanel({ tenderId }: { tenderId: string }) {
   const userId = await getSession();
   if (!userId) return null;
 
   try {
-  await prismaReady;
+    await prismaReady;
 
-  const ownsTender = await prisma.tender.findFirst({
-    where: { id: tenderId, userId },
-    select: { id: true },
-  }).catch(() => null);
-  if (!ownsTender) return null;
+    const ownsTender = await prisma.tender.findFirst({ where: { id: tenderId, userId }, select: { id: true } }).catch(() => null);
+    if (!ownsTender) return null;
 
-  // Load compliance matrix rows joined to their requirements.
-  const matrixRows = await prisma.complianceMatrix.findMany({
-    where: { tenderId },
-    orderBy: { createdAt: "asc" },
-    include: {
-      requirement: {
-        select: {
-          id: true,
-          title: true,
-          requirementType: true,
-          priority: true,
-        },
+    const matrixRows = await prisma.complianceMatrix.findMany({
+      where: { tenderId },
+      orderBy: { createdAt: "asc" },
+      include: {
+        requirement: { select: { id: true, title: true, requirementType: true, priority: true } },
       },
-    },
-  }).catch(() => [] as Array<{
-    id: string;
-    requirementId: string | null;
-    evidenceType: string;
-    evidenceSource: string;
-    evidenceReference: string | null;
-    supportLevel: string;
-    notes: string | null;
-    requirement: {
+    }).catch(() => [] as Array<{
       id: string;
-      title: string;
-      requirementType: string;
-      priority: string;
-    } | null;
-  }>);
+      requirementId: string | null;
+      evidenceType: string;
+      evidenceSource: string;
+      evidenceReference: string | null;
+      supportLevel: string;
+      notes: string | null;
+      requirement: { id: string; title: string; requirementType: string; priority: string } | null;
+    }>);
 
-  if (matrixRows.length === 0) return null;
+    if (matrixRows.length === 0) return null;
 
-  // Build display rows.
-  const rows = matrixRows.map((row) => {
-    const status = toHeatmapStatus(row.supportLevel);
-    const priority = row.requirement?.priority ?? "OPTIONAL";
-    const risk = riskLevel(status, priority);
-    return {
-      id: row.id,
-      title: row.requirement?.title ?? `Requirement ${row.requirementId ?? "—"}`,
-      requirementType: row.requirement?.requirementType ?? row.evidenceType ?? "—",
-      priority,
-      status,
-      risk,
-      evidenceSource: row.evidenceSource,
-      notes: row.notes,
-    };
-  });
+    const rows: HeatmapRow[] = matrixRows.map((row) => {
+      const status = toHeatmapStatus(row.supportLevel);
+      const priority = row.requirement?.priority ?? "OPTIONAL";
+      return {
+        id: row.id,
+        title: row.requirement?.title ?? `Requirement ${row.requirementId ?? "—"}`,
+        requirementType: row.requirement?.requirementType ?? row.evidenceType ?? "—",
+        priority,
+        status,
+        risk: riskLevel(status, priority),
+        evidenceSource: row.evidenceSource,
+        notes: row.notes,
+      };
+    });
 
-  // Summary counts.
-  const fullyMet     = rows.filter((r) => r.status === "FULLY_MET").length;
-  const partiallyMet = rows.filter((r) => r.status === "PARTIALLY_MET").length;
-  const notMet       = rows.filter((r) => r.status === "NOT_MET").length;
-  const unknown      = rows.filter((r) => r.status === "UNKNOWN").length;
-  const highRisk     = rows.filter((r) => r.risk === "HIGH").length;
+    const fullyMetRows = rows.filter((r) => r.status === "FULLY_MET");
+    const partialRows = rows.filter((r) => r.status === "PARTIALLY_MET");
+    const notMetRows = rows.filter((r) => r.status === "NOT_MET");
+    const unknownRows = rows.filter((r) => r.status === "UNKNOWN");
+    const highRiskRows = rows.filter((r) => r.risk === "HIGH");
+    const visibleRiskRows = rows.filter((r) => r.risk === "HIGH" || r.status === "NOT_MET");
 
-  return (
-    <section className="mb-4 rounded-2xl border bg-white p-5 shadow-sm">
-      <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Compliance Heatmap</p>
-          <h2 className="mt-1 text-lg font-bold text-slate-900">Requirement compliance status</h2>
-          <p className="mt-1 text-sm text-slate-600">
-            Visual overview of how well company evidence covers each tender requirement.
-            High-risk rows must be resolved before final proposal generation.
-          </p>
+    return (
+      <section className="mb-4 rounded-2xl border bg-white p-5 shadow-sm">
+        <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Compliance Heatmap</p>
+            <h2 className="mt-1 text-lg font-bold text-slate-900">Requirement compliance status</h2>
+            <p className="mt-1 text-sm text-slate-600">Summary first. Partial and fully-met rows are collapsed by default to avoid a long page.</p>
+          </div>
+          {highRiskRows.length > 0 && <span className="rounded-full bg-red-100 px-3 py-1 text-xs font-semibold text-red-700">{highRiskRows.length} high-risk requirement{highRiskRows.length !== 1 ? "s" : ""}</span>}
         </div>
-        {highRisk > 0 && (
-          <span className="rounded-full bg-red-100 px-3 py-1 text-xs font-semibold text-red-700">
-            {highRisk} high-risk requirement{highRisk !== 1 ? "s" : ""}
-          </span>
+
+        <div className="mb-4 grid grid-cols-2 gap-2 text-center text-xs sm:grid-cols-5">
+          <div className="rounded-xl border border-slate-200 bg-slate-50 px-2 py-2"><p className="text-lg font-bold text-slate-900">{rows.length}</p><p className="text-slate-500">Total</p></div>
+          <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-2 py-2"><p className="text-lg font-bold text-emerald-700">{fullyMetRows.length}</p><p className="text-emerald-600">Fully Met</p></div>
+          <div className="rounded-xl border border-amber-200 bg-amber-50 px-2 py-2"><p className="text-lg font-bold text-amber-700">{partialRows.length}</p><p className="text-amber-600">Partial</p></div>
+          <div className="rounded-xl border border-red-200 bg-red-50 px-2 py-2"><p className="text-lg font-bold text-red-700">{notMetRows.length}</p><p className="text-red-600">Not Met</p></div>
+          <div className="rounded-xl border border-slate-200 bg-slate-50 px-2 py-2"><p className="text-lg font-bold text-slate-500">{unknownRows.length}</p><p className="text-slate-400">Unknown</p></div>
+        </div>
+
+        {visibleRiskRows.length > 0 && (
+          <div className="mb-3">
+            <h3 className="mb-2 text-sm font-semibold text-red-800">Visible blockers and high-risk rows</h3>
+            <HeatmapRows rows={visibleRiskRows.slice(0, 25)} />
+          </div>
         )}
-      </div>
 
-      {/* Summary counts */}
-      <div className="mb-4 grid grid-cols-2 gap-2 text-center text-xs sm:grid-cols-5">
-        <div className="rounded-xl border border-slate-200 bg-slate-50 px-2 py-2">
-          <p className="text-lg font-bold text-slate-900">{rows.length}</p>
-          <p className="text-slate-500">Total</p>
-        </div>
-        <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-2 py-2">
-          <p className="text-lg font-bold text-emerald-700">{fullyMet}</p>
-          <p className="text-emerald-600">Fully Met</p>
-        </div>
-        <div className="rounded-xl border border-amber-200 bg-amber-50 px-2 py-2">
-          <p className="text-lg font-bold text-amber-700">{partiallyMet}</p>
-          <p className="text-amber-600">Partial</p>
-        </div>
-        <div className="rounded-xl border border-red-200 bg-red-50 px-2 py-2">
-          <p className="text-lg font-bold text-red-700">{notMet}</p>
-          <p className="text-red-600">Not Met</p>
-        </div>
-        <div className="rounded-xl border border-slate-200 bg-slate-50 px-2 py-2">
-          <p className="text-lg font-bold text-slate-500">{unknown}</p>
-          <p className="text-slate-400">Unknown</p>
-        </div>
-      </div>
+        <div className="space-y-3">
+          {partialRows.length > 0 && (
+            <details className="rounded-xl border border-amber-200 bg-amber-50 p-3">
+              <summary className="cursor-pointer text-sm font-semibold text-amber-800">Show partial requirements ({partialRows.length})</summary>
+              <div className="mt-3"><HeatmapRows rows={partialRows.slice(0, 50)} /></div>
+              {partialRows.length > 50 && <p className="mt-2 text-xs text-amber-700">Showing first 50 partial rows. Use compliance review filters for the full list.</p>}
+            </details>
+          )}
 
-      {/* Heatmap table */}
-      <div className="space-y-2">
-        {rows.map((row) => {
-          const style = STATUS_STYLES[row.status];
-          return (
-            <div
-              key={row.id}
-              className={`rounded-xl border p-3 ${style.row}`}
-            >
-              <div className="flex flex-wrap items-start justify-between gap-2">
-                <div className="min-w-0 flex-1">
-                  <p className="truncate font-medium text-slate-900 text-sm">{row.title}</p>
-                  <p className="mt-0.5 text-xs text-slate-500">
-                    {row.requirementType} · Evidence: {row.evidenceSource}
-                  </p>
-                  {row.notes && (
-                    <p className="mt-1 text-xs text-slate-600 italic">{row.notes}</p>
-                  )}
-                </div>
-                <div className="flex flex-shrink-0 flex-wrap items-center gap-1.5">
-                  {/* Priority badge */}
-                  <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${
-                    row.priority === "MANDATORY"
-                      ? "bg-red-100 text-red-700"
-                      : row.priority === "PREFERRED"
-                        ? "bg-blue-100 text-blue-700"
-                        : "bg-slate-100 text-slate-500"
-                  }`}>
-                    {row.priority}
-                  </span>
-                  {/* Compliance status badge */}
-                  <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${style.badge}`}>
-                    {style.label}
-                  </span>
-                  {/* Risk badge */}
-                  {row.risk !== "NONE" && (
-                    <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${RISK_STYLES[row.risk]}`}>
-                      {row.risk} RISK
-                    </span>
-                  )}
-                  {row.risk === "NONE" && (
-                    <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${RISK_STYLES.NONE}`}>
-                      LOW RISK
-                    </span>
-                  )}
-                </div>
-              </div>
-            </div>
-          );
-        })}
-      </div>
+          {fullyMetRows.length > 0 && (
+            <details className="rounded-xl border border-emerald-200 bg-emerald-50 p-3">
+              <summary className="cursor-pointer text-sm font-semibold text-emerald-800">Show fully met requirements ({fullyMetRows.length})</summary>
+              <div className="mt-3"><HeatmapRows rows={fullyMetRows.slice(0, 50)} /></div>
+              {fullyMetRows.length > 50 && <p className="mt-2 text-xs text-emerald-700">Showing first 50 fully met rows. Use compliance review filters for the full list.</p>}
+            </details>
+          )}
 
-      {highRisk > 0 && (
-        <div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
-          <strong>{highRisk} mandatory requirement{highRisk !== 1 ? "s" : ""} ha{highRisk === 1 ? "s" : "ve"} no evidence coverage.</strong>{" "}
-          Upload supporting documents or run the compliance engine to close these gaps before final generation.
+          {unknownRows.length > 0 && (
+            <details className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+              <summary className="cursor-pointer text-sm font-semibold text-slate-700">Show unknown requirements ({unknownRows.length})</summary>
+              <div className="mt-3"><HeatmapRows rows={unknownRows.slice(0, 50)} /></div>
+            </details>
+          )}
         </div>
-      )}
-    </section>
-  );
+
+        {highRiskRows.length > 0 && (
+          <div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+            <strong>{highRiskRows.length} mandatory requirement{highRiskRows.length !== 1 ? "s" : ""} need attention.</strong> Upload supporting documents or run the compliance engine before final generation.
+          </div>
+        )}
+      </section>
+    );
   } catch (err) {
     console.error("[ComplianceHeatmapPanel] render error:", err);
     return (
