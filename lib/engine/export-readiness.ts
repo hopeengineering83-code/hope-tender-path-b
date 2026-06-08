@@ -355,6 +355,14 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
       "HIGH",
     ));
   }
+  if (analysisExtractionStatus === "PARTIAL_EXTRACTION_AI_ANALYZED") {
+    blockers.push(tenderBlocker(
+      "ANALYSIS_FROM_PARTIAL_EXTRACTION",
+      "AI analysis was performed on a partially-extracted tender — some pages were weak, blank, or OCR-only. Exported documents may be missing requirements, evaluation criteria, or submission instructions from unread pages.",
+      "Re-extract the tender file (run OCR if needed), then re-run AI Analyze to obtain a full-extraction analysis before exporting.",
+      "HIGH",
+    ));
+  }
 
   // ── Submission method + endpoint completeness blockers ──────────────────
   if (!tender.submissionMethod) {

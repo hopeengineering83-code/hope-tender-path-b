@@ -27,4 +27,35 @@ describe("export-readiness route policy mappings", () => {
     assert.ok(src.includes("nextActions") || src.includes("nextAction"));
     assert.ok(src.includes("recommendedAction"));
   });
+
+  it("export-readiness blocks on PARTIAL_EXTRACTION_AI_ANALYZED with HIGH severity", async () => {
+    // Regression: before this fix, PARTIAL_EXTRACTION_AI_ANALYZED was only blocked for
+    // generate-docs; export was silently allowed even though documents may have been built
+    // on 60-75% extraction coverage. Now both generate and export gates block it.
+    const src = await readFile("lib/engine/export-readiness.ts", "utf8");
+    assert.ok(
+      src.includes("PARTIAL_EXTRACTION_AI_ANALYZED"),
+      "export-readiness must block on PARTIAL_EXTRACTION_AI_ANALYZED",
+    );
+    assert.ok(
+      src.includes("ANALYSIS_FROM_PARTIAL_EXTRACTION"),
+      "export-readiness must use ANALYSIS_FROM_PARTIAL_EXTRACTION blocker category",
+    );
+  });
+
+  it("generate route blocks on PARTIAL_EXTRACTION_AI_ANALYZED", async () => {
+    const src = await readFile("app/api/tenders/[id]/generate/route.ts", "utf8");
+    assert.ok(
+      src.includes("PARTIAL_EXTRACTION_AI_ANALYZED"),
+      "generate route must block on PARTIAL_EXTRACTION_AI_ANALYZED",
+    );
+    assert.ok(
+      src.includes("PARTIAL_EXTRACTION_ANALYSIS"),
+      "generate route must use PARTIAL_EXTRACTION_ANALYSIS error code",
+    );
+    assert.ok(
+      src.includes("acceptPartialExtraction"),
+      "generate route must provide acceptPartialExtraction override mechanism",
+    );
+  });
 });

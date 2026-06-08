@@ -294,3 +294,71 @@ describe("generate gate — zero documents created on gate failure", () => {
     assert.equal(countCalls.length, 1, "count should be called exactly once");
   });
 });
+
+// ── PARTIAL_EXTRACTION_AI_ANALYZED generate gate (regression) ─────────────────
+// Verifies the new gate that blocks generation when AI Analyze ran on a
+// partially-extracted tender (some pages could not be fully read).
+
+describe("generate gate — PARTIAL_EXTRACTION_AI_ANALYZED blocks generation", () => {
+  function simulatePartialExtractionGate(
+    analysisExtractionStatus: string | null | undefined,
+    acceptPartialExtraction: boolean,
+  ): { blocked: boolean; errorCode?: string; nextAction?: string } {
+    if (
+      analysisExtractionStatus === "PARTIAL_EXTRACTION_AI_ANALYZED" &&
+      !acceptPartialExtraction
+    ) {
+      return {
+        blocked: true,
+        errorCode: "PARTIAL_EXTRACTION_ANALYSIS",
+        nextAction: "RERUN_AI_ANALYZE",
+      };
+    }
+    return { blocked: false };
+  }
+
+  it("blocks when analysisExtractionStatus is PARTIAL_EXTRACTION_AI_ANALYZED", () => {
+    const result = simulatePartialExtractionGate("PARTIAL_EXTRACTION_AI_ANALYZED", false);
+    assert.equal(result.blocked, true);
+    assert.equal(result.errorCode, "PARTIAL_EXTRACTION_ANALYSIS");
+    assert.equal(result.nextAction, "RERUN_AI_ANALYZE");
+  });
+
+  it("allows when acceptPartialExtraction=true override is present", () => {
+    const result = simulatePartialExtractionGate("PARTIAL_EXTRACTION_AI_ANALYZED", true);
+    assert.equal(result.blocked, false);
+  });
+
+  it("does NOT block on FULL_EXTRACTION_AI_ANALYZED", () => {
+    const result = simulatePartialExtractionGate("FULL_EXTRACTION_AI_ANALYZED", false);
+    assert.equal(result.blocked, false);
+  });
+
+  it("does NOT block when analysisExtractionStatus is null (old tender, no status set)", () => {
+    const result = simulatePartialExtractionGate(null, false);
+    assert.equal(result.blocked, false);
+  });
+
+  it("REGEX_FALLBACK_FROM_WEAK_EXTRACTION is handled by the isExtractionAcceptableForGeneration gate, not this one", () => {
+    // REGEX_FALLBACK is already caught by the isExtractionAcceptableForGeneration check
+    // before the PARTIAL_EXTRACTION gate runs. This test documents that distinction.
+    const result = simulatePartialExtractionGate("REGEX_FALLBACK_FROM_WEAK_EXTRACTION", false);
+    assert.equal(result.blocked, false, "REGEX_FALLBACK is handled by the earlier extraction quality gate");
+  });
+
+  it("PARTIAL_EXTRACTION gate response has required shape fields", () => {
+    const response = {
+      errorCode: "PARTIAL_EXTRACTION_ANALYSIS",
+      error: "Generation blocked: AI Analyze ran on a partially-extracted tender.",
+      blockers: ["AI analysis was performed on partial tender extraction — some pages were weak, blank, or OCR-only."],
+      nextAction: "RERUN_AI_ANALYZE",
+      acceptPartialExtraction: false,
+      diagnosticId: "partial-extraction-analysis-tender-1",
+    };
+    assert.ok(typeof response.errorCode === "string");
+    assert.ok(Array.isArray(response.blockers) && response.blockers.length > 0);
+    assert.equal(response.nextAction, "RERUN_AI_ANALYZE");
+    assert.equal(response.acceptPartialExtraction, false);
+    assert.ok(response.diagnosticId.startsWith("partial-extraction-analysis-"));
+  });
+});

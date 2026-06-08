@@ -337,6 +337,29 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }, { status: 422 });
   }
 
+  // ── Partial-extraction AI analysis advisory ───────────────────────────────
+  // When AI Analyze ran on partial extraction (some pages failed/were OCR-only),
+  // the analysis result may be missing requirements, evaluation criteria, or
+  // submission details from the unextracted pages. We surface this as a blocking
+  // advisory so the user can re-extract and re-analyze before committing to
+  // generated documents. REGEX_FALLBACK is already blocked above by the
+  // isExtractionAcceptableForGeneration() check; this guard covers the softer
+  // PARTIAL_EXTRACTION_AI_ANALYZED case.
+  const analysisExtractionStatusForGen = (tender as { analysisExtractionStatus?: string | null }).analysisExtractionStatus;
+  if (analysisExtractionStatusForGen === "PARTIAL_EXTRACTION_AI_ANALYZED") {
+    const reqUrl2 = new URL(req.url);
+    if (reqUrl2.searchParams.get("planOnly") !== "true" && reqUrl2.searchParams.get("acceptPartialExtraction") !== "true") {
+      return NextResponse.json({
+        errorCode: "PARTIAL_EXTRACTION_ANALYSIS",
+        error: "Generation blocked: AI Analyze ran on a partially-extracted tender (some pages could not be fully read). The generated documents may be missing requirements, evaluation criteria, or submission instructions from unread pages. Re-extract the tender file (run OCR if needed) and re-run AI Analyze to get a complete analysis before generating documents.",
+        blockers: ["AI analysis was performed on partial tender extraction — some pages were weak, blank, or OCR-only. Re-extract and re-analyze before generating."],
+        nextAction: "RERUN_AI_ANALYZE",
+        acceptPartialExtraction: false,
+        diagnosticId: `partial-extraction-analysis-${id}`,
+      }, { status: 422 });
+    }
+  }
+
   if (tender.status === "NO_BID") return NextResponse.json({
     errorCode: "NO_BID_BLOCK",
     error: "Generation blocked: this tender is marked NO_BID. Apply a BID or BID_WITH_CONDITIONS decision before generating proposal documents.",
