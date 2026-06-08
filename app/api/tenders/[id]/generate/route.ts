@@ -169,7 +169,7 @@ const COMPANY_PRODUCED_KINDS: ReadonlySet<SupportDocKind> = new Set<SupportDocKi
 ]);
 
 async function fillPlannedSupportDocuments(tenderId: string, plannedFileKeys?: Set<string>): Promise<number> {
-  const tender = await prisma.tender.findUnique({ where: { id: tenderId }, select: { title: true, clientName: true, procuringEntityName: true, description: true, requirements: true, expertMatches: { where: { isSelected: true }, include: { expert: true }, orderBy: { score: "desc" } }, projectMatches: { where: { isSelected: true }, include: { project: true }, orderBy: { score: "desc" } } } });
+  const tender = await prisma.tender.findUnique({ where: { id: tenderId }, select: { title: true, clientName: true, procuringEntityName: true, legalClientName: true, donorAgency: true, implementingAgency: true, description: true, requirements: true, expertMatches: { where: { isSelected: true }, include: { expert: true }, orderBy: { score: "desc" } }, projectMatches: { where: { isSelected: true }, include: { project: true }, orderBy: { score: "desc" } } } });
   if (!tender) return 0;
   const requirements = tender.requirements.map((r) => formatRequirementLine(r, 380));
   const experts = tender.expertMatches.filter((m) => m.expert && m.expert.trustLevel === "REVIEWED").map((m) => `${m.expert.fullName}${m.expert.title ? ` — ${m.expert.title}` : ""}${m.expert.yearsExperience ? ` | ${m.expert.yearsExperience}+ years` : ""}${m.expert.profile ? ` | ${shortText(m.expert.profile, 260)}` : ""}`);

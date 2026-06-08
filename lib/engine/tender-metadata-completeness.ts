@@ -311,7 +311,7 @@ export function assessTenderMetadataCompleteness(
 
   // Accept either clientName or procuringEntityName — if the AI set procuringEntityName
   // but the back-fill into clientName hasn't run yet, do not block generation.
-  const effectiveClientName = input.clientName || input.procuringEntityName;
+  const effectiveClientName = input.clientName || input.procuringEntityName || input.legalClientName || input.implementingAgency || input.donorAgency;
   checkCritical("clientName", effectiveClientName, "Client / procuring entity name is required for cover letter and declarations.");
   checkCritical("title", input.title, "Tender title is required throughout the proposal.");
   checkCritical("submissionMethod", input.submissionMethod, "Submission method (portal / sealed envelope / email) drives package mode and final ZIP behaviour.");
@@ -385,6 +385,10 @@ export function assessTenderMetadataCompleteness(
   // invalid — it would otherwise leak into generated proposals verbatim.
   const stringFieldsForScan: Array<[string, unknown]> = [
     ["clientName", input.clientName],
+    ["procuringEntityName", input.procuringEntityName],
+    ["legalClientName", input.legalClientName],
+    ["donorAgency", input.donorAgency],
+    ["implementingAgency", input.implementingAgency],
     ["title", input.title],
     ["reference", input.reference],
     ["country", input.country],
