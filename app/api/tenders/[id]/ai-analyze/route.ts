@@ -883,7 +883,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         let aiMeta: AnalysisWithMeta;
         try {
           aiMeta = await withTimeout(
-            analyzeWithAI(tenderContent, { deadlineAt, startFromChunk }),
+            analyzeWithAI(tenderContent, { deadlineAt, startFromChunk, previousChunkResults }),
             AI_ANALYSIS_TIMEOUT_MS,
           );
         } catch (aiErr) {
