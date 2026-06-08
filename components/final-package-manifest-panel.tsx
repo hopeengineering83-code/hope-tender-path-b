@@ -30,6 +30,7 @@ type DocRow = {
   validationStatus: string | null;
   reviewStatus: string | null;
   storagePath: string | null;
+  fileContent: string | null;
   format: string | null;
 };
 
@@ -139,6 +140,7 @@ export async function FinalPackageManifestPanel({ tenderId }: { tenderId: string
             generationStatus: true,
             validationStatus: true,
             reviewStatus: true,
+            fileContent: true,
             storagePath: true,
             format: true,
           },
@@ -178,6 +180,7 @@ export async function FinalPackageManifestPanel({ tenderId }: { tenderId: string
         generationStatus: doc.generationStatus,
         validationStatus: doc.validationStatus,
         reviewStatus: doc.reviewStatus,
+        fileContent: doc.fileContent,
       };
       const isCandidate = isFinalExportCandidateDocument(docLike);
       const outputState = deriveDocumentOutputState(docLike);

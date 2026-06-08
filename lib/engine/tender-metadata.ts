@@ -33,6 +33,15 @@ export type TenderMetadataDraft = {
   title: string;
   reference: string | null;
   clientName: string | null;
+  procuringEntityName: string | null;
+  legalClientName: string | null;
+  donorAgency: string | null;
+  implementingAgency: string | null;
+  clientCity: string | null;
+  clientWebsite: string | null;
+  submissionEmailSubject: string | null;
+  preBidChannel: string | null;
+  clientRepresentative: string | null;
   // ─── new fields (returned but only mapped to DB when columns exist) ───
   clientContactName: string | null;
   clientContactTitle: string | null;
@@ -459,6 +468,15 @@ export function inferTenderMetadata(extractedText: string, fallbackFileName: str
       title: `[REVIEW NEEDED] ${baseFileName}`,
       reference: null,
       clientName: null,
+      procuringEntityName: null,
+      legalClientName: null,
+      donorAgency: null,
+      implementingAgency: null,
+      clientCity: null,
+      clientWebsite: null,
+      submissionEmailSubject: null,
+      preBidChannel: null,
+      clientRepresentative: null,
       clientContactName: null,
       clientContactTitle: null,
       clientContactEmail: null,
@@ -526,6 +544,15 @@ export function inferTenderMetadata(extractedText: string, fallbackFileName: str
     title,
     reference,
     clientName,
+    procuringEntityName: null,
+    legalClientName: null,
+    donorAgency: null,
+    implementingAgency: null,
+    clientCity: null,
+    clientWebsite: null,
+    submissionEmailSubject: null,
+    preBidChannel: null,
+    clientRepresentative: null,
     clientContactName,
     clientContactTitle,
     clientContactEmail,

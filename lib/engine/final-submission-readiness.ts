@@ -388,6 +388,9 @@ export async function getFinalSubmissionReadiness(
       // Metadata-completeness signals consumed by the gate (Part 5).
       clientName: true,
       procuringEntityName: true,
+      legalClientName: true,
+      donorAgency: true,
+      implementingAgency: true,
       reference: true,
       country: true,
       deadline: true,
@@ -646,7 +649,7 @@ export async function getFinalSubmissionReadiness(
   // Client name gate — an empty/whitespace-only clientName (and no
   // procuringEntityName fallback) must block export so a proposal is
   // never sent without knowing who the procuring entity is.
-  const effectiveClientName = (tender.clientName ?? "").trim() || ((tender as Record<string, unknown>).procuringEntityName as string | null | undefined ?? "").trim();
+  const effectiveClientName = (tender.clientName ?? "").trim() || ((tender as Record<string, unknown>).procuringEntityName as string | null | undefined ?? "").trim() || ((tender as Record<string, unknown>).legalClientName as string | null | undefined ?? "").trim() || ((tender as Record<string, unknown>).implementingAgency as string | null | undefined ?? "").trim() || ((tender as Record<string, unknown>).donorAgency as string | null | undefined ?? "").trim();
   if (!effectiveClientName) {
     tenderLevelBlockers.push({
       category: "CLIENT_NAME_MISSING",

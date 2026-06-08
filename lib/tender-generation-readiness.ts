@@ -447,6 +447,9 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
   const metadataReport = assessTenderMetadataCompleteness({
     clientName: effectiveClientName,
     procuringEntityName: (tender as Record<string, unknown>).procuringEntityName as string | null | undefined,
+    legalClientName: (tender as Record<string, unknown>).legalClientName as string | null | undefined,
+    donorAgency: (tender as Record<string, unknown>).donorAgency as string | null | undefined,
+    implementingAgency: (tender as Record<string, unknown>).implementingAgency as string | null | undefined,
     title: tender.title,
     reference: tender.reference ?? null,
     country: tender.country ?? null,
