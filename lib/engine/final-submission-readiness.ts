@@ -455,6 +455,10 @@ export async function getFinalSubmissionReadiness(
           storagePath: true,
         },
       },
+      // Extraction quality status — consumed by checkTenderLevelExportBlockers to
+      // emit the ANALYSIS_FROM_PARTIAL_EXTRACTION blocker when AI analysis ran on
+      // partial extraction. Without this field the blocker silently never fires.
+      analysisExtractionStatus: true,
       // Extraction metrics — needed by isExtractionAcceptableForExport in the
       // export readiness gate so the panel shows the blocker before export.
       files: {
