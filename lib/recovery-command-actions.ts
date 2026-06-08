@@ -218,6 +218,75 @@ export const RECOVERY_COMMAND_ACTIONS: Record<string, RecoveryCommandActionSpec>
     method: "POST",
     path: "/api/tenders/{tenderId}/re-extract-metadata",
   },
+  // Company readiness / vault ────────────────────────────────────────────────
+  OPEN_COMPANY_READINESS: {
+    label: "Open Company Readiness",
+    kind: "navigate",
+    path: "/dashboard/company/readiness",
+    aliases: ["COMPANY_READINESS"],
+  },
+  // Expert / project match review ────────────────────────────────────────────
+  REVIEW_MATCHES: {
+    label: "Review Matches",
+    kind: "navigate",
+    path: "/dashboard/matching",
+    aliases: ["REVIEW_MATCHING_INPUTS"],
+  },
+  REVIEW_MATCHING_INPUTS: {
+    label: "Review Matching Inputs",
+    kind: "navigate",
+    path: "/dashboard/matching",
+  },
+  // Generation readiness ─────────────────────────────────────────────────────
+  OPEN_GENERATION_READINESS: {
+    label: "Open Generation Readiness",
+    kind: "scroll",
+    anchorId: "generated-documents",
+    message: "Open the Generated Documents panel to review generation readiness and fix blockers.",
+  },
+  // Submission plan confirmation ─────────────────────────────────────────────
+  CONFIRM_SUBMISSION_PLAN: {
+    label: "Confirm Submission Plan",
+    kind: "scroll",
+    anchorId: "generated-documents",
+    message: "Open the Generated Documents panel and confirm each required file in the submission plan.",
+  },
+  REVIEW_REQUIREMENTS_OR_ADD_MANUAL_PLAN: {
+    label: "Review Requirements or Add Plan",
+    kind: "scroll",
+    anchorId: "generated-documents",
+    message: "Open the Generated Documents panel to review extracted requirements or manually add submission plan entries.",
+  },
+  // Repair source grounding ──────────────────────────────────────────────────
+  REPAIR_SOURCE_GROUNDING: {
+    label: "Repair Source Grounding",
+    kind: "api",
+    method: "POST",
+    path: "/api/tenders/{tenderId}/repair-source-grounding",
+    aliases: ["REPAIR_OR_EDIT_TENDER"],
+  },
+  // AI Analyze resume / retry aliases ───────────────────────────────────────
+  RERUN_AI_ANALYZE: {
+    label: "Re-run AI Analyze",
+    kind: "api",
+    method: "POST",
+    path: "/api/tenders/{tenderId}/ai-analyze",
+    aliases: ["RERUN_AI_ANALYZE_AFTER_OCR", "RETRY_AI_ANALYZE_OR_APPROVE_FALLBACK", "CONTINUE_AI_ANALYSIS"],
+  },
+  // Auto-finalize resume ─────────────────────────────────────────────────────
+  CONTINUE_AUTO_FINALIZE: {
+    label: "Continue Auto-Finalize",
+    kind: "api",
+    method: "POST",
+    path: "/api/tenders/{tenderId}/auto-finalize",
+  },
+  // Upload source document ───────────────────────────────────────────────────
+  UPLOAD_TENDER_SOURCE: {
+    label: "Upload Tender Source",
+    kind: "scroll",
+    anchorId: "tender-files",
+    message: "Open the Tender Files panel to upload the tender source document.",
+  },
 };
 
 export function getRecoveryCommandActionSpec(action: string): RecoveryCommandActionSpec | null {
