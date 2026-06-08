@@ -841,7 +841,10 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
     setAnalyzePhase("Connecting…");
     setAnalyzeProgress(5);
     try {
-      const res = await fetch(`/api/tenders/${tender.id}/ai-analyze`, {
+      const analyzeUrl = continueJobId
+        ? `/api/tenders/${tender.id}/ai-analyze?continue=${encodeURIComponent(continueJobId)}`
+        : `/api/tenders/${tender.id}/ai-analyze`;
+      const res = await fetch(analyzeUrl, {
         method: "POST",
         headers: { "Accept": "text/event-stream" },
       });
