@@ -1,0 +1,40 @@
+name: Apply permanent resumable AI Analyze conversion on PR
+
+on:
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
+      - synchronize
+      - reopened
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.head_ref == 'chatgpt/permanent-resumable-ai-analyze-20260608' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Reuse conversion block and commit permanent changes
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          node scripts/patch-resumable-ai-analyze.mjs
+
+          awk 'BEGIN{flag=0} /node <<'\''NODE'\''/{flag=1; next} /^          NODE$/{flag=0} flag { sub(/^          /, ""); print }' \
+            .github/workflows/apply-permanent-resumable-ai-analyze.yml > /tmp/permanent-resumable-ai-analyze.mjs
+          node /tmp/permanent-resumable-ai-analyze.mjs
+
+          rm -f .github/workflows/apply-permanent-resumable-ai-analyze-pr.yml
+          git status --short
+          git add --all
+          git commit -m "fix: make AI Analyze resume cache permanent" || exit 0
+          git push origin HEAD:${{ github.head_ref }}
