@@ -3178,6 +3178,18 @@ List appendices in the required format, e.g.:
 - Appendix D: Project References and Client Letters
 - Appendix E: Project Photos, Drawings and Completion Evidence
 
+### SUBMISSION CONTROL SHEET (mandatory — place AFTER appendices register)
+A submission control sheet is a pre-submission checklist that mirrors the tender's exact submission requirements back to the bid team. It is the last page of the proposal package and must be completed in full.
+
+Structure it exactly as follows:
+**Submission Recipients** — list exact email address(es) from the SUBMISSION RULES. If none given, write: "Bid-Team Action: confirm submission email from tender document before sending."
+**Email Subject Line** — echo the exact subject line verbatim. If not stated, write: "Bid-Team Action: confirm required subject line from tender."
+**Submission Rules** — bullet each rule from SUBMISSION RULES (deadline with timezone, file format, number of copies, financial proposal restriction, etc.). If no rules were extracted, state: "Bid-Team Action: review original tender document for submission format, deadline, and file requirements before submission."
+**Document Format Requirements** — confirm PDF/Word format, page limits, naming conventions, and any other format rules from the tender.
+**Pre-Submission Checklist** — a tick-box list: Cover Letter signed on letterhead · All required sections present · Expert CVs attached and signed · Project references include client contacts · Legal documents attached (registration, TIN, VAT) · Bid bond / performance guarantee attached if required · Sent before deadline.
+
+This section ensures the evaluator sees that the bidder read and understood the submission process. It is not optional.
+
 ---
 
 ## TENDER INFORMATION

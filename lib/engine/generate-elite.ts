@@ -570,9 +570,12 @@ function fallbackProposalMarkdown(params: {
   } else {
     lines.push("- Key personnel CVs and role assignments to be confirmed before submission.");
   }
+  lines.push("## Submission Instructions Acknowledged");
   if (params.submissionRules.length > 0) {
-    lines.push("## Submission Instructions Acknowledged");
     lines.push(...params.submissionRules.map((r) => `- ${r}`));
+  } else {
+    lines.push("- This proposal has been prepared in accordance with the submission instructions provided in the tender document.");
+    lines.push("- All required documents are formatted as specified. Bid-Team Action: verify file format, page limit, and submission method against the original tender before sending.");
   }
 
   // ── Section B: Relevant Experience ────────────────────────────────────────────
@@ -664,10 +667,7 @@ function fallbackProposalMarkdown(params: {
   lines.push("## Email Subject Line");
   lines.push(`> **${exactSubject}**`);
   lines.push("Copy and paste this subject line exactly. Do not abbreviate or reword.");
-  lines.push("## Document Format Requirements");
-  if (params.noFinancialProposal) {
-    lines.push("- **Technical Proposal ONLY** — Do NOT include any pricing, rates, or financial figures in this submission.");
-  }
+  lines.push("## Submission Rules");
   if (params.submissionRules.length > 0) {
     lines.push(...params.submissionRules.slice(0, 12).map((r) => `- ${r}`));
   } else {
@@ -675,6 +675,11 @@ function fallbackProposalMarkdown(params: {
     lines.push("- Ensure the email attachment total does not exceed the size limit stated in the tender.");
     lines.push("- Confirm the deadline time zone before submission (e.g., EAT, GMT, WAT).");
   }
+  lines.push("## Document Format Requirements");
+  if (params.noFinancialProposal) {
+    lines.push("- **Technical Proposal ONLY** — Do NOT include any pricing, rates, or financial figures in this submission.");
+  }
+  lines.push("- Confirm all documents are complete, signed, and formatted as required by the tender instructions.");
   lines.push("## Pre-Submission Checklist");
   lines.push("- [ ] Cover Letter signed and on company letterhead");
   lines.push("- [ ] All required sections included and complete");
@@ -2900,6 +2905,16 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
       console.info(`[generate-elite] Post-repair quality lift: ${qualityScore.total} → ${repairedScore.total} (+${repairedScore.total - qualityScore.total}).`);
       qualityScore = repairedScore;
     }
+  }
+
+  // Final placeholder sweep — repair addenda may have injected placeholder text.
+  // Run stripPlaceholders one more time so markdownToDocx never sees raw placeholders.
+  if (refinementApplied || repairAddendaApplied) {
+    const finalStrip = stripPlaceholders(workingMarkdown);
+    if (finalStrip.removedLines + finalStrip.blankedCells + finalStrip.removedParagraphs > 0) {
+      console.info(`[generate-elite] Final placeholder sweep: removed ${finalStrip.removedLines} line(s), ${finalStrip.removedParagraphs} paragraph(s); blanked ${finalStrip.blankedCells} table cell(s).`);
+    }
+    workingMarkdown = finalStrip.markdown;
   }
 
   // Re-render the DOCX from the (possibly refined) markdown.
