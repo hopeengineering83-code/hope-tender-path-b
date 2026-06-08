@@ -230,8 +230,9 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
     exactFileNaming: tender.exactFileNaming,
     exactFileOrder: tender.exactFileOrder,
     // Gap 4 fix — pass metadata + matching state so the score reflects reality.
-    // Use procuringEntityName as fallback when clientName is null (AI Analyze tenders).
-    clientName: tender.clientName || (tender as Record<string, unknown>).procuringEntityName as string | null | undefined,
+    // Use procuringEntityName / legalClientName / donorAgency / implementingAgency as
+    // fallback when clientName is null (AI Analyze tenders or donor-funded projects).
+    clientName: (tender.clientName || (tender as Record<string, unknown>).procuringEntityName || (tender as Record<string, unknown>).legalClientName || (tender as Record<string, unknown>).donorAgency || (tender as Record<string, unknown>).implementingAgency) as string | null | undefined,
     referenceNumber: tender.reference,
     country: tender.country,
     clientContactName: tender.clientContactName,
@@ -255,7 +256,12 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
   // need to render different messages: "Client name not set" is fixable
   // by EDIT_TENDER; "Invalid client name extracted" usually means OCR
   // captured a TOC entry and the tender needs re-extraction.
-  const effectiveClientNameForReadiness = tender.clientName || (tender as Record<string, unknown>).procuringEntityName as string | null | undefined;
+  const _t = tender as Record<string, unknown>;
+  const effectiveClientNameForReadiness = (tender.clientName
+    || _t.procuringEntityName
+    || _t.legalClientName
+    || _t.donorAgency
+    || _t.implementingAgency) as string | null | undefined;
   const clientNameStatus = getClientNameStatus(effectiveClientNameForReadiness);
   if (clientNameStatus === "EMPTY" || clientNameStatus === "PLACEHOLDER") {
     blockers.push({
@@ -443,10 +449,14 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
   // never show "Full proposal generation gate: passes" while the same POST
   // would return 422 with METADATA_INCOMPLETE_FOR_GENERATION. The two paths
   // call the same helper with the same inputs so they agree byte-for-byte.
-  const effectiveClientName = tender.clientName || (tender as Record<string, unknown>).procuringEntityName as string | null | undefined;
+  const effectiveClientName = (tender.clientName
+    || _t.procuringEntityName
+    || _t.legalClientName
+    || _t.donorAgency
+    || _t.implementingAgency) as string | null | undefined;
   const metadataReport = assessTenderMetadataCompleteness({
     clientName: effectiveClientName,
-    procuringEntityName: (tender as Record<string, unknown>).procuringEntityName as string | null | undefined,
+    procuringEntityName: _t.procuringEntityName as string | null | undefined,
     title: tender.title,
     reference: tender.reference ?? null,
     country: tender.country ?? null,

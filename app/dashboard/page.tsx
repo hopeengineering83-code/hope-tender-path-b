@@ -11,7 +11,7 @@ export default async function DashboardPage() {
   if (!userId) redirect("/login");
   await prismaReady;
 
-  const tenderIds = await prisma.tender.findMany({ where: { userId }, select: { id: true } }).then((r) => r.map((t) => t.id));
+  const tenderIds = await prisma.tender.findMany({ where: { userId }, select: { id: true }, orderBy: { createdAt: "desc" }, take: 200 }).then((r) => r.map((t) => t.id));
 
   const [tenders, company, recentActivity, generatedDocStats] = await Promise.all([
     prisma.tender.findMany({
@@ -24,6 +24,7 @@ export default async function DashboardPage() {
         complianceGaps: { select: { isResolved: true, severity: true } },
       },
       orderBy: { createdAt: "desc" },
+      take: 50,
     }),
     prisma.company.findUnique({ where: { userId } }),
     prisma.auditLog.findMany({
