@@ -582,11 +582,17 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
   const [contactDetailsOpen, setContactDetailsOpen] = useState(false);
   const [expandedReqs, setExpandedReqs] = useState<Set<string>>(new Set());
   const [expandedCompliance, setExpandedCompliance] = useState<Set<string>>(new Set());
+  const [showAllReqs, setShowAllReqs] = useState(false);
+  const [showAllMatrix, setShowAllMatrix] = useState(false);
+  const [expandedFields, setExpandedFields] = useState<Set<string>>(new Set());
   function toggleReq(id: string) {
     setExpandedReqs((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
   }
   function toggleCompliance(id: string) {
     setExpandedCompliance((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  }
+  function toggleField(key: string) {
+    setExpandedFields((prev) => { const n = new Set(prev); n.has(key) ? n.delete(key) : n.add(key); return n; });
   }
 
   // Collapsible diagnostic panel state — persisted per tender in localStorage.
@@ -2297,10 +2303,66 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
                     </dd>
                   </div>
                 )}
-                <div className="md:col-span-2"><dt className="text-sm text-slate-500">Description</dt><dd className="mt-1 whitespace-pre-wrap text-slate-900">{tender.description || "—"}</dd></div>
-                <div className="md:col-span-2"><dt className="text-sm text-slate-500">Intake Summary</dt><dd className="mt-1 text-slate-900">{tender.intakeSummary ? <ProposalMarkdown markdown={tender.intakeSummary} /> : "—"}</dd></div>
-                <div className="md:col-span-2"><dt className="text-sm text-slate-500">Analysis Summary</dt><dd className="mt-1 whitespace-pre-wrap text-slate-900">{tender.analysisSummary || "—"}</dd></div>
-                <div className="md:col-span-2"><dt className="text-sm text-slate-500">Evaluation Methodology</dt><dd className="mt-1 whitespace-pre-wrap text-slate-900">{tender.evaluationMethodology || "—"}</dd></div>
+                <div className="md:col-span-2">
+                  <button type="button" onClick={() => toggleField("description")} className="flex w-full items-center justify-between gap-2 text-sm text-slate-500 mb-1 hover:text-slate-700">
+                    <span className="font-medium">Description</span>
+                    {tender.description && tender.description.length > 200 && (
+                      <svg className={`h-3.5 w-3.5 text-slate-400 shrink-0 transition-transform duration-200 ${expandedFields.has("description") ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7"/></svg>
+                    )}
+                  </button>
+                  {!tender.description ? (
+                    <dd className="text-slate-400">—</dd>
+                  ) : tender.description.length <= 200 || expandedFields.has("description") ? (
+                    <dd className="text-slate-900 whitespace-pre-wrap">{tender.description}</dd>
+                  ) : (
+                    <dd className="text-slate-900 whitespace-pre-wrap">{tender.description.slice(0, 200)}<span className="text-slate-400">… </span><button type="button" onClick={() => toggleField("description")} className="text-xs text-blue-600 hover:underline">Show more</button></dd>
+                  )}
+                </div>
+                <div className="md:col-span-2">
+                  <button type="button" onClick={() => toggleField("intake")} className="flex w-full items-center justify-between gap-2 text-sm text-slate-500 mb-1 hover:text-slate-700">
+                    <span className="font-medium">Intake Summary</span>
+                    {tender.intakeSummary && tender.intakeSummary.length > 200 && (
+                      <svg className={`h-3.5 w-3.5 text-slate-400 shrink-0 transition-transform duration-200 ${expandedFields.has("intake") ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7"/></svg>
+                    )}
+                  </button>
+                  {!tender.intakeSummary ? (
+                    <dd className="text-slate-400">—</dd>
+                  ) : tender.intakeSummary.length <= 200 || expandedFields.has("intake") ? (
+                    <dd className="text-slate-900"><ProposalMarkdown markdown={tender.intakeSummary} /></dd>
+                  ) : (
+                    <dd className="text-slate-900 whitespace-pre-wrap">{tender.intakeSummary.slice(0, 200)}<span className="text-slate-400">… </span><button type="button" onClick={() => toggleField("intake")} className="text-xs text-blue-600 hover:underline">Show more</button></dd>
+                  )}
+                </div>
+                <div className="md:col-span-2">
+                  <button type="button" onClick={() => toggleField("analysis")} className="flex w-full items-center justify-between gap-2 text-sm text-slate-500 mb-1 hover:text-slate-700">
+                    <span className="font-medium">Analysis Summary</span>
+                    {tender.analysisSummary && tender.analysisSummary.length > 200 && (
+                      <svg className={`h-3.5 w-3.5 text-slate-400 shrink-0 transition-transform duration-200 ${expandedFields.has("analysis") ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7"/></svg>
+                    )}
+                  </button>
+                  {!tender.analysisSummary ? (
+                    <dd className="text-slate-400">—</dd>
+                  ) : tender.analysisSummary.length <= 200 || expandedFields.has("analysis") ? (
+                    <dd className="text-slate-900 whitespace-pre-wrap">{tender.analysisSummary}</dd>
+                  ) : (
+                    <dd className="text-slate-900 whitespace-pre-wrap">{tender.analysisSummary.slice(0, 200)}<span className="text-slate-400">… </span><button type="button" onClick={() => toggleField("analysis")} className="text-xs text-blue-600 hover:underline">Show more</button></dd>
+                  )}
+                </div>
+                <div className="md:col-span-2">
+                  <button type="button" onClick={() => toggleField("methodology")} className="flex w-full items-center justify-between gap-2 text-sm text-slate-500 mb-1 hover:text-slate-700">
+                    <span className="font-medium">Evaluation Methodology</span>
+                    {tender.evaluationMethodology && tender.evaluationMethodology.length > 200 && (
+                      <svg className={`h-3.5 w-3.5 text-slate-400 shrink-0 transition-transform duration-200 ${expandedFields.has("methodology") ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7"/></svg>
+                    )}
+                  </button>
+                  {!tender.evaluationMethodology ? (
+                    <dd className="text-slate-400">—</dd>
+                  ) : tender.evaluationMethodology.length <= 200 || expandedFields.has("methodology") ? (
+                    <dd className="text-slate-900 whitespace-pre-wrap">{tender.evaluationMethodology}</dd>
+                  ) : (
+                    <dd className="text-slate-900 whitespace-pre-wrap">{tender.evaluationMethodology.slice(0, 200)}<span className="text-slate-400">… </span><button type="button" onClick={() => toggleField("methodology")} className="text-xs text-blue-600 hover:underline">Show more</button></dd>
+                  )}
+                </div>
                 {evalCriteria.length > 0 && (
                   <div className="md:col-span-2">
                     <dt className="text-sm text-slate-500">
@@ -2536,7 +2598,7 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
               <p className="mt-3 text-sm text-slate-400">Tender analysis has not created structured requirements yet.</p>
             ) : (
               <ul className="mt-4 space-y-3">
-                {tender.requirements.slice(0, 5).map((req) => {
+                {(showAllReqs ? tender.requirements : tender.requirements.slice(0, 5)).map((req) => {
                   const hasSource = req.sourcePageNumber || req.sectionReference || req.sourceExactQuote;
                   const isOpen = expandedReqs.has(req.id);
                   return (
@@ -2577,6 +2639,25 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
                   );
                 })}
               </ul>
+            )}
+            {tender.requirements.length > 5 && (
+              <button
+                type="button"
+                onClick={() => setShowAllReqs((v) => !v)}
+                className="mt-3 flex items-center gap-1 text-xs text-blue-600 hover:underline"
+              >
+                {showAllReqs ? (
+                  <>
+                    <svg className="h-3 w-3 rotate-180" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7"/></svg>
+                    Show fewer requirements
+                  </>
+                ) : (
+                  <>
+                    <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7"/></svg>
+                    Show all {tender.requirements.length} requirements
+                  </>
+                )}
+              </button>
             )}
           </div>
 
@@ -2750,7 +2831,7 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
                 </span>
               </h2>
               <ul className="space-y-1.5">
-                {tender.complianceMatrix!.slice(0, 10).map((entry) => {
+                {(showAllMatrix ? tender.complianceMatrix! : tender.complianceMatrix!.slice(0, 10)).map((entry) => {
                   const isOpen = expandedCompliance.has(entry.id);
                   return (
                   <li key={entry.id} className="rounded-lg border">
@@ -2778,6 +2859,25 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
                   );
                 })}
               </ul>
+              {tender.complianceMatrix!.length > 10 && (
+                <button
+                  type="button"
+                  onClick={() => setShowAllMatrix((v) => !v)}
+                  className="mt-3 flex items-center gap-1 text-xs text-blue-600 hover:underline"
+                >
+                  {showAllMatrix ? (
+                    <>
+                      <svg className="h-3 w-3 rotate-180" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7"/></svg>
+                      Show fewer
+                    </>
+                  ) : (
+                    <>
+                      <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7"/></svg>
+                      Show all {tender.complianceMatrix!.length} entries
+                    </>
+                  )}
+                </button>
+              )}
             </div>
           )}
 

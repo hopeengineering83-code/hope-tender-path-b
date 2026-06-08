@@ -30,6 +30,14 @@ const SUPP: Record<string,string> = {
 
 type SubTab = "gaps"|"matrix";
 
+function ChevronIcon({ open }: { open: boolean }) {
+  return (
+    <svg className={`h-4 w-4 text-slate-400 shrink-0 transition-transform duration-200 ${open ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+    </svg>
+  );
+}
+
 export function ComplianceDashboard({ tenders: initial }: { tenders: Tender[] }) {
   const [tenders, setTenders] = useState(initial);
   const [resolvingId, setResolvingId] = useState<string|null>(null);
@@ -39,6 +47,15 @@ export function ComplianceDashboard({ tenders: initial }: { tenders: Tender[] })
   const [filterSeverity, setFilterSeverity] = useState("all");
   const [filterStatus, setFilterStatus] = useState("unresolved");
   const [subTab, setSubTab] = useState<SubTab>("gaps");
+  const [expandedGapIds, setExpandedGapIds] = useState<Set<string>>(new Set());
+  const [expandedMatrixTenders, setExpandedMatrixTenders] = useState<Set<string>>(new Set());
+
+  function toggleGapCard(id: string) {
+    setExpandedGapIds((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  }
+  function toggleMatrixTender(id: string) {
+    setExpandedMatrixTenders((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  }
 
   async function patchGap(tenderId: string, gapId: string, body: { isResolved?: boolean; resolvedNote?: string; mitigationPlan?: string }) {
     setResolvingId(gapId);
@@ -62,11 +79,6 @@ export function ComplianceDashboard({ tenders: initial }: { tenders: Tender[] })
     return patchGap(tenderId, gapId, { isResolved, resolvedNote: note });
   }
 
-  // Part 10 — explicit mandatory-coverage actions. Each records a human
-  // decision via the existing gap fields (no fabricated evidence):
-  //   • Save mitigation        — mitigationPlan
-  //   • JV/subcontractor        — mitigationPlan prefixed so reviewers see the route
-  //   • Mark not applicable     — resolve with a NOT_APPLICABLE audit note
   function saveMitigation(tenderId: string, gapId: string, prefix = "") {
     const text = (mitigationMap[gapId] ?? "").trim();
     if (text.length === 0) return;
@@ -92,6 +104,11 @@ export function ComplianceDashboard({ tenders: initial }: { tenders: Tender[] })
   const totalUnresolved = allGaps.filter(g=>!g.isResolved).length;
   const totalResolved = allGaps.filter(g=>g.isResolved).length;
 
+  // Group matrix rows by tender for accordion
+  const matrixByTender = tenders
+    .filter(t => (t.complianceMatrix?.length ?? 0) > 0)
+    .map(t => ({ tender: t, rows: t.complianceMatrix! }));
+
   return (
     <div className="space-y-6">
       <div>
@@ -114,7 +131,7 @@ export function ComplianceDashboard({ tenders: initial }: { tenders: Tender[] })
       </div>
 
       <div className="flex gap-1 rounded-xl bg-slate-100 p-1 w-fit">
-        {([["gaps","Compliance Gaps"],["matrix","Evidence Matrix"]] as [SubTab,string][]).map(([id,label]) => (
+        {([["gaps","Compliance Gaps"],["matrix","Evidence Mapping"]] as [SubTab,string][]).map(([id,label]) => (
           <button key={id} onClick={()=>setSubTab(id)}
             className={`rounded-lg px-4 py-2 text-sm font-medium transition-colors ${subTab===id?"bg-white text-slate-900 shadow-sm":"text-slate-500 hover:text-slate-700"}`}>
             {label}
@@ -145,90 +162,161 @@ export function ComplianceDashboard({ tenders: initial }: { tenders: Tender[] })
               <p className="text-slate-400 text-sm">{allGaps.length===0 ? "No compliance gaps. Run the engine on a tender first." : "No gaps match current filters."}</p>
             </div>
           ) : (
-            <div className="space-y-3">
-              {filtered.map(gap => (
-                <div key={gap.id} className={`rounded-2xl border p-5 bg-white shadow-sm ${gap.isResolved?"opacity-60":""}`}>
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex flex-wrap items-center gap-2 mb-1.5">
-                        <span className={`rounded-full border px-2.5 py-0.5 text-xs font-semibold ${SEV[gap.severity]??"bg-slate-100 text-slate-500"}`}>{gap.severity}</span>
-                        <span className="text-xs text-slate-400">{gap.tenderTitle}</span>
-                        {gap.isResolved && <span className="rounded-full bg-green-100 px-2.5 py-0.5 text-xs font-medium text-green-700">Resolved</span>}
+            <div className="space-y-2">
+              {filtered.map(gap => {
+                const isOpen = expandedGapIds.has(gap.id);
+                return (
+                  <div key={gap.id} className={`rounded-2xl border bg-white shadow-sm overflow-hidden ${gap.isResolved?"opacity-70":""}`}>
+                    {/* Always-visible header row — click to expand */}
+                    <button
+                      type="button"
+                      onClick={() => toggleGapCard(gap.id)}
+                      className="w-full flex items-center gap-3 px-5 py-4 text-left hover:bg-slate-50 transition-colors"
+                    >
+                      <span className={`shrink-0 rounded-full border px-2.5 py-0.5 text-xs font-semibold ${SEV[gap.severity]??"bg-slate-100 text-slate-500"}`}>{gap.severity}</span>
+                      <div className="flex-1 min-w-0">
+                        <p className="font-semibold text-slate-900 text-sm truncate">{gap.title}</p>
+                        <p className="text-xs text-slate-400 truncate">{gap.tenderTitle}</p>
                       </div>
-                      <p className="font-semibold text-slate-900 text-sm">{gap.title}</p>
-                      <p className="mt-1 text-sm text-slate-600">{gap.description}</p>
-                      {gap.mitigationPlan && <p className="mt-1.5 text-xs text-slate-500 italic">Mitigation: {gap.mitigationPlan}</p>}
-                      {gap.resolvedNote && <p className="mt-1 text-xs text-green-700">✓ {gap.resolvedNote}</p>}
-                    </div>
-                    <div className="flex flex-col gap-2 sm:items-end shrink-0">
-                      {!gap.isResolved ? (
-                        <>
-                          <input value={noteMap[gap.id]??""} onChange={e=>setNoteMap(m=>({...m,[gap.id]:e.target.value}))}
-                            placeholder="Resolution / audit note…" className="rounded-lg border px-2 py-1.5 text-xs w-48" />
-                          <button onClick={()=>toggleGap(gap.tenderId,gap.id,true,noteMap[gap.id]??"")} disabled={resolvingId===gap.id}
-                            className="rounded-lg bg-green-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-700 disabled:opacity-50">
-                            {resolvingId===gap.id?"…":"Mark covered with evidence"}
-                          </button>
-                          <button onClick={()=>markNotApplicable(gap.tenderId,gap.id)} disabled={resolvingId===gap.id}
-                            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50">
-                            Mark not applicable
-                          </button>
-                          <input value={mitigationMap[gap.id]??""} onChange={e=>setMitigationMap(m=>({...m,[gap.id]:e.target.value}))}
-                            placeholder="Mitigation / JV plan…" className="rounded-lg border px-2 py-1.5 text-xs w-48" />
-                          <div className="flex gap-1">
-                            <button onClick={()=>saveMitigation(gap.tenderId,gap.id)} disabled={resolvingId===gap.id}
-                              className="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50">
-                              Add mitigation
+                      <div className="flex items-center gap-2 shrink-0">
+                        {gap.isResolved && <span className="rounded-full bg-green-100 px-2.5 py-0.5 text-xs font-medium text-green-700">Resolved</span>}
+                        {gap.mitigationPlan && !gap.isResolved && <span className="rounded-full bg-blue-100 px-2.5 py-0.5 text-xs font-medium text-blue-700">Has mitigation</span>}
+                        <ChevronIcon open={isOpen} />
+                      </div>
+                    </button>
+
+                    {/* Expanded body */}
+                    {isOpen && (
+                      <div className="px-5 pb-5 border-t border-slate-100 pt-4 space-y-3">
+                        <p className="text-sm text-slate-700">{gap.description}</p>
+                        {gap.mitigationPlan && <p className="text-xs text-slate-500 italic bg-slate-50 rounded-lg px-3 py-2">Mitigation: {gap.mitigationPlan}</p>}
+                        {gap.resolvedNote && <p className="text-xs text-green-700 bg-green-50 rounded-lg px-3 py-2">✓ {gap.resolvedNote}</p>}
+
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:flex-wrap">
+                          {!gap.isResolved ? (
+                            <>
+                              <input value={noteMap[gap.id]??""} onChange={e=>setNoteMap(m=>({...m,[gap.id]:e.target.value}))}
+                                placeholder="Resolution / audit note…" className="rounded-lg border px-2 py-1.5 text-xs flex-1 min-w-[180px]" />
+                              <button onClick={()=>toggleGap(gap.tenderId,gap.id,true,noteMap[gap.id]??"")} disabled={resolvingId===gap.id}
+                                className="rounded-lg bg-green-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-700 disabled:opacity-50 shrink-0">
+                                {resolvingId===gap.id?"…":"Mark covered with evidence"}
+                              </button>
+                              <button onClick={()=>markNotApplicable(gap.tenderId,gap.id)} disabled={resolvingId===gap.id}
+                                className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50 shrink-0">
+                                Mark not applicable
+                              </button>
+                              <input value={mitigationMap[gap.id]??""} onChange={e=>setMitigationMap(m=>({...m,[gap.id]:e.target.value}))}
+                                placeholder="Mitigation / JV plan…" className="rounded-lg border px-2 py-1.5 text-xs flex-1 min-w-[180px]" />
+                              <div className="flex gap-1 shrink-0">
+                                <button onClick={()=>saveMitigation(gap.tenderId,gap.id)} disabled={resolvingId===gap.id}
+                                  className="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50">
+                                  Add mitigation
+                                </button>
+                                <button onClick={()=>saveMitigation(gap.tenderId,gap.id,"JV/Subcontractor: ")} disabled={resolvingId===gap.id}
+                                  className="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50">
+                                  JV / subcontractor
+                                </button>
+                              </div>
+                            </>
+                          ) : (
+                            <button onClick={()=>toggleGap(gap.tenderId,gap.id,false,"")} disabled={resolvingId===gap.id}
+                              className="rounded-lg border px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-50">
+                              {resolvingId===gap.id?"…":"Reopen"}
                             </button>
-                            <button onClick={()=>saveMitigation(gap.tenderId,gap.id,"JV/Subcontractor: ")} disabled={resolvingId===gap.id}
-                              className="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50">
-                              JV / subcontractor
-                            </button>
-                          </div>
-                        </>
-                      ) : (
-                        <button onClick={()=>toggleGap(gap.tenderId,gap.id,false,"")} disabled={resolvingId===gap.id}
-                          className="rounded-lg border px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-50">
-                          {resolvingId===gap.id?"…":"Reopen"}
-                        </button>
-                      )}
-                      <Link href={`/dashboard/tenders/${gap.tenderId}`} className="text-xs text-blue-600 hover:underline">View tender →</Link>
-                    </div>
+                          )}
+                          <Link href={`/dashboard/tenders/${gap.tenderId}`} className="text-xs text-blue-600 hover:underline self-center ml-auto">View tender →</Link>
+                        </div>
+                      </div>
+                    )}
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </>
       )}
 
       {subTab==="matrix" && (
-        <div className="rounded-2xl border bg-white shadow-sm overflow-hidden">
+        <div className="space-y-3">
           {allMatrix.length===0 ? (
-            <div className="py-12 text-center text-slate-400 text-sm">No evidence matrix data yet. Run the engine on a tender to generate compliance mapping.</div>
+            <div className="rounded-2xl border bg-white p-10 text-center shadow-sm">
+              <div className="text-slate-400 text-sm">No evidence mapping data yet. Run the engine on a tender to generate compliance mapping.</div>
+            </div>
+          ) : matrixByTender.length > 0 ? (
+            matrixByTender.map(({ tender, rows }) => {
+              const isOpen = expandedMatrixTenders.has(tender.id);
+              const supported = rows.filter(r => r.supportLevel === "SUPPORTED").length;
+              return (
+                <div key={tender.id} className="rounded-2xl border bg-white shadow-sm overflow-hidden">
+                  <button
+                    type="button"
+                    onClick={() => toggleMatrixTender(tender.id)}
+                    className="w-full flex items-center gap-3 px-5 py-4 text-left hover:bg-slate-50 transition-colors"
+                  >
+                    <div className="flex-1 min-w-0">
+                      <p className="font-semibold text-slate-900 text-sm truncate">{tender.title}</p>
+                      <p className="text-xs text-slate-400 mt-0.5">{rows.length} evidence entries · {supported}/{rows.length} supported</p>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${supported === rows.length ? "bg-green-100 text-green-700" : supported > 0 ? "bg-amber-100 text-amber-700" : "bg-red-100 text-red-700"}`}>
+                        {Math.round((supported / rows.length) * 100)}% supported
+                      </span>
+                      <ChevronIcon open={isOpen} />
+                    </div>
+                  </button>
+                  {isOpen && (
+                    <div className="border-t border-slate-100 overflow-hidden">
+                      <table className="w-full text-sm">
+                        <thead className="bg-slate-50 text-left text-xs text-slate-500">
+                          <tr>
+                            <th className="px-5 py-3 font-medium">Evidence Type</th>
+                            <th className="px-5 py-3 font-medium">Evidence Source</th>
+                            <th className="px-5 py-3 font-medium">Support</th>
+                            <th className="px-5 py-3 font-medium hidden lg:table-cell">Notes</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y">
+                          {rows.map(row => (
+                            <tr key={row.id} className="hover:bg-slate-50">
+                              <td className="px-5 py-3 text-xs font-medium text-slate-700">{row.evidenceType}</td>
+                              <td className="px-5 py-3 text-xs text-slate-600">{row.evidenceSource}</td>
+                              <td className="px-5 py-3"><span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${SUPP[row.supportLevel]??"bg-slate-100 text-slate-500"}`}>{row.supportLevel}</span></td>
+                              <td className="px-5 py-3 text-xs text-slate-400 hidden lg:table-cell">{row.notes??"-"}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              );
+            })
           ) : (
-            <table className="w-full text-sm">
-              <thead className="bg-slate-50 text-left text-xs text-slate-500">
-                <tr>
-                  <th className="px-5 py-3 font-medium">Tender</th>
-                  <th className="px-5 py-3 font-medium">Evidence Type</th>
-                  <th className="px-5 py-3 font-medium">Evidence Source</th>
-                  <th className="px-5 py-3 font-medium">Support</th>
-                  <th className="px-5 py-3 font-medium hidden lg:table-cell">Notes</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y">
-                {allMatrix.map(row => (
-                  <tr key={row.id} className="hover:bg-slate-50">
-                    <td className="px-5 py-3 text-xs text-slate-500 truncate max-w-[120px]">{row.tenderTitle}</td>
-                    <td className="px-5 py-3 text-xs font-medium text-slate-700">{row.evidenceType}</td>
-                    <td className="px-5 py-3 text-xs text-slate-600">{row.evidenceSource}</td>
-                    <td className="px-5 py-3"><span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${SUPP[row.supportLevel]??"bg-slate-100 text-slate-500"}`}>{row.supportLevel}</span></td>
-                    <td className="px-5 py-3 text-xs text-slate-400 hidden lg:table-cell">{row.notes??"-"}</td>
+            // Fallback: show flat table when tenders have no complianceMatrix but allMatrix has data
+            <div className="rounded-2xl border bg-white shadow-sm overflow-hidden">
+              <table className="w-full text-sm">
+                <thead className="bg-slate-50 text-left text-xs text-slate-500">
+                  <tr>
+                    <th className="px-5 py-3 font-medium">Tender</th>
+                    <th className="px-5 py-3 font-medium">Evidence Type</th>
+                    <th className="px-5 py-3 font-medium">Evidence Source</th>
+                    <th className="px-5 py-3 font-medium">Support</th>
+                    <th className="px-5 py-3 font-medium hidden lg:table-cell">Notes</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="divide-y">
+                  {allMatrix.map(row => (
+                    <tr key={row.id} className="hover:bg-slate-50">
+                      <td className="px-5 py-3 text-xs text-slate-500 truncate max-w-[120px]">{row.tenderTitle}</td>
+                      <td className="px-5 py-3 text-xs font-medium text-slate-700">{row.evidenceType}</td>
+                      <td className="px-5 py-3 text-xs text-slate-600">{row.evidenceSource}</td>
+                      <td className="px-5 py-3"><span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${SUPP[row.supportLevel]??"bg-slate-100 text-slate-500"}`}>{row.supportLevel}</span></td>
+                      <td className="px-5 py-3 text-xs text-slate-400 hidden lg:table-cell">{row.notes??"-"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
         </div>
       )}
