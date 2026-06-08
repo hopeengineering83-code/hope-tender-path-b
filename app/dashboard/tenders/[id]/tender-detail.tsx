@@ -585,6 +585,10 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
   const [showAllReqs, setShowAllReqs] = useState(false);
   const [showAllMatrix, setShowAllMatrix] = useState(false);
   const [expandedFields, setExpandedFields] = useState<Set<string>>(new Set());
+  const [expandedDocs, setExpandedDocs] = useState<Set<string>>(new Set());
+  function toggleDoc(id: string) {
+    setExpandedDocs((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  }
   function toggleReq(id: string) {
     setExpandedReqs((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
   }
@@ -2973,12 +2977,24 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
               <p className="text-sm text-slate-400">Run the engine then click &quot;Generate Docs&quot; to create submission-ready files.</p>
             ) : (
               <ul className="space-y-2">
-                {tender.generatedDocuments.map((doc) => (
+                {tender.generatedDocuments.map((doc) => {
+                  const isDocExpanded = expandedDocs.has(doc.id);
+                  const hasDetails = !!(parseDocumentQuality(doc.contentSummary) || (doc.reviewedExpertCount ?? 0) > 0 || (doc.reviewedProjectCount ?? 0) > 0 || (doc.draftExpertCount ?? 0) > 0 || (doc.draftProjectCount ?? 0) > 0 || doc.reviewNotes);
+                  return (
                   <li key={doc.id} className="rounded-xl border px-3 py-2.5 space-y-2">
                     <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0">
-                        <p className="text-sm font-medium text-slate-900 truncate">{doc.exactFileName ?? doc.name}</p>
-                        <div className="flex flex-wrap gap-2 mt-0.5">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-1.5">
+                          {hasDetails && (
+                            <button onClick={() => toggleDoc(doc.id)} className="shrink-0 text-slate-400 hover:text-slate-600" aria-label={isDocExpanded ? "Collapse details" : "Expand details"}>
+                              <svg className={`h-3 w-3 transition-transform ${isDocExpanded ? "rotate-180" : ""}`} fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                              </svg>
+                            </button>
+                          )}
+                          <p className="text-sm font-medium text-slate-900 truncate">{doc.exactFileName ?? doc.name}</p>
+                        </div>
+                        <div className="flex flex-wrap gap-2 mt-0.5 pl-4">
                           <span className={`text-xs font-medium ${
                             doc.generationStatus === "GENERATED" ? "text-green-600" :
                             doc.generationStatus === "GENERATED_NEEDS_REVIEW" ? "text-amber-600" :
@@ -3012,42 +3028,46 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
                             </span>
                           )}
                         </div>
-                        {(() => {
-                          const q = parseDocumentQuality(doc.contentSummary);
-                          if (!q) return null;
-                          return (
-                            <div className="flex flex-wrap gap-1.5 mt-1">
-                              {q.qualityScore > 0 && (
-                                <span className={`text-xs font-medium px-1.5 py-0.5 rounded-md ${q.qualityScore >= 80 ? "bg-green-50 text-green-700" : q.qualityScore >= 60 ? "bg-amber-50 text-amber-700" : "bg-red-50 text-red-600"}`}>
-                                  Quality {q.qualityScore}/100
-                                </span>
-                              )}
-                              {q.benchmarkScore > 0 && (
-                                <span className={`text-xs font-medium px-1.5 py-0.5 rounded-md ${q.verdict === "BENCHMARK_READY" ? "bg-green-50 text-green-700" : "bg-amber-50 text-amber-700"}`}>
-                                  Benchmark {q.benchmarkScore}/100{q.verdict === "BENCHMARK_READY" ? " ✓" : ""}
-                                </span>
-                              )}
-                            </div>
-                          );
-                        })()}
-                        {((doc.reviewedExpertCount ?? 0) > 0 || (doc.reviewedProjectCount ?? 0) > 0 || (doc.draftExpertCount ?? 0) > 0 || (doc.draftProjectCount ?? 0) > 0) && (
-                          <div className="flex flex-wrap gap-1 mt-1">
-                            {(doc.reviewedExpertCount ?? 0) > 0 && (
-                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700">{doc.reviewedExpertCount} expert{doc.reviewedExpertCount !== 1 ? "s" : ""} reviewed</span>
+                        {isDocExpanded && (
+                          <div className="pl-4 mt-1 space-y-1">
+                            {(() => {
+                              const q = parseDocumentQuality(doc.contentSummary);
+                              if (!q) return null;
+                              return (
+                                <div className="flex flex-wrap gap-1.5">
+                                  {q.qualityScore > 0 && (
+                                    <span className={`text-xs font-medium px-1.5 py-0.5 rounded-md ${q.qualityScore >= 80 ? "bg-green-50 text-green-700" : q.qualityScore >= 60 ? "bg-amber-50 text-amber-700" : "bg-red-50 text-red-600"}`}>
+                                      Quality {q.qualityScore}/100
+                                    </span>
+                                  )}
+                                  {q.benchmarkScore > 0 && (
+                                    <span className={`text-xs font-medium px-1.5 py-0.5 rounded-md ${q.verdict === "BENCHMARK_READY" ? "bg-green-50 text-green-700" : "bg-amber-50 text-amber-700"}`}>
+                                      Benchmark {q.benchmarkScore}/100{q.verdict === "BENCHMARK_READY" ? " ✓" : ""}
+                                    </span>
+                                  )}
+                                </div>
+                              );
+                            })()}
+                            {((doc.reviewedExpertCount ?? 0) > 0 || (doc.reviewedProjectCount ?? 0) > 0 || (doc.draftExpertCount ?? 0) > 0 || (doc.draftProjectCount ?? 0) > 0) && (
+                              <div className="flex flex-wrap gap-1">
+                                {(doc.reviewedExpertCount ?? 0) > 0 && (
+                                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700">{doc.reviewedExpertCount} expert{doc.reviewedExpertCount !== 1 ? "s" : ""} reviewed</span>
+                                )}
+                                {(doc.draftExpertCount ?? 0) > 0 && (
+                                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-700">{doc.draftExpertCount} expert draft{doc.draftExpertCount !== 1 ? "s" : ""}</span>
+                                )}
+                                {(doc.reviewedProjectCount ?? 0) > 0 && (
+                                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700">{doc.reviewedProjectCount} project{doc.reviewedProjectCount !== 1 ? "s" : ""} reviewed</span>
+                                )}
+                                {(doc.draftProjectCount ?? 0) > 0 && (
+                                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-700">{doc.draftProjectCount} project draft{doc.draftProjectCount !== 1 ? "s" : ""}</span>
+                                )}
+                              </div>
                             )}
-                            {(doc.draftExpertCount ?? 0) > 0 && (
-                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-700">{doc.draftExpertCount} expert draft{doc.draftExpertCount !== 1 ? "s" : ""}</span>
-                            )}
-                            {(doc.reviewedProjectCount ?? 0) > 0 && (
-                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700">{doc.reviewedProjectCount} project{doc.reviewedProjectCount !== 1 ? "s" : ""} reviewed</span>
-                            )}
-                            {(doc.draftProjectCount ?? 0) > 0 && (
-                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-700">{doc.draftProjectCount} project draft{doc.draftProjectCount !== 1 ? "s" : ""}</span>
+                            {doc.reviewNotes && (
+                              <p className="text-xs text-slate-500 italic">&ldquo;{doc.reviewNotes}&rdquo;</p>
                             )}
                           </div>
-                        )}
-                        {doc.reviewNotes && (
-                          <p className="mt-1 text-xs text-slate-500 italic">&ldquo;{doc.reviewNotes}&rdquo;</p>
                         )}
                       </div>
                       <div className="flex items-center gap-1.5 shrink-0 flex-wrap justify-end">
@@ -3114,7 +3134,8 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
                       </div>
                     )}
                   </li>
-                ))}
+                  );
+                })}
               </ul>
             )}
           </div>
