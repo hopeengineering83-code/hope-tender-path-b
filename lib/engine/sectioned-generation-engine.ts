@@ -1,7 +1,7 @@
 import { prisma } from "../prisma";
 import { buildProposalSectionSpecs, type ProposalSectionId, buildSectionFallback } from "./proposal-sections";
 import { generateWithFallback, type AIBidWriterInput } from "../ai";
-import { writeSectionEvidence } from "./section-evidence-map";
+import { inferSectionRequirementIds, writeSectionEvidence, type RequirementForEvidenceMap } from "./section-evidence-map";
 
 export type SectionStatus = "PLANNED" | "GENERATING" | "GENERATED" | "FAILED" | "NEEDS_REVIEW" | "APPROVED" | "SUPERSEDED";
 
@@ -13,22 +13,36 @@ export interface SectionGenerationResult {
   aiProvider?: string;
 }
 
-/**
- * SectionedGenerationEngine (Phase 2)
- *
- * Manages the lifecycle of individual proposal sections.
- * Allows for resumable, multi-pass generation where failed sections can be retried
- * without regenerating the entire proposal.
- */
+async function loadEvidenceContext(tenderId: string, sectionId: string, sectionTitle: string, sectionText = "") {
+  const [requirements, expertMatches, projectMatches] = await Promise.all([
+    prisma.tenderRequirement.findMany({
+      where: { tenderId },
+      select: { id: true, title: true, description: true, requirementType: true, priority: true },
+    }).catch(() => [] as RequirementForEvidenceMap[]),
+    prisma.tenderExpertMatch.findMany({
+      where: { tenderId, isSelected: true },
+      select: { expertId: true },
+    }).catch(() => [] as Array<{ expertId: string }>),
+    prisma.tenderProjectMatch.findMany({
+      where: { tenderId, isSelected: true },
+      select: { projectId: true },
+    }).catch(() => [] as Array<{ projectId: string }>),
+  ]);
+
+  return {
+    requirementIds: inferSectionRequirementIds({ sectionId, sectionTitle, sectionText, requirements }),
+    expertIds: expertMatches.map((match) => match.expertId),
+    projectIds: projectMatches.map((match) => match.projectId),
+  };
+}
+
 export class SectionedGenerationEngine {
   constructor(private tenderId: string, private proposalVersion: number = 1) {}
 
-  /**
-   * Initializes the generation plan by creating SectionEvidenceMap rows for each required section.
-   */
   async initializePlan(input: AIBidWriterInput): Promise<void> {
     const specs = buildProposalSectionSpecs(input);
     for (const spec of specs) {
+      const evidence = await loadEvidenceContext(this.tenderId, spec.id, spec.title, spec.userPrompt);
       await prisma.sectionEvidenceMap.upsert({
         where: {
           tenderId_proposalVersion_sectionId: {
@@ -39,6 +53,9 @@ export class SectionedGenerationEngine {
         },
         update: {
           sectionTitle: spec.title,
+          requirementIds: evidence.requirementIds.join("|"),
+          expertIds: evidence.expertIds.join("|"),
+          projectIds: evidence.projectIds.join("|"),
           status: "PLANNED",
         },
         create: {
@@ -46,15 +63,15 @@ export class SectionedGenerationEngine {
           proposalVersion: this.proposalVersion,
           sectionId: spec.id,
           sectionTitle: spec.title,
+          requirementIds: evidence.requirementIds.join("|"),
+          expertIds: evidence.expertIds.join("|"),
+          projectIds: evidence.projectIds.join("|"),
           status: "PLANNED",
         },
       });
     }
   }
 
-  /**
-   * Generates a single section by its ID.
-   */
   async generateSection(sectionId: ProposalSectionId, input: AIBidWriterInput, attemptId?: string): Promise<SectionGenerationResult> {
     const specs = buildProposalSectionSpecs(input);
     const spec = specs.find(s => s.id === sectionId);
@@ -62,8 +79,7 @@ export class SectionedGenerationEngine {
       throw new Error(`Section spec not found: ${sectionId}`);
     }
 
-    // Update state to GENERATING
-    await prisma.sectionEvidenceMap.update({
+    await prisma.sectionEvidenceMap.upsert({
       where: {
         tenderId_proposalVersion_sectionId: {
           tenderId: this.tenderId,
@@ -71,14 +87,21 @@ export class SectionedGenerationEngine {
           sectionId,
         },
       },
-      data: {
+      update: {
+        status: "GENERATING",
+        generationAttemptId: attemptId,
+      },
+      create: {
+        tenderId: this.tenderId,
+        proposalVersion: this.proposalVersion,
+        sectionId,
+        sectionTitle: spec.title,
         status: "GENERATING",
         generationAttemptId: attemptId,
       },
     });
 
     try {
-      // Actually call the AI with fallback
       const content = await generateWithFallback(
         spec.userPrompt,
         {
@@ -90,7 +113,18 @@ export class SectionedGenerationEngine {
         throw new Error("AI returned empty or insufficient content.");
       }
 
-      // Update state to GENERATED
+      const evidence = await loadEvidenceContext(this.tenderId, sectionId, spec.title, content);
+      await writeSectionEvidence({
+        tenderId: this.tenderId,
+        proposalVersion: this.proposalVersion,
+        sectionId,
+        sectionTitle: spec.title,
+        text: content,
+        requirementIds: evidence.requirementIds,
+        expertIds: evidence.expertIds,
+        projectIds: evidence.projectIds,
+      });
+
       await prisma.sectionEvidenceMap.update({
         where: {
           tenderId_proposalVersion_sectionId: {
@@ -111,7 +145,6 @@ export class SectionedGenerationEngine {
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);
 
-      // Update state to FAILED
       await prisma.sectionEvidenceMap.update({
         where: {
           tenderId_proposalVersion_sectionId: {
@@ -130,9 +163,6 @@ export class SectionedGenerationEngine {
     }
   }
 
-  /**
-   * Returns all sections for the current tender and version.
-   */
   async getSections() {
     return prisma.sectionEvidenceMap.findMany({
       where: {
@@ -143,9 +173,6 @@ export class SectionedGenerationEngine {
     });
   }
 
-  /**
-   * Resumes generation for any sections that are PLANNED or FAILED.
-   */
   async resumeGeneration(input: AIBidWriterInput, attemptId?: string): Promise<SectionGenerationResult[]> {
     const sections = await this.getSections();
     const toGenerate = sections.filter(s => s.status === "PLANNED" || s.status === "FAILED");
