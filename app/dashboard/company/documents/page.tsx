@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { getSession } from "../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../lib/prisma";
 import { ensureCompanyForUser } from "../../../../lib/company-workspace";
+import { CategoryAccordion } from "./category-accordion";
 
 const CATEGORY_LABELS: Record<string, string> = {
   COMPANY_PROFILE: "Company Profile",
@@ -46,15 +47,6 @@ const CARD_STYLES: Record<string, string> = {
   OTHER: "border-slate-200 bg-slate-50 text-slate-700",
 };
 
-function formatBytes(bytes: number) {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-}
-
-function fileExt(name: string) {
-  return name.toLowerCase().split(".").pop()?.toUpperCase() || "FILE";
-}
 
 export default async function CompanyDocumentCategoriesPage() {
   const userId = await getSession();
@@ -117,39 +109,21 @@ export default async function CompanyDocumentCategoriesPage() {
         })}
       </div>
 
-      <div className="space-y-5">
-        {categories.map((category) => {
-          const docs = grouped[category] || [];
-          return (
-            <section key={category} id={category} className="rounded-2xl border bg-white p-5 shadow-sm">
-              <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <h2 className="text-lg font-bold text-slate-900">{CATEGORY_LABELS[category] || category}</h2>
-                  <p className="mt-0.5 text-xs text-slate-500">{CATEGORY_HELPERS[category] || "Categorized company document evidence."}</p>
-                </div>
-                <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600">{docs.length} file{docs.length === 1 ? "" : "s"}</span>
-              </div>
-              <div className="space-y-2">
-                {docs.map((doc) => (
-                  <div key={doc.id} className="rounded-xl border px-4 py-3 hover:bg-slate-50">
-                    <div className="flex items-start gap-3">
-                      <span className="shrink-0 rounded border bg-slate-50 px-2 py-1 text-[10px] font-bold text-slate-600">{fileExt(doc.originalFileName)}</span>
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-semibold text-slate-900">{doc.originalFileName}</p>
-                        <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-500">
-                          <span>{formatBytes(doc.size)}</span>
-                          {doc.aiExtractionStatus === "EXTRACTED" ? <span className="text-green-600">✓ Text extracted</span> : <span className="text-slate-400">{doc.aiExtractionStatus === "FAILED" ? "Text extraction failed" : "No extracted text"}</span>}
-                          <span>{new Date(doc.createdAt).toLocaleDateString()}</span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </section>
-          );
-        })}
-      </div>
+      <CategoryAccordion
+        categories={categories.map((category) => ({
+          category,
+          label: CATEGORY_LABELS[category] || category,
+          helper: CATEGORY_HELPERS[category] || "Categorized company document evidence.",
+          style: CARD_STYLES[category] || CARD_STYLES.OTHER,
+          docs: (grouped[category] || []).map((doc) => ({
+            id: doc.id,
+            originalFileName: doc.originalFileName,
+            size: doc.size,
+            aiExtractionStatus: doc.aiExtractionStatus,
+            createdAt: doc.createdAt.toISOString(),
+          })),
+        }))}
+      />
     </div>
   );
 }
