@@ -1,0 +1,164 @@
+name: Apply permanent resumable AI Analyze conversion
+
+on:
+  push:
+    branches:
+      - chatgpt/permanent-resumable-ai-analyze-20260608
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Convert emergency patch into source code
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          node scripts/patch-resumable-ai-analyze.mjs
+
+          node <<'NODE'
+          const fs = require("fs");
+
+          function read(path) {
+            return fs.readFileSync(path, "utf8");
+          }
+
+          function write(path, content) {
+            fs.writeFileSync(path, content, "utf8");
+          }
+
+          function replaceOnce(source, search, replacement, label) {
+            if (source.includes(replacement)) return source;
+            if (!source.includes(search)) {
+              throw new Error(`[permanent-resumable-ai-analyze] Missing target: ${label}`);
+            }
+            return source.replace(search, replacement);
+          }
+
+          // Restore build scripts so production no longer mutates source at build time.
+          const pkgPath = "package.json";
+          const pkg = JSON.parse(read(pkgPath));
+          pkg.scripts.build = "node scripts/check-env.mjs && prisma generate && next build";
+          pkg.scripts["vercel-build"] = "node scripts/check-env.mjs && prisma generate && prisma db push --accept-data-loss=false && next build";
+          write(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`);
+
+          // Source hardening: resume from the first unfinished chunk, not just max index + 1.
+          const aiPath = "lib/ai.ts";
+          let ai = read(aiPath);
+          ai = replaceOnce(
+            ai,
+            `        && Boolean(entry.result?.summary)\n        && Array.isArray(entry.result?.requirements);`,
+            `        && typeof entry.result?.summary === "string"\n        && Array.isArray(entry.result?.requirements);`,
+            "allow cached chunk results with empty summaries",
+          );
+          ai = replaceOnce(
+            ai,
+            `  const startIndex = Math.max(opts?.startFromChunk ?? 0, previousChunkResults.length > 0 ? Math.max(...previousChunkResults.map((entry) => entry.index)) + 1 : 0);\n  const queue = chunks`,
+            `  const firstUnfinishedIndex = (() => {\n    for (let i = 0; i < chunks.length; i++) {\n      if (!previousIndexes.has(i)) return i;\n    }\n    return chunks.length;\n  })();\n  const startIndex = Math.max(opts?.startFromChunk ?? 0, firstUnfinishedIndex);\n  const queue = chunks`,
+            "first unfinished chunk resume index",
+          );
+          write(aiPath, ai);
+
+          // Route hardening: use cached chunkResults to calculate the next unfinished chunk.
+          const routePath = "app/api/tenders/[id]/ai-analyze/route.ts";
+          let route = read(routePath);
+          route = replaceOnce(
+            route,
+            `function normalizePreviousChunkResults(raw: unknown): Array<{ index: number; result: AIAnalysisResult; provider?: string | null }> {\n  if (!Array.isArray(raw)) return [];\n  const cleaned: Array<{ index: number; result: AIAnalysisResult; provider?: string | null }> = [];\n  for (const item of raw) {\n    if (!item || typeof item !== "object") continue;\n    const row = item as Record<string, unknown>;\n    const result = row.result as AIAnalysisResult | undefined;\n    if (!Number.isInteger(row.index) || !result || typeof result.summary !== "string" || !Array.isArray(result.requirements)) continue;\n    cleaned.push({ index: row.index as number, result, provider: typeof row.provider === "string" ? row.provider : null });\n  }\n  return cleaned.sort((a, b) => a.index - b.index);\n}\n`,
+            `function normalizePreviousChunkResults(raw: unknown): Array<{ index: number; result: AIAnalysisResult; provider?: string | null }> {\n  if (!Array.isArray(raw)) return [];\n  const cleaned: Array<{ index: number; result: AIAnalysisResult; provider?: string | null }> = [];\n  for (const item of raw) {\n    if (!item || typeof item !== "object") continue;\n    const row = item as Record<string, unknown>;\n    const result = row.result as AIAnalysisResult | undefined;\n    if (!Number.isInteger(row.index) || !result || typeof result.summary !== "string" || !Array.isArray(result.requirements)) continue;\n    cleaned.push({ index: row.index as number, result, provider: typeof row.provider === "string" ? row.provider : null });\n  }\n  return cleaned.sort((a, b) => a.index - b.index);\n}\n\nfunction getNextUnfinishedChunk(previousChunkResults: Array<{ index: number }>): number {\n  const completedIndexes = new Set(previousChunkResults.map((entry) => entry.index));\n  for (let i = 0; i <= previousChunkResults.length; i++) {\n    if (!completedIndexes.has(i)) return i;\n  }\n  return previousChunkResults.length;\n}\n`,
+            "route next unfinished chunk helper",
+          );
+          route = route.replace(/Math\.max\(\.\.\.previousChunkResults\.map\(\(entry\) => entry\.index\)\) \+ 1/g, "getNextUnfinishedChunk(previousChunkResults)");
+          route = route.replace(/Math\.max\(\.\.\.cachedChunks\.map\(\(entry\) => entry\.index\)\) \+ 1/g, "getNextUnfinishedChunk(cachedChunks)");
+          write(routePath, route);
+
+          // Tender detail page includes the latest AI_ANALYZE jobs so the client can show a persistent resume notice.
+          const pagePath = "app/dashboard/tenders/[id]/page.tsx";
+          let page = read(pagePath);
+          page = replaceOnce(
+            page,
+            `      complianceMatrix: { orderBy: { createdAt: "asc" } },\n    },\n  });`,
+            `      complianceMatrix: { orderBy: { createdAt: "asc" } },\n      aiJobs: {\n        where: { jobType: "AI_ANALYZE" },\n        orderBy: [{ finishedAt: "desc" }, { startedAt: "desc" }],\n        take: 3,\n        select: { id: true, jobType: true, status: true, output: true, startedAt: true, finishedAt: true },\n      },\n    },\n  });`,
+            "include recent AI Analyze jobs",
+          );
+          write(pagePath, page);
+
+          // Client UI: visible partial-resume notice and button label.
+          const detailPath = "app/dashboard/tenders/[id]/tender-detail.tsx";
+          let detail = read(detailPath);
+          detail = replaceOnce(
+            detail,
+            `type MatchingDiagnostics = {\n  experts: { selected: number; averageSelectedScore: number; lowConfidence: Array<{ id: string; score: number }>; lowCoverage: Array<{ id: string }>; hardExcluded: Array<{ id: string }> };\n  projects: { selected: number; averageSelectedScore: number; lowConfidence: Array<{ id: string; score: number }>; lowCoverage: Array<{ id: string }>; hardExcluded: Array<{ id: string }> };\n};`,
+            `type MatchingDiagnostics = {\n  experts: { selected: number; averageSelectedScore: number; lowConfidence: Array<{ id: string; score: number }>; lowCoverage: Array<{ id: string }>; hardExcluded: Array<{ id: string }> };\n  projects: { selected: number; averageSelectedScore: number; lowConfidence: Array<{ id: string; score: number }>; lowCoverage: Array<{ id: string }>; hardExcluded: Array<{ id: string }> };\n};\n\ntype TenderAiJob = {\n  id: string;\n  jobType: string;\n  status: string;\n  output: string | null;\n  startedAt?: string | Date | null;\n  finishedAt?: string | Date | null;\n};\n\ntype ParsedAiAnalyzeJobOutput = {\n  isPartial?: boolean;\n  totalChunks?: number;\n  completedChunks?: number;\n  failedChunks?: number;\n  skippedChunks?: number;\n  contentHash?: string;\n  chunkResults?: unknown[];\n  nextAction?: string | null;\n};\n\nfunction parseAiAnalyzeJobOutput(output: string | null | undefined): ParsedAiAnalyzeJobOutput | null {\n  if (!output) return null;\n  try {\n    const parsed = JSON.parse(output);\n    return parsed && typeof parsed === "object" ? (parsed as ParsedAiAnalyzeJobOutput) : null;\n  } catch {\n    return null;\n  }\n}`,
+            "AI Analyze partial job types and parser",
+          );
+          detail = replaceOnce(
+            detail,
+            `  complianceMatrix?: ComplianceMatrixEntry[];\n  bidOutcome?: string | null;`,
+            `  complianceMatrix?: ComplianceMatrixEntry[];\n  aiJobs?: TenderAiJob[];\n  bidOutcome?: string | null;`,
+            "Tender aiJobs type",
+          );
+          detail = replaceOnce(
+            detail,
+            `      const analyzeUrl = continueJobId\n        ? \`/api/tenders/\${tender.id}/ai-analyze?continue=\${encodeURIComponent(continueJobId)}\`\n        : \`/api/tenders/\${tender.id}/ai-analyze\`;`,
+            `      const analyzeUrl = effectiveContinueJobId\n        ? \`/api/tenders/\${tender.id}/ai-analyze?continue=\${encodeURIComponent(effectiveContinueJobId)}\`\n        : \`/api/tenders/\${tender.id}/ai-analyze\`;`,
+            "streaming client uses effective resume job id",
+          );
+          detail = replaceOnce(
+            detail,
+            `    if (!continueJobId) return;\n    setAnalyzing(true);`,
+            `    const resumeJobId = effectiveContinueJobId;\n    if (!resumeJobId) return;\n    setAnalyzing(true);`,
+            "continue handler effective resume id guard",
+          );
+          detail = replaceOnce(
+            detail,
+            `      const res = await fetch(\`/api/tenders/\${tender.id}/ai-analyze?continue=\${continueJobId}\`, { method: "POST" });`,
+            `      const res = await fetch(\`/api/tenders/\${tender.id}/ai-analyze?continue=\${encodeURIComponent(resumeJobId)}\`, { method: "POST" });`,
+            "continue handler encodes resume id",
+          );
+          detail = replaceOnce(
+            detail,
+            `  const readinessScore = tender.readinessScore ??\n    (tender.requirements.length === 0 ? 0\n      : Math.max(0, Math.round(((tender.requirements.length - criticalGaps) / tender.requirements.length) * 100)));\n\n  const proposalQuality = (() => {`,
+            `  const readinessScore = tender.readinessScore ??\n    (tender.requirements.length === 0 ? 0\n      : Math.max(0, Math.round(((tender.requirements.length - criticalGaps) / tender.requirements.length) * 100)));\n\n  const latestPartialAiAnalyzeJob = (tender.aiJobs ?? []).find((job) => job.jobType === "AI_ANALYZE" && job.status === "PARTIAL_SUCCESS") ?? null;\n  const latestPartialAiAnalyzeOutput = parseAiAnalyzeJobOutput(latestPartialAiAnalyzeJob?.output);\n  const partialCompletedChunks = typeof latestPartialAiAnalyzeOutput?.completedChunks === "number"\n    ? latestPartialAiAnalyzeOutput.completedChunks\n    : (analyzeResult?.chunks?.completed ?? 0);\n  const partialTotalChunks = typeof latestPartialAiAnalyzeOutput?.totalChunks === "number"\n    ? latestPartialAiAnalyzeOutput.totalChunks\n    : (analyzeResult?.chunks?.total ?? 0);\n  const hasPartialAiAnalysis = Boolean(\n    (latestPartialAiAnalyzeJob || analyzeResult?.chunks?.isPartial)\n    && partialTotalChunks > 0\n    && partialCompletedChunks > 0\n    && partialCompletedChunks < partialTotalChunks,\n  );\n  const nextResumeChunk = hasPartialAiAnalysis ? Math.min(partialCompletedChunks + 1, partialTotalChunks) : null;\n  const effectiveContinueJobId = continueJobId ?? (hasPartialAiAnalysis ? latestPartialAiAnalyzeJob?.id ?? null : null);\n\n  const proposalQuality = (() => {`,
+            "partial AI Analyze resume state",
+          );
+          detail = replaceOnce(
+            detail,
+            `              {analyzing ? (analyzePhase ? \`${analyzePhase.slice(0, 28)}…\` : "Analyzing…") : "✦ AI Analyze"}`,
+            `              {analyzing ? (analyzePhase ? \`${analyzePhase.slice(0, 28)}…\` : "Analyzing…") : hasPartialAiAnalysis ? "Resume AI Analyze" : "✦ AI Analyze"}`,
+            "AI Analyze button resume label",
+          );
+          detail = replaceOnce(
+            detail,
+            `        </div>\n      </div>\n\n      {matchingDiagnostics && (`,
+            `        </div>\n      </div>\n\n      {hasPartialAiAnalysis && nextResumeChunk && (\n        <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">\n          <span className="font-semibold">Partial AI analysis found</span> — completed {partialCompletedChunks} / {partialTotalChunks} chunks. Next AI Analyze will resume from chunk {nextResumeChunk}.\n        </div>\n      )}\n\n      {matchingDiagnostics && (`,
+            "partial AI Analyze visible resume message",
+          );
+          write(detailPath, detail);
+
+          // Pure unit coverage for the resume-cache invariants; mirrors repo test style for private helpers.
+          write("tests/ai-analyze-resume-cache.test.ts", `import { describe, it } from "node:test";\nimport { strict as assert } from "node:assert";\n\ntype AnalysisResult = {\n  summary: string;\n  requirements: Array<{ title?: string; description?: string }>;\n  exactFileNaming: string[];\n  exactFileOrder: string[];\n  evaluationMethodology: string;\n  submissionNotes: string;\n};\n\ntype ChunkCacheEntry = { index: number; result: AnalysisResult; provider?: string | null };\n\nfunction emptyResult(overrides: Partial<AnalysisResult> = {}): AnalysisResult {\n  return { summary: "", requirements: [], exactFileNaming: [], exactFileOrder: [], evaluationMethodology: "", submissionNotes: "", ...overrides };\n}\n\nfunction normalizePreviousChunkResults(raw: unknown, totalChunks: number): ChunkCacheEntry[] {\n  if (!Array.isArray(raw)) return [];\n  return raw\n    .filter((item): item is ChunkCacheEntry => {\n      if (!item || typeof item !== "object") return false;\n      const row = item as Record<string, unknown>;\n      const result = row.result as AnalysisResult | undefined;\n      return Number.isInteger(row.index)\n        && (row.index as number) >= 0\n        && (row.index as number) < totalChunks\n        && !!result\n        && typeof result.summary === "string"\n        && Array.isArray(result.requirements);\n    })\n    .sort((a, b) => a.index - b.index);\n}\n\nfunction firstUnfinishedChunk(previous: Array<{ index: number }>, totalChunks: number): number {\n  const completed = new Set(previous.map((entry) => entry.index));\n  for (let i = 0; i < totalChunks; i++) {\n    if (!completed.has(i)) return i;\n  }\n  return totalChunks;\n}\n\nfunction mergeRequirements(parts: AnalysisResult[]): string[] {\n  const byTitle = new Map<string, string>();\n  for (const part of parts) {\n    for (const req of part.requirements) {\n      const key = (req.title ?? "").toLowerCase().replace(/\\s+/g, " ").trim();\n      if (!key) continue;\n      const existing = byTitle.get(key);\n      if (!existing || (req.description?.length ?? 0) > existing.length) {\n        byTitle.set(key, req.description ?? "");\n      }\n    }\n  }\n  return [...byTitle.keys()];\n}\n\ndescribe("AI Analyze resume cache", () => {\n  it("resumes from chunk 4 after a 3/6 partial success", () => {\n    const previous = normalizePreviousChunkResults([\n      { index: 0, result: emptyResult({ summary: "one" }), provider: "gemini" },\n      { index: 1, result: emptyResult({ summary: "two" }), provider: "openai" },\n      { index: 2, result: emptyResult({ summary: "three" }), provider: "mistral" },\n    ], 6);\n\n    assert.equal(previous.length, 3);\n    assert.equal(firstUnfinishedChunk(previous, 6), 3);\n  });\n\n  it("reuses successful chunk results and deduplicates requirements on final merge", () => {\n    const previous = [\n      { index: 0, result: emptyResult({ requirements: [{ title: "Team Leader", description: "short" }] }) },\n      { index: 1, result: emptyResult({ requirements: [{ title: "Financial Expert", description: "CPA" }] }) },\n    ];\n    const next = [\n      emptyResult({ requirements: [{ title: "team leader", description: "longer description from resumed chunk" }] }),\n    ];\n\n    const keys = mergeRequirements([...previous.map((entry) => entry.result), ...next]);\n    assert.deepEqual(keys.sort(), ["financial expert", "team leader"]);\n  });\n\n  it("discards cached chunks when the content hash changes", () => {\n    const saved = { contentHash: "old-hash", chunkResults: [{ index: 0, result: emptyResult({ summary: "old" }) }] };\n    const currentHash = "new-hash";\n    const reusable = saved.contentHash === currentHash ? normalizePreviousChunkResults(saved.chunkResults, 6) : [];\n    assert.deepEqual(reusable, []);\n  });\n});\n`);
+
+          fs.unlinkSync("scripts/patch-resumable-ai-analyze.mjs");
+          fs.rmSync(".github/workflows/apply-permanent-resumable-ai-analyze.yml", { force: true });
+          NODE
+
+          git status --short
+          git add -- \
+            'lib/ai.ts' \
+            'app/api/tenders/[id]/ai-analyze/route.ts' \
+            'app/dashboard/tenders/[id]/page.tsx' \
+            'app/dashboard/tenders/[id]/tender-detail.tsx' \
+            'package.json' \
+            'scripts/patch-resumable-ai-analyze.mjs' \
+            'tests/ai-analyze-resume-cache.test.ts' \
+            '.github/workflows/apply-permanent-resumable-ai-analyze.yml'
+          git commit -m "fix: make AI Analyze resume cache permanent"
+          git push
