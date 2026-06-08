@@ -131,6 +131,7 @@ export async function ExtractionQualityDashboard({ tenderId }: { tenderId: strin
         submissionPages: perPage?.submissionInstructionPages.length ?? null,
         evaluationPages: perPage?.evaluationCriteriaPages.length ?? null,
         requiredDocPages: perPage?.requiredDocumentPages.length ?? null,
+        clientDetailPages: perPage?.clientDetailPages.length ?? null,
       };
     });
 
@@ -267,14 +268,15 @@ export async function ExtractionQualityDashboard({ tenderId }: { tenderId: strin
                   </div>
 
                   {/* Content page detection */}
-                  {(file.submissionPages !== null || file.evaluationPages !== null || file.requiredDocPages !== null) && (
-                    <div className="mt-3 grid grid-cols-3 gap-1.5 text-center text-xs">
+                  {(file.submissionPages !== null || file.evaluationPages !== null || file.requiredDocPages !== null || file.clientDetailPages !== null) && (
+                    <div className="mt-3 grid grid-cols-4 gap-1.5 text-center text-xs">
                       {[
                         ["Submission", file.submissionPages],
                         ["Eval Criteria", file.evaluationPages],
                         ["Req. Docs", file.requiredDocPages],
+                        ["Client Details", file.clientDetailPages],
                       ].map(([label, count]) => (
-                        <div key={label as string} className={`rounded-lg border px-1.5 py-1.5 ${(count as number) > 0 ? "border-green-200 bg-green-50" : "border-red-200 bg-red-50"}`}>
+                        <div key={label as string} className={`rounded-lg border px-1 py-1.5 ${(count as number) > 0 ? "border-green-200 bg-green-50" : "border-red-200 bg-red-50"}`}>
                           <p className="text-[9px] uppercase text-slate-400 leading-tight">{label as string}</p>
                           <p className={`mt-0.5 font-bold ${(count as number) > 0 ? "text-green-700" : "text-red-600"}`}>
                             {(count as number) > 0 ? `${count}p` : "0"}
@@ -314,6 +316,11 @@ export async function ExtractionQualityDashboard({ tenderId }: { tenderId: strin
                     {!file.corrupted && !file.notYetExtracted && file.evaluationPages === 0 && file.score >= 45 && (
                       <p className="text-xs text-slate-400 italic">
                         No evaluation criteria pages detected
+                      </p>
+                    )}
+                    {!file.corrupted && !file.notYetExtracted && file.clientDetailPages === 0 && file.score >= 45 && (
+                      <p className="text-xs text-amber-700">
+                        ⚠ No client/contact detail pages detected — procuring entity name, submission contact, and address may be missing
                       </p>
                     )}
                   </div>

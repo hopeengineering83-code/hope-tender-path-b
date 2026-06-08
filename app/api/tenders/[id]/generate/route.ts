@@ -315,6 +315,22 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }, { status: 422 });
   }
 
+  // ── Partial AI analysis gate ─────────────────────────────────────────────
+  // When tender.status === "AI_ANALYSIS_PARTIAL", the AI analysis job hit its
+  // deadline and stopped before processing all content chunks. Requirements from
+  // later pages of the tender were not extracted. Generating on a partial analysis
+  // produces proposals that may be missing evaluation criteria, required documents,
+  // or submission rules from the unprocessed sections.
+  if (tender.status === "AI_ANALYSIS_PARTIAL") {
+    return NextResponse.json({
+      errorCode: "ANALYSIS_PARTIAL",
+      error: "Generation blocked: the previous AI Analyze run did not finish — it was interrupted before processing all tender content. Re-run AI Analyze to complete the analysis before generating documents.",
+      blockers: ["AI Analyze stopped before reading all tender pages. Requirements from later sections may be missing."],
+      nextAction: "RERUN_AI_ANALYZE",
+      diagnosticId: `analysis-partial-${id}`,
+    }, { status: 422 });
+  }
+
   // ── Extraction quality gate ───────────────────────────────────────────────
   // Block generation when extraction quality is too poor to produce reliable
   // documents (REGEX_FALLBACK_FROM_WEAK_EXTRACTION — average score < 45 with
@@ -335,6 +351,29 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       nextAction: corruptedExtractionFiles.length > 0 ? "RUN_OCR_OR_UPLOAD_CLEARER_SCAN" : "OPEN_EXTRACTION_QUALITY",
       diagnosticId: `extraction-insufficient-${id}`,
     }, { status: 422 });
+  }
+
+  // ── Partial-extraction AI analysis advisory ───────────────────────────────
+  // When AI Analyze ran on partial extraction (some pages failed/were OCR-only),
+  // the analysis result may be missing requirements, evaluation criteria, or
+  // submission details from the unextracted pages. We surface this as a blocking
+  // advisory so the user can re-extract and re-analyze before committing to
+  // generated documents. REGEX_FALLBACK is already blocked above by the
+  // isExtractionAcceptableForGeneration() check; this guard covers the softer
+  // PARTIAL_EXTRACTION_AI_ANALYZED case.
+  const analysisExtractionStatusForGen = (tender as { analysisExtractionStatus?: string | null }).analysisExtractionStatus;
+  if (analysisExtractionStatusForGen === "PARTIAL_EXTRACTION_AI_ANALYZED") {
+    const reqUrl2 = new URL(req.url);
+    if (reqUrl2.searchParams.get("planOnly") !== "true" && reqUrl2.searchParams.get("acceptPartialExtraction") !== "true") {
+      return NextResponse.json({
+        errorCode: "PARTIAL_EXTRACTION_ANALYSIS",
+        error: "Generation blocked: AI Analyze ran on a partially-extracted tender (some pages could not be fully read). The generated documents may be missing requirements, evaluation criteria, or submission instructions from unread pages. Re-extract the tender file (run OCR if needed) and re-run AI Analyze to get a complete analysis before generating documents.",
+        blockers: ["AI analysis was performed on partial tender extraction — some pages were weak, blank, or OCR-only. Re-extract and re-analyze before generating."],
+        nextAction: "RERUN_AI_ANALYZE",
+        acceptPartialExtraction: false,
+        diagnosticId: `partial-extraction-analysis-${id}`,
+      }, { status: 422 });
+    }
   }
 
   if (tender.status === "NO_BID") return NextResponse.json({
@@ -776,6 +815,25 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   }
   if (selectedExpertMatches.length > 0 && reviewedExpertCount === 0 && expertRequirementExists > 0) return NextResponse.json({ error: `Generation blocked: ${selectedExpertMatches.length} expert(s) are selected but NONE have been reviewed. Go to the Knowledge Review page and review at least one expert before generating.`, code: "ALL_EXPERTS_UNREVIEWED", draftExperts: draftExperts.map((m) => m.expert.fullName) }, { status: 422 });
   if (selectedProjectMatches.length > 0 && reviewedProjectCount === 0 && projectRequirementExists > 0) return NextResponse.json({ error: `Generation blocked: ${selectedProjectMatches.length} project reference(s) are selected but NONE have been reviewed. Go to the Knowledge Review page and review at least one project before generating.`, code: "ALL_PROJECTS_UNREVIEWED", draftProjects: draftProjects.map((m) => m.project.name) }, { status: 422 });
+
+  // ── Empty vault hard gate ─────────────────────────────────────────────────
+  // A proposal built from zero evidence is entirely generic and unsuitable for
+  // submission. Block generation when the company vault has no reviewed experts
+  // AND no reviewed projects so the user is prompted to add real evidence before
+  // generating documents that will be submitted under their company name.
+  const [vaultReviewedExpertCount, vaultReviewedProjectCount] = await Promise.all([
+    prisma.expert.count({ where: { company: { userId }, trustLevel: "REVIEWED" } }),
+    prisma.project.count({ where: { company: { userId }, trustLevel: "REVIEWED" } }),
+  ]);
+  if (vaultReviewedExpertCount === 0 && vaultReviewedProjectCount === 0) {
+    return NextResponse.json({
+      errorCode: "EMPTY_VAULT",
+      error: "Generation blocked: your company knowledge vault contains no reviewed experts or projects. A proposal built from zero evidence will be entirely generic and unsuitable for submission. Import and review at least one expert CV or one comparable project reference before generating documents.",
+      blockers: ["Company knowledge vault is empty — zero reviewed experts and zero reviewed projects found."],
+      nextAction: "OPEN_COMPANY_READINESS",
+      diagnosticId: `empty-vault-${id}`,
+    }, { status: 422 });
+  }
 
   const warnings: string[] = [...readiness.warnings, ...promotion.warnings];
   if (explicitSubmissionScope) warnings.push(`Submission plan target scope detected: ${plannedTargetFiles.length} tender-required file(s) will control generation reconciliation.`);

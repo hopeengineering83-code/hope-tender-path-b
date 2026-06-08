@@ -340,3 +340,164 @@ describe("schema sanitizer (mirrors tryParseAndSanitize inside analyzeOneChunk)"
     assert.equal(result.exactFileNaming[0], "tech_proposal.pdf");
   });
 });
+
+// ─── isPartial → PARTIAL_EXTRACTION_AI_ANALYZED downgrade ────────────────────
+// Regression for the bug where a partial AI analysis (deadline hit, not all chunks
+// processed) left analysisExtractionStatus as FULL_EXTRACTION_AI_ANALYZED even
+// though requirements from later chunks were never extracted. Both streaming and
+// non-streaming paths now downgrade FULL → PARTIAL when aiMeta.isPartial is true.
+
+function computeEffectiveExtractionStatus(
+  extractionStatus: string,
+  isPartial: boolean,
+): string {
+  return isPartial && extractionStatus === "FULL_EXTRACTION_AI_ANALYZED"
+    ? "PARTIAL_EXTRACTION_AI_ANALYZED"
+    : extractionStatus;
+}
+
+describe("ai-analyze: isPartial → PARTIAL_EXTRACTION_AI_ANALYZED downgrade (regression)", () => {
+  it("downgrades FULL_EXTRACTION_AI_ANALYZED to PARTIAL when isPartial=true", () => {
+    const result = computeEffectiveExtractionStatus("FULL_EXTRACTION_AI_ANALYZED", true);
+    assert.equal(result, "PARTIAL_EXTRACTION_AI_ANALYZED");
+  });
+
+  it("does NOT downgrade when isPartial=false", () => {
+    const result = computeEffectiveExtractionStatus("FULL_EXTRACTION_AI_ANALYZED", false);
+    assert.equal(result, "FULL_EXTRACTION_AI_ANALYZED");
+  });
+
+  it("does NOT modify REGEX_FALLBACK even when isPartial=true", () => {
+    const result = computeEffectiveExtractionStatus("REGEX_FALLBACK_FROM_WEAK_EXTRACTION", true);
+    assert.equal(result, "REGEX_FALLBACK_FROM_WEAK_EXTRACTION");
+  });
+
+  it("does NOT modify PARTIAL_EXTRACTION_AI_ANALYZED when isPartial=true (already correct)", () => {
+    const result = computeEffectiveExtractionStatus("PARTIAL_EXTRACTION_AI_ANALYZED", true);
+    assert.equal(result, "PARTIAL_EXTRACTION_AI_ANALYZED");
+  });
+
+  it("does NOT modify EXTRACTION_CORRUPTED_AI_SKIPPED when isPartial=true", () => {
+    const result = computeEffectiveExtractionStatus("EXTRACTION_CORRUPTED_AI_SKIPPED", true);
+    assert.equal(result, "EXTRACTION_CORRUPTED_AI_SKIPPED");
+  });
+});
+
+// ─── Non-streaming resume: previousChunkResults normalization ─────────────────
+// Regression test for the bug where the non-streaming POST path loaded
+// previousChunkResults from a saved AiJob output but did NOT pass them to
+// analyzeWithAI(), making resume a no-op that re-processed already-done chunks.
+//
+// This test exercises the normalization helper that would produce
+// previousChunkResults from a stored job output — ensuring saved chunk data
+// survives the round-trip through JSON storage and is ready to be injected.
+
+type StoredChunkResult = {
+  chunkIndex: number;
+  ok: boolean;
+  value?: AIAnalysisResultLike;
+  error?: string;
+};
+
+function normalizePreviousChunkResults(
+  savedOutput: unknown,
+): Array<{ ok: true; value: AIAnalysisResultLike } | { ok: false; error: string }> | undefined {
+  if (!savedOutput || typeof savedOutput !== "object") return undefined;
+  const out = savedOutput as Record<string, unknown>;
+  if (!Array.isArray(out.chunkResults)) return undefined;
+  const arr = out.chunkResults as StoredChunkResult[];
+  if (arr.length === 0) return undefined;
+  return arr.map((r) =>
+    r.ok && r.value
+      ? { ok: true as const, value: r.value }
+      : { ok: false as const, error: r.error ?? "unknown" },
+  );
+}
+
+describe("non-streaming resume: previousChunkResults normalization (regression)", () => {
+  it("returns undefined when savedOutput is null", () => {
+    assert.equal(normalizePreviousChunkResults(null), undefined);
+  });
+
+  it("returns undefined when savedOutput has no chunkResults array", () => {
+    assert.equal(normalizePreviousChunkResults({ status: "partial" }), undefined);
+  });
+
+  it("returns undefined for an empty chunkResults array", () => {
+    assert.equal(normalizePreviousChunkResults({ chunkResults: [] }), undefined);
+  });
+
+  it("maps successful chunk entries to { ok: true, value }", () => {
+    const chunk: StoredChunkResult = {
+      chunkIndex: 0,
+      ok: true,
+      value: {
+        summary: "chunk 0 summary",
+        requirements: [{ title: "Req A" }],
+        exactFileNaming: [],
+        exactFileOrder: [],
+        evaluationMethodology: "",
+        submissionNotes: "",
+      },
+    };
+    const result = normalizePreviousChunkResults({ chunkResults: [chunk] });
+    assert.ok(result !== undefined);
+    assert.equal(result!.length, 1);
+    assert.equal(result![0].ok, true);
+    assert.equal((result![0] as { ok: true; value: AIAnalysisResultLike }).value.summary, "chunk 0 summary");
+  });
+
+  it("maps failed chunk entries to { ok: false, error }", () => {
+    const chunk: StoredChunkResult = { chunkIndex: 1, ok: false, error: "rate limited" };
+    const result = normalizePreviousChunkResults({ chunkResults: [chunk] });
+    assert.ok(result !== undefined);
+    assert.equal(result![0].ok, false);
+    assert.equal((result![0] as { ok: false; error: string }).error, "rate limited");
+  });
+
+  it("maps a missing error string to 'unknown' for failed entries", () => {
+    const chunk: StoredChunkResult = { chunkIndex: 2, ok: false };
+    const result = normalizePreviousChunkResults({ chunkResults: [chunk] });
+    assert.ok(result !== undefined);
+    assert.equal((result![0] as { ok: false; error: string }).error, "unknown");
+  });
+
+  it("round-trips through JSON serialization (simulates AiJob.output storage)", () => {
+    const original = {
+      chunkResults: [
+        { chunkIndex: 0, ok: true, value: { summary: "p1", requirements: [], exactFileNaming: [], exactFileOrder: [], evaluationMethodology: "", submissionNotes: "" } },
+        { chunkIndex: 1, ok: false, error: "timeout" },
+      ],
+    };
+    // Simulate JSON.stringify / JSON.parse round-trip (AiJob.output is stored as JSON string)
+    const saved = JSON.parse(JSON.stringify(original));
+    const result = normalizePreviousChunkResults(saved);
+    assert.ok(result !== undefined);
+    assert.equal(result!.length, 2);
+    assert.equal(result![0].ok, true);
+    assert.equal(result![1].ok, false);
+  });
+
+  it("non-streaming path now passes previousChunkResults to analyzeWithAI — verified in route.ts", () => {
+    // This is a documentation/contract test.
+    // The fix applied to app/api/tenders/[id]/ai-analyze/route.ts line ~886
+    // changed the analyzeWithAI() call from:
+    //   analyzeWithAI(tenderContent, { deadlineAt, startFromChunk })
+    // to:
+    //   analyzeWithAI(tenderContent, { deadlineAt, startFromChunk, previousChunkResults })
+    // Without this fix, resume on the non-streaming path was silently re-processing
+    // all previously-completed chunks instead of starting from startFromChunk with
+    // their cached results injected.
+    const { readFileSync } = require("node:fs");
+    const { resolve } = require("node:path");
+    const routeSrc = readFileSync(
+      resolve(process.cwd(), "app/api/tenders/[id]/ai-analyze/route.ts"),
+      "utf8",
+    );
+    // The non-streaming call must include previousChunkResults in the options object.
+    assert.ok(
+      routeSrc.includes("analyzeWithAI(tenderContent, { deadlineAt, startFromChunk, previousChunkResults })"),
+      "non-streaming analyzeWithAI call must pass previousChunkResults to enable resume",
+    );
+  });
+});

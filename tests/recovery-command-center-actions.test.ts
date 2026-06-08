@@ -26,10 +26,41 @@ import { RECOVERY_COMMAND_ACTIONS, getRecoveryCommandActionSpec, renderRecoveryA
 // must point to routes that exist inside the Next.js app.
 // We enumerate the known-safe target paths so any future addition is caught.
 const KNOWN_SAFE_NAVIGATE_TARGETS = new Set([
-  "/dashboard/analytics",   // CONFIGURE_AI_PROVIDER — page exists
+  "/dashboard/analytics",        // CONFIGURE_AI_PROVIDER
+  "/dashboard/company/readiness", // OPEN_COMPANY_READINESS
+  "/dashboard/matching",          // REVIEW_MATCHES, REVIEW_MATCHING_INPUTS
   // /dashboard/vault was the old LINK_VAULT_EVIDENCE target — it does NOT exist
   // and must never appear in the component.
 ]);
+
+// All nextAction codes that API routes emit. Every code here must have a
+// corresponding entry in RECOVERY_COMMAND_ACTIONS (or a safe alias).
+const KNOWN_NEXT_ACTIONS = [
+  "BUILD_SUBMISSION_PLAN",
+  "CHANGE_BID_DECISION",
+  "CONFIRM_SUBMISSION_PLAN",
+  "CONTINUE_AI_ANALYSIS",
+  "CONTINUE_AUTO_FINALIZE",
+  "EDIT_TENDER",
+  "EDIT_TENDER_METADATA",
+  "OPEN_ANALYSIS_QUALITY",
+  "OPEN_COMPANY_READINESS",
+  "OPEN_EXTRACTION_QUALITY",
+  "OPEN_GENERATION_READINESS",
+  "REPAIR_OR_EDIT_TENDER",
+  "REPAIR_SOURCE_GROUNDING",
+  "RERUN_AI_ANALYZE",
+  "RERUN_AI_ANALYZE_AFTER_OCR",
+  "RETRY_AI_ANALYZE",
+  "RETRY_AI_ANALYZE_OR_APPROVE_FALLBACK",
+  "REVIEW_MATCHES",
+  "REVIEW_MATCHING_INPUTS",
+  "REVIEW_REQUIREMENTS_OR_ADD_MANUAL_PLAN",
+  "RUN_ENGINE",
+  "RUN_OCR_OR_UPLOAD_CLEARER_SCAN",
+  "UPLOAD_TENDER_DOCUMENT",
+  "UPLOAD_TENDER_SOURCE",
+];
 
 
 const REQUIRED_EXECUTE_ACTIONS = [
@@ -137,6 +168,59 @@ describe("Recovery Command Center — no 404-causing navigation", () => {
       src.includes("Action not available yet"),
       "unknown actions must show 'Action not available yet' fallback message",
     );
+  });
+});
+
+// ─── 1b. nextAction coverage — every API error code resolves in the registry ──
+
+describe("Recovery Command Center — nextAction code coverage", () => {
+  it("every known nextAction code from API routes resolves in the registry", () => {
+    const missing: string[] = [];
+    for (const code of KNOWN_NEXT_ACTIONS) {
+      if (!getRecoveryCommandActionSpec(code)) missing.push(code);
+    }
+    assert.deepEqual(missing, [], `These nextAction codes have no registry entry and will show "Action not available yet": ${missing.join(", ")}`);
+  });
+
+  it("every navigate action points at an existing Next.js page directory", () => {
+    const { existsSync } = require("node:fs");
+    const { resolve } = require("node:path");
+    for (const [action, spec] of Object.entries(RECOVERY_COMMAND_ACTIONS)) {
+      if (spec.kind !== "navigate") continue;
+      assert.ok(spec.path, `${action} must define a navigation path`);
+      assert.ok(KNOWN_SAFE_NAVIGATE_TARGETS.has(spec.path!), `${action} navigates to an unverified page: ${spec.path}`);
+      // Also verify the page directory exists in the app
+      const pageDir = resolve(process.cwd(), "app", spec.path!.replace(/^\//, ""));
+      assert.ok(existsSync(pageDir), `${action} navigates to a page directory that does not exist: ${pageDir}`);
+    }
+  });
+
+  it("OPEN_COMPANY_READINESS resolves to the company readiness page", () => {
+    const spec = getRecoveryCommandActionSpec("OPEN_COMPANY_READINESS");
+    assert.ok(spec, "OPEN_COMPANY_READINESS must have a registry entry");
+    assert.equal(spec!.kind, "navigate");
+    assert.equal(spec!.path, "/dashboard/company/readiness");
+  });
+
+  it("REVIEW_MATCHES resolves to the matching page", () => {
+    const spec = getRecoveryCommandActionSpec("REVIEW_MATCHES");
+    assert.ok(spec, "REVIEW_MATCHES must have a registry entry");
+    assert.equal(spec!.kind, "navigate");
+    assert.equal(spec!.path, "/dashboard/matching");
+  });
+
+  it("REPAIR_OR_EDIT_TENDER alias resolves to source grounding repair", () => {
+    const spec = getRecoveryCommandActionSpec("REPAIR_OR_EDIT_TENDER");
+    assert.ok(spec, "REPAIR_OR_EDIT_TENDER must resolve via alias");
+    assert.equal(spec!.kind, "api");
+    assert.ok(spec!.path?.includes("repair-source-grounding"));
+  });
+
+  it("RERUN_AI_ANALYZE_AFTER_OCR alias resolves to ai-analyze", () => {
+    const spec = getRecoveryCommandActionSpec("RERUN_AI_ANALYZE_AFTER_OCR");
+    assert.ok(spec, "RERUN_AI_ANALYZE_AFTER_OCR must resolve via alias");
+    assert.equal(spec!.kind, "api");
+    assert.ok(spec!.path?.includes("ai-analyze"));
   });
 });
 

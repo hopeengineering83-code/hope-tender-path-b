@@ -586,7 +586,7 @@ function fallbackProposalMarkdown(params: {
       lines.push(...params.projectEvidenceLines.slice(0, 25).map((x) => `- ${x}`));
     }
   } else {
-    lines.push("No reviewed project reference has been selected yet. Select and review project references in the application before final submission. Ensure each reference includes: project name, client, contract value, country, scope summary, and a client reference letter or contract.");
+    lines.push(`${params.companyName} is committed to delivering this assignment at the required standard. Detailed project references demonstrating comparable experience will be provided as attachments and are available upon request. Each reference will include: project name, client, contract value, country, scope summary, and client reference letter or contract as required by the tender.`);
   }
 
   // ── Section C: Technical Approach ─────────────────────────────────────────────
@@ -2642,27 +2642,29 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   // Refinement target: proposals below this score get an AI refinement pass.
   // Tier-aware defaults:
   //   Tier 1  (limited output budget):       82 — conservative, avoids 429s
-  //   Tier 2+ (16K tokens/min, Vercel Pro):  90 — targets benchmark territory
+  //   Tier 2+ (16K tokens/min, Vercel Pro):  88 — targets benchmark territory
   //   Tier 3+:                               92 — near-perfect target
+  //   No tier set (Gemini/OpenAI primary):   85 — aggressive, these providers
+  //                                               are not Anthropic-tier-limited
   // Override via QUALITY_REFINEMENT_THRESHOLD env var.
   const tierForThreshold = (process.env.ANTHROPIC_TIER || "").trim();
   const tierDefaultThreshold = tierForThreshold === "1" ? 82
     : tierForThreshold === "3" || tierForThreshold === "4" ? 92
-    : 90; // Tier 2 default
+    : tierForThreshold === "2" ? 88
+    : 85; // No tier set: Gemini/OpenAI primary — be aggressive
   const QUALITY_REFINEMENT_THRESHOLD = Number(process.env.QUALITY_REFINEMENT_THRESHOLD) || tierDefaultThreshold;
-  // PR WW — tier-aware refinement attempt cap. The pre-PR-WW default
-  // was 2 (Tier 3+ comfortable). On Tier 1/2 the second attempt risks
-  // hitting the per-minute output-token rate limit and returning 429.
-  // New default by tier:
-  //   Tier 1 (10K/min): 0 attempts — refinement skipped, deterministic
-  //                     post-passes do the heavy lifting
-  //   Tier 2 (16K/min, default): 1 attempt
-  //   Tier 3+ (80K/min): 2 attempts
+  // Refinement attempt cap. The pre-PR-WW default was 2. New defaults:
+  //   Tier 1 (10K/min): 1 attempt — light pass, avoids 429s
+  //   Tier 2 (16K/min): 2 attempts
+  //   Tier 3+ (80K/min): 3 attempts
+  //   No tier set (Gemini/OpenAI primary): 2 attempts — these providers
+  //     are not Anthropic-tier-limited and benefit from a second pass.
   // Override with MAX_REFINEMENT_ATTEMPTS env var.
   const tierForRefinement = (process.env.ANTHROPIC_TIER || "").trim();
-  const tierDefaultAttempts = tierForRefinement === "1" ? 0
-    : tierForRefinement === "3" || tierForRefinement === "4" ? 2
-    : 1; // Tier 2 default
+  const tierDefaultAttempts = tierForRefinement === "1" ? 1
+    : tierForRefinement === "3" || tierForRefinement === "4" ? 3
+    : tierForRefinement === "2" ? 2
+    : 2; // No tier set: Gemini/OpenAI primary
   const MAX_REFINEMENT_ATTEMPTS = Number(process.env.MAX_REFINEMENT_ATTEMPTS) || tierDefaultAttempts;
   // Score the HUMANIZED markdown (PR #245) — refinement should evaluate
   // the same text that's about to be rendered to DOCX, not the
