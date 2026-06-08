@@ -140,6 +140,7 @@ export async function FinalPackageManifestPanel({ tenderId }: { tenderId: string
             validationStatus: true,
             reviewStatus: true,
             storagePath: true,
+            fileContent: true,
             format: true,
           },
         },

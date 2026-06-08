@@ -409,8 +409,7 @@ export function submissionPlanFileCount(plan: SubmissionPlan): number {
 export function hasExplicitSubmissionScope(tender: TenderLike): boolean {
   return parseStringArray(tender.exactFileNaming).length > 0
     || parseStringArray(tender.exactFileOrder).length > 0
-    || (tender.requirements ?? []).some((requirement) => Boolean(requirement.exactFileName))
-    || (tender.requirements ?? []).length > 0;
+    || (tender.requirements ?? []).some((requirement) => Boolean(requirement.exactFileName));
 }
 
 export function plannedSubmissionTargetFiles(plan: SubmissionPlan): SubmissionPlanFile[] {
