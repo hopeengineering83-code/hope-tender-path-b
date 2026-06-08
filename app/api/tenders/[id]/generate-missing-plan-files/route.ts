@@ -10,6 +10,8 @@ import { extractRequestId } from "../../../../../lib/request-id";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
+type RequirementLike = { title: string; description?: string | null; requirementType?: string | null; priority?: string | null };
+
 function clean(value: string) {
   return value.replace(/[\u0000-\u001F\u007F]/g, " ").replace(/\s+/g, " ").trim();
 }
@@ -22,6 +24,10 @@ function heading(text: string) {
   return new Paragraph({ text: clean(text), heading: HeadingLevel.HEADING_1, spacing: { before: 260, after: 140 } });
 }
 
+function subheading(text: string) {
+  return new Paragraph({ text: clean(text), heading: HeadingLevel.HEADING_2, spacing: { before: 180, after: 100 } });
+}
+
 function bullet(text: string) {
   return new Paragraph({ text: clean(text), bullet: { level: 0 }, spacing: { after: 80, line: 260 } });
 }
@@ -30,7 +36,6 @@ function documentTypeFor(fileName: string, fallback: string) {
   const label = fileName.toLowerCase();
   if (/financial|audited|capacity|bank|turnover/.test(label)) return "FINANCIAL_EVIDENCE";
   if (/legal|eligibility|registration|licen[cs]ing|tax|certificate/.test(label)) return "LEGAL_EVIDENCE";
-  // Submission/rules must be checked before form|template — "submission formatting" contains "form"
   if (/submission formatting|packaging rules|submission rules|delivery instruction|submission method|submission deadline/.test(label)) return "SUBMISSION_RULES";
   if (/\bform\b|template/.test(label)) return "FORM_OR_TEMPLATE";
   if (/submission|deadline|delivery|method|rules/.test(label)) return "SUBMISSION_RULES";
@@ -39,8 +44,27 @@ function documentTypeFor(fileName: string, fallback: string) {
 
 function needsOriginalReplacement(fileName: string, documentType: string) {
   const label = `${fileName} ${documentType}`.toLowerCase();
-  // Use \bform\b word boundary to prevent "formatting" from matching "form"
-  return /\bform\b|template|annex\s*[a-z0-9]+\s*\(?official\)?/.test(label);
+  const type = documentType.toUpperCase();
+  if (["FINANCIAL_EVIDENCE", "LEGAL_EVIDENCE", "FORM_OR_TEMPLATE", "BID_FORM", "TENDER_FORM"].includes(type)) return true;
+  return /\bform\b|template|annex\s*[a-z0-9]+\s*\(?official\)?|audited|financial\s+statement|tax\s+clearance|business\s+licen|trade\s+licen|registration\s+cert|tin\s+cert|vat\s+cert/i.test(label);
+}
+
+function isNarrativeDraft(fileName: string, documentType: string) {
+  const label = `${fileName} ${documentType}`.toLowerCase();
+  if (needsOriginalReplacement(fileName, documentType)) return false;
+  if (/submission formatting|packaging rules|submission rules|delivery instruction|submission method|submission deadline/.test(label)) return false;
+  return /technical|methodology|approach|work\s*plan|strategic|proposal|narrative|scope|requirement/.test(label);
+}
+
+function matchingRequirements(fileName: string, requirements: RequirementLike[]): RequirementLike[] {
+  const labelWords = new Set(fileName.toLowerCase().replace(/[^a-z0-9]+/g, " ").split(/\s+/).filter((word) => word.length >= 4));
+  const scored = requirements.map((requirement) => {
+    const text = `${requirement.title} ${requirement.description ?? ""} ${requirement.requirementType ?? ""}`.toLowerCase();
+    const score = Array.from(labelWords).reduce((sum, word) => sum + (text.includes(word) ? 1 : 0), 0) + ((requirement.priority ?? "").toUpperCase() === "MANDATORY" ? 1 : 0);
+    return { requirement, score };
+  }).filter((entry) => entry.score > 0).sort((a, b) => b.score - a.score);
+  const picked = scored.slice(0, 8).map((entry) => entry.requirement);
+  return picked.length > 0 ? picked : requirements.filter((r) => (r.priority ?? "").toUpperCase() === "MANDATORY").slice(0, 8);
 }
 
 async function replacementControlContent(tenderTitle: string, fileName: string, replaceWithOriginal: boolean) {
@@ -51,7 +75,7 @@ async function replacementControlContent(tenderTitle: string, fileName: string, 
   ];
   if (replaceWithOriginal) {
     children.push(
-      bullet("DO NOT SUBMIT this generated control document as the final tender attachment."),
+      bullet("Do not submit this generated control document as the final tender attachment."),
       bullet("Replace this record with the tender-issued original, signed/stamped/certified document, or verified source evidence before final export."),
       bullet("Keep the exact tender-required file name and order when replacing the file."),
     );
@@ -63,6 +87,61 @@ async function replacementControlContent(tenderTitle: string, fileName: string, 
   }
   const buffer = await Packer.toBuffer(new Document({ sections: [{ properties: {}, children }] }));
   return buffer.toString("base64");
+}
+
+async function narrativeDraftContent(tenderTitle: string, fileName: string, documentType: string, requirements: RequirementLike[]) {
+  const related = matchingRequirements(fileName, requirements);
+  const children: Paragraph[] = [
+    para(fileName, true),
+    para(`Tender: ${tenderTitle}`),
+    heading("Draft technical response"),
+    para("This document has been generated from the current tender analysis and submission plan. It is a working draft for review, validation, and final approval before export."),
+    subheading("Tender requirements addressed"),
+  ];
+  if (related.length === 0) {
+    children.push(bullet("No requirement text is currently linked to this planned document. Re-run AI Analyze or repair requirement extraction before final approval."));
+  } else {
+    for (const requirement of related) {
+      children.push(bullet(`${requirement.title}${requirement.description ? ` — ${requirement.description}` : ""}`.slice(0, 700)));
+    }
+  }
+  children.push(
+    subheading("Proposed response structure"),
+    bullet("Confirm the assignment objectives, client priorities, location, and required deliverables using the tender source text."),
+    bullet("Describe the methodology in the same order as the tender scope, including responsibility assignment, quality gates, and deliverable controls."),
+    bullet("Reference only reviewed company evidence, selected experts, and selected projects approved in the Knowledge Vault."),
+    bullet("Keep technical and financial content separated. Pricing, rates, BOQ, and commercial terms must not appear in a technical-envelope document."),
+    subheading("Reviewer completion checklist"),
+    bullet("Replace this draft with the final generated narrative or complete the draft manually before marking READY_FOR_EXPORT."),
+    bullet("Validate that every mandatory requirement covered by this file has confirmed evidence and source traceability."),
+    bullet("Run document validation again after editing and before final ZIP packaging."),
+    para(`Document type: ${documentType}`),
+  );
+  const buffer = await Packer.toBuffer(new Document({ sections: [{ properties: {}, children }] }));
+  return buffer.toString("base64");
+}
+
+async function buildPlannedRowContent(args: { tenderTitle: string; fileName: string; documentType: string; requirements: RequirementLike[] }) {
+  const replaceWithOriginal = needsOriginalReplacement(args.fileName, args.documentType);
+  const isSubmissionRules = args.documentType === "SUBMISSION_RULES" || /submission formatting|packaging rules|submission rules|delivery instruction/i.test(args.fileName);
+  if (isNarrativeDraft(args.fileName, args.documentType)) {
+    return {
+      fileContent: await narrativeDraftContent(args.tenderTitle, args.fileName, args.documentType, args.requirements),
+      format: "DOCX",
+      validationStatus: "NEEDS_REVALIDATION",
+      reviewStatus: "NEEDS_REVIEW",
+      contentSummary: `Generated narrative draft for tender-required file ${args.fileName}. Reviewer must validate and approve before export.`,
+    };
+  }
+  return {
+    fileContent: await replacementControlContent(args.tenderTitle, args.fileName, replaceWithOriginal),
+    format: replaceWithOriginal || isSubmissionRules ? "CONTROL" : "DOCX",
+    validationStatus: "PENDING",
+    reviewStatus: replaceWithOriginal ? "REPLACE_WITH_ORIGINAL" : "PENDING",
+    contentSummary: replaceWithOriginal
+      ? `Replacement-control record for tender-required file ${args.fileName}. This internal control record is intentionally non-final and must be replaced with the original before export.`
+      : `Generated support-control record for tender-required file ${args.fileName}. Review before final export.`,
+  };
 }
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -102,9 +181,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     requirements: tender.requirements,
   });
   const missing = findMissingGeneratedDocuments(plan, tender.generatedDocuments);
-  if (missing.length === 0) {
-    await logAction({ userId: actor.id, action: "DOCUMENT_GENERATE", entityType: "Tender", entityId: id, description: `${actor.email} checked missing planned files for "${tender.title}"; none were missing.`, metadata: { tenderId: id, created: 0, updated: 0 }, requestId });
-    return NextResponse.json({ success: true, created: 0, message: "No missing planned files remain." });
+  const plannedRows = await prisma.generatedDocument.findMany({
+    where: { tenderId: id, generationStatus: "PLANNED" },
+    select: { id: true, name: true, exactFileName: true, documentType: true, format: true, exactOrder: true },
+  });
+
+  if (missing.length === 0 && plannedRows.length === 0) {
+    await logAction({ userId: actor.id, action: "DOCUMENT_GENERATE", entityType: "Tender", entityId: id, description: `${actor.email} checked missing planned files for "${tender.title}"; none were missing.`, metadata: { tenderId: id, created: 0, updated: 0, convertedFromPlanned: 0 }, requestId });
+    return NextResponse.json({ success: true, created: 0, updated: 0, convertedFromPlanned: 0, message: "No missing planned files remain." });
   }
 
   const created: string[] = [];
@@ -112,12 +196,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const skipped: string[] = [];
   for (const file of missing) {
     const documentType = documentTypeFor(file.exactFileName, file.documentType);
-    const replaceWithOriginal = needsOriginalReplacement(file.exactFileName, documentType);
-    const isSubmissionRules = documentType === "SUBMISSION_RULES" || /submission formatting|packaging rules|submission rules|delivery instruction/i.test(file.exactFileName);
-
-    // Dedup check: skip creation if a non-superseded doc with same exactFileName
-    // OR a sufficiently similar name already exists (prevents duplicate rows).
-    const normalizedFileName = file.exactFileName.toLowerCase().trim();
     const existingByExactName = await prisma.generatedDocument.findFirst({
       where: {
         tenderId: id,
@@ -126,28 +204,24 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       },
       select: { id: true, generationStatus: true },
     });
-    // If a non-PLANNED doc already exists with the same file name, skip to avoid duplicates.
     if (existingByExactName && existingByExactName.generationStatus !== "PLANNED") {
       skipped.push(file.exactFileName);
       continue;
     }
 
-    const fileContent = await replacementControlContent(tender.title, file.exactFileName, replaceWithOriginal);
+    const generated = await buildPlannedRowContent({ tenderTitle: tender.title, fileName: file.exactFileName, documentType, requirements: tender.requirements });
     const existing = existingByExactName ?? await prisma.generatedDocument.findFirst({ where: { tenderId: id, exactFileName: file.exactFileName }, select: { id: true } });
-    void normalizedFileName; // used above in comment
     const data = {
       name: file.exactFileName.replace(/\.[a-z0-9]{2,5}$/i, ""),
       documentType,
-      format: replaceWithOriginal || isSubmissionRules ? "CONTROL" : file.format,
+      format: generated.format,
       exactFileName: file.exactFileName,
       exactOrder: file.exactOrder,
-      fileContent,
+      fileContent: generated.fileContent,
       generationStatus: "GENERATED",
-      validationStatus: "PENDING",
-      reviewStatus: replaceWithOriginal ? "REPLACE_WITH_ORIGINAL" : "PENDING",
-      contentSummary: replaceWithOriginal
-        ? `Replacement-control record for tender-required file ${file.exactFileName}. This internal control record is intentionally non-final and must be replaced with the original before export.`
-        : `Generated support-control record for tender-required file ${file.exactFileName}. Review before final export.`,
+      validationStatus: generated.validationStatus,
+      reviewStatus: generated.reviewStatus,
+      contentSummary: generated.contentSummary,
       updatedAt: new Date(),
     };
     if (existing) {
@@ -159,27 +233,23 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }
   }
 
-  // ── Pass 2: convert any lingering PLANNED rows to control drafts ──────────
-  // Engine planned these docs but the AI provider failed to generate them.
-  // Convert them to replacement-control records so the export gate can proceed.
-  const plannedRows = await prisma.generatedDocument.findMany({
-    where: { tenderId: id, generationStatus: "PLANNED" },
-    select: { id: true, name: true, exactFileName: true, documentType: true },
-  });
   const convertedFromPlanned: string[] = [];
   for (const row of plannedRows) {
     const fileName = row.exactFileName ?? row.name ?? "Unnamed document";
     const documentType = documentTypeFor(fileName, row.documentType ?? "");
-    const replaceWithOriginal = needsOriginalReplacement(fileName, documentType);
-    const isSubmissionRules = documentType === "SUBMISSION_RULES" || /submission formatting|packaging rules|submission rules|delivery instruction/i.test(fileName);
-    const fileContent = await replacementControlContent(tender.title, fileName, replaceWithOriginal);
+    const generated = await buildPlannedRowContent({ tenderTitle: tender.title, fileName, documentType, requirements: tender.requirements });
     await prisma.generatedDocument.update({
       where: { id: row.id },
       data: {
-        fileContent,
+        name: row.name ?? fileName.replace(/\.[a-z0-9]{2,5}$/i, ""),
+        exactFileName: row.exactFileName ?? fileName,
+        documentType,
+        format: generated.format,
+        fileContent: generated.fileContent,
         generationStatus: "GENERATED",
-        validationStatus: "PENDING",
-        reviewStatus: replaceWithOriginal ? "REPLACE_WITH_ORIGINAL" : "PENDING",
+        validationStatus: generated.validationStatus,
+        reviewStatus: generated.reviewStatus,
+        contentSummary: generated.contentSummary,
         updatedAt: new Date(),
       },
     });
@@ -191,8 +261,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     action: "DOCUMENT_GENERATE",
     entityType: "Tender",
     entityId: id,
-    description: `${actor.email} generated ${created.length} and updated ${updated.length} missing planned file control record(s), converted ${convertedFromPlanned.length} PLANNED rows, skipped ${skipped.length} duplicates, for "${tender.title}".`,
-    metadata: { tenderId: id, createdCount: created.length, updatedCount: updated.length, created, updated, convertedFromPlanned, skipped, warning: "Replacement-control documents are not final submission evidence." },
+    description: `${actor.email} generated ${created.length} and updated ${updated.length} missing planned file record(s), converted ${convertedFromPlanned.length} PLANNED rows, skipped ${skipped.length} duplicates, for "${tender.title}".`,
+    metadata: { tenderId: id, createdCount: created.length, updatedCount: updated.length, created, updated, convertedFromPlanned, skipped, warning: "Narrative drafts and replacement controls are not final until validated and approved." },
     requestId,
   });
 
@@ -203,6 +273,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     convertedFromPlanned: convertedFromPlanned.length,
     skipped: skipped.length,
     files: { created, updated, convertedFromPlanned, skipped },
-    warning: "Replacement-control documents are not final submission evidence. Replace originals before export where reviewStatus is REPLACE_WITH_ORIGINAL.",
+    warning: "Generated narrative drafts/replacement controls require validation and reviewer approval before export. Replace official originals where reviewStatus is REPLACE_WITH_ORIGINAL.",
   });
 }
