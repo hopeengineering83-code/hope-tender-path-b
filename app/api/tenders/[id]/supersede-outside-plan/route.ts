@@ -3,6 +3,7 @@ import { forbiddenResponse, requireRole, unauthorizedResponse } from "../../../.
 import { logAction } from "../../../../../lib/audit";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { buildSubmissionPlan } from "../../../../../lib/engine/submission-plan";
+import { buildSubmissionPlanWithDerivedFallback } from "../../../../../lib/engine/submission-plan";
 import { MUTATION_RATE_LIMIT, rateLimit } from "../../../../../lib/rate-limit";
 import { extractRequestId } from "../../../../../lib/request-id";
 
@@ -22,7 +23,7 @@ async function getOutsidePlanDocIds(tenderId: string, userId: string): Promise<{
     },
   });
   if (!tender) return { ids: [], planEmpty: false };
-  const plan = buildSubmissionPlan(tender);
+  const plan = buildSubmissionPlanWithDerivedFallback(tender);
   if (plan.files.length === 0) return { ids: [], planEmpty: true };
   const required = new Set(plan.files.map((f) => normalizeExactFileName(f.exactFileName)).filter(Boolean));
   const ids = tender.generatedDocuments

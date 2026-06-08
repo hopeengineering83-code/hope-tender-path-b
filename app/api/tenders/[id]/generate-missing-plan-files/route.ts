@@ -3,7 +3,7 @@ import { Document, HeadingLevel, Packer, Paragraph, TextRun } from "docx";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { logAction } from "../../../../../lib/audit";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
-import { buildSubmissionPlan, findMissingGeneratedDocuments } from "../../../../../lib/engine/submission-plan";
+import { buildSubmissionPlan, buildSubmissionPlanWithDerivedFallback, findMissingGeneratedDocuments } from "../../../../../lib/engine/submission-plan";
 import { MUTATION_RATE_LIMIT, rateLimit } from "../../../../../lib/rate-limit";
 import { extractRequestId } from "../../../../../lib/request-id";
 
@@ -93,12 +93,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   });
   if (!tender) return NextResponse.json({ error: "Tender not found", code: "TENDER_NOT_FOUND" }, { status: 404 });
 
-  const plan = buildSubmissionPlan({
+  const plan = buildSubmissionPlanWithDerivedFallback({
     id: tender.id,
     title: tender.title,
     exactFileNaming: tender.exactFileNaming,
     exactFileOrder: tender.exactFileOrder,
     pageLimit: tender.pageLimit,
+    submissionMethod: tender.submissionMethod,
+    tenderCategory: (tender as any).category,
+    analysisExtractionStatus: (tender as any).analysisExtractionStatus,
     requirements: tender.requirements,
   });
   const missing = findMissingGeneratedDocuments(plan, tender.generatedDocuments);
@@ -145,9 +148,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       generationStatus: "GENERATED",
       validationStatus: "PENDING",
       reviewStatus: replaceWithOriginal ? "REPLACE_WITH_ORIGINAL" : "PENDING",
-      contentSummary: replaceWithOriginal
-        ? `Replacement-control record for tender-required file ${file.exactFileName}. This internal control record is intentionally non-final and must be replaced with the original before export.`
-        : `Generated support-control record for tender-required file ${file.exactFileName}. Review before final export.`,
+      contentSummary: `${replaceWithOriginal ? "REPLACE_WITH_ORIGINAL" : "SUPPORT_CONTROL"} ${file.notes && file.notes.includes("DERIVED_DRAFT_UNCONFIRMED") ? "DERIVED_DRAFT_UNCONFIRMED" : ""}`.trim(),
       updatedAt: new Date(),
     };
     if (existing) {

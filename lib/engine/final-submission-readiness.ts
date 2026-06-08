@@ -41,7 +41,7 @@ import {
   type DocumentLike,
 } from "./document-output-state";
 import {
-  buildSubmissionPlan,
+  buildSubmissionPlan, buildSubmissionPlanWithDerivedFallback,
   hasExplicitSubmissionScope,
   findExtraGeneratedDocuments,
   findMissingGeneratedDocuments,
@@ -516,12 +516,15 @@ export async function getFinalSubmissionReadiness(
   }));
 
   // Plan reconciliation — used for the summary planStatus enum.
-  const plan = buildSubmissionPlan({
+  const plan = buildSubmissionPlanWithDerivedFallback({
     id: tender.id,
     title: tender.title,
     exactFileNaming: tender.exactFileNaming,
     exactFileOrder: tender.exactFileOrder,
     pageLimit: tender.pageLimit,
+    submissionMethod: tender.submissionMethod,
+    tenderCategory: (tender as any).category,
+    analysisExtractionStatus: (tender as any).analysisExtractionStatus,
     requirements: tender.requirements,
   });
   const requiredPlanCount = submissionPlanFileCount(plan);

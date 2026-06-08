@@ -7,7 +7,7 @@ import { checkFullExportReadiness, documentHygieneIssues, extractDocxVisibleText
 import { containsPricingLeakage } from "../../../../../lib/engine/pricing-hygiene";
 import { generateWithFallback } from "../../../../../lib/ai";
 import { applyActiveUploadedLetterheadToTenderDocuments } from "../../../../../lib/engine/apply-active-letterhead";
-import { buildSubmissionPlan } from "../../../../../lib/engine/submission-plan";
+import { buildSubmissionPlan, buildSubmissionPlanWithDerivedFallback } from "../../../../../lib/engine/submission-plan";
 import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import { extractRequestId } from "../../../../../lib/request-id";
 import { logAction } from "../../../../../lib/audit";
@@ -173,7 +173,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // gate correctly honours human approval of regex-fallback analyses.
   const resolvedAnalysisSource = await detectAnalysisSourceWithApproval(prisma, tenderId, tender);
 
-  const plan = buildSubmissionPlan(tender);
+  const plan = buildSubmissionPlanWithDerivedFallback(tender);
   const planEmpty = plan.files.length === 0;
   const plannedNames = new Set(plan.files.map((f) => (f.exactFileName ?? "").trim().toLowerCase()));
 

@@ -10,7 +10,7 @@
 import { NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../../lib/prisma";
-import { buildSubmissionPlan, plannedSubmissionTargetFiles, buildDerivedDraftPlan } from "../../../../../../lib/engine/submission-plan";
+import { buildSubmissionPlan, buildSubmissionPlanWithDerivedFallback, plannedSubmissionTargetFiles, buildDerivedDraftPlan } from "../../../../../../lib/engine/submission-plan";
 import { logAction } from "../../../../../../lib/audit";
 import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../../../lib/rate-limit";
 import { sanitizeError } from "../../../../../../lib/sanitize-error";
@@ -184,13 +184,13 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       }
     }
 
-    const plan = buildSubmissionPlan(tender);
+    const plan = buildSubmissionPlanWithDerivedFallback(tender);
     let plannedFiles = plannedSubmissionTargetFiles(plan);
 
     // ── Derived draft fallback ────────────────────────────────────────────────
     // The primary plan produced 0 files (e.g. all requirements are non-MANDATORY
     // and no exactFileName is set). Try a heuristic derived draft from keywords.
-    let isDerivedDraft = false;
+    let isDerivedDraft = plan.warnings.some((w: string) => w.includes("derived draft"));
 
     if (plannedFiles.length === 0 && tender.requirements.length > 0) {
       const derivedEntries = buildDerivedDraftPlan({

@@ -19,7 +19,7 @@
 // submission-plan endpoint.
 
 import {
-  buildSubmissionPlan,
+  buildSubmissionPlan, buildSubmissionPlanWithDerivedFallback,
   hasExplicitSubmissionScope,
   inferEnvelope,
   type SubmissionEnvelope,
@@ -224,7 +224,7 @@ export type ResolvePlanCompletenessInput = {
  *      OUTSIDE_PLAN row (or SUPERSEDED when generationStatus is SUPERSEDED).
  */
 export function resolveSubmissionPlanCompleteness(input: ResolvePlanCompletenessInput): SubmissionPlanCompletenessReport {
-  const plan = buildSubmissionPlan(input.tender);
+  const plan = buildSubmissionPlanWithDerivedFallback(input.tender);
   let planFiles = plan.files.filter((f) => f.required);
   const requirementCount = input.tender.requirements?.length ?? 0;
   const explicitScope = hasExplicitSubmissionScope(input.tender);
