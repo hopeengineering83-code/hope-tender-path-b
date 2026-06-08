@@ -3,13 +3,9 @@ import { Document, HeadingLevel, Packer, Paragraph, TextRun } from "docx";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { logAction } from "../../../../../lib/audit";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
-import { findMissingGeneratedDocuments } from "../../../../../lib/engine/submission-plan";
+import { buildSubmissionPlan, findMissingGeneratedDocuments } from "../../../../../lib/engine/submission-plan";
 import { MUTATION_RATE_LIMIT, rateLimit } from "../../../../../lib/rate-limit";
 import { extractRequestId } from "../../../../../lib/request-id";
-import { isExtractionAcceptableForGeneration } from "../../../../../lib/engine/extraction-quality-gate";
-import { assessExtractionQuality, assessExtractionQualityPerPage } from "../../../../../lib/extraction-quality";
-import { assertTenderReadyForGenerationAndExport } from "../../../../../lib/engine/generation-readiness-gate";
-import { getCurrentConfirmedBuildPlan } from "../../../../../lib/engine/build-plan";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -172,241 +168,18 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         where: { generationStatus: { not: "SUPERSEDED" } },
         select: { id: true, name: true, exactFileName: true, documentType: true, format: true, exactOrder: true, generationStatus: true },
       },
-      files: {
-        select: {
-          id: true,
-          originalFileName: true,
-          extractedText: true,
-          extractionScore: true,
-          totalPages: true,
-          extractedPages: true,
-          ocrPages: true,
-          failedPages: true,
-          pageStatusJson: true,
-        },
-      },
     },
   });
   if (!tender) return NextResponse.json({ error: "Tender not found", code: "TENDER_NOT_FOUND" }, { status: 404 });
 
-  // ── Pre-flight gates (CLAUDE.md: Generate Docs gate — all 6 conditions) ────
-
-  // Gate 0: Block when AI Analyze was skipped or ran on unreliable extraction.
-  // These statuses mean the requirements/metadata were extracted from corrupted
-  // or weak text, so any generated documents would be built on bad foundations.
-  const analysisExtractionStatus = (tender as { analysisExtractionStatus?: string | null }).analysisExtractionStatus;
-  if (analysisExtractionStatus === "OCR_REQUIRED") {
-    return NextResponse.json({
-      success: false, ok: false,
-      code: "ANALYSIS_FROM_CORRUPTED_EXTRACTION",
-      error: "Document generation is blocked: AI Analyze was skipped because tender extraction was corrupted. Re-upload the document or run OCR, then re-run AI Analyze before generating documents.",
-      nextAction: "RUN_OCR_OR_UPLOAD_CLEARER_SCAN",
-    }, { status: 422 });
-  }
-  if (analysisExtractionStatus === "EXTRACTION_WEAK_REVIEW_REQUIRED" || analysisExtractionStatus === "REGEX_FALLBACK_FROM_WEAK_EXTRACTION") {
-    return NextResponse.json({
-      success: false, ok: false,
-      code: "ANALYSIS_FROM_WEAK_EXTRACTION",
-      error: "Document generation is blocked: AI Analyze ran on a weak extraction (low text density or quality). Re-extract the tender (run OCR if needed) and re-run AI Analyze before generating documents.",
-      nextAction: "RERUN_AI_ANALYZE",
-    }, { status: 422 });
-  }
-
-  // Gate 1: Extraction quality must be acceptable
-  if (tender.files.length > 0) {
-    const effectiveFiles = tender.files.map((file) => {
-      const quality = assessExtractionQuality(file.extractedText, file.originalFileName);
-      return { ...file, extractionScore: Math.min(file.extractionScore ?? quality.score, quality.score) };
-    });
-    if (!isExtractionAcceptableForGeneration(effectiveFiles)) {
-      const corruptedFiles = effectiveFiles
-        .filter((f) => assessExtractionQuality(f.extractedText, f.originalFileName).corrupted)
-        .map((f) => f.originalFileName ?? f.id);
-      return NextResponse.json({
-        success: false, ok: false,
-        code: corruptedFiles.length > 0 ? "EXTRACTION_CORRUPTED_GENERATE_BLOCKED" : "EXTRACTION_QUALITY_INSUFFICIENT",
-        error: "Document generation is blocked because page extraction quality is too low. Re-extract or run OCR before generating documents.",
-        nextAction: corruptedFiles.length > 0 ? "RUN_OCR_OR_UPLOAD_CLEARER_SCAN" : "OPEN_EXTRACTION_QUALITY",
-        corruptedFiles,
-      }, { status: 422 });
-    }
-  }
-
-  // Gate 2: Client/procuring entity must be present and not contaminated
-  if (tender.metadataContaminated) {
-    return NextResponse.json({
-      success: false, ok: false,
-      code: "METADATA_CONTAMINATED",
-      error: "Document generation is blocked because the client/procuring entity metadata appears contaminated. Review and correct the client name before generating documents.",
-      nextAction: "EDIT_TENDER_METADATA",
-    }, { status: 422 });
-  }
-  const clientDisplayName = tender.clientName || tender.procuringEntityName;
-  if (!clientDisplayName) {
-    return NextResponse.json({
-      success: false, ok: false,
-      code: "MISSING_CLIENT_DETAILS",
-      error: "Document generation requires a client or procuring entity name. Run AI Analyze or manually enter the client name before generating documents.",
-      nextAction: "EDIT_TENDER_METADATA",
-    }, { status: 422 });
-  }
-
-  // Gate 3: Requirements or explicit file lists must exist
-  const hasExplicitFiles =
-    (tender.exactFileNaming ?? "").trim().length > 2 ||
-    (tender.exactFileOrder ?? "").trim().length > 2;
-  if (tender.requirements.length === 0 && !hasExplicitFiles) {
-    return NextResponse.json({
-      success: false, ok: false,
-      code: "NO_REQUIREMENTS",
-      error: "Document generation requires extracted requirements or explicit submission file instructions. Run AI Analyze before generating documents.",
-      nextAction: "RERUN_AI_ANALYZE",
-    }, { status: 422 });
-  }
-
-  // ── Central generation readiness gate ──────────────────────────────────
-  // Creating GENERATED GeneratedDocument rows (narrative drafts, replacement
-  // controls) is a generation act that must pass the SAME central gate as
-  // /generate and the PROPOSAL_GENERATION handler. Without this, the
-  // missing-plan-files path could create GENERATED documents on a tender
-  // whose analysis is partial/failed/regex-fallback, bypassing
-  // hash-binding, chunk-integrity, source-grounding, and submission-plan
-  // checks. Fail-closed: a blocked gate creates ZERO GeneratedDocument
-  // rows.
-  //
-  // ── Central generation readiness gate ──────────────────────────────────
-  // This route creates GENERATED GeneratedDocument rows (narrative drafts,
-  // replacement controls), which is a generation act that must pass the SAME
-  // central gate as /generate, /ai-proposal, /export, and /download. Without
-  // this, the missing-plan-files path could create GENERATED documents on a
-  // tender whose analysis is partial/failed/regex-fallback, bypassing
-  // hash-binding, chunk-integrity, source-grounding, and confirmed-plan
-  // checks. Fail-closed: a blocked gate creates ZERO GeneratedDocument rows.
-  //
-  // NOTE: this route is NOT a chicken-and-egg escape hatch. "Missing plan
-  // files" means "files that the CONFIRMED BuildPlan already specifies but
-  // which have not yet been generated" — see the getCurrentConfirmedBuildPlan
-  // check below. The route therefore requires a confirmed plan and must fail
-  // closed on every central-gate blocker, including BUILD_PLAN_MISSING and
-  // BUILD_PLAN_NOT_CONFIRMED. (The previous carve-out for an unused
-  // SUBMISSION_PLAN_MISSING code was dead — the gate never emits that code;
-  // the enum value exists but is never passed to fail().)
-  const centralGate = await assertTenderReadyForGenerationAndExport({
-    prisma,
-    tenderId: id,
-    userId: actor.id,
-    purpose: "generate-missing-plan-files",
+  const plan = buildSubmissionPlan({
+    id: tender.id,
+    title: tender.title,
+    exactFileNaming: tender.exactFileNaming,
+    exactFileOrder: tender.exactFileOrder,
+    pageLimit: tender.pageLimit,
+    requirements: tender.requirements,
   });
-  if (!centralGate.ok) {
-    return NextResponse.json({
-      success: false, ok: false,
-      code: centralGate.blockerCode,
-      error: centralGate.blockerDetail,
-      nextAction: "Resolve the analysis readiness blocker before generating missing plan files.",
-    }, { status: 422 });
-  }
-
-  // Gates 4 & 5: Submission instructions and required documents pages.
-  //
-  // Two-tier check:
-  //   Tier 1 (PAGE_MARKERS available): enforce based on per-page content detection.
-  //   Tier 2 (no PAGE_MARKERS — e.g. DOCX or short single-block extraction):
-  //     fall back to checking whether AI Analyze stored the resulting submission
-  //     metadata (submissionMethod/submissionAddress/submissionEmails). If AI was
-  //     run but none of those fields are populated, submission instructions were
-  //     effectively not extracted.
-  if (tender.files.length > 0) {
-    let anySubmission = false;
-    let anyRequiredDocs = false;
-    let hasPageMarkers = false;
-    for (const file of tender.files) {
-      const pp = assessExtractionQualityPerPage(file.extractedText);
-      if (pp.detectionMode !== "PAGE_MARKERS") continue;
-      hasPageMarkers = true;
-      if (pp.submissionInstructionPages.length > 0) anySubmission = true;
-      if (pp.requiredDocumentPages.length > 0) anyRequiredDocs = true;
-    }
-    if (hasPageMarkers) {
-      // Tier 1: strict page-marker check
-      if (!anySubmission) {
-        return NextResponse.json({
-          success: false, ok: false,
-          code: "MISSING_SUBMISSION_INSTRUCTIONS",
-          error: "No submission instruction pages were detected in the extracted text. Submission deadlines, addresses, and methods may be missing. Review extraction quality or re-run AI Analyze before generating documents.",
-          nextAction: "OPEN_EXTRACTION_QUALITY",
-        }, { status: 422 });
-      }
-      const mandatoryRequirements = tender.requirements.filter((r) => (r.priority ?? "").toUpperCase() === "MANDATORY");
-      if (!anyRequiredDocs && mandatoryRequirements.length === 0) {
-        return NextResponse.json({
-          success: false, ok: false,
-          code: "MISSING_REQUIRED_DOCUMENTS_PAGES",
-          error: "No required documents/forms pages were detected and no mandatory requirements are defined. The submission plan may be missing mandatory annexures. Review extraction quality before generating documents.",
-          nextAction: "OPEN_EXTRACTION_QUALITY",
-        }, { status: 422 });
-      }
-    } else {
-      // Tier 2: no page markers — check stored submission metadata as proxy.
-      // Only apply when AI Analyze has already run (analysisExtractionStatus is set),
-      // because for a fresh upload without analysis the check would always fail.
-      const analysisRan = !!tender.analysisExtractionStatus;
-      if (analysisRan) {
-        const hasStoredSubmissionDetails =
-          !!(tender.submissionMethod ?? "").trim() ||
-          !!(tender.submissionAddress ?? "").trim() ||
-          !!(tender.submissionEmails ?? "").trim();
-        if (!hasStoredSubmissionDetails) {
-          return NextResponse.json({
-            success: false, ok: false,
-            code: "MISSING_SUBMISSION_INSTRUCTIONS",
-            error: "AI Analyze ran but no submission method, address, or email was extracted. Submission instructions are missing. Re-run AI Analyze or manually enter the submission details before generating documents.",
-            nextAction: "EDIT_TENDER_METADATA",
-          }, { status: 422 });
-        }
-        // Gate 5 fallback: require mandatory requirements when no page markers
-        const mandatoryRequirements = tender.requirements.filter((r) => (r.priority ?? "").toUpperCase() === "MANDATORY");
-        if (tender.requirements.length > 0 && mandatoryRequirements.length === 0 && !hasExplicitFiles) {
-          return NextResponse.json({
-            success: false, ok: false,
-            code: "MISSING_REQUIRED_DOCUMENTS_PAGES",
-            error: "No mandatory requirements are defined. The submission plan may be missing required documents. Review requirements before generating documents.",
-            nextAction: "RERUN_AI_ANALYZE",
-          }, { status: 422 });
-        }
-      }
-    }
-  }
-
-  // Gate 6: Submission plan must have been built (PLANNED rows must exist)
-  // when requirements are present and no explicit file list overrides the plan.
-  if (tender.requirements.length > 0 && !hasExplicitFiles) {
-    const plannedCount = await prisma.generatedDocument.count({
-      where: { tenderId: id, generationStatus: "PLANNED" },
-    });
-    if (plannedCount === 0) {
-      return NextResponse.json({
-        success: false, ok: false,
-        code: "SUBMISSION_PLAN_NOT_BUILT",
-        error: "No submission plan has been built for this tender. Run 'Build Submission Plan' first to define which documents are required before generating them.",
-        nextAction: "BUILD_SUBMISSION_PLAN",
-      }, { status: 422 });
-    }
-  }
-
-  // AUTHORITATIVE: the set of "missing plan files" this route may create is
-  // defined by the current CONFIRMED BuildPlan only. Creating files from a
-  // derived heuristic plan could mint documents the confirmed plan never
-  // required. Fail closed when no current confirmed plan exists.
-  const confirmedPlan = await getCurrentConfirmedBuildPlan(prisma, id, actor.id);
-  if (!confirmedPlan.ok) {
-    return NextResponse.json({
-      success: false, ok: false,
-      code: "BUILD_PLAN_NOT_CONFIRMED",
-      error: `Cannot generate missing plan files: ${confirmedPlan.blocker}`,
-      nextAction: "BUILD_SUBMISSION_PLAN",
-    }, { status: 422 });
-  }
-  const plan = { files: confirmedPlan.items, warnings: [] as string[] } as any;
   const missing = findMissingGeneratedDocuments(plan, tender.generatedDocuments);
   const plannedRows = await prisma.generatedDocument.findMany({
     where: { tenderId: id, generationStatus: "PLANNED" },
@@ -437,14 +210,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }
 
     const generated = await buildPlannedRowContent({ tenderTitle: tender.title, fileName: file.exactFileName, documentType, requirements: tender.requirements });
-    // ACTIVE rows only: matching a SUPERSEDED historical row would mutate
-    // preserved history back to GENERATED — and collide with the partial
-    // unique index on (tenderId, exactFileName) WHERE non-SUPERSEDED.
-    const existing = existingByExactName ?? await prisma.generatedDocument.findFirst({
-      where: { tenderId: id, exactFileName: file.exactFileName, generationStatus: { not: "SUPERSEDED" } },
-      orderBy: { updatedAt: "desc" },
-      select: { id: true },
-    });
+    const existing = existingByExactName ?? await prisma.generatedDocument.findFirst({ where: { tenderId: id, exactFileName: file.exactFileName }, select: { id: true } });
     const data = {
       name: file.exactFileName.replace(/\.[a-z0-9]{2,5}$/i, ""),
       documentType,
@@ -453,42 +219,17 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       exactOrder: file.exactOrder,
       fileContent: generated.fileContent,
       generationStatus: "GENERATED",
-      validationStatus: "PENDING",
+      validationStatus: generated.validationStatus,
       reviewStatus: generated.reviewStatus,
-      contentSummary: [generated.contentSummary, file.notes?.includes("DERIVED_DRAFT_UNCONFIRMED") ? "DERIVED_DRAFT_UNCONFIRMED" : ""].filter(Boolean).join(" ").trim(),
+      contentSummary: generated.contentSummary,
       updatedAt: new Date(),
     };
     if (existing) {
       await prisma.generatedDocument.update({ where: { id: existing.id }, data });
       updated.push(file.exactFileName);
     } else {
-      try {
-        await prisma.generatedDocument.create({ data: { tenderId: id, ...data } });
-        created.push(file.exactFileName);
-      } catch (createErr) {
-        // P2002 = the partial unique index caught a concurrent creator making
-        // the same active file between our check and this create. Converge
-        // idempotently: update the row the winner created instead of failing
-        // the whole route partway through.
-        if ((createErr as { code?: string })?.code === "P2002") {
-          const winner = await prisma.generatedDocument.findFirst({
-            where: { tenderId: id, exactFileName: file.exactFileName, generationStatus: { not: "SUPERSEDED" } },
-            orderBy: { updatedAt: "desc" },
-            select: { id: true },
-          });
-          if (winner) {
-            await prisma.generatedDocument.update({ where: { id: winner.id }, data });
-            updated.push(file.exactFileName);
-          } else {
-            // Winner was deleted between the failed create and this lookup.
-            // Push to skipped so the user has visibility (no silent drop).
-            // The loop continues rather than 500-ing the whole route.
-            skipped.push(`${file.exactFileName} (P2002 convergence failed: winner deleted)`);
-          }
-        } else {
-          throw createErr;
-        }
-      }
+      await prisma.generatedDocument.create({ data: { tenderId: id, ...data } });
+      created.push(file.exactFileName);
     }
   }
 
