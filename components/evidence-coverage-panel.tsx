@@ -7,6 +7,7 @@
 
 import { getSession } from "../lib/auth";
 import { prisma, prismaReady } from "../lib/prisma";
+import { inferSectionRequirementIds } from "../lib/engine/section-evidence-map";
 
 function coverageBadge(state: "COVERED" | "PARTIAL" | "UNCOVERED") {
   if (state === "COVERED") return <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700">Covered</span>;
@@ -14,9 +15,10 @@ function coverageBadge(state: "COVERED" | "PARTIAL" | "UNCOVERED") {
   return <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700">Uncovered</span>;
 }
 
-function reviewBadge(status: string) {
+function reviewBadge(status: string, autoLinked?: boolean) {
   if (status === "CONFIRMED" || status === "APPROVED") return <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700">Confirmed</span>;
   if (status === "REJECTED") return <span className="rounded-full bg-red-100 px-1.5 py-0.5 text-[10px] font-medium text-red-700">Rejected</span>;
+  if (autoLinked) return <span className="rounded-full bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-700">Auto-linked</span>;
   return <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-500">Pending review</span>;
 }
 
@@ -34,7 +36,7 @@ export async function EvidenceCoveragePanel({ tenderId }: { tenderId: string }) 
     prisma.tenderRequirement.findMany({
       where: { tenderId },
       orderBy: { createdAt: "asc" },
-      select: { id: true, title: true, priority: true, requirementType: true },
+      select: { id: true, title: true, description: true, priority: true, requirementType: true },
     }).catch(() => []),
     prisma.tenderExpertMatch.findMany({
       where: { tenderId, isSelected: true },
@@ -49,7 +51,7 @@ export async function EvidenceCoveragePanel({ tenderId }: { tenderId: string }) 
     prisma.sectionEvidenceMap.findMany({
       where: { tenderId },
       orderBy: { createdAt: "asc" },
-      select: { id: true, sectionId: true, sectionTitle: true, requirementIds: true, expertIds: true, projectIds: true, reviewerStatus: true, wordCount: true },
+      select: { id: true, sectionId: true, sectionTitle: true, requirementIds: true, expertIds: true, projectIds: true, reviewerStatus: true, wordCount: true, content: true },
     }).catch(() => []),
   ]);
 
@@ -58,15 +60,30 @@ export async function EvidenceCoveragePanel({ tenderId }: { tenderId: string }) 
   const mandatoryReqs = requirements.filter((r) => r.priority === "MANDATORY" || r.priority === "CRITICAL");
   const otherReqs = requirements.filter((r) => r.priority !== "MANDATORY" && r.priority !== "CRITICAL");
 
-  const reqSections = new Map<string, Array<{ sectionTitle: string; reviewerStatus: string; wordCount: number }>>();
+  const reqSections = new Map<string, Array<{ sectionTitle: string; reviewerStatus: string; wordCount: number; autoLinked?: boolean }>>();
   for (const map of sectionMaps) {
-    const reqIds = map.requirementIds.split("|").map((s) => s.trim()).filter(Boolean);
+    const explicitReqIds = (map.requirementIds || "").split("|").map((s) => s.trim()).filter(Boolean);
+    const inferredReqIds = explicitReqIds.length > 0
+      ? []
+      : inferSectionRequirementIds({
+          sectionId: map.sectionId,
+          sectionTitle: map.sectionTitle,
+          sectionText: map.content ?? "",
+          requirements,
+        });
+    const reqIds = explicitReqIds.length > 0 ? explicitReqIds : inferredReqIds;
     for (const reqId of reqIds) {
       if (!reqSections.has(reqId)) reqSections.set(reqId, []);
-      reqSections.get(reqId)!.push({ sectionTitle: map.sectionTitle, reviewerStatus: map.reviewerStatus, wordCount: map.wordCount });
+      reqSections.get(reqId)!.push({
+        sectionTitle: map.sectionTitle,
+        reviewerStatus: map.reviewerStatus,
+        wordCount: map.wordCount,
+        autoLinked: explicitReqIds.length === 0,
+      });
     }
   }
 
+  const autoLinkedCount = Array.from(reqSections.values()).flat().filter((section) => section.autoLinked).length;
   const reviewedExperts = expertMatches.filter((m) => m.expert?.trustLevel === "REVIEWED");
   const reviewedProjects = projectMatches.filter((m) => m.project?.trustLevel === "REVIEWED");
 
@@ -124,6 +141,12 @@ export async function EvidenceCoveragePanel({ tenderId }: { tenderId: string }) 
         </div>
       </div>
 
+      {autoLinkedCount > 0 && (
+        <div className="mb-4 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
+          <strong>{autoLinkedCount} section link(s) were auto-inferred from generated section text.</strong> They count as partial coverage until a reviewer confirms the section evidence.
+        </div>
+      )}
+
       {mandatoryReqs.length > 0 && (
         <div>
           <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">Mandatory / Critical requirements</p>
@@ -142,9 +165,9 @@ export async function EvidenceCoveragePanel({ tenderId }: { tenderId: string }) 
                   {sections.length > 0 ? (
                     <div className="mt-2 flex flex-wrap gap-1.5">
                       {sections.map((s) => (
-                        <div key={s.sectionTitle} className="flex items-center gap-1 rounded-md bg-white/70 border px-2 py-0.5 text-xs">
+                        <div key={`${s.sectionTitle}-${s.autoLinked ? "auto" : "explicit"}`} className="flex items-center gap-1 rounded-md bg-white/70 border px-2 py-0.5 text-xs">
                           <span className="text-slate-700">{s.sectionTitle}</span>
-                          {reviewBadge(s.reviewerStatus)}
+                          {reviewBadge(s.reviewerStatus, s.autoLinked)}
                           {s.wordCount > 0 && <span className="text-slate-400">{s.wordCount}w</span>}
                         </div>
                       ))}
