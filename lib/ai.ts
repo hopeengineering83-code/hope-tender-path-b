@@ -2390,7 +2390,7 @@ export async function refineProposalWithAI(input: {
   }
 
   const axisDirectives: Record<string, string> = {
-    structureCompleteness: "Add any missing canonical sections (Cover Letter, Executive Summary, Section A/B/C/D, Declaration). Do NOT delete existing sections; only add what is missing.",
+    structureCompleteness: "Add any missing canonical sections (Cover Letter, Executive Summary, Section A/B/C/D, Declaration, Submission Control Sheet). For Submission Control Sheet: include Submission Recipients (exact email), Email Subject Line, Submission Rules (deadline/format/copies from tender), Document Format Requirements, and a Pre-Submission Checklist with tick-boxes. Do NOT delete existing sections; only add what is missing.",
     evidenceDensity: "Rewrite generic paragraphs (without project names, ETB values, license numbers, dates, or named clients) so each substantive paragraph carries at least one specific evidence anchor drawn from the existing project / expert references in the document. Keep all tables intact.",
     tableCoverage: "Where a section refers to data that should be tabular (project portfolio, team, risks, work plan, value framework), convert prose lists to Markdown tables matching the structures already used elsewhere in the document.",
     sectorVocabulary: `Strengthen the Section C technical methodology with sector-specific vocabulary appropriate to ${input.primarySector}. Use terms in context, not as a glossary list.`,
