@@ -10,6 +10,7 @@ import { getStorageAdapter } from "../../../../lib/storage";
 import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../lib/rate-limit";
 import { sanitizeError } from "../../../../lib/sanitize-error";
 import { assessExtractionQuality } from "../../../../lib/extraction-quality";
+import { reportError } from "../../../../lib/observability";
 
 /** Derive per-file extraction quality metrics from extracted text. */
 function deriveFileExtractionMetrics(extractedText: string, mimeType: string): {
@@ -299,6 +300,7 @@ export async function POST(req: Request) {
     const stackRaw = error instanceof Error ? error.stack?.slice(0, 800) : undefined;
     const isProduction = process.env.NODE_ENV === "production";
     console.error(`[upload-first tender] failed (requestId=${requestId}):`, error);
+    void reportError(error, { route: "/api/tenders/upload-first", requestId });
 
     const lowered = msg.toLowerCase();
     const hint = msg.includes("text")
