@@ -3198,6 +3198,7 @@ SUBMISSION RULES:
 ${params.submissionNotes.slice(0, 3_000)}
 
 CONSOLIDATED REQUIREMENTS:
+(Each requirement below may include a source page citation [p.N]. When writing compliance sections and the Evaluation Criteria Response Matrix, reference these page numbers so evaluators can verify your interpretation against the original tender document — e.g. "as specified on page 7 of the tender".)
 ${params.requirements.slice(0, 7_000)}
 
 ---
