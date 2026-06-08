@@ -777,6 +777,25 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (selectedExpertMatches.length > 0 && reviewedExpertCount === 0 && expertRequirementExists > 0) return NextResponse.json({ error: `Generation blocked: ${selectedExpertMatches.length} expert(s) are selected but NONE have been reviewed. Go to the Knowledge Review page and review at least one expert before generating.`, code: "ALL_EXPERTS_UNREVIEWED", draftExperts: draftExperts.map((m) => m.expert.fullName) }, { status: 422 });
   if (selectedProjectMatches.length > 0 && reviewedProjectCount === 0 && projectRequirementExists > 0) return NextResponse.json({ error: `Generation blocked: ${selectedProjectMatches.length} project reference(s) are selected but NONE have been reviewed. Go to the Knowledge Review page and review at least one project before generating.`, code: "ALL_PROJECTS_UNREVIEWED", draftProjects: draftProjects.map((m) => m.project.name) }, { status: 422 });
 
+  // ── Empty vault hard gate ─────────────────────────────────────────────────
+  // A proposal built from zero evidence is entirely generic and unsuitable for
+  // submission. Block generation when the company vault has no reviewed experts
+  // AND no reviewed projects so the user is prompted to add real evidence before
+  // generating documents that will be submitted under their company name.
+  const [vaultReviewedExpertCount, vaultReviewedProjectCount] = await Promise.all([
+    prisma.expert.count({ where: { company: { userId }, trustLevel: "REVIEWED" } }),
+    prisma.project.count({ where: { company: { userId }, trustLevel: "REVIEWED" } }),
+  ]);
+  if (vaultReviewedExpertCount === 0 && vaultReviewedProjectCount === 0) {
+    return NextResponse.json({
+      errorCode: "EMPTY_VAULT",
+      error: "Generation blocked: your company knowledge vault contains no reviewed experts or projects. A proposal built from zero evidence will be entirely generic and unsuitable for submission. Import and review at least one expert CV or one comparable project reference before generating documents.",
+      blockers: ["Company knowledge vault is empty — zero reviewed experts and zero reviewed projects found."],
+      nextAction: "OPEN_COMPANY_READINESS",
+      diagnosticId: `empty-vault-${id}`,
+    }, { status: 422 });
+  }
+
   const warnings: string[] = [...readiness.warnings, ...promotion.warnings];
   if (explicitSubmissionScope) warnings.push(`Submission plan target scope detected: ${plannedTargetFiles.length} tender-required file(s) will control generation reconciliation.`);
   if (seniorReviewCriticals.length > 0) warnings.push(`${seniorReviewCriticals.length} critical evidence/review gap(s) were carried into the proposal as senior bid-review items instead of blocking draft generation.`);

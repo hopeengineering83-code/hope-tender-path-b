@@ -433,6 +433,60 @@ async function zipPackage(userId: string, tender: any, envelopeFilter: EnvelopeF
   return new NextResponse(new Uint8Array(zipBuffer), { headers: responseHeaders });
 }
 
+async function proposalPdf(userId: string, tender: any, docId: string | null) {
+  // Find the main technical proposal document (or the doc specified by docId).
+  const docs = (tender.generatedDocuments as any[]).filter(
+    (d: any) => d.generationStatus === "GENERATED" && isFinalExportCandidateDocument(d) && generatedDocumentHasContent(d),
+  );
+  if (!docs.length) return err("No generated documents available for PDF export. Generate documents first.", 400, { code: "NO_DOCS_FOR_PDF" });
+
+  // Pick the target document
+  const target = docId
+    ? docs.find((d: any) => d.id === docId)
+    : docs.find((d: any) => /technical.proposal|technical_proposal/i.test(d.exactFileName ?? d.name ?? "")) ?? docs[0];
+  if (!target) return err("Target document not found or not yet generated.", 404, { code: "PDF_DOC_NOT_FOUND" });
+
+  // Read the DOCX content and extract text using mammoth
+  const contentResult = await readContentOrError(asReadyDoc(target));
+  if (!contentResult.ok) return contentResult.response;
+  const content = contentResult.content;
+
+  let markdown = "";
+  try {
+    const mammoth = await import("mammoth");
+    const result = await mammoth.extractRawText({ buffer: content.buffer });
+    markdown = result.value ?? "";
+  } catch {
+    // Fallback: use contentSummary if mammoth fails
+    markdown = target.contentSummary ?? target.name ?? tender.title ?? "Technical Proposal";
+  }
+  if (!markdown.trim()) markdown = target.contentSummary ?? target.name ?? tender.title ?? "Technical Proposal";
+
+  const { generateProposalPdf } = await import("../../../../../lib/engine/proposal-pdf");
+  const pdfBytes = await generateProposalPdf({
+    title: tender.title ?? "Technical Proposal",
+    clientName: (tender as any).clientName ?? (tender as any).procuringEntityName ?? null,
+    reference: tender.reference ?? null,
+    markdown,
+  });
+
+  const safeBase = (tender.title ?? "proposal").replace(/[^a-zA-Z0-9]/g, "-").toLowerCase().slice(0, 60);
+  const pdfName = `${safeBase}-proposal.pdf`;
+  await logAction({
+    userId,
+    action: "EXPORT_PACKAGE_DOWNLOAD",
+    entityType: "GeneratedDocument",
+    entityId: target.id,
+    description: `Downloaded PDF export of "${target.name ?? target.exactFileName}" for tender "${tender.title}"`,
+  });
+  return new NextResponse(Buffer.from(pdfBytes), {
+    headers: {
+      "Content-Type": "application/pdf",
+      "Content-Disposition": `attachment; filename="${pdfName}"`,
+    },
+  });
+}
+
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     let actor;
@@ -455,6 +509,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     if (docId) return await singleDocument(actor.id, tender, docId);
     if (type === "zip") return await zipPackage(actor.id, tender, envelopeRaw);
     if (type === "compliance" || type === "requirements") return await internalReport(actor.id, tender, type);
+    if (type === "pdf") return await proposalPdf(actor.id, tender, searchParams.get("docId") ?? null);
     return err("Direct proposal export is disabled. Generate and download final documents or the ZIP package instead.", 409, { code: "DIRECT_PROPOSAL_EXPORT_DISABLED" });
   } catch (error) {
     console.error("Tender download route failed", error);
