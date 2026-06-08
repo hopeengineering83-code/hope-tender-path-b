@@ -149,6 +149,12 @@ export function evaluateEnv(env: Record<string, string | undefined> = process.en
     else warnings.push(message);
   }
 
+  // SENTRY_DSN is optional but strongly recommended for production.
+  // Without it, errors are only logged to stdout/Vercel logs — no alerting.
+  if (isProd && !env.SENTRY_DSN) {
+    warnings.push("SENTRY_DSN is not set. Errors will only appear in stdout/Vercel logs with no alerting or grouping. Set SENTRY_DSN to enable error reporting.");
+  }
+
   return { ok: errors.length === 0, errors, warnings };
 }
 
