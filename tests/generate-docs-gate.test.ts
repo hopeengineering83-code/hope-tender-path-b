@@ -295,6 +295,53 @@ describe("generate gate — zero documents created on gate failure", () => {
   });
 });
 
+// ── AI_ANALYSIS_PARTIAL generate gate (regression) ───────────────────────────
+// Verifies the gate that blocks generation when tender.status === AI_ANALYSIS_PARTIAL.
+// This covers the case where the AI ran out of time mid-analysis — pages processed
+// late in the document were never seen, so requirements may be silently missing.
+
+describe("generate gate — AI_ANALYSIS_PARTIAL blocks generation", () => {
+  function simulatePartialAiStatusGate(tenderStatus: string): { blocked: boolean; errorCode?: string } {
+    if (tenderStatus === "AI_ANALYSIS_PARTIAL") {
+      return { blocked: true, errorCode: "ANALYSIS_PARTIAL" };
+    }
+    return { blocked: false };
+  }
+
+  it("blocks when tender.status is AI_ANALYSIS_PARTIAL", () => {
+    const result = simulatePartialAiStatusGate("AI_ANALYSIS_PARTIAL");
+    assert.equal(result.blocked, true);
+    assert.equal(result.errorCode, "ANALYSIS_PARTIAL");
+  });
+
+  it("allows when tender.status is AI_ANALYZED", () => {
+    const result = simulatePartialAiStatusGate("AI_ANALYZED");
+    assert.equal(result.blocked, false);
+  });
+
+  it("allows when tender.status is DRAFT (pre-analysis, other gates will catch)", () => {
+    const result = simulatePartialAiStatusGate("DRAFT");
+    assert.equal(result.blocked, false);
+  });
+
+  it("generate route source includes AI_ANALYSIS_PARTIAL check", async () => {
+    const { readFileSync } = require("node:fs");
+    const { resolve } = require("node:path");
+    const src = readFileSync(
+      resolve(process.cwd(), "app/api/tenders/[id]/generate/route.ts"),
+      "utf8",
+    );
+    assert.ok(
+      src.includes("AI_ANALYSIS_PARTIAL"),
+      "generate route must block when tender.status === AI_ANALYSIS_PARTIAL",
+    );
+    assert.ok(
+      src.includes("ANALYSIS_PARTIAL"),
+      "generate route must use ANALYSIS_PARTIAL error code",
+    );
+  });
+});
+
 // ── PARTIAL_EXTRACTION_AI_ANALYZED generate gate (regression) ─────────────────
 // Verifies the new gate that blocks generation when AI Analyze ran on a
 // partially-extracted tender (some pages could not be fully read).

@@ -341,6 +341,48 @@ describe("schema sanitizer (mirrors tryParseAndSanitize inside analyzeOneChunk)"
   });
 });
 
+// ─── isPartial → PARTIAL_EXTRACTION_AI_ANALYZED downgrade ────────────────────
+// Regression for the bug where a partial AI analysis (deadline hit, not all chunks
+// processed) left analysisExtractionStatus as FULL_EXTRACTION_AI_ANALYZED even
+// though requirements from later chunks were never extracted. Both streaming and
+// non-streaming paths now downgrade FULL → PARTIAL when aiMeta.isPartial is true.
+
+function computeEffectiveExtractionStatus(
+  extractionStatus: string,
+  isPartial: boolean,
+): string {
+  return isPartial && extractionStatus === "FULL_EXTRACTION_AI_ANALYZED"
+    ? "PARTIAL_EXTRACTION_AI_ANALYZED"
+    : extractionStatus;
+}
+
+describe("ai-analyze: isPartial → PARTIAL_EXTRACTION_AI_ANALYZED downgrade (regression)", () => {
+  it("downgrades FULL_EXTRACTION_AI_ANALYZED to PARTIAL when isPartial=true", () => {
+    const result = computeEffectiveExtractionStatus("FULL_EXTRACTION_AI_ANALYZED", true);
+    assert.equal(result, "PARTIAL_EXTRACTION_AI_ANALYZED");
+  });
+
+  it("does NOT downgrade when isPartial=false", () => {
+    const result = computeEffectiveExtractionStatus("FULL_EXTRACTION_AI_ANALYZED", false);
+    assert.equal(result, "FULL_EXTRACTION_AI_ANALYZED");
+  });
+
+  it("does NOT modify REGEX_FALLBACK even when isPartial=true", () => {
+    const result = computeEffectiveExtractionStatus("REGEX_FALLBACK_FROM_WEAK_EXTRACTION", true);
+    assert.equal(result, "REGEX_FALLBACK_FROM_WEAK_EXTRACTION");
+  });
+
+  it("does NOT modify PARTIAL_EXTRACTION_AI_ANALYZED when isPartial=true (already correct)", () => {
+    const result = computeEffectiveExtractionStatus("PARTIAL_EXTRACTION_AI_ANALYZED", true);
+    assert.equal(result, "PARTIAL_EXTRACTION_AI_ANALYZED");
+  });
+
+  it("does NOT modify EXTRACTION_CORRUPTED_AI_SKIPPED when isPartial=true", () => {
+    const result = computeEffectiveExtractionStatus("EXTRACTION_CORRUPTED_AI_SKIPPED", true);
+    assert.equal(result, "EXTRACTION_CORRUPTED_AI_SKIPPED");
+  });
+});
+
 // ─── Non-streaming resume: previousChunkResults normalization ─────────────────
 // Regression test for the bug where the non-streaming POST path loaded
 // previousChunkResults from a saved AiJob output but did NOT pass them to

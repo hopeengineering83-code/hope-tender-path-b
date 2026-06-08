@@ -505,7 +505,10 @@ async function handleStreamingAnalyze(
               extractionScore: (f as { extractionScore?: number | null }).extractionScore ?? null,
             }));
             const extractionStatus = deriveExtractionStatus(fileQualitySnapshots);
-            void prisma.tender.update({ where: { id }, data: { analysisExtractionStatus: extractionStatus } }).catch(() => {});
+            const effectiveStreamExtractionStatus = (aiMeta.isPartial && extractionStatus === "FULL_EXTRACTION_AI_ANALYZED")
+              ? "PARTIAL_EXTRACTION_AI_ANALYZED"
+              : extractionStatus;
+            void prisma.tender.update({ where: { id }, data: { analysisExtractionStatus: effectiveStreamExtractionStatus } }).catch(() => {});
 
             // Persist per-page classification to TenderFile.pageStatusJson
             for (const file of tenderRecord.files) {
@@ -1077,9 +1080,17 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           extractionScore: (f as { extractionScore?: number | null }).extractionScore ?? null,
         }));
         const extractionStatus = deriveExtractionStatus(fileQualitySnapshots);
+        // When the AI analysis itself was partial (deadline hit before all chunks
+        // were processed), downgrade FULL_EXTRACTION_AI_ANALYZED to
+        // PARTIAL_EXTRACTION_AI_ANALYZED so the Generate Docs and Export gates
+        // can block appropriately. The extraction may have been full, but the
+        // resulting analysis is incomplete — requirements from later chunks are missing.
+        const effectiveExtractionStatus = (aiMeta.isPartial && extractionStatus === "FULL_EXTRACTION_AI_ANALYZED")
+          ? "PARTIAL_EXTRACTION_AI_ANALYZED"
+          : extractionStatus;
         void prisma.tender.update({
           where: { id },
-          data: { analysisExtractionStatus: extractionStatus },
+          data: { analysisExtractionStatus: effectiveExtractionStatus },
         }).catch(() => {});
 
         // Persist per-page classification (submission/eval/required-docs/client pages)

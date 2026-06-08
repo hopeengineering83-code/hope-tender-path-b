@@ -315,6 +315,22 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }, { status: 422 });
   }
 
+  // ── Partial AI analysis gate ─────────────────────────────────────────────
+  // When tender.status === "AI_ANALYSIS_PARTIAL", the AI analysis job hit its
+  // deadline and stopped before processing all content chunks. Requirements from
+  // later pages of the tender were not extracted. Generating on a partial analysis
+  // produces proposals that may be missing evaluation criteria, required documents,
+  // or submission rules from the unprocessed sections.
+  if (tender.status === "AI_ANALYSIS_PARTIAL") {
+    return NextResponse.json({
+      errorCode: "ANALYSIS_PARTIAL",
+      error: "Generation blocked: the previous AI Analyze run did not finish — it was interrupted before processing all tender content. Re-run AI Analyze to complete the analysis before generating documents.",
+      blockers: ["AI Analyze stopped before reading all tender pages. Requirements from later sections may be missing."],
+      nextAction: "RERUN_AI_ANALYZE",
+      diagnosticId: `analysis-partial-${id}`,
+    }, { status: 422 });
+  }
+
   // ── Extraction quality gate ───────────────────────────────────────────────
   // Block generation when extraction quality is too poor to produce reliable
   // documents (REGEX_FALLBACK_FROM_WEAK_EXTRACTION — average score < 45 with
