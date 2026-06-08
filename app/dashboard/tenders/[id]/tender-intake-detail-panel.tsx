@@ -1,12 +1,6 @@
-// Auto-extracted tender detail panel.
-//
-// Shows every field inferTenderMetadata() captured from the uploaded
-// tender body in a structured 2-column layout. Fields that came back
-// empty are flagged as missing so the user knows what needs manual
-// review before submission.
-//
-// Server component — pure presentation. The "Re-extract from PDF"
-// button is a small client island.
+// Compact auto-extracted tender detail panel.
+// Shows submission-critical metadata first and hides secondary/long details behind
+// dropdowns so the tender workspace stays short.
 
 import { ReExtractMetadataButton } from "./re-extract-button";
 
@@ -56,7 +50,7 @@ function fmtNumber(value: number | null | undefined, currency?: string | null): 
   return currency ? `${currency} ${formatted}` : formatted;
 }
 
-const MISSING_NOTE = "Not extracted — confirm manually";
+const MISSING_NOTE = "Not extracted";
 
 export function TenderIntakeDetailPanel({ tender }: { tender: TenderDetailLike }) {
   const deadline = formatDeadline(tender.deadline);
@@ -67,10 +61,10 @@ export function TenderIntakeDetailPanel({ tender }: { tender: TenderDetailLike }
   const evaluation = tender.technicalWeight && tender.financialWeight
     ? `Technical ${tender.technicalWeight}% / Financial ${tender.financialWeight}%`
     : null;
+  const client = tender.clientName || (tender as Record<string, unknown>).procuringEntityName as string | null | undefined;
 
-  // Count how many fields were auto-filled vs need review
   const fields = [
-    tender.reference, tender.clientName || (tender as Record<string, unknown>).procuringEntityName as string | null | undefined, tender.clientContactName, tender.clientContactEmail,
+    tender.reference, client, tender.clientContactName, tender.clientContactEmail,
     tender.clientContactPhone, tender.clientAddress, tender.country, deadline, tender.submissionMethod,
     budget, tender.validityDays, bond, preBid, tender.numberOfCopiesRequired, tender.pageLimit,
     evaluation, tender.description, tender.evaluationMethodology, tender.intakeSummary, tender.analysisSummary,
@@ -80,12 +74,10 @@ export function TenderIntakeDetailPanel({ tender }: { tender: TenderDetailLike }
 
   return (
     <section className="rounded-2xl border bg-white p-6 shadow-sm">
-      <div className="flex items-start justify-between mb-4 gap-4">
+      <div className="mb-4 flex items-start justify-between gap-4">
         <div className="flex-1">
           <h2 className="text-lg font-semibold text-slate-900">Tender Detail</h2>
-          <p className="mt-1 text-xs text-slate-500">
-            Auto-extracted from the uploaded tender body. Review each field before final submission.
-          </p>
+          <p className="mt-1 text-xs text-slate-500">Submission-critical metadata is shown first. Secondary extracted fields are collapsed.</p>
         </div>
         <div className="flex items-center gap-4">
           <div className="text-right">
@@ -96,47 +88,46 @@ export function TenderIntakeDetailPanel({ tender }: { tender: TenderDetailLike }
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-x-6 gap-y-3 md:grid-cols-2 text-sm">
+      <div className="grid grid-cols-1 gap-x-6 gap-y-3 text-sm md:grid-cols-2">
         <Detail label="Reference number" value={tender.reference} />
         <Detail label="Country" value={tender.country} />
-        <Detail label="Client / Procuring entity" value={tender.clientName || (tender as Record<string, unknown>).procuringEntityName as string | null | undefined} />
-        <Detail label="Client address" value={tender.clientAddress} />
-        <Detail label="Client contact" value={tender.clientContactName ? `${tender.clientContactName}${tender.clientContactTitle ? ` — ${tender.clientContactTitle}` : ""}` : null} />
-        <Detail label="Contact email" value={tender.clientContactEmail} />
-        <Detail label="Contact phone" value={tender.clientContactPhone} />
-        <Detail label="Submission method" value={tender.submissionMethod} />
-        <Detail label="Submission address" value={tender.submissionAddress} />
-        <Detail label="Submission emails" value={emails.length > 0 ? emails.join(", ") : null} />
+        <Detail label="Client / Procuring entity" value={client} />
         <Detail label="Deadline" value={deadline} />
-        <Detail label="Pre-bid meeting" value={preBid || tender.preBidMeetingLocation} />
-        <Detail label="Proposal validity" value={tender.validityDays ? `${tender.validityDays} days` : null} />
-        <Detail label="Budget" value={budget} />
-        <Detail label="Bid bond" value={bond} />
-        <Detail label="Page limit" value={tender.pageLimit ? `${tender.pageLimit} pages` : null} />
-        <Detail label="Copies required" value={tender.numberOfCopiesRequired ? `Original + ${tender.numberOfCopiesRequired}` : null} />
-        <Detail label="Mandatory site visit" value={tender.mandatorySiteVisit ? "YES" : null} highlight={tender.mandatorySiteVisit} />
-        <Detail label="Evaluation weights" value={evaluation} />
+        <Detail label="Submission method" value={tender.submissionMethod} />
+        <Detail label="Submission emails" value={emails.length > 0 ? emails.join(", ") : null} />
       </div>
 
+      <details className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-3">
+        <summary className="cursor-pointer text-sm font-semibold text-slate-700">Show all extracted metadata</summary>
+        <div className="mt-3 grid grid-cols-1 gap-x-6 gap-y-3 bg-white p-3 text-sm md:grid-cols-2">
+          <Detail label="Client address" value={tender.clientAddress} />
+          <Detail label="Client contact" value={tender.clientContactName ? `${tender.clientContactName}${tender.clientContactTitle ? ` — ${tender.clientContactTitle}` : ""}` : null} />
+          <Detail label="Contact email" value={tender.clientContactEmail} />
+          <Detail label="Contact phone" value={tender.clientContactPhone} />
+          <Detail label="Submission address" value={tender.submissionAddress} />
+          <Detail label="Pre-bid meeting" value={preBid || tender.preBidMeetingLocation} />
+          <Detail label="Proposal validity" value={tender.validityDays ? `${tender.validityDays} days` : null} />
+          <Detail label="Budget" value={budget} />
+          <Detail label="Bid bond" value={bond} />
+          <Detail label="Page limit" value={tender.pageLimit ? `${tender.pageLimit} pages` : null} />
+          <Detail label="Copies required" value={tender.numberOfCopiesRequired ? `Original + ${tender.numberOfCopiesRequired}` : null} />
+          <Detail label="Mandatory site visit" value={tender.mandatorySiteVisit ? "YES" : null} highlight={tender.mandatorySiteVisit} />
+          <Detail label="Evaluation weights" value={evaluation} />
+        </div>
+      </details>
+
       <div className="mt-4 space-y-3 border-t border-slate-100 pt-4">
-        {tender.description && (
-          <ProseBlock label="Description" value={tender.description} />
+        {tender.description && <ProseBlock label="Description" value={tender.description} />}
+        {tender.evaluationMethodology ? (
+          <ProseBlock label="Evaluation methodology" value={tender.evaluationMethodology} />
+        ) : (
+          <div>
+            <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Evaluation methodology</div>
+            <p className="inline-flex rounded-full bg-amber-50 px-2 py-1 text-xs italic text-amber-700">Not extracted — re-extract from PDF or add manually.</p>
+          </div>
         )}
-        {tender.evaluationMethodology
-          ? <ProseBlock label="Evaluation methodology" value={tender.evaluationMethodology} />
-          : (
-            <div>
-              <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Evaluation methodology</div>
-              <p className="text-sm italic text-amber-700">Not extracted — re-extract from PDF or add manually. Required for scored proposals.</p>
-            </div>
-          )
-        }
-        {tender.intakeSummary && (
-          <ProseBlock label="Intake summary" value={tender.intakeSummary} />
-        )}
-        {tender.analysisSummary && (
-          <ProseBlock label="Analysis summary" value={tender.analysisSummary} />
-        )}
+        {tender.intakeSummary && <ProseBlock label="Intake summary" value={tender.intakeSummary} />}
+        {tender.analysisSummary && <ProseBlock label="Analysis summary" value={tender.analysisSummary} />}
       </div>
     </section>
   );
@@ -147,8 +138,8 @@ function Detail({ label, value, highlight }: { label: string; value: string | nu
   return (
     <div className="flex items-start gap-3 border-b border-slate-100 pb-2">
       <div className="w-44 shrink-0 text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</div>
-      <div className={`flex-1 text-sm ${empty ? "italic text-amber-700" : highlight ? "font-semibold text-amber-700" : "text-slate-800"}`}>
-        {empty ? MISSING_NOTE : value}
+      <div className={`flex-1 text-sm ${empty ? "text-amber-700" : highlight ? "font-semibold text-amber-700" : "text-slate-800"}`}>
+        {empty ? <span className="inline-flex rounded-full bg-amber-50 px-2 py-0.5 text-xs italic">{MISSING_NOTE}</span> : value}
       </div>
     </div>
   );
@@ -156,9 +147,9 @@ function Detail({ label, value, highlight }: { label: string; value: string | nu
 
 function ProseBlock({ label, value }: { label: string; value: string }) {
   return (
-    <div>
-      <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</div>
-      <p className="whitespace-pre-wrap text-sm text-slate-800 leading-relaxed">{value}</p>
-    </div>
+    <details className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+      <summary className="cursor-pointer text-xs font-semibold uppercase tracking-wide text-slate-600">{label}</summary>
+      <p className="mt-3 max-h-40 overflow-auto whitespace-pre-wrap rounded-lg bg-white p-3 text-sm leading-relaxed text-slate-800">{value}</p>
+    </details>
   );
 }
