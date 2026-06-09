@@ -13,6 +13,7 @@ type TenderRequirementLite = {
   description?: string | null;
   priority?: string | null;
   requirementType?: string | null;
+  sourcePageNumber?: number | null;
 };
 
 function escCell(text: string): string {
@@ -76,15 +77,16 @@ export function buildBidComplianceMapping(opts: { requirements: TenderRequiremen
 
   const rows = sorted.slice(0, 30).map((req) => {
     const reqText = (req.title || (req.description ?? "").slice(0, 100)).trim();
-    return `| ${escCell(req.priority || "—")} | ${escCell(req.requirementType || "GENERAL")} | ${escCell(reqText)} | ${escCell(inferProposalLocation(req))} |`;
+    const pageRef = req.sourcePageNumber != null ? `p.${req.sourcePageNumber}` : "—";
+    return `| ${escCell(req.priority || "—")} | ${escCell(req.requirementType || "GENERAL")} | ${escCell(reqText)} | ${pageRef} | ${escCell(inferProposalLocation(req))} |`;
   });
 
   return [
     "## E.1 Bid Compliance Mapping — Tender Requirements to Proposal Sections",
     "Every tender requirement detected during analysis is mapped below to the proposal section that addresses it. Evaluators can use this table to navigate the proposal during scoring.",
     "",
-    "| Priority | Type | Tender Requirement | Addressed In |",
-    "|---|---|---|---|",
+    "| Priority | Type | Tender Requirement | Source Page | Addressed In |",
+    "|---|---|---|---|---|",
     ...rows,
     "",
     `_${sorted.length} requirement${sorted.length === 1 ? "" : "s"} detected; ${rows.length} shown in this mapping. Full evidence-mapped Compliance Matrix is provided in the proposal annex._`,
