@@ -431,6 +431,10 @@ async function handleStreamingAnalyze(
               const tenderStatus = aiMeta.isPartial ? "AI_ANALYSIS_PARTIAL" : "AI_ANALYZED";
               const clientNameForContaminationCheck = aiResult.procuringEntityName || tenderRecord.clientName;
               const contamination = detectMetadataContamination(clientNameForContaminationCheck);
+              const legalNameContamination = detectMetadataContamination(aiResult.legalClientName ?? null);
+              const donorAgencyContamination = detectMetadataContamination(aiResult.donorAgency ?? null);
+              const implementingAgencyContamination = detectMetadataContamination(aiResult.implementingAgency ?? null);
+              const anyEntityContaminated = contamination.contaminated || legalNameContamination.contaminated || donorAgencyContamination.contaminated || implementingAgencyContamination.contaminated;
 
               await tx.tender.update({
                 where: { id },
@@ -471,7 +475,7 @@ async function handleStreamingAnalyze(
                   ...(aiResult.submissionAddressSourcePage !== undefined ? { submissionAddressSourcePage: aiResult.submissionAddressSourcePage } : {}),
                   ...(aiResult.submissionAddressSourceQuote !== undefined ? { submissionAddressSourceQuote: aiResult.submissionAddressSourceQuote } : {}),
                   ...(aiResult.evaluationCriteriaSource !== undefined ? { evaluationCriteriaSourceJson: aiResult.evaluationCriteriaSource ? JSON.stringify(aiResult.evaluationCriteriaSource) : null } : {}),
-                  metadataContaminated: contamination.contaminated,
+                  metadataContaminated: anyEntityContaminated,
                 },
               });
             });
@@ -951,9 +955,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           //   Partial (deadline) → "AI_ANALYSIS_PARTIAL"
           const tenderStatus = aiMeta.isPartial ? "AI_ANALYSIS_PARTIAL" : "AI_ANALYZED";
 
-          // Contamination check on the extracted client name
+          // Contamination check on all extracted entity identity fields
           const clientNameForContaminationCheck = aiResult.procuringEntityName || tenderRecord.clientName;
           const contamination = detectMetadataContamination(clientNameForContaminationCheck);
+          const legalNameContamination = detectMetadataContamination(aiResult.legalClientName ?? null);
+          const donorAgencyContamination = detectMetadataContamination(aiResult.donorAgency ?? null);
+          const implementingAgencyContamination = detectMetadataContamination(aiResult.implementingAgency ?? null);
+          const anyEntityContaminated = contamination.contaminated || legalNameContamination.contaminated || donorAgencyContamination.contaminated || implementingAgencyContamination.contaminated;
 
           await tx.tender.update({
             where: { id },
@@ -1018,8 +1026,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
               ...(aiResult.submissionAddressSourceQuote !== undefined ? { submissionAddressSourceQuote: aiResult.submissionAddressSourceQuote } : {}),
               // Per-criterion evaluation criteria source
               ...(aiResult.evaluationCriteriaSource !== undefined ? { evaluationCriteriaSourceJson: aiResult.evaluationCriteriaSource ? JSON.stringify(aiResult.evaluationCriteriaSource) : null } : {}),
-              // Flag contaminated client name so the export gate can block
-              metadataContaminated: contamination.contaminated,
+              // Flag contaminated entity fields so the export gate can block
+              metadataContaminated: anyEntityContaminated,
             },
           });
         });

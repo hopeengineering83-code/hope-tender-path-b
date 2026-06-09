@@ -68,7 +68,8 @@ describe("metadataContaminated blocks generation-readiness and generate route", 
   it("AI Analyze writes contamination flag when portal noise detected", () => {
     const analyzeSource = readFileSync("app/api/tenders/[id]/ai-analyze/route.ts", "utf8");
     assert.match(analyzeSource, /detectMetadataContamination/);
-    assert.match(analyzeSource, /metadataContaminated.*contamination\.contaminated/);
+    // Phase 21: contamination check covers all entity fields via anyEntityContaminated
+    assert.match(analyzeSource, /metadataContaminated.*anyEntityContaminated|anyEntityContaminated.*metadataContaminated/);
   });
 
   it("AI Analyze extracts full contact fields (Phase 7) and writes them to DB", () => {

@@ -666,16 +666,31 @@ export async function getFinalSubmissionReadiness(
       recommendedAction: "Enter the official procuring entity name in Tender Detail before final export.",
     });
   }
-  // Contamination gate — a polluted client name (portal nav text, status
-  // banners, unrelated tender alerts) must block export until corrected.
+  // Contamination gate — any entity identity field (clientName, legalClientName,
+  // donorAgency, implementingAgency) polluted with portal nav text or status
+  // banners must block export until corrected.
   if (tender.metadataContaminated === true) {
     tenderLevelBlockers.push({
       category: "METADATA_CONTAMINATED",
       severity: "HIGH",
-      title: "Client/procuring entity name may be contaminated by unrelated portal text.",
-      recommendedAction: "Review and correct the client name in tender settings before exporting.",
+      title: "One or more entity identity fields (client name, legal name, donor agency, or implementing agency) may be contaminated by unrelated portal text.",
+      recommendedAction: "Re-run AI Analyze or review and correct the affected entity fields in Tender Detail before exporting.",
     });
   }
+  // Entity identity collision — implementingAgency and clientName must refer
+  // to distinct organisations on multi-stakeholder tenders. Identical values
+  // usually mean the same text was copied into both fields by mistake.
+  const implementingAgencyValue = ((tender as Record<string, unknown>).implementingAgency as string | null | undefined ?? "").trim();
+  const clientNameValue = (tender.clientName ?? "").trim();
+  if (implementingAgencyValue && clientNameValue && implementingAgencyValue.toLowerCase() === clientNameValue.toLowerCase()) {
+    tenderLevelBlockers.push({
+      category: "ENTITY_IDENTITY_COLLISION",
+      severity: "MEDIUM",
+      title: "implementingAgency and clientName are identical — this is likely a data quality issue (same value populated in both fields).",
+      recommendedAction: "Verify whether the procuring entity and implementing agency are the same organisation; if they differ, correct the implementing agency field in Tender Detail.",
+    });
+  }
+
   if (qualityFailed > 0) {
     tenderLevelBlockers.push({
       category: "GENERATED_DOCUMENT_QUALITY_FAILED",
@@ -767,6 +782,26 @@ export async function getFinalSubmissionReadiness(
         severity: "MEDIUM",
         title: `${missingTraceability} of ${mandatoryRequirements.length} mandatory requirement(s) lack source traceability (${Math.round(missingRatio * 100)}% untraced).`,
         recommendedAction: "Re-run AI Analyze to extract source page, quote, and confidence for mandatory requirements before building the submission plan.",
+      });
+    }
+
+    // Weak-trace check: confidence-only traces (no page number, no source quote)
+    // are unverifiable. If more than 20% of mandatory requirements have only a
+    // confidence score but neither a page reference nor a source quote, the AI
+    // traceability cannot be independently verified against the source document.
+    const weaklyTracedCount = mandatoryRequirements.filter(
+      (r) =>
+        (r.sourceConfidence ?? 0) > 0 &&
+        !r.sourcePageNumber &&
+        !(r.sourceExactQuote ?? "").trim(),
+    ).length;
+    const weakRatio = weaklyTracedCount / mandatoryRequirements.length;
+    if (weakRatio > 0.2) {
+      tenderLevelBlockers.push({
+        category: "SOURCE_TRACE_WEAK",
+        severity: "MEDIUM",
+        title: `${weaklyTracedCount} of ${mandatoryRequirements.length} mandatory requirement(s) have a confidence score but no page number or source quote — traces cannot be verified (${Math.round(weakRatio * 100)}% weak-traced).`,
+        recommendedAction: "Re-run AI Analyze to extract concrete page references and source quotes for mandatory requirements.",
       });
     }
   }
