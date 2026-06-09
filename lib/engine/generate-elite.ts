@@ -1931,6 +1931,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
         topProjectName: (projects as ProjectRecord[])[0]?.name ?? null,
         topExpertName: (experts as ExpertRecord[])[0]?.fullName ?? null,
         primarySector: intelligence.primarySector,
+        requirements: tender.requirements,
       })
     : null;
   const deterministicWinThemes = !hasWinThemesHeading(upstreamMarkdownForBackstops)
