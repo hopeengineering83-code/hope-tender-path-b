@@ -3117,6 +3117,9 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
         fileContent,
         generationStatus: "GENERATED",
         validationStatus: "PENDING",
+        // Reset authority review whenever content is replaced — the previous
+        // AUTHORITY_READY status must not carry over to new content.
+        reviewStatus: "PENDING",
         contentSummary: summary,
         updatedAt: new Date(),
       },
@@ -3138,6 +3141,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
           fileContent,
           generationStatus: "GENERATED",
           validationStatus: "PENDING",
+          reviewStatus: "PENDING",
           contentSummary: summary,
           updatedAt: new Date(),
         },
@@ -3261,7 +3265,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
         if (existing) {
           await prisma.generatedDocument.update({
             where: { id: existing.id },
-            data: { fileContent: cvContent, generationStatus: "GENERATED", updatedAt: new Date() },
+            data: { fileContent: cvContent, generationStatus: "GENERATED", validationStatus: "PENDING", reviewStatus: "PENDING", updatedAt: new Date() },
           });
         } else {
           await prisma.generatedDocument.create({
