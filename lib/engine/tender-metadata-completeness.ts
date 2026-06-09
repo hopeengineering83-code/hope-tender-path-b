@@ -18,9 +18,9 @@
 // This module replaces that with a single source of truth:
 //
 //   assessTenderMetadataCompleteness(tender) -> {
-//     overallRatio,        // 0..1, share of REQUIRED fields populated
-//     missingCritical,     // critical fields that block final generation
-//     missingNonCritical,  // optional fields surfaced for completeness
+//     overallRatio,        // 0..1, share of required metadata populated
+//     missingCritical,     // fields that block final generation
+//     missingNonCritical,  // optional / tender-type-dependent fields surfaced for review
 //     invalidFields,       // fields containing "Bid-Team to confirm" etc.
 //     blockingForGeneration,
 //     blockingForExport,
@@ -129,11 +129,11 @@ export type MetadataFieldFinding = {
 };
 
 export type MetadataCompletenessReport = {
-  /** 0..1, share of REQUIRED critical fields populated. */
+  /** 0..1, share of required/tracked metadata populated. */
   overallRatio: number;
   /** Critical fields that are missing — blocks final generation/export. */
   missingCritical: MetadataFieldFinding[];
-  /** Non-critical fields that are missing — surfaced as warnings only. */
+  /** Non-critical / tender-type-dependent fields that are missing — surfaced as warnings only. */
   missingNonCritical: MetadataFieldFinding[];
   /** Fields explicitly marked NOT_APPLICABLE by user override. */
   notApplicableFields: MetadataFieldFinding[];
@@ -332,12 +332,17 @@ export function assessTenderMetadataCompleteness(
       missingCritical.push({ field: reqField, reason: "No tender requirements extracted yet — required-document list is empty." });
     }
   }
+
+  // Evaluation criteria and weights are tender-type dependent. Many EOIs,
+  // RFIs, RFQs, prequalification notices, and direct invitations do not publish
+  // weighted scoring. Missing evaluation criteria should therefore be visible
+  // for senior review, but it must not universally block metadata confirmation.
   if (input.hasEvaluationMethodology !== true && (input.technicalWeight === null || input.technicalWeight === undefined)) {
     const evalField = "evaluationCriteria";
     if (isNotApplicable(evalField)) {
-      notApplicableFields.push({ field: evalField, reason: "Evaluation criteria / scoring weights are not extracted — needed for scored tenders." });
+      notApplicableFields.push({ field: evalField, reason: "Evaluation criteria / scoring weights were not issued in this tender." });
     } else if (!isOverrideResolved(evalField)) {
-      missingCritical.push({ field: evalField, reason: "Evaluation criteria / scoring weights are not extracted — needed for scored tenders." });
+      missingNonCritical.push({ field: evalField, reason: "Evaluation criteria / scoring weights were not extracted. Confirm manually when the tender is scored; otherwise mark not applicable or ignore for this tender." });
     }
   }
 
@@ -412,19 +417,10 @@ export function assessTenderMetadataCompleteness(
   }
 
   // ── Compute overall ratio. ───────────────────────────────────────────────
-  // Critical-field universe is the 11 fields above (clientName, title,
-  // submissionMethod, submissionEndpoint, deadline, requiredDocuments,
-  // evaluationCriteria, pageLimit, bidBond, siteVisit, proposalValidity).
   // We count critical AND non-critical present fields so the ratio aligns
-  // with the "5/16" auto-fill coverage UI label.
-  // Budget and bidBondAmount are FINANCIAL-PROPOSAL-ONLY metadata. Most
-  // tenders never publish the ceiling budget and the bond is often expressed
-  // as "1% of the bid value" — there is no honest absolute amount to extract.
-  // Including them in the auto-fill denominator dragged the coverage ratio
-  // below the 60% threshold even on fully-populated tenders, surfacing a
-  // misleading "tender metadata is weak" note in the readiness panel.
-  // They remain non-critical missing warnings (see checkNonCritical above)
-  // but no longer count against the cross-tender auto-fill ratio.
+  // with the auto-fill coverage UI label. Tender-type-dependent fields such
+  // as evaluation weights, budget and bid bond remain review warnings but do
+  // not create universal hard blockers across EOI/RFP/RFI/RFQ workflows.
   const tracked: Array<unknown> = [
     input.clientName,
     input.title,
@@ -445,13 +441,13 @@ export function assessTenderMetadataCompleteness(
   const overallRatio = present / tracked.length;
 
   if (missingCritical.length > 0) {
-    notes.push(`${missingCritical.length} critical metadata field(s) missing or placeholder-filled — final generation is blocked until completed.`);
+    notes.push(`${missingCritical.length} critical metadata field(s) missing or placeholder-filled — final generation is blocked until completed or resolved by a manual decision.`);
   }
   if (invalidFields.length > 0) {
     notes.push(`${invalidFields.length} field(s) contain internal placeholder language (e.g. "Bid-Team to confirm") and must be cleaned before generation.`);
   }
   if (overallRatio < 0.6) {
-    notes.push(`Tender metadata auto-fill coverage is ${Math.round(overallRatio * 100)}% — below the 60% threshold required for senior-grade generation.`);
+    notes.push(`Tender metadata auto-fill coverage is ${Math.round(overallRatio * 100)}% — review missing fields, then mark absent tender-specific fields as not applicable or ignored.`);
   }
 
   const dl = input.deadline;
