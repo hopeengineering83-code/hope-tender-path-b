@@ -117,6 +117,7 @@ describe("assessTenderMetadataCompleteness — procuringEntityName fallback for 
       procuringEntityName: "Federal Ministry of Health and Sanitation",
       title: "RFP for Consultancy Services",
       submissionMethod: "Sealed envelope",
+      submissionAddress: "Ministry Compound, Garki, Abuja",
       submissionEmails: "procurement@fmoh.gov",
       deadline: new Date(),
       requirementCount: 10,

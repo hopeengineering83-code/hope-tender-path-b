@@ -51,6 +51,7 @@ export type CriticalMetadataField =
   | "title"
   | "submissionMethod"
   | "submissionEndpoint"
+  | "submissionAddress"
   | "deadline"
   | "requiredDocuments"
   | "evaluationCriteria"
@@ -264,6 +265,15 @@ export function stripMetadataPlaceholders(value: string): string {
   return out.replace(/\s{2,}/g, " ").replace(/\s*[,;:.]\s*[,;:.]/g, ".").trim();
 }
 
+/**
+ * Returns true when the submission method indicates a physical / sealed
+ * envelope delivery, meaning a submission address is required.
+ */
+export function isPhysicalSubmissionMethod(method?: string | null): boolean {
+  if (!method) return false;
+  return /sealed\s*envelope|hard\s*copy|physical\s*deliver|hand\s*deliver|in\s*person|drop[\s-]?off|courier|registered\s*mail|post|by\s*hand/i.test(method);
+}
+
 export function assessTenderMetadataCompleteness(
   input: MetadataCompletenessInput,
   overrides?: Array<{ field: string; fieldState: string; overrideValue?: string | null }>,
@@ -362,7 +372,14 @@ export function assessTenderMetadataCompleteness(
   checkNonCritical("clientContactName", input.clientContactName, "Client contact name is useful for cover letters and clarifications.");
   checkNonCritical("clientContactEmail", input.clientContactEmail, "Client contact email is useful for clarifications.");
   checkNonCritical("clientContactPhone", input.clientContactPhone, "Client contact phone improves the cover letter.");
-  checkNonCritical("submissionAddress", input.submissionAddress, "Physical submission address is useful when sealed envelopes are required.");
+  // submissionAddress is critical when the method is physical/sealed — the bidder
+  // cannot deliver without a verified delivery address. For email/portal methods
+  // it remains a non-critical warning.
+  if (isPhysicalSubmissionMethod(input.submissionMethod)) {
+    checkCritical("submissionAddress", input.submissionAddress, "Physical submission address is required when the submission method is sealed envelope / hard copy / physical delivery.");
+  } else {
+    checkNonCritical("submissionAddress", input.submissionAddress, "Physical submission address is useful when sealed envelopes are required.");
+  }
   checkNonCritical("submissionEmails", input.submissionEmails, "Submission email list is useful when email submission is allowed.");
   checkNonCritical("country", input.country, "Tender country improves jurisdiction-specific declarations.");
   checkNonCritical("budget", input.budget, "Budget guidance informs financial proposal sizing.");
