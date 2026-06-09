@@ -111,8 +111,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     let effectiveSkipAiRematch = skipAiRematch;
     if (!isAsync && !skipAiRematch) {
       const [reviewedExpertsCount, reviewedProjectsCount] = await Promise.all([
-        prisma.expert.count({ where: { userId, trustLevel: "REVIEWED" } }),
-        prisma.project.count({ where: { userId, trustLevel: "REVIEWED" } }),
+        prisma.expert.count({ where: { company: { userId }, trustLevel: "REVIEWED" } }),
+        prisma.project.count({ where: { company: { userId }, trustLevel: "REVIEWED" } }),
       ]);
       if (reviewedExpertsCount + reviewedProjectsCount > LARGE_VAULT_SYNC_THRESHOLD) {
         effectiveSkipAiRematch = true;
