@@ -95,6 +95,19 @@ describe("metadata-override-gate", () => {
     assert.ok(!afterReport.missingCritical.some((f) => f.field === "submissionEndpoint"));
   });
 
+  it("missing evaluation criteria is a review warning, not a universal generation blocker", () => {
+    const input = fullInput({
+      hasEvaluationMethodology: false,
+      technicalWeight: null,
+      financialWeight: null,
+    });
+
+    const report = assessTenderMetadataCompleteness(input);
+    assert.ok(!report.missingCritical.some((f) => f.field === "evaluationCriteria"));
+    assert.ok(report.missingNonCritical.some((f) => f.field === "evaluationCriteria"));
+    assert.equal(report.blockingForGeneration, false);
+  });
+
   it("overrides do not suppress placeholder field detection in invalidFields", () => {
     // If a field has a placeholder value AND an override, the placeholder is still flagged
     // in invalidFields. The override affects missingCritical/missingNonCritical only.
