@@ -1,17 +1,21 @@
 import { NextResponse } from "next/server";
-import { Document, Packer, Paragraph, TextRun } from "docx";
-import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
+import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { logAction } from "../../../../../lib/audit";
 import { safeFileBaseName } from "../../../../../lib/engine/proposal-labels";
-import { checkExportReadiness, exportReadinessError, type ExportReadyDocument } from "../../../../../lib/engine/export-readiness";
-import { filterFinalExportCandidateDocuments, isFinalExportCandidateDocument } from "../../../../../lib/engine/document-output-state";
-import { buildFinalZipEntries } from "../../../../../lib/engine/final-zip-scope";
+import { readGeneratedDocumentContent, generatedDocumentHasContent } from "../../../../../lib/generated-document-content";
 import { validateFileSignature } from "../../../../../lib/engine/export-format-policy";
-import { getCompanyIngestionReadiness } from "../../../../../lib/company-ingestion-readiness";
+import {
+  ExportReadyDocument,
+  checkExportReadiness,
+  exportReadinessError
+} from "../../../../../lib/engine/export-readiness";
+import { isFinalExportCandidateDocument } from "../../../../../lib/engine/document-output-state";
+import { buildFinalZipEntries } from "../../../../../lib/engine/final-zip-scope";
+import { inferEnvelope, SubmissionEnvelope } from "../../../../../lib/engine/submission-plan";
+import { Document, Packer, Paragraph, TextRun } from "docx";
 import { getTenderGenerationReadiness } from "../../../../../lib/tender-generation-readiness";
-import { generatedDocumentHasContent, readGeneratedDocumentContent } from "../../../../../lib/generated-document-content";
-import { inferEnvelope, type SubmissionEnvelope } from "../../../../../lib/engine/submission-plan";
+import { getCompanyIngestionReadiness } from "../../../../../lib/company-ingestion-readiness";
 import { getFinalSubmissionReadiness } from "../../../../../lib/engine/final-submission-readiness";
 import { runAuthorityReview } from "../../../../../lib/engine/authority-review";
 
@@ -45,6 +49,16 @@ function asReadyDoc(doc: any): ExportReadyDocument {
 
 async function readContentOrError(doc: ExportReadyDocument) {
   try {
+    if (!doc.fileContent && !doc.storagePath) {
+      const fresh = await prisma.generatedDocument.findUnique({
+        where: { id: doc.id },
+        select: { fileContent: true, storagePath: true }
+      });
+      if (fresh) {
+        doc.fileContent = fresh.fileContent as string | null;
+        doc.storagePath = fresh.storagePath as string | null;
+      }
+    }
     return { ok: true as const, content: await readGeneratedDocumentContent(doc) };
   } catch (error) {
     return {
@@ -109,15 +123,11 @@ async function singleDocument(userId: string, tender: any, docId: string) {
   const raw = tender.generatedDocuments.find((d: any) => d.id === docId);
   if (!raw || raw.generationStatus !== "GENERATED") return err("Document not found or not yet generated.", 404, { code: "DOCUMENT_NOT_FOUND" });
   if (!isFinalExportCandidateDocument(raw)) return err("This workspace draft is not a final export file.", 409, { code: "INTERNAL_DRAFT_NOT_EXPORTABLE" });
-  if (!generatedDocumentHasContent(raw)) return err("Document content is unavailable.", 409, { code: "MISSING_CONTENT" });
 
   const doc = asReadyDoc(raw);
   const readiness = checkExportReadiness([doc], { requireFileContent: false });
   if (!readiness.ok) return err(exportReadinessError(readiness.failures), 409, { code: "DOCUMENT_NOT_READY", failures: readiness.failures });
 
-  // Run authority review on this single document before serving it.
-  // Pass empty manifestEntries and requiredSections since we are only
-  // checking content quality on the individual document.
   const singleAuthorityResult = runAuthorityReview(
     [{
       id: String(raw.id),
@@ -130,9 +140,9 @@ async function singleDocument(userId: string, tender: any, docId: string) {
     [],
     [],
   );
-  if (singleAuthorityResult.status === "BLOCKED") {
+  if (singleAuthorityResult.status !== "AUTHORITY_READY") {
     return err(
-      `Single-document download blocked by Authority Review: ${singleAuthorityResult.blockers.length} critical issue(s) must be resolved.`,
+      `Single-document download blocked by Authority Review: status is ${singleAuthorityResult.status}. Resolve all critical blockers before export.`,
       422,
       {
         code: "AUTHORITY_REVIEW_BLOCKED",
@@ -147,6 +157,18 @@ async function singleDocument(userId: string, tender: any, docId: string) {
   const contentResult = await readContentOrError(doc);
   if (!contentResult.ok) return contentResult.response;
   const content = contentResult.content;
+
+  const { validateDocumentQuality } = await import("../../../../../lib/engine/document-quality-validator");
+  const quality = validateDocumentQuality({
+    name: doc.name,
+    documentType: doc.documentType ?? null,
+    fileContent: content.base64,
+    storagePath: doc.storagePath ?? null,
+  });
+  if (quality.status === "BLOCKED") {
+    return err(`Document "${content.filename}" failed final quality validation: ${quality.placeholders.length ? "placeholders detected; " : ""}${quality.aiTrace.length ? "AI traces detected; " : ""}${quality.envelopeMismatch || ""}`, 422, { code: "QUALITY_VALIDATION_FAILED", documentId: doc.id, quality });
+  }
+
   const sig = validateFileSignature(content.filename, content.base64);
   if (!sig.ok) return err(`File signature mismatch on ${content.filename}.`, 422, { code: "FILE_SIGNATURE_MISMATCH", reason: sig.reason });
 
@@ -167,13 +189,7 @@ async function zipPackage(userId: string, tender: any, envelopeFilter: EnvelopeF
   const gate = await finalPackageGate(userId, tender);
   if (!gate.ok) return gate.response;
 
-  // Canonical readiness gate — same helper used by Export Readiness API,
-  // Bid Control, and Final Submission Control Center. Backend MUST reject
-  // direct ZIP downloads when canonical ok === false so a user cannot
-  // bypass blockers by hitting /download?type=zip directly.
-  // METADATA_CONTAMINATED is enforced inside getFinalSubmissionReadiness (see
-  // lib/engine/final-submission-readiness.ts). It is not duplicated here
-  // because the canonical readiness gate already surfaces it as a blocker.
+  // METADATA_CONTAMINATED is enforced inside getFinalSubmissionReadiness
   const canonical = await getFinalSubmissionReadiness(prisma, { tenderId: tender.id, userId, requireFileContent: false });
   if (!canonical) return err("Tender not found", 404, { code: "TENDER_NOT_FOUND" });
   if (!canonical.ok) {
@@ -190,39 +206,10 @@ async function zipPackage(userId: string, tender: any, envelopeFilter: EnvelopeF
     );
   }
 
-  // ── Phase 4: Server-enforced quality validation check for ALL docs ─────────
-  const { validateDocumentQuality } = await import("../../../../../lib/engine/document-quality-validator");
-  const blockedDocs = tender.generatedDocuments.filter((doc: any) => {
-    if (!isFinalExportCandidateDocument(doc)) return false;
-    const quality = validateDocumentQuality({
-      name: doc.name,
-      documentType: doc.documentType,
-      fileContent: doc.fileContent, // Note: may be base64 if not text, validator handles this
-      storagePath: doc.storagePath,
-    });
-    return quality.status === "BLOCKED";
-  });
-
-  if (blockedDocs.length > 0) {
-    return err(
-      `${blockedDocs.length} document(s) have blocking quality issues (placeholders, AI traces, or envelope mismatches). Fix these before export.`,
-      409,
-      {
-        code: "QUALITY_VALIDATION_BLOCKED",
-        blockedDocuments: blockedDocs.map((d: any) => d.exactFileName ?? d.name),
-      }
-    );
-  }
-
-  // ── Phase 4b: Authority Review gate ──────────────────────────────────────
-  // Additional to the Phase 4 quality validation check above.
-  // Detects AI traces, placeholders, Bid-Team stubs, envelope cross-contamination,
-  // and documents not in the Final Package Manifest.
   let zipAuthorityNeedsReview = false;
-  {
-    const authorityDocs = tender.generatedDocuments
-      .filter((doc: any) => isFinalExportCandidateDocument(doc) && doc.generationStatus === "GENERATED")
-      .map((doc: any) => ({
+  const authorityDocs = (tender.generatedDocuments as any[])
+      .filter((doc) => isFinalExportCandidateDocument(doc))
+      .map((doc) => ({
         id: String(doc.id),
         name: String(doc.name ?? doc.exactFileName ?? doc.id),
         documentType: String(doc.documentType ?? ""),
@@ -231,14 +218,12 @@ async function zipPackage(userId: string, tender: any, envelopeFilter: EnvelopeF
         exactFileName: doc.exactFileName ?? null,
       }));
 
-    // Build manifest entries from requirements with exactFileName
     const manifestEntries: Array<{ exactFileName: string; documentType: string }> = [];
     for (const req of (tender.requirements ?? [])) {
       if ((req as any).exactFileName) {
         manifestEntries.push({ exactFileName: (req as any).exactFileName, documentType: "TENDER_REQUIRED_FILE" });
       }
     }
-    // Also include entries from exactFileNaming JSON
     try {
       const parsed = JSON.parse(tender.exactFileNaming ?? "[]");
       if (Array.isArray(parsed)) {
@@ -252,7 +237,6 @@ async function zipPackage(userId: string, tender: any, envelopeFilter: EnvelopeF
       }
     } catch { /* ignore invalid JSON */ }
 
-    // Derive required sections from exactFileNaming / exactFileOrder
     const requiredSections: string[] = [];
     for (const raw of [tender.exactFileNaming, tender.exactFileOrder]) {
       if (!raw) continue;
@@ -268,9 +252,9 @@ async function zipPackage(userId: string, tender: any, envelopeFilter: EnvelopeF
     }
 
     const authorityResult = runAuthorityReview(authorityDocs, manifestEntries, requiredSections);
-    if (authorityResult.status === "BLOCKED") {
+    if (authorityResult.status !== "AUTHORITY_READY") {
       return err(
-        `Export blocked by Authority Review: ${authorityResult.blockers.length} critical issue(s) must be resolved before export.`,
+        `Export blocked by Authority Review: status is ${authorityResult.status}. Resolve all critical blockers before export.`,
         422,
         {
           code: "AUTHORITY_REVIEW_BLOCKED",
@@ -281,28 +265,15 @@ async function zipPackage(userId: string, tender: any, envelopeFilter: EnvelopeF
         },
       );
     }
-    // Capture NEEDS_REVIEW status so we can annotate the ZIP response header.
-    zipAuthorityNeedsReview = authorityResult.status === "NEEDS_REVIEW";
-  }
-  // (zipAuthorityNeedsReview is set inside the block above; it propagates to
-  //  the response headers at the end of zipPackage.)
+    zipAuthorityNeedsReview = authorityResult.status as string === "NEEDS_REVIEW";
 
-  // Strict two-envelope tenders: the canonical helper sets
-  // summary.strictTwoEnvelope when the tender requires SEPARATE technical
-  // and financial envelopes. In that case we MUST NOT produce one mixed
-  // ZIP. Either:
-  //   (a) reject the unqualified request with a clear 409 and instruct the
-  //       caller to specify ?envelope=technical or ?envelope=financial, or
-  //   (b) build one ZIP per envelope when the caller specifies the
-  //       envelope= query.
-  const docs: ExportReadyDocument[] = filterFinalExportCandidateDocuments(tender.generatedDocuments as any[])
-    .filter((d: any) => d.generationStatus === "GENERATED")
+  const docs: ExportReadyDocument[] = (tender.generatedDocuments as any[])
+    .filter((d: any) => d.generationStatus === "GENERATED" && isFinalExportCandidateDocument(d))
     .map(asReadyDoc)
     .sort((a, b) => (a.exactOrder ?? Number.MAX_SAFE_INTEGER) - (b.exactOrder ?? Number.MAX_SAFE_INTEGER));
 
   if (!docs.length) return err("No final exportable generated documents to package.", 400, { code: "NO_FINAL_EXPORT_CANDIDATES" });
 
-  // Annotate each doc with its envelope and filter when ?envelope= is set.
   const docEnvelopes = new Map(docs.map((d) => [d.id, inferEnvelope(d.documentType ?? "TECHNICAL", d.exactFileName ?? d.name ?? "")]));
   const fullEnvelopeCounts: Record<SubmissionEnvelope, number> = { TECHNICAL: 0, FINANCIAL: 0, ADMIN: 0 };
   for (const env of docEnvelopes.values()) fullEnvelopeCounts[env] = (fullEnvelopeCounts[env] ?? 0) + 1;
@@ -345,8 +316,6 @@ async function zipPackage(userId: string, tender: any, envelopeFilter: EnvelopeF
   if (!entries.length) return err("Final ZIP has no entries after scope filtering.", 409, { code: "NO_ZIP_ENTRIES_AFTER_SCOPE_FILTERING", exclusions: scope.exclusions });
 
   // Pre-check: identify entries whose document has no file content before attempting ZIP.
-  // This gives a clear structured error listing exactly which documents need regenerating,
-  // rather than a generic storage error mid-loop.
   const noContent = entries
     .map((entry) => byId.get(entry.generatedDocId!))
     .filter((doc): doc is ExportReadyDocument => !!doc && !doc.fileContent && !doc.storagePath);
@@ -359,7 +328,6 @@ async function zipPackage(userId: string, tender: any, envelopeFilter: EnvelopeF
     );
   }
 
-  // Duplicate filename guard — two docs with the same ZIP path would silently overwrite each other.
   const seenNames = new Set<string>();
   const dupes: string[] = [];
   for (const entry of entries) {
@@ -369,22 +337,31 @@ async function zipPackage(userId: string, tender: any, envelopeFilter: EnvelopeF
   }
   if (dupes.length) return err(`Duplicate filenames in export package: ${dupes.join(", ")}. Ensure each document has a unique exactFileName.`, 409, { code: "DUPLICATE_FILENAMES_IN_ZIP", duplicates: dupes });
 
+  const { validateDocumentQuality } = await import("../../../../../lib/engine/document-quality-validator");
+
   for (const entry of entries) {
     const doc = byId.get(entry.generatedDocId!);
     if (!doc) continue;
     const contentResult = await readContentOrError(doc);
     if (!contentResult.ok) return contentResult.response;
     const content = contentResult.content;
+
+    // Deep quality validation on the actual content about to be zipped
+    const quality = validateDocumentQuality({
+      name: doc.name,
+      documentType: doc.documentType ?? null,
+      fileContent: content.base64,
+      storagePath: doc.storagePath ?? null,
+    });
+    if (quality.status === "BLOCKED") {
+      return err(`Document "${content.filename}" failed final quality validation: ${quality.placeholders.length ? "placeholders detected; " : ""}${quality.aiTrace.length ? "AI traces detected; " : ""}${quality.envelopeMismatch || ""}`, 422, { code: "QUALITY_VALIDATION_FAILED", documentId: doc.id, quality });
+    }
+
     const sig = validateFileSignature(content.filename, content.base64);
     if (!sig.ok) return err(`File signature mismatch on ${content.filename}.`, 422, { code: "FILE_SIGNATURE_MISMATCH", reason: sig.reason });
     zip.file(entry.name || fileName(doc.name), content.buffer);
   }
 
-  // ── Envelope breakdown — annotate the response so clients know how many
-  // TECHNICAL / FINANCIAL / ADMIN files are in this ZIP. For two-envelope
-  // tenders the caller should submit the FINANCIAL files in a separate
-  // sealed envelope; they are included here for single-envelope submissions
-  // (and split into separate ZIPs when ?envelope=… is used).
   const envelopeCounts: Record<SubmissionEnvelope, number> = { TECHNICAL: 0, FINANCIAL: 0, ADMIN: 0 };
   for (const entry of entries) {
     const doc = byId.get(entry.generatedDocId!);
@@ -396,16 +373,11 @@ async function zipPackage(userId: string, tender: any, envelopeFilter: EnvelopeF
   const hasFinancialDocs = envelopeCounts.FINANCIAL > 0;
 
   const zipBuffer = await zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" });
-  // Name the ZIP after the envelope when scoped, so the user has clarity:
-  //   submission-package.zip                  — single combined
-  //   submission-package-technical.zip        — technical envelope only
-  //   submission-package-financial.zip        — financial envelope only
   const baseLabel = `${safeFileBaseName(tender.title)}-submission-package`;
   const zipName = envelopeFilter
     ? `${baseLabel}-${envelopeFilter.toLowerCase()}.zip`
     : `${baseLabel}.zip`;
   const fileList = entries.map((entry) => entry.name);
-  // Fresh read before create/update to avoid stale-object race on concurrent requests.
   const freshPkg = await prisma.exportPackage.findFirst({ where: { tenderId: tender.id }, orderBy: { createdAt: "desc" } });
   if (freshPkg) await prisma.exportPackage.update({ where: { id: freshPkg.id }, data: { status: "READY", fileList: JSON.stringify(fileList), downloadCount: { increment: 1 } } });
   else await prisma.exportPackage.create({ data: { tenderId: tender.id, status: "READY", fileList: JSON.stringify(fileList), downloadCount: 1 } });
@@ -434,22 +406,69 @@ async function zipPackage(userId: string, tender: any, envelopeFilter: EnvelopeF
 }
 
 async function proposalPdf(userId: string, tender: any, docId: string | null) {
-  // Find the main technical proposal document (or the doc specified by docId).
+  // METADATA_CONTAMINATED is enforced inside getFinalSubmissionReadiness
+  const canonical = await getFinalSubmissionReadiness(prisma, { tenderId: tender.id, userId, requireFileContent: false });
+  if (!canonical || !canonical.ok) {
+    return err(
+      canonical?.message ?? "Tender not ready for export.",
+      409,
+      {
+        code: "EXPORT_READINESS_BLOCKED",
+        documentBlockers: canonical?.documentBlockers ?? [],
+        tenderLevelBlockers: canonical?.tenderLevelBlockers ?? [],
+      },
+    );
+  }
+
+  // Authority Review hard gate for PDF
+  const authorityDocs = (tender.generatedDocuments as any[])
+      .filter((doc) => isFinalExportCandidateDocument(doc))
+      .map((doc) => ({
+        id: String(doc.id),
+        name: String(doc.name ?? doc.exactFileName ?? doc.id),
+        documentType: String(doc.documentType ?? ""),
+        contentSummary: doc.contentSummary ?? null,
+        reviewNotes: doc.reviewNotes ?? null,
+        exactFileName: doc.exactFileName ?? null,
+      }));
+  const authorityResult = runAuthorityReview(authorityDocs, [], []);
+  if (authorityResult.status !== "AUTHORITY_READY") {
+    return err(
+      `PDF download blocked by Authority Review: status is ${authorityResult.status}. Resolve all critical blockers before export..`,
+      422,
+      {
+        code: "AUTHORITY_REVIEW_BLOCKED",
+        blockers: authorityResult.blockers,
+        overallScore: authorityResult.overallScore,
+        affectedDocumentIds: authorityResult.affectedDocumentIds,
+      },
+    );
+  }
+
   const docs = (tender.generatedDocuments as any[]).filter(
-    (d: any) => d.generationStatus === "GENERATED" && isFinalExportCandidateDocument(d) && generatedDocumentHasContent(d),
+    (d: any) => d.generationStatus === "GENERATED" && isFinalExportCandidateDocument(d)
   );
   if (!docs.length) return err("No generated documents available for PDF export. Generate documents first.", 400, { code: "NO_DOCS_FOR_PDF" });
 
-  // Pick the target document
   const target = docId
     ? docs.find((d: any) => d.id === docId)
     : docs.find((d: any) => /technical.proposal|technical_proposal/i.test(d.exactFileName ?? d.name ?? "")) ?? docs[0];
   if (!target) return err("Target document not found or not yet generated.", 404, { code: "PDF_DOC_NOT_FOUND" });
 
-  // Read the DOCX content and extract text using mammoth
   const contentResult = await readContentOrError(asReadyDoc(target));
   if (!contentResult.ok) return contentResult.response;
   const content = contentResult.content;
+
+  const { validateDocumentQuality } = await import("../../../../../lib/engine/document-quality-validator");
+  const quality = validateDocumentQuality({
+    name: target.name,
+    documentType: target.documentType ?? null,
+    fileContent: content.base64,
+    storagePath: target.storagePath ?? null,
+  });
+  if (quality.status === "BLOCKED") {
+    return err(`Document "${content.filename}" failed final quality validation: ${quality.placeholders.length ? "placeholders detected; " : ""}${quality.aiTrace.length ? "AI traces detected; " : ""}${quality.envelopeMismatch || ""}`, 422, { code: "QUALITY_VALIDATION_FAILED", documentId: target.id, quality });
+  }
 
   let markdown = "";
   try {
@@ -457,7 +476,6 @@ async function proposalPdf(userId: string, tender: any, docId: string | null) {
     const result = await mammoth.extractRawText({ buffer: content.buffer });
     markdown = result.value ?? "";
   } catch {
-    // Fallback: use contentSummary if mammoth fails
     markdown = target.contentSummary ?? target.name ?? tender.title ?? "Technical Proposal";
   }
   if (!markdown.trim()) markdown = target.contentSummary ?? target.name ?? tender.title ?? "Technical Proposal";
@@ -503,7 +521,31 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
       return err("Invalid envelope query parameter. Use technical, financial, or admin.", 400, { code: "INVALID_ENVELOPE_QUERY" });
     }
 
-    const tender = await prisma.tender.findFirst({ where: { id, userId: actor.id }, include: { requirements: true, complianceGaps: true, generatedDocuments: true, exportPackages: true } });
+    const tender = await prisma.tender.findFirst({
+      where: { id, userId: actor.id },
+      include: {
+        requirements: true,
+        complianceGaps: true,
+        generatedDocuments: {
+          select: {
+            id: true,
+            name: true,
+            documentType: true,
+            format: true,
+            storagePath: true,
+            exactFileName: true,
+            exactOrder: true,
+            contentSummary: true,
+            validationStatus: true,
+            generationStatus: true,
+            reviewStatus: true,
+            reviewNotes: true,
+            // fileContent is EXCLUDED to save bandwidth until actual download
+          }
+        },
+        exportPackages: true
+      }
+    });
     if (!tender) return err("Tender not found", 404, { code: "TENDER_NOT_FOUND" });
 
     if (docId) return await singleDocument(actor.id, tender, docId);

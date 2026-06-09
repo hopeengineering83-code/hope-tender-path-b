@@ -1,15 +1,26 @@
 import { NextResponse } from "next/server";
+import { prisma } from "../../../../../lib/prisma";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
-import { prisma, prismaReady } from "../../../../../lib/prisma";
-import { validateTender } from "../../../../../lib/engine/validate";
-import { checkExportReadiness, checkFullExportReadiness, exportReadinessError } from "../../../../../lib/engine/export-readiness";
-import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../../lib/rate-limit";
-import { filterFinalExportCandidateDocuments } from "../../../../../lib/engine/document-output-state";
+import { prismaReady } from "../../../../../lib/prisma";
 import { logAction } from "../../../../../lib/audit";
+import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../../lib/rate-limit";
+import { reportError } from "../../../../../lib/observability";
 import { getCompanyIngestionReadiness } from "../../../../../lib/company-ingestion-readiness";
 import { isExtractionAcceptableForExport } from "../../../../../lib/engine/extraction-quality-gate";
-import { runAuthorityReview, type ManifestEntry, type DocumentInput } from "../../../../../lib/engine/authority-review";
-import { reportError } from "../../../../../lib/observability";
+import { validateTender } from "../../../../../lib/engine/validate";
+import { filterFinalExportCandidateDocuments } from "../../../../../lib/engine/document-output-state";
+import { getFinalSubmissionReadiness } from "../../../../../lib/engine/final-submission-readiness";
+import { runAuthorityReview } from "../../../../../lib/engine/authority-review";
+import type { ManifestEntry, DocumentInput } from "../../../../../lib/engine/authority-review";
+
+export const maxDuration = 60;
+
+function exportReadinessError(failures: any[], tenderBlockers: any[]) {
+  const parts = [];
+  if (failures.length) parts.push(`${failures.length} document(s) not ready for export.`);
+  if (tenderBlockers.length) parts.push(`${tenderBlockers.length} tender-level blocker(s) identified.`);
+  return `Export preparation blocked: ${parts.join(" ")}`;
+}
 
 export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   let actor;
@@ -29,7 +40,21 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       include: {
         complianceGaps: true,
         requirements: true,
-        generatedDocuments: true,
+        generatedDocuments: {
+          select: {
+            id: true,
+            name: true,
+            documentType: true,
+            exactFileName: true,
+            exactOrder: true,
+            contentSummary: true,
+            generationStatus: true,
+            validationStatus: true,
+            reviewStatus: true,
+            reviewNotes: true,
+            // fileContent EXCLUDED
+          }
+        },
         files: {
           select: {
             extractionScore: true,
@@ -51,8 +76,6 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     const ingestion = await getCompanyIngestionReadiness(company.id, { requireDocuments: true, requireReviewedExperts: tender.requirements.some((r) => r.requirementType === "EXPERT"), requireReviewedProjects: tender.requirements.some((r) => r.requirementType === "PROJECT_EXPERIENCE") });
     if (!ingestion.ingestionReady) return NextResponse.json({ error: "Export blocked: company knowledge ingestion is not ready.", code: "INGESTION_NOT_READY", blockers: ingestion.blockers, totals: ingestion.totals }, { status: 422 });
 
-    // Block export when page extraction is too poor to trust the submitted documents.
-    // CLAUDE.md Export/ZIP gate: poor extraction, unknown page count, or failed pages.
     if (!isExtractionAcceptableForExport(tender.files)) {
       return NextResponse.json(
         {
@@ -63,8 +86,6 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       );
     }
 
-    // Block export when AI Analyze ran on weak/corrupted extraction — the
-    // generated documents may be based on incomplete requirement extraction.
     const analysisExtractionStatus = (tender as { analysisExtractionStatus?: string | null }).analysisExtractionStatus;
     if (analysisExtractionStatus === "REGEX_FALLBACK_FROM_WEAK_EXTRACTION" || analysisExtractionStatus === "EXTRACTION_CORRUPTED_AI_SKIPPED") {
       return NextResponse.json(
@@ -106,7 +127,6 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       );
     }
 
-    // Only count final export candidates (not internal drafts, SUPERSEDED, etc.)
     const generatedDocuments = filterFinalExportCandidateDocuments(
       tender.generatedDocuments.filter((doc) => doc.generationStatus === "GENERATED"),
     );
@@ -114,22 +134,19 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       return NextResponse.json({ error: "No generated documents are available for export." }, { status: 400 });
     }
 
-    // PR XX-G4 — full readiness check: per-document + tender-level blockers
-    // (HIGH evaluator objections, pricing workbook leakage). The export
-    // gate now closes when EITHER set of blockers is non-empty.
-    const readiness = await checkFullExportReadiness({ tenderId: tender.id, docs: generatedDocuments });
-    if (!readiness.ok) {
+    // PR XX-G4 — canonical readiness check
+    const readiness = await getFinalSubmissionReadiness(prisma, { tenderId: tender.id, userId, requireFileContent: false });
+    if (!readiness || !readiness.ok) {
       return NextResponse.json(
         {
-          error: exportReadinessError(readiness.failures, readiness.tenderLevelBlockers),
-          failures: readiness.failures,
-          tenderLevelBlockers: readiness.tenderLevelBlockers ?? [],
+          error: exportReadinessError(readiness?.documentBlockers ?? [], readiness?.tenderLevelBlockers ?? []),
+          failures: readiness?.documentBlockers ?? [],
+          tenderLevelBlockers: readiness?.tenderLevelBlockers ?? [],
         },
         { status: 409 },
       );
     }
 
-    // Authority Review hard gate — export is blocked unless the review passes.
     const t = tender as Record<string, unknown>;
     const manifestEntries: ManifestEntry[] = [];
     for (const req of tender.requirements) {
@@ -163,7 +180,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       return NextResponse.json(
         {
           error: `Export blocked: Authority Review status is ${authorityResult.status}. Resolve all critical blockers and raise the authority score to ≥85 before export.`,
-          code: "AUTHORITY_REVIEW_NOT_READY",
+          code: "AUTHORITY_REVIEW_BLOCKED",
           authorityStatus: authorityResult.status,
           authorityScore: authorityResult.overallScore,
           blockers: authorityResult.blockers.filter((b) => b.severity === "CRITICAL").map((b) => b.detail),
