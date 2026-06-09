@@ -47,7 +47,12 @@ const TOP_LEVEL_ORDER: { match: RegExp; rank: number }[] = [
   { match: /^section h\b|^h\.|^(?:proposal\s+)?self.score/i, rank: 670 },
   { match: /^appendi[cx]/i, rank: 700 },
   { match: /^declaration\b|^declaration of/i, rank: 800 }, // covered by D.4 within section D
-  { match: /^submission control sheet|^submission/i, rank: 900 },
+  // Only match the exact "Submission Control Sheet" heading — NOT sub-headings
+  // like "## Submission Rules", "## Submission Recipients", or "## Submission
+  // Instructions Acknowledged" (which lives inside Section A and must stay there).
+  // The old /^submission/ catch-all pulled Section-A sub-headings out of their
+  // parent section and placed them as orphaned rank-900 groups before the sheet.
+  { match: /^submission control sheet\b/i, rank: 900 },
 ];
 
 // Sub-rank within each section — alphanumerical sub-ID heading prefixes (A.0, A.4, A.4.1, B.2.0, etc.)
@@ -118,9 +123,15 @@ export function reorderToCanonicalSequence(markdown: string): string {
   let currentGroup: TopGroup | null = null;
 
   sections.forEach((section, idx) => {
-    const isTop = section.level <= 2;
     const rank = topLevelRank(section.heading);
     const subRank = extractSubId(section.heading);
+    // A level-1 heading always starts a new group.
+    // A level-2 heading only starts a new group when it has a recognised canonical
+    // rank (rank < 999_999). Unknown ## headings (e.g. "## Submission Instructions
+    // Acknowledged", "## Submission Rules") are sub-headings that belong inside
+    // their parent group and must NOT be promoted into orphan top groups, because
+    // sorting would place them at rank 999_999 — far away from their parent section.
+    const isTop = section.level === 1 || (section.level === 2 && rank < 999_999);
 
     if (isTop) {
       currentGroup = { rank, subRank, originalIndex: idx, sections: [section] };
