@@ -32,6 +32,11 @@ export type WinThemesBuilderInput = {
   companyName: string;
   clientName: string;
   primarySector: string;
+  // Fallback inputs: used to synthesise differentiators when the differentiators
+  // array is empty (no structured intelligence was extracted for this tender).
+  // Prevents Section G from being silently absent when proposal-intelligence
+  // did not detect claims from the firm's profile/description.
+  requirements?: { title?: string | null; requirementType?: string | null }[];
 };
 
 function escCell(text: string | null | undefined): string {
@@ -129,8 +134,64 @@ function buildThemeLabel(differentiator: string): string {
   return beforeColon.split(" ").slice(0, 8).join(" ");
 }
 
+/**
+ * Synthesise plausible differentiator claims when the firm's profile produced
+ * no structured intelligence. Constructs claims from the requirement types,
+ * available project/expert evidence, and sector. Prevents Section G from
+ * being silently absent on tenders where proposal-intelligence returned no
+ * differentiators.
+ */
+function synthesiseDifferentiators(input: WinThemesBuilderInput): string[] {
+  const synthetic: string[] = [];
+  const sector = input.primarySector.toLowerCase();
+  const reqs = input.requirements ?? [];
+  const types = new Set(reqs.map((r) => (r.requirementType ?? "").toUpperCase()));
+
+  const project = input.topProjects[0];
+  const expert = input.topExperts[0];
+
+  // Team / expert theme
+  if (types.has("EXPERT") || reqs.some((r) => /expert|cv|personnel|qualif/i.test(r.title ?? "")) || expert) {
+    const expertRef = expert?.fullName ? `led by ${expert.fullName}${expert.title ? ` (${expert.title})` : ""}` : "from our specialist team";
+    synthetic.push(`Multidisciplinary ${sector} team ${expertRef} with direct, verifiable experience on comparable assignments — not subcontracted depth but in-house senior capacity retained across every project phase`);
+  }
+
+  // Project experience / track record theme
+  if (types.has("PROJECT_EXPERIENCE") || reqs.some((r) => /experience|portfolio|similar|reference/i.test(r.title ?? "")) || project) {
+    const projectRef = project?.name ? `including ${project.name}` : "across multiple comparable contracts";
+    synthetic.push(`Demonstrated track record on similar ${sector} assignments ${projectRef} — references available and deliverable samples on request, not assertion-only experience claims`);
+  }
+
+  // Methodology theme
+  if (types.has("METHODOLOGY") || reqs.some((r) => /methodology|work.?plan|approach|scope/i.test(r.title ?? ""))) {
+    synthetic.push(`Structured, phased technical methodology tailored to this ${sector} scope — with built-in quality review gates, schedule contingency, and documented handover protocol reducing client oversight burden`);
+  }
+
+  // Quality / QA theme
+  if (reqs.some((r) => /quality|qa|qc|iso/i.test(r.title ?? ""))) {
+    synthetic.push(`In-house quality assurance system with three-stage review (technical, editorial, and compliance) applied before every deliverable submission — reducing revision cycles and protecting the client's evaluation score`);
+  }
+
+  // Risk theme
+  if (reqs.some((r) => /risk|mitigation|contingency/i.test(r.title ?? ""))) {
+    synthetic.push(`Pre-identified risk register with client-specific mitigation strategies — not generic checklists but assignment-specific controls informed by lessons learned on comparable ${sector} projects`);
+  }
+
+  // Always add a value/responsiveness theme as the closing discriminator
+  if (synthetic.length > 0) {
+    synthetic.push(`Single-point client responsiveness with named senior contact across the full assignment duration — no handover to junior staff post-award, preserving continuity and protecting the client's investment in the relationship`);
+  }
+
+  return synthetic.slice(0, 5);
+}
+
 export function buildWinThemesSection(input: WinThemesBuilderInput): string | null {
-  const claims = input.differentiators.filter((d) => d.trim().length >= 20);
+  let claims = input.differentiators.filter((d) => d.trim().length >= 20);
+  // When no structured differentiators were detected, synthesise from requirements,
+  // projects, and experts. Prevents Section G from being silently absent.
+  if (claims.length === 0) {
+    claims = synthesiseDifferentiators(input);
+  }
   if (claims.length === 0) return null;
 
   const themes = claims.slice(0, 7).map((claim, idx) => ({
