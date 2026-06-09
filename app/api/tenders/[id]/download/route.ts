@@ -269,21 +269,37 @@ async function zipPackage(userId: string, tender: any, envelopeFilter: EnvelopeF
     }
 
     const authorityResult = runAuthorityReview(authorityDocs, manifestEntries, requiredSections);
-    if (authorityResult.status === "BLOCKED") {
+    // Block on BLOCKED and NEEDS_REVIEW — consistent with the single-doc download gate
+    // (which uses !== "AUTHORITY_READY") and the export route. Only AUTHORITY_READY
+    // proceeds without annotation.
+    if (authorityResult.status !== "AUTHORITY_READY") {
+      if (authorityResult.status === "BLOCKED") {
+        return err(
+          `Export blocked by Authority Review: ${authorityResult.blockers.length} critical issue(s) must be resolved before export.`,
+          422,
+          {
+            code: "AUTHORITY_REVIEW_BLOCKED",
+            blockers: authorityResult.blockers,
+            overallScore: authorityResult.overallScore,
+            affectedDocumentIds: authorityResult.affectedDocumentIds,
+            recommendedFixes: authorityResult.recommendedFixes,
+          },
+        );
+      }
+      // NEEDS_REVIEW: block ZIP export until authority review is cleared
       return err(
-        `Export blocked by Authority Review: ${authorityResult.blockers.length} critical issue(s) must be resolved before export.`,
+        `Export blocked: Authority Review is pending (status: ${authorityResult.status}). Complete the authority review before downloading the final package.`,
         422,
         {
-          code: "AUTHORITY_REVIEW_BLOCKED",
+          code: "AUTHORITY_REVIEW_NEEDS_REVIEW",
+          authorityStatus: authorityResult.status,
+          authorityScore: authorityResult.overallScore,
           blockers: authorityResult.blockers,
-          overallScore: authorityResult.overallScore,
-          affectedDocumentIds: authorityResult.affectedDocumentIds,
           recommendedFixes: authorityResult.recommendedFixes,
         },
       );
     }
-    // Capture NEEDS_REVIEW status so we can annotate the ZIP response header.
-    zipAuthorityNeedsReview = authorityResult.status === "NEEDS_REVIEW";
+    zipAuthorityNeedsReview = false;
   }
   // (zipAuthorityNeedsReview is set inside the block above; it propagates to
   //  the response headers at the end of zipPackage.)

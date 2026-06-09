@@ -806,6 +806,18 @@ export async function getFinalSubmissionReadiness(
     }
   }
 
+  // Empty plan with mandatory requirements: if the tender has mandatory requirements
+  // but no submission plan was built at all, document planning is impossible and
+  // the export package would be an empty or ad-hoc bundle.
+  if (requiredPlanCount === 0 && !hasExplicitPlanScope && mandatoryRequirements.length > 0) {
+    tenderLevelBlockers.push({
+      category: "MANDATORY_REQUIREMENTS_NO_SUBMISSION_PLAN",
+      severity: "HIGH",
+      title: `Tender has ${mandatoryRequirements.length} mandatory requirement(s) but no submission plan has been built — the export package cannot be correctly planned.`,
+      recommendedAction: "Run Build Plan to construct the submission plan from the mandatory requirements before export.",
+    });
+  }
+
   // ── Readiness scoring (Part 3) — weighted, with hard caps. ───────────────
   // NOTE: all tender-level blockers must be pushed above this call so that
   // finalExportGateOk correctly reflects the blocked state.
