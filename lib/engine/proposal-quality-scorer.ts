@@ -349,11 +349,23 @@ export function scoreProposalQuality(opts: {
   }
 
   // 2. Evidence density (0–10)
-  const paragraphs = md
+  // Split paragraphs into two pools:
+  //   - long (>=80 chars): always included in the denominator; their evidence
+  //     status follows normal rules.
+  //   - compact (40–79 chars): the prior 80-char floor excluded anchors like
+  //     "Adama Water Supply Scheme — ETB 45M, MoWIE (2019–2022)" (~55 chars).
+  //     Including ALL compact paragraphs in the denominator would dilute the
+  //     ratio with short transitions that carry no evidence. So compact paragraphs
+  //     are only added to the pool when they already contain an evidence marker —
+  //     they count as 1/1 (fully evidence-bearing) rather than 0/1 (diluting).
+  const allCandidates = md
     .split(/\n{2,}/)
     .map((p) => p.replace(/\s+/g, " ").trim())
-    .filter((p) => p.length > 80 && !p.startsWith("|") && !p.startsWith("#"));
-  const withEvidence = paragraphs.filter(paragraphHasEvidence).length;
+    .filter((p) => !p.startsWith("|") && !p.startsWith("#"));
+  const longParagraphs = allCandidates.filter((p) => p.length >= 80);
+  const compactEvidenceParagraphs = allCandidates.filter((p) => p.length >= 40 && p.length < 80 && paragraphHasEvidence(p));
+  const paragraphs = [...longParagraphs, ...compactEvidenceParagraphs];
+  const withEvidence = longParagraphs.filter(paragraphHasEvidence).length + compactEvidenceParagraphs.length;
   // Floor at 4 when fewer than 6 paragraphs exist — a short but focused
   // proposal should not be penalised the same as a long evidence-thin one,
   // but an evidence-free short proposal should still score below passing.
