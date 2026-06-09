@@ -46,6 +46,10 @@ export type SelfScoreBuilderInput = {
   hasEvaluatorMirror: boolean;
   hasWinThemes: boolean;
   primarySector: string;
+  // Fallback inputs: used to synthesise evaluation criteria when the
+  // evaluationCriteria array is empty (tender does not explicitly list
+  // criteria). Prevents Section H from being silently absent.
+  requirements?: { title?: string | null; requirementType?: string | null; priority?: string | null }[];
 };
 
 function escCell(text: string | null | undefined): string {
@@ -161,8 +165,42 @@ function predictScore(criterion: string, input: SelfScoreBuilderInput): { score:
   };
 }
 
+/**
+ * Synthesise plausible evaluation criteria from requirements when the tender
+ * does not explicitly list criteria. Mirrors the same fallback logic used by
+ * evaluator-mirror-builder to ensure Section H is present on all tenders
+ * regardless of whether explicit criteria were detected.
+ */
+function synthesiseCriteriaFromRequirements(
+  reqs: NonNullable<SelfScoreBuilderInput["requirements"]>,
+  primarySector: string,
+): string[] {
+  const types = new Set(reqs.map((r) => (r.requirementType ?? "").toUpperCase()));
+  const synthetic: string[] = [];
+  if (types.has("EXPERT") || reqs.some((r) => /expert|cv|personnel|qualif/i.test(r.title ?? "")))
+    synthetic.push(`Proposed team qualifications and relevant ${primarySector} experience`);
+  if (types.has("PROJECT_EXPERIENCE") || reqs.some((r) => /experience|portfolio|similar|reference/i.test(r.title ?? "")))
+    synthetic.push(`Track record of similar ${primarySector} assignments`);
+  if (types.has("METHODOLOGY") || reqs.some((r) => /methodology|work.?plan|approach|scope/i.test(r.title ?? "")))
+    synthetic.push(`Soundness of technical methodology and work plan`);
+  if (reqs.some((r) => /quality|qa|qc|iso/i.test(r.title ?? "")))
+    synthetic.push(`Quality assurance systems and review processes`);
+  if (reqs.some((r) => /risk|mitigation|contingency/i.test(r.title ?? "")))
+    synthetic.push(`Risk identification and mitigation strategy`);
+  if (types.has("ELIGIBILITY") || reqs.some((r) => /registration|licen|certificate|compliance/i.test(r.title ?? "")))
+    synthetic.push(`Eligibility and compliance with submission requirements`);
+  if (synthetic.length > 0) synthetic.push(`Ability to meet scope and schedule commitments`);
+  return synthetic.slice(0, 6);
+}
+
 export function buildSelfScoreSection(input: SelfScoreBuilderInput): string | null {
-  const criteria = input.evaluationCriteria.filter((c) => c.trim().length > 0);
+  let criteria = input.evaluationCriteria.filter((c) => c.trim().length > 0);
+  // When no explicit evaluation criteria were detected, synthesise them from
+  // the requirements array. This prevents Section H from being silently absent
+  // on tenders that embed scoring criteria implicitly in their requirements.
+  if (criteria.length === 0 && (input.requirements ?? []).length > 0) {
+    criteria = synthesiseCriteriaFromRequirements(input.requirements!, input.primarySector);
+  }
   if (criteria.length === 0) return null;
 
   type Row = { criterion: string; weight: string; score: number; rationale: string; risk: string };
