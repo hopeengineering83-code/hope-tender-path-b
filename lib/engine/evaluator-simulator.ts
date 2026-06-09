@@ -1,3 +1,5 @@
+import { safeParse, safeParseJsonObject } from "./safe-json-util";
+import { safeParse, safeParseJsonArray } from "./safe-json-util";
 /**
  * Evaluator Persona Simulator.
  *
@@ -273,7 +275,7 @@ function safeParseJson(raw: string): Record<string, unknown> | null {
   const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
   if (!jsonMatch) return null;
   try {
-    return JSON.parse(jsonMatch[0]) as Record<string, unknown>;
+    return safeParseJsonObject(jsonMatch[0], {}) as Record<string, unknown>;
   } catch {
     const matches = [...cleaned.matchAll(/\{[\s\S]*?\}/g)].sort((a, b) => b[0].length - a[0].length);
     for (const m of matches) {

@@ -1,3 +1,4 @@
+import { safeParse, safeParseJsonArray } from "./safe-json-util";
 export type TenderRequirementLite = { title: string; description: string; priority: string; requirementType: string };
 export type TenderLite = { title: string; reference?: string | null; clientName?: string | null; procuringEntityName?: string | null; country?: string | null; description?: string | null; intakeSummary?: string | null; analysisSummary?: string | null; evaluationMethodology?: string | null; deadline?: Date | string | null; submissionMethod?: string | null; submissionAddress?: string | null; clientContactName?: string | null };
 export type CompanyLite = { name: string; legalName?: string | null; description?: string | null; profileSummary?: string | null; serviceLines: string; sectors: string; email?: string | null; phone?: string | null; website?: string | null; address?: string | null };
@@ -53,7 +54,7 @@ export const BENCHMARK_CONTEXT_LINES: string[] = [
 export function safeParseArr(value: string | null | undefined): string[] {
   if (!value) return [];
   try {
-    const parsed = JSON.parse(value);
+    const parsed = safeParse(value, null);
     return Array.isArray(parsed) ? parsed.map(String).filter(Boolean) : [];
   } catch {
     console.warn("[safeParseArr] Non-JSON value split as CSV:", value.slice(0, 80));

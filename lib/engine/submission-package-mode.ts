@@ -1,3 +1,4 @@
+import { safeParse, safeParseJsonArray } from "./safe-json-util";
 export type SubmissionPackageMode =
   | "SINGLE_ZIP"
   | "SEPARATE_TECHNICAL_FINANCIAL"
@@ -34,7 +35,7 @@ function compact(value: string): string {
 function parseFileList(value?: string | null): string[] {
   if (!value) return [];
   try {
-    const parsed = JSON.parse(value);
+    const parsed = safeParse(value, null);
     return Array.isArray(parsed) ? parsed.map(String).filter(Boolean) : [];
   } catch {
     return value.split(/\n|,/).map((item) => item.trim()).filter(Boolean);

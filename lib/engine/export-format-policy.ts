@@ -1,3 +1,4 @@
+import { safeParse, safeParseJsonArray } from "./safe-json-util";
 /**
  * Tender-driven export-format and branding/signature/stamp policy.
  */
@@ -24,7 +25,7 @@ function collectExactFilenames(tender: TenderLike): string[] {
   const out = new Set<string>();
   for (const raw of [tender.exactFileNaming, tender.exactFileOrder]) {
     try {
-      const parsed = JSON.parse(raw ?? "[]");
+      const parsed = safeParseJsonArray(raw ?? "[]");
       if (Array.isArray(parsed)) {
         for (const item of parsed) {
           if (typeof item === "string" && item.trim().length > 0) out.add(item.trim());

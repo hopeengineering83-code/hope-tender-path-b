@@ -1,3 +1,4 @@
+import { safeParse, safeParseJsonArray } from "./safe-json-util";
 /**
  * Personnel Deep Treatment (PR L) — Personnel Loading + Per-Expert
  * Profile Cards + Project Management Organogram.
@@ -65,7 +66,7 @@ function safeArr(value: unknown): string[] {
   if (Array.isArray(value)) return value.map(String).filter(Boolean);
   if (typeof value === "string") {
     try {
-      const parsed = JSON.parse(value);
+      const parsed = safeParse(value, null);
       if (Array.isArray(parsed)) return parsed.map(String).filter(Boolean);
     } catch {
       return value.split(/[,;|]/).map((s) => s.trim()).filter(Boolean);

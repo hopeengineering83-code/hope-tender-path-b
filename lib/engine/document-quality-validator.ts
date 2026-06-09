@@ -4,6 +4,7 @@
  * Server-side implementation of the document quality validation logic.
  * Derived from DocumentValidatorPanel to ensure consistency between UI and server.
  */
+import { PLACEHOLDER_PATTERNS, AI_TRACE_PATTERNS } from "./detection-patterns";
 
 export interface DocumentValidationResult {
   hasContent: boolean;
@@ -16,33 +17,8 @@ export interface DocumentValidationResult {
   status: "GOOD" | "WARNING" | "BLOCKED" | "NEEDS_REVIEW";
 }
 
-const PLACEHOLDER_RE = [
-  /\[insert [^\]]+\]/i,
-  /\{[^}]+\}/,
-  /\bTODO\b/,
-  /\bXXX\b/,
-  /\[TBD\]/i,
-  /\[NAME\]/i,
-  /\[DATE\]/i,
-  /\bplaceholder\b/i,
-  /Bid-Team\s+to\s+confirm/i,
-  /Bid-Team\s+Action/i,
-  /Not\s+extracted\s*[—–-]\s*confirm\s+manually/i,
-  /MISSING_SOURCE/,
-  /\[CLIENT(?:\s+TO\s+BE\s+CONFIRMED)?\]/i,
-];
-
-const AI_TRACE_RE = [
-  /as an ai/i,
-  /language model/i,
-  /\bi cannot\b/i,
-  /\bas a large language\b/i,
-  /I don'?t have access/i,
-  /I'?m sorry,? I/i,
-];
-
 const EMPTY_SECTION_RE = /^#+\s+.+\n+(?:\n|$)/m;
-const FINANCIAL_IN_TECHNICAL_RE = /total\s+price\s*(?:[:\$€£]|is\b)?\s*[\$€£]?\s*[\d,]|unit\s+price|rate\s+card|price\s+schedule|BOQ|bill\s+of\s+quantities|tax.*rate|vat.*\d/i;
+const FINANCIAL_IN_TECHNICAL_RE = /total\s+price\s*(?:[:$€£]|is\b)?\s*[$€£]?\s*[\d,]|unit\s+price|rate\s+card|price\s+schedule|BOQ|bill\s+of\s+quantities|tax.*rate|vat.*\d/i;
 const TECHNICAL_IN_FINANCIAL_RE = /methodology|work\s+plan|staffing\s+plan|technical\s+approach/i;
 
 export function validateDocumentQuality(doc: {
@@ -59,11 +35,11 @@ export function validateDocumentQuality(doc: {
   const text = isBase64Like ? "" : (doc.fileContent ?? "");
 
   const placeholders = hasContent && text
-    ? PLACEHOLDER_RE.filter((re) => re.test(text)).map((re) => re.source.replace(/[\\^$.*+?()[\]{}|]/g, "").slice(0, 40))
+    ? PLACEHOLDER_PATTERNS.filter((re) => re.test(text)).map((re) => re.source.replace(/[\\^$.*+?()[\]{}|]/g, "").slice(0, 40))
     : [];
 
   const aiTrace = hasContent && text
-    ? AI_TRACE_RE.filter((re) => re.test(text)).map((re) => re.source.replace(/[\\^$.*+?()[\]{}|]/g, "").slice(0, 40))
+    ? AI_TRACE_PATTERNS.filter((re) => re.test(text)).map((re) => re.source.replace(/[\\^$.*+?()[\]{}|]/g, "").slice(0, 40))
     : [];
 
   const dtype = (doc.documentType ?? "").toUpperCase();

@@ -1,3 +1,5 @@
+import { safeParse, safeParseJsonObject } from "./safe-json-util";
+import { safeParse, safeParseJsonArray } from "./safe-json-util";
 /**
  * Benchmark-quality tabular sections built deterministically from the
  * reviewed knowledge vault. These are appended to the proposal so that
@@ -63,7 +65,7 @@ function safeArr(value: unknown): string[] {
   if (!trimmed) return [];
   if (trimmed.startsWith("[")) {
     try {
-      const parsed = JSON.parse(trimmed);
+      const parsed = safeParse(trimmed, null);
       if (Array.isArray(parsed)) return parsed.map(String).filter(Boolean);
     } catch {
       // fall through
@@ -326,7 +328,7 @@ function extractTestimonyFields(evidences: ProjectEvidenceRecord[]): {
     // First check structured metadata
     if (ev.metadata) {
       try {
-        const meta = JSON.parse(ev.metadata) as Record<string, string | undefined>;
+        const meta = safeParseJsonObject(ev.metadata, {}) as Record<string, string | undefined>;
         if (!referenceNumber && meta.referenceNumber) referenceNumber = String(meta.referenceNumber);
         if (!date && meta.date) date = String(meta.date);
         if (!author && meta.author) author = String(meta.author);

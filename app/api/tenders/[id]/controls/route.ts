@@ -73,7 +73,7 @@ async function deriveSuggestedControls(tenderId: string): Promise<SuggestedContr
     // suggestionCode lives in the metadata blob.
     const rejectedLogs = await prisma.auditLog.findMany({
       where: { entityType: "Tender", entityId: tenderId, action: "TENDER_CONTROL_SUGGESTION_REJECTED" },
-      select: { metadata: true },
+      select: { id: true, metadata: true, createdAt: true },
     });
     const rejectedCodes = new Set<string>();
     for (const row of rejectedLogs) {
@@ -121,6 +121,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   const [logs, suggested] = await Promise.all([
     prisma.auditLog.findMany({
       where: { entityType: "Tender", entityId: id, action: { startsWith: "TENDER_CONTROL_" } },
+      select: { id: true, action: true, entityType: true, entityId: true, description: true, metadata: true, createdAt: true, userId: true },
       orderBy: { createdAt: "desc" },
       take: 300,
     }),

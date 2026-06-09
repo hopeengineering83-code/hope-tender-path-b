@@ -13,6 +13,7 @@
  *
  * All detection is deterministic regex — no AI calls, no external I/O.
  */
+import { PLACEHOLDER_RE, AI_TRACE_RE } from "./detection-patterns";
 
 export type AuthorityBlockerCode =
   | "AI_TRACE"
@@ -51,37 +52,17 @@ export interface DocumentAuthorityScore {
 }
 
 export interface AuthorityReviewResult {
-  overallScore: number; // 0–100
+  overallScore: number;
   status: AuthorityReviewStatus;
-  blockers: AuthorityBlocker[];
-  warnings: string[];
-  documentScores: DocumentAuthorityScore[];
-  recommendedFixes: string[];
-  affectedDocumentIds: string[];
-  affectedSectionNames: string[];
+  documents: DocumentAuthorityScore[];
+  summary: {
+    criticalCount: number;
+    highCount: number;
+    mediumCount: number;
+    totalDocuments: number;
+    readyDocuments: number;
+  };
 }
-
-export interface DocumentInput {
-  id: string;
-  name: string;
-  documentType: string;
-  contentSummary?: string | null;
-  reviewNotes?: string | null;
-  exactFileName?: string | null;
-}
-
-export interface ManifestEntry {
-  exactFileName: string;
-  documentType: string;
-}
-
-// ── Detection patterns ────────────────────────────────────────────────────────
-
-const AI_TRACE_RE =
-  /\b(as an AI|as a language model|I cannot|I don't have access|my training data|I was trained|ChatGPT|GPT-4|Claude|Gemini)\b/i;
-
-const PLACEHOLDER_RE =
-  /\[TBD\]|\[INSERT\]|\[PLACEHOLDER\]|\bTBD\b|\bN\/A\b|\bXXX\b|\[.*?\?.*?\]/i;
 
 const INTERNAL_NOTE_RE =
   /Bid-Team to confirm|MISSING_SOURCE|\[Bid-Team[^\]]*\]|Source-evidence action/i;
@@ -90,7 +71,7 @@ const TODO_FIXME_RE =
   /\bTODO\b|\bFIXME\b|\bHACK\b|\bNOTE:\s/;
 
 const PRICING_IN_TECHNICAL_RE =
-  /\$\s*[\d,]+|\bprice\b|\bunit cost\b|\bbid price\b|\bfinancial offer\b/i;
+  /$\s*[\d,]+|\bprice\b|\bunit cost\b|\bbid price\b|\bfinancial offer\b/i;
 
 const METHODOLOGY_IN_FINANCIAL_RE =
   /technical approach|work methodology|implementation methodology|technical methodology/i;
@@ -98,223 +79,157 @@ const METHODOLOGY_IN_FINANCIAL_RE =
 // ── Score deductions per severity ────────────────────────────────────────────
 
 const SEVERITY_DEDUCTIONS: Record<"CRITICAL" | "HIGH" | "MEDIUM", number> = {
-  CRITICAL: 30,
-  HIGH: 15,
-  MEDIUM: 8,
+  CRITICAL: 100, // One critical = automatic fail
+  HIGH: 40,
+  MEDIUM: 15,
 };
 
-function scoreStatus(score: number, hasCritical: boolean): AuthorityReviewStatus {
-  // Any CRITICAL blocker immediately blocks export regardless of overall score,
-  // because a single unresolved CRITICAL issue (AI trace, placeholder, envelope
-  // cross-contamination) would compromise the submission.
-  if (hasCritical) return "BLOCKED";
-  if (score >= 85) return "AUTHORITY_READY";
-  if (score >= 60) return "NEEDS_REVIEW";
-  return "BLOCKED";
-}
-
-function applyDeductions(blockers: AuthorityBlocker[]): number {
-  let score = 100;
-  for (const blocker of blockers) {
-    score -= SEVERITY_DEDUCTIONS[blocker.severity];
-  }
-  return Math.max(0, score);
-}
-
-// ── Per-document analysis ─────────────────────────────────────────────────────
-
-function analyseDocument(
-  doc: DocumentInput,
-  manifestEntries: ManifestEntry[],
-): { blockers: AuthorityBlocker[]; warnings: string[] } {
+/**
+ * Scan a single document for authority issues.
+ */
+export function scanDocument(doc: {
+  id: string;
+  name: string;
+  documentType: string;
+  text: string;
+}): DocumentAuthorityScore {
   const blockers: AuthorityBlocker[] = [];
   const warnings: string[] = [];
-  const text = [doc.contentSummary ?? "", doc.reviewNotes ?? ""].join(" ");
-  const dtype = (doc.documentType ?? "").toUpperCase();
+  const { id, name, documentType, text } = doc;
 
-  // AI trace
   if (AI_TRACE_RE.test(text)) {
-    const match = text.match(AI_TRACE_RE);
     blockers.push({
       code: "AI_TRACE",
       severity: "CRITICAL",
-      documentId: doc.id,
-      documentName: doc.name,
-      detail: `AI-generated language detected: "${match?.[0] ?? "pattern match"}"`,
-      recoveryAction: "Remove all AI self-referential language from the document content and regenerate.",
+      documentId: id,
+      documentName: name,
+      detail: "AI-generated conversational trace or acknowledgement detected.",
+      recoveryAction: "Rewrite affected section to remove robotic AI language.",
     });
   }
 
-  // Placeholder
   if (PLACEHOLDER_RE.test(text)) {
     const match = text.match(PLACEHOLDER_RE);
     blockers.push({
       code: "PLACEHOLDER",
       severity: "CRITICAL",
-      documentId: doc.id,
-      documentName: doc.name,
-      detail: `Unfilled placeholder detected: "${match?.[0] ?? "pattern match"}"`,
-      recoveryAction: "Replace all placeholder tokens with actual content before export.",
+      documentId: id,
+      documentName: name,
+      detail: `Unfilled placeholder detected: "${match ? match[0] : "[...]"}"`,
+      recoveryAction: "Provide real data or evidence for this placeholder.",
     });
   }
 
-  // Internal notes / Bid-Team stubs (check both INTERNAL_NOTE and BID_TEAM)
   if (INTERNAL_NOTE_RE.test(text)) {
-    const match = text.match(INTERNAL_NOTE_RE);
-    const isBidTeam = /Bid-Team to confirm|\[Bid-Team[^\]]*\]/i.test(text);
     blockers.push({
-      code: isBidTeam ? "BID_TEAM_STUB" : "INTERNAL_NOTE",
-      severity: "CRITICAL",
-      documentId: doc.id,
-      documentName: doc.name,
-      detail: `Internal note/stub detected: "${match?.[0] ?? "pattern match"}"`,
-      recoveryAction: "Remove all internal notes, Bid-Team stubs, and MISSING_SOURCE markers before export.",
+      code: "INTERNAL_NOTE",
+      severity: "HIGH",
+      documentId: id,
+      documentName: name,
+      detail: "Internal bid-team instructions or notes found in client-facing text.",
+      recoveryAction: "Delete internal commentary.",
     });
   }
 
-  // TODO/FIXME
   if (TODO_FIXME_RE.test(text)) {
-    const match = text.match(TODO_FIXME_RE);
     blockers.push({
       code: "TODO_FIXME_IN_CONTENT",
-      severity: "HIGH",
-      documentId: doc.id,
-      documentName: doc.name,
-      detail: `Development annotation found: "${match?.[0] ?? "pattern match"}"`,
-      recoveryAction: "Remove all TODO, FIXME, HACK, and NOTE: annotations before exporting.",
+      severity: "MEDIUM",
+      documentId: id,
+      documentName: name,
+      detail: "Incomplete development markers (TODO/FIXME) detected.",
+      recoveryAction: "Complete the pending item and remove the marker.",
     });
   }
 
-  // Pricing in technical envelope
-  if ((dtype === "TECHNICAL" || dtype === "TECHNICAL_PROPOSAL") && PRICING_IN_TECHNICAL_RE.test(text)) {
-    const match = text.match(PRICING_IN_TECHNICAL_RE);
+  const isTechnical = documentType.includes("TECHNICAL");
+  const isFinancial = documentType.includes("FINANCIAL");
+
+  if (isTechnical && PRICING_IN_TECHNICAL_RE.test(text)) {
     blockers.push({
       code: "PRICING_IN_TECHNICAL",
       severity: "CRITICAL",
-      documentId: doc.id,
-      documentName: doc.name,
-      detail: `Pricing content found in TECHNICAL document: "${match?.[0] ?? "pattern match"}"`,
-      recoveryAction: "Move all pricing, unit costs, and financial offers to the FINANCIAL document.",
+      documentId: id,
+      documentName: name,
+      detail: "Potential pricing data or financial terms detected in technical envelope.",
+      recoveryAction: "Move all commercial details to the financial proposal.",
     });
   }
 
-  // Methodology in financial envelope
-  if ((dtype === "FINANCIAL" || dtype === "FINANCIAL_PROPOSAL") && METHODOLOGY_IN_FINANCIAL_RE.test(text)) {
-    const match = text.match(METHODOLOGY_IN_FINANCIAL_RE);
+  if (isFinancial && METHODOLOGY_IN_FINANCIAL_RE.test(text)) {
     blockers.push({
       code: "METHODOLOGY_IN_FINANCIAL",
-      severity: "CRITICAL",
-      documentId: doc.id,
-      documentName: doc.name,
-      detail: `Technical methodology content found in FINANCIAL document: "${match?.[0] ?? "pattern match"}"`,
-      recoveryAction: "Move technical approach/methodology content to the TECHNICAL document.",
+      severity: "HIGH",
+      documentId: id,
+      documentName: name,
+      detail: "Extensive technical methodology found in financial envelope.",
+      recoveryAction: "Keep financial doc focused on pricing; move prose to technical.",
     });
   }
 
-  // Extra document not in manifest (filename mismatch)
-  if (doc.exactFileName) {
-    const inManifest = manifestEntries.some(
-      (m) => m.exactFileName.toLowerCase() === doc.exactFileName!.toLowerCase(),
-    );
-    if (!inManifest) {
-      blockers.push({
-        code: "EXTRA_DOCUMENT_NOT_IN_MANIFEST",
-        severity: "HIGH",
-        documentId: doc.id,
-        documentName: doc.name,
-        detail: `Document "${doc.exactFileName}" is not listed in the Final Package Manifest.`,
-        recoveryAction: "Either remove this document from the export or add it to the submission plan/manifest.",
-      });
-    }
-  } else {
-    warnings.push(`Document "${doc.name}" has no exactFileName — cannot verify manifest membership.`);
+  // Calculate score
+  let score = 100;
+  for (const b of blockers) {
+    score = Math.max(0, score - SEVERITY_DEDUCTIONS[b.severity]);
   }
 
-  return { blockers, warnings };
+  const status = score === 100 ? "AUTHORITY_READY" : score < 50 ? "BLOCKED" : "NEEDS_REVIEW";
+
+  return {
+    documentId: id,
+    documentName: name,
+    documentType,
+    score,
+    status,
+    blockers,
+    warnings,
+  };
 }
 
-// ── Main entry point ──────────────────────────────────────────────────────────
+/**
+ * Full authority review for a tender package.
+ */
+export function runAuthorityReview(tender: {
+  id: string;
+  title: string;
+  exactFileNaming?: string;
+  exactFileOrder?: string;
+  generatedDocuments: Array<{ id: string; name: string; documentType: string; text: string }>;
+}): AuthorityReviewResult {
+  const docScores = tender.generatedDocuments.map(scanDocument);
 
-export function runAuthorityReview(
-  documents: DocumentInput[],
-  manifestEntries: ManifestEntry[],
-  tenderRequiredSections: string[],
-): AuthorityReviewResult {
-  const allBlockers: AuthorityBlocker[] = [];
-  const allWarnings: string[] = [];
-  const documentScores: DocumentAuthorityScore[] = [];
+  let criticalCount = 0;
+  let highCount = 0;
+  let mediumCount = 0;
+  let readyDocuments = 0;
 
-  // Per-document analysis
-  for (const doc of documents) {
-    const { blockers, warnings } = analyseDocument(doc, manifestEntries);
-    const score = applyDeductions(blockers);
-    const hasCritical = blockers.some((b) => b.severity === "CRITICAL");
-    const status = scoreStatus(score, hasCritical);
-    documentScores.push({
-      documentId: doc.id,
-      documentName: doc.name,
-      documentType: doc.documentType,
-      score,
-      status,
-      blockers,
-      warnings,
-    });
-    allBlockers.push(...blockers);
-    allWarnings.push(...warnings);
-  }
-
-  // Missing required sections — a required section has no matching document
-  for (const section of tenderRequiredSections) {
-    const sectionLower = section.toLowerCase();
-    const hasMatch = documents.some(
-      (d) =>
-        d.name.toLowerCase().includes(sectionLower) ||
-        d.documentType.toLowerCase().includes(sectionLower),
-    );
-    if (!hasMatch) {
-      allBlockers.push({
-        code: "MISSING_REQUIRED_SECTION",
-        severity: "CRITICAL",
-        sectionName: section,
-        detail: `Required section "${section}" has no generated document.`,
-        recoveryAction: `Generate the required document for section: "${section}" before export.`,
-      });
+  for (const s of docScores) {
+    for (const b of s.blockers) {
+      if (b.severity === "CRITICAL") criticalCount++;
+      if (b.severity === "HIGH") highCount++;
+      if (b.severity === "MEDIUM") mediumCount++;
     }
+    if (s.status === "AUTHORITY_READY") readyDocuments++;
   }
 
-  const overallScore = applyDeductions(allBlockers);
-  const hasAnyCritical = allBlockers.some((b) => b.severity === "CRITICAL");
-  const status = scoreStatus(overallScore, hasAnyCritical);
+  const overallScore = docScores.length > 0
+    ? Math.round(docScores.reduce((sum, s) => sum + s.score, 0) / docScores.length)
+    : 100;
 
-  const affectedDocumentIds = Array.from(
-    new Set(allBlockers.filter((b) => b.documentId).map((b) => b.documentId!)),
-  );
-  const affectedSectionNames = Array.from(
-    new Set(allBlockers.filter((b) => b.sectionName).map((b) => b.sectionName!)),
-  );
-
-  const criticalCount = allBlockers.filter((b) => b.severity === "CRITICAL").length;
-  const highCount = allBlockers.filter((b) => b.severity === "HIGH").length;
-
-  const recommendedFixes: string[] = [];
-  if (criticalCount > 0) {
-    recommendedFixes.push(`Fix ${criticalCount} CRITICAL blocker(s) before attempting export.`);
-  }
-  if (highCount > 0) {
-    recommendedFixes.push(`Review and resolve ${highCount} HIGH severity issue(s).`);
-  }
-  if (status === "AUTHORITY_READY") {
-    recommendedFixes.push("All authority review checks pass. Document is ready for final export.");
-  }
+  let status: AuthorityReviewStatus = "AUTHORITY_READY";
+  if (criticalCount > 0 || overallScore < 50) status = "BLOCKED";
+  else if (highCount > 0 || overallScore < 90) status = "NEEDS_REVIEW";
 
   return {
     overallScore,
     status,
-    blockers: allBlockers,
-    warnings: allWarnings,
-    documentScores,
-    recommendedFixes,
-    affectedDocumentIds,
-    affectedSectionNames,
+    documents: docScores,
+    summary: {
+      criticalCount,
+      highCount,
+      mediumCount,
+      totalDocuments: docScores.length,
+      readyDocuments,
+    },
   };
 }

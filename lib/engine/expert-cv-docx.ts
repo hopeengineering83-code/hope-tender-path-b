@@ -1,3 +1,4 @@
+import { safeParse, safeParseJsonArray } from "./safe-json-util";
 // Expert CV DOCX generator.
 //
 // Produces a professional one-to-two-page Word document for each selected
@@ -39,7 +40,7 @@ const GRAY = "595959";
 function safeArr(json: string | null | undefined): string[] {
   if (!json) return [];
   try {
-    const parsed = JSON.parse(json);
+    const parsed = safeParse(json, null);
     return Array.isArray(parsed) ? parsed.filter((s): s is string => typeof s === "string" && s.trim().length > 0).map(stripForbiddenTraces) : [];
   } catch {
     return [];

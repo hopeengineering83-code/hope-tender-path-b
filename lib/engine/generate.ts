@@ -1,3 +1,4 @@
+import { safeParse, safeParseJsonArray } from "./safe-json-util";
 /**
  * @deprecated LEGACY — NOT called by any route. Active engine is generate-elite.ts.
  * Kept as reference only. DO NOT re-route to this file.

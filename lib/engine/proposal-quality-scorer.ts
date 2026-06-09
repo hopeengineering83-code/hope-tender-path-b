@@ -116,7 +116,8 @@ const SECTOR_VOCAB: Record<string, RegExp[]> = {
 // "in this day and age"), and unsupported superlatives ("unparalleled",
 // "second to none", "unmatched"). The expanded list makes
 // `aiTraceFreedom` materially harder to game.
-const FORBIDDEN_PHRASES = [
+import { AI_TRACE_PATTERNS } from "./detection-patterns";
+const FORBIDDEN_PHRASES = [...AI_TRACE_PATTERNS,
   // AI / model self-references
   /as an ai/i,
   /\bi am an ai\b/i,

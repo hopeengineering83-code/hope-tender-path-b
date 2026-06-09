@@ -1,3 +1,4 @@
+import { safeParse, safeParseJsonArray } from "./safe-json-util";
 import { prisma } from "../prisma";
 import { exactSelectionLimit } from "./scope-policy";
 import { buildDeterministicComprehension } from "./deterministic-prohibition-extractor";

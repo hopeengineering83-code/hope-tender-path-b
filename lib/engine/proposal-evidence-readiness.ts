@@ -1,3 +1,4 @@
+import { safeParse, safeParseJsonArray } from "./safe-json-util";
 import { prisma } from "../prisma";
 import { checkHighValueClaimEvidence } from "./claim-evidence-coverage";
 
@@ -44,7 +45,7 @@ export type ProposalEvidenceReadiness = {
 function parseArray(value: string | null | undefined): unknown[] {
   if (!value) return [];
   try {
-    const parsed = JSON.parse(value);
+    const parsed = safeParse(value, null);
     return Array.isArray(parsed) ? parsed : [];
   } catch {
     return [];

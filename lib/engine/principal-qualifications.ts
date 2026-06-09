@@ -1,3 +1,4 @@
+import { safeParse, safeParseJsonArray } from "./safe-json-util";
 /**
  * Principal Qualifications — rich per-expert mini-CV blocks for the top
  * proposed experts. Mirrors the benchmark's expert profile depth: name +
@@ -23,7 +24,7 @@ function safeArr(value: unknown): string[] {
   if (!trimmed) return [];
   if (trimmed.startsWith("[")) {
     try {
-      const parsed = JSON.parse(trimmed);
+      const parsed = safeParse(trimmed, null);
       if (Array.isArray(parsed)) return parsed.map(String).filter(Boolean);
     } catch {
       // fall through to delimiter split

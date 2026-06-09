@@ -1,3 +1,4 @@
+import { safeParse, safeParseJsonArray } from "./safe-json-util";
 // Win probability estimator.
 //
 // Returns a 0–100 score estimating the firm's likelihood of winning a given
@@ -72,7 +73,7 @@ export type WinProbabilityResult = {
 function safeArrField(json: string | null | undefined): string[] {
   if (!json) return [];
   try {
-    const p = JSON.parse(json);
+    const p = safeParse(json, null);
     return Array.isArray(p) ? p.filter((s): s is string => typeof s === "string") : [];
   } catch {
     return [];

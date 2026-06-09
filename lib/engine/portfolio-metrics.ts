@@ -1,3 +1,4 @@
+import { safeParse, safeParseJsonArray } from "./safe-json-util";
 /**
  * Aggregate portfolio metrics tile block — mirrors the benchmark's cover-page
  * "headline facts" row (e.g., "2 Hospitals Designed | ETB 675M | 12-Expert
@@ -54,7 +55,7 @@ export function computePortfolioMetrics(opts: {
   for (const e of experts) {
     if (e.certifications) {
       try {
-        const parsed = JSON.parse(e.certifications);
+        const parsed = safeParseJsonArray(e.certifications);
         if (Array.isArray(parsed)) certificationsCount += parsed.length;
       } catch {
         certificationsCount += (e.certifications.match(/[,;|]/g)?.length ?? 0) + 1;
@@ -62,7 +63,7 @@ export function computePortfolioMetrics(opts: {
     }
     if (e.disciplines) {
       try {
-        const parsed = JSON.parse(e.disciplines);
+        const parsed = safeParseJsonArray(e.disciplines);
         if (Array.isArray(parsed)) parsed.forEach((d: string) => disciplines.add(d));
       } catch {
         e.disciplines.split(/[,;|]/).forEach((d) => disciplines.add(d.trim()));

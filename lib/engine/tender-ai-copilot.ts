@@ -1,3 +1,4 @@
+import { safeParse, safeParseJsonArray } from "./safe-json-util";
 import { generateWithFallback } from "../ai";
 import { buildEvidencePromptBlock, verifyEvidenceIds, type EvidenceGraph, type EvidenceNode } from "../evidence-graph";
 

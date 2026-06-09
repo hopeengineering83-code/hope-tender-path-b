@@ -7,6 +7,7 @@ import { analyzeTender } from "../../../../../lib/engine/analysis";
 import { logAction } from "../../../../../lib/audit";
 import { rateLimit, AI_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import { extractRequestId } from "../../../../../lib/request-id";
+import { safeParse, safeParseJsonArray, safeParseJsonObject } from "../../../../../lib/safe-json";
 import { createNotification } from "../../../../../lib/notifications";
 import { assessExtractionQuality } from "../../../../../lib/extraction-quality";
 import { deriveExtractionStatus, isExtractionCorrupted, type TenderFileQuality } from "../../../../../lib/engine/extraction-quality-gate";
@@ -185,7 +186,7 @@ async function handleStreamingAnalyze(
           });
           if (existingJob?.output) {
             try {
-              const savedOutput = JSON.parse(existingJob.output) as { completedChunks?: number; contentHash?: string };
+              const savedOutput = safeParseJsonObject(existingJob.output) as { completedChunks?: number; contentHash?: string };
               startFromChunk = savedOutput.completedChunks ?? 0;
               existingContentHash = savedOutput.contentHash;
             } catch { /* ignore parse errors — do a full re-run */ }
@@ -583,7 +584,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     });
     if (existingJob?.output) {
       try {
-        const savedOutput = JSON.parse(existingJob.output) as { completedChunks?: number; contentHash?: string };
+        const savedOutput = safeParseJsonObject(existingJob.output) as { completedChunks?: number; contentHash?: string };
         startFromChunk = savedOutput.completedChunks ?? 0;
         existingContentHash = savedOutput.contentHash;
       } catch { /* ignore parse errors — do a full re-run */ }

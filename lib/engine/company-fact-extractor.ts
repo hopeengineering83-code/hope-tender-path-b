@@ -1,3 +1,4 @@
+import { safeParse, safeParseJsonArray } from "./safe-json-util";
 // Company fact extractor (closes Section A.1 / A.2 / Cover Page gaps)
 //
 // THE PROBLEM

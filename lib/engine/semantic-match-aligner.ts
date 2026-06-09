@@ -1,3 +1,5 @@
+import { safeParse, safeParseJsonObject } from "./safe-json-util";
+import { safeParse, safeParseJsonArray } from "./safe-json-util";
 /**
  * Semantic match-to-criteria aligner.
  *
@@ -265,7 +267,7 @@ function parseCoverage(raw: unknown): { criterionId: string; coverageScore: numb
 export function parseAlignmentReport(raw: string, comprehension: DeepTenderComprehension): AlignmentReport | null {
   let parsed: unknown;
   try {
-    parsed = JSON.parse(unwrapJson(raw));
+    parsed = safeParse(unwrapJson(raw), null);
   } catch {
     return null;
   }

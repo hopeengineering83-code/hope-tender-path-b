@@ -1,3 +1,5 @@
+import { safeParse, safeParseJsonObject } from "./safe-json-util";
+import { safeParse, safeParseJsonArray } from "./safe-json-util";
 /**
  * Semantic evaluation-criteria extractor.
  *
@@ -235,7 +237,7 @@ function parseDisqualifier(raw: unknown, index: number): DisqualifyingCondition 
 export function parseComprehensionJson(raw: string): DeepTenderComprehension | null {
   let parsed: unknown;
   try {
-    parsed = JSON.parse(unwrapJson(raw));
+    parsed = safeParse(unwrapJson(raw), null);
   } catch {
     return null;
   }

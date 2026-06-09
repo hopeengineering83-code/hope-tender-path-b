@@ -1,3 +1,4 @@
+import { safeParse, safeParseJsonArray } from "./safe-json-util";
 import { classifySubmissionPlanItem } from "./submission-plan-classifier";
 
 export type SubmissionPlanFormat = "DOCX" | "PDF" | "ZIP" | "XLSX" | "OTHER";
@@ -114,7 +115,7 @@ const QUANTITY_REQUIREMENT_TYPES = new Set<SubmissionPlanQuantityRule["requireme
 function parseStringArray(value?: string | null): string[] {
   if (!value) return [];
   try {
-    const parsed = JSON.parse(value);
+    const parsed = safeParse(value, null);
     if (!Array.isArray(parsed)) return [];
     return parsed.map((item) => String(item).trim()).filter(Boolean);
   } catch {

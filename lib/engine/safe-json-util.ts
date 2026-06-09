@@ -1,8 +1,15 @@
 /**
- * Safe JSON helpers — never throw.
- * Use these instead of bare JSON.parse in server components and API routes
- * so a single malformed DB field cannot crash the entire page.
+ * Internal engine helper for safe JSON parsing.
  */
+
+export function safeParse<T>(value: string | null | undefined, fallback: T): T {
+  if (!value || value.trim() === "") return fallback;
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return fallback;
+  }
+}
 
 export function safeParseJsonArray<T = unknown>(
   value: string | null | undefined,
@@ -27,18 +34,6 @@ export function safeParseJsonObject<T extends Record<string, unknown> = Record<s
     return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)
       ? (parsed as T)
       : fallback;
-  } catch {
-    return fallback;
-  }
-}
-
-/**
- * Generic safe JSON parse — returns fallback on any error.
- */
-export function safeParse<T>(value: string | null | undefined, fallback: T): T {
-  if (!value || value.trim() === "") return fallback;
-  try {
-    return JSON.parse(value) as T;
   } catch {
     return fallback;
   }

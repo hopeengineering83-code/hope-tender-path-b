@@ -32,6 +32,7 @@ export async function GET(_req: Request) {
 
     const records = await prisma.legalRecord.findMany({
       where: { companyId: company.id },
+      select: { id: true, recordType: true, title: true, authority: true, referenceNumber: true, status: true, issueDate: true, expiryDate: true, createdAt: true },
       orderBy: { createdAt: "desc" },
     });
 

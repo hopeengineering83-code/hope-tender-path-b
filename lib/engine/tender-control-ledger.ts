@@ -1,3 +1,4 @@
+import { safeParse, safeParseJsonArray } from "./safe-json-util";
 /**
  * Tender Control Ledger — deterministic control record builder.
  *
@@ -158,7 +159,7 @@ export function auditLogToControlRecord(log: {
 }): TenderControlRecord | null {
   let meta: Record<string, unknown>;
   try {
-    meta = JSON.parse(log.metadata) as Record<string, unknown>;
+    meta = safeParse(log.metadata, {}) as Record<string, unknown>;
   } catch {
     return null;
   }

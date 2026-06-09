@@ -1,3 +1,4 @@
+import { safeParse, safeParseJsonArray } from "./safe-json-util";
 /**
  * Bid Strategy Engine — beyond-spec feature (PR #249).
  *
@@ -148,7 +149,7 @@ function thresholdDecline(): number {
 function safeJsonArray(value: string | null | undefined): string[] {
   if (!value) return [];
   try {
-    const parsed = JSON.parse(value);
+    const parsed = safeParse(value, null);
     return Array.isArray(parsed) ? parsed.map(String).filter(Boolean) : [];
   } catch {
     return [];

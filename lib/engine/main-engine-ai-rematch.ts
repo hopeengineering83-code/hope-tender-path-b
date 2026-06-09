@@ -1,3 +1,4 @@
+import { safeParse, safeParseJsonArray } from "./safe-json-util";
 import type { CompanyKnowledgeSnapshot, MatchingResult, RequirementDraft } from "./types";
 import {
   aiRematchExperts,
@@ -54,7 +55,7 @@ function emptyResult(matching: MatchingResult, warning: string): MainEngineAIRem
 function safeParseJsonArray(value: string | null | undefined): string[] {
   if (!value) return [];
   try {
-    const parsed = JSON.parse(value);
+    const parsed = safeParse(value, null);
     return Array.isArray(parsed) ? parsed.map(String).filter(Boolean) : [];
   } catch {
     return [];

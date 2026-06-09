@@ -1,3 +1,4 @@
+import { safeParse, safeParseJsonArray } from "./safe-json-util";
 /**
  * "Why Us" 5-bullet summary — the most-read section of any proposal.
  * Each bullet is a single sentence anchored in evidence: project name +
@@ -24,7 +25,7 @@ function safeArr(value: unknown): string[] {
   if (!trimmed) return [];
   if (trimmed.startsWith("[")) {
     try {
-      const parsed = JSON.parse(trimmed);
+      const parsed = safeParse(trimmed, null);
       if (Array.isArray(parsed)) return parsed.map(String).filter(Boolean);
     } catch { /* fall through */ }
   }

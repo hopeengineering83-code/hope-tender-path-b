@@ -47,6 +47,7 @@ export async function GET(req: Request) {
     },
     orderBy: [{ trustLevel: "asc" }, { createdAt: "desc" }],
     take: limit + 1,
+    select: { id: true, fullName: true, title: true, email: true, phone: true, yearsExperience: true, disciplines: true, sectors: true, certifications: true, trustLevel: true, createdAt: true },
     ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
   });
 

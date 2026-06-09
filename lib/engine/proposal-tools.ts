@@ -1,3 +1,4 @@
+import { safeParse, safeParseJsonArray } from "./safe-json-util";
 /**
  * Proposal tools — closes audit gap #10 (no tool-use during
  * generation; Claude can't search evidence mid-write).
@@ -207,7 +208,7 @@ function joinList(value: string[] | string | null | undefined): string {
   if (Array.isArray(value)) return value.join(", ");
   // Some records store the list as a JSON string ("[\"a\",\"b\"]").
   try {
-    const parsed = JSON.parse(value);
+    const parsed = safeParse(value, null);
     if (Array.isArray(parsed)) return parsed.join(", ");
   } catch {
     // Not JSON — fall through to plain string.
