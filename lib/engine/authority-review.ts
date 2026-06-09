@@ -1,3 +1,4 @@
+import { PLACEHOLDER_PATTERNS, AI_TRACE_PATTERNS } from "./detection-patterns";
 /**
  * Authority Review Engine — pure module (no DB, no network).
  *
@@ -133,7 +134,7 @@ function analyseDocument(
   const dtype = (doc.documentType ?? "").toUpperCase();
 
   // AI trace
-  if (AI_TRACE_RE.test(text)) {
+  if (AI_TRACE_PATTERNS.some(re => re.test(text))) {
     const match = text.match(AI_TRACE_RE);
     blockers.push({
       code: "AI_TRACE",
@@ -146,7 +147,7 @@ function analyseDocument(
   }
 
   // Placeholder
-  if (PLACEHOLDER_RE.test(text)) {
+  if (PLACEHOLDER_PATTERNS.some(re => re.test(text))) {
     const match = text.match(PLACEHOLDER_RE);
     blockers.push({
       code: "PLACEHOLDER",
@@ -159,7 +160,7 @@ function analyseDocument(
   }
 
   // Internal notes / Bid-Team stubs (check both INTERNAL_NOTE and BID_TEAM)
-  if (INTERNAL_NOTE_RE.test(text)) {
+  if (PLACEHOLDER_PATTERNS.some(re => re.test(text))) {
     const match = text.match(INTERNAL_NOTE_RE);
     const isBidTeam = /Bid-Team to confirm|\[Bid-Team[^\]]*\]/i.test(text);
     blockers.push({

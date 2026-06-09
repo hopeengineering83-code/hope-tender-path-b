@@ -38,6 +38,7 @@
  */
 
 import type { ProjectRecord } from "./benchmark-tables";
+import { PLACEHOLDER_PATTERNS, AI_TRACE_PATTERNS } from "./detection-patterns";
 
 export type QualityScore = {
   total: number; // 0–100
@@ -127,36 +128,14 @@ const SECTOR_VOCAB: Record<string, RegExp[]> = {
 // "second to none", "unmatched"). The expanded list makes
 // `aiTraceFreedom` materially harder to game.
 const FORBIDDEN_PHRASES = [
-  // AI / model self-references
-  /as an ai/i,
-  /\bi am an ai\b/i,
-  /\blanguage model\b/i,
-  /chatgpt/i,
-  /openai/i,
-  /\banthropic\b/i,
-  /claude(?:\.ai)?/i,
-  /\bgemini\b/i,
-  // AI conversational artefacts
-  /\bcertainly[!.]/i,
-  /\bof course[!.]/i,
-  /\bi(?:'d| would) be happy to\b/i,
-  /\bi(?:'m| am) pleased to\b/i,
-  /\bi(?:'ve| have) prepared\b/i,
-  /\bi(?:'ll| will) (?:now\s+)?(?:provide|generate|create|draft|write)\b/i,
-  /\bbelow is (?:a|the|my)\b/i,
-  /\bplease find (?:attached|below|enclosed)\b/i,
-  /\bhere(?:'s| is) (?:a|the|my|your)\b/i,
-  // Placeholders and stubs
-  /lorem ipsum/i,
-  /\bplaceholder\b/i,
-  /sample text/i,
-  /\btodo\b/i,
-  /\btbd\b/i,
-  /to be determined/i,
-  /to be (?:added|filled|completed|provided)\b/i,
-  /n\/a \(pending\)/i,
-  /\[INSERT[^\]]*\]/i,
-  /\[(?:PLACEHOLDER|NAME|DATE|TBD|ADD|ENTER|SPECIFY|YOUR)[^\]]{0,60}\]/i,
+  // Bid-team stubs and metadata placeholders left unresolved in final output
+  /\bBid-Team to confirm\b/i,
+  /\bBid-team confirmation\b/i,
+  /\bMISSING_SOURCE\b/,
+  /\bSource-evidence action\b/i,
+  /\[Bid-Team[^\]]*\]/i,
+  ...AI_TRACE_PATTERNS,
+  ...PLACEHOLDER_PATTERNS,
   // Generic / boilerplate / unsupported superlatives
   /committed to excellence/i,
   /leading firm in the region/i,
@@ -181,18 +160,6 @@ const FORBIDDEN_PHRASES = [
   /\bgoing forward,?\s+we\b/i,
   /\bneedless to say\b/i,
   /\bthat being said\b/i,
-  // Placeholder styles (from PR)
-  /\{(?:INSERT|PLACEHOLDER|NAME|DATE|TBD|ADD|ENTER|COMPANY|FIRM|CLIENT)[^}]{0,60}\}/i,
-  /<<(?:INSERT|NAME|DATE|COMPANY|PLACEHOLDER|YOUR)[^>]{0,60}>>/i,
-  /__(?:INSERT|NAME|DATE|COMPANY|PLACEHOLDER|YOUR)[A-Z_]{0,40}__/,
-  /\bI cannot\b/i,
-  /\bI'm unable\b/i,
-  // Bid-team stubs and metadata placeholders left unresolved in final output
-  /\bBid-Team to confirm\b/i,
-  /\bBid-team confirmation\b/i,
-  /\bMISSING_SOURCE\b/,
-  /\bSource-evidence action\b/i,
-  /\[Bid-Team[^\]]*\]/i,
 ];
 
 function detectSector(primarySector: string): string {
@@ -380,11 +347,20 @@ export function scoreProposalQuality(opts: {
   // Floor at 4 when fewer than 6 paragraphs exist — a short but focused
   // proposal should not be penalised the same as a long evidence-thin one,
   // but an evidence-free short proposal should still score below passing.
-  const evidenceDensity = paragraphs.length === 0
+
+  // Hard cap evidence density if placeholders or Bid-Team internal notes are present.
+  // A proposal full of placeholders is not "dense" with evidence.
+  const placeholderCount = PLACEHOLDER_PATTERNS.reduce((count, re) => count + (md.match(new RegExp(re.source, "gi")) || []).length, 0);
+  let evidenceDensity = paragraphs.length === 0
     ? 5
     : paragraphs.length < 6
       ? Math.max(4, Math.round((withEvidence / paragraphs.length) * 10))
       : Math.round((withEvidence / paragraphs.length) * 10);
+
+  if (placeholderCount >= 3) {
+    evidenceDensity = Math.max(0, evidenceDensity - Math.floor(placeholderCount / 2));
+    notes.push(`Evidence density penalised due to ${placeholderCount} unresolved placeholder(s)/internal note(s).`);
+  }
   if (evidenceDensity < 4) {
     weakAxes.push("evidenceDensity");
     notes.push(`Only ${withEvidence} of ${paragraphs.length} substantive paragraphs cite specific evidence (projects/values/licenses).`);
@@ -530,7 +506,7 @@ export function scoreProposalQuality(opts: {
 
   // 6. AI-trace freedom (0–10)
   const traces = FORBIDDEN_PHRASES.filter((re) => re.test(md));
-  const aiTraceFreedom = traces.length === 0 ? 10 : Math.max(0, 10 - traces.length * 2);
+  const aiTraceFreedom = traces.length === 0 ? 10 : Math.max(0, 10 - traces.length * 3);
   if (aiTraceFreedom < 8) {
     weakAxes.push("aiTraceFreedom");
     notes.push(`AI / forbidden phrase trace detected: ${traces.length} hit(s).`);

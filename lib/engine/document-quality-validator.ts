@@ -4,7 +4,7 @@
  * Server-side implementation of the document quality validation logic.
  * Derived from DocumentValidatorPanel to ensure consistency between UI and server.
  */
-import { PLACEHOLDER_PATTERNS, AI_TRACE_PATTERNS } from "./detection-patterns";
+import { PLACEHOLDER_PATTERNS, AI_TRACE_PATTERNS, GENERIC_BOILERPLATE_PATTERNS } from "./detection-patterns";
 
 export interface DocumentValidationResult {
   hasContent: boolean;
@@ -37,6 +37,9 @@ export function validateDocumentQuality(doc: {
   const placeholders = hasContent && text
     ? PLACEHOLDER_PATTERNS.filter((re) => re.test(text)).map((re) => re.source.replace(/[\\^$.*+?()[\]{}|]/g, "").slice(0, 40))
     : [];
+  const boilerplateHits = hasContent && text
+    ? GENERIC_BOILERPLATE_PATTERNS.filter((re) => re.test(text)).map((re) => re.source.replace(/[\\^$.*+?()[\]{}|]/g, "").slice(0, 40))
+    : [];
 
   const aiTrace = hasContent && text
     ? AI_TRACE_PATTERNS.filter((re) => re.test(text)).map((re) => re.source.replace(/[\\^$.*+?()[\]{}|]/g, "").slice(0, 40))
@@ -54,12 +57,13 @@ export function validateDocumentQuality(doc: {
   const qualityWarnings: string[] = [];
   if (text && EMPTY_SECTION_RE.test(text)) qualityWarnings.push("Empty section headings detected");
   if (text && text.length > 0 && text.length < 200) qualityWarnings.push("Document content is very short — may be incomplete");
+  if (boilerplateHits.length >= 3) qualityWarnings.push(`High generic boilerplate density detected (${boilerplateHits.length} hits)`);
 
   // Determine status and numeric score
   let status: DocumentValidationResult["status"] = "GOOD";
   let score = 100;
 
-  if (placeholders.length > 0 || aiTrace.length > 0 || isEmpty || envelopeMismatch != null) {
+  if (placeholders.length > 0 || aiTrace.length > 0 || isEmpty || envelopeMismatch != null || boilerplateHits.length >= 5) {
     status = "BLOCKED";
     score = 30; // Default blocked score
   } else if (qualityWarnings.length > 0) {
@@ -72,6 +76,7 @@ export function validateDocumentQuality(doc: {
     if (isEmpty) score = 0;
     else if (aiTrace.length > 0) score = 20;
     else if (placeholders.length > 0) score = 35;
+    else if (boilerplateHits.length >= 5) score = 40;
   }
 
   return {
