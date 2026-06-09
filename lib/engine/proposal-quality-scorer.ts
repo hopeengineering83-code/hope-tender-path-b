@@ -57,15 +57,22 @@ export type QualityScore = {
   notes: string[];
 };
 
-const REQUIRED_SECTIONS = [
-  /cover letter/i,
-  /executive summary/i,
-  /(section a|company profile|corporate information)/i,
-  /(section b|relevant experience|project portfolio)/i,
-  /(section c|technical approach|methodology)/i,
-  /(section d|additional information|value)/i,
-  /declaration/i,
-  /submission control sheet/i,
+// Each entry carries an optional `substantiveAt` override that lowers the
+// "considered complete" char threshold for template/checklist sections.
+// Default thresholds (no override): <60=stub, <200=shallow, <600=moderate, 600+=full.
+// Declaration and Submission Control Sheet are legitimately short — a well-formed
+// Declaration is 60–200 chars; a Control Sheet checklist is 100–400 chars after
+// bullet-stripping. Without a lower threshold both score 0.5 (shallow) instead of
+// 1.0, capping structureCompleteness at 9/10 on fully-complete proposals.
+const REQUIRED_SECTIONS: Array<{ pattern: RegExp; substantiveAt?: number }> = [
+  { pattern: /cover letter/i },
+  { pattern: /executive summary/i },
+  { pattern: /(section a|company profile|corporate information)/i },
+  { pattern: /(section b|relevant experience|project portfolio)/i },
+  { pattern: /(section c|technical approach|methodology)/i },
+  { pattern: /(section d|additional information|value)/i },
+  { pattern: /declaration/i, substantiveAt: 60 },         // statement section — 60+ chars is complete
+  { pattern: /submission control sheet/i, substantiveAt: 100 }, // checklist — 100+ chars after bullet-strip is complete
 ];
 
 // ─── Sector vocabulary with word-boundary-safe abbreviations ────────
@@ -233,7 +240,7 @@ function detectSector(primarySector: string): string {
  * section presence, not depth). A section with just "# Section A\n\n
  * TBD" used to score the same as a fully-developed section.
  */
-function sectionDepthMultiplier(markdown: string, headingPattern: RegExp): number {
+function sectionDepthMultiplier(markdown: string, headingPattern: RegExp, substantiveAt?: number): number {
   const headingMatch = markdown.match(headingPattern);
   if (!headingMatch) return 0;
   // Determine the heading level (# count) immediately preceding the
@@ -261,6 +268,10 @@ function sectionDepthMultiplier(markdown: string, headingPattern: RegExp): numbe
   if (fillerOnly) return 0;
   const length = cleaned.length;
   if (length < 60) return 0;                   // single-sentence-or-less stub
+  // When a section has a lower substantiveAt override (template/checklist sections),
+  // treat it as complete once it clears that threshold — don't apply the
+  // shallow/moderate progression that's designed for prose-body sections.
+  if (substantiveAt !== undefined && length >= substantiveAt) return 1;
   if (length < 200) return 0.5;                // shallow body
   if (length < 600) return 0.85;               // moderate body
   return 1;                                    // substantive body
@@ -337,7 +348,7 @@ export function scoreProposalQuality(opts: {
   // Depth-weighted (gap #7): each present section contributes 0–1
   // based on the actual body content. A section with only a heading
   // or filler counts as 0; substantive prose counts as 1.
-  const sectionDepthMultipliers = REQUIRED_SECTIONS.map((re) => sectionDepthMultiplier(md, re));
+  const sectionDepthMultipliers = REQUIRED_SECTIONS.map((s) => sectionDepthMultiplier(md, s.pattern, s.substantiveAt));
   const depthSum = sectionDepthMultipliers.reduce((sum, m) => sum + m, 0);
   const structureCompleteness = Math.round((depthSum / REQUIRED_SECTIONS.length) * 10);
   const presentSections = sectionDepthMultipliers.filter((m) => m > 0).length;
