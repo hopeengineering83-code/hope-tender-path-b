@@ -1971,6 +1971,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     hasEvaluatorMirror: hasEvaluatorMirrorHeading(upstreamWithBackstops),
     hasWinThemes: hasWinThemesHeading(upstreamWithBackstops),
     primarySector: intelligence.primarySector,
+    requirements: tender.requirements,
   });
 
   const combinedMarkdown = [
