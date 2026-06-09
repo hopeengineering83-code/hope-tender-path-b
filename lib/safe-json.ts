@@ -4,6 +4,15 @@
  * so a single malformed DB field cannot crash the entire page.
  */
 
+export function safeParse<T>(value: string | null | undefined, fallback: T): T {
+  if (!value || value.trim() === "") return fallback;
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return fallback;
+  }
+}
+
 export function safeParseJsonArray<T = unknown>(
   value: string | null | undefined,
   fallback: T[] = [],

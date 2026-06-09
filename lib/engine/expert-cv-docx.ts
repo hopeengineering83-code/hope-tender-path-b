@@ -1,3 +1,4 @@
+import { safeParseJsonArray } from "../safe-json";
 // Expert CV DOCX generator.
 //
 // Produces a professional one-to-two-page Word document for each selected
@@ -38,12 +39,7 @@ const GRAY = "595959";
 
 function safeArr(json: string | null | undefined): string[] {
   if (!json) return [];
-  try {
-    const parsed = JSON.parse(json);
-    return Array.isArray(parsed) ? parsed.filter((s): s is string => typeof s === "string" && s.trim().length > 0).map(stripForbiddenTraces) : [];
-  } catch {
-    return [];
-  }
+  return safeParseJsonArray<string>(json).filter((s): s is string => typeof s === "string" && s.trim().length > 0).map(stripForbiddenTraces);
 }
 
 // ─── Forbidden-trace sanitizer (CV-DOCX export-blocker fix) ───────────────────

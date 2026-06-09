@@ -32,6 +32,7 @@ export async function GET(_req: Request) {
 
     const records = await prisma.financialRecord.findMany({
       where: { companyId: company.id },
+      select: { id: true, recordType: true, fiscalYear: true, currency: true, amount: true, createdAt: true },
       orderBy: [{ fiscalYear: "desc" }, { createdAt: "desc" }],
     });
 

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma, prismaReady } from "../../../../lib/prisma";
 import { requireUser, unauthorizedResponse, forbiddenResponse } from "../../../../lib/auth";
+import { safeParse } from "../../../../lib/safe-json";
 
 /**
  * Recent TENDER_DEEP_REASONING_RUN audit-log entries — operators
@@ -39,19 +40,13 @@ export async function GET(req: Request) {
 
   const rows = await prisma.auditLog.findMany({
     where,
+    select: { id: true, action: true, entityType: true, entityId: true, userId: true, description: true, metadata: true, createdAt: true },
     orderBy: { createdAt: "desc" },
     take: limit,
   });
 
   const runs = rows.map((row) => {
-    let metadata: unknown = null;
-    if (row.metadata) {
-      try {
-        metadata = JSON.parse(row.metadata);
-      } catch {
-        // Leave as null when stored metadata isn't valid JSON.
-      }
-    }
+    const metadata = safeParse(row.metadata, null);
     return {
       id: row.id,
       createdAt: row.createdAt,

@@ -1,3 +1,4 @@
+import { safeParseJsonArray, safeParseJsonObject } from "../safe-json";
 /**
  * Benchmark-quality tabular sections built deterministically from the
  * reviewed knowledge vault. These are appended to the proposal so that
@@ -62,12 +63,8 @@ function safeArr(value: unknown): string[] {
   const trimmed = value.trim();
   if (!trimmed) return [];
   if (trimmed.startsWith("[")) {
-    try {
-      const parsed = JSON.parse(trimmed);
-      if (Array.isArray(parsed)) return parsed.map(String).filter(Boolean);
-    } catch {
-      // fall through
-    }
+    const parsed = safeParseJsonArray(trimmed);
+    if (parsed.length > 0) return parsed.map(String).filter(Boolean);
   }
   return trimmed
     .split(/[,;|\n]/)
@@ -325,13 +322,11 @@ function extractTestimonyFields(evidences: ProjectEvidenceRecord[]): {
   for (const ev of testimonialEvidence) {
     // First check structured metadata
     if (ev.metadata) {
-      try {
-        const meta = JSON.parse(ev.metadata) as Record<string, string | undefined>;
-        if (!referenceNumber && meta.referenceNumber) referenceNumber = String(meta.referenceNumber);
-        if (!date && meta.date) date = String(meta.date);
-        if (!author && meta.author) author = String(meta.author);
-        if (!contact && meta.contact) contact = String(meta.contact);
-      } catch { /* metadata isn't valid JSON; fall through to description parsing */ }
+      const meta = safeParseJsonObject<Record<string, string | undefined>>(ev.metadata);
+      if (!referenceNumber && meta.referenceNumber) referenceNumber = String(meta.referenceNumber);
+      if (!date && meta.date) date = String(meta.date);
+      if (!author && meta.author) author = String(meta.author);
+      if (!contact && meta.contact) contact = String(meta.contact);
     }
 
     // Then parse description prose. Description format varies but

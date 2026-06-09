@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { runAuthorityReview, type ManifestEntry, type DocumentInput } from "../../../../../lib/engine/authority-review";
+import { safeParseJsonArray } from "../../../../../lib/safe-json";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 15;
@@ -25,19 +26,17 @@ function deriveRequiredSections(
   // Parse exact file naming/order hints
   for (const raw of [exactFileNaming, exactFileOrder]) {
     if (!raw) continue;
-    try {
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) {
-        for (const entry of parsed) {
-          if (typeof entry === "string" && entry.trim()) {
-            sections.add(entry.trim());
-          } else if (entry && typeof entry === "object" && typeof entry.name === "string") {
-            sections.add(entry.name.trim());
-          }
+    const parsed = safeParseJsonArray(raw);
+    if (parsed.length > 0) {
+      for (const entry of parsed) {
+        if (typeof entry === "string" && entry.trim()) {
+          sections.add(entry.trim());
+        } else if (entry && typeof entry === "object" && typeof (entry as Record<string, unknown>).name === "string") {
+          sections.add(((entry as Record<string, unknown>).name as string).trim());
         }
       }
-    } catch {
-      // ignore invalid JSON
+    } else {
+      // ignore empty / non-array
     }
   }
 
@@ -106,19 +105,16 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 
     // From exactFileNaming JSON array
     const exactFileNamingRaw = tender.exactFileNaming ?? "[]";
-    try {
-      const parsed = JSON.parse(exactFileNamingRaw);
-      if (Array.isArray(parsed)) {
-        for (const entry of parsed) {
-          if (typeof entry === "string" && entry.trim()) {
-            manifestEntries.push({ exactFileName: entry.trim(), documentType: "TENDER_REQUIRED_FILE" });
-          } else if (entry && typeof entry === "object" && typeof entry.name === "string") {
-            manifestEntries.push({ exactFileName: entry.name.trim(), documentType: entry.documentType ?? "TENDER_REQUIRED_FILE" });
-          }
+    const parsedFileNaming = safeParseJsonArray(exactFileNamingRaw);
+    if (parsedFileNaming.length > 0) {
+      for (const entry of parsedFileNaming) {
+        if (typeof entry === "string" && entry.trim()) {
+          manifestEntries.push({ exactFileName: entry.trim(), documentType: "TENDER_REQUIRED_FILE" });
+        } else if (entry && typeof entry === "object" && typeof (entry as Record<string, unknown>).name === "string") {
+          const e = entry as Record<string, unknown>;
+          manifestEntries.push({ exactFileName: (e.name as string).trim(), documentType: (e.documentType as string | undefined) ?? "TENDER_REQUIRED_FILE" });
         }
       }
-    } catch {
-      // ignore invalid JSON
     }
 
     // Only check GENERATED documents (not PLANNED stubs)
