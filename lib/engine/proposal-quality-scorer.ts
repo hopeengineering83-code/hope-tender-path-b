@@ -509,7 +509,16 @@ export function scoreProposalQuality(opts: {
       for (const aliases of sectionAliases) {
         total++;
         const sectionContent = sectionText(aliases);
-        if (sectionContent.includes(projectKey) || (distinctive && sectionContent.includes(distinctive))) matches++;
+        // Three-level matching mirrors the throughline enforcer's projectMentioned():
+        //   1. Full normalised name
+        //   2. Leading 3-token distinctive phrase
+        //   3. Any 2+ distinctive tokens (covers abbreviated mentions like
+        //      "Addis Water Scheme" matching "Addis Ababa Water Supply Scheme").
+        //      Without this, the enforcer considers a section already throughline-
+        //      compliant (via token set match) but the scorer still counts it as a miss.
+        const tokenSetMatch = tokens.length >= 2 &&
+          tokens.filter((t) => sectionContent.includes(t)).length >= Math.min(2, tokens.length);
+        if (sectionContent.includes(projectKey) || (distinctive && sectionContent.includes(distinctive)) || tokenSetMatch) matches++;
       }
     }
     throughlineConsistency = total > 0 ? Math.round((matches / total) * 10) : 5;
