@@ -28,10 +28,14 @@ function safeAutoLinkSupportLevel(value: unknown): { level: string; capped: bool
     return {
       level: "PARTIAL",
       capped: true,
-      reason: "Auto-linked vault evidence is reviewer-confirmed only as PARTIAL here. Mark FULL/SUBSTANTIAL only through the compliance matrix with traceable source support.",
+      reason: "Auto-linked vault evidence is reviewer-confirmed only as PARTIAL here. Mark FULL/SUBSTANTIAL only after reviewer confirmation with traceable source support.",
     };
   }
   return { level: requested, capped: false, reason: null };
+}
+
+function isManualReviewerConfirmation(body: Body): boolean {
+  return String(body.evidenceType ?? "").toUpperCase() === "MANUAL_REVIEWER_CONFIRMATION";
 }
 
 async function resolveReviewedEvidence(companyId: string, body: Body) {
@@ -93,15 +97,33 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const requirement = await prisma.tenderRequirement.findFirst({ where: { id: body.requirementId, tenderId: id }, select: { id: true, title: true } });
   if (!requirement) return NextResponse.json({ ok: false, error: "Requirement not found for this tender" }, { status: 404 });
 
+  const requestedLevel = requestedSupportLevel(body.supportLevel);
+
+  if (isManualReviewerConfirmation(body)) {
+    const evidenceReference = String(body.evidenceReference ?? `manual-${requirement.id}`).trim();
+    const notes = body.notes ?? `Reviewer manually confirmed ${requestedLevel} coverage.`;
+    const existing = await prisma.complianceMatrix.findFirst({
+      where: { tenderId: id, requirementId: requirement.id, evidenceType: "MANUAL_REVIEWER_CONFIRMATION" },
+      select: { id: true },
+    });
+
+    const row = existing
+      ? await prisma.complianceMatrix.update({ where: { id: existing.id }, data: { evidenceSource: "REVIEWER_CONFIRMED", evidenceReference, supportLevel: requestedLevel, notes, updatedAt: new Date() } })
+      : await prisma.complianceMatrix.create({ data: { tenderId: id, requirementId: requirement.id, evidenceType: "MANUAL_REVIEWER_CONFIRMATION", evidenceSource: "REVIEWER_CONFIRMED", evidenceReference, supportLevel: requestedLevel, notes } });
+
+    await logAction({ userId: actor.id, action: "REQUIREMENT_COVERAGE_MANUALLY_CONFIRMED", entityType: "Tender", entityId: id, description: `Manually confirmed ${requestedLevel.toLowerCase()} coverage for requirement: ${requirement.title}`, metadata: { requirementId: requirement.id, complianceMatrixId: row.id, supportLevel: requestedLevel }, requestId });
+
+    return NextResponse.json({ ok: true, success: true, row, requestedSupportLevel: requestedLevel, effectiveSupportLevel: requestedLevel, supportLevelCapped: false, supportLevelPolicy: null });
+  }
+
   const company = await prisma.company.findUnique({ where: { userId: tender.userId }, select: { id: true } });
   if (!company) return NextResponse.json({ ok: false, error: "Company profile required" }, { status: 422 });
 
   const evidence = await resolveReviewedEvidence(company.id, body);
   if (!evidence) {
-    return NextResponse.json({ ok: false, code: "REVIEWED_EVIDENCE_NOT_FOUND", error: "Only REVIEWED vault experts/projects can be confirmed as requirement evidence." }, { status: 422 });
+    return NextResponse.json({ ok: false, code: "REVIEWED_EVIDENCE_NOT_FOUND", error: "Only REVIEWED vault experts/projects can be confirmed as requirement evidence. Use manual confirmation for reviewer-approved coverage decisions." }, { status: 422 });
   }
 
-  const requestedLevel = requestedSupportLevel(body.supportLevel);
   const supportPolicy = safeAutoLinkSupportLevel(body.supportLevel);
   const level = supportPolicy.level;
   const confirmationNote = supportPolicy.capped
