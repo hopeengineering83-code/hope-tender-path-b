@@ -1931,6 +1931,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
         companyName: company.name,
         clientName: intelligence.clientName,
         primarySector: intelligence.primarySector,
+        requirements: tender.requirements,
       })
     : null;
 
