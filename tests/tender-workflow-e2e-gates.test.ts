@@ -32,14 +32,14 @@ describe("Tender Workflow E2E Gates Regression Pack", () => {
       const tender = { title: "", clientName: null, tenderCategory: "Work" };
       const result = assessTenderMetadataCompleteness(tender as any);
       assert.ok(result.missingCritical.some(f => f.field === "title"), "Title should be flagged as missing critical");
-      assert.ok(!result.ok, "Metadata should not be ready");
+      assert.ok(result.blockingForGeneration, "Metadata should not be ready");
     });
 
     it("should block if metadata contains placeholders", () => {
       const tender = { title: "Test Tender", clientName: "[TBC] Bid Team to confirm", tenderCategory: "Service" };
       const result = assessTenderMetadataCompleteness(tender as any);
       assert.equal(result.placeholderCount, 1, "Should detect 1 placeholder");
-      assert.ok(!result.ok, "Metadata should not be ready due to placeholders");
+      assert.ok(result.blockingForGeneration, "Metadata should not be ready due to placeholders");
     });
   });
 
@@ -135,7 +135,7 @@ describe("Tender Workflow E2E Gates Regression Pack", () => {
   describe("Readiness Scoring Gates", () => {
     it("should cap score if finalExportGateOk is false", () => {
       const result = computeReadinessScore({
-        analysisSource: "AI_ANALYZED",
+        analysisSource: "AI",
         metadataCompletenessRatio: 1.0,
         metadataInvalidCount: 0,
         sourceReferenceCoverage: 1.0,
@@ -156,7 +156,7 @@ describe("Tender Workflow E2E Gates Regression Pack", () => {
 
     it("should cap score significantly if metadata is missing", () => {
       const result = computeReadinessScore({
-        analysisSource: "AI_ANALYZED",
+        analysisSource: "AI",
         metadataCompletenessRatio: 0.2, // Poor metadata
         metadataInvalidCount: 1,
         sourceReferenceCoverage: 1.0,
