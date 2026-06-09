@@ -870,6 +870,21 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (draftExperts.length > 0) warnings.push(`${draftExperts.length} selected expert(s) are unreviewed drafts: ${draftExperts.map((m) => m.expert.fullName).join(", ")}. Review them in the Knowledge Review page for more accurate proposals.`);
   if (draftProjects.length > 0) warnings.push(`${draftProjects.length} selected project(s) are unreviewed drafts: ${draftProjects.map((m) => m.project.name).join(", ")}. Review them in the Knowledge Review page for more accurate proposals.`);
 
+  // Concurrent generation guard — same check used for planOnly mode.
+  // Without this, two parallel POST /generate calls could each enter
+  // generateTenderDocuments() simultaneously, creating duplicate GENERATING
+  // records and doubled proposal output.
+  const alreadyGenerating = await prisma.generatedDocument.count({
+    where: { tenderId: id, generationStatus: { in: ["GENERATING", "QUEUED"] } },
+  });
+  if (alreadyGenerating > 0) {
+    return NextResponse.json({
+      error: "Generation already in progress — another generate request is running for this tender. Wait for it to finish before starting a new run.",
+      code: "GENERATION_IN_PROGRESS",
+      nextAction: "WAIT_FOR_CURRENT_GENERATION",
+    }, { status: 409 });
+  }
+
   const log = childLogger({ tenderId: id, userId, route: "/api/tenders/[id]/generate" });
   log.info("generation_started", { reviewedExpertCount, draftExpertCount: draftExperts.length, reviewedProjectCount, draftProjectCount: draftProjects.length, promotedExpertCount: promotion.promotedExpertCount, promotedProjectCount: promotion.promotedProjectCount, readinessTotals: readiness.totals });
   const job = createJob({ userId, tenderId: id, type: "GENERATE", steps: ["FETCH", "AI_GENERATE", "SAVE", "LETTERHEAD", "VALIDATE"] });
