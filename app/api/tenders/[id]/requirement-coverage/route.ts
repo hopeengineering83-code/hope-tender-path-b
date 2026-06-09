@@ -1,10 +1,10 @@
 // GET /api/tenders/[id]/requirement-coverage
 //
-// Returns per-requirement mandatory coverage: title, type, source reference,
+// Returns per-requirement mandatory/critical coverage: title, type, source reference,
 // support level, linked evidence rows, and recommended next action.
 //
 // Used by the Mandatory Requirement Coverage panel on the tender detail page.
-// Only surfaces MANDATORY requirements — advisory/optional ones are out of scope.
+// Advisory/optional requirements are out of scope.
 //
 // Auth: ADMIN, PROPOSAL_MANAGER, REVIEWER
 // Rate: API_RATE_LIMIT (read-only)
@@ -105,6 +105,7 @@ function deriveSupportLevel(links: EvidenceLink[]): SupportLevel {
   if (levels.some((l) => l === "FULL")) return "FULL";
   if (levels.some((l) => l === "SUBSTANTIAL")) return "SUBSTANTIAL";
   if (levels.some((l) => l === "PARTIAL")) return "PARTIAL";
+  if (levels.some((l) => l === "NOT_APPLICABLE")) return "NOT_APPLICABLE";
   return "NONE";
 }
 
@@ -114,13 +115,14 @@ function nextActionFor(row: {
   requirementType: string;
   evidenceLinks: EvidenceLink[];
 }): string {
+  if (row.supportLevel === "NOT_APPLICABLE") return "Requirement marked not applicable by reviewer. Keep the audit note for export review.";
   if (row.supportLevel === "NONE" || row.evidenceLinks.length === 0) {
     if (row.requirementType === "EXPERT") return "Add a reviewed expert with this discipline to the vault and run Engine to match.";
     if (row.requirementType === "PROJECT_EXPERIENCE") return "Add a relevant project reference to the vault and run Engine to match.";
     if (row.requirementType === "FORM" || row.requirementType === "DECLARATION") return "Attach the official tender-issued form or declaration — do not generate.";
     return "Link vault evidence via 'Use vault evidence', or mark as not applicable with an audit note.";
   }
-  if (row.supportLevel === "PARTIAL") return "Strengthen evidence: add more specific expert CVs or project references that address this requirement directly.";
+  if (row.supportLevel === "PARTIAL") return "Strengthen evidence or manually confirm FULL/SUBSTANTIAL only after reviewer traceability review.";
   if (!row.hasSourceRef) return "Add source reference (page number or exact quote) so this requirement can be traced back to the tender document.";
   return "Requirement is covered. Verify evidence is marked REVIEWED.";
 }
@@ -156,7 +158,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 
     const [requirements, vaultExperts, vaultProjects] = await Promise.all([
       prisma.tenderRequirement.findMany({
-        where: { tenderId: id, priority: "MANDATORY" },
+        where: { tenderId: id, priority: { in: ["MANDATORY", "CRITICAL"] } },
         orderBy: { createdAt: "asc" },
         select: {
           id: true,
@@ -226,16 +228,13 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
         : [];
 
       const links = [...storedLinks, ...autoLinks];
-      // Auto-linked evidence from unreviewed sources cannot count toward coverage;
-      // stored rows reflect actual user-confirmed links.
       const effectiveLinks = links.filter((l) => !l.autoLinked || l.supportLevel !== "NONE");
       const supportLevel = deriveSupportLevel(effectiveLinks);
       const hasSourceRef = Boolean(
         req.sectionReference || req.sourcePageNumber || req.sourceExactQuote || (req.sourceConfidence ?? 0) > 0,
       );
-      // Auto-linked evidence cannot make a requirement isFullyCovered — user must confirm
       const hasOnlyAutoLinks = storedLinks.length === 0 && autoLinks.length > 0;
-      const isFullyCovered = !hasOnlyAutoLinks && (supportLevel === "FULL" || supportLevel === "SUBSTANTIAL") && hasSourceRef;
+      const isFullyCovered = !hasOnlyAutoLinks && (supportLevel === "FULL" || supportLevel === "SUBSTANTIAL" || supportLevel === "NOT_APPLICABLE") && hasSourceRef;
       return {
         id: req.id,
         title: req.title,
