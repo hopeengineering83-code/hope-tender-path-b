@@ -530,7 +530,7 @@ export function scoreProposalQuality(opts: {
 
   // 6. AI-trace freedom (0–10)
   const traces = FORBIDDEN_PHRASES.filter((re) => re.test(md));
-  const aiTraceFreedom = traces.length === 0 ? 10 : Math.max(0, 10 - traces.length * 2);
+  const aiTraceFreedom = traces.length === 0 ? 10 : Math.max(0, 10 - traces.length * 3);
   if (aiTraceFreedom < 8) {
     weakAxes.push("aiTraceFreedom");
     notes.push(`AI / forbidden phrase trace detected: ${traces.length} hit(s).`);

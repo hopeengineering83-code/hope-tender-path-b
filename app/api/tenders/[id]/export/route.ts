@@ -163,7 +163,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       return NextResponse.json(
         {
           error: `Export blocked: Authority Review status is ${authorityResult.status}. Resolve all critical blockers and raise the authority score to ≥85 before export.`,
-          code: "AUTHORITY_REVIEW_NOT_READY",
+          code: "AUTHORITY_REVIEW_BLOCKED",
           authorityStatus: authorityResult.status,
           authorityScore: authorityResult.overallScore,
           blockers: authorityResult.blockers.filter((b) => b.severity === "CRITICAL").map((b) => b.detail),

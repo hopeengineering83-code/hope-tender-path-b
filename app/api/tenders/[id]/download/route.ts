@@ -130,12 +130,13 @@ async function singleDocument(userId: string, tender: any, docId: string) {
     [],
     [],
   );
-  if (singleAuthorityResult.status === "BLOCKED") {
+  if (singleAuthorityResult.status !== "AUTHORITY_READY") {
     return err(
-      `Single-document download blocked by Authority Review: ${singleAuthorityResult.blockers.length} critical issue(s) must be resolved.`,
+      `Single-document download blocked by Authority Review (${singleAuthorityResult.status}): ${singleAuthorityResult.blockers.length} issue(s) must be resolved.`,
       422,
       {
         code: "AUTHORITY_REVIEW_BLOCKED",
+        authorityStatus: singleAuthorityResult.status,
         blockers: singleAuthorityResult.blockers,
         overallScore: singleAuthorityResult.overallScore,
         affectedDocumentIds: singleAuthorityResult.affectedDocumentIds,
@@ -445,6 +446,22 @@ async function proposalPdf(userId: string, tender: any, docId: string | null) {
     ? docs.find((d: any) => d.id === docId)
     : docs.find((d: any) => /technical.proposal|technical_proposal/i.test(d.exactFileName ?? d.name ?? "")) ?? docs[0];
   if (!target) return err("Target document not found or not yet generated.", 404, { code: "PDF_DOC_NOT_FOUND" });
+
+  // Quality gate on PDF target — block if document has placeholders, AI traces, or envelope mismatches.
+  const { validateDocumentQuality } = await import("../../../../../lib/engine/document-quality-validator");
+  const pdfQuality = validateDocumentQuality({
+    name: target.name,
+    documentType: target.documentType,
+    fileContent: target.fileContent ?? null,
+    storagePath: target.storagePath ?? null,
+  });
+  if (pdfQuality.status === "BLOCKED") {
+    return err(
+      "PDF generation blocked: target document has quality issues (placeholders, AI traces, or envelope mismatches). Fix and regenerate before exporting.",
+      409,
+      { code: "QUALITY_VALIDATION_BLOCKED", document: target.exactFileName ?? target.name },
+    );
+  }
 
   // Read the DOCX content and extract text using mammoth
   const contentResult = await readContentOrError(asReadyDoc(target));
