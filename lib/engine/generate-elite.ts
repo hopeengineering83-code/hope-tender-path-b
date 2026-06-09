@@ -686,7 +686,19 @@ function fallbackProposalMarkdown(params: {
   lines.push("- [ ] Expert CVs attached and signed");
   lines.push("- [ ] Project references include client contact details");
   lines.push("- [ ] All legal documents (registration, TIN, VAT) attached");
-  lines.push("- [ ] Submission sent before the stated deadline");
+  // Show the actual submission deadline when available so bid teams don't
+  // have to look it up — a missing or wrong deadline is the most common
+  // cause of disqualification. Fall back to a generic reminder when the
+  // deadline has not been extracted from the tender document.
+  if (params.tenderDeadline) {
+    const deadlineDate = params.tenderDeadline instanceof Date ? params.tenderDeadline : new Date(params.tenderDeadline);
+    const formatted = Number.isNaN(deadlineDate.getTime())
+      ? String(params.tenderDeadline)
+      : deadlineDate.toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
+    lines.push(`- [ ] Submission sent before the deadline: **${formatted}** (confirm exact time and time zone with the original tender document)`);
+  } else {
+    lines.push("- [ ] Submission sent before the stated deadline (extract exact date/time/time-zone from the tender document)");
+  }
 
   return lines.join("\n\n");
 }
