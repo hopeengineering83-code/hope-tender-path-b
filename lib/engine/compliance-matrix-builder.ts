@@ -37,6 +37,7 @@ type RequirementLite = {
   description?: string | null;
   priority?: string | null;
   requirementType?: string | null;
+  sourcePageNumber?: number | null;
 };
 
 type ComplianceMatrixRowLite = {
@@ -211,7 +212,8 @@ export function buildComplianceMatrixSection(input: ComplianceMatrixBuilderInput
   let mandatoryNotMet = 0;
 
   sorted.forEach((req, idx) => {
-    const reqText = (req.title || (req.description ?? "").slice(0, 220)).trim();
+    const baseReqText = (req.title || (req.description ?? "").slice(0, 220)).trim();
+    const reqText = req.sourcePageNumber != null ? `${baseReqText} [p.${req.sourcePageNumber}]` : baseReqText;
     const proposalLocation = inferProposalLocation(req);
 
     // Choose the strongest matrix row for the status (FULLY > PARTIALLY > NOT MET).
