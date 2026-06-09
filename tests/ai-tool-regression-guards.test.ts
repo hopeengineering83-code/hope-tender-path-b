@@ -21,7 +21,7 @@ describe("AI tool regression guards", () => {
   it("AI rematch and matcher engines keep substantive logic", () => {
     const route = read("app/api/tenders/[id]/ai-rematch/route.ts");
     const matcher = read("lib/engine/ai-multi-perspective-matcher.ts");
-    assert.ok(route.includes("aiMultiPerspectiveMatch") || route.includes("multiPerspective"));
+    assert.ok(route.includes("aiRematchExperts") || route.includes("aiRematchProjects"));
     assert.ok(!route.includes("Simplified for audit"));
     assert.ok(matcher.includes("sector") || matcher.includes("Sector"));
     assert.ok(matcher.includes("evidence") || matcher.includes("Evidence"));
