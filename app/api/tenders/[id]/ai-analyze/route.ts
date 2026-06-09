@@ -13,6 +13,7 @@ import { deriveExtractionStatus, isExtractionCorrupted, type TenderFileQuality }
 import { detectMetadataContamination } from "../../../../../lib/engine/tender-metadata-completeness";
 import { isValidClientContact } from "../../../../../lib/engine/metadata-validators";
 import { buildAnalysisFallbackDiagnostics, formatFallbackDiagnosticsLine, type AnalysisFallbackDiagnostics } from "../../../../../lib/engine/analysis-fallback-diagnostics";
+import { safeParseJsonObject } from "../../../../../lib/safe-json";
 import { buildProviderDiagnosticsSnapshot } from "../../../../../lib/ai-provider-health";
 import { restoreHealthFromDb, persistAllHealthToDb } from "../../../../../lib/ai-provider-health-db";
 
@@ -209,7 +210,7 @@ async function handleStreamingAnalyze(
           });
           if (existingJob?.output) {
             try {
-              const savedOutput = JSON.parse(existingJob.output) as { completedChunks?: number; contentHash?: string };
+              const savedOutput = safeParseJsonObject(existingJob.output) as { completedChunks?: number; contentHash?: string };
               startFromChunk = savedOutput.completedChunks ?? 0;
               existingContentHash = savedOutput.contentHash;
             } catch { /* ignore parse errors — do a full re-run */ }

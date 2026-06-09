@@ -36,6 +36,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 
   const objections = await prisma.evaluatorObjection.findMany({
     where: { tenderId: id },
+    select: { id: true, severity: true, category: true, title: true, description: true, sectionRef: true, status: true, resolvedAt: true, createdAt: true },
     orderBy: [{ status: "asc" }, { severity: "asc" }, { createdAt: "desc" }],
   });
 

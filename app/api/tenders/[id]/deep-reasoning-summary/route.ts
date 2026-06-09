@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { requireUser, unauthorizedResponse, forbiddenResponse } from "../../../../../lib/auth";
 import { formatDeepReasoningRunAsMarkdown, type DeepReasoningSummaryMetadata } from "../../../../../lib/engine/deep-reasoning-summary-formatter";
+import { safeParseJsonObject } from "../../../../../lib/safe-json";
 
 /**
  * Per-tender deep-reasoning summary — returns the most recent
@@ -49,14 +50,9 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     });
   }
 
-  let parsed: DeepReasoningSummaryMetadata | null = null;
-  if (row.metadata) {
-    try {
-      parsed = JSON.parse(row.metadata) as DeepReasoningSummaryMetadata;
-    } catch {
-      // Leave as null; the formatter handles missing metadata.
-    }
-  }
+  const parsed = row.metadata
+    ? (safeParseJsonObject(row.metadata) as DeepReasoningSummaryMetadata | null) ?? null
+    : null;
 
   const markdown = formatDeepReasoningRunAsMarkdown({
     createdAt: row.createdAt,

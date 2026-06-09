@@ -6,6 +6,7 @@ import { ensureCompanyForUser } from "../../../../lib/company-workspace";
 import { logAction } from "../../../../lib/audit";
 import { completenessStats, deriveExpectedCounts, hasUsableText } from "./helpers";
 import { sanitizeError } from "../../../../lib/sanitize-error";
+import { safeParse } from "../../../../lib/safe-json";
 
 // Vercel route timeout — plan-B import processes all uploaded documents.
 // 60 = Hobby max; Pro applies its own plan limit when exceeded.
@@ -280,7 +281,7 @@ async function readPayload(req: Request): Promise<PlanBPayload> {
     const file = form.get("file");
     if (!(file instanceof File)) throw new Error("No JSON file provided.");
     const text = await file.text();
-    return planBPayloadSchema.parse(JSON.parse(text)) as PlanBPayload;
+    return planBPayloadSchema.parse(safeParse(text, null)) as PlanBPayload;
   }
   const rawJson = await req.json().catch(() => null);
   if (!rawJson) throw new Error("Request body must be valid JSON");

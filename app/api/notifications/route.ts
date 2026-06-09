@@ -18,6 +18,7 @@ export async function GET(req: Request) {
   const [notifications, unreadCount] = await Promise.all([
     prisma.notification.findMany({
       where: { userId, ...(unreadOnly ? { readAt: null } : {}) },
+      select: { id: true, type: true, title: true, body: true, entityType: true, entityId: true, link: true, readAt: true, createdAt: true },
       orderBy: { createdAt: "desc" },
       take: limit + 1,
       ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
