@@ -14,6 +14,8 @@
  * All detection is deterministic regex — no AI calls, no external I/O.
  */
 
+import { AI_TRACE_PATTERNS, PLACEHOLDER_PATTERNS } from "./detection-patterns";
+
 export type AuthorityBlockerCode =
   | "AI_TRACE"
   | "PLACEHOLDER"
@@ -77,11 +79,15 @@ export interface ManifestEntry {
 
 // ── Detection patterns ────────────────────────────────────────────────────────
 
-const AI_TRACE_RE =
-  /\b(as an AI|as a language model|I cannot|I don't have access|my training data|I was trained|ChatGPT|GPT-4|Claude|Gemini)\b/i;
-
-const PLACEHOLDER_RE =
-  /\[TBD\]|\[INSERT\]|\[PLACEHOLDER\]|\bTBD\b|\bN\/A\b|\bXXX\b|\[.*?\?.*?\]/i;
+// AI_TRACE_PATTERNS and PLACEHOLDER_PATTERNS imported from shared detection-patterns module.
+// Local helper: return the first matched snippet across a pattern list.
+function firstPatternMatch(patterns: RegExp[], text: string): string {
+  for (const re of patterns) {
+    const m = text.match(re);
+    if (m) return m[0];
+  }
+  return "pattern match";
+}
 
 const INTERNAL_NOTE_RE =
   /Bid-Team to confirm|MISSING_SOURCE|\[Bid-Team[^\]]*\]|Source-evidence action/i;
@@ -132,28 +138,26 @@ function analyseDocument(
   const text = [doc.contentSummary ?? "", doc.reviewNotes ?? ""].join(" ");
   const dtype = (doc.documentType ?? "").toUpperCase();
 
-  // AI trace
-  if (AI_TRACE_RE.test(text)) {
-    const match = text.match(AI_TRACE_RE);
+  // AI trace — uses shared AI_TRACE_PATTERNS for comprehensive coverage
+  if (AI_TRACE_PATTERNS.some((re) => re.test(text))) {
     blockers.push({
       code: "AI_TRACE",
       severity: "CRITICAL",
       documentId: doc.id,
       documentName: doc.name,
-      detail: `AI-generated language detected: "${match?.[0] ?? "pattern match"}"`,
+      detail: `AI-generated language detected: "${firstPatternMatch(AI_TRACE_PATTERNS, text)}"`,
       recoveryAction: "Remove all AI self-referential language from the document content and regenerate.",
     });
   }
 
-  // Placeholder
-  if (PLACEHOLDER_RE.test(text)) {
-    const match = text.match(PLACEHOLDER_RE);
+  // Placeholder — uses shared PLACEHOLDER_PATTERNS for comprehensive coverage
+  if (PLACEHOLDER_PATTERNS.some((re) => re.test(text))) {
     blockers.push({
       code: "PLACEHOLDER",
       severity: "CRITICAL",
       documentId: doc.id,
       documentName: doc.name,
-      detail: `Unfilled placeholder detected: "${match?.[0] ?? "pattern match"}"`,
+      detail: `Unfilled placeholder detected: "${firstPatternMatch(PLACEHOLDER_PATTERNS, text)}"`,
       recoveryAction: "Replace all placeholder tokens with actual content before export.",
     });
   }

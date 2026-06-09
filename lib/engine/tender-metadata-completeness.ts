@@ -73,10 +73,15 @@ export type NonCriticalMetadataField =
   | "preBidMeetingDate"
   | "preBidMeetingLocation"
   | "clientCity"
+  | "clientAddress"
   | "clientWebsite"
   | "submissionEmailSubject"
   | "preBidChannel"
-  | "clientRepresentative";
+  | "clientRepresentative"
+  // CLAUDE.md items 2-4: entity-identity fields
+  | "legalClientName"
+  | "donorAgency"
+  | "implementingAgency";
 
 export type MetadataCompletenessInput = {
   // Top-level tender fields
@@ -109,10 +114,15 @@ export type MetadataCompletenessInput = {
   financialWeight?: number | null;
   // Extended client fields (CLAUDE.md items 8–19)
   clientCity?: string | null;
+  clientAddress?: string | null;
   clientWebsite?: string | null;
   submissionEmailSubject?: string | null;
   preBidChannel?: string | null;
   clientRepresentative?: string | null;
+  // CLAUDE.md items 2–4: entity-identity disambiguation fields
+  legalClientName?: string | null;
+  donorAgency?: string | null;
+  implementingAgency?: string | null;
 
   // Derived inputs (so we don't need to redo SQL)
   /** Total number of requirement rows extracted from the tender. */
@@ -361,10 +371,16 @@ export function assessTenderMetadataCompleteness(
   checkNonCritical("preBidMeetingDate", input.preBidMeetingDate, "Pre-bid meeting date informs the bid schedule.");
   checkNonCritical("preBidMeetingLocation", input.preBidMeetingLocation, "Pre-bid meeting location informs the bid schedule.");
   checkNonCritical("clientCity", input.clientCity, "City/location of the procuring entity improves address blocks.");
+  checkNonCritical("clientAddress", input.clientAddress, "Client physical address is needed for sealed-envelope logistics and declarations.");
   checkNonCritical("clientWebsite", input.clientWebsite, "Procuring entity website is useful for portal submission links.");
   checkNonCritical("submissionEmailSubject", input.submissionEmailSubject, "Required email subject line must appear verbatim in the submission email.");
   checkNonCritical("preBidChannel", input.preBidChannel, "Pre-bid clarification channel informs the questions submission process.");
   checkNonCritical("clientRepresentative", input.clientRepresentative, "Authorized client representative name may be required in declarations.");
+  // CLAUDE.md items 2–4: entity-identity disambiguation — surfaced as non-critical warnings
+  // so donor-funded tenders can be identified and the correct legal counterparty used.
+  checkNonCritical("legalClientName", input.legalClientName, "Full legal client name (if different from display name) is required on formal declarations.");
+  checkNonCritical("donorAgency", input.donorAgency, "Donor/funding agency name is needed for donor-compliance cover letters and acknowledgements.");
+  checkNonCritical("implementingAgency", input.implementingAgency, "Project owner/implementing agency name is required when different from the procuring entity.");
 
   // Page limit, bid bond, site visit, validity — track per spec.
   if (!isPresent(input.pageLimit) && !isOverrideResolved("pageLimit")) {
@@ -398,10 +414,14 @@ export function assessTenderMetadataCompleteness(
     ["bidBondCurrency", input.bidBondCurrency],
     ["preBidMeetingLocation", input.preBidMeetingLocation],
     ["clientCity", input.clientCity],
+    ["clientAddress", input.clientAddress],
     ["clientWebsite", input.clientWebsite],
     ["submissionEmailSubject", input.submissionEmailSubject],
     ["preBidChannel", input.preBidChannel],
     ["clientRepresentative", input.clientRepresentative],
+    ["legalClientName", input.legalClientName],
+    ["donorAgency", input.donorAgency],
+    ["implementingAgency", input.implementingAgency],
   ];
   let placeholderCount = 0;
   for (const [field, raw] of stringFieldsForScan) {

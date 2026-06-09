@@ -1485,7 +1485,11 @@ JSON structure required:
     "preBidChannel": {"page": page_number_or_null, "quote": "verbatim snippet or null"},
     "preBidMeetingDate": {"page": page_number_or_null, "quote": "verbatim snippet or null"},
     "preBidMeetingLocation": {"page": page_number_or_null, "quote": "verbatim snippet or null"},
-    "clientRepresentative": {"page": page_number_or_null, "quote": "verbatim snippet or null"}
+    "clientRepresentative": {"page": page_number_or_null, "quote": "verbatim snippet or null"},
+    "procuringEntityName": {"page": page_number_or_null, "quote": "verbatim snippet or null"},
+    "legalClientName": {"page": page_number_or_null, "quote": "verbatim snippet or null"},
+    "donorAgency": {"page": page_number_or_null, "quote": "verbatim snippet or null"},
+    "implementingAgency": {"page": page_number_or_null, "quote": "verbatim snippet or null"}
   },
   "submissionMethodSourcePage": page_number_integer_or_null,
   "submissionMethodSourceQuote": "verbatim snippet showing the submission method, or null",

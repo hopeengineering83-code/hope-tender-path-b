@@ -393,6 +393,31 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }, { status: 422 });
   }
 
+  // ── Mandatory requirements classification advisory ────────────────────────
+  // Per CLAUDE.md: "Mandatory requirements are extracted" is a generation gate.
+  // When the AI extracted requirements but classified none as MANDATORY, the
+  // mandatory-compliance section may be incomplete. Fire an advisory block so
+  // the user can re-run AI Analyze or reclassify before generating.
+  // Only applies when >= 3 requirements exist (avoids false positives on simple
+  // scopes where all requirements are genuinely optional/desirable).
+  // Bypass with ?acceptNoMandatoryReqs=true after deliberate review.
+  {
+    const reqUrl0 = new URL(req.url);
+    if (reqUrl0.searchParams.get("planOnly") !== "true" && reqUrl0.searchParams.get("acceptNoMandatoryReqs") !== "true") {
+      const mandatoryCount = tender.requirements.filter((r) => r.priority === "MANDATORY").length;
+      if (mandatoryCount === 0 && tender.requirements.length >= 3) {
+        return NextResponse.json({
+          errorCode: "NO_MANDATORY_REQUIREMENTS",
+          error: "Generation advisory: requirements were extracted but none are classified as MANDATORY. This may indicate the AI missed mandatory compliance requirements. Re-run AI Analyze or manually mark critical requirements as MANDATORY before generating documents.",
+          blockers: ["No requirements are classified as MANDATORY — mandatory requirement classification may be incomplete."],
+          nextAction: "RERUN_AI_ANALYZE",
+          acceptNoMandatoryReqs: false,
+          diagnosticId: `no-mandatory-reqs-${id}`,
+        }, { status: 422 });
+      }
+    }
+  }
+
   // ── Critical content-page gate ────────────────────────────────────────────
   // Per CLAUDE.md: generation is blocked unless submission instructions AND
   // required documents were detected in the extracted text. Evaluation criteria
@@ -595,10 +620,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     preBidMeetingDate: tender.preBidMeetingDate ?? null,
     preBidMeetingLocation: tender.preBidMeetingLocation ?? null,
     clientCity: tender.clientCity ?? null,
+    clientAddress: (tender as Record<string, unknown>).clientAddress as string | null ?? null,
     clientWebsite: tender.clientWebsite ?? null,
     submissionEmailSubject: tender.submissionEmailSubject ?? null,
     preBidChannel: tender.preBidChannel ?? null,
     clientRepresentative: tender.clientRepresentative ?? null,
+    legalClientName: (tender as Record<string, unknown>).legalClientName as string | null ?? null,
+    donorAgency: (tender as Record<string, unknown>).donorAgency as string | null ?? null,
+    implementingAgency: (tender as Record<string, unknown>).implementingAgency as string | null ?? null,
     requirementCount: tender.requirements.length,
     hasEvaluationMethodology: Boolean((tender.evaluationMethodology ?? "").trim()),
     hasSubmissionRules: Boolean(tender.submissionMethod || tender.submissionEmails || tender.submissionAddress),

@@ -623,10 +623,14 @@ export async function getFinalSubmissionReadiness(
     technicalWeight: tender.technicalWeight,
     financialWeight: tender.financialWeight,
     clientCity: tender.clientCity,
+    clientAddress: (tender as Record<string, unknown>).clientAddress as string | null | undefined,
     clientWebsite: tender.clientWebsite,
     submissionEmailSubject: tender.submissionEmailSubject,
     preBidChannel: tender.preBidChannel,
     clientRepresentative: tender.clientRepresentative,
+    legalClientName: (tender as Record<string, unknown>).legalClientName as string | null | undefined,
+    donorAgency: (tender as Record<string, unknown>).donorAgency as string | null | undefined,
+    implementingAgency: (tender as Record<string, unknown>).implementingAgency as string | null | undefined,
     requirementCount: tender.requirements.length,
     hasEvaluationMethodology: Boolean((tender.evaluationMethodology ?? "").trim()),
     hasSubmissionRules: Boolean((tender.submissionMethod ?? "").trim()) || Boolean((tender.submissionEmails ?? "").trim()) || Boolean((tender.submissionAddress ?? "").trim()),
@@ -741,9 +745,11 @@ export async function getFinalSubmissionReadiness(
   }
 
   // ── Source traceability coverage (evidence gap check) ────────────────────
-  // If more than 20% of mandatory requirements lack any source traceability
+  // If more than 10% of mandatory requirements lack any source traceability
   // (no sourceConfidence > 0, no sourceTenderFileId, no sourcePageNumber,
   // no sourceExactQuote), push a MEDIUM-severity blocker.
+  // Threshold tightened from 20% → 10%: a 20% tolerance allowed 4 of 5
+  // critical requirements to be untraceable before surfacing the warning.
   const mandatoryRequirements = tender.requirements.filter((r) => r.priority === "MANDATORY");
   if (mandatoryRequirements.length > 0) {
     const missingTraceability = mandatoryRequirements.filter(
@@ -755,7 +761,7 @@ export async function getFinalSubmissionReadiness(
         !(r.sectionReference ?? "").trim(),
     ).length;
     const missingRatio = missingTraceability / mandatoryRequirements.length;
-    if (missingRatio > 0.2) {
+    if (missingRatio > 0.1) {
       tenderLevelBlockers.push({
         category: "SOURCE_TRACEABILITY_MISSING",
         severity: "MEDIUM",

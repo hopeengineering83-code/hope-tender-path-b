@@ -210,7 +210,10 @@ const FULL_EXTRACTION_MIN_SCORE = 80;
 const PARTIAL_EXTRACTION_MIN_SCORE = 60;
 const WEAK_MIN_SCORE = 40;
 const CRITICALLY_FAILED_SCORE = 40;
-const EXPORT_BLOCK_SCORE = 20;
+// Aligned with CRITICALLY_FAILED_SCORE so export cannot proceed on extraction
+// quality that would have blocked generation. A 20-point gap allowed "ready for
+// export" verdicts on visibly weak extraction — closing that gap here.
+const EXPORT_BLOCK_SCORE = 40;
 
 function averageScore(files: ExtractionFileMetrics[]): number | null {
   const scoredFiles = files.filter((f) => f.extractionScore !== null);
