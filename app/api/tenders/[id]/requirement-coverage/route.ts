@@ -234,7 +234,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
         req.sectionReference || req.sourcePageNumber || req.sourceExactQuote || (req.sourceConfidence ?? 0) > 0,
       );
       const hasOnlyAutoLinks = storedLinks.length === 0 && autoLinks.length > 0;
-      const isFullyCovered = !hasOnlyAutoLinks && (supportLevel === "FULL" || supportLevel === "SUBSTANTIAL" || supportLevel === "NOT_APPLICABLE") && hasSourceRef;
+      const isFullyCovered = supportLevel === "NOT_APPLICABLE" || (!hasOnlyAutoLinks && (supportLevel === "FULL" || supportLevel === "SUBSTANTIAL") && hasSourceRef);
       return {
         id: req.id,
         title: req.title,
