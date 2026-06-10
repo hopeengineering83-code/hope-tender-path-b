@@ -29,7 +29,7 @@ function result(category: SubmissionPlanCategory, rationale: string): Classifier
   return {
     category,
     rationale,
-    shouldBePlannedFile: category === "REQUIRED_OUTPUT_FILE" || category === "FORM_TEMPLATE_TO_COMPLETE" || category === "ORIGINAL_EVIDENCE_ATTACHMENT",
+    shouldBePlannedFile: category === "REQUIRED_OUTPUT_FILE" || category === "FORM_TEMPLATE_TO_COMPLETE",
   };
 }
 
