@@ -519,6 +519,8 @@ export async function getFinalSubmissionReadiness(
     recommendedAction: b.recommendedAction,
   }));
 
+  const mandatoryRequirements = tender.requirements.filter((r) => r.priority === "MANDATORY");
+
   // Plan reconciliation — used for the summary planStatus enum.
   const plan = buildSubmissionPlanWithDerivedFallback({
     id: tender.id,
@@ -707,6 +709,26 @@ export async function getFinalSubmissionReadiness(
       recommendedAction: "Review the Submission Plan Completeness panel, then confirm exact file names/order from the tender before final export. Do not treat derived rows as official tender forms.",
     });
   }
+  // Hard block when the confirmed submission plan lists files that have not yet
+  // been generated — exporting an incomplete package would omit required documents.
+  if (missingPlan.length > 0 && hasExplicitPlanScope) {
+    tenderLevelBlockers.push({
+      category: "SUBMISSION_PLAN_DOCUMENTS_MISSING",
+      severity: "HIGH",
+      title: `${missingPlan.length} submission plan document(s) have not been generated: ${missingPlan.map((d) => d.exactFileName ?? d.name).join(", ")}.`,
+      recommendedAction: "Generate the missing documents from the Generate Documents panel before attempting final export.",
+    });
+  }
+  // Hard block when the tender has mandatory requirements but no submission plan
+  // has been built at all — the export package cannot be correctly planned.
+  if (requiredPlanCount === 0 && !hasExplicitPlanScope && mandatoryRequirements.length > 0) {
+    tenderLevelBlockers.push({
+      category: "MANDATORY_REQUIREMENTS_NO_SUBMISSION_PLAN",
+      severity: "HIGH",
+      title: `Tender has ${mandatoryRequirements.length} mandatory requirement(s) but no submission plan has been built — the export package cannot be correctly planned.`,
+      recommendedAction: "Run Build Plan to construct the submission plan from the mandatory requirements before export.",
+    });
+  }
   if (analysisSource === "REGEX_FALLBACK_AI_ERROR") {
     tenderLevelBlockers.push({
       category: "ANALYSIS_REGEX_FALLBACK_UNAPPROVED",
@@ -765,7 +787,6 @@ export async function getFinalSubmissionReadiness(
   // no sourceExactQuote), push a MEDIUM-severity blocker.
   // Threshold tightened from 20% → 10%: a 20% tolerance allowed 4 of 5
   // critical requirements to be untraceable before surfacing the warning.
-  const mandatoryRequirements = tender.requirements.filter((r) => r.priority === "MANDATORY");
   if (mandatoryRequirements.length > 0) {
     const missingTraceability = mandatoryRequirements.filter(
       (r) =>
