@@ -540,7 +540,7 @@ async function handleStreamingAnalyze(
               }
               const previousNotes = (tenderRecord.notes ?? "").split("\n").filter((line) => !/^Analysis source:/i.test(line.trim()) && !/^Analysis fallback diagnostics:/i.test(line.trim()));
               const notes = [...previousNotes, `Analysis source: Regex fallback (${diagnostics.category}).`, diagnosticsLine].filter(Boolean).join("\n").trim() || null;
-              await tx.tender.update({ where: { id }, data: { analysisSummary: `${result.summary}\n\nFast fallback used because AI analysis did not complete. ${diagnosticsLine}`, exactFileNaming: JSON.stringify(result.exactFileNaming), exactFileOrder: JSON.stringify(result.exactFileOrder), notes, status: "ANALYSIS_REQUIRES_REVIEW", stage: "ANALYSIS" } });
+              await tx.tender.update({ where: { id }, data: { analysisSummary: `${result.summary}\n\nFast fallback used because AI analysis did not complete. ${diagnosticsLine}`, exactFileNaming: JSON.stringify(result.exactFileNaming), exactFileOrder: JSON.stringify(result.exactFileOrder), notes, status: "ANALYSIS_REQUIRES_REVIEW", stage: "ANALYSIS", analysisExtractionStatus: "REGEX_FALLBACK_FROM_WEAK_EXTRACTION" } });
             });
             analysisResult = { ai: false, fallback: true, analysisSource: "REGEX_FALLBACK", summary: result.summary, requirementCount: result.requirements.length, fallbackDiagnostics: diagnostics, providerDiagnostics, nextAction: "RETRY_AI_ANALYZE_OR_APPROVE_FALLBACK" };
           }
@@ -557,7 +557,7 @@ async function handleStreamingAnalyze(
             }
             const previousNotes = (tenderRecord.notes ?? "").split("\n").filter((line) => !/^Analysis source:/i.test(line.trim()) && !/^Analysis fallback diagnostics:/i.test(line.trim()));
             const notes = [...previousNotes, `Analysis source: Regex fallback (${diagnostics.category}).`, diagnosticsLine].filter(Boolean).join("\n").trim() || null;
-            await tx.tender.update({ where: { id }, data: { analysisSummary: `${result.summary}\n\nFast fallback used because AI analysis did not complete. ${diagnosticsLine}`, exactFileNaming: JSON.stringify(result.exactFileNaming), exactFileOrder: JSON.stringify(result.exactFileOrder), notes, status: "FALLBACK_DRAFT_CREATED", stage: "ANALYSIS" } });
+            await tx.tender.update({ where: { id }, data: { analysisSummary: `${result.summary}\n\nFast fallback used because AI analysis did not complete. ${diagnosticsLine}`, exactFileNaming: JSON.stringify(result.exactFileNaming), exactFileOrder: JSON.stringify(result.exactFileOrder), notes, status: "FALLBACK_DRAFT_CREATED", stage: "ANALYSIS", analysisExtractionStatus: "REGEX_FALLBACK_FROM_WEAK_EXTRACTION" } });
           });
           analysisResult = { ai: false, fallback: false, analysisSource: "REGEX_FALLBACK", summary: result.summary, requirementCount: result.requirements.length, fallbackDiagnostics: diagnostics, providerDiagnostics: buildProviderDiagnosticsSnapshot() };
         }
@@ -756,6 +756,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           notes,
           status: tenderStatus,
           stage: "ANALYSIS",
+          analysisExtractionStatus: "REGEX_FALLBACK_FROM_WEAK_EXTRACTION",
         },
       });
     });

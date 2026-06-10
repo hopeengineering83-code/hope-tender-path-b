@@ -226,6 +226,24 @@ describe("AI Analyze route — extraction gate wiring (source assertions)", () =
       "AI Analyze route must inspect extraction score or weak-extraction status",
     );
   });
+
+  it("streaming regex fallback sets analysisExtractionStatus to REGEX_FALLBACK_FROM_WEAK_EXTRACTION", () => {
+    // Regression: before this fix, both streaming and non-streaming regex fallback
+    // paths left analysisExtractionStatus null, so export/generate gates could not
+    // detect the fallback and would silently allow generation over a regex-only analysis.
+    const fallbackBlocks = src.split("REGEX_FALLBACK_FROM_WEAK_EXTRACTION");
+    assert.ok(
+      fallbackBlocks.length >= 4,
+      `ai-analyze route must set analysisExtractionStatus = "REGEX_FALLBACK_FROM_WEAK_EXTRACTION" in at least 3 locations (streaming AI-error, streaming no-AI, non-streaming runRegexFallback). Found ${fallbackBlocks.length - 1} occurrence(s).`,
+    );
+  });
+
+  it("non-streaming runRegexFallback sets analysisExtractionStatus to REGEX_FALLBACK_FROM_WEAK_EXTRACTION", () => {
+    assert.ok(
+      src.includes("analysisExtractionStatus: \"REGEX_FALLBACK_FROM_WEAK_EXTRACTION\""),
+      "runRegexFallback must persist analysisExtractionStatus so generate/export gates can detect the fallback",
+    );
+  });
 });
 
 // ── 7. Build Plan route source-level gate checks ─────────────────────────────
