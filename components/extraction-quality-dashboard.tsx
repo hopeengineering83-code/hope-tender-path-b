@@ -38,6 +38,12 @@ function scoreBadge(score: number, status: FileStatus) {
   );
 }
 
+function sectionCountLabel(count: number | null, documentLevel: boolean) {
+  if (count === null) return "—";
+  if (count <= 0) return "0";
+  return documentLevel ? "✓" : `${count}p`;
+}
+
 export async function ExtractionQualityDashboard({ tenderId }: { tenderId: string }) {
   try {
     await prismaReady;
@@ -63,7 +69,7 @@ export async function ExtractionQualityDashboard({ tenderId }: { tenderId: strin
       return (
         <section className="mb-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
           <div className="flex items-center gap-2">
-            <span>📄</span>
+            <span aria-hidden="true">📄</span>
             <h2 className="text-base font-semibold text-slate-700">Extraction Quality</h2>
           </div>
           <p className="mt-2 text-sm text-slate-500">No files uploaded yet.</p>
@@ -74,7 +80,6 @@ export async function ExtractionQualityDashboard({ tenderId }: { tenderId: strin
     const fileData = files.map((file) => {
       const name = file.originalFileName || file.fileName;
       const text = file.extractedText ?? null;
-      // Check corruption on first 200 chars only — avoid loading entire text blob
       const textSample = text ? text.slice(0, 200) : null;
       const corrupted =
         textSample && textSample.trim().length > 20
@@ -100,7 +105,6 @@ export async function ExtractionQualityDashboard({ tenderId }: { tenderId: strin
 
       const notYetExtracted = text === null;
 
-      // Derive a human-friendly file type from mimeType or file extension
       const fileType =
         file.mimeType === "application/pdf"
           ? "PDF"
@@ -113,6 +117,8 @@ export async function ExtractionQualityDashboard({ tenderId }: { tenderId: strin
                 : file.fileName?.split(".").pop()?.toUpperCase() ?? null;
 
       const perPage = text ? assessExtractionQualityPerPage(text) : null;
+      const detectionMode = perPage?.detectionMode ?? "EMPTY";
+      const documentLevelDetection = detectionMode === "DOCUMENT_LEVEL";
 
       return {
         id: file.id,
@@ -128,6 +134,8 @@ export async function ExtractionQualityDashboard({ tenderId }: { tenderId: strin
         status,
         quality,
         notYetExtracted,
+        detectionMode,
+        documentLevelDetection,
         submissionPages: perPage?.submissionInstructionPages.length ?? null,
         evaluationPages: perPage?.evaluationCriteriaPages.length ?? null,
         requiredDocPages: perPage?.requiredDocumentPages.length ?? null,
@@ -152,13 +160,12 @@ export async function ExtractionQualityDashboard({ tenderId }: { tenderId: strin
       </span>
     );
 
-    // Determine overall recommended action
     let recommendedAction: string;
     if (fileData.some((f) => f.corrupted)) {
       recommendedAction =
         "Enable OCR or upload a clearer scan before running AI Analyze";
     } else if (fileData.some((f) => f.score < 45)) {
-      recommendedAction = "Re-extract or upload a higher-quality PDF";
+      recommendedAction = "Re-extract or upload a higher-quality PDF/DOCX";
     } else if (fileData.some((f) => f.score < 75)) {
       recommendedAction = "Review extraction quality before generating documents";
     } else {
@@ -168,47 +175,47 @@ export async function ExtractionQualityDashboard({ tenderId }: { tenderId: strin
 
     return (
       <section className="mb-4 rounded-2xl border bg-white p-5 shadow-sm">
-        {/* Header */}
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="flex items-center gap-2">
-            <span className="text-lg">📄</span>
+            <span className="text-lg" aria-hidden="true">📄</span>
             <div>
               <h2 className="text-base font-bold text-slate-900">Extraction Quality</h2>
               <p className="text-xs text-slate-500">
-                Per-file breakdown of page extraction coverage and quality
+                Per-file breakdown of extraction coverage and tender-section detection
               </p>
             </div>
           </div>
           {headerBadge}
         </div>
 
-        {/* Per-file cards */}
         <div className="mt-4 grid gap-4 lg:grid-cols-2">
           {fileData.map((file) => (
             <div
               key={file.id}
               className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm"
             >
-              {/* File name + type + status */}
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
                   <p className="truncate font-semibold text-slate-900">{file.name}</p>
-                  <div className="mt-0.5 flex items-center gap-2">
+                  <div className="mt-0.5 flex flex-wrap items-center gap-2">
                     {file.fileType && (
                       <span className="text-xs uppercase text-slate-400">{file.fileType}</span>
                     )}
                     {statusPill(file.status)}
+                    {file.documentLevelDetection && (
+                      <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-semibold text-blue-700">
+                        Document-level detection
+                      </span>
+                    )}
                   </div>
                 </div>
                 <div className="flex-shrink-0">{scoreBadge(file.score, file.status)}</div>
               </div>
 
-              {/* Not yet extracted notice */}
               {file.notYetExtracted ? (
                 <p className="mt-3 text-xs italic text-slate-500">Not yet extracted</p>
               ) : (
                 <>
-                  {/* Pages grid */}
                   <div className="mt-3 grid grid-cols-4 gap-2 text-center">
                     {(
                       [
@@ -231,10 +238,13 @@ export async function ExtractionQualityDashboard({ tenderId }: { tenderId: strin
                     ))}
                   </div>
 
-                  {/* Coverage */}
                   <div className="mt-3">
                     {file.totalPages === null || file.totalPages === 0 ? (
-                      <p className="text-xs text-slate-400">Page count unknown</p>
+                      <p className="text-xs text-slate-400">
+                        {file.documentLevelDetection
+                          ? "Page count unknown — DOCX/text whole-document detection used"
+                          : "Page count unknown"}
+                      </p>
                     ) : file.coverage !== null ? (
                       <>
                         <div className="flex items-center justify-between text-xs text-slate-500">
@@ -267,7 +277,6 @@ export async function ExtractionQualityDashboard({ tenderId }: { tenderId: strin
                     ) : null}
                   </div>
 
-                  {/* Content page detection */}
                   {(file.submissionPages !== null || file.evaluationPages !== null || file.requiredDocPages !== null || file.clientDetailPages !== null) && (
                     <div className="mt-3 grid grid-cols-4 gap-1.5 text-center text-xs">
                       {[
@@ -279,14 +288,13 @@ export async function ExtractionQualityDashboard({ tenderId }: { tenderId: strin
                         <div key={label as string} className={`rounded-lg border px-1 py-1.5 ${(count as number) > 0 ? "border-green-200 bg-green-50" : "border-red-200 bg-red-50"}`}>
                           <p className="text-[9px] uppercase text-slate-400 leading-tight">{label as string}</p>
                           <p className={`mt-0.5 font-bold ${(count as number) > 0 ? "text-green-700" : "text-red-600"}`}>
-                            {(count as number) > 0 ? `${count}p` : "0"}
+                            {sectionCountLabel(count as number, file.documentLevelDetection)}
                           </p>
                         </div>
                       ))}
                     </div>
                   )}
 
-                  {/* Inline warnings */}
                   <div className="mt-2 space-y-1">
                     {file.corrupted && (
                       <p className="text-xs text-red-700">
@@ -310,17 +318,17 @@ export async function ExtractionQualityDashboard({ tenderId }: { tenderId: strin
                       )}
                     {!file.corrupted && !file.notYetExtracted && file.submissionPages === 0 && file.score >= 45 && (
                       <p className="text-xs text-amber-700">
-                        ⚠ No submission instruction pages detected — deadline and submission method may be missing
+                        ⚠ No submission instructions detected — deadline and submission method may be missing
                       </p>
                     )}
                     {!file.corrupted && !file.notYetExtracted && file.evaluationPages === 0 && file.score >= 45 && (
                       <p className="text-xs text-slate-400 italic">
-                        No evaluation criteria pages detected
+                        No evaluation criteria detected
                       </p>
                     )}
                     {!file.corrupted && !file.notYetExtracted && file.clientDetailPages === 0 && file.score >= 45 && (
                       <p className="text-xs text-amber-700">
-                        ⚠ No client/contact detail pages detected — procuring entity name, submission contact, and address may be missing
+                        ⚠ No client/contact details detected — procuring entity name, submission contact, and address may be missing
                       </p>
                     )}
                   </div>
@@ -330,7 +338,6 @@ export async function ExtractionQualityDashboard({ tenderId }: { tenderId: strin
           ))}
         </div>
 
-        {/* Recommended action banner */}
         <div
           className={`mt-4 rounded-xl border px-4 py-3 text-sm ${
             anyPoor
