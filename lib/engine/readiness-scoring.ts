@@ -80,6 +80,10 @@ export type ReadinessScoreInput = {
   metadataCompletenessRatio?: number | null;
   /** Count of metadata fields that failed validation (e.g. "Bid-Team to confirm"). */
   metadataInvalidCount?: number | null;
+  /** True when the client/procuring entity name is contaminated by portal noise. */
+  metadataContaminated?: boolean | null;
+  /** Extraction status set by AI Analyze; used to cap score when extraction was weak or corrupted. */
+  analysisExtractionStatus?: string | null;
 
   // Source / evidence
   /** 0..1 fraction of requirements with a source reference. */
@@ -327,6 +331,27 @@ export function computeReadinessScore(input: ReadinessScoreInput): ReadinessScor
       dimension: "analysisSource",
       capScore: 45,
       reason: "Analysis came from regex fallback. Readiness is capped at 45 until AI analysis is re-run or a human explicitly approves the fallback analysis.",
+    });
+  }
+  if (input.analysisExtractionStatus === "EXTRACTION_CORRUPTED_AI_SKIPPED") {
+    applicableCaps.push({
+      dimension: "analysisSource",
+      capScore: 30,
+      reason: "AI Analyze was skipped because tender extraction was corrupted — requirements and metadata may be incomplete. Readiness is capped at 30 until the document is re-extracted and re-analyzed.",
+    });
+  }
+  if (input.analysisExtractionStatus === "REGEX_FALLBACK_FROM_WEAK_EXTRACTION") {
+    applicableCaps.push({
+      dimension: "analysisSource",
+      capScore: 40,
+      reason: "AI analysis used regex/deterministic fallback due to weak extraction — requirements may be incomplete. Readiness is capped at 40 until re-extracted and re-analyzed.",
+    });
+  }
+  if (input.metadataContaminated) {
+    applicableCaps.push({
+      dimension: "metadataCompleteness",
+      capScore: 50,
+      reason: "Client/procuring entity name is contaminated by portal noise or unrelated text. Readiness is capped at 50 until the metadata contamination is corrected.",
     });
   }
   if (input.analysisSource === "HUMAN_APPROVED_REGEX_FALLBACK") {

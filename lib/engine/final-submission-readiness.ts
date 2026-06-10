@@ -884,6 +884,8 @@ export async function getFinalSubmissionReadiness(
   // finalExportGateOk correctly reflects the blocked state.
   const readinessScoreResult = computeReadinessScore({
     analysisSource,
+    analysisExtractionStatus: (tender as { analysisExtractionStatus?: string | null }).analysisExtractionStatus,
+    metadataContaminated: tender.metadataContaminated,
     metadataCompletenessRatio: metadata.overallRatio,
     metadataInvalidCount: metadata.invalidFields.length,
     sourceReferenceCoverage,
