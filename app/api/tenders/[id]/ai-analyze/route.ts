@@ -208,12 +208,13 @@ async function handleStreamingAnalyze(
           const existingJob = await prisma.aiJob.findFirst({
             where: { id: continueJobId, tenderId: id, userId },
           });
-          if (existingJob?.output) {
-            try {
-              const savedOutput = safeParseJsonObject(existingJob.output) as { completedChunks?: number; contentHash?: string };
-              startFromChunk = savedOutput.completedChunks ?? 0;
-              existingContentHash = savedOutput.contentHash;
-            } catch { /* ignore parse errors — do a full re-run */ }
+          const savedOutput = parseAiAnalyzeJobOutput(existingJob?.output);
+          if (savedOutput) {
+            previousChunkResults = normalizePreviousChunkResults(savedOutput.chunkResults);
+            startFromChunk = previousChunkResults.length > 0
+              ? Math.max(...previousChunkResults.map((entry) => entry.index)) + 1
+              : (typeof savedOutput.completedChunks === "number" ? savedOutput.completedChunks : 0);
+            existingContentHash = typeof savedOutput.contentHash === "string" ? savedOutput.contentHash : undefined;
           }
         }
 
