@@ -472,12 +472,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         const contentBlockers: string[] = [];
         if (!anySubmission) contentBlockers.push("No submission instruction pages were detected in the extracted text. Submission deadlines, addresses, and methods cannot be verified.");
         if (!anyRequiredDocs) contentBlockers.push("No required documents/forms pages were detected. The generated proposal may be missing mandatory annexures or official forms.");
+        if (!anyEvaluation) contentBlockers.push("No evaluation criteria pages were detected in the extracted text. The generated proposal cannot be scored correctly without evaluation criteria — re-extract or run OCR before generating documents.");
         if (contentBlockers.length > 0) {
           return NextResponse.json({
             errorCode: "CRITICAL_CONTENT_PAGES_MISSING",
-            error: "Generation blocked: critical tender sections (submission instructions or required documents) were not found in the extracted text. Re-extract the PDF or run OCR to ensure these sections are readable before generating documents.",
+            error: "Generation blocked: critical tender sections (submission instructions, required documents, or evaluation criteria) were not found in the extracted text. Re-extract the PDF or run OCR to ensure these sections are readable before generating documents.",
             blockers: contentBlockers,
-            evaluationCriteriaMissing: !anyEvaluation,
             nextAction: "OPEN_EXTRACTION_QUALITY",
             diagnosticId: `content-pages-missing-${id}`,
           }, { status: 422 });

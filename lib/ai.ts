@@ -1317,12 +1317,19 @@ function mergeAnalysisResults(parts: AIAnalysisResult[]): AIAnalysisResult {
   const clientNameSourcePage = firstDefined((p) => p.clientNameSourcePage ?? undefined);
   const clientNameSourceQuote = firstDefined((p) => p.clientNameSourceQuote ?? undefined);
   const submissionEmailSourcePage = firstDefined((p) => p.submissionEmailSourcePage ?? undefined);
-  // Merge contactDetailsSource: combine all keys, first-non-null wins per key
+  // Merge contactDetailsSource: prefer entries with real source data (non-null page or quote).
+  // Earlier chunks may output null for a key that appears in a later chunk — "best wins" ensures
+  // donorAgency/implementingAgency found in chunk 3 are not silently dropped by a null entry from chunk 0.
   const contactDetailsSource: Record<string, { page: number | null; quote: string | null }> = {};
   for (const part of parts) {
     if (part.contactDetailsSource) {
       for (const [key, val] of Object.entries(part.contactDetailsSource)) {
-        if (!(key in contactDetailsSource)) contactDetailsSource[key] = val;
+        const existing = contactDetailsSource[key];
+        const existingHasData = existing && (existing.page !== null || existing.quote !== null);
+        const newHasData = val.page !== null || val.quote !== null;
+        if (!existing || (!existingHasData && newHasData)) {
+          contactDetailsSource[key] = val;
+        }
       }
     }
   }
@@ -1489,7 +1496,8 @@ JSON structure required:
     "procuringEntityName": {"page": page_number_or_null, "quote": "verbatim snippet or null"},
     "legalClientName": {"page": page_number_or_null, "quote": "verbatim snippet or null"},
     "donorAgency": {"page": page_number_or_null, "quote": "verbatim snippet or null"},
-    "implementingAgency": {"page": page_number_or_null, "quote": "verbatim snippet or null"}
+    "implementingAgency": {"page": page_number_or_null, "quote": "verbatim snippet or null"},
+    "procurementReferenceNumber": {"page": page_number_or_null, "quote": "verbatim snippet or null"}
   },
   "submissionMethodSourcePage": page_number_integer_or_null,
   "submissionMethodSourceQuote": "verbatim snippet showing the submission method, or null",

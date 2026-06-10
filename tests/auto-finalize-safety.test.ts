@@ -244,4 +244,37 @@ describe("auto-finalize — pre-flight gate contract (route source)", () => {
     assert.match(source, /extractedText/);
     assert.match(source, /extractionScore/);
   });
+
+  it("gate 3: blocks when analysisExtractionStatus is OCR_REQUIRED", () => {
+    assert.ok(
+      source.includes('"OCR_REQUIRED"') && source.includes("ANALYSIS_FROM_DEGRADED_EXTRACTION"),
+      "auto-finalize must block with ANALYSIS_FROM_DEGRADED_EXTRACTION when analysisExtractionStatus is OCR_REQUIRED",
+    );
+  });
+
+  it("gate 3: blocks when analysisExtractionStatus is REGEX_FALLBACK_FROM_WEAK_EXTRACTION", () => {
+    assert.ok(
+      source.includes('"REGEX_FALLBACK_FROM_WEAK_EXTRACTION"'),
+      "auto-finalize must check for REGEX_FALLBACK_FROM_WEAK_EXTRACTION in analysisExtractionStatus",
+    );
+  });
+
+  it("gate 3: blocks when analysisExtractionStatus is PARTIAL_EXTRACTION_AI_ANALYZED", () => {
+    assert.ok(
+      source.includes('"PARTIAL_EXTRACTION_AI_ANALYZED"'),
+      "auto-finalize must check for PARTIAL_EXTRACTION_AI_ANALYZED in analysisExtractionStatus",
+    );
+  });
+
+  it("gate 3: suggests RUN_OCR_OR_UPLOAD_CLEARER_SCAN for OCR_REQUIRED status", () => {
+    assert.ok(
+      source.includes('"RUN_OCR_OR_UPLOAD_CLEARER_SCAN"'),
+      "auto-finalize must suggest RUN_OCR_OR_UPLOAD_CLEARER_SCAN when analysis was skipped due to corrupted extraction",
+    );
+  });
+
+  it("returns at least 4 × status:422 for the 4 pre-flight gates", () => {
+    const count = (source.match(/status: 422/g) ?? []).length;
+    assert.ok(count >= 4, `Expected ≥4 × 'status: 422' for gates 1, 2, 2b, 3 — got ${count}`);
+  });
 });

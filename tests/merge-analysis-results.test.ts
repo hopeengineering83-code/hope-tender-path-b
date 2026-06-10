@@ -240,6 +240,85 @@ describe("mergeAnalysisResults — partial success (2/3 chunks)", () => {
   });
 });
 
+// ─── contactDetailsSource chunk merge — best wins (Phase 32 fix) ──────────────
+// Earlier chunks may output null for keys found only in later chunks (e.g. donorAgency
+// is on page 40 so chunk 0 returns { page: null, quote: null } but chunk 3 returns
+// { page: 40, quote: "World Bank" }). The merge must prefer the real data over the null.
+
+type DetailsSource = Record<string, { page: number | null; quote: string | null }>;
+
+function mergeContactDetailsSource(parts: Array<DetailsSource | null | undefined>): DetailsSource {
+  const merged: DetailsSource = {};
+  for (const part of parts) {
+    if (!part) continue;
+    for (const [key, val] of Object.entries(part)) {
+      const existing = merged[key];
+      const existingHasData = existing && (existing.page !== null || existing.quote !== null);
+      const newHasData = val.page !== null || val.quote !== null;
+      if (!existing || (!existingHasData && newHasData)) {
+        merged[key] = val;
+      }
+    }
+  }
+  return merged;
+}
+
+describe("contactDetailsSource merge — best-wins logic", () => {
+  it("keeps a real entry from a later chunk when an earlier chunk has null for the same key", () => {
+    const chunk0: DetailsSource = {
+      procuringEntityName: { page: 1, quote: "Ministry of Water" },
+      donorAgency: { page: null, quote: null }, // not found in chunk 0
+    };
+    const chunk3: DetailsSource = {
+      donorAgency: { page: 40, quote: "World Bank" }, // found in chunk 3
+    };
+    const merged = mergeContactDetailsSource([chunk0, chunk3]);
+    assert.equal(merged.donorAgency.page, 40, "Later chunk's real donorAgency must win over null from chunk 0");
+    assert.equal(merged.donorAgency.quote, "World Bank");
+  });
+
+  it("keeps first-chunk data when later chunk has null", () => {
+    const chunk0: DetailsSource = { country: { page: 2, quote: "Ethiopia" } };
+    const chunk3: DetailsSource = { country: { page: null, quote: null } };
+    const merged = mergeContactDetailsSource([chunk0, chunk3]);
+    assert.equal(merged.country.page, 2, "Real data from chunk 0 must not be overwritten by null from chunk 3");
+  });
+
+  it("keeps first real entry when both chunks have real data for the same key", () => {
+    const chunk0: DetailsSource = { clientContactName: { page: 5, quote: "John Doe" } };
+    const chunk2: DetailsSource = { clientContactName: { page: 22, quote: "Jane Smith" } };
+    const merged = mergeContactDetailsSource([chunk0, chunk2]);
+    assert.equal(merged.clientContactName.quote, "John Doe", "First real entry must not be replaced by a later real entry");
+  });
+
+  it("captures new keys introduced by later chunks", () => {
+    const chunk0: DetailsSource = { procuringEntityName: { page: 1, quote: "GoE" } };
+    const chunk2: DetailsSource = { implementingAgency: { page: 30, quote: "NPCU" } };
+    const merged = mergeContactDetailsSource([chunk0, chunk2]);
+    assert.ok("implementingAgency" in merged, "Keys first seen in later chunks must be included");
+    assert.equal(merged.implementingAgency.quote, "NPCU");
+  });
+
+  it("preserves procurementReferenceNumber when provided by any chunk", () => {
+    const chunk0: DetailsSource = { procuringEntityName: { page: 1, quote: "DoT" } };
+    const chunk1: DetailsSource = { procurementReferenceNumber: { page: 3, quote: "RFP/DoT/2025/001" } };
+    const merged = mergeContactDetailsSource([chunk0, chunk1]);
+    assert.ok("procurementReferenceNumber" in merged);
+    assert.equal(merged.procurementReferenceNumber.quote, "RFP/DoT/2025/001");
+  });
+
+  it("handles empty parts array gracefully", () => {
+    const merged = mergeContactDetailsSource([]);
+    assert.deepEqual(merged, {});
+  });
+
+  it("handles null/undefined parts without throwing", () => {
+    const chunk0: DetailsSource = { country: { page: 1, quote: "Ethiopia" } };
+    const merged = mergeContactDetailsSource([chunk0, null, undefined]);
+    assert.equal(merged.country.quote, "Ethiopia");
+  });
+});
+
 // ─── JSON repair: largest balanced-object extraction path ─────────────────────
 // Mirrors the allMatches path in analyzeOneChunk (lib/ai.ts:1145–1149).
 //

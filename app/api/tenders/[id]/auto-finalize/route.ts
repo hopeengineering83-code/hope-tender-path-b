@@ -212,6 +212,26 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }, { status: 422 });
   }
 
+  // Gate 3: analysis extraction status — auto-finalize must not mark documents
+  // READY_FOR_EXPORT when AI Analyze was skipped or ran on a degraded extraction.
+  // Note: "EXTRACTION_CORRUPTED_AI_SKIPPED" is tender.status (job status);
+  // analysisExtractionStatus is "OCR_REQUIRED" in that case.
+  const badAnalysisStatuses = [
+    "OCR_REQUIRED",
+    "REGEX_FALLBACK_FROM_WEAK_EXTRACTION",
+    "EXTRACTION_WEAK_REVIEW_REQUIRED",
+    "PARTIAL_EXTRACTION_AI_ANALYZED",
+  ] as const;
+  const currentAnalysisStatus = (tender as Record<string, unknown>).analysisExtractionStatus as string | undefined;
+  if (currentAnalysisStatus && badAnalysisStatuses.includes(currentAnalysisStatus as (typeof badAnalysisStatuses)[number])) {
+    return NextResponse.json({
+      error: `Auto-finalize blocked: AI analysis was performed on degraded extraction (${currentAnalysisStatus}). Re-run AI Analyze after fixing extraction quality before finalizing documents.`,
+      code: "ANALYSIS_FROM_DEGRADED_EXTRACTION",
+      analysisExtractionStatus: currentAnalysisStatus,
+      nextAction: currentAnalysisStatus === "OCR_REQUIRED" ? "RUN_OCR_OR_UPLOAD_CLEARER_SCAN" : "RERUN_AI_ANALYZE",
+    }, { status: 422 });
+  }
+
   // Resolve analysis source once (includes DB approval check) so the seven-pass
   // gate correctly honours human approval of regex-fallback analyses.
   const resolvedAnalysisSource = await detectAnalysisSourceWithApproval(prisma, tenderId, tender);

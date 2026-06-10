@@ -570,6 +570,63 @@ describe("generate-missing-plan-files: gate 5 — required documents pages or ma
   });
 });
 
+// ── Evaluation criteria as hard blocker in generate/route.ts ─────────────────
+// Per CLAUDE.md: evaluation criteria pages are required for correct scoring.
+// generate/route.ts must block — not just warn — when eval criteria pages are absent.
+
+describe("generate route — evaluation criteria missing is a hard blocker", () => {
+  it("generate route source includes evaluation criteria in the CRITICAL_CONTENT_PAGES_MISSING block", () => {
+    const { readFileSync } = require("node:fs");
+    const { resolve } = require("node:path");
+    const src = readFileSync(
+      resolve(process.cwd(), "app/api/tenders/[id]/generate/route.ts"),
+      "utf8",
+    );
+    assert.ok(
+      src.includes("anyEvaluation") && src.includes('"CRITICAL_CONTENT_PAGES_MISSING"'),
+      "generate route must check anyEvaluation inside the CRITICAL_CONTENT_PAGES_MISSING block",
+    );
+  });
+
+  it("evaluation criteria blocker message is in contentBlockers array (not just advisory)", () => {
+    const { readFileSync } = require("node:fs");
+    const { resolve } = require("node:path");
+    const src = readFileSync(
+      resolve(process.cwd(), "app/api/tenders/[id]/generate/route.ts"),
+      "utf8",
+    );
+    // Must contain anyEvaluation pushed into contentBlockers — not just set as evaluationCriteriaMissing flag
+    assert.ok(
+      src.includes("contentBlockers.push") && src.includes("anyEvaluation"),
+      "generate route must push an eval criteria message into contentBlockers, not just surface it as a warning flag",
+    );
+  });
+
+  it("evaluation criteria blocking logic: contentBlockers includes a blocker when !anyEvaluation", () => {
+    // Simulate the generate route's content-page gate logic
+    const contentBlockers: string[] = [];
+    const anySubmission = true;
+    const anyRequiredDocs = true;
+    const anyEvaluation = false;
+    if (!anySubmission) contentBlockers.push("No submission instruction pages detected.");
+    if (!anyRequiredDocs) contentBlockers.push("No required documents pages detected.");
+    if (!anyEvaluation) contentBlockers.push("No evaluation criteria pages detected — re-extract before generating.");
+    assert.ok(contentBlockers.length > 0, "Should have a blocker when evaluation criteria missing");
+    assert.ok(contentBlockers.some((b) => /evaluation criteria/i.test(b)));
+  });
+
+  it("no blocker when all three content page types are present", () => {
+    const contentBlockers: string[] = [];
+    const anySubmission = true;
+    const anyRequiredDocs = true;
+    const anyEvaluation = true;
+    if (!anySubmission) contentBlockers.push("No submission instruction pages detected.");
+    if (!anyRequiredDocs) contentBlockers.push("No required documents pages detected.");
+    if (!anyEvaluation) contentBlockers.push("No evaluation criteria pages detected.");
+    assert.equal(contentBlockers.length, 0, "No blockers when all content page types are present");
+  });
+});
+
 describe("generate-missing-plan-files: gate 6 — submission plan must have been built", () => {
   it("blocks when no PLANNED rows exist and requirements are present", () => {
     const plannedCount = 0;
