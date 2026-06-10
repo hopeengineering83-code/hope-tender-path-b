@@ -550,7 +550,7 @@ describe("generate-missing-plan-files: gate 5 — required documents pages or ma
   it("allows when required-doc pages are not found but mandatory requirements exist", () => {
     const hasPageMarkers = true;
     const anyRequiredDocs = false;
-    const mandatoryCount = 3;
+    const mandatoryCount: number = 3;
     const blocked = hasPageMarkers && !anyRequiredDocs && mandatoryCount === 0;
     assert.equal(blocked, false, "Mandatory requirements are a valid alternative to detected required-doc pages");
   });
@@ -580,8 +580,8 @@ describe("generate-missing-plan-files: gate 6 — submission plan must have been
   });
 
   it("allows when PLANNED rows exist", () => {
-    const plannedCount = 3;
-    const requirementsLength = 5;
+    const plannedCount: number = 3;
+    const requirementsLength: number = 5;
     const hasExplicit = false;
     const blocked = requirementsLength > 0 && !hasExplicit && plannedCount === 0;
     assert.equal(blocked, false);

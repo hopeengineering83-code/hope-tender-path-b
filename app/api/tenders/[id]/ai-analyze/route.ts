@@ -400,6 +400,13 @@ async function handleStreamingAnalyze(
 
             emit({ phase: "saving", message: "Saving analysis results…" });
 
+            // Derive effective extraction method from the uploaded files so each
+            // requirement row carries source-traceability for how its text was obtained.
+            const effectiveExtractionMethod: string = tenderRecord.files.some(
+              (f: { extractionMethod?: string | null; ocrPages?: number | null }) =>
+                f.extractionMethod === "ocr" || (f.ocrPages != null && f.ocrPages > 0),
+            ) ? "ocr" : "text";
+
             await prisma.$transaction(async (tx) => {
               await tx.tenderRequirement.deleteMany({ where: { tenderId: id } });
               for (const req of aiResult.requirements) {
@@ -411,6 +418,7 @@ async function handleStreamingAnalyze(
                     pageLimit: req.pageLimit ?? null, restrictions: req.restrictions ?? null,
                     sectionReference: req.sectionReference ?? null, sourceSectionHeading: req.sectionReference ?? null,
                     sourcePageNumber: req.sourcePage ?? null, sourceExactQuote: req.sourceQuote ?? null,
+                    sourceExtractionMethod: effectiveExtractionMethod,
                     sourceConfidence: typeof req.sourcePage === "number" && req.sourcePage > 0 ? 0.8 : (typeof req.sourceQuote === "string" && req.sourceQuote.trim().length > 10 ? 0.7 : 0),
                   },
                 });
@@ -898,6 +906,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         }
         const aiResult = aiMeta.result;
 
+        const effectiveExtractionMethodNonStreaming: string = tenderRecord.files.some(
+          (f: { extractionMethod?: string | null; ocrPages?: number | null }) =>
+            f.extractionMethod === "ocr" || (f.ocrPages != null && f.ocrPages > 0),
+        ) ? "ocr" : "text";
+
         await prisma.$transaction(async (tx) => {
           await tx.tenderRequirement.deleteMany({ where: { tenderId: id } });
           for (const req of aiResult.requirements) {
@@ -916,6 +929,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
                 sourceSectionHeading: req.sectionReference ?? null,
                 sourcePageNumber: req.sourcePage ?? null,
                 sourceExactQuote: req.sourceQuote ?? null,
+                sourceExtractionMethod: effectiveExtractionMethodNonStreaming,
                 sourceConfidence: typeof req.sourcePage === "number" && req.sourcePage > 0 ? 0.8 : (typeof req.sourceQuote === "string" && req.sourceQuote.trim().length > 10 ? 0.7 : 0),
               },
             });

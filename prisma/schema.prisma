@@ -466,11 +466,12 @@ model TenderRequirement {
   // and verbatim quote. The Copilot, evaluator, and compliance matrix
   // all read from these fields when surfacing "where in the tender does
   // this come from?" answers.
-  sourceTenderFileId   String?
-  sourcePageNumber     Int?
-  sourceSectionHeading String?
-  sourceExactQuote     String?
-  sourceConfidence     Float              @default(0)
+  sourceTenderFileId     String?
+  sourcePageNumber       Int?
+  sourceSectionHeading   String?
+  sourceExactQuote       String?
+  sourceExtractionMethod String?  // "text" | "ocr" | "manual"
+  sourceConfidence       Float              @default(0)
   complianceMatrixRows ComplianceMatrix[]
   createdAt            DateTime           @default(now())
   updatedAt            DateTime           @updatedAt
