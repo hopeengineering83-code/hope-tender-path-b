@@ -255,7 +255,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     tenderStatus: tender.status,
     tenderStage: tender.stage,
     pipeline: {
-      upload: { ok: hasFiles, fileCount: tender.files.length, files: fileQuality.map((f) => ({ name: f.name, mimeType: f.mimeType, severity: f.severity, score: f.extractionScore, corrupted: f.corrupted })) },
+      upload: { ok: hasFiles, fileCount: tender.files.length, files: fileQuality.map((f) => ({ name: f.name, mimeType: f.mimeType, severity: f.severity, score: f.extractionScore, corrupted: f.corrupted, totalPages: f.totalPages, extractedPages: f.extractedPages, ocrPages: f.ocrPages, failedPages: f.failedPages })) },
       extraction: { ok: extractionOk, avgScore: avgExtractionScore, anyCorrupted, anyFailed, status: analysisStatus ?? "NOT_RUN" },
       aiAnalyze: { ok: aiAnalyzeOk, analyzed: aiAnalyzed, extractionStatus: analysisStatus ?? "NOT_RUN" },
       metadata: { ok: metadataOk, missingCritical: metadataReport.missingCritical.map((f) => f.field), notApplicable: metadataReport.notApplicableFields.map((f) => f.field), placeholders: metadataReport.placeholderCount, contaminated: tender.metadataContaminated },
