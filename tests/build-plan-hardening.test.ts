@@ -265,6 +265,7 @@ describe("submission plan build route — contentPageWarnings logic", () => {
 
     for (const text of extractedTexts) {
       const pp = assessExtractionQualityPerPage(text);
+      if (pp.detectionMode !== "PAGE_MARKERS") continue;
       totalDetected += pp.totalDetectedPages;
       if (pp.submissionInstructionPages.length > 0) anySubmission = true;
       if (pp.evaluationCriteriaPages.length > 0) anyEvaluation = true;
