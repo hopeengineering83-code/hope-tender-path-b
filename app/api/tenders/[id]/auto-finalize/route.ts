@@ -8,6 +8,8 @@ import { containsPricingLeakage } from "../../../../../lib/engine/pricing-hygien
 import { generateWithFallback } from "../../../../../lib/ai";
 import { applyActiveUploadedLetterheadToTenderDocuments } from "../../../../../lib/engine/apply-active-letterhead";
 import { buildSubmissionPlan, buildSubmissionPlanWithDerivedFallback } from "../../../../../lib/engine/submission-plan";
+import { assessExtractionQuality } from "../../../../../lib/extraction-quality";
+import { isExtractionAcceptableForGeneration } from "../../../../../lib/engine/extraction-quality-gate";
 import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import { extractRequestId } from "../../../../../lib/request-id";
 import { logAction } from "../../../../../lib/audit";
@@ -160,6 +162,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     where: { id: tenderId, userId: actor.id },
     include: {
       requirements: true,
+      files: {
+        select: {
+          id: true, originalFileName: true, fileName: true, extractedText: true,
+          extractionScore: true, totalPages: true, extractedPages: true, ocrPages: true, failedPages: true,
+        },
+      },
       generatedDocuments: {
         where: { generationStatus: { not: "SUPERSEDED" } },
         orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }],
@@ -168,6 +176,41 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     },
   });
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
+
+  // ── Pre-flight gates (same contract as generate-missing-plan-files) ──────
+  // Gate 1: extraction quality — auto-finalize must not mark docs READY_FOR_EXPORT
+  // when the underlying tender was never reliably extracted.
+  const effectiveFiles = tender.files.map((file) => {
+    const quality = assessExtractionQuality(file.extractedText, file.originalFileName || file.fileName);
+    return { ...file, extractionScore: Math.min(file.extractionScore ?? quality.score, quality.score), quality };
+  });
+  if (effectiveFiles.length > 0 && !isExtractionAcceptableForGeneration(effectiveFiles)) {
+    return NextResponse.json({
+      error: "Auto-finalize blocked: tender extraction is not reliable enough. Re-extract or run OCR first.",
+      code: "EXTRACTION_QUALITY_INSUFFICIENT",
+      nextAction: "OPEN_EXTRACTION_QUALITY",
+    }, { status: 422 });
+  }
+
+  // Gate 2: metadata contamination
+  if (tender.metadataContaminated) {
+    return NextResponse.json({
+      error: "Auto-finalize blocked: tender metadata is flagged as contaminated. Review and correct client details first.",
+      code: "METADATA_CONTAMINATED",
+      nextAction: "REVIEW_METADATA",
+    }, { status: 422 });
+  }
+
+  // Gate 2b: client display name must exist — documents finalised without a client
+  // name would contain blank/placeholder headings in the generated DOCX.
+  const clientDisplayName = tender.clientName || tender.procuringEntityName;
+  if (!clientDisplayName) {
+    return NextResponse.json({
+      error: "Auto-finalize blocked: client/procuring entity name is missing. Provide client details before finalizing.",
+      code: "MISSING_CLIENT_DETAILS",
+      nextAction: "FILL_CLIENT_METADATA",
+    }, { status: 422 });
+  }
 
   // Resolve analysis source once (includes DB approval check) so the seven-pass
   // gate correctly honours human approval of regex-fallback analyses.

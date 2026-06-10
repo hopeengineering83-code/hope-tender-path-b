@@ -101,6 +101,53 @@ describe("POST /api/tenders/[id]/repair-metadata contract", () => {
   });
 });
 
+describe("POST /api/tenders/[id]/repair-metadata — placeholder rejection (Gap C fix)", () => {
+  const source = readFileSync("app/api/tenders/[id]/repair-metadata/route.ts", "utf8");
+
+  it("imports containsMetadataPlaceholder", () => {
+    assert.match(source, /containsMetadataPlaceholder/);
+  });
+
+  it("rejects extracted string values that contain a placeholder before storing", () => {
+    assert.match(source, /containsMetadataPlaceholder\(rawValue\)/);
+  });
+
+  it("returns REJECTED status for placeholder values (never stores them)", () => {
+    assert.match(source, /status:\s*"REJECTED"/);
+    assert.match(source, /placeholder pattern and was not stored/);
+  });
+
+  it("uses continue to skip audit log and DB write when value is a placeholder", () => {
+    // The continue must appear inside the placeholder check block (up to 500 chars away)
+    assert.match(source, /containsMetadataPlaceholder[\s\S]{1,500}continue;/);
+  });
+});
+
+describe("POST /api/tenders/[id]/engine — SELECT includes entity fields (Gap B fix)", () => {
+  const source = readFileSync("app/api/tenders/[id]/engine/route.ts", "utf8");
+
+  it("selects procuringEntityName", () => {
+    assert.match(source, /procuringEntityName:\s*true/);
+  });
+
+  it("selects legalClientName", () => {
+    assert.match(source, /legalClientName:\s*true/);
+  });
+
+  it("selects donorAgency", () => {
+    assert.match(source, /donorAgency:\s*true/);
+  });
+
+  it("selects implementingAgency", () => {
+    assert.match(source, /implementingAgency:\s*true/);
+  });
+
+  it("calls computeStoredMetadataPatch after selecting entity fields so sanitizer can nullify them", () => {
+    assert.match(source, /computeStoredMetadataPatch/);
+    assert.match(source, /listInvalidStoredFields/);
+  });
+});
+
 describe("MANUAL_CONFIRMED audit on tender PATCH", () => {
   const source = readFileSync("app/api/tenders/[id]/route.ts", "utf8");
 

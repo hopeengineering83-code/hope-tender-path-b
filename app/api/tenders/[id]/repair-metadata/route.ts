@@ -31,6 +31,7 @@ import {
   type ExtractorFieldName,
   type ExtractedFieldOrMissing,
 } from "../../../../../lib/engine/tender-field-extractors";
+import { containsMetadataPlaceholder } from "../../../../../lib/engine/metadata-validators";
 
 export const dynamic = "force-dynamic";
 
@@ -156,14 +157,25 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       const dt = extraction.value as Date;
       (updates as Record<string, unknown>)[field] = dt;
     } else {
-      (updates as Record<string, unknown>)[field] = extraction.value;
+      const rawValue = extraction.value as string;
+      // Reject placeholder values ("TBC", "N/A", "Bid-Team to confirm", etc.)
+      // to prevent metadata contamination from being stored as real values.
+      if (containsMetadataPlaceholder(rawValue)) {
+        results[field] = {
+          status: "REJECTED",
+          reason: "Extracted value contains a placeholder pattern and was not stored to prevent metadata contamination.",
+          value: rawValue,
+        };
+        continue;
+      }
+      (updates as Record<string, unknown>)[field] = rawValue;
       // When we repair clientName, also sync procuringEntityName if it's empty —
       // the two fields are conceptually the same; keeping them in sync avoids
       // the need for || fallback patterns in every consumer.
       if (field === "clientName") {
         const current = (tender as unknown as Record<string, unknown>).procuringEntityName;
         if (!current) {
-          (updates as Record<string, unknown>).procuringEntityName = extraction.value;
+          (updates as Record<string, unknown>).procuringEntityName = rawValue;
         }
       }
     }

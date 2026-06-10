@@ -15,6 +15,7 @@
 
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
+import { readFileSync } from "node:fs";
 import { isFinalExportCandidateDocument } from "../lib/engine/document-output-state";
 import { containsPricingLeakage, isSensitiveFinancialOrLegalDoc } from "../lib/engine/pricing-hygiene";
 
@@ -198,5 +199,49 @@ describe("auto-finalize — batch-size constraint logic", () => {
     const candidates: unknown[] = [];
     const batch = candidates.slice(0, 3);
     assert.equal(batch.length, 0);
+  });
+});
+
+// ─── Pre-flight gate contract (route source checks) ───────────────────────
+// Auto-finalize must block before polishing/marking documents when extraction
+// is bad, metadata is contaminated, or the client name is missing — the same
+// contract as generate-missing-plan-files.
+
+describe("auto-finalize — pre-flight gate contract (route source)", () => {
+  const source = readFileSync("app/api/tenders/[id]/auto-finalize/route.ts", "utf8");
+
+  it("imports isExtractionAcceptableForGeneration", () => {
+    assert.match(source, /isExtractionAcceptableForGeneration/);
+  });
+
+  it("imports assessExtractionQuality", () => {
+    assert.match(source, /assessExtractionQuality/);
+  });
+
+  it("gate 1: blocks when extraction quality is insufficient", () => {
+    assert.match(source, /EXTRACTION_QUALITY_INSUFFICIENT/);
+    assert.match(source, /!isExtractionAcceptableForGeneration/);
+  });
+
+  it("gate 2: blocks when tender metadata is contaminated", () => {
+    assert.match(source, /METADATA_CONTAMINATED/);
+    assert.match(source, /metadataContaminated/);
+  });
+
+  it("gate 2b: blocks when client/procuring entity name is missing", () => {
+    assert.match(source, /MISSING_CLIENT_DETAILS/);
+    assert.match(source, /clientDisplayName/);
+    assert.match(source, /clientName.*procuringEntityName|procuringEntityName.*clientName/);
+  });
+
+  it("returns 422 for all pre-flight gate failures", () => {
+    const status422Count = (source.match(/status: 422/g) ?? []).length;
+    assert.ok(status422Count >= 3, `Expected at least 3 × '{ status: 422 }' for the 3 pre-flight gates, got ${status422Count}`);
+  });
+
+  it("fetches files with extraction data for the gate check", () => {
+    assert.match(source, /files:\s*\{/);
+    assert.match(source, /extractedText/);
+    assert.match(source, /extractionScore/);
   });
 });

@@ -43,6 +43,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         submissionMethod: true, submissionAddress: true, submissionEmails: true,
         analysisSummary: true, evaluationMethodology: true, exactFileNaming: true,
         exactFileOrder: true, notes: true, intakeSummary: true, clientContactName: true,
+        procuringEntityName: true, legalClientName: true, donorAgency: true, implementingAgency: true,
         files: {
           select: {
             id: true, originalFileName: true, fileName: true, extractedText: true,
