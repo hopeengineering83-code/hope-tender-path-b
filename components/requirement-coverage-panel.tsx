@@ -143,8 +143,8 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
       setLinkAction(key, { pending: false, error: null, success: "Confirmed" });
       void load();
       router.refresh();
-    } catch {
-      setLinkAction(key, { pending: false, error: "Network error", success: null });
+    } catch (e) {
+      setLinkAction(key, { pending: false, error: e instanceof Error ? e.message : "Network error", success: null });
     }
   };
 
@@ -169,8 +169,8 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
       }
       setLinkAction(key, { pending: false, error: null, success: "Rejected" });
       router.refresh();
-    } catch {
-      setLinkAction(key, { pending: false, error: "Network error", success: null });
+    } catch (e) {
+      setLinkAction(key, { pending: false, error: e instanceof Error ? e.message : "Network error", success: null });
     }
   };
 
@@ -251,8 +251,8 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
       setCoverageActionStates((prev) => ({ ...prev, [key]: { pending: false, error: null, success: `Set to ${supportLevel}` } }));
       void load();
       router.refresh();
-    } catch {
-      setCoverageActionStates((prev) => ({ ...prev, [key]: { pending: false, error: "Network error", success: null } }));
+    } catch (e) {
+      setCoverageActionStates((prev) => ({ ...prev, [key]: { pending: false, error: e instanceof Error ? e.message : "Network error", success: null } }));
     }
   };
 
@@ -328,9 +328,10 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <button onClick={load} className="rounded px-2 py-1 text-xs text-gray-500 hover:bg-gray-100" aria-label="Refresh coverage">↻</button>
+          <button type="button" onClick={load} className="rounded px-2 py-1 text-xs text-gray-500 hover:bg-gray-100" aria-label="Refresh coverage">↻</button>
           {data && data.rows.some((r) => r.evidenceLinks.some((l) => l.autoLinked && !actionStates[`${r.id}-${l.id}`]?.success)) && (
             <button
+              type="button"
               onClick={() => void confirmAllSafe()}
               disabled={confirmingAll}
               className="rounded border border-green-300 bg-green-50 px-2 py-1 text-xs font-medium text-green-800 hover:bg-green-100 disabled:opacity-50"
@@ -338,10 +339,10 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
               {confirmingAll ? "Confirming…" : "Confirm all as partial"}
             </button>
           )}
-          <button onClick={() => void loadTraceability()} disabled={traceLoading} className="rounded px-2 py-1 text-xs text-gray-500 hover:bg-gray-100 disabled:opacity-50">
+          <button type="button" onClick={() => void loadTraceability()} disabled={traceLoading} aria-expanded={traceOpen} aria-controls="traceability-panel" className="rounded px-2 py-1 text-xs text-gray-500 hover:bg-gray-100 disabled:opacity-50">
             {traceLoading ? "…" : traceOpen ? "▲ Traceability" : "▼ Traceability"}
           </button>
-          <button onClick={() => setExpanded((v) => !v)} className="rounded px-2 py-1 text-xs text-gray-500 hover:bg-gray-100">
+          <button type="button" onClick={() => setExpanded((v) => !v)} aria-expanded={expanded} aria-controls="req-coverage-list" className="rounded px-2 py-1 text-xs text-gray-500 hover:bg-gray-100">
             {expanded ? "▲ Collapse" : "▼ Show requirements"}
           </button>
         </div>
@@ -357,7 +358,7 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
 
       {/* Traceability summary */}
       {traceOpen && traceability && (
-        <div className="border-b border-gray-100 px-5 py-3 bg-amber-50">
+        <div id="traceability-panel" className="border-b border-gray-100 px-5 py-3 bg-amber-50">
           <p className="text-xs font-semibold uppercase tracking-wide text-amber-700 mb-2">Traceability Audit</p>
           <div className="grid grid-cols-4 gap-3 text-xs text-center">
             <div><div className="text-base font-bold text-gray-800">{traceability.summary.requirements}</div><div className="text-gray-500">Requirements</div></div>
@@ -400,7 +401,7 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
 
       {/* Requirement list */}
       {expanded && (
-        <div className="divide-y divide-gray-100">
+        <div id="req-coverage-list" className="divide-y divide-gray-100">
           {/* Filter tabs */}
           <div className="flex gap-1 px-5 py-2">
             {(["ALL", "UNCOVERED", "PARTIAL", "COVERED"] as const).map((f) => (
@@ -424,7 +425,10 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
             return (
               <div key={row.id} className="px-5 py-3">
                 <button
+                  type="button"
                   onClick={() => toggleRow(row.id)}
+                  aria-expanded={isOpen}
+                  aria-controls={`req-row-${row.id}`}
                   className="flex w-full items-start gap-3 text-left"
                 >
                   <span className={`mt-0.5 h-2.5 w-2.5 shrink-0 rounded-full ${cfg.dot}`} aria-hidden="true" />
@@ -451,7 +455,7 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
                 </button>
 
                 {isOpen && (
-                  <div className="ml-5 mt-2 space-y-3">
+                  <div id={`req-row-${row.id}`} className="ml-5 mt-2 space-y-3">
                     {/* Source reference */}
                     <div>
                       <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Source Reference</p>
@@ -591,9 +595,9 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
 
       {/* N/A reason inline prompt */}
       {naReasonPrompt && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-sm rounded-xl bg-white p-5 shadow-xl">
-            <h4 className="mb-2 text-sm font-semibold text-gray-900">Mark as Not Applicable</h4>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" role="presentation">
+          <div role="dialog" aria-modal="true" aria-labelledby="na-dialog-title" className="w-full max-w-sm rounded-xl bg-white p-5 shadow-xl">
+            <h4 id="na-dialog-title" className="mb-2 text-sm font-semibold text-gray-900">Mark as Not Applicable</h4>
             <p className="mb-3 text-xs text-gray-600">Requirement: <strong>{naReasonPrompt.title}</strong></p>
             <label className="mb-1 block text-xs font-medium text-gray-700">Reason (required)</label>
             <textarea

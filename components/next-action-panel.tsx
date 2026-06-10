@@ -3,13 +3,6 @@
 // Shows the current workflow step + the single most important action the
 // user must take next. Uses the pipeline-diagnostic logic inline (no extra
 // HTTP round-trip) so it renders correctly during SSR.
-//
-// Workflow order:
-//   1 Upload Tender   6 Confirm Evidence
-//   2 Fix Extraction  7 Generate Docs
-//   3 Run AI Analyze  8 Validate Docs
-//   4 Confirm Metadata  9 Review Manifest
-//   5 Build Plan       10 Export ZIP
 
 import { getSession } from "../lib/auth";
 import { prisma, prismaReady } from "../lib/prisma";
@@ -60,6 +53,19 @@ const STEP_INDEX: Record<WorkflowStep, number> = {
   COMPLETE: 10,
 };
 
+const STEP_TARGETS = [
+  "#tender-files",
+  "#tender-files",
+  "#ai-analyze-section",
+  "#tender-edit-form",
+  "#requirement-coverage",
+  "#submission-plan-completeness",
+  "#generated-documents",
+  "#generated-documents",
+  "#final-package-manifest",
+  "#export-package",
+] as const;
+
 function stepColor(step: WorkflowStep) {
   if (step === "COMPLETE") return "border-emerald-200 bg-emerald-50";
   if (step === "EXPORT_ZIP" || step === "REVIEW_MANIFEST") return "border-blue-200 bg-blue-50";
@@ -90,6 +96,9 @@ export async function NextActionPanel({ tenderId }: { tenderId: string }) {
       submissionAddress: true, submissionEmails: true,
       submissionMethod: true, deadline: true, currency: true,
       exactFileNaming: true,
+      metadataOverrides: {
+        select: { field: true, fieldState: true, overrideValue: true },
+      },
       files: {
         select: {
           extractedText: true, originalFileName: true, fileName: true,
@@ -116,7 +125,6 @@ export async function NextActionPanel({ tenderId }: { tenderId: string }) {
 
   if (!tender) return null;
 
-  // ── Derive pipeline state ─────────────────────────────────────────────────
   const hasFiles = tender.files.length > 0;
 
   const fileQuality = tender.files.map((f) => {
@@ -149,12 +157,12 @@ export async function NextActionPanel({ tenderId }: { tenderId: string }) {
     currency: tender.currency ?? null,
     hasSubmissionRules: Boolean(tender.submissionMethod || tender.submissionEmails || tender.submissionAddress),
     requirementCount: tender.requirements.length,
-  });
+  }, tender.metadataOverrides);
   const metadataOk = metaReport.missingCritical.length === 0 &&
     metaReport.placeholderCount === 0 &&
     !tender.metadataContaminated;
 
-  const mandatoryReqs = tender.requirements.filter((r) => r.priority === "MANDATORY");
+  const mandatoryReqs = tender.requirements.filter((r) => r.priority === "MANDATORY" || r.priority === "CRITICAL");
   const tracedReqs = mandatoryReqs.filter(
     (r) => (r.sourceConfidence ?? 0) > 0 || r.sourcePageNumber != null || (r.sourceExactQuote ?? "").trim().length > 0,
   );
@@ -170,7 +178,6 @@ export async function NextActionPanel({ tenderId }: { tenderId: string }) {
     (d) => d.validationStatus === "PASSED" || d.validationStatus === "VALIDATED",
   );
 
-  // ── Derive next step ──────────────────────────────────────────────────────
   let step: WorkflowStep;
   let label: string;
   let reason: string;
@@ -194,7 +201,7 @@ export async function NextActionPanel({ tenderId }: { tenderId: string }) {
     if (tender.analysisExtractionStatus === "EXTRACTION_CORRUPTED_AI_SKIPPED") blockers.push("Analysis skipped: corrupted extraction");
   } else if (!metadataOk) {
     step = "CONFIRM_METADATA"; label = "Confirm tender metadata";
-    reason = "Critical metadata fields are missing or contain placeholder text. Fill them before building the submission plan.";
+    reason = "Critical metadata fields are missing or contain placeholder text. Fill them, mark not applicable, or ignore if the tender does not issue them.";
     metaReport.missingCritical.slice(0, 4).forEach((f) => blockers.push(`Missing: ${f.field}`));
     if (tender.metadataContaminated) blockers.push("Client name contains portal noise — needs manual correction");
     if (metaReport.placeholderCount > 0) blockers.push(`${metaReport.placeholderCount} metadata field(s) contain placeholder text`);
@@ -205,8 +212,8 @@ export async function NextActionPanel({ tenderId }: { tenderId: string }) {
       blockers.push("No requirements extracted");
     } else {
       const untraced = mandatoryReqs.length - tracedReqs.length;
-      reason = `${untraced} mandatory requirement(s) lack source page/quote traceability. Run AI Analyze again or use the repair tool.`;
-      blockers.push(`${untraced} untraced mandatory requirements`);
+      reason = `${untraced} mandatory/critical requirement(s) lack source page/quote traceability. Run AI Analyze again or use the repair tool.`;
+      blockers.push(`${untraced} untraced mandatory/critical requirements`);
     }
   } else if (!hasPlan) {
     step = "BUILD_PLAN"; label = "Build submission plan";
@@ -232,12 +239,12 @@ export async function NextActionPanel({ tenderId }: { tenderId: string }) {
   const currentIndex = STEP_INDEX[step];
 
   return (
-    <section className={`mb-4 rounded-2xl border p-5 shadow-sm ${stepColor(step)}`}>
+    <section className={`mb-4 rounded-2xl border p-5 shadow-sm ${stepColor(step)}`} aria-labelledby="next-required-action-title">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Next required action</p>
-          <h2 className="mt-1 text-xl font-bold text-slate-900">
-            <span className="mr-2 text-slate-400">{stepIcon(step)}</span>
+          <h2 id="next-required-action-title" className="mt-1 text-xl font-bold text-slate-900">
+            <span className="mr-2 text-slate-400" aria-hidden="true">{stepIcon(step)}</span>
             {label}
           </h2>
           <p className="mt-1 max-w-2xl text-sm text-slate-700">{reason}</p>
@@ -248,25 +255,26 @@ export async function NextActionPanel({ tenderId }: { tenderId: string }) {
         </div>
       </div>
 
-      {/* Workflow breadcrumb */}
-      <div className="mt-4 flex flex-wrap gap-1.5">
+      <nav className="mt-4 flex flex-wrap gap-1.5" aria-label="Tender workflow shortcuts">
         {STEPS.map((s, i) => {
           const done = i < currentIndex;
           const active = i === currentIndex;
+          const baseClass = done ? "bg-emerald-100 text-emerald-700 hover:bg-emerald-200" :
+            active ? "bg-slate-900 text-white hover:bg-slate-800" :
+            "bg-slate-100 text-slate-500 hover:bg-slate-200";
           return (
-            <span
+            <a
               key={s}
-              className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${
-                done ? "bg-emerald-100 text-emerald-700" :
-                active ? "bg-slate-900 text-white" :
-                "bg-slate-100 text-slate-400"
-              }`}
+              href={STEP_TARGETS[i]}
+              aria-current={active ? "step" : undefined}
+              className={`rounded-full px-2.5 py-0.5 text-xs font-medium transition-colors ${baseClass}`}
+              title={`Go to ${s}`}
             >
-              {done ? "✓ " : active ? "→ " : ""}{s}
-            </span>
+              <span aria-hidden="true">{done ? "✓ " : active ? "→ " : ""}</span>{s}
+            </a>
           );
         })}
-      </div>
+      </nav>
 
       {blockers.length > 0 && (
         <div className="mt-3 rounded-lg border border-red-200 bg-white px-4 py-2.5 text-sm">
