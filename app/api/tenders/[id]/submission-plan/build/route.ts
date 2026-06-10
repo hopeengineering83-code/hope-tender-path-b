@@ -305,6 +305,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       let totalDetected = 0;
       for (const file of tender.files) {
         const pp = assessExtractionQualityPerPage(file.extractedText);
+        if (pp.detectionMode !== "PAGE_MARKERS") continue;
         totalDetected += pp.totalDetectedPages;
         if (pp.submissionInstructionPages.length > 0) anySubmission = true;
         if (pp.evaluationCriteriaPages.length > 0) anyEvaluation = true;

@@ -328,7 +328,7 @@ export async function ExtractionQualityDashboard({ tenderId }: { tenderId: strin
                     )}
                     {!file.corrupted && !file.notYetExtracted && file.clientDetailPages === 0 && file.score >= 45 && (
                       <p className="text-xs text-amber-700">
-                        ⚠ No client/contact details detected — procuring entity name, submission contact, and address may be missing
+                        ⚠ No client/contact detail pages detected — procuring entity name, submission contact, and address may be missing
                       </p>
                     )}
                   </div>
