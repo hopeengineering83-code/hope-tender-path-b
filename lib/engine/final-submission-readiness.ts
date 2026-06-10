@@ -715,7 +715,7 @@ export async function getFinalSubmissionReadiness(
     tenderLevelBlockers.push({
       category: "SUBMISSION_PLAN_DOCUMENTS_MISSING",
       severity: "HIGH",
-      title: `${missingPlan.length} submission plan document(s) have not been generated: ${missingPlan.map((d) => d.exactFileName ?? d.name).join(", ")}.`,
+      title: `${missingPlan.length} submission plan document(s) have not been generated: ${missingPlan.map((d) => d.exactFileName).join(", ")}.`,
       recommendedAction: "Generate the missing documents from the Generate Documents panel before attempting final export.",
     });
   }
