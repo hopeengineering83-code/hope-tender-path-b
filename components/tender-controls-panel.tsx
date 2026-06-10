@@ -131,6 +131,7 @@ export default function TenderControlsPanel({ tenderId }: { tenderId: string }) 
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [resolvingId, setResolvingId] = useState<string | null>(null);
+  const [resolveErrors, setResolveErrors] = useState<Record<string, string>>({});
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -271,6 +272,7 @@ export default function TenderControlsPanel({ tenderId }: { tenderId: string }) 
 
   const resolveControl = async (record: TenderControlRecord) => {
     setResolvingId(record.id);
+    setResolveErrors((prev) => { const next = { ...prev }; delete next[record.id]; return next; });
     try {
       const res = await fetch(`/api/tenders/${tenderId}/controls`, {
         method: "POST",
@@ -284,12 +286,12 @@ export default function TenderControlsPanel({ tenderId }: { tenderId: string }) 
           status: "RESOLVED",
         }),
       });
-      const json = await res.json();
-      if (!res.ok || !json.success) throw new Error(json.error ?? "Failed to resolve control");
+      const json = await res.json().catch(() => ({})) as { success?: boolean; error?: string };
+      if (!res.ok || !json.success) throw new Error(json.error ?? `Resolve failed (${res.status})`);
       void load();
       router.refresh();
-    } catch {
-      // silently ignore — user can retry
+    } catch (e) {
+      setResolveErrors((prev) => ({ ...prev, [record.id]: e instanceof Error ? e.message : "Failed to resolve control" }));
     } finally {
       setResolvingId(null);
     }
@@ -349,14 +351,17 @@ export default function TenderControlsPanel({ tenderId }: { tenderId: string }) 
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <button onClick={load} className="rounded px-2 py-1 text-xs text-gray-500 hover:bg-gray-100" aria-label="Refresh controls">↻</button>
+          <button type="button" onClick={load} className="rounded px-2 py-1 text-xs text-gray-500 hover:bg-gray-100" aria-label="Refresh controls">↻</button>
           <button
+            type="button"
             onClick={() => { setShowForm((v) => !v); setSubmitError(null); }}
+            aria-expanded={showForm}
+            aria-controls="controls-add-form"
             className="rounded bg-blue-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-blue-700"
           >
             + Add control
           </button>
-          <button onClick={() => setExpanded((v) => !v)} className="rounded px-2 py-1 text-xs text-gray-500 hover:bg-gray-100">
+          <button type="button" onClick={() => setExpanded((v) => !v)} aria-expanded={expanded} aria-controls="controls-ledger-list" className="rounded px-2 py-1 text-xs text-gray-500 hover:bg-gray-100">
             {expanded ? "▲ Collapse" : "▼ Show ledger"}
           </button>
         </div>
@@ -439,7 +444,7 @@ export default function TenderControlsPanel({ tenderId }: { tenderId: string }) 
 
       {/* Add control form */}
       {showForm && (
-        <form onSubmit={submitControl} className="border-b border-gray-100 bg-gray-50 px-5 py-4 space-y-3">
+        <form id="controls-add-form" onSubmit={submitControl} className="border-b border-gray-100 bg-gray-50 px-5 py-4 space-y-3">
           <p className="text-xs font-semibold text-gray-700 uppercase tracking-wide">New control entry</p>
           <div className="grid grid-cols-2 gap-3">
             <div>
@@ -554,7 +559,7 @@ export default function TenderControlsPanel({ tenderId }: { tenderId: string }) 
 
       {/* Ledger list */}
       {expanded && (
-        <div className="divide-y divide-gray-100">
+        <div id="controls-ledger-list" className="divide-y divide-gray-100">
           {/* Filters */}
           <div className="flex flex-wrap gap-2 px-5 py-2">
             {/* Status filter */}
@@ -585,7 +590,7 @@ export default function TenderControlsPanel({ tenderId }: { tenderId: string }) 
                     onClick={() => setTypeFilter(typeFilter === t ? "ALL" : t)}
                     className={`rounded px-2 py-1 text-xs font-medium transition-colors ${typeFilter === t ? "bg-gray-700 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}
                   >
-                    {cfg.icon} {cfg.label} ({summary.byType[t]})
+                    <span aria-hidden="true">{cfg.icon}</span> {cfg.label} ({summary.byType[t]})
                   </button>
                 );
               })}
@@ -604,10 +609,13 @@ export default function TenderControlsPanel({ tenderId }: { tenderId: string }) 
             return (
               <div key={record.id} className={`px-5 py-3 ${isResolved ? "opacity-60" : ""}`}>
                 <button
+                  type="button"
                   onClick={() => toggleRow(record.id)}
+                  aria-expanded={isOpen}
+                  aria-controls={`control-row-${record.id}`}
                   className="flex w-full items-start gap-3 text-left"
                 >
-                  <span className="mt-0.5 shrink-0 text-base leading-none">{typeCfg.icon}</span>
+                  <span aria-hidden="true" className="mt-0.5 shrink-0 text-base leading-none">{typeCfg.icon}</span>
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="text-sm font-medium text-gray-900">{record.title}</span>
@@ -635,7 +643,7 @@ export default function TenderControlsPanel({ tenderId }: { tenderId: string }) 
                 </button>
 
                 {isOpen && (
-                  <div className="ml-7 mt-2 space-y-2">
+                  <div id={`control-row-${record.id}`} className="ml-7 mt-2 space-y-2">
                     <div className="grid grid-cols-3 gap-2 text-xs text-gray-600">
                       <div><span className="text-gray-400">Logged:</span> {new Date(record.createdAt).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" })}</div>
                       {record.owner && <div><span className="text-gray-400">Owner:</span> {record.owner}</div>}
@@ -645,13 +653,19 @@ export default function TenderControlsPanel({ tenderId }: { tenderId: string }) 
                       <p className="text-xs text-gray-700 rounded bg-gray-50 px-3 py-2 border border-gray-100">{record.description}</p>
                     )}
                     {!isResolved && (
-                      <button
-                        onClick={() => void resolveControl(record)}
-                        disabled={resolving}
-                        className="rounded border border-green-300 bg-green-50 px-2.5 py-1 text-xs font-medium text-green-800 hover:bg-green-100 disabled:opacity-50"
-                      >
-                        {resolving ? "Resolving…" : "Mark resolved"}
-                      </button>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => void resolveControl(record)}
+                          disabled={resolving}
+                          className="rounded border border-green-300 bg-green-50 px-2.5 py-1 text-xs font-medium text-green-800 hover:bg-green-100 disabled:opacity-50"
+                        >
+                          {resolving ? "Resolving…" : "Mark resolved"}
+                        </button>
+                        {resolveErrors[record.id] && (
+                          <span className="text-xs text-red-600">{resolveErrors[record.id]}</span>
+                        )}
+                      </div>
                     )}
                   </div>
                 )}

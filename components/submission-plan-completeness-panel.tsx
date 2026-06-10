@@ -289,10 +289,10 @@ export function SubmissionPlanCompletenessPanel({ tenderId }: { tenderId: string
   }, [data]);
 
   if (loading && !data) {
-    return <section className="mb-4 rounded-2xl border border-slate-200 bg-white p-5 text-sm text-slate-500">Loading submission plan completeness…</section>;
+    return <section aria-busy="true" aria-label="Submission plan completeness" className="mb-4 rounded-2xl border border-slate-200 bg-white p-5 text-sm text-slate-500">Loading submission plan completeness…</section>;
   }
   if (building && !data) {
-    return <section className="mb-4 rounded-2xl border border-slate-200 bg-white p-5 text-sm text-slate-500">Building submission plan…</section>;
+    return <section aria-busy="true" aria-label="Submission plan completeness" className="mb-4 rounded-2xl border border-slate-200 bg-white p-5 text-sm text-slate-500">Building submission plan…</section>;
   }
   if (error || !data) {
     return <section className="mb-4 rounded-2xl border border-red-200 bg-red-50 p-5 text-sm text-red-700">Could not load submission plan: {error ?? "no data"}</section>;
@@ -301,7 +301,12 @@ export function SubmissionPlanCompletenessPanel({ tenderId }: { tenderId: string
   const visibleRows = showHistorical ? data.rows : data.rows.filter((r) => r.status !== "SUPERSEDED");
 
   return (
-    <section className="mb-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm" id="submission-plan-completeness">
+    <section
+      className="mb-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"
+      id="submission-plan-completeness"
+      aria-busy={loading || building || classifying}
+      aria-label="Submission plan completeness"
+    >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h3 className="text-sm font-semibold text-slate-900">Submission Plan Completeness</h3>
@@ -310,11 +315,11 @@ export function SubmissionPlanCompletenessPanel({ tenderId }: { tenderId: string
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2 text-xs">
-          <button type="button" onClick={() => void buildPlan()} className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50" disabled={loading || building || classifying}>
+          <button type="button" onClick={() => void buildPlan()} aria-label={building ? "Building submission plan" : classifying ? "Auto-classifying documents" : "Build submission plan"} className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50" disabled={loading || building || classifying}>
             {building ? "Building…" : classifying ? "Classifying…" : "⚡ Build Plan"}
           </button>
-          <button type="button" onClick={() => void load()} className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-medium text-white hover:bg-slate-800 disabled:opacity-50" disabled={loading}>
-            Re-check
+          <button type="button" onClick={() => void load()} aria-label={loading ? "Refreshing submission plan" : "Re-check submission plan"} className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-medium text-white hover:bg-slate-800 disabled:opacity-50" disabled={loading || building || classifying}>
+            {loading ? "Checking…" : "Re-check"}
           </button>
           {data.summary.totalSuperseded > 0 && (
             <label className="ml-2 inline-flex items-center gap-1 text-[11px] text-slate-500">
