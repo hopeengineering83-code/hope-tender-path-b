@@ -60,6 +60,26 @@ const generatedDocumentDashboardSelect = {
   draftProjectCount: true,
 };
 
+const TENDER_DASHBOARD_SELECT = {
+  id: true, title: true, description: true, reference: true, clientName: true, category: true, country: true, budget: true, currency: true,
+  deadline: true, submissionMethod: true, submissionAddress: true, status: true, stage: true, intakeSummary: true, analysisSummary: true,
+  evaluationMethodology: true, notes: true, clientContactName: true, clientContactTitle: true, clientContactEmail: true, clientContactPhone: true,
+  clientAddress: true, submissionEmails: true, validityDays: true, bidBondAmount: true, bidBondCurrency: true, preBidMeetingDate: true,
+  preBidMeetingLocation: true, mandatorySiteVisit: true, numberOfCopiesRequired: true, technicalWeight: true, financialWeight: true,
+  procuringEntityName: true, legalClientName: true, donorAgency: true, implementingAgency: true, metadataContaminated: true,
+  clientNameSourcePage: true, clientNameSourceQuote: true, submissionEmailSourcePage: true, contactDetailsSourceJson: true,
+  submissionMethodSourcePage: true, submissionMethodSourceQuote: true, submissionAddressSourcePage: true, submissionAddressSourceQuote: true,
+  evaluationCriteriaSourceJson: true, analysisExtractionStatus: true, clientCity: true, clientWebsite: true, submissionEmailSubject: true,
+  preBidChannel: true, clientRepresentative: true, createdAt: true, updatedAt: true,
+  files: {
+    orderBy: { createdAt: "desc" as const },
+    select: { id: true, fileName: true, originalFileName: true, mimeType: true, size: true, classification: true, createdAt: true },
+  },
+  requirements: { orderBy: { createdAt: "asc" as const }, select: { id: true, title: true, description: true, requirementType: true, priority: true, sourceConfidence: true, sourcePageNumber: true, sourceExactQuote: true, sourceTenderFileId: true, exactFileName: true, sectionReference: true, createdAt: true, updatedAt: true } },
+  complianceGaps: { orderBy: { createdAt: "desc" as const }, select: { id: true, tenderId: true, title: true, description: true, severity: true, mitigationPlan: true, isResolved: true, resolvedNote: true, createdAt: true, updatedAt: true } },
+  generatedDocuments: { orderBy: generatedDocumentOrder, select: generatedDocumentDashboardSelect },
+};
+
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const userId = await getSession();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -70,19 +90,11 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   try {
     const tender = await prisma.tender.findFirst({
       where: { id, userId },
-      include: {
-        files: {
-          orderBy: { createdAt: "desc" },
-          select: { id: true, fileName: true, originalFileName: true, mimeType: true, size: true, classification: true, createdAt: true },
-        },
-        requirements: { orderBy: { createdAt: "asc" }, select: { id: true, title: true, description: true, requirementType: true, priority: true, sourceConfidence: true, sourcePageNumber: true, sourceExactQuote: true, sourceTenderFileId: true, exactFileName: true, sectionReference: true, createdAt: true, updatedAt: true } },
-        complianceGaps: { orderBy: { createdAt: "desc" }, select: { id: true, tenderId: true, title: true, description: true, severity: true, mitigationPlan: true, isResolved: true, resolvedNote: true, createdAt: true, updatedAt: true } },
-        generatedDocuments: { orderBy: generatedDocumentOrder, select: generatedDocumentDashboardSelect },
-      },
+      select: TENDER_DASHBOARD_SELECT,
     });
 
     if (!tender) return NextResponse.json({ error: "Not found" }, { status: 404 });
-    return NextResponse.json(await withDashboardPayload(tender));
+    return NextResponse.json(await withDashboardPayload(tender as any));
   } catch (error) {
     console.error("[GET /api/tenders/[id]] failed:", error);
     return NextResponse.json({ error: "Failed to load tender" }, { status: 500 });
@@ -143,15 +155,7 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
         status: status ?? existing.status,
         updatedAt: new Date(),
       },
-      include: {
-        files: {
-          orderBy: { createdAt: "desc" },
-          select: { id: true, fileName: true, originalFileName: true, mimeType: true, size: true, classification: true, createdAt: true },
-        },
-        requirements: { orderBy: { createdAt: "asc" }, select: { id: true, title: true, description: true, requirementType: true, priority: true, sourceConfidence: true, sourcePageNumber: true, sourceExactQuote: true, sourceTenderFileId: true, exactFileName: true, sectionReference: true, createdAt: true, updatedAt: true } },
-        complianceGaps: { orderBy: { createdAt: "desc" }, select: { id: true, tenderId: true, title: true, description: true, severity: true, mitigationPlan: true, isResolved: true, resolvedNote: true, createdAt: true, updatedAt: true } },
-        generatedDocuments: { orderBy: generatedDocumentOrder, select: generatedDocumentDashboardSelect },
-      },
+      select: TENDER_DASHBOARD_SELECT,
     });
 
     await logAction({
@@ -163,17 +167,12 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
       metadata: { tenderId: id, prevStatus, newStatus: status ?? prevStatus },
     });
 
-    // Record a MANUAL_CONFIRMED audit entry when the user provided a NEW
-    // value for one of the critical metadata fields. The metadata-repair
-    // endpoint and the AI-extracted analysis are the only other sources for
-    // these fields; logging a manual confirmation lets later panels show
-    // "this field was set by <user> on <date>" instead of "AI-extracted".
     const MANUAL_FIELDS = [
       ["clientName", existing.clientName, tender.clientName],
       ["reference", existing.reference, tender.reference],
       ["submissionMethod", existing.submissionMethod, tender.submissionMethod],
       ["submissionAddress", existing.submissionAddress, tender.submissionAddress],
-      ["deadline", existing.deadline?.toISOString() ?? null, tender.deadline?.toISOString() ?? null],
+      ["deadline", existing.deadline?.toISOString() ?? null, (tender.deadline as Date | null)?.toISOString() ?? null],
       ["evaluationMethodology", existing.evaluationMethodology, tender.evaluationMethodology],
     ] as const;
     const manuallySet = MANUAL_FIELDS
@@ -190,7 +189,7 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
       });
     }
 
-    return NextResponse.json(await withDashboardPayload(tender));
+    return NextResponse.json(await withDashboardPayload(tender as any));
   } catch (error) {
     console.error(error);
     return NextResponse.json({ error: "Failed to update tender" }, { status: 500 });
