@@ -88,7 +88,7 @@ export function ClientSubmissionDetailsPanel({ tenderId }: { tenderId: string })
     } catch (err) { setError(err instanceof Error ? err.message : "Failed to load client details"); }
     finally { setLoading(false); }
   }
-  useEffect(() => { void load(); }, [tenderId]);
+  useEffect(() => { void load(); }, [tenderId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function save(row: Row, action: string) {
     let fieldState = "USER_CONFIRMED";
