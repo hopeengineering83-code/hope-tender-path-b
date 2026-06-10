@@ -334,6 +334,22 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
     ));
   }
 
+  // ── Unknown total page count blocker ─────────────────────────────────────
+  // CLAUDE.md requires blocking export when the total page count is unknown.
+  // Only fires when we have extracted pages but no total — an empty file with
+  // null totalPages is already caught by the score check above.
+  if (tender.files && tender.files.some(f => {
+    const ff = f as { totalPages?: number | null; extractedPages?: number | null };
+    return (ff.totalPages === null || ff.totalPages === undefined) && (ff.extractedPages ?? 0) > 0;
+  })) {
+    blockers.push(tenderBlocker(
+      "EXTRACTION_PAGE_COUNT_UNKNOWN",
+      "One or more tender files have an unknown total page count. Extraction coverage cannot be verified — important pages may have been missed.",
+      "Re-extract the tender file with page detection enabled, or run OCR, before exporting.",
+      "HIGH",
+    ));
+  }
+
   // ── Submission-instructions extracted check ───────────────────────────────
   // Per CLAUDE.md the export gate must block when submission instruction pages
   // were not extracted from the tender. The generate route already enforces
@@ -393,6 +409,22 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
       "ANALYSIS_FROM_PARTIAL_EXTRACTION",
       "AI analysis was performed on a partially-extracted tender — some pages were weak, blank, or OCR-only. Exported documents may be missing requirements, evaluation criteria, or submission instructions from unread pages.",
       "Re-extract the tender file (run OCR if needed), then re-run AI Analyze to obtain a full-extraction analysis before exporting.",
+      "HIGH",
+    ));
+  }
+  if (analysisExtractionStatus === "OCR_REQUIRED") {
+    blockers.push(tenderBlocker(
+      "ANALYSIS_SKIPPED_OCR_REQUIRED",
+      "AI analysis was skipped because the tender text is corrupted or unreadable — no reliable analysis has been performed. The generated documents may be empty or invalid.",
+      "Run OCR extraction on the tender file, then re-run AI Analyze before exporting.",
+      "HIGH",
+    ));
+  }
+  if (analysisExtractionStatus === "EXTRACTION_WEAK_REVIEW_REQUIRED") {
+    blockers.push(tenderBlocker(
+      "ANALYSIS_FROM_WEAK_EXTRACTION_REVIEW",
+      "AI analysis ran on a weak extraction — the tender text had low density or quality. Generated documents may be incomplete and require human review before export.",
+      "Re-extract the tender (run OCR if needed), then re-run AI Analyze. If re-extraction is not possible, manually review all generated documents before exporting.",
       "HIGH",
     ));
   }

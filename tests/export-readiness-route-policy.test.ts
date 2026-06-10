@@ -58,4 +58,40 @@ describe("export-readiness route policy mappings", () => {
       "generate route must provide acceptPartialExtraction override mechanism",
     );
   });
+
+  it("export-readiness blocks on OCR_REQUIRED (AI analysis was skipped — no reliable analysis)", async () => {
+    const src = await readFile("lib/engine/export-readiness.ts", "utf8");
+    assert.ok(
+      src.includes('"OCR_REQUIRED"'),
+      "export-readiness must block when analysisExtractionStatus === OCR_REQUIRED (AI was skipped)",
+    );
+    assert.ok(
+      src.includes("ANALYSIS_SKIPPED_OCR_REQUIRED"),
+      "export-readiness must use ANALYSIS_SKIPPED_OCR_REQUIRED blocker category",
+    );
+  });
+
+  it("export-readiness blocks on EXTRACTION_WEAK_REVIEW_REQUIRED (AI ran on weak extraction)", async () => {
+    const src = await readFile("lib/engine/export-readiness.ts", "utf8");
+    assert.ok(
+      src.includes('"EXTRACTION_WEAK_REVIEW_REQUIRED"'),
+      "export-readiness must block when analysisExtractionStatus === EXTRACTION_WEAK_REVIEW_REQUIRED",
+    );
+    assert.ok(
+      src.includes("ANALYSIS_FROM_WEAK_EXTRACTION_REVIEW"),
+      "export-readiness must use ANALYSIS_FROM_WEAK_EXTRACTION_REVIEW blocker category",
+    );
+  });
+
+  it("export-readiness blocks when total page count is unknown (CLAUDE.md requirement)", async () => {
+    const src = await readFile("lib/engine/export-readiness.ts", "utf8");
+    assert.ok(
+      src.includes("EXTRACTION_PAGE_COUNT_UNKNOWN"),
+      "export-readiness must use EXTRACTION_PAGE_COUNT_UNKNOWN blocker category",
+    );
+    assert.ok(
+      src.includes("totalPages"),
+      "export-readiness must check totalPages for the page-count-unknown gate",
+    );
+  });
 });
