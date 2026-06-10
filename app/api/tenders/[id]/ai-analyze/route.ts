@@ -11,7 +11,7 @@ import { createNotification } from "../../../../../lib/notifications";
 import { assessExtractionQuality } from "../../../../../lib/extraction-quality";
 import { deriveExtractionStatus, isExtractionCorrupted, type TenderFileQuality } from "../../../../../lib/engine/extraction-quality-gate";
 import { detectMetadataContamination } from "../../../../../lib/engine/tender-metadata-completeness";
-import { isValidClientContact } from "../../../../../lib/engine/metadata-validators";
+import { isValidClientContact, containsMetadataPlaceholder } from "../../../../../lib/engine/metadata-validators";
 import { buildAnalysisFallbackDiagnostics, formatFallbackDiagnosticsLine, type AnalysisFallbackDiagnostics } from "../../../../../lib/engine/analysis-fallback-diagnostics";
 import { buildProviderDiagnosticsSnapshot } from "../../../../../lib/ai-provider-health";
 import { restoreHealthFromDb, persistAllHealthToDb } from "../../../../../lib/ai-provider-health-db";
@@ -449,10 +449,10 @@ async function handleStreamingAnalyze(
                   exactFileOrder: JSON.stringify(aiResult.exactFileOrder),
                   ...(aiResult.tenderCategory ? { category: aiResult.tenderCategory } : {}),
                   notes: updatedNotes, status: tenderStatus, stage: "ANALYSIS",
-                  ...(aiResult.procuringEntityName != null ? { procuringEntityName: aiResult.procuringEntityName, ...(!tenderRecord.clientName ? { clientName: aiResult.procuringEntityName } : {}) } : {}),
-                  ...(aiResult.legalClientName != null ? { legalClientName: aiResult.legalClientName } : {}),
-                  ...(aiResult.donorAgency != null ? { donorAgency: aiResult.donorAgency } : {}),
-                  ...(aiResult.implementingAgency != null ? { implementingAgency: aiResult.implementingAgency } : {}),
+                  ...(aiResult.procuringEntityName != null && !containsMetadataPlaceholder(aiResult.procuringEntityName) ? { procuringEntityName: aiResult.procuringEntityName, ...(!tenderRecord.clientName ? { clientName: aiResult.procuringEntityName } : {}) } : {}),
+                  ...(aiResult.legalClientName != null && !containsMetadataPlaceholder(aiResult.legalClientName) ? { legalClientName: aiResult.legalClientName } : {}),
+                  ...(aiResult.donorAgency != null && !containsMetadataPlaceholder(aiResult.donorAgency) ? { donorAgency: aiResult.donorAgency } : {}),
+                  ...(aiResult.implementingAgency != null && !containsMetadataPlaceholder(aiResult.implementingAgency) ? { implementingAgency: aiResult.implementingAgency } : {}),
                   ...(aiResult.country != null ? { country: aiResult.country } : {}),
                   ...(aiResult.clientAddress != null ? { clientAddress: aiResult.clientAddress } : {}),
                   ...(aiResult.clientContactName != null && isValidClientContact(aiResult.clientContactName) ? { clientContactName: aiResult.clientContactName } : {}),
@@ -979,13 +979,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
               // Use != null (not !== undefined) so a null AI result never overwrites user-entered data.
               // Also back-fill the legacy clientName when it's blank — procuringEntityName is
               // the authoritative AI-extracted value; clientName drives generation gating.
-              ...(aiResult.procuringEntityName != null ? {
+              ...(aiResult.procuringEntityName != null && !containsMetadataPlaceholder(aiResult.procuringEntityName) ? {
                 procuringEntityName: aiResult.procuringEntityName,
                 ...(!tenderRecord.clientName ? { clientName: aiResult.procuringEntityName } : {}),
               } : {}),
-              ...(aiResult.legalClientName != null ? { legalClientName: aiResult.legalClientName } : {}),
-              ...(aiResult.donorAgency != null ? { donorAgency: aiResult.donorAgency } : {}),
-              ...(aiResult.implementingAgency != null ? { implementingAgency: aiResult.implementingAgency } : {}),
+              ...(aiResult.legalClientName != null && !containsMetadataPlaceholder(aiResult.legalClientName) ? { legalClientName: aiResult.legalClientName } : {}),
+              ...(aiResult.donorAgency != null && !containsMetadataPlaceholder(aiResult.donorAgency) ? { donorAgency: aiResult.donorAgency } : {}),
+              ...(aiResult.implementingAgency != null && !containsMetadataPlaceholder(aiResult.implementingAgency) ? { implementingAgency: aiResult.implementingAgency } : {}),
               // Full contact/location fields — only update when AI returned a value
               // to avoid overwriting manually-confirmed data with null on re-runs.
               ...(aiResult.country != null ? { country: aiResult.country } : {}),

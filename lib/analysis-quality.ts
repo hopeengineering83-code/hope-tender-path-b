@@ -137,6 +137,7 @@ export function assessTenderAnalysisQuality(params: {
   const hasSubmissionMethodOrEndpoint = Boolean((params.submissionMethod ?? "").trim() || (params.submissionAddress ?? "").trim() || (params.submissionEmails ?? "").trim());
   const extractionStatusText = String(params.analysisExtractionStatus ?? "").toUpperCase();
   const extractionUnsafe = /EXTRACTION_CORRUPTED|OCR_REQUIRED|EXTRACTION_WEAK_REVIEW_REQUIRED|REGEX_FALLBACK_FROM_WEAK_EXTRACTION/.test(extractionStatusText);
+  const extractionPartial = extractionStatusText === "PARTIAL_EXTRACTION_AI_ANALYZED";
   const allAnalysisText = `${params.analysisSummary ?? ""}\n${params.evaluationMethodology ?? ""}\n${params.submissionNotes ?? ""}\n${requirements.map((req) => `${req.title ?? ""} ${req.description ?? ""} ${req.restrictions ?? ""}`).join("\n")}`;
 
   const likelyHasEvaluationLanguage = textIncludesAny(allAnalysisText, [/evaluation/i, /scor/i, /points?/i, /weight/i, /technical\s+score/i, /financial\s+score/i]);
@@ -328,6 +329,10 @@ export function assessTenderAnalysisQuality(params: {
     warnings.push("Extraction status is weak/corrupted/OCR-required; analysis cannot be trusted for downstream gates.");
     score = Math.min(score, 25);
     isUnsafe = true;
+  }
+  if (extractionPartial) {
+    warnings.push("AI analysis ran on partially-extracted tender pages — results may be missing sections. Re-extract or run OCR for a fully reliable analysis.");
+    score = Math.min(score, 74);
   }
   if (isRegexFallback) {
     isUnsafe = true;

@@ -241,9 +241,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }, { status: 422 });
   }
 
-  // Gates 4 & 5: Submission instructions and required documents pages
-  // Only enforced when PAGE_MARKERS detection is available, meaning the extraction
-  // was detailed enough to emit page-content-type annotations.
+  // Gates 4 & 5: Submission instructions and required documents pages.
+  //
+  // Two-tier check:
+  //   Tier 1 (PAGE_MARKERS available): enforce based on per-page content detection.
+  //   Tier 2 (no PAGE_MARKERS — e.g. DOCX or short single-block extraction):
+  //     fall back to checking whether AI Analyze stored the resulting submission
+  //     metadata (submissionMethod/submissionAddress/submissionEmails). If AI was
+  //     run but none of those fields are populated, submission instructions were
+  //     effectively not extracted.
   if (tender.files.length > 0) {
     let anySubmission = false;
     let anyRequiredDocs = false;
@@ -256,6 +262,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       if (pp.requiredDocumentPages.length > 0) anyRequiredDocs = true;
     }
     if (hasPageMarkers) {
+      // Tier 1: strict page-marker check
       if (!anySubmission) {
         return NextResponse.json({
           success: false, ok: false,
@@ -272,6 +279,35 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           error: "No required documents/forms pages were detected and no mandatory requirements are defined. The submission plan may be missing mandatory annexures. Review extraction quality before generating documents.",
           nextAction: "OPEN_EXTRACTION_QUALITY",
         }, { status: 422 });
+      }
+    } else {
+      // Tier 2: no page markers — check stored submission metadata as proxy.
+      // Only apply when AI Analyze has already run (analysisExtractionStatus is set),
+      // because for a fresh upload without analysis the check would always fail.
+      const analysisRan = !!(tender as any).analysisExtractionStatus;
+      if (analysisRan) {
+        const hasStoredSubmissionDetails =
+          !!((tender as any).submissionMethod ?? "").trim() ||
+          !!((tender as any).submissionAddress ?? "").trim() ||
+          !!((tender as any).submissionEmails ?? "").trim();
+        if (!hasStoredSubmissionDetails) {
+          return NextResponse.json({
+            success: false, ok: false,
+            code: "MISSING_SUBMISSION_INSTRUCTIONS",
+            error: "AI Analyze ran but no submission method, address, or email was extracted. Submission instructions are missing. Re-run AI Analyze or manually enter the submission details before generating documents.",
+            nextAction: "EDIT_TENDER_METADATA",
+          }, { status: 422 });
+        }
+        // Gate 5 fallback: require mandatory requirements when no page markers
+        const mandatoryRequirements = tender.requirements.filter((r) => (r.priority ?? "").toUpperCase() === "MANDATORY");
+        if (tender.requirements.length > 0 && mandatoryRequirements.length === 0 && !hasExplicitFiles) {
+          return NextResponse.json({
+            success: false, ok: false,
+            code: "MISSING_REQUIRED_DOCUMENTS_PAGES",
+            error: "No mandatory requirements are defined. The submission plan may be missing required documents. Review requirements before generating documents.",
+            nextAction: "RERUN_AI_ANALYZE",
+          }, { status: 422 });
+        }
       }
     }
   }

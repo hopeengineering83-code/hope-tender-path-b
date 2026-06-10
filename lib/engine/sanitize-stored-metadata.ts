@@ -68,6 +68,10 @@ export type StoredMetadataLike = {
   clientName?: string | null;
   country?: string | null;
   clientContactName?: string | null;
+  procuringEntityName?: string | null;
+  legalClientName?: string | null;
+  donorAgency?: string | null;
+  implementingAgency?: string | null;
 };
 
 /**
@@ -85,6 +89,10 @@ export function sanitizeStoredMetadataForEngine<T extends StoredMetadataLike>(te
     clientName: validOrNull(tender.clientName, withPlaceholderRejection(isValidClientName)),
     country: validOrNull(tender.country, withPlaceholderRejection(isValidCountry)),
     clientContactName: validOrNull(tender.clientContactName, withPlaceholderRejection(isValidClientContact)),
+    procuringEntityName: validOrNull(tender.procuringEntityName, withPlaceholderRejection(isValidClientName)),
+    legalClientName: validOrNull(tender.legalClientName, withPlaceholderRejection(isValidClientName)),
+    donorAgency: validOrNull(tender.donorAgency, withPlaceholderRejection(isValidClientName)),
+    implementingAgency: validOrNull(tender.implementingAgency, withPlaceholderRejection(isValidClientName)),
   };
 }
 
@@ -103,12 +111,20 @@ export function computeStoredMetadataPatch(tender: StoredMetadataLike): {
   clientName?: null;
   country?: null;
   clientContactName?: null;
+  procuringEntityName?: null;
+  legalClientName?: null;
+  donorAgency?: null;
+  implementingAgency?: null;
 } {
   const patch: Record<string, null> = {};
   if (hasInvalidValue(tender.reference, withPlaceholderRejection(isValidReferenceNumber))) patch.reference = null;
   if (hasInvalidValue(tender.clientName, withPlaceholderRejection(isValidClientName))) patch.clientName = null;
   if (hasInvalidValue(tender.country, withPlaceholderRejection(isValidCountry))) patch.country = null;
   if (hasInvalidValue(tender.clientContactName, withPlaceholderRejection(isValidClientContact))) patch.clientContactName = null;
+  if (hasInvalidValue(tender.procuringEntityName, withPlaceholderRejection(isValidClientName))) patch.procuringEntityName = null;
+  if (hasInvalidValue(tender.legalClientName, withPlaceholderRejection(isValidClientName))) patch.legalClientName = null;
+  if (hasInvalidValue(tender.donorAgency, withPlaceholderRejection(isValidClientName))) patch.donorAgency = null;
+  if (hasInvalidValue(tender.implementingAgency, withPlaceholderRejection(isValidClientName))) patch.implementingAgency = null;
   return patch;
 }
 
@@ -122,6 +138,10 @@ export function listInvalidStoredFields(tender: StoredMetadataLike): string[] {
   if (hasInvalidValue(tender.clientName, withPlaceholderRejection(isValidClientName))) out.push("clientName");
   if (hasInvalidValue(tender.country, withPlaceholderRejection(isValidCountry))) out.push("country");
   if (hasInvalidValue(tender.clientContactName, withPlaceholderRejection(isValidClientContact))) out.push("clientContactName");
+  if (hasInvalidValue(tender.procuringEntityName, withPlaceholderRejection(isValidClientName))) out.push("procuringEntityName");
+  if (hasInvalidValue(tender.legalClientName, withPlaceholderRejection(isValidClientName))) out.push("legalClientName");
+  if (hasInvalidValue(tender.donorAgency, withPlaceholderRejection(isValidClientName))) out.push("donorAgency");
+  if (hasInvalidValue(tender.implementingAgency, withPlaceholderRejection(isValidClientName))) out.push("implementingAgency");
   return out;
 }
 

@@ -130,3 +130,78 @@ describe("sanitize-stored-metadata — listInvalidStoredFields (audit log)", () 
     assert.deepEqual(fields, []);
   });
 });
+
+// ── Phase 2: entity fields now covered ───────────────────────────────────────
+
+describe("sanitize-stored-metadata — entity fields (procuringEntityName etc.)", () => {
+  it("nullifies procuringEntityName containing a placeholder", () => {
+    const clean = sanitizeStoredMetadataForEngine({ procuringEntityName: "Bid-Team to confirm" });
+    assert.equal(clean.procuringEntityName, null);
+  });
+
+  it("preserves a valid procuringEntityName", () => {
+    const clean = sanitizeStoredMetadataForEngine({ procuringEntityName: "Ministry of Finance Ethiopia" });
+    assert.equal(clean.procuringEntityName, "Ministry of Finance Ethiopia");
+  });
+
+  it("nullifies legalClientName = TBC", () => {
+    const clean = sanitizeStoredMetadataForEngine({ legalClientName: "TBC" });
+    assert.equal(clean.legalClientName, null);
+  });
+
+  it("preserves a valid legalClientName", () => {
+    const clean = sanitizeStoredMetadataForEngine({ legalClientName: "Federal Republic of Nigeria" });
+    assert.equal(clean.legalClientName, "Federal Republic of Nigeria");
+  });
+
+  it("nullifies donorAgency = not specified", () => {
+    const clean = sanitizeStoredMetadataForEngine({ donorAgency: "not specified" });
+    assert.equal(clean.donorAgency, null);
+  });
+
+  it("nullifies implementingAgency = pending", () => {
+    const clean = sanitizeStoredMetadataForEngine({ implementingAgency: "pending" });
+    assert.equal(clean.implementingAgency, null);
+  });
+
+  it("computeStoredMetadataPatch includes entity field names when invalid", () => {
+    const patch = computeStoredMetadataPatch({
+      procuringEntityName: "N/A",
+      legalClientName: "To Be Determined",
+      donorAgency: null,
+      implementingAgency: "unknown",
+    });
+    assert.ok("procuringEntityName" in patch);
+    assert.ok("legalClientName" in patch);
+    assert.ok(!("donorAgency" in patch), "null is already clean, must not appear in patch");
+    assert.ok("implementingAgency" in patch);
+  });
+
+  it("listInvalidStoredFields includes entity fields", () => {
+    const fields = listInvalidStoredFields({
+      clientName: "Ministry of Water",
+      procuringEntityName: "TBC",
+      legalClientName: "placeholder",
+      donorAgency: "World Bank",
+      implementingAgency: "unknown",
+    });
+    assert.ok(fields.includes("procuringEntityName"), "procuringEntityName should be flagged");
+    assert.ok(fields.includes("legalClientName"), "legalClientName should be flagged");
+    assert.ok(!fields.includes("donorAgency"), "valid donorAgency must not be flagged");
+    assert.ok(fields.includes("implementingAgency"), "implementingAgency should be flagged");
+    assert.ok(!fields.includes("clientName"), "valid clientName must not be flagged");
+  });
+
+  it("all four entity fields are null when all are placeholders", () => {
+    const clean = sanitizeStoredMetadataForEngine({
+      procuringEntityName: "N/A",
+      legalClientName: "TBD",
+      donorAgency: "Bid-Team to confirm",
+      implementingAgency: "unknown",
+    });
+    assert.equal(clean.procuringEntityName, null);
+    assert.equal(clean.legalClientName, null);
+    assert.equal(clean.donorAgency, null);
+    assert.equal(clean.implementingAgency, null);
+  });
+});

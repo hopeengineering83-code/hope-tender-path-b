@@ -446,3 +446,62 @@ describe("analysis-quality — zero source grounding penalty (increased to -25/-
     assert.ok(report.score <= 74, `Score must be ≤74 when zero grounding is forced to WARNING; got ${report.score}`);
   });
 });
+
+// ── Phase 4: PARTIAL_EXTRACTION_AI_ANALYZED caps score at 74 ─────────────────
+
+describe("analysis quality — PARTIAL_EXTRACTION_AI_ANALYZED caps score at max WARNING", () => {
+  const baseParams = {
+    requirements: [
+      { title: "Technical Proposal", description: "Full methodology", requirementType: "TECHNICAL", priority: "MANDATORY", sourcePageNumber: 4, sourceExactQuote: "Technical proposal required", sectionReference: "Section 4" },
+      { title: "Financial Proposal", description: "Cost breakdown", requirementType: "FINANCIAL", priority: "MANDATORY", sourcePageNumber: 7, sourceExactQuote: "Financial proposal required", sectionReference: "Section 7" },
+      { title: "Company Registration", description: "Certificate required", requirementType: "ELIGIBILITY", priority: "MANDATORY", sourcePageNumber: 2, sourceExactQuote: "Company registration certificate", sectionReference: "Section 2" },
+      { title: "CV Key Personnel", description: "CVs of senior staff", requirementType: "TECHNICAL", priority: "MANDATORY", sourcePageNumber: 5, sourceExactQuote: "CVs of key personnel", sectionReference: "Section 5" },
+      { title: "Work Plan", description: "Gantt chart", requirementType: "TECHNICAL", priority: "MANDATORY", sourcePageNumber: 6, sourceExactQuote: "Work plan in Gantt format", sectionReference: "Section 6" },
+    ],
+    analysisSummary: "Full analysis of road design tender",
+    evaluationMethodology: "Technical 80% / Financial 20%",
+    submissionNotes: "Submit via email by deadline",
+    extractedTextLength: 15000,
+    totalPageCount: 30,
+    clientName: "Ethiopia Roads Authority",
+    referenceNumber: "ERA-2026-001",
+    country: "Ethiopia",
+    clientContactName: "Tigist Bekele",
+    deadline: new Date("2026-08-01"),
+    submissionMethod: "email",
+    submissionEmails: "tenders@era.gov.et",
+    exactFileNaming: '["Technical Proposal.pdf","Financial Proposal.pdf"]',
+    exactFileOrder: '["1","2"]',
+  };
+
+  it("strong analysis with FULL_EXTRACTION scores GOOD", () => {
+    const report = assessTenderAnalysisQuality({ ...baseParams, analysisExtractionStatus: "FULL_EXTRACTION_AI_ANALYZED" });
+    assert.equal(report.severity, "GOOD", `Full extraction should allow GOOD; got ${report.severity} at ${report.score}`);
+    assert.ok(report.score >= 75);
+  });
+
+  it("same strong analysis with PARTIAL_EXTRACTION is capped at max 74 (WARNING)", () => {
+    const report = assessTenderAnalysisQuality({ ...baseParams, analysisExtractionStatus: "PARTIAL_EXTRACTION_AI_ANALYZED" });
+    assert.notEqual(report.severity, "GOOD", `Partial extraction must not score GOOD; got ${report.severity} at ${report.score}`);
+    assert.ok(report.score <= 74, `Score must be ≤74 for partial extraction; got ${report.score}`);
+  });
+
+  it("partial extraction warning appears in warnings array", () => {
+    const report = assessTenderAnalysisQuality({ ...baseParams, analysisExtractionStatus: "PARTIAL_EXTRACTION_AI_ANALYZED" });
+    assert.ok(
+      report.warnings.some((w) => /partial/i.test(w)),
+      `Expected a partial-extraction warning; got: ${report.warnings.join(" | ")}`,
+    );
+  });
+
+  it("null/empty analysisExtractionStatus does not trigger partial cap", () => {
+    const report = assessTenderAnalysisQuality({ ...baseParams, analysisExtractionStatus: undefined });
+    assert.equal(report.severity, "GOOD", `No status → should not cap; got ${report.severity} at ${report.score}`);
+  });
+
+  it("EXTRACTION_WEAK_REVIEW_REQUIRED still caps at 25 (UNSAFE), not 74", () => {
+    const report = assessTenderAnalysisQuality({ ...baseParams, analysisExtractionStatus: "EXTRACTION_WEAK_REVIEW_REQUIRED" });
+    assert.equal(report.severity, "UNSAFE", `Weak extraction must be UNSAFE; got ${report.severity} at ${report.score}`);
+    assert.ok(report.score <= 25, `Score must be ≤25 for weak extraction; got ${report.score}`);
+  });
+});
