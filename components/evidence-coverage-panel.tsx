@@ -8,11 +8,29 @@
 import { getSession } from "../lib/auth";
 import { prisma, prismaReady } from "../lib/prisma";
 import { inferSectionRequirementIds } from "../lib/engine/section-evidence-map";
+import { normalizeSupportLevel } from "../lib/engine/requirement-evidence-profile";
 
 function coverageBadge(state: "COVERED" | "PARTIAL" | "UNCOVERED") {
   if (state === "COVERED") return <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700">Covered</span>;
   if (state === "PARTIAL") return <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">Partial</span>;
   return <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700">Uncovered</span>;
+}
+
+function evidenceBadge(level: string) {
+  const normalized = normalizeSupportLevel(level);
+  if (normalized === "FULL" || normalized === "SUBSTANTIAL" || normalized === "NOT_APPLICABLE") return <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700">{normalized}</span>;
+  if (normalized === "PARTIAL") return <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">PARTIAL</span>;
+  return <span className="rounded-full bg-red-100 px-1.5 py-0.5 text-[10px] font-medium text-red-700">NONE</span>;
+}
+
+function matrixCoverageLevel(rows: Array<{ supportLevel: string }>): "FULL" | "SUBSTANTIAL" | "PARTIAL" | "NONE" | "NOT_APPLICABLE" {
+  if (rows.length === 0) return "NONE";
+  const levels = rows.map((row) => normalizeSupportLevel(row.supportLevel));
+  if (levels.some((level) => level === "FULL")) return "FULL";
+  if (levels.some((level) => level === "SUBSTANTIAL")) return "SUBSTANTIAL";
+  if (levels.some((level) => level === "NOT_APPLICABLE")) return "NOT_APPLICABLE";
+  if (levels.some((level) => level === "PARTIAL")) return "PARTIAL";
+  return "NONE";
 }
 
 function reviewBadge(status: string, autoLinked?: boolean) {
@@ -36,7 +54,18 @@ export async function EvidenceCoveragePanel({ tenderId }: { tenderId: string }) 
     prisma.tenderRequirement.findMany({
       where: { tenderId },
       orderBy: { createdAt: "asc" },
-      select: { id: true, title: true, description: true, priority: true, requirementType: true },
+      select: {
+        id: true, title: true, description: true, priority: true, requirementType: true,
+        complianceMatrixRows: {
+          select: {
+            id: true,
+            evidenceType: true,
+            evidenceSource: true,
+            evidenceReference: true,
+            supportLevel: true,
+          },
+        },
+      },
     }).catch(() => []),
     prisma.tenderExpertMatch.findMany({
       where: { tenderId, isSelected: true },
@@ -86,18 +115,20 @@ export async function EvidenceCoveragePanel({ tenderId }: { tenderId: string }) 
   const autoLinkedCount = Array.from(reqSections.values()).flat().filter((section) => section.autoLinked).length;
   const reviewedExperts = expertMatches.filter((m) => m.expert?.trustLevel === "REVIEWED");
   const reviewedProjects = projectMatches.filter((m) => m.project?.trustLevel === "REVIEWED");
+  const complianceEvidenceCount = mandatoryReqs.reduce((sum, req) => sum + req.complianceMatrixRows.length, 0);
 
-  function getCoverageState(reqId: string): "COVERED" | "PARTIAL" | "UNCOVERED" {
-    const sections = reqSections.get(reqId) ?? [];
-    if (sections.length === 0) return "UNCOVERED";
-    const confirmed = sections.filter((s) => s.reviewerStatus === "CONFIRMED" || s.reviewerStatus === "APPROVED");
-    if (confirmed.length > 0) return "COVERED";
-    return "PARTIAL";
+  function getCoverageState(req: (typeof mandatoryReqs)[number]): "COVERED" | "PARTIAL" | "UNCOVERED" {
+    const sections = reqSections.get(req.id) ?? [];
+    const confirmedSections = sections.filter((s) => s.reviewerStatus === "CONFIRMED" || s.reviewerStatus === "APPROVED");
+    const matrixLevel = matrixCoverageLevel(req.complianceMatrixRows);
+    if (confirmedSections.length > 0 || matrixLevel === "FULL" || matrixLevel === "SUBSTANTIAL" || matrixLevel === "NOT_APPLICABLE") return "COVERED";
+    if (sections.length > 0 || matrixLevel === "PARTIAL") return "PARTIAL";
+    return "UNCOVERED";
   }
 
-  const coveredCount = mandatoryReqs.filter((r) => getCoverageState(r.id) === "COVERED").length;
-  const partialCount = mandatoryReqs.filter((r) => getCoverageState(r.id) === "PARTIAL").length;
-  const uncoveredCount = mandatoryReqs.filter((r) => getCoverageState(r.id) === "UNCOVERED").length;
+  const coveredCount = mandatoryReqs.filter((r) => getCoverageState(r) === "COVERED").length;
+  const partialCount = mandatoryReqs.filter((r) => getCoverageState(r) === "PARTIAL").length;
+  const uncoveredCount = mandatoryReqs.filter((r) => getCoverageState(r) === "UNCOVERED").length;
 
   return (
     <section className="mb-4 rounded-2xl border bg-white p-5 shadow-sm">
@@ -139,6 +170,10 @@ export async function EvidenceCoveragePanel({ tenderId }: { tenderId: string }) 
           <p className="text-slate-500">Section evidence maps</p>
           <p className="font-bold text-slate-900">{sectionMaps.length}</p>
         </div>
+        <div className="rounded-lg border bg-slate-50 px-3 py-2">
+          <p className="text-slate-500">Compliance matrix entries</p>
+          <p className="font-bold text-slate-900">{complianceEvidenceCount}</p>
+        </div>
       </div>
 
       {autoLinkedCount > 0 && (
@@ -153,7 +188,7 @@ export async function EvidenceCoveragePanel({ tenderId }: { tenderId: string }) 
           <div className="space-y-2">
             {mandatoryReqs.map((req) => {
               const sections = reqSections.get(req.id) ?? [];
-              const state = getCoverageState(req.id);
+              const state = getCoverageState(req);
               return (
                 <div key={req.id} className={`rounded-xl border p-3 ${state === "COVERED" ? "border-emerald-100 bg-emerald-50" : state === "PARTIAL" ? "border-amber-100 bg-amber-50" : "border-red-100 bg-red-50"}`}>
                   <div className="flex flex-wrap items-start gap-2 justify-between">
@@ -172,8 +207,18 @@ export async function EvidenceCoveragePanel({ tenderId }: { tenderId: string }) 
                         </div>
                       ))}
                     </div>
-                  ) : (
-                    <p className="mt-1 text-xs text-red-700">No section evidence map covers this requirement. Generate documents or manually link evidence.</p>
+                  ) : req.complianceMatrixRows.length === 0 ? (
+                    <p className="mt-1 text-xs text-red-700">No section evidence map or compliance-matrix entry covers this requirement. Generate documents or manually link evidence.</p>
+                  ) : null}
+                  {req.complianceMatrixRows.length > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {req.complianceMatrixRows.map((mr) => (
+                        <div key={mr.id} className="flex items-center gap-1 rounded-md bg-white/70 border px-2 py-0.5 text-xs">
+                          <span className="text-slate-700">{mr.evidenceType}{mr.evidenceReference ? `: ${mr.evidenceReference}` : ""}</span>
+                          {evidenceBadge(mr.supportLevel)}
+                        </div>
+                      ))}
+                    </div>
                   )}
                 </div>
               );

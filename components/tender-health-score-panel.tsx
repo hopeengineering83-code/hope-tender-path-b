@@ -69,6 +69,9 @@ export async function TenderHealthScorePanel({ tenderId }: { tenderId: string })
       deadline: true,
       currency: true,
       exactFileNaming: true,
+      metadataOverrides: {
+        select: { field: true, fieldState: true, overrideValue: true },
+      },
       files: {
         select: {
           extractedText: true,
@@ -165,13 +168,16 @@ export async function TenderHealthScorePanel({ tenderId }: { tenderId: string })
     currency: tender.currency ?? null,
     hasSubmissionRules: Boolean(tender.submissionMethod || tender.submissionEmails || tender.submissionAddress),
     requirementCount: tender.requirements.length,
-  });
+  }, tender.metadataOverrides);
   const metaScore = meta.blockingForGeneration || tender.metadataContaminated ? 0
     : Math.round(meta.overallRatio * 15);
   const metaStatusLabel: Dimension["status"] = metaScore >= 12 ? "PASS" : metaScore >= 8 ? "WARN" : "FAIL";
-  const metaDetail = meta.missingCritical.length > 0
-    ? `Missing: ${meta.missingCritical.slice(0, 3).join(", ")}${meta.missingCritical.length > 3 ? " …" : ""}`
+  const missingCriticalNames = meta.missingCritical.map((f) => f.field);
+  const notApplicableNames = meta.notApplicableFields.map((f) => f.field);
+  const metaDetail = missingCriticalNames.length > 0
+    ? `Missing: ${missingCriticalNames.slice(0, 3).join(", ")}${missingCriticalNames.length > 3 ? " …" : ""}`
     : tender.metadataContaminated ? "Contaminated client name"
+    : notApplicableNames.length > 0 ? `${Math.round(meta.overallRatio * 100)}% filled; ignored/not applicable: ${notApplicableNames.slice(0, 2).join(", ")}${notApplicableNames.length > 2 ? " …" : ""}`
     : `${Math.round(meta.overallRatio * 100)}% filled`;
   dimensions.push({
     label: "Metadata",
