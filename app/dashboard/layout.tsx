@@ -14,21 +14,21 @@ const NAV_GROUPS_BASE = [
     title: "Workspace",
     roles: null as string[] | null,
     links: [
-      { href: "/dashboard", label: "Overview", icon: "◼" },
-      { href: "/dashboard/tenders", label: "Tenders", icon: "📋" },
+      { href: "/dashboard", label: "Overview", icon: "🏠" },
+      { href: "/dashboard/tenders", label: "Active Tenders", icon: "📋" },
       { href: "/dashboard/history", label: "Tender History", icon: "🕘" },
       { href: "/dashboard/calendar", label: "Deadline Calendar", icon: "📅" },
     ],
   },
   {
-    title: "Company",
+    title: "Knowledge",
     roles: ["ADMIN", "PROPOSAL_MANAGER"] as string[] | null,
     links: [
-      { href: "/dashboard/company", label: "Knowledge Vault", icon: "🏢" },
-      { href: "/dashboard/company/readiness", label: "Readiness", icon: "🟢" },
-      { href: "/dashboard/company/plan-b-import", label: "Plan B Exact Import", icon: "🧾" },
-      { href: "/dashboard/company/review-board", label: "Review Board", icon: "✅" },
-      { href: "/dashboard/company/review", label: "Knowledge Diagnostics", icon: "🔍" },
+      { href: "/dashboard/company", label: "Knowledge Vault", icon: "🗄️" },
+      { href: "/dashboard/company/readiness", label: "Profile Readiness", icon: "📈" },
+      { href: "/dashboard/company/plan-b-import", label: "Legacy Data Import", icon: "📥" },
+      { href: "/dashboard/company/review-board", label: "Review Board", icon: "⚖️" },
+      { href: "/dashboard/company/review", label: "Data Diagnostics", icon: "🩺" },
       { href: "/dashboard/assets", label: "Brand Assets", icon: "🖼️" },
       { href: "/dashboard/setup", label: "Setup Wizard", icon: "✨" },
       { href: "/dashboard/settings", label: "Settings", icon: "⚙️" },
@@ -38,14 +38,14 @@ const NAV_GROUPS_BASE = [
     title: "Engine",
     roles: null as string[] | null,
     links: [
-      { href: "/dashboard/analysis", label: "Tender Analysis", icon: "🔎" },
-      { href: "/dashboard/matching", label: "Matching", icon: "🧩" },
-      { href: "/dashboard/compliance", label: "Compliance", icon: "✅" },
-      { href: "/dashboard/documents", label: "Generated Docs", icon: "📄" },
-      { href: "/dashboard/export", label: "Export Packages", icon: "📦" },
-      { href: "/dashboard/activity", label: "Activity Logs", icon: "📝" },
-      { href: "/dashboard/analytics", label: "Analytics", icon: "📊" },
-      { href: "/dashboard/search", label: "Search", icon: "🔍" },
+      { href: "/dashboard/analysis", label: "Global Analysis", icon: "🧠" },
+      { href: "/dashboard/matching", label: "Global Matching", icon: "🧩" },
+      { href: "/dashboard/compliance", label: "Global Compliance", icon: "🛡️" },
+      { href: "/dashboard/documents", label: "Document Archive", icon: "📄" },
+      { href: "/dashboard/export", label: "Export Hub", icon: "📦" },
+      { href: "/dashboard/activity", label: "Activity Logs", icon: "📜" },
+      { href: "/dashboard/analytics", label: "System Analytics", icon: "📊" },
+      { href: "/dashboard/search", label: "Global Search", icon: "🔭" },
     ],
   },
   {
@@ -53,7 +53,8 @@ const NAV_GROUPS_BASE = [
     roles: ["ADMIN"] as string[] | null,
     links: [
       { href: "/dashboard/users", label: "User Management", icon: "👥" },
-      { href: "/dashboard/admin/ai-readiness", label: "AI Readiness", icon: "🧠" },
+      { href: "/dashboard/admin/ai-readiness", label: "AI Readiness", icon: "🤖" },
+      { href: "/dashboard/system", label: "System Status", icon: "🌡️" },
     ],
   },
 ];
@@ -63,9 +64,6 @@ export default async function DashboardLayout({ children }: { children: ReactNod
   if (!userId) redirect("/login");
 
   await prismaReady;
-  // PR #253 — parallelize the user + company fetch. These two queries
-  // are independent; running them in parallel saves ~1 round-trip
-  // (typically 30-80ms) on every dashboard page load.
   const [user, company, unreadCount] = await Promise.all([
     prisma.user.findUnique({ where: { id: userId } }),
     prisma.company.findUnique({ where: { userId } }),
@@ -79,9 +77,6 @@ export default async function DashboardLayout({ children }: { children: ReactNod
 
   return (
     <div className="min-h-screen bg-slate-50 lg:flex">
-      {/* Skip-link for keyboard users (PR #253). Hidden until focused;
-          jumping past the nav directly to main content is a WCAG 2.4.1
-          requirement. */}
       <a href="#main-content" className="skip-link">Skip to main content</a>
 
       <div className="flex items-center justify-between border-b bg-white px-4 py-3 lg:hidden">
