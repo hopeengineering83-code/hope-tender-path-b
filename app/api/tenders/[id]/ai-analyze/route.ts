@@ -15,6 +15,7 @@ import { isValidClientContact } from "../../../../../lib/engine/metadata-validat
 import { buildAnalysisFallbackDiagnostics, formatFallbackDiagnosticsLine, type AnalysisFallbackDiagnostics } from "../../../../../lib/engine/analysis-fallback-diagnostics";
 import { buildProviderDiagnosticsSnapshot } from "../../../../../lib/ai-provider-health";
 import { restoreHealthFromDb, persistAllHealthToDb } from "../../../../../lib/ai-provider-health-db";
+import { safeParseJsonObject } from "../../../../../lib/safe-json";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -45,12 +46,7 @@ function buildChunkStepResults(meta: AnalysisWithMeta): Array<{
 
 function parseAiAnalyzeJobOutput(output: string | null | undefined): Record<string, unknown> | null {
   if (!output) return null;
-  try {
-    const parsed = JSON.parse(output);
-    return parsed && typeof parsed === "object" ? parsed as Record<string, unknown> : null;
-  } catch {
-    return null;
-  }
+  return safeParseJsonObject(output);
 }
 
 function normalizePreviousChunkResults(raw: unknown): Array<{ index: number; result: AIAnalysisResult; provider?: string | null }> {
@@ -209,11 +205,11 @@ async function handleStreamingAnalyze(
             where: { id: continueJobId, tenderId: id, userId },
           });
           if (existingJob?.output) {
-            try {
-              const savedOutput = JSON.parse(existingJob.output) as { completedChunks?: number; contentHash?: string };
+            const savedOutput = safeParseJsonObject<{ completedChunks?: number; contentHash?: string }>(existingJob.output);
+            if (savedOutput) {
               startFromChunk = savedOutput.completedChunks ?? 0;
               existingContentHash = savedOutput.contentHash;
-            } catch { /* ignore parse errors — do a full re-run */ }
+            }
           }
         }
 
@@ -431,6 +427,10 @@ async function handleStreamingAnalyze(
               const tenderStatus = aiMeta.isPartial ? "AI_ANALYSIS_PARTIAL" : "AI_ANALYZED";
               const clientNameForContaminationCheck = aiResult.procuringEntityName || tenderRecord.clientName;
               const contamination = detectMetadataContamination(clientNameForContaminationCheck);
+              const legalNameContamination = detectMetadataContamination(aiResult.legalClientName);
+              const donorAgencyContamination = detectMetadataContamination(aiResult.donorAgency);
+              const implementingAgencyContamination = detectMetadataContamination(aiResult.implementingAgency);
+              const anyEntityContaminated = contamination.contaminated || legalNameContamination.contaminated || donorAgencyContamination.contaminated || implementingAgencyContamination.contaminated;
 
               await tx.tender.update({
                 where: { id },
@@ -471,7 +471,7 @@ async function handleStreamingAnalyze(
                   ...(aiResult.submissionAddressSourcePage !== undefined ? { submissionAddressSourcePage: aiResult.submissionAddressSourcePage } : {}),
                   ...(aiResult.submissionAddressSourceQuote !== undefined ? { submissionAddressSourceQuote: aiResult.submissionAddressSourceQuote } : {}),
                   ...(aiResult.evaluationCriteriaSource !== undefined ? { evaluationCriteriaSourceJson: aiResult.evaluationCriteriaSource ? JSON.stringify(aiResult.evaluationCriteriaSource) : null } : {}),
-                  metadataContaminated: contamination.contaminated,
+                  metadataContaminated: anyEntityContaminated,
                 },
               });
             });
@@ -937,9 +937,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           //   Partial (deadline) → "AI_ANALYSIS_PARTIAL"
           const tenderStatus = aiMeta.isPartial ? "AI_ANALYSIS_PARTIAL" : "AI_ANALYZED";
 
-          // Contamination check on the extracted client name
+          // Contamination check on all entity name fields
           const clientNameForContaminationCheck = aiResult.procuringEntityName || tenderRecord.clientName;
           const contamination = detectMetadataContamination(clientNameForContaminationCheck);
+          const legalNameContamination = detectMetadataContamination(aiResult.legalClientName);
+          const donorAgencyContamination = detectMetadataContamination(aiResult.donorAgency);
+          const implementingAgencyContamination = detectMetadataContamination(aiResult.implementingAgency);
+          const anyEntityContaminated = contamination.contaminated || legalNameContamination.contaminated || donorAgencyContamination.contaminated || implementingAgencyContamination.contaminated;
 
           await tx.tender.update({
             where: { id },
@@ -1004,8 +1008,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
               ...(aiResult.submissionAddressSourceQuote !== undefined ? { submissionAddressSourceQuote: aiResult.submissionAddressSourceQuote } : {}),
               // Per-criterion evaluation criteria source
               ...(aiResult.evaluationCriteriaSource !== undefined ? { evaluationCriteriaSourceJson: aiResult.evaluationCriteriaSource ? JSON.stringify(aiResult.evaluationCriteriaSource) : null } : {}),
-              // Flag contaminated client name so the export gate can block
-              metadataContaminated: contamination.contaminated,
+              // Flag contaminated entity name so the export gate can block
+              metadataContaminated: anyEntityContaminated,
             },
           });
         });
