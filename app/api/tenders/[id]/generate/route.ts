@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { Document, HeadingLevel, Packer, Paragraph, TextRun } from "docx";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
+import { Prisma } from "@prisma/client";
 import { generateTenderDocuments } from "../../../../../lib/engine/generate-elite";
 import { promoteBestAvailableReviewedMatchesForGeneration } from "../../../../../lib/engine/best-available-selection";
 import { applyActiveUploadedLetterheadToTenderDocuments } from "../../../../../lib/engine/apply-active-letterhead";
@@ -85,7 +86,11 @@ async function ensurePlannedGeneratedDocumentRecords(tenderId: string, plannedFi
       try {
         await prisma.generatedDocument.create({ data: { tenderId, name: file.exactFileName.replace(/\.[a-z0-9]{2,5}$/i, ""), documentType, format: file.format, exactFileName: file.exactFileName, exactOrder: file.exactOrder, generationStatus: "PLANNED", validationStatus: "PENDING", reviewStatus: "PENDING", contentSummary: summary } });
         created += 1;
-      } catch { /* race-condition guard: if a concurrent request created the row first, skip silently */ }
+      } catch (err) {
+        // Narrow catch: swallow only unique-constraint violations (concurrent insert race).
+        // Re-throw anything else so real errors surface.
+        if (!(err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002")) throw err;
+      }
     } else if (current.generationStatus !== "GENERATED") {
       await prisma.generatedDocument.update({ where: { id: current.id }, data: { name: current.name || file.exactFileName.replace(/\.[a-z0-9]{2,5}$/i, ""), documentType, format: file.format, exactFileName: file.exactFileName, exactOrder: file.exactOrder, contentSummary: generatedDocumentHasContent(current) ? undefined : summary, updatedAt: new Date() } });
     }
@@ -353,15 +358,29 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }, { status: 422 });
   }
 
-  // ── Partial-extraction AI analysis advisory ───────────────────────────────
-  // When AI Analyze ran on partial extraction (some pages failed/were OCR-only),
-  // the analysis result may be missing requirements, evaluation criteria, or
-  // submission details from the unextracted pages. We surface this as a blocking
-  // advisory so the user can re-extract and re-analyze before committing to
-  // generated documents. REGEX_FALLBACK is already blocked above by the
-  // isExtractionAcceptableForGeneration() check; this guard covers the softer
-  // PARTIAL_EXTRACTION_AI_ANALYZED case.
+  // ── Analysis-extraction-status gate ──────────────────────────────────────
+  // Block generation when AI Analyze ran on corrupted or regex-fallback
+  // extraction, mirroring the same gate in the export route. Block with a
+  // bypass option when extraction was only partial (softer case).
   const analysisExtractionStatusForGen = (tender as { analysisExtractionStatus?: string | null }).analysisExtractionStatus;
+  if (analysisExtractionStatusForGen === "EXTRACTION_CORRUPTED_AI_SKIPPED") {
+    return NextResponse.json({
+      errorCode: "ANALYSIS_FROM_CORRUPTED_EXTRACTION",
+      error: "Generation blocked: AI Analyze was skipped because tender extraction was corrupted. The analysis and requirements may be incomplete. Re-upload a clearer document or run OCR, then re-run AI Analyze before generating documents.",
+      blockers: ["AI Analyze was skipped due to corrupted extraction — requirements and metadata may be incomplete."],
+      nextAction: "RUN_OCR_OR_UPLOAD_CLEARER_SCAN",
+      diagnosticId: `corrupted-extraction-${id}`,
+    }, { status: 422 });
+  }
+  if (analysisExtractionStatusForGen === "REGEX_FALLBACK_FROM_WEAK_EXTRACTION") {
+    return NextResponse.json({
+      errorCode: "ANALYSIS_FROM_WEAK_EXTRACTION",
+      error: "Generation blocked: AI Analyze used regex/deterministic fallback because extraction was too weak. The generated documents would be based on incomplete requirements. Re-extract the tender (run OCR if needed) and re-run AI Analyze before generating documents.",
+      blockers: ["AI analysis used regex fallback due to weak extraction — requirements may be incomplete."],
+      nextAction: "RERUN_AI_ANALYZE",
+      diagnosticId: `regex-fallback-analysis-${id}`,
+    }, { status: 422 });
+  }
   if (analysisExtractionStatusForGen === "PARTIAL_EXTRACTION_AI_ANALYZED") {
     const reqUrl2 = new URL(req.url);
     if (reqUrl2.searchParams.get("planOnly") !== "true" && reqUrl2.searchParams.get("acceptPartialExtraction") !== "true") {
