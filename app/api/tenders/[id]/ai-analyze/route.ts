@@ -8,12 +8,11 @@ import { logAction } from "../../../../../lib/audit";
 import { rateLimit, AI_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import { extractRequestId } from "../../../../../lib/request-id";
 import { createNotification } from "../../../../../lib/notifications";
-import { assessExtractionQuality, assessExtractionQualityPerPage } from "../../../../../lib/extraction-quality";
+import { assessExtractionQuality } from "../../../../../lib/extraction-quality";
 import { deriveExtractionStatus, isExtractionCorrupted, type TenderFileQuality } from "../../../../../lib/engine/extraction-quality-gate";
 import { detectMetadataContamination } from "../../../../../lib/engine/tender-metadata-completeness";
 import { isValidClientContact } from "../../../../../lib/engine/metadata-validators";
 import { buildAnalysisFallbackDiagnostics, formatFallbackDiagnosticsLine, type AnalysisFallbackDiagnostics } from "../../../../../lib/engine/analysis-fallback-diagnostics";
-import { safeParseJsonObject } from "../../../../../lib/safe-json";
 import { buildProviderDiagnosticsSnapshot } from "../../../../../lib/ai-provider-health";
 import { restoreHealthFromDb, persistAllHealthToDb } from "../../../../../lib/ai-provider-health-db";
 
@@ -197,7 +196,8 @@ async function handleStreamingAnalyze(
         const { id } = params;
         const reqUrl = new URL(req.url);
         const force = reqUrl.searchParams.get("force") === "true";
-        let continueJobId: string | null = reqUrl.searchParams.get("continue");
+        const continueJobIdParam = reqUrl.searchParams.get("continue");
+        let continueJobId: string | null = continueJobIdParam;
         let startFromChunk: number | undefined;
         let existingContentHash: string | undefined;
         let previousChunkResults: Array<{ index: number; result: AIAnalysisResult; provider?: string | null }> = [];
@@ -208,13 +208,12 @@ async function handleStreamingAnalyze(
           const existingJob = await prisma.aiJob.findFirst({
             where: { id: continueJobId, tenderId: id, userId },
           });
-          const savedOutput = parseAiAnalyzeJobOutput(existingJob?.output);
-          if (savedOutput) {
-            previousChunkResults = normalizePreviousChunkResults(savedOutput.chunkResults);
-            startFromChunk = previousChunkResults.length > 0
-              ? Math.max(...previousChunkResults.map((entry) => entry.index)) + 1
-              : (typeof savedOutput.completedChunks === "number" ? savedOutput.completedChunks : 0);
-            existingContentHash = typeof savedOutput.contentHash === "string" ? savedOutput.contentHash : undefined;
+          if (existingJob?.output) {
+            try {
+              const savedOutput = JSON.parse(existingJob.output) as { completedChunks?: number; contentHash?: string };
+              startFromChunk = savedOutput.completedChunks ?? 0;
+              existingContentHash = savedOutput.contentHash;
+            } catch { /* ignore parse errors — do a full re-run */ }
           }
         }
 
@@ -432,10 +431,6 @@ async function handleStreamingAnalyze(
               const tenderStatus = aiMeta.isPartial ? "AI_ANALYSIS_PARTIAL" : "AI_ANALYZED";
               const clientNameForContaminationCheck = aiResult.procuringEntityName || tenderRecord.clientName;
               const contamination = detectMetadataContamination(clientNameForContaminationCheck);
-              const legalNameContamination = detectMetadataContamination(aiResult.legalClientName ?? null);
-              const donorAgencyContamination = detectMetadataContamination(aiResult.donorAgency ?? null);
-              const implementingAgencyContamination = detectMetadataContamination(aiResult.implementingAgency ?? null);
-              const anyEntityContaminated = contamination.contaminated || legalNameContamination.contaminated || donorAgencyContamination.contaminated || implementingAgencyContamination.contaminated;
 
               await tx.tender.update({
                 where: { id },
@@ -476,7 +471,7 @@ async function handleStreamingAnalyze(
                   ...(aiResult.submissionAddressSourcePage !== undefined ? { submissionAddressSourcePage: aiResult.submissionAddressSourcePage } : {}),
                   ...(aiResult.submissionAddressSourceQuote !== undefined ? { submissionAddressSourceQuote: aiResult.submissionAddressSourceQuote } : {}),
                   ...(aiResult.evaluationCriteriaSource !== undefined ? { evaluationCriteriaSourceJson: aiResult.evaluationCriteriaSource ? JSON.stringify(aiResult.evaluationCriteriaSource) : null } : {}),
-                  metadataContaminated: anyEntityContaminated,
+                  metadataContaminated: contamination.contaminated,
                 },
               });
             });
@@ -511,21 +506,7 @@ async function handleStreamingAnalyze(
               extractionScore: (f as { extractionScore?: number | null }).extractionScore ?? null,
             }));
             const extractionStatus = deriveExtractionStatus(fileQualitySnapshots);
-            const effectiveStreamExtractionStatus = (aiMeta.isPartial && extractionStatus === "FULL_EXTRACTION_AI_ANALYZED")
-              ? "PARTIAL_EXTRACTION_AI_ANALYZED"
-              : extractionStatus;
-            void prisma.tender.update({ where: { id }, data: { analysisExtractionStatus: effectiveStreamExtractionStatus } }).catch(() => {});
-
-            // Persist per-page classification to TenderFile.pageStatusJson
-            for (const file of tenderRecord.files) {
-              const pageReport = assessExtractionQualityPerPage((file as { extractedText?: string | null }).extractedText);
-              if (pageReport.totalDetectedPages > 0) {
-                void prisma.tenderFile.update({
-                  where: { id: (file as { id: string }).id },
-                  data: { pageStatusJson: JSON.stringify(pageReport.pages) },
-                }).catch(() => {});
-              }
-            }
+            void prisma.tender.update({ where: { id }, data: { analysisExtractionStatus: extractionStatus } }).catch(() => {});
 
             analysisResult = {
               ai: true, fallback: false,
@@ -892,7 +873,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         let aiMeta: AnalysisWithMeta;
         try {
           aiMeta = await withTimeout(
-            analyzeWithAI(tenderContent, { deadlineAt, startFromChunk, previousChunkResults }),
+            analyzeWithAI(tenderContent, { deadlineAt, startFromChunk }),
             AI_ANALYSIS_TIMEOUT_MS,
           );
         } catch (aiErr) {
@@ -956,13 +937,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           //   Partial (deadline) → "AI_ANALYSIS_PARTIAL"
           const tenderStatus = aiMeta.isPartial ? "AI_ANALYSIS_PARTIAL" : "AI_ANALYZED";
 
-          // Contamination check on all extracted entity identity fields
+          // Contamination check on the extracted client name
           const clientNameForContaminationCheck = aiResult.procuringEntityName || tenderRecord.clientName;
           const contamination = detectMetadataContamination(clientNameForContaminationCheck);
-          const legalNameContamination = detectMetadataContamination(aiResult.legalClientName ?? null);
-          const donorAgencyContamination = detectMetadataContamination(aiResult.donorAgency ?? null);
-          const implementingAgencyContamination = detectMetadataContamination(aiResult.implementingAgency ?? null);
-          const anyEntityContaminated = contamination.contaminated || legalNameContamination.contaminated || donorAgencyContamination.contaminated || implementingAgencyContamination.contaminated;
 
           await tx.tender.update({
             where: { id },
@@ -1027,8 +1004,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
               ...(aiResult.submissionAddressSourceQuote !== undefined ? { submissionAddressSourceQuote: aiResult.submissionAddressSourceQuote } : {}),
               // Per-criterion evaluation criteria source
               ...(aiResult.evaluationCriteriaSource !== undefined ? { evaluationCriteriaSourceJson: aiResult.evaluationCriteriaSource ? JSON.stringify(aiResult.evaluationCriteriaSource) : null } : {}),
-              // Flag contaminated entity fields so the export gate can block
-              metadataContaminated: anyEntityContaminated,
+              // Flag contaminated client name so the export gate can block
+              metadataContaminated: contamination.contaminated,
             },
           });
         });
@@ -1090,31 +1067,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           extractionScore: (f as { extractionScore?: number | null }).extractionScore ?? null,
         }));
         const extractionStatus = deriveExtractionStatus(fileQualitySnapshots);
-        // When the AI analysis itself was partial (deadline hit before all chunks
-        // were processed), downgrade FULL_EXTRACTION_AI_ANALYZED to
-        // PARTIAL_EXTRACTION_AI_ANALYZED so the Generate Docs and Export gates
-        // can block appropriately. The extraction may have been full, but the
-        // resulting analysis is incomplete — requirements from later chunks are missing.
-        const effectiveExtractionStatus = (aiMeta.isPartial && extractionStatus === "FULL_EXTRACTION_AI_ANALYZED")
-          ? "PARTIAL_EXTRACTION_AI_ANALYZED"
-          : extractionStatus;
         void prisma.tender.update({
           where: { id },
-          data: { analysisExtractionStatus: effectiveExtractionStatus },
+          data: { analysisExtractionStatus: extractionStatus },
         }).catch(() => {});
-
-        // Persist per-page classification (submission/eval/required-docs/client pages)
-        // to TenderFile.pageStatusJson so the Extraction Quality panel and downstream
-        // gates can read structured page metadata without re-parsing extractedText.
-        for (const file of tenderRecord.files) {
-          const pageReport = assessExtractionQualityPerPage((file as { extractedText?: string | null }).extractedText);
-          if (pageReport.totalDetectedPages > 0) {
-            void prisma.tenderFile.update({
-              where: { id: (file as { id: string }).id },
-              data: { pageStatusJson: JSON.stringify(pageReport.pages) },
-            }).catch(() => {});
-          }
-        }
 
         analysisResult = {
           ai: true,
