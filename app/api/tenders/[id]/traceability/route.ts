@@ -45,7 +45,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   const tender = await prisma.tender.findFirst({
     where: { id, userId: actor.id },
     include: {
-      files: { select: { id: true, originalFileName: true, classification: true, extractedText: true } },
+      files: { select: { id: true, originalFileName: true, classification: true, extractedText: true, extractionMethod: true } },
       requirements: true,
       complianceMatrix: true,
       expertMatches: { include: { expert: { select: { id: true, fullName: true, title: true, trustLevel: true, sourceDocumentId: true, profile: true } } }, orderBy: { score: "desc" } },
@@ -75,7 +75,12 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       sourceSectionHeading: requirement.sourceSectionHeading ?? null,
       sourceExactQuote: short(requirement.sourceExactQuote, 300),
       sourceConfidenceScore: dbSourceConfidence,
-      extractionMethod: requirement.sourceTenderFileId ? "ai_extracted" : "manual_or_unknown",
+      extractionMethod: (() => {
+        if (!requirement.sourceTenderFileId) return "manual_or_unknown";
+        const srcFile = tender.files.find((f) => f.id === requirement.sourceTenderFileId);
+        if (srcFile?.extractionMethod) return srcFile.extractionMethod; // "text" | "ocr" | "mixed" | "failed"
+        return "ai_extracted";
+      })(),
       // Text-match source file references
       sourceFiles,
       sourceConfidence: dbSourceConfidence > 0.6 ? "HIGH" : dbSourceConfidence > 0.3 ? "MEDIUM" : derivedConfidence,
