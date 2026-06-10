@@ -14,6 +14,7 @@ import {
 import { containsPricingLeakage } from "./pricing-hygiene";
 import { checkExportFileByteReadiness } from "./export-byte-readiness";
 import { detectSubmissionPackageMode } from "./submission-package-mode";
+import { assessExtractionQualityPerPage } from "../extraction-quality";
 
 export type ExportReadyDocument = {
   id: string;
@@ -331,6 +332,38 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
       "Re-upload the tender file with better quality or run OCR extraction before exporting.",
       "HIGH",
     ));
+  }
+
+  // ── Submission-instructions extracted check ───────────────────────────────
+  // Per CLAUDE.md the export gate must block when submission instruction pages
+  // were not extracted from the tender. The generate route already enforces
+  // this check; enforce the same constraint at export time.
+  if (tender.files && tender.files.length > 0) {
+    let anySubmissionInstructions = false;
+    let anyRequiredDocPages = false;
+    let totalDetectedPages = 0;
+    for (const file of tender.files) {
+      const pp = assessExtractionQualityPerPage((file as { extractedText?: string | null }).extractedText);
+      totalDetectedPages += pp.totalDetectedPages;
+      if (pp.submissionInstructionPages.length > 0) anySubmissionInstructions = true;
+      if (pp.requiredDocumentPages.length > 0) anyRequiredDocPages = true;
+    }
+    if (totalDetectedPages > 0 && !anySubmissionInstructions) {
+      blockers.push(tenderBlocker(
+        "SUBMISSION_INSTRUCTIONS_NOT_EXTRACTED",
+        "No submission instruction pages were detected in the extracted tender text. The package may be submitted to the wrong address or by the wrong method.",
+        "Re-extract the tender (run OCR if needed), then re-run AI Analyze to recover submission instructions before exporting.",
+        "HIGH",
+      ));
+    }
+    if (totalDetectedPages > 0 && !anyRequiredDocPages) {
+      advisoryWarnings.push({
+        category: "REQUIRED_DOCUMENT_PAGES_NOT_EXTRACTED",
+        severity: "MEDIUM" as const,
+        title: "No required-document/form pages were detected in the extracted tender text. The submission package may be missing mandatory annexures or official forms.",
+        recommendedAction: "Re-extract the tender to ensure required-document sections are readable, or manually review the tender for forms/templates to attach.",
+      });
+    }
   }
 
   // ── Metadata contamination blocker ───────────────────────────────────────

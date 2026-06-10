@@ -37,7 +37,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const maxChars = Number.isFinite(maxCharsRaw) && maxCharsRaw >= 1000 ? maxCharsRaw : undefined;
     const tender = await prisma.tender.findFirst({
       where: { id, userId },
-      include: {
+      select: {
+        id: true, title: true, analysisExtractionStatus: true,
+        clientName: true, country: true, reference: true, currency: true, deadline: true,
+        submissionMethod: true, submissionAddress: true, submissionEmails: true,
+        analysisSummary: true, evaluationMethodology: true, exactFileNaming: true,
+        exactFileOrder: true, notes: true, intakeSummary: true, clientContactName: true,
         files: {
           select: {
             id: true, originalFileName: true, fileName: true, extractedText: true,
@@ -96,6 +101,29 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         blockers,
         corruptedFiles,
         hint: "Run OCR/re-extract the tender first. Run Engine cannot be forced through corrupted, unknown-page, or incomplete extraction.",
+        diagnosticId,
+        inputStats,
+      }, { status: 422 });
+    }
+
+    // Block engine run when prior AI Analyze flagged corrupted or regex-fallback extraction
+    const engineAnalysisStatus = tender.analysisExtractionStatus;
+    if (engineAnalysisStatus === "EXTRACTION_CORRUPTED_AI_SKIPPED") {
+      return NextResponse.json({
+        error: "Engine run blocked: AI Analyze was skipped due to corrupted extraction. Re-upload or run OCR before running the engine.",
+        code: "ANALYSIS_FROM_CORRUPTED_EXTRACTION",
+        nextAction: "RUN_OCR_OR_UPLOAD_CLEARER_SCAN",
+        hint: "The tender's AI analysis was not completed due to corrupted extraction. Re-extract or run OCR, then re-run AI Analyze before running the engine.",
+        diagnosticId,
+        inputStats,
+      }, { status: 422 });
+    }
+    if (engineAnalysisStatus === "REGEX_FALLBACK_FROM_WEAK_EXTRACTION") {
+      return NextResponse.json({
+        error: "Engine run blocked: tender analysis used regex fallback on weak extraction — re-extract and re-run AI Analyze before running the engine.",
+        code: "ANALYSIS_FROM_WEAK_EXTRACTION",
+        nextAction: "RERUN_AI_ANALYZE",
+        hint: "AI Analyze fell back to regex because extraction was too weak. Fix extraction quality and re-run AI Analyze before running the engine.",
         diagnosticId,
         inputStats,
       }, { status: 422 });

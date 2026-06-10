@@ -737,6 +737,46 @@ export async function getFinalSubmissionReadiness(
       recommendedAction: "Re-run AI Analyze with healthy providers, or POST /api/tenders/[id]/approve-analysis if you have manually verified the fallback analysis is correct.",
     });
   }
+  // Mirror the export-readiness.ts gate: block when analysisExtractionStatus
+  // indicates that AI Analyze ran on corrupted or weak extraction.
+  const analysisExtractionStatus = (tender as { analysisExtractionStatus?: string | null }).analysisExtractionStatus;
+  if (analysisExtractionStatus === "EXTRACTION_CORRUPTED_AI_SKIPPED") {
+    tenderLevelBlockers.push({
+      category: "ANALYSIS_FROM_CORRUPTED_EXTRACTION",
+      severity: "HIGH",
+      title: "AI Analyze was skipped because tender extraction was corrupted — requirements and metadata may be incomplete.",
+      recommendedAction: "Re-upload a clearer document or run OCR, then re-run AI Analyze before attempting export.",
+    });
+  }
+  if (analysisExtractionStatus === "REGEX_FALLBACK_FROM_WEAK_EXTRACTION") {
+    tenderLevelBlockers.push({
+      category: "ANALYSIS_FROM_WEAK_EXTRACTION",
+      severity: "HIGH",
+      title: "Tender analysis used regex/deterministic fallback because extraction was too weak — generated documents may be based on incomplete requirements.",
+      recommendedAction: "Run OCR extraction on the tender file, then re-run AI Analyze before exporting.",
+    });
+  }
+  if (analysisExtractionStatus === "PARTIAL_EXTRACTION_AI_ANALYZED") {
+    tenderLevelBlockers.push({
+      category: "ANALYSIS_FROM_PARTIAL_EXTRACTION",
+      severity: "HIGH",
+      title: "AI analysis was performed on a partially-extracted tender — some pages were weak or OCR-only. Exported documents may be missing requirements from unread pages.",
+      recommendedAction: "Re-extract the tender file (run OCR if needed), then re-run AI Analyze to obtain a full-extraction analysis before exporting.",
+    });
+  }
+  // Deadline-in-the-past advisory — mirrors the export-readiness.ts check.
+  if (tender.deadline) {
+    const deadlineDate = tender.deadline instanceof Date ? tender.deadline : new Date(tender.deadline as string);
+    if (!Number.isNaN(deadlineDate.getTime()) && deadlineDate < new Date()) {
+      const daysAgo = Math.round((Date.now() - deadlineDate.getTime()) / (1000 * 60 * 60 * 24));
+      tenderLevelBlockers.push({
+        category: "DEADLINE_PASSED",
+        severity: "MEDIUM",
+        title: `Submission deadline passed ${daysAgo} day${daysAgo === 1 ? "" : "s"} ago (${deadlineDate.toISOString().slice(0, 10)}). Exporting after deadline has no practical use unless an extension was granted.`,
+        recommendedAction: "Confirm whether a deadline extension was granted. If the tender closed, mark it as lost/withdrawn rather than exporting.",
+      });
+    }
+  }
 
   // Extraction quality gate — mirrors the POST /export enforcement so the panel
   // shows the blocker before the user tries to export, not just after.
@@ -844,6 +884,8 @@ export async function getFinalSubmissionReadiness(
   // finalExportGateOk correctly reflects the blocked state.
   const readinessScoreResult = computeReadinessScore({
     analysisSource,
+    analysisExtractionStatus: (tender as { analysisExtractionStatus?: string | null }).analysisExtractionStatus,
+    metadataContaminated: tender.metadataContaminated,
     metadataCompletenessRatio: metadata.overallRatio,
     metadataInvalidCount: metadata.invalidFields.length,
     sourceReferenceCoverage,

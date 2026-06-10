@@ -143,7 +143,9 @@ export async function NextActionPanel({ tenderId }: { tenderId: string }) {
   const extractionOk = hasFiles && !anyCorrupted && !anyFailed && avgScore >= 45;
 
   const aiAnalyzed = Boolean(tender.analysisSummary);
-  const aiAnalyzeOk = aiAnalyzed && tender.analysisExtractionStatus !== "EXTRACTION_CORRUPTED_AI_SKIPPED";
+  const aiAnalyzeOk = aiAnalyzed &&
+    tender.analysisExtractionStatus !== "EXTRACTION_CORRUPTED_AI_SKIPPED" &&
+    tender.analysisExtractionStatus !== "REGEX_FALLBACK_FROM_WEAK_EXTRACTION";
 
   const metaReport = assessTenderMetadataCompleteness({
     clientName: (tender.clientName || tender.procuringEntityName) ?? null,
@@ -196,9 +198,12 @@ export async function NextActionPanel({ tenderId }: { tenderId: string }) {
     step = "RUN_AI_ANALYZE"; label = "Run AI Analyze";
     reason = !aiAnalyzed
       ? "The tender has not been analyzed yet. Run AI Analyze to extract requirements, client details, and evaluation criteria."
-      : "AI Analyze was blocked due to corrupted extraction. Fix extraction and re-run.";
+      : tender.analysisExtractionStatus === "REGEX_FALLBACK_FROM_WEAK_EXTRACTION"
+        ? "AI Analyze used regex/deterministic fallback because extraction was too weak — requirements may be incomplete. Re-extract (run OCR if needed) and re-run AI Analyze."
+        : "AI Analyze was blocked due to corrupted extraction. Fix extraction and re-run.";
     if (!aiAnalyzed) blockers.push("AI Analyze not run");
     if (tender.analysisExtractionStatus === "EXTRACTION_CORRUPTED_AI_SKIPPED") blockers.push("Analysis skipped: corrupted extraction");
+    if (tender.analysisExtractionStatus === "REGEX_FALLBACK_FROM_WEAK_EXTRACTION") blockers.push("Analysis used regex fallback (weak extraction) — re-extract and re-run AI Analyze");
   } else if (!metadataOk) {
     step = "CONFIRM_METADATA"; label = "Confirm tender metadata";
     reason = "Critical metadata fields are missing or contain placeholder text. Fill them, mark not applicable, or ignore if the tender does not issue them.";

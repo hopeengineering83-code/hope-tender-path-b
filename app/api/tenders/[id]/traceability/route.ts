@@ -59,6 +59,10 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       .filter((file) => textIncludes(file.extractedText, requirement.title) || textIncludes(file.extractedText, requirement.description) || textIncludes(file.extractedText, requirement.sectionReference))
       .map((file) => ({ id: file.id, fileName: file.originalFileName, classification: file.classification }));
     const matrixRows = tender.complianceMatrix.filter((row) => row.requirementId === requirement.id);
+    // Use DB-stored source fields (set by AI Analyze / engine) for authoritative traceability.
+    // Fall back to text-match confidence when DB fields are absent.
+    const dbSourceConfidence = requirement.sourceConfidence ?? 0;
+    const derivedConfidence = sourceFiles.length > 0 ? "MEDIUM" : "LOW";
     return {
       requirementId: requirement.id,
       code: requirement.code,
@@ -66,8 +70,15 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       priority: requirement.priority,
       requirementType: requirement.requirementType,
       sectionReference: requirement.sectionReference,
+      // DB-stored source traceability fields (per CLAUDE.md source-traceability requirement)
+      sourcePageNumber: requirement.sourcePageNumber ?? null,
+      sourceSectionHeading: requirement.sourceSectionHeading ?? null,
+      sourceExactQuote: short(requirement.sourceExactQuote, 300),
+      sourceConfidenceScore: dbSourceConfidence,
+      extractionMethod: requirement.sourceTenderFileId ? "ai_extracted" : "manual_or_unknown",
+      // Text-match source file references
       sourceFiles,
-      sourceConfidence: sourceFiles.length > 0 ? "MEDIUM" : "LOW",
+      sourceConfidence: dbSourceConfidence > 0.6 ? "HIGH" : dbSourceConfidence > 0.3 ? "MEDIUM" : derivedConfidence,
       supportRows: matrixRows.map((row) => ({
         evidenceType: row.evidenceType,
         evidenceSource: row.evidenceSource,
@@ -106,6 +117,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   }));
 
   const weakRequirements = requirementTrace.filter((r) => r.sourceFiles.length === 0 || r.supportRows.length === 0);
+  const weakMandatoryCritical = weakRequirements.filter((r) => r.priority === "MANDATORY" || r.priority === "CRITICAL");
   const weakSelectedExperts = expertEvidence.filter((e) => e.isSelected && (e.trustLevel !== "REVIEWED" || ["NONE", "LOW"].includes(e.evidenceConfidence)));
   const weakSelectedProjects = projectEvidence.filter((p) => p.isSelected && (p.trustLevel !== "REVIEWED" || ["NONE", "LOW"].includes(p.evidenceConfidence)));
 
@@ -118,11 +130,13 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       summary: {
         requirements: requirementTrace.length,
         weakRequirements: weakRequirements.length,
+        weakMandatoryCriticalRequirements: weakMandatoryCritical.length,
         selectedExpertsWithWeakEvidence: weakSelectedExperts.length,
         selectedProjectsWithWeakEvidence: weakSelectedProjects.length,
       },
       warnings: [
-        weakRequirements.length > 0 ? `${weakRequirements.length} requirement(s) have weak source/support traceability.` : null,
+        weakMandatoryCritical.length > 0 ? `${weakMandatoryCritical.length} MANDATORY/CRITICAL requirement(s) have weak source/support traceability — export may be blocked.` : null,
+        weakRequirements.length > weakMandatoryCritical.length ? `${weakRequirements.length - weakMandatoryCritical.length} other requirement(s) have weak traceability.` : null,
         weakSelectedExperts.length > 0 ? `${weakSelectedExperts.length} selected expert(s) have weak evidence or are not REVIEWED.` : null,
         weakSelectedProjects.length > 0 ? `${weakSelectedProjects.length} selected project(s) have weak evidence or are not REVIEWED.` : null,
       ].filter(Boolean),

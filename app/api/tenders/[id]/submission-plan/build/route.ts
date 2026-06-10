@@ -127,7 +127,8 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     if (tender.requirements.length === 0 && tender.files.length > 0) {
       const isWeak = tender.files.some((f) =>
         (f.extractionScore ?? 100) < 60 ||
-        tender.analysisExtractionStatus === "EXTRACTION_CORRUPTED_AI_SKIPPED"
+        tender.analysisExtractionStatus === "EXTRACTION_CORRUPTED_AI_SKIPPED" ||
+        tender.analysisExtractionStatus === "REGEX_FALLBACK_FROM_WEAK_EXTRACTION"
       );
 
       if (isWeak) {
