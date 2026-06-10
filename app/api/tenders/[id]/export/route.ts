@@ -63,14 +63,32 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       );
     }
 
-    // Block export when AI Analyze ran on weak/corrupted extraction — the
-    // generated documents may be based on incomplete requirement extraction.
+    // Block export when AI Analyze ran on weak/corrupted extraction, was skipped,
+    // or used regex fallback — the generated documents may be based on incomplete
+    // requirement extraction. Note: "EXTRACTION_CORRUPTED_AI_SKIPPED" is the tender
+    // job status; the analysisExtractionStatus field is set to "OCR_REQUIRED" in
+    // that case (see ai-analyze/route.ts).
     const analysisExtractionStatus = (tender as { analysisExtractionStatus?: string | null }).analysisExtractionStatus;
-    if (analysisExtractionStatus === "REGEX_FALLBACK_FROM_WEAK_EXTRACTION" || analysisExtractionStatus === "EXTRACTION_CORRUPTED_AI_SKIPPED") {
+    const weakAnalysisStatuses = [
+      "REGEX_FALLBACK_FROM_WEAK_EXTRACTION",
+      "OCR_REQUIRED",                   // AI was skipped — no reliable analysis at all
+      "EXTRACTION_WEAK_REVIEW_REQUIRED", // AI ran on weak extraction
+      "PARTIAL_EXTRACTION_AI_ANALYZED",  // AI ran on incomplete pages
+    ] as const;
+    if (weakAnalysisStatuses.some((s) => s === analysisExtractionStatus)) {
+      const detail =
+        analysisExtractionStatus === "OCR_REQUIRED"
+          ? "AI Analyze was skipped because the extracted text is corrupted"
+          : analysisExtractionStatus === "REGEX_FALLBACK_FROM_WEAK_EXTRACTION"
+          ? "tender analysis used regex/deterministic fallback"
+          : analysisExtractionStatus === "EXTRACTION_WEAK_REVIEW_REQUIRED"
+          ? "AI Analyze ran on weak extraction"
+          : "AI Analyze ran on a partially-extracted tender";
       return NextResponse.json(
         {
-          error: `Export blocked: tender analysis was based on ${analysisExtractionStatus === "EXTRACTION_CORRUPTED_AI_SKIPPED" ? "corrupted extraction (AI Analyze was skipped)" : "weak/regex-fallback extraction"}. Re-run AI Analyze after OCR extraction before exporting.`,
+          error: `Export blocked: ${detail}. Re-run AI Analyze after OCR extraction before exporting.`,
           code: "ANALYSIS_FROM_WEAK_EXTRACTION",
+          analysisExtractionStatus,
         },
         { status: 422 },
       );

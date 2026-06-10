@@ -333,6 +333,27 @@ describe("Export route — extraction gate wiring (source assertions)", () => {
       "Export route must return EXTRACTION_QUALITY_INSUFFICIENT when extraction is poor",
     );
   });
+
+  it("blocks export on OCR_REQUIRED (AI was skipped — not EXTRACTION_CORRUPTED_AI_SKIPPED which is never in analysisExtractionStatus)", () => {
+    // Regression: original code compared analysisExtractionStatus === "EXTRACTION_CORRUPTED_AI_SKIPPED"
+    // which is NEVER the value written — ai-analyze sets analysisExtractionStatus = "OCR_REQUIRED"
+    // when AI is skipped due to corrupted text. The check was dead code.
+    assert.ok(
+      src.includes('"OCR_REQUIRED"'),
+      'Export route must check analysisExtractionStatus === "OCR_REQUIRED" (not the never-set EXTRACTION_CORRUPTED_AI_SKIPPED)',
+    );
+  });
+
+  it("blocks export on EXTRACTION_WEAK_REVIEW_REQUIRED and PARTIAL_EXTRACTION_AI_ANALYZED", () => {
+    assert.ok(
+      src.includes('"EXTRACTION_WEAK_REVIEW_REQUIRED"'),
+      "Export route must block when AI ran on weak extraction",
+    );
+    assert.ok(
+      src.includes('"PARTIAL_EXTRACTION_AI_ANALYZED"'),
+      "Export route must block when AI ran on partially-extracted tender",
+    );
+  });
 });
 
 // ── 10. Chain integration: corrupted text → all gates block ──────────────────
