@@ -1,9 +1,9 @@
-import Link from "next/link";
 import { redirect } from "next/navigation";
+import Link from "next/link";
 import { getSession } from "../../lib/auth";
 import { prisma, prismaReady } from "../../lib/prisma";
 import { StatusBadge } from "../../components/status-badge";
-import { formatDate, formatTenderStatus } from "../../lib/tender-workflow";
+import { formatDate } from "../../lib/tender-workflow";
 import { isAIEnabled } from "../../lib/ai";
 
 export default async function DashboardPage() {
@@ -11,37 +11,27 @@ export default async function DashboardPage() {
   if (!userId) redirect("/login");
   await prismaReady;
 
-  const tenderIds = await prisma.tender.findMany({ where: { userId }, select: { id: true }, orderBy: { createdAt: "desc" }, take: 200 }).then((r) => r.map((t) => t.id));
-
-  const [tenders, company, recentActivity, generatedDocStats] = await Promise.all([
+  const [tenders, recentActivity] = await Promise.all([
     prisma.tender.findMany({
       where: { userId },
-      select: {
-        id: true, title: true, clientName: true, procuringEntityName: true, status: true, deadline: true,
-        readinessScore: true, budget: true, currency: true, createdAt: true,
-        bidOutcome: true,
+      include: {
         _count: { select: { requirements: true } },
-        complianceGaps: { select: { isResolved: true, severity: true } },
+        complianceGaps: { select: { id: true, severity: true, isResolved: true } },
+        generatedDocuments: { select: { id: true, validationStatus: true } },
       },
-      orderBy: { createdAt: "desc" },
-      take: 50,
+      orderBy: { updatedAt: "desc" },
     }),
-    prisma.company.findUnique({ where: { userId } }),
     prisma.auditLog.findMany({
       where: { userId },
       orderBy: { createdAt: "desc" },
-      take: 8,
+      take: 5,
     }),
-    tenderIds.length > 0 ? prisma.generatedDocument.groupBy({
-      by: ["reviewStatus"],
-      where: { tenderId: { in: tenderIds }, generationStatus: { not: "SUPERSEDED" } },
-      _count: { _all: true },
-    }) : Promise.resolve([]),
   ]);
 
+  const aiEnabled = isAIEnabled();
   const now = new Date();
-  const in7days = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
   const in3days = new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000);
+  const in7days = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
 
   const overdue = tenders.filter((t) => t.deadline && new Date(t.deadline) < now && !["EXPORTED", "CLOSED"].includes(t.status));
   const dueSoon3 = tenders.filter((t) => {
@@ -56,48 +46,45 @@ export default async function DashboardPage() {
   });
 
   const tendersWithOutcome = tenders.filter((t) => t.bidOutcome && t.bidOutcome !== "PENDING");
-  const wonCount = tendersWithOutcome.filter((t) => t.bidOutcome === "WON").length;
-  const winRate = tendersWithOutcome.length > 0 ? Math.round((wonCount / tendersWithOutcome.length) * 100) : null;
-
-  const activeBudgets = tenders.filter((t) => !["DRAFT", "CLOSED"].includes(t.status) && t.budget);
-  const pipelineValue = activeBudgets.reduce((sum, t) => sum + (t.budget ?? 0), 0);
-
-  const scoredTenders = tenders.filter((t) => (t.readinessScore ?? 0) > 0);
-  const avgReadiness = scoredTenders.length > 0
-    ? Math.round(scoredTenders.reduce((s, t) => s + (t.readinessScore ?? 0), 0) / scoredTenders.length)
+  const wonCount = tenders.filter((t) => t.bidOutcome === "WON").length;
+  const winRate = tendersWithOutcome.length > 0
+    ? Math.round((wonCount / tendersWithOutcome.length) * 100)
     : null;
 
-  const stats = {
-    total: tenders.length,
-    inProgress: tenders.filter((t) => !["DRAFT", "EXPORTED", "CLOSED"].includes(t.status)).length,
-    criticalGaps: tenders.reduce((sum, t) => sum + t.complianceGaps.filter((g: { isResolved: boolean; severity: string }) => !g.isResolved && g.severity === "CRITICAL").length, 0),
-    highGaps: tenders.reduce((sum, t) => sum + t.complianceGaps.filter((g: { isResolved: boolean; severity: string }) => !g.isResolved && g.severity === "HIGH").length, 0),
-    dueSoon: dueSoon7.length,
-    overdue: overdue.length,
-  };
+  const activeBudgets = tenders
+    .map((t) => t.budget as number | null)
+    .filter((b): b is number => b !== null && b > 0);
+  const pipelineValue = activeBudgets.reduce((a, b) => a + b, 0);
 
-  const totalGenDocs = generatedDocStats.reduce((s, g) => s + g._count._all, 0);
-  const exportReadyDocs = generatedDocStats
-    .filter((g) => g.reviewStatus === "READY_FOR_EXPORT" || g.reviewStatus === "APPROVED")
-    .reduce((s, g) => s + g._count._all, 0);
+  const scoredTenders = tenders.filter((t) => t.readinessScore !== null);
+  const avgReadiness = scoredTenders.length > 0
+    ? Math.round(scoredTenders.reduce((a, b) => a + (b.readinessScore ?? 0), 0) / scoredTenders.length)
+    : null;
 
-  const aiEnabled = isAIEnabled();
+  const totalGenDocs = tenders.reduce((a, b) => a + b.generatedDocuments.length, 0);
+  const exportReadyDocs = tenders.reduce(
+    (a, b) => a + b.generatedDocuments.filter((d) => d.validationStatus === "PASSED" || d.validationStatus === "VALIDATED").length,
+    0
+  );
+
+  const criticalGaps = tenders.reduce((sum, t) => sum + t.complianceGaps.filter((g) => !g.isResolved && g.severity === "CRITICAL").length, 0);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Dashboard</h1>
-          <p className="mt-0.5 text-slate-500 flex items-center gap-2">
-            {company ? `${company.name}` : ""}
-            {company && <span className="text-slate-300">·</span>}
+          <h1 className="text-3xl font-bold text-slate-900 tracking-tight">Workspace Overview</h1>
+          <p className="mt-1 text-slate-500 flex items-center gap-2">
             {aiEnabled
               ? <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-2 py-0.5">✦ AI enabled</span>
               : <span className="inline-flex items-center gap-1 text-xs font-medium text-slate-500 bg-slate-100 border border-slate-200 rounded-full px-2 py-0.5">AI offline — rule-based mode</span>
             }
           </p>
         </div>
-        <Link href="/dashboard/tenders/new" className="rounded-lg bg-black px-4 py-2 text-sm text-white hover:bg-slate-800">
+        <Link
+          href="/dashboard/tenders/new"
+          className="rounded-xl bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-slate-800 transition-all active:scale-95"
+        >
           + New Tender
         </Link>
       </div>
@@ -124,36 +111,32 @@ export default async function DashboardPage() {
         </div>
       )}
 
-      {/* Stats */}
-      <div className="grid gap-4 grid-cols-2 xl:grid-cols-6">
+      <div className="grid gap-4 grid-cols-2 lg:grid-cols-4">
         {[
-          { label: "Total Tenders", value: stats.total, color: "text-slate-900" },
-          { label: "In Progress", value: stats.inProgress, color: "text-blue-600" },
-          { label: "Critical Gaps", value: stats.criticalGaps, color: stats.criticalGaps > 0 ? "text-red-600" : "text-green-600" },
-          { label: "High Gaps", value: stats.highGaps, color: stats.highGaps > 0 ? "text-orange-600" : "text-slate-400" },
-          { label: "Due ≤ 7 Days", value: stats.dueSoon, color: stats.dueSoon > 0 ? "text-amber-600" : "text-slate-400" },
-          { label: "Overdue", value: stats.overdue, color: stats.overdue > 0 ? "text-red-700" : "text-slate-400" },
+          { label: "Active Tenders", value: tenders.length, color: "text-blue-600" },
+          { label: "Critical Gaps", value: criticalGaps, color: criticalGaps > 0 ? "text-red-600" : "text-green-600" },
+          { label: "Due ≤ 7 Days", value: dueSoon7.length, color: dueSoon7.length > 0 ? "text-amber-600" : "text-slate-400" },
+          { label: "Overdue", value: overdue.length, color: overdue.length > 0 ? "text-red-700" : "text-slate-400" },
         ].map((s) => (
-          <div key={s.label} className="rounded-2xl border bg-white p-5 shadow-sm">
-            <p className="text-sm text-slate-500">{s.label}</p>
+          <div key={s.label} className="rounded-2xl border bg-white p-5 shadow-sm hover:shadow-md transition-shadow">
+            <p className="text-xs font-bold uppercase tracking-widest text-slate-400">{s.label}</p>
             <p className={`mt-1 text-3xl font-bold ${s.color}`}>{s.value}</p>
           </div>
         ))}
       </div>
 
-      {/* Analytics strip */}
       {(winRate !== null || pipelineValue > 0 || avgReadiness !== null || totalGenDocs > 0) && (
         <div className="grid gap-4 grid-cols-2 xl:grid-cols-4">
           {winRate !== null && (
             <div className="rounded-2xl border bg-white p-5 shadow-sm">
-              <p className="text-sm text-slate-500">Win Rate</p>
+              <p className="text-sm text-slate-500 font-medium">Win Rate</p>
               <p className={`mt-1 text-3xl font-bold ${winRate >= 50 ? "text-green-600" : "text-amber-600"}`}>{winRate}%</p>
-              <p className="mt-1 text-xs text-slate-400">{wonCount} of {tendersWithOutcome.length} decided tenders</p>
+              <p className="mt-1 text-xs text-slate-400">{wonCount} of {tendersWithOutcome.length} decided</p>
             </div>
           )}
           {pipelineValue > 0 && (
             <div className="rounded-2xl border bg-white p-5 shadow-sm">
-              <p className="text-sm text-slate-500">Pipeline Value</p>
+              <p className="text-sm text-slate-500 font-medium">Pipeline Value</p>
               <p className="mt-1 text-2xl font-bold text-blue-600">
                 {pipelineValue >= 1_000_000
                   ? `$${(pipelineValue / 1_000_000).toFixed(1)}M`
@@ -161,45 +144,31 @@ export default async function DashboardPage() {
                   ? `$${(pipelineValue / 1_000).toFixed(0)}K`
                   : `$${pipelineValue.toLocaleString()}`}
               </p>
-              <p className="mt-1 text-xs text-slate-400">{activeBudgets.length} active tenders with budget</p>
+              <p className="mt-1 text-xs text-slate-400">{activeBudgets.length} with budget</p>
             </div>
           )}
           {avgReadiness !== null && (
             <div className="rounded-2xl border bg-white p-5 shadow-sm">
-              <p className="text-sm text-slate-500">Avg Readiness</p>
+              <p className="text-sm text-slate-500 font-medium">Avg Readiness</p>
               <p className={`mt-1 text-3xl font-bold ${avgReadiness >= 80 ? "text-green-600" : avgReadiness >= 50 ? "text-amber-600" : "text-red-500"}`}>{avgReadiness}%</p>
-              <p className="mt-1 text-xs text-slate-400">across {scoredTenders.length} scored tender(s)</p>
+              <p className="mt-1 text-xs text-slate-400">across {scoredTenders.length} tenders</p>
             </div>
           )}
           {totalGenDocs > 0 && (
             <div className="rounded-2xl border bg-white p-5 shadow-sm">
-              <p className="text-sm text-slate-500">Docs Export-Ready</p>
+              <p className="text-sm text-slate-500 font-medium">Ready for Export</p>
               <p className={`mt-1 text-3xl font-bold ${exportReadyDocs === totalGenDocs ? "text-green-600" : exportReadyDocs > 0 ? "text-amber-600" : "text-slate-400"}`}>{exportReadyDocs}</p>
-              <p className="mt-1 text-xs text-slate-400">of {totalGenDocs} generated document{totalGenDocs !== 1 ? "s" : ""}</p>
+              <p className="mt-1 text-xs text-slate-400">of {totalGenDocs} docs</p>
             </div>
           )}
-          <div className="rounded-2xl border bg-white p-5 shadow-sm">
-            <p className="text-sm text-slate-500">Outcomes Tracked</p>
-            <div className="mt-2 flex flex-wrap gap-2">
-              {[["WON","bg-green-100 text-green-700"],["LOST","bg-red-100 text-red-700"],["WITHDRAWN","bg-slate-100 text-slate-600"],["PENDING","bg-amber-100 text-amber-700"]].map(([outcome, cls]) => {
-                const count = tenders.filter((t) => t.bidOutcome === outcome).length;
-                if (count === 0) return null;
-                return <span key={outcome} className={`rounded-full px-2 py-0.5 text-xs font-medium ${cls}`}>{outcome.toLowerCase()} {count}</span>;
-              })}
-              {tenders.filter((t) => !t.bidOutcome).length > 0 && (
-                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-400">unrecorded {tenders.filter((t) => !t.bidOutcome).length}</span>
-              )}
-            </div>
-          </div>
         </div>
       )}
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,2fr),minmax(300px,1fr)]">
-        {/* Pipeline table */}
         <div className="rounded-2xl border bg-white shadow-sm overflow-hidden">
           <div className="flex items-center justify-between border-b px-6 py-4">
-            <h2 className="font-semibold text-slate-900">Live pipeline</h2>
-            <Link href="/dashboard/tenders" className="text-sm text-blue-600 hover:underline">View all</Link>
+            <h2 className="font-bold text-slate-900">Live Pipeline</h2>
+            <Link href="/dashboard/tenders" className="text-sm font-medium text-blue-600 hover:underline">View All</Link>
           </div>
           {tenders.length === 0 ? (
             <div className="py-12 text-center text-slate-400">
@@ -210,10 +179,10 @@ export default async function DashboardPage() {
             <table className="w-full text-sm">
               <thead className="bg-slate-50 text-left text-slate-500">
                 <tr>
-                  <th className="px-6 py-3 font-medium">Title</th>
-                  <th className="px-6 py-3 font-medium">Deadline</th>
-                  <th className="px-6 py-3 font-medium">Status</th>
-                  <th className="px-6 py-3 font-medium">Workflow Progress</th>
+                  <th className="px-6 py-3 font-semibold uppercase tracking-wider text-[10px]">Tender Title</th>
+                  <th className="px-6 py-3 font-semibold uppercase tracking-wider text-[10px]">Deadline</th>
+                  <th className="px-6 py-3 font-semibold uppercase tracking-wider text-[10px]">Status</th>
+                  <th className="px-6 py-3 font-semibold uppercase tracking-wider text-[10px]">Readiness</th>
                 </tr>
               </thead>
               <tbody className="divide-y">
@@ -224,29 +193,25 @@ export default async function DashboardPage() {
                   const isLate = tender.deadline && new Date(tender.deadline) < now && !["EXPORTED", "CLOSED"].includes(tender.status);
 
                   return (
-                    <tr key={tender.id} className="hover:bg-slate-50">
+                    <tr key={tender.id} className="hover:bg-slate-50 group">
                       <td className="px-6 py-4">
-                        <Link href={`/dashboard/tenders/${tender.id}`} className="font-medium text-slate-900 hover:underline">{tender.title}</Link>
-                        {(tender.clientName || (tender as Record<string, unknown>).procuringEntityName as string | null | undefined) && <p className="text-xs text-slate-400">{tender.clientName || (tender as Record<string, unknown>).procuringEntityName as string}</p>}
+                        <Link href={`/dashboard/tenders/${tender.id}`} className="font-semibold text-slate-900 group-hover:text-blue-600 transition-colors">{tender.title}</Link>
+                        {tender.clientName && <p className="text-xs text-slate-400 mt-0.5">{tender.clientName}</p>}
                       </td>
                       <td className="px-6 py-4">
-                        <span className={isLate ? "text-red-600 font-medium" : "text-slate-500"}>
+                        <span className={isLate ? "text-red-600 font-bold" : "text-slate-500"}>
                           {formatDate(tender.deadline)}
                         </span>
                       </td>
                       <td className="px-6 py-4"><StatusBadge status={tender.status} /></td>
                       <td className="px-6 py-4">
-                        {total > 0 ? (
-                          <div className="flex items-center gap-2">
-                            <div className="h-1.5 w-20 rounded-full bg-slate-100 overflow-hidden">
-                              <div className={`h-full rounded-full ${readiness >= 80 ? "bg-green-500" : readiness >= 50 ? "bg-amber-400" : "bg-red-400"}`}
-                                style={{ width: `${readiness}%` }} />
-                            </div>
-                            <span className="text-xs text-slate-500">{readiness}% <span className="text-slate-300">(workflow)</span></span>
+                        <div className="flex items-center gap-2">
+                          <div className="h-1.5 w-16 rounded-full bg-slate-100 overflow-hidden">
+                            <div className={`h-full rounded-full ${readiness >= 80 ? "bg-green-500" : readiness >= 50 ? "bg-amber-400" : "bg-red-400"}`}
+                              style={{ width: `${readiness}%` }} />
                           </div>
-                        ) : (
-                          <span className="text-xs text-slate-400">No analysis</span>
-                        )}
+                          <span className="text-[10px] font-bold text-slate-500">{readiness}%</span>
+                        </div>
                       </td>
                     </tr>
                   );
@@ -256,41 +221,40 @@ export default async function DashboardPage() {
           )}
         </div>
 
-        {/* Right sidebar */}
-        <div className="space-y-3">
-          {!aiEnabled && (
-            <div className="rounded-2xl border border-purple-200 bg-purple-50 p-4">
-              <p className="text-sm font-semibold text-purple-800">Unlock AI features</p>
-              <p className="mt-1 text-xs text-purple-600">Add <code className="bg-purple-100 px-1 rounded">GEMINI_API_KEY</code> to Vercel environment variables to enable AI-powered requirement extraction and proposal generation.</p>
+        <div className="space-y-4">
+          <div className="rounded-2xl border bg-slate-900 p-6 text-white shadow-lg">
+            <h3 className="text-lg font-bold">Quick Engine Access</h3>
+            <p className="mt-1 text-xs text-slate-400">Jump directly to specialized engine views.</p>
+            <div className="mt-6 space-y-2">
+              {[
+                { href: "/dashboard/analysis", label: "Global Analysis", icon: "🧠" },
+                { href: "/dashboard/matching", label: "Global Matching", icon: "🧩" },
+                { href: "/dashboard/compliance", label: "Global Compliance", icon: "🛡️" },
+                { href: "/dashboard/company", label: "Knowledge Vault", icon: "🗄️" },
+                { href: "/dashboard/export", label: "Export Hub", icon: "📦" },
+              ].map((item) => (
+                <Link key={item.href} href={item.href}
+                  className="flex items-center gap-3 rounded-xl bg-slate-800/50 p-3 text-sm hover:bg-slate-800 transition-colors border border-slate-700/50">
+                  <span className="text-lg">{item.icon}</span>
+                  <span className="font-medium">{item.label}</span>
+                </Link>
+              ))}
             </div>
-          )}
-          {[
-            { href: "/dashboard/analysis", label: "Tender Analysis", desc: aiEnabled ? "AI-powered requirement extraction" : "Extract requirements and file rules" },
-            { href: "/dashboard/matching", label: "Matching Engine", desc: "Rank experts and project references" },
-            { href: "/dashboard/compliance", label: "Compliance Review", desc: "Detect and resolve critical gaps" },
-            { href: "/dashboard/company", label: "Company Vault", desc: "Experts, projects, and profile data" },
-            { href: "/dashboard/export", label: "Export Packages", desc: "Download DOCX proposals and reports" },
-          ].map((item) => (
-            <Link key={item.href} href={item.href}
-              className="block rounded-2xl border bg-white p-4 shadow-sm transition hover:border-black">
-              <p className="font-semibold text-slate-900 text-sm">{item.label}</p>
-              <p className="mt-0.5 text-xs text-slate-500">{item.desc}</p>
-            </Link>
-          ))}
+          </div>
 
           {recentActivity.length > 0 && (
-            <div className="rounded-2xl border bg-white p-4 shadow-sm">
-              <div className="flex items-center justify-between mb-3">
-                <p className="font-semibold text-slate-900 text-sm">Recent Activity</p>
-                <Link href="/dashboard/activity" className="text-xs text-blue-600 hover:underline">View all</Link>
+            <div className="rounded-2xl border bg-white p-5 shadow-sm">
+              <div className="flex items-center justify-between mb-4">
+                <p className="font-bold text-slate-900 text-sm">Activity Feed</p>
+                <Link href="/dashboard/activity" className="text-xs font-medium text-blue-600 hover:underline">View All</Link>
               </div>
-              <ul className="space-y-2">
+              <ul className="space-y-4">
                 {recentActivity.map((log) => (
-                  <li key={log.id} className="flex items-start gap-2">
-                    <span className="mt-0.5 h-1.5 w-1.5 shrink-0 rounded-full bg-blue-400" />
+                  <li key={log.id} className="flex gap-3">
+                    <div className="mt-1 h-2 w-2 shrink-0 rounded-full bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.5)]" />
                     <div className="min-w-0">
-                      <p className="text-xs text-slate-700 truncate">{log.description}</p>
-                      <p className="text-xs text-slate-400">
+                      <p className="text-xs font-medium text-slate-800 leading-normal">{log.description}</p>
+                      <p className="text-[10px] text-slate-400 mt-1">
                         {new Date(log.createdAt).toLocaleDateString()} · {log.action}
                       </p>
                     </div>
