@@ -364,9 +364,9 @@ export function assessTenderMetadataCompleteness(
   if (input.hasEvaluationMethodology !== true && (input.technicalWeight === null || input.technicalWeight === undefined)) {
     const evalField = "evaluationCriteria";
     if (isNotApplicable(evalField)) {
-      notApplicableFields.push({ field: evalField, reason: "Evaluation criteria / scoring weights are not extracted — needed for scored tenders." });
+      notApplicableFields.push({ field: evalField, reason: "Evaluation criteria / scoring weights were not issued in this tender." });
     } else if (!isOverrideResolved(evalField)) {
-      missingCritical.push({ field: evalField, reason: "Evaluation criteria / scoring weights are not extracted — needed for scored tenders." });
+      missingNonCritical.push({ field: evalField, reason: "Evaluation criteria / scoring weights were not extracted. Confirm manually when the tender is scored; otherwise mark not applicable or ignore for this tender." });
     }
   }
 
@@ -497,7 +497,7 @@ export function assessTenderMetadataCompleteness(
     notes.push(`${invalidFields.length} field(s) contain internal placeholder language (e.g. "Bid-Team to confirm") and must be cleaned before generation.`);
   }
   if (overallRatio < 0.6) {
-    notes.push(`Tender metadata auto-fill coverage is ${Math.round(overallRatio * 100)}% — below the 60% threshold required for senior-grade generation.`);
+    notes.push(`Tender metadata auto-fill coverage is ${Math.round(overallRatio * 100)}% — review missing fields, then mark absent tender-specific fields as not applicable or ignored.`);
   }
 
   const dl = input.deadline;

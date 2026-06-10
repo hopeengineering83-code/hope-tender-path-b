@@ -176,15 +176,15 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       .sort((a, b) => (a.exactOrder ?? Number.MAX_SAFE_INTEGER) - (b.exactOrder ?? Number.MAX_SAFE_INTEGER))
       .map((doc) => doc.exactFileName ?? doc.name);
 
-    const existingPackage = await prisma.exportPackage.findFirst({ where: { tenderId: id }, orderBy: { createdAt: "desc" } });
-    const exportPackage = existingPackage
-      ? await prisma.exportPackage.update({
-          where: { id: existingPackage.id },
-          data: { status: "READY", fileList: JSON.stringify(generatedFileNames) },
-        })
-      : await prisma.exportPackage.create({
-          data: { tenderId: id, status: "READY", fileList: JSON.stringify(generatedFileNames), downloadCount: 0 },
-        });
+    const exportPackage = await prisma.$transaction(async (tx) => {
+      await tx.exportPackage.updateMany({
+        where: { tenderId: id, status: "READY" },
+        data: { status: "SUPERSEDED" },
+      });
+      return tx.exportPackage.create({
+        data: { tenderId: id, status: "READY", fileList: JSON.stringify(generatedFileNames), downloadCount: 0 },
+      });
+    });
 
     await prisma.tender.update({
       where: { id },

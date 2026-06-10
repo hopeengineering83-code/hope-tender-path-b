@@ -53,6 +53,9 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       submissionAddress: true,
       submissionEmails: true,
       currency: true,
+      metadataOverrides: {
+        select: { field: true, fieldState: true, overrideValue: true },
+      },
       files: {
         select: {
           id: true,
@@ -145,7 +148,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     currency: tender.currency ?? null,
     hasSubmissionRules: Boolean(tender.submissionMethod || tender.submissionEmails || tender.submissionAddress),
     requirementCount: tender.requirements.length,
-  });
+  }, tender.metadataOverrides);
   const metadataOk = metadataReport.missingCritical.length === 0 &&
     metadataReport.placeholderCount === 0 &&
     !tender.metadataContaminated;
@@ -255,7 +258,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       upload: { ok: hasFiles, fileCount: tender.files.length, files: fileQuality.map((f) => ({ name: f.name, mimeType: f.mimeType, severity: f.severity, score: f.extractionScore, corrupted: f.corrupted })) },
       extraction: { ok: extractionOk, avgScore: avgExtractionScore, anyCorrupted, anyFailed, status: analysisStatus ?? "NOT_RUN" },
       aiAnalyze: { ok: aiAnalyzeOk, analyzed: aiAnalyzed, extractionStatus: analysisStatus ?? "NOT_RUN" },
-      metadata: { ok: metadataOk, missingCritical: metadataReport.missingCritical.map((f) => f.field), placeholders: metadataReport.placeholderCount, contaminated: tender.metadataContaminated },
+      metadata: { ok: metadataOk, missingCritical: metadataReport.missingCritical.map((f) => f.field), notApplicable: metadataReport.notApplicableFields.map((f) => f.field), placeholders: metadataReport.placeholderCount, contaminated: tender.metadataContaminated },
       requirements: { ok: requirementsOk, total: tender.requirements.length, mandatory: mandatoryReqs.length, traced: tracedReqs.length, traceabilityPercent: traceabilityRatio },
       buildPlan: { ok: hasPlan, planFileCount: planFiles.length },
       generateDocs: { ok: hasGeneratedDocs, totalActive: activeDocs.length, generated: generatedCount },

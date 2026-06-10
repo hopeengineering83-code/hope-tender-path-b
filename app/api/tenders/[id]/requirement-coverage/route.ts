@@ -105,6 +105,7 @@ function deriveSupportLevel(links: EvidenceLink[]): SupportLevel {
   if (levels.some((l) => l === "FULL")) return "FULL";
   if (levels.some((l) => l === "SUBSTANTIAL")) return "SUBSTANTIAL";
   if (levels.some((l) => l === "PARTIAL")) return "PARTIAL";
+  if (levels.some((l) => l === "NOT_APPLICABLE")) return "NOT_APPLICABLE";
   return "NONE";
 }
 
@@ -114,6 +115,7 @@ function nextActionFor(row: {
   requirementType: string;
   evidenceLinks: EvidenceLink[];
 }): string {
+  if (row.supportLevel === "NOT_APPLICABLE") return "Requirement marked not applicable by reviewer. Keep the audit note for export review.";
   if (row.supportLevel === "NONE" || row.evidenceLinks.length === 0) {
     if (row.requirementType === "EXPERT") return "Add a reviewed expert with this discipline to the vault and run Engine to match.";
     if (row.requirementType === "PROJECT_EXPERIENCE") return "Add a relevant project reference to the vault and run Engine to match.";
@@ -156,7 +158,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 
     const [requirements, vaultExperts, vaultProjects] = await Promise.all([
       prisma.tenderRequirement.findMany({
-        where: { tenderId: id, priority: "MANDATORY" },
+        where: { tenderId: id, priority: { in: ["MANDATORY", "CRITICAL"] } },
         orderBy: { createdAt: "asc" },
         select: {
           id: true,
@@ -235,7 +237,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       );
       // Auto-linked evidence cannot make a requirement isFullyCovered — user must confirm
       const hasOnlyAutoLinks = storedLinks.length === 0 && autoLinks.length > 0;
-      const isFullyCovered = !hasOnlyAutoLinks && (supportLevel === "FULL" || supportLevel === "SUBSTANTIAL") && hasSourceRef;
+      const isFullyCovered = supportLevel === "NOT_APPLICABLE" || (!hasOnlyAutoLinks && (supportLevel === "FULL" || supportLevel === "SUBSTANTIAL") && hasSourceRef);
       return {
         id: req.id,
         title: req.title,
