@@ -187,6 +187,35 @@ export async function ExtractionQualityPanel({ tenderId }: { tenderId: string })
         <div className="rounded-xl border bg-white p-3 text-sm"><p className="text-xs uppercase text-slate-500">Blank/failed pages</p><p className="mt-1 text-xl font-bold text-slate-900">{pageCoverage.failed}</p></div>
       </div>
 
+      {pageCoverage.total > 0 && (
+        <div className="mt-3 grid gap-3 md:grid-cols-4">
+          <div className="rounded-xl border bg-white p-3 text-sm">
+            <p className="text-xs uppercase text-slate-500">Submission instruction pages</p>
+            {pageCoverage.submissionPages.length > 0
+              ? <><p className="mt-1 text-xl font-bold text-green-700">{pageCoverage.submissionPages.length}</p><p className="text-[10px] text-slate-400">pp. {formatPages(pageCoverage.submissionPages, 6)}</p></>
+              : <p className="mt-1 text-sm font-semibold text-amber-600">None detected</p>}
+          </div>
+          <div className="rounded-xl border bg-white p-3 text-sm">
+            <p className="text-xs uppercase text-slate-500">Evaluation criteria pages</p>
+            {pageCoverage.evaluationPages.length > 0
+              ? <><p className="mt-1 text-xl font-bold text-green-700">{pageCoverage.evaluationPages.length}</p><p className="text-[10px] text-slate-400">pp. {formatPages(pageCoverage.evaluationPages, 6)}</p></>
+              : <p className="mt-1 text-sm font-semibold text-amber-600">None detected</p>}
+          </div>
+          <div className="rounded-xl border bg-white p-3 text-sm">
+            <p className="text-xs uppercase text-slate-500">Required documents pages</p>
+            {pageCoverage.requiredDocPages.length > 0
+              ? <><p className="mt-1 text-xl font-bold text-green-700">{pageCoverage.requiredDocPages.length}</p><p className="text-[10px] text-slate-400">pp. {formatPages(pageCoverage.requiredDocPages, 6)}</p></>
+              : <p className="mt-1 text-sm font-semibold text-amber-600">None detected</p>}
+          </div>
+          <div className="rounded-xl border bg-white p-3 text-sm">
+            <p className="text-xs uppercase text-slate-500">Client/contact detail pages</p>
+            {pageCoverage.clientPages.length > 0
+              ? <><p className="mt-1 text-xl font-bold text-green-700">{pageCoverage.clientPages.length}</p><p className="text-[10px] text-slate-400">pp. {formatPages(pageCoverage.clientPages, 6)}</p></>
+              : <p className="mt-1 text-sm font-semibold text-amber-600">None detected</p>}
+          </div>
+        </div>
+      )}
+
       {(hasWeakOrFailedPages || pageCoverage.lowConfidencePages.length > 0) && (
         <div className="mt-4 rounded-xl border border-amber-200 bg-white p-4 text-sm">
           <p className="font-semibold text-slate-900">Extraction review list and recommended action</p>
@@ -198,6 +227,11 @@ export async function ExtractionQualityPanel({ tenderId }: { tenderId: string })
         </div>
       )}
 
+      {(analysisStatus === "PARTIAL_EXTRACTION_AI_ANALYZED" || analysisStatus === "EXTRACTION_WEAK_REVIEW_REQUIRED" || analysisStatus === "REGEX_FALLBACK_FROM_WEAK_EXTRACTION") && (
+        <div className="mt-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          <strong>Warning: document is only partially extracted.</strong> AI Analyze ran on incomplete extraction ({EXTRACTION_STATUS_LABELS[analysisStatus] ?? analysisStatus}). Results may be missing tender pages. Re-extract or run OCR for a more reliable analysis.
+        </div>
+      )}
       {!ready && !isCorruptionBlocked && <div className="mt-3 rounded-lg border border-amber-200 bg-white px-4 py-2.5 text-xs text-amber-900"><span className="font-semibold">Recommended action: </span>{anyOcrMissing ? "Set PDF_OCR_ENABLED=true and re-extract — the document requires OCR." : pageCoverage.failed > 0 ? "Re-upload or re-extract the file. Blank/failed pages mean extraction is not fully reliable." : pageCoverage.coveragePercent < 80 ? "Review or re-extract before AI Analyze. The page-status coverage is below the safe threshold." : "Continue only if the weak/table-heavy pages are acceptable for this tender."}</div>}
       {isCorruptionBlocked && <div className="mt-3 rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800"><strong>Extraction corrupted / OCR required</strong> — text quality is too low for reliable analysis. AI Analyze is blocked until the extraction quality issue is resolved.</div>}
       {isContaminated && <div className="mt-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800"><strong>Metadata contamination warning:</strong> The procuring entity / client name may be polluted by unrelated tender portal text or navigation content. Review and correct before generating documents or exporting.</div>}

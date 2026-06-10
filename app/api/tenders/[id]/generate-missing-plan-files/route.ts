@@ -6,6 +6,8 @@ import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { buildSubmissionPlan, buildSubmissionPlanWithDerivedFallback, findMissingGeneratedDocuments } from "../../../../../lib/engine/submission-plan";
 import { MUTATION_RATE_LIMIT, rateLimit } from "../../../../../lib/rate-limit";
 import { extractRequestId } from "../../../../../lib/request-id";
+import { isExtractionAcceptableForGeneration } from "../../../../../lib/engine/extraction-quality-gate";
+import { assessExtractionQuality, assessExtractionQualityPerPage } from "../../../../../lib/extraction-quality";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -168,9 +170,127 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         where: { generationStatus: { not: "SUPERSEDED" } },
         select: { id: true, name: true, exactFileName: true, documentType: true, format: true, exactOrder: true, generationStatus: true },
       },
+      files: {
+        select: {
+          id: true,
+          originalFileName: true,
+          extractedText: true,
+          extractionScore: true,
+          totalPages: true,
+          extractedPages: true,
+          ocrPages: true,
+          failedPages: true,
+          pageStatusJson: true,
+        },
+      },
     },
   });
   if (!tender) return NextResponse.json({ error: "Tender not found", code: "TENDER_NOT_FOUND" }, { status: 404 });
+
+  // ── Pre-flight gates (CLAUDE.md: Generate Docs gate — all 6 conditions) ────
+
+  // Gate 1: Extraction quality must be acceptable
+  if (tender.files.length > 0) {
+    const effectiveFiles = tender.files.map((file) => {
+      const quality = assessExtractionQuality(file.extractedText, file.originalFileName);
+      return { ...file, extractionScore: Math.min(file.extractionScore ?? quality.score, quality.score) };
+    });
+    if (!isExtractionAcceptableForGeneration(effectiveFiles)) {
+      const corruptedFiles = effectiveFiles
+        .filter((f) => assessExtractionQuality(f.extractedText, f.originalFileName).corrupted)
+        .map((f) => f.originalFileName ?? f.id);
+      return NextResponse.json({
+        success: false, ok: false,
+        code: corruptedFiles.length > 0 ? "EXTRACTION_CORRUPTED_GENERATE_BLOCKED" : "EXTRACTION_QUALITY_INSUFFICIENT",
+        error: "Document generation is blocked because page extraction quality is too low. Re-extract or run OCR before generating documents.",
+        nextAction: corruptedFiles.length > 0 ? "RUN_OCR_OR_UPLOAD_CLEARER_SCAN" : "OPEN_EXTRACTION_QUALITY",
+        corruptedFiles,
+      }, { status: 422 });
+    }
+  }
+
+  // Gate 2: Client/procuring entity must be present and not contaminated
+  if ((tender as any).metadataContaminated) {
+    return NextResponse.json({
+      success: false, ok: false,
+      code: "METADATA_CONTAMINATED",
+      error: "Document generation is blocked because the client/procuring entity metadata appears contaminated. Review and correct the client name before generating documents.",
+      nextAction: "EDIT_TENDER_METADATA",
+    }, { status: 422 });
+  }
+  const clientDisplayName = (tender as any).clientName || (tender as any).procuringEntityName;
+  if (!clientDisplayName) {
+    return NextResponse.json({
+      success: false, ok: false,
+      code: "MISSING_CLIENT_DETAILS",
+      error: "Document generation requires a client or procuring entity name. Run AI Analyze or manually enter the client name before generating documents.",
+      nextAction: "EDIT_TENDER_METADATA",
+    }, { status: 422 });
+  }
+
+  // Gate 3: Requirements or explicit file lists must exist
+  const hasExplicitFiles =
+    ((tender as any).exactFileNaming ?? "").trim().length > 2 ||
+    ((tender as any).exactFileOrder ?? "").trim().length > 2;
+  if (tender.requirements.length === 0 && !hasExplicitFiles) {
+    return NextResponse.json({
+      success: false, ok: false,
+      code: "NO_REQUIREMENTS",
+      error: "Document generation requires extracted requirements or explicit submission file instructions. Run AI Analyze before generating documents.",
+      nextAction: "RERUN_AI_ANALYZE",
+    }, { status: 422 });
+  }
+
+  // Gates 4 & 5: Submission instructions and required documents pages
+  // Only enforced when PAGE_MARKERS detection is available, meaning the extraction
+  // was detailed enough to emit page-content-type annotations.
+  if (tender.files.length > 0) {
+    let anySubmission = false;
+    let anyRequiredDocs = false;
+    let hasPageMarkers = false;
+    for (const file of tender.files) {
+      const pp = assessExtractionQualityPerPage(file.extractedText);
+      if (pp.detectionMode !== "PAGE_MARKERS") continue;
+      hasPageMarkers = true;
+      if (pp.submissionInstructionPages.length > 0) anySubmission = true;
+      if (pp.requiredDocumentPages.length > 0) anyRequiredDocs = true;
+    }
+    if (hasPageMarkers) {
+      if (!anySubmission) {
+        return NextResponse.json({
+          success: false, ok: false,
+          code: "MISSING_SUBMISSION_INSTRUCTIONS",
+          error: "No submission instruction pages were detected in the extracted text. Submission deadlines, addresses, and methods may be missing. Review extraction quality or re-run AI Analyze before generating documents.",
+          nextAction: "OPEN_EXTRACTION_QUALITY",
+        }, { status: 422 });
+      }
+      const mandatoryRequirements = tender.requirements.filter((r) => (r.priority ?? "").toUpperCase() === "MANDATORY");
+      if (!anyRequiredDocs && mandatoryRequirements.length === 0) {
+        return NextResponse.json({
+          success: false, ok: false,
+          code: "MISSING_REQUIRED_DOCUMENTS_PAGES",
+          error: "No required documents/forms pages were detected and no mandatory requirements are defined. The submission plan may be missing mandatory annexures. Review extraction quality before generating documents.",
+          nextAction: "OPEN_EXTRACTION_QUALITY",
+        }, { status: 422 });
+      }
+    }
+  }
+
+  // Gate 6: Submission plan must have been built (PLANNED rows must exist)
+  // when requirements are present and no explicit file list overrides the plan.
+  if (tender.requirements.length > 0 && !hasExplicitFiles) {
+    const plannedCount = await prisma.generatedDocument.count({
+      where: { tenderId: id, generationStatus: "PLANNED" },
+    });
+    if (plannedCount === 0) {
+      return NextResponse.json({
+        success: false, ok: false,
+        code: "SUBMISSION_PLAN_NOT_BUILT",
+        error: "No submission plan has been built for this tender. Run 'Build Submission Plan' first to define which documents are required before generating them.",
+        nextAction: "BUILD_SUBMISSION_PLAN",
+      }, { status: 422 });
+    }
+  }
 
   const plan = buildSubmissionPlanWithDerivedFallback({
     id: tender.id,

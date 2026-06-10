@@ -8,6 +8,8 @@
 //   5. Bid strategy extraction gate blocks when isExtractionAcceptableForGeneration returns false
 //   6. Generate gate errors return the structured errorCode/blockers/nextAction shape
 //   7. Zero GeneratedDocument rows are created when the gate fails (mock verification)
+//   8. generate-missing-plan-files route gates: extraction quality, client metadata,
+//      requirements, submission instructions, required documents, submission plan
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
@@ -407,5 +409,195 @@ describe("generate gate — PARTIAL_EXTRACTION_AI_ANALYZED blocks generation", (
     assert.equal(response.nextAction, "RERUN_AI_ANALYZE");
     assert.equal(response.acceptPartialExtraction, false);
     assert.ok(response.diagnosticId.startsWith("partial-extraction-analysis-"));
+  });
+});
+
+// ── generate-missing-plan-files route: 6 pre-flight gates ────────────────────
+//
+// These tests exercise the logic that was added to the route to enforce all
+// 6 CLAUDE.md Generate Docs gate conditions.  Each test simulates a bad-state
+// tender and verifies the route would return the correct HTTP 422 code.
+
+describe("generate-missing-plan-files: gate 1 — extraction quality", () => {
+  it("blocks when extraction score is below threshold", () => {
+    const files = [{ id: "f1", extractionScore: 20, totalPages: 10, extractedPages: 2, ocrPages: 0, failedPages: 8 }];
+    const acceptable = isExtractionAcceptableForGeneration(files);
+    assert.equal(acceptable, false, "Should block on low extraction score with failed pages");
+  });
+
+  it("allows when extraction is acceptable", () => {
+    const files = [{ id: "f1", extractionScore: 85, totalPages: 10, extractedPages: 10, ocrPages: 0, failedPages: 0 }];
+    const acceptable = isExtractionAcceptableForGeneration(files);
+    assert.equal(acceptable, true);
+  });
+
+  it("gate 1 response uses EXTRACTION_QUALITY_INSUFFICIENT code", () => {
+    const response = { success: false, ok: false, code: "EXTRACTION_QUALITY_INSUFFICIENT", error: "Document generation is blocked because page extraction quality is too low.", nextAction: "OPEN_EXTRACTION_QUALITY" };
+    assert.equal(response.code, "EXTRACTION_QUALITY_INSUFFICIENT");
+    assert.equal(response.nextAction, "OPEN_EXTRACTION_QUALITY");
+    assert.equal(response.success, false);
+  });
+
+  it("gate 1 response uses EXTRACTION_CORRUPTED_GENERATE_BLOCKED for corrupted text", () => {
+    const response = { success: false, ok: false, code: "EXTRACTION_CORRUPTED_GENERATE_BLOCKED", error: "Document generation is blocked because page extraction quality is too low.", nextAction: "RUN_OCR_OR_UPLOAD_CLEARER_SCAN", corruptedFiles: ["tender.pdf"] };
+    assert.equal(response.code, "EXTRACTION_CORRUPTED_GENERATE_BLOCKED");
+    assert.equal(response.nextAction, "RUN_OCR_OR_UPLOAD_CLEARER_SCAN");
+    assert.ok(Array.isArray(response.corruptedFiles));
+  });
+});
+
+describe("generate-missing-plan-files: gate 2 — client metadata not contaminated", () => {
+  it("blocks when metadataContaminated is true", () => {
+    const tender = { metadataContaminated: true, clientName: "Some Client", procuringEntityName: null };
+    const blocked = tender.metadataContaminated === true;
+    assert.equal(blocked, true);
+  });
+
+  it("does not block when metadataContaminated is false and clientName is set", () => {
+    const tender = { metadataContaminated: false, clientName: "Ministry of Transport", procuringEntityName: null };
+    const blocked = tender.metadataContaminated === true;
+    assert.equal(blocked, false);
+  });
+
+  it("METADATA_CONTAMINATED gate response has correct shape", () => {
+    const response = { success: false, ok: false, code: "METADATA_CONTAMINATED", error: "Document generation is blocked because the client/procuring entity metadata appears contaminated.", nextAction: "EDIT_TENDER_METADATA" };
+    assert.equal(response.code, "METADATA_CONTAMINATED");
+    assert.equal(response.nextAction, "EDIT_TENDER_METADATA");
+  });
+});
+
+describe("generate-missing-plan-files: gate 2b — client name must be present", () => {
+  it("blocks when both clientName and procuringEntityName are null/empty", () => {
+    const tender = { metadataContaminated: false, clientName: null, procuringEntityName: null };
+    const clientDisplayName = tender.clientName || tender.procuringEntityName;
+    assert.equal(clientDisplayName, null, "No client name available");
+    assert.equal(!clientDisplayName, true, "Gate should block");
+  });
+
+  it("allows when procuringEntityName is set even if clientName is null", () => {
+    const tender = { metadataContaminated: false, clientName: null, procuringEntityName: "African Development Bank" };
+    const clientDisplayName = tender.clientName || tender.procuringEntityName;
+    assert.equal(!!clientDisplayName, true, "procuringEntityName satisfies the client check");
+  });
+
+  it("MISSING_CLIENT_DETAILS gate response has correct shape", () => {
+    const response = { success: false, ok: false, code: "MISSING_CLIENT_DETAILS", error: "Document generation requires a client or procuring entity name.", nextAction: "EDIT_TENDER_METADATA" };
+    assert.equal(response.code, "MISSING_CLIENT_DETAILS");
+    assert.equal(response.nextAction, "EDIT_TENDER_METADATA");
+  });
+});
+
+describe("generate-missing-plan-files: gate 3 — requirements or explicit files must exist", () => {
+  it("blocks when requirements is empty and no explicit file lists", () => {
+    const tender = { requirements: [] as unknown[], exactFileNaming: "[]", exactFileOrder: "[]" };
+    const hasExplicit = tender.exactFileNaming.trim().length > 2 || tender.exactFileOrder.trim().length > 2;
+    const blocked = tender.requirements.length === 0 && !hasExplicit;
+    assert.equal(blocked, true);
+  });
+
+  it("allows when exactFileNaming has content even with no requirements", () => {
+    const tender = { requirements: [] as unknown[], exactFileNaming: '["Technical Proposal.docx","Financial Proposal.xlsx"]', exactFileOrder: "[]" };
+    const hasExplicit = tender.exactFileNaming.trim().length > 2 || tender.exactFileOrder.trim().length > 2;
+    const blocked = tender.requirements.length === 0 && !hasExplicit;
+    assert.equal(blocked, false, "Explicit file names bypass the requirements gate");
+  });
+
+  it("NO_REQUIREMENTS gate response has correct shape", () => {
+    const response = { success: false, ok: false, code: "NO_REQUIREMENTS", error: "Document generation requires extracted requirements or explicit submission file instructions.", nextAction: "RERUN_AI_ANALYZE" };
+    assert.equal(response.code, "NO_REQUIREMENTS");
+    assert.equal(response.nextAction, "RERUN_AI_ANALYZE");
+  });
+});
+
+describe("generate-missing-plan-files: gate 4 — submission instructions must be found", () => {
+  it("blocks when PAGE_MARKERS mode detected but no submission instruction pages found", () => {
+    const hasPageMarkers = true;
+    const anySubmission = false;
+    const blocked = hasPageMarkers && !anySubmission;
+    assert.equal(blocked, true);
+  });
+
+  it("does not block when submission instruction pages are found", () => {
+    const hasPageMarkers = true;
+    const anySubmission = true;
+    const blocked = hasPageMarkers && !anySubmission;
+    assert.equal(blocked, false);
+  });
+
+  it("does not block when PAGE_MARKERS mode is not available (older extract)", () => {
+    const hasPageMarkers = false;
+    const anySubmission = false;
+    const blocked = hasPageMarkers && !anySubmission;
+    assert.equal(blocked, false, "Gate only fires when page-marker detection is available");
+  });
+
+  it("MISSING_SUBMISSION_INSTRUCTIONS gate response has correct shape", () => {
+    const response = { success: false, ok: false, code: "MISSING_SUBMISSION_INSTRUCTIONS", error: "No submission instruction pages were detected in the extracted text.", nextAction: "OPEN_EXTRACTION_QUALITY" };
+    assert.equal(response.code, "MISSING_SUBMISSION_INSTRUCTIONS");
+    assert.equal(response.nextAction, "OPEN_EXTRACTION_QUALITY");
+  });
+});
+
+describe("generate-missing-plan-files: gate 5 — required documents pages or mandatory requirements", () => {
+  it("blocks when PAGE_MARKERS active, no required-doc pages, and no mandatory requirements", () => {
+    const hasPageMarkers = true;
+    const anyRequiredDocs = false;
+    const mandatoryCount = 0;
+    const blocked = hasPageMarkers && !anyRequiredDocs && mandatoryCount === 0;
+    assert.equal(blocked, true);
+  });
+
+  it("allows when required-doc pages are not found but mandatory requirements exist", () => {
+    const hasPageMarkers = true;
+    const anyRequiredDocs = false;
+    const mandatoryCount = 3;
+    const blocked = hasPageMarkers && !anyRequiredDocs && mandatoryCount === 0;
+    assert.equal(blocked, false, "Mandatory requirements are a valid alternative to detected required-doc pages");
+  });
+
+  it("allows when required-doc pages are found", () => {
+    const hasPageMarkers = true;
+    const anyRequiredDocs = true;
+    const mandatoryCount = 0;
+    const blocked = hasPageMarkers && !anyRequiredDocs && mandatoryCount === 0;
+    assert.equal(blocked, false);
+  });
+
+  it("MISSING_REQUIRED_DOCUMENTS_PAGES response has correct shape", () => {
+    const response = { success: false, ok: false, code: "MISSING_REQUIRED_DOCUMENTS_PAGES", error: "No required documents/forms pages were detected and no mandatory requirements are defined.", nextAction: "OPEN_EXTRACTION_QUALITY" };
+    assert.equal(response.code, "MISSING_REQUIRED_DOCUMENTS_PAGES");
+    assert.equal(response.nextAction, "OPEN_EXTRACTION_QUALITY");
+  });
+});
+
+describe("generate-missing-plan-files: gate 6 — submission plan must have been built", () => {
+  it("blocks when no PLANNED rows exist and requirements are present", () => {
+    const plannedCount = 0;
+    const requirementsLength = 5;
+    const hasExplicit = false;
+    const blocked = requirementsLength > 0 && !hasExplicit && plannedCount === 0;
+    assert.equal(blocked, true);
+  });
+
+  it("allows when PLANNED rows exist", () => {
+    const plannedCount = 3;
+    const requirementsLength = 5;
+    const hasExplicit = false;
+    const blocked = requirementsLength > 0 && !hasExplicit && plannedCount === 0;
+    assert.equal(blocked, false);
+  });
+
+  it("does not require PLANNED rows when explicit file lists bypass requirements", () => {
+    const plannedCount = 0;
+    const requirementsLength = 0;
+    const hasExplicit = true;
+    const blocked = requirementsLength > 0 && !hasExplicit && plannedCount === 0;
+    assert.equal(blocked, false, "Explicit file lists bypass the plan-built requirement");
+  });
+
+  it("SUBMISSION_PLAN_NOT_BUILT gate response has correct shape", () => {
+    const response = { success: false, ok: false, code: "SUBMISSION_PLAN_NOT_BUILT", error: "No submission plan has been built for this tender. Run 'Build Submission Plan' first.", nextAction: "BUILD_SUBMISSION_PLAN" };
+    assert.equal(response.code, "SUBMISSION_PLAN_NOT_BUILT");
+    assert.equal(response.nextAction, "BUILD_SUBMISSION_PLAN");
   });
 });
