@@ -19,7 +19,7 @@ import { createNotification } from "../../../../../lib/notifications";
 import { childLogger, reportError, time } from "../../../../../lib/observability";
 import { mapGenerationError } from "../../../../../lib/engine/structured-generation-error";
 import { computeStoredMetadataPatch, listInvalidStoredFields } from "../../../../../lib/engine/sanitize-stored-metadata";
-import { isValidClientName } from "../../../../../lib/engine/metadata-validators";
+import { isValidClientName, containsMetadataPlaceholder } from "../../../../../lib/engine/metadata-validators";
 import { repairSourceGrounding } from "../../../../../lib/engine/repair-source-grounding";
 import { assertAnalysisReadyForFinalGeneration, detectAnalysisSourceWithApproval } from "../../../../../lib/engine/analysis-source";
 import { assessTenderMetadataCompleteness } from "../../../../../lib/engine/tender-metadata-completeness";
@@ -302,6 +302,18 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     blockers: ["Client name is missing or invalid."],
     nextAction: "EDIT_TENDER",
     diagnosticId: `no-client-name-${id}`,
+  }, { status: 422 });
+
+  // Reject names that pass the structural check but still embed placeholder
+  // language (e.g. "Ministry of Water / Bid-Team to confirm"). isValidClientName
+  // only tests full-string patterns; containsMetadataPlaceholder catches embedded
+  // placeholder tokens anywhere in the value.
+  if (containsMetadataPlaceholder(effectiveClientName)) return NextResponse.json({
+    errorCode: "PLACEHOLDER_CLIENT_NAME",
+    error: "Generation blocked: client/procuring entity name contains placeholder text (e.g. 'Bid-Team to confirm', 'TBD'). Edit the tender and fill in the actual client name before generating documents.",
+    blockers: ["Client name contains an internal placeholder pattern and must be corrected before generation."],
+    nextAction: "EDIT_TENDER_METADATA",
+    diagnosticId: `placeholder-client-${id}`,
   }, { status: 422 });
 
   // ── Contaminated metadata hard block ─────────────────────────────────────

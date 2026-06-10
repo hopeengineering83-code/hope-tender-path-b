@@ -164,3 +164,133 @@ describe("metadata completeness — placeholder blocking", () => {
     assert.ok(!result.blockingForGeneration);
   });
 });
+
+describe("metadata completeness — NOT_APPLICABLE override skips placeholder scan", () => {
+  it("does NOT flag donorAgency placeholder when field is marked NOT_APPLICABLE", () => {
+    const result = assessTenderMetadataCompleteness(
+      { ...PASSING_INPUT, donorAgency: "Bid-Team to confirm" },
+      [{ field: "donorAgency", fieldState: "NOT_APPLICABLE" }],
+    );
+    assert.ok(
+      !result.invalidFields.some((f) => f.field === "donorAgency"),
+      "NOT_APPLICABLE donorAgency must not appear in invalidFields even when value is a placeholder",
+    );
+    assert.ok(
+      !result.blockingForGeneration,
+      "NOT_APPLICABLE override on donorAgency placeholder must not block generation",
+    );
+  });
+
+  it("does NOT flag legalClientName placeholder when field is NOT_APPLICABLE", () => {
+    const result = assessTenderMetadataCompleteness(
+      { ...PASSING_INPUT, legalClientName: "TBD" },
+      [{ field: "legalClientName", fieldState: "NOT_APPLICABLE" }],
+    );
+    assert.ok(
+      !result.invalidFields.some((f) => f.field === "legalClientName"),
+      "NOT_APPLICABLE legalClientName must not be flagged as invalid",
+    );
+  });
+
+  it("still flags donorAgency placeholder when field has NO override", () => {
+    const result = assessTenderMetadataCompleteness(
+      { ...PASSING_INPUT, donorAgency: "Bid-Team to confirm" },
+    );
+    assert.ok(
+      result.invalidFields.some((f) => f.field === "donorAgency"),
+      "Without NOT_APPLICABLE override, donorAgency placeholder must still be flagged",
+    );
+  });
+
+  it("still flags donorAgency placeholder when field has USER_CONFIRMED (not NOT_APPLICABLE)", () => {
+    const result = assessTenderMetadataCompleteness(
+      { ...PASSING_INPUT, donorAgency: "Bid-Team to confirm" },
+      [{ field: "donorAgency", fieldState: "USER_CONFIRMED" }],
+    );
+    assert.ok(
+      result.invalidFields.some((f) => f.field === "donorAgency"),
+      "USER_CONFIRMED does not suppress placeholder detection — only NOT_APPLICABLE does",
+    );
+  });
+
+  it("NOT_APPLICABLE on clientContactEmail does not block generation", () => {
+    const result = assessTenderMetadataCompleteness(
+      { ...PASSING_INPUT, clientContactEmail: "N/A" },
+      [{ field: "clientContactEmail", fieldState: "NOT_APPLICABLE" }],
+    );
+    assert.ok(
+      !result.invalidFields.some((f) => f.field === "clientContactEmail"),
+      "NOT_APPLICABLE clientContactEmail with N/A value must not appear in invalidFields",
+    );
+  });
+});
+
+describe("generate route — embedded placeholder in client name blocked", () => {
+  it("generate route source imports containsMetadataPlaceholder", () => {
+    const { readFileSync } = require("node:fs");
+    const { resolve } = require("node:path");
+    const src = readFileSync(
+      resolve(process.cwd(), "app/api/tenders/[id]/generate/route.ts"),
+      "utf8",
+    );
+    assert.ok(
+      src.includes("containsMetadataPlaceholder"),
+      "generate route must import and use containsMetadataPlaceholder for embedded placeholder detection",
+    );
+  });
+
+  it("generate route blocks with PLACEHOLDER_CLIENT_NAME code", () => {
+    const { readFileSync } = require("node:fs");
+    const { resolve } = require("node:path");
+    const src = readFileSync(
+      resolve(process.cwd(), "app/api/tenders/[id]/generate/route.ts"),
+      "utf8",
+    );
+    assert.ok(
+      src.includes('"PLACEHOLDER_CLIENT_NAME"'),
+      "generate route must return PLACEHOLDER_CLIENT_NAME error code when embedded placeholder is detected",
+    );
+  });
+
+  it("containsMetadataPlaceholder detects embedded placeholder in otherwise-valid name", () => {
+    const { containsMetadataPlaceholder: check } = require("../lib/engine/metadata-validators");
+    assert.equal(
+      check("Ministry of Water / Bid-Team to confirm"),
+      true,
+      "Embedded 'Bid-Team to confirm' must be detected even inside a real-looking name",
+    );
+    assert.equal(
+      check("Ministry of Health"),
+      false,
+      "Real client name must not be flagged",
+    );
+  });
+});
+
+describe("auto-finalize route — embedded placeholder in client name blocked", () => {
+  it("auto-finalize route source imports containsMetadataPlaceholder", () => {
+    const { readFileSync } = require("node:fs");
+    const { resolve } = require("node:path");
+    const src = readFileSync(
+      resolve(process.cwd(), "app/api/tenders/[id]/auto-finalize/route.ts"),
+      "utf8",
+    );
+    assert.ok(
+      src.includes("containsMetadataPlaceholder"),
+      "auto-finalize route must use containsMetadataPlaceholder for embedded placeholder detection",
+    );
+  });
+
+  it("auto-finalize route blocks with PLACEHOLDER_CLIENT_NAME code", () => {
+    const { readFileSync } = require("node:fs");
+    const { resolve } = require("node:path");
+    const src = readFileSync(
+      resolve(process.cwd(), "app/api/tenders/[id]/auto-finalize/route.ts"),
+      "utf8",
+    );
+    assert.ok(
+      src.includes('"PLACEHOLDER_CLIENT_NAME"'),
+      "auto-finalize must return PLACEHOLDER_CLIENT_NAME when client name contains placeholder text",
+    );
+  });
+});

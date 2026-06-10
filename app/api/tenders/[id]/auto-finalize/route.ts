@@ -16,6 +16,7 @@ import { logAction } from "../../../../../lib/audit";
 import { buildSevenPassGateInput, applySevenPassGateToDocumentState, summarizeSevenPassForReviewNotes, evaluateSevenPassForDocument } from "../../../../../lib/engine/seven-pass-generation-wiring";
 import { assessGeneratedDocumentQuality } from "../../../../../lib/engine/document-quality-gate";
 import { detectAnalysisSourceWithApproval } from "../../../../../lib/engine/analysis-source";
+import { containsMetadataPlaceholder } from "../../../../../lib/engine/metadata-validators";
 import { validateDocumentQuality } from "../../../../../lib/engine/document-quality-validator";
 
 export const dynamic = "force-dynamic";
@@ -208,6 +209,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     return NextResponse.json({
       error: "Auto-finalize blocked: client/procuring entity name is missing. Provide client details before finalizing.",
       code: "MISSING_CLIENT_DETAILS",
+      nextAction: "FILL_CLIENT_METADATA",
+    }, { status: 422 });
+  }
+  // Reject names that pass the null check but contain embedded placeholder language.
+  if (containsMetadataPlaceholder(clientDisplayName)) {
+    return NextResponse.json({
+      error: "Auto-finalize blocked: client/procuring entity name contains placeholder text (e.g. 'Bid-Team to confirm', 'TBD'). Correct the client name before finalizing.",
+      code: "PLACEHOLDER_CLIENT_NAME",
       nextAction: "FILL_CLIENT_METADATA",
     }, { status: 422 });
   }

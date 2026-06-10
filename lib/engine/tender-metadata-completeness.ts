@@ -451,6 +451,10 @@ export function assessTenderMetadataCompleteness(
   ];
   let placeholderCount = 0;
   for (const [field, raw] of stringFieldsForScan) {
+    // Skip fields the user has explicitly marked NOT_APPLICABLE — they may still
+    // have an old placeholder value in the DB column but the override means the
+    // user confirmed the field does not apply to this tender.
+    if (isNotApplicable(field)) continue;
     if (typeof raw === "string" && looksLikeMetadataPlaceholder(raw)) {
       invalidFields.push({ field, reason: `Value "${raw.trim().slice(0, 60)}" is an internal placeholder (e.g. "Bid-Team to confirm", "TBD", "N/A") and must not enter generated proposals.` });
       placeholderCount += 1;
