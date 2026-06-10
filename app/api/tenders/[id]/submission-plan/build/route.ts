@@ -125,9 +125,12 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     // Hard block: tender has files but no requirements AND extraction is weak.
     // Weak = any file score < 60 OR analysisExtractionStatus indicates corruption.
     if (tender.requirements.length === 0 && tender.files.length > 0) {
+      // Note: "EXTRACTION_CORRUPTED_AI_SKIPPED" is tender.status; the
+      // analysisExtractionStatus field is "OCR_REQUIRED" in that case.
       const isWeak = tender.files.some((f) =>
         (f.extractionScore ?? 100) < 60 ||
-        tender.analysisExtractionStatus === "EXTRACTION_CORRUPTED_AI_SKIPPED" ||
+        tender.analysisExtractionStatus === "OCR_REQUIRED" ||
+        tender.analysisExtractionStatus === "EXTRACTION_WEAK_REVIEW_REQUIRED" ||
         tender.analysisExtractionStatus === "REGEX_FALLBACK_FROM_WEAK_EXTRACTION"
       );
 

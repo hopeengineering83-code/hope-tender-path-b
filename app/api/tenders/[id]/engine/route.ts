@@ -107,14 +107,26 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       }, { status: 422 });
     }
 
-    // Block engine run when prior AI Analyze flagged corrupted or regex-fallback extraction
+    // Block engine run when prior AI Analyze flagged corrupted or regex-fallback extraction.
+    // Note: "EXTRACTION_CORRUPTED_AI_SKIPPED" is the tender.status value; the
+    // analysisExtractionStatus field is set to "OCR_REQUIRED" in that case.
     const engineAnalysisStatus = tender.analysisExtractionStatus;
-    if (engineAnalysisStatus === "EXTRACTION_CORRUPTED_AI_SKIPPED") {
+    if (engineAnalysisStatus === "OCR_REQUIRED") {
       return NextResponse.json({
         error: "Engine run blocked: AI Analyze was skipped due to corrupted extraction. Re-upload or run OCR before running the engine.",
         code: "ANALYSIS_FROM_CORRUPTED_EXTRACTION",
         nextAction: "RUN_OCR_OR_UPLOAD_CLEARER_SCAN",
         hint: "The tender's AI analysis was not completed due to corrupted extraction. Re-extract or run OCR, then re-run AI Analyze before running the engine.",
+        diagnosticId,
+        inputStats,
+      }, { status: 422 });
+    }
+    if (engineAnalysisStatus === "EXTRACTION_WEAK_REVIEW_REQUIRED") {
+      return NextResponse.json({
+        error: "Engine run blocked: AI Analyze ran on a weak extraction. Re-extract and re-run AI Analyze before running the engine.",
+        code: "ANALYSIS_FROM_WEAK_EXTRACTION",
+        nextAction: "RERUN_AI_ANALYZE",
+        hint: "AI Analyze ran on weak extraction — requirements and metadata may be incomplete. Fix extraction quality and re-run AI Analyze before running the engine.",
         diagnosticId,
         inputStats,
       }, { status: 422 });

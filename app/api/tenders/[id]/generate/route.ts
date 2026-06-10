@@ -362,14 +362,25 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // Block generation when AI Analyze ran on corrupted or regex-fallback
   // extraction, mirroring the same gate in the export route. Block with a
   // bypass option when extraction was only partial (softer case).
+  // Note: "EXTRACTION_CORRUPTED_AI_SKIPPED" is stored in tender.status;
+  // the analysisExtractionStatus field is set to "OCR_REQUIRED" in that case.
   const analysisExtractionStatusForGen = (tender as { analysisExtractionStatus?: string | null }).analysisExtractionStatus;
-  if (analysisExtractionStatusForGen === "EXTRACTION_CORRUPTED_AI_SKIPPED") {
+  if (analysisExtractionStatusForGen === "OCR_REQUIRED") {
     return NextResponse.json({
       errorCode: "ANALYSIS_FROM_CORRUPTED_EXTRACTION",
       error: "Generation blocked: AI Analyze was skipped because tender extraction was corrupted. The analysis and requirements may be incomplete. Re-upload a clearer document or run OCR, then re-run AI Analyze before generating documents.",
       blockers: ["AI Analyze was skipped due to corrupted extraction — requirements and metadata may be incomplete."],
       nextAction: "RUN_OCR_OR_UPLOAD_CLEARER_SCAN",
       diagnosticId: `corrupted-extraction-${id}`,
+    }, { status: 422 });
+  }
+  if (analysisExtractionStatusForGen === "EXTRACTION_WEAK_REVIEW_REQUIRED") {
+    return NextResponse.json({
+      errorCode: "ANALYSIS_FROM_WEAK_EXTRACTION",
+      error: "Generation blocked: AI Analyze ran on a weak extraction — the tender text had low density or quality. Re-extract the tender (run OCR if needed) and re-run AI Analyze before generating documents.",
+      blockers: ["AI analysis ran on weak extraction — requirements and metadata may be incomplete."],
+      nextAction: "RERUN_AI_ANALYZE",
+      diagnosticId: `weak-extraction-analysis-${id}`,
     }, { status: 422 });
   }
   if (analysisExtractionStatusForGen === "REGEX_FALLBACK_FROM_WEAK_EXTRACTION") {

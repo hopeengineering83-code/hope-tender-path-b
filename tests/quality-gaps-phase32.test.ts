@@ -1,9 +1,12 @@
 // Phase 32 quality-gap regression tests.
 //
 // Coverage:
-//   1. engine/route: blocks when analysisExtractionStatus is EXTRACTION_CORRUPTED_AI_SKIPPED
+//   1. engine/route: blocks when analysisExtractionStatus is OCR_REQUIRED (AI was skipped)
 //   2. engine/route: blocks when analysisExtractionStatus is REGEX_FALLBACK_FROM_WEAK_EXTRACTION
 //   3. engine/route: fetches analysisExtractionStatus in the tender select query
+//
+// Note: "EXTRACTION_CORRUPTED_AI_SKIPPED" is tender.status (job status).
+// The analysisExtractionStatus field is set to "OCR_REQUIRED" in that case.
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
@@ -23,11 +26,13 @@ describe("engine/route — analysisExtractionStatus blocking checks", () => {
     );
   });
 
-  it("blocks engine run when analysisExtractionStatus is EXTRACTION_CORRUPTED_AI_SKIPPED", () => {
+  it("blocks engine run when analysisExtractionStatus is OCR_REQUIRED (AI was skipped)", () => {
+    // Regression: original code compared analysisExtractionStatus === "EXTRACTION_CORRUPTED_AI_SKIPPED"
+    // which is never written to that field. ai-analyze writes "OCR_REQUIRED" instead.
     assert.ok(
-      engineSource.includes('"EXTRACTION_CORRUPTED_AI_SKIPPED"') &&
+      engineSource.includes('"OCR_REQUIRED"') &&
         engineSource.includes('"ANALYSIS_FROM_CORRUPTED_EXTRACTION"'),
-      "engine route must block with ANALYSIS_FROM_CORRUPTED_EXTRACTION when analysisExtractionStatus is EXTRACTION_CORRUPTED_AI_SKIPPED",
+      "engine route must block with ANALYSIS_FROM_CORRUPTED_EXTRACTION when analysisExtractionStatus is OCR_REQUIRED",
     );
   });
 

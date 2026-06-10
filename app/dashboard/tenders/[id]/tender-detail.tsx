@@ -1451,8 +1451,11 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
   // Mirror the server-side generate gate: block when extraction is corrupted or
   // analysis ran on a weak/fallback extraction (client name check below is
   // separate — both must pass before enabling the button).
+  // Note: "EXTRACTION_CORRUPTED_AI_SKIPPED" is tender.status; the
+  // analysisExtractionStatus field is "OCR_REQUIRED" in that case.
   const extractionCorrupted =
-    tender.analysisExtractionStatus === "EXTRACTION_CORRUPTED_AI_SKIPPED" ||
+    tender.analysisExtractionStatus === "OCR_REQUIRED" ||
+    tender.analysisExtractionStatus === "EXTRACTION_WEAK_REVIEW_REQUIRED" ||
     tender.analysisExtractionStatus === "REGEX_FALLBACK_FROM_WEAK_EXTRACTION";
   // Mirror hasRealClientName() from lib/engine/metadata-validators.ts.
   // Use clientName || procuringEntityName to match the server-side gate.
