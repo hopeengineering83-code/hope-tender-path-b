@@ -133,12 +133,7 @@ function routeHelper() {
   return `
 function parseAiAnalyzeJobOutput(output: string | null | undefined): Record<string, unknown> | null {
   if (!output) return null;
-  try {
-    const parsed = JSON.parse(output);
-    return parsed && typeof parsed === "object" ? parsed as Record<string, unknown> : null;
-  } catch {
-    return null;
-  }
+  return safeParseJsonObject(output);
 }
 
 function normalizePreviousChunkResults(raw: unknown): Array<{ index: number; result: AIAnalysisResult; provider?: string | null }> {
@@ -211,6 +206,32 @@ function patchAnalyzeRoute() {
 `import { analyzeWithAI, isAIEnabled, type AnalysisWithMeta } from "../../../../../lib/ai";`,
 `import { analyzeWithAI, isAIEnabled, type AnalysisWithMeta, type AIAnalysisResult } from "../../../../../lib/ai";`,
     "route import AIAnalysisResult",
+  );
+
+  source = replaceOnce(
+    source,
+`import { restoreHealthFromDb, persistAllHealthToDb } from "../../../../../lib/ai-provider-health-db";`,
+`import { restoreHealthFromDb, persistAllHealthToDb } from "../../../../../lib/ai-provider-health-db";
+import { safeParseJsonObject } from "../../../../../lib/safe-json";`,
+    "route import safeParseJsonObject",
+  );
+
+  source = replaceOnce(
+    source,
+`function parseAiAnalyzeJobOutput(output: string | null | undefined): Record<string, unknown> | null {
+  if (!output) return null;
+  try {
+    const parsed = JSON.parse(output);
+    return parsed && typeof parsed === "object" ? parsed as Record<string, unknown> : null;
+  } catch {
+    return null;
+  }
+}`,
+`function parseAiAnalyzeJobOutput(output: string | null | undefined): Record<string, unknown> | null {
+  if (!output) return null;
+  return safeParseJsonObject(output);
+}`,
+    "route parseAiAnalyzeJobOutput upgrade",
   );
 
   source = replaceOnce(
