@@ -42,7 +42,7 @@ function err(message: string, status = 500, extra: Record<string, unknown> = {})
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     let actor;
-    try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER"); }
+    try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER", "REVIEWER"); }
     catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
 
     const rl = rateLimit(`approve-analysis:${actor.id}`, MUTATION_RATE_LIMIT);
@@ -77,7 +77,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     let actor;
-    try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER"); }
+    try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER", "REVIEWER"); }
     catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
     await prismaReady;
     const { id } = await params;

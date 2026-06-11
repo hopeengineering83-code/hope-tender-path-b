@@ -71,7 +71,7 @@ describe("POST /api/tenders/[id]/repair-metadata contract", () => {
   const source = readFileSync("app/api/tenders/[id]/repair-metadata/route.ts", "utf8");
 
   it("is role-gated, rate-limited and audit-logged", () => {
-    assert.match(source, /requireRole\("ADMIN",\s*"PROPOSAL_MANAGER"\)/);
+    assert.match(source, /requireRole\("ADMIN",\s*"PROPOSAL_MANAGER",\s*"REVIEWER"\)/);
     assert.match(source, /rateLimit\(/);
     assert.match(source, /TENDER_METADATA_REPAIRED/);
   });

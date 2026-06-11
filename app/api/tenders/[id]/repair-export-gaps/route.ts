@@ -151,7 +151,7 @@ async function makeSafeDocx(title: string, tenderTitle: string): Promise<string>
 export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   let actor;
   try {
-    actor = await requireRole("ADMIN", "PROPOSAL_MANAGER");
+    actor = await requireRole("ADMIN", "PROPOSAL_MANAGER", "REVIEWER");
   } catch (error) {
     return error instanceof Error && error.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse();
   }
