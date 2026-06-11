@@ -51,13 +51,91 @@ export function GenerationActionPanel({ tenderId, readiness }: { tenderId: strin
   const fullProposalReady = readiness?.fullProposalReady ?? readiness?.ready ?? false;
   const fullProposalBlockers = readiness?.fullProposalBlockers ?? [];
   const blocked = !fullProposalReady;
-  const actionDisabled = blocked || running || isPending;
+  const metadataBlockerPresent = fullProposalBlockers.some((b) => b.code === "FULL_PROPOSAL_METADATA_INCOMPLETE");
 
   const autoPromotionAvailable = Boolean(
     readiness?.counts &&
     (((readiness.counts.selectedExperts ?? 0) === 0 && (readiness.counts.reviewedExpertMatches ?? 0) > 0) ||
       ((readiness.counts.selectedProjects ?? 0) === 0 && (readiness.counts.reviewedProjectMatches ?? 0) > 0)),
   );
+
+  const ALL_REPAIRABLE_FIELDS = [
+    "evaluationMethodology",
+    "reference",
+    "deadline",
+    "submissionEmails",
+    "submissionMethod",
+    "pageLimit",
+    "validityDays",
+    "bidBondAmount",
+    "numberOfCopiesRequired",
+    "mandatorySiteVisit",
+  ] as const;
+
+  async function runRepairMetadata() {
+    setRunning(true);
+    setMessage(null);
+    try {
+      const res = await fetch(`/api/tenders/${tenderId}/repair-metadata`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fields: ["evaluationMethodology"] }),
+      });
+      const result = await res.json().catch(() => ({})) as { status: string; value?: string };
+      if (result.status === "REPAIRED") {
+        setKind("success");
+        setMessage("evaluationMethodology repaired from source.");
+        startTransition(() => router.refresh());
+      } else if (result.status === "NOT_FOUND") {
+        setKind("info");
+        setMessage("evaluationMethodology not found in the tender source.");
+      } else if (result.status === "SKIPPED") {
+        setKind("info");
+        setMessage("evaluationMethodology repair was skipped (field already has a value).");
+      } else {
+        setKind("error");
+        setMessage("Repair failed.");
+      }
+    } catch (error) {
+      setKind("error");
+      setMessage(error instanceof Error ? error.message : "Repair failed due to a network error.");
+    } finally {
+      setRunning(false);
+    }
+  }
+
+  async function runRepairAllMetadata() {
+    setRunning(true);
+    setMessage(null);
+    try {
+      const res = await fetch(`/api/tenders/${tenderId}/repair-metadata`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fields: ALL_REPAIRABLE_FIELDS }),
+      });
+      const data = await res.json().catch(() => ({ results: [] })) as { results: Array<{ field: string; status: string }> };
+      const results = data.results ?? [];
+      const repairedFields = results.filter((r) => r.status === "REPAIRED");
+      const notFoundFields = results.filter((r) => r.status === "NOT_FOUND");
+      const skippedFields = results.filter((r) => r.status === "SKIPPED");
+      if (repairedFields.length > 0) {
+        setKind("success");
+        setMessage(`Repaired ${repairedFields.length} field(s). ${notFoundFields.length} not found, ${skippedFields.length} skipped.`);
+        startTransition(() => router.refresh());
+      } else if (notFoundFields.length > 0) {
+        setKind("info");
+        setMessage(`${notFoundFields.length} field(s) not found in source. ${skippedFields.length} skipped.`);
+      } else {
+        setKind("info");
+        setMessage(`All fields skipped (${skippedFields.length} already have values).`);
+      }
+    } catch (error) {
+      setKind("error");
+      setMessage(error instanceof Error ? error.message : "Batch repair failed due to a network error.");
+    } finally {
+      setRunning(false);
+    }
+  }
 
   async function runGenerate() {
     if (!fullProposalReady) {
@@ -124,8 +202,8 @@ export function GenerationActionPanel({ tenderId, readiness }: { tenderId: strin
           <button
             type="button"
             onClick={runGenerate}
-            disabled={actionDisabled}
-            aria-disabled={actionDisabled}
+            disabled={!fullProposalReady || running || isPending}
+            aria-disabled={!fullProposalReady || running || isPending}
             className={fullProposalReady
               ? "rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
               : "cursor-not-allowed rounded-lg border border-red-200 bg-slate-200 px-4 py-2 text-sm font-semibold text-slate-500"}
@@ -154,6 +232,31 @@ export function GenerationActionPanel({ tenderId, readiness }: { tenderId: strin
           <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-emerald-800">
             {warnings.slice(0, 3).map((item, index) => <li key={`w-${item.code}-${index}`}>{item.message}</li>)}
           </ul>
+        )}
+
+        {metadataBlockerPresent && (
+          <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3">
+            <p className="text-xs font-semibold text-amber-700">Metadata incomplete — source-grounded repair available</p>
+            <p className="mt-1 text-xs text-amber-600">Use the source-grounded repair to extract missing metadata fields directly from the tender document.</p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={runRepairMetadata}
+                disabled={running || isPending}
+                className="rounded-md bg-amber-100 px-3 py-1.5 text-xs font-semibold text-amber-800 hover:bg-amber-200 disabled:opacity-50"
+              >
+                Repair evaluationMethodology only
+              </button>
+              <button
+                type="button"
+                onClick={runRepairAllMetadata}
+                disabled={running || isPending}
+                className="rounded-md bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-700 disabled:opacity-50"
+              >
+                Repair all empty fields from source
+              </button>
+            </div>
+          </div>
         )}
 
         {message && (
