@@ -1420,6 +1420,13 @@ Step 11 — Build strategic requirement bundles: consolidate related requirement
 Step 12 — Write evaluationMethodology: how the proposal should be structured to score maximum points against each criterion, criterion-by-criterion with weights when known.
 
 ## CRITICAL RULES:
+- CLIENT ENTITY RULE — when multiple organisations appear, assign EXACTLY ONE to each role:
+  (a) procuringEntityName = the authority that RECEIVES and evaluates bids (the contracting authority / procuring entity).
+  (b) donorAgency = the funder or financing institution (e.g. World Bank, UNDP, KfW, AfDB) — only when explicitly mentioned.
+  (c) implementingAgency = the body executing the project if different from the procuring entity — only when explicitly mentioned.
+  (d) legalClientName = the full official registered name if explicitly different from the display name.
+  If a role is not identifiable from the document, return null — do NOT copy the same value across multiple entity fields.
+- PLACEHOLDER PROHIBITION — NEVER fill procuringEntityName, legalClientName, donorAgency, implementingAgency, clientContactName, clientAddress, or any other field with placeholder text such as "Bid-Team to confirm", "unknown", "not specified", "N/A", "TBD", "TBC", or "to be determined". If the information is absent from the tender document, return null for that field.
 - Do NOT convert table-of-contents entries, page numbers, clause numbers, scores, years, percentages, or page references into quantity requirements.
 - Set requiredQuantity ONLY when the tender explicitly says minimum/required/at least/provide/submit a specific NUMBER of experts, CVs, projects, or references.
 - Do not create hundreds of line-by-line requirements — consolidate into 10-20 strategic bundles maximum.
