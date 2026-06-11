@@ -19,6 +19,11 @@ function replaceOnce(source, search, replacement, label) {
 function patchAiLibrary() {
   const path = "lib/ai.ts";
   let source = read(path);
+  if (source.includes("previousChunkResults?: AnalysisChunkCacheEntry[]")
+    && source.includes("onChunkComplete?:")
+    && source.includes("const hasSavedChunkResults = previousChunkResults.length > 0")) {
+    return;
+  }
 
   source = replaceOnce(
     source,
@@ -200,6 +205,11 @@ function contentHashResumeBlock() {
 function patchAnalyzeRoute() {
   const path = "app/api/tenders/[id]/ai-analyze/route.ts";
   let source = read(path);
+  if (source.includes("preserveAiAnalyzeProgressOnFailure")
+    && source.includes("onChunkComplete")
+    && source.includes("buildResumeState(parseJobOutput(")) {
+    return;
+  }
 
   source = replaceOnce(
     source,
@@ -387,6 +397,9 @@ ${contentHashResumeBlock().replace(/^/gm, "        ").trimEnd()}`,
 function patchTenderDetailClient() {
   const path = "app/dashboard/tenders/[id]/tender-detail.tsx";
   let source = read(path);
+  if (source.includes("const analyzeUrl = continueJobId")) {
+    return;
+  }
 
   source = replaceOnce(
     source,

@@ -1685,7 +1685,9 @@ export async function analyzeWithAI(
     deadlineAt?: number;
     startFromChunk?: number;
     previousChunkResults?: AnalysisChunkCacheEntry[];
-    onChunkComplete?: (snapshot: { completed: AnalysisChunkCacheEntry[]; totalChunks: number }) => void | Promise<void>;
+    onChunkStart?: (snapshot: { chunkIndex: number; totalChunks: number }) => void | Promise<void>;
+    onChunkComplete?: (snapshot: { completed: AnalysisChunkCacheEntry[]; totalChunks: number; chunkIndex?: number; result?: AIAnalysisResult; provider?: string | null }) => void | Promise<void>;
+    onChunkFailure?: (snapshot: { chunkIndex: number; totalChunks: number; errorMessage: string; provider?: string | null }) => void | Promise<void>;
   },
 ): Promise<AnalysisWithMeta> {
   // For tenders within the soft limit, run a single call (faster path).
@@ -1701,8 +1703,17 @@ export async function analyzeWithAI(
       return { result: cached.result, isPartial: false, totalChunks: 1, completedChunks: 1, failedChunks: 0, skippedChunks: 0, chunkProviders: [cached.provider ?? null], chunkResults: [cached] };
     }
     let chunkProvider: string | null = null;
-    const result = await analyzeOneChunk(chunks[0], 0, 1, (p) => { chunkProvider = p; });
-    return { result, isPartial: false, totalChunks: 1, completedChunks: 1, failedChunks: 0, skippedChunks: 0, chunkProviders: [chunkProvider], chunkResults: [{ index: 0, result, provider: chunkProvider }] };
+    try { await opts?.onChunkStart?.({ chunkIndex: 0, totalChunks: 1 }); } catch { /* non-fatal */ }
+    try {
+      const result = await analyzeOneChunk(chunks[0], 0, 1, (p) => { chunkProvider = p; });
+      const chunkResults = [{ index: 0, result, provider: chunkProvider }];
+      try { await opts?.onChunkComplete?.({ completed: chunkResults, totalChunks: 1, chunkIndex: 0, result, provider: chunkProvider }); } catch { /* non-fatal */ }
+      return { result, isPartial: false, totalChunks: 1, completedChunks: 1, failedChunks: 0, skippedChunks: 0, chunkProviders: [chunkProvider], chunkResults };
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      try { await opts?.onChunkFailure?.({ chunkIndex: 0, totalChunks: 1, errorMessage, provider: chunkProvider }); } catch { /* non-fatal */ }
+      throw err;
+    }
   }
 
   console.info(`[ai] tender content is ${tenderContent.length.toLocaleString()} chars — chunking into ${chunks.length} concurrent analysis calls (limit=3).`);
@@ -1724,10 +1735,17 @@ export async function analyzeWithAI(
   let failedChunks = 0;
   let skippedChunks = 0;
 
-  const startIndex = Math.max(opts?.startFromChunk ?? 0, previousChunkResults.length > 0 ? Math.max(...previousChunkResults.map((entry) => entry.index)) + 1 : 0);
+  const hasSavedChunkResults = previousChunkResults.length > 0;
+  // When explicit chunkResults exist, resume by index membership rather than
+  // by the highest completed index. Saved chunks can be non-contiguous after a
+  // partial concurrent run (for example 0 and 2 succeeded while 1 failed), so
+  // using max(index) + 1 would permanently skip missing middle chunks.
+  // startFromChunk remains only as a legacy fallback for old jobs that stored a
+  // completedChunks count without per-chunk results.
+  const startIndex = hasSavedChunkResults ? 0 : Math.max(opts?.startFromChunk ?? 0, 0);
   const queue = chunks
     .map((content, index) => ({ content, index }))
-    .filter((c) => c.index >= startIndex && !previousIndexes.has(c.index));
+    .filter((c) => !previousIndexes.has(c.index) && c.index >= startIndex);
 
   // Limited concurrency: process up to 3 chunks in parallel.
   // This balances speed with provider rate-limit safety.
@@ -1747,6 +1765,7 @@ export async function analyzeWithAI(
 
       try {
         let chunkProvider: string | null = null;
+        try { await opts?.onChunkStart?.({ chunkIndex: item.index, totalChunks: chunks.length }); } catch { /* non-fatal */ }
         const res = await analyzeOneChunkWithRetry(item.content, item.index, chunks.length, (p) => {
           chunkProviders[item.index] = p;
           chunkProvider = p;
@@ -1758,12 +1777,13 @@ export async function analyzeWithAI(
             .slice()
             .sort((a, b) => a.index - b.index)
             .map((s) => ({ index: s.index, result: s.result, provider: chunkProviders[s.index] ?? null }));
-          try { await opts.onChunkComplete({ completed, totalChunks: chunks.length }); } catch { /* non-fatal */ }
+          try { await opts.onChunkComplete({ completed, totalChunks: chunks.length, chunkIndex: item.index, result: res, provider: chunkProvider }); } catch { /* non-fatal */ }
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         failures.push(`chunk ${item.index + 1}: ${msg}`);
         failedChunks++;
+        try { await opts?.onChunkFailure?.({ chunkIndex: item.index, totalChunks: chunks.length, errorMessage: msg, provider: chunkProviders[item.index] ?? null }); } catch { /* non-fatal */ }
         console.warn(`[ai] chunk ${item.index + 1}/${chunks.length} failed: ${msg}`);
         // Brief backoff after transient failure so a rate-limited provider
         // has recovery time before the next chunk. Skip when deadline is near.

@@ -53,6 +53,25 @@ describe("analyzeWithAI — chunkResults in return value", () => {
   });
 });
 
+describe("analyzeWithAI — resume queue building", () => {
+  function buildResumeQueue(totalChunks: number, startFromChunk: number | undefined, previousChunkResults: Array<{ index: number }>) {
+    const previousIndexes = new Set(previousChunkResults.map((entry) => entry.index));
+    const hasSavedChunkResults = previousChunkResults.length > 0;
+    const startIndex = hasSavedChunkResults ? 0 : Math.max(startFromChunk ?? 0, 0);
+    return Array.from({ length: totalChunks }, (_, index) => ({ content: `chunk ${index}`, index }))
+      .filter((c) => !previousIndexes.has(c.index) && c.index >= startIndex)
+      .map((c) => c.index);
+  }
+
+  it("retries a missing middle chunk when chunks 0 and 2 are already saved", () => {
+    assert.deepEqual(buildResumeQueue(3, 3, [{ index: 0 }, { index: 2 }]), [1]);
+  });
+
+  it("uses startFromChunk only for old jobs without chunkResults", () => {
+    assert.deepEqual(buildResumeQueue(5, 3, []), [3, 4]);
+  });
+});
+
 // ── Unit: buildResumeState helper ─────────────────────────────────────────────
 
 describe("buildResumeState — extracts previousChunkResults from saved job output", () => {
@@ -63,7 +82,7 @@ describe("buildResumeState — extracts previousChunkResults from saved job outp
       const raw = (savedOutput.chunkResults ?? []) as Array<{ index: number; result: unknown; provider?: string | null }>;
       const previousChunkResults = raw.filter((r) => typeof r.index === "number" && r.result != null).sort((a, b) => a.index - b.index);
       const startFromChunk = previousChunkResults.length > 0
-        ? Math.max(...previousChunkResults.map((r) => r.index)) + 1
+        ? 0
         : (typeof savedOutput.completedChunks === "number" ? savedOutput.completedChunks : 0);
       return { startFromChunk, previousChunkResults, existingContentHash: typeof savedOutput.contentHash === "string" ? savedOutput.contentHash : undefined };
     }
@@ -80,7 +99,7 @@ describe("buildResumeState — extracts previousChunkResults from saved job outp
       const raw = (savedOutput.chunkResults ?? []) as Array<{ index: number; result: unknown; provider?: string | null }>;
       const previousChunkResults = raw.filter((r) => typeof r.index === "number" && r.result != null).sort((a, b) => a.index - b.index);
       const startFromChunk = previousChunkResults.length > 0
-        ? Math.max(...previousChunkResults.map((r) => r.index)) + 1
+        ? 0
         : (typeof savedOutput.completedChunks === "number" ? savedOutput.completedChunks : 0);
       return { startFromChunk, previousChunkResults, existingContentHash: typeof savedOutput.contentHash === "string" ? savedOutput.contentHash : undefined };
     }
@@ -94,7 +113,7 @@ describe("buildResumeState — extracts previousChunkResults from saved job outp
       completedChunks: 2,
       contentHash: "abc123",
     });
-    assert.equal(result.startFromChunk, 2, "should start from chunk 2 (index of last completed + 1)");
+    assert.equal(result.startFromChunk, 0, "saved chunkResults should resume by missing indexes, not highest completed index");
     assert.equal(result.previousChunkResults.length, 2);
     assert.equal(result.existingContentHash, "abc123");
   });
@@ -105,7 +124,7 @@ describe("buildResumeState — extracts previousChunkResults from saved job outp
       const raw = (savedOutput.chunkResults ?? []) as Array<{ index: number; result: unknown; provider?: string | null }>;
       const previousChunkResults = raw.filter((r) => typeof r.index === "number" && r.result != null).sort((a, b) => a.index - b.index);
       const startFromChunk = previousChunkResults.length > 0
-        ? Math.max(...previousChunkResults.map((r) => r.index)) + 1
+        ? 0
         : (typeof savedOutput.completedChunks === "number" ? savedOutput.completedChunks : 0);
       return { startFromChunk, previousChunkResults, existingContentHash: typeof savedOutput.contentHash === "string" ? savedOutput.contentHash : undefined };
     }
@@ -135,8 +154,8 @@ describe("ai-analyze/route (streaming) — resume fixes", () => {
 
   it("streaming path passes previousChunkResults to analyzeWithAI", () => {
     assert.ok(
-      routeSource.includes("analyzeWithAI(tenderContent, { deadlineAt, startFromChunk, previousChunkResults })"),
-      "streaming path must pass previousChunkResults to analyzeWithAI",
+      /analyzeWithAI\(tenderContent, \{[^}]*deadlineAt[^}]*startFromChunk[^}]*previousChunkResults[^}]*onChunkComplete/.test(routeSource),
+      "streaming path must pass previousChunkResults and onChunkComplete to analyzeWithAI",
     );
   });
 
@@ -147,10 +166,11 @@ describe("ai-analyze/route (streaming) — resume fixes", () => {
     );
   });
 
-  it("streaming path detects PARTIAL_SUCCESS job for auto-resume when no continueJobId", () => {
+  it("streaming path detects resumable PARTIAL_SUCCESS or FAILED jobs for auto-resume when no continueJobId", () => {
     assert.ok(
-      routeSource.includes("PARTIAL_SUCCESS") && routeSource.includes("latestPartial"),
-      "streaming path must auto-detect latest PARTIAL_SUCCESS job for transparent resume",
+      routeSource.includes("findLatestResumableAiAnalyzeJob")
+        && routeSource.includes('status: { in: ["PARTIAL_SUCCESS", "FAILED"] }'),
+      "streaming path must auto-detect latest resumable PARTIAL_SUCCESS or FAILED job for transparent resume",
     );
   });
 
@@ -180,21 +200,48 @@ describe("ai-analyze/route (non-streaming) — resume fixes", () => {
     assert.ok(count >= 2, `both paths must save chunkResults in job output (found ${count})`);
   });
 
-  it("non-streaming path has auto-resume detection for PARTIAL_SUCCESS", () => {
-    // Both paths contain the auto-resume logic — verify at least 2 occurrences of the PARTIAL_SUCCESS lookup
-    const count = (routeSource.match(/status.*PARTIAL_SUCCESS/g) ?? []).length;
-    assert.ok(count >= 2, `auto-resume must be present in both streaming and non-streaming paths (found ${count})`);
+  it("non-streaming path has auto-resume detection for resumable FAILED jobs too", () => {
+    const count = (routeSource.match(/findLatestResumableAiAnalyzeJob\(id, userId, contentHash\)/g) ?? []).length;
+    assert.ok(count >= 2, `auto-resume must use the shared resumable-job lookup in both paths (found ${count})`);
+  });
+
+  it("per-chunk progress output includes chunkProviders for later failure preservation", () => {
+    assert.ok(
+      routeSource.includes("function buildAiAnalyzePartialOutput")
+        && routeSource.includes("chunkProviders")
+        && routeSource.includes("output: JSON.stringify(buildAiAnalyzePartialOutput(completed, totalChunks, contentHash))"),
+      "onChunkComplete output must persist chunkProviders along with chunkResults",
+    );
+  });
+
+  it("failure helper preserves chunkResults and marks resumable failures as continue", () => {
+    assert.ok(
+      routeSource.includes("async function preserveAiAnalyzeProgressOnFailure")
+        && routeSource.includes("const existingOutput = parseAiAnalyzeJobOutput")
+        && routeSource.includes("chunkResults")
+        && routeSource.includes('nextAction: hasChunkResults ? "CONTINUE_AI_ANALYZE" : "RETRY_AI_ANALYZE"'),
+      "failure helper must merge failure metadata into existing output without deleting chunkResults",
+    );
+  });
+
+  it("catch blocks use preserveAiAnalyzeProgressOnFailure instead of fallback-only output", () => {
+    const fallbackOnlyWrites = routeSource.match(/output:\s*JSON\.stringify\(\{\s*analysisSource:\s*"REGEX_FALLBACK",\s*nextAction:\s*"RETRY_AI_ANALYZE"/g) ?? [];
+    assert.equal(fallbackOnlyWrites.length, 0, "catch blocks must not overwrite job output with fallback-only JSON");
+    const preserveCalls = routeSource.match(/preserveAiAnalyzeProgressOnFailure\(analysisJob\.id/g) ?? [];
+    assert.ok(preserveCalls.length >= 2, `streaming and non-streaming catches must preserve progress (found ${preserveCalls.length})`);
   });
 });
 
 // ── Tender GET route: surfaces partial job ───────────────────────────────────
 
 describe("tender GET route — surfaces latestPartialAnalysisJob", () => {
-  it("route.ts queries for PARTIAL_SUCCESS job", () => {
+  it("route.ts queries for resumable PARTIAL_SUCCESS and FAILED jobs", () => {
     const routeGet = readFileSync(path.join(process.cwd(), "app/api/tenders/[id]/route.ts"), "utf-8");
     assert.ok(
-      routeGet.includes("PARTIAL_SUCCESS") && routeGet.includes("latestPartialJob"),
-      "tender GET route must query for the latest PARTIAL_SUCCESS job",
+      routeGet.includes('status: { in: ["PARTIAL_SUCCESS", "FAILED"] }')
+        && routeGet.includes("latestPartialJobCandidates")
+        && routeGet.includes("chunkResults"),
+      "tender GET route must surface resumable failed jobs with saved chunkResults, not only PARTIAL_SUCCESS jobs",
     );
   });
 
