@@ -22,6 +22,7 @@ export type PerPageExtractionReport = {
   failedPages: number[];
   ocrPages: number[];
   tableHeavyPages: number[];
+  imageHeavyPages: number[];
   submissionInstructionPages: number[];
   evaluationCriteriaPages: number[];
   requiredDocumentPages: number[];
@@ -235,13 +236,14 @@ function reportFromPages(pages: PageQualityEntry[], detectionMode: PerPageExtrac
   const failedPages = pages.filter((p) => p.status === "FAILED").map((p) => p.page);
   const ocrPages = pages.filter((p) => p.status === "OCR").map((p) => p.page);
   const tableHeavyPages = pages.filter((p) => p.status === "TABLE_HEAVY").map((p) => p.page);
+  const imageHeavyPages = pages.filter((p) => p.status === "IMAGE_HEAVY").map((p) => p.page);
   const submissionInstructionPages = pages.filter((p) => p.hasSubmissionInstructions).map((p) => p.page);
   const evaluationCriteriaPages = pages.filter((p) => p.hasEvaluationCriteria).map((p) => p.page);
   const requiredDocumentPages = pages.filter((p) => p.hasRequiredDocuments).map((p) => p.page);
   const clientDetailPages = pages.filter((p) => p.hasClientDetails).map((p) => p.page);
   const totalDetectedPages = pages.length;
   const coveragePercent = totalDetectedPages > 0 ? Math.round((perfectPages.length / totalDetectedPages) * 100) : 0;
-  return { totalDetectedPages, perfectPages, lowDensityPages, blankPages, failedPages, ocrPages, tableHeavyPages, submissionInstructionPages, evaluationCriteriaPages, requiredDocumentPages, clientDetailPages, coveragePercent, pages, detectionMode };
+  return { totalDetectedPages, perfectPages, lowDensityPages, blankPages, failedPages, ocrPages, tableHeavyPages, imageHeavyPages, submissionInstructionPages, evaluationCriteriaPages, requiredDocumentPages, clientDetailPages, coveragePercent, pages, detectionMode };
 }
 
 export function buildReportFromStoredPages(pages: PageQualityEntry[]): PerPageExtractionReport {

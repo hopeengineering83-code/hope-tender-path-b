@@ -197,6 +197,26 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     let isDerivedDraft = plan.warnings.some((w: string) => w.includes("derived draft"));
 
     if (plannedFiles.length === 0 && tender.requirements.length > 0) {
+      // Gate: if ALL requirements are non-MANDATORY (SCORED/INFORMATIONAL) and no
+      // exactFileName is set, we cannot reliably auto-build a plan — require the
+      // user to manually mark at least one requirement as MANDATORY or add explicit
+      // file names. This prevents a derived draft from being built on purely advisory
+      // requirements, which would produce a misleading DERIVED_DRAFT_UNCONFIRMED plan.
+      const hasExplicitFileNames = tender.requirements.some((r) => (r.exactFileName ?? "").trim().length > 0);
+      const hasMandatory = tender.requirements.some((r) => (r.priority ?? "").toUpperCase() === "MANDATORY");
+      if (!hasMandatory && !hasExplicitFileNames) {
+        return NextResponse.json({
+          ok: false,
+          errorCode: "BUILD_PLAN_ALL_OPTIONAL_REQUIREMENTS",
+          error: "Cannot auto-build submission plan: all requirements are SCORED or INFORMATIONAL (none are MANDATORY) and no explicit file names are set. Mark at least one requirement as MANDATORY or add exact file names before building the plan.",
+          blockers: [
+            "All requirements are non-MANDATORY — no required submission files can be derived.",
+            "Set at least one requirement priority to MANDATORY, or add exactFileName values, then rebuild.",
+          ],
+          nextAction: "SET_MANDATORY_REQUIREMENTS_OR_ADD_FILE_NAMES",
+        }, { status: 422 });
+      }
+
       const derivedEntries = buildDerivedDraftPlan({
         requirements: tender.requirements.map((r) => ({
           title: r.title,

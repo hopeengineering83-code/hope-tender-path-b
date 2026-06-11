@@ -1427,6 +1427,8 @@ Step 12 — Write evaluationMethodology: how the proposal should be structured t
 - Extract email recipients, exact subject line, no-financial-proposal rules, appendix letters, and evaluation scoring weights when present.
 - evaluationMethodology must be actionable: "Score criterion X by doing Y using evidence Z" — not just a list of criteria.
 - submissionNotes must include: deadline, email recipients, exact subject line, file format, financial proposal restriction, appendix requirements.
+- CLIENT ENTITY RULE — when multiple organisations appear, assign EXACTLY ONE to each role: (a) procuringEntityName = the authority that RECEIVES and evaluates bids (ministry, department, authority — look for "issued by", "contracting authority", "tender issuing office"); (b) donorAgency = the funder or financing institution (World Bank, AfDB, USAID, KfW, UN agency — look for "financed by", "funded by", "grant"); (c) implementingAgency = the body executing the project if different from the procuring entity (PMU, project unit — look for "implementing agency", "project management unit"); (d) legalClientName = the full official registered name if the document provides a legally distinct name alongside a short display name. If a role is not identifiable from the document, return null — do NOT copy the same value across multiple entity fields.
+- PLACEHOLDER PROHIBITION — NEVER fill procuringEntityName, legalClientName, donorAgency, implementingAgency, clientContactName, clientAddress, or any other field with placeholder text such as "Bid-Team to confirm", "unknown", "not specified", "N/A", "TBD", "TBC", or "to be determined". If the information is absent from the tender document, return null for that field.
 
 JSON structure required:
 {
