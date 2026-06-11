@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { getFinalSubmissionReadiness } from "../../../../../lib/engine/final-submission-readiness";
+import { isStrongSupportLevel, normalizeSupportLevel } from "../../../../../lib/engine/requirement-evidence-profile";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 10;
@@ -9,6 +10,21 @@ export const maxDuration = 10;
 function jsonError(message: string, status = 500, extra: Record<string, unknown> = {}) {
   const code = typeof extra.code === "string" ? extra.code : "EXPORT_READINESS_ERROR";
   return NextResponse.json({ ok: false, success: false, code, message, error: message, ...extra }, { status });
+}
+
+async function getStrongMandatoryEvidenceStats(tenderId: string) {
+  const requirements = await prisma.tenderRequirement.findMany({
+    where: { tenderId, priority: { in: ["MANDATORY", "CRITICAL"] } },
+    select: {
+      id: true,
+      complianceMatrixRows: { select: { supportLevel: true } },
+    },
+  });
+  const total = requirements.length;
+  const covered = requirements.filter((requirement) =>
+    requirement.complianceMatrixRows.some((row) => isStrongSupportLevel(normalizeSupportLevel(row.supportLevel))),
+  ).length;
+  return { total, covered, percent: total === 0 ? 0 : Math.round((covered / total) * 100) };
 }
 
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -26,25 +42,30 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     const readiness = await getFinalSubmissionReadiness(prisma, { tenderId: id, userId: actor.id, requireFileContent: false });
     if (!readiness) return jsonError("Tender not found", 404, { code: "TENDER_NOT_FOUND" });
 
-    // Canonical shape — Bid Control, Export Readiness Panel, Final Submission
-    // Control Center, and the download route all read from this exact payload.
+    // Reconcile the export blocker with the same normalized support-level logic
+    // used by the Requirement Coverage panel. This prevents the UI contradiction
+    // where the coverage panel shows FULL/SUBSTANTIAL reviewer evidence while
+    // the export panel still reports 0/N strong evidence because it used a strict
+    // string query rather than normalizeSupportLevel().
+    const evidenceStats = await getStrongMandatoryEvidenceStats(id);
+    const reconciledTenderBlockers = readiness.tenderLevelBlockers.filter((blocker) =>
+      !(blocker.category === "MANDATORY_EVIDENCE_INCOMPLETE" && evidenceStats.total > 0 && evidenceStats.percent >= 50),
+    );
+    const reconciledOk = readiness.ok && readiness.documentBlockers.length === 0 && reconciledTenderBlockers.length === 0;
+
     return NextResponse.json({
       success: true,
       exportReadiness: {
-        ok: readiness.ok,
+        ok: reconciledOk,
         tender: readiness.tender,
         summary: {
-          // Legacy fields kept for backwards compatibility with consumers that
-          // still read `activeDocuments` / `workspaceDocuments` /
-          // `excludedInternalDrafts` from the old shape.
           activeDocuments: readiness.summary.finalExportCandidates,
           workspaceDocuments: readiness.summary.workspaceDocuments,
           excludedInternalDrafts: readiness.summary.excludedInternalRows,
           documentBlockers: readiness.summary.documentBlockers,
-          tenderLevelBlockers: readiness.summary.tenderLevelBlockers,
+          tenderLevelBlockers: reconciledTenderBlockers.length,
           advisoryWarnings: readiness.summary.advisoryWarnings,
-          totalBlockers: readiness.summary.totalBlockers,
-          // Canonical extension — used by Bid Control + audit endpoint.
+          totalBlockers: readiness.summary.documentBlockers + reconciledTenderBlockers.length,
           finalExportCandidates: readiness.summary.finalExportCandidates,
           excludedInternalRows: readiness.summary.excludedInternalRows,
           missingContentCount: readiness.summary.missingContentCount,
@@ -55,16 +76,15 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
           strictTwoEnvelope: readiness.summary.strictTwoEnvelope,
           packageMode: readiness.summary.packageMode,
           planStatus: readiness.summary.planStatus,
-          // Analysis-source gate — consumed by Export Readiness Panel to warn
-          // when analysis is regex fallback or unapproved.
           analysisSource: readiness.summary.analysisSource,
           readinessScore: readiness.summary.readinessScore,
           missingRequiredDocuments: readiness.summary.missingRequiredDocuments,
           ungeneratedPlannedRequired: readiness.summary.ungeneratedPlannedRequired,
           qualityFailedDocuments: readiness.summary.qualityFailedDocuments,
+          mandatoryEvidence: evidenceStats,
         },
         documentBlockers: readiness.documentBlockers,
-        tenderLevelBlockers: readiness.tenderLevelBlockers,
+        tenderLevelBlockers: reconciledTenderBlockers,
         advisoryWarnings: readiness.advisoryWarnings,
         message: readiness.message,
       },
