@@ -37,6 +37,8 @@ type TenderLike = {
   exactFileOrder?: string | null;
   pageLimit?: number | null;
   bidOutcome?: string | null;
+  analysisSource?: string | null;
+  analysisExtractionStatus?: string | null;
   requirements?: TenderRequirementLike[];
   complianceGaps?: Array<{ severity: string; isResolved: boolean }>;
   generatedDocuments?: GeneratedDocLike[];
@@ -168,6 +170,11 @@ export function ExecutiveSnapshot({ tender }: { tender: TenderLike }) {
   const hasNoDocsForWorkflow = hasRequirements && dashboardDocTotal === 0 && generatedDocs.length === 0;
   const hasNoGeneratedDocs = dashboardDocTotal > 0 && dashboardGeneratedCount === 0;
 
+  // GO requires trusted AI analysis — regex fallback (approved or not) must
+  // stay at REVIEW so no one exports on unverified extraction-based analysis.
+  const analysisSourceNorm = (tender.analysisSource ?? "").toUpperCase();
+  const analysisTrustedForGo = analysisSourceNorm === "AI";
+
   const decision: "GO" | "REVIEW" | "NO_GO" = unresolvedCritical > 0
     ? "NO_GO"
     : canonicalDecisionScore >= 85
@@ -175,6 +182,7 @@ export function ExecutiveSnapshot({ tender }: { tender: TenderLike }) {
       && dashboardGeneratedCount > 0
       && !hasPlanMismatch
       && !hasStrongEvidenceGap
+      && analysisTrustedForGo
         ? "GO"
         : "REVIEW";
 

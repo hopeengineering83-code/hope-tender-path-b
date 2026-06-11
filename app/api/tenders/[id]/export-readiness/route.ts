@@ -53,6 +53,15 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     );
     const reconciledOk = readiness.ok && readiness.documentBlockers.length === 0 && reconciledTenderBlockers.length === 0;
 
+    // Canonical upstream trust flags for UI components that need to check
+    // whether docs are stale or whether the submission plan is built.
+    const submissionPlanBuilt = readiness.summary.planStatus !== "NO_PLAN_NO_DOCS" && readiness.summary.planStatus !== "NO_PLAN_WITH_ACTIVE_DOCS";
+    const analysisSource = readiness.summary.analysisSource ?? "UNKNOWN";
+    const analysisTrusted = analysisSource === "AI";
+    // Documents are current only when the plan is built, analysis is trusted,
+    // and docs are matched to the plan (not in PLAN_MISSING_DOCS state).
+    const documentsCurrent = submissionPlanBuilt && analysisTrusted && readiness.summary.planStatus === "PLAN_MATCHED";
+
     return NextResponse.json({
       success: true,
       exportReadiness: {
@@ -87,6 +96,9 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
         tenderLevelBlockers: reconciledTenderBlockers,
         advisoryWarnings: readiness.advisoryWarnings,
         message: readiness.message,
+        submissionPlanBuilt,
+        analysisTrusted,
+        documentsCurrent,
       },
     });
   } catch (error) {
