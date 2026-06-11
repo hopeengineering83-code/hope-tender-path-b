@@ -1724,10 +1724,16 @@ export async function analyzeWithAI(
   let failedChunks = 0;
   let skippedChunks = 0;
 
-  const startIndex = Math.max(opts?.startFromChunk ?? 0, previousChunkResults.length > 0 ? Math.max(...previousChunkResults.map((entry) => entry.index)) + 1 : 0);
+  const startIndex = opts?.startFromChunk ?? 0;
   const queue = chunks
     .map((content, index) => ({ content, index }))
-    .filter((c) => c.index >= startIndex && !previousIndexes.has(c.index));
+    .filter((c) => {
+      if (previousIndexes.has(c.index)) return false; // already completed in a prior run
+      // When we have specific chunk results, process ALL missing chunks — this fills
+      // gaps (e.g. chunk 1 missing when 0 and 2 completed) rather than stopping at max+1.
+      // When no specific results exist, respect startIndex from opts.startFromChunk.
+      return previousIndexes.size > 0 || c.index >= startIndex;
+    });
 
   // Limited concurrency: process up to 3 chunks in parallel.
   // This balances speed with provider rate-limit safety.

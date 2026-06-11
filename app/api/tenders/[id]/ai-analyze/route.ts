@@ -418,8 +418,10 @@ async function handleStreamingAnalyze(
         let analysisMeta: AnalysisWithMeta | null = null;
 
         if (isAIEnabled()) {
+          let chunksCompletedThisRunStream = 0;
           const onChunkComplete = analysisJob
             ? async ({ completed, totalChunks }: { completed: Array<{ index: number; result: AIAnalysisResult; provider?: string | null }>; totalChunks: number }) => {
+                chunksCompletedThisRunStream++;
                 await prisma.aiJob.update({
                   where: { id: analysisJob!.id },
                   data: {
@@ -440,9 +442,16 @@ async function handleStreamingAnalyze(
               if (analysisJob) {
                 const errMsg = aiErr instanceof Error ? aiErr.message : String(aiErr);
                 const safeErrMsg = errMsg.replace(/sk-[a-zA-Z0-9_-]{10,}/g, "[KEY_REDACTED]").replace(/AIza[a-zA-Z0-9_-]{30,}/g, "[KEY_REDACTED]").replace(/Bearer\s+[a-zA-Z0-9._-]{10,}/gi, "Bearer [REDACTED]").slice(0, 300);
+                const hasPartialChunks = previousChunkResults.length > 0 || chunksCompletedThisRunStream > 0;
                 await prisma.aiJob.update({
                   where: { id: analysisJob.id },
-                  data: { status: "FAILED", finishedAt: new Date(), output: JSON.stringify({ analysisSource: "REGEX_FALLBACK", nextAction: "RETRY_AI_ANALYZE" }), errorMessage: safeErrMsg },
+                  data: {
+                    status: hasPartialChunks ? "PARTIAL_SUCCESS" : "FAILED",
+                    finishedAt: new Date(),
+                    // Preserve per-chunk output when partial progress exists; only overwrite on clean failure
+                    ...(hasPartialChunks ? {} : { output: JSON.stringify({ analysisSource: "REGEX_FALLBACK", nextAction: "RETRY_AI_ANALYZE" }) }),
+                    errorMessage: safeErrMsg,
+                  },
                 }).catch(() => {});
               }
               throw aiErr;
@@ -933,8 +942,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         ]).catch(() => {});
 
         const deadlineAt = Date.now() + SAFE_DEADLINE_MS;
+        let chunksCompletedThisRunNonStream = 0;
         const onChunkCompleteNonStream = analysisJob
           ? async ({ completed, totalChunks }: { completed: Array<{ index: number; result: AIAnalysisResult; provider?: string | null }>; totalChunks: number }) => {
+              chunksCompletedThisRunNonStream++;
               await prisma.aiJob.update({
                 where: { id: analysisJob!.id },
                 data: {
@@ -950,19 +961,17 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
             AI_ANALYSIS_TIMEOUT_MS,
           );
         } catch (aiErr) {
-          // Fail the job before re-throwing
           if (analysisJob) {
             const errMsg = aiErr instanceof Error ? aiErr.message : String(aiErr);
             const safeErrMsg = errMsg.replace(/sk-[a-zA-Z0-9_-]{10,}/g, "[KEY_REDACTED]").replace(/AIza[a-zA-Z0-9_-]{30,}/g, "[KEY_REDACTED]").replace(/Bearer\s+[a-zA-Z0-9._-]{10,}/gi, "Bearer [REDACTED]").slice(0, 300);
+            const hasPartialChunks = previousChunkResults.length > 0 || chunksCompletedThisRunNonStream > 0;
             await prisma.aiJob.update({
               where: { id: analysisJob.id },
               data: {
-                status: "FAILED",
+                status: hasPartialChunks ? "PARTIAL_SUCCESS" : "FAILED",
                 finishedAt: new Date(),
-                output: JSON.stringify({
-                  analysisSource: "REGEX_FALLBACK",
-                  nextAction: "RETRY_AI_ANALYZE",
-                }),
+                // Preserve per-chunk output when partial progress exists; only overwrite on clean failure
+                ...(hasPartialChunks ? {} : { output: JSON.stringify({ analysisSource: "REGEX_FALLBACK", nextAction: "RETRY_AI_ANALYZE" }) }),
                 errorMessage: safeErrMsg,
               },
             }).catch(() => {});

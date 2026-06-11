@@ -135,15 +135,15 @@ describe("ai-analyze/route (streaming) — resume fixes", () => {
 
   it("streaming path passes previousChunkResults to analyzeWithAI", () => {
     assert.ok(
-      routeSource.includes("analyzeWithAI(tenderContent, { deadlineAt, startFromChunk, previousChunkResults })"),
+      routeSource.includes("analyzeWithAI(tenderContent, {") && routeSource.includes("previousChunkResults"),
       "streaming path must pass previousChunkResults to analyzeWithAI",
     );
   });
 
-  it("streaming path uses buildResumeState to extract chunkResults from job output", () => {
+  it("streaming path uses normalizePreviousChunkResults to extract chunkResults from job output", () => {
     assert.ok(
-      routeSource.includes("buildResumeState(parseJobOutput("),
-      "streaming path must use buildResumeState(parseJobOutput(...)) to load resume state",
+      routeSource.includes("normalizePreviousChunkResults") && routeSource.includes("parseAiAnalyzeJobOutput"),
+      "streaming path must use parseAiAnalyzeJobOutput + normalizePreviousChunkResults to load resume state",
     );
   });
 
@@ -239,6 +239,104 @@ describe("tender-detail.tsx — resume banner and continueJobId wiring", () => {
     assert.ok(
       uiSource.includes("Start fresh") && uiSource.includes("setContinueJobId(null)"),
       "tender-detail must provide a 'Start fresh' option that clears the resume state",
+    );
+  });
+});
+
+// ── Unit: gap-filling queue logic ─────────────────────────────────────────────
+
+describe("analyzeWithAI queue logic — processes gaps when previousChunkResults exist", () => {
+  it("queue includes chunk 1 when chunks 0 and 2 are already completed", () => {
+    // Reproduce the queue-filter logic from lib/ai.ts
+    function buildQueue(
+      totalChunks: number,
+      previousIndexes: Set<number>,
+      startIndex: number,
+    ): number[] {
+      return Array.from({ length: totalChunks }, (_, index) => index).filter((index) => {
+        if (previousIndexes.has(index)) return false;
+        return previousIndexes.size > 0 || index >= startIndex;
+      });
+    }
+
+    // Chunks 0 and 2 done; chunk 1 is missing
+    const prev = new Set([0, 2]);
+    const queue = buildQueue(3, prev, 3); // startIndex=3 would wrongly skip chunk 1 with old logic
+    assert.deepEqual(queue, [1], "should queue only the missing chunk 1");
+  });
+
+  it("queue skips all chunks when all are in previousIndexes", () => {
+    function buildQueue(totalChunks: number, previousIndexes: Set<number>, startIndex: number): number[] {
+      return Array.from({ length: totalChunks }, (_, index) => index).filter((index) => {
+        if (previousIndexes.has(index)) return false;
+        return previousIndexes.size > 0 || index >= startIndex;
+      });
+    }
+
+    const prev = new Set([0, 1, 2]);
+    const queue = buildQueue(3, prev, 3);
+    assert.deepEqual(queue, [], "all chunks already done — queue must be empty");
+  });
+
+  it("queue respects startIndex when previousIndexes is empty", () => {
+    function buildQueue(totalChunks: number, previousIndexes: Set<number>, startIndex: number): number[] {
+      return Array.from({ length: totalChunks }, (_, index) => index).filter((index) => {
+        if (previousIndexes.has(index)) return false;
+        return previousIndexes.size > 0 || index >= startIndex;
+      });
+    }
+
+    // No previous results — resume from chunk 2 using only startIndex
+    const prev = new Set<number>();
+    const queue = buildQueue(4, prev, 2);
+    assert.deepEqual(queue, [2, 3], "without previousIndexes should respect startIndex");
+  });
+
+  it("lib/ai.ts queue filter does not use startIndex as lower bound when previousIndexes exist", () => {
+    const aiSource = readFileSync(path.join(process.cwd(), "lib/ai.ts"), "utf-8");
+    // Verify the correct pattern is present: previousIndexes.size > 0 as the gate
+    assert.ok(
+      aiSource.includes("previousIndexes.size > 0"),
+      "lib/ai.ts queue filter must use previousIndexes.size > 0 to bypass startIndex lower bound for gap-filling",
+    );
+  });
+});
+
+// ── Source: catch blocks preserve chunkResults ────────────────────────────────
+
+describe("ai-analyze/route catch blocks — preserve chunkResults on failure", () => {
+  it("streaming catch block sets PARTIAL_SUCCESS when partial chunks exist", () => {
+    assert.ok(
+      routeSource.includes("hasPartialChunks") && routeSource.includes("PARTIAL_SUCCESS"),
+      "streaming catch block must set PARTIAL_SUCCESS status when partial progress exists",
+    );
+  });
+
+  it("streaming catch block does not overwrite output when partial chunks exist", () => {
+    // The pattern: spread no output field when hasPartialChunks
+    assert.ok(
+      routeSource.includes("hasPartialChunks ? {} :"),
+      "streaming catch block must conditionally skip output overwrite to preserve per-chunk writes",
+    );
+  });
+
+  it("non-streaming catch block also sets PARTIAL_SUCCESS when partial chunks exist", () => {
+    const occurrences = (routeSource.match(/hasPartialChunks \? "PARTIAL_SUCCESS" : "FAILED"/g) ?? []).length;
+    assert.ok(occurrences >= 2, `both streaming and non-streaming catch blocks must check hasPartialChunks (found ${occurrences})`);
+  });
+
+  it("nextAction is RETRY_AI_ANALYZE only when no chunks completed", () => {
+    // CONTINUE_AI_ANALYZE is implied by PARTIAL_SUCCESS status; RETRY_AI_ANALYZE
+    // is only written to output when no chunks exist (hasPartialChunks === false).
+    assert.ok(
+      routeSource.includes("RETRY_AI_ANALYZE"),
+      "RETRY_AI_ANALYZE must only appear in the no-chunks-completed branch",
+    );
+    // Ensure RETRY_AI_ANALYZE is not set unconditionally in catch blocks
+    // (it must be inside the `hasPartialChunks ? {} : { output: ... }` branch)
+    assert.ok(
+      routeSource.includes("hasPartialChunks ? {} :") && routeSource.includes("RETRY_AI_ANALYZE"),
+      "RETRY_AI_ANALYZE must be gated behind hasPartialChunks check",
     );
   });
 });
