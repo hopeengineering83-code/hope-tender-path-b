@@ -4,18 +4,8 @@ import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { GenerationProgressPanel } from "./generation-progress-panel";
 
-// Gap 16 fix — accepts the split-readiness flags from
-// TenderGenerationReadiness so the panel can render two distinct
-// states:
-//   • Support package readiness (vault fallback OK)
-//   • Full proposal readiness    (tender-specific evidence required)
-// The "Generate Docs" button is gated by FULL_PROPOSAL_READY, not just
-// the legacy `ready` flag, so the panel can never show green while
-// the Bid Control Verdict says NOT_READY.
 type GenerationReadiness = {
   ready: boolean;
-  // Optional for back-compat — older callers that haven't migrated still
-  // work, they just lose the split-state nuance.
   supportPackageReady?: boolean;
   fullProposalReady?: boolean;
   fullProposalBlockers?: Array<{ code: string; message: string; nextAction?: string }>;
@@ -32,30 +22,19 @@ type GenerationReadiness = {
 type GenerateResponse = {
   jobId?: string;
   error?: string;
-  code?: string;
   nextAction?: string;
   warnings?: string[];
-  tender?: unknown;
   diagnosticId?: string;
-  failedStage?: string;
 };
 
 function shortAction(action?: string): string {
   if (action === "RUN_ENGINE") return "Run Engine first.";
   if (action === "REVIEW_MATCHES") return "Review/select matching evidence.";
-  if (action === "OPEN_KNOWLEDGE_REVIEW") return "Open the Knowledge Review board.";
-  if (action === "OPEN_COMPANY_READINESS") return "Open Company Readiness.";
-  if (action === "OPEN_ANALYSIS_QUALITY") return "Review Analysis Quality.";
-  if (action === "OPEN_MATCHING_QUALITY") return "Review Matching Quality.";
-  if (action === "EDIT_TENDER") return "Edit the tender details.";
-  if (action === "EDIT_TENDER_METADATA") return "Open Tender Detail and fill the missing metadata fields.";
+  if (action === "EDIT_TENDER_METADATA") return "Open Tender Detail and fill missing metadata.";
   if (action === "BUILD_SUBMISSION_PLAN") return "Run Build Plan first.";
-  if (action === "RUN_OCR_OR_UPLOAD_CLEARER_SCAN") return "Enable OCR or upload a clearer scan.";
-  if (action === "OPEN_EXTRACTION_QUALITY") return "Check the Extraction Quality panel.";
-  if (action === "CHANGE_BID_DECISION") return "Change the bid decision to BID before generating.";
-  if (action === "RETRY_AS_BACKGROUND_JOB") return "Retry as a background job.";
-  if (action === "RETRY_AFTER_BACKOFF") return "Wait a minute and retry.";
-  return "Review the tender readiness panels.";
+  if (action === "RUN_OCR_OR_UPLOAD_CLEARER_SCAN") return "Run OCR or upload a clearer scan.";
+  if (action === "OPEN_EXTRACTION_QUALITY") return "Check Extraction Quality.";
+  return "Resolve the readiness blockers first.";
 }
 
 export function GenerationActionPanel({ tenderId, readiness }: { tenderId: string; readiness: GenerationReadiness | null }) {
@@ -64,133 +43,28 @@ export function GenerationActionPanel({ tenderId, readiness }: { tenderId: strin
   const [running, setRunning] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [kind, setKind] = useState<"success" | "error" | "info">("info");
-  const [repairing, setRepairing] = useState(false);
-  const [repairMsg, setRepairMsg] = useState<{ kind: "success" | "error" | "info"; text: string } | null>(null);
   const [jobId, setJobId] = useState<string | null>(null);
 
   const blockers = readiness?.blockers ?? [];
   const warnings = readiness?.warnings ?? [];
   const supportReady = readiness?.supportPackageReady ?? readiness?.ready ?? false;
-  // Full-proposal-ready is the STRICT gate. When the server returns the
-  // split-readiness shape (post-Gap-6), use it. Older callers fall back to
-  // the legacy `ready` flag.
   const fullProposalReady = readiness?.fullProposalReady ?? readiness?.ready ?? false;
   const fullProposalBlockers = readiness?.fullProposalBlockers ?? [];
-  // Surface a one-click repair affordance when the only thing in the way of
-  // generation is missing critical metadata (see #519: deterministic, source-
-  // grounded extractor for tender.evaluationMethodology). The button is
-  // gated on the blocker actually being present; clicking it never overwrites
-  // an existing value, only repairs when the extractor finds a source quote.
-  const metadataBlockerPresent = fullProposalBlockers.some((b) => b.code === "FULL_PROPOSAL_METADATA_INCOMPLETE");
-
-  async function runRepairMetadata() {
-    setRepairing(true);
-    setRepairMsg(null);
-    try {
-      const res = await fetch(`/api/tenders/${tenderId}/repair-metadata`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ fields: ["evaluationMethodology"] }),
-      });
-      const data = await res.json().catch(() => ({} as Record<string, unknown>));
-      if (!res.ok) {
-        const err = typeof data.error === "string" ? data.error : `Repair failed (${res.status})`;
-        setRepairMsg({ kind: "error", text: err });
-        return;
-      }
-      type RepairResult = { status?: string; reason?: string; confidence?: string; sourceFile?: string | null };
-      const result = (data.results as { evaluationMethodology?: RepairResult } | undefined)?.evaluationMethodology ?? {};
-      if (result.status === "REPAIRED") {
-        const sourceFile = result.sourceFile ?? "tender source";
-        const confidence = result.confidence ?? "MEDIUM";
-        setRepairMsg({ kind: "success", text: `evaluationMethodology repaired from ${sourceFile} (${confidence} confidence). Review the tender and re-check generation readiness.` });
-        startTransition(() => router.refresh());
-      } else if (result.status === "NOT_FOUND") {
-        setRepairMsg({ kind: "info", text: result.reason ?? "No evaluation methodology section detected in the uploaded tender files. Open the tender editor and confirm the value manually." });
-      } else if (result.status === "SKIPPED") {
-        setRepairMsg({ kind: "info", text: result.reason ?? "evaluationMethodology is already populated." });
-      } else {
-        setRepairMsg({ kind: "info", text: "Repair endpoint returned no actionable result." });
-      }
-    } catch (e) {
-      setRepairMsg({ kind: "error", text: e instanceof Error ? e.message : "Repair failed due to a network/runtime error." });
-    } finally {
-      setRepairing(false);
-    }
-  }
-
-  // Batch "Repair all from source" — calls the endpoint with every supported
-  // field. Skips fields the tender already has populated (the endpoint enforces
-  // the no-overwrite rule); reports REPAIRED / NOT_FOUND / SKIPPED counts so
-  // the user understands what changed and what didn't. Refresh fires only when
-  // at least one field was actually written.
-  const ALL_REPAIRABLE_FIELDS = [
-    "evaluationMethodology",
-    "reference",
-    "deadline",
-    "submissionEmails",
-    "submissionMethod",
-    "pageLimit",
-    "validityDays",
-    "bidBondAmount",
-    "numberOfCopiesRequired",
-    "mandatorySiteVisit",
-  ] as const;
-
-  async function runRepairAllMetadata() {
-    setRepairing(true);
-    setRepairMsg(null);
-    try {
-      const res = await fetch(`/api/tenders/${tenderId}/repair-metadata`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ fields: ALL_REPAIRABLE_FIELDS }),
-      });
-      const data = await res.json().catch(() => ({} as Record<string, unknown>));
-      if (!res.ok) {
-        const err = typeof data.error === "string" ? data.error : `Batch repair failed (${res.status})`;
-        setRepairMsg({ kind: "error", text: err });
-        return;
-      }
-      type ResultEntry = { status?: string; reason?: string; sourceFile?: string | null; confidence?: string };
-      const results = (data.results as Record<string, ResultEntry> | undefined) ?? {};
-      const repairedFields: string[] = [];
-      const notFoundFields: string[] = [];
-      const skippedFields: string[] = [];
-      for (const field of ALL_REPAIRABLE_FIELDS) {
-        const r = results[field];
-        if (!r) continue;
-        if (r.status === "REPAIRED") repairedFields.push(field);
-        else if (r.status === "NOT_FOUND") notFoundFields.push(field);
-        else if (r.status === "SKIPPED") skippedFields.push(field);
-      }
-      const parts: string[] = [];
-      if (repairedFields.length > 0) parts.push(`${repairedFields.length} repaired (${repairedFields.join(", ")})`);
-      if (notFoundFields.length > 0) parts.push(`${notFoundFields.length} not found in source`);
-      if (skippedFields.length > 0) parts.push(`${skippedFields.length} already populated (skipped)`);
-      const summary = parts.length > 0 ? parts.join(" · ") : "no fields needed repair";
-      if (repairedFields.length > 0) {
-        setRepairMsg({ kind: "success", text: `Batch repair: ${summary}. Re-check generation readiness.` });
-        startTransition(() => router.refresh());
-      } else if (notFoundFields.length === ALL_REPAIRABLE_FIELDS.length) {
-        setRepairMsg({ kind: "info", text: "No fields could be repaired from source. Open the tender editor and confirm values manually." });
-      } else {
-        setRepairMsg({ kind: "info", text: `Batch repair: ${summary}.` });
-      }
-    } catch (e) {
-      setRepairMsg({ kind: "error", text: e instanceof Error ? e.message : "Batch repair failed due to a network/runtime error." });
-    } finally {
-      setRepairing(false);
-    }
-  }
+  const blocked = !fullProposalReady;
+  const actionDisabled = blocked || running || isPending;
 
   const autoPromotionAvailable = Boolean(
-    readiness?.counts
-    && ((readiness.counts.selectedExperts ?? 0) === 0 && (readiness.counts.reviewedExpertMatches ?? 0) > 0
-      || (readiness.counts.selectedProjects ?? 0) === 0 && (readiness.counts.reviewedProjectMatches ?? 0) > 0),
+    readiness?.counts &&
+    (((readiness.counts.selectedExperts ?? 0) === 0 && (readiness.counts.reviewedExpertMatches ?? 0) > 0) ||
+      ((readiness.counts.selectedProjects ?? 0) === 0 && (readiness.counts.reviewedProjectMatches ?? 0) > 0)),
   );
 
   async function runGenerate() {
+    if (!fullProposalReady) {
+      setKind("error");
+      setMessage("Generation is blocked. Resolve the listed full-proposal blockers first.");
+      return;
+    }
     setRunning(true);
     setMessage(null);
     setJobId(null);
@@ -204,9 +78,7 @@ export function GenerationActionPanel({ tenderId, readiness }: { tenderId: strin
         setMessage(`${data.error || "Generation failed."}${hint}${diag}`.trim());
         return;
       }
-      if (data.jobId) {
-        setJobId(data.jobId);
-      }
+      if (data.jobId) setJobId(data.jobId);
       const warningText = Array.isArray(data.warnings) && data.warnings.length > 0 ? ` Warnings: ${data.warnings.slice(0, 2).join(" ")}` : "";
       setKind("success");
       setMessage(`Generation completed.${warningText}`.trim());
@@ -219,20 +91,12 @@ export function GenerationActionPanel({ tenderId, readiness }: { tenderId: strin
     }
   }
 
-  // Panel colour reflects the STRICT gate so the user can't mistake "support
-  // package would generate" for "full proposal is ready". Green = full
-  // proposal ready, amber = support-package-ready-only, red = neither.
   const panelClass = fullProposalReady
     ? "border-emerald-200 bg-emerald-50"
     : supportReady
       ? "border-amber-200 bg-amber-50"
       : "border-red-200 bg-red-50";
-  const labelClass = fullProposalReady
-    ? "text-emerald-700"
-    : supportReady
-      ? "text-amber-700"
-      : "text-red-700";
-
+  const labelClass = fullProposalReady ? "text-emerald-700" : supportReady ? "text-amber-700" : "text-red-700";
   const headlineText = fullProposalReady
     ? "Full proposal generation gate: passes"
     : supportReady
@@ -241,109 +105,64 @@ export function GenerationActionPanel({ tenderId, readiness }: { tenderId: strin
 
   return (
     <>
-    <section className={`mb-4 rounded-2xl border p-5 shadow-sm ${panelClass}`}>
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-        <div>
-          <p className={`text-xs font-semibold uppercase tracking-wide ${labelClass}`}>Generation action</p>
-          <h2 className="mt-1 text-lg font-bold text-slate-900">{headlineText}</h2>
-          <p className="mt-1 max-w-3xl text-sm text-slate-600">
-            This action follows the server-side generation-readiness gate, including reviewed-match auto-promotion. The &quot;Generate Docs&quot; button is gated by the strict full-proposal readiness — vault fallback alone does not unlock it.
-          </p>
-          {autoPromotionAvailable && (
-            <p className="mt-2 text-xs font-medium text-emerald-700">Reviewed matches are available for automatic promotion if no manual selection has been made.</p>
-          )}
-
-          {/* Gap 16 — surface the split state plainly so reviewers know which
-              kind of output they can produce and which they cannot. */}
-          <div className="mt-3 flex flex-wrap gap-2 text-xs">
-            <span className={`rounded-full px-3 py-1 font-semibold ${supportReady ? "bg-emerald-100 text-emerald-800" : "bg-red-100 text-red-800"}`}>
-              Support evidence: {supportReady ? "available" : "blocked"}
-            </span>
-            <span className={`rounded-full px-3 py-1 font-semibold ${fullProposalReady ? "bg-emerald-100 text-emerald-800" : "bg-red-100 text-red-800"}`}>
-              Full proposal: {fullProposalReady ? "ready" : "blocked"}
-            </span>
-          </div>
-        </div>
-        <button
-          onClick={runGenerate}
-          disabled={!fullProposalReady || running || isPending}
-          className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
-          title={!fullProposalReady ? "Full proposal generation is blocked — resolve the blockers listed below." : undefined}
-        >
-          {running || isPending ? "Generating…" : "Generate Docs"}
-        </button>
-      </div>
-
-      {/* PRIOR BUG (May 17 screenshots): when both gates were blocked,
-          the panel rendered BOTH fullProposalBlockers AND the raw
-          blockers list. Since fullProposalBlockers already contains the
-          topic-deduped union of full-proposal-specific + inherited
-          support-package blockers, rendering `blockers` again caused
-          duplicate complaints with slightly different wording —
-          notably "Full proposal generation is blocked: client name is
-          empty or a placeholder." appearing alongside "Client name is
-          not set. Fill the tender Client Name before...".
-          FIX: when full proposal is blocked, show ONLY the deduped
-          fullProposalBlockers. Show raw `blockers` only in the
-          "support-only-blocked" state (full proposal ready but
-          something blocks even the support package) — that path uses
-          the original wording without overlap. */}
-      {!fullProposalReady && fullProposalBlockers.length > 0 && (
-        <div className="mt-3">
-          <p className="text-xs font-semibold uppercase tracking-wide text-red-700">Full proposal blocked because:</p>
-          <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-red-800">
-            {fullProposalBlockers.slice(0, 6).map((item, index) => <li key={`fp-${item.code}-${index}`}>{item.message}</li>)}
-          </ul>
-          {metadataBlockerPresent && (
-            <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm">
-              <p className="font-semibold text-amber-900">Try a source-grounded repair</p>
-              <p className="mt-1 text-xs text-amber-800">If the tender files already contain the values, the deterministic repair will populate them from a verbatim source quote and log the source file + confidence for each. It never invents content and never overwrites a non-empty value.</p>
-              <div className="mt-2 flex flex-wrap items-center gap-2">
-                <button
-                  type="button"
-                  onClick={runRepairAllMetadata}
-                  disabled={repairing}
-                  className="rounded-lg bg-amber-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-900 disabled:cursor-not-allowed disabled:opacity-50"
-                  title="Run the deterministic extractor for every supported metadata field — reference, deadline, submission emails, page limit, validity, bid bond, copies, mandatory site visit, and evaluationMethodology."
-                >
-                  {repairing ? "Repairing all…" : "Repair all empty fields from source"}
-                </button>
-                <button
-                  type="button"
-                  onClick={runRepairMetadata}
-                  disabled={repairing}
-                  className="rounded-lg border border-amber-700 bg-white px-3 py-1.5 text-xs font-semibold text-amber-800 hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-50"
-                  title="Run only the evaluationMethodology extractor."
-                >
-                  {repairing ? "Repairing…" : "Repair evaluationMethodology only"}
-                </button>
-                {repairMsg && (
-                  <span className={`text-xs ${repairMsg.kind === "success" ? "text-emerald-800" : repairMsg.kind === "error" ? "text-red-700" : "text-slate-700"}`}>
-                    {repairMsg.text}
-                  </span>
-                )}
-              </div>
+      <section className={`mb-4 rounded-2xl border p-5 shadow-sm ${panelClass}`}>
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <p className={`text-xs font-semibold uppercase tracking-wide ${labelClass}`}>Generation action</p>
+            <h2 className="mt-1 text-lg font-bold text-slate-900">{headlineText}</h2>
+            <p className="mt-1 max-w-3xl text-sm text-slate-600">
+              The Generate Docs action is controlled by the strict full-proposal readiness gate. When blocked, the button is disabled and no green action state is shown.
+            </p>
+            {autoPromotionAvailable && (
+              <p className="mt-2 text-xs font-medium text-emerald-700">Reviewed matches are available for automatic promotion if no manual selection has been made.</p>
+            )}
+            <div className="mt-3 flex flex-wrap gap-2 text-xs">
+              <span className={`rounded-full px-3 py-1 font-semibold ${supportReady ? "bg-emerald-100 text-emerald-800" : "bg-red-100 text-red-800"}`}>Support evidence: {supportReady ? "available" : "blocked"}</span>
+              <span className={`rounded-full px-3 py-1 font-semibold ${fullProposalReady ? "bg-emerald-100 text-emerald-800" : "bg-red-100 text-red-800"}`}>Full proposal: {fullProposalReady ? "ready" : "blocked"}</span>
             </div>
-          )}
+          </div>
+          <button
+            type="button"
+            onClick={runGenerate}
+            disabled={actionDisabled}
+            aria-disabled={actionDisabled}
+            className={fullProposalReady
+              ? "rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+              : "cursor-not-allowed rounded-lg border border-red-200 bg-slate-200 px-4 py-2 text-sm font-semibold text-slate-500"}
+            title={blocked ? "Generation blocked — resolve the blockers listed below." : "Generate proposal documents."}
+          >
+            {running || isPending ? "Generating…" : blocked ? "Resolve blockers first" : "Generate Docs"}
+          </button>
         </div>
-      )}
-      {fullProposalReady && !supportReady && blockers.length > 0 && (
-        <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-red-800">
-          {blockers.slice(0, 4).map((item, index) => <li key={`b-${item.code}-${index}`}>{item.message}</li>)}
-        </ul>
-      )}
-      {(fullProposalReady || supportReady) && warnings.length > 0 && (
-        <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-emerald-800">
-          {warnings.slice(0, 3).map((item, index) => <li key={`w-${item.code}-${index}`}>{item.message}</li>)}
-        </ul>
-      )}
-      {message && (
-        <div className={`mt-3 rounded-xl border px-3 py-2 text-sm ${kind === "success" ? "border-emerald-200 bg-white text-emerald-800" : kind === "error" ? "border-red-200 bg-white text-red-700" : "border-slate-200 bg-white text-slate-700"}`}>
-          {message}
-        </div>
-      )}
-    </section>
-    <GenerationProgressPanel tenderId={tenderId} jobId={jobId} />
+
+        {!fullProposalReady && fullProposalBlockers.length > 0 && (
+          <div className="mt-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-red-700">Full proposal blocked because:</p>
+            <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-red-800">
+              {fullProposalBlockers.slice(0, 6).map((item, index) => <li key={`fp-${item.code}-${index}`}>{item.message}</li>)}
+            </ul>
+          </div>
+        )}
+
+        {fullProposalReady && !supportReady && blockers.length > 0 && (
+          <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-red-800">
+            {blockers.slice(0, 4).map((item, index) => <li key={`b-${item.code}-${index}`}>{item.message}</li>)}
+          </ul>
+        )}
+
+        {(fullProposalReady || supportReady) && warnings.length > 0 && (
+          <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-emerald-800">
+            {warnings.slice(0, 3).map((item, index) => <li key={`w-${item.code}-${index}`}>{item.message}</li>)}
+          </ul>
+        )}
+
+        {message && (
+          <div className={`mt-3 rounded-xl border px-3 py-2 text-sm ${kind === "success" ? "border-emerald-200 bg-white text-emerald-800" : kind === "error" ? "border-red-200 bg-white text-red-700" : "border-slate-200 bg-white text-slate-700"}`}>
+            {message}
+          </div>
+        )}
+      </section>
+      <GenerationProgressPanel tenderId={tenderId} jobId={jobId} />
     </>
   );
 }
