@@ -1665,6 +1665,8 @@ export type AnalysisChunkCacheEntry = {
   result: AIAnalysisResult;
   provider?: string | null;
 };
+// Alias used by resume tests and the ai-analyze route
+export type ChunkResult = AnalysisChunkCacheEntry;
 
 export type AnalysisWithMeta = {
   result: AIAnalysisResult;
@@ -1688,6 +1690,11 @@ export async function analyzeWithAI(
   // independently analyzed; results merge below.
   const chunks = chunkTenderContent(tenderContent);
   if (chunks.length === 1) {
+    // If chunk 0 was already completed in a previous run, re-use it.
+    const cached = opts?.previousChunkResults?.find((r) => r.index === 0);
+    if (cached) {
+      return { result: cached.result, isPartial: false, totalChunks: 1, completedChunks: 1, failedChunks: 0, skippedChunks: 0, chunkProviders: [cached.provider ?? null], chunkResults: [cached] };
+    }
     let chunkProvider: string | null = null;
     const result = await analyzeOneChunk(chunks[0], 0, 1, (p) => { chunkProvider = p; });
     return { result, isPartial: false, totalChunks: 1, completedChunks: 1, failedChunks: 0, skippedChunks: 0, chunkProviders: [chunkProvider], chunkResults: [{ index: 0, result, provider: chunkProvider }] };
@@ -1704,7 +1711,7 @@ export async function analyzeWithAI(
     })
     .sort((a, b) => a.index - b.index);
   const previousIndexes = new Set(previousChunkResults.map((entry) => entry.index));
-  const successesWithIdx: Array<{ index: number; result: AIAnalysisResult }> = previousChunkResults.map((entry) => ({ index: entry.index, result: entry.result }));
+  const successesWithIdx: Array<{ index: number; result: AIAnalysisResult; provider?: string | null }> = previousChunkResults.map((entry) => ({ index: entry.index, result: entry.result, provider: entry.provider ?? null }));
   const failures: string[] = [];
   const chunkProviders: Array<string | null> = Array(chunks.length).fill(null);
   for (const entry of previousChunkResults) chunkProviders[entry.index] = entry.provider ?? null;
@@ -1734,10 +1741,12 @@ export async function analyzeWithAI(
       if (!item) break;
 
       try {
+        let chunkProvider: string | null = null;
         const res = await analyzeOneChunkWithRetry(item.content, item.index, chunks.length, (p) => {
           chunkProviders[item.index] = p;
+          chunkProvider = p;
         });
-        successesWithIdx.push({ index: item.index, result: res });
+        successesWithIdx.push({ index: item.index, result: res, provider: chunkProvider });
         completedChunks++;
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);

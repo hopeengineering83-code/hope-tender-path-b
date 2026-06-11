@@ -361,6 +361,8 @@ type Tender = {
   evaluationCriteriaSourceJson?: string | null;
   // Extraction/analysis quality signals used by generation gate
   analysisExtractionStatus?: string | null;
+  // Partial analysis job from a previous interrupted run — shown as a resume banner
+  latestPartialAnalysisJob?: { jobId: string; completedChunks: number; totalChunks: number } | null;
 };
 
 const CATEGORIES = ["General", "IT", "Construction", "Services", "Consulting", "Supply", "Healthcare", "Education", "Other"];
@@ -558,7 +560,7 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
   } | null>(null);
   const [approvingFallback, setApprovingFallback] = useState(false);
   const [fallbackNote, setFallbackNote] = useState("");
-  const [continueJobId, setContinueJobId] = useState<string | null>(null);
+  const [continueJobId, setContinueJobId] = useState<string | null>(initial.latestPartialAnalysisJob?.jobId ?? null);
   const [aiProposal, setAiProposal] = useState("");
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
   const [generationPhase, setGenerationPhase] = useState("");
@@ -894,7 +896,13 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
             } else if (event.phase === "complete") {
               setAnalyzePhase(`Analysis complete — ${event.requirementCount ?? 0} requirements extracted`);
               setAnalyzeProgress(100);
-              if (event.jobId) setContinueJobId(event.jobId);
+              // If the job is no longer partial (full success), clear the resume state.
+              if (event.status !== "AI_ANALYSIS_PARTIAL") {
+                setContinueJobId(null);
+                setTender((t) => ({ ...t, latestPartialAnalysisJob: null }));
+              } else if (event.jobId) {
+                setContinueJobId(event.jobId as string);
+              }
               done = true;
             } else if (event.phase === "error") {
               setError(event.message ?? "Analysis failed");
@@ -1608,12 +1616,36 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
           </p>
         </div>
 
+        {/* Resume banner — shown when a previous AI Analyze run was interrupted */}
+        {aiEnabled && continueJobId && !analyzing && (() => {
+          const partial = tender.latestPartialAnalysisJob;
+          if (!partial || partial.jobId !== continueJobId) return null;
+          const pct = partial.totalChunks > 0 ? Math.round((partial.completedChunks / partial.totalChunks) * 100) : null;
+          return (
+            <div className="mb-2 flex items-center gap-3 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+              <span className="text-amber-500">⚠</span>
+              <span>
+                Previous analysis was interrupted
+                {pct !== null ? ` at ${pct}% (${partial.completedChunks}/${partial.totalChunks} chunks)` : ""}.
+                Click <strong>AI Analyze</strong> to resume from where it left off.
+              </span>
+              <button
+                onClick={() => { setContinueJobId(null); setTender((t) => ({ ...t, latestPartialAnalysisJob: null })); }}
+                className="ml-auto text-xs text-amber-600 underline hover:text-amber-800"
+                title="Start a fresh analysis instead"
+              >
+                Start fresh
+              </button>
+            </div>
+          );
+        })()}
+
         <div id="ai-analyze-section" className="flex flex-wrap gap-2">
           {aiEnabled && (
             <button onClick={handleAnalyzeStreaming} disabled={analyzing}
               title={analyzing && analyzePhase ? analyzePhase : undefined}
               className="rounded-lg bg-purple-600 px-3 py-2 text-sm text-white hover:bg-purple-700 disabled:opacity-50">
-              {analyzing ? (analyzePhase ? `${analyzePhase.slice(0, 28)}…` : "Analyzing…") : "✦ AI Analyze"}
+              {analyzing ? (analyzePhase ? `${analyzePhase.slice(0, 28)}…` : "Analyzing…") : continueJobId ? "✦ Resume AI Analyze" : "✦ AI Analyze"}
             </button>
           )}
           {aiEnabled && (
@@ -1715,8 +1747,10 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
               style={{ width: analyzeProgress > 0 ? `${analyzeProgress}%` : "15%" }}
             />
           </div>
-          {analyzePhase?.includes("chunk") || analyzePhase?.includes("Chunk") ? (
-            <p className="mt-1 text-xs text-purple-500">AI is processing the tender in sections — this may take up to a minute.</p>
+          {analyzePhase?.toLowerCase().includes("chunk") ? (
+            <p className="mt-1 text-xs text-purple-500">
+              {continueJobId ? "Resuming analysis — skipping already-completed sections…" : "AI is processing the tender in sections — this may take up to a minute."}
+            </p>
           ) : null}
         </div>
       )}
