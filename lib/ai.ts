@@ -1685,7 +1685,9 @@ export async function analyzeWithAI(
     deadlineAt?: number;
     startFromChunk?: number;
     previousChunkResults?: AnalysisChunkCacheEntry[];
-    onChunkComplete?: (snapshot: { completed: AnalysisChunkCacheEntry[]; totalChunks: number }) => void | Promise<void>;
+    onChunkStart?: (snapshot: { chunkIndex: number; totalChunks: number }) => void | Promise<void>;
+    onChunkComplete?: (snapshot: { completed: AnalysisChunkCacheEntry[]; totalChunks: number; chunkIndex?: number; result?: AIAnalysisResult; provider?: string | null }) => void | Promise<void>;
+    onChunkFailure?: (snapshot: { chunkIndex: number; totalChunks: number; errorMessage: string; provider?: string | null }) => void | Promise<void>;
   },
 ): Promise<AnalysisWithMeta> {
   // For tenders within the soft limit, run a single call (faster path).
@@ -1701,8 +1703,17 @@ export async function analyzeWithAI(
       return { result: cached.result, isPartial: false, totalChunks: 1, completedChunks: 1, failedChunks: 0, skippedChunks: 0, chunkProviders: [cached.provider ?? null], chunkResults: [cached] };
     }
     let chunkProvider: string | null = null;
-    const result = await analyzeOneChunk(chunks[0], 0, 1, (p) => { chunkProvider = p; });
-    return { result, isPartial: false, totalChunks: 1, completedChunks: 1, failedChunks: 0, skippedChunks: 0, chunkProviders: [chunkProvider], chunkResults: [{ index: 0, result, provider: chunkProvider }] };
+    try { await opts?.onChunkStart?.({ chunkIndex: 0, totalChunks: 1 }); } catch { /* non-fatal */ }
+    try {
+      const result = await analyzeOneChunk(chunks[0], 0, 1, (p) => { chunkProvider = p; });
+      const chunkResults = [{ index: 0, result, provider: chunkProvider }];
+      try { await opts?.onChunkComplete?.({ completed: chunkResults, totalChunks: 1, chunkIndex: 0, result, provider: chunkProvider }); } catch { /* non-fatal */ }
+      return { result, isPartial: false, totalChunks: 1, completedChunks: 1, failedChunks: 0, skippedChunks: 0, chunkProviders: [chunkProvider], chunkResults };
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      try { await opts?.onChunkFailure?.({ chunkIndex: 0, totalChunks: 1, errorMessage, provider: chunkProvider }); } catch { /* non-fatal */ }
+      throw err;
+    }
   }
 
   console.info(`[ai] tender content is ${tenderContent.length.toLocaleString()} chars — chunking into ${chunks.length} concurrent analysis calls (limit=3).`);
@@ -1754,6 +1765,7 @@ export async function analyzeWithAI(
 
       try {
         let chunkProvider: string | null = null;
+        try { await opts?.onChunkStart?.({ chunkIndex: item.index, totalChunks: chunks.length }); } catch { /* non-fatal */ }
         const res = await analyzeOneChunkWithRetry(item.content, item.index, chunks.length, (p) => {
           chunkProviders[item.index] = p;
           chunkProvider = p;
@@ -1765,12 +1777,13 @@ export async function analyzeWithAI(
             .slice()
             .sort((a, b) => a.index - b.index)
             .map((s) => ({ index: s.index, result: s.result, provider: chunkProviders[s.index] ?? null }));
-          try { await opts.onChunkComplete({ completed, totalChunks: chunks.length }); } catch { /* non-fatal */ }
+          try { await opts.onChunkComplete({ completed, totalChunks: chunks.length, chunkIndex: item.index, result: res, provider: chunkProvider }); } catch { /* non-fatal */ }
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         failures.push(`chunk ${item.index + 1}: ${msg}`);
         failedChunks++;
+        try { await opts?.onChunkFailure?.({ chunkIndex: item.index, totalChunks: chunks.length, errorMessage: msg, provider: chunkProviders[item.index] ?? null }); } catch { /* non-fatal */ }
         console.warn(`[ai] chunk ${item.index + 1}/${chunks.length} failed: ${msg}`);
         // Brief backoff after transient failure so a rate-limited provider
         // has recovery time before the next chunk. Skip when deadline is near.

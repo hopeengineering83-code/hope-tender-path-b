@@ -861,6 +861,27 @@ model AiJobStep {
   @@index([jobId, stepIndex])
 }
 
+model AiAnalyzeChunk {
+  id           String   @id @default(uuid())
+  tenderId     String
+  userId       String
+  contentHash  String
+  chunkIndex   Int
+  totalChunks  Int
+  status       String   @default("QUEUED") // QUEUED | RUNNING | SUCCEEDED | FAILED | SKIPPED
+  provider     String?
+  resultJson   String?
+  errorMessage String?
+  startedAt    DateTime?
+  finishedAt   DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([tenderId, userId, contentHash, chunkIndex])
+  @@index([tenderId, userId, contentHash])
+  @@index([status])
+}
+
 // ─── ProviderHealthSnapshot ───────────────────────────────────────────────────
 // Persists per-provider cooldown state across Vercel cold starts. The in-memory
 // tracker in lib/ai-provider-health.ts resets on every cold start; this table

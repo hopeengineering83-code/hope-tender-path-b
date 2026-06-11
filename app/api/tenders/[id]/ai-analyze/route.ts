@@ -16,6 +16,14 @@ import { buildAnalysisFallbackDiagnostics, formatFallbackDiagnosticsLine, type A
 import { buildProviderDiagnosticsSnapshot } from "../../../../../lib/ai-provider-health";
 import { restoreHealthFromDb, persistAllHealthToDb } from "../../../../../lib/ai-provider-health-db";
 import { safeParseJsonObject } from "../../../../../lib/safe-json";
+import {
+  clearAnalyzeCheckpoints,
+  clearAnalyzeCheckpointsForContentHashMismatch,
+  getCompletedChunkResults,
+  upsertAnalyzeChunkFailed,
+  upsertAnalyzeChunkStarted,
+  upsertAnalyzeChunkSucceeded,
+} from "../../../../../lib/ai-analyze-checkpoints";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -93,6 +101,17 @@ function buildAiAnalyzePartialOutput(
 }
 
 async function findLatestResumableAiAnalyzeJob(tenderId: string, userId: string, contentHash: string) {
+  const checkpointChunks = await getCompletedChunkResults(tenderId, userId, contentHash);
+  if (checkpointChunks.length > 0) {
+    const latestJob = await prisma.aiJob.findFirst({
+      where: { tenderId, userId, jobType: "AI_ANALYZE", status: { in: ["PARTIAL_SUCCESS", "FAILED", "RUNNING"] } },
+      orderBy: [{ finishedAt: "desc" }, { startedAt: "desc" }],
+      select: { id: true },
+    }).catch(() => null);
+    return { id: latestJob?.id ?? null, previousChunkResults: checkpointChunks };
+  }
+
+  // Legacy fallback: older partial runs only stored chunkResults in AiJob.output.
   const candidates = await prisma.aiJob.findMany({
     where: { tenderId, userId, jobType: "AI_ANALYZE", status: { in: ["PARTIAL_SUCCESS", "FAILED"] } },
     orderBy: [{ finishedAt: "desc" }, { startedAt: "desc" }],
@@ -420,6 +439,17 @@ async function handleStreamingAnalyze(
         ].filter(Boolean).join("\n\n").slice(0, MAX_TOTAL_AI_CHARS);
 
         const contentHash = crypto.createHash("sha256").update(tenderContent).digest("hex").slice(0, 16);
+        if (force) {
+          await clearAnalyzeCheckpoints(id, userId, contentHash);
+        } else {
+          await clearAnalyzeCheckpointsForContentHashMismatch(id, userId, contentHash);
+          const durableChunks = await getCompletedChunkResults(id, userId, contentHash);
+          if (durableChunks.length > 0) {
+            previousChunkResults = durableChunks;
+            startFromChunk = 0;
+            existingContentHash = contentHash;
+          }
+        }
         if (!continueJobId && !force) {
           const resumableJob = await findLatestResumableAiAnalyzeJob(id, userId, contentHash);
           if (resumableJob) {
@@ -495,21 +525,47 @@ async function handleStreamingAnalyze(
         let analysisMeta: AnalysisWithMeta | null = null;
 
         if (isAIEnabled()) {
-          const onChunkComplete = analysisJob
-            ? async ({ completed, totalChunks }: { completed: Array<{ index: number; result: AIAnalysisResult; provider?: string | null }>; totalChunks: number }) => {
-                await prisma.aiJob.update({
-                  where: { id: analysisJob!.id },
-                  data: {
-                    output: JSON.stringify(buildAiAnalyzePartialOutput(completed, totalChunks, contentHash)),
-                  },
-                }).catch(() => {});
-              }
-            : undefined;
+          const onChunkStart = async ({ chunkIndex, totalChunks }: { chunkIndex: number; totalChunks: number }) => {
+            await upsertAnalyzeChunkStarted({ tenderId: id, userId, contentHash, chunkIndex, totalChunks }).catch(() => {});
+          };
+          const onChunkComplete = async ({
+            completed,
+            totalChunks,
+            chunkIndex,
+            result,
+            provider,
+          }: {
+            completed: Array<{ index: number; result: AIAnalysisResult; provider?: string | null }>;
+            totalChunks: number;
+            chunkIndex?: number;
+            result?: AIAnalysisResult;
+            provider?: string | null;
+          }) => {
+            if (typeof chunkIndex === "number" && result) {
+              await upsertAnalyzeChunkSucceeded({ tenderId: id, userId, contentHash, chunkIndex, totalChunks, result, provider }).catch(() => {});
+            }
+            if (analysisJob) {
+              await prisma.aiJob.update({
+                where: { id: analysisJob.id },
+                data: {
+                  output: JSON.stringify(buildAiAnalyzePartialOutput(completed, totalChunks, contentHash)),
+                },
+              }).catch(() => {});
+            }
+          };
+          const onChunkFailure = async ({
+            chunkIndex,
+            totalChunks,
+            errorMessage,
+            provider,
+          }: { chunkIndex: number; totalChunks: number; errorMessage: string; provider?: string | null }) => {
+            await upsertAnalyzeChunkFailed({ tenderId: id, userId, contentHash, chunkIndex, totalChunks, errorMessage, provider }).catch(() => {});
+          };
           try {
             const deadlineAt = Date.now() + SAFE_DEADLINE_MS;
             try {
               aiMeta = await withTimeout(
-                analyzeWithAI(tenderContent, { deadlineAt, startFromChunk, previousChunkResults, onChunkComplete }),
+                analyzeWithAI(tenderContent, { deadlineAt, startFromChunk, previousChunkResults, onChunkStart, onChunkComplete, onChunkFailure }),
                 AI_ANALYSIS_TIMEOUT_MS,
               );
             } catch (aiErr) {
@@ -939,6 +995,17 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
         // Compute content hash for continuation validation and auto-resume discovery
         const contentHash = crypto.createHash("sha256").update(tenderContent).digest("hex").slice(0, 16);
+        if (force) {
+          await clearAnalyzeCheckpoints(id, userId, contentHash);
+        } else {
+          await clearAnalyzeCheckpointsForContentHashMismatch(id, userId, contentHash);
+          const durableChunks = await getCompletedChunkResults(id, userId, contentHash);
+          if (durableChunks.length > 0) {
+            previousChunkResults = durableChunks;
+            startFromChunk = 0;
+            existingContentHash = contentHash;
+          }
+        }
         if (!continueJobId && !force) {
           const resumableJob = await findLatestResumableAiAnalyzeJob(id, userId, contentHash);
           if (resumableJob) {
@@ -1000,20 +1067,46 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         ]).catch(() => {});
 
         const deadlineAt = Date.now() + SAFE_DEADLINE_MS;
-        const onChunkCompleteNonStream = analysisJob
-          ? async ({ completed, totalChunks }: { completed: Array<{ index: number; result: AIAnalysisResult; provider?: string | null }>; totalChunks: number }) => {
-              await prisma.aiJob.update({
-                where: { id: analysisJob!.id },
-                data: {
-                  output: JSON.stringify(buildAiAnalyzePartialOutput(completed, totalChunks, contentHash)),
-                },
-              }).catch(() => {});
-            }
-          : undefined;
+        const onChunkStartNonStream = async ({ chunkIndex, totalChunks }: { chunkIndex: number; totalChunks: number }) => {
+          await upsertAnalyzeChunkStarted({ tenderId: id, userId, contentHash, chunkIndex, totalChunks }).catch(() => {});
+        };
+        const onChunkCompleteNonStream = async ({
+          completed,
+          totalChunks,
+          chunkIndex,
+          result,
+          provider,
+        }: {
+          completed: Array<{ index: number; result: AIAnalysisResult; provider?: string | null }>;
+          totalChunks: number;
+          chunkIndex?: number;
+          result?: AIAnalysisResult;
+          provider?: string | null;
+        }) => {
+          if (typeof chunkIndex === "number" && result) {
+            await upsertAnalyzeChunkSucceeded({ tenderId: id, userId, contentHash, chunkIndex, totalChunks, result, provider }).catch(() => {});
+          }
+          if (analysisJob) {
+            await prisma.aiJob.update({
+              where: { id: analysisJob.id },
+              data: {
+                output: JSON.stringify(buildAiAnalyzePartialOutput(completed, totalChunks, contentHash)),
+              },
+            }).catch(() => {});
+          }
+        };
+        const onChunkFailureNonStream = async ({
+          chunkIndex,
+          totalChunks,
+          errorMessage,
+          provider,
+        }: { chunkIndex: number; totalChunks: number; errorMessage: string; provider?: string | null }) => {
+          await upsertAnalyzeChunkFailed({ tenderId: id, userId, contentHash, chunkIndex, totalChunks, errorMessage, provider }).catch(() => {});
+        };
         let aiMeta: AnalysisWithMeta;
         try {
           aiMeta = await withTimeout(
-            analyzeWithAI(tenderContent, { deadlineAt, startFromChunk, previousChunkResults, onChunkComplete: onChunkCompleteNonStream }),
+            analyzeWithAI(tenderContent, { deadlineAt, startFromChunk, previousChunkResults, onChunkStart: onChunkStartNonStream, onChunkComplete: onChunkCompleteNonStream, onChunkFailure: onChunkFailureNonStream }),
             AI_ANALYSIS_TIMEOUT_MS,
           );
         } catch (aiErr) {

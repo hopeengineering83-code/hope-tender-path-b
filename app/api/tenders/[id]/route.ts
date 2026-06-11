@@ -5,6 +5,7 @@ import { logAction } from "../../../../lib/audit";
 import { parseTenderStatus } from "../../../../lib/tender-workflow";
 import { prepareDashboardGeneratedDocuments } from "../../../../lib/dashboard-generated-documents";
 import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../lib/rate-limit";
+import { getLatestAnalyzeCheckpointProgress } from "../../../../lib/ai-analyze-checkpoints";
 
 function withDashboardGeneratedDocuments<T extends { generatedDocuments: any[] }>(tender: T): T {
   const prepared = prepareDashboardGeneratedDocuments(tender.generatedDocuments);
@@ -122,8 +123,9 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       } catch { /* ignore */ }
     }
 
+    const aiAnalyzeCheckpointProgress = await getLatestAnalyzeCheckpointProgress(id, userId).catch(() => null);
     const payload = await withDashboardPayload(tender as any);
-    return NextResponse.json({ ...payload, latestPartialAnalysisJob: partialJobInfo });
+    return NextResponse.json({ ...payload, latestPartialAnalysisJob: partialJobInfo, aiAnalyzeCheckpointProgress });
   } catch (error) {
     console.error("[GET /api/tenders/[id]] failed:", error);
     return NextResponse.json({ error: "Failed to load tender" }, { status: 500 });
