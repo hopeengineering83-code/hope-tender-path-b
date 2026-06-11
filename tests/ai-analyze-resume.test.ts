@@ -166,10 +166,11 @@ describe("ai-analyze/route (streaming) — resume fixes", () => {
     );
   });
 
-  it("streaming path detects PARTIAL_SUCCESS job for auto-resume when no continueJobId", () => {
+  it("streaming path detects resumable PARTIAL_SUCCESS or FAILED jobs for auto-resume when no continueJobId", () => {
     assert.ok(
-      routeSource.includes("PARTIAL_SUCCESS") && routeSource.includes("latestPartial"),
-      "streaming path must auto-detect latest PARTIAL_SUCCESS job for transparent resume",
+      routeSource.includes("findLatestResumableAiAnalyzeJob")
+        && routeSource.includes('status: { in: ["PARTIAL_SUCCESS", "FAILED"] }'),
+      "streaming path must auto-detect latest resumable PARTIAL_SUCCESS or FAILED job for transparent resume",
     );
   });
 
@@ -199,10 +200,18 @@ describe("ai-analyze/route (non-streaming) — resume fixes", () => {
     assert.ok(count >= 2, `both paths must save chunkResults in job output (found ${count})`);
   });
 
-  it("non-streaming path has auto-resume detection for PARTIAL_SUCCESS", () => {
-    // Both paths contain the auto-resume logic — verify at least 2 occurrences of the PARTIAL_SUCCESS lookup
-    const count = (routeSource.match(/status.*PARTIAL_SUCCESS/g) ?? []).length;
-    assert.ok(count >= 2, `auto-resume must be present in both streaming and non-streaming paths (found ${count})`);
+  it("non-streaming path has auto-resume detection for resumable FAILED jobs too", () => {
+    const count = (routeSource.match(/findLatestResumableAiAnalyzeJob\(id, userId, contentHash\)/g) ?? []).length;
+    assert.ok(count >= 2, `auto-resume must use the shared resumable-job lookup in both paths (found ${count})`);
+  });
+
+  it("per-chunk progress output includes chunkProviders for later failure preservation", () => {
+    assert.ok(
+      routeSource.includes("function buildAiAnalyzePartialOutput")
+        && routeSource.includes("chunkProviders")
+        && routeSource.includes("output: JSON.stringify(buildAiAnalyzePartialOutput(completed, totalChunks, contentHash))"),
+      "onChunkComplete output must persist chunkProviders along with chunkResults",
+    );
   });
 
   it("failure helper preserves chunkResults and marks resumable failures as continue", () => {
@@ -226,11 +235,13 @@ describe("ai-analyze/route (non-streaming) — resume fixes", () => {
 // ── Tender GET route: surfaces partial job ───────────────────────────────────
 
 describe("tender GET route — surfaces latestPartialAnalysisJob", () => {
-  it("route.ts queries for PARTIAL_SUCCESS job", () => {
+  it("route.ts queries for resumable PARTIAL_SUCCESS and FAILED jobs", () => {
     const routeGet = readFileSync(path.join(process.cwd(), "app/api/tenders/[id]/route.ts"), "utf-8");
     assert.ok(
-      routeGet.includes("PARTIAL_SUCCESS") && routeGet.includes("latestPartialJob"),
-      "tender GET route must query for the latest PARTIAL_SUCCESS job",
+      routeGet.includes('status: { in: ["PARTIAL_SUCCESS", "FAILED"] }')
+        && routeGet.includes("latestPartialJobCandidates")
+        && routeGet.includes("chunkResults"),
+      "tender GET route must surface resumable failed jobs with saved chunkResults, not only PARTIAL_SUCCESS jobs",
     );
   });
 

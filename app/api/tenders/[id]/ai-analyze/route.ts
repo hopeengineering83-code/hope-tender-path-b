@@ -70,6 +70,48 @@ type AiAnalyzeFailureOutput = {
   providerDiagnostics?: unknown;
 };
 
+function buildAiAnalyzePartialOutput(
+  completed: Array<{ index: number; result: AIAnalysisResult; provider?: string | null }>,
+  totalChunks: number,
+  contentHash: string,
+) {
+  const chunkProviders: Array<string | null> = Array(totalChunks).fill(null);
+  for (const entry of completed) {
+    if (Number.isInteger(entry.index) && entry.index >= 0 && entry.index < totalChunks) {
+      chunkProviders[entry.index] = entry.provider ?? null;
+    }
+  }
+
+  return {
+    isPartial: true,
+    completedChunks: completed.length,
+    totalChunks,
+    chunkProviders,
+    chunkResults: completed,
+    contentHash,
+  };
+}
+
+async function findLatestResumableAiAnalyzeJob(tenderId: string, userId: string, contentHash: string) {
+  const candidates = await prisma.aiJob.findMany({
+    where: { tenderId, userId, jobType: "AI_ANALYZE", status: { in: ["PARTIAL_SUCCESS", "FAILED"] } },
+    orderBy: [{ finishedAt: "desc" }, { startedAt: "desc" }],
+    take: 10,
+    select: { id: true, output: true },
+  }).catch(() => []);
+
+  for (const job of candidates) {
+    const savedOutput = parseAiAnalyzeJobOutput(job.output);
+    if (savedOutput?.contentHash !== contentHash) continue;
+    const cachedChunks = normalizePreviousChunkResults(savedOutput.chunkResults);
+    if (cachedChunks.length > 0) {
+      return { id: job.id, previousChunkResults: cachedChunks };
+    }
+  }
+
+  return null;
+}
+
 async function preserveAiAnalyzeProgressOnFailure(jobId: string, failureData: AiAnalyzeFailureOutput) {
   const currentJob = await prisma.aiJob.findUnique({
     where: { id: jobId },
@@ -78,14 +120,21 @@ async function preserveAiAnalyzeProgressOnFailure(jobId: string, failureData: Ai
   const existingOutput = parseAiAnalyzeJobOutput(currentJob?.output) ?? {};
   const chunkResults = normalizePreviousChunkResults(existingOutput.chunkResults);
   const hasChunkResults = chunkResults.length > 0;
+  const totalChunks = typeof existingOutput.totalChunks === "number" ? existingOutput.totalChunks : undefined;
+  const existingProviders = Array.isArray(existingOutput.chunkProviders)
+    ? existingOutput.chunkProviders.map((provider) => typeof provider === "string" ? provider : null)
+    : undefined;
+  const chunkProviders = existingProviders ?? (totalChunks !== undefined
+    ? buildAiAnalyzePartialOutput(chunkResults, totalChunks, typeof existingOutput.contentHash === "string" ? existingOutput.contentHash : "").chunkProviders
+    : undefined);
 
   const preservedOutput = {
     ...existingOutput,
-    ...(existingOutput.completedChunks !== undefined ? { completedChunks: existingOutput.completedChunks } : {}),
-    ...(existingOutput.totalChunks !== undefined ? { totalChunks: existingOutput.totalChunks } : {}),
-    ...(existingOutput.contentHash !== undefined ? { contentHash: existingOutput.contentHash } : {}),
-    ...(existingOutput.chunkProviders !== undefined ? { chunkProviders: existingOutput.chunkProviders } : {}),
     ...(hasChunkResults ? { chunkResults } : {}),
+    ...(hasChunkResults ? { completedChunks: Math.max(typeof existingOutput.completedChunks === "number" ? existingOutput.completedChunks : 0, chunkResults.length) } : {}),
+    ...(totalChunks !== undefined ? { totalChunks } : {}),
+    ...(existingOutput.contentHash !== undefined ? { contentHash: existingOutput.contentHash } : {}),
+    ...(chunkProviders !== undefined ? { chunkProviders } : {}),
     ...failureData,
     status: failureData.status ?? "FAILED",
     failedAt: new Date().toISOString(),
@@ -372,19 +421,12 @@ async function handleStreamingAnalyze(
 
         const contentHash = crypto.createHash("sha256").update(tenderContent).digest("hex").slice(0, 16);
         if (!continueJobId && !force) {
-          const latestPartialJob = await prisma.aiJob.findFirst({
-            where: { tenderId: id, userId, jobType: "AI_ANALYZE", status: "PARTIAL_SUCCESS" },
-            orderBy: [{ finishedAt: "desc" }, { startedAt: "desc" }],
-          }).catch(() => null);
-          const savedOutput = parseAiAnalyzeJobOutput(latestPartialJob?.output);
-          if (savedOutput?.contentHash === contentHash) {
-            const cachedChunks = normalizePreviousChunkResults(savedOutput.chunkResults);
-            if (cachedChunks.length > 0) {
-              continueJobId = latestPartialJob?.id ?? null;
-              previousChunkResults = cachedChunks;
-              startFromChunk = 0;
-              existingContentHash = contentHash;
-            }
+          const resumableJob = await findLatestResumableAiAnalyzeJob(id, userId, contentHash);
+          if (resumableJob) {
+            continueJobId = resumableJob.id;
+            previousChunkResults = resumableJob.previousChunkResults;
+            startFromChunk = 0;
+            existingContentHash = contentHash;
           }
         }
         if (existingContentHash && existingContentHash !== contentHash) {
@@ -458,7 +500,7 @@ async function handleStreamingAnalyze(
                 await prisma.aiJob.update({
                   where: { id: analysisJob!.id },
                   data: {
-                    output: JSON.stringify({ isPartial: true, completedChunks: completed.length, totalChunks, chunkResults: completed, contentHash }),
+                    output: JSON.stringify(buildAiAnalyzePartialOutput(completed, totalChunks, contentHash)),
                   },
                 }).catch(() => {});
               }
@@ -898,19 +940,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         // Compute content hash for continuation validation and auto-resume discovery
         const contentHash = crypto.createHash("sha256").update(tenderContent).digest("hex").slice(0, 16);
         if (!continueJobId && !force) {
-          const latestPartialJob = await prisma.aiJob.findFirst({
-            where: { tenderId: id, userId, jobType: "AI_ANALYZE", status: "PARTIAL_SUCCESS" },
-            orderBy: [{ finishedAt: "desc" }, { startedAt: "desc" }],
-          }).catch(() => null);
-          const savedOutput = parseAiAnalyzeJobOutput(latestPartialJob?.output);
-          if (savedOutput?.contentHash === contentHash) {
-            const cachedChunks = normalizePreviousChunkResults(savedOutput.chunkResults);
-            if (cachedChunks.length > 0) {
-              continueJobId = latestPartialJob?.id ?? null;
-              previousChunkResults = cachedChunks;
-              startFromChunk = 0;
-              existingContentHash = contentHash;
-            }
+          const resumableJob = await findLatestResumableAiAnalyzeJob(id, userId, contentHash);
+          if (resumableJob) {
+            continueJobId = resumableJob.id;
+            previousChunkResults = resumableJob.previousChunkResults;
+            startFromChunk = 0;
+            existingContentHash = contentHash;
           }
         }
         if (existingContentHash && existingContentHash !== contentHash) {
@@ -970,7 +1005,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
               await prisma.aiJob.update({
                 where: { id: analysisJob!.id },
                 data: {
-                  output: JSON.stringify({ isPartial: true, completedChunks: completed.length, totalChunks, chunkResults: completed, contentHash }),
+                  output: JSON.stringify(buildAiAnalyzePartialOutput(completed, totalChunks, contentHash)),
                 },
               }).catch(() => {});
             }

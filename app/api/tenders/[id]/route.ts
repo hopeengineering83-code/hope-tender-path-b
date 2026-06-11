@@ -96,23 +96,29 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 
     if (!tender) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-    // Surface the latest PARTIAL_SUCCESS analysis job so the UI can show a
+    // Surface the latest resumable analysis job so the UI can show a
     // "Resume analysis" banner and pre-wire the continue flow on page load.
-    const latestPartialJob = await prisma.aiJob.findFirst({
-      where: { tenderId: id, userId, jobType: "AI_ANALYZE", status: "PARTIAL_SUCCESS" },
+    // Failed AI_ANALYZE jobs can still be resumable when their output preserved
+    // successful chunkResults before a timeout/provider failure triggered regex fallback.
+    const latestPartialJobCandidates = await prisma.aiJob.findMany({
+      where: { tenderId: id, userId, jobType: "AI_ANALYZE", status: { in: ["PARTIAL_SUCCESS", "FAILED"] } },
       orderBy: [{ finishedAt: "desc" }, { startedAt: "desc" }],
+      take: 10,
       select: { id: true, output: true },
-    }).catch(() => null);
+    }).catch(() => []);
 
     let partialJobInfo: { jobId: string; completedChunks: number; totalChunks: number } | null = null;
-    if (latestPartialJob) {
+    for (const candidate of latestPartialJobCandidates) {
       try {
-        const out = JSON.parse(latestPartialJob.output ?? "{}") as { completedChunks?: number; totalChunks?: number };
+        const out = JSON.parse(candidate.output ?? "{}") as { completedChunks?: number; totalChunks?: number; chunkResults?: unknown[] };
+        const completedChunks = typeof out.completedChunks === "number" ? out.completedChunks : (Array.isArray(out.chunkResults) ? out.chunkResults.length : 0);
+        if (completedChunks <= 0) continue;
         partialJobInfo = {
-          jobId: latestPartialJob.id,
-          completedChunks: out.completedChunks ?? 0,
+          jobId: candidate.id,
+          completedChunks,
           totalChunks: out.totalChunks ?? 0,
         };
+        break;
       } catch { /* ignore */ }
     }
 
