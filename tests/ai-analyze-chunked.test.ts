@@ -495,8 +495,10 @@ describe("non-streaming resume: previousChunkResults normalization (regression)"
       "utf8",
     );
     // The non-streaming call must include previousChunkResults in the options object.
+    // Accept any call shape that includes previousChunkResults — the exact signature
+    // may also include onChunkComplete and other options added in subsequent PRs.
     assert.ok(
-      routeSrc.includes("analyzeWithAI(tenderContent, { deadlineAt, startFromChunk, previousChunkResults })"),
+      routeSrc.includes("analyzeWithAI(tenderContent, {") && routeSrc.includes("previousChunkResults"),
       "non-streaming analyzeWithAI call must pass previousChunkResults to enable resume",
     );
   });

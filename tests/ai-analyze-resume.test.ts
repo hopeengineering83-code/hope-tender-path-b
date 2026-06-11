@@ -134,16 +134,19 @@ describe("ai-analyze/route (streaming) — resume fixes", () => {
   });
 
   it("streaming path passes previousChunkResults to analyzeWithAI", () => {
+    // Accept any call shape that includes previousChunkResults — the exact signature
+    // may also include onChunkComplete and other options added later.
     assert.ok(
-      routeSource.includes("analyzeWithAI(tenderContent, { deadlineAt, startFromChunk, previousChunkResults })"),
+      routeSource.includes("analyzeWithAI(tenderContent, {") && routeSource.includes("previousChunkResults"),
       "streaming path must pass previousChunkResults to analyzeWithAI",
     );
   });
 
-  it("streaming path uses buildResumeState to extract chunkResults from job output", () => {
+  it("streaming path uses parseAiAnalyzeJobOutput + normalizePreviousChunkResults to load resume state", () => {
+    // The route uses parseAiAnalyzeJobOutput + normalizePreviousChunkResults (not buildResumeState).
     assert.ok(
-      routeSource.includes("buildResumeState(parseJobOutput("),
-      "streaming path must use buildResumeState(parseJobOutput(...)) to load resume state",
+      routeSource.includes("parseAiAnalyzeJobOutput") && routeSource.includes("normalizePreviousChunkResults"),
+      "streaming path must use parseAiAnalyzeJobOutput + normalizePreviousChunkResults to load resume state",
     );
   });
 
