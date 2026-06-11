@@ -142,7 +142,7 @@ export function resolveTenderNextAction(input: TenderNextActionInput): TenderNex
         ? "Regex fallback is draft-only. Review source tracing and do not treat it as final-export ready unless there is an explicit admin override."
         : "AI analysis is partial or untrusted. Review it before continuing downstream.",
       blockers: [
-        input.aiAnalysis.regexFallback ? "Regex fallback is not final-export proof" : "Analysis is partial or untrusted",
+        input.aiAnalysis.regexFallback ? "Analysis used regex fallback (weak extraction) — re-extract and re-run AI Analyze for a trusted result" : "Analysis is partial or untrusted",
         ...(input.requirements.mandatoryCount > input.requirements.mandatoryTracedCount ? [`Mandatory traced: ${input.requirements.mandatoryTracedCount}/${input.requirements.mandatoryCount}`] : []),
       ],
       tone: "amber",

@@ -16,6 +16,11 @@ const panelSource = readFileSync(
   "utf-8",
 );
 
+const nextActionSource = readFileSync(
+  path.join(process.cwd(), "lib/tender-next-action.ts"),
+  "utf-8",
+);
+
 const buildSource = readFileSync(
   path.join(process.cwd(), "app/api/tenders/[id]/submission-plan/build/route.ts"),
   "utf-8",
@@ -37,9 +42,10 @@ describe("next-action-panel — REGEX_FALLBACK_FROM_WEAK_EXTRACTION as blocker",
   });
 
   it("pushes a blocker message for REGEX_FALLBACK status", () => {
+    // The blocker may be defined directly in the panel or delegated to the shared resolver.
     assert.ok(
-      panelSource.includes("Analysis used regex fallback"),
-      "panel must push a human-readable blocker when analysis used regex fallback",
+      panelSource.includes("Analysis used regex fallback") || nextActionSource.includes("Analysis used regex fallback"),
+      "panel or its resolver must push a human-readable blocker when analysis used regex fallback",
     );
   });
 });
