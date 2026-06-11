@@ -1681,7 +1681,12 @@ export type AnalysisWithMeta = {
 
 export async function analyzeWithAI(
   tenderContent: string,
-  opts?: { deadlineAt?: number; startFromChunk?: number; previousChunkResults?: AnalysisChunkCacheEntry[] },
+  opts?: {
+    deadlineAt?: number;
+    startFromChunk?: number;
+    previousChunkResults?: AnalysisChunkCacheEntry[];
+    onChunkComplete?: (snapshot: { completed: AnalysisChunkCacheEntry[]; totalChunks: number }) => void | Promise<void>;
+  },
 ): Promise<AnalysisWithMeta> {
   // For tenders within the soft limit, run a single call (faster path).
   // For larger tenders, chunk into overlapping pieces and analyze sequentially.
@@ -1748,6 +1753,13 @@ export async function analyzeWithAI(
         });
         successesWithIdx.push({ index: item.index, result: res, provider: chunkProvider });
         completedChunks++;
+        if (opts?.onChunkComplete) {
+          const completed = successesWithIdx
+            .slice()
+            .sort((a, b) => a.index - b.index)
+            .map((s) => ({ index: s.index, result: s.result, provider: chunkProviders[s.index] ?? null }));
+          try { await opts.onChunkComplete({ completed, totalChunks: chunks.length }); } catch { /* non-fatal */ }
+        }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         failures.push(`chunk ${item.index + 1}: ${msg}`);

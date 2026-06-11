@@ -418,11 +418,21 @@ async function handleStreamingAnalyze(
         let analysisMeta: AnalysisWithMeta | null = null;
 
         if (isAIEnabled()) {
+          const onChunkComplete = analysisJob
+            ? async ({ completed, totalChunks }: { completed: Array<{ index: number; result: AIAnalysisResult; provider?: string | null }>; totalChunks: number }) => {
+                await prisma.aiJob.update({
+                  where: { id: analysisJob!.id },
+                  data: {
+                    output: JSON.stringify({ isPartial: true, completedChunks: completed.length, totalChunks, chunkResults: completed, contentHash }),
+                  },
+                }).catch(() => {});
+              }
+            : undefined;
           try {
             const deadlineAt = Date.now() + SAFE_DEADLINE_MS;
             try {
               aiMeta = await withTimeout(
-                analyzeWithAI(tenderContent, { deadlineAt, startFromChunk, previousChunkResults }),
+                analyzeWithAI(tenderContent, { deadlineAt, startFromChunk, previousChunkResults, onChunkComplete }),
                 AI_ANALYSIS_TIMEOUT_MS,
               );
             } catch (aiErr) {
@@ -923,10 +933,20 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         ]).catch(() => {});
 
         const deadlineAt = Date.now() + SAFE_DEADLINE_MS;
+        const onChunkCompleteNonStream = analysisJob
+          ? async ({ completed, totalChunks }: { completed: Array<{ index: number; result: AIAnalysisResult; provider?: string | null }>; totalChunks: number }) => {
+              await prisma.aiJob.update({
+                where: { id: analysisJob!.id },
+                data: {
+                  output: JSON.stringify({ isPartial: true, completedChunks: completed.length, totalChunks, chunkResults: completed, contentHash }),
+                },
+              }).catch(() => {});
+            }
+          : undefined;
         let aiMeta: AnalysisWithMeta;
         try {
           aiMeta = await withTimeout(
-            analyzeWithAI(tenderContent, { deadlineAt, startFromChunk, previousChunkResults }),
+            analyzeWithAI(tenderContent, { deadlineAt, startFromChunk, previousChunkResults, onChunkComplete: onChunkCompleteNonStream }),
             AI_ANALYSIS_TIMEOUT_MS,
           );
         } catch (aiErr) {
