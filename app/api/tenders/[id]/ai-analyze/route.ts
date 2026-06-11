@@ -11,7 +11,7 @@ import { createNotification } from "../../../../../lib/notifications";
 import { assessExtractionQuality } from "../../../../../lib/extraction-quality";
 import { deriveExtractionStatus, isExtractionCorrupted, type TenderFileQuality } from "../../../../../lib/engine/extraction-quality-gate";
 import { detectMetadataContamination } from "../../../../../lib/engine/tender-metadata-completeness";
-import { isValidClientContact, containsMetadataPlaceholder } from "../../../../../lib/engine/metadata-validators";
+import { isValidClientContact, containsMetadataPlaceholder, isValidCountry, isValidReferenceNumber } from "../../../../../lib/engine/metadata-validators";
 import { buildAnalysisFallbackDiagnostics, formatFallbackDiagnosticsLine, type AnalysisFallbackDiagnostics } from "../../../../../lib/engine/analysis-fallback-diagnostics";
 import { buildProviderDiagnosticsSnapshot } from "../../../../../lib/ai-provider-health";
 import { restoreHealthFromDb, persistAllHealthToDb } from "../../../../../lib/ai-provider-health-db";
@@ -453,21 +453,21 @@ async function handleStreamingAnalyze(
                   ...(aiResult.legalClientName != null && !containsMetadataPlaceholder(aiResult.legalClientName) ? { legalClientName: aiResult.legalClientName } : {}),
                   ...(aiResult.donorAgency != null && !containsMetadataPlaceholder(aiResult.donorAgency) ? { donorAgency: aiResult.donorAgency } : {}),
                   ...(aiResult.implementingAgency != null && !containsMetadataPlaceholder(aiResult.implementingAgency) ? { implementingAgency: aiResult.implementingAgency } : {}),
-                  ...(aiResult.country != null ? { country: aiResult.country } : {}),
-                  ...(aiResult.clientAddress != null ? { clientAddress: aiResult.clientAddress } : {}),
+                  ...(aiResult.country != null && isValidCountry(aiResult.country) ? { country: aiResult.country } : {}),
+                  ...(aiResult.clientAddress != null && !containsMetadataPlaceholder(aiResult.clientAddress) ? { clientAddress: aiResult.clientAddress } : {}),
                   ...(aiResult.clientContactName != null && isValidClientContact(aiResult.clientContactName) ? { clientContactName: aiResult.clientContactName } : {}),
-                  ...(aiResult.clientContactTitle != null ? { clientContactTitle: aiResult.clientContactTitle } : {}),
-                  ...(aiResult.clientContactEmail != null ? { clientContactEmail: aiResult.clientContactEmail } : {}),
-                  ...(aiResult.clientContactPhone != null ? { clientContactPhone: aiResult.clientContactPhone } : {}),
-                  ...(aiResult.submissionAddress != null ? { submissionAddress: aiResult.submissionAddress } : {}),
-                  ...(aiResult.clientCity != null ? { clientCity: aiResult.clientCity } : {}),
-                  ...(aiResult.clientWebsite != null ? { clientWebsite: aiResult.clientWebsite } : {}),
-                  ...(aiResult.submissionEmailSubject != null ? { submissionEmailSubject: aiResult.submissionEmailSubject } : {}),
-                  ...(aiResult.preBidChannel != null ? { preBidChannel: aiResult.preBidChannel } : {}),
+                  ...(aiResult.clientContactTitle != null && !containsMetadataPlaceholder(aiResult.clientContactTitle) ? { clientContactTitle: aiResult.clientContactTitle } : {}),
+                  ...(aiResult.clientContactEmail != null && !containsMetadataPlaceholder(aiResult.clientContactEmail) ? { clientContactEmail: aiResult.clientContactEmail } : {}),
+                  ...(aiResult.clientContactPhone != null && !containsMetadataPlaceholder(aiResult.clientContactPhone) ? { clientContactPhone: aiResult.clientContactPhone } : {}),
+                  ...(aiResult.submissionAddress != null && !containsMetadataPlaceholder(aiResult.submissionAddress) ? { submissionAddress: aiResult.submissionAddress } : {}),
+                  ...(aiResult.clientCity != null && !containsMetadataPlaceholder(aiResult.clientCity) ? { clientCity: aiResult.clientCity } : {}),
+                  ...(aiResult.clientWebsite != null && !containsMetadataPlaceholder(aiResult.clientWebsite) ? { clientWebsite: aiResult.clientWebsite } : {}),
+                  ...(aiResult.submissionEmailSubject != null && !containsMetadataPlaceholder(aiResult.submissionEmailSubject) ? { submissionEmailSubject: aiResult.submissionEmailSubject } : {}),
+                  ...(aiResult.preBidChannel != null && !containsMetadataPlaceholder(aiResult.preBidChannel) ? { preBidChannel: aiResult.preBidChannel } : {}),
                   ...(aiResult.preBidMeetingDate != null ? { preBidMeetingDate: new Date(aiResult.preBidMeetingDate) } : {}),
-                  ...(aiResult.preBidMeetingLocation != null ? { preBidMeetingLocation: aiResult.preBidMeetingLocation } : {}),
-                  ...(aiResult.clientRepresentative != null ? { clientRepresentative: aiResult.clientRepresentative } : {}),
-                  ...(aiResult.procurementReferenceNumber != null ? { reference: aiResult.procurementReferenceNumber } : {}),
+                  ...(aiResult.preBidMeetingLocation != null && !containsMetadataPlaceholder(aiResult.preBidMeetingLocation) ? { preBidMeetingLocation: aiResult.preBidMeetingLocation } : {}),
+                  ...(aiResult.clientRepresentative != null && !containsMetadataPlaceholder(aiResult.clientRepresentative) ? { clientRepresentative: aiResult.clientRepresentative } : {}),
+                  ...(aiResult.procurementReferenceNumber != null && isValidReferenceNumber(aiResult.procurementReferenceNumber) ? { reference: aiResult.procurementReferenceNumber } : {}),
                   ...(aiResult.submissionMethod != null && !tenderRecord.submissionMethod ? { submissionMethod: aiResult.submissionMethod } : {}),
                   ...(aiResult.submissionEmails != null && !tenderRecord.submissionEmails ? { submissionEmails: aiResult.submissionEmails } : {}),
                   ...(aiResult.clientNameSourcePage !== undefined ? { clientNameSourcePage: aiResult.clientNameSourcePage } : {}),
@@ -987,24 +987,25 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
               ...(aiResult.legalClientName != null && !containsMetadataPlaceholder(aiResult.legalClientName) ? { legalClientName: aiResult.legalClientName } : {}),
               ...(aiResult.donorAgency != null && !containsMetadataPlaceholder(aiResult.donorAgency) ? { donorAgency: aiResult.donorAgency } : {}),
               ...(aiResult.implementingAgency != null && !containsMetadataPlaceholder(aiResult.implementingAgency) ? { implementingAgency: aiResult.implementingAgency } : {}),
-              // Full contact/location fields — only update when AI returned a value
-              // to avoid overwriting manually-confirmed data with null on re-runs.
-              ...(aiResult.country != null ? { country: aiResult.country } : {}),
-              ...(aiResult.clientAddress != null ? { clientAddress: aiResult.clientAddress } : {}),
-              ...(aiResult.clientContactName != null ? { clientContactName: aiResult.clientContactName } : {}),
-              ...(aiResult.clientContactTitle != null ? { clientContactTitle: aiResult.clientContactTitle } : {}),
-              ...(aiResult.clientContactEmail != null ? { clientContactEmail: aiResult.clientContactEmail } : {}),
-              ...(aiResult.clientContactPhone != null ? { clientContactPhone: aiResult.clientContactPhone } : {}),
-              ...(aiResult.submissionAddress != null ? { submissionAddress: aiResult.submissionAddress } : {}),
-              ...(aiResult.clientCity != null ? { clientCity: aiResult.clientCity } : {}),
-              ...(aiResult.clientWebsite != null ? { clientWebsite: aiResult.clientWebsite } : {}),
-              ...(aiResult.submissionEmailSubject != null ? { submissionEmailSubject: aiResult.submissionEmailSubject } : {}),
-              ...(aiResult.preBidChannel != null ? { preBidChannel: aiResult.preBidChannel } : {}),
+              // Full contact/location fields — only update when AI returned a real value;
+              // skip placeholders ("N/A", "unknown", "Bid-Team to confirm", etc.) so they
+              // do not overwrite null or previously-confirmed user data.
+              ...(aiResult.country != null && isValidCountry(aiResult.country) ? { country: aiResult.country } : {}),
+              ...(aiResult.clientAddress != null && !containsMetadataPlaceholder(aiResult.clientAddress) ? { clientAddress: aiResult.clientAddress } : {}),
+              ...(aiResult.clientContactName != null && isValidClientContact(aiResult.clientContactName) ? { clientContactName: aiResult.clientContactName } : {}),
+              ...(aiResult.clientContactTitle != null && !containsMetadataPlaceholder(aiResult.clientContactTitle) ? { clientContactTitle: aiResult.clientContactTitle } : {}),
+              ...(aiResult.clientContactEmail != null && !containsMetadataPlaceholder(aiResult.clientContactEmail) ? { clientContactEmail: aiResult.clientContactEmail } : {}),
+              ...(aiResult.clientContactPhone != null && !containsMetadataPlaceholder(aiResult.clientContactPhone) ? { clientContactPhone: aiResult.clientContactPhone } : {}),
+              ...(aiResult.submissionAddress != null && !containsMetadataPlaceholder(aiResult.submissionAddress) ? { submissionAddress: aiResult.submissionAddress } : {}),
+              ...(aiResult.clientCity != null && !containsMetadataPlaceholder(aiResult.clientCity) ? { clientCity: aiResult.clientCity } : {}),
+              ...(aiResult.clientWebsite != null && !containsMetadataPlaceholder(aiResult.clientWebsite) ? { clientWebsite: aiResult.clientWebsite } : {}),
+              ...(aiResult.submissionEmailSubject != null && !containsMetadataPlaceholder(aiResult.submissionEmailSubject) ? { submissionEmailSubject: aiResult.submissionEmailSubject } : {}),
+              ...(aiResult.preBidChannel != null && !containsMetadataPlaceholder(aiResult.preBidChannel) ? { preBidChannel: aiResult.preBidChannel } : {}),
               ...(aiResult.preBidMeetingDate != null ? { preBidMeetingDate: new Date(aiResult.preBidMeetingDate) } : {}),
-              ...(aiResult.preBidMeetingLocation != null ? { preBidMeetingLocation: aiResult.preBidMeetingLocation } : {}),
-              ...(aiResult.clientRepresentative != null ? { clientRepresentative: aiResult.clientRepresentative } : {}),
-              // Procurement reference number mapped to the legacy `reference` field
-              ...(aiResult.procurementReferenceNumber != null ? { reference: aiResult.procurementReferenceNumber } : {}),
+              ...(aiResult.preBidMeetingLocation != null && !containsMetadataPlaceholder(aiResult.preBidMeetingLocation) ? { preBidMeetingLocation: aiResult.preBidMeetingLocation } : {}),
+              ...(aiResult.clientRepresentative != null && !containsMetadataPlaceholder(aiResult.clientRepresentative) ? { clientRepresentative: aiResult.clientRepresentative } : {}),
+              // Procurement reference number — validate it's a real ref (has a digit, ≥3 chars, not a stop-word)
+              ...(aiResult.procurementReferenceNumber != null && isValidReferenceNumber(aiResult.procurementReferenceNumber) ? { reference: aiResult.procurementReferenceNumber } : {}),
               // Submission method and emails — only set when AI extracted a value
               // and the DB field is currently blank (preserve user-corrected data)
               ...(aiResult.submissionMethod != null && !tenderRecord.submissionMethod ? { submissionMethod: aiResult.submissionMethod } : {}),
