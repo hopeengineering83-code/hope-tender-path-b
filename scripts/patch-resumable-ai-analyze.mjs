@@ -19,6 +19,11 @@ function replaceOnce(source, search, replacement, label) {
 function patchAiLibrary() {
   const path = "lib/ai.ts";
   let source = read(path);
+  // Sentinel: if AnalysisChunkCacheEntry is already defined, this patch was already applied.
+  if (source.includes("export type AnalysisChunkCacheEntry")) {
+    console.log("[patch-resumable-ai-analyze] patchAiLibrary: already applied, skipping.");
+    return;
+  }
 
   source = replaceOnce(
     source,
@@ -200,6 +205,11 @@ function contentHashResumeBlock() {
 function patchAnalyzeRoute() {
   const path = "app/api/tenders/[id]/ai-analyze/route.ts";
   let source = read(path);
+  // Sentinel: if normalizePreviousChunkResults is already present, this patch was already applied.
+  if (source.includes("normalizePreviousChunkResults") && source.includes("parseAiAnalyzeJobOutput")) {
+    console.log("[patch-resumable-ai-analyze] patchAnalyzeRoute: already applied, skipping.");
+    return;
+  }
 
   source = replaceOnce(
     source,
@@ -387,6 +397,11 @@ ${contentHashResumeBlock().replace(/^/gm, "        ").trimEnd()}`,
 function patchTenderDetailClient() {
   const path = "app/dashboard/tenders/[id]/tender-detail.tsx";
   let source = read(path);
+  // Sentinel: if continueJobId + the resume URL are already present, this patch was already applied.
+  if (source.includes("continueJobId") && source.includes("ai-analyze?continue=")) {
+    console.log("[patch-resumable-ai-analyze] patchTenderDetailClient: already applied, skipping.");
+    return;
+  }
 
   source = replaceOnce(
     source,
