@@ -138,6 +138,42 @@ function stripExtractionHeader(txt: string): string {
   return txt.replace(/^\[(?:PDF text|OCR text)[^\]]*\]\s*\n+/i, "").trim();
 }
 
+type SavedJobOutput = {
+  isPartial?: boolean;
+  totalChunks?: number;
+  completedChunks?: number;
+  contentHash?: string;
+  chunkResults?: Array<{ index: number; result: unknown; provider?: string | null }>;
+};
+
+function parseJobOutput(raw: string | null | undefined): SavedJobOutput | null {
+  if (!raw) return null;
+  try { return JSON.parse(raw) as SavedJobOutput; } catch { return null; }
+}
+
+type ResumeState = {
+  startFromChunk: number;
+  previousChunkResults: import("../../../../../lib/ai").ChunkResult[];
+  existingContentHash: string | undefined;
+};
+
+function buildResumeState(savedOutput: SavedJobOutput | null): ResumeState {
+  if (!savedOutput) return { startFromChunk: 0, previousChunkResults: [], existingContentHash: undefined };
+  const raw = savedOutput.chunkResults ?? [];
+  const previousChunkResults = raw
+    .filter((r): r is { index: number; result: import("../../../../../lib/ai").AIAnalysisResult; provider?: string | null } =>
+      typeof r.index === "number" && r.result != null)
+    .sort((a, b) => a.index - b.index);
+  const startFromChunk = previousChunkResults.length > 0
+    ? Math.max(...previousChunkResults.map((r) => r.index)) + 1
+    : (typeof savedOutput.completedChunks === "number" ? savedOutput.completedChunks : 0);
+  return {
+    startFromChunk,
+    previousChunkResults,
+    existingContentHash: typeof savedOutput.contentHash === "string" ? savedOutput.contentHash : undefined,
+  };
+}
+
 // SAFE_DEADLINE_MS must stay within maxDuration (60s). On Vercel Hobby the
 // platform hard-kills the function at 60s regardless of AI_ANALYSIS_TIMEOUT_MS.
 // The outer withTimeout races against AI_ANALYSIS_TIMEOUT_MS but the inner
@@ -173,22 +209,38 @@ async function handleStreamingAnalyze(
         const { id } = params;
         const reqUrl = new URL(req.url);
         const force = reqUrl.searchParams.get("force") === "true";
-        const continueJobId = reqUrl.searchParams.get("continue");
+        let continueJobId: string | null = reqUrl.searchParams.get("continue");
         let startFromChunk: number | undefined;
         let existingContentHash: string | undefined;
+        let previousChunkResults: import("../../../../../lib/ai").ChunkResult[] = [];
 
         await prismaReady;
 
         if (continueJobId) {
+          // Explicit resume: load the chunk results from the referenced job so
+          // analyzeWithAI can skip already-completed chunks.
           const existingJob = await prisma.aiJob.findFirst({
             where: { id: continueJobId, tenderId: id, userId },
           });
-          if (existingJob?.output) {
-            try {
-              const savedOutput = JSON.parse(existingJob.output) as { completedChunks?: number; contentHash?: string };
-              startFromChunk = savedOutput.completedChunks ?? 0;
-              existingContentHash = savedOutput.contentHash;
-            } catch { /* ignore parse errors — do a full re-run */ }
+          const resume = buildResumeState(parseJobOutput(existingJob?.output));
+          startFromChunk = resume.startFromChunk;
+          previousChunkResults = resume.previousChunkResults;
+          existingContentHash = resume.existingContentHash;
+        } else if (!force) {
+          // Auto-resume: if a PARTIAL_SUCCESS job exists for this tender, pick it up
+          // transparently so the user doesn't have to remember to click "Continue".
+          const latestPartial = await prisma.aiJob.findFirst({
+            where: { tenderId: id, userId, jobType: "AI_ANALYZE", status: "PARTIAL_SUCCESS" },
+            orderBy: [{ finishedAt: "desc" }, { startedAt: "desc" }],
+          }).catch(() => null);
+          if (latestPartial) {
+            const resume = buildResumeState(parseJobOutput(latestPartial.output));
+            if (resume.previousChunkResults.length > 0) {
+              continueJobId = latestPartial.id;
+              startFromChunk = resume.startFromChunk;
+              previousChunkResults = resume.previousChunkResults;
+              existingContentHash = resume.existingContentHash;
+            }
           }
         }
 
@@ -275,7 +327,10 @@ async function handleStreamingAnalyze(
 
         const contentHash = crypto.createHash("sha256").update(tenderContent).digest("hex").slice(0, 16);
         if (existingContentHash && existingContentHash !== contentHash) {
+          // Tender content changed since the partial run — restart from scratch.
           startFromChunk = undefined;
+          previousChunkResults = [];
+          continueJobId = null;
         }
 
         // Clean up stale RUNNING jobs
@@ -340,7 +395,7 @@ async function handleStreamingAnalyze(
             const deadlineAt = Date.now() + SAFE_DEADLINE_MS;
             try {
               aiMeta = await withTimeout(
-                analyzeWithAI(tenderContent, { deadlineAt, startFromChunk }),
+                analyzeWithAI(tenderContent, { deadlineAt, startFromChunk, previousChunkResults }),
                 AI_ANALYSIS_TIMEOUT_MS,
               );
             } catch (aiErr) {
@@ -440,7 +495,7 @@ async function handleStreamingAnalyze(
                 data: {
                   status: aiMeta.isPartial ? "PARTIAL_SUCCESS" : "SUCCEEDED",
                   finishedAt: new Date(),
-                  output: JSON.stringify({ isPartial: aiMeta.isPartial, totalChunks: aiMeta.totalChunks, completedChunks: aiMeta.completedChunks, failedChunks: aiMeta.failedChunks, skippedChunks: aiMeta.skippedChunks, chunkProviders: aiMeta.chunkProviders, contentHash, analysisSource: "AI", nextAction: aiMeta.isPartial ? "CONTINUE_AI_ANALYSIS" : null }),
+                  output: JSON.stringify({ isPartial: aiMeta.isPartial, totalChunks: aiMeta.totalChunks, completedChunks: aiMeta.completedChunks, failedChunks: aiMeta.failedChunks, skippedChunks: aiMeta.skippedChunks, chunkProviders: aiMeta.chunkProviders, chunkResults: aiMeta.chunkResults, contentHash, resumedFromJobId: continueJobId, analysisSource: "AI", nextAction: aiMeta.isPartial ? "CONTINUE_AI_ANALYSIS" : null }),
                 },
               }).catch(() => {});
 
@@ -574,19 +629,32 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const { id } = await params;
   const reqUrl = new URL(req.url);
   const force = reqUrl.searchParams.get("force") === "true";
-  const continueJobId = reqUrl.searchParams.get("continue");
+  let continueJobId: string | null = reqUrl.searchParams.get("continue");
   let startFromChunk: number | undefined;
   let existingContentHash: string | undefined;
+  let previousChunkResults: import("../../../../../lib/ai").ChunkResult[] = [];
+
   if (continueJobId) {
     const existingJob = await prisma.aiJob.findFirst({
       where: { id: continueJobId, tenderId: id, userId },
     });
-    if (existingJob?.output) {
-      try {
-        const savedOutput = JSON.parse(existingJob.output) as { completedChunks?: number; contentHash?: string };
-        startFromChunk = savedOutput.completedChunks ?? 0;
-        existingContentHash = savedOutput.contentHash;
-      } catch { /* ignore parse errors — do a full re-run */ }
+    const resume = buildResumeState(parseJobOutput(existingJob?.output));
+    startFromChunk = resume.startFromChunk;
+    previousChunkResults = resume.previousChunkResults;
+    existingContentHash = resume.existingContentHash;
+  } else if (!force) {
+    const latestPartial = await prisma.aiJob.findFirst({
+      where: { tenderId: id, userId, jobType: "AI_ANALYZE", status: "PARTIAL_SUCCESS" },
+      orderBy: [{ finishedAt: "desc" }, { startedAt: "desc" }],
+    }).catch(() => null);
+    if (latestPartial) {
+      const resume = buildResumeState(parseJobOutput(latestPartial.output));
+      if (resume.previousChunkResults.length > 0) {
+        continueJobId = latestPartial.id;
+        startFromChunk = resume.startFromChunk;
+        previousChunkResults = resume.previousChunkResults;
+        existingContentHash = resume.existingContentHash;
+      }
     }
   }
 
@@ -760,8 +828,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         const contentHash = crypto.createHash("sha256").update(tenderContent).digest("hex").slice(0, 16);
         // Validate content hash if continuing from a previous job
         if (existingContentHash && existingContentHash !== contentHash) {
-          // Content changed — do a full re-run, ignore startFromChunk
+          // Content changed — do a full re-run, discard all cached chunk results.
           startFromChunk = undefined;
+          previousChunkResults = [];
+          continueJobId = null;
         }
 
         // Clean up stale RUNNING jobs before creating a new one.
@@ -813,7 +883,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         let aiMeta: AnalysisWithMeta;
         try {
           aiMeta = await withTimeout(
-            analyzeWithAI(tenderContent, { deadlineAt, startFromChunk }),
+            analyzeWithAI(tenderContent, { deadlineAt, startFromChunk, previousChunkResults }),
             AI_ANALYSIS_TIMEOUT_MS,
           );
         } catch (aiErr) {
@@ -966,7 +1036,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
                 failedChunks: aiMeta.failedChunks,
                 skippedChunks: aiMeta.skippedChunks,
                 chunkProviders: aiMeta.chunkProviders,
+                chunkResults: aiMeta.chunkResults,
                 contentHash,
+                resumedFromJobId: continueJobId,
                 analysisSource: "AI",
                 nextAction: aiMeta.isPartial ? "CONTINUE_AI_ANALYSIS" : null,
               }),

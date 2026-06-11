@@ -1646,6 +1646,8 @@ async function analyzeOneChunkWithRetry(content: string, index: number, total: n
   }
 }
 
+export type ChunkResult = { index: number; result: AIAnalysisResult; provider?: string | null };
+
 export type AnalysisWithMeta = {
   result: AIAnalysisResult;
   isPartial: boolean;
@@ -1654,11 +1656,12 @@ export type AnalysisWithMeta = {
   failedChunks: number;
   skippedChunks: number; // stopped by deadline
   chunkProviders: Array<string | null>; // provider that succeeded per chunk (null = failed/skipped)
+  chunkResults: ChunkResult[]; // per-chunk payloads for resumption
 };
 
 export async function analyzeWithAI(
   tenderContent: string,
-  opts?: { deadlineAt?: number; startFromChunk?: number },
+  opts?: { deadlineAt?: number; startFromChunk?: number; previousChunkResults?: ChunkResult[] },
 ): Promise<AnalysisWithMeta> {
   // For tenders within the soft limit, run a single call (faster path).
   // For larger tenders, chunk into overlapping pieces and analyze sequentially.
@@ -1667,23 +1670,41 @@ export async function analyzeWithAI(
   // independently analyzed; results merge below.
   const chunks = chunkTenderContent(tenderContent);
   if (chunks.length === 1) {
+    // If chunk 0 was already completed in a previous run, re-use it.
+    const cached = opts?.previousChunkResults?.find((r) => r.index === 0);
+    if (cached) {
+      return { result: cached.result, isPartial: false, totalChunks: 1, completedChunks: 1, failedChunks: 0, skippedChunks: 0, chunkProviders: [cached.provider ?? null], chunkResults: [cached] };
+    }
     let chunkProvider: string | null = null;
     const result = await analyzeOneChunk(chunks[0], 0, 1, (p) => { chunkProvider = p; });
-    return { result, isPartial: false, totalChunks: 1, completedChunks: 1, failedChunks: 0, skippedChunks: 0, chunkProviders: [chunkProvider] };
+    return { result, isPartial: false, totalChunks: 1, completedChunks: 1, failedChunks: 0, skippedChunks: 0, chunkProviders: [chunkProvider], chunkResults: [{ index: 0, result, provider: chunkProvider }] };
   }
 
   console.info(`[ai] tender content is ${tenderContent.length.toLocaleString()} chars — chunking into ${chunks.length} concurrent analysis calls (limit=3).`);
-  const successesWithIdx: Array<{ index: number; result: AIAnalysisResult }> = [];
+
+  // Pre-populate with results from a prior run so we only process the missing chunks.
+  const prevResults = (opts?.previousChunkResults ?? [])
+    .filter((r) => r.index >= 0 && r.index < chunks.length)
+    .sort((a, b) => a.index - b.index);
+  const previousIndexes = new Set(prevResults.map((r) => r.index));
+
+  const successesWithIdx: Array<{ index: number; result: AIAnalysisResult; provider?: string | null }> = [...prevResults];
   const failures: string[] = [];
   const chunkProviders: Array<string | null> = Array(chunks.length).fill(null);
-  let completedChunks = 0;
+  // Mark providers from the cached results
+  for (const r of prevResults) chunkProviders[r.index] = r.provider ?? null;
+
+  let completedChunks = prevResults.length;
   let failedChunks = 0;
   let skippedChunks = 0;
 
-  const startIndex = opts?.startFromChunk ?? 0;
+  const startIndex = prevResults.length > 0
+    ? Math.max(...prevResults.map((r) => r.index)) + 1
+    : (opts?.startFromChunk ?? 0);
+
   const queue = chunks
     .map((content, index) => ({ content, index }))
-    .filter((c) => c.index >= startIndex);
+    .filter((c) => c.index >= startIndex && !previousIndexes.has(c.index));
 
   // Limited concurrency: process up to 3 chunks in parallel.
   // This balances speed with provider rate-limit safety.
@@ -1702,10 +1723,12 @@ export async function analyzeWithAI(
       if (!item) break;
 
       try {
+        let chunkProvider: string | null = null;
         const res = await analyzeOneChunkWithRetry(item.content, item.index, chunks.length, (p) => {
           chunkProviders[item.index] = p;
+          chunkProvider = p;
         });
-        successesWithIdx.push({ index: item.index, result: res });
+        successesWithIdx.push({ index: item.index, result: res, provider: chunkProvider });
         completedChunks++;
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -1741,11 +1764,10 @@ export async function analyzeWithAI(
   // IMPORTANT: Sort by index before merging so mergeAnalysisResults merge rules
   // (like first-chunk-wins for classification) remain deterministic.
   const sortedSuccesses = successesWithIdx
-    .sort((a, b) => a.index - b.index)
-    .map((s) => s.result);
+    .sort((a, b) => a.index - b.index);
 
-  const result = mergeAnalysisResults(sortedSuccesses);
-  return { result, isPartial, totalChunks: chunks.length, completedChunks, failedChunks, skippedChunks, chunkProviders };
+  const result = mergeAnalysisResults(sortedSuccesses.map((s) => s.result));
+  return { result, isPartial, totalChunks: chunks.length, completedChunks, failedChunks, skippedChunks, chunkProviders, chunkResults: sortedSuccesses };
 }
 
 // ─── CV / Expert extraction ───────────────────────────────────────────────────

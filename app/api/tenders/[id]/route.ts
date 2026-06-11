@@ -82,7 +82,29 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     });
 
     if (!tender) return NextResponse.json({ error: "Not found" }, { status: 404 });
-    return NextResponse.json(await withDashboardPayload(tender));
+
+    // Surface the latest PARTIAL_SUCCESS analysis job so the UI can show a
+    // "Resume analysis" banner and pre-wire the continue flow on page load.
+    const latestPartialJob = await prisma.aiJob.findFirst({
+      where: { tenderId: id, userId, jobType: "AI_ANALYZE", status: "PARTIAL_SUCCESS" },
+      orderBy: [{ finishedAt: "desc" }, { startedAt: "desc" }],
+      select: { id: true, output: true },
+    }).catch(() => null);
+
+    let partialJobInfo: { jobId: string; completedChunks: number; totalChunks: number } | null = null;
+    if (latestPartialJob) {
+      try {
+        const out = JSON.parse(latestPartialJob.output ?? "{}") as { completedChunks?: number; totalChunks?: number };
+        partialJobInfo = {
+          jobId: latestPartialJob.id,
+          completedChunks: out.completedChunks ?? 0,
+          totalChunks: out.totalChunks ?? 0,
+        };
+      } catch { /* ignore */ }
+    }
+
+    const payload = await withDashboardPayload(tender);
+    return NextResponse.json({ ...payload, latestPartialAnalysisJob: partialJobInfo });
   } catch (error) {
     console.error("[GET /api/tenders/[id]] failed:", error);
     return NextResponse.json({ error: "Failed to load tender" }, { status: 500 });
