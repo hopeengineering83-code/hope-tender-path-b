@@ -150,7 +150,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const requestId = extractRequestId(req);
   let actor;
   try {
-    actor = await requireRole("ADMIN", "PROPOSAL_MANAGER");
+    actor = await requireRole("ADMIN", "PROPOSAL_MANAGER", "REVIEWER");
   } catch (error) {
     return error instanceof Error && error.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse();
   }

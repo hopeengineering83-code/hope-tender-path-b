@@ -334,3 +334,43 @@ describe("export gate: partial vault evidence does not unblock export", () => {
     assert.equal(isReadyForFinalExport(doc), false, "PENDING review doc must not pass the export readiness gate");
   });
 });
+
+// ─── 4. Role-parity: every Execute-path route allows REVIEWER ─────────────────
+//
+// The lifecycle endpoint grants access to REVIEWER-role users. Every API route
+// that can be called via the "▶ Execute" button in the Recovery Command Center
+// must therefore also allow REVIEWER — otherwise the Execute button silently
+// fails with 403 Forbidden for REVIEWER users.
+
+const EXECUTE_PATH_ROUTES = [
+  // primaryNextAction → API path mappings
+  { action: "GENERATE_REQUIRED_DOCUMENTS", file: "app/api/tenders/[id]/generate-missing-plan-files/route.ts" },
+  { action: "AUTO_FINALIZE",               file: "app/api/tenders/[id]/auto-finalize/route.ts" },
+  { action: "VALIDATE_DOCS",               file: "app/api/tenders/[id]/validate/route.ts" },
+  { action: "REPAIR_SOURCE_REFERENCES",    file: "app/api/tenders/[id]/repair-source-grounding/route.ts" },
+  { action: "REPAIR_DOCUMENT_QUALITY",     file: "app/api/tenders/[id]/repair-export-gaps/route.ts" },
+  { action: "BUILD_SUBMISSION_PLAN",       file: "app/api/tenders/[id]/submission-plan/build/route.ts" },
+  { action: "REPAIR_METADATA",             file: "app/api/tenders/[id]/repair-metadata/route.ts" },
+  { action: "APPROVE_FALLBACK_WITH_NOTE",  file: "app/api/tenders/[id]/approve-analysis/route.ts" },
+  { action: "RECONCILE_OUTSIDE_PLAN_DOCS", file: "app/api/tenders/[id]/supersede-outside-plan/route.ts" },
+  { action: "LINK_VAULT_EVIDENCE",         file: "app/api/tenders/[id]/link-vault-evidence/route.ts" },
+];
+
+describe("Recovery Command Center — REVIEWER role parity on Execute-path routes", () => {
+  it("lifecycle route grants REVIEWER access", () => {
+    const src = readFileSync(resolve(process.cwd(), "app/api/tenders/[id]/lifecycle/route.ts"), "utf8");
+    assert.ok(src.includes('"REVIEWER"'), "lifecycle route must allow REVIEWER role");
+  });
+
+  for (const { action, file } of EXECUTE_PATH_ROUTES) {
+    it(`${action} → ${file} allows REVIEWER`, () => {
+      const filePath = resolve(process.cwd(), file);
+      assert.ok(existsSync(filePath), `Route file must exist: ${file}`);
+      const src = readFileSync(filePath, "utf8");
+      assert.ok(
+        src.includes('"REVIEWER"'),
+        `${action} route must include requireRole("ADMIN", "PROPOSAL_MANAGER", "REVIEWER") so REVIEWER users can execute it via the Recovery Command Center`,
+      );
+    });
+  }
+});

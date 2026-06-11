@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 
 export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   let actor;
-  try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER"); }
+  try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER", "REVIEWER"); }
   catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
 
   const rl = rateLimit(`validate:${actor.id}`, MUTATION_RATE_LIMIT);
