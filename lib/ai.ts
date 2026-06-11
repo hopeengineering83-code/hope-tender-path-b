@@ -1724,10 +1724,17 @@ export async function analyzeWithAI(
   let failedChunks = 0;
   let skippedChunks = 0;
 
-  const startIndex = Math.max(opts?.startFromChunk ?? 0, previousChunkResults.length > 0 ? Math.max(...previousChunkResults.map((entry) => entry.index)) + 1 : 0);
+  const hasSavedChunkResults = previousChunkResults.length > 0;
+  // When explicit chunkResults exist, resume by index membership rather than
+  // by the highest completed index. Saved chunks can be non-contiguous after a
+  // partial concurrent run (for example 0 and 2 succeeded while 1 failed), so
+  // using max(index) + 1 would permanently skip missing middle chunks.
+  // startFromChunk remains only as a legacy fallback for old jobs that stored a
+  // completedChunks count without per-chunk results.
+  const startIndex = hasSavedChunkResults ? 0 : Math.max(opts?.startFromChunk ?? 0, 0);
   const queue = chunks
     .map((content, index) => ({ content, index }))
-    .filter((c) => c.index >= startIndex && !previousIndexes.has(c.index));
+    .filter((c) => !previousIndexes.has(c.index) && c.index >= startIndex);
 
   // Limited concurrency: process up to 3 chunks in parallel.
   // This balances speed with provider rate-limit safety.

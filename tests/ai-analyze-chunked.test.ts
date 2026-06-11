@@ -484,7 +484,7 @@ describe("non-streaming resume: previousChunkResults normalization (regression)"
     // changed the analyzeWithAI() call from:
     //   analyzeWithAI(tenderContent, { deadlineAt, startFromChunk })
     // to:
-    //   analyzeWithAI(tenderContent, { deadlineAt, startFromChunk, previousChunkResults })
+    //   analyzeWithAI(tenderContent, { deadlineAt, startFromChunk, previousChunkResults, onChunkComplete })
     // Without this fix, resume on the non-streaming path was silently re-processing
     // all previously-completed chunks instead of starting from startFromChunk with
     // their cached results injected.
@@ -496,8 +496,8 @@ describe("non-streaming resume: previousChunkResults normalization (regression)"
     );
     // The non-streaming call must include previousChunkResults in the options object.
     assert.ok(
-      routeSrc.includes("analyzeWithAI(tenderContent, { deadlineAt, startFromChunk, previousChunkResults })"),
-      "non-streaming analyzeWithAI call must pass previousChunkResults to enable resume",
+      /analyzeWithAI\(tenderContent, \{[^}]*deadlineAt[^}]*startFromChunk[^}]*previousChunkResults[^}]*onChunkComplete/.test(routeSrc),
+      "non-streaming analyzeWithAI call must pass previousChunkResults and onChunkComplete to enable resume",
     );
   });
 });

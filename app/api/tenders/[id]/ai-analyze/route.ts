@@ -62,6 +62,47 @@ function normalizePreviousChunkResults(raw: unknown): Array<{ index: number; res
   return cleaned.sort((a, b) => a.index - b.index);
 }
 
+type AiAnalyzeFailureOutput = {
+  analysisSource?: "AI" | "PARTIAL_AI" | "REGEX_FALLBACK";
+  errorMessage?: string;
+  status?: "FAILED" | "FALLBACK";
+  fallbackDiagnostics?: unknown;
+  providerDiagnostics?: unknown;
+};
+
+async function preserveAiAnalyzeProgressOnFailure(jobId: string, failureData: AiAnalyzeFailureOutput) {
+  const currentJob = await prisma.aiJob.findUnique({
+    where: { id: jobId },
+    select: { output: true },
+  }).catch(() => null);
+  const existingOutput = parseAiAnalyzeJobOutput(currentJob?.output) ?? {};
+  const chunkResults = normalizePreviousChunkResults(existingOutput.chunkResults);
+  const hasChunkResults = chunkResults.length > 0;
+
+  const preservedOutput = {
+    ...existingOutput,
+    ...(existingOutput.completedChunks !== undefined ? { completedChunks: existingOutput.completedChunks } : {}),
+    ...(existingOutput.totalChunks !== undefined ? { totalChunks: existingOutput.totalChunks } : {}),
+    ...(existingOutput.contentHash !== undefined ? { contentHash: existingOutput.contentHash } : {}),
+    ...(existingOutput.chunkProviders !== undefined ? { chunkProviders: existingOutput.chunkProviders } : {}),
+    ...(hasChunkResults ? { chunkResults } : {}),
+    ...failureData,
+    status: failureData.status ?? "FAILED",
+    failedAt: new Date().toISOString(),
+    nextAction: hasChunkResults ? "CONTINUE_AI_ANALYZE" : "RETRY_AI_ANALYZE",
+  };
+
+  await prisma.aiJob.update({
+    where: { id: jobId },
+    data: {
+      status: "FAILED",
+      finishedAt: new Date(),
+      output: JSON.stringify(preservedOutput),
+      errorMessage: failureData.errorMessage,
+    },
+  }).catch(() => {});
+}
+
 const AI_ANALYSIS_TIMEOUT_MS = (() => {
   const raw = Number(process.env.AI_ANALYSIS_TIMEOUT_MS);
   if (Number.isFinite(raw) && raw >= 5_000 && raw <= 600_000) return raw;
@@ -184,7 +225,7 @@ function buildResumeState(savedOutput: SavedJobOutput | null): ResumeState {
       typeof r.index === "number" && r.result != null)
     .sort((a, b) => a.index - b.index);
   const startFromChunk = previousChunkResults.length > 0
-    ? Math.max(...previousChunkResults.map((r) => r.index)) + 1
+    ? 0
     : (typeof savedOutput.completedChunks === "number" ? savedOutput.completedChunks : 0);
   return {
     startFromChunk,
@@ -242,16 +283,10 @@ async function handleStreamingAnalyze(
           const existingJob = await prisma.aiJob.findFirst({
             where: { id: continueJobId, tenderId: id, userId },
           });
-          if (existingJob?.output) {
-            const savedOutput = parseAiAnalyzeJobOutput(existingJob.output);
-            if (savedOutput) {
-              previousChunkResults = normalizePreviousChunkResults(savedOutput.chunkResults);
-              startFromChunk = previousChunkResults.length > 0
-                ? Math.max(...previousChunkResults.map((entry) => entry.index)) + 1
-                : (typeof savedOutput.completedChunks === "number" ? savedOutput.completedChunks : 0);
-              existingContentHash = typeof savedOutput.contentHash === "string" ? savedOutput.contentHash : undefined;
-            }
-          }
+          const resumeState = buildResumeState(parseJobOutput(existingJob?.output));
+          previousChunkResults = resumeState.previousChunkResults;
+          startFromChunk = resumeState.startFromChunk;
+          existingContentHash = resumeState.existingContentHash;
         }
 
         const [tender, company] = await Promise.all([
@@ -347,7 +382,7 @@ async function handleStreamingAnalyze(
             if (cachedChunks.length > 0) {
               continueJobId = latestPartialJob?.id ?? null;
               previousChunkResults = cachedChunks;
-              startFromChunk = Math.max(...cachedChunks.map((entry) => entry.index)) + 1;
+              startFromChunk = 0;
               existingContentHash = contentHash;
             }
           }
@@ -440,10 +475,11 @@ async function handleStreamingAnalyze(
               if (analysisJob) {
                 const errMsg = aiErr instanceof Error ? aiErr.message : String(aiErr);
                 const safeErrMsg = errMsg.replace(/sk-[a-zA-Z0-9_-]{10,}/g, "[KEY_REDACTED]").replace(/AIza[a-zA-Z0-9_-]{30,}/g, "[KEY_REDACTED]").replace(/Bearer\s+[a-zA-Z0-9._-]{10,}/gi, "Bearer [REDACTED]").slice(0, 300);
-                await prisma.aiJob.update({
-                  where: { id: analysisJob.id },
-                  data: { status: "FAILED", finishedAt: new Date(), output: JSON.stringify({ analysisSource: "REGEX_FALLBACK", nextAction: "RETRY_AI_ANALYZE" }), errorMessage: safeErrMsg },
-                }).catch(() => {});
+                await preserveAiAnalyzeProgressOnFailure(analysisJob.id, {
+                  analysisSource: "REGEX_FALLBACK",
+                  errorMessage: safeErrMsg,
+                  status: "FAILED",
+                });
               }
               throw aiErr;
             }
@@ -686,14 +722,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const existingJob = await prisma.aiJob.findFirst({
       where: { id: continueJobId, tenderId: id, userId },
     });
-    const savedOutput = parseAiAnalyzeJobOutput(existingJob?.output);
-    if (savedOutput) {
-      previousChunkResults = normalizePreviousChunkResults(savedOutput.chunkResults);
-      startFromChunk = previousChunkResults.length > 0
-        ? Math.max(...previousChunkResults.map((entry) => entry.index)) + 1
-        : (typeof savedOutput.completedChunks === "number" ? savedOutput.completedChunks : 0);
-      existingContentHash = typeof savedOutput.contentHash === "string" ? savedOutput.contentHash : undefined;
-    }
+    const resumeState = buildResumeState(parseJobOutput(existingJob?.output));
+    previousChunkResults = resumeState.previousChunkResults;
+    startFromChunk = resumeState.startFromChunk;
+    existingContentHash = resumeState.existingContentHash;
   }
 
   const [tender, company] = await Promise.all([
@@ -876,7 +908,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
             if (cachedChunks.length > 0) {
               continueJobId = latestPartialJob?.id ?? null;
               previousChunkResults = cachedChunks;
-              startFromChunk = Math.max(...cachedChunks.map((entry) => entry.index)) + 1;
+              startFromChunk = 0;
               existingContentHash = contentHash;
             }
           }
@@ -954,18 +986,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           if (analysisJob) {
             const errMsg = aiErr instanceof Error ? aiErr.message : String(aiErr);
             const safeErrMsg = errMsg.replace(/sk-[a-zA-Z0-9_-]{10,}/g, "[KEY_REDACTED]").replace(/AIza[a-zA-Z0-9_-]{30,}/g, "[KEY_REDACTED]").replace(/Bearer\s+[a-zA-Z0-9._-]{10,}/gi, "Bearer [REDACTED]").slice(0, 300);
-            await prisma.aiJob.update({
-              where: { id: analysisJob.id },
-              data: {
-                status: "FAILED",
-                finishedAt: new Date(),
-                output: JSON.stringify({
-                  analysisSource: "REGEX_FALLBACK",
-                  nextAction: "RETRY_AI_ANALYZE",
-                }),
-                errorMessage: safeErrMsg,
-              },
-            }).catch(() => {});
+            await preserveAiAnalyzeProgressOnFailure(analysisJob.id, {
+              analysisSource: "REGEX_FALLBACK",
+              errorMessage: safeErrMsg,
+              status: "FAILED",
+            });
           }
           throw aiErr;
         }
