@@ -16,13 +16,16 @@
 //      gate is failing.
 //
 // Spec-mandated caps:
-//   - evidence coverage == 0          -> final ≤ 35
-//   - required documents incomplete   -> final ≤ 50
+//   - evidence coverage == 0                  -> final ≤ 35
+//   - required documents incomplete           -> final ≤ 50
 //   - analysis source is regex fallback (and not human-approved)
-//                                     -> final ≤ 45
-//   - critical metadata missing       -> final ≤ 60
-//   - generated document quality poor -> final ≤ 60
-//   - final export gate failing       -> final ≤ 99 (never exactly 100)
+//                                             -> final ≤ 45
+//   - OCR required (extraction not run)       -> final ≤ 40
+//   - partial extraction AI analyzed          -> final ≤ 50
+//   - mandatory requirements untraceable      -> final ≤ 60
+//   - critical metadata missing               -> final ≤ 60
+//   - generated document quality poor        -> final ≤ 60
+//   - final export gate failing               -> final ≤ 99 (never exactly 100)
 //
 // This module is pure and easy to unit-test. The DB-aware
 // composeTenderReadinessScore() loader wraps it with a Prisma fetch.
@@ -115,6 +118,12 @@ export type ReadinessScoreInput = {
   readyForExportCount?: number | null;
   /** Count of final-export-candidate docs total. */
   finalExportCandidatesCount?: number | null;
+
+  // Requirements trust — used for the requirements-untrusted hard cap.
+  /** Count of requirements whose priority is MANDATORY. */
+  mandatoryRequirementsCount?: number | null;
+  /** Count of MANDATORY requirements that have at least one source trace (page / quote / section ref). */
+  mandatoryTracedCount?: number | null;
 
   // Final gate
   finalExportGateOk?: boolean | null;
@@ -345,6 +354,30 @@ export function computeReadinessScore(input: ReadinessScoreInput): ReadinessScor
       dimension: "analysisSource",
       capScore: 40,
       reason: "AI analysis used regex/deterministic fallback due to weak extraction — requirements may be incomplete. Readiness is capped at 40 until re-extracted and re-analyzed.",
+    });
+  }
+  if (input.analysisExtractionStatus === "OCR_REQUIRED") {
+    applicableCaps.push({
+      dimension: "analysisSource",
+      capScore: 40,
+      reason: "Tender requires OCR extraction before AI Analyze can be run — requirements and metadata may be unavailable. Readiness is capped at 40 until OCR extraction is performed.",
+    });
+  }
+  if (input.analysisExtractionStatus === "PARTIAL_EXTRACTION_AI_ANALYZED") {
+    applicableCaps.push({
+      dimension: "analysisSource",
+      capScore: 50,
+      reason: "AI analysis ran on partially-extracted tender pages — some requirements or sections may be missing. Readiness is capped at 50 until full extraction is performed and analysis is re-run.",
+    });
+  }
+  if (
+    (input.mandatoryRequirementsCount ?? 0) > 0 &&
+    (input.mandatoryTracedCount ?? 0) === 0
+  ) {
+    applicableCaps.push({
+      dimension: "sourceReferenceCoverage",
+      capScore: 60,
+      reason: `Tender has ${input.mandatoryRequirementsCount} mandatory requirement(s) but none have source traceability (page / quote / section reference) — requirements cannot be verified against the source document. Readiness is capped at 60 until AI Analyze extracts source references for mandatory requirements.`,
     });
   }
   if (input.metadataContaminated) {
