@@ -10,9 +10,18 @@ import { inferSector } from "../lib/engine/proposal-intelligence";
 
 function analysisSourceSummary(source: Awaited<ReturnType<typeof detectAnalysisSourceWithApproval>>) {
   if (source === "AI") return { label: "AI", risk: "LOW" as const, detail: "Analysis produced by AI provider." };
-  if (source === "HUMAN_APPROVED_REGEX_FALLBACK") return { label: "Regex fallback (approved)", risk: "MEDIUM" as const, detail: "Regex fallback was used, but a human reviewer has approved it as sufficient." };
+  if (source === "HUMAN_APPROVED_REGEX_FALLBACK") return { label: "Regex fallback (draft-approved)", risk: "MEDIUM" as const, detail: "Approved for draft review only. Not approved for final export because extraction is weak; final export requires reliable extraction or an explicit admin override." };
   if (source === "REGEX_FALLBACK_AI_ERROR") return { label: "Regex fallback", risk: "HIGH" as const, detail: "AI providers failed or were unavailable — regex extraction was used. Review carefully before submission." };
-  return { label: "Unknown", risk: "MEDIUM" as const, detail: "Analysis source not yet determined. Run AI Analyze to classify the source." };
+  return { label: "Unknown", risk: "MEDIUM" as const, detail: "Analysis source not yet determined. Run AI Analyze only after extraction is reliable enough for analysis." };
+}
+
+function isUntrustedAnalysisStatus(status?: string | null) {
+  return status === "REGEX_FALLBACK_FROM_WEAK_EXTRACTION" ||
+    status === "EXTRACTION_CORRUPTED_AI_SKIPPED" ||
+    status === "OCR_REQUIRED" ||
+    status === "EXTRACTION_WEAK_REVIEW_REQUIRED" ||
+    status === "AI_ANALYSIS_PARTIAL" ||
+    status === "PARTIAL_EXTRACTION_AI_ANALYZED";
 }
 
 export async function AnalysisQualityPanel({ tenderId }: { tenderId: string }) {
@@ -42,10 +51,6 @@ export async function AnalysisQualityPanel({ tenderId }: { tenderId: string }) {
   `.catch(() => [{ extractedChars: 0, totalPageCount: 0 }]);
   const [{ extractedChars, totalPageCount }] = rawMetrics.length > 0 ? rawMetrics : [{ extractedChars: 0, totalPageCount: 0 }];
 
-  // Pass vault counts so analysis-quality matching sub-score matches the
-  // matching-quality panel — both should show VAULT_AWAITS_ENGINE (−18)
-  // not NO_VAULT (−35) when reviewed vault evidence is ready but the
-  // engine hasn't been run on this tender yet.
   const companyReadiness = await getCompanyIngestionReadiness(company.id, {}, prisma);
   const matchingQuality = assessMatchingQuality({
     requirements: tender.requirements,
@@ -64,8 +69,6 @@ export async function AnalysisQualityPanel({ tenderId }: { tenderId: string }) {
     submissionNotes: [tender.notes, tender.intakeSummary].filter(Boolean).join("\n\n"),
     exactFileNaming: tender.exactFileNaming,
     exactFileOrder: tender.exactFileOrder,
-    // Gap 4 — metadata + matching state. Now this panel matches the
-    // readiness gate instead of disagreeing with it.
     clientName: tender.clientName || (tender as Record<string, unknown>).procuringEntityName as string | null | undefined,
     referenceNumber: tender.reference,
     country: tender.country,
@@ -84,22 +87,27 @@ export async function AnalysisQualityPanel({ tenderId }: { tenderId: string }) {
   });
 
   const analysisSource = analysisSourceSummary(rawSource);
-  const ready = quality.severity !== "POOR" && quality.severity !== "UNSAFE" && analysisSource.risk !== "HIGH";
+  const sourceIsFallbackOrUnknown = rawSource !== "AI";
+  const untrustedStatus = isUntrustedAnalysisStatus(tender.analysisExtractionStatus);
+  const fallbackOnly = quality.isRegexFallback || sourceIsFallbackOrUnknown || untrustedStatus;
+  const ready = quality.severity !== "POOR" && quality.severity !== "UNSAFE" && analysisSource.risk === "LOW" && !fallbackOnly;
   const sectorProbeText = [tender.analysisSummary, tender.intakeSummary, tender.notes, tender.title, tender.description].filter(Boolean).join("\n\n");
   const detectedSector = sectorProbeText.trim().length > 20 ? inferSector(sectorProbeText) : null;
-  const sourceRiskClass = analysisSource.risk === "LOW" ? "bg-emerald-100 text-emerald-700" : analysisSource.risk === "HIGH" ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-700";
+  const sourceRiskClass = analysisSource.risk === "LOW" && !fallbackOnly ? "bg-emerald-100 text-emerald-700" : analysisSource.risk === "HIGH" || untrustedStatus ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-700";
   const severityClass: Record<string, string> = {
-    GOOD: "bg-emerald-100 text-emerald-700",
+    GOOD: fallbackOnly ? "bg-amber-100 text-amber-800" : "bg-emerald-100 text-emerald-700",
     WARNING: "bg-amber-100 text-amber-700",
     POOR: "bg-red-100 text-red-700",
     UNSAFE: "bg-red-200 text-red-800",
   };
+  const sectionClass = ready ? "border-green-200 bg-green-50" : fallbackOnly ? "border-amber-200 bg-amber-50" : "border-red-200 bg-red-50";
+  const headerTone = ready ? "text-green-700" : fallbackOnly ? "text-amber-700" : "text-red-700";
 
   return (
-    <section className={`mb-4 rounded-2xl border p-5 shadow-sm ${ready ? "border-green-200 bg-green-50" : "border-red-200 bg-red-50"}`}>
+    <section className={`mb-4 rounded-2xl border p-5 shadow-sm ${sectionClass}`}>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <p className={`text-xs font-semibold uppercase tracking-wide ${ready ? "text-green-700" : "text-red-700"}`}>Analysis quality</p>
+          <p className={`text-xs font-semibold uppercase tracking-wide ${headerTone}`}>Analysis quality</p>
           <h2 className="mt-1 text-lg font-bold text-slate-900">{ready ? "Tender analysis appears usable" : "Tender analysis needs review"}</h2>
           <p className="mt-1 text-sm text-slate-600">Checks whether extracted requirements include mandatory criteria, scoring methodology, submission rules, file naming/order, source references, and whether analysis used AI or fallback rules.</p>
         </div>
@@ -112,7 +120,7 @@ export async function AnalysisQualityPanel({ tenderId }: { tenderId: string }) {
         <div className="rounded-xl bg-white p-3">
           <p className="text-xs text-slate-500">Score</p>
           <p className="text-xl font-bold text-slate-900">{quality.score}/100</p>
-          <span className={`mt-1 inline-block rounded-full px-2 py-0.5 text-[10px] font-bold ${severityClass[quality.severity] ?? "bg-slate-100 text-slate-600"}`}>{quality.severity}</span>
+          <span className={`mt-1 inline-block rounded-full px-2 py-0.5 text-[10px] font-bold ${severityClass[quality.severity] ?? "bg-slate-100 text-slate-600"}`}>{fallbackOnly && quality.severity === "GOOD" ? "REVIEW" : quality.severity}</span>
           {quality.isRegexFallback && <p className="mt-0.5 text-[10px] text-amber-700 leading-tight">Score capped — regex fallback</p>}
         </div>
         <div className="rounded-xl bg-white p-3"><p className="text-xs text-slate-500">Requirements</p><p className="text-xl font-bold text-slate-900">{quality.requirementCount}</p></div>
@@ -121,7 +129,6 @@ export async function AnalysisQualityPanel({ tenderId }: { tenderId: string }) {
         <div className="rounded-xl bg-white p-3"><p className="text-xs text-slate-500">Extracted text</p><p className="text-xl font-bold text-slate-900">{extractedChars.toLocaleString()}</p></div>
       </div>
 
-      {/* Sub-scores breakdown */}
       <div className="mt-3 grid gap-2 sm:grid-cols-3 lg:grid-cols-6">
         {(Object.entries(quality.subScores) as [string, number][]).map(([key, val]) => {
           const label: Record<string, string> = {
@@ -132,7 +139,7 @@ export async function AnalysisQualityPanel({ tenderId }: { tenderId: string }) {
             matchingReadiness: "Matching",
             sourceGrounding: "Grounding",
           };
-          const color = val >= 70 ? "text-emerald-700" : val >= 40 ? "text-amber-700" : "text-red-700";
+          const color = val >= 70 && !fallbackOnly ? "text-emerald-700" : val >= 40 ? "text-amber-700" : "text-red-700";
           return (
             <div key={key} className="rounded-lg bg-white/70 px-2 py-1.5 text-center">
               <p className="text-[10px] text-slate-500">{label[key] ?? key}</p>
@@ -165,6 +172,9 @@ export async function AnalysisQualityPanel({ tenderId }: { tenderId: string }) {
         {analysisSource.risk === "HIGH" && (
           <p className="mt-2 text-red-700">High risk: regex fallback can miss exact forms, evaluation scoring, file names, submission instructions, and expert/project requirements. Re-check extraction quality and AI provider health, then re-run Engine.</p>
         )}
+        {fallbackOnly && analysisSource.risk !== "HIGH" && (
+          <p className="mt-2 text-amber-700">Fallback or partial analysis is for draft review only. Do not treat this as final-export ready until extraction and AI analysis are reliable.</p>
+        )}
       </div>
 
       {detectedSector && (
@@ -173,7 +183,11 @@ export async function AnalysisQualityPanel({ tenderId }: { tenderId: string }) {
             <p className="font-semibold text-slate-900">Detected sector:</p>
             <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-700">{detectedSector}</span>
           </div>
-          <p className="mt-1 text-xs text-slate-500">Inferred from tender summary. If incorrect, update the tender title/description — sector detection influences proposal methodology framing.</p>
+          <p className={`mt-1 text-xs ${fallbackOnly ? "text-amber-700" : "text-slate-500"}`}>
+            {fallbackOnly
+              ? "Sector inferred from untrusted analysis. Confirm manually before generation."
+              : "Inferred from tender summary. If incorrect, update the tender title/description — sector detection influences proposal methodology framing."}
+          </p>
         </div>
       )}
 
