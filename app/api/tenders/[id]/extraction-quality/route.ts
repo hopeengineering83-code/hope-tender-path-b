@@ -40,8 +40,10 @@ export async function GET(
     });
     if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
 
-    // When a tender has no files the $queryRaw returns an empty array; use
-    // optional chaining on map to stay safe even if Prisma changes behaviour.
+    // PostgreSQL SELECT returns [] naturally when no TenderFile rows exist —
+    // no .catch() needed here. A genuine DB error must propagate to the
+    // outer catch so the panel returns a structured 500 rather than silently
+    // treating every file as having zero extracted characters.
     const textSamples = await prisma.$queryRaw<ExtractedTextSampleRow[]>`
       SELECT
         id,
@@ -49,7 +51,7 @@ export async function GET(
         LEFT(COALESCE("extractedText", ''), 6000) AS "extractedTextSample"
       FROM "TenderFile"
       WHERE "tenderId" = ${id}
-    `.catch(() => [] as ExtractedTextSampleRow[]);
+    `;
     const textSampleById = new Map(textSamples.map((row) => [row.id, row]));
 
     const files = tender.files.map((file) => {

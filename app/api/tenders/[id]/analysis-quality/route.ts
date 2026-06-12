@@ -10,14 +10,13 @@ import { randomUUID } from "node:crypto";
 
 export const dynamic = "force-dynamic";
 
-function panelError(message: string, status: number, extra: {
+function panelError(message: string, status: number, diagnosticId: string, extra: {
   code: string;
   retryable: boolean;
   staleDataPossible: boolean;
   tenderId?: string;
   detail?: string;
 }) {
-  const diagnosticId = randomUUID();
   return NextResponse.json({
     error: message,
     panel: "analysis-quality",
@@ -152,7 +151,7 @@ export async function GET(
       errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
       message: error instanceof Error ? error.message : String(error),
     });
-    return panelError("Analysis quality panel failed to load.", 500, {
+    return panelError("Analysis quality panel failed to load.", 500, diagnosticId, {
       code: "ANALYSIS_QUALITY_RUNTIME_ERROR",
       retryable: true,
       staleDataPossible: false,

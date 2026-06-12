@@ -91,6 +91,29 @@ describe("panel routes — structured error response fields", () => {
       assert.ok(field in mockPanelError, `panel error response must contain field: ${field}`);
     }
   });
+
+  it("analysis-quality panelError uses same diagnosticId in log and response", () => {
+    // The panelError helper now accepts diagnosticId as a parameter rather than
+    // generating its own, so the ID written to server logs matches the ID
+    // returned in the error response body.
+    const src = readFileSync(resolve(process.cwd(), "app/api/tenders/[id]/analysis-quality/route.ts"), "utf8");
+    // The catch block must pass the same `diagnosticId` variable to panelError.
+    assert.ok(
+      src.includes("panelError(\"Analysis quality panel failed to load.\", 500, diagnosticId,"),
+      "panelError call must forward the logged diagnosticId so log and response share the same id",
+    );
+  });
+
+  it("extraction-quality sample query propagates DB errors rather than silencing them", () => {
+    const src = readFileSync(resolve(process.cwd(), "app/api/tenders/[id]/extraction-quality/route.ts"), "utf8");
+    // The text-sample $queryRaw must NOT have .catch(() => []) which would convert
+    // DB failures to empty-string assessments (wrong quality data returned as 200).
+    const queryBlock = src.slice(src.indexOf("const textSamples"), src.indexOf("const textSampleById"));
+    assert.ok(
+      !queryBlock.includes(".catch("),
+      "text-sample $queryRaw must not swallow errors — genuine DB failures should propagate to the outer catch",
+    );
+  });
 });
 
 // ─── 3. Recovery action routes remain intact ──────────────────────────────────
