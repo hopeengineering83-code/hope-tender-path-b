@@ -632,7 +632,22 @@ async function handleStreamingAnalyze(
                 .filter((line) => !/^Analysis source:/i.test(line.trim()) && !/^Analysis fallback diagnostics:/i.test(line.trim()))
                 .concat(["Analysis source: AI (re-run via AI Analyze button)."]).join("\n").trim() || null;
 
+              // Atomic TOCTOU guard: re-verify inside the transaction that no newer
+              // AiJob was created between the outer canPromoteToCanonical check above
+              // and this write. If superseded, the tx returns without any writes.
+              let streamPromoSuperseded = false;
               await prisma.$transaction(async (tx) => {
+                if (analysisJob) {
+                  const currentVer = await tx.aiJob.findUnique({
+                    where: { id: analysisJob.id },
+                    select: { analysisVersion: true },
+                  });
+                  const newerExists = !currentVer || await tx.aiJob.findFirst({
+                    where: { tenderId: id, jobType: "AI_ANALYZE", id: { not: analysisJob.id }, analysisVersion: { gt: currentVer.analysisVersion } },
+                    select: { id: true },
+                  });
+                  if (newerExists) { streamPromoSuperseded = true; return; }
+                }
                 await tx.tenderRequirement.deleteMany({ where: { tenderId: id } });
                 for (const req of aiResult.requirements) {
                   await tx.tenderRequirement.create({
@@ -691,7 +706,7 @@ async function handleStreamingAnalyze(
                   },
                 });
               });
-              if (analysisJob) {
+              if (!streamPromoSuperseded && analysisJob) {
                 await promoteAnalysisToCanonical(analysisJob.id, runId);
               }
             }
@@ -1199,7 +1214,20 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
             .filter((line) => !/^Analysis source:/i.test(line.trim()) && !/^Analysis fallback diagnostics:/i.test(line.trim()))
             .concat(["Analysis source: AI (re-run via AI Analyze button)."]).join("\n").trim() || null;
 
+          // Atomic TOCTOU guard: same pattern as streaming path.
+          let nsPromoSuperseded = false;
           await prisma.$transaction(async (tx) => {
+            if (analysisJob) {
+              const currentVer = await tx.aiJob.findUnique({
+                where: { id: analysisJob.id },
+                select: { analysisVersion: true },
+              });
+              const newerExists = !currentVer || await tx.aiJob.findFirst({
+                where: { tenderId: id, jobType: "AI_ANALYZE", id: { not: analysisJob.id }, analysisVersion: { gt: currentVer.analysisVersion } },
+                select: { id: true },
+              });
+              if (newerExists) { nsPromoSuperseded = true; return; }
+            }
             await tx.tenderRequirement.deleteMany({ where: { tenderId: id } });
             for (const req of aiResult.requirements) {
               await tx.tenderRequirement.create({
@@ -1270,7 +1298,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
               },
             });
           });
-          if (analysisJob) {
+          if (!nsPromoSuperseded && analysisJob) {
             await promoteAnalysisToCanonical(analysisJob.id, nsRunId);
           }
         }
@@ -1354,7 +1382,44 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         analysisResult = await runRegexFallback(msg, diagnostics);
       }
     } else {
+      // No AI provider configured. Create a minimal AiJob so runRegexFallback
+      // can call stageFallbackDraft instead of the legacy canonical overwrite.
+      // Without this, a deployment with no AI key would destroy a previous
+      // trusted AI analysis by taking the legacy deleteMany/canonical-write path.
+      if (!nsJobIdForFallback) {
+        const noAiHash = crypto.createHash("sha256").update(id).digest("hex").slice(0, 16);
+        nsContentHashForFallback = noAiHash;
+        try {
+          const noAiJob = await prisma.aiJob.create({
+            data: {
+              tenderId: id, userId, jobType: "AI_ANALYZE", status: "RUNNING",
+              startedAt: new Date(),
+              input: JSON.stringify({ noAiProvider: true, contentHash: noAiHash }),
+            },
+            select: { id: true },
+          });
+          nsJobIdForFallback = noAiJob.id;
+        } catch {
+          // Job creation failed — runRegexFallback falls back to the legacy
+          // canonical write as a last resort.
+        }
+      }
       analysisResult = await runRegexFallback(undefined, buildAnalysisFallbackDiagnostics("No AI provider configured"));
+      if (nsJobIdForFallback) {
+        await prisma.aiJob.update({
+          where: { id: nsJobIdForFallback },
+          data: {
+            status: "PARTIAL_SUCCESS",
+            finishedAt: new Date(),
+            output: JSON.stringify({
+              analysisSource: "REGEX_FALLBACK",
+              analysisExtractionStatus: "REGEX_FALLBACK_FROM_WEAK_EXTRACTION",
+              reason: "No AI provider configured",
+              requirementCount: analysisResult.requirementCount,
+            }),
+          },
+        }).catch(() => {});
+      }
     }
 
     await logAction({
