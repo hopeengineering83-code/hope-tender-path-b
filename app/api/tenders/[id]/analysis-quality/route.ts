@@ -15,7 +15,6 @@ function panelError(message: string, status: number, diagnosticId: string, extra
   retryable: boolean;
   staleDataPossible: boolean;
   tenderId?: string;
-  detail?: string;
 }) {
   return NextResponse.json({
     error: message,
@@ -45,10 +44,10 @@ export async function GET(
   const userId = await getSession();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  await prismaReady;
   const { id } = await params;
 
   try {
+    await prismaReady;
     // Load full tender shape so we can pass metadata + matching state into
     // the analysis-quality assessor. Without these the score climbs to
     // 100/100 even when matching is 0 and clientName is corrupted — the
@@ -81,17 +80,17 @@ export async function GET(
       vaultReviewedProjects: companyReadiness.totals.reviewedProjects,
     });
 
-    // Defensive: PostgreSQL SUM aggregate with no matching rows returns NULL which
-    // COALESCE converts to 0, but always yields exactly one row. However we guard
-    // with a fallback so an empty result-set or driver edge case never throws
-    // TypeError: Cannot destructure property of undefined.
+    // PostgreSQL SUM aggregate always returns exactly one row (NULL coalesced
+    // to 0 when no TenderFile rows exist). The ?? fallback covers any edge
+    // case where the driver returns an empty array. Genuine query failures
+    // must propagate to the outer catch — no .catch() here.
     const fileMetricsRows = await prisma.$queryRaw<Array<{ extractedTextLength: number; totalPageCount: number }>>`
       SELECT
         COALESCE(SUM(char_length("extractedText")), 0)::int AS "extractedTextLength",
         COALESCE(SUM(COALESCE("totalPages", 0)), 0)::int AS "totalPageCount"
       FROM "TenderFile"
       WHERE "tenderId" = ${id}
-    `.catch(() => [] as Array<{ extractedTextLength: number; totalPageCount: number }>);
+    `;
     const { extractedTextLength, totalPageCount } = fileMetricsRows[0] ?? { extractedTextLength: 0, totalPageCount: 0 };
 
     const resolvedAnalysisSource = await detectAnalysisSourceWithApproval(prisma, id, tender).catch(() => "UNKNOWN" as const);
@@ -156,7 +155,6 @@ export async function GET(
       retryable: true,
       staleDataPossible: false,
       tenderId: id,
-      detail: error instanceof Error ? error.message : String(error),
     });
   }
 }

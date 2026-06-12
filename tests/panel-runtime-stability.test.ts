@@ -114,6 +114,35 @@ describe("panel routes — structured error response fields", () => {
       "text-sample $queryRaw must not swallow errors — genuine DB failures should propagate to the outer catch",
     );
   });
+
+  it("analysis-quality error response does not include raw detail/error.message", () => {
+    const src = readFileSync(resolve(process.cwd(), "app/api/tenders/[id]/analysis-quality/route.ts"), "utf8");
+    // The panelError call in the catch block must not pass 'detail' containing
+    // the raw error message — keep internals in the server log only.
+    assert.ok(
+      !src.includes("detail: error instanceof Error"),
+      "panelError must not forward raw error.message to clients",
+    );
+  });
+
+  it("analysis-quality file-metrics $queryRaw does not swallow genuine DB failures", () => {
+    const src = readFileSync(resolve(process.cwd(), "app/api/tenders/[id]/analysis-quality/route.ts"), "utf8");
+    const queryBlock = src.slice(src.indexOf("const fileMetricsRows"), src.indexOf("const { extractedTextLength"));
+    assert.ok(
+      !queryBlock.includes(".catch("),
+      "file-metrics $queryRaw must not catch errors — genuine failures must reach the outer try/catch",
+    );
+  });
+
+  it("analysis-quality prismaReady is inside the try block", () => {
+    const src = readFileSync(resolve(process.cwd(), "app/api/tenders/[id]/analysis-quality/route.ts"), "utf8");
+    const tryIdx = src.indexOf("try {");
+    const prismaReadyIdx = src.indexOf("await prismaReady");
+    assert.ok(
+      prismaReadyIdx > tryIdx,
+      "await prismaReady must be inside the try block so DB bootstrap failures produce a structured error response",
+    );
+  });
 });
 
 // ─── 3. Recovery action routes remain intact ──────────────────────────────────
