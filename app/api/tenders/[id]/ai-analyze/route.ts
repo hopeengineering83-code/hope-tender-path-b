@@ -483,17 +483,14 @@ async function handleStreamingAnalyze(
         }).catch(() => {});
 
         const runId = crypto.randomUUID();
-        // Use the current timestamp as a monotonically-increasing version that is
-        // collision-resistant across concurrent requests without a DB round-trip or lock.
-        // Must be BigInt: Date.now() ≈ 1.75e12, which overflows PostgreSQL INT (max ~2.1e9).
-        const streamAnalysisVersion = BigInt(Date.now());
+        // analysisVersion is assigned by the PostgreSQL sequence (BIGSERIAL) —
+        // no application-level version needed; DB guarantees strict ordering.
 
         let analysisJob: { id: string } | null = null;
         try {
           analysisJob = await prisma.aiJob.create({
             data: {
               tenderId: id, userId, jobType: "AI_ANALYZE", status: "RUNNING", startedAt: new Date(),
-              analysisVersion: streamAnalysisVersion,
               input: JSON.stringify({ contentLength: tenderContent.length, chunkCount: Math.ceil(tenderContent.length / 50_000), contentHash }),
             },
             select: { id: true },
@@ -1080,8 +1077,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         // Create an AiJob record to track this synchronous analysis run
         nsContentHashForFallback = contentHash;
         const nsRunId = crypto.randomUUID();
-        // Must be BigInt: Date.now() ≈ 1.75e12, which overflows PostgreSQL INT (max ~2.1e9).
-        const nsAnalysisVersion = BigInt(Date.now());
+        // analysisVersion is assigned by the PostgreSQL sequence — no application value needed.
 
         let analysisJob: { id: string } | null = null;
         try {
@@ -1092,7 +1088,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
               jobType: "AI_ANALYZE",
               status: "RUNNING",
               startedAt: new Date(),
-              analysisVersion: nsAnalysisVersion,
               input: JSON.stringify({
                 contentLength: tenderContent.length,
                 chunkCount: Math.ceil(tenderContent.length / 50_000),

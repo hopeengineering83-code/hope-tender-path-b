@@ -840,7 +840,7 @@ model AiJob {
   // Versioning and non-destructive promotion fields
   runId               String?   @unique
   analysisInputHash   String?
-  analysisVersion     BigInt    @default(0)
+  analysisVersion     BigInt    @default(autoincrement())
   stagedMergedResult  String?
   validationResult    String?
   promotedAt          DateTime?

@@ -46,14 +46,18 @@ describe("non-destructive AI analysis — AiJob schema fields", () => {
     );
   });
 
-  it("AiJob schema has analysisVersion field as BigInt (not Int)", () => {
+  it("AiJob schema has analysisVersion as BigInt autoincrement (collision-proof)", () => {
     assert.ok(
       schemaSource.includes("analysisVersion"),
       "AiJob must have analysisVersion column to support stale-run detection",
     );
     assert.ok(
       schemaSource.includes("analysisVersion     BigInt"),
-      "analysisVersion must be BigInt (not Int); Date.now() values overflow PostgreSQL INT",
+      "analysisVersion must be BigInt, not Int",
+    );
+    assert.ok(
+      schemaSource.includes("autoincrement()"),
+      "analysisVersion must use @default(autoincrement()) so PostgreSQL assigns values via a sequence — no application-level timestamp and no same-millisecond collision risk",
     );
   });
 
@@ -153,17 +157,12 @@ describe("non-destructive AI analysis — route staging for partial and fallback
     );
   });
 
-  it("AiJob is created with analysisVersion for ordering (tests 6 and 7)", () => {
+  it("AiJob is created without explicit analysisVersion (DB sequence assigns it)", () => {
+    // analysisVersion uses @default(autoincrement()) — the route must NOT pass it
+    // explicitly, or the DB sequence could be skipped/overridden.
     assert.ok(
-      routeSource.includes("analysisVersion"),
-      "route must set analysisVersion on each new AiJob so canPromoteToCanonical can detect which run is newer",
-    );
-  });
-
-  it("analysisVersion uses BigInt(Date.now()) to prevent PostgreSQL INT overflow", () => {
-    assert.ok(
-      routeSource.includes("BigInt(Date.now())"),
-      "analysisVersion must be assigned BigInt(Date.now()); plain Date.now() (~1.75e12) overflows INT (max ~2.1e9)",
+      !routeSource.includes("analysisVersion: stream") && !routeSource.includes("analysisVersion: ns"),
+      "route must not pass analysisVersion in create() calls; the PostgreSQL sequence assigns it automatically",
     );
   });
 });
