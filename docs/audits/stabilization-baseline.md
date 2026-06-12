@@ -94,7 +94,7 @@ Production was last confirmed returning HTTP 200 with `databaseReachable: true` 
 
 ---
 
-## Confirmed runtime error — root cause
+## Runtime error — root cause (hypothesis consistent with all available evidence)
 
 ### Endpoint
 
