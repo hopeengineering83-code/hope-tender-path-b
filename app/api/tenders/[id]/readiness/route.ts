@@ -19,10 +19,10 @@ export async function GET(
   const userId = await getSession();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  await prismaReady;
   const { id: tenderId } = await params;
 
   try {
+    await prismaReady;
     const readiness = await getCanonicalTenderReadiness(prisma, userId, tenderId);
     if (!readiness) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
 

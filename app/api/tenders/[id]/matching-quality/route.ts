@@ -32,10 +32,10 @@ export async function GET(
   const userId = await getSession();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  await prismaReady;
   const { id } = await params;
 
   try {
+    await prismaReady;
     const [company, tender] = await Promise.all([
       ensureCompanyForUser(prisma, userId),
       prisma.tender.findFirst({

@@ -134,15 +134,17 @@ describe("panel routes — structured error response fields", () => {
     );
   });
 
-  it("analysis-quality prismaReady is inside the try block", () => {
-    const src = readFileSync(resolve(process.cwd(), "app/api/tenders/[id]/analysis-quality/route.ts"), "utf8");
-    const tryIdx = src.indexOf("try {");
-    const prismaReadyIdx = src.indexOf("await prismaReady");
-    assert.ok(
-      prismaReadyIdx > tryIdx,
-      "await prismaReady must be inside the try block so DB bootstrap failures produce a structured error response",
-    );
-  });
+  for (const { panel: p, file: f } of PANEL_ROUTES) {
+    it(`${p} — prismaReady is inside the try block`, () => {
+      const src = readFileSync(resolve(process.cwd(), f), "utf8");
+      const tryIdx = src.indexOf("try {");
+      const prismaReadyIdx = src.indexOf("await prismaReady");
+      assert.ok(
+        prismaReadyIdx > tryIdx,
+        `${p}: await prismaReady must be inside the try block so DB bootstrap failures produce a structured error response`,
+      );
+    });
+  }
 });
 
 // ─── 3. Recovery action routes remain intact ──────────────────────────────────

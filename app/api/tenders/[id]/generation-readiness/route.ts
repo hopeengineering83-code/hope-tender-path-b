@@ -15,11 +15,11 @@ export async function GET(
   const userId = await getSession();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  await prismaReady;
   const { id: tenderId } = await params;
 
   try {
-  const [readiness, tender] = await Promise.all([
+    await prismaReady;
+    const [readiness, tender] = await Promise.all([
     getTenderGenerationReadiness(prisma, userId, tenderId),
     prisma.tender.findFirst({
       where: { id: tenderId, userId },

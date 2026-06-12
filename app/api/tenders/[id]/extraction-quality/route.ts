@@ -20,10 +20,10 @@ export async function GET(
   const userId = await getSession();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  await prismaReady;
   const { id } = await params;
 
   try {
+    await prismaReady;
     const tender = await prisma.tender.findFirst({
       where: { id, userId },
       select: {
