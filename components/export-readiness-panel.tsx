@@ -672,6 +672,12 @@ export function ExportReadinessPanel({ tenderId }: { tenderId: string }) {
                 <li>Click <strong>Re-check</strong> to refresh the gate.</li>
               </ol>
               <p className="mt-2 text-[10px] text-sky-600">Manual action required only for: tender-issued official forms/templates, missing company evidence not in Knowledge Vault, or missing official tender source file.</p>
+              <div className="mt-3 flex flex-wrap items-center gap-3 border-t border-sky-200 pt-2">
+                <p className="text-[10px] font-semibold text-sky-700 uppercase tracking-wide">Severity legend:</p>
+                <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${SEVERITY_BADGE.HIGH}`}>HIGH — blocks export</span>
+                <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${SEVERITY_BADGE.MEDIUM}`}>MEDIUM — blocks export</span>
+                <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${SEVERITY_BADGE.LOW}`}>LOW — advisory only</span>
+              </div>
             </div>
           )}
 

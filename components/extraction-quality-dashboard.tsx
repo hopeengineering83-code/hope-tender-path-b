@@ -1,6 +1,7 @@
 import { prisma, prismaReady } from "../lib/prisma";
 import { assessExtractionQuality, assessExtractionQualityPerPage } from "../lib/extraction-quality";
 import { isExtractionCorrupted } from "../lib/engine/extraction-quality-gate";
+import { scoreToSeverity, severityBadgeClasses, severityBgClass, severityTextClass, severityBorderClass } from "../lib/ui-tokens";
 
 type FileStatus = "GOOD" | "ACCEPTABLE" | "POOR";
 
@@ -10,29 +11,25 @@ function getStatus(score: number): FileStatus {
   return "POOR";
 }
 
+function fileStatusSeverity(status: FileStatus) {
+  if (status === "GOOD") return "good" as const;
+  if (status === "ACCEPTABLE") return "warning" as const;
+  return "poor" as const;
+}
+
 function statusPill(status: FileStatus) {
-  const classes =
-    status === "GOOD"
-      ? "bg-green-100 text-green-700"
-      : status === "ACCEPTABLE"
-        ? "bg-amber-100 text-amber-700"
-        : "bg-red-100 text-red-700";
+  const sev = fileStatusSeverity(status);
   return (
-    <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${classes}`}>
+    <span className={`rounded-full border px-2 py-0.5 text-xs font-semibold ${severityBadgeClasses(sev)}`}>
       {status}
     </span>
   );
 }
 
 function scoreBadge(score: number, status: FileStatus) {
-  const classes =
-    status === "GOOD"
-      ? "bg-green-100 text-green-800"
-      : status === "ACCEPTABLE"
-        ? "bg-amber-100 text-amber-800"
-        : "bg-red-100 text-red-800";
+  const sev = fileStatusSeverity(status);
   return (
-    <span className={`rounded-lg px-2 py-1 text-xs font-bold tabular-nums ${classes}`}>
+    <span className={`rounded-lg border px-2 py-1 text-xs font-bold tabular-nums ${severityBadgeClasses(sev)}`}>
       {Math.round(score)}/100
     </span>
   );
@@ -119,6 +116,8 @@ export async function ExtractionQualityDashboard({ tenderId }: { tenderId: strin
       const perPage = text ? assessExtractionQualityPerPage(text) : null;
       const detectionMode = perPage?.detectionMode ?? "EMPTY";
       const documentLevelDetection = detectionMode === "DOCUMENT_LEVEL";
+      // Separate blank from failed/error pages using per-page quality data
+      const blankPages = perPage?.blankPages.length ?? null;
 
       return {
         id: file.id,
@@ -128,6 +127,7 @@ export async function ExtractionQualityDashboard({ tenderId }: { tenderId: strin
         extractedPages,
         ocrPages,
         failedPages,
+        blankPages,
         coverage,
         corrupted,
         score,
@@ -216,18 +216,19 @@ export async function ExtractionQualityDashboard({ tenderId }: { tenderId: strin
                 <p className="mt-3 text-xs italic text-slate-500">Not yet extracted</p>
               ) : (
                 <>
-                  <div className="mt-3 grid grid-cols-4 gap-2 text-center">
+                  <div className="mt-3 grid grid-cols-5 gap-2 text-center">
                     {(
                       [
-                        ["Total", file.totalPages],
-                        ["Extracted", file.extractedPages],
-                        ["OCR", file.ocrPages],
-                        ["Failed/Weak", file.failedPages],
-                      ] as [string, number | null][]
-                    ).map(([label, value]) => (
+                        ["Total", file.totalPages, "slate"],
+                        ["Extracted", file.extractedPages, "slate"],
+                        ["OCR", file.ocrPages, "slate"],
+                        ["Blank", file.blankPages, file.blankPages ? "amber" : "slate"],
+                        ["Failed", file.failedPages, file.failedPages ? "red" : "slate"],
+                      ] as [string, number | null, string][]
+                    ).map(([label, value, tone]) => (
                       <div key={label} className="rounded-lg border bg-white px-2 py-2">
                         <p className="text-[10px] uppercase text-slate-400">{label}</p>
-                        <p className="mt-0.5 text-base font-bold text-slate-800">
+                        <p className={`mt-0.5 text-base font-bold ${tone === "red" ? "text-red-700" : tone === "amber" ? "text-amber-700" : "text-slate-800"}`}>
                           {value !== null ? (
                             value
                           ) : (
@@ -250,26 +251,14 @@ export async function ExtractionQualityDashboard({ tenderId }: { tenderId: strin
                         <div className="flex items-center justify-between text-xs text-slate-500">
                           <span>Coverage</span>
                           <span
-                            className={`font-semibold ${
-                              file.coverage >= 80
-                                ? "text-green-700"
-                                : file.coverage >= 50
-                                  ? "text-amber-700"
-                                  : "text-red-700"
-                            }`}
+                            className={`font-semibold ${severityTextClass(scoreToSeverity(file.coverage ?? 0, { good: 80, warn: 50 }))}`}
                           >
                             {file.extractedPages}/{file.totalPages} = {file.coverage}%
                           </span>
                         </div>
                         <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-slate-200">
                           <div
-                            className={`h-full rounded-full transition-all ${
-                              file.coverage >= 80
-                                ? "bg-green-500"
-                                : file.coverage >= 50
-                                  ? "bg-amber-500"
-                                  : "bg-red-500"
-                            }`}
+                            className={`h-full rounded-full transition-all ${(file.coverage ?? 0) >= 80 ? "bg-emerald-500" : (file.coverage ?? 0) >= 50 ? "bg-amber-500" : "bg-red-500"}`}
                             style={{ width: `${Math.min(100, file.coverage)}%` }}
                           />
                         </div>
@@ -343,7 +332,7 @@ export async function ExtractionQualityDashboard({ tenderId }: { tenderId: strin
             anyPoor
               ? "border-red-200 bg-red-50 text-red-800"
               : allGood
-                ? "border-green-200 bg-green-50 text-green-800"
+                ? "border-emerald-200 bg-emerald-50 text-emerald-800"
                 : "border-amber-200 bg-amber-50 text-amber-800"
           }`}
         >
