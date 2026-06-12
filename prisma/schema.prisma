@@ -828,7 +828,7 @@ model AiJob {
   // jobType: "PROPOSAL_GENERATION" | "AI_REMATCH" | "EVALUATOR_SIM" |
   // "COPILOT_DEEP_ANALYSIS" | "PROFILE_FACT_EXTRACTION"
   jobType       String
-  // status: "QUEUED" | "RUNNING" | "SUCCEEDED" | "FAILED" | "CANCELED"
+  // status: "QUEUED" | "RUNNING" | "SUCCEEDED" | "PARTIAL_SUCCESS" | "FAILED" | "CANCELED"
   status        String      @default("QUEUED")
   // input (JSON-serialised) and output (JSON-serialised, may include refs).
   input         String      @default("{}")
@@ -837,6 +837,15 @@ model AiJob {
   retries       Int         @default(0)
   startedAt     DateTime?
   finishedAt    DateTime?
+  // Versioning and non-destructive promotion fields
+  runId               String?   @unique
+  analysisInputHash   String?
+  analysisVersion     Int       @default(0)
+  stagedMergedResult  String?
+  validationResult    String?
+  promotedAt          DateTime?
+  promotedBy          String?
+  supersededBy        String?
   createdAt     DateTime    @default(now())
   updatedAt     DateTime    @updatedAt
   steps         AiJobStep[]
