@@ -45,28 +45,29 @@ export async function stageFallbackDraft(
   }).catch(() => {});
 }
 
-// Returns false when a newer analysisVersion has already been promoted for this tender,
-// meaning this run is stale and should not overwrite canonical data.
-export async function canPromoteToCanonical(jobId: string, tenderId: string): Promise<boolean> {
-  if (!jobId) return false;
+// Returns false when a newer analysisVersion job exists for this tender (even if
+// still RUNNING), preventing a stale concurrent run from overwriting canonical data.
+// Returns true when jobId is absent (job tracking failed) so canonical write proceeds.
+export async function canPromoteToCanonical(jobId: string | null, tenderId: string): Promise<boolean> {
+  if (!jobId) return true; // No job record — can't version-check, allow canonical write
   const thisJob = await prisma.aiJob.findUnique({
     where: { id: jobId },
     select: { analysisVersion: true },
   }).catch(() => null);
-  if (!thisJob) return false;
+  if (!thisJob) return true; // Job not found — allow canonical write
 
-  const newerPromotion = await prisma.aiJob.findFirst({
+  const newerJob = await prisma.aiJob.findFirst({
     where: {
       tenderId,
       jobType: "AI_ANALYZE",
-      promotedAt: { not: null },
       id: { not: jobId },
       analysisVersion: { gt: thisJob.analysisVersion },
+      // Any newer-version job (including RUNNING) supersedes this one
     },
     select: { id: true },
   }).catch(() => null);
 
-  return newerPromotion === null;
+  return newerJob === null;
 }
 
 // Record that a full AI analysis has been atomically promoted to canonical state.

@@ -483,12 +483,9 @@ async function handleStreamingAnalyze(
         }).catch(() => {});
 
         const runId = crypto.randomUUID();
-        const latestStreamVersion = await prisma.aiJob.findFirst({
-          where: { tenderId: id, userId, jobType: "AI_ANALYZE" },
-          orderBy: { analysisVersion: "desc" },
-          select: { analysisVersion: true },
-        }).catch(() => null);
-        const streamAnalysisVersion = (latestStreamVersion?.analysisVersion ?? 0) + 1;
+        // Use the current timestamp as a monotonically-increasing version that is
+        // collision-resistant across concurrent requests without a DB round-trip or lock.
+        const streamAnalysisVersion = Date.now();
 
         let analysisJob: { id: string } | null = null;
         try {
@@ -623,7 +620,7 @@ async function handleStreamingAnalyze(
                   totalChunks: aiMeta.totalChunks,
                 });
               }
-            } else if (await canPromoteToCanonical(analysisJob?.id ?? "", id)) {
+            } else if (await canPromoteToCanonical(analysisJob?.id ?? null, id)) {
               // Full success: promote atomically to canonical.
               const clientNameForContaminationCheck = aiResult.procuringEntityName || tenderRecord.clientName;
               const contamination = detectMetadataContamination(clientNameForContaminationCheck);
@@ -1082,12 +1079,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         // Create an AiJob record to track this synchronous analysis run
         nsContentHashForFallback = contentHash;
         const nsRunId = crypto.randomUUID();
-        const nsLatestVersion = await prisma.aiJob.findFirst({
-          where: { tenderId: id, userId, jobType: "AI_ANALYZE" },
-          orderBy: { analysisVersion: "desc" },
-          select: { analysisVersion: true },
-        }).catch(() => null);
-        const nsAnalysisVersion = (nsLatestVersion?.analysisVersion ?? 0) + 1;
+        const nsAnalysisVersion = Date.now();
 
         let analysisJob: { id: string } | null = null;
         try {
@@ -1196,7 +1188,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
               totalChunks: aiMeta.totalChunks,
             });
           }
-        } else if (await canPromoteToCanonical(analysisJob?.id ?? "", id)) {
+        } else if (await canPromoteToCanonical(analysisJob?.id ?? null, id)) {
           // Full success: promote atomically to canonical.
           const clientNameForContaminationCheck = aiResult.procuringEntityName || tenderRecord.clientName;
           const contamination = detectMetadataContamination(clientNameForContaminationCheck);
