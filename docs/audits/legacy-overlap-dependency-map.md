@@ -68,9 +68,9 @@ app/api/tenders/[id]/download/route.ts
 **Export-readiness panel path:**
 ```
 app/api/tenders/[id]/export-readiness/route.ts
-  → getFinalSubmissionReadiness(prisma, tenderId, userId)        [lib/engine/final-submission-readiness.ts]
-    → computeReadinessScore(input)                               [lib/engine/readiness-scoring.ts]
-    → checkExportReadiness(prisma, tenderId, userId)             [lib/engine/export-readiness.ts]
+  → getFinalSubmissionReadiness(prisma, { tenderId, userId, requireFileContent: false })  [lib/engine/final-submission-readiness.ts]
+    → checkFullExportReadiness(...)                              [lib/engine/export-readiness.ts]
+    → computeReadinessScore(input)                              [lib/engine/readiness-scoring.ts]
 ```
 
 **Canonical readiness path (used by /readiness panel):**
@@ -176,7 +176,7 @@ POST /api/tenders/[id]/ai-analyze
   ├── Resume bootstrap: load previousChunkResults from existing job (content-hash match)
   ├── Content extraction: prisma.tender.findFirst → files → extractedText
   ├── analyzeWithAI(tenderContent, { deadlineAt, startFromChunk, previousChunkResults })
-  │     ├── Provider chain: Gemini → Anthropic → OpenAI → Groq → OpenRouter → DeepSeek
+  │     ├── Provider chain (extraction use case): Gemini → OpenAI → Mistral → Together → DeepSeek → Groq → OpenRouter → Anthropic
   │     ├── Chunking (if content > threshold)
   │     ├── Per-chunk AI call with fallback
   │     └── Returns AnalysisWithMeta { result, chunkResults, isPartial, ... }
@@ -221,7 +221,7 @@ All AI providers exhausted
 |------|------|
 | `lib/recovery-command-actions.ts` | Defines `RECOVERY_COMMAND_ACTIONS` record (all action specs) |
 | `components/tender-recovery-command-center.tsx` | UI — dispatches actions based on spec kind |
-| `app/dashboard/tenders/[id]/command-center/page.tsx` | Full command center page (REVIEWER role) |
+| `app/dashboard/tenders/[id]/command-center/page.tsx` | Full command center page (**getSession only** — no requireRole; any authenticated owner can open the shell) |
 
 ### 4.2 Action Spec Types and Routes
 
@@ -480,9 +480,9 @@ The following tests read source file content (`.ts` file text) rather than invok
 ### PR 4 — Fix shadow readiness logic in `tender-detail.tsx`
 
 **Scope:**
-1. Remove `canGenerateDocs` local flag in `tender-detail.tsx`; derive from the `readiness` prop or a shared readiness context
+1. Remove `canGenerateDocs` local flag in `tender-detail.tsx`; derive from the generation-readiness API response (`GET /api/tenders/[id]/generation-readiness`) rather than the raw `getTenderGenerationReadiness()` prop — the API route adds `FULL_PROPOSAL_SUBMISSION_PLAN_MISSING` and a `fullProposalReady` override that the SSR prop omits, so the button must use the API result to stay aligned with the server gate
 2. Remove inline `criticalGaps` and `hasCriticalGapBlock` computations; the `hasCriticalGapBlock` regex differs from `generate/route.ts:criticalGapIsHardBlock()` — unify them
-3. **No SSR removal needed.** `GenerationReadinessPanel` is a server component that receives the pre-computed `readiness` prop from `page.tsx`; it does not client-fetch the API route. The SSR call in `page.tsx` is correct and should remain as the single source of truth for generation-readiness on that page.
+3. **No SSR removal needed.** `GenerationReadinessPanel` is a server component that receives the pre-computed `readiness` prop from `page.tsx`; it does not client-fetch the API route. The SSR call in `page.tsx` is correct and should remain for the panel display — but `tender-detail.tsx` button logic must use the API route result, not the raw SSR prop.
 
 **Why third:** Requires understanding of how SSR props flow to client components. Must not break the button wiring.
 
