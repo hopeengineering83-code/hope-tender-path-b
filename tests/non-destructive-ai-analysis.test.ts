@@ -46,10 +46,14 @@ describe("non-destructive AI analysis — AiJob schema fields", () => {
     );
   });
 
-  it("AiJob schema has analysisVersion field", () => {
+  it("AiJob schema has analysisVersion field as BigInt (not Int)", () => {
     assert.ok(
       schemaSource.includes("analysisVersion"),
       "AiJob must have analysisVersion column to support stale-run detection",
+    );
+    assert.ok(
+      schemaSource.includes("analysisVersion     BigInt"),
+      "analysisVersion must be BigInt (not Int); Date.now() values overflow PostgreSQL INT",
     );
   });
 
@@ -153,6 +157,13 @@ describe("non-destructive AI analysis — route staging for partial and fallback
     assert.ok(
       routeSource.includes("analysisVersion"),
       "route must set analysisVersion on each new AiJob so canPromoteToCanonical can detect which run is newer",
+    );
+  });
+
+  it("analysisVersion uses BigInt(Date.now()) to prevent PostgreSQL INT overflow", () => {
+    assert.ok(
+      routeSource.includes("BigInt(Date.now())"),
+      "analysisVersion must be assigned BigInt(Date.now()); plain Date.now() (~1.75e12) overflows INT (max ~2.1e9)",
     );
   });
 });
