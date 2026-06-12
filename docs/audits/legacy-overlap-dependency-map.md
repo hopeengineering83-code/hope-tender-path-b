@@ -209,7 +209,7 @@ All AI providers exhausted
   → generate route: assertAnalysisReadyForFinalGeneration throws → 422
 ```
 
-**Shadow path risk:** `tender-detail.tsx:canGenerateDocs` line 1475 checks `!analysisIsFallbackUnapproved` — but `analysisIsFallbackUnapproved` is derived from local state set by the streaming SSE response from the AI analyze call. If the user navigates away and back, this local state is reset and may not reflect the actual `analysisSource` stored in DB. The canonical check in the generate route will still block, but the button in the UI may incorrectly appear enabled.
+**Shadow path risk:** `tender-detail.tsx:canGenerateDocs` line 1475 checks `!analysisIsFallbackUnapproved`. This flag is derived from `detectAnalysisSource(tender)` (using the SSR-provided tender prop) plus `tender.complianceGaps` — both are DB-backed and correct on initial load. The divergence risk is that `tender-detail.tsx` uses a different regex via `detectAnalysisSource` (no approval-gap check) whereas the generate route uses `assertAnalysisReadyForFinalGeneration` which also checks for an existing compliance gap marking the fallback as approved. The button can show "enabled" when the user has added an approval compliance gap, while the generate route correctly allows generation — or vice versa if the logic ever drifts.
 
 ---
 
@@ -234,10 +234,11 @@ All AI providers exhausted
 | `GENERATE_REQUIRED_DOCUMENTS` | `api` (POST) | `/api/tenders/[id]/generate-missing-plan-files` | REVIEWER |
 | `APPROVE_FALLBACK_WITH_NOTE` | `api` (POST) | `/api/tenders/[id]/approve-analysis` | REVIEWER |
 | `RECONCILE_OUTSIDE_PLAN_DOCS` | `api` (POST) | `/api/tenders/[id]/supersede-outside-plan` | REVIEWER |
-| `RE_EXTRACT_METADATA` | `api` (POST) | `/api/tenders/[id]/re-extract-metadata` | REVIEWER |
+| `RE_EXTRACT_METADATA` | `api` (POST) | `/api/tenders/[id]/re-extract-metadata` | **ADMIN / PROPOSAL_MANAGER only** (NOT REVIEWER — 403 for REVIEWER users) |
+| `RUN_ENGINE` | `api` (POST) | `/api/tenders/[id]/engine` | **getSession only** (no requireRole — any authenticated user) |
 | `RESOLVE_COMPLIANCE_GAP` | `navigate` | `/dashboard/tenders/{tenderId}#compliance-gaps` | — |
 
-**REVIEWER role protection:** All execute-path routes are guarded by `requireRole(userId, "REVIEWER")` — confirmed by PR #698 which patched any that were missing. Tests in `tests/recovery-command-center-actions.test.ts` verify this for all execute-path routes.
+**Auth gap:** Not all execute-path routes follow the REVIEWER contract. `re-extract-metadata/route.ts` uses `requireUser()` + `ADMIN/PROPOSAL_MANAGER` explicit check (REVIEWER gets 403). `engine/route.ts` uses `getSession()` only (any authenticated user can trigger it). Both are missing from the role-parity test coverage. PR #698 patched some routes but not these two.
 
 ### 4.3 Pre-PR #699 vs Post-PR #699 LINK_VAULT_EVIDENCE
 
@@ -259,13 +260,18 @@ All AI providers exhausted
 | Auth: `requireRole("ADMIN", "PROPOSAL_MANAGER")` | `generate/route.ts` | All |
 | Rate limit: `rateLimit(AI_RATE_LIMIT)` | `generate/route.ts` | Full proposal |
 | `prismaReady` | `generate/route.ts` (inside try) | All |
+| Company ingestion: `getCompanyIngestionReadiness` → `!ingestionReady` | `generate/route.ts` | Full proposal |
 | Extraction gate: `isExtractionAcceptableForGeneration` | `generate/route.ts` | Full proposal |
 | Client metadata: `assessTenderMetadataCompleteness` | `generate/route.ts` | Full proposal |
 | Analysis source: `assertAnalysisReadyForFinalGeneration` | `generate/route.ts` | Full proposal |
 | Analysis quality: `assessTenderAnalysisQuality` severity check | `generate/route.ts` | Full proposal |
 | Compliance gaps: CRITICAL + `isResolved: false` | `generate/route.ts` | HARD_BLOCKERS only |
 | `computeStoredMetadataPatch` + `listInvalidStoredFields` | `generate/route.ts` | If invalid fields exist |
-| Submission plan: `hasValidSubmissionPlan` (implicit via plan entries) | `generate/route.ts` | If no plan |
+| Submission plan: `hasValidSubmissionPlan` | `generate/route.ts` | If no valid plan |
+| All-derived-unconfirmed plan: `allDerivedUnconfirmed === totalPlanned` with explicit scope | `generate/route.ts` | If 100% of plan rows are unconfirmed derived drafts |
+| Expert matches: all selected experts unreviewed + expert requirement exists | `generate/route.ts` | If zero reviewed experts selected |
+| Project matches: all selected projects unreviewed + project requirement exists | `generate/route.ts` | If zero reviewed projects selected |
+| Empty vault: `vaultReviewedExpertCount === 0 && vaultReviewedProjectCount === 0` | `generate/route.ts` | Full proposal |
 
 ### 5.2 Export Gate Checks
 
