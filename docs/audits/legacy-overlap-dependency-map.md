@@ -12,7 +12,7 @@
 The codebase has grown through multiple independent PRs without a unifying consolidation pass. The result is:
 
 1. **13 readiness-computation modules** covering overlapping responsibilities — no single canonical path from DB read to UI display.
-2. **Build-time source mutation** (`scripts/patch-resumable-ai-analyze.mjs`) that patches 3 TypeScript source files at Vercel build time, meaning the production code does not match what `npm run dev` and `tsc --noEmit` see.
+2. **Build-time source mutation** (`scripts/patch-resumable-ai-analyze.mjs`) that was designed to patch 3 TypeScript source files at Vercel build time. All three patch targets are now present in the checked-in source, so all three guard clauses exit early — the script is currently a **no-op**. The script should be deleted in PR 2 after verifying the guard clauses remain valid.
 3. **Local inline color/status decisions** in `tender-detail.tsx` and multiple panel components that predate and contradict the canonical `lib/engine/canonical-readiness-state.ts` + `components/canonical-status-badge.tsx` system added in PR #696.
 4. **Deprecated `lib/engine/generate.ts`** explicitly marked `@deprecated` with no importers — safe to delete.
 5. **`LegacyTenderActionHider`** — a DOM-mutation component that hides duplicate action buttons as a workaround for overlapping panels rendering the same button.
@@ -52,10 +52,10 @@ app/dashboard/tenders/[id]/page.tsx (SSR)
     → detectBrandingPolicy(...)                                   [lib/engine/export-format-policy.ts]
     → detectAnalysisSourceWithApproval(...)                       [lib/engine/analysis-source.ts]
     → DB reads: tender, requirements, expertMatches, projectMatches, complianceGaps, generatedDocuments
-  → ALSO calls: app/api/tenders/[id]/generation-readiness/route.ts (separate client-side refetch)
+  → ALSO passes readiness prop to GenerationReadinessPanel (server component — receives prop; only calls getTenderGenerationReadiness directly when prop is null)
 ```
 
-**Problem:** The SSR page (`page.tsx`) calls `getTenderGenerationReadiness` at render time AND the client-side `GenerationReadinessPanel` component independently fetches from `/api/tenders/[id]/generation-readiness/route.ts` which also calls `getTenderGenerationReadiness`. This means the generation readiness computation runs TWICE per page load with potentially different timing and DB state.
+**Note:** `GenerationReadinessPanel` is an async **server** component. `page.tsx` computes `generationReadiness` via `getTenderGenerationReadiness` and always passes it as a prop. The component only calls `getTenderGenerationReadiness` directly (DB call, not the API route) when the prop is `null` — in practice that fallback never fires. The duplicate risk is the prop-null fallback path remaining live if `page.tsx` is ever refactored to drop the call.
 
 **Export/download path:**
 ```
@@ -160,18 +160,20 @@ PR #699 introduced `lib/ui-tokens.ts` — an excellent canonical token system. A
 
 | File | What Gets Patched | Dev/Typecheck State |
 |------|-------------------|---------------------|
-| `lib/ai.ts` | Adds `AnalysisChunkCacheEntry` type; adds `previousChunkResults` param to `analyzeWithAI`; adds `chunkResults` to return value | Unpatched — `analyzeWithAI` does not accept `previousChunkResults` |
-| `app/api/tenders/[id]/ai-analyze/route.ts` | Upgrades resume bootstrap to load previous chunk results from job output; adds auto-resume discovery on content-hash match | Unpatched — old resume logic |
-| `app/dashboard/tenders/[id]/tender-detail.tsx` | Makes streaming client pass `?continue=jobId` on subsequent analyze calls | Unpatched — never sends `continue` param |
+| `lib/ai.ts` | Adds `AnalysisChunkCacheEntry` type; adds `previousChunkResults` param to `analyzeWithAI`; adds `chunkResults` to return value | **Already in checked-in source** — `patchAiLibrary()` guard exits early |
+| `app/api/tenders/[id]/ai-analyze/route.ts` | Upgrades resume bootstrap; adds auto-resume on content-hash match | **Already in checked-in source** — `patchAnalyzeRoute()` guard exits early |
+| `app/dashboard/tenders/[id]/tender-detail.tsx` | Makes streaming client pass `?continue=jobId` on subsequent analyze calls | **Already in checked-in source** — `patchTenderDetailClient()` guard exits early |
 
-**Regression risk:** TypeScript typechecks the UNPATCHED source. If `lib/ai.ts` is modified in a way that conflicts with the patch targets (e.g. reformatting the `AnalysisWithMeta` type or renaming `analyzeWithAI`'s parameter block), the build-time patch will **throw** with a `[patch-resumable-ai-analyze] Could not find patch target` error, silently blocking Vercel deploys without a clear local signal.
+**Current status:** All three `patchX()` functions have guard clauses that check whether the target content already exists and return early if so. As of this audit all three guards match — the script is a **complete no-op** at Vercel build time. Local dev and production now see the same source.
+
+**Remaining risk:** If any of the three files is modified in a way that breaks the guard-clause string match but does not yet include the replacement text, the script will throw `[patch-resumable-ai-analyze] Could not find patch target` at build time, blocking Vercel deploys silently. Delete the script in PR 2 to eliminate this residual risk.
 
 ### 3.2 AI Analyze Data Flow
 
 ```
 POST /api/tenders/[id]/ai-analyze
-  ├── Auth check (getSession + REVIEWER role)
-  ├── [PRODUCTION ONLY] Resume bootstrap: load previousChunkResults from existing job
+  ├── Auth check (getSession only — no requireRole check on this route)
+  ├── Resume bootstrap: load previousChunkResults from existing job (content-hash match)
   ├── Content extraction: prisma.tender.findFirst → files → extractedText
   ├── analyzeWithAI(tenderContent, { deadlineAt, startFromChunk, previousChunkResults })
   │     ├── Provider chain: Gemini → Anthropic → OpenAI → Groq → OpenRouter → DeepSeek
@@ -180,7 +182,7 @@ POST /api/tenders/[id]/ai-analyze
   │     └── Returns AnalysisWithMeta { result, chunkResults, isPartial, ... }
   ├── Regex fallback (if all providers fail): detectAnalysisSource = REGEX_FALLBACK_AI_ERROR
   ├── DB writes: tender.update (analysisSummary, requirements, etc.) + aiJob.update
-  └── [PRODUCTION ONLY] chunkResults saved to job.output for resume
+  └── chunkResults saved to job.output for resume
 ```
 
 ### 3.3 AI Analyze Consumers of Extracted Data
@@ -254,7 +256,7 @@ All AI providers exhausted
 
 | Check | Location | Blocks |
 |-------|----------|--------|
-| Auth: `getSession` + `requireRole(REVIEWER)` | `generate/route.ts` | All |
+| Auth: `requireRole("ADMIN", "PROPOSAL_MANAGER")` | `generate/route.ts` | All |
 | Rate limit: `rateLimit(AI_RATE_LIMIT)` | `generate/route.ts` | Full proposal |
 | `prismaReady` | `generate/route.ts` (inside try) | All |
 | Extraction gate: `isExtractionAcceptableForGeneration` | `generate/route.ts` | Full proposal |
@@ -419,7 +421,7 @@ The following tests read source file content (`.ts` file text) rather than invok
 | File | Classification | Notes |
 |------|----------------|-------|
 | `lib/engine/generate.ts` | DELETE | Explicitly deprecated; zero importers |
-| `lib/ui-tokens.ts` | KEEP | Canonical token system; partially adopted |
+| `lib/ui-tokens.ts` | KEEP (conditional) | Canonical token system; **does not exist on `main` — only in unmerged PR #699**. PR 3 migration is blocked until this file lands. |
 | `lib/engine/canonical-readiness-state.ts` | KEEP | Canonical 8-state system; needs wider adoption |
 | `components/canonical-status-badge.tsx` | KEEP | Canonical badge; needs production consumers |
 | `components/legacy-tender-action-hider.tsx` | DEPRECATE | DOM mutation workaround; symptom of duplicate button rendering |
@@ -435,26 +437,27 @@ The following tests read source file content (`.ts` file text) rather than invok
 | `app/dashboard/tenders/[id]/tender-detail.tsx` criticalGaps/hasCriticalGapBlock | REFACTOR | Local shadow of generate route gate |
 | `components/requirement-coverage-panel.tsx` inline colors (PR #699) | REWORK | Uses local colors when `confidenceToSeverity` + `severityBadgeClasses` exist |
 | `app/api/tenders/[id]/link-vault-evidence/route.ts` | UNKNOWN | Check consumers before classifying |
-| `app/api/tenders/[id]/link-vault-evidence-auto/route.ts` | KEEP | New canonical auto-link endpoint |
+| `app/api/tenders/[id]/link-vault-evidence-auto/route.ts` | KEEP (conditional) | New canonical auto-link endpoint; **does not exist on `main` — only in unmerged PR #699**. |
 
 ---
 
 ## Migration Order (Small PR Boundaries)
 
-### PR 2 — Delete confirmed dead code + eliminate build-time source mutation
+### PR 2 — Delete confirmed dead code + remove now-redundant build-time mutation script
 
 **Scope:**
 1. Delete `lib/engine/generate.ts` (explicitly deprecated, zero importers)
-2. Apply the `patch-resumable-ai-analyze.mjs` patches directly to source files so they live in version control
-3. Delete `scripts/patch-resumable-ai-analyze.mjs` once patches are applied
-4. Add tests for the now-visible chunk-resume logic
+2. Verify all three `patchX()` guard clauses in `patch-resumable-ai-analyze.mjs` still match the current source, then delete the script — all patch targets are already in the checked-in source and the script is a no-op
+3. Add tests for the chunk-resume logic (which is already live in source but has no test coverage)
 
-**Why first:** Lowest risk. Removes the divergence between local and production source. Unblocks accurate typechecking of the full AI analyze flow.
+**Why first:** Lowest risk. Removes a residual build-time maintenance hazard (script that throws if targets drift). No logic changes required.
 
 **Characterization tests required before migration:**
 - `tests/ai-analyze-resume.test.ts` must cover: resume from partial job, content hash mismatch resets, auto-resume on matching hash
 
 ### PR 3 — Adopt `lib/ui-tokens.ts` across all panels + eliminate shadow color maps
+
+**Prerequisite:** `lib/ui-tokens.ts` does not exist on `main` — it is only in unmerged PR #699. PR 3 cannot begin until a corrected version of PR #699 is merged (with the REVIEWER auth fix on `link-vault-evidence-auto/route.ts`).
 
 **Scope:**
 1. Migrate `tender-detail.tsx` GAP_SEVERITY_STYLE, trustLevel badges, and `mimeType` color map to use `severityBadgeClasses` / `statusToSeverity` / `confidenceToSeverity`
@@ -471,9 +474,9 @@ The following tests read source file content (`.ts` file text) rather than invok
 ### PR 4 — Fix shadow readiness logic in `tender-detail.tsx`
 
 **Scope:**
-1. Remove `canGenerateDocs` local flag; replace with data from the generation-readiness API response already fetched by `GenerationReadinessPanel`
-2. Remove inline `criticalGaps` and `hasCriticalGapBlock` computations; derive from readiness API response
-3. Remove SSR `getTenderGenerationReadiness` call in `page.tsx` (reduce to single client-side fetch)
+1. Remove `canGenerateDocs` local flag in `tender-detail.tsx`; derive from the `readiness` prop or a shared readiness context
+2. Remove inline `criticalGaps` and `hasCriticalGapBlock` computations; the `hasCriticalGapBlock` regex differs from `generate/route.ts:criticalGapIsHardBlock()` — unify them
+3. **No SSR removal needed.** `GenerationReadinessPanel` is a server component that receives the pre-computed `readiness` prop from `page.tsx`; it does not client-fetch the API route. The SSR call in `page.tsx` is correct and should remain as the single source of truth for generation-readiness on that page.
 
 **Why third:** Requires understanding of how SSR props flow to client components. Must not break the button wiring.
 
