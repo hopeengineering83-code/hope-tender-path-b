@@ -18,6 +18,8 @@ import ScoreBreakdownPanel from "../../../../components/score-breakdown-panel";
 import { MetadataCompletionPanel } from "../../../../components/metadata-completion-panel";
 import { CollapsiblePanel } from "../../../../components/collapsible-panel";
 import { detectAnalysisSource } from "../../../../lib/engine/analysis-source";
+import { CanonicalStatusBadge } from "../../../../components/canonical-status-badge";
+import type { CanonicalTenderReadiness } from "../../../../lib/canonical-tender-readiness";
 
 function renderInline(text: string): React.ReactNode[] {
   const parts = text.split(/(\*\*[^*\n]+\*\*|\*[^*\n]+\*|_[^_\n]+_)/g);
@@ -514,7 +516,7 @@ function ComplianceGapsPanel({ tenderId, initialGaps }: { tenderId: string; init
   );
 }
 
-export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; aiEnabled?: boolean }) {
+export function TenderDetail({ tender: initial, aiEnabled, canonicalReadiness }: { tender: Tender; aiEnabled?: boolean; canonicalReadiness?: CanonicalTenderReadiness | null }) {
   const router = useRouter();
   const [tender, setTender] = useState(initial);
   const [editing, setEditing] = useState(false);
@@ -1532,6 +1534,7 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
             : hasCriticalGapBlock
               ? "Critical compliance gaps must be resolved before export"
               : null;
+  const tenderSummaryState = canonicalReadiness?.modules.generation.state ?? canonicalReadiness?.modules.export.state ?? "NOT_RUN";
   const readinessScore = tender.readinessScore ??
     (tender.requirements.length === 0 ? 0
       : Math.max(0, Math.round(((tender.requirements.length - criticalGaps) / tender.requirements.length) * 100)));
@@ -2097,7 +2100,7 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
           <p className="mt-1 text-xs text-slate-500">of {tender.projectMatches?.length ?? 0} matched</p>
         </div>
         <div className="rounded-2xl border bg-white p-5 shadow-sm" title="Workflow progress only — derived from requirements vs critical gaps. NOT the export-readiness score. See the Canonical Readiness Score panel above for the gated number used by the gates and the ZIP route.">
-          <p className="text-sm text-slate-500">Workflow status</p>
+          <div className="flex items-center justify-between gap-2"><p className="text-sm text-slate-500">Workflow status</p><CanonicalStatusBadge status={tenderSummaryState} size="sm" /></div>
           <p className={`mt-1 text-3xl font-bold ${readinessScore >= 80 ? "text-green-600" : readinessScore >= 50 ? "text-amber-500" : "text-red-500"}`}>
             {readinessScore}%
           </p>
@@ -2105,7 +2108,7 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
             <div className={`h-full rounded-full ${readinessScore >= 80 ? "bg-green-500" : readinessScore >= 50 ? "bg-amber-400" : "bg-red-400"}`}
               style={{ width: `${readinessScore}%` }} />
           </div>
-          <p className="mt-1 text-[10px] text-slate-400">Workflow progress only — see canonical score above.</p>
+          <p className="mt-1 text-[10px] text-slate-400">Workflow progress only — icon uses canonical readiness.</p>
         </div>
         {proposalQuality && (
           <div className="rounded-2xl border bg-white p-5 shadow-sm">

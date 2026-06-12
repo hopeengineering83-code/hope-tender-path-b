@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { buildSubmissionPlan, findExtraGeneratedDocuments, findMissingGeneratedDocuments, submissionPlanFileCount } from "@/lib/engine/submission-plan";
 import { computeEvidenceCoverage } from "@/lib/engine/requirement-evidence-profile";
+import { CanonicalStatusBadge } from "@/components/canonical-status-badge";
+import type { CanonicalTenderReadiness } from "@/lib/canonical-tender-readiness";
 
 type GeneratedDocLike = {
   id?: string;
@@ -93,7 +95,7 @@ function bidOutcomeBadgeClass(outcome: string): string {
   return "bg-amber-100 text-amber-700 border-amber-200";
 }
 
-export function ExecutiveSnapshot({ tender }: { tender: TenderLike }) {
+export function ExecutiveSnapshot({ tender, canonicalReadiness }: { tender: TenderLike; canonicalReadiness?: CanonicalTenderReadiness | null }) {
   const requirements = tender.requirements ?? [];
   const gaps = tender.complianceGaps ?? [];
   const generatedDocs = visiblePackageDocs(tender.generatedDocuments ?? []);
@@ -114,6 +116,7 @@ export function ExecutiveSnapshot({ tender }: { tender: TenderLike }) {
   const projectMatches = tender.projectMatches ?? [];
   const matrix = tender.complianceMatrix ?? [];
   const files = tender.files ?? [];
+  const snapshotState = canonicalReadiness?.modules.generation.state ?? canonicalReadiness?.modules.export.state ?? "NOT_RUN";
 
   const unresolvedCritical = gaps.filter((g) => !g.isResolved && g.severity === "CRITICAL").length;
   const unresolvedHigh = gaps.filter((g) => !g.isResolved && g.severity === "HIGH").length;
@@ -221,7 +224,7 @@ export function ExecutiveSnapshot({ tender }: { tender: TenderLike }) {
           <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Executive Tender Command Center</p>
           <h2 className="mt-1 text-xl font-bold text-slate-900 break-words line-clamp-3">Senior proposal decision snapshot</h2>
           <p className="mt-1 max-w-3xl text-sm text-slate-500">
-            One proposal-management view for readiness, critical gaps, evidence coverage, selected experts/projects, submission-plan documents, validation, review status, and extraction health.
+            One proposal-management view for canonical generation readiness, critical gaps, evidence coverage, selected experts/projects, submission-plan documents, validation, review status, and extraction health.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -230,6 +233,7 @@ export function ExecutiveSnapshot({ tender }: { tender: TenderLike }) {
               Bid: {tender.bidOutcome}
             </span>
           )}
+          <CanonicalStatusBadge status={snapshotState} label={`Snapshot ${snapshotState.replace("_", " ")}`} />
           <span className={`rounded-full border px-4 py-2 text-sm font-bold ${badgeClass(decision)}`}>{decision}</span>
           <Link
             href={`/dashboard/tenders/${tender.id}/command-center`}

@@ -26,16 +26,34 @@ export type CanonicalModuleStatus =
   | "RUNNING"
   | "NOT_APPLICABLE";
 
-export type CanonicalModuleStates = {
-  extraction: CanonicalModuleStatus;
-  analysis: CanonicalModuleStatus;
-  metadata: CanonicalModuleStatus;
-  requirements: CanonicalModuleStatus;
-  submissionPlan: CanonicalModuleStatus;
-  compliance: CanonicalModuleStatus;
-  documents: CanonicalModuleStatus;
-  export: CanonicalModuleStatus;
+export const CANONICAL_MODULE_KEYS = [
+  "extraction",
+  "analysis",
+  "metadata",
+  "requirements",
+  "matching",
+  "submissionPlan",
+  "compliance",
+  "documents",
+  "generation",
+  "export",
+] as const;
+
+export type CanonicalModuleKey = typeof CANONICAL_MODULE_KEYS[number];
+
+export type CanonicalModuleStates = Record<CanonicalModuleKey, CanonicalModuleStatus>;
+
+export type CanonicalModuleDetail = {
+  state: CanonicalModuleStatus;
+  blockers: string[];
+  warnings: string[];
+  sourceRevision: string;
+  calculatedAt: string;
+  nextAction: string | null;
+  reason: string;
 };
+
+export type CanonicalModuleStatePayload = Record<CanonicalModuleKey, CanonicalModuleDetail>;
 
 export type CanonicalStatusConfig = {
   label: string;
@@ -60,86 +78,145 @@ export type ComputeCanonicalStatesInput = TenderReadinessState & {
   hasAnalysis: boolean;
   hasRequirements: boolean;
   hasDocuments: boolean;
+  matchingComplete?: boolean;
+  matchingBlocked?: boolean;
+  generationServerReady?: boolean;
   analysisIsApprovedFallback?: boolean;
+  extractionStale?: boolean;
+  analysisStale?: boolean;
+  requirementsStale?: boolean;
+  complianceStale?: boolean;
+  submissionPlanStale?: boolean;
+  documentsStale?: boolean;
+  runningModules?: Partial<Record<CanonicalModuleKey, boolean>>;
+  notApplicableModules?: Partial<Record<CanonicalModuleKey, boolean>>;
 };
 
+const DOWNSTREAM_NOT_READY = new Set<CanonicalModuleStatus>(["BLOCKED", "PARTIAL", "STALE", "NOT_RUN"]);
+
+function overrideModule(key: CanonicalModuleKey, state: CanonicalModuleStatus, input: ComputeCanonicalStatesInput): CanonicalModuleStatus {
+  if (input.notApplicableModules?.[key]) return "NOT_APPLICABLE";
+  if (input.runningModules?.[key]) return "RUNNING";
+  return state;
+}
+
+export function isCanonicalReady(state: CanonicalModuleStatus): boolean {
+  return state === "READY";
+}
+
 export function computeCanonicalModuleStates(input: ComputeCanonicalStatesInput): CanonicalModuleStates {
-  // ── Extraction ─────────────────────────────────────────────────────────────
-  const extraction: CanonicalModuleStatus = input.extractionTrusted ? "READY" : "BLOCKED";
+  const extractionBase: CanonicalModuleStatus = input.extractionStale ? "STALE" : input.extractionTrusted ? "READY" : "BLOCKED";
+  const extraction = overrideModule("extraction", extractionBase, input);
 
-  // ── Analysis ───────────────────────────────────────────────────────────────
-  let analysis: CanonicalModuleStatus;
-  if (!input.extractionTrusted) {
-    analysis = "BLOCKED";
-  } else if (!input.hasAnalysis) {
-    analysis = "NOT_RUN";
-  } else if (input.analysisIsApprovedFallback) {
-    analysis = "WARNING";
-  } else if (!input.analysisTrusted) {
-    analysis = "BLOCKED";
-  } else {
-    analysis = "READY";
-  }
+  let analysisBase: CanonicalModuleStatus;
+  if (extraction === "STALE") analysisBase = "STALE";
+  else if (extraction === "BLOCKED") analysisBase = "BLOCKED";
+  else if (input.analysisStale) analysisBase = "STALE";
+  else if (!input.hasAnalysis) analysisBase = "NOT_RUN";
+  else if (input.analysisIsApprovedFallback) analysisBase = "WARNING";
+  else if (!input.analysisTrusted) analysisBase = input.blockers.some((blocker) => /regex fallback/i.test(blocker)) ? "BLOCKED" : input.rawRequirementsCount > 0 ? "PARTIAL" : "BLOCKED";
+  else analysisBase = "READY";
+  const analysis = overrideModule("analysis", analysisBase, input);
 
-  // ── Metadata ───────────────────────────────────────────────────────────────
-  const metadata: CanonicalModuleStatus = input.metadataTrusted ? "READY" : "BLOCKED";
+  const metadataBase: CanonicalModuleStatus = input.metadataTrusted ? "READY" : "BLOCKED";
+  const metadata = overrideModule("metadata", metadataBase, input);
 
-  // ── Requirements ───────────────────────────────────────────────────────────
-  let requirements: CanonicalModuleStatus;
-  if (!input.hasAnalysis || !input.hasRequirements) {
-    requirements = "NOT_RUN";
-  } else if (!input.analysisTrusted) {
-    // requirements may exist but are derived from untrusted analysis
-    requirements = "BLOCKED";
-  } else if (!input.requirementsTrusted) {
-    requirements = "PARTIAL";
-  } else {
-    requirements = "READY";
-  }
+  let requirementsBase: CanonicalModuleStatus;
+  if (DOWNSTREAM_NOT_READY.has(analysis)) requirementsBase = analysis === "STALE" ? "STALE" : analysis === "NOT_RUN" ? "NOT_RUN" : analysis === "PARTIAL" ? "PARTIAL" : "BLOCKED";
+  else if (input.requirementsStale) requirementsBase = "STALE";
+  else if (!input.hasRequirements) requirementsBase = "NOT_RUN";
+  else if (!input.requirementsTrusted) requirementsBase = "PARTIAL";
+  else requirementsBase = "READY";
+  const requirements = overrideModule("requirements", requirementsBase, input);
 
-  // ── Submission Plan ────────────────────────────────────────────────────────
-  const submissionPlan: CanonicalModuleStatus = input.submissionPlanBuilt ? "READY" : "NOT_RUN";
+  let matchingBase: CanonicalModuleStatus;
+  if (DOWNSTREAM_NOT_READY.has(requirements)) matchingBase = requirements === "STALE" ? "STALE" : requirements === "NOT_RUN" ? "NOT_RUN" : "BLOCKED";
+  else if (input.matchingBlocked) matchingBase = "BLOCKED";
+  else if (input.matchingComplete === false) matchingBase = "NOT_RUN";
+  else matchingBase = "READY";
+  const matching = overrideModule("matching", matchingBase, input);
 
-  // ── Compliance ─────────────────────────────────────────────────────────────
-  let compliance: CanonicalModuleStatus;
-  if (!input.requirementsTrusted || !input.analysisTrusted || !input.extractionTrusted) {
-    compliance = "BLOCKED";
-  } else if (!input.complianceCurrent) {
-    compliance = "PARTIAL";
-  } else {
-    compliance = "READY";
-  }
+  const submissionPlanBase: CanonicalModuleStatus = input.submissionPlanStale ? "STALE" : input.submissionPlanBuilt ? "READY" : "NOT_RUN";
+  const submissionPlan = overrideModule("submissionPlan", submissionPlanBase, input);
 
-  // ── Documents ──────────────────────────────────────────────────────────────
-  let documents: CanonicalModuleStatus;
-  if (!input.hasDocuments) {
-    documents = "NOT_RUN";
-  } else if (!input.submissionPlanBuilt) {
-    // docs exist but plan was never built — can't trust file names/order
-    documents = "BLOCKED";
-  } else if (!input.analysisTrusted) {
-    documents = "BLOCKED";
-  } else if (!input.docsGeneratedFromCurrentAnalysis) {
-    documents = "STALE";
-  } else if (!input.documentsCurrent) {
-    documents = "PARTIAL";
-  } else {
-    documents = "READY";
-  }
+  let complianceBase: CanonicalModuleStatus;
+  if (DOWNSTREAM_NOT_READY.has(requirements)) complianceBase = requirements === "STALE" ? "STALE" : requirements === "NOT_RUN" ? "NOT_RUN" : "BLOCKED";
+  else if (input.complianceStale) complianceBase = "STALE";
+  else if (!input.complianceCurrent) complianceBase = "PARTIAL";
+  else complianceBase = "READY";
+  const compliance = overrideModule("compliance", complianceBase, input);
 
-  // ── Export ─────────────────────────────────────────────────────────────────
-  let exportStatus: CanonicalModuleStatus;
-  if (!input.extractionTrusted || !input.analysisTrusted || !input.metadataTrusted || !input.requirementsTrusted) {
-    exportStatus = "BLOCKED";
-  } else if (!input.submissionPlanBuilt || !input.hasDocuments) {
-    exportStatus = "NOT_RUN";
-  } else if (!input.docsGeneratedFromCurrentAnalysis) {
-    exportStatus = "STALE";
-  } else if (!input.exportAllowed) {
-    exportStatus = "BLOCKED";
-  } else {
-    exportStatus = "READY";
-  }
+  let documentsBase: CanonicalModuleStatus;
+  if (submissionPlan !== "READY") documentsBase = submissionPlan === "STALE" ? "STALE" : input.hasDocuments ? "BLOCKED" : "NOT_RUN";
+  else if (input.documentsStale || (!input.docsGeneratedFromCurrentAnalysis && input.hasDocuments)) documentsBase = "STALE";
+  else if (!input.hasDocuments) documentsBase = "NOT_RUN";
+  else if (DOWNSTREAM_NOT_READY.has(analysis)) documentsBase = analysis === "STALE" ? "STALE" : "BLOCKED";
+  else if (!input.documentsCurrent) documentsBase = "PARTIAL";
+  else documentsBase = "READY";
+  const documents = overrideModule("documents", documentsBase, input);
 
-  return { extraction, analysis, metadata, requirements, submissionPlan, compliance, documents, export: exportStatus };
+  let generationBase: CanonicalModuleStatus;
+  if (compliance === "BLOCKED" || compliance === "STALE") generationBase = compliance;
+  else if (DOWNSTREAM_NOT_READY.has(documents)) generationBase = documents === "STALE" ? "STALE" : documents === "NOT_RUN" ? "NOT_RUN" : documents === "PARTIAL" ? "PARTIAL" : "BLOCKED";
+  else if (input.generationServerReady === false) generationBase = "BLOCKED";
+  else if (input.warnings.length > 0) generationBase = "WARNING";
+  else generationBase = "READY";
+  const generation = overrideModule("generation", generationBase, input);
+
+  let exportStatusBase: CanonicalModuleStatus;
+  if ([extraction, analysis, metadata, requirements, compliance, documents, generation].some((s) => s === "BLOCKED")) exportStatusBase = "BLOCKED";
+  else if ([extraction, analysis, requirements, compliance, documents, generation].some((s) => s === "STALE")) exportStatusBase = "STALE";
+  else if ([analysis, requirements, documents, generation].some((s) => s === "PARTIAL")) exportStatusBase = "BLOCKED";
+  else if ([analysis, requirements, submissionPlan, documents, generation].some((s) => s === "NOT_RUN")) exportStatusBase = "NOT_RUN";
+  else if (!input.exportAllowed) exportStatusBase = "BLOCKED";
+  else exportStatusBase = "READY";
+  const exportStatus = overrideModule("export", exportStatusBase, input);
+
+  return { extraction, analysis, metadata, requirements, matching, submissionPlan, compliance, documents, generation, export: exportStatus };
+}
+
+const NEXT_ACTION_BY_MODULE: Record<CanonicalModuleKey, string> = {
+  extraction: "RUN_OCR_OR_UPLOAD_CLEARER_SCAN",
+  analysis: "RUN_AI_ANALYZE",
+  metadata: "EDIT_TENDER_METADATA",
+  requirements: "RUN_AI_ANALYZE",
+  matching: "REVIEW_MATCHES",
+  submissionPlan: "BUILD_SUBMISSION_PLAN",
+  compliance: "RESOLVE_COMPLIANCE_GAPS",
+  documents: "GENERATE_DOCUMENTS",
+  generation: "RESOLVE_GENERATION_BLOCKERS",
+  export: "OPEN_EXPORT_READINESS",
+};
+
+function reasonFor(key: CanonicalModuleKey, state: CanonicalModuleStatus): string {
+  if (state === "READY") return `${key} is ready according to canonical upstream gates.`;
+  if (state === "WARNING") return `${key} has non-blocking warnings; server gates remain authoritative.`;
+  if (state === "RUNNING") return `${key} is currently running.`;
+  if (state === "STALE") return `${key} is stale relative to current upstream inputs.`;
+  if (state === "PARTIAL") return `${key} is partially complete but not final-ready.`;
+  if (state === "NOT_RUN") return `${key} has not run yet.`;
+  if (state === "NOT_APPLICABLE") return `${key} is not applicable for this tender.`;
+  return `${key} is blocked by canonical upstream gates.`;
+}
+
+export function buildCanonicalModulePayload(
+  states: CanonicalModuleStates,
+  input: Pick<TenderReadinessState, "blockers" | "warnings" | "currentAnalysisHash">,
+  options: { calculatedAt?: string; sourceRevision?: string; moduleReasons?: Partial<Record<CanonicalModuleKey, string>> } = {},
+): CanonicalModuleStatePayload {
+  const calculatedAt = options.calculatedAt ?? new Date().toISOString();
+  const sourceRevision = options.sourceRevision ?? input.currentAnalysisHash;
+  return CANONICAL_MODULE_KEYS.reduce((acc, key) => {
+    const state = states[key];
+    acc[key] = {
+      state,
+      blockers: state === "READY" || state === "WARNING" ? [] : input.blockers,
+      warnings: input.warnings,
+      sourceRevision,
+      calculatedAt,
+      nextAction: state === "READY" || state === "WARNING" || state === "NOT_APPLICABLE" ? null : NEXT_ACTION_BY_MODULE[key],
+      reason: options.moduleReasons?.[key] ?? reasonFor(key, state),
+    };
+    return acc;
+  }, {} as CanonicalModuleStatePayload);
 }
