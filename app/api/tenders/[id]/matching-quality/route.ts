@@ -4,6 +4,7 @@ import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { assessMatchingQuality } from "../../../../../lib/matching-quality";
 import { ensureCompanyForUser } from "../../../../../lib/company-workspace";
 import { getCompanyIngestionReadiness } from "../../../../../lib/company-ingestion-readiness";
+import { randomUUID } from "node:crypto";
 
 export const dynamic = "force-dynamic";
 
@@ -33,40 +34,61 @@ export async function GET(
 
   await prismaReady;
   const { id } = await params;
-  const [company, tender] = await Promise.all([
-    ensureCompanyForUser(prisma, userId),
-    prisma.tender.findFirst({
-      where: { id, userId },
-      include: {
-        requirements: true,
-        expertMatches: { include: { expert: { select: { trustLevel: true, fullName: true } } } },
-        projectMatches: { include: { project: { select: { trustLevel: true, name: true } } } },
-      },
-    }),
-  ]);
-  if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
 
-  const companyReadiness = await getCompanyIngestionReadiness(company.id, {}, prisma);
-  const quality = assessMatchingQuality({
-    requirements: tender.requirements,
-    expertMatches: tender.expertMatches,
-    projectMatches: tender.projectMatches,
-    vaultReviewedExperts: companyReadiness.totals.reviewedExperts,
-    vaultReviewedProjects: companyReadiness.totals.reviewedProjects,
-  });
+  try {
+    const [company, tender] = await Promise.all([
+      ensureCompanyForUser(prisma, userId),
+      prisma.tender.findFirst({
+        where: { id, userId },
+        include: {
+          requirements: true,
+          expertMatches: { include: { expert: { select: { trustLevel: true, fullName: true } } } },
+          projectMatches: { include: { project: { select: { trustLevel: true, name: true } } } },
+        },
+      }),
+    ]);
+    if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
 
-  const readyForGeneration = structuralReadyForGeneration(quality);
-  const readyForMatchingAttempt = structuralReadyForMatchingAttempt(quality);
+    const companyReadiness = await getCompanyIngestionReadiness(company.id, {}, prisma);
+    const quality = assessMatchingQuality({
+      requirements: tender.requirements,
+      expertMatches: tender.expertMatches,
+      projectMatches: tender.projectMatches,
+      vaultReviewedExperts: companyReadiness.totals.reviewedExperts,
+      vaultReviewedProjects: companyReadiness.totals.reviewedProjects,
+    });
 
-  return NextResponse.json({
-    tenderId: id,
-    readyForMatchingAttempt,
-    readyForGeneration,
-    nextAction: readyForGeneration
-      ? "GENERATE"
-      : quality.state === "VAULT_AWAITS_ENGINE"
-        ? "RUN_ENGINE"
-        : "REVIEW_MATCHING_QUALITY",
-    quality,
-  });
+    const readyForGeneration = structuralReadyForGeneration(quality);
+    const readyForMatchingAttempt = structuralReadyForMatchingAttempt(quality);
+
+    return NextResponse.json({
+      tenderId: id,
+      readyForMatchingAttempt,
+      readyForGeneration,
+      nextAction: readyForGeneration
+        ? "GENERATE"
+        : quality.state === "VAULT_AWAITS_ENGINE"
+          ? "RUN_ENGINE"
+          : "REVIEW_MATCHING_QUALITY",
+      quality,
+    });
+  } catch (error) {
+    const diagnosticId = randomUUID();
+    console.error("[matching-quality]", {
+      route: "/api/tenders/[id]/matching-quality",
+      tenderId: id,
+      diagnosticId,
+      errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+      message: error instanceof Error ? error.message : String(error),
+    });
+    return NextResponse.json({
+      error: "Matching quality panel failed to load.",
+      panel: "matching-quality",
+      endpoint: "/api/tenders/[id]/matching-quality",
+      diagnosticId,
+      code: "MATCHING_QUALITY_RUNTIME_ERROR",
+      retryable: true,
+      staleDataPossible: false,
+    }, { status: 500 });
+  }
 }

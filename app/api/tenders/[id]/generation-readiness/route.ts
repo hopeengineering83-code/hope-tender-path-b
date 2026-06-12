@@ -4,6 +4,7 @@ import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { getTenderGenerationReadiness } from "../../../../../lib/tender-generation-readiness";
 import { detectAnalysisSourceWithApproval } from "../../../../../lib/engine/analysis-source";
 import { safeParseJsonArray } from "../../../../../lib/safe-json";
+import { randomUUID } from "node:crypto";
 
 export const dynamic = "force-dynamic";
 
@@ -16,6 +17,8 @@ export async function GET(
 
   await prismaReady;
   const { id: tenderId } = await params;
+
+  try {
   const [readiness, tender] = await Promise.all([
     getTenderGenerationReadiness(prisma, userId, tenderId),
     prisma.tender.findFirst({
@@ -111,4 +114,23 @@ export async function GET(
       finalExportReady: "not evaluated by generation-readiness; check links.exportReadiness or the dashboard export-readiness panel",
     },
   });
+  } catch (error) {
+    const diagnosticId = randomUUID();
+    console.error("[generation-readiness]", {
+      route: "/api/tenders/[id]/generation-readiness",
+      tenderId,
+      diagnosticId,
+      errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+      message: error instanceof Error ? error.message : String(error),
+    });
+    return NextResponse.json({
+      error: "Generation readiness panel failed to load.",
+      panel: "generation-readiness",
+      endpoint: "/api/tenders/[id]/generation-readiness",
+      diagnosticId,
+      code: "GENERATION_READINESS_RUNTIME_ERROR",
+      retryable: true,
+      staleDataPossible: false,
+    }, { status: 500 });
+  }
 }
