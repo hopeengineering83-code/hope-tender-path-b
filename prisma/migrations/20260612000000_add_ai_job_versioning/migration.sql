@@ -17,6 +17,10 @@ ALTER TABLE "AiJob" ADD COLUMN IF NOT EXISTS "analysisVersion" BIGINT NOT NULL D
 ALTER TABLE "AiJob" ALTER COLUMN "analysisVersion" TYPE BIGINT USING "analysisVersion"::BIGINT;
 ALTER TABLE "AiJob" ALTER COLUMN "analysisVersion" SET DEFAULT nextval('"AiJob_analysisVersion_seq"');
 ALTER SEQUENCE "AiJob_analysisVersion_seq" OWNED BY "AiJob"."analysisVersion";
+-- Advance the sequence past any existing analysisVersion values so new jobs
+-- always receive strictly higher versions than rows written before this migration
+-- (e.g. timestamp-based values ~1.75×10¹²).
+SELECT setval('"AiJob_analysisVersion_seq"', GREATEST(1, (SELECT COALESCE(MAX("analysisVersion"), 0) FROM "AiJob")));
 ALTER TABLE "AiJob" ADD COLUMN IF NOT EXISTS "stagedMergedResult" TEXT;
 ALTER TABLE "AiJob" ADD COLUMN IF NOT EXISTS "validationResult" TEXT;
 ALTER TABLE "AiJob" ADD COLUMN IF NOT EXISTS "promotedAt" TIMESTAMP(3);

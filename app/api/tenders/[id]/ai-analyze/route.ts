@@ -764,8 +764,25 @@ async function handleStreamingAnalyze(
             const result = analyzeTender(tenderRecord);
             const diagnosticsLine = formatFallbackDiagnosticsLine(diagnostics);
             const providerDiagnostics = buildProviderDiagnosticsSnapshot();
-            if (analysisJob) {
-              await stageFallbackDraft(analysisJob.id, {
+            // When the AiJob was never created (rare transient DB failure on startup),
+            // create a minimal tracking record so the fallback draft can be staged
+            // rather than silently dropped.
+            let streamFallbackJobId = analysisJob?.id ?? null;
+            if (!streamFallbackJobId) {
+              try {
+                const emergencyFb = await prisma.aiJob.create({
+                  data: {
+                    tenderId: id, userId, jobType: "AI_ANALYZE", status: "RUNNING",
+                    startedAt: new Date(),
+                    input: JSON.stringify({ streamingEmergencyFallback: true, contentHash }),
+                  },
+                  select: { id: true },
+                });
+                streamFallbackJobId = emergencyFb.id;
+              } catch { /* accept silent drop as last resort */ }
+            }
+            if (streamFallbackJobId) {
+              await stageFallbackDraft(streamFallbackJobId, {
                 requirements: result.requirements,
                 summary: result.summary,
                 contentHash,
@@ -773,9 +790,12 @@ async function handleStreamingAnalyze(
                 completedChunks: 0,
                 totalChunks: Math.ceil(tenderContent.length / 50_000),
               });
+              // Do NOT set output here — preserveAiAnalyzeProgressOnFailure already
+              // wrote chunkResults into AiJob.output for resume; overwriting would
+              // destroy the saved chunk data.
               await prisma.aiJob.update({
-                where: { id: analysisJob.id },
-                data: { status: "FAILED", finishedAt: new Date(), output: JSON.stringify({ analysisSource: "REGEX_FALLBACK", analysisExtractionStatus: "REGEX_FALLBACK_FROM_WEAK_EXTRACTION", contentHash, diagnostics: diagnosticsLine }) },
+                where: { id: streamFallbackJobId },
+                data: { status: "FAILED", finishedAt: new Date() },
               }).catch(() => {});
             }
             analysisResult = { ai: false, fallback: true, analysisSource: "REGEX_FALLBACK", summary: result.summary, requirementCount: result.requirements.length, fallbackDiagnostics: diagnostics, providerDiagnostics, nextAction: "RETRY_AI_ANALYZE_OR_APPROVE_FALLBACK" };
@@ -801,7 +821,7 @@ async function handleStreamingAnalyze(
               data: { status: "FAILED", finishedAt: new Date(), output: JSON.stringify({ analysisSource: "REGEX_FALLBACK", analysisExtractionStatus: "REGEX_FALLBACK_FROM_WEAK_EXTRACTION", contentHash, diagnostics: diagnosticsLine }) },
             }).catch(() => {});
           }
-          analysisResult = { ai: false, fallback: false, analysisSource: "REGEX_FALLBACK", summary: result.summary, requirementCount: result.requirements.length, fallbackDiagnostics: diagnostics, providerDiagnostics: buildProviderDiagnosticsSnapshot() };
+          analysisResult = { ai: false, fallback: true, analysisSource: "REGEX_FALLBACK", summary: result.summary, requirementCount: result.requirements.length, fallbackDiagnostics: diagnostics, providerDiagnostics: buildProviderDiagnosticsSnapshot(), nextAction: "RETRY_AI_ANALYZE_OR_APPROVE_FALLBACK" };
         }
 
         await logAction({
@@ -1409,7 +1429,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           // canonical write as a last resort.
         }
       }
-      analysisResult = await runRegexFallback(undefined, buildAnalysisFallbackDiagnostics("No AI provider configured"));
+      analysisResult = await runRegexFallback("No AI provider configured", buildAnalysisFallbackDiagnostics("No AI provider configured"));
       if (nsJobIdForFallback) {
         await prisma.aiJob.update({
           where: { id: nsJobIdForFallback },

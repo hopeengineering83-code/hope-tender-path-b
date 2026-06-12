@@ -744,6 +744,7 @@ async function bootstrap(client: PrismaClient): Promise<void> {
   await client.$executeRawUnsafe(`ALTER TABLE "AiJob" ALTER COLUMN "analysisVersion" TYPE BIGINT USING "analysisVersion"::BIGINT`);
   await client.$executeRawUnsafe(`ALTER TABLE "AiJob" ALTER COLUMN "analysisVersion" SET DEFAULT nextval('"AiJob_analysisVersion_seq"')`);
   await client.$executeRawUnsafe(`ALTER SEQUENCE "AiJob_analysisVersion_seq" OWNED BY "AiJob"."analysisVersion"`);
+  await client.$executeRawUnsafe(`SELECT setval('"AiJob_analysisVersion_seq"', GREATEST(1, (SELECT COALESCE(MAX("analysisVersion"), 0) FROM "AiJob")))`);
   await client.$executeRawUnsafe(`ALTER TABLE "AiJob" ADD COLUMN IF NOT EXISTS "stagedMergedResult" TEXT`);
   await client.$executeRawUnsafe(`ALTER TABLE "AiJob" ADD COLUMN IF NOT EXISTS "validationResult" TEXT`);
   await client.$executeRawUnsafe(`ALTER TABLE "AiJob" ADD COLUMN IF NOT EXISTS "promotedAt" TIMESTAMPTZ`);
