@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getSession } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { getCanonicalTenderReadiness } from "../../../../../lib/canonical-tender-readiness";
+import { randomUUID } from "node:crypto";
 
 export const dynamic = "force-dynamic";
 
@@ -18,10 +19,31 @@ export async function GET(
   const userId = await getSession();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  await prismaReady;
   const { id: tenderId } = await params;
-  const readiness = await getCanonicalTenderReadiness(prisma, userId, tenderId);
-  if (!readiness) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
 
-  return NextResponse.json({ readiness });
+  try {
+    await prismaReady;
+    const readiness = await getCanonicalTenderReadiness(prisma, userId, tenderId);
+    if (!readiness) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
+
+    return NextResponse.json({ readiness });
+  } catch (error) {
+    const diagnosticId = randomUUID();
+    console.error("[readiness]", {
+      route: "/api/tenders/[id]/readiness",
+      tenderId,
+      diagnosticId,
+      errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+      message: error instanceof Error ? error.message : String(error),
+    });
+    return NextResponse.json({
+      error: "Readiness panel failed to load.",
+      panel: "readiness",
+      endpoint: "/api/tenders/[id]/readiness",
+      diagnosticId,
+      code: "READINESS_RUNTIME_ERROR",
+      retryable: true,
+      staleDataPossible: false,
+    }, { status: 500 });
+  }
 }
