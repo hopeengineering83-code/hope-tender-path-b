@@ -637,6 +637,10 @@ async function handleStreamingAnalyze(
               // and this write. If superseded, the tx returns without any writes.
               let streamPromoSuperseded = false;
               await prisma.$transaction(async (tx) => {
+                // Serialize all promotion attempts for this tender. The advisory
+                // lock prevents a concurrent run from inserting a higher-version
+                // AiJob between our version check and the canonical writes.
+                await tx.$queryRaw`SELECT pg_advisory_xact_lock(1, hashtext(${id}))`;
                 if (analysisJob) {
                   const currentVer = await tx.aiJob.findUnique({
                     where: { id: analysisJob.id },
@@ -1217,6 +1221,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           // Atomic TOCTOU guard: same pattern as streaming path.
           let nsPromoSuperseded = false;
           await prisma.$transaction(async (tx) => {
+            await tx.$queryRaw`SELECT pg_advisory_xact_lock(1, hashtext(${id}))`;
             if (analysisJob) {
               const currentVer = await tx.aiJob.findUnique({
                 where: { id: analysisJob.id },

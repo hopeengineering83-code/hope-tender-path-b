@@ -733,6 +733,23 @@ async function bootstrap(client: PrismaClient): Promise<void> {
     "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW()
   )`);
+  // Versioning/staging columns from migration 20260612000000_add_ai_job_versioning.
+  // ADD COLUMN IF NOT EXISTS is idempotent; mirrors migration SQL so fresh
+  // bootstrap databases and ENABLE_RUNTIME_SCHEMA_BOOTSTRAP=true deployments
+  // get the same schema as a migrated database.
+  await client.$executeRawUnsafe(`ALTER TABLE "AiJob" ADD COLUMN IF NOT EXISTS "runId" TEXT`);
+  await client.$executeRawUnsafe(`ALTER TABLE "AiJob" ADD COLUMN IF NOT EXISTS "analysisInputHash" TEXT`);
+  await client.$executeRawUnsafe(`CREATE SEQUENCE IF NOT EXISTS "AiJob_analysisVersion_seq"`);
+  await client.$executeRawUnsafe(`ALTER TABLE "AiJob" ADD COLUMN IF NOT EXISTS "analysisVersion" BIGINT NOT NULL DEFAULT 0`);
+  await client.$executeRawUnsafe(`ALTER TABLE "AiJob" ALTER COLUMN "analysisVersion" TYPE BIGINT USING "analysisVersion"::BIGINT`);
+  await client.$executeRawUnsafe(`ALTER TABLE "AiJob" ALTER COLUMN "analysisVersion" SET DEFAULT nextval('"AiJob_analysisVersion_seq"')`);
+  await client.$executeRawUnsafe(`ALTER SEQUENCE "AiJob_analysisVersion_seq" OWNED BY "AiJob"."analysisVersion"`);
+  await client.$executeRawUnsafe(`ALTER TABLE "AiJob" ADD COLUMN IF NOT EXISTS "stagedMergedResult" TEXT`);
+  await client.$executeRawUnsafe(`ALTER TABLE "AiJob" ADD COLUMN IF NOT EXISTS "validationResult" TEXT`);
+  await client.$executeRawUnsafe(`ALTER TABLE "AiJob" ADD COLUMN IF NOT EXISTS "promotedAt" TIMESTAMPTZ`);
+  await client.$executeRawUnsafe(`ALTER TABLE "AiJob" ADD COLUMN IF NOT EXISTS "promotedBy" TEXT`);
+  await client.$executeRawUnsafe(`ALTER TABLE "AiJob" ADD COLUMN IF NOT EXISTS "supersededBy" TEXT`);
+  await client.$executeRawUnsafe(`CREATE UNIQUE INDEX IF NOT EXISTS "AiJob_runId_key" ON "AiJob"("runId")`);
   await client.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "AiJobStep" (
     "id" TEXT NOT NULL PRIMARY KEY,
     "jobId" TEXT NOT NULL,
