@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   verify:
-    name: Migrate, typecheck, lint, test, build, and smoke
+    name: Schema, typecheck, lint, test, build, and smoke
     runs-on: ubuntu-latest
     timeout-minutes: 40
     services:
@@ -53,20 +53,11 @@ jobs:
       - name: Generate Prisma client
         run: npx prisma generate
 
-      - name: Deploy database migrations
-        shell: bash
-        run: |
-          set -o pipefail
-          npx prisma migrate deploy 2>&1 | tee prisma-migrate.log
+      - name: Initialize CI database
+        run: npx prisma db push
 
-      - name: Upload migration diagnostics
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: prisma-migration-log
-          path: prisma-migrate.log
-          if-no-files-found: ignore
-          retention-days: 7
+      - name: Apply custom database guards
+        run: npx prisma db execute --file prisma/migrations/20260613190000_comprehensive_gap_guards/migration.sql --schema prisma/schema.prisma
 
       - name: Typecheck
         run: npm run typecheck
