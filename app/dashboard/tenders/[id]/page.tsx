@@ -43,6 +43,7 @@ import { CanonicalReadinessScoreWidget } from "../../../../components/canonical-
 import { MetadataCompletionPanel } from "../../../../components/metadata-completion-panel";
 import RequirementCoveragePanel from "../../../../components/requirement-coverage-panel";
 import { TenderSourceFilesPanel } from "../../../../components/tender-source-files-panel";
+import { TenderDownloadActionsPanel } from "../../../../components/tender-download-actions-panel";
 
 function WorkflowStage({
   number,
@@ -207,6 +208,7 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
         <TenderSharePanel tenderId={tender.id} />
         <AuditTrailPanel tenderId={tender.id} />
       </WorkflowStage>
+      <TenderDownloadActionsPanel tenderId={tender.id} />
     </main>
   );
 }
