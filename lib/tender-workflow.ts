@@ -47,6 +47,11 @@ export const NEXT_STATUS: Partial<Record<TenderStatusValue, TenderStatusValue>> 
   ANALYZED: "MATCHED",
   AI_ANALYZED: "MATCHED",
   AI_ANALYSIS_PARTIAL: "MATCHED",
+  // Fallback states can advance to MATCHED after human review or re-analyze.
+  // Without these entries, tenders stuck in fallback states have no forward
+  // transition in the UI and the "Move to next stage" button is hidden.
+  FALLBACK_DRAFT_CREATED: "MATCHED",
+  ANALYSIS_REQUIRES_REVIEW: "MATCHED",
   MATCHED: "COMPLIANCE_REVIEW",
   COMPLIANCE_REVIEW: "READY_FOR_GENERATION",
   READY_FOR_GENERATION: "GENERATED",

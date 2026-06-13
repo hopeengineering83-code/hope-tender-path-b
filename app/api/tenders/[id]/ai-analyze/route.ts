@@ -400,7 +400,9 @@ async function handleStreamingAnalyze(
           await prisma.tender.update({
             where: { id },
             data: { status: "EXTRACTION_CORRUPTED_AI_SKIPPED", analysisExtractionStatus: "OCR_REQUIRED" },
-          }).catch(() => {});
+          }).catch((e: unknown) => {
+            console.error("[ai-analyze/stream] failed to persist EXTRACTION_CORRUPTED_AI_SKIPPED status:", e instanceof Error ? e.message : String(e));
+          });
           emit({ phase: "error", message: "AI analysis skipped: extracted tender text is corrupted/gibberish and requires OCR or re-upload before reliable analysis.", code: "EXTRACTION_CORRUPTED_AI_SKIPPED" });
           controller.close();
           return;
@@ -537,7 +539,9 @@ async function handleStreamingAnalyze(
 
         if (isAIEnabled()) {
           const onChunkStart = async ({ chunkIndex, totalChunks }: { chunkIndex: number; totalChunks: number }) => {
-            await upsertAnalyzeChunkStarted({ tenderId: id, userId, contentHash, chunkIndex, totalChunks }).catch(() => {});
+            await upsertAnalyzeChunkStarted({ tenderId: id, userId, contentHash, chunkIndex, totalChunks }).catch((e: unknown) => {
+              console.error("[ai-analyze/stream] checkpoint start write failed — chunk resume may retry this chunk:", e instanceof Error ? e.message : String(e));
+            });
           };
           const onChunkComplete = async ({
             completed,
@@ -553,7 +557,9 @@ async function handleStreamingAnalyze(
             provider?: string | null;
           }) => {
             if (typeof chunkIndex === "number" && result) {
-              await upsertAnalyzeChunkSucceeded({ tenderId: id, userId, contentHash, chunkIndex, totalChunks, result, provider }).catch(() => {});
+              await upsertAnalyzeChunkSucceeded({ tenderId: id, userId, contentHash, chunkIndex, totalChunks, result, provider }).catch((e: unknown) => {
+                console.error("[ai-analyze/stream] checkpoint succeeded write failed — chunk resume may retry this chunk:", e instanceof Error ? e.message : String(e));
+              });
             }
             if (analysisJob) {
               await prisma.aiJob.update({
@@ -561,7 +567,9 @@ async function handleStreamingAnalyze(
                 data: {
                   output: JSON.stringify(buildAiAnalyzePartialOutput(completed, totalChunks, contentHash)),
                 },
-              }).catch(() => {});
+              }).catch((e: unknown) => {
+                console.error("[ai-analyze/stream] AiJob partial output update failed (non-critical):", e instanceof Error ? e.message : String(e));
+              });
             }
           };
           const onChunkFailure = async ({
@@ -570,7 +578,9 @@ async function handleStreamingAnalyze(
             errorMessage,
             provider,
           }: { chunkIndex: number; totalChunks: number; errorMessage: string; provider?: string | null }) => {
-            await upsertAnalyzeChunkFailed({ tenderId: id, userId, contentHash, chunkIndex, totalChunks, errorMessage, provider }).catch(() => {});
+            await upsertAnalyzeChunkFailed({ tenderId: id, userId, contentHash, chunkIndex, totalChunks, errorMessage, provider }).catch((e: unknown) => {
+              console.error("[ai-analyze/stream] checkpoint failed write failed — chunk may be retried on resume:", e instanceof Error ? e.message : String(e));
+            });
           };
           try {
             const deadlineAt = Date.now() + SAFE_DEADLINE_MS;
@@ -735,7 +745,9 @@ async function handleStreamingAnalyze(
               }
             }
             analysisMeta = aiMeta;
-            void persistAllHealthToDb().catch(() => {});
+            void persistAllHealthToDb().catch((e: unknown) => {
+              console.error("[ai-analyze/stream] persistAllHealthToDb failed (non-critical):", e instanceof Error ? e.message : String(e));
+            });
 
             const fileQualitySnapshots = tenderRecord.files.map((f) => ({
               totalPages: (f as { totalPages?: number | null }).totalPages ?? null,
@@ -745,7 +757,9 @@ async function handleStreamingAnalyze(
               extractionScore: (f as { extractionScore?: number | null }).extractionScore ?? null,
             }));
             const extractionStatus = deriveExtractionStatus(fileQualitySnapshots);
-            void prisma.tender.update({ where: { id }, data: { analysisExtractionStatus: extractionStatus } }).catch(() => {});
+            await prisma.tender.update({ where: { id }, data: { analysisExtractionStatus: extractionStatus } }).catch((e: unknown) => {
+              console.error("[ai-analyze/stream] analysisExtractionStatus persist failed — generation gates may use stale status:", e instanceof Error ? e.message : String(e));
+            });
 
             analysisResult = {
               ai: true, fallback: false,
@@ -758,8 +772,9 @@ async function handleStreamingAnalyze(
             const msg = aiError instanceof Error ? aiError.message : String(aiError);
             const diagnostics = buildAnalysisFallbackDiagnostics(msg);
             console.error("[ai-analyze/stream] AI failed; regex fallback:", { category: diagnostics.category });
-            void persistAllHealthToDb().catch(() => {});
-
+            void persistAllHealthToDb().catch((e: unknown) => {
+              console.error("[ai-analyze/stream] persistAllHealthToDb (fallback) failed (non-critical):", e instanceof Error ? e.message : String(e));
+            });
             // Non-destructive: stage fallback result without touching canonical tender data.
             const result = analyzeTender(tenderRecord);
             const diagnosticsLine = formatFallbackDiagnosticsLine(diagnostics);
@@ -1150,7 +1165,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
         const deadlineAt = Date.now() + SAFE_DEADLINE_MS;
         const onChunkStartNonStream = async ({ chunkIndex, totalChunks }: { chunkIndex: number; totalChunks: number }) => {
-          await upsertAnalyzeChunkStarted({ tenderId: id, userId, contentHash, chunkIndex, totalChunks }).catch(() => {});
+          await upsertAnalyzeChunkStarted({ tenderId: id, userId, contentHash, chunkIndex, totalChunks }).catch((e: unknown) => {
+            console.error("[ai-analyze/non-stream] checkpoint start write failed — chunk resume may retry this chunk:", e instanceof Error ? e.message : String(e));
+          });
         };
         const onChunkCompleteNonStream = async ({
           completed,
@@ -1166,7 +1183,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           provider?: string | null;
         }) => {
           if (typeof chunkIndex === "number" && result) {
-            await upsertAnalyzeChunkSucceeded({ tenderId: id, userId, contentHash, chunkIndex, totalChunks, result, provider }).catch(() => {});
+            await upsertAnalyzeChunkSucceeded({ tenderId: id, userId, contentHash, chunkIndex, totalChunks, result, provider }).catch((e: unknown) => {
+              console.error("[ai-analyze/non-stream] checkpoint succeeded write failed — chunk resume may retry this chunk:", e instanceof Error ? e.message : String(e));
+            });
           }
           if (analysisJob) {
             await prisma.aiJob.update({
@@ -1174,7 +1193,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
               data: {
                 output: JSON.stringify(buildAiAnalyzePartialOutput(completed, totalChunks, contentHash)),
               },
-            }).catch(() => {});
+            }).catch((e: unknown) => {
+              console.error("[ai-analyze/non-stream] AiJob partial output update failed (non-critical):", e instanceof Error ? e.message : String(e));
+            });
           }
         };
         const onChunkFailureNonStream = async ({
@@ -1183,7 +1204,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           errorMessage,
           provider,
         }: { chunkIndex: number; totalChunks: number; errorMessage: string; provider?: string | null }) => {
-          await upsertAnalyzeChunkFailed({ tenderId: id, userId, contentHash, chunkIndex, totalChunks, errorMessage, provider }).catch(() => {});
+          await upsertAnalyzeChunkFailed({ tenderId: id, userId, contentHash, chunkIndex, totalChunks, errorMessage, provider }).catch((e: unknown) => {
+            console.error("[ai-analyze/non-stream] checkpoint failed write failed — chunk may be retried on resume:", e instanceof Error ? e.message : String(e));
+          });
         };
         let aiMeta: AnalysisWithMeta;
         try {
@@ -1373,10 +1396,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         analysisMeta = aiMeta;
         // Persist updated provider health to DB after analysis completes.
         // Fire-and-forget — never blocks the response.
-        void persistAllHealthToDb().catch(() => {});
+        void persistAllHealthToDb().catch((e: unknown) => {
+          console.error("[ai-analyze/non-stream] persistAllHealthToDb failed (non-critical):", e instanceof Error ? e.message : String(e));
+        });
 
-        // Compute and persist the extraction status so downstream gates
-        // (Generate Docs, Export) can inspect it without re-deriving.
+        // Compute and persist the extraction status synchronously so downstream
+        // gates (Generate Docs, Export) read the correct status immediately.
         const fileQualitySnapshots = tenderRecord.files.map((f) => ({
           totalPages: (f as { totalPages?: number | null }).totalPages ?? null,
           extractedPages: (f as { extractedPages?: number | null }).extractedPages ?? null,
@@ -1385,10 +1410,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           extractionScore: (f as { extractionScore?: number | null }).extractionScore ?? null,
         }));
         const extractionStatus = deriveExtractionStatus(fileQualitySnapshots);
-        void prisma.tender.update({
+        await prisma.tender.update({
           where: { id },
           data: { analysisExtractionStatus: extractionStatus },
-        }).catch(() => {});
+        }).catch((e: unknown) => {
+          console.error("[ai-analyze/non-stream] analysisExtractionStatus persist failed — generation gates may use stale status:", e instanceof Error ? e.message : String(e));
+        });
 
         analysisResult = {
           ai: true,
@@ -1403,7 +1430,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         const diagnostics = buildAnalysisFallbackDiagnostics(msg);
         console.error("AI analysis failed; deterministic fallback used:", { category: diagnostics.category, message: diagnostics.message });
         // Persist failure state so the next cold start knows which providers are cooling down.
-        void persistAllHealthToDb().catch(() => {});
+        void persistAllHealthToDb().catch((e: unknown) => {
+          console.error("[ai-analyze/non-stream] persistAllHealthToDb (fallback) failed (non-critical):", e instanceof Error ? e.message : String(e));
+        });
         analysisResult = await runRegexFallback(msg, diagnostics);
       }
     } else {
