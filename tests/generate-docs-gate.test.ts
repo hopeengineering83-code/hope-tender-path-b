@@ -658,3 +658,77 @@ describe("generate-missing-plan-files: gate 6 — submission plan must have been
     assert.equal(response.nextAction, "BUILD_SUBMISSION_PLAN");
   });
 });
+
+describe("generate/route.ts, export-readiness.ts, tender-generation-readiness.ts — as-any cast removal", () => {
+  it("generate route accesses procuringEntityName directly (no as-Record cast)", () => {
+    const { readFileSync } = require("node:fs");
+    const { resolve } = require("node:path");
+    const src = readFileSync(resolve(process.cwd(), "app/api/tenders/[id]/generate/route.ts"), "utf8");
+    assert.ok(
+      !src.includes('(tender as Record<string, unknown>).procuringEntityName'),
+      "generate route must not cast tender to Record to access procuringEntityName — route uses include so all scalars are available",
+    );
+    assert.ok(
+      !src.includes('(tender as Record<string, unknown>).legalClientName'),
+      "generate route must not cast tender to Record to access legalClientName",
+    );
+    assert.ok(
+      !src.includes('(tender as Record<string, unknown>).donorAgency'),
+      "generate route must not cast tender to Record to access donorAgency",
+    );
+    assert.ok(
+      !src.includes('(tender as Record<string, unknown>).implementingAgency'),
+      "generate route must not cast tender to Record to access implementingAgency",
+    );
+    assert.ok(
+      !src.includes('(tender as Record<string, unknown>).clientAddress'),
+      "generate route must not cast tender to Record to access clientAddress",
+    );
+  });
+
+  it("export-readiness.ts accesses procuringEntityName directly (no as-Record cast)", () => {
+    const { readFileSync } = require("node:fs");
+    const { resolve } = require("node:path");
+    const src = readFileSync(resolve(process.cwd(), "lib/engine/export-readiness.ts"), "utf8");
+    assert.ok(
+      !src.includes('(tender as Record<string, unknown>).procuringEntityName'),
+      "export-readiness must not cast tender to Record to access procuringEntityName — route uses include so all scalars are available",
+    );
+  });
+
+  it("tender-generation-readiness.ts has no _t = tender as Record workaround", () => {
+    const { readFileSync } = require("node:fs");
+    const { resolve } = require("node:path");
+    const src = readFileSync(resolve(process.cwd(), "lib/tender-generation-readiness.ts"), "utf8");
+    assert.ok(
+      !src.includes('tender as Record<string, unknown>'),
+      "tender-generation-readiness must not use as-Record cast on tender — route uses include so all scalars are available",
+    );
+    assert.ok(
+      !src.includes('const _t = tender'),
+      "tender-generation-readiness must not create _t workaround variable — access fields directly on tender",
+    );
+  });
+
+  it("tender-generation-readiness.ts assessTenderMetadataCompleteness call includes clientAddress, legalClientName, donorAgency, implementingAgency", () => {
+    const { readFileSync } = require("node:fs");
+    const { resolve } = require("node:path");
+    const src = readFileSync(resolve(process.cwd(), "lib/tender-generation-readiness.ts"), "utf8");
+    assert.ok(
+      src.includes("clientAddress: tender.clientAddress"),
+      "readiness fn must pass clientAddress to assessTenderMetadataCompleteness to mirror the generate gate",
+    );
+    assert.ok(
+      src.includes("legalClientName: tender.legalClientName"),
+      "readiness fn must pass legalClientName to assessTenderMetadataCompleteness to mirror the generate gate",
+    );
+    assert.ok(
+      src.includes("donorAgency: tender.donorAgency"),
+      "readiness fn must pass donorAgency to assessTenderMetadataCompleteness to mirror the generate gate",
+    );
+    assert.ok(
+      src.includes("implementingAgency: tender.implementingAgency"),
+      "readiness fn must pass implementingAgency to assessTenderMetadataCompleteness to mirror the generate gate",
+    );
+  });
+});
