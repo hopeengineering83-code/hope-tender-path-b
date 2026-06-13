@@ -16,7 +16,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.ref || 'codex/solve-audited-app-gaps' }}
-          fetch-depth: 0
+          fetch-depth: 1
 
       - uses: actions/setup-node@v4
         with:
@@ -33,10 +33,10 @@ jobs:
         run: python scripts/patch-ui-ci.py
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --silent
 
       - name: Generate Prisma client
-        run: npx prisma generate
+        run: npx prisma generate >/dev/null
 
       - name: Typecheck
         run: npm run typecheck
