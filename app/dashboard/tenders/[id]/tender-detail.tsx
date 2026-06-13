@@ -514,6 +514,11 @@ function ComplianceGapsPanel({ tenderId, initialGaps }: { tenderId: string; init
   );
 }
 
+function resolveResumeState(data: { jobId?: string | null; chunks?: { isPartial?: boolean } | null; nextAction?: string | null }) {
+  if (data.chunks?.isPartial && data.jobId) return { keep: true, jobId: data.jobId };
+  return { keep: false, jobId: null };
+}
+
 export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; aiEnabled?: boolean }) {
   const router = useRouter();
   const [tender, setTender] = useState(initial);
@@ -831,7 +836,9 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
         extractionWarnings: Array.isArray(data.extractionWarnings) ? data.extractionWarnings : null,
         providerDiagnostics: data.providerDiagnostics ?? null,
       });
-      if (data.jobId) setContinueJobId(data.jobId);
+      const resumeResolution = resolveResumeState(data);
+      if (resumeResolution.keep) { setContinueJobId(resumeResolution.jobId); }
+      else { setContinueJobId(null); setTender((t) => ({ ...t, latestPartialAnalysisJob: null })); }
       router.refresh();
     } catch { setError("Analysis failed"); }
     finally { setAnalyzing(false); stopAnalyzeProgress(); }
@@ -946,7 +953,9 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
         extractionWarnings: Array.isArray(data.extractionWarnings) ? data.extractionWarnings : null,
         providerDiagnostics: data.providerDiagnostics ?? null,
       });
-      if (data.jobId) setContinueJobId(data.jobId);
+      const resumeResolution = resolveResumeState(data);
+      if (resumeResolution.keep) { setContinueJobId(resumeResolution.jobId); }
+      else { setContinueJobId(null); setTender((t) => ({ ...t, latestPartialAnalysisJob: null })); }
       if (data.tender) setTender((cur) => ({ ...cur, ...data.tender }));
       router.refresh();
     } catch { setError("Continue analysis failed"); }

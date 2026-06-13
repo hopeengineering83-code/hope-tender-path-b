@@ -746,6 +746,30 @@ async function bootstrap(client: PrismaClient): Promise<void> {
     FOREIGN KEY ("jobId") REFERENCES "AiJob"("id") ON DELETE CASCADE
   )`);
 
+  // ─── AiAnalyzeChunk (checkpoint/resume table) ─────────────────────────
+  // Mirrors migration 20260611000000_add_ai_analyze_chunks exactly so that
+  // runtime-bootstrapped databases (no Prisma migrate) can persist chunk
+  // results and resume interrupted AI Analyze runs from the correct chunk.
+  await client.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "AiAnalyzeChunk" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "tenderId" TEXT NOT NULL,
+    "userId" TEXT NOT NULL,
+    "contentHash" TEXT NOT NULL,
+    "chunkIndex" INTEGER NOT NULL,
+    "totalChunks" INTEGER NOT NULL,
+    "status" TEXT NOT NULL DEFAULT 'QUEUED',
+    "provider" TEXT,
+    "resultJson" TEXT,
+    "errorMessage" TEXT,
+    "startedAt" TIMESTAMPTZ,
+    "finishedAt" TIMESTAMPTZ,
+    "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`);
+  await client.$executeRawUnsafe(`CREATE UNIQUE INDEX IF NOT EXISTS "AiAnalyzeChunk_tenderId_userId_contentHash_chunkIndex_key" ON "AiAnalyzeChunk"("tenderId", "userId", "contentHash", "chunkIndex")`);
+  await client.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "AiAnalyzeChunk_tenderId_userId_contentHash_idx" ON "AiAnalyzeChunk"("tenderId", "userId", "contentHash")`);
+  await client.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "AiAnalyzeChunk_status_idx" ON "AiAnalyzeChunk"("status")`);
+
   // ─── Pricing engine (G8) ───────────────────────────────────────────────
   // PricingWorkbook (one per tender) + CostLine rows. Replaces ad-hoc
   // commercial assumptions with a real pricing workbook the export gate
