@@ -1,5 +1,5 @@
 import type { PrismaClient } from "@prisma/client";
-import { getTenderGenerationReadiness } from "./tender-generation-readiness";
+import { getTenderGenerationReadinessStrict } from "./tender-generation-readiness-strict";
 import { assessMatchingQuality } from "./matching-quality";
 import { getCompanyIngestionReadiness } from "./company-ingestion-readiness";
 import { buildSubmissionPlanWithDerivedFallback, findMissingGeneratedDocuments } from "./engine/submission-plan";
@@ -22,7 +22,7 @@ export type CanonicalTenderReadiness = {
 };
 
 export async function getCanonicalTenderReadiness(client: PrismaClient, userId: string, tenderId: string): Promise<CanonicalTenderReadiness | null> {
-  const readiness = await getTenderGenerationReadiness(client, userId, tenderId);
+  const readiness = await getTenderGenerationReadinessStrict(client, userId, tenderId);
   if (!readiness) return null;
 
   const tender = await client.tender.findFirst({
