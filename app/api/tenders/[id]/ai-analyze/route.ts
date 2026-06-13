@@ -16,6 +16,7 @@ import { buildAnalysisFallbackDiagnostics, formatFallbackDiagnosticsLine, type A
 import { buildProviderDiagnosticsSnapshot } from "../../../../../lib/ai-provider-health";
 import { restoreHealthFromDb, persistAllHealthToDb } from "../../../../../lib/ai-provider-health-db";
 import { safeParseJsonObject } from "../../../../../lib/safe-json";
+import { formatTenderFileAnalysisMarker } from "../../../../../lib/engine/requirement-source-linkage";
 import {
   AiAnalyzeCheckpointPersistenceError,
   clearAnalyzeCheckpoints,
@@ -431,8 +432,8 @@ async function handleStreamingAnalyze(
         // Build tender content (same logic as non-streaming path)
         const fileTexts = tenderRecord.files
           .map((f) => f.extractedText
-            ? `[FILE: ${f.originalFileName}]\n${extractRelevantSections(stripExtractionHeader(f.extractedText), MAX_FILE_CHARS_FOR_AI_ANALYSIS)}`
-            : `[FILE: ${f.originalFileName} ${f.classification ?? ""}]`)
+            ? `${formatTenderFileAnalysisMarker(f)}\n${extractRelevantSections(stripExtractionHeader(f.extractedText), MAX_FILE_CHARS_FOR_AI_ANALYSIS)}`
+            : `${formatTenderFileAnalysisMarker(f)} ${f.classification ?? ""}`)
           .join("\n\n");
 
         const companyContext = company?.documents?.length
@@ -672,8 +673,9 @@ async function handleStreamingAnalyze(
                       pageLimit: req.pageLimit ?? null, restrictions: req.restrictions ?? null,
                       sectionReference: req.sectionReference ?? null, sourceSectionHeading: req.sectionReference ?? null,
                       sourcePageNumber: req.sourcePage ?? null, sourceExactQuote: req.sourceQuote ?? null,
-                      sourceExtractionMethod: effectiveExtractionMethod,
-                      sourceConfidence: typeof req.sourcePage === "number" && req.sourcePage > 0 ? 0.8 : (typeof req.sourceQuote === "string" && req.sourceQuote.trim().length > 10 ? 0.7 : 0),
+                      sourceTenderFileId: req.sourceFileToken ?? null,
+                      sourceExtractionMethod: req.sourceExtractionMethod ?? effectiveExtractionMethod,
+                      sourceConfidence: req.sourceConfidence ?? (typeof req.sourcePage === "number" && req.sourcePage > 0 ? 0.8 : (typeof req.sourceQuote === "string" && req.sourceQuote.trim().length > 10 ? 0.7 : 0)),
                     },
                   });
                 }
@@ -1075,8 +1077,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       try {
         const fileTexts = tenderRecord.files
           .map((f) => f.extractedText
-            ? `[FILE: ${f.originalFileName}]\n${extractRelevantSections(stripExtractionHeader(f.extractedText), MAX_FILE_CHARS_FOR_AI_ANALYSIS)}`
-            : `[FILE: ${f.originalFileName} ${f.classification ?? ""}]`)
+            ? `${formatTenderFileAnalysisMarker(f)}\n${extractRelevantSections(stripExtractionHeader(f.extractedText), MAX_FILE_CHARS_FOR_AI_ANALYSIS)}`
+            : `${formatTenderFileAnalysisMarker(f)} ${f.classification ?? ""}`)
           .join("\n\n");
 
         const companyContext = company?.documents?.length
@@ -1302,8 +1304,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
                   sourceSectionHeading: req.sectionReference ?? null,
                   sourcePageNumber: req.sourcePage ?? null,
                   sourceExactQuote: req.sourceQuote ?? null,
-                  sourceExtractionMethod: effectiveExtractionMethodNonStreaming,
-                  sourceConfidence: typeof req.sourcePage === "number" && req.sourcePage > 0 ? 0.8 : (typeof req.sourceQuote === "string" && req.sourceQuote.trim().length > 10 ? 0.7 : 0),
+                  sourceTenderFileId: req.sourceFileToken ?? null,
+                  sourceExtractionMethod: req.sourceExtractionMethod ?? effectiveExtractionMethodNonStreaming,
+                  sourceConfidence: req.sourceConfidence ?? (typeof req.sourcePage === "number" && req.sourcePage > 0 ? 0.8 : (typeof req.sourceQuote === "string" && req.sourceQuote.trim().length > 10 ? 0.7 : 0)),
                 },
               });
             }
@@ -1471,9 +1474,20 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
             select: { id: true },
           });
           nsJobIdForFallback = noAiJob.id;
-        } catch {
-          // Job creation failed — runRegexFallback falls back to the legacy
-          // canonical write as a last resort.
+        } catch (jobCreateError) {
+          // Job creation failed — throw so canonical requirements are preserved.
+          // The legacy deleteMany/canonical-write path must never run when job
+          // tracking is unavailable: it would destroy trusted canonical state.
+          throw new AiAnalyzeCheckpointPersistenceError(
+            "stageFallbackDraft",
+            crypto.randomUUID(),
+            id,
+            null,
+            "no-job",
+            jobCreateError instanceof Error
+              ? jobCreateError
+              : new Error("AI Analyze could not create a staging job; canonical requirements were preserved."),
+          );
         }
       }
       analysisResult = await runRegexFallback("No AI provider configured", buildAnalysisFallbackDiagnostics("No AI provider configured"));
