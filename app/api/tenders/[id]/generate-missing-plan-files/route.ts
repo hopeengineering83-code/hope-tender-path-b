@@ -210,7 +210,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   }
 
   // Gate 2: Client/procuring entity must be present and not contaminated
-  if ((tender as any).metadataContaminated) {
+  if (tender.metadataContaminated) {
     return NextResponse.json({
       success: false, ok: false,
       code: "METADATA_CONTAMINATED",
@@ -218,7 +218,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       nextAction: "EDIT_TENDER_METADATA",
     }, { status: 422 });
   }
-  const clientDisplayName = (tender as any).clientName || (tender as any).procuringEntityName;
+  const clientDisplayName = tender.clientName || tender.procuringEntityName;
   if (!clientDisplayName) {
     return NextResponse.json({
       success: false, ok: false,

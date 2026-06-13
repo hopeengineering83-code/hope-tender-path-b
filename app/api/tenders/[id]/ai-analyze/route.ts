@@ -9,7 +9,7 @@ import { rateLimit, AI_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import { extractRequestId } from "../../../../../lib/request-id";
 import { createNotification } from "../../../../../lib/notifications";
 import { assessExtractionQuality } from "../../../../../lib/extraction-quality";
-import { deriveExtractionStatus, isExtractionCorrupted, type TenderFileQuality } from "../../../../../lib/engine/extraction-quality-gate";
+import { deriveExtractionStatus, isExtractionCorrupted, type ExtractionStatus, type TenderFileQuality } from "../../../../../lib/engine/extraction-quality-gate";
 import { detectMetadataContamination } from "../../../../../lib/engine/tender-metadata-completeness";
 import { isValidClientContact, containsMetadataPlaceholder, isValidCountry, isValidReferenceNumber } from "../../../../../lib/engine/metadata-validators";
 import { buildAnalysisFallbackDiagnostics, formatFallbackDiagnosticsLine, type AnalysisFallbackDiagnostics } from "../../../../../lib/engine/analysis-fallback-diagnostics";
@@ -756,7 +756,16 @@ async function handleStreamingAnalyze(
               failedPages: (f as { failedPages?: number | null }).failedPages ?? null,
               extractionScore: (f as { extractionScore?: number | null }).extractionScore ?? null,
             }));
-            const extractionStatus = deriveExtractionStatus(fileQualitySnapshots);
+            const rawExtractionStatus = deriveExtractionStatus(fileQualitySnapshots);
+            // When AI analysis was only partial (some chunks failed or the deadline
+            // was reached before all chunks completed), cap the persisted status to
+            // PARTIAL so downstream gates (Generate Docs, Export) cannot treat an
+            // incomplete analysis result as a full trusted analysis — even if the
+            // files themselves were perfectly extracted.
+            const extractionStatus: ExtractionStatus =
+              aiMeta.isPartial && rawExtractionStatus === "FULL_EXTRACTION_AI_ANALYZED"
+                ? "PARTIAL_EXTRACTION_AI_ANALYZED"
+                : rawExtractionStatus;
             await prisma.tender.update({ where: { id }, data: { analysisExtractionStatus: extractionStatus } }).catch((e: unknown) => {
               console.error("[ai-analyze/stream] analysisExtractionStatus persist failed — generation gates may use stale status:", e instanceof Error ? e.message : String(e));
             });
@@ -1409,7 +1418,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           failedPages: (f as { failedPages?: number | null }).failedPages ?? null,
           extractionScore: (f as { extractionScore?: number | null }).extractionScore ?? null,
         }));
-        const extractionStatus = deriveExtractionStatus(fileQualitySnapshots);
+        const rawExtractionStatus = deriveExtractionStatus(fileQualitySnapshots);
+        // When AI analysis was only partial (some chunks failed or the deadline
+        // was reached before all chunks completed), cap the persisted status to
+        // PARTIAL so downstream gates (Generate Docs, Export) cannot treat an
+        // incomplete analysis result as a full trusted analysis — even if the
+        // files themselves were perfectly extracted.
+        const extractionStatus: ExtractionStatus =
+          aiMeta.isPartial && rawExtractionStatus === "FULL_EXTRACTION_AI_ANALYZED"
+            ? "PARTIAL_EXTRACTION_AI_ANALYZED"
+            : rawExtractionStatus;
         await prisma.tender.update({
           where: { id },
           data: { analysisExtractionStatus: extractionStatus },

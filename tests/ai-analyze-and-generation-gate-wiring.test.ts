@@ -300,6 +300,41 @@ describe("proposal quality score improvement — Bid-Team stubs penalised on aiT
   });
 });
 
+describe("partial AI analysis caps analysisExtractionStatus to PARTIAL_EXTRACTION_AI_ANALYZED", () => {
+  const source = readFileSync("app/api/tenders/[id]/ai-analyze/route.ts", "utf8");
+
+  it("imports ExtractionStatus type for compile-time safety", () => {
+    assert.match(source, /type ExtractionStatus/);
+  });
+
+  it("streaming path: downgrades FULL to PARTIAL when aiMeta.isPartial is true", () => {
+    // The fix must NOT simply persist the raw deriveExtractionStatus() return;
+    // when isPartial is true the status must be capped at PARTIAL_EXTRACTION_AI_ANALYZED.
+    assert.match(
+      source,
+      /aiMeta\.isPartial\s*&&\s*rawExtractionStatus\s*===\s*"FULL_EXTRACTION_AI_ANALYZED"\s*\?/,
+      "streaming path must check aiMeta.isPartial before persisting extraction status",
+    );
+  });
+
+  it("non-streaming path: downgrades FULL to PARTIAL when aiMeta.isPartial is true", () => {
+    // The same cap must exist in the non-streaming path.
+    // We verify by counting occurrences — at least 2 (one per code path).
+    const matches = source.match(/aiMeta\.isPartial\s*&&\s*rawExtractionStatus\s*===\s*"FULL_EXTRACTION_AI_ANALYZED"/g);
+    assert.ok(matches && matches.length >= 2, "both streaming and non-streaming paths must cap partial AI status");
+  });
+
+  it("generate-missing-plan-files route no longer uses (tender as any) for contamination check", () => {
+    const genSource = readFileSync("app/api/tenders/[id]/generate-missing-plan-files/route.ts", "utf8");
+    assert.doesNotMatch(genSource, /\(tender as any\)\.metadataContaminated/);
+    assert.doesNotMatch(genSource, /\(tender as any\)\.clientName/);
+    assert.doesNotMatch(genSource, /\(tender as any\)\.procuringEntityName/);
+    assert.match(genSource, /tender\.metadataContaminated/);
+    assert.match(genSource, /tender\.clientName/);
+    assert.match(genSource, /tender\.procuringEntityName/);
+  });
+});
+
 describe("authority review gate blocks download route", () => {
   const source = readFileSync("app/api/tenders/[id]/download/route.ts", "utf8");
   it("imports runAuthorityReview", () => { assert.match(source, /runAuthorityReview/); });
