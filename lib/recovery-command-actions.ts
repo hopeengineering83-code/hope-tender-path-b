@@ -91,8 +91,9 @@ export const RECOVERY_COMMAND_ACTIONS: Record<string, RecoveryCommandActionSpec>
   },
   LINK_VAULT_EVIDENCE: {
     label: "Link Vault Evidence",
-    kind: "custom",
-    path: "/api/tenders/{tenderId}/link-vault-evidence",
+    kind: "api",
+    method: "POST",
+    path: "/api/tenders/{tenderId}/link-vault-evidence-auto",
   },
   GENERATE_REQUIRED_DOCUMENTS: {
     label: "Generate Missing Planned Docs",

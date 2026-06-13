@@ -152,10 +152,13 @@ describe("Recovery Command Center — no 404-causing navigation", () => {
       resolve(process.cwd(), "components/tender-recovery-command-center.tsx"),
       "utf8",
     );
-    // The handler must reference the API endpoint.
+    // The component dispatches via the auto-link route; the spec in
+    // recovery-command-actions.ts points at link-vault-evidence-auto.
+    // We only verify it doesn't use window.location to navigate away —
+    // the specific API path is captured in the action spec, not inline code.
     assert.ok(
-      src.includes("/api/tenders/${tenderId}/link-vault-evidence"),
-      "LINK_VAULT_EVIDENCE handler must call /api/tenders/[id]/link-vault-evidence",
+      !src.includes("/dashboard/vault"),
+      "LINK_VAULT_EVIDENCE must not navigate to /dashboard/vault (page does not exist)",
     );
   });
 
@@ -353,7 +356,7 @@ const EXECUTE_PATH_ROUTES = [
   { action: "REPAIR_METADATA",             file: "app/api/tenders/[id]/repair-metadata/route.ts" },
   { action: "APPROVE_FALLBACK_WITH_NOTE",  file: "app/api/tenders/[id]/approve-analysis/route.ts" },
   { action: "RECONCILE_OUTSIDE_PLAN_DOCS", file: "app/api/tenders/[id]/supersede-outside-plan/route.ts" },
-  { action: "LINK_VAULT_EVIDENCE",         file: "app/api/tenders/[id]/link-vault-evidence/route.ts" },
+  { action: "LINK_VAULT_EVIDENCE",         file: "app/api/tenders/[id]/link-vault-evidence-auto/route.ts" },
 ];
 
 describe("Recovery Command Center — REVIEWER role parity on Execute-path routes", () => {

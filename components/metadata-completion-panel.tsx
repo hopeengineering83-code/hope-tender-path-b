@@ -179,6 +179,20 @@ export function MetadataCompletionPanel({ tenderId }: { tenderId: string }) {
   const invalidFindings = report?.invalidFields ?? [];
   const hasCritical = criticalFindings.length > 0 || invalidFindings.length > 0;
 
+  // Contamination detection: flag invalid client/entity fields as a prominent warning
+  const CLIENT_FIELDS = ["clientName", "procuringEntityName", "clientContactName", "submissionEmail", "submissionAddress"];
+  const contaminatedFields = invalidFindings.filter(
+    (f) => CLIENT_FIELDS.some((cf) => f.field.toLowerCase().includes(cf.toLowerCase()) || f.reason.toLowerCase().includes("contaminat") || f.reason.toLowerCase().includes("conflict") || f.reason.toLowerCase().includes("placeholder"))
+  );
+  const hasContaminatedClientFields = contaminatedFields.length > 0;
+
+  // Client name conflict: multiple override values for client-name fields
+  const clientNameOverrides = overrides.filter((o) =>
+    CLIENT_FIELDS.some((cf) => o.field.toLowerCase().includes(cf.toLowerCase()))
+  );
+  const hasClientNameConflict = clientNameOverrides.length > 1 &&
+    new Set(clientNameOverrides.map((o) => (o.overrideValue ?? "").toLowerCase().trim()).filter(Boolean)).size > 1;
+
   if (!hasCritical && nonCriticalFindings.length === 0 && notApplicableFindings.length === 0 && overrides.length === 0) {
     return (
       <section className="mb-4 rounded-2xl border border-emerald-200 bg-emerald-50 p-5 text-sm text-emerald-700">
@@ -302,6 +316,36 @@ export function MetadataCompletionPanel({ tenderId }: { tenderId: string }) {
 
       {saveMsg && (
         <p className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-2 text-xs text-slate-700">{saveMsg}</p>
+      )}
+
+      {hasContaminatedClientFields && (
+        <div className="mt-3 rounded-lg border border-red-300 bg-red-50 p-3 text-xs">
+          <p className="font-semibold text-red-800">⚠ Contaminated client/entity field(s) detected</p>
+          <p className="mt-1 text-red-700">
+            The following fields may contain portal navigation text, unrelated tender alerts, or placeholder values —
+            generation is blocked until each is corrected or confirmed:
+          </p>
+          <ul className="mt-1 list-disc space-y-0.5 pl-4 text-red-700">
+            {contaminatedFields.map((f) => (
+              <li key={f.field}><strong>{f.field}</strong> — {f.reason}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {hasClientNameConflict && (
+        <div className="mt-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs">
+          <p className="font-semibold text-amber-800">⚠ Multiple conflicting client name values</p>
+          <p className="mt-1 text-amber-700">
+            More than one client-related field has been overridden with different values. Verify which is the procuring entity,
+            project owner, funder/donor, and implementing agency — do not merge distinct organisations into a single field.
+          </p>
+          <ul className="mt-1 list-disc space-y-0.5 pl-4 text-amber-700">
+            {clientNameOverrides.map((o) => (
+              <li key={o.id}><strong>{o.field}</strong>: &ldquo;{o.overrideValue ?? "(blank)"}&rdquo;</li>
+            ))}
+          </ul>
+        </div>
       )}
 
       {hasCritical && (

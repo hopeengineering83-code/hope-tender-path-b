@@ -469,7 +469,23 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
                               &ldquo;{row.sourceExactQuote.slice(0, 200)}{row.sourceExactQuote.length > 200 ? "…" : ""}&rdquo;
                             </blockquote>
                           )}
-                          <div className="text-gray-400">Confidence: {Math.round(row.sourceConfidence * 100)}%</div>
+                          {(() => {
+                            const pct = Math.round((row.sourceConfidence ?? 0) * 100);
+                            const cls = pct >= 70
+                              ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                              : pct >= 40
+                                ? "bg-amber-50 text-amber-700 border-amber-200"
+                                : "bg-red-50 text-red-700 border-red-200";
+                            const label = pct >= 70 ? "high" : pct >= 40 ? "med" : "low";
+                            return (
+                              <span
+                                className={`inline-flex items-center rounded border px-1 py-0.5 text-[9px] font-medium ${cls}`}
+                                title="Source confidence: how reliably this requirement was traced to the tender document"
+                              >
+                                {pct}% conf ({label})
+                              </span>
+                            );
+                          })()}
                         </div>
                       ) : (
                         <p className="text-xs text-amber-700">⚠ No source reference recorded. Run source extraction or add manually.</p>

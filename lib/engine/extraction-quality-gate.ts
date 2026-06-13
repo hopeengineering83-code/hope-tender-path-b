@@ -206,13 +206,25 @@ export type ExtractionCoverageReport = {
 export type TenderFileQuality = ExtractionFileMetrics;
 
 // ── thresholds ───────────────────────────────────────────────────────────────
-const FULL_EXTRACTION_MIN_SCORE = 80;
-const PARTIAL_EXTRACTION_MIN_SCORE = 60;
-const WEAK_MIN_SCORE = 40;
-const CRITICALLY_FAILED_SCORE = 40;
+/** Score at/above which extraction is considered fully reliable for AI Analyze. */
+export const EXTRACTION_SCORE_GOOD_THRESHOLD = 80;
+/** Score at/above which extraction is considered partial but usable for draft. */
+export const EXTRACTION_SCORE_WARN_THRESHOLD = 60;
+/** Score below this blocks Build Plan and Generate Docs. */
+export const EXTRACTION_SCORE_BLOCK_THRESHOLD = 40;
+/** sourceConfidence at/above this is considered high-confidence traceability. */
+export const SOURCE_CONFIDENCE_HIGH = 0.7;
+/** sourceConfidence at/above this is considered acceptable traceability. */
+export const SOURCE_CONFIDENCE_ACCEPTABLE = 0.4;
+
+const FULL_EXTRACTION_MIN_SCORE = EXTRACTION_SCORE_GOOD_THRESHOLD;
+const PARTIAL_EXTRACTION_MIN_SCORE = EXTRACTION_SCORE_WARN_THRESHOLD;
+const WEAK_MIN_SCORE = EXTRACTION_SCORE_BLOCK_THRESHOLD;
+const CRITICALLY_FAILED_SCORE = EXTRACTION_SCORE_BLOCK_THRESHOLD;
 // Aligned with CRITICALLY_FAILED_SCORE so export cannot proceed on extraction
 // quality that would have blocked generation. A 20-point gap allowed "ready for
 // export" verdicts on visibly weak extraction — closing that gap here.
+// Keep the literal 40 so static-audit tests can grep for the canonical value.
 const EXPORT_BLOCK_SCORE = 40;
 
 function averageScore(files: ExtractionFileMetrics[]): number | null {

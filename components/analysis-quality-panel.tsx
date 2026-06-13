@@ -7,6 +7,7 @@ import { ensureCompanyForUser } from "../lib/company-workspace";
 import { getCompanyIngestionReadiness } from "../lib/company-ingestion-readiness";
 import { detectAnalysisSourceWithApproval } from "../lib/engine/analysis-source";
 import { inferSector } from "../lib/engine/proposal-intelligence";
+import { statusToSeverity, severityBadgeClasses, severityBgClass, severityBorderClass, severityTextClass, scoreToSeverity } from "../lib/ui-tokens";
 
 function analysisSourceSummary(source: Awaited<ReturnType<typeof detectAnalysisSourceWithApproval>>) {
   if (source === "AI") return { label: "AI", risk: "LOW" as const, detail: "Analysis produced by AI provider." };
@@ -93,15 +94,17 @@ export async function AnalysisQualityPanel({ tenderId }: { tenderId: string }) {
   const ready = quality.severity !== "POOR" && quality.severity !== "UNSAFE" && analysisSource.risk === "LOW" && !fallbackOnly;
   const sectorProbeText = [tender.analysisSummary, tender.intakeSummary, tender.notes, tender.title, tender.description].filter(Boolean).join("\n\n");
   const detectedSector = sectorProbeText.trim().length > 20 ? inferSector(sectorProbeText) : null;
-  const sourceRiskClass = analysisSource.risk === "LOW" && !fallbackOnly ? "bg-emerald-100 text-emerald-700" : analysisSource.risk === "HIGH" || untrustedStatus ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-700";
+  const sourceSev = statusToSeverity(fallbackOnly ? (analysisSource.risk === "HIGH" || untrustedStatus ? "HIGH" : "MEDIUM") : "GOOD");
+  const sourceRiskClass = `${severityBgClass(sourceSev).replace("-50", "-100")} ${severityTextClass(sourceSev)}`;
   const severityClass: Record<string, string> = {
     GOOD: fallbackOnly ? "bg-amber-100 text-amber-800" : "bg-emerald-100 text-emerald-700",
     WARNING: "bg-amber-100 text-amber-700",
     POOR: "bg-red-100 text-red-700",
     UNSAFE: "bg-red-200 text-red-800",
   };
-  const sectionClass = ready ? "border-green-200 bg-green-50" : fallbackOnly ? "border-amber-200 bg-amber-50" : "border-red-200 bg-red-50";
-  const headerTone = ready ? "text-green-700" : fallbackOnly ? "text-amber-700" : "text-red-700";
+  const sectionSev = ready ? "good" as const : fallbackOnly ? "warning" as const : "poor" as const;
+  const sectionClass = `${severityBorderClass(sectionSev)} ${severityBgClass(sectionSev)}`;
+  const headerTone = severityTextClass(sectionSev);
 
   return (
     <section className={`mb-4 rounded-2xl border p-5 shadow-sm ${sectionClass}`}>
@@ -139,7 +142,7 @@ export async function AnalysisQualityPanel({ tenderId }: { tenderId: string }) {
             matchingReadiness: "Matching",
             sourceGrounding: "Grounding",
           };
-          const color = val >= 70 && !fallbackOnly ? "text-emerald-700" : val >= 40 ? "text-amber-700" : "text-red-700";
+          const color = severityTextClass(fallbackOnly ? "warning" : scoreToSeverity(val, { good: 70, warn: 40 }));
           return (
             <div key={key} className="rounded-lg bg-white/70 px-2 py-1.5 text-center">
               <p className="text-[10px] text-slate-500">{label[key] ?? key}</p>
