@@ -9,9 +9,9 @@ on:
 
 jobs:
   build:
-    name: Typecheck, test, and build
+    name: Typecheck, lint, test, e2e, and build
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
 
     steps:
       - name: Checkout
@@ -32,12 +32,29 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      - name: Lint
+        run: npm run lint
+
       - name: Test (unit)
         run: npm test
 
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Test (Playwright smoke)
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL || 'postgresql://ci:ci@127.0.0.1:5432/ci' }}
+          SESSION_SECRET: ${{ secrets.SESSION_SECRET || 'ci-e2e-placeholder-not-used-at-runtime-abcdef0123456789' }}
+          NEXTAUTH_SECRET: ${{ secrets.NEXTAUTH_SECRET || 'ci-nextauth-placeholder' }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY || 'AIzaFakeCiE2EKeyNotUsedAtRuntime12345678901' }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          PLAYWRIGHT_BASE_URL: http://127.0.0.1:3000
+          E2E_FULL_AUTH: 'false'
+        run: npm run test:e2e
+
       - name: Build
         env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL || 'postgresql://ci:ci@localhost:5432/ci' }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL || 'postgresql://ci:ci@127.0.0.1:5432/ci' }}
           SESSION_SECRET: ${{ secrets.SESSION_SECRET || 'ci-build-only-placeholder-not-used-at-runtime-abcdef0123456789' }}
           NEXTAUTH_SECRET: ${{ secrets.NEXTAUTH_SECRET || 'ci-nextauth-placeholder' }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY || 'AIzaFakeCiBuildKeyNotUsedAtRuntime12345678901' }}
