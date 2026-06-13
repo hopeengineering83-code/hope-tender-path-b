@@ -17,6 +17,7 @@ import { buildProviderDiagnosticsSnapshot } from "../../../../../lib/ai-provider
 import { restoreHealthFromDb, persistAllHealthToDb } from "../../../../../lib/ai-provider-health-db";
 import { safeParseJsonObject } from "../../../../../lib/safe-json";
 import {
+  AiAnalyzeCheckpointPersistenceError,
   clearAnalyzeCheckpoints,
   clearAnalyzeCheckpointsForContentHashMismatch,
   getCompletedChunkResults,
@@ -1472,6 +1473,17 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       extractionWarnings: extractionReports.filter((item) => item.quality.severity === "WARNING"),
     });
   } catch (error) {
+    if (error instanceof AiAnalyzeCheckpointPersistenceError) {
+      console.error("Analysis route error (checkpoint persistence):", { code: error.code, diagnosticId: error.diagnosticId, operation: error.operation });
+      return NextResponse.json(
+        {
+          error: "Analysis progress could not be saved. Please retry after the database issue is resolved.",
+          code: "AI_ANALYZE_CHECKPOINT_PERSISTENCE_FAILED",
+          diagnosticId: error.diagnosticId,
+        },
+        { status: 503 },
+      );
+    }
     console.error("Analysis route error:", error);
     const raw = error instanceof Error ? error.message : "Analysis failed";
     // Sanitize before returning — strip API keys and truncate stack detail
