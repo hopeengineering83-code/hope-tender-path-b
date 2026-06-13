@@ -221,9 +221,21 @@ CREATE OR REPLACE FUNCTION refresh_submission_plan_state_trigger()
 RETURNS trigger
 LANGUAGE plpgsql
 AS $$
+DECLARE
+  target_tender_id text;
 BEGIN
-  PERFORM refresh_submission_plan_state(COALESCE(NEW."tenderId", OLD."tenderId"));
-  RETURN COALESCE(NEW, OLD);
+  IF TG_OP = 'DELETE' THEN
+    target_tender_id := OLD."tenderId";
+  ELSE
+    target_tender_id := NEW."tenderId";
+  END IF;
+
+  PERFORM refresh_submission_plan_state(target_tender_id);
+
+  IF TG_OP = 'DELETE' THEN
+    RETURN OLD;
+  END IF;
+  RETURN NEW;
 END;
 $$;
 
