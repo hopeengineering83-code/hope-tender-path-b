@@ -9,6 +9,15 @@ export type TenderSourceFile = {
   ocrPages?: number | null;
 };
 
+type SourceAwareRequirement = AIRequirement & {
+  sourceTenderFileId?: string | null;
+  sourceFileToken?: string | null;
+  sourceFileName?: string | null;
+  sourceExtractionMethod?: "text" | "ocr" | "mixed" | "manual" | null;
+  sourceConfidence?: number | null;
+  sourceLinkageWarning?: string | null;
+};
+
 export type SourceLinkageResolution = {
   sourceTenderFileId: string | null;
   sourceFileName: string | null;
@@ -59,10 +68,7 @@ function extractionMethod(file: TenderSourceFile): "text" | "ocr" | "mixed" {
 }
 
 export function resolveRequirementSourceFile(
-  requirement: Pick<
-    AIRequirement,
-    "sourceTenderFileId" | "sourceFileToken" | "sourceFileName" | "sourceQuote" | "sourcePage"
-  >,
+  requirement: SourceAwareRequirement,
   files: TenderSourceFile[],
 ): SourceLinkageResolution {
   const requestedId = requirement.sourceTenderFileId || tokenToId(requirement.sourceFileToken);
@@ -152,14 +158,15 @@ export function enrichRequirementsWithSourceLinkage(
   files: TenderSourceFile[],
 ): AIRequirement[] {
   return requirements.map((requirement) => {
-    const resolution = resolveRequirementSourceFile(requirement, files);
+    const sourceAwareRequirement = requirement as SourceAwareRequirement;
+    const resolution = resolveRequirementSourceFile(sourceAwareRequirement, files);
     return {
-      ...requirement,
+      ...sourceAwareRequirement,
       sourceTenderFileId: resolution.sourceTenderFileId,
       sourceFileName: resolution.sourceFileName,
       sourceExtractionMethod: resolution.sourceExtractionMethod,
       sourceConfidence: resolution.sourceConfidence,
       sourceLinkageWarning: resolution.sourceLinkageWarning,
-    };
+    } as AIRequirement;
   });
 }
