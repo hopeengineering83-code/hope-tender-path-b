@@ -201,7 +201,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       nextAction: "RUN_OCR_OR_UPLOAD_CLEARER_SCAN",
     }, { status: 422 });
   }
-  if (analysisExtractionStatus === "EXTRACTION_WEAK_REVIEW_REQUIRED") {
+  if (analysisExtractionStatus === "EXTRACTION_WEAK_REVIEW_REQUIRED" || analysisExtractionStatus === "REGEX_FALLBACK_FROM_WEAK_EXTRACTION") {
     return NextResponse.json({
       success: false, ok: false,
       code: "ANALYSIS_FROM_WEAK_EXTRACTION",

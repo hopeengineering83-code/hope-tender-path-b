@@ -59,7 +59,7 @@ describe("export-readiness route policy mappings", () => {
     );
   });
 
-  it("generate-missing-plan-files route blocks on OCR_REQUIRED and EXTRACTION_WEAK_REVIEW_REQUIRED", async () => {
+  it("generate-missing-plan-files route blocks on OCR_REQUIRED, EXTRACTION_WEAK_REVIEW_REQUIRED, and REGEX_FALLBACK_FROM_WEAK_EXTRACTION", async () => {
     const src = await readFile("app/api/tenders/[id]/generate-missing-plan-files/route.ts", "utf8");
     assert.ok(
       src.includes('"OCR_REQUIRED"'),
@@ -68,6 +68,10 @@ describe("export-readiness route policy mappings", () => {
     assert.ok(
       src.includes('"EXTRACTION_WEAK_REVIEW_REQUIRED"'),
       "generate-missing-plan-files must block when analysisExtractionStatus === EXTRACTION_WEAK_REVIEW_REQUIRED",
+    );
+    assert.ok(
+      src.includes('"REGEX_FALLBACK_FROM_WEAK_EXTRACTION"'),
+      "generate-missing-plan-files must block when analysisExtractionStatus === REGEX_FALLBACK_FROM_WEAK_EXTRACTION",
     );
     assert.ok(
       src.includes("ANALYSIS_FROM_CORRUPTED_EXTRACTION"),
