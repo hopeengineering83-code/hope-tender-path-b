@@ -388,6 +388,11 @@ export async function getFinalSubmissionReadiness(
       // Metadata-completeness signals consumed by the gate (Part 5).
       clientName: true,
       procuringEntityName: true,
+      legalClientName: true,
+      donorAgency: true,
+      implementingAgency: true,
+      clientAddress: true,
+      category: true,
       reference: true,
       country: true,
       deadline: true,
@@ -529,8 +534,8 @@ export async function getFinalSubmissionReadiness(
     exactFileOrder: tender.exactFileOrder,
     pageLimit: tender.pageLimit,
     submissionMethod: tender.submissionMethod,
-    tenderCategory: (tender as any).category,
-    analysisExtractionStatus: (tender as any).analysisExtractionStatus,
+    tenderCategory: tender.category,
+    analysisExtractionStatus: tender.analysisExtractionStatus,
     requirements: tender.requirements,
   });
   const requiredPlanCount = submissionPlanFileCount(plan);
@@ -601,7 +606,7 @@ export async function getFinalSubmissionReadiness(
   // ── Metadata completeness gate (Part 5) ──────────────────────────────────
   const metadata = assessTenderMetadataCompleteness({
     clientName: tender.clientName,
-    procuringEntityName: (tender as Record<string, unknown>).procuringEntityName as string | null | undefined,
+    procuringEntityName: tender.procuringEntityName,
     title: tender.title,
     reference: tender.reference,
     country: tender.country,
@@ -625,14 +630,14 @@ export async function getFinalSubmissionReadiness(
     technicalWeight: tender.technicalWeight,
     financialWeight: tender.financialWeight,
     clientCity: tender.clientCity,
-    clientAddress: (tender as Record<string, unknown>).clientAddress as string | null | undefined,
+    clientAddress: tender.clientAddress,
     clientWebsite: tender.clientWebsite,
     submissionEmailSubject: tender.submissionEmailSubject,
     preBidChannel: tender.preBidChannel,
     clientRepresentative: tender.clientRepresentative,
-    legalClientName: (tender as Record<string, unknown>).legalClientName as string | null | undefined,
-    donorAgency: (tender as Record<string, unknown>).donorAgency as string | null | undefined,
-    implementingAgency: (tender as Record<string, unknown>).implementingAgency as string | null | undefined,
+    legalClientName: tender.legalClientName,
+    donorAgency: tender.donorAgency,
+    implementingAgency: tender.implementingAgency,
     requirementCount: tender.requirements.length,
     hasEvaluationMethodology: Boolean((tender.evaluationMethodology ?? "").trim()),
     hasSubmissionRules: Boolean((tender.submissionMethod ?? "").trim()) || Boolean((tender.submissionEmails ?? "").trim()) || Boolean((tender.submissionAddress ?? "").trim()),
@@ -659,7 +664,7 @@ export async function getFinalSubmissionReadiness(
   // Client name gate — an empty/whitespace-only clientName (and no
   // procuringEntityName fallback) must block export so a proposal is
   // never sent without knowing who the procuring entity is.
-  const effectiveClientName = (tender.clientName ?? "").trim() || ((tender as Record<string, unknown>).procuringEntityName as string | null | undefined ?? "").trim();
+  const effectiveClientName = (tender.clientName ?? "").trim() || (tender.procuringEntityName ?? "").trim();
   if (!effectiveClientName) {
     tenderLevelBlockers.push({
       category: "CLIENT_NAME_MISSING",
@@ -682,7 +687,7 @@ export async function getFinalSubmissionReadiness(
   // Entity identity collision — implementingAgency and clientName must refer
   // to distinct organisations on multi-stakeholder tenders. Identical values
   // usually mean the same text was copied into both fields by mistake.
-  const implementingAgencyValue = ((tender as Record<string, unknown>).implementingAgency as string | null | undefined ?? "").trim();
+  const implementingAgencyValue = (tender.implementingAgency ?? "").trim();
   const clientNameValue = (tender.clientName ?? "").trim();
   if (implementingAgencyValue && clientNameValue && implementingAgencyValue.toLowerCase() === clientNameValue.toLowerCase()) {
     tenderLevelBlockers.push({
@@ -739,7 +744,7 @@ export async function getFinalSubmissionReadiness(
   }
   // Mirror the export-readiness.ts gate: block when analysisExtractionStatus
   // indicates that AI Analyze ran on corrupted or weak extraction.
-  const analysisExtractionStatus = (tender as { analysisExtractionStatus?: string | null }).analysisExtractionStatus;
+  const analysisExtractionStatus = tender.analysisExtractionStatus;
   if (analysisExtractionStatus === "EXTRACTION_CORRUPTED_AI_SKIPPED") {
     tenderLevelBlockers.push({
       category: "ANALYSIS_FROM_CORRUPTED_EXTRACTION",
@@ -884,7 +889,7 @@ export async function getFinalSubmissionReadiness(
   // finalExportGateOk correctly reflects the blocked state.
   const readinessScoreResult = computeReadinessScore({
     analysisSource,
-    analysisExtractionStatus: (tender as { analysisExtractionStatus?: string | null }).analysisExtractionStatus,
+    analysisExtractionStatus: tender.analysisExtractionStatus,
     metadataContaminated: tender.metadataContaminated,
     metadataCompletenessRatio: metadata.overallRatio,
     metadataInvalidCount: metadata.invalidFields.length,
