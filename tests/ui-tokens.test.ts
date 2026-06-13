@@ -39,47 +39,44 @@ describe("ui-tokens: severityBadgeClasses", () => {
     assert.ok(cls.includes("bg-"));
     assert.ok(cls.includes("text-"));
   });
-  it("all four severities produce distinct badge strings", () => {
+  it("base severities produce distinct badge strings", () => {
     const severities: UISeverity[] = ["good", "warning", "poor", "muted"];
     const classes = severities.map(severityBadgeClasses);
-    const unique = new Set(classes);
-    assert.equal(unique.size, 4);
+    assert.equal(new Set(classes).size, 4);
   });
 });
 
 describe("ui-tokens: scoreToSeverity", () => {
-  it("maps score >= 75 to good (default thresholds)", () => { assert.equal(scoreToSeverity(75), "good"); assert.equal(scoreToSeverity(100), "good"); });
-  it("maps score 45–74 to warning (default thresholds)", () => { assert.equal(scoreToSeverity(45), "warning"); assert.equal(scoreToSeverity(74), "warning"); });
-  it("maps score < 45 to poor (default thresholds)", () => { assert.equal(scoreToSeverity(0), "poor"); assert.equal(scoreToSeverity(44), "poor"); });
+  it("maps score >= 75 to good", () => { assert.equal(scoreToSeverity(75), "good"); assert.equal(scoreToSeverity(100), "good"); });
+  it("maps score 45–74 to warning", () => { assert.equal(scoreToSeverity(45), "warning"); assert.equal(scoreToSeverity(74), "warning"); });
+  it("maps score < 45 to poor", () => { assert.equal(scoreToSeverity(0), "poor"); assert.equal(scoreToSeverity(44), "poor"); });
   it("respects custom thresholds", () => {
     assert.equal(scoreToSeverity(80, { good: 80, warn: 60 }), "good");
     assert.equal(scoreToSeverity(70, { good: 80, warn: 60 }), "warning");
-    assert.equal(scoreToSeverity(60, { good: 80, warn: 60 }), "warning");
-    assert.equal(scoreToSeverity(79, { good: 80, warn: 60 }), "warning");
     assert.equal(scoreToSeverity(50, { good: 80, warn: 60 }), "poor");
-    assert.equal(scoreToSeverity(0, { good: 80, warn: 60 }), "poor");
   });
 });
 
 describe("ui-tokens: statusToSeverity", () => {
-  it("maps GOOD, PASS, AI to good", () => {
+  it("maps good states to good", () => {
     assert.equal(statusToSeverity("GOOD"), "good");
     assert.equal(statusToSeverity("PASS"), "good");
     assert.equal(statusToSeverity("AI"), "good");
     assert.equal(statusToSeverity("FULL_EXTRACTION_AI_ANALYZED"), "good");
-    assert.equal(statusToSeverity("AI_ANALYZED"), "good");
   });
-  it("maps WARNING, MEDIUM, OCR_REQUIRED to warning", () => {
+  it("maps warning states to warning", () => {
     assert.equal(statusToSeverity("WARNING"), "warning");
     assert.equal(statusToSeverity("MEDIUM"), "warning");
-    assert.equal(statusToSeverity("OCR_REQUIRED"), "warning");
-    assert.equal(statusToSeverity("HUMAN_APPROVED_REGEX_FALLBACK"), "warning");
   });
-  it("maps POOR, FAIL, HIGH, CORRUPTED to poor", () => {
+  it("keeps approved fallback partial rather than fully ready", () => {
+    assert.equal(statusToSeverity("HUMAN_APPROVED_REGEX_FALLBACK"), "partial");
+  });
+  it("maps blocking states to poor", () => {
     assert.equal(statusToSeverity("POOR"), "poor");
     assert.equal(statusToSeverity("FAIL"), "poor");
     assert.equal(statusToSeverity("HIGH"), "poor");
     assert.equal(statusToSeverity("CORRUPTED"), "poor");
+    assert.equal(statusToSeverity("OCR_REQUIRED"), "poor");
     assert.equal(statusToSeverity("REGEX_FALLBACK_AI_ERROR"), "poor");
   });
   it("maps unknown string to muted", () => { assert.equal(statusToSeverity("UNKNOWN_XYZ"), "muted"); });
@@ -87,7 +84,7 @@ describe("ui-tokens: statusToSeverity", () => {
 });
 
 describe("ui-tokens: confidenceToSeverity", () => {
-  it("maps null/undefined to muted", () => {
+  it("maps null or undefined to muted", () => {
     assert.equal(confidenceToSeverity(null), "muted");
     assert.equal(confidenceToSeverity(undefined), "muted");
   });

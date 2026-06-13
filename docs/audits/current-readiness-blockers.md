@@ -1,102 +1,70 @@
 # Current Readiness Blockers
 
-Last updated: 2026-05-23
+Last updated: 2026-06-13
 
-This document tracks known PRs and issues that block or threaten production readiness.
-It is the authoritative reference for triage decisions — do not merge any PR listed here
-without reading its status note first.
+This document records the current production-readiness controls for the Hope Tender Proposal Generator.
 
----
+## Merge policy
 
-## Merge policy (enforced)
+A pull request affecting tender analysis, generation, review, or export requires all of the following:
 
-**No PR may be merged if GitHub CI (the "Typecheck, test, and build" check) has failed,
-even when the Vercel deployment check is green.**
+1. GitHub Actions CI: database migrations, typecheck, lint, tests, build, and Playwright smoke checks.
+2. Vercel preview deployment.
+3. Datadog Synthetic checks where configured.
+4. Human review of database migrations and canonical readiness/export gates.
 
-Vercel can succeed on a build that skips typecheck and tests (it only runs `next build`).
-GitHub Actions CI runs the full suite: typecheck → tests → build. Both must pass.
-Where Datadog Synthetic tests are configured they are also required before merge.
+A Vercel build alone is not sufficient.
 
-Required passing checks before merging to `main`:
-1. GitHub Actions CI — "Typecheck, test, and build"
-2. Vercel deployment preview
-3. Datadog Synthetic tests (where configured for the affected route)
+## PR #714
 
----
+**Status:** Draft while automated verification is running.
 
-## PR #407 — closed, redundant, do not merge
+This PR addresses the June 2026 audit gaps:
 
-**Status:** Closed and unmerged.
+- requirement-to-source-file linkage;
+- protection of canonical analysis during fallback failures;
+- structured submission-plan provenance;
+- removal of duplicate legacy tender controls;
+- staged tender workspace organization;
+- PostgreSQL-backed integration tests;
+- final ZIP archive regression tests;
+- lint and Playwright execution in CI;
+- removal of accidental repository marker files.
 
-PR #407 contained early readiness scaffolding that was superseded by later PRs.
-Its changes have diverged from main. **Do not reopen or merge it** — cherry-picking
-individual commits requires a manual review to confirm no regression is introduced.
+## Source grounding
 
-Action: None. PR is closed. Mark any referenced issues as resolved by subsequent work.
+TenderRequirement rows are linked to a TenderFile only when the source is unambiguous. Explicit file IDs are validated against the same tender. Exact-quote matches may resolve a source file. Missing or ambiguous matches remain unlinked and receive reduced confidence.
 
----
+A production verification must still run one authenticated multi-file tender and confirm that displayed filenames, pages, headings, and quotes match the uploaded documents.
 
-## PR #404 — diverged readiness work, do not merge directly
+## Canonical analysis preservation
 
-**Status:** Open but significantly diverged from main.
+The database rejects deletion of the final canonical requirement set unless a recent staged AI Analyze or Engine run exists. The integration suite verifies that an unstaged delete fails and preserves existing requirements.
 
-PR #404 contains readiness-gate work that was partially absorbed by later PRs
-(#415, #416). Merging it directly will introduce merge conflicts and may reintroduce
-code that was intentionally changed or removed.
+## Submission-plan provenance
 
-Action: If any specific fix from PR #404 is needed, **extract and apply it manually
-after a line-by-line review** against current main. Do not click "Merge" on the PR
-as-is.
+Structured plan state is stored in `SubmissionPlanState`, including provenance, confirmation status, active and derived document counts, and confirmation timestamps. The legacy content-summary marker remains only as a backward-compatible migration input.
 
----
+## Final ZIP flow
 
-## PR #419 — pricing hygiene fix, pending CI
+The regression suite verifies valid ZIP bytes, exact filenames, exact order, exclusion of internal artifacts, duplicate-name rejection, missing-byte rejection, and technical/financial envelope separation.
 
-**Status:** Vercel passed; GitHub CI status must be confirmed green before merge.
+The runtime route must continue to enforce canonical readiness, authority review, document quality, file-signature validation, final-scope filtering, and strict two-envelope rules.
 
-PR #419 contains pricing display hygiene changes. Vercel reported success on preview
-but GitHub CI must also be green before this PR can be merged. CI is the required gate.
+## Tender workspace
 
-Action: Check the "Typecheck, test, and build" check on PR #419. If it is red, fix
-the failing step before merging. Do not merge on Vercel-green alone.
+The active tender page now uses five stages:
 
----
+1. Intake and extraction.
+2. Analysis and engine.
+3. Evidence and matching.
+4. Generation and review.
+5. Final package and submission.
 
-## Source grounding blocker
+Each major action appears once. Static regression tests prevent the return of hidden duplicate actions or MutationObserver-based button suppression.
 
-**Status:** Active blocker on final proposal export quality.
+## CI and release decision
 
-Proposals generated without grounded source citations may fail compliance checks.
-This must be fixed through dedicated `repair-source-grounding` work (see
-`app/api/tenders/[id]/repair-export-gaps/route.ts` for the repair endpoint scaffolding).
+CI provisions PostgreSQL, deploys Prisma migrations, runs typecheck, lint, unit and database integration tests, builds the application, and runs Playwright smoke tests against the built server.
 
-Action: Do not mark the export flow as "production ready" until source grounding is
-verified end-to-end on a real tender with REVIEWED vault records.
-
----
-
-## Export ZIP flow — regression test required
-
-**Status:** Flow is implemented; regression test is not yet in CI.
-
-The export ZIP route assembles the final proposal package. A regression in this flow
-would silently break the deliverable without a test catching it.
-
-Action: Before shipping any change that touches `app/api/tenders/[id]/export*` or
-`lib/engine/generate*`, confirm that an integration or snapshot test covers the ZIP
-output. Adding that test is a prerequisite for marking the export flow production-safe.
-
----
-
-## Notes on the large-vault engine blocker (resolved in PRs #415 and #416)
-
-PRs #415 and #416 fixed the `ASYNC_ENGINE_TIMEOUT` at `engine.analyze` for vaults
-with >30 reviewed records:
-
-- PR #415: large-vault safe mode, stuck-recovery threshold 90s, Gap 8 sanitizer
-- PR #416: 50k char cap in safe mode for the analyze step, 25s heartbeat interval
-
-These are merged. If a new `ASYNC_ENGINE_TIMEOUT` appears, check:
-1. Was the job dispatched with `safe: true`? (UI should do this automatically for large vaults)
-2. Is the heartbeat firing? (check AiJobStep rows for `engine.heartbeat` entries)
-3. Is the tender text exceeding 50k chars after deduplication?
+The application should still be described as operational with controlled human review until an authenticated preview workflow completes upload, extraction, engine, review, generation, and final ZIP download on a representative tender.

@@ -1,10 +1,10 @@
+import type { ReactNode } from "react";
 import { notFound, redirect } from "next/navigation";
 import { getSession } from "../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../lib/prisma";
 import { isAIEnabled } from "../../../../lib/ai";
 import { getTenderGenerationReadiness } from "../../../../lib/tender-generation-readiness";
 import { getCanonicalTenderReadiness } from "../../../../lib/canonical-tender-readiness";
-import { TenderDetail } from "./tender-detail";
 import { ExecutiveSnapshot } from "./executive-snapshot";
 import { TenderIntakeDetailPanel } from "./tender-intake-detail-panel";
 import { TenderAICopilotPanel } from "../../../../components/tender-ai-copilot-panel";
@@ -22,7 +22,6 @@ import { ExtractionQualityPanel } from "../../../../components/extraction-qualit
 import { ExtractionQualityDashboard } from "../../../../components/extraction-quality-dashboard";
 import { AnalysisQualityPanel } from "../../../../components/analysis-quality-panel";
 import { MatchingQualityPanel } from "../../../../components/matching-quality-panel";
-import { LegacyTenderActionHider } from "../../../../components/legacy-tender-action-hider";
 import { CorruptedMetadataBanner } from "../../../../components/corrupted-metadata-banner";
 import { FinalSubmissionControlCenter } from "../../../../components/final-submission-control-center";
 import { NextActionPanel } from "../../../../components/next-action-panel";
@@ -39,6 +38,39 @@ import VaultEvidenceSearchPanel from "../../../../components/vault-evidence-sear
 import { TenderSharePanel } from "../../../../components/tender-share-panel";
 import { AuditTrailPanel } from "../../../../components/audit-trail-panel";
 import { TenderChatPanelWrapper } from "../../../../components/tender-chat-panel-wrapper";
+import TenderRecoveryCommandCenter from "../../../../components/tender-recovery-command-center";
+import { CanonicalReadinessScoreWidget } from "../../../../components/canonical-readiness-score-widget";
+import { MetadataCompletionPanel } from "../../../../components/metadata-completion-panel";
+import RequirementCoveragePanel from "../../../../components/requirement-coverage-panel";
+import { TenderSourceFilesPanel } from "../../../../components/tender-source-files-panel";
+
+function WorkflowStage({
+  number,
+  title,
+  description,
+  children,
+  open = false,
+}: {
+  number: number;
+  title: string;
+  description: string;
+  children: ReactNode;
+  open?: boolean;
+}) {
+  return (
+    <details open={open} className="group rounded-2xl border border-slate-200 bg-slate-50 shadow-sm">
+      <summary className="flex cursor-pointer list-none items-start gap-3 px-5 py-4 marker:content-none">
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-900 text-sm font-bold text-white">{number}</span>
+        <span className="min-w-0 flex-1">
+          <span className="block text-base font-semibold text-slate-900">{title}</span>
+          <span className="mt-0.5 block text-sm text-slate-600">{description}</span>
+        </span>
+        <span aria-hidden="true" className="mt-1 text-slate-400 transition-transform group-open:rotate-180">⌄</span>
+      </summary>
+      <div className="space-y-4 border-t border-slate-200 bg-white p-4 sm:p-5">{children}</div>
+    </details>
+  );
+}
 
 export default async function TenderPage({ params }: { params: Promise<{ id: string }> }) {
   const userId = await getSession();
@@ -104,60 +136,77 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
   const canonicalReadiness = await getCanonicalTenderReadiness(prisma, userId, tender.id).catch(() => null);
 
   return (
-    <>
+    <main className="space-y-5" aria-label="Tender workflow workspace">
       <CorruptedMetadataBanner tender={{
         id: tender.id,
         reference: tender.reference,
         clientName: tender.clientName,
-        procuringEntityName: (tender as Record<string, unknown>).procuringEntityName as string | null | undefined,
+        procuringEntityName: tender.procuringEntityName,
         country: tender.country,
         clientContactName: tender.clientContactName,
       }} />
+
       <ExecutiveSnapshot tender={tenderForUi} canonicalReadiness={canonicalReadiness} />
-      <div id="extraction-quality"><ExtractionQualityDashboard tenderId={tender.id} /></div>
       <NextActionPanel tenderId={tender.id} />
-      {ai && <TenderChatPanelWrapper tenderId={tender.id} />}
+      <TenderRecoveryCommandCenter tenderId={tender.id} />
+      <CanonicalReadinessScoreWidget tenderId={tender.id} />
       <TenderHealthScorePanel tenderId={tender.id} canonicalReadiness={canonicalReadiness} />
-      <AICopilotSuggestionsPanel tenderId={tender.id} />
       <BidControlVerdictPanel tenderId={tender.id} />
       <FinalSubmissionControlCenter tenderId={tender.id} generationReadiness={generationReadiness} />
-      <AIHealthPanel />
-      <div id="run-engine-action"><EngineActionPanel
-        tenderId={tender.id}
-        vaultReviewedExperts={generationReadiness?.matchingQuality?.vaultReviewedExperts ?? 0}
-        vaultReviewedProjects={generationReadiness?.matchingQuality?.vaultReviewedProjects ?? 0}
-        lifecycleBlockersExist={(generationReadiness?.blockers?.length ?? 0) > 0}
-      /></div>
-      <div id="extraction-quality-detail"><ExtractionQualityPanel tenderId={tender.id} /></div>
-      <div id="analysis-quality"><AnalysisQualityPanel tenderId={tender.id} /></div>
-      <AIAnalyzeRecoveryPanel tenderId={tender.id} />
-      <ClientSubmissionDetailsPanel tenderId={tender.id} />
-      <div id="matching-quality"><MatchingQualityPanel tenderId={tender.id} /></div>
-      <GenerationReadinessPanel tenderId={tender.id} readiness={generationReadiness} />
-      <div id="generate-docs-action"><GenerationActionPanel tenderId={tender.id} readiness={generationReadiness} canonicalReadiness={canonicalReadiness} /></div>
-      <SubmissionPlanReconciliationPanel tenderId={tender.id} />
-      <TenderIntakeDetailPanel tender={tenderForUi} />
-      <div id="proposal-evidence-readiness"><ProposalEvidenceReadinessPanel tenderId={tender.id} /></div>
-      <EvidenceCoveragePanel tenderId={tender.id} />
-      <VaultEvidenceSearchPanel tenderId={tender.id} />
 
-      <AuthorityReviewPanel tenderId={tender.id} />
-      <DocumentValidatorPanel tenderId={tender.id} />
-      <FinalPackageManifestPanel tenderId={tender.id} />
-      <ExportReadinessPanel tenderId={tender.id} />
-      <EvaluatorObjectionsPanel tenderId={tender.id} />
-      <ComplianceHeatmapPanel tenderId={tender.id} />
-      <TenderSharePanel tenderId={tender.id} />
-      <AuditTrailPanel tenderId={tender.id} />
-      <PricingWorkbookPanel tenderId={tender.id} />
-      {ai && <TenderAICopilotPanel tenderId={tender.id} />}
-      <div className="mb-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
-        <span className="font-semibold">Authoritative actions:</span> use the Final Submission Control Center and structured panels above. Only the duplicate legacy buttons are hidden below; other actions remain available.
-      </div>
-      <div id="legacy-tender-detail-actions">
-        <LegacyTenderActionHider targetId="legacy-tender-detail-actions" />
-        <TenderDetail tender={tenderForUi} aiEnabled={ai} canonicalReadiness={canonicalReadiness} />
-      </div>
-    </>
+      <nav aria-label="Tender workflow stages" className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-900">
+        Work from Stage 1 through Stage 5. Each major action appears once and uses the canonical server-side readiness gates.
+      </nav>
+
+      <WorkflowStage number={1} title="Intake and extraction" description="Manage source documents and confirm submission-critical metadata." open>
+        <TenderSourceFilesPanel tenderId={tender.id} initialFiles={tender.files} />
+        <ExtractionQualityDashboard tenderId={tender.id} />
+        <TenderIntakeDetailPanel tender={tenderForUi} />
+        <MetadataCompletionPanel tenderId={tender.id} />
+        <ClientSubmissionDetailsPanel tenderId={tender.id} />
+        <ExtractionQualityPanel tenderId={tender.id} />
+      </WorkflowStage>
+
+      <WorkflowStage number={2} title="Analysis and engine" description="Run the authoritative engine, inspect AI health, and repair incomplete analysis.">
+        <AIHealthPanel />
+        <EngineActionPanel
+          tenderId={tender.id}
+          vaultReviewedExperts={generationReadiness?.matchingQuality?.vaultReviewedExperts ?? 0}
+          vaultReviewedProjects={generationReadiness?.matchingQuality?.vaultReviewedProjects ?? 0}
+          lifecycleBlockersExist={(generationReadiness?.blockers?.length ?? 0) > 0}
+        />
+        <AnalysisQualityPanel tenderId={tender.id} />
+        <AIAnalyzeRecoveryPanel tenderId={tender.id} />
+        <RequirementCoveragePanel tenderId={tender.id} />
+        <AICopilotSuggestionsPanel tenderId={tender.id} />
+        {ai && <TenderChatPanelWrapper tenderId={tender.id} />}
+        {ai && <TenderAICopilotPanel tenderId={tender.id} />}
+      </WorkflowStage>
+
+      <WorkflowStage number={3} title="Evidence and matching" description="Verify reviewed experts, projects, requirement coverage, and compliance evidence.">
+        <MatchingQualityPanel tenderId={tender.id} />
+        <ProposalEvidenceReadinessPanel tenderId={tender.id} />
+        <EvidenceCoveragePanel tenderId={tender.id} />
+        <VaultEvidenceSearchPanel tenderId={tender.id} />
+        <ComplianceHeatmapPanel tenderId={tender.id} />
+      </WorkflowStage>
+
+      <WorkflowStage number={4} title="Generation and review" description="Confirm the submission plan, generate through the canonical gate, and complete document review.">
+        <GenerationReadinessPanel tenderId={tender.id} readiness={generationReadiness} />
+        <GenerationActionPanel tenderId={tender.id} readiness={generationReadiness} canonicalReadiness={canonicalReadiness} />
+        <SubmissionPlanReconciliationPanel tenderId={tender.id} />
+        <AuthorityReviewPanel tenderId={tender.id} />
+        <DocumentValidatorPanel tenderId={tender.id} />
+        <EvaluatorObjectionsPanel tenderId={tender.id} />
+      </WorkflowStage>
+
+      <WorkflowStage number={5} title="Final package and submission" description="Reconcile pricing, inspect the exact manifest, verify export readiness, and release the package.">
+        <PricingWorkbookPanel tenderId={tender.id} />
+        <FinalPackageManifestPanel tenderId={tender.id} />
+        <ExportReadinessPanel tenderId={tender.id} />
+        <TenderSharePanel tenderId={tender.id} />
+        <AuditTrailPanel tenderId={tender.id} />
+      </WorkflowStage>
+    </main>
   );
 }
