@@ -232,7 +232,7 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
     // Gap 4 fix — pass metadata + matching state so the score reflects reality.
     // Use procuringEntityName / legalClientName / donorAgency / implementingAgency as
     // fallback when clientName is null (AI Analyze tenders or donor-funded projects).
-    clientName: (tender.clientName || (tender as Record<string, unknown>).procuringEntityName || (tender as Record<string, unknown>).legalClientName || (tender as Record<string, unknown>).donorAgency || (tender as Record<string, unknown>).implementingAgency) as string | null | undefined,
+    clientName: tender.clientName || tender.procuringEntityName || tender.legalClientName || tender.donorAgency || tender.implementingAgency,
     referenceNumber: tender.reference,
     country: tender.country,
     clientContactName: tender.clientContactName,
@@ -256,12 +256,11 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
   // need to render different messages: "Client name not set" is fixable
   // by EDIT_TENDER; "Invalid client name extracted" usually means OCR
   // captured a TOC entry and the tender needs re-extraction.
-  const _t = tender as Record<string, unknown>;
-  const effectiveClientNameForReadiness = (tender.clientName
-    || _t.procuringEntityName
-    || _t.legalClientName
-    || _t.donorAgency
-    || _t.implementingAgency) as string | null | undefined;
+  const effectiveClientNameForReadiness = tender.clientName
+    || tender.procuringEntityName
+    || tender.legalClientName
+    || tender.donorAgency
+    || tender.implementingAgency;
   const clientNameStatus = getClientNameStatus(effectiveClientNameForReadiness);
   if (clientNameStatus === "EMPTY" || clientNameStatus === "PLACEHOLDER") {
     blockers.push({
@@ -449,14 +448,14 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
   // never show "Full proposal generation gate: passes" while the same POST
   // would return 422 with METADATA_INCOMPLETE_FOR_GENERATION. The two paths
   // call the same helper with the same inputs so they agree byte-for-byte.
-  const effectiveClientName = (tender.clientName
-    || _t.procuringEntityName
-    || _t.legalClientName
-    || _t.donorAgency
-    || _t.implementingAgency) as string | null | undefined;
+  const effectiveClientName = tender.clientName
+    || tender.procuringEntityName
+    || tender.legalClientName
+    || tender.donorAgency
+    || tender.implementingAgency;
   const metadataReport = assessTenderMetadataCompleteness({
     clientName: effectiveClientName,
-    procuringEntityName: _t.procuringEntityName as string | null | undefined,
+    procuringEntityName: tender.procuringEntityName,
     title: tender.title,
     reference: tender.reference ?? null,
     country: tender.country ?? null,
@@ -478,10 +477,14 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
     preBidMeetingDate: tender.preBidMeetingDate ?? null,
     preBidMeetingLocation: tender.preBidMeetingLocation ?? null,
     clientCity: tender.clientCity ?? null,
+    clientAddress: tender.clientAddress ?? null,
     clientWebsite: tender.clientWebsite ?? null,
     submissionEmailSubject: tender.submissionEmailSubject ?? null,
     preBidChannel: tender.preBidChannel ?? null,
     clientRepresentative: tender.clientRepresentative ?? null,
+    legalClientName: tender.legalClientName ?? null,
+    donorAgency: tender.donorAgency ?? null,
+    implementingAgency: tender.implementingAgency ?? null,
     requirementCount: tender.requirements.length,
     hasEvaluationMethodology: Boolean((tender.evaluationMethodology ?? "").trim()),
     hasSubmissionRules: Boolean(tender.submissionMethod || tender.submissionEmails || tender.submissionAddress),
@@ -704,7 +707,7 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
   // criteria were missed or weights are in different units (points vs %).
   // We only warn — the user may need to run AI Analyze again to get complete
   // criteria, or the tender may express weights in a non-standard format.
-  const evalWeights = parseEvalWeights((tender as Record<string, unknown>).evaluationCriteriaSourceJson as string | null | undefined);
+  const evalWeights = parseEvalWeights(tender.evaluationCriteriaSourceJson);
   if (evalWeights && evalWeights.covered > 0) {
     if (evalWeights.sum < 80 || evalWeights.sum > 120) {
       warnings.push({
