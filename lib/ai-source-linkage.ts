@@ -9,7 +9,7 @@ export type TenderSourceFile = {
   ocrPages?: number | null;
 };
 
-type SourceAwareRequirement = AIRequirement & {
+type SourceAwareRequirement = Partial<AIRequirement> & {
   sourceTenderFileId?: string | null;
   sourceFileToken?: string | null;
   sourceFileName?: string | null;
@@ -29,26 +29,18 @@ export type SourceLinkageResolution = {
 const TOKEN_PREFIX = "TFILE:";
 
 function normalized(value: string | null | undefined): string {
-  return (value ?? "")
-    .normalize("NFKC")
-    .trim()
-    .toLowerCase()
-    .replace(/\\/g, "/")
-    .replace(/^.*\//, "")
-    .replace(/\s+/g, " ");
+  return (value ?? "").normalize("NFKC").trim().toLowerCase().replace(/\\/g, "/").replace(/^.*\//, "").replace(/\s+/g, " ");
 }
 
 function normalizedQuote(value: string | null | undefined): string {
-  return normalized(value).replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+  return normalized(value).replace(/[^a-z0-9]+/gi, " ").trim();
 }
 
 export function tenderFileSourceToken(fileId: string): string {
   return `${TOKEN_PREFIX}${fileId}`;
 }
 
-export function buildTenderFileSourceHeader(
-  file: Pick<TenderSourceFile, "id" | "fileName" | "originalFileName">,
-): string {
+export function buildTenderFileSourceHeader(file: Pick<TenderSourceFile, "id" | "fileName" | "originalFileName">): string {
   const name = file.originalFileName || file.fileName;
   return `[TENDER_FILE|TOKEN=${tenderFileSourceToken(file.id)}|ID=${file.id}|NAME=${encodeURIComponent(name)}]`;
 }
@@ -67,10 +59,7 @@ function extractionMethod(file: TenderSourceFile): "text" | "ocr" | "mixed" {
   return "text";
 }
 
-export function resolveRequirementSourceFile(
-  requirement: SourceAwareRequirement,
-  files: TenderSourceFile[],
-): SourceLinkageResolution {
+export function resolveRequirementSourceFile(requirement: SourceAwareRequirement, files: TenderSourceFile[]): SourceLinkageResolution {
   const requestedId = requirement.sourceTenderFileId || tokenToId(requirement.sourceFileToken);
   if (requestedId) {
     const exact = files.find((file) => file.id === requestedId);
@@ -94,11 +83,7 @@ export function resolveRequirementSourceFile(
 
   const requestedName = normalized(requirement.sourceFileName);
   if (requestedName) {
-    const matches = files.filter(
-      (file) =>
-        normalized(file.originalFileName) === requestedName ||
-        normalized(file.fileName) === requestedName,
-    );
+    const matches = files.filter((file) => normalized(file.originalFileName) === requestedName || normalized(file.fileName) === requestedName);
     if (matches.length === 1) {
       const match = matches[0];
       return {
@@ -153,10 +138,7 @@ export function resolveRequirementSourceFile(
   };
 }
 
-export function enrichRequirementsWithSourceLinkage(
-  requirements: AIRequirement[],
-  files: TenderSourceFile[],
-): AIRequirement[] {
+export function enrichRequirementsWithSourceLinkage(requirements: AIRequirement[], files: TenderSourceFile[]): AIRequirement[] {
   return requirements.map((requirement) => {
     const sourceAwareRequirement = requirement as SourceAwareRequirement;
     const resolution = resolveRequirementSourceFile(sourceAwareRequirement, files);
