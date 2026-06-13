@@ -29,6 +29,7 @@ export default defineConfig({
         reuseExistingServer: !process.env.CI,
         timeout: 120_000,
         env: {
+          ...process.env,
           NEXT_TELEMETRY_DISABLED: "1",
           DATABASE_URL: process.env.DATABASE_URL || "postgresql://placeholder:placeholder@localhost:5432/placeholder",
         },
