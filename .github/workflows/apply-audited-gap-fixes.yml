@@ -13,11 +13,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 35
     steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request.head.ref || 'codex/solve-audited-app-gaps' }}
-          fetch-depth: 1
-          show-progress: false
+      - name: Quiet checkout of PR branch
+        shell: bash
+        run: |
+          git init -q
+          git remote add origin "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
+          git fetch -q --depth=1 origin "${{ github.event.pull_request.head.ref || 'codex/solve-audited-app-gaps' }}"
+          git checkout -q -B "${{ github.event.pull_request.head.ref || 'codex/solve-audited-app-gaps' }}" FETCH_HEAD
 
       - uses: actions/setup-node@v4
         with:
