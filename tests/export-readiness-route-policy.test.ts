@@ -94,4 +94,28 @@ describe("export-readiness route policy mappings", () => {
       "export-readiness must check totalPages for the page-count-unknown gate",
     );
   });
+
+  it("export-readiness blocks when critical metadata fields contain placeholder strings", async () => {
+    const src = await readFile("lib/engine/export-readiness.ts", "utf8");
+    assert.ok(
+      src.includes("METADATA_PLACEHOLDER_IN_CRITICAL_FIELD"),
+      "export-readiness must use METADATA_PLACEHOLDER_IN_CRITICAL_FIELD blocker when clientName/procuringEntityName/submissionMethod contain placeholder text",
+    );
+    assert.ok(
+      src.includes("containsMetadataPlaceholder"),
+      "export-readiness must call containsMetadataPlaceholder() to detect placeholder strings",
+    );
+  });
+
+  it("export-readiness blocks when company profile is missing in link-vault-evidence (422 not 404)", async () => {
+    const src = await readFile("app/api/tenders/[id]/link-vault-evidence-auto/route.ts", "utf8");
+    assert.ok(
+      !src.includes("Tender or company not found"),
+      "route must not use combined 'Tender or company not found' 404 — company absence is 422",
+    );
+    assert.ok(
+      src.includes("COMPANY_NOT_FOUND") && src.includes("status: 422"),
+      "missing company profile must return 422 with COMPANY_NOT_FOUND code",
+    );
+  });
 });
