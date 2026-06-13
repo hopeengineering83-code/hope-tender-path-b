@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { getSession } from "../lib/auth";
 import { prisma, prismaReady } from "../lib/prisma";
-import { getTenderGenerationReadiness, type TenderGenerationReadiness } from "../lib/tender-generation-readiness";
+import { getTenderGenerationReadinessStrict } from "../lib/tender-generation-readiness-strict";
+import type { TenderGenerationReadiness } from "../lib/tender-generation-readiness";
 
 function actionHref(tenderId: string, action?: string): string {
   if (action === "EDIT_TENDER") return `/dashboard/tenders/${tenderId}#legacy-tender-detail-actions`;
@@ -47,41 +48,17 @@ function buildActionLabel(action?: string): string {
 }
 
 function ScoreGauge({ score }: { score: number }) {
-  // Clamp score to [0, 100]
-  const s = Math.max(0, Math.min(100, score));
-
-  // Determine color tier
-  let colorClass: string;
-  let labelText: string;
-  if (s >= 90) {
-    colorClass = "bg-emerald-500";
-    labelText = "FULLY READY";
-  } else if (s >= 70) {
-    colorClass = "bg-green-500";
-    labelText = "READY";
-  } else if (s >= 40) {
-    colorClass = "bg-amber-500";
-    labelText = "PARTIAL";
-  } else {
-    colorClass = "bg-red-500";
-    labelText = "NOT READY";
-  }
-
-  const textColor = s >= 90 ? "text-emerald-700" : s >= 70 ? "text-green-700" : s >= 40 ? "text-amber-700" : "text-red-700";
-
+  const value = Math.max(0, Math.min(100, score));
   return (
-    <div className="flex flex-col items-center gap-1 min-w-[96px]">
-      <div className="relative w-24 h-3 rounded-full bg-slate-200 overflow-hidden">
-        <div
-          className={`absolute left-0 top-0 h-full rounded-full transition-all duration-300 ${colorClass}`}
-          style={{ width: `${s}%` }}
-        />
+    <div className="flex min-w-[96px] flex-col items-center gap-1" title="Secondary readiness score. It never overrides blockers or the server generation gate.">
+      <div className="relative h-3 w-24 overflow-hidden rounded-full bg-slate-200">
+        <div className="absolute left-0 top-0 h-full rounded-full bg-slate-500 transition-all duration-300" style={{ width: `${value}%` }} />
       </div>
       <div className="flex items-baseline gap-1.5">
-        <span className={`text-2xl font-extrabold leading-none ${textColor}`}>{s}</span>
-        <span className="text-xs text-slate-400 font-medium">/100</span>
+        <span className="text-2xl font-extrabold leading-none text-slate-800">{value}</span>
+        <span className="text-xs font-medium text-slate-400">/100</span>
       </div>
-      <span className={`text-[10px] font-bold uppercase tracking-wide ${textColor}`}>{labelText}</span>
+      <span className="text-[10px] font-bold uppercase tracking-wide text-slate-500">Secondary score</span>
     </div>
   );
 }
@@ -97,86 +74,98 @@ export async function GenerationReadinessPanel({
   if (!userId) return null;
 
   try {
-  const readiness = providedReadiness ?? await (async () => {
-    await prismaReady;
-    return getTenderGenerationReadiness(prisma, userId, tenderId);
-  })();
-  if (!readiness) return null;
+    const readiness = providedReadiness === undefined
+      ? await (async () => {
+          await prismaReady;
+          return getTenderGenerationReadinessStrict(prisma, userId, tenderId);
+        })()
+      : providedReadiness;
 
-  const { ready, blockers, fullProposalBlockers, warnings, score } = readiness;
-  // Use fullProposalReady for the headline label — it is the stricter gate.
-  // ready / supportPackageReady only covers blockers; fullProposalReady also
-  // covers fullProposalBlockers (e.g. missing client details, weak extraction).
-  const fullProposalReady = readiness.fullProposalReady ?? ready;
-  const isFullyReady = fullProposalReady;
+    if (!readiness) {
+      return (
+        <section className="mb-4 rounded-2xl border border-red-200 bg-red-50 p-4 shadow-sm">
+          <p className="text-xs font-semibold uppercase tracking-wide text-red-700">Generation readiness unavailable</p>
+          <p className="mt-1 text-sm text-red-800">The readiness calculation failed. Generation remains blocked until the server check succeeds.</p>
+          <Link href={`/api/tenders/${tenderId}/generation-readiness`} className="mt-2 inline-block text-xs font-semibold text-red-700 underline">Open diagnostic endpoint</Link>
+        </section>
+      );
+    }
 
-  return (
-    <section className={`mb-4 rounded-2xl border p-5 shadow-sm ${isFullyReady ? "border-green-200 bg-green-50" : ready ? "border-amber-200 bg-amber-50" : "border-red-200 bg-red-50"}`}>
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <p className={`text-xs font-semibold uppercase tracking-wide ${isFullyReady ? "text-green-700" : ready ? "text-amber-700" : "text-red-700"}`}>Generation readiness</p>
-          <h2 className="mt-1 text-lg font-bold text-slate-900">{isFullyReady ? "Ready to generate full proposal" : "Generation blockers found"}</h2>
-          <p className="mt-1 text-sm text-slate-600">Preflight check for company knowledge, tender analysis, matching quality, compliance blockers, client metadata, and selected reviewed evidence.</p>
-          {ready && !fullProposalReady && (
-            <p className="mt-1 text-sm text-amber-700">
-              Support packages may generate, but full proposal is blocked. Resolve blockers below.
-            </p>
-          )}
-        </div>
-        <div className="flex items-center gap-3">
-          <ScoreGauge score={score} />
-          <Link href={`/api/tenders/${tenderId}/generation-readiness`} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50">
-            Open JSON
-          </Link>
-        </div>
-      </div>
+    const { blockers, fullProposalBlockers, warnings, score } = readiness;
+    const fullProposalReady = Boolean(readiness.fullProposalReady);
+    const supportPackageReady = Boolean(readiness.supportPackageReady);
+    const panelClass = fullProposalReady
+      ? "border-green-200 bg-green-50"
+      : "border-red-200 bg-red-50";
+    const statusClass = fullProposalReady ? "text-green-700" : "text-red-700";
 
-      {blockers.length > 0 && (
-        <div className="mt-4 space-y-2">
-          {blockers.map((item, index) => (
-            <div key={`${item.code}-${index}`} className="rounded-xl border border-red-200 bg-white px-3 py-2 text-sm text-red-800">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <span>{item.message}</span>
-                <Link href={actionHref(tenderId, item.nextAction)} className="text-xs font-semibold text-red-700 underline">{buildActionLabel(item.nextAction)}</Link>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {fullProposalBlockers && fullProposalBlockers.length > 0 && (
-        <div className="mt-4 space-y-2">
-          <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">Full proposal blockers</p>
-          {fullProposalBlockers.map((item, index) => (
-            <div key={`fp-${item.code}-${index}`} className="rounded-xl border border-amber-200 bg-white px-3 py-2 text-sm text-amber-800">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <span>{item.message}</span>
-                <Link href={actionHref(tenderId, item.nextAction)} className="text-xs font-semibold text-amber-700 underline">{buildActionLabel(item.nextAction)}</Link>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {warnings.length > 0 && (
-        <div className="mt-4 space-y-2">
-          {warnings.slice(0, 5).map((item, index) => (
-            <div key={`${item.code}-${index}`} className="rounded-xl border border-amber-200 bg-white px-3 py-2 text-sm text-amber-800">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <span>{item.message}</span>
-                <Link href={actionHref(tenderId, item.nextAction)} className="text-xs font-semibold text-amber-700 underline">{buildActionLabel(item.nextAction)}</Link>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-    </section>
-  );
-  } catch (err) {
-    console.error("[GenerationReadinessPanel] render error:", err);
     return (
-      <section className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 p-4 shadow-sm">
-        <p className="text-xs font-semibold text-amber-700">Panel failed to load — data may be incomplete. Refresh to retry.</p>
+      <section className={`mb-4 rounded-2xl border p-5 shadow-sm ${panelClass}`}>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className={`text-xs font-semibold uppercase tracking-wide ${statusClass}`}>Generation readiness</p>
+            <h2 className="mt-1 text-lg font-bold text-slate-900">{fullProposalReady ? "Ready to generate full proposal" : "Full proposal generation blocked"}</h2>
+            <p className="mt-1 text-sm text-slate-600">The server gate is authoritative. The numeric score is informational and cannot override blockers.</p>
+            {supportPackageReady && !fullProposalReady && (
+              <p className="mt-1 text-sm text-amber-700">Support packages may be generated, but the full proposal remains blocked.</p>
+            )}
+          </div>
+          <div className="flex items-center gap-3">
+            <ScoreGauge score={score} />
+            <Link href={`/api/tenders/${tenderId}/generation-readiness`} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50">Open JSON</Link>
+          </div>
+        </div>
+
+        {blockers.length > 0 && (
+          <div className="mt-4 space-y-2">
+            {blockers.map((item, index) => (
+              <div key={`${item.code}-${index}`} className="rounded-xl border border-red-200 bg-white px-3 py-2 text-sm text-red-800">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span>{item.message}</span>
+                  <Link href={actionHref(tenderId, item.nextAction)} className="text-xs font-semibold text-red-700 underline">{buildActionLabel(item.nextAction)}</Link>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {fullProposalBlockers && fullProposalBlockers.length > 0 && (
+          <div className="mt-4 space-y-2">
+            <p className="text-xs font-semibold uppercase tracking-wide text-red-700">Full proposal blockers</p>
+            {fullProposalBlockers.map((item, index) => (
+              <div key={`fp-${item.code}-${index}`} className="rounded-xl border border-red-200 bg-white px-3 py-2 text-sm text-red-800">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span>{item.message}</span>
+                  <Link href={actionHref(tenderId, item.nextAction)} className="text-xs font-semibold text-red-700 underline">{buildActionLabel(item.nextAction)}</Link>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {warnings.length > 0 && (
+          <div className="mt-4 space-y-2">
+            {warnings.slice(0, 5).map((item, index) => (
+              <div key={`${item.code}-${index}`} className="rounded-xl border border-amber-200 bg-white px-3 py-2 text-sm text-amber-800">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span>{item.message}</span>
+                  <Link href={actionHref(tenderId, item.nextAction)} className="text-xs font-semibold text-amber-700 underline">{buildActionLabel(item.nextAction)}</Link>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+    );
+  } catch (error) {
+    console.error("[GenerationReadinessPanel] render error", {
+      tenderId,
+      errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+      message: error instanceof Error ? error.message : String(error),
+    });
+    return (
+      <section className="mb-4 rounded-2xl border border-red-200 bg-red-50 p-4 shadow-sm">
+        <p className="text-xs font-semibold text-red-700">Generation readiness failed to load. Generation remains blocked. Refresh to retry.</p>
       </section>
     );
   }
