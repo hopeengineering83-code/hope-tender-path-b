@@ -17,6 +17,7 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.ref || 'codex/solve-audited-app-gaps' }}
           fetch-depth: 1
+          show-progress: false
 
       - uses: actions/setup-node@v4
         with:
@@ -39,7 +40,13 @@ jobs:
         run: npx prisma generate >/dev/null
 
       - name: Typecheck
-        run: npm run typecheck
+        shell: bash
+        run: |
+          set +e
+          npm run typecheck > /tmp/typecheck.log 2>&1
+          status=$?
+          grep -E "error TS|Found [0-9]+ error" /tmp/typecheck.log || cat /tmp/typecheck.log
+          exit $status
 
       - name: Unit tests
         run: npm test
