@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import { prisma } from "../prisma";
 import { logAction } from "../audit";
 import { analyzeTender, normalizeStrategicRequirements } from "./analysis";
+import { upsertRequirements } from "./stable-requirements";
 import { analyzeWithAI, isAIEnabled } from "../ai";
 import { buildCompliance } from "./compliance";
 import { buildDocumentPlan } from "./documents";
@@ -428,16 +429,42 @@ export async function runTenderEngine(
     }
     const documentRows = documentPlan.documents.map((document) => ({ tenderId, name: document.name, documentType: document.documentType, exactFileName: document.exactFileName ?? null, exactOrder: typeof document.exactOrder === "number" ? document.exactOrder : null, contentSummary: document.contentSummary }));
 
+    // PR FIX: Fetch existing selections so re-running the engine doesn"t wipe user choices
+    const [existingExpertMatches, existingProjectMatches, existingMatrix] = await Promise.all([
+      prisma.tenderExpertMatch.findMany({ where: { tenderId }, select: { expertId: true, isSelected: true } }),
+      prisma.tenderProjectMatch.findMany({ where: { tenderId }, select: { projectId: true, isSelected: true } }),
+      prisma.complianceMatrix.findMany({ where: { tenderId }, select: { requirementId: true, supportLevel: true, notes: true } }),
+    ]);
+    const selectedExpertsSet = new Set(existingExpertMatches.filter(m => m.isSelected).map(m => m.expertId));
+    const selectedProjectsSet = new Set(existingProjectMatches.filter(m => m.isSelected).map(m => m.projectId));
+    // Create a map for existing manual compliance overrides
+    const manualMatrixMap = new Map(existingMatrix.map(m => [m.requirementId, { supportLevel: m.supportLevel, notes: m.notes }]));
+
     await prisma.$transaction(async (tx) => {
+      // 1. Stable requirement upsert (keeps IDs consistent for ComplianceMatrix links)
+      await upsertRequirements(tx, tenderId, analysis.requirements as any);
+
+      // 2. Clear transient artifacts
       await tx.tenderExpertMatch.deleteMany({ where: { tenderId } });
       await tx.tenderProjectMatch.deleteMany({ where: { tenderId } });
       await tx.complianceGap.deleteMany({ where: { tenderId } });
       await tx.complianceMatrix.deleteMany({ where: { tenderId } });
-      await tx.tenderRequirement.deleteMany({ where: { tenderId } });
-      for (const batch of chunks(requirementRows, 100)) await tx.tenderRequirement.createMany({ data: batch });
-      for (const batch of chunks(expertMatchRows, 100)) await tx.tenderExpertMatch.createMany({ data: batch, skipDuplicates: true });
-      for (const batch of chunks(projectMatchRows, 100)) await tx.tenderProjectMatch.createMany({ data: batch, skipDuplicates: true });
-      for (const batch of chunks(matrixRows, 100)) await tx.complianceMatrix.createMany({ data: batch });
+
+      // 3. Prepare matches with preserved selections
+      const finalExpertMatchRows = expertMatchRows.map(m => ({ ...m, isSelected: m.isSelected || selectedExpertsSet.has(m.expertId) }));
+      const finalProjectMatchRows = projectMatchRows.map(m => ({ ...m, isSelected: m.isSelected || selectedProjectsSet.has(m.projectId) }));
+      for (const batch of chunks(finalExpertMatchRows, 100)) await tx.tenderExpertMatch.createMany({ data: batch, skipDuplicates: true });
+      for (const batch of chunks(finalProjectMatchRows, 100)) await tx.tenderProjectMatch.createMany({ data: batch, skipDuplicates: true });
+
+      // 4. Matrix preservation: keep manual notes/status if requirement ID matches
+      const finalMatrixRows = matrixRows.map(m => {
+        const manual = manualMatrixMap.get(m.requirementId);
+        if (manual && (manual.notes || manual.supportLevel === "USER_CONFIRMED")) {
+           return { ...m, supportLevel: manual.supportLevel, notes: manual.notes };
+        }
+        return m;
+      });
+      for (const batch of chunks(finalMatrixRows, 100)) await tx.complianceMatrix.createMany({ data: batch });
       for (const batch of chunks(gapRows, 100)) await tx.complianceGap.createMany({ data: batch });
       for (const batch of chunks(documentRows, 100)) await tx.generatedDocument.createMany({ data: batch });
       await tx.tender.update({

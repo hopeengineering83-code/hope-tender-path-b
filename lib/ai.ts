@@ -1193,11 +1193,11 @@ const ANALYSIS_CHUNK_SOFT_LIMIT = 60_000;
 // Each chunk size — kept under 80K so the prompt + chunk fits comfortably
 // in one call. Overlap preserves context across boundaries (a requirement
 // straddling the boundary is captured in both chunks; merge dedupes).
-const ANALYSIS_CHUNK_SIZE = 50_000;
-const ANALYSIS_CHUNK_OVERLAP = 5_000;
+const ANALYSIS_CHUNK_SIZE = 60_000;
+const ANALYSIS_CHUNK_OVERLAP = 8_000;
 // Cap to prevent runaway cost on truly enormous PDFs. 6 × 50K = 300K
 // chars covers an extremely long RFP. Anything past 300K is rare.
-const ANALYSIS_MAX_CHUNKS = 6;
+const ANALYSIS_MAX_CHUNKS = 10;
 
 function chunkTenderContent(content: string): string[] {
   if (content.length <= ANALYSIS_CHUNK_SOFT_LIMIT) return [content];
