@@ -117,6 +117,24 @@ describe("non-destructive AI analysis — ai-analyze-promotion library", () => {
       "canPromoteToCanonical must use analysisVersion and promotedAt to detect stale/superseded runs",
     );
   });
+
+  it("canPromoteToCanonical fails closed when job tracking is unavailable", () => {
+    assert.match(
+      promotionSource,
+      /if \(!jobId\) return false;/,
+      "missing AiJob id must block canonical promotion instead of allowing unversioned writes",
+    );
+    assert.match(
+      promotionSource,
+      /if \(!thisJob\) return false;/,
+      "missing AiJob row must block canonical promotion instead of allowing unversioned writes",
+    );
+    assert.doesNotMatch(
+      promotionSource,
+      /if \(!jobId\) return true;|if \(!thisJob\) return true;/,
+      "promotion must not fail open when job tracking fails",
+    );
+  });
 });
 
 // ── Route: partial and fallback paths use non-destructive staging ─────────────
