@@ -76,7 +76,12 @@ new_fallback = '''    } else {
       // No staging record means fallback output cannot be reviewed or resumed safely.
       // Preserve all canonical requirements and metadata rather than replacing them.
       throw new AiAnalyzeCheckpointPersistenceError(
-        "AI Analyze could not create a staging job. Existing canonical requirements were preserved; retry after database connectivity is restored.",
+        "stageFallbackDraft",
+        crypto.randomUUID(),
+        id,
+        null,
+        contentHash.slice(0, 8),
+        new Error("AI Analyze could not create a staging job; canonical requirements were preserved."),
       );
     }'''
 once(old_fallback, new_fallback, "remove destructive no-job fallback")
