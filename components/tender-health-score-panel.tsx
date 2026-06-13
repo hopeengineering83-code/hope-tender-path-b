@@ -12,6 +12,9 @@ import { assessExtractionQuality } from "../lib/extraction-quality";
 import { isExtractionCorrupted } from "../lib/engine/extraction-quality-gate";
 import { assessTenderMetadataCompleteness } from "../lib/engine/tender-metadata-completeness";
 import { safeParseJsonArray } from "../lib/safe-json";
+import { CanonicalStatusBadge, CanonicalStatusIcon } from "./canonical-status-badge";
+import type { CanonicalTenderReadiness } from "../lib/canonical-tender-readiness";
+import type { CanonicalModuleKey } from "../lib/engine/canonical-readiness-state";
 
 type Dimension = {
   label: string;
@@ -36,13 +39,17 @@ function scoreBar(score: number, max: number) {
   );
 }
 
-function statusIcon(status: "PASS" | "WARN" | "FAIL") {
-  if (status === "PASS") return <span className="text-emerald-600">✓</span>;
-  if (status === "WARN") return <span className="text-amber-600">⚠</span>;
-  return <span className="text-red-600">✗</span>;
-}
+const DIMENSION_MODULE: Record<string, CanonicalModuleKey> = {
+  Extraction: "extraction",
+  "AI Analysis": "analysis",
+  Metadata: "metadata",
+  Requirements: "requirements",
+  "Submission Plan": "submissionPlan",
+  Documents: "documents",
+  Compliance: "compliance",
+};
 
-export async function TenderHealthScorePanel({ tenderId }: { tenderId: string }) {
+export async function TenderHealthScorePanel({ tenderId, canonicalReadiness }: { tenderId: string; canonicalReadiness?: CanonicalTenderReadiness | null }) {
   const userId = await getSession();
   if (!userId) return null;
 
@@ -272,6 +279,7 @@ export async function TenderHealthScorePanel({ tenderId }: { tenderId: string })
   const healthColor = healthPct >= 80 ? "text-emerald-700" : healthPct >= 50 ? "text-amber-700" : "text-red-700";
   const healthBg = healthPct >= 80 ? "border-emerald-200 bg-emerald-50" : healthPct >= 50 ? "border-amber-200 bg-amber-50" : "border-red-200 bg-red-50";
   const healthLabel = healthPct >= 80 ? "Strong" : healthPct >= 60 ? "Acceptable" : healthPct >= 40 ? "Needs Work" : "Critical Issues";
+  const healthState = canonicalReadiness?.modules.generation.state ?? canonicalReadiness?.modules.export.state ?? "NOT_RUN";
 
   return (
     <section className={`mb-4 rounded-2xl border p-5 shadow-sm ${healthBg}`}>
@@ -282,8 +290,9 @@ export async function TenderHealthScorePanel({ tenderId }: { tenderId: string })
             <span className={`text-4xl font-extrabold ${healthColor}`}>{healthPct}</span>
             <span className="text-lg text-slate-400">/100</span>
             <span className={`rounded-full px-3 py-0.5 text-sm font-semibold ${healthColor} bg-white border`}>{healthLabel}</span>
+            <CanonicalStatusBadge status={healthState} size="sm" />
           </div>
-          <p className="mt-1 text-sm text-slate-600">Composite score across {dimensions.length} quality dimensions. Fix FAIL dimensions before exporting.</p>
+          <p className="mt-1 text-sm text-slate-600">Composite score across {dimensions.length} quality dimensions. Canonical icon/state comes from the shared readiness payload; numeric score cannot override blockers.</p>
         </div>
         <div className="text-right">
           <p className="text-xs text-slate-500">Raw points</p>
@@ -295,7 +304,7 @@ export async function TenderHealthScorePanel({ tenderId }: { tenderId: string })
         {dimensions.map((d) => (
           <div key={d.label} className={`rounded-xl border bg-white/80 p-3 ${d.status === "FAIL" ? "border-red-200" : d.status === "WARN" ? "border-amber-200" : "border-slate-200"}`}>
             <div className="flex items-center justify-between mb-1">
-              <p className="text-xs font-semibold text-slate-700">{statusIcon(d.status)} {d.label}</p>
+              <p className="text-xs font-semibold text-slate-700">{canonicalReadiness?.modules[DIMENSION_MODULE[d.label]] ? <CanonicalStatusIcon status={canonicalReadiness.modules[DIMENSION_MODULE[d.label]].state} /> : null} {d.label}</p>
             </div>
             {scoreBar(d.score, d.max)}
             <p className="mt-1 text-[10px] text-slate-500 truncate" title={d.detail}>{d.detail}</p>

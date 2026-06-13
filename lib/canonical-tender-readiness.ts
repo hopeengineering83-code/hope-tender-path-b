@@ -2,7 +2,10 @@ import type { PrismaClient } from "@prisma/client";
 import { getTenderGenerationReadiness } from "./tender-generation-readiness";
 import { assessMatchingQuality } from "./matching-quality";
 import { getCompanyIngestionReadiness } from "./company-ingestion-readiness";
-import { buildSubmissionPlan, buildSubmissionPlanWithDerivedFallback, findMissingGeneratedDocuments } from "./engine/submission-plan";
+import { buildSubmissionPlanWithDerivedFallback, findMissingGeneratedDocuments } from "./engine/submission-plan";
+import { computeTenderReadinessState } from "./tender-readiness-state";
+import { buildCanonicalModulePayload, computeCanonicalModuleStates, type CanonicalModuleStatePayload } from "./engine/canonical-readiness-state";
+import { detectAnalysisSourceWithApproval } from "./engine/analysis-source";
 
 export type CanonicalTenderReadiness = {
   readyForAnalysis: boolean;
@@ -12,6 +15,7 @@ export type CanonicalTenderReadiness = {
   readyForSupportPackage: boolean;
   readyForFullProposal: boolean;
   readyForFinalExport: boolean;
+  modules: CanonicalModuleStatePayload;
   blockers: string[];
   warnings: string[];
   nextActions: string[];
@@ -62,6 +66,22 @@ export async function getCanonicalTenderReadiness(client: PrismaClient, userId: 
   const reviewedSelectedExperts = tender.expertMatches.filter((m) => m.isSelected && m.expert?.trustLevel === "REVIEWED").length;
   const reviewedSelectedProjects = tender.projectMatches.filter((m) => m.isSelected && m.project?.trustLevel === "REVIEWED").length;
 
+  const analysisSource = await detectAnalysisSourceWithApproval(client, tenderId, tender);
+  const baseState = computeTenderReadinessState({
+    analysisExtractionStatus: tender.analysisExtractionStatus,
+    analysisSource,
+    analysisSeverity: readiness.analysisQuality.severity as "GOOD" | "WARNING" | "POOR" | "UNSAFE" | null,
+    title: tender.title,
+    clientName: tender.clientName,
+    procuringEntityName: tender.procuringEntityName,
+    reference: tender.reference,
+    metadataContaminated: tender.metadataContaminated,
+    requirements: tender.requirements,
+    exactFileNaming: tender.exactFileNaming,
+    exactFileOrder: tender.exactFileOrder,
+    generatedDocuments: tender.generatedDocuments,
+  });
+
   const blockers = [
     ...readiness.fullProposalBlockers.map((b) => b.code),
     ...(matching.state === "VAULT_AWAITS_ENGINE" ? ["ENGINE_NOT_COMPLETED"] : []),
@@ -78,6 +98,21 @@ export async function getCanonicalTenderReadiness(client: PrismaClient, userId: 
     ...(matching.state === "VAULT_AWAITS_ENGINE" ? ["RUN_ENGINE"] : []),
   ]));
 
+  const states = computeCanonicalModuleStates({
+    ...baseState,
+    hasAnalysis: Boolean(tender.analysisSummary),
+    hasRequirements: tender.requirements.length > 0,
+    hasDocuments: tender.generatedDocuments.length > 0,
+    matchingComplete: matching.state !== "VAULT_AWAITS_ENGINE",
+    matchingBlocked: blockers.some((code) => code.includes("MATCH") || code.includes("EXPERT") || code.includes("PROJECT")),
+    generationServerReady: readiness.fullProposalReady,
+  });
+  const modules = buildCanonicalModulePayload(states, {
+    blockers,
+    warnings: readiness.warnings.map((w) => w.code),
+    currentAnalysisHash: baseState.currentAnalysisHash,
+  });
+
   return {
     readyForAnalysis: readiness.analysisQuality.severity !== "POOR",
     readyForMatchingAttempt: true,
@@ -86,6 +121,7 @@ export async function getCanonicalTenderReadiness(client: PrismaClient, userId: 
     readyForSupportPackage: readiness.supportPackageReady,
     readyForFullProposal: readiness.fullProposalReady,
     readyForFinalExport: tender.generatedDocuments.length > 0 && missing.length === 0 && blockers.length === 0,
+    modules,
     blockers,
     warnings: readiness.warnings.map((w) => w.code),
     nextActions,

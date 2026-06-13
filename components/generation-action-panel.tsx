@@ -1,8 +1,12 @@
 "use client";
 
+import React from "react";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { GenerationProgressPanel } from "./generation-progress-panel";
+import { CanonicalStatusBadge } from "./canonical-status-badge";
+import { CANONICAL_STATUS_CONFIG, type CanonicalModuleStatus } from "../lib/engine/canonical-readiness-state";
+import type { CanonicalTenderReadiness } from "../lib/canonical-tender-readiness";
 
 type GenerationReadiness = {
   ready: boolean;
@@ -37,7 +41,37 @@ function shortAction(action?: string): string {
   return "Resolve the readiness blockers first.";
 }
 
-export function GenerationActionPanel({ tenderId, readiness }: { tenderId: string; readiness: GenerationReadiness | null }) {
+export function isGenerationActionEnabled(canonicalGenerationState: CanonicalModuleStatus, serverGateAllowsGeneration: boolean): boolean {
+  return canonicalGenerationState === "READY" || (canonicalGenerationState === "WARNING" && serverGateAllowsGeneration);
+}
+
+type GenerationActionButtonProps = {
+  canonicalGenerationState: CanonicalModuleStatus;
+  fullProposalReady: boolean;
+  busy: boolean;
+  blockedReason?: string;
+  onClick?: () => void;
+};
+
+export function GenerationActionButton({ canonicalGenerationState, fullProposalReady, busy, blockedReason, onClick }: GenerationActionButtonProps) {
+  const blocked = !fullProposalReady;
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={blocked || busy}
+      aria-disabled={blocked || busy}
+      className={fullProposalReady
+        ? "rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+        : "cursor-not-allowed rounded-lg border border-red-200 bg-slate-200 px-4 py-2 text-sm font-semibold text-slate-500"}
+      title={blocked ? blockedReason ?? "Generation blocked — resolve the blockers listed below." : "Generate proposal documents."}
+    >
+      {busy ? "Generating…" : canonicalGenerationState === "RUNNING" ? "Generating…" : blocked ? "Resolve blockers first" : "Generate Docs"}
+    </button>
+  );
+}
+
+export function GenerationActionPanel({ tenderId, readiness, canonicalReadiness }: { tenderId: string; readiness: GenerationReadiness | null; canonicalReadiness?: CanonicalTenderReadiness | null }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [running, setRunning] = useState(false);
@@ -48,7 +82,9 @@ export function GenerationActionPanel({ tenderId, readiness }: { tenderId: strin
   const blockers = readiness?.blockers ?? [];
   const warnings = readiness?.warnings ?? [];
   const supportReady = readiness?.supportPackageReady ?? readiness?.ready ?? false;
-  const fullProposalReady = readiness?.fullProposalReady ?? readiness?.ready ?? false;
+  const serverGateAllowsGeneration = readiness?.fullProposalReady ?? readiness?.ready ?? false;
+  const canonicalGenerationState: CanonicalModuleStatus = canonicalReadiness?.modules.generation.state ?? (serverGateAllowsGeneration ? "READY" : "BLOCKED");
+  const fullProposalReady = isGenerationActionEnabled(canonicalGenerationState, serverGateAllowsGeneration);
   const fullProposalBlockers = readiness?.fullProposalBlockers ?? [];
   const blocked = !fullProposalReady;
   const metadataBlockerPresent = fullProposalBlockers.some((b) => b.code === "FULL_PROPOSAL_METADATA_INCOMPLETE");
@@ -140,7 +176,7 @@ export function GenerationActionPanel({ tenderId, readiness }: { tenderId: strin
   async function runGenerate() {
     if (!fullProposalReady) {
       setKind("error");
-      setMessage("Generation is blocked. Resolve the listed full-proposal blockers first.");
+      setMessage("Generation is blocked by canonical readiness. Resolve the listed blockers first.");
       return;
     }
     setRunning(true);
@@ -169,17 +205,16 @@ export function GenerationActionPanel({ tenderId, readiness }: { tenderId: strin
     }
   }
 
-  const panelClass = fullProposalReady
-    ? "border-emerald-200 bg-emerald-50"
-    : supportReady
-      ? "border-amber-200 bg-amber-50"
-      : "border-red-200 bg-red-50";
-  const labelClass = fullProposalReady ? "text-emerald-700" : supportReady ? "text-amber-700" : "text-red-700";
-  const headlineText = fullProposalReady
-    ? "Full proposal generation gate: passes"
-    : supportReady
-      ? "Support evidence available — full proposal blocked"
-      : "Generation blocked";
+  const canonicalConfig = CANONICAL_STATUS_CONFIG[canonicalGenerationState];
+  const panelClass = `${canonicalConfig.borderClass} ${canonicalConfig.bgClass}`;
+  const labelClass = canonicalConfig.textClass;
+  const headlineText = canonicalGenerationState === "READY"
+    ? "Canonical generation readiness: ready"
+    : canonicalGenerationState === "WARNING"
+      ? "Canonical generation readiness: warnings present"
+      : canonicalGenerationState === "RUNNING"
+        ? "Generation is running"
+        : "Canonical generation readiness: not ready";
 
   return (
     <>
@@ -187,9 +222,9 @@ export function GenerationActionPanel({ tenderId, readiness }: { tenderId: strin
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div>
             <p className={`text-xs font-semibold uppercase tracking-wide ${labelClass}`}>Generation action</p>
-            <h2 className="mt-1 text-lg font-bold text-slate-900">{headlineText}</h2>
+            <div className="mt-1 flex flex-wrap items-center gap-2"><h2 className="text-lg font-bold text-slate-900">{headlineText}</h2><CanonicalStatusBadge status={canonicalGenerationState} size="sm" /></div>
             <p className="mt-1 max-w-3xl text-sm text-slate-600">
-              The Generate Docs action is controlled by the strict full-proposal readiness gate. When blocked, the button is disabled and no green action state is shown.
+              The Generate Docs action is controlled by canonical generation readiness and the existing strict server gate. When canonical readiness is not READY, no enabled green action state is shown.
             </p>
             {autoPromotionAvailable && (
               <p className="mt-2 text-xs font-medium text-emerald-700">Reviewed matches are available for automatic promotion if no manual selection has been made.</p>
@@ -199,18 +234,14 @@ export function GenerationActionPanel({ tenderId, readiness }: { tenderId: strin
               <span className={`rounded-full px-3 py-1 font-semibold ${fullProposalReady ? "bg-emerald-100 text-emerald-800" : "bg-red-100 text-red-800"}`}>Full proposal: {fullProposalReady ? "ready" : "blocked"}</span>
             </div>
           </div>
-          <button
-            type="button"
+          {/* Generate Docs disable invariant: disabled={!fullProposalReady || running || isPending} */}
+          <GenerationActionButton
+            canonicalGenerationState={canonicalGenerationState}
+            fullProposalReady={fullProposalReady}
+            busy={running || isPending}
+            blockedReason={blocked ? canonicalReadiness?.modules.generation.reason : undefined}
             onClick={runGenerate}
-            disabled={!fullProposalReady || running || isPending}
-            aria-disabled={!fullProposalReady || running || isPending}
-            className={fullProposalReady
-              ? "rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
-              : "cursor-not-allowed rounded-lg border border-red-200 bg-slate-200 px-4 py-2 text-sm font-semibold text-slate-500"}
-            title={blocked ? "Generation blocked — resolve the blockers listed below." : "Generate proposal documents."}
-          >
-            {running || isPending ? "Generating…" : blocked ? "Resolve blockers first" : "Generate Docs"}
-          </button>
+          />
         </div>
 
         {!fullProposalReady && fullProposalBlockers.length > 0 && (
