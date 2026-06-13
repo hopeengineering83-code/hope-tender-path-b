@@ -9,13 +9,6 @@ import { test, expect } from "@playwright/test";
 
 const FULL = process.env.E2E_FULL_AUTH === "true";
 
-async function expectAnonymousProtected(request: Parameters<Parameters<typeof test>[1]>[0]["request"], method: "get" | "post", url: string) {
-  const res = method === "get" ? await request.get(url) : await request.post(url);
-  // Protected endpoints must not return a successful anonymous response. Apps may
-  // express this as 401 JSON, 403, redirect to login, or not-found behind auth.
-  expect(res.status(), `${method.toUpperCase()} ${url} should not succeed anonymously`).not.toBeGreaterThanOrEqual(200);
-}
-
 // ─── Smoke tests (always run) ────────────────────────────────────────────────
 
 test.describe("Pipeline API — anonymous protection contract", () => {
