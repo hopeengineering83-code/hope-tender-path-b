@@ -11,7 +11,21 @@ jobs:
   build:
     name: Typecheck, lint, test, e2e, and build
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 35
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ci -d ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
 
     steps:
       - name: Checkout
@@ -29,6 +43,11 @@ jobs:
       - name: Generate Prisma client
         run: npx prisma generate
 
+      - name: Initialize isolated CI database
+        env:
+          DATABASE_URL: postgresql://ci:ci@127.0.0.1:5432/ci
+        run: npx prisma db push --accept-data-loss=false
+
       - name: Typecheck
         run: npm run typecheck
 
@@ -43,7 +62,7 @@ jobs:
 
       - name: Test (Playwright smoke)
         env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL || 'postgresql://ci:ci@127.0.0.1:5432/ci' }}
+          DATABASE_URL: postgresql://ci:ci@127.0.0.1:5432/ci
           SESSION_SECRET: ${{ secrets.SESSION_SECRET || 'ci-e2e-placeholder-not-used-at-runtime-abcdef0123456789' }}
           NEXTAUTH_SECRET: ${{ secrets.NEXTAUTH_SECRET || 'ci-nextauth-placeholder' }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY || 'AIzaFakeCiE2EKeyNotUsedAtRuntime12345678901' }}
@@ -54,7 +73,7 @@ jobs:
 
       - name: Build
         env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL || 'postgresql://ci:ci@127.0.0.1:5432/ci' }}
+          DATABASE_URL: postgresql://ci:ci@127.0.0.1:5432/ci
           SESSION_SECRET: ${{ secrets.SESSION_SECRET || 'ci-build-only-placeholder-not-used-at-runtime-abcdef0123456789' }}
           NEXTAUTH_SECRET: ${{ secrets.NEXTAUTH_SECRET || 'ci-nextauth-placeholder' }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY || 'AIzaFakeCiBuildKeyNotUsedAtRuntime12345678901' }}
