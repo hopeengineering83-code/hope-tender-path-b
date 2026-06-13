@@ -47,14 +47,16 @@ export async function stageFallbackDraft(
 
 // Returns false when a newer analysisVersion job exists for this tender (even if
 // still RUNNING), preventing a stale concurrent run from overwriting canonical data.
-// Returns true when jobId is absent (job tracking failed) so canonical write proceeds.
+// Also fails closed when job tracking is unavailable. Canonical AI promotion must
+// be versioned by a durable AiJob row; otherwise a job-record failure could allow
+// an unversioned analysis to delete and replace trusted canonical requirements.
 export async function canPromoteToCanonical(jobId: string | null, tenderId: string): Promise<boolean> {
-  if (!jobId) return true; // No job record — can't version-check, allow canonical write
+  if (!jobId) return false;
   const thisJob = await prisma.aiJob.findUnique({
     where: { id: jobId },
     select: { analysisVersion: true },
   }).catch(() => null);
-  if (!thisJob) return true; // Job not found — allow canonical write
+  if (!thisJob) return false;
 
   const newerJob = await prisma.aiJob.findFirst({
     where: {
@@ -62,10 +64,10 @@ export async function canPromoteToCanonical(jobId: string | null, tenderId: stri
       jobType: "AI_ANALYZE",
       id: { not: jobId },
       analysisVersion: { gt: thisJob.analysisVersion },
-      // Any newer-version job (including RUNNING) supersedes this one
+      // Any newer-version job (including RUNNING) supersedes this one.
     },
     select: { id: true },
-  }).catch(() => null);
+  }).catch(() => ({ id: "promotion-check-failed" }));
 
   return newerJob === null;
 }
