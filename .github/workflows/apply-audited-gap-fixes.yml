@@ -1,80 +1,10 @@
-name: Apply audited gap fixes
+name: Retired audited gap patch
 
 on:
-  pull_request:
-    branches: [main]
   workflow_dispatch:
 
-permissions:
-  contents: write
-
 jobs:
-  patch-and-validate:
+  retired:
     runs-on: ubuntu-latest
-    timeout-minutes: 35
     steps:
-      - name: Quiet checkout of PR branch
-        shell: bash
-        run: |
-          git init -q
-          git remote add origin "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
-          git fetch -q --depth=1 origin "${{ github.event.pull_request.head.ref || 'codex/solve-audited-app-gaps' }}"
-          git checkout -q -B "${{ github.event.pull_request.head.ref || 'codex/solve-audited-app-gaps' }}" FETCH_HEAD
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Patch AI analysis contract
-        run: python scripts/patch-ai-source-linkage.py
-
-      - name: Patch AI Analyze persistence
-        run: python scripts/patch-ai-analyze-route.py
-
-      - name: Patch tender UI
-        run: python scripts/patch-ui-ci.py
-
-      - name: Exclude CI workflow from bot commit
-        run: git restore .github/workflows/ci.yml
-
-      - name: Commit patch before deterministic validation
-        shell: bash
-        run: |
-          if git diff --quiet; then
-            echo "No patch changes to commit"
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git commit -m "fix: close source linkage, fallback, and legacy UI gaps"
-          git push origin HEAD:${{ github.event.pull_request.head.ref || 'codex/solve-audited-app-gaps' }}
-
-      - name: Install dependencies
-        run: npm ci --silent
-
-      - name: Identify failing unit test files
-        shell: bash
-        run: |
-          failed=0
-          for file in tests/*.test.ts; do
-            if ! ./node_modules/.bin/tsx --test "$file" > /tmp/one-test.log 2>&1; then
-              echo "FAILED_FILE=$file"
-              tail -80 /tmp/one-test.log
-              failed=1
-            fi
-          done
-          exit $failed
-
-      - name: Generate Prisma client
-        run: npx prisma generate >/dev/null
-
-      - name: Typecheck
-        run: npm run typecheck
-
-      - name: Full unit suite
-        run: npm test
-
-      - name: Lint
-        run: npm run lint
+      - run: echo "The audited gap patch has already been applied. Use the standard CI workflow for validation."
