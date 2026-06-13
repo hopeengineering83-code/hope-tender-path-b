@@ -241,7 +241,7 @@ $$;
 
 DROP TRIGGER IF EXISTS "GeneratedDocument_refresh_plan_state" ON "GeneratedDocument";
 CREATE TRIGGER "GeneratedDocument_refresh_plan_state"
-AFTER INSERT OR UPDATE OF "tenderId", "generationStatus", "reviewStatus", "contentSummary" OR DELETE
+AFTER INSERT OR UPDATE OR DELETE
 ON "GeneratedDocument"
 FOR EACH ROW
 EXECUTE FUNCTION refresh_submission_plan_state_trigger();
