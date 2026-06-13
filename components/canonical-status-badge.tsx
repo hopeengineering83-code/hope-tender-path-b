@@ -1,5 +1,6 @@
 "use client";
 
+import React from "react";
 import { CANONICAL_STATUS_CONFIG, type CanonicalModuleStatus } from "../lib/engine/canonical-readiness-state";
 
 type CanonicalStatusBadgeProps = {

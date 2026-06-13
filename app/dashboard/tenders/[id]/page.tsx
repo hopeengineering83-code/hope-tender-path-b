@@ -3,6 +3,7 @@ import { getSession } from "../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../lib/prisma";
 import { isAIEnabled } from "../../../../lib/ai";
 import { getTenderGenerationReadiness } from "../../../../lib/tender-generation-readiness";
+import { getCanonicalTenderReadiness } from "../../../../lib/canonical-tender-readiness";
 import { TenderDetail } from "./tender-detail";
 import { ExecutiveSnapshot } from "./executive-snapshot";
 import { TenderIntakeDetailPanel } from "./tender-intake-detail-panel";
@@ -100,6 +101,7 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
 
   const ai = isAIEnabled();
   const generationReadiness = await getTenderGenerationReadiness(prisma, userId, tender.id).catch(() => null);
+  const canonicalReadiness = await getCanonicalTenderReadiness(prisma, userId, tender.id).catch(() => null);
 
   return (
     <>
@@ -111,11 +113,11 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
         country: tender.country,
         clientContactName: tender.clientContactName,
       }} />
-      <ExecutiveSnapshot tender={tenderForUi} />
+      <ExecutiveSnapshot tender={tenderForUi} canonicalReadiness={canonicalReadiness} />
       <div id="extraction-quality"><ExtractionQualityDashboard tenderId={tender.id} /></div>
       <NextActionPanel tenderId={tender.id} />
       {ai && <TenderChatPanelWrapper tenderId={tender.id} />}
-      <TenderHealthScorePanel tenderId={tender.id} />
+      <TenderHealthScorePanel tenderId={tender.id} canonicalReadiness={canonicalReadiness} />
       <AICopilotSuggestionsPanel tenderId={tender.id} />
       <BidControlVerdictPanel tenderId={tender.id} />
       <FinalSubmissionControlCenter tenderId={tender.id} generationReadiness={generationReadiness} />
@@ -132,7 +134,7 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
       <ClientSubmissionDetailsPanel tenderId={tender.id} />
       <div id="matching-quality"><MatchingQualityPanel tenderId={tender.id} /></div>
       <GenerationReadinessPanel tenderId={tender.id} readiness={generationReadiness} />
-      <div id="generate-docs-action"><GenerationActionPanel tenderId={tender.id} readiness={generationReadiness} /></div>
+      <div id="generate-docs-action"><GenerationActionPanel tenderId={tender.id} readiness={generationReadiness} canonicalReadiness={canonicalReadiness} /></div>
       <SubmissionPlanReconciliationPanel tenderId={tender.id} />
       <TenderIntakeDetailPanel tender={tenderForUi} />
       <div id="proposal-evidence-readiness"><ProposalEvidenceReadinessPanel tenderId={tender.id} /></div>
@@ -154,7 +156,7 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
       </div>
       <div id="legacy-tender-detail-actions">
         <LegacyTenderActionHider targetId="legacy-tender-detail-actions" />
-        <TenderDetail tender={tenderForUi} aiEnabled={ai} />
+        <TenderDetail tender={tenderForUi} aiEnabled={ai} canonicalReadiness={canonicalReadiness} />
       </div>
     </>
   );

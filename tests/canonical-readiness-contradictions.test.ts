@@ -513,8 +513,8 @@ describe("canonical-status-badge component exists and exports correctly", () => 
   it("canonical resolver covers all 8 modules", () => {
     const { readFileSync } = require("node:fs");
     const source = readFileSync("lib/engine/canonical-readiness-state.ts", "utf8");
-    for (const module of ["extraction", "analysis", "metadata", "requirements", "submissionPlan", "compliance", "documents", "export"]) {
-      assert.match(source, new RegExp(module), `canonical resolver must compute state for module ${module}`);
+    for (const moduleName of ["extraction", "analysis", "metadata", "requirements", "matching", "submissionPlan", "compliance", "documents", "generation", "export"]) {
+      assert.match(source, new RegExp(moduleName), `canonical resolver must compute state for module ${moduleName}`);
     }
   });
 });
