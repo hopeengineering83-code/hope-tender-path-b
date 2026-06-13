@@ -27,7 +27,7 @@ function normalizeFileName(value: string | null | undefined): string {
 
 function parseFileToken(value: string | null | undefined): string | null {
   if (!value) return null;
-  const match = value.match(/\[?FILE_ID:([^\]|\s]+)(?:\]|\||\s|$)/i);
+  const match = value.match(/\[?FILE_ID:([^\]\|\s]+)(?:\]|\||\s|$)/i);
   return match?.[1]?.trim() || null;
 }
 
