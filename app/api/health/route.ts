@@ -10,6 +10,8 @@ type PublicHealthSnapshot = {
   ok: boolean;
   status: "ok" | "degraded";
   databaseReachable: boolean;
+  schemaCompatible: boolean;
+  criticalModelsReadable: boolean;
   timestamp: string;
 };
 
@@ -31,18 +33,57 @@ export async function GET() {
   }
 
   let databaseReachable = false;
+  let schemaCompatible = false;
+  let criticalModelsReadable = false;
+
   try {
     await prismaReady;
     await prisma.$queryRawUnsafe("SELECT 1");
     databaseReachable = true;
-  } catch {
-    databaseReachable = false;
+
+    // Exercise fields that previously drifted between Prisma schema, runtime
+    // bootstrap, and production DB. Values are never returned publicly.
+    await Promise.all([
+      prisma.tender.findFirst({
+        select: {
+          id: true,
+          procuringEntityName: true,
+          legalClientName: true,
+          donorAgency: true,
+          implementingAgency: true,
+          evaluationCriteriaSourceJson: true,
+          analysisExtractionStatus: true,
+        },
+      }),
+      prisma.aiJob.findFirst({
+        select: {
+          id: true,
+          analysisVersion: true,
+          stagedMergedResult: true,
+          promotedAt: true,
+        },
+      }),
+      prisma.aiAnalyzeChunk.findFirst({ select: { id: true, status: true } }),
+      prisma.generatedDocument.findFirst({
+        select: { id: true, generationStatus: true, validationStatus: true, reviewStatus: true },
+      }),
+    ]);
+    schemaCompatible = true;
+    criticalModelsReadable = true;
+  } catch (error) {
+    console.error("[health] dependency check failed", {
+      errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+      message: error instanceof Error ? error.message : String(error),
+    });
   }
 
+  const ok = databaseReachable && schemaCompatible && criticalModelsReadable;
   const value = snapshot({
-    ok: databaseReachable,
-    status: databaseReachable ? "ok" : "degraded",
+    ok,
+    status: ok ? "ok" : "degraded",
     databaseReachable,
+    schemaCompatible,
+    criticalModelsReadable,
   });
   g.publicHealthSnapshot = { at: Date.now(), value };
 
