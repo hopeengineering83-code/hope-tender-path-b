@@ -1,6 +1,6 @@
 import { getSession } from "../lib/auth";
 import { prisma, prismaReady } from "../lib/prisma";
-import { getTenderGenerationReadiness } from "../lib/tender-generation-readiness";
+import { getTenderGenerationReadinessStrict } from "../lib/tender-generation-readiness-strict";
 import { getFinalSubmissionReadiness } from "../lib/engine/final-submission-readiness";
 import { BidDecisionForm } from "./bid-decision-form";
 
@@ -38,14 +38,23 @@ export async function BidControlVerdictPanel({ tenderId }: { tenderId: string })
   if (!userId) return null;
   await prismaReady;
 
-  // Canonical readiness — same shape consumed by Export Gate, Final
-  // Submission Control Center, and download ZIP route. Bid Control
-  // intentionally NEVER reconstructs the blocker logic locally; it
-  // reads the canonical answer so the same tender cannot show
-  // inconsistent counts across panels.
   const [generationReadiness, canonical, tender] = await Promise.all([
-    getTenderGenerationReadiness(prisma, userId, tenderId).catch(() => null),
-    getFinalSubmissionReadiness(prisma, { tenderId, userId, requireFileContent: false }).catch(() => null),
+    getTenderGenerationReadinessStrict(prisma, userId, tenderId).catch((error) => {
+      console.error("[BidControlVerdictPanel] generation readiness failed", {
+        tenderId,
+        errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+        message: error instanceof Error ? error.message : String(error),
+      });
+      return null;
+    }),
+    getFinalSubmissionReadiness(prisma, { tenderId, userId, requireFileContent: false }).catch((error) => {
+      console.error("[BidControlVerdictPanel] final readiness failed", {
+        tenderId,
+        errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+        message: error instanceof Error ? error.message : String(error),
+      });
+      return null;
+    }),
     prisma.tender.findFirst({
       where: { id: tenderId, userId },
       select: {
@@ -58,19 +67,21 @@ export async function BidControlVerdictPanel({ tenderId }: { tenderId: string })
     }),
   ]);
 
-  if (!tender || !generationReadiness || !canonical) return null;
+  if (!tender) return null;
+  if (!generationReadiness || !canonical) {
+    return (
+      <section className="mb-4 rounded-2xl border border-red-200 bg-red-50 p-5 shadow-sm text-red-800">
+        <p className="text-xs font-semibold uppercase tracking-wide">Bid control verdict</p>
+        <h2 className="mt-1 text-2xl font-bold text-slate-900">NOT READY</h2>
+        <p className="mt-1 text-sm">A required readiness calculation failed. Generation and export remain blocked until the server checks succeed.</p>
+      </section>
+    );
+  }
 
-  const fullProposalReady = generationReadiness.fullProposalReady ?? generationReadiness.ready;
-  const supportPackageReady = generationReadiness.supportPackageReady ?? generationReadiness.ready;
+  const fullProposalReady = Boolean(generationReadiness.fullProposalReady);
+  const supportPackageReady = Boolean(generationReadiness.supportPackageReady);
   const fullProposalBlockers = generationReadiness.fullProposalBlockers ?? [];
 
-  // Final readiness counts come ONLY from the canonical helper — Bid
-  // Control no longer counts ungenerated/unvalidated/unreviewed docs
-  // separately, because canonical.summary.documentBlockers already
-  // covers every per-doc reason (and excludes internal/control/
-  // official-original placeholder rows from the count). PASSED and
-  // VALIDATED are both treated as success because the canonical
-  // helper uses isValidationPassed() under the hood.
   const documentBlockersCount = canonical.summary.documentBlockers;
   const tenderBlockersCount = canonical.summary.tenderLevelBlockers;
   const advisoryWarningsCount = canonical.summary.advisoryWarnings;
@@ -93,11 +104,9 @@ export async function BidControlVerdictPanel({ tenderId }: { tenderId: string })
   if (advisoryWarningsCount > 0) warnings.push(`${advisoryWarningsCount} advisory warning(s) (donor safeguards / non-mandatory items).`);
   if (highGaps.length > 0) warnings.push(`${highGaps.length} unresolved high-severity review gap(s).`);
 
-  // "Ready for export" pill must reflect canonical ok exactly so it
-  // can never claim Yes when the export gate is blocked.
-  let readyForExportLabel: string;
-  if (canonical.ok) readyForExportLabel = advisoryWarningsCount > 0 ? "Yes (with advisories)" : "Yes";
-  else readyForExportLabel = "No";
+  const readyForExportLabel = canonical.ok
+    ? advisoryWarningsCount > 0 ? "Yes (with advisories)" : "Yes"
+    : "No";
 
   const verdict: Verdict = tender.status === "NO_BID"
     ? "NO_BID"
@@ -107,10 +116,6 @@ export async function BidControlVerdictPanel({ tenderId }: { tenderId: string })
         ? "BID_READY_WITH_WARNINGS"
         : "BID_READY";
 
-  // Plan pill — when plan count is zero but active docs exist, show a
-  // "Mismatch" indicator rather than a misleading "0/0" so the user knows
-  // documents need reconciliation. When plan files exist, show the
-  // resolved/total count derived from the canonical plan status.
   const planLabel = (() => {
     if (planStatus === "NO_PLAN_WITH_ACTIVE_DOCS") return "Not detected";
     if (planStatus === "NO_PLAN_NO_DOCS") return "Not detected";
@@ -128,7 +133,6 @@ export async function BidControlVerdictPanel({ tenderId }: { tenderId: string })
     if (planStatus === "DERIVED_PLAN_UNCONFIRMED") return "Confirm exact tender file names/order before export";
     return null;
   })();
-  // Top reason why full proposal is blocked, for inline display
   const fullProposalBlockReason = !fullProposalReady && fullProposalBlockers.length > 0
     ? fullProposalBlockers[0].message
     : null;
@@ -139,7 +143,7 @@ export async function BidControlVerdictPanel({ tenderId }: { tenderId: string })
         <div>
           <p className="text-xs font-semibold uppercase tracking-wide">Bid control verdict</p>
           <h2 className="mt-1 text-2xl font-bold text-slate-900">{verdictLabel(verdict)}</h2>
-          <p className="mt-1 max-w-3xl text-sm text-slate-600">Consolidates generation readiness, canonical export readiness, compliance gaps, and donor advisories into one bid-control signal.</p>
+          <p className="mt-1 max-w-3xl text-sm text-slate-600">Consolidates strict generation readiness, canonical export readiness, compliance gaps, and donor advisories into one bid-control signal.</p>
         </div>
         <div className="rounded-xl bg-white px-4 py-3 text-right shadow-sm">
           <p className="text-xs text-slate-500">Analysis</p>
@@ -149,26 +153,24 @@ export async function BidControlVerdictPanel({ tenderId }: { tenderId: string })
       </div>
 
       <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-7">
-        <div className="rounded-xl bg-white p-3" title="Strict gate — full proposal generation. Requires valid client metadata, real tender-specific matches with reviewed selections, non-zero matching score, and analysis quality not POOR.">
+        <div className="rounded-xl bg-white p-3" title="Strict gate — full proposal generation.">
           <p className="text-xs text-slate-500">Full proposal</p>
           <p className={`text-lg font-bold ${fullProposalReady ? "text-emerald-700" : "text-red-700"}`}>{fullProposalReady ? "Ready" : "Blocked"}</p>
           {fullProposalBlockReason && <p className="mt-0.5 text-[10px] text-red-600 leading-tight">{fullProposalBlockReason}</p>}
         </div>
-        <div className="rounded-xl bg-white p-3" title="Lenient gate — support / compliance file generation. Allows vault fallback evidence.">
+        <div className="rounded-xl bg-white p-3" title="Support / compliance file generation gate.">
           <p className="text-xs text-slate-500">Support pkg</p>
           <p className={`text-lg font-bold ${supportPackageReady ? "text-emerald-700" : "text-red-700"}`}>{supportPackageReady ? "Ready" : "Blocked"}</p>
         </div>
-        <div className="rounded-xl bg-white p-3" title="Submission plan status (NO_PLAN_NO_DOCS / NO_PLAN_WITH_ACTIVE_DOCS / PLAN_MATCHED / PLAN_MISSING_DOCS / PLAN_EXTRA_DOCS / DERIVED_PLAN_UNCONFIRMED / PLAN_ORDER_MISMATCH / PLAN_NAME_MISMATCH)."><p className="text-xs text-slate-500">Plan files</p><p className={`text-lg font-bold ${planStatus === "PLAN_MATCHED" ? "text-emerald-700" : "text-slate-900"}`}>{planLabel}</p>{planLabelNote && <p className="mt-0.5 text-[10px] text-amber-600 leading-tight">{planLabelNote}</p>}</div>
+        <div className="rounded-xl bg-white p-3"><p className="text-xs text-slate-500">Plan files</p><p className={`text-lg font-bold ${planStatus === "PLAN_MATCHED" ? "text-emerald-700" : "text-slate-900"}`}>{planLabel}</p>{planLabelNote && <p className="mt-0.5 text-[10px] text-amber-600 leading-tight">{planLabelNote}</p>}</div>
         <div className="rounded-xl bg-white p-3" title={`Workspace rows: ${workspaceDocuments}. Final export candidates: ${finalExportCandidates}. Excluded internal/control rows: ${excludedInternalRows}.`}><p className="text-xs text-slate-500">Workspace / export</p><p className="text-lg font-bold text-slate-900">{workspaceDocuments} / {finalExportCandidates}</p>{workspaceDocuments > 0 && finalExportCandidates === 0 && <p className="mt-0.5 text-[10px] text-amber-600 leading-tight">{workspaceDocuments} workspace rows, 0 export candidates — review quality/classification</p>}</div>
         <div className="rounded-xl bg-white p-3"><p className="text-xs text-slate-500">Doc blockers</p><p className={`text-lg font-bold ${documentBlockersCount === 0 ? "text-emerald-700" : "text-red-700"}`}>{documentBlockersCount}</p></div>
-        <div className="rounded-xl bg-white p-3" title="Registered critical/high compliance gaps (not the same as lifecycle blockers). Use the Recovery Command Center for full blocker list."><p className="text-xs text-slate-500">Registered gaps</p><p className={`text-lg font-bold ${criticalGaps.length + highGaps.length === 0 ? "text-emerald-700" : "text-red-700"}`}>{criticalGaps.length + highGaps.length}</p><p className="text-[10px] text-slate-400">{criticalGaps.length} critical, {highGaps.length} high</p></div>
-        <div className="rounded-xl bg-white p-3" title="Canonical Export Gate result. Yes only when canonical.ok === true; advisories never flip this to No."><p className="text-xs text-slate-500">Ready for export</p><p className={`text-lg font-bold ${canonical.ok ? "text-emerald-700" : "text-red-700"}`}>{readyForExportLabel}</p></div>
+        <div className="rounded-xl bg-white p-3"><p className="text-xs text-slate-500">Registered gaps</p><p className={`text-lg font-bold ${criticalGaps.length + highGaps.length === 0 ? "text-emerald-700" : "text-red-700"}`}>{criticalGaps.length + highGaps.length}</p><p className="text-[10px] text-slate-400">{criticalGaps.length} critical, {highGaps.length} high</p></div>
+        <div className="rounded-xl bg-white p-3"><p className="text-xs text-slate-500">Ready for export</p><p className={`text-lg font-bold ${canonical.ok ? "text-emerald-700" : "text-red-700"}`}>{readyForExportLabel}</p></div>
       </div>
 
       {workspaceDocuments > 0 && excludedInternalRows > 0 && (
-        <p className="mt-2 text-[11px] text-slate-500">
-          {excludedInternalRows} workspace row(s) (control / quick-draft / planned / official-original placeholder) are excluded from final-export blocker counts.
-        </p>
+        <p className="mt-2 text-[11px] text-slate-500">{excludedInternalRows} workspace row(s) are excluded from final-export blocker counts.</p>
       )}
 
       {blockers.length > 0 && (
