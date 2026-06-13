@@ -12,6 +12,7 @@ import {
 } from "../lib/engine/canonical-readiness-state";
 import { computeTenderReadinessState, deriveAnalysisHash } from "../lib/tender-readiness-state";
 import { CanonicalStatusBadge } from "../components/canonical-status-badge";
+import { GenerationActionButton, isGenerationActionEnabled } from "../components/generation-action-panel";
 
 const req = (priority = "MANDATORY", traced = true) => ({
   priority,
@@ -55,10 +56,6 @@ function payloadWith(state: CanonicalModuleStatus): CanonicalModuleStatePayload 
   const states = computeCanonicalModuleStates(baseInput({ generationServerReady: state === "READY", runningModules: state === "RUNNING" ? { generation: true } : undefined }));
   states.generation = state;
   return buildCanonicalModulePayload(states, { blockers: state === "READY" ? [] : ["BLOCKER"], warnings: [], currentAnalysisHash: "test" }, { calculatedAt: "2026-06-12T00:00:00.000Z" });
-}
-
-function generateButtonEnabled(state: CanonicalModuleStatus, serverGateAllows: boolean): boolean {
-  return state === "READY" || (state === "WARNING" && serverGateAllows);
 }
 
 describe("canonical readiness dependency propagation", () => {
@@ -120,13 +117,34 @@ describe("canonical readiness dependency propagation", () => {
 
 describe("Generate Documents canonical availability", () => {
   for (const state of ["BLOCKED", "STALE", "PARTIAL", "NOT_RUN"] as const) {
-    it(`is disabled for ${state}`, () => assert.equal(generateButtonEnabled(state, true), false));
+    it(`is disabled for ${state}`, () => assert.equal(isGenerationActionEnabled(state, true), false));
   }
 
   it("is enabled only for READY by default", () => {
-    assert.equal(generateButtonEnabled("READY", true), true);
-    assert.equal(generateButtonEnabled("WARNING", false), false);
-    assert.equal(generateButtonEnabled("WARNING", true), true);
+    assert.equal(isGenerationActionEnabled("READY", true), true);
+    assert.equal(isGenerationActionEnabled("WARNING", false), false);
+    assert.equal(isGenerationActionEnabled("WARNING", true), true);
+  });
+
+  it("renders a disabled Generate Documents button for blocked canonical state", () => {
+    const html = renderToStaticMarkup(React.createElement(GenerationActionButton, {
+      canonicalGenerationState: "BLOCKED",
+      fullProposalReady: false,
+      busy: false,
+      blockedReason: "Canonical generation is blocked.",
+    }));
+    assert.match(html, /disabled=""/);
+    assert.match(html, /Resolve blockers first/);
+  });
+
+  it("renders an enabled Generate Documents button only for ready canonical state", () => {
+    const html = renderToStaticMarkup(React.createElement(GenerationActionButton, {
+      canonicalGenerationState: "READY",
+      fullProposalReady: true,
+      busy: false,
+    }));
+    assert.doesNotMatch(html, /disabled=""/);
+    assert.match(html, /Generate Docs/);
   });
 });
 
@@ -144,7 +162,7 @@ describe("migrated UI canonical rendering", () => {
     const highNumericScore = 100;
     assert.equal(highNumericScore, 100);
     assert.equal(payload.generation.state, "BLOCKED");
-    assert.equal(generateButtonEnabled(payload.generation.state, true), false);
+    assert.equal(isGenerationActionEnabled(payload.generation.state, true), false);
   });
 
   it("existing recovery action labels remain available in the generation panel source", () => {

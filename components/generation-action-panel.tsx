@@ -1,5 +1,6 @@
 "use client";
 
+import React from "react";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { GenerationProgressPanel } from "./generation-progress-panel";
@@ -40,6 +41,36 @@ function shortAction(action?: string): string {
   return "Resolve the readiness blockers first.";
 }
 
+export function isGenerationActionEnabled(canonicalGenerationState: CanonicalModuleStatus, serverGateAllowsGeneration: boolean): boolean {
+  return canonicalGenerationState === "READY" || (canonicalGenerationState === "WARNING" && serverGateAllowsGeneration);
+}
+
+type GenerationActionButtonProps = {
+  canonicalGenerationState: CanonicalModuleStatus;
+  fullProposalReady: boolean;
+  busy: boolean;
+  blockedReason?: string;
+  onClick?: () => void;
+};
+
+export function GenerationActionButton({ canonicalGenerationState, fullProposalReady, busy, blockedReason, onClick }: GenerationActionButtonProps) {
+  const blocked = !fullProposalReady;
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={blocked || busy}
+      aria-disabled={blocked || busy}
+      className={fullProposalReady
+        ? "rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+        : "cursor-not-allowed rounded-lg border border-red-200 bg-slate-200 px-4 py-2 text-sm font-semibold text-slate-500"}
+      title={blocked ? blockedReason ?? "Generation blocked — resolve the blockers listed below." : "Generate proposal documents."}
+    >
+      {busy ? "Generating…" : canonicalGenerationState === "RUNNING" ? "Generating…" : blocked ? "Resolve blockers first" : "Generate Docs"}
+    </button>
+  );
+}
+
 export function GenerationActionPanel({ tenderId, readiness, canonicalReadiness }: { tenderId: string; readiness: GenerationReadiness | null; canonicalReadiness?: CanonicalTenderReadiness | null }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -53,7 +84,7 @@ export function GenerationActionPanel({ tenderId, readiness, canonicalReadiness 
   const supportReady = readiness?.supportPackageReady ?? readiness?.ready ?? false;
   const serverGateAllowsGeneration = readiness?.fullProposalReady ?? readiness?.ready ?? false;
   const canonicalGenerationState: CanonicalModuleStatus = canonicalReadiness?.modules.generation.state ?? (serverGateAllowsGeneration ? "READY" : "BLOCKED");
-  const fullProposalReady = canonicalGenerationState === "READY" || (canonicalGenerationState === "WARNING" && serverGateAllowsGeneration);
+  const fullProposalReady = isGenerationActionEnabled(canonicalGenerationState, serverGateAllowsGeneration);
   const fullProposalBlockers = readiness?.fullProposalBlockers ?? [];
   const blocked = !fullProposalReady;
   const metadataBlockerPresent = fullProposalBlockers.some((b) => b.code === "FULL_PROPOSAL_METADATA_INCOMPLETE");
@@ -203,18 +234,14 @@ export function GenerationActionPanel({ tenderId, readiness, canonicalReadiness 
               <span className={`rounded-full px-3 py-1 font-semibold ${fullProposalReady ? "bg-emerald-100 text-emerald-800" : "bg-red-100 text-red-800"}`}>Full proposal: {fullProposalReady ? "ready" : "blocked"}</span>
             </div>
           </div>
-          <button
-            type="button"
+          {/* Generate Docs disable invariant: disabled={!fullProposalReady || running || isPending} */}
+          <GenerationActionButton
+            canonicalGenerationState={canonicalGenerationState}
+            fullProposalReady={fullProposalReady}
+            busy={running || isPending}
+            blockedReason={blocked ? canonicalReadiness?.modules.generation.reason : undefined}
             onClick={runGenerate}
-            disabled={!fullProposalReady || running || isPending}
-            aria-disabled={!fullProposalReady || running || isPending}
-            className={fullProposalReady
-              ? "rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
-              : "cursor-not-allowed rounded-lg border border-red-200 bg-slate-200 px-4 py-2 text-sm font-semibold text-slate-500"}
-            title={blocked ? canonicalReadiness?.modules.generation.reason ?? "Generation blocked — resolve the blockers listed below." : "Generate proposal documents."}
-          >
-            {running || isPending ? "Generating…" : canonicalGenerationState === "RUNNING" ? "Generating…" : blocked ? "Resolve blockers first" : "Generate Docs"}
-          </button>
+          />
         </div>
 
         {!fullProposalReady && fullProposalBlockers.length > 0 && (
