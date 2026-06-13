@@ -13,7 +13,7 @@ import {
  * method loses its receiver. This proxy binds Prisma methods while leaving model
  * delegates untouched.
  */
-function bindPrismaMethods(client: PrismaClient): PrismaClient {
+export function bindPrismaMethodsForReadiness(client: PrismaClient): PrismaClient {
   return new Proxy(client, {
     get(target, property, receiver) {
       const value = Reflect.get(target, property, receiver);
@@ -39,7 +39,7 @@ export async function getTenderGenerationReadinessStrict(
   userId: string,
   tenderId: string,
 ): Promise<TenderGenerationReadiness | null> {
-  const boundClient = bindPrismaMethods(client);
+  const boundClient = bindPrismaMethodsForReadiness(client);
   const readiness = await getTenderGenerationReadiness(boundClient, userId, tenderId);
   if (!readiness) return null;
 
