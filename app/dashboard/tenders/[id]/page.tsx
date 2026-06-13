@@ -3,7 +3,7 @@ import { notFound, redirect } from "next/navigation";
 import { getSession } from "../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../lib/prisma";
 import { isAIEnabled } from "../../../../lib/ai";
-import { getTenderGenerationReadiness } from "../../../../lib/tender-generation-readiness";
+import { getTenderGenerationReadinessStrict } from "../../../../lib/tender-generation-readiness-strict";
 import { getCanonicalTenderReadiness } from "../../../../lib/canonical-tender-readiness";
 import { ExecutiveSnapshot } from "./executive-snapshot";
 import { TenderIntakeDetailPanel } from "./tender-intake-detail-panel";
@@ -133,7 +133,7 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
   };
 
   const ai = isAIEnabled();
-  const generationReadiness = await getTenderGenerationReadiness(prisma, userId, tender.id).catch(() => null);
+  const generationReadiness = await getTenderGenerationReadinessStrict(prisma, userId, tender.id).catch(() => null);
   const canonicalReadiness = await getCanonicalTenderReadiness(prisma, userId, tender.id).catch(() => null);
 
   return (
