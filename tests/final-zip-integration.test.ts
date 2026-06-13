@@ -62,7 +62,7 @@ describe("final ZIP integration", () => {
 
   it("produces a technical envelope without financial content", async () => {
     const technicalDocs = generatedDocs.filter((doc) =>
-      inferEnvelope(doc.documentType, doc.exactFileName, doc.name) === "TECHNICAL",
+      inferEnvelope(doc.documentType, doc.exactFileName) === "TECHNICAL",
     );
     const scope = buildFinalZipEntries({ tender: tenderScope, generatedDocs: technicalDocs });
     const result = await assembleFinalSubmissionZip(scope.entries, contents);
