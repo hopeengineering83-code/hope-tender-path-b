@@ -951,6 +951,12 @@ export type AIRequirement = {
   sectionReference?: string | null;
   sourcePage?: number | null;
   sourceQuote?: string | null;
+  sourceFileToken?: string | null;
+  sourceFileName?: string | null;
+  sourceTenderFileId?: string | null;
+  sourceExtractionMethod?: "text" | "ocr" | "mixed" | null;
+  sourceConfidence?: number | null;
+  sourceLinkageWarning?: string | null;
 };
 
 export type AIAnalysisResult = {
@@ -1231,7 +1237,9 @@ function mergeAnalysisResults(parts: AIAnalysisResult[]): AIAnalysisResult {
       const key = (req.title ?? "").toLowerCase().replace(/\s+/g, " ").trim();
       if (!key) continue;
       const existing = reqByKey.get(key);
-      if (!existing || (req.description?.length ?? 0) > (existing.description?.length ?? 0)) {
+      const existingHasSource = Boolean(existing?.sourceFileToken || existing?.sourceTenderFileId || existing?.sourceFileName || existing?.sourceQuote);
+      const candidateHasSource = Boolean(req.sourceFileToken || req.sourceTenderFileId || req.sourceFileName || req.sourceQuote);
+      if (!existing || (candidateHasSource && !existingHasSource) || (candidateHasSource === existingHasSource && (req.description?.length ?? 0) > (existing.description?.length ?? 0))) {
         reqByKey.set(key, req);
       }
     }
@@ -1426,6 +1434,7 @@ Step 12 — Write evaluationMethodology: how the proposal should be structured t
 - A methodology/technical approach requirement is something the proposal WRITES — it is not a missing document.
 - Extract email recipients, exact subject line, no-financial-proposal rules, appendix letters, and evaluation scoring weights when present.
 - evaluationMethodology must be actionable: "Score criterion X by doing Y using evidence Z" — not just a list of criteria.
+- SOURCE FILE RULE — every requirement must copy the exact TFILE:<id> token and file name from the [TENDER_FILE|...] header containing its source quote. Never guess or invent a token. Return null when the source file is not visible in this chunk.
 - submissionNotes must include: deadline, email recipients, exact subject line, file format, financial proposal restriction, appendix requirements.
 - CLIENT ENTITY RULE — when multiple organisations appear, assign EXACTLY ONE to each role: (a) procuringEntityName = the authority that RECEIVES and evaluates bids (ministry, department, authority — look for "issued by", "contracting authority", "tender issuing office"); (b) donorAgency = the funder or financing institution (World Bank, AfDB, USAID, KfW, UN agency — look for "financed by", "funded by", "grant"); (c) implementingAgency = the body executing the project if different from the procuring entity (PMU, project unit — look for "implementing agency", "project management unit"); (d) legalClientName = the full official registered name if the document provides a legally distinct name alongside a short display name. If a role is not identifiable from the document, return null — do NOT copy the same value across multiple entity fields.
 - PLACEHOLDER PROHIBITION — NEVER fill procuringEntityName, legalClientName, donorAgency, implementingAgency, clientContactName, clientAddress, or any other field with placeholder text such as "Bid-Team to confirm", "unknown", "not specified", "N/A", "TBD", "TBC", or "to be determined". If the information is absent from the tender document, return null for that field.
@@ -1445,7 +1454,9 @@ JSON structure required:
       "restrictions": "branding/signature/file/page/format restrictions or null",
       "sectionReference": "section/clause/annex reference or null",
       "sourcePage": page_number_integer_or_null,
-      "sourceQuote": "verbatim 1-2 sentence snippet from the tender that this requirement is drawn from, or null"
+      "sourceQuote": "verbatim 1-2 sentence snippet from the tender that this requirement is drawn from, or null",
+       "sourceFileToken": "copy the exact TFILE:<id> token from the nearest [TENDER_FILE|...] header, or null",
+       "sourceFileName": "copy the exact NAME shown in that same tender-file header, or null"
     }
   ],
   "exactFileNaming": ["exact filenames required by the tender"],
@@ -1538,6 +1549,8 @@ ${tenderContent}`;
                 ...r,
                 sourcePage: typeof r.sourcePage === "number" && Number.isInteger(r.sourcePage) && r.sourcePage > 0 ? r.sourcePage : null,
                 sourceQuote: typeof r.sourceQuote === "string" ? r.sourceQuote.trim().slice(0, 500) || null : null,
+                sourceFileToken: typeof r.sourceFileToken === "string" ? r.sourceFileToken.trim().slice(0, 200) || null : null,
+                sourceFileName: typeof r.sourceFileName === "string" ? r.sourceFileName.trim().slice(0, 500) || null : null,
               }))
           : [],
         exactFileNaming: Array.isArray(parsed.exactFileNaming) ? parsed.exactFileNaming.filter((s: unknown) => typeof s === "string") : [],

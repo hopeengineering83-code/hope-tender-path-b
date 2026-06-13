@@ -16,6 +16,7 @@ import { buildAnalysisFallbackDiagnostics, formatFallbackDiagnosticsLine, type A
 import { buildProviderDiagnosticsSnapshot } from "../../../../../lib/ai-provider-health";
 import { restoreHealthFromDb, persistAllHealthToDb } from "../../../../../lib/ai-provider-health-db";
 import { safeParseJsonObject } from "../../../../../lib/safe-json";
+import { buildTenderFileSourceHeader, enrichRequirementsWithSourceLinkage } from "../../../../../lib/ai-source-linkage";
 import {
   AiAnalyzeCheckpointPersistenceError,
   clearAnalyzeCheckpoints,
@@ -431,8 +432,8 @@ async function handleStreamingAnalyze(
         // Build tender content (same logic as non-streaming path)
         const fileTexts = tenderRecord.files
           .map((f) => f.extractedText
-            ? `[FILE: ${f.originalFileName}]\n${extractRelevantSections(stripExtractionHeader(f.extractedText), MAX_FILE_CHARS_FOR_AI_ANALYSIS)}`
-            : `[FILE: ${f.originalFileName} ${f.classification ?? ""}]`)
+            ? `${buildTenderFileSourceHeader(f)}\n${extractRelevantSections(stripExtractionHeader(f.extractedText), MAX_FILE_CHARS_FOR_AI_ANALYSIS)}`
+            : `${buildTenderFileSourceHeader(f)}\n[NO_EXTRACTED_TEXT] ${f.classification ?? ""}`)
           .join("\n\n");
 
         const companyContext = company?.documents?.length
@@ -604,7 +605,10 @@ async function handleStreamingAnalyze(
             }
             if (progressTimer) { clearInterval(progressTimer); progressTimer = null; }
 
-            const aiResult = aiMeta.result;
+            const aiResult = {
+              ...aiMeta.result,
+              requirements: enrichRequirementsWithSourceLinkage(aiMeta.result.requirements, tenderRecord.files),
+            };
 
             emit({ phase: "saving", message: "Saving analysis results…" });
 
@@ -671,9 +675,10 @@ async function handleStreamingAnalyze(
                       exactFileName: req.exactFileName ?? null, requiredQuantity: req.requiredQuantity ?? null,
                       pageLimit: req.pageLimit ?? null, restrictions: req.restrictions ?? null,
                       sectionReference: req.sectionReference ?? null, sourceSectionHeading: req.sectionReference ?? null,
+                      sourceTenderFileId: req.sourceTenderFileId ?? null,
                       sourcePageNumber: req.sourcePage ?? null, sourceExactQuote: req.sourceQuote ?? null,
-                      sourceExtractionMethod: effectiveExtractionMethod,
-                      sourceConfidence: typeof req.sourcePage === "number" && req.sourcePage > 0 ? 0.8 : (typeof req.sourceQuote === "string" && req.sourceQuote.trim().length > 10 ? 0.7 : 0),
+                      sourceExtractionMethod: req.sourceExtractionMethod ?? effectiveExtractionMethod,
+                      sourceConfidence: req.sourceConfidence ?? (typeof req.sourcePage === "number" && req.sourcePage > 0 ? 0.8 : (typeof req.sourceQuote === "string" && req.sourceQuote.trim().length > 10 ? 0.7 : 0)),
                     },
                   });
                 }
@@ -1019,30 +1024,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         totalChunks: 0,
       });
     } else {
-      // Legacy path: no job tracking (rare — only if job creation failed).
-      await prisma.$transaction(async (tx) => {
-        await tx.tenderRequirement.deleteMany({ where: { tenderId: id } });
-        for (const req of result.requirements) {
-          await tx.tenderRequirement.create({ data: { tenderId: id, ...req } });
-        }
-        const previousNotes = (tenderRecord.notes ?? "")
-          .split("\n")
-          .filter((line) => !/^Analysis source:/i.test(line.trim()) && !/^Analysis fallback diagnostics:/i.test(line.trim()));
-        const notes = [...previousNotes, `Analysis source: Regex fallback (${fallbackDiagnostics.category}).`, diagnosticsLine].filter(Boolean).join("\n").trim() || null;
-        const tenderStatus = errorMessage ? "ANALYSIS_REQUIRES_REVIEW" : "FALLBACK_DRAFT_CREATED";
-        await tx.tender.update({
-          where: { id },
-          data: {
-            analysisSummary: `${result.summary}\n\nFast fallback used because AI analysis did not complete. ${diagnosticsLine}`,
-            exactFileNaming: JSON.stringify(result.exactFileNaming),
-            exactFileOrder: JSON.stringify(result.exactFileOrder),
-            notes,
-            status: tenderStatus,
-            stage: "ANALYSIS",
-            analysisExtractionStatus: "REGEX_FALLBACK_FROM_WEAK_EXTRACTION",
-          },
-        });
-      });
+      // No staging record means fallback output cannot be reviewed or resumed safely.
+      // Preserve all canonical requirements and metadata rather than replacing them.
+      throw new AiAnalyzeCheckpointPersistenceError(
+        "stageFallbackDraft",
+        crypto.randomUUID(),
+        id,
+        null,
+        "no-job",
+        new Error("AI Analyze could not create a staging job; canonical requirements were preserved."),
+      );
     }
 
     return {
@@ -1075,8 +1066,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       try {
         const fileTexts = tenderRecord.files
           .map((f) => f.extractedText
-            ? `[FILE: ${f.originalFileName}]\n${extractRelevantSections(stripExtractionHeader(f.extractedText), MAX_FILE_CHARS_FOR_AI_ANALYSIS)}`
-            : `[FILE: ${f.originalFileName} ${f.classification ?? ""}]`)
+            ? `${buildTenderFileSourceHeader(f)}\n${extractRelevantSections(stripExtractionHeader(f.extractedText), MAX_FILE_CHARS_FOR_AI_ANALYSIS)}`
+            : `${buildTenderFileSourceHeader(f)}\n[NO_EXTRACTED_TEXT] ${f.classification ?? ""}`)
           .join("\n\n");
 
         const companyContext = company?.documents?.length
@@ -1236,7 +1227,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           }
           throw aiErr;
         }
-        const aiResult = aiMeta.result;
+        const aiResult = {
+          ...aiMeta.result,
+          requirements: enrichRequirementsWithSourceLinkage(aiMeta.result.requirements, tenderRecord.files),
+        };
 
         const effectiveExtractionMethodNonStreaming: string = tenderRecord.files.some(
           (f: { extractionMethod?: string | null; ocrPages?: number | null }) =>
@@ -1300,10 +1294,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
                   restrictions: req.restrictions ?? null,
                   sectionReference: req.sectionReference ?? null,
                   sourceSectionHeading: req.sectionReference ?? null,
+                  sourceTenderFileId: req.sourceTenderFileId ?? null,
                   sourcePageNumber: req.sourcePage ?? null,
                   sourceExactQuote: req.sourceQuote ?? null,
-                  sourceExtractionMethod: effectiveExtractionMethodNonStreaming,
-                  sourceConfidence: typeof req.sourcePage === "number" && req.sourcePage > 0 ? 0.8 : (typeof req.sourceQuote === "string" && req.sourceQuote.trim().length > 10 ? 0.7 : 0),
+                  sourceExtractionMethod: req.sourceExtractionMethod ?? effectiveExtractionMethodNonStreaming,
+                  sourceConfidence: req.sourceConfidence ?? (typeof req.sourcePage === "number" && req.sourcePage > 0 ? 0.8 : (typeof req.sourceQuote === "string" && req.sourceQuote.trim().length > 10 ? 0.7 : 0)),
                 },
               });
             }
