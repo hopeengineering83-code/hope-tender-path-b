@@ -106,7 +106,7 @@ export async function GET(
       // function (added in PR #368); the dedicated route just wasn't passing
       // them, so this panel rendered the legacy "requirements-only" score
       // and disagreed with every other panel that consumes the readiness gate.
-      clientName: tender.clientName || (tender as Record<string, unknown>).procuringEntityName as string | null | undefined,
+      clientName: tender.clientName || tender.procuringEntityName,
       referenceNumber: tender.reference,
       country: tender.country,
       clientContactName: tender.clientContactName,

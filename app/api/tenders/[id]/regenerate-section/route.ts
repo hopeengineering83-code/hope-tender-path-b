@@ -190,7 +190,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const intelligence = buildProposalIntelligence({ tender, company, requirements: tender.requirements, experts, projects });
 
   const tenderText = [
-    tender.title, tender.reference, tender.clientName || (tender as Record<string, unknown>).procuringEntityName as string | null | undefined, tender.description,
+    tender.title, tender.reference, tender.clientName || tender.procuringEntityName, tender.description,
     tender.intakeSummary, tender.analysisSummary, tender.evaluationMethodology,
     ...tender.files.map((f) => `${f.originalFileName}\n${f.extractedText ?? ""}`),
   ].filter(Boolean).join("\n\n");
