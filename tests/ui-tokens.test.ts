@@ -69,17 +69,17 @@ describe("ui-tokens: statusToSeverity", () => {
     assert.equal(statusToSeverity("FULL_EXTRACTION_AI_ANALYZED"), "good");
     assert.equal(statusToSeverity("AI_ANALYZED"), "good");
   });
-  it("maps WARNING, MEDIUM, OCR_REQUIRED to warning", () => {
+  it("maps WARNING, MEDIUM, and human-approved fallback to warning", () => {
     assert.equal(statusToSeverity("WARNING"), "warning");
     assert.equal(statusToSeverity("MEDIUM"), "warning");
-    assert.equal(statusToSeverity("OCR_REQUIRED"), "warning");
     assert.equal(statusToSeverity("HUMAN_APPROVED_REGEX_FALLBACK"), "warning");
   });
-  it("maps POOR, FAIL, HIGH, CORRUPTED to poor", () => {
+  it("maps POOR, FAIL, HIGH, CORRUPTED, and OCR_REQUIRED to poor", () => {
     assert.equal(statusToSeverity("POOR"), "poor");
     assert.equal(statusToSeverity("FAIL"), "poor");
     assert.equal(statusToSeverity("HIGH"), "poor");
     assert.equal(statusToSeverity("CORRUPTED"), "poor");
+    assert.equal(statusToSeverity("OCR_REQUIRED"), "poor");
     assert.equal(statusToSeverity("REGEX_FALLBACK_AI_ERROR"), "poor");
   });
   it("maps unknown string to muted", () => { assert.equal(statusToSeverity("UNKNOWN_XYZ"), "muted"); });
