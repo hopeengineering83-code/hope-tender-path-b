@@ -35,6 +35,13 @@ function scoreBadge(score: number, status: FileStatus) {
   );
 }
 
+function pageList(nums: number[], maxInline = 12): string {
+  if (nums.length === 0) return "";
+  const sorted = [...nums].sort((a, b) => a - b);
+  if (sorted.length <= maxInline) return `p. ${sorted.join(", ")}`;
+  return `p. ${sorted.slice(0, maxInline).join(", ")} +${sorted.length - maxInline} more`;
+}
+
 function sectionCountLabel(count: number | null, documentLevel: boolean) {
   if (count === null) return "—";
   if (count <= 0) return "0";
@@ -116,8 +123,6 @@ export async function ExtractionQualityDashboard({ tenderId }: { tenderId: strin
       const perPage = text ? assessExtractionQualityPerPage(text) : null;
       const detectionMode = perPage?.detectionMode ?? "EMPTY";
       const documentLevelDetection = detectionMode === "DOCUMENT_LEVEL";
-      // Separate blank from failed/error pages using per-page quality data
-      const blankPages = perPage?.blankPages.length ?? null;
 
       return {
         id: file.id,
@@ -127,7 +132,7 @@ export async function ExtractionQualityDashboard({ tenderId }: { tenderId: strin
         extractedPages,
         ocrPages,
         failedPages,
-        blankPages,
+        blankPages: perPage?.blankPages.length ?? null,
         coverage,
         corrupted,
         score,
@@ -140,6 +145,14 @@ export async function ExtractionQualityDashboard({ tenderId }: { tenderId: strin
         evaluationPages: perPage?.evaluationCriteriaPages.length ?? null,
         requiredDocPages: perPage?.requiredDocumentPages.length ?? null,
         clientDetailPages: perPage?.clientDetailPages.length ?? null,
+        // Page number lists for CLAUDE.md "failed pages list" and "low-confidence pages list"
+        failedPageNums: perPage?.failedPages ?? [],
+        blankPageNums: perPage?.blankPages ?? [],
+        lowDensityPageNums: perPage?.lowDensityPages ?? [],
+        ocrPageNums: perPage?.ocrPages ?? [],
+        tableHeavyPageNums: perPage?.tableHeavyPages ?? [],
+        imageHeavyPageNums: perPage?.imageHeavyPages ?? [],
+        perPageEntries: perPage?.pages ?? [],
       };
     });
 
@@ -239,6 +252,38 @@ export async function ExtractionQualityDashboard({ tenderId }: { tenderId: strin
                     ))}
                   </div>
 
+                  {/* Per-page confidence detail — only shown when PAGE_MARKERS detection found problem pages */}
+                  {file.detectionMode === "PAGE_MARKERS" && (file.failedPageNums.length > 0 || file.lowDensityPageNums.length > 0) && (
+                    <div className="mt-3 rounded-lg border border-slate-200 bg-white p-2">
+                      <p className="mb-1.5 text-[10px] font-semibold uppercase text-slate-400">Per-page confidence</p>
+                      <div className="max-h-28 overflow-y-auto">
+                        <table className="w-full text-xs">
+                          <thead>
+                            <tr className="text-[9px] uppercase text-slate-400">
+                              <th className="pb-0.5 text-left font-medium">Page</th>
+                              <th className="pb-0.5 text-left font-medium">Status</th>
+                              <th className="pb-0.5 text-right font-medium">Chars</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {file.perPageEntries
+                              .filter((p) => p.status !== "GOOD" && p.status !== "TABLE_HEAVY")
+                              .slice(0, 30)
+                              .map((p) => (
+                                <tr key={p.page} className="border-t border-slate-100">
+                                  <td className="py-0.5 tabular-nums text-slate-700">{p.page}</td>
+                                  <td className={`py-0.5 font-semibold ${p.status === "FAILED" ? "text-red-700" : p.status === "BLANK" ? "text-slate-400" : p.status === "LOW_DENSITY" ? "text-amber-700" : p.status === "OCR" ? "text-blue-700" : "text-slate-500"}`}>
+                                    {p.status}
+                                  </td>
+                                  <td className="py-0.5 text-right tabular-nums text-slate-500">{p.charCount}</td>
+                                </tr>
+                              ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+
                   <div className="mt-3">
                     {file.totalPages === null || file.totalPages === 0 ? (
                       <p className="text-xs text-slate-400">
@@ -290,13 +335,36 @@ export async function ExtractionQualityDashboard({ tenderId }: { tenderId: strin
                         ⚠ Text appears corrupted — enable OCR or upload a clearer scan
                       </p>
                     )}
-                    {!file.corrupted &&
-                      file.failedPages !== null &&
-                      file.failedPages > 0 && (
-                        <p className="text-xs text-red-700">
-                          ⚠ {file.failedPages} page(s) failed extraction
-                        </p>
-                      )}
+                    {!file.corrupted && file.failedPageNums.length > 0 && (
+                      <p className="text-xs text-red-700">
+                        ⚠ {file.failedPageNums.length} page(s) failed extraction — {pageList(file.failedPageNums)}
+                      </p>
+                    )}
+                    {!file.corrupted && file.failedPageNums.length === 0 && file.failedPages !== null && file.failedPages > 0 && (
+                      <p className="text-xs text-red-700">
+                        ⚠ {file.failedPages} page(s) failed extraction
+                      </p>
+                    )}
+                    {!file.corrupted && file.blankPageNums.length > 0 && (
+                      <p className="text-xs text-slate-500">
+                        Blank pages: {pageList(file.blankPageNums)}
+                      </p>
+                    )}
+                    {!file.corrupted && file.lowDensityPageNums.length > 0 && (
+                      <p className="text-xs text-amber-700">
+                        ⚠ Low-confidence pages ({file.lowDensityPageNums.length}): {pageList(file.lowDensityPageNums)}
+                      </p>
+                    )}
+                    {!file.corrupted && file.tableHeavyPageNums.length > 0 && (
+                      <p className="text-xs text-slate-500">
+                        Table-heavy pages: {pageList(file.tableHeavyPageNums)}
+                      </p>
+                    )}
+                    {!file.corrupted && file.imageHeavyPageNums.length > 0 && (
+                      <p className="text-xs text-slate-500">
+                        Image/scan pages: {pageList(file.imageHeavyPageNums)}
+                      </p>
+                    )}
                     {!file.corrupted &&
                       file.coverage !== null &&
                       file.coverage < 80 && (
