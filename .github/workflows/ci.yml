@@ -2,25 +2,28 @@ name: CI
 
 on:
   pull_request:
-    branches: [main]
   push:
     branches: [main]
-  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
-  build:
-    name: Typecheck, test, and build
+  verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
-
+    timeout-minutes: 35
+    env:
+      NEXT_TELEMETRY_DISABLED: "1"
+      DATABASE_URL: "postgresql://placeholder:placeholder@localhost:5432/placeholder"
+      E2E_FULL_AUTH: "false"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
+      - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 20
           cache: npm
 
       - name: Install dependencies
@@ -32,14 +35,26 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
-      - name: Test (unit)
+      - name: Lint
+        run: npm run lint
+
+      - name: Unit and integration tests
         run: npm test
 
       - name: Build
-        env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL || 'postgresql://ci:ci@localhost:5432/ci' }}
-          SESSION_SECRET: ${{ secrets.SESSION_SECRET || 'ci-build-only-placeholder-not-used-at-runtime-abcdef0123456789' }}
-          NEXTAUTH_SECRET: ${{ secrets.NEXTAUTH_SECRET || 'ci-nextauth-placeholder' }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY || 'AIzaFakeCiBuildKeyNotUsedAtRuntime12345678901' }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: npm run build
+
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Browser smoke tests
+        run: npm run test:e2e
+
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+          if-no-files-found: ignore
+          retention-days: 7
