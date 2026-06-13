@@ -233,8 +233,8 @@ describe("AI Analyze route — extraction gate wiring (source assertions)", () =
     // detect the fallback and would silently allow generation over a regex-only analysis.
     const fallbackBlocks = src.split("REGEX_FALLBACK_FROM_WEAK_EXTRACTION");
     assert.ok(
-      fallbackBlocks.length >= 4,
-      `ai-analyze route must set analysisExtractionStatus = "REGEX_FALLBACK_FROM_WEAK_EXTRACTION" in at least 3 locations (streaming AI-error, streaming no-AI, non-streaming runRegexFallback). Found ${fallbackBlocks.length - 1} occurrence(s).`,
+      fallbackBlocks.length >= 3,
+      `ai-analyze route must set analysisExtractionStatus = "REGEX_FALLBACK_FROM_WEAK_EXTRACTION" in at least 2 locations (streaming AI-error fallback, non-streaming no-AI-provider path). The legacy destructive canonical-write path was removed — fallback results are now staged non-destructively. Found ${fallbackBlocks.length - 1} occurrence(s).`,
     );
   });
 

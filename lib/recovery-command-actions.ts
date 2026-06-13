@@ -288,6 +288,48 @@ export const RECOVERY_COMMAND_ACTIONS: Record<string, RecoveryCommandActionSpec>
     anchorId: "tender-files",
     message: "Open the Tender Files panel to upload the tender source document.",
   },
+  // Knowledge vault / match review ──────────────────────────────────────────
+  OPEN_KNOWLEDGE_REVIEW: {
+    label: "Review Matching & Knowledge",
+    kind: "navigate",
+    path: "/dashboard/matching",
+    aliases: ["EXPERT_REVIEW", "PROJECT_REVIEW", "EXPERT_SELECTION", "PROJECT_SELECTION"],
+  },
+  // Matching quality ─────────────────────────────────────────────────────────
+  OPEN_MATCHING_QUALITY: {
+    label: "Open Analysis & Matching Quality",
+    kind: "scroll",
+    anchorId: "analysis-quality",
+    message: "Open the Analysis Quality panel to review matching and analysis scores.",
+  },
+  // Compliance gap review ────────────────────────────────────────────────────
+  OPEN_COMPLIANCE_REVIEW: {
+    label: "Open Compliance Review",
+    kind: "scroll",
+    anchorId: "generated-documents",
+    message: "Open the Generated Documents panel to review and resolve critical compliance gaps before generation.",
+    aliases: ["RESOLVE_COMPLIANCE_GAPS", "HARD_COMPLIANCE_BLOCKER"],
+  },
+  // Re-upload tender ─────────────────────────────────────────────────────────
+  RE_UPLOAD_TENDER: {
+    label: "Re-upload Tender",
+    kind: "scroll",
+    anchorId: "tender-files",
+    message: "Open the Tender Files panel to re-upload a clearer version of the tender document.",
+  },
+  // Settings ─────────────────────────────────────────────────────────────────
+  OPEN_SETTINGS: {
+    label: "Open Settings",
+    kind: "navigate",
+    path: "/dashboard/settings",
+  },
+  // Tender detail ─────────────────────────────────────────────────────────────
+  OPEN_TENDER_DETAIL: {
+    label: "Open Tender Detail",
+    kind: "scroll",
+    anchorId: "tender-edit-form",
+    message: "Open the Tender Detail panel to review and complete tender information.",
+  },
 };
 
 export function getRecoveryCommandActionSpec(action: string): RecoveryCommandActionSpec | null {

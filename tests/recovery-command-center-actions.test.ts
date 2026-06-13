@@ -28,7 +28,8 @@ import { RECOVERY_COMMAND_ACTIONS, getRecoveryCommandActionSpec, renderRecoveryA
 const KNOWN_SAFE_NAVIGATE_TARGETS = new Set([
   "/dashboard/analytics",        // CONFIGURE_AI_PROVIDER
   "/dashboard/company/readiness", // OPEN_COMPANY_READINESS
-  "/dashboard/matching",          // REVIEW_MATCHES, REVIEW_MATCHING_INPUTS
+  "/dashboard/matching",          // REVIEW_MATCHES, REVIEW_MATCHING_INPUTS, OPEN_KNOWLEDGE_REVIEW
+  "/dashboard/settings",          // OPEN_SETTINGS
   // /dashboard/vault was the old LINK_VAULT_EVIDENCE target — it does NOT exist
   // and must never appear in the component.
 ]);
@@ -43,12 +44,20 @@ const KNOWN_NEXT_ACTIONS = [
   "CONTINUE_AUTO_FINALIZE",
   "EDIT_TENDER",
   "EDIT_TENDER_METADATA",
+  "HARD_COMPLIANCE_BLOCKER",
   "OPEN_ANALYSIS_QUALITY",
   "OPEN_COMPANY_READINESS",
+  "OPEN_COMPLIANCE_REVIEW",
   "OPEN_EXTRACTION_QUALITY",
   "OPEN_GENERATION_READINESS",
+  "OPEN_KNOWLEDGE_REVIEW",
+  "OPEN_MATCHING_QUALITY",
+  "OPEN_SETTINGS",
+  "OPEN_TENDER_DETAIL",
+  "RE_UPLOAD_TENDER",
   "REPAIR_OR_EDIT_TENDER",
   "REPAIR_SOURCE_GROUNDING",
+  "RESOLVE_COMPLIANCE_GAPS",
   "RERUN_AI_ANALYZE",
   "RERUN_AI_ANALYZE_AFTER_OCR",
   "RETRY_AI_ANALYZE",

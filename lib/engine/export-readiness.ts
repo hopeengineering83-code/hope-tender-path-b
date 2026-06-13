@@ -1,6 +1,6 @@
 import { prisma, prismaReady } from "../prisma";
 import { getStorageAdapter } from "../storage";
-import { isValidClientName } from "./metadata-validators";
+import { isValidClientName, containsMetadataPlaceholder } from "./metadata-validators";
 import { isExportBlockingConfidence, scanTenderForExplicitDonorRequirement } from "./donor-advisory-confidence";
 import {
   deriveDocumentOutputState,
@@ -298,6 +298,15 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
 
   if (!tender) return { blockers: [tenderBlocker("TENDER_NOT_FOUND", "Tender not found for export readiness check.", "Reload the tender and run export readiness again.")], advisoryWarnings };
 
+  const exportOverrides = await prisma.tenderMetadataOverride
+    .findMany({ where: { tenderId } })
+    .catch(() => [] as Array<{ field: string; fieldState: string }>);
+  const exportOverrideByField = new Map(exportOverrides.map(o => [o.field, o]));
+  const isOverridden = (field: string) => {
+    const o = exportOverrideByField.get(field);
+    return o !== undefined && ["USER_CONFIRMED", "USER_EDITED", "NOT_APPLICABLE", "IGNORED_WITH_REASON"].includes(o.fieldState);
+  };
+
   const packageMode = detectSubmissionPackageMode({
     submissionMethod: tender.submissionMethod,
     submissionAddress: tender.submissionAddress,
@@ -322,7 +331,7 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
   if (docs.length === 0) blockers.push(tenderBlocker("NO_ACTIVE_GENERATED_DOCUMENTS", "No active generated documents exist for export.", "Generate, validate and review the required documents before final export."));
   // Accept procuringEntityName as fallback — older tenders may have it set without clientName.
   const effectiveExportClientName = tender.clientName || tender.procuringEntityName;
-  if (!isValidClientName(effectiveExportClientName)) blockers.push(tenderBlocker("CLIENT_NAME_REQUIRED", "Client/procuring entity name is missing or invalid.", "Edit Tender Detail and enter the exact official procuring entity name."));
+  if (!isValidClientName(effectiveExportClientName) && !isOverridden("clientName")) blockers.push(tenderBlocker("CLIENT_NAME_REQUIRED", "Client/procuring entity name is missing or invalid.", "Edit Tender Detail and enter the exact official procuring entity name."));
 
   // ── Extraction quality blocker ────────────────────────────────────────────
   if (tender.files && tender.files.some(f => (f as { extractionScore?: number | null }).extractionScore !== null && ((f as { extractionScore: number }).extractionScore) < 20)) {
@@ -383,13 +392,31 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
   }
 
   // ── Metadata contamination blocker ───────────────────────────────────────
-  if ((tender as { metadataContaminated?: boolean }).metadataContaminated) {
+  if ((tender as { metadataContaminated?: boolean }).metadataContaminated && !isOverridden("clientName")) {
     blockers.push(tenderBlocker(
       "METADATA_CONTAMINATED",
       "The procuring entity/client name may be contaminated by unrelated tender portal text.",
       "Correct the client name in tender metadata before exporting.",
       "HIGH",
     ));
+  }
+
+  // ── Metadata placeholder hygiene blocker ─────────────────────────────────
+  // Block when critical tender metadata fields still contain placeholder strings.
+  const criticalMetadataFields: Array<[string, string | null | undefined]> = [
+    ["Client name", tender.clientName],
+    ["Procuring entity", tender.procuringEntityName],
+    ["Submission method", tender.submissionMethod],
+  ];
+  for (const [label, value] of criticalMetadataFields) {
+    if (value && containsMetadataPlaceholder(value)) {
+      blockers.push(tenderBlocker(
+        "METADATA_PLACEHOLDER_IN_CRITICAL_FIELD",
+        `${label} contains a placeholder value ("${value.slice(0, 60)}"). Replace with the actual value before exporting.`,
+        "Edit Tender Detail and replace the placeholder with the correct value.",
+        "HIGH",
+      ));
+    }
   }
 
   // ── Analysis extraction quality blocker ──────────────────────────────────

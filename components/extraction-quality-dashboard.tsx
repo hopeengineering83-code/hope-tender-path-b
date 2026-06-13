@@ -65,6 +65,7 @@ export async function ExtractionQualityDashboard({ tenderId }: { tenderId: strin
         failedPages: true,
         extractionScore: true,
         extractedText: true,
+        ocrModel: true,
       },
       orderBy: { createdAt: "asc" },
     });
@@ -132,6 +133,7 @@ export async function ExtractionQualityDashboard({ tenderId }: { tenderId: strin
         extractedPages,
         ocrPages,
         failedPages,
+        ocrModel: file.ocrModel ?? null,
         blankPages: perPage?.blankPages.length ?? null,
         coverage,
         corrupted,
@@ -251,6 +253,12 @@ export async function ExtractionQualityDashboard({ tenderId }: { tenderId: strin
                       </div>
                     ))}
                   </div>
+
+                  {file.ocrModel && (
+                    <p className="mt-1.5 text-xs text-slate-500">
+                      OCR engine: <span className="font-medium text-slate-700">{file.ocrModel}</span>
+                    </p>
+                  )}
 
                   {/* Per-page confidence detail — only shown when PAGE_MARKERS detection found problem pages */}
                   {file.detectionMode === "PAGE_MARKERS" && (file.failedPageNums.length > 0 || file.lowDensityPageNums.length > 0) && (

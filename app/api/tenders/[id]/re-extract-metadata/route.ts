@@ -83,11 +83,17 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const rl = rateLimit(`re-extract-metadata:${actor.id}`, MUTATION_RATE_LIMIT);
   if (!rl.allowed) return NextResponse.json({ error: "Too many requests", retryAfter: Math.ceil((rl.resetAt - Date.now()) / 1000) }, { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } });
 
-  // Optional ocrProvider hint — logged for observability, not yet wired to a runtime OCR call
-  // (the actual OCR re-run requires file re-upload; this records the user's preferred provider
-  // so it can be used in a future OCR retry pipeline).
   const body = await req.json().catch(() => ({})) as Record<string, unknown>;
   const ocrProvider = typeof body.ocrProvider === "string" ? body.ocrProvider : null;
+
+  if (ocrProvider) {
+    return NextResponse.json({
+      error: `OCR provider "${ocrProvider}" is not yet implemented. The re-extract endpoint re-runs regex/NLP-based metadata inference on the already-extracted text — it does not perform optical character recognition. To extract text from scanned PDFs, set PDF_OCR_ENABLED=true on Vercel and re-upload the document.`,
+      code: "OCR_NOT_IMPLEMENTED",
+      ocrProvider,
+      hint: "To run OCR, re-upload the tender file with PDF_OCR_ENABLED=true enabled.",
+    }, { status: 501 });
+  }
 
   await prismaReady;
   const { id } = await params;

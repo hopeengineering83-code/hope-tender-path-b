@@ -177,6 +177,12 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
 
   if (!tender) return null;
 
+  const overrideModel = (client as unknown as { tenderMetadataOverride?: { findMany: (q: unknown) => Promise<Array<{ field: string; fieldState: string }>> } }).tenderMetadataOverride;
+  const metadataOverrides = overrideModel
+    ? await overrideModel.findMany({ where: { tenderId } }).catch(() => [] as Array<{ field: string; fieldState: string }>)
+    : [];
+  const overrideByField = new Map(metadataOverrides.map(o => [o.field, o]));
+
   const queryRaw = (client as unknown as { $queryRaw?: <T = unknown>(strings: TemplateStringsArray, ...values: unknown[]) => Promise<T> }).$queryRaw;
   const [{ extractedTextLength, totalPageCount }] = queryRaw
     ? await queryRaw<Array<{ extractedTextLength: number; totalPageCount: number }>>`
@@ -262,13 +268,13 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
     || tender.donorAgency
     || tender.implementingAgency;
   const clientNameStatus = getClientNameStatus(effectiveClientNameForReadiness);
-  if (clientNameStatus === "EMPTY" || clientNameStatus === "PLACEHOLDER") {
+  if ((clientNameStatus === "EMPTY" || clientNameStatus === "PLACEHOLDER") && !overrideByField.has("clientName")) {
     blockers.push({
       code: "CLIENT_NAME_REQUIRED",
       message: "Client name is not set. Fill the tender Client Name before generating proposal documents so final files do not use \"The Client\" as a placeholder.",
       nextAction: "EDIT_TENDER",
     });
-  } else if (clientNameStatus === "GARBAGE") {
+  } else if (clientNameStatus === "GARBAGE" && !overrideByField.has("clientName")) {
     blockers.push({
       code: "CLIENT_NAME_INVALID",
       message: "Client name was extracted but appears to be a TOC/section fragment, not a real entity. Re-run metadata extraction or correct the field manually before generation.",
@@ -281,7 +287,7 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
   // Generating with a contaminated name produces cover pages and addressing
   // blocks with portal garbage. The /generate route hard-blocks on this too;
   // surface it here so the panel shows blocked before the user tries to generate.
-  if ((tender as { metadataContaminated?: boolean | null }).metadataContaminated) {
+  if ((tender as { metadataContaminated?: boolean | null }).metadataContaminated && !overrideByField.has("clientName")) {
     blockers.push({
       code: "METADATA_CONTAMINATED",
       message: "Client/procuring entity metadata is contaminated with portal navigation text or unrelated tender alerts. Correct the Client Name field and re-run AI Analyze before generating documents.",

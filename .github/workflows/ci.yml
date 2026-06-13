@@ -7,17 +7,43 @@ on:
     branches: [main]
   workflow_dispatch:
 
-jobs:
-  build:
-    name: Typecheck, test, and build
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
+permissions:
+  contents: read
 
+jobs:
+  verify:
+    name: Schema, typecheck, lint, test, build, and smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: hope_ci
+          POSTGRES_PASSWORD: hope_ci
+          POSTGRES_DB: hope_tender_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U hope_ci -d hope_tender_ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      CI: "true"
+      NEXT_TELEMETRY_DISABLED: "1"
+      DATABASE_URL: "postgresql://hope_ci:hope_ci@127.0.0.1:5432/hope_tender_ci?schema=public"
+      SESSION_SECRET: "ci-only-session-secret-0123456789abcdef0123456789abcdef"
+      NEXTAUTH_SECRET: "ci-only-nextauth-secret-0123456789abcdef0123456789abcdef"
+      GEMINI_API_KEY: "AIzaFakeCiBuildKeyNotUsedAtRuntime12345678901"
+      ANTHROPIC_API_KEY: ""
+      RUN_DB_INTEGRATION: "true"
+      E2E_FULL_AUTH: "false"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
+      - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -29,17 +55,61 @@ jobs:
       - name: Generate Prisma client
         run: npx prisma generate
 
+      - name: Initialize CI database
+        run: npx prisma db push
+
+      - name: Apply custom database guards
+        run: npx prisma db execute --file prisma/migrations/20260613190000_comprehensive_gap_guards/migration.sql --schema prisma/schema.prisma
+
       - name: Typecheck
         run: npm run typecheck
 
-      - name: Test (unit)
-        run: npm test
+      - name: Lint
+        run: npm run lint
+
+      - name: Unit and database integration tests
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p test-results
+          npm test 2>&1 | tee test-results/npm-test.log
+
+      - name: Upload test diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-output
+          path: test-results/
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Build
-        env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL || 'postgresql://ci:ci@localhost:5432/ci' }}
-          SESSION_SECRET: ${{ secrets.SESSION_SECRET || 'ci-build-only-placeholder-not-used-at-runtime-abcdef0123456789' }}
-          NEXTAUTH_SECRET: ${{ secrets.NEXTAUTH_SECRET || 'ci-nextauth-placeholder' }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY || 'AIzaFakeCiBuildKeyNotUsedAtRuntime12345678901' }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        run: npm run build
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p build-results
+          npm run build 2>&1 | tee build-results/npm-build.log
+
+      - name: Upload build diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-output
+          path: build-results/
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Browser smoke tests
+        run: npm run test:e2e
+
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+          if-no-files-found: ignore
+          retention-days: 7
