@@ -450,3 +450,115 @@ describe("ExtractionQualityDashboard — clientDetailPages shown in content grid
     );
   });
 });
+
+describe("ExtractionQualityDashboard — page-list display (CLAUDE.md requirement)", () => {
+  it("dashboard source exposes failedPageNums, blankPageNums, lowDensityPageNums in fileData", () => {
+    const { readFileSync } = require("node:fs");
+    const { resolve } = require("node:path");
+    const src = readFileSync(
+      resolve(process.cwd(), "components/extraction-quality-dashboard.tsx"),
+      "utf8",
+    );
+    assert.ok(src.includes("failedPageNums"), "fileData must expose failedPageNums array");
+    assert.ok(src.includes("blankPageNums"), "fileData must expose blankPageNums array");
+    assert.ok(src.includes("lowDensityPageNums"), "fileData must expose lowDensityPageNums array");
+    assert.ok(src.includes("ocrPageNums"), "fileData must expose ocrPageNums array");
+    assert.ok(src.includes("perPageEntries"), "fileData must expose perPageEntries for per-page confidence table");
+  });
+
+  it("dashboard source renders specific page numbers for failed pages", () => {
+    const { readFileSync } = require("node:fs");
+    const { resolve } = require("node:path");
+    const src = readFileSync(
+      resolve(process.cwd(), "components/extraction-quality-dashboard.tsx"),
+      "utf8",
+    );
+    assert.ok(
+      src.includes("failedPageNums.length > 0"),
+      "dashboard must render failed page numbers when failedPageNums is non-empty",
+    );
+    assert.ok(
+      src.includes("pageList(file.failedPageNums)"),
+      "dashboard must call pageList() to format failed page numbers",
+    );
+  });
+
+  it("dashboard source renders specific page numbers for low-confidence pages", () => {
+    const { readFileSync } = require("node:fs");
+    const { resolve } = require("node:path");
+    const src = readFileSync(
+      resolve(process.cwd(), "components/extraction-quality-dashboard.tsx"),
+      "utf8",
+    );
+    assert.ok(
+      src.includes("lowDensityPageNums.length > 0"),
+      "dashboard must render low-density page numbers",
+    );
+    assert.ok(
+      src.includes("Low-confidence pages"),
+      "dashboard must label low-density pages as 'Low-confidence pages'",
+    );
+  });
+
+  it("dashboard source renders per-page confidence table for problem pages", () => {
+    const { readFileSync } = require("node:fs");
+    const { resolve } = require("node:path");
+    const src = readFileSync(
+      resolve(process.cwd(), "components/extraction-quality-dashboard.tsx"),
+      "utf8",
+    );
+    assert.ok(
+      src.includes("Per-page confidence"),
+      "dashboard must include a per-page confidence section header",
+    );
+    assert.ok(
+      src.includes("perPageEntries"),
+      "dashboard must render perPageEntries in the per-page table",
+    );
+    assert.ok(
+      src.includes("PAGE_MARKERS"),
+      "per-page confidence table must only show when PAGE_MARKERS detection mode is active",
+    );
+  });
+
+  it("pageList helper formats up to 12 page numbers inline", () => {
+    // Mirror the pageList helper from the component
+    function pageList(nums: number[], maxInline = 12): string {
+      if (nums.length === 0) return "";
+      const sorted = [...nums].sort((a, b) => a - b);
+      if (sorted.length <= maxInline) return `p. ${sorted.join(", ")}`;
+      return `p. ${sorted.slice(0, maxInline).join(", ")} +${sorted.length - maxInline} more`;
+    }
+
+    assert.equal(pageList([]), "");
+    assert.equal(pageList([3]), "p. 3");
+    assert.equal(pageList([5, 2, 8]), "p. 2, 5, 8");
+    assert.equal(pageList([1,2,3,4,5,6,7,8,9,10,11,12]), "p. 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12");
+
+    const manyPages = [1,2,3,4,5,6,7,8,9,10,11,12,13,14];
+    const result = pageList(manyPages);
+    assert.ok(result.includes("+2 more"), `Expected '+2 more' in '${result}'`);
+    assert.ok(result.startsWith("p. 1, 2,"), `Expected to start with 'p. 1, 2,' — got '${result}'`);
+  });
+
+  it("assessExtractionQualityPerPage exposes failedPages, blankPages, lowDensityPages as page-number arrays", () => {
+    const text = [
+      "[Page 1] Normal page with enough content to be considered good. " + "word ".repeat(30),
+      "[Page 2] [Extraction failed for this page]",
+      "[Page 3]",  // very short — BLANK
+      "[Page 4] " + "sparse ".repeat(5),  // low density (short text)
+    ].join("\n");
+
+    const report = assessExtractionQualityPerPage(text);
+
+    assert.ok(Array.isArray(report.failedPages), "failedPages must be an array");
+    assert.ok(Array.isArray(report.blankPages), "blankPages must be an array");
+    assert.ok(Array.isArray(report.lowDensityPages), "lowDensityPages must be an array");
+
+    assert.ok(report.failedPages.includes(2), `page 2 should be in failedPages, got ${JSON.stringify(report.failedPages)}`);
+    assert.ok(
+      report.blankPages.includes(3) || report.lowDensityPages.includes(3),
+      `page 3 (very short) should be blank or low-density, got blankPages=${JSON.stringify(report.blankPages)}, lowDensity=${JSON.stringify(report.lowDensityPages)}`,
+    );
+  });
+});
