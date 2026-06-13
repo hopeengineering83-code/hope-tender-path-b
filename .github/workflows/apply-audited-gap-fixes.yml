@@ -23,11 +23,14 @@ jobs:
           node-version: 22
           cache: npm
 
-      - name: Apply source-level patches
-        run: |
-          python scripts/patch-ai-source-linkage.py
-          python scripts/patch-ai-analyze-route.py
-          python scripts/patch-ui-ci.py
+      - name: Patch AI analysis contract
+        run: python scripts/patch-ai-source-linkage.py
+
+      - name: Patch AI Analyze persistence
+        run: python scripts/patch-ai-analyze-route.py
+
+      - name: Patch tender UI and CI
+        run: python scripts/patch-ui-ci.py
 
       - name: Install dependencies
         run: npm ci
