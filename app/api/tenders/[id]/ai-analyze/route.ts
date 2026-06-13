@@ -25,6 +25,12 @@ import {
   upsertAnalyzeChunkStarted,
   upsertAnalyzeChunkSucceeded,
 } from "../../../../../lib/ai-analyze-checkpoints";
+import {
+  canPromoteToCanonical,
+  promoteAnalysisToCanonical,
+  stageFallbackDraft,
+  stagePartialResult,
+} from "../../../../../lib/ai-analyze-promotion";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -476,6 +482,10 @@ async function handleStreamingAnalyze(
           data: { status: "FAILED", finishedAt: new Date(), errorMessage: "Timed out (cleaned up by subsequent request)" },
         }).catch(() => {});
 
+        const runId = crypto.randomUUID();
+        // analysisVersion is assigned by the PostgreSQL sequence (BIGSERIAL) —
+        // no application-level version needed; DB guarantees strict ordering.
+
         let analysisJob: { id: string } | null = null;
         try {
           analysisJob = await prisma.aiJob.create({
@@ -595,32 +605,21 @@ async function handleStreamingAnalyze(
                 f.extractionMethod === "ocr" || (f.ocrPages != null && f.ocrPages > 0),
             ) ? "ocr" : "text";
 
-            await prisma.$transaction(async (tx) => {
-              await tx.tenderRequirement.deleteMany({ where: { tenderId: id } });
-              for (const req of aiResult.requirements) {
-                await tx.tenderRequirement.create({
-                  data: {
-                    tenderId: id, title: req.title, description: req.description,
-                    requirementType: req.requirementType, priority: req.priority,
-                    exactFileName: req.exactFileName ?? null, requiredQuantity: req.requiredQuantity ?? null,
-                    pageLimit: req.pageLimit ?? null, restrictions: req.restrictions ?? null,
-                    sectionReference: req.sectionReference ?? null, sourceSectionHeading: req.sectionReference ?? null,
-                    sourcePageNumber: req.sourcePage ?? null, sourceExactQuote: req.sourceQuote ?? null,
-                    sourceExtractionMethod: effectiveExtractionMethod,
-                    sourceConfidence: typeof req.sourcePage === "number" && req.sourcePage > 0 ? 0.8 : (typeof req.sourceQuote === "string" && req.sourceQuote.trim().length > 10 ? 0.7 : 0),
-                  },
+            if (aiMeta.isPartial) {
+              // Non-destructive: stage partial result without touching canonical tender data.
+              if (analysisJob) {
+                await stagePartialResult(analysisJob.id, {
+                  requirements: aiResult.requirements,
+                  summary: aiResult.summary,
+                  chunkResults: aiMeta.chunkResults,
+                  contentHash,
+                  isPartial: true,
+                  completedChunks: aiMeta.completedChunks,
+                  totalChunks: aiMeta.totalChunks,
                 });
               }
-
-              const existingNotes = (tenderRecord.notes ?? "").split("\n");
-              const analysisSourceNote = aiMeta.isPartial
-                ? `Analysis source: AI (partial, ${aiMeta.completedChunks}/${aiMeta.totalChunks} chunks completed — deadline reached).`
-                : "Analysis source: AI (re-run via AI Analyze button).";
-              const updatedNotes = existingNotes
-                .filter((line) => !/^Analysis source:/i.test(line.trim()) && !/^Analysis fallback diagnostics:/i.test(line.trim()))
-                .concat([analysisSourceNote]).join("\n").trim() || null;
-
-              const tenderStatus = aiMeta.isPartial ? "AI_ANALYSIS_PARTIAL" : "AI_ANALYZED";
+            } else if (await canPromoteToCanonical(analysisJob?.id ?? null, id)) {
+              // Full success: promote atomically to canonical.
               const clientNameForContaminationCheck = aiResult.procuringEntityName || tenderRecord.clientName;
               const contamination = detectMetadataContamination(clientNameForContaminationCheck);
               const legalNameContamination = detectMetadataContamination(aiResult.legalClientName);
@@ -628,49 +627,93 @@ async function handleStreamingAnalyze(
               const implementingAgencyContamination = detectMetadataContamination(aiResult.implementingAgency);
               const anyEntityContaminated = contamination.contaminated || legalNameContamination.contaminated || donorAgencyContamination.contaminated || implementingAgencyContamination.contaminated;
 
-              await tx.tender.update({
-                where: { id },
-                data: {
-                  analysisSummary: aiResult.summary,
-                  evaluationMethodology: aiResult.evaluationMethodology || null,
-                  exactFileNaming: JSON.stringify(aiResult.exactFileNaming),
-                  exactFileOrder: JSON.stringify(aiResult.exactFileOrder),
-                  ...(aiResult.tenderCategory ? { category: aiResult.tenderCategory } : {}),
-                  notes: updatedNotes, status: tenderStatus, stage: "ANALYSIS",
-                  ...(aiResult.procuringEntityName != null && !containsMetadataPlaceholder(aiResult.procuringEntityName) ? { procuringEntityName: aiResult.procuringEntityName, ...(!tenderRecord.clientName ? { clientName: aiResult.procuringEntityName } : {}) } : {}),
-                  ...(aiResult.legalClientName != null && !containsMetadataPlaceholder(aiResult.legalClientName) ? { legalClientName: aiResult.legalClientName } : {}),
-                  ...(aiResult.donorAgency != null && !containsMetadataPlaceholder(aiResult.donorAgency) ? { donorAgency: aiResult.donorAgency } : {}),
-                  ...(aiResult.implementingAgency != null && !containsMetadataPlaceholder(aiResult.implementingAgency) ? { implementingAgency: aiResult.implementingAgency } : {}),
-                  ...(aiResult.country != null && isValidCountry(aiResult.country) ? { country: aiResult.country } : {}),
-                  ...(aiResult.clientAddress != null && !containsMetadataPlaceholder(aiResult.clientAddress) ? { clientAddress: aiResult.clientAddress } : {}),
-                  ...(aiResult.clientContactName != null && isValidClientContact(aiResult.clientContactName) ? { clientContactName: aiResult.clientContactName } : {}),
-                  ...(aiResult.clientContactTitle != null && !containsMetadataPlaceholder(aiResult.clientContactTitle) ? { clientContactTitle: aiResult.clientContactTitle } : {}),
-                  ...(aiResult.clientContactEmail != null && !containsMetadataPlaceholder(aiResult.clientContactEmail) ? { clientContactEmail: aiResult.clientContactEmail } : {}),
-                  ...(aiResult.clientContactPhone != null && !containsMetadataPlaceholder(aiResult.clientContactPhone) ? { clientContactPhone: aiResult.clientContactPhone } : {}),
-                  ...(aiResult.submissionAddress != null && !containsMetadataPlaceholder(aiResult.submissionAddress) ? { submissionAddress: aiResult.submissionAddress } : {}),
-                  ...(aiResult.clientCity != null && !containsMetadataPlaceholder(aiResult.clientCity) ? { clientCity: aiResult.clientCity } : {}),
-                  ...(aiResult.clientWebsite != null && !containsMetadataPlaceholder(aiResult.clientWebsite) ? { clientWebsite: aiResult.clientWebsite } : {}),
-                  ...(aiResult.submissionEmailSubject != null && !containsMetadataPlaceholder(aiResult.submissionEmailSubject) ? { submissionEmailSubject: aiResult.submissionEmailSubject } : {}),
-                  ...(aiResult.preBidChannel != null && !containsMetadataPlaceholder(aiResult.preBidChannel) ? { preBidChannel: aiResult.preBidChannel } : {}),
-                  ...(aiResult.preBidMeetingDate != null ? { preBidMeetingDate: new Date(aiResult.preBidMeetingDate) } : {}),
-                  ...(aiResult.preBidMeetingLocation != null && !containsMetadataPlaceholder(aiResult.preBidMeetingLocation) ? { preBidMeetingLocation: aiResult.preBidMeetingLocation } : {}),
-                  ...(aiResult.clientRepresentative != null && !containsMetadataPlaceholder(aiResult.clientRepresentative) ? { clientRepresentative: aiResult.clientRepresentative } : {}),
-                  ...(aiResult.procurementReferenceNumber != null && isValidReferenceNumber(aiResult.procurementReferenceNumber) ? { reference: aiResult.procurementReferenceNumber } : {}),
-                  ...(aiResult.submissionMethod != null && !tenderRecord.submissionMethod ? { submissionMethod: aiResult.submissionMethod } : {}),
-                  ...(aiResult.submissionEmails != null && !tenderRecord.submissionEmails ? { submissionEmails: aiResult.submissionEmails } : {}),
-                  ...(aiResult.clientNameSourcePage !== undefined ? { clientNameSourcePage: aiResult.clientNameSourcePage } : {}),
-                  ...(aiResult.clientNameSourceQuote !== undefined ? { clientNameSourceQuote: aiResult.clientNameSourceQuote } : {}),
-                  ...(aiResult.submissionEmailSourcePage !== undefined ? { submissionEmailSourcePage: aiResult.submissionEmailSourcePage } : {}),
-                  ...(aiResult.contactDetailsSource != null ? { contactDetailsSourceJson: JSON.stringify(aiResult.contactDetailsSource) } : {}),
-                  ...(aiResult.submissionMethodSourcePage !== undefined ? { submissionMethodSourcePage: aiResult.submissionMethodSourcePage } : {}),
-                  ...(aiResult.submissionMethodSourceQuote !== undefined ? { submissionMethodSourceQuote: aiResult.submissionMethodSourceQuote } : {}),
-                  ...(aiResult.submissionAddressSourcePage !== undefined ? { submissionAddressSourcePage: aiResult.submissionAddressSourcePage } : {}),
-                  ...(aiResult.submissionAddressSourceQuote !== undefined ? { submissionAddressSourceQuote: aiResult.submissionAddressSourceQuote } : {}),
-                  ...(aiResult.evaluationCriteriaSource !== undefined ? { evaluationCriteriaSourceJson: aiResult.evaluationCriteriaSource ? JSON.stringify(aiResult.evaluationCriteriaSource) : null } : {}),
-                  metadataContaminated: anyEntityContaminated,
-                },
+              const existingNotes = (tenderRecord.notes ?? "").split("\n");
+              const updatedNotes = existingNotes
+                .filter((line) => !/^Analysis source:/i.test(line.trim()) && !/^Analysis fallback diagnostics:/i.test(line.trim()))
+                .concat(["Analysis source: AI (re-run via AI Analyze button)."]).join("\n").trim() || null;
+
+              // Atomic TOCTOU guard: re-verify inside the transaction that no newer
+              // AiJob was created between the outer canPromoteToCanonical check above
+              // and this write. If superseded, the tx returns without any writes.
+              let streamPromoSuperseded = false;
+              await prisma.$transaction(async (tx) => {
+                // Serialize all promotion attempts for this tender. The advisory
+                // lock prevents a concurrent run from inserting a higher-version
+                // AiJob between our version check and the canonical writes.
+                await tx.$queryRaw`SELECT pg_advisory_xact_lock(1, hashtext(${id}))`;
+                if (analysisJob) {
+                  const currentVer = await tx.aiJob.findUnique({
+                    where: { id: analysisJob.id },
+                    select: { analysisVersion: true },
+                  });
+                  const newerExists = !currentVer || await tx.aiJob.findFirst({
+                    where: { tenderId: id, jobType: "AI_ANALYZE", id: { not: analysisJob.id }, analysisVersion: { gt: currentVer.analysisVersion } },
+                    select: { id: true },
+                  });
+                  if (newerExists) { streamPromoSuperseded = true; return; }
+                }
+                await tx.tenderRequirement.deleteMany({ where: { tenderId: id } });
+                for (const req of aiResult.requirements) {
+                  await tx.tenderRequirement.create({
+                    data: {
+                      tenderId: id, title: req.title, description: req.description,
+                      requirementType: req.requirementType, priority: req.priority,
+                      exactFileName: req.exactFileName ?? null, requiredQuantity: req.requiredQuantity ?? null,
+                      pageLimit: req.pageLimit ?? null, restrictions: req.restrictions ?? null,
+                      sectionReference: req.sectionReference ?? null, sourceSectionHeading: req.sectionReference ?? null,
+                      sourcePageNumber: req.sourcePage ?? null, sourceExactQuote: req.sourceQuote ?? null,
+                      sourceExtractionMethod: effectiveExtractionMethod,
+                      sourceConfidence: typeof req.sourcePage === "number" && req.sourcePage > 0 ? 0.8 : (typeof req.sourceQuote === "string" && req.sourceQuote.trim().length > 10 ? 0.7 : 0),
+                    },
+                  });
+                }
+                await tx.tender.update({
+                  where: { id },
+                  data: {
+                    analysisSummary: aiResult.summary,
+                    evaluationMethodology: aiResult.evaluationMethodology || null,
+                    exactFileNaming: JSON.stringify(aiResult.exactFileNaming),
+                    exactFileOrder: JSON.stringify(aiResult.exactFileOrder),
+                    ...(aiResult.tenderCategory ? { category: aiResult.tenderCategory } : {}),
+                    notes: updatedNotes, status: "AI_ANALYZED", stage: "ANALYSIS",
+                    ...(aiResult.procuringEntityName != null && !containsMetadataPlaceholder(aiResult.procuringEntityName) ? { procuringEntityName: aiResult.procuringEntityName, ...(!tenderRecord.clientName ? { clientName: aiResult.procuringEntityName } : {}) } : {}),
+                    ...(aiResult.legalClientName != null && !containsMetadataPlaceholder(aiResult.legalClientName) ? { legalClientName: aiResult.legalClientName } : {}),
+                    ...(aiResult.donorAgency != null && !containsMetadataPlaceholder(aiResult.donorAgency) ? { donorAgency: aiResult.donorAgency } : {}),
+                    ...(aiResult.implementingAgency != null && !containsMetadataPlaceholder(aiResult.implementingAgency) ? { implementingAgency: aiResult.implementingAgency } : {}),
+                    ...(aiResult.country != null && isValidCountry(aiResult.country) ? { country: aiResult.country } : {}),
+                    ...(aiResult.clientAddress != null && !containsMetadataPlaceholder(aiResult.clientAddress) ? { clientAddress: aiResult.clientAddress } : {}),
+                    ...(aiResult.clientContactName != null && isValidClientContact(aiResult.clientContactName) ? { clientContactName: aiResult.clientContactName } : {}),
+                    ...(aiResult.clientContactTitle != null && !containsMetadataPlaceholder(aiResult.clientContactTitle) ? { clientContactTitle: aiResult.clientContactTitle } : {}),
+                    ...(aiResult.clientContactEmail != null && !containsMetadataPlaceholder(aiResult.clientContactEmail) ? { clientContactEmail: aiResult.clientContactEmail } : {}),
+                    ...(aiResult.clientContactPhone != null && !containsMetadataPlaceholder(aiResult.clientContactPhone) ? { clientContactPhone: aiResult.clientContactPhone } : {}),
+                    ...(aiResult.submissionAddress != null && !containsMetadataPlaceholder(aiResult.submissionAddress) ? { submissionAddress: aiResult.submissionAddress } : {}),
+                    ...(aiResult.clientCity != null && !containsMetadataPlaceholder(aiResult.clientCity) ? { clientCity: aiResult.clientCity } : {}),
+                    ...(aiResult.clientWebsite != null && !containsMetadataPlaceholder(aiResult.clientWebsite) ? { clientWebsite: aiResult.clientWebsite } : {}),
+                    ...(aiResult.submissionEmailSubject != null && !containsMetadataPlaceholder(aiResult.submissionEmailSubject) ? { submissionEmailSubject: aiResult.submissionEmailSubject } : {}),
+                    ...(aiResult.preBidChannel != null && !containsMetadataPlaceholder(aiResult.preBidChannel) ? { preBidChannel: aiResult.preBidChannel } : {}),
+                    ...(aiResult.preBidMeetingDate != null ? { preBidMeetingDate: new Date(aiResult.preBidMeetingDate) } : {}),
+                    ...(aiResult.preBidMeetingLocation != null && !containsMetadataPlaceholder(aiResult.preBidMeetingLocation) ? { preBidMeetingLocation: aiResult.preBidMeetingLocation } : {}),
+                    ...(aiResult.clientRepresentative != null && !containsMetadataPlaceholder(aiResult.clientRepresentative) ? { clientRepresentative: aiResult.clientRepresentative } : {}),
+                    ...(aiResult.procurementReferenceNumber != null && isValidReferenceNumber(aiResult.procurementReferenceNumber) ? { reference: aiResult.procurementReferenceNumber } : {}),
+                    ...(aiResult.submissionMethod != null && !tenderRecord.submissionMethod ? { submissionMethod: aiResult.submissionMethod } : {}),
+                    ...(aiResult.submissionEmails != null && !tenderRecord.submissionEmails ? { submissionEmails: aiResult.submissionEmails } : {}),
+                    ...(aiResult.clientNameSourcePage !== undefined ? { clientNameSourcePage: aiResult.clientNameSourcePage } : {}),
+                    ...(aiResult.clientNameSourceQuote !== undefined ? { clientNameSourceQuote: aiResult.clientNameSourceQuote } : {}),
+                    ...(aiResult.submissionEmailSourcePage !== undefined ? { submissionEmailSourcePage: aiResult.submissionEmailSourcePage } : {}),
+                    ...(aiResult.contactDetailsSource != null ? { contactDetailsSourceJson: JSON.stringify(aiResult.contactDetailsSource) } : {}),
+                    ...(aiResult.submissionMethodSourcePage !== undefined ? { submissionMethodSourcePage: aiResult.submissionMethodSourcePage } : {}),
+                    ...(aiResult.submissionMethodSourceQuote !== undefined ? { submissionMethodSourceQuote: aiResult.submissionMethodSourceQuote } : {}),
+                    ...(aiResult.submissionAddressSourcePage !== undefined ? { submissionAddressSourcePage: aiResult.submissionAddressSourcePage } : {}),
+                    ...(aiResult.submissionAddressSourceQuote !== undefined ? { submissionAddressSourceQuote: aiResult.submissionAddressSourceQuote } : {}),
+                    ...(aiResult.evaluationCriteriaSource !== undefined ? { evaluationCriteriaSourceJson: aiResult.evaluationCriteriaSource ? JSON.stringify(aiResult.evaluationCriteriaSource) : null } : {}),
+                    metadataContaminated: anyEntityContaminated,
+                  },
+                });
               });
-            });
+              if (!streamPromoSuperseded && analysisJob) {
+                await promoteAnalysisToCanonical(analysisJob.id, runId);
+              }
+            }
 
             if (analysisJob) {
               analysisJobId = analysisJob.id;
@@ -717,19 +760,44 @@ async function handleStreamingAnalyze(
             console.error("[ai-analyze/stream] AI failed; regex fallback:", { category: diagnostics.category });
             void persistAllHealthToDb().catch(() => {});
 
-            // Run regex fallback inline
+            // Non-destructive: stage fallback result without touching canonical tender data.
             const result = analyzeTender(tenderRecord);
             const diagnosticsLine = formatFallbackDiagnosticsLine(diagnostics);
             const providerDiagnostics = buildProviderDiagnosticsSnapshot();
-            await prisma.$transaction(async (tx) => {
-              await tx.tenderRequirement.deleteMany({ where: { tenderId: id } });
-              for (const req of result.requirements) {
-                await tx.tenderRequirement.create({ data: { tenderId: id, ...req } });
-              }
-              const previousNotes = (tenderRecord.notes ?? "").split("\n").filter((line) => !/^Analysis source:/i.test(line.trim()) && !/^Analysis fallback diagnostics:/i.test(line.trim()));
-              const notes = [...previousNotes, `Analysis source: Regex fallback (${diagnostics.category}).`, diagnosticsLine].filter(Boolean).join("\n").trim() || null;
-              await tx.tender.update({ where: { id }, data: { analysisSummary: `${result.summary}\n\nFast fallback used because AI analysis did not complete. ${diagnosticsLine}`, exactFileNaming: JSON.stringify(result.exactFileNaming), exactFileOrder: JSON.stringify(result.exactFileOrder), notes, status: "ANALYSIS_REQUIRES_REVIEW", stage: "ANALYSIS", analysisExtractionStatus: "REGEX_FALLBACK_FROM_WEAK_EXTRACTION" } });
-            });
+            // When the AiJob was never created (rare transient DB failure on startup),
+            // create a minimal tracking record so the fallback draft can be staged
+            // rather than silently dropped.
+            let streamFallbackJobId = analysisJob?.id ?? null;
+            if (!streamFallbackJobId) {
+              try {
+                const emergencyFb = await prisma.aiJob.create({
+                  data: {
+                    tenderId: id, userId, jobType: "AI_ANALYZE", status: "RUNNING",
+                    startedAt: new Date(),
+                    input: JSON.stringify({ streamingEmergencyFallback: true, contentHash }),
+                  },
+                  select: { id: true },
+                });
+                streamFallbackJobId = emergencyFb.id;
+              } catch { /* accept silent drop as last resort */ }
+            }
+            if (streamFallbackJobId) {
+              await stageFallbackDraft(streamFallbackJobId, {
+                requirements: result.requirements,
+                summary: result.summary,
+                contentHash,
+                isPartial: false,
+                completedChunks: 0,
+                totalChunks: Math.ceil(tenderContent.length / 50_000),
+              });
+              // Do NOT set output here — preserveAiAnalyzeProgressOnFailure already
+              // wrote chunkResults into AiJob.output for resume; overwriting would
+              // destroy the saved chunk data.
+              await prisma.aiJob.update({
+                where: { id: streamFallbackJobId },
+                data: { status: "FAILED", finishedAt: new Date() },
+              }).catch(() => {});
+            }
             analysisResult = { ai: false, fallback: true, analysisSource: "REGEX_FALLBACK", summary: result.summary, requirementCount: result.requirements.length, fallbackDiagnostics: diagnostics, providerDiagnostics, nextAction: "RETRY_AI_ANALYZE_OR_APPROVE_FALLBACK" };
           }
         } else {
@@ -738,16 +806,22 @@ async function handleStreamingAnalyze(
           const diagnostics = buildAnalysisFallbackDiagnostics("No AI provider configured");
           const diagnosticsLine = formatFallbackDiagnosticsLine(diagnostics);
           emit({ phase: "saving", message: "Saving analysis results…" });
-          await prisma.$transaction(async (tx) => {
-            await tx.tenderRequirement.deleteMany({ where: { tenderId: id } });
-            for (const req of result.requirements) {
-              await tx.tenderRequirement.create({ data: { tenderId: id, ...req } });
-            }
-            const previousNotes = (tenderRecord.notes ?? "").split("\n").filter((line) => !/^Analysis source:/i.test(line.trim()) && !/^Analysis fallback diagnostics:/i.test(line.trim()));
-            const notes = [...previousNotes, `Analysis source: Regex fallback (${diagnostics.category}).`, diagnosticsLine].filter(Boolean).join("\n").trim() || null;
-            await tx.tender.update({ where: { id }, data: { analysisSummary: `${result.summary}\n\nFast fallback used because AI analysis did not complete. ${diagnosticsLine}`, exactFileNaming: JSON.stringify(result.exactFileNaming), exactFileOrder: JSON.stringify(result.exactFileOrder), notes, status: "FALLBACK_DRAFT_CREATED", stage: "ANALYSIS", analysisExtractionStatus: "REGEX_FALLBACK_FROM_WEAK_EXTRACTION" } });
-          });
-          analysisResult = { ai: false, fallback: false, analysisSource: "REGEX_FALLBACK", summary: result.summary, requirementCount: result.requirements.length, fallbackDiagnostics: diagnostics, providerDiagnostics: buildProviderDiagnosticsSnapshot() };
+          // Non-destructive: stage fallback draft without touching canonical tender data.
+          if (analysisJob) {
+            await stageFallbackDraft(analysisJob.id, {
+              requirements: result.requirements,
+              summary: result.summary,
+              contentHash,
+              isPartial: false,
+              completedChunks: 0,
+              totalChunks: Math.ceil(tenderContent.length / 50_000),
+            });
+            await prisma.aiJob.update({
+              where: { id: analysisJob.id },
+              data: { status: "FAILED", finishedAt: new Date(), output: JSON.stringify({ analysisSource: "REGEX_FALLBACK", analysisExtractionStatus: "REGEX_FALLBACK_FROM_WEAK_EXTRACTION", contentHash, diagnostics: diagnosticsLine }) },
+            }).catch(() => {});
+          }
+          analysisResult = { ai: false, fallback: true, analysisSource: "REGEX_FALLBACK", summary: result.summary, requirementCount: result.requirements.length, fallbackDiagnostics: diagnostics, providerDiagnostics: buildProviderDiagnosticsSnapshot(), nextAction: "RETRY_AI_ANALYZE_OR_APPROVE_FALLBACK" };
         }
 
         await logAction({
@@ -899,51 +973,53 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }, { status: 400 });
   }
 
+  // nsJobIdForFallback and nsContentHashForFallback are set inside the AI try block
+  // so the fallback function can stage the result without canonical writes.
+  let nsJobIdForFallback: string | null = null;
+  let nsContentHashForFallback: string | undefined;
+
   async function runRegexFallback(errorMessage?: string, diagnostics?: AnalysisFallbackDiagnostics) {
     const result = analyzeTender(tenderRecord);
     const fallbackDiagnostics = diagnostics ?? (errorMessage ? buildAnalysisFallbackDiagnostics(errorMessage) : buildAnalysisFallbackDiagnostics("No AI provider configured"));
     const diagnosticsLine = formatFallbackDiagnosticsLine(fallbackDiagnostics);
-    // Provider-specific snapshot so the fallback message is actionable
-    // (which providers were tried, which are cooling down, safe category per
-    // provider). Sourced from the in-memory health tracker — already redacted,
-    // never includes keys, raw provider bodies, prompts, or proposal text.
     const providerDiagnostics = buildProviderDiagnosticsSnapshot();
 
-    await prisma.$transaction(async (tx) => {
-      await tx.tenderRequirement.deleteMany({ where: { tenderId: id } });
-      for (const req of result.requirements) {
-        await tx.tenderRequirement.create({ data: { tenderId: id, ...req } });
-      }
-
-      const previousNotes = (tenderRecord.notes ?? "")
-        .split("\n")
-        .filter((line) => !/^Analysis source:/i.test(line.trim()) && !/^Analysis fallback diagnostics:/i.test(line.trim()));
-      const notes = [...previousNotes, `Analysis source: Regex fallback (${fallbackDiagnostics.category}).`, diagnosticsLine].filter(Boolean).join("\n").trim() || null;
-
-      // When no AI chunks succeeded at all the analysis needs human review
-      // before it can be trusted. When AI was partially involved (e.g. some
-      // chunks succeeded before a timeout and then the fallback covered the
-      // rest) we use the lighter FALLBACK_DRAFT_CREATED status instead.
-      // calledWithAiChunks is only true when the error came from the catch
-      // block of the AI path — i.e. at least the AI path was attempted.
-      // In the non-AI path (isAIEnabled() === false) no chunks ran at all.
-      const tenderStatus = errorMessage
-        ? "ANALYSIS_REQUIRES_REVIEW"
-        : "FALLBACK_DRAFT_CREATED";
-
-      await tx.tender.update({
-        where: { id },
-        data: {
-          analysisSummary: `${result.summary}\n\nFast fallback used because AI analysis did not complete. ${diagnosticsLine}`,
-          exactFileNaming: JSON.stringify(result.exactFileNaming),
-          exactFileOrder: JSON.stringify(result.exactFileOrder),
-          notes,
-          status: tenderStatus,
-          stage: "ANALYSIS",
-          analysisExtractionStatus: "REGEX_FALLBACK_FROM_WEAK_EXTRACTION",
-        },
+    if (nsJobIdForFallback) {
+      // Non-destructive: stage the fallback draft without touching canonical tender data.
+      await stageFallbackDraft(nsJobIdForFallback, {
+        requirements: result.requirements,
+        summary: result.summary,
+        contentHash: nsContentHashForFallback ?? "",
+        isPartial: false,
+        completedChunks: 0,
+        totalChunks: 0,
       });
-    });
+    } else {
+      // Legacy path: no job tracking (rare — only if job creation failed).
+      await prisma.$transaction(async (tx) => {
+        await tx.tenderRequirement.deleteMany({ where: { tenderId: id } });
+        for (const req of result.requirements) {
+          await tx.tenderRequirement.create({ data: { tenderId: id, ...req } });
+        }
+        const previousNotes = (tenderRecord.notes ?? "")
+          .split("\n")
+          .filter((line) => !/^Analysis source:/i.test(line.trim()) && !/^Analysis fallback diagnostics:/i.test(line.trim()));
+        const notes = [...previousNotes, `Analysis source: Regex fallback (${fallbackDiagnostics.category}).`, diagnosticsLine].filter(Boolean).join("\n").trim() || null;
+        const tenderStatus = errorMessage ? "ANALYSIS_REQUIRES_REVIEW" : "FALLBACK_DRAFT_CREATED";
+        await tx.tender.update({
+          where: { id },
+          data: {
+            analysisSummary: `${result.summary}\n\nFast fallback used because AI analysis did not complete. ${diagnosticsLine}`,
+            exactFileNaming: JSON.stringify(result.exactFileNaming),
+            exactFileOrder: JSON.stringify(result.exactFileOrder),
+            notes,
+            status: tenderStatus,
+            stage: "ANALYSIS",
+            analysisExtractionStatus: "REGEX_FALLBACK_FROM_WEAK_EXTRACTION",
+          },
+        });
+      });
+    }
 
     return {
       ai: false,
@@ -1038,6 +1114,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         }).catch(() => {});
 
         // Create an AiJob record to track this synchronous analysis run
+        nsContentHashForFallback = contentHash;
+        const nsRunId = crypto.randomUUID();
+        // analysisVersion is assigned by the PostgreSQL sequence — no application value needed.
+
         let analysisJob: { id: string } | null = null;
         try {
           analysisJob = await prisma.aiJob.create({
@@ -1055,6 +1135,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
             },
             select: { id: true },
           });
+          nsJobIdForFallback = analysisJob?.id ?? null;
         } catch (jobCreateErr) {
           console.warn("[ai-analyze] Failed to create AiJob record — continuing without job tracking:", jobCreateErr instanceof Error ? jobCreateErr.message : String(jobCreateErr));
         }
@@ -1130,47 +1211,21 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
             f.extractionMethod === "ocr" || (f.ocrPages != null && f.ocrPages > 0),
         ) ? "ocr" : "text";
 
-        await prisma.$transaction(async (tx) => {
-          await tx.tenderRequirement.deleteMany({ where: { tenderId: id } });
-          for (const req of aiResult.requirements) {
-            await tx.tenderRequirement.create({
-              data: {
-                tenderId: id,
-                title: req.title,
-                description: req.description,
-                requirementType: req.requirementType,
-                priority: req.priority,
-                exactFileName: req.exactFileName ?? null,
-                requiredQuantity: req.requiredQuantity ?? null,
-                pageLimit: req.pageLimit ?? null,
-                restrictions: req.restrictions ?? null,
-                sectionReference: req.sectionReference ?? null,
-                sourceSectionHeading: req.sectionReference ?? null,
-                sourcePageNumber: req.sourcePage ?? null,
-                sourceExactQuote: req.sourceQuote ?? null,
-                sourceExtractionMethod: effectiveExtractionMethodNonStreaming,
-                sourceConfidence: typeof req.sourcePage === "number" && req.sourcePage > 0 ? 0.8 : (typeof req.sourceQuote === "string" && req.sourceQuote.trim().length > 10 ? 0.7 : 0),
-              },
+        if (aiMeta.isPartial) {
+          // Non-destructive: stage partial result without touching canonical tender data.
+          if (analysisJob) {
+            await stagePartialResult(analysisJob.id, {
+              requirements: aiResult.requirements,
+              summary: aiResult.summary,
+              chunkResults: aiMeta.chunkResults,
+              contentHash,
+              isPartial: true,
+              completedChunks: aiMeta.completedChunks,
+              totalChunks: aiMeta.totalChunks,
             });
           }
-
-          const existingNotes = (tenderRecord.notes ?? "").split("\n");
-          const analysisSourceNote = aiMeta.isPartial
-            ? `Analysis source: AI (partial, ${aiMeta.completedChunks}/${aiMeta.totalChunks} chunks completed — deadline reached).`
-            : "Analysis source: AI (re-run via AI Analyze button).";
-          const updatedNotesLines = existingNotes
-            .filter((line) => !/^Analysis source:/i.test(line.trim()) && !/^Analysis fallback diagnostics:/i.test(line.trim()))
-            .concat([analysisSourceNote]);
-          const updatedNotes = updatedNotesLines.join("\n").trim() || null;
-
-          // Reflect the actual analysis source in the tender status so the UI
-          // and downstream gates can distinguish AI success from partial AI and
-          // regex fallback without parsing the notes field.
-          //   AI full success   → "AI_ANALYZED"
-          //   Partial (deadline) → "AI_ANALYSIS_PARTIAL"
-          const tenderStatus = aiMeta.isPartial ? "AI_ANALYSIS_PARTIAL" : "AI_ANALYZED";
-
-          // Contamination check on all entity name fields
+        } else if (await canPromoteToCanonical(analysisJob?.id ?? null, id)) {
+          // Full success: promote atomically to canonical.
           const clientNameForContaminationCheck = aiResult.procuringEntityName || tenderRecord.clientName;
           const contamination = detectMetadataContamination(clientNameForContaminationCheck);
           const legalNameContamination = detectMetadataContamination(aiResult.legalClientName);
@@ -1178,75 +1233,100 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           const implementingAgencyContamination = detectMetadataContamination(aiResult.implementingAgency);
           const anyEntityContaminated = contamination.contaminated || legalNameContamination.contaminated || donorAgencyContamination.contaminated || implementingAgencyContamination.contaminated;
 
-          await tx.tender.update({
-            where: { id },
-            data: {
-              analysisSummary: aiResult.summary,
-              evaluationMethodology: aiResult.evaluationMethodology || null,
-              exactFileNaming: JSON.stringify(aiResult.exactFileNaming),
-              exactFileOrder: JSON.stringify(aiResult.exactFileOrder),
-              // Tender-driven classification: when the analysis detected a
-              // category, store it on the existing Tender.category column so
-              // section planning / readiness / matching adapt to the actual
-              // tender type instead of a fixed default. Detection is best-effort
-              // — leave the prior value untouched when undetermined.
-              ...(aiResult.tenderCategory ? { category: aiResult.tenderCategory } : {}),
-              notes: updatedNotes,
-              status: tenderStatus,
-              stage: "ANALYSIS",
-              // Extended client/procuring-entity extraction fields
-              // Use != null (not !== undefined) so a null AI result never overwrites user-entered data.
-              // Also back-fill the legacy clientName when it's blank — procuringEntityName is
-              // the authoritative AI-extracted value; clientName drives generation gating.
-              ...(aiResult.procuringEntityName != null && !containsMetadataPlaceholder(aiResult.procuringEntityName) ? {
-                procuringEntityName: aiResult.procuringEntityName,
-                ...(!tenderRecord.clientName ? { clientName: aiResult.procuringEntityName } : {}),
-              } : {}),
-              ...(aiResult.legalClientName != null && !containsMetadataPlaceholder(aiResult.legalClientName) ? { legalClientName: aiResult.legalClientName } : {}),
-              ...(aiResult.donorAgency != null && !containsMetadataPlaceholder(aiResult.donorAgency) ? { donorAgency: aiResult.donorAgency } : {}),
-              ...(aiResult.implementingAgency != null && !containsMetadataPlaceholder(aiResult.implementingAgency) ? { implementingAgency: aiResult.implementingAgency } : {}),
-              // Full contact/location fields — only update when AI returned a real value;
-              // skip placeholders ("N/A", "unknown", "Bid-Team to confirm", etc.) so they
-              // do not overwrite null or previously-confirmed user data.
-              ...(aiResult.country != null && isValidCountry(aiResult.country) ? { country: aiResult.country } : {}),
-              ...(aiResult.clientAddress != null && !containsMetadataPlaceholder(aiResult.clientAddress) ? { clientAddress: aiResult.clientAddress } : {}),
-              ...(aiResult.clientContactName != null && isValidClientContact(aiResult.clientContactName) ? { clientContactName: aiResult.clientContactName } : {}),
-              ...(aiResult.clientContactTitle != null && !containsMetadataPlaceholder(aiResult.clientContactTitle) ? { clientContactTitle: aiResult.clientContactTitle } : {}),
-              ...(aiResult.clientContactEmail != null && !containsMetadataPlaceholder(aiResult.clientContactEmail) ? { clientContactEmail: aiResult.clientContactEmail } : {}),
-              ...(aiResult.clientContactPhone != null && !containsMetadataPlaceholder(aiResult.clientContactPhone) ? { clientContactPhone: aiResult.clientContactPhone } : {}),
-              ...(aiResult.submissionAddress != null && !containsMetadataPlaceholder(aiResult.submissionAddress) ? { submissionAddress: aiResult.submissionAddress } : {}),
-              ...(aiResult.clientCity != null && !containsMetadataPlaceholder(aiResult.clientCity) ? { clientCity: aiResult.clientCity } : {}),
-              ...(aiResult.clientWebsite != null && !containsMetadataPlaceholder(aiResult.clientWebsite) ? { clientWebsite: aiResult.clientWebsite } : {}),
-              ...(aiResult.submissionEmailSubject != null && !containsMetadataPlaceholder(aiResult.submissionEmailSubject) ? { submissionEmailSubject: aiResult.submissionEmailSubject } : {}),
-              ...(aiResult.preBidChannel != null && !containsMetadataPlaceholder(aiResult.preBidChannel) ? { preBidChannel: aiResult.preBidChannel } : {}),
-              ...(aiResult.preBidMeetingDate != null ? { preBidMeetingDate: new Date(aiResult.preBidMeetingDate) } : {}),
-              ...(aiResult.preBidMeetingLocation != null && !containsMetadataPlaceholder(aiResult.preBidMeetingLocation) ? { preBidMeetingLocation: aiResult.preBidMeetingLocation } : {}),
-              ...(aiResult.clientRepresentative != null && !containsMetadataPlaceholder(aiResult.clientRepresentative) ? { clientRepresentative: aiResult.clientRepresentative } : {}),
-              // Procurement reference number — validate it's a real ref (has a digit, ≥3 chars, not a stop-word)
-              ...(aiResult.procurementReferenceNumber != null && isValidReferenceNumber(aiResult.procurementReferenceNumber) ? { reference: aiResult.procurementReferenceNumber } : {}),
-              // Submission method and emails — only set when AI extracted a value
-              // and the DB field is currently blank (preserve user-corrected data)
-              ...(aiResult.submissionMethod != null && !tenderRecord.submissionMethod ? { submissionMethod: aiResult.submissionMethod } : {}),
-              ...(aiResult.submissionEmails != null && !tenderRecord.submissionEmails ? { submissionEmails: aiResult.submissionEmails } : {}),
-              ...(aiResult.clientNameSourcePage !== undefined ? { clientNameSourcePage: aiResult.clientNameSourcePage } : {}),
-              ...(aiResult.clientNameSourceQuote !== undefined ? { clientNameSourceQuote: aiResult.clientNameSourceQuote } : {}),
-              ...(aiResult.submissionEmailSourcePage !== undefined ? { submissionEmailSourcePage: aiResult.submissionEmailSourcePage } : {}),
-              // Per-field source provenance for contact/location fields (CLAUDE.md requirement)
-              ...(aiResult.contactDetailsSource != null
-                ? { contactDetailsSourceJson: JSON.stringify(aiResult.contactDetailsSource) }
-                : {}),
-              // Source traceability for submission method and address
-              ...(aiResult.submissionMethodSourcePage !== undefined ? { submissionMethodSourcePage: aiResult.submissionMethodSourcePage } : {}),
-              ...(aiResult.submissionMethodSourceQuote !== undefined ? { submissionMethodSourceQuote: aiResult.submissionMethodSourceQuote } : {}),
-              ...(aiResult.submissionAddressSourcePage !== undefined ? { submissionAddressSourcePage: aiResult.submissionAddressSourcePage } : {}),
-              ...(aiResult.submissionAddressSourceQuote !== undefined ? { submissionAddressSourceQuote: aiResult.submissionAddressSourceQuote } : {}),
-              // Per-criterion evaluation criteria source
-              ...(aiResult.evaluationCriteriaSource !== undefined ? { evaluationCriteriaSourceJson: aiResult.evaluationCriteriaSource ? JSON.stringify(aiResult.evaluationCriteriaSource) : null } : {}),
-              // Flag contaminated entity name so the export gate can block
-              metadataContaminated: anyEntityContaminated,
-            },
+          const existingNotes = (tenderRecord.notes ?? "").split("\n");
+          const updatedNotes = existingNotes
+            .filter((line) => !/^Analysis source:/i.test(line.trim()) && !/^Analysis fallback diagnostics:/i.test(line.trim()))
+            .concat(["Analysis source: AI (re-run via AI Analyze button)."]).join("\n").trim() || null;
+
+          // Atomic TOCTOU guard: same pattern as streaming path.
+          let nsPromoSuperseded = false;
+          await prisma.$transaction(async (tx) => {
+            await tx.$queryRaw`SELECT pg_advisory_xact_lock(1, hashtext(${id}))`;
+            if (analysisJob) {
+              const currentVer = await tx.aiJob.findUnique({
+                where: { id: analysisJob.id },
+                select: { analysisVersion: true },
+              });
+              const newerExists = !currentVer || await tx.aiJob.findFirst({
+                where: { tenderId: id, jobType: "AI_ANALYZE", id: { not: analysisJob.id }, analysisVersion: { gt: currentVer.analysisVersion } },
+                select: { id: true },
+              });
+              if (newerExists) { nsPromoSuperseded = true; return; }
+            }
+            await tx.tenderRequirement.deleteMany({ where: { tenderId: id } });
+            for (const req of aiResult.requirements) {
+              await tx.tenderRequirement.create({
+                data: {
+                  tenderId: id,
+                  title: req.title,
+                  description: req.description,
+                  requirementType: req.requirementType,
+                  priority: req.priority,
+                  exactFileName: req.exactFileName ?? null,
+                  requiredQuantity: req.requiredQuantity ?? null,
+                  pageLimit: req.pageLimit ?? null,
+                  restrictions: req.restrictions ?? null,
+                  sectionReference: req.sectionReference ?? null,
+                  sourceSectionHeading: req.sectionReference ?? null,
+                  sourcePageNumber: req.sourcePage ?? null,
+                  sourceExactQuote: req.sourceQuote ?? null,
+                  sourceExtractionMethod: effectiveExtractionMethodNonStreaming,
+                  sourceConfidence: typeof req.sourcePage === "number" && req.sourcePage > 0 ? 0.8 : (typeof req.sourceQuote === "string" && req.sourceQuote.trim().length > 10 ? 0.7 : 0),
+                },
+              });
+            }
+            await tx.tender.update({
+              where: { id },
+              data: {
+                analysisSummary: aiResult.summary,
+                evaluationMethodology: aiResult.evaluationMethodology || null,
+                exactFileNaming: JSON.stringify(aiResult.exactFileNaming),
+                exactFileOrder: JSON.stringify(aiResult.exactFileOrder),
+                ...(aiResult.tenderCategory ? { category: aiResult.tenderCategory } : {}),
+                notes: updatedNotes,
+                status: "AI_ANALYZED",
+                stage: "ANALYSIS",
+                ...(aiResult.procuringEntityName != null && !containsMetadataPlaceholder(aiResult.procuringEntityName) ? {
+                  procuringEntityName: aiResult.procuringEntityName,
+                  ...(!tenderRecord.clientName ? { clientName: aiResult.procuringEntityName } : {}),
+                } : {}),
+                ...(aiResult.legalClientName != null && !containsMetadataPlaceholder(aiResult.legalClientName) ? { legalClientName: aiResult.legalClientName } : {}),
+                ...(aiResult.donorAgency != null && !containsMetadataPlaceholder(aiResult.donorAgency) ? { donorAgency: aiResult.donorAgency } : {}),
+                ...(aiResult.implementingAgency != null && !containsMetadataPlaceholder(aiResult.implementingAgency) ? { implementingAgency: aiResult.implementingAgency } : {}),
+                ...(aiResult.country != null && isValidCountry(aiResult.country) ? { country: aiResult.country } : {}),
+                ...(aiResult.clientAddress != null && !containsMetadataPlaceholder(aiResult.clientAddress) ? { clientAddress: aiResult.clientAddress } : {}),
+                ...(aiResult.clientContactName != null && isValidClientContact(aiResult.clientContactName) ? { clientContactName: aiResult.clientContactName } : {}),
+                ...(aiResult.clientContactTitle != null && !containsMetadataPlaceholder(aiResult.clientContactTitle) ? { clientContactTitle: aiResult.clientContactTitle } : {}),
+                ...(aiResult.clientContactEmail != null && !containsMetadataPlaceholder(aiResult.clientContactEmail) ? { clientContactEmail: aiResult.clientContactEmail } : {}),
+                ...(aiResult.clientContactPhone != null && !containsMetadataPlaceholder(aiResult.clientContactPhone) ? { clientContactPhone: aiResult.clientContactPhone } : {}),
+                ...(aiResult.submissionAddress != null && !containsMetadataPlaceholder(aiResult.submissionAddress) ? { submissionAddress: aiResult.submissionAddress } : {}),
+                ...(aiResult.clientCity != null && !containsMetadataPlaceholder(aiResult.clientCity) ? { clientCity: aiResult.clientCity } : {}),
+                ...(aiResult.clientWebsite != null && !containsMetadataPlaceholder(aiResult.clientWebsite) ? { clientWebsite: aiResult.clientWebsite } : {}),
+                ...(aiResult.submissionEmailSubject != null && !containsMetadataPlaceholder(aiResult.submissionEmailSubject) ? { submissionEmailSubject: aiResult.submissionEmailSubject } : {}),
+                ...(aiResult.preBidChannel != null && !containsMetadataPlaceholder(aiResult.preBidChannel) ? { preBidChannel: aiResult.preBidChannel } : {}),
+                ...(aiResult.preBidMeetingDate != null ? { preBidMeetingDate: new Date(aiResult.preBidMeetingDate) } : {}),
+                ...(aiResult.preBidMeetingLocation != null && !containsMetadataPlaceholder(aiResult.preBidMeetingLocation) ? { preBidMeetingLocation: aiResult.preBidMeetingLocation } : {}),
+                ...(aiResult.clientRepresentative != null && !containsMetadataPlaceholder(aiResult.clientRepresentative) ? { clientRepresentative: aiResult.clientRepresentative } : {}),
+                ...(aiResult.procurementReferenceNumber != null && isValidReferenceNumber(aiResult.procurementReferenceNumber) ? { reference: aiResult.procurementReferenceNumber } : {}),
+                ...(aiResult.submissionMethod != null && !tenderRecord.submissionMethod ? { submissionMethod: aiResult.submissionMethod } : {}),
+                ...(aiResult.submissionEmails != null && !tenderRecord.submissionEmails ? { submissionEmails: aiResult.submissionEmails } : {}),
+                ...(aiResult.clientNameSourcePage !== undefined ? { clientNameSourcePage: aiResult.clientNameSourcePage } : {}),
+                ...(aiResult.clientNameSourceQuote !== undefined ? { clientNameSourceQuote: aiResult.clientNameSourceQuote } : {}),
+                ...(aiResult.submissionEmailSourcePage !== undefined ? { submissionEmailSourcePage: aiResult.submissionEmailSourcePage } : {}),
+                ...(aiResult.contactDetailsSource != null ? { contactDetailsSourceJson: JSON.stringify(aiResult.contactDetailsSource) } : {}),
+                ...(aiResult.submissionMethodSourcePage !== undefined ? { submissionMethodSourcePage: aiResult.submissionMethodSourcePage } : {}),
+                ...(aiResult.submissionMethodSourceQuote !== undefined ? { submissionMethodSourceQuote: aiResult.submissionMethodSourceQuote } : {}),
+                ...(aiResult.submissionAddressSourcePage !== undefined ? { submissionAddressSourcePage: aiResult.submissionAddressSourcePage } : {}),
+                ...(aiResult.submissionAddressSourceQuote !== undefined ? { submissionAddressSourceQuote: aiResult.submissionAddressSourceQuote } : {}),
+                ...(aiResult.evaluationCriteriaSource !== undefined ? { evaluationCriteriaSourceJson: aiResult.evaluationCriteriaSource ? JSON.stringify(aiResult.evaluationCriteriaSource) : null } : {}),
+                metadataContaminated: anyEntityContaminated,
+              },
+            });
           });
-        });
+          if (!nsPromoSuperseded && analysisJob) {
+            await promoteAnalysisToCanonical(analysisJob.id, nsRunId);
+          }
+        }
 
         // Update the AiJob to SUCCEEDED (or PARTIAL_SUCCESS) with chunk metadata.
         // PARTIAL_SUCCESS = some chunks succeeded, some failed/skipped due to deadline.
@@ -1327,7 +1407,44 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         analysisResult = await runRegexFallback(msg, diagnostics);
       }
     } else {
-      analysisResult = await runRegexFallback(undefined, buildAnalysisFallbackDiagnostics("No AI provider configured"));
+      // No AI provider configured. Create a minimal AiJob so runRegexFallback
+      // can call stageFallbackDraft instead of the legacy canonical overwrite.
+      // Without this, a deployment with no AI key would destroy a previous
+      // trusted AI analysis by taking the legacy deleteMany/canonical-write path.
+      if (!nsJobIdForFallback) {
+        const noAiHash = crypto.createHash("sha256").update(id).digest("hex").slice(0, 16);
+        nsContentHashForFallback = noAiHash;
+        try {
+          const noAiJob = await prisma.aiJob.create({
+            data: {
+              tenderId: id, userId, jobType: "AI_ANALYZE", status: "RUNNING",
+              startedAt: new Date(),
+              input: JSON.stringify({ noAiProvider: true, contentHash: noAiHash }),
+            },
+            select: { id: true },
+          });
+          nsJobIdForFallback = noAiJob.id;
+        } catch {
+          // Job creation failed — runRegexFallback falls back to the legacy
+          // canonical write as a last resort.
+        }
+      }
+      analysisResult = await runRegexFallback("No AI provider configured", buildAnalysisFallbackDiagnostics("No AI provider configured"));
+      if (nsJobIdForFallback) {
+        await prisma.aiJob.update({
+          where: { id: nsJobIdForFallback },
+          data: {
+            status: "PARTIAL_SUCCESS",
+            finishedAt: new Date(),
+            output: JSON.stringify({
+              analysisSource: "REGEX_FALLBACK",
+              analysisExtractionStatus: "REGEX_FALLBACK_FROM_WEAK_EXTRACTION",
+              reason: "No AI provider configured",
+              requirementCount: analysisResult.requirementCount,
+            }),
+          },
+        }).catch(() => {});
+      }
     }
 
     await logAction({
