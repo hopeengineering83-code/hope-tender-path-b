@@ -210,7 +210,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   }
 
   // Gate 2: Client/procuring entity must be present and not contaminated
-  if ((tender as any).metadataContaminated) {
+  if (tender.metadataContaminated) {
     return NextResponse.json({
       success: false, ok: false,
       code: "METADATA_CONTAMINATED",
@@ -218,7 +218,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       nextAction: "EDIT_TENDER_METADATA",
     }, { status: 422 });
   }
-  const clientDisplayName = (tender as any).clientName || (tender as any).procuringEntityName;
+  const clientDisplayName = tender.clientName || tender.procuringEntityName;
   if (!clientDisplayName) {
     return NextResponse.json({
       success: false, ok: false,
@@ -284,12 +284,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       // Tier 2: no page markers — check stored submission metadata as proxy.
       // Only apply when AI Analyze has already run (analysisExtractionStatus is set),
       // because for a fresh upload without analysis the check would always fail.
-      const analysisRan = !!(tender as any).analysisExtractionStatus;
+      const analysisRan = !!tender.analysisExtractionStatus;
       if (analysisRan) {
         const hasStoredSubmissionDetails =
-          !!((tender as any).submissionMethod ?? "").trim() ||
-          !!((tender as any).submissionAddress ?? "").trim() ||
-          !!((tender as any).submissionEmails ?? "").trim();
+          !!(tender.submissionMethod ?? "").trim() ||
+          !!(tender.submissionAddress ?? "").trim() ||
+          !!(tender.submissionEmails ?? "").trim();
         if (!hasStoredSubmissionDetails) {
           return NextResponse.json({
             success: false, ok: false,
@@ -335,8 +335,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     exactFileOrder: tender.exactFileOrder,
     pageLimit: tender.pageLimit,
     submissionMethod: tender.submissionMethod,
-    tenderCategory: (tender as any).category,
-    analysisExtractionStatus: (tender as any).analysisExtractionStatus,
+    tenderCategory: tender.category,
+    analysisExtractionStatus: tender.analysisExtractionStatus,
     requirements: tender.requirements,
   });
   const missing = findMissingGeneratedDocuments(plan, tender.generatedDocuments);

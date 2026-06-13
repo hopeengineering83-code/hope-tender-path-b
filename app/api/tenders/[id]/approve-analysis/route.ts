@@ -16,7 +16,9 @@
 // title="ANALYSIS_APPROVAL:REGEX_FALLBACK", isResolved=true. Same
 // pattern we use for donor advisory resolutions (no migration).
 //
-// Auth: ADMIN or PROPOSAL_MANAGER. REVIEWER and VIEWER are rejected.
+// Auth: ADMIN, PROPOSAL_MANAGER, or REVIEWER. VIEWER is rejected.
+// REVIEWER is included so that Recovery Command Center Execute buttons work
+// for reviewer-role users — see tests/recovery-command-center-actions.test.ts.
 
 import { NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
