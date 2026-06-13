@@ -33,6 +33,7 @@ export type RequirementDraft = {
   sourcePageNumber?: number | null;
   sourceSectionHeading?: string | null;
   sourceExactQuote?: string | null;
+  sourceExtractionMethod?: string | null;
   // sourceConfidence is `number | undefined` (no `null`) because the
   // Prisma column has a non-null default of 0 and the create input
   // type does not accept null.

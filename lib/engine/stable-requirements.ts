@@ -70,7 +70,7 @@ export async function upsertRequirements(
   }
 
   if (options.deleteMissing) {
-    const toDelete = existing.filter(e => !processedIds.has(e.id)).map(e => e.id);
+    const toDelete = existing.filter((e: { id: string }) => !processedIds.has(e.id)).map((e: { id: string }) => e.id);
     if (toDelete.length > 0) {
       await tx.tenderRequirement.deleteMany({
         where: { id: { in: toDelete } },
