@@ -59,6 +59,34 @@ describe("export-readiness route policy mappings", () => {
     );
   });
 
+  it("generate route blocks on OCR_REQUIRED (corrupted extraction — AI was skipped)", async () => {
+    const src = await readFile("app/api/tenders/[id]/generate/route.ts", "utf8");
+    assert.ok(
+      src.includes('"OCR_REQUIRED"'),
+      "generate route must block when analysisExtractionStatus === OCR_REQUIRED",
+    );
+    assert.ok(
+      src.includes("ANALYSIS_FROM_CORRUPTED_EXTRACTION"),
+      "generate route must use ANALYSIS_FROM_CORRUPTED_EXTRACTION error code for OCR_REQUIRED",
+    );
+    assert.ok(
+      src.includes("RUN_OCR_OR_UPLOAD_CLEARER_SCAN"),
+      "generate route must provide RUN_OCR_OR_UPLOAD_CLEARER_SCAN nextAction for OCR_REQUIRED",
+    );
+  });
+
+  it("generate route blocks on EXTRACTION_WEAK_REVIEW_REQUIRED (weak extraction)", async () => {
+    const src = await readFile("app/api/tenders/[id]/generate/route.ts", "utf8");
+    assert.ok(
+      src.includes('"EXTRACTION_WEAK_REVIEW_REQUIRED"'),
+      "generate route must block when analysisExtractionStatus === EXTRACTION_WEAK_REVIEW_REQUIRED",
+    );
+    assert.ok(
+      src.includes("ANALYSIS_FROM_WEAK_EXTRACTION"),
+      "generate route must use ANALYSIS_FROM_WEAK_EXTRACTION error code for weak extraction",
+    );
+  });
+
   it("export-readiness blocks on OCR_REQUIRED (AI analysis was skipped — no reliable analysis)", async () => {
     const src = await readFile("lib/engine/export-readiness.ts", "utf8");
     assert.ok(
