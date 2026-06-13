@@ -2,14 +2,17 @@ name: CI
 
 on:
   pull_request:
+    branches: [main]
   push:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
   verify:
+    name: Migrate, typecheck, lint, test, build, and smoke
     runs-on: ubuntu-latest
     timeout-minutes: 40
     services:
@@ -27,8 +30,11 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     env:
+      CI: "true"
       NEXT_TELEMETRY_DISABLED: "1"
       DATABASE_URL: "postgresql://hope_ci:hope_ci@127.0.0.1:5432/hope_tender_ci?schema=public"
+      SESSION_SECRET: "ci-only-session-secret-0123456789abcdef0123456789abcdef"
+      NEXTAUTH_SECRET: "ci-only-nextauth-secret-0123456789abcdef0123456789abcdef"
       RUN_DB_INTEGRATION: "true"
       E2E_FULL_AUTH: "false"
     steps:
@@ -38,7 +44,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       - name: Install dependencies
