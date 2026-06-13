@@ -59,6 +59,26 @@ describe("export-readiness route policy mappings", () => {
     );
   });
 
+  it("generate-missing-plan-files route blocks on OCR_REQUIRED and EXTRACTION_WEAK_REVIEW_REQUIRED", async () => {
+    const src = await readFile("app/api/tenders/[id]/generate-missing-plan-files/route.ts", "utf8");
+    assert.ok(
+      src.includes('"OCR_REQUIRED"'),
+      "generate-missing-plan-files must block when analysisExtractionStatus === OCR_REQUIRED",
+    );
+    assert.ok(
+      src.includes('"EXTRACTION_WEAK_REVIEW_REQUIRED"'),
+      "generate-missing-plan-files must block when analysisExtractionStatus === EXTRACTION_WEAK_REVIEW_REQUIRED",
+    );
+    assert.ok(
+      src.includes("ANALYSIS_FROM_CORRUPTED_EXTRACTION"),
+      "generate-missing-plan-files must use ANALYSIS_FROM_CORRUPTED_EXTRACTION code for OCR_REQUIRED",
+    );
+    assert.ok(
+      src.includes("ANALYSIS_FROM_WEAK_EXTRACTION"),
+      "generate-missing-plan-files must use ANALYSIS_FROM_WEAK_EXTRACTION code for weak extraction",
+    );
+  });
+
   it("generate route blocks on OCR_REQUIRED (corrupted extraction — AI was skipped)", async () => {
     const src = await readFile("app/api/tenders/[id]/generate/route.ts", "utf8");
     assert.ok(
