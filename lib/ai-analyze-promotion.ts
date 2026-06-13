@@ -13,7 +13,6 @@ export interface StagedAnalysisPayload {
   stagedAt: string;
 }
 
-// Write partial AI result to AiJob.stagedMergedResult without touching canonical tender data.
 export async function stagePartialResult(
   jobId: string,
   payload: Omit<StagedAnalysisPayload, "analysisSource" | "stagedAt">,
@@ -26,10 +25,9 @@ export async function stagePartialResult(
   await prisma.aiJob.update({
     where: { id: jobId },
     data: { stagedMergedResult: JSON.stringify(staged) },
-  }).catch(() => {});
+  });
 }
 
-// Write regex fallback result to AiJob.stagedMergedResult without touching canonical tender data.
 export async function stageFallbackDraft(
   jobId: string,
   payload: Omit<StagedAnalysisPayload, "analysisSource" | "stagedAt">,
@@ -42,19 +40,16 @@ export async function stageFallbackDraft(
   await prisma.aiJob.update({
     where: { id: jobId },
     data: { stagedMergedResult: JSON.stringify(staged) },
-  }).catch(() => {});
+  });
 }
 
-// Returns false when a newer analysisVersion job exists for this tender (even if
-// still RUNNING), preventing a stale concurrent run from overwriting canonical data.
-// Returns true when jobId is absent (job tracking failed) so canonical write proceeds.
 export async function canPromoteToCanonical(jobId: string | null, tenderId: string): Promise<boolean> {
-  if (!jobId) return true; // No job record — can't version-check, allow canonical write
+  if (!jobId) return false;
   const thisJob = await prisma.aiJob.findUnique({
     where: { id: jobId },
     select: { analysisVersion: true },
-  }).catch(() => null);
-  if (!thisJob) return true; // Job not found — allow canonical write
+  });
+  if (!thisJob) return false;
 
   const newerJob = await prisma.aiJob.findFirst({
     where: {
@@ -62,29 +57,31 @@ export async function canPromoteToCanonical(jobId: string | null, tenderId: stri
       jobType: "AI_ANALYZE",
       id: { not: jobId },
       analysisVersion: { gt: thisJob.analysisVersion },
-      // Any newer-version job (including RUNNING) supersedes this one
     },
     select: { id: true },
-  }).catch(() => null);
+  });
 
   return newerJob === null;
 }
 
-// Record that a full AI analysis has been atomically promoted to canonical state.
-// Must be called AFTER the canonical $transaction completes successfully.
 export async function promoteAnalysisToCanonical(
   jobId: string,
   runId: string,
 ): Promise<void> {
+  const job = await prisma.aiJob.findUnique({
+    where: { id: jobId },
+    select: { userId: true },
+  });
+  if (!job) throw new Error("AI_ANALYZE_PROMOTION_JOB_NOT_FOUND");
+
   await prisma.aiJob.update({
     where: { id: jobId },
     data: {
       promotedAt: new Date(),
-      promotedBy: "system",
+      promotedBy: job.userId,
       runId,
     },
-  }).catch(() => {});
+  });
 }
 
-// Re-export AnalysisWithMeta so callers can avoid a separate import.
 export type { AnalysisWithMeta };
