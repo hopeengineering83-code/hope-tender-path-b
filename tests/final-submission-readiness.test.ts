@@ -204,3 +204,43 @@ describe("final-submission-readiness — CLIENT_NAME_MISSING blocker (source-lev
     assert.ok(blockContext.includes("HIGH"), "CLIENT_NAME_MISSING blocker must use HIGH severity");
   });
 });
+
+describe("final-submission-readiness — Prisma select includes extended entity fields", () => {
+  const source = readFileSync("lib/engine/final-submission-readiness.ts", "utf8");
+
+  // These fields were previously omitted from the Prisma select, causing
+  // assessTenderMetadataCompleteness to always receive undefined for them.
+  // The entity-collision check (implementingAgency vs clientName) also silently
+  // never fired. Adding them to the select makes the readiness gate see actual
+  // DB values rather than silently treating them as missing.
+
+  it("select includes legalClientName", () => {
+    assert.match(source, /legalClientName:\s*true/);
+  });
+
+  it("select includes donorAgency", () => {
+    assert.match(source, /donorAgency:\s*true/);
+  });
+
+  it("select includes implementingAgency", () => {
+    assert.match(source, /implementingAgency:\s*true/);
+  });
+
+  it("select includes clientAddress", () => {
+    assert.match(source, /clientAddress:\s*true/);
+  });
+
+  it("select includes category so tenderCategory can be derived without as-any cast", () => {
+    assert.match(source, /category:\s*true/);
+  });
+
+  it("no longer uses (tender as any) or (tender as Record<string, unknown>) casts for entity fields", () => {
+    assert.doesNotMatch(source, /\(tender as any\)\.(category|legalClientName|donorAgency|implementingAgency|clientAddress)/);
+    assert.doesNotMatch(source, /\(tender as Record<string, unknown>\)\.(procuringEntityName|legalClientName|donorAgency|implementingAgency|clientAddress)/);
+  });
+
+  it("analysisExtractionStatus is accessed directly (no cast needed — it is in select)", () => {
+    assert.doesNotMatch(source, /tender as \{ analysisExtractionStatus\?/);
+    assert.match(source, /tender\.analysisExtractionStatus/);
+  });
+});

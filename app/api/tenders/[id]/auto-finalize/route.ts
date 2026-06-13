@@ -231,7 +231,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     "EXTRACTION_WEAK_REVIEW_REQUIRED",
     "PARTIAL_EXTRACTION_AI_ANALYZED",
   ] as const;
-  const currentAnalysisStatus = (tender as Record<string, unknown>).analysisExtractionStatus as string | undefined;
+  const currentAnalysisStatus = tender.analysisExtractionStatus;
   if (currentAnalysisStatus && badAnalysisStatuses.includes(currentAnalysisStatus as (typeof badAnalysisStatuses)[number])) {
     return NextResponse.json({
       error: `Auto-finalize blocked: AI analysis was performed on degraded extraction (${currentAnalysisStatus}). Re-run AI Analyze after fixing extraction quality before finalizing documents.`,

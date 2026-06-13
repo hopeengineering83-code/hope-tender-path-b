@@ -164,7 +164,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       submissionNotes: [tender.notes, tender.intakeSummary].filter(Boolean).join("\n\n"),
       exactFileNaming: tender.exactFileNaming,
       exactFileOrder: tender.exactFileOrder,
-      clientName: tender.clientName || (tender as Record<string, unknown>).procuringEntityName as string | null | undefined,
+      clientName: tender.clientName || tender.procuringEntityName,
       referenceNumber: tender.reference,
       country: tender.country,
       clientContactName: tender.clientContactName,

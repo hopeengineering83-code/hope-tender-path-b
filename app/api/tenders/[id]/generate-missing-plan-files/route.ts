@@ -230,8 +230,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   // Gate 3: Requirements or explicit file lists must exist
   const hasExplicitFiles =
-    ((tender as any).exactFileNaming ?? "").trim().length > 2 ||
-    ((tender as any).exactFileOrder ?? "").trim().length > 2;
+    (tender.exactFileNaming ?? "").trim().length > 2 ||
+    (tender.exactFileOrder ?? "").trim().length > 2;
   if (tender.requirements.length === 0 && !hasExplicitFiles) {
     return NextResponse.json({
       success: false, ok: false,
