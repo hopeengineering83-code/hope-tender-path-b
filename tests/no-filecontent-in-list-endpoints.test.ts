@@ -70,7 +70,7 @@ describe("Large fields excluded from list/dashboard endpoints", () => {
     const panelSrc = readRoute("components/generation-readiness-panel.tsx");
     assert.match(pageSrc, /<GenerationReadinessPanel tenderId=\{tender\.id\} readiness=\{generationReadiness\} \/>/);
     assert.match(panelSrc, /readiness:\s*providedReadiness/);
-    assert.match(panelSrc, /providedReadiness \?\? await/);
+    assert.match(panelSrc, /providedReadiness\s*===\s*undefined/);
   });
 
 });

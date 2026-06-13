@@ -1020,31 +1020,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         completedChunks: 0,
         totalChunks: 0,
       });
-    } else {
-      // Legacy path: no job tracking (rare — only if job creation failed).
-      await prisma.$transaction(async (tx) => {
-        await tx.tenderRequirement.deleteMany({ where: { tenderId: id } });
-        for (const req of result.requirements) {
-          await tx.tenderRequirement.create({ data: { tenderId: id, ...req } });
-        }
-        const previousNotes = (tenderRecord.notes ?? "")
-          .split("\n")
-          .filter((line) => !/^Analysis source:/i.test(line.trim()) && !/^Analysis fallback diagnostics:/i.test(line.trim()));
-        const notes = [...previousNotes, `Analysis source: Regex fallback (${fallbackDiagnostics.category}).`, diagnosticsLine].filter(Boolean).join("\n").trim() || null;
-        const tenderStatus = errorMessage ? "ANALYSIS_REQUIRES_REVIEW" : "FALLBACK_DRAFT_CREATED";
-        await tx.tender.update({
-          where: { id },
-          data: {
-            analysisSummary: `${result.summary}\n\nFast fallback used because AI analysis did not complete. ${diagnosticsLine}`,
-            exactFileNaming: JSON.stringify(result.exactFileNaming),
-            exactFileOrder: JSON.stringify(result.exactFileOrder),
-            notes,
-            status: tenderStatus,
-            stage: "ANALYSIS",
-            analysisExtractionStatus: "REGEX_FALLBACK_FROM_WEAK_EXTRACTION",
-          },
-        });
-      });
     }
 
     return {
