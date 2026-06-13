@@ -64,15 +64,12 @@ dbDescribe("database-backed analysis and export safeguards", () => {
 
   after(async () => {
     if (!userId) return;
-    // A running job also makes cleanup safe if PostgreSQL evaluates the child
-    // cascade before the parent Tender row is no longer visible to the guard.
     if (tenderId) {
       await prisma.aiJob.create({
         data: { tenderId, userId, jobType: "AI_ANALYZE", status: "RUNNING", startedAt: new Date() },
       }).catch(() => undefined);
     }
     await prisma.user.delete({ where: { id: userId } }).catch(() => undefined);
-    await prisma.$disconnect();
   });
 
   it("links a requirement to the unique TenderFile containing its exact quote", async () => {
