@@ -147,6 +147,8 @@ export async function ExtractionQualityDashboard({ tenderId }: { tenderId: strin
         evaluationPages: perPage?.evaluationCriteriaPages.length ?? null,
         requiredDocPages: perPage?.requiredDocumentPages.length ?? null,
         clientDetailPages: perPage?.clientDetailPages.length ?? null,
+        characterCount: quality.characterCount,
+        ocrUsed: (file.ocrPages != null && file.ocrPages > 0) || file.ocrModel != null,
         // Page number lists for CLAUDE.md "failed pages list" and "low-confidence pages list"
         failedPageNums: perPage?.failedPages ?? [],
         blankPageNums: perPage?.blankPages ?? [],
@@ -254,11 +256,25 @@ export async function ExtractionQualityDashboard({ tenderId }: { tenderId: strin
                     ))}
                   </div>
 
-                  {file.ocrModel && (
-                    <p className="mt-1.5 text-xs text-slate-500">
-                      OCR engine: <span className="font-medium text-slate-700">{file.ocrModel}</span>
-                    </p>
-                  )}
+                  <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-slate-500">
+                    <span>
+                      OCR used:{" "}
+                      <span className={`font-medium ${file.ocrUsed ? "text-blue-700" : "text-slate-600"}`}>
+                        {file.ocrUsed ? "Yes" : "No"}
+                      </span>
+                    </span>
+                    {file.ocrModel && (
+                      <span>
+                        OCR engine: <span className="font-medium text-slate-700">{file.ocrModel}</span>
+                      </span>
+                    )}
+                    {file.characterCount > 0 && (
+                      <span>
+                        Chars extracted:{" "}
+                        <span className="font-medium text-slate-700">{file.characterCount.toLocaleString()}</span>
+                      </span>
+                    )}
+                  </div>
 
                   {/* Per-page confidence detail — only shown when PAGE_MARKERS detection found problem pages */}
                   {file.detectionMode === "PAGE_MARKERS" && (file.failedPageNums.length > 0 || file.lowDensityPageNums.length > 0) && (
