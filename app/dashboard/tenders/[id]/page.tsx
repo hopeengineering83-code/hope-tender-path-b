@@ -22,7 +22,6 @@ import { ExtractionQualityPanel } from "../../../../components/extraction-qualit
 import { ExtractionQualityDashboard } from "../../../../components/extraction-quality-dashboard";
 import { AnalysisQualityPanel } from "../../../../components/analysis-quality-panel";
 import { MatchingQualityPanel } from "../../../../components/matching-quality-panel";
-import { LegacyTenderActionHider } from "../../../../components/legacy-tender-action-hider";
 import { CorruptedMetadataBanner } from "../../../../components/corrupted-metadata-banner";
 import { FinalSubmissionControlCenter } from "../../../../components/final-submission-control-center";
 import { NextActionPanel } from "../../../../components/next-action-panel";
@@ -151,11 +150,7 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
       <AuditTrailPanel tenderId={tender.id} />
       <PricingWorkbookPanel tenderId={tender.id} />
       {ai && <TenderAICopilotPanel tenderId={tender.id} />}
-      <div className="mb-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
-        <span className="font-semibold">Authoritative actions:</span> use the Final Submission Control Center and structured panels above. Only the duplicate legacy buttons are hidden below; other actions remain available.
-      </div>
       <div id="legacy-tender-detail-actions">
-        <LegacyTenderActionHider targetId="legacy-tender-detail-actions" />
         <TenderDetail tender={tenderForUi} aiEnabled={ai} canonicalReadiness={canonicalReadiness} />
       </div>
     </>

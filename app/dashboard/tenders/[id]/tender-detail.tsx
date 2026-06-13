@@ -1483,66 +1483,18 @@ export function TenderDetail({ tender: initial, aiEnabled, canonicalReadiness }:
   // Mirror server-side hasValidSubmissionPlan gate: at least one non-SUPERSEDED doc row must exist.
   const hasValidPlan = tender.generatedDocuments.some((d) => d.generationStatus !== "SUPERSEDED");
 
-  const canGenerateDocs = !analysisIsFallbackUnapproved
-    && !extractionCorrupted
-    && !clientNameInvalid
-    && !metadataContaminatedBlock
-    && hasValidPlan
-    && tender.requirements.length > 0
-    && (!expertReqExists || selectedExpertCount > 0 || !expertMatchesExist || hasRecoverableExpertSelection)
-    && (!projectReqExists || selectedProjectCount > 0 || !projectMatchesExist || hasRecoverableProjectSelection)
-    && hasReviewedExpertPath
-    && hasReviewedProjectPath
-    && !criticalHardBlockExists;
-  const generateDisabledReason = extractionCorrupted
-    ? "Extraction is corrupted or too weak — run OCR extraction or re-upload a clearer scan before generating"
-    : metadataContaminatedBlock
-      ? "Tender metadata is contaminated — review and correct the client name and critical fields before generating"
-      : clientNameInvalid
-        ? "Client/procuring entity name is missing or invalid — run AI Analyze or enter it manually before generating"
-        : analysisIsFallbackUnapproved
-          ? "Analysis used regex fallback — retry AI Analyze or approve the fallback before generating"
-          : tender.requirements.length === 0
-            ? "Run AI Analyze or Run Engine first to extract requirements"
-            : !hasValidPlan
-              ? "Build the submission plan first (click Build Plan or Run Engine) before generating documents"
-              : (expertReqExists && selectedExpertCount === 0 && totalExpertMatches === 0)
-                ? "Run Engine first to generate expert matches"
-                : (projectReqExists && selectedProjectCount === 0 && totalProjectMatches === 0)
-                  ? "Run Engine first to generate project matches"
-                  : (expertReqExists && expertMatchesExist && selectedExpertCount === 0 && !hasRecoverableExpertSelection)
-                    ? "Select at least one reviewed expert match before generating"
-                    : (projectReqExists && projectMatchesExist && selectedProjectCount === 0 && !hasRecoverableProjectSelection)
-                      ? "Select at least one reviewed project match before generating"
-                      : (expertReqExists && selectedExpertCount > 0 && reviewedExpertMatches === 0)
-                        ? "Review at least one selected expert before generating"
-                        : (projectReqExists && selectedProjectCount > 0 && reviewedProjectMatches === 0)
-                          ? "Review at least one selected project before generating"
-                          : criticalHardBlockExists
-                            ? "Resolve critical hard blockers before generating"
-                            : "Generate proposal documents";
+
+
 
   // ZIP is only safe when there are generated documents. The canonical
   // export-readiness gate (Export Readiness panel) is the canonical final gate,
   // but these pre-flight checks surface the most common blockers before the API
   // call, avoiding a round-trip to discover obvious issues.
-  const hasAnyGeneratedDoc = (tender.generatedDocuments?.length ?? 0) > 0;
-  const hasCriticalGapBlock = (tender.complianceGaps ?? []).some((g) => g.severity === "CRITICAL");
-  const clientNameMissing = !tender.clientName && !tender.procuringEntityName;
-  const submissionEndpointMissing = !tender.submissionMethod && !tender.submissionEmails && !tender.submissionAddress;
-  const zipDisabledReason = analysisIsFallbackUnapproved
-    ? "Analysis source is unapproved regex fallback — approve or retry AI Analyze first"
-    : !hasAnyGeneratedDoc
-      ? "No generated documents yet — generate documents before downloading"
-      : (tender.metadataContaminated ?? false)
-        ? "Client name is contaminated — review and correct the client name before exporting"
-        : clientNameMissing
-          ? "Client/procuring entity name is missing — run AI Analyze or enter it manually"
-          : submissionEndpointMissing
-            ? "Submission method/endpoint is missing — extract or enter submission details"
-            : hasCriticalGapBlock
-              ? "Critical compliance gaps must be resolved before export"
-              : null;
+
+
+
+
+
   const tenderSummaryState = canonicalReadiness?.modules.generation.state ?? canonicalReadiness?.modules.export.state ?? "NOT_RUN";
   const readinessScore = tender.readinessScore ??
     (tender.requirements.length === 0 ? 0
@@ -1653,47 +1605,6 @@ export function TenderDetail({ tender: initial, aiEnabled, canonicalReadiness }:
         })()}
 
         <div id="ai-analyze-section" className="flex flex-wrap gap-2">
-          {aiEnabled && (
-            <button onClick={handleAnalyzeStreaming} disabled={analyzing}
-              title={analyzing && analyzePhase ? analyzePhase : undefined}
-              className="rounded-lg bg-purple-600 px-3 py-2 text-sm text-white hover:bg-purple-700 disabled:opacity-50">
-              {analyzing ? (analyzePhase ? `${analyzePhase.slice(0, 28)}…` : "Analyzing…") : continueJobId ? "✦ Resume AI Analyze" : "✦ AI Analyze"}
-            </button>
-          )}
-          {aiEnabled && (
-            <button onClick={handleAIProposal} disabled={generating}
-              className="rounded-lg bg-purple-100 px-3 py-2 text-sm text-purple-800 hover:bg-purple-200 disabled:opacity-50">
-              {generating ? "Generating..." : "✦ AI Proposal"}
-            </button>
-          )}
-          <button onClick={handleRunEngine} disabled={engineRunning}
-            title={engineRunning && engineStepMessage ? engineStepMessage : undefined}
-            className="rounded-lg bg-black px-3 py-2 text-sm text-white hover:bg-slate-800 disabled:opacity-50">
-            {engineRunning
-              ? (engineStepMessage ? `${engineStepMessage.slice(0, 32)}${engineStepMessage.length > 32 ? "…" : ""}` : "Running…")
-              : "Run Engine"}
-          </button>
-          <button onClick={handleGenerateDocs} disabled={generatingDocs || !canGenerateDocs}
-            title={generateDisabledReason}
-            className="rounded-lg bg-emerald-600 px-3 py-2 text-sm text-white hover:bg-emerald-700 disabled:opacity-50">
-            {generatingDocs ? "Generating…" : "⚡ Generate Docs"}
-          </button>
-          <button onClick={handleValidate} disabled={validating}
-            className="rounded-lg bg-teal-600 px-3 py-2 text-sm text-white hover:bg-teal-700 disabled:opacity-50">
-            {validating ? "Validating…" : "✓ Validate"}
-          </button>
-          {NEXT_STATUS[tender.status as keyof typeof NEXT_STATUS] && (
-            <button onClick={handleStatusAdvance} disabled={saving}
-              className="rounded-lg bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700 disabled:opacity-50">
-              → {formatTenderStatus(NEXT_STATUS[tender.status as keyof typeof NEXT_STATUS] as string)}
-            </button>
-          )}
-          <button onClick={downloadZip}
-            disabled={!!zipDisabledReason}
-            title={zipDisabledReason ?? "Download the final ZIP package"}
-            className="rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm text-emerald-800 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-40">
-            ↓ ZIP Package
-          </button>
           <button onClick={() => downloadDoc("proposal")}
             className="rounded-lg border px-3 py-2 text-sm hover:bg-slate-50">
             ↓ Proposal

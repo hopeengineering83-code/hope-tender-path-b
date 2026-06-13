@@ -273,13 +273,6 @@ describe("tender-detail.tsx — resume banner and continueJobId wiring", () => {
     );
   });
 
-  it("button label changes to Resume AI Analyze when continueJobId is set", () => {
-    const uiSource = readFileSync(path.join(process.cwd(), "app/dashboard/tenders/[id]/tender-detail.tsx"), "utf-8");
-    assert.ok(
-      uiSource.includes("Resume AI Analyze"),
-      "AI Analyze button must say 'Resume AI Analyze' when a partial job is available",
-    );
-  });
 
   it("start-fresh button clears continueJobId", () => {
     const uiSource = readFileSync(path.join(process.cwd(), "app/dashboard/tenders/[id]/tender-detail.tsx"), "utf-8");
