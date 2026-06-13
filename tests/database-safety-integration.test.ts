@@ -11,6 +11,36 @@ let userId = "";
 let tenderId = "";
 let fileId = "";
 
+async function createIsolatedTender(suffix: string) {
+  const tender = await prisma.tender.create({
+    data: {
+      userId,
+      title: `Database safety integration tender ${suffix}`,
+      clientName: "Example Procuring Authority",
+      reference: `INT-${suffix}`,
+      country: "Ethiopia",
+      status: "DRAFT",
+      stage: "TENDER_INTAKE",
+    },
+  });
+  await prisma.tenderFile.create({
+    data: {
+      tenderId: tender.id,
+      fileName: `stored-${suffix}.pdf`,
+      originalFileName: `Instructions-${suffix}.pdf`,
+      mimeType: "application/pdf",
+      size: 1024,
+      extractedText: `Page 12. ${SOURCE_QUOTE}`,
+      totalPages: 12,
+      extractedPages: 12,
+      failedPages: 0,
+      extractionScore: 100,
+      extractionMethod: "text",
+    },
+  });
+  return tender;
+}
+
 dbDescribe("database-backed analysis and export safeguards", () => {
   before(async () => {
     await prismaReady;
@@ -25,34 +55,10 @@ dbDescribe("database-backed analysis and export safeguards", () => {
     });
     userId = user.id;
 
-    const tender = await prisma.tender.create({
-      data: {
-        userId,
-        title: "Database safety integration tender",
-        clientName: "Example Procuring Authority",
-        reference: `INT-${nonce}`,
-        country: "Ethiopia",
-        status: "DRAFT",
-        stage: "TENDER_INTAKE",
-      },
-    });
+    const tender = await createIsolatedTender(nonce);
     tenderId = tender.id;
 
-    const file = await prisma.tenderFile.create({
-      data: {
-        tenderId,
-        fileName: "stored-instructions.pdf",
-        originalFileName: "Instructions.pdf",
-        mimeType: "application/pdf",
-        size: 1024,
-        extractedText: `Page 12. ${SOURCE_QUOTE}`,
-        totalPages: 12,
-        extractedPages: 12,
-        failedPages: 0,
-        extractionScore: 100,
-        extractionMethod: "text",
-      },
-    });
+    const file = await prisma.tenderFile.findFirstOrThrow({ where: { tenderId } });
     fileId = file.id;
   });
 
@@ -118,9 +124,10 @@ dbDescribe("database-backed analysis and export safeguards", () => {
   });
 
   it("persists submission-plan provenance and confirmation as structured state", async () => {
+    const planTender = await createIsolatedTender(`plan-${Date.now()}`);
     const document = await prisma.generatedDocument.create({
       data: {
-        tenderId,
+        tenderId: planTender.id,
         name: "Technical Proposal",
         documentType: "TECHNICAL_PROPOSAL",
         exactFileName: "Technical-Proposal.docx",
@@ -140,7 +147,7 @@ dbDescribe("database-backed analysis and export safeguards", () => {
     const [unconfirmed] = await prisma.$queryRaw<PlanState[]>`
       SELECT "provenance", "confirmationStatus", "derivedDocumentCount", "activeDocumentCount"
       FROM "SubmissionPlanState"
-      WHERE "tenderId" = ${tenderId}
+      WHERE "tenderId" = ${planTender.id}
     `;
     assert.equal(unconfirmed.provenance, "DERIVED_FROM_REQUIREMENTS");
     assert.equal(unconfirmed.confirmationStatus, "UNCONFIRMED");
@@ -150,14 +157,15 @@ dbDescribe("database-backed analysis and export safeguards", () => {
     const [confirmed] = await prisma.$queryRaw<PlanState[]>`
       SELECT "provenance", "confirmationStatus", "derivedDocumentCount", "activeDocumentCount"
       FROM "SubmissionPlanState"
-      WHERE "tenderId" = ${tenderId}
+      WHERE "tenderId" = ${planTender.id}
     `;
     assert.equal(confirmed.confirmationStatus, "CONFIRMED");
     assert.ok(confirmed.activeDocumentCount >= 1);
   });
 
-  it("executes tender-level export blockers against the live database", async () => {
-    const result = await checkTenderLevelExportBlockers(tenderId, []);
+  it("executes tender-level export blockers against a live tender without generated documents", async () => {
+    const exportTender = await createIsolatedTender(`export-${Date.now()}`);
+    const result = await checkTenderLevelExportBlockers(exportTender.id, []);
     const categories = new Set(result.blockers.map((blocker) => blocker.category));
     assert.ok(categories.has("NO_ACTIVE_GENERATED_DOCUMENTS"));
     assert.ok(categories.has("SUBMISSION_METHOD_MISSING"));
