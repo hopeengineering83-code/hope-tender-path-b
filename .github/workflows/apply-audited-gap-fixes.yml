@@ -38,28 +38,27 @@ jobs:
       - name: Install dependencies
         run: npm ci --silent
 
+      - name: Identify failing unit test files
+        shell: bash
+        run: |
+          failed=0
+          for file in tests/*.test.ts; do
+            if ! ./node_modules/.bin/tsx --test "$file" > /tmp/one-test.log 2>&1; then
+              echo "FAILED_FILE=$file"
+              tail -80 /tmp/one-test.log
+              failed=1
+            fi
+          done
+          exit $failed
+
       - name: Generate Prisma client
         run: npx prisma generate >/dev/null
 
       - name: Typecheck
-        shell: bash
-        run: |
-          set +e
-          npm run typecheck > /tmp/typecheck.log 2>&1
-          status=$?
-          grep -E "error TS|Found [0-9]+ error" /tmp/typecheck.log || cat /tmp/typecheck.log
-          exit $status
+        run: npm run typecheck
 
-      - name: Unit tests
-        shell: bash
-        run: |
-          set +e
-          npm test > /tmp/tests.log 2>&1
-          status=$?
-          if [ "$status" -ne 0 ]; then
-            grep -E "^(not ok|# Subtest:|# fail|# tests|# pass)|AssertionError|ERR_ASSERTION|error:" /tmp/tests.log | tail -160 || tail -160 /tmp/tests.log
-          fi
-          exit $status
+      - name: Full unit suite
+        run: npm test
 
       - name: Lint
         run: npm run lint
