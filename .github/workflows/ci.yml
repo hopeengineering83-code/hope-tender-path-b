@@ -35,6 +35,8 @@ jobs:
       DATABASE_URL: "postgresql://hope_ci:hope_ci@127.0.0.1:5432/hope_tender_ci?schema=public"
       SESSION_SECRET: "ci-only-session-secret-0123456789abcdef0123456789abcdef"
       NEXTAUTH_SECRET: "ci-only-nextauth-secret-0123456789abcdef0123456789abcdef"
+      GEMINI_API_KEY: "AIzaFakeCiBuildKeyNotUsedAtRuntime12345678901"
+      ANTHROPIC_API_KEY: ""
       RUN_DB_INTEGRATION: "true"
       E2E_FULL_AUTH: "false"
     steps:
@@ -82,7 +84,20 @@ jobs:
           retention-days: 7
 
       - name: Build
-        run: npm run build
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p build-results
+          npm run build 2>&1 | tee build-results/npm-build.log
+
+      - name: Upload build diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-output
+          path: build-results/
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Install Playwright browser
         run: npx playwright install --with-deps chromium
