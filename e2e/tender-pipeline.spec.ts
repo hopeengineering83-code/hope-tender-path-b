@@ -46,7 +46,10 @@ test.describe("Pipeline UI — structural smoke tests", () => {
   test("login page renders an authentication surface", async ({ page }) => {
     const response = await page.goto("/login", { waitUntil: "domcontentloaded" });
     expect(response?.status() ?? 0).toBeLessThan(500);
-    const authSurface = page.locator("input[type=email], input[name=email], input[type=password], input[name=password], form, text=/sign in|login/i").first();
+    const authSurface = page
+      .locator("input[type=email], input[name=email], input[type=password], input[name=password], form")
+      .or(page.getByText(/sign in|login/i))
+      .first();
     await expect(authSurface).toBeVisible({ timeout: 10000 });
   });
 });
