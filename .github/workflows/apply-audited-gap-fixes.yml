@@ -51,7 +51,15 @@ jobs:
           exit $status
 
       - name: Unit tests
-        run: npm test
+        shell: bash
+        run: |
+          set +e
+          npm test > /tmp/tests.log 2>&1
+          status=$?
+          if [ "$status" -ne 0 ]; then
+            grep -E "^(not ok|# Subtest:|# fail|# tests|# pass)|AssertionError|ERR_ASSERTION|error:" /tmp/tests.log | tail -160 || tail -160 /tmp/tests.log
+          fi
+          exit $status
 
       - name: Lint
         run: npm run lint
