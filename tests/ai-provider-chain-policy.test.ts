@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 const source = readFileSync("lib/ai.ts", "utf8");
-const canonical = ["gemini", "openai", "mistral", "together", "deepseek", "groq", "openrouter", "anthropic"];
+const canonical = ["mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"];
 
 function canonicalChain(): string[] {
   const match = source.match(/CANONICAL_PROVIDER_CHAIN[^=]*=\s*\[([^\]]+)\]/);
@@ -31,8 +31,8 @@ describe("AI provider chain policy", () => {
   });
 
   it("documents and implements proposal/section generation in the required order", () => {
-    assert.match(source, /Provider chain for proposal generation: gemini → openai → mistral → together → deepseek → groq → openrouter → anthropic/);
-    assert.match(source, /Provider chain for sections: gemini → openai → mistral → together → deepseek → groq → openrouter → anthropic/);
+    assert.match(source, /Provider chain for proposal generation: mistral → groq → openrouter → gemini → openai → together → deepseek → anthropic/);
+    assert.match(source, /Provider chain for sections: mistral → groq → openrouter → gemini → openai → together → deepseek → anthropic/);
     assert.ok(source.indexOf("// Claude (Anthropic) — last resort") > source.indexOf("// Groq/OpenRouter tail"));
     assert.ok(source.indexOf("// Claude — last resort") > source.indexOf("// Groq/OpenRouter section tail"));
   });
@@ -56,15 +56,15 @@ describe("AI provider status surfaces stay aligned with canonical chain", () => 
   const healthRoute = readFileSync("app/api/ai/health/route.ts", "utf8");
   const envReadiness = readFileSync("lib/ai-environment-readiness.ts", "utf8");
 
-  it("surfaces Gemini-first order in the AI health route", () => {
-    assert.match(healthRoute, /Gemini → OpenAI → Mistral → Together → DeepSeek → Groq → OpenRouter → Claude/);
-    assert.ok(healthRoute.indexOf('geminiConfigured ? "gemini"') < healthRoute.indexOf(': openaiConfigured ? "openai"'));
-    assert.ok(healthRoute.indexOf('fallbackRank: 1,\n        label: "Gemini"') < healthRoute.indexOf('fallbackRank: 8,\n        label: "Claude"'));
+  it("surfaces Mistral-first order in the AI health route", () => {
+    assert.match(healthRoute, /Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Claude/);
+    assert.ok(healthRoute.indexOf('mistralConfigured ? "mistral"') < healthRoute.indexOf(': geminiConfigured ? "gemini"'));
+    assert.ok(healthRoute.indexOf('fallbackRank: 1,\n        label: "Mistral"') < healthRoute.indexOf('fallbackRank: 8,\n        label: "Claude"'));
   });
 
-  it("surfaces Gemini-first order in environment readiness", () => {
-    assert.match(envReadiness, /Gemini → OpenAI → Mistral → Together → DeepSeek → Groq → OpenRouter → Claude/);
-    assert.ok(envReadiness.indexOf('present("GEMINI_API_KEY")') < envReadiness.indexOf('present("OPENAI_API_KEY")'));
+  it("surfaces Mistral-first order in environment readiness", () => {
+    assert.match(envReadiness, /Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Claude/);
+    assert.ok(envReadiness.indexOf('present("MISTRAL_API_KEY")') < envReadiness.indexOf('present("GEMINI_API_KEY")'));
     assert.ok(envReadiness.indexOf('present("ANTHROPIC_API_KEY")') > envReadiness.indexOf('present("OPENROUTER_API_KEY")'));
   });
 });

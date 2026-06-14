@@ -21,9 +21,10 @@ const REASONING_MODELS = ["o3-mini", "o1-preview", "gpt-4o"];
 const CLAUDE_REASONING_MODELS = ["claude-3-7-sonnet-latest", "claude-3-5-sonnet-latest"];
 
 // Claude models in preference order when the last-resort Anthropic provider
-// is reached. The overall proposal provider chain is Gemini → OpenAI →
-// Mistral → Together → DeepSeek → Groq → OpenRouter → Claude for proposals, keeping Anthropic last so rate
-// limits do not block the app when earlier providers are available.
+// is reached. The overall proposal provider chain is Mistral → Groq →
+// OpenRouter → Gemini → OpenAI → Together → DeepSeek → Claude for proposals,
+// keeping Anthropic last so rate limits do not block the app when earlier
+// providers are available.
 //
 // The default chain prefers stable, widely-available aliases so it works
 // on a fresh Anthropic account without configuration. To pin specific
@@ -359,14 +360,17 @@ async function generate(prompt: string, modelName = DEFAULT_GEMINI_MODEL): Promi
 // cooled-down or unconfigured providers are skipped automatically.
 export type AiUseCase = "default" | "extraction" | "proposal" | "validation" | "fast" | "reasoning";
 
-export const CANONICAL_PROVIDER_CHAIN: readonly AiProviderName[] = ["gemini", "openai", "mistral", "together", "deepseek", "groq", "openrouter", "anthropic"] as const;
+// Order: verified-working providers first (Mistral → Groq → OpenRouter),
+// then high-quality providers that may be rate-limited (Gemini → OpenAI),
+// then providers that need key/balance fixes (Together → DeepSeek → Anthropic).
+export const CANONICAL_PROVIDER_CHAIN: readonly AiProviderName[] = ["mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"] as const;
 
 const PROVIDER_CHAINS: Record<AiUseCase, AiProviderName[]> = {
-  default:    ["gemini", "openai", "mistral", "together", "deepseek", "groq", "openrouter", "anthropic"],
-  extraction: ["gemini", "openai", "mistral", "together", "deepseek", "groq", "openrouter", "anthropic"],
-  proposal:   ["gemini", "openai", "mistral", "together", "deepseek", "groq", "openrouter", "anthropic"],
-  validation: ["gemini", "openai", "mistral", "together", "deepseek", "groq", "openrouter", "anthropic"],
-  fast:       ["gemini", "openai", "mistral", "together", "deepseek", "groq", "openrouter", "anthropic"],
+  default:    ["mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"],
+  extraction: ["mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"],
+  proposal:   ["mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"],
+  validation: ["mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"],
+  fast:       ["mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"],
   reasoning:  ["openai", "deepseek", "gemini", "anthropic"],
 };
 
@@ -618,7 +622,7 @@ export function isTogetherEnabled() {
 }
 
 // ─── DeepSeek provider ─────────────────────────────────────────────────────────
-// DeepSeek provider in the default chain (Gemini → OpenAI → Mistral → Together → DeepSeek → Groq → OpenRouter → Claude).
+// DeepSeek provider in the default chain (Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Claude).
 // Uses the OpenAI-compatible REST endpoint (no SDK needed).
 // Returns null when DEEPSEEK_API_KEY is not configured.
 // 20s per-provider cap — Vercel Hobby has a 60s function limit so each
@@ -3324,7 +3328,7 @@ ${params.doNotUseAsClient.slice(0, 12).map((c) => `- ${c}`).join("\n")}`
 
 Now write the complete technical proposal. Start with the Cover Letter. The evaluator must feel — after the first two pages — that this firm has already delivered this exact project and is simply repeating a proven capability.`;
 
-  // Provider chain for proposal generation: gemini → openai → mistral → together → deepseek → groq → openrouter → anthropic.
+  // Provider chain for proposal generation: mistral → groq → openrouter → gemini → openai → together → deepseek → anthropic.
   // Claude is placed last so Anthropic rate limits do not block proposal generation.
   // lastProposalProvider is set so callers can surface which provider was used.
 
@@ -3498,7 +3502,7 @@ async function generateOneSection(spec: ProposalSectionSpec): Promise<SectionRes
     );
   }
 
-  // Provider chain for sections: gemini → openai → mistral → together → deepseek → groq → openrouter → anthropic
+  // Provider chain for sections: mistral → groq → openrouter → gemini → openai → together → deepseek → anthropic
   // Claude is tried last so Anthropic rate limits don't block parallel section generation.
 
   // Gemini — first tier
