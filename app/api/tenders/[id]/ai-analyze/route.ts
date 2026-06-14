@@ -863,12 +863,26 @@ async function handleStreamingAnalyze(
           entityType: "Tender", entityId: id, link: `/dashboard/tenders/${id}`,
         });
 
+        // Include fallback signals in the SSE complete event so the streaming
+        // client can show the retry countdown without a full page reload.
+        const sseProviderRetryAfterMs = analysisResult.fallback ? getMinCooldownExpiryMs() : null;
+        const sseResumableJobId = (analysisMeta?.isPartial || (analysisMeta && analysisMeta.completedChunks > 0))
+          ? (analysisJobId ?? null) : null;
         emit({
           phase: "complete",
           status: analysisResult.fallback ? "FALLBACK" : (analysisMeta?.isPartial ? "AI_ANALYSIS_PARTIAL" : "AI_ANALYZED"),
           requirementCount: analysisResult.requirementCount,
           jobId: analysisJobId,
           message: `Analysis complete — ${analysisResult.requirementCount} requirements extracted`,
+          ...(analysisResult.fallback && {
+            fallback: true,
+            code: analysisResult.fallbackDiagnostics?.category === "NO_PROVIDER_CONFIGURED"
+              ? "AI_NO_PROVIDER_CONFIGURED" : "AI_PROVIDERS_EXHAUSTED",
+            nextAction: analysisMeta?.isPartial ? "CONTINUE_AI_ANALYSIS" : "RETRY_AI_ANALYZE_OR_APPROVE_FALLBACK",
+            providerRetryAfterMs: sseProviderRetryAfterMs,
+            resumableJobId: sseResumableJobId,
+            providerDiagnostics: buildProviderDiagnosticsSnapshot(),
+          }),
         });
       } catch (err) {
         const raw = err instanceof Error ? err.message : String(err);

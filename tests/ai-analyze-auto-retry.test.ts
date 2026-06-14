@@ -195,3 +195,68 @@ describe("tender-detail UI — auto-retry countdown banner", () => {
     );
   });
 });
+
+// ── 5. Streaming path structural fixes ───────────────────────────────────────
+
+describe("ai-analyze streaming path — structural fix for fallback + auto-retry", () => {
+  it("SSE complete event includes fallback field when result is a fallback", () => {
+    assert.ok(
+      routeSrc.includes("fallback: true") && routeSrc.includes("phase: \"complete\""),
+      "SSE complete event must include fallback:true when AI fell back to regex",
+    );
+  });
+
+  it("SSE complete event includes providerRetryAfterMs when fallback", () => {
+    assert.ok(
+      routeSrc.includes("sseProviderRetryAfterMs") && routeSrc.includes("providerRetryAfterMs: sseProviderRetryAfterMs"),
+      "SSE complete event must include providerRetryAfterMs so client can schedule auto-retry",
+    );
+  });
+
+  it("SSE complete event includes resumableJobId when fallback", () => {
+    assert.ok(
+      routeSrc.includes("sseResumableJobId") && routeSrc.includes("resumableJobId: sseResumableJobId"),
+      "SSE complete event must include resumableJobId so client can resume from last checkpoint",
+    );
+  });
+
+  it("SSE complete event includes providerDiagnostics when fallback", () => {
+    assert.ok(
+      routeSrc.includes("providerDiagnostics: buildProviderDiagnosticsSnapshot()"),
+      "SSE complete event must include providerDiagnostics for the fallback banner details panel",
+    );
+  });
+
+  it("handleAnalyzeStreaming calls setAnalyzeResult when SSE complete has fallback:true", () => {
+    const streamingFn = uiSrc.slice(uiSrc.indexOf("async function handleAnalyzeStreaming"));
+    const fnEnd = streamingFn.indexOf("\n  async function", 1);
+    const fnBody = streamingFn.slice(0, fnEnd > 0 ? fnEnd : 3000);
+    assert.ok(
+      fnBody.includes("event.fallback") && fnBody.includes("setAnalyzeResult"),
+      "streaming path must call setAnalyzeResult when event.fallback is true",
+    );
+  });
+
+  it("handleAnalyzeStreaming schedules auto-retry when SSE complete has providerRetryAfterMs", () => {
+    const streamingFn = uiSrc.slice(uiSrc.indexOf("async function handleAnalyzeStreaming"));
+    const fnEnd = streamingFn.indexOf("\n  async function", 1);
+    const fnBody = streamingFn.slice(0, fnEnd > 0 ? fnEnd : 3000);
+    assert.ok(
+      fnBody.includes("scheduleAutoRetry") && fnBody.includes("event.providerRetryAfterMs"),
+      "streaming path must call scheduleAutoRetry using event.providerRetryAfterMs",
+    );
+  });
+
+  it("handleAnalyzeStreaming does NOT call window.location.reload for fallback results", () => {
+    const streamingFn = uiSrc.slice(uiSrc.indexOf("async function handleAnalyzeStreaming"));
+    const fnEnd = streamingFn.indexOf("\n  async function", 1);
+    const fnBody = streamingFn.slice(0, fnEnd > 0 ? fnEnd : 3000);
+    // The reload must be conditional — only for non-fallback results
+    const reloadLine = fnBody.indexOf("window.location.reload()");
+    const streamedFallbackCheck = fnBody.indexOf("streamedFallback");
+    assert.ok(
+      reloadLine > 0 && streamedFallbackCheck > 0 && streamedFallbackCheck < reloadLine,
+      "window.location.reload() must be guarded by !streamedFallback so state is preserved for the countdown banner",
+    );
+  });
+});
