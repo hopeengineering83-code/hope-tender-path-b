@@ -1,5 +1,6 @@
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
+import { readFileSync } from "node:fs";
 import JSZip from "jszip";
 import { assembleFinalSubmissionZip } from "../lib/engine/final-zip-assembly";
 import { buildFinalZipEntries } from "../lib/engine/final-zip-scope";
@@ -36,7 +37,7 @@ const contents = generatedDocs.map((doc) => ({
 }));
 
 describe("final ZIP integration", () => {
-  it("creates a valid archive with exact names, exact order, and no internal extras", async () => {
+  it("creates a valid reopened archive with exact names, order, and no internal extras", async () => {
     const scope = buildFinalZipEntries({ tender: tenderScope, generatedDocs });
     assert.deepEqual(
       scope.entries.map((entry) => entry.name),
@@ -53,7 +54,7 @@ describe("final ZIP integration", () => {
       "03-Financial-Proposal.xlsx",
     ]);
 
-    const zip = await JSZip.loadAsync(result.buffer);
+    const zip = await JSZip.loadAsync(result.buffer, { checkCRC32: true });
     const actualNames = Object.keys(zip.files).filter((name) => !zip.files[name].dir);
     assert.deepEqual(actualNames, result.fileList);
     assert.equal(zip.file("Win-Probability-Report.docx"), null);
@@ -66,7 +67,7 @@ describe("final ZIP integration", () => {
     );
     const scope = buildFinalZipEntries({ tender: tenderScope, generatedDocs: technicalDocs });
     const result = await assembleFinalSubmissionZip(scope.entries, contents);
-    const zip = await JSZip.loadAsync(result.buffer);
+    const zip = await JSZip.loadAsync(result.buffer, { checkCRC32: true });
     const names = Object.keys(zip.files).filter((name) => !zip.files[name].dir);
     assert.ok(names.includes("01-Technical-Proposal.docx"));
     assert.ok(!names.some((name) => /financial/i.test(name)));
@@ -82,12 +83,47 @@ describe("final ZIP integration", () => {
     );
   });
 
-  it("rejects missing document bytes", async () => {
+  it("rejects one generated document being included more than once", async () => {
+    await assert.rejects(
+      assembleFinalSubmissionZip([
+        { name: "Proposal.docx", source: "GENERATED_DOC", generatedDocId: "technical" },
+        { name: "Proposal-Copy.docx", source: "GENERATED_DOC", generatedDocId: "technical" },
+      ], contents),
+      /included more than once/i,
+    );
+  });
+
+  it("rejects unsafe archive paths", async () => {
+    for (const unsafeName of ["../secret.docx", "/absolute.docx", "folder//blank.docx", "C:/drive.docx"]) {
+      await assert.rejects(
+        assembleFinalSubmissionZip([
+          { name: unsafeName, source: "GENERATED_DOC", generatedDocId: "technical" },
+        ], contents),
+        /unsafe path|absolute path/i,
+      );
+    }
+  });
+
+  it("rejects missing or empty document bytes", async () => {
     await assert.rejects(
       assembleFinalSubmissionZip([
         { name: "Missing.docx", source: "GENERATED_DOC", generatedDocId: "missing" },
       ], contents),
       /no document bytes/i,
     );
+    await assert.rejects(
+      assembleFinalSubmissionZip([
+        { name: "Empty.docx", source: "GENERATED_DOC", generatedDocId: "empty" },
+      ], [{ generatedDocId: "empty", bytes: Buffer.alloc(0) }]),
+      /no document bytes/i,
+    );
+  });
+
+  it("production download route calls the same verified assembly helper", () => {
+    const routeSource = readFileSync("app/api/tenders/[id]/download/route.ts", "utf8");
+    assert.match(routeSource, /assembleFinalSubmissionZip/);
+    assert.match(routeSource, /FINAL_ZIP_VERIFICATION_FAILED/);
+    assert.doesNotMatch(routeSource, /const zip = new JSZip\(\)/);
+    assert.match(routeSource, /Cache-Control": "private, no-store"/);
   });
 });
