@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "node scripts/check-env.mjs && prisma generate && next build",
-    "vercel-build": "node scripts/check-env.mjs && prisma generate && prisma migrate deploy && next build",
+    "vercel-build": "node scripts/check-env.mjs && prisma generate && node scripts/migrate-deploy-safe.mjs && next build",
     "typecheck": "tsc --noEmit",
     "test": "node scripts/run-tests.mjs",
     "test:integration": "node scripts/run-tests.mjs",
@@ -18,6 +18,7 @@
     "prisma:validate": "prisma validate",
     "prisma:generate": "prisma generate",
     "prisma:migrate:deploy": "prisma migrate deploy",
+    "prisma:migrate:safe": "node scripts/migrate-deploy-safe.mjs",
     "electron": "electron electron/main.js",
     "electron:local": "cross-env HOPE_TENDER_DESKTOP_MODE=local-server electron electron/main.js",
     "build:desktop": "electron-builder --config electron/electron-builder.json --win --mac --linux",
