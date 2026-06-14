@@ -530,6 +530,10 @@ export function TenderDetail({ tender: initial, aiEnabled, canonicalReadiness }:
   const [engineJobId, setEngineJobId] = useState<string | null>(null);
   const [engineStepMessage, setEngineStepMessage] = useState("");
   const [analyzing, setAnalyzing] = useState(false);
+  const [autoRetryAt, setAutoRetryAt] = useState<number | null>(null);
+  const autoRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [autoRetrySecondsLeft, setAutoRetrySecondsLeft] = useState<number | null>(null);
+  const autoRetryCountdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [generating, setGenerating] = useState(false);
   const [generatingDocs, setGeneratingDocs] = useState(false);
   const [validating, setValidating] = useState(false);
@@ -564,6 +568,8 @@ export function TenderDetail({ tender: initial, aiEnabled, canonicalReadiness }:
       providersCoolingDown: string[];
       perProvider: Array<{ provider: string; configured: boolean; coolingDown: boolean; lastErrorCategory: string | null; cooldownUntil: string | null }>;
     } | null;
+    providerRetryAfterMs: number | null;
+    resumableJobId: string | null;
   } | null>(null);
   const [approvingFallback, setApprovingFallback] = useState(false);
   const [fallbackNote, setFallbackNote] = useState("");
@@ -730,6 +736,13 @@ export function TenderDetail({ tender: initial, aiEnabled, canonicalReadiness }:
   // Auto-fetch on mount; loadDiagnostics is also wired to the Refresh button.
   useEffect(() => { void loadDiagnostics(); }, [loadDiagnostics]);
 
+  useEffect(() => {
+    return () => {
+      if (autoRetryTimerRef.current) clearTimeout(autoRetryTimerRef.current);
+      if (autoRetryCountdownRef.current) clearInterval(autoRetryCountdownRef.current);
+    };
+  }, []);
+
   async function handleSave() {
     await save({
       ...form,
@@ -837,7 +850,13 @@ export function TenderDetail({ tender: initial, aiEnabled, canonicalReadiness }:
         nextAction: data.nextAction ?? null,
         extractionWarnings: Array.isArray(data.extractionWarnings) ? data.extractionWarnings : null,
         providerDiagnostics: data.providerDiagnostics ?? null,
+        providerRetryAfterMs: typeof data.providerRetryAfterMs === "number" ? data.providerRetryAfterMs : null,
+        resumableJobId: data.resumableJobId ?? null,
       });
+      if (data.fallback && typeof data.providerRetryAfterMs === "number" && data.providerRetryAfterMs !== null) {
+        const delayMs = Math.max(data.providerRetryAfterMs, 5_000);
+        scheduleAutoRetry(delayMs, data.resumableJobId ?? null);
+      }
       const resumeResolution = resolveResumeState(data);
       if (resumeResolution.keep) { setContinueJobId(resumeResolution.jobId); }
       else { setContinueJobId(null); setTender((t) => ({ ...t, latestPartialAnalysisJob: null })); }
@@ -847,6 +866,7 @@ export function TenderDetail({ tender: initial, aiEnabled, canonicalReadiness }:
   }
 
   async function handleAnalyzeStreaming() {
+    cancelAutoRetry();
     setAnalyzing(true);
     setError("");
     setAnalyzePhase("Connecting…");
@@ -938,6 +958,7 @@ export function TenderDetail({ tender: initial, aiEnabled, canonicalReadiness }:
 
   async function handleContinueAnalysis() {
     if (!continueJobId) return;
+    cancelAutoRetry();
     setAnalyzing(true);
     setError("");
     startAnalyzeProgress();
@@ -954,7 +975,13 @@ export function TenderDetail({ tender: initial, aiEnabled, canonicalReadiness }:
         nextAction: data.nextAction ?? null,
         extractionWarnings: Array.isArray(data.extractionWarnings) ? data.extractionWarnings : null,
         providerDiagnostics: data.providerDiagnostics ?? null,
+        providerRetryAfterMs: typeof data.providerRetryAfterMs === "number" ? data.providerRetryAfterMs : null,
+        resumableJobId: data.resumableJobId ?? null,
       });
+      if (data.fallback && typeof data.providerRetryAfterMs === "number" && data.providerRetryAfterMs !== null) {
+        const delayMs = Math.max(data.providerRetryAfterMs, 5_000);
+        scheduleAutoRetry(delayMs, data.resumableJobId ?? null);
+      }
       const resumeResolution = resolveResumeState(data);
       if (resumeResolution.keep) { setContinueJobId(resumeResolution.jobId); }
       else { setContinueJobId(null); setTender((t) => ({ ...t, latestPartialAnalysisJob: null })); }
@@ -1099,6 +1126,36 @@ export function TenderDetail({ tender: initial, aiEnabled, canonicalReadiness }:
     if (analyzeCreepRef.current) { clearInterval(analyzeCreepRef.current); analyzeCreepRef.current = null; }
     setAnalyzePhase("");
     setAnalyzeProgress(0);
+  }
+
+  function cancelAutoRetry() {
+    if (autoRetryTimerRef.current) { clearTimeout(autoRetryTimerRef.current); autoRetryTimerRef.current = null; }
+    if (autoRetryCountdownRef.current) { clearInterval(autoRetryCountdownRef.current); autoRetryCountdownRef.current = null; }
+    setAutoRetryAt(null);
+    setAutoRetrySecondsLeft(null);
+  }
+
+  function scheduleAutoRetry(delayMs: number, resumeJobId: string | null) {
+    cancelAutoRetry();
+    if (resumeJobId) setContinueJobId(resumeJobId);
+    const fireAt = Date.now() + delayMs;
+    setAutoRetryAt(fireAt);
+    setAutoRetrySecondsLeft(Math.ceil(delayMs / 1000));
+    autoRetryCountdownRef.current = setInterval(() => {
+      const left = Math.ceil((fireAt - Date.now()) / 1000);
+      if (left <= 0) {
+        if (autoRetryCountdownRef.current) { clearInterval(autoRetryCountdownRef.current); autoRetryCountdownRef.current = null; }
+        setAutoRetrySecondsLeft(null);
+      } else {
+        setAutoRetrySecondsLeft(left);
+      }
+    }, 1000);
+    autoRetryTimerRef.current = setTimeout(() => {
+      autoRetryTimerRef.current = null;
+      setAutoRetryAt(null);
+      setAutoRetrySecondsLeft(null);
+      void handleAnalyzeStreaming();
+    }, delayMs);
   }
 
   async function handleGenerateDocs() {
@@ -1892,7 +1949,30 @@ export function TenderDetail({ tender: initial, aiEnabled, canonicalReadiness }:
               )}
               {analyzeResult.fallback && (
                 <div className="mt-2 space-y-2">
-                  <p className="text-xs text-amber-700">AI providers unavailable — regex fallback used. Approve the fallback to unblock document generation, or retry AI Analyze when providers recover.</p>
+                  {/* Auto-retry countdown — shown when providers are cooling down and a retry is scheduled */}
+                  {autoRetrySecondsLeft !== null && autoRetrySecondsLeft > 0 ? (
+                    <div className="flex items-center gap-2 rounded-md border border-blue-200 bg-blue-50 px-3 py-2">
+                      <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-blue-400 border-t-transparent" />
+                      <span className="text-xs text-blue-800 font-medium">
+                        Provider cooling down — auto-retrying in {autoRetrySecondsLeft}s
+                        {analyzeResult.resumableJobId ? " (will resume from last checkpoint)" : ""}
+                      </span>
+                      <button
+                        onClick={cancelAutoRetry}
+                        className="ml-auto text-xs text-blue-600 underline hover:text-blue-800"
+                        title="Cancel auto-retry"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  ) : (
+                    <p className="text-xs text-amber-700">
+                      AI providers unavailable — regex fallback used.
+                      {analyzeResult.providerRetryAfterMs === null
+                        ? " Configure an AI provider (ANTHROPIC_API_KEY, OPENAI_API_KEY, etc.) to enable AI Analyze."
+                        : " Approve the fallback to unblock document generation, or retry AI Analyze when providers recover."}
+                    </p>
+                  )}
                   {analyzeResult.providerDiagnostics && (() => {
                     const configured = analyzeResult.providerDiagnostics.perProvider.filter((p) => p.configured);
                     const notConfigured = analyzeResult.providerDiagnostics.perProvider.filter((p) => !p.configured);
