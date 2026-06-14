@@ -12,13 +12,32 @@ const knownVercelDatabase = Boolean(
 );
 const ALLOW_BASELINE = explicitBaseline || knownVercelDatabase;
 
-function prisma(args, options = {}) {
-  return execFileSync(process.platform === "win32" ? "npx.cmd" : "npx", ["prisma", ...args], {
-    cwd: process.cwd(),
-    env: process.env,
-    encoding: "utf8",
-    stdio: options.capture ? ["ignore", "pipe", "pipe"] : "inherit",
-  });
+function emitCaptured(value, target) {
+  if (!value) return;
+  target.write(String(value));
+}
+
+function prisma(args, { capture = false } = {}) {
+  try {
+    const output = execFileSync(process.platform === "win32" ? "npx.cmd" : "npx", ["prisma", ...args], {
+      cwd: process.cwd(),
+      env: process.env,
+      encoding: "utf8",
+      stdio: capture ? ["ignore", "pipe", "pipe"] : "inherit",
+    });
+    if (capture) emitCaptured(output, process.stdout);
+    return output;
+  } catch (error) {
+    if (capture) {
+      emitCaptured(error?.stdout, process.stdout);
+      emitCaptured(error?.stderr, process.stderr);
+    }
+    throw error;
+  }
+}
+
+function capturedErrorText(error) {
+  return `${String(error?.stdout || "")}\n${String(error?.stderr || "")}\n${String(error?.message || "")}`;
 }
 
 function migrationNames() {
@@ -30,13 +49,12 @@ function migrationNames() {
 
 function deploy() {
   try {
-    prisma(["migrate", "deploy"]);
+    prisma(["migrate", "deploy"], { capture: true });
     return true;
   } catch (error) {
-    const stdout = String(error?.stdout || "");
-    const stderr = String(error?.stderr || "");
-    const message = `${stdout}\n${stderr}\n${error?.message || ""}`;
+    const message = capturedErrorText(error);
     if (!message.includes("P3005") && !message.includes("database schema is not empty")) throw error;
+    console.warn("Detected an existing database without Prisma migration history; evaluating controlled baseline policy.");
     return false;
   }
 }
@@ -56,9 +74,9 @@ if (!deploy()) {
   console.log(`Baselining ${historical.length} historical migration(s) through ${BASELINE_CUTOFF}.`);
   for (const name of historical) {
     try {
-      prisma(["migrate", "resolve", "--applied", name]);
+      prisma(["migrate", "resolve", "--applied", name], { capture: true });
     } catch (error) {
-      const text = `${error?.stdout || ""}\n${error?.stderr || ""}\n${error?.message || ""}`;
+      const text = capturedErrorText(error);
       if (!/already recorded|already applied/i.test(text)) throw error;
     }
   }
