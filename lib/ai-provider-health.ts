@@ -452,6 +452,30 @@ export function buildProviderDiagnosticsSnapshot(): {
   };
 }
 
+/**
+ * Returns milliseconds until the soonest configured provider exits cooldown,
+ * or 0 if at least one configured provider is already available.
+ * Returns null when no providers are configured.
+ */
+export function getMinCooldownExpiryMs(): number | null {
+  const providers = Object.keys(PROVIDER_ENV_KEY) as AiProviderName[];
+  const configured = providers.filter((p) => isProviderConfigured(p));
+  if (configured.length === 0) return null;
+  const now = Date.now();
+  let minMs = Infinity;
+  let anyAvailable = false;
+  for (const provider of configured) {
+    const s = state.get(provider);
+    if (!s?.cooldownUntil || now >= s.cooldownUntil) {
+      anyAvailable = true;
+      break;
+    }
+    minMs = Math.min(minMs, s.cooldownUntil - now);
+  }
+  if (anyAvailable) return 0;
+  return isFinite(minMs) ? minMs : null;
+}
+
 /** Reset state (test-only, also used by an admin endpoint when an
  *  operator wants to clear cooldowns after fixing a misconfiguration). */
 export function resetProviderHealth(provider?: AiProviderName): void {

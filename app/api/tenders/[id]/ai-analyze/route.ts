@@ -13,7 +13,7 @@ import { deriveExtractionStatus, isExtractionCorrupted, type ExtractionStatus, t
 import { detectMetadataContamination } from "../../../../../lib/engine/tender-metadata-completeness";
 import { isValidClientContact, containsMetadataPlaceholder, isValidCountry, isValidReferenceNumber } from "../../../../../lib/engine/metadata-validators";
 import { buildAnalysisFallbackDiagnostics, formatFallbackDiagnosticsLine, type AnalysisFallbackDiagnostics } from "../../../../../lib/engine/analysis-fallback-diagnostics";
-import { buildProviderDiagnosticsSnapshot } from "../../../../../lib/ai-provider-health";
+import { buildProviderDiagnosticsSnapshot, getMinCooldownExpiryMs } from "../../../../../lib/ai-provider-health";
 import { restoreHealthFromDb, persistAllHealthToDb } from "../../../../../lib/ai-provider-health-db";
 import { safeParseJsonObject } from "../../../../../lib/safe-json";
 import { formatTenderFileAnalysisMarker } from "../../../../../lib/engine/requirement-source-linkage";
@@ -1622,6 +1622,18 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         isPartial: analysisMeta.isPartial,
       } : null,
       nextAction: responseNextAction,
+      // When the AI chain fell back to regex because providers are cooling down,
+      // tell the client exactly how long to wait before auto-retrying so it can
+      // show a countdown and fire the retry automatically without user input.
+      // null  → no providers configured (permanent — don't auto-retry)
+      // 0     → a provider is already available (retry immediately)
+      // > 0   → ms until soonest provider exits cooldown
+      providerRetryAfterMs: analysisResult.fallback ? getMinCooldownExpiryMs() : null,
+      // The job ID the client should pass as ?continue= when auto-retrying so
+      // analysis resumes from the last successful chunk.
+      resumableJobId: (analysisMeta?.isPartial || (analysisMeta && analysisMeta.completedChunks > 0))
+        ? (analysisJobId ?? null)
+        : null,
       tender: updatedForResponse,
       extractionWarnings: extractionReports.filter((item) => item.quality.severity === "WARNING"),
     });
