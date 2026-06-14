@@ -5,6 +5,11 @@ import { recordProviderSuccess, recordProviderFailure, isProviderCooledDown, get
 const apiKey = process.env.GEMINI_API_KEY;
 const anthropicApiKey = process.env.ANTHROPIC_API_KEY;
 const DEFAULT_GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-pro";
+// Per-call timeout for Gemini. Vercel function limit is 60s; leaving ~30s for
+// fallback providers requires Gemini to abort no later than ~25-28s.
+const GEMINI_TIMEOUT_MS = Number(process.env.GEMINI_TIMEOUT_MS) > 0
+  ? Number(process.env.GEMINI_TIMEOUT_MS)
+  : 28_000;
 const FALLBACK_GEMINI_MODELS = (process.env.GEMINI_FALLBACK_MODELS || "gemini-2.5-flash,gemini-2.0-flash")
   .split(",")
   .map((m) => m.trim())
@@ -329,7 +334,7 @@ async function generate(prompt: string, modelName = DEFAULT_GEMINI_MODEL): Promi
     try {
       const text = await withRateLimitRetry(async () => {
         const model = getModel(candidate);
-        const result = await model.generateContent(prompt);
+        const result = await model.generateContent(prompt, { timeout: GEMINI_TIMEOUT_MS });
         const t = result.response.text();
         if (!t || t.trim().length === 0) throw new Error(`Empty response from Gemini API using ${candidate}`);
         return t;
@@ -916,7 +921,7 @@ async function generateWithBestModel(prompt: string): Promise<string> {
     try {
       return await withRateLimitRetry(async () => {
         const model = getModel(modelName);
-        const result = await model.generateContent(prompt);
+        const result = await model.generateContent(prompt, { timeout: GEMINI_TIMEOUT_MS });
         const text = result.response.text();
         if (!text || text.trim().length === 0) throw new Error("Empty response from Gemini API");
         return text;
