@@ -23,7 +23,8 @@ model User {
   documentComments DocumentComment[]
   notifications    Notification[]
   tenderShares TenderShare[]
-  metadataOverrides TenderMetadataOverride[]
+  metadataOverrides    TenderMetadataOverride[]
+  passwordResetTokens  PasswordResetToken[]
   createdAt    DateTime    @default(now())
   updatedAt    DateTime    @updatedAt
 }
@@ -1008,4 +1009,29 @@ model TenderMetadataOverride {
 
   @@unique([tenderId, field])
   @@index([tenderId])
+}
+
+// ─── PasswordResetToken ───────────────────────────────────────────────────────
+// One-time password reset tokens. Stored hashed; consumed atomically.
+model PasswordResetToken {
+  id          String    @id @default(uuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash   String    @unique
+  expiresAt   DateTime
+  consumedAt  DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+// ─── RateLimitBucket ─────────────────────────────────────────────────────────
+// Persistent rate-limiting buckets for multi-instance deployments.
+model RateLimitBucket {
+  keyHash   String   @id
+  count     Int      @default(1)
+  resetAt   DateTime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
