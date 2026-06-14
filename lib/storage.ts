@@ -1,44 +1,27 @@
-import { mkdir, writeFile, readFile } from "fs/promises";
+import { mkdir, writeFile, readFile, unlink } from "fs/promises";
 import path from "path";
 import { randomUUID } from "crypto";
 
-/**
- * Storage adapter (Gap 7).
- *
- * The codebase historically had two parallel storage paths:
- *
- *   1. lib/storage.ts wrote uploads into a local .storage filesystem
- *      directory and returned a `storagePath` for later reads.
- *   2. app/api/upload + app/api/tenders/upload-first persisted the file
- *      bytes as base64 inside the DB row's `fileContent` column with
- *      `storagePath=""`.
- *
- * Both call paths still need to work, but new writes are now routed
- * through a single adapter that picks the best provider for the current
- * deployment:
- *
- *   - "local"     — STORAGE_ROOT is writable; large files OK.
- *   - "blob"      — BLOB_READ_WRITE_TOKEN (Vercel Blob) is configured.
- *                   Uses the @vercel/blob SDK for real uploads/downloads.
- *                   Falls back to "db-base64" when token is absent (dev/CI).
- *   - "db-base64" — small files only; fileContent stored on the row.
- *
- * Legacy rows (storagePath="" + fileContent populated) read transparently
- * via getFile(). No automatic migration is performed — existing rows are
- * left in place to keep this change reversible.
- */
-
 const STORAGE_ROOT = process.env.STORAGE_ROOT || path.join(process.cwd(), ".storage");
-export const DB_BASE64_MAX_BYTES = 5 * 1024 * 1024; // 5 MB cap when forced into base64
+export const DB_BASE64_MAX_BYTES = 5 * 1024 * 1024;
 
 export type StorageProvider = "local" | "db-base64" | "blob";
+export type StorageMetadata = {
+  fileName: string;
+  mimeType: string;
+  tenderId?: string;
+  companyId?: string;
+};
+export type StoredRecord = {
+  storagePath?: string | null;
+  fileContent?: string | null;
+  fileName: string;
+};
 
 export interface StorageAdapter {
-  putFile(
-    buffer: Buffer,
-    metadata: { fileName: string; mimeType: string; tenderId?: string },
-  ): Promise<{ storagePath: string; fileContent?: string; provider: StorageProvider }>;
-  getFile(record: { storagePath?: string | null; fileContent?: string | null; fileName: string }): Promise<Buffer>;
+  putFile(buffer: Buffer, metadata: StorageMetadata): Promise<{ storagePath: string; fileContent?: string; provider: StorageProvider }>;
+  getFile(record: StoredRecord): Promise<Buffer>;
+  deleteFile(record: StoredRecord): Promise<void>;
 }
 
 async function ensureDir(dir: string) {
@@ -46,134 +29,132 @@ async function ensureDir(dir: string) {
 }
 
 function isProduction(): boolean {
-  return process.env.NODE_ENV === "production";
+  return process.env.NODE_ENV === "production" || Boolean(process.env.VERCEL_ENV);
 }
 
 function hasBlobToken(): boolean {
-  return Boolean(process.env.BLOB_READ_WRITE_TOKEN && process.env.BLOB_READ_WRITE_TOKEN.length > 0);
+  return Boolean(process.env.BLOB_READ_WRITE_TOKEN?.trim());
 }
 
-function canUseLocalDisk(): boolean {
-  // In production serverless (Vercel) the writable filesystem is /tmp
-  // only — and persistence across requests isn't guaranteed. We treat
-  // local disk as unavailable in production unless STORAGE_ROOT is
-  // explicitly configured to /tmp/... .
-  if (!isProduction()) return true;
-  return Boolean(process.env.STORAGE_ROOT);
+function allowDatabaseStorage(): boolean {
+  return !isProduction() || process.env.ALLOW_DB_FILE_STORAGE === "true";
 }
 
-/** Resolves the active provider for the current environment. */
+function safeScope(metadata: StorageMetadata): string {
+  const company = metadata.companyId?.replace(/[^a-zA-Z0-9_-]/g, "") || "unscoped";
+  const resource = metadata.tenderId
+    ? `tender-${metadata.tenderId.replace(/[^a-zA-Z0-9_-]/g, "")}`
+    : "company";
+  return `${company}/${resource}`;
+}
+
+function assertLocalPath(storagePath: string): void {
+  const root = path.resolve(STORAGE_ROOT);
+  const resolved = path.resolve(storagePath);
+  if (resolved !== root && !resolved.startsWith(`${root}${path.sep}`)) {
+    throw new Error("Storage path is outside the configured root");
+  }
+}
+
 export function resolveStorageProvider(): StorageProvider {
   if (hasBlobToken()) return "blob";
-  if (canUseLocalDisk()) return "local";
+  if (!isProduction()) return "local";
   return "db-base64";
 }
 
+export function isProductionStorageReady(): boolean {
+  if (!isProduction()) return true;
+  return hasBlobToken() || allowDatabaseStorage();
+}
+
 class LocalStorage implements StorageAdapter {
-  async putFile(
-    buffer: Buffer,
-    metadata: { fileName: string; mimeType: string; tenderId?: string },
-  ): Promise<{ storagePath: string; fileContent?: string; provider: StorageProvider }> {
-    const ext = path.extname(metadata.fileName) || "";
-    const scope = metadata.tenderId ? "tender" : "company";
-    const dir = path.join(STORAGE_ROOT, scope);
+  async putFile(buffer: Buffer, metadata: StorageMetadata) {
+    if (isProduction()) throw new Error("Local filesystem storage is not permitted in production");
+    const ext = path.extname(metadata.fileName).replace(/[^.a-zA-Z0-9]/g, "");
+    const dir = path.join(STORAGE_ROOT, safeScope(metadata));
     await ensureDir(dir);
-    const fileName = `${randomUUID()}${ext}`;
-    const storagePath = path.join(dir, fileName);
-    await writeFile(storagePath, buffer);
-    return { storagePath, provider: "local" };
+    const storagePath = path.join(dir, `${randomUUID()}${ext}`);
+    assertLocalPath(storagePath);
+    await writeFile(storagePath, buffer, { flag: "wx" });
+    return { storagePath, provider: "local" as const };
   }
 
-  async getFile(record: { storagePath?: string | null; fileContent?: string | null; fileName: string }): Promise<Buffer> {
-    // Legacy compatibility: row with empty storagePath but populated
-    // fileContent (base64) — read from fileContent.
+  async getFile(record: StoredRecord): Promise<Buffer> {
     if ((!record.storagePath || record.storagePath.length === 0) && record.fileContent) {
       return Buffer.from(record.fileContent, "base64");
     }
-    if (!record.storagePath) {
-      throw new Error(`getFile: record "${record.fileName}" has no storagePath or fileContent`);
-    }
+    if (!record.storagePath) throw new Error("File record has no stored content");
+    assertLocalPath(record.storagePath);
     return readFile(record.storagePath);
+  }
+
+  async deleteFile(record: StoredRecord): Promise<void> {
+    if (!record.storagePath) return;
+    assertLocalPath(record.storagePath);
+    await unlink(record.storagePath).catch((error: NodeJS.ErrnoException) => {
+      if (error.code !== "ENOENT") throw error;
+    });
   }
 }
 
 class DbBase64Storage implements StorageAdapter {
-  async putFile(
-    buffer: Buffer,
-    metadata: { fileName: string; mimeType: string; tenderId?: string },
-  ): Promise<{ storagePath: string; fileContent?: string; provider: StorageProvider }> {
-    if (buffer.byteLength > DB_BASE64_MAX_BYTES) {
-      throw new Error(
-        `db-base64 storage cannot accept files larger than ${DB_BASE64_MAX_BYTES} bytes (received ${buffer.byteLength}). Configure BLOB_READ_WRITE_TOKEN or STORAGE_ROOT to enable a real filesystem backend.`,
-      );
+  async putFile(buffer: Buffer, _metadata: StorageMetadata) {
+    if (!allowDatabaseStorage()) {
+      throw new Error("Durable production storage is not configured");
     }
-    return {
-      storagePath: "",
-      fileContent: buffer.toString("base64"),
-      provider: "db-base64",
-    };
+    if (buffer.byteLength > DB_BASE64_MAX_BYTES) {
+      throw new Error(`Database file storage limit exceeded (${DB_BASE64_MAX_BYTES} bytes)`);
+    }
+    return { storagePath: "", fileContent: buffer.toString("base64"), provider: "db-base64" as const };
   }
 
-  async getFile(record: { storagePath?: string | null; fileContent?: string | null; fileName: string }): Promise<Buffer> {
-    if (!record.fileContent) {
-      throw new Error(`db-base64 read: record "${record.fileName}" has no fileContent`);
-    }
+  async getFile(record: StoredRecord): Promise<Buffer> {
+    if (!record.fileContent) throw new Error("File record has no database content");
     return Buffer.from(record.fileContent, "base64");
+  }
+
+  async deleteFile(_record: StoredRecord): Promise<void> {
+    // Database content is removed transactionally with its owning row.
   }
 }
 
-/**
- * Real Vercel Blob adapter using the @vercel/blob SDK.
- * Falls back to db-base64 when BLOB_READ_WRITE_TOKEN is not set
- * (keeps local dev and CI working without credentials).
- */
 class BlobStorage implements StorageAdapter {
   private readonly fallback = new DbBase64Storage();
 
-  async putFile(
-    buffer: Buffer,
-    metadata: { fileName: string; mimeType: string; tenderId?: string },
-  ): Promise<{ storagePath: string; fileContent?: string; provider: StorageProvider }> {
+  async putFile(buffer: Buffer, metadata: StorageMetadata) {
     const token = process.env.BLOB_READ_WRITE_TOKEN;
-    if (!token) {
-      // No token configured — fall back to db-base64 so dev/CI still works.
-      const result = await this.fallback.putFile(buffer, metadata);
-      return { ...result, provider: "blob" };
-    }
-
+    if (!token) return this.fallback.putFile(buffer, metadata);
     const { put } = await import("@vercel/blob");
-    const ext = path.extname(metadata.fileName) || "";
-    const scope = metadata.tenderId ? "tender" : "company";
-    const key = `${scope}/${randomUUID()}${ext}`;
-
-    const result = await put(key, buffer, {
-      access: "private",
-      token,
-    });
-
-    return { storagePath: result.url, provider: "blob" };
+    const ext = path.extname(metadata.fileName).replace(/[^.a-zA-Z0-9]/g, "");
+    const key = `${safeScope(metadata)}/${randomUUID()}${ext}`;
+    const result = await put(key, buffer, { access: "private", token });
+    return { storagePath: result.url, provider: "blob" as const };
   }
 
-  async getFile(record: { storagePath?: string | null; fileContent?: string | null; fileName: string }): Promise<Buffer> {
-    if (record.storagePath && /^https?:\/\//.test(record.storagePath)) {
+  async getFile(record: StoredRecord): Promise<Buffer> {
+    if (record.storagePath && /^https:\/\//.test(record.storagePath)) {
       const token = process.env.BLOB_READ_WRITE_TOKEN;
-      const headers: Record<string, string> = {};
-      if (token) {
-        headers["Authorization"] = `Bearer ${token}`;
-      }
-      const res = await fetch(record.storagePath, { headers });
-      if (!res.ok) throw new Error(`blob fetch failed: ${res.status} ${res.statusText}`);
-      const ab = await res.arrayBuffer();
-      return Buffer.from(ab);
+      if (!token) throw new Error("Blob storage token is not configured");
+      const response = await fetch(record.storagePath, { headers: { Authorization: `Bearer ${token}` } });
+      if (!response.ok) throw new Error(`Blob read failed with status ${response.status}`);
+      return Buffer.from(await response.arrayBuffer());
     }
     return this.fallback.getFile(record);
   }
+
+  async deleteFile(record: StoredRecord): Promise<void> {
+    if (!record.storagePath) return;
+    if (/^https:\/\//.test(record.storagePath)) {
+      const token = process.env.BLOB_READ_WRITE_TOKEN;
+      if (!token) throw new Error("Blob storage token is not configured");
+      const { del } = await import("@vercel/blob");
+      await del(record.storagePath, { token });
+      return;
+    }
+    await this.fallback.deleteFile(record);
+  }
 }
 
-/**
- * Lazy singleton adapter, resolved at first use. Tests can call
- * resetStorageAdapter() to force re-resolution after mutating env.
- */
 let cached: StorageAdapter | null = null;
 let cachedProvider: StorageProvider | null = null;
 
@@ -195,24 +176,21 @@ export function resetStorageAdapter(): void {
   cachedProvider = null;
 }
 
-// ─── legacy helpers ──────────────────────────────────────────────────────────
-
 export async function saveUploadedFile(
   file: File,
   scope: "company" | "tender" | "generated" | "assets" = "tender",
 ) {
+  if (isProduction()) throw new Error("Legacy local upload helper is disabled in production");
   const buffer = Buffer.from(await file.arrayBuffer());
-  const ext = path.extname(file.name);
+  const ext = path.extname(file.name).replace(/[^.a-zA-Z0-9]/g, "");
   const dir = path.join(STORAGE_ROOT, scope);
   await ensureDir(dir);
-
-  const fileName = `${randomUUID()}${ext}`;
-  const storagePath = path.join(dir, fileName);
-  await writeFile(storagePath, buffer);
-
+  const storagePath = path.join(dir, `${randomUUID()}${ext}`);
+  assertLocalPath(storagePath);
+  await writeFile(storagePath, buffer, { flag: "wx" });
   return {
-    fileName,
-    originalFileName: file.name,
+    fileName: path.basename(storagePath),
+    originalFileName: path.basename(file.name),
     size: file.size,
     mimeType: file.type || "application/octet-stream",
     storagePath,
@@ -220,6 +198,7 @@ export async function saveUploadedFile(
 }
 
 export async function ensureGeneratedDir() {
+  if (isProduction()) throw new Error("Legacy generated-file directory is disabled in production");
   const dir = path.join(STORAGE_ROOT, "generated");
   await ensureDir(dir);
   return dir;
