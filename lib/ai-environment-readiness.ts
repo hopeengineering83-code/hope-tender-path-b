@@ -60,15 +60,15 @@ export function getAIEnvironmentReadiness(): AIEnvironmentReadiness {
     status("PROPOSAL_SECTION_TIMEOUT_MS", "runtime", "recommended", "Section-level proposal timeout guard."),
   ];
 
-  // Reflect actual PROVIDER_CHAINS order: Gemini → OpenAI → Mistral → Together → DeepSeek → Groq → OpenRouter → Claude
+  // Reflect actual PROVIDER_CHAINS order: Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Claude
   const providerChain: string[] = [];
-  if (present("GEMINI_API_KEY")) providerChain.push(`Gemini (${process.env.GEMINI_MODEL || "gemini-2.5-pro"})`);
-  if (present("OPENAI_API_KEY")) providerChain.push(`OpenAI (${process.env.OPENAI_PROPOSAL_MODEL || "gpt-4o"})`);
   if (present("MISTRAL_API_KEY")) providerChain.push(`Mistral (${process.env.MISTRAL_PROPOSAL_MODEL || "mistral-large-latest"})`);
-  if (present("TOGETHER_API_KEY")) providerChain.push(`Together (${process.env.TOGETHER_PROPOSAL_MODEL || "meta-llama/Llama-3.3-70B-Instruct-Turbo"})`);
-  if (present("DEEPSEEK_API_KEY")) providerChain.push(`DeepSeek (${process.env.DEEPSEEK_PROPOSAL_MODEL || "deepseek-chat"})`);
   if (present("GROQ_API_KEY")) providerChain.push(`Groq (${process.env.GROQ_PROPOSAL_MODEL || "llama-3.3-70b-versatile"})`);
   if (present("OPENROUTER_API_KEY")) providerChain.push(`OpenRouter (${process.env.OPENROUTER_PROPOSAL_MODEL || "auto"})`);
+  if (present("GEMINI_API_KEY")) providerChain.push(`Gemini (${process.env.GEMINI_MODEL || "gemini-2.5-pro"})`);
+  if (present("OPENAI_API_KEY")) providerChain.push(`OpenAI (${process.env.OPENAI_PROPOSAL_MODEL || "gpt-4o"})`);
+  if (present("TOGETHER_API_KEY")) providerChain.push(`Together (${process.env.TOGETHER_PROPOSAL_MODEL || "meta-llama/Llama-3.3-70B-Instruct-Turbo"})`);
+  if (present("DEEPSEEK_API_KEY")) providerChain.push(`DeepSeek (${process.env.DEEPSEEK_PROPOSAL_MODEL || "deepseek-chat"})`);
   if (present("ANTHROPIC_API_KEY")) providerChain.push("Claude (last-resort)");
 
   const blockers: string[] = [];

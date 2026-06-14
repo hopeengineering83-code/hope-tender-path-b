@@ -23,7 +23,7 @@ import { restoreHealthFromDb } from "../../../../lib/ai-provider-health-db";
 
 // Canonical fallback order surfaced to operators. Must match lib/ai.ts PROVIDER_CHAINS.
 // Claude is placed LAST so Anthropic rate limits do not block other providers.
-const AI_FALLBACK_CHAIN = "Gemini → OpenAI → Mistral → Together → DeepSeek → Groq → OpenRouter → Claude → deterministic draft fallback";
+const AI_FALLBACK_CHAIN = "Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Claude → deterministic draft fallback";
 const AI_FALLBACK_CHAIN_EXTRACTION = AI_FALLBACK_CHAIN;
 
 export const dynamic = "force-dynamic";
@@ -83,13 +83,13 @@ export async function GET() {
     claudeConfigured || geminiConfigured || openaiConfigured || mistralConfigured || deepSeekConfigured || groqConfigured || togetherConfigured || openRouterConfigured;
   // preferredProvider reflects the actual default chain order (Claude is last)
   const preferredProvider =
-    geminiConfigured ? "gemini"
-    : openaiConfigured ? "openai"
-    : mistralConfigured ? "mistral"
-    : togetherConfigured ? "together"
-    : deepSeekConfigured ? "deepseek"
+    mistralConfigured ? "mistral"
     : groqConfigured ? "groq"
     : openRouterConfigured ? "openrouter"
+    : geminiConfigured ? "gemini"
+    : openaiConfigured ? "openai"
+    : togetherConfigured ? "together"
+    : deepSeekConfigured ? "deepseek"
     : claudeConfigured ? "claude"
     : "none";
 
@@ -142,18 +142,18 @@ export async function GET() {
         configured: openaiConfigured,
         envPresent: openaiConfigured,
         model: openaiModel,
-        fallbackRank: 2,
+        fallbackRank: 5,
         label: "OpenAI",
-        note: "Second-tier provider (canonical chain)",
+        note: "Fifth-tier provider (canonical chain)",
         runtime: providerRuntime.openai,
       },
       gemini: {
         configured: geminiConfigured,
         envPresent: geminiConfigured,
         model: process.env.GEMINI_MODEL || "gemini-2.5-pro",
-        fallbackRank: 1,
+        fallbackRank: 4,
         label: "Gemini",
-        note: "First-tier provider (canonical chain for analysis, extraction, proposal, validation, and fast use cases)",
+        note: "Fourth-tier provider (canonical chain for analysis, extraction, proposal, validation, and fast use cases)",
         primaryModel: process.env.GEMINI_MODEL || "gemini-2.5-pro",
         fallbackModels: maskModelChain(geminiModels),
         extractionModel: process.env.GEMINI_EXTRACTION_MODEL || process.env.GEMINI_EXTRACT_MODEL || null,
@@ -163,9 +163,9 @@ export async function GET() {
         configured: mistralConfigured,
         envPresent: mistralConfigured,
         model: getMistralProposalModel(),
-        fallbackRank: 3,
+        fallbackRank: 1,
         label: "Mistral",
-        note: "Third-tier provider; also used for analysis fallback",
+        note: "First-tier provider; verified working — used for analysis, extraction, proposal, validation",
         analysisModel: getMistralAnalysisModel(),
         runtime: providerRuntime.mistral,
       },
@@ -173,27 +173,27 @@ export async function GET() {
         configured: deepSeekConfigured,
         envPresent: deepSeekOfficialEnvPresent(),
         model: getDeepSeekModel(),
-        fallbackRank: 5,
+        fallbackRank: 7,
         label: "DeepSeek",
-        note: "Fifth-tier fallback provider",
+        note: "Seventh-tier fallback provider",
         runtime: providerRuntime.deepseek,
       },
       groq: {
         configured: groqConfigured,
         envPresent: groqConfigured,
         model: getGroqModel(),
-        fallbackRank: 6,
+        fallbackRank: 2,
         label: "Groq",
-        note: "Sixth-tier fallback provider",
+        note: "Second-tier provider — fastest verified working provider (88ms)",
         runtime: providerRuntime.groq,
       },
       together: {
         configured: togetherConfigured,
         envPresent: togetherConfigured,
         model: getTogetherProposalModel(),
-        fallbackRank: 4,
+        fallbackRank: 6,
         label: "Together",
-        note: "Fourth-tier fallback provider",
+        note: "Sixth-tier fallback provider",
         analysisModel: getTogetherAnalysisModel(),
         fastModel: getTogetherFastModel(),
         runtime: providerRuntime.together,
@@ -202,9 +202,9 @@ export async function GET() {
         configured: openRouterConfigured,
         envPresent: openRouterConfigured,
         model: getOpenRouterModel(),
-        fallbackRank: 7,
+        fallbackRank: 3,
         label: "OpenRouter",
-        note: "Seventh-tier aggregator fallback provider",
+        note: "Third-tier aggregator provider — verified working, routes via high-quality models",
         runtime: providerRuntime.openrouter,
       },
       claude: {

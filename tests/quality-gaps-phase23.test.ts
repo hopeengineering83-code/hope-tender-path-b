@@ -13,6 +13,7 @@
 
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
+import { readFileSync } from "node:fs";
 import { assessTenderMetadataCompleteness, isPhysicalSubmissionMethod } from "../lib/engine/tender-metadata-completeness";
 
 // ── isPhysicalSubmissionMethod helper ─────────────────────────────────────────
@@ -121,7 +122,7 @@ describe("phase 23 — submissionAddress becomes CRITICAL for physical methods",
   });
 
   it("submissionAddress is in CriticalMetadataField type (static audit)", () => {
-    const src = require("fs").readFileSync("lib/engine/tender-metadata-completeness.ts", "utf8");
+    const src = readFileSync("lib/engine/tender-metadata-completeness.ts", "utf8");
     assert.ok(
       src.includes('"submissionAddress"') && src.includes("CriticalMetadataField"),
       "submissionAddress must be added to CriticalMetadataField union type",
