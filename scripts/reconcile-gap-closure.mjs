@@ -1,8 +1,8 @@
 import { readFileSync, writeFileSync, readdirSync, statSync } from "node:fs";
 import { join, extname } from "node:path";
 
-const REQUIRED_CHAIN = ["gemini", "openrouter", "openai", "groq", "deepseek", "anthropic"];
-const REQUIRED_LABELS = "Gemini → OpenRouter → OpenAI → Groq → DeepSeek → Claude";
+const REQUIRED_CHAIN = ["mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"];
+const REQUIRED_LABELS = "Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Claude";
 
 function read(path) { return readFileSync(path, "utf8"); }
 function write(path, value) { writeFileSync(path, value); }
@@ -68,10 +68,10 @@ function patchHealth() {
   );
   source = source.replace(
     /const preferredProvider =[\s\S]*?: "none";/,
-    `const preferredProvider =\n    geminiConfigured ? "gemini"\n    : openRouterConfigured ? "openrouter"\n    : openaiConfigured ? "openai"\n    : groqConfigured ? "groq"\n    : deepSeekConfigured ? "deepseek"\n    : claudeConfigured ? "claude"\n    : "none";`,
+    `const preferredProvider =\n    mistralConfigured ? "mistral"\n    : groqConfigured ? "groq"\n    : openRouterConfigured ? "openrouter"\n    : geminiConfigured ? "gemini"\n    : openaiConfigured ? "openai"\n    : togetherConfigured ? "together"\n    : deepSeekConfigured ? "deepseek"\n    : claudeConfigured ? "claude"\n    : "none";`,
   );
 
-  const ranks = { gemini: 1, openrouter: 2, openai: 3, groq: 4, deepseek: 5, claude: 6, mistral: 99, together: 99 };
+  const ranks = { mistral: 1, groq: 2, openrouter: 3, gemini: 4, openai: 5, together: 6, deepseek: 7, claude: 8 };
   for (const [key, rank] of Object.entries(ranks)) {
     const block = new RegExp(`(${key}: \\{[\\s\\S]*?fallbackRank:) \\d+`, "m");
     source = source.replace(block, `$1 ${rank}`);
@@ -86,7 +86,7 @@ function patchEnvironmentReadiness() {
   let source = read(path);
   source = source.replace(
     /  \/\/ Reflect actual PROVIDER_CHAINS order:[\s\S]*?  const blockers: string\[] = \[];/,
-    `  // Reflect the required canonical provider order: ${REQUIRED_LABELS}\n  const providerChain: string[] = [];\n  if (present("GEMINI_API_KEY")) providerChain.push(\`Gemini (\${process.env.GEMINI_MODEL || "gemini-2.5-pro"})\`);\n  if (present("OPENROUTER_API_KEY")) providerChain.push(\`OpenRouter (\${process.env.OPENROUTER_PROPOSAL_MODEL || "auto"})\`);\n  if (present("OPENAI_API_KEY")) providerChain.push(\`OpenAI (\${process.env.OPENAI_PROPOSAL_MODEL || "gpt-4o"})\`);\n  if (present("GROQ_API_KEY")) providerChain.push(\`Groq (\${process.env.GROQ_PROPOSAL_MODEL || "llama-3.3-70b-versatile"})\`);\n  if (present("DEEPSEEK_API_KEY")) providerChain.push(\`DeepSeek (\${process.env.DEEPSEEK_PROPOSAL_MODEL || "deepseek-chat"})\`);\n  if (present("ANTHROPIC_API_KEY")) providerChain.push("Claude (last-resort)");\n\n  const blockers: string[] = [];`,
+    `  // Reflect the required canonical provider order: ${REQUIRED_LABELS}\n  const providerChain: string[] = [];\n  if (present("MISTRAL_API_KEY")) providerChain.push(\`Mistral (\${process.env.MISTRAL_PROPOSAL_MODEL || "mistral-large-latest"})\`);\n  if (present("GROQ_API_KEY")) providerChain.push(\`Groq (\${process.env.GROQ_PROPOSAL_MODEL || "llama-3.3-70b-versatile"})\`);\n  if (present("OPENROUTER_API_KEY")) providerChain.push(\`OpenRouter (\${process.env.OPENROUTER_PROPOSAL_MODEL || "auto"})\`);\n  if (present("GEMINI_API_KEY")) providerChain.push(\`Gemini (\${process.env.GEMINI_MODEL || "gemini-2.5-pro"})\`);\n  if (present("OPENAI_API_KEY")) providerChain.push(\`OpenAI (\${process.env.OPENAI_PROPOSAL_MODEL || "gpt-4o"})\`);\n  if (present("TOGETHER_API_KEY")) providerChain.push(\`Together (\${process.env.TOGETHER_PROPOSAL_MODEL || "meta-llama/Llama-3-70b-chat-hf"})\`);\n  if (present("DEEPSEEK_API_KEY")) providerChain.push(\`DeepSeek (\${process.env.DEEPSEEK_PROPOSAL_MODEL || "deepseek-chat"})\`);\n  if (present("ANTHROPIC_API_KEY")) providerChain.push("Claude (last-resort)");\n\n  const blockers: string[] = [];`,
   );
   write(path, source);
 }
@@ -124,10 +124,12 @@ function patchFinalZipRoute() {
     "  const fileList = entries.map((entry) => entry.name);",
     "  const fileList = assembledZip.fileList;",
   );
-  source = source.replace(
-    '    "X-Envelope-Breakdown": envelopeBreakdown,\n',
-    '    "X-Envelope-Breakdown": envelopeBreakdown,\n    "Cache-Control": "private, no-store",\n    "X-Content-Type-Options": "nosniff",\n',
-  );
+  if (!source.includes('"Cache-Control": "private, no-store"')) {
+    source = source.replace(
+      '    "X-Envelope-Breakdown": envelopeBreakdown,\n',
+      '    "X-Envelope-Breakdown": envelopeBreakdown,\n    "Cache-Control": "private, no-store",\n    "X-Content-Type-Options": "nosniff",\n',
+    );
+  }
 
   write(path, source);
 }
@@ -149,6 +151,7 @@ function patchTextReferences() {
     "Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Claude",
     "Gemini → OpenAI → Mistral → Together → DeepSeek → Groq → OpenRouter → Claude",
     "Gemini → OpenAI → Mistral → DeepSeek → Groq → OpenRouter → Claude",
+    "Gemini → OpenRouter → OpenAI → Groq → DeepSeek → Claude",
   ];
   for (const root of roots) {
     try {

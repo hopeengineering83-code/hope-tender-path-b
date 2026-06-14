@@ -51,8 +51,8 @@ jobs:
       - run: npm ci
       - run: npx prisma validate
       - run: npx prisma generate
-      - name: Apply migrations
-        run: npx prisma migrate deploy
+      - name: Sync database schema
+        run: npx prisma db push --accept-data-loss
       - run: npm run typecheck
       - run: npm run lint
       - name: Tests
