@@ -378,9 +378,10 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
       )}
 
       {/* Summary bar */}
-      <div className="grid grid-cols-4 gap-px border-b border-gray-100 bg-gray-100 text-center text-xs">
+      <div className="grid grid-cols-5 gap-px border-b border-gray-100 bg-gray-100 text-center text-xs">
         {[
           { label: "Mandatory", value: data.totalMandatory, color: "text-gray-800" },
+          { label: "Traced", value: data.totalMandatory - data.missingSourceRef, color: "text-blue-700" },
           { label: "Covered", value: data.fullyCovered, color: "text-green-700" },
           { label: "Partial", value: data.partiallyCovered, color: "text-amber-700" },
           { label: "Uncovered", value: data.uncovered, color: data.uncovered > 0 ? "text-red-600" : "text-gray-400" },
@@ -395,7 +396,7 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
       {/* Source ref warning */}
       {data.missingSourceRef > 0 && (
         <div className="border-b border-amber-100 bg-amber-50 px-5 py-2 text-xs text-amber-800">
-          ⚠ {data.missingSourceRef} mandatory requirement(s) lack source page/quote traceability — export may be blocked.
+          ⚠ {data.missingSourceRef} requirements are &quot;raw fallback&quot; (no source tracing). Trusted tracing required for final export.
         </div>
       )}
 

@@ -19,7 +19,7 @@ import {
 } from "../lib/ai-provider-health";
 import { AIHealthTestButton } from "./ai-health-test-button";
 
-const AI_FALLBACK_CHAIN = "Canonical: Gemini → OpenAI → Mistral → Together → DeepSeek → Groq → OpenRouter → Claude. Claude remains last.";
+const AI_FALLBACK_CHAIN = "Canonical: Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Claude. Claude remains last.";
 
 type ProviderCardData = {
   key: string;
@@ -68,48 +68,49 @@ function getAIHealth(): AIHealthResponse {
 
   // Provider order IS the default fallback priority (rank 1..8). Claude is LAST so
   // Anthropic rate limits do not block the app when other providers are available.
+  // Order: Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Claude
   const providers: ProviderCardData[] = [
     {
-      key: "gemini", label: "Gemini", rank: 1, configured: geminiConfigured, envVar: "GEMINI_API_KEY",
-      model: process.env.GEMINI_MODEL || "gemini-2.5-pro", note: "First-tier provider",
-      detail: `Fallback: ${geminiModels.slice(0, 2).join(", ") || "none"}`,
-      modelHint: null, runtime: getProviderRuntimeSnapshot("gemini"),
-    },
-    {
-      key: "openai", label: "OpenAI", rank: 2, configured: openaiConfigured, envVar: "OPENAI_API_KEY",
-      model: process.env.OPENAI_PROPOSAL_MODEL || "gpt-4o", note: "Second-tier provider",
-      detail: null, modelHint: null, runtime: getProviderRuntimeSnapshot("openai"),
-    },
-    {
-      key: "mistral", label: "Mistral", rank: 3, configured: mistralConfigured, envVar: "MISTRAL_API_KEY",
-      model: getMistralProposalModel(), note: "Third-tier provider (also analysis/fast capable)",
+      key: "mistral", label: "Mistral", rank: 1, configured: mistralConfigured, envVar: "MISTRAL_API_KEY",
+      model: getMistralProposalModel(), note: "First-tier provider (also analysis/fast capable)",
       detail: `Analysis: ${getMistralAnalysisModel()} · fast: ${getMistralFastModel()}`, modelHint: null,
       runtime: getProviderRuntimeSnapshot("mistral"),
     },
     {
-      key: "together", label: "Together", rank: 4, configured: togetherConfigured, envVar: "TOGETHER_API_KEY",
-      model: getTogetherProposalModel(), note: "Fourth-tier provider",
-      detail: `Analysis: ${getTogetherAnalysisModel()} · fast: ${getTogetherFastModel()}`, modelHint: null,
-      runtime: getProviderRuntimeSnapshot("together"),
-    },
-    {
-      key: "deepseek", label: "DeepSeek", rank: 5, configured: deepseekConfigured, envVar: "DEEPSEEK_API_KEY",
-      model: getDeepSeekModel(), note: "Fifth-tier provider",
-      detail: deepseekConfigured && !deepSeekOfficialEnvPresent() ? "Enabled via alias env var — rename to DEEPSEEK_API_KEY." : null,
-      modelHint: null, runtime: getProviderRuntimeSnapshot("deepseek"),
-    },
-    {
-      key: "groq", label: "Groq", rank: 6, configured: groqConfigured, envVar: "GROQ_API_KEY",
-      model: getGroqModel(), note: "Sixth-tier provider", detail: null, modelHint: null,
+      key: "groq", label: "Groq", rank: 2, configured: groqConfigured, envVar: "GROQ_API_KEY",
+      model: getGroqModel(), note: "Second-tier provider", detail: null, modelHint: null,
       runtime: getProviderRuntimeSnapshot("groq"),
     },
     {
-      key: "openrouter", label: "OpenRouter", rank: 7, configured: openRouterConfigured, envVar: "OPENROUTER_API_KEY",
-      model: openRouterModel, note: "Seventh-tier provider", detail: null,
+      key: "openrouter", label: "OpenRouter", rank: 3, configured: openRouterConfigured, envVar: "OPENROUTER_API_KEY",
+      model: openRouterModel, note: "Third-tier provider", detail: null,
       modelHint: openRouterConfigured && openRouterModel === "openrouter/auto"
         ? "Using openrouter/auto. Set OPENROUTER_PROPOSAL_MODEL to a model available in your OpenRouter account to pin it."
         : null,
       runtime: getProviderRuntimeSnapshot("openrouter"),
+    },
+    {
+      key: "gemini", label: "Gemini", rank: 4, configured: geminiConfigured, envVar: "GEMINI_API_KEY",
+      model: process.env.GEMINI_MODEL || "gemini-2.5-pro", note: "Fourth-tier provider",
+      detail: `Fallback: ${geminiModels.slice(0, 2).join(", ") || "none"}`,
+      modelHint: null, runtime: getProviderRuntimeSnapshot("gemini"),
+    },
+    {
+      key: "openai", label: "OpenAI", rank: 5, configured: openaiConfigured, envVar: "OPENAI_API_KEY",
+      model: process.env.OPENAI_PROPOSAL_MODEL || "gpt-4o", note: "Fifth-tier provider",
+      detail: null, modelHint: null, runtime: getProviderRuntimeSnapshot("openai"),
+    },
+    {
+      key: "together", label: "Together", rank: 6, configured: togetherConfigured, envVar: "TOGETHER_API_KEY",
+      model: getTogetherProposalModel(), note: "Sixth-tier provider",
+      detail: `Analysis: ${getTogetherAnalysisModel()} · fast: ${getTogetherFastModel()}`, modelHint: null,
+      runtime: getProviderRuntimeSnapshot("together"),
+    },
+    {
+      key: "deepseek", label: "DeepSeek", rank: 7, configured: deepseekConfigured, envVar: "DEEPSEEK_API_KEY",
+      model: getDeepSeekModel(), note: "Seventh-tier provider",
+      detail: deepseekConfigured && !deepSeekOfficialEnvPresent() ? "Enabled via alias env var — rename to DEEPSEEK_API_KEY." : null,
+      modelHint: null, runtime: getProviderRuntimeSnapshot("deepseek"),
     },
     {
       key: "claude", label: "Claude", rank: 8, configured: claudeConfigured, envVar: "ANTHROPIC_API_KEY",
