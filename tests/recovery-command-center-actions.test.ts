@@ -12,9 +12,6 @@
 
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
-import { existsSync } from "node:fs";
-import { resolve } from "node:path";
-
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
