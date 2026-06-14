@@ -890,6 +890,7 @@ export function TenderDetail({ tender: initial, aiEnabled, canonicalReadiness }:
       const decoder = new TextDecoder();
       let buffer = "";
       let done = false;
+      let streamedFallback = false;
       while (!done) {
         const { done: streamDone, value } = await reader.read();
         if (streamDone) break;
@@ -907,6 +908,15 @@ export function TenderDetail({ tender: initial, aiEnabled, canonicalReadiness }:
               requirementCount?: number;
               status?: string;
               jobId?: string;
+              fallback?: boolean;
+              code?: string;
+              nextAction?: string;
+              providerRetryAfterMs?: number | null;
+              resumableJobId?: string | null;
+              providerDiagnostics?: {
+                providersCoolingDown: string[];
+                perProvider: Array<{ provider: string; configured: boolean; coolingDown: boolean; lastErrorCategory: string | null; cooldownUntil: string | null }>;
+              };
             };
             if (event.phase === "analyzing" && event.chunk !== undefined) {
               const total = event.totalChunks ?? "?";
@@ -923,9 +933,32 @@ export function TenderDetail({ tender: initial, aiEnabled, canonicalReadiness }:
               setAnalyzePhase("Preparing tender content…");
               setAnalyzeProgress(8);
             } else if (event.phase === "complete") {
-              setAnalyzePhase(`Analysis complete — ${event.requirementCount ?? 0} requirements extracted`);
+              setAnalyzePhase(
+                event.fallback
+                  ? "Analysis complete — AI unavailable, regex fallback used"
+                  : `Analysis complete — ${event.requirementCount ?? 0} requirements extracted`,
+              );
               setAnalyzeProgress(100);
-              // If the job is no longer partial (full success), clear the resume state.
+              // Set analyzeResult so the fallback/retry UI renders correctly.
+              if (event.fallback) {
+                streamedFallback = true;
+                setAnalyzeResult({
+                  ai: false,
+                  fallback: true,
+                  jobId: event.jobId ?? null,
+                  chunks: null,
+                  code: event.code ?? null,
+                  nextAction: event.nextAction ?? null,
+                  extractionWarnings: null,
+                  providerDiagnostics: event.providerDiagnostics ?? null,
+                  providerRetryAfterMs: typeof event.providerRetryAfterMs === "number" ? event.providerRetryAfterMs : null,
+                  resumableJobId: event.resumableJobId ?? null,
+                });
+                if (typeof event.providerRetryAfterMs === "number" && event.providerRetryAfterMs !== null) {
+                  scheduleAutoRetry(Math.max(event.providerRetryAfterMs, 5_000), event.resumableJobId ?? null);
+                }
+              }
+              // Clear or keep resume state depending on success/partial status.
               if (event.status !== "AI_ANALYSIS_PARTIAL") {
                 setContinueJobId(null);
                 setTender((t) => ({ ...t, latestPartialAnalysisJob: null }));
@@ -940,10 +973,17 @@ export function TenderDetail({ tender: initial, aiEnabled, canonicalReadiness }:
           } catch { /* ignore SSE parse errors */ }
         }
       }
-      // Reload page data after successful streaming completion
-      if (!done || !error) {
+      // Refresh server data. For fallback results keep the page mounted so
+      // the retry countdown banner stays visible — skip the hard reload.
+      if (done && !streamedFallback) {
         router.refresh();
         window.location.reload();
+      } else if (!done) {
+        // Stream ended without a complete event (disconnected early) — soft refresh.
+        router.refresh();
+      } else {
+        // Fallback result: soft refresh to update tender data without losing state.
+        router.refresh();
       }
     } catch {
       setAnalyzePhase("");
