@@ -1,3 +1,6 @@
+import { prisma, prismaReady } from "./prisma";
+import { resolveStorageProvider } from "./storage";
+
 export type ReadinessSeverity = "OK" | "WARNING" | "CRITICAL";
 
 export type ReadinessCheck = {
@@ -13,93 +16,142 @@ export type SystemReadiness = {
   checks: ReadinessCheck[];
 };
 
-function has(value: string | undefined | null) {
+function has(value: string | undefined | null): boolean {
   return Boolean(value && value.trim().length > 0);
 }
 
+export const REQUIRED_PROVIDER_ORDER = [
+  "Gemini",
+  "OpenRouter",
+  "OpenAI",
+  "Groq",
+  "DeepSeek",
+  "Claude/Anthropic",
+] as const;
+
 function configuredAiProviders(): string[] {
   const providers: string[] = [];
-  if (has(process.env.OPENAI_API_KEY)) providers.push("OpenAI");
   if (has(process.env.GEMINI_API_KEY)) providers.push("Gemini");
-  if (has(process.env.MISTRAL_API_KEY)) providers.push("Mistral");
-  if (has(process.env.DEEPSEEK_API_KEY)) providers.push("DeepSeek");
-  if (has(process.env.GROQ_API_KEY)) providers.push("Groq");
-  if (has(process.env.TOGETHER_API_KEY)) providers.push("Together");
   if (has(process.env.OPENROUTER_API_KEY)) providers.push("OpenRouter");
-  if (has(process.env.ANTHROPIC_API_KEY)) providers.push("Claude/Anthropic (last)");
+  if (has(process.env.OPENAI_API_KEY)) providers.push("OpenAI");
+  if (has(process.env.GROQ_API_KEY)) providers.push("Groq");
+  if (has(process.env.DEEPSEEK_API_KEY)) providers.push("DeepSeek");
+  if (has(process.env.ANTHROPIC_API_KEY)) providers.push("Claude/Anthropic");
   return providers;
 }
 
-function hasAnyAiProvider(): boolean {
-  return configuredAiProviders().length > 0;
-}
+async function databaseChecks(): Promise<ReadinessCheck[]> {
+  try {
+    await prismaReady;
+    await prisma.$queryRawUnsafe("SELECT 1");
 
-function aiProviderDetail(): string {
-  const providers = configuredAiProviders();
-  if (providers.length === 0) {
-    return "No AI provider key set. Configure at least one of OPENAI_API_KEY, GEMINI_API_KEY, MISTRAL_API_KEY, DEEPSEEK_API_KEY, GROQ_API_KEY, TOGETHER_API_KEY, OPENROUTER_API_KEY, or ANTHROPIC_API_KEY. Without any AI key, complex PDFs fall back to weaker regex extraction and imported records remain REGEX_DRAFT.";
-  }
-  const extractionNote = has(process.env.GEMINI_API_KEY)
-    ? "Gemini analysis/extraction is configured."
-    : "Gemini analysis/extraction is not configured; analysis may use later fallbacks and can degrade to regex if providers fail.";
-  return `Configured providers in default proposal order: ${providers.join(" → ")}. ${extractionNote} Claude/Anthropic is intentionally last.`;
-}
+    const functionRows = await prisma.$queryRawUnsafe<Array<{ proname: string }>>(
+      `SELECT proname FROM pg_proc WHERE proname IN ('resolve_tender_requirement_source_file', 'guard_canonical_requirement_set_delete', 'refresh_submission_plan_state')`,
+    );
+    const functions = new Set(functionRows.map((row) => row.proname));
+    const missingFunctions = [
+      "resolve_tender_requirement_source_file",
+      "guard_canonical_requirement_set_delete",
+      "refresh_submission_plan_state",
+    ].filter((name) => !functions.has(name));
 
-export function getSystemReadiness(): SystemReadiness {
-  const databaseUrl = process.env.DATABASE_URL ?? "";
-  const isSqlite =
-    databaseUrl.startsWith("file:") ||
-    databaseUrl.includes("/tmp/app.db") ||
-    databaseUrl.length === 0;
+    const tableRows = await prisma.$queryRawUnsafe<Array<{ submissionPlanState: string | null; resetToken: string | null; rateLimit: string | null }>>(
+      `SELECT
+        to_regclass('"SubmissionPlanState"')::text AS "submissionPlanState",
+        to_regclass('"PasswordResetToken"')::text AS "resetToken",
+        to_regclass('"RateLimitBucket"')::text AS "rateLimit"`,
+    );
+    const tables = tableRows[0];
+    const missingTables = [
+      !tables?.submissionPlanState ? "SubmissionPlanState" : null,
+      !tables?.resetToken ? "PasswordResetToken" : null,
+      !tables?.rateLimit ? "RateLimitBucket" : null,
+    ].filter(Boolean) as string[];
 
-  const checks: ReadinessCheck[] = [
-    {
+    return [
+      {
+        key: "database",
+        title: "PostgreSQL connectivity",
+        severity: "OK",
+        requiredForProduction: true,
+        detail: "Database connection and Prisma client are operational.",
+      },
+      {
+        key: "database_guards",
+        title: "Required database guards",
+        severity: missingFunctions.length === 0 && missingTables.length === 0 ? "OK" : "CRITICAL",
+        requiredForProduction: true,
+        detail: missingFunctions.length === 0 && missingTables.length === 0
+          ? "Required functions and security tables are installed."
+          : `Missing migration objects: ${[...missingFunctions, ...missingTables].join(", ")}. Run prisma migrate deploy.`,
+      },
+    ];
+  } catch (error) {
+    return [{
       key: "database",
-      title: "Persistent PostgreSQL database",
-      severity: isSqlite ? "CRITICAL" : "OK",
+      title: "PostgreSQL connectivity",
+      severity: "CRITICAL",
       requiredForProduction: true,
-      detail: isSqlite
-        ? "The app is not connected to a persistent PostgreSQL database. SQLite cannot store company knowledge permanently."
-        : "DATABASE_URL is configured. Verify it points to a managed PostgreSQL provider (Neon, Supabase, Railway, etc.).",
-    },
-    {
-      key: "ai_extraction",
-      title: "AI provider chain",
-      // OK when any supported provider is configured. The default proposal and
-      // validation chain is Gemini → OpenAI → Mistral → Together → DeepSeek → Groq → OpenRouter →
-      // Claude. Claude remains
-      // last so Anthropic rate limits cannot block the app when earlier
-      // providers are available.
-      severity: hasAnyAiProvider() ? "OK" : "CRITICAL",
-      requiredForProduction: true,
-      detail: aiProviderDetail(),
-    },
+      detail: `Database or migration readiness failed (${error instanceof Error ? error.constructor.name : "UnknownError"}).`,
+    }];
+  }
+}
+
+export async function getSystemReadiness(): Promise<SystemReadiness> {
+  const checks = await databaseChecks();
+  const configuredProviders = configuredAiProviders();
+  const storageProvider = resolveStorageProvider();
+  const production = process.env.NODE_ENV === "production" || Boolean(process.env.VERCEL_ENV);
+  const strongSessionSecret = (process.env.SESSION_SECRET ?? process.env.AUTH_SECRET ?? "").length >= 32;
+  const smtpConfigured = has(process.env.SMTP_HOST) && has(process.env.SMTP_USER) && has(process.env.SMTP_PASS) && has(process.env.EMAIL_FROM);
+  const durableStorage = storageProvider === "blob" || (storageProvider === "db-base64" && process.env.ALLOW_DB_FILE_STORAGE === "true");
+
+  checks.push(
     {
       key: "session_secret",
-      title: "Session secret",
-      severity:
-        has(process.env.SESSION_SECRET) || has(process.env.AUTH_SECRET) ? "OK" : "WARNING",
+      title: "Session signing secret",
+      severity: strongSessionSecret ? "OK" : "CRITICAL",
       requiredForProduction: true,
-      detail:
-        has(process.env.SESSION_SECRET) || has(process.env.AUTH_SECRET)
-          ? "A session/auth secret appears configured."
-          : "No SESSION_SECRET or AUTH_SECRET detected. Configure one stable secret for production sessions.",
+      detail: strongSessionSecret ? "A sufficiently long session secret is configured." : "Configure SESSION_SECRET or AUTH_SECRET with at least 32 characters.",
     },
     {
       key: "file_storage",
-      title: "Durable file storage",
-      severity:
-        has(process.env.BLOB_READ_WRITE_TOKEN) || has(process.env.S3_BUCKET) ? "OK" : "WARNING",
+      title: "Durable private file storage",
+      severity: !production || durableStorage ? "OK" : "CRITICAL",
       requiredForProduction: true,
-      detail:
-        has(process.env.BLOB_READ_WRITE_TOKEN) || has(process.env.S3_BUCKET)
-          ? "A durable file storage configuration appears present."
-          : "No durable file storage token configured. Current database base64 storage is only suitable for small-scale testing.",
+      detail: !production || durableStorage
+        ? `Storage provider: ${storageProvider}.`
+        : "Production requires Vercel Blob or an explicitly approved durable database storage mode.",
     },
-  ];
+    {
+      key: "ai_providers",
+      title: "AI provider chain",
+      severity: configuredProviders.length > 0 ? "OK" : "CRITICAL",
+      requiredForProduction: true,
+      detail: configuredProviders.length > 0
+        ? `Configured providers in policy order: ${configuredProviders.join(" → ")}.`
+        : `Configure at least one provider. Policy order: ${REQUIRED_PROVIDER_ORDER.join(" → ")}.`,
+    },
+    {
+      key: "email",
+      title: "Password reset email delivery",
+      severity: !production || smtpConfigured ? "OK" : "CRITICAL",
+      requiredForProduction: true,
+      detail: smtpConfigured ? "SMTP delivery is configured." : "SMTP_HOST, SMTP_USER, SMTP_PASS and EMAIL_FROM are required for production password reset.",
+    },
+    {
+      key: "worker_auth",
+      title: "Background worker authentication",
+      severity: has(process.env.AI_JOBS_WORKER_SECRET) || has(process.env.CRON_SECRET) ? "OK" : "WARNING",
+      requiredForProduction: false,
+      detail: has(process.env.AI_JOBS_WORKER_SECRET) || has(process.env.CRON_SECRET)
+        ? "At least one worker authentication secret is configured."
+        : "No worker or cron secret is configured; only user-scoped workers can run.",
+    },
+  );
 
   return {
-    productionReady: checks.every((check) => check.severity !== "CRITICAL"),
+    productionReady: checks.every((check) => !check.requiredForProduction || check.severity === "OK"),
     checks,
   };
 }
