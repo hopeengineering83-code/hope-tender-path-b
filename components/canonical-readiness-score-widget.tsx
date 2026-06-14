@@ -58,8 +58,8 @@ function severityToClass(score: number): { text: string; bg: string; bar: string
 
 function analysisSourceLabel(source: ReadinessSummary["analysisSource"]): { label: string; tone: "ok" | "warn" | "bad" } {
   if (source === "AI") return { label: "AI", tone: "ok" };
-  if (source === "HUMAN_APPROVED_REGEX_FALLBACK") return { label: "Regex (human-approved)", tone: "warn" };
-  if (source === "REGEX_FALLBACK_AI_ERROR") return { label: "Regex fallback — unapproved", tone: "bad" };
+  if (source === "HUMAN_APPROVED_REGEX_FALLBACK") return { label: "Approved for draft review only", tone: "warn" };
+  if (source === "REGEX_FALLBACK_AI_ERROR") return { label: "Untrusted extraction", tone: "bad" };
   return { label: "Unknown", tone: "warn" };
 }
 

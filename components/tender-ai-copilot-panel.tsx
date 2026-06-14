@@ -130,7 +130,7 @@ export function TenderAICopilotPanel({ tenderId }: { tenderId: string }) {
           <h3 className="text-sm font-semibold text-slate-900">Tender AI Copilot</h3>
           <p className="mt-0.5 text-xs text-slate-500">Ask strategic questions about this tender using requirements, gaps, selected experts/projects, documents, controls, and audit context.</p>
         </div>
-        {response && <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${SEVERITY_BADGE[response.confidence]}`}>Confidence {response.confidence}</span>}
+        {response && <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${SEVERITY_BADGE[response.confidence]}`}>Confidence {response.confidence}{response.confidence === "LOW" && " (untrusted analysis)"}</span>}
       </div>
 
       {error && <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700">{error}</div>}

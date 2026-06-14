@@ -1490,7 +1490,7 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
       : clientNameInvalid
         ? "Client/procuring entity name is missing or invalid — run AI Analyze or enter it manually before generating"
         : analysisIsFallbackUnapproved
-          ? "Analysis used regex fallback — retry AI Analyze or approve the fallback before generating"
+          ? "Analysis used regex fallback — re-extract and re-run AI Analyze or approve the fallback before generating"
           : tender.requirements.length === 0
             ? "Run AI Analyze or Run Engine first to extract requirements"
             : !hasValidPlan
@@ -1520,7 +1520,7 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
   const clientNameMissing = !tender.clientName && !tender.procuringEntityName;
   const submissionEndpointMissing = !tender.submissionMethod && !tender.submissionEmails && !tender.submissionAddress;
   const zipDisabledReason = analysisIsFallbackUnapproved
-    ? "Analysis source is unapproved regex fallback — approve or retry AI Analyze first"
+    ? "Analysis source is unapproved regex fallback — approve or re-extract and re-run AI Analyze first"
     : !hasAnyGeneratedDoc
       ? "No generated documents yet — generate documents before downloading"
       : (tender.metadataContaminated ?? false)
@@ -1627,7 +1627,7 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
               <span>
                 Previous analysis was interrupted
                 {pct !== null ? ` at ${pct}% (${partial.completedChunks}/${partial.totalChunks} chunks)` : ""}.
-                Click <strong>AI Analyze</strong> to resume from where it left off.
+                Click <strong>Resume AI Analyze</strong> to resume from where it left off.
               </span>
               <button
                 onClick={() => { setContinueJobId(null); setTender((t) => ({ ...t, latestPartialAnalysisJob: null })); }}
@@ -1645,7 +1645,7 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
             <button onClick={handleAnalyzeStreaming} disabled={analyzing}
               title={analyzing && analyzePhase ? analyzePhase : undefined}
               className="rounded-lg bg-purple-600 px-3 py-2 text-sm text-white hover:bg-purple-700 disabled:opacity-50">
-              {analyzing ? (analyzePhase ? `${analyzePhase.slice(0, 28)}…` : "Analyzing…") : continueJobId ? "✦ Resume AI Analyze" : "✦ AI Analyze"}
+              {analyzing ? (analyzePhase ? `${analyzePhase.slice(0, 28)}…` : "Analyzing…") : continueJobId ? "✦ Resume AI Analyze" : "✦ Run AI Analyze"}
             </button>
           )}
           {aiEnabled && (
@@ -1823,7 +1823,7 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
       {analysisIsFallbackUnapproved && !analyzeResult?.fallback && (
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm">
           <p className="font-semibold text-amber-800">Analysis used regex fallback — AI providers were unavailable.</p>
-          <p className="mt-1 text-xs text-amber-700">Document generation is blocked until you either retry AI Analyze (recommended) or approve the fallback analysis with a note.</p>
+          <p className="mt-1 text-xs text-amber-700">Document generation is blocked until you either re-extract and re-run AI Analyze (recommended) or approve the fallback analysis with a note.</p>
           <div className="mt-2 flex flex-wrap gap-2">
             {aiEnabled && (
               <button
@@ -1831,7 +1831,7 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
                 disabled={analyzing}
                 className="rounded bg-purple-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-purple-700 disabled:opacity-50"
               >
-                {analyzing ? "Analyzing…" : "✦ Retry AI Analyze"}
+                {analyzing ? "Analyzing…" : "✦ Run OCR / Re-extract before AI Analyze"}
               </button>
             )}
             <div className="flex flex-1 min-w-0 gap-1">
@@ -1880,7 +1880,7 @@ export function TenderDetail({ tender: initial, aiEnabled }: { tender: Tender; a
               )}
               {analyzeResult.fallback && (
                 <div className="mt-2 space-y-2">
-                  <p className="text-xs text-amber-700">AI providers unavailable — regex fallback used. Approve the fallback to unblock document generation, or retry AI Analyze when providers recover.</p>
+                  <p className="text-xs text-amber-700">AI providers unavailable — regex fallback used. Approve the fallback to unblock document generation, or re-extract and re-run AI Analyze when providers recover.</p>
                   {analyzeResult.providerDiagnostics && (() => {
                     const configured = analyzeResult.providerDiagnostics.perProvider.filter((p) => p.configured);
                     const notConfigured = analyzeResult.providerDiagnostics.perProvider.filter((p) => !p.configured);

@@ -34,7 +34,7 @@ const STATUS_LABELS: Record<string, { title: string; detail: string; risk: "HIGH
     risk: "HIGH",
   },
   REGEX_FALLBACK_FROM_WEAK_EXTRACTION: {
-    title: "Regex fallback (weak extraction)",
+    title: "Untrusted extraction (regex fallback)",
     detail: "AI providers were unavailable or failed, and extraction quality was too weak for reliable regex parsing. Results are unreliable — re-run after fixing extraction and provider health.",
     risk: "HIGH",
   },
@@ -58,7 +58,7 @@ const RECOVERY_STEPS: Record<string, string[]> = {
   ],
   REGEX_FALLBACK_FROM_WEAK_EXTRACTION: [
     "Check the AI Health panel — verify at least one AI provider (Gemini, OpenAI, Mistral) is configured and healthy.",
-    "Fix extraction quality first (see Extraction Quality panel).",
+    "Fix Extraction First — check quality panel (see Extraction Quality panel).",
     "Then re-run AI Analyze from the Engine Action panel.",
   ],
   PARTIAL_EXTRACTION_AI_ANALYZED: [

@@ -10,7 +10,7 @@ import { inferSector } from "../lib/engine/proposal-intelligence";
 
 function analysisSourceSummary(source: Awaited<ReturnType<typeof detectAnalysisSourceWithApproval>>) {
   if (source === "AI") return { label: "AI", risk: "LOW" as const, detail: "Analysis produced by AI provider." };
-  if (source === "HUMAN_APPROVED_REGEX_FALLBACK") return { label: "Regex fallback (approved)", risk: "MEDIUM" as const, detail: "Regex fallback was used, but a human reviewer has approved it as sufficient." };
+  if (source === "HUMAN_APPROVED_REGEX_FALLBACK") return { label: "Regex fallback (approved)", risk: "MEDIUM" as const, detail: "Approved for draft review only. Final export requires reliable extraction or explicit admin override." };
   if (source === "REGEX_FALLBACK_AI_ERROR") return { label: "Regex fallback", risk: "HIGH" as const, detail: "AI providers failed or were unavailable — regex extraction was used. Review carefully before submission." };
   return { label: "Unknown", risk: "MEDIUM" as const, detail: "Analysis source not yet determined. Run AI Analyze to classify the source." };
 }
@@ -163,7 +163,7 @@ export async function AnalysisQualityPanel({ tenderId }: { tenderId: string }) {
         </div>
         <p className="mt-1 text-slate-600">{analysisSource.detail}</p>
         {analysisSource.risk === "HIGH" && (
-          <p className="mt-2 text-red-700">High risk: regex fallback can miss exact forms, evaluation scoring, file names, submission instructions, and expert/project requirements. Re-check extraction quality and AI provider health, then re-run Engine.</p>
+          <p className="mt-2 text-red-700">High risk: untrusted extraction can miss exact forms, evaluation scoring, file names, submission instructions, and expert/project requirements. Re-check extraction quality and AI provider health, then re-run Engine.</p>
         )}
       </div>
 
