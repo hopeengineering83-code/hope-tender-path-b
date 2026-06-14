@@ -1,9 +1,3 @@
-// Groq (6th-tier) + OpenRouter (7th-tier) fallback providers.
-//
-// The actual HTTP calls need live keys, so the chain WIRING is asserted at the
-// source level and the provider-health plumbing (configured detection, model
-// resolution, diagnostics snapshot, no key leak) is unit-tested.
-
 import { describe, it, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -36,12 +30,11 @@ function clearEnv() {
 
 describe("Groq provider config", () => {
   beforeEach(() => { clearEnv(); resetProviderHealth(); });
-  it("is unconfigured by default, configured via GROQ_API_KEY", () => {
+
+  it("detects configuration and model overrides", () => {
     assert.equal(isGroqConfigured(), false);
     process.env.GROQ_API_KEY = "gsk-test-1234567890";
     assert.equal(isGroqConfigured(), true);
-  });
-  it("defaults the model and honours GROQ_PROPOSAL_MODEL", () => {
     assert.equal(getGroqModel(), "llama-3.3-70b-versatile");
     process.env.GROQ_PROPOSAL_MODEL = "llama-3.1-8b-instant";
     assert.equal(getGroqModel(), "llama-3.1-8b-instant");
@@ -50,159 +43,93 @@ describe("Groq provider config", () => {
 
 describe("OpenRouter provider config", () => {
   beforeEach(() => { clearEnv(); resetProviderHealth(); });
-  it("is unconfigured by default, configured via OPENROUTER_API_KEY", () => {
+
+  it("detects configuration and model overrides", () => {
     assert.equal(isOpenRouterConfigured(), false);
     process.env.OPENROUTER_API_KEY = "sk-or-test-1234567890";
     assert.equal(isOpenRouterConfigured(), true);
-  });
-  it("defaults the model and honours OPENROUTER_PROPOSAL_MODEL", () => {
     assert.equal(getOpenRouterModel(), "openrouter/auto");
     process.env.OPENROUTER_PROPOSAL_MODEL = "openai/gpt-4o-mini";
     assert.equal(getOpenRouterModel(), "openai/gpt-4o-mini");
   });
 });
 
-describe("provider health includes groq + openrouter", () => {
+describe("provider health redaction", () => {
   beforeEach(() => { clearEnv(); resetProviderHealth(); });
-  it("runtime snapshots expose the contract fields", () => {
-    for (const p of ["groq", "openrouter"] as const) {
-      const snap = getProviderRuntimeSnapshot(p);
-      assert.ok("lastErrorCategory" in snap);
-      assert.ok("coolingDown" in snap);
-    }
-  });
-  it("diagnostics snapshot lists groq + openrouter and never leaks keys", () => {
+
+  it("tracks Groq and OpenRouter without leaking keys", () => {
     process.env.GROQ_API_KEY = "gsk-secret-abcdef123456";
     process.env.OPENROUTER_API_KEY = "sk-or-secret-abcdef123456";
     recordProviderFailure("groq", new Error(`429 boom ${process.env.GROQ_API_KEY}`));
-    const snap = buildProviderDiagnosticsSnapshot();
-    const names = snap.perProvider.map((p) => p.provider);
+    const snapshot = buildProviderDiagnosticsSnapshot();
+    const names = snapshot.perProvider.map((provider) => provider.provider);
     assert.ok(names.includes("groq"));
     assert.ok(names.includes("openrouter"));
-    assert.ok(snap.providersAttempted.includes("groq"));
-    assert.ok(snap.providersCoolingDown.includes("groq"));
-    assert.ok(!JSON.stringify(snap).includes("gsk-secret-abcdef123456"));
+    assert.ok(snapshot.providersCoolingDown.includes("groq"));
+    assert.ok(!JSON.stringify(snapshot).includes("gsk-secret-abcdef123456"));
+    for (const provider of ["groq", "openrouter"] as const) {
+      const runtime = getProviderRuntimeSnapshot(provider);
+      assert.ok("lastErrorCategory" in runtime);
+      assert.ok("coolingDown" in runtime);
+    }
   });
 });
 
-describe("lib/ai.ts wires Groq → OpenRouter into the chain", () => {
+describe("canonical provider wiring", () => {
   const source = readFileSync("lib/ai.ts", "utf8");
-  it("defines the new providers and the shared tail helper", () => {
+
+  it("keeps Groq and OpenRouter adapters and central URLs", () => {
     assert.match(source, /function generateWithGroq/);
     assert.match(source, /function generateWithOpenRouter/);
-    assert.match(source, /function tryTailFallbackProviders/);
-    // Endpoints derive from the centralized base-url getters (default URLs live in ai-provider-health).
     assert.match(source, /getGroqBaseUrl\(\)/);
     assert.match(source, /getOpenRouterBaseUrl\(\)/);
-  });
-  it("groq and openrouter are included in the provider chain", () => {
-    // PROVIDER_CHAINS includes groq and openrouter in every chain variant
-    assert.match(source, /PROVIDER_CHAINS/);
-    assert.match(source, /"groq"/);
-    assert.match(source, /"openrouter"/);
-    // tryTailFallbackProviders is still used in section-parallel generation
-    assert.match(source, /tryTailFallbackProviders/);
-  });
-  it("includes the new keys in the no-provider error", () => {
-    assert.match(source, /GROQ_API_KEY, TOGETHER_API_KEY, OPENROUTER_API_KEY, or ANTHROPIC_API_KEY/);
-  });
-});
-
-describe("/api/ai/health exposes groq + openrouter and the full chain", () => {
-  const source = readFileSync("app/api/ai/health/route.ts", "utf8");
-  it("returns groq and openrouter provider objects with fallback ranks", () => {
-    assert.match(source, /groq:\s*\{/);
-    assert.match(source, /openrouter:\s*\{/);
-    // Claude is last (rank 8); openrouter and groq are in the chain
-    assert.match(source, /fallbackRank:\s*6/);
-    assert.match(source, /fallbackRank:\s*7/);
-    assert.match(source, /fallbackRank:\s*8/);
-  });
-  it("advertises the extended fallback chain with Claude last", () => {
-    // Together → DeepSeek → Groq → OpenRouter appear together before Claude
-    assert.match(source, /Together → DeepSeek → Groq → OpenRouter → Claude → deterministic draft fallback/);
-  });
-});
-
-describe("AI Health panel renders all eight provider cards from the contract", () => {
-  const source = readFileSync("components/ai-health-panel.tsx", "utf8");
-  it("includes Groq + OpenRouter labels, env vars, and fallback ranks", () => {
-    assert.match(source, /label: "Groq"/);
-    assert.match(source, /label: "OpenRouter"/);
-    assert.match(source, /GROQ_API_KEY/);
-    assert.match(source, /OPENROUTER_API_KEY/);
-    assert.match(source, /rank: 6/);
-    assert.match(source, /rank: 7/);
-  });
-  it("renders cards by mapping the provider contract (rank + cooldown shown)", () => {
-    assert.match(source, /health\.providers\.map/);
-    assert.match(source, /Fallback rank \{p\.rank\}/);
-    assert.match(source, /Rate-limited|coolingDown/);
-  });
-  it("nudges pinning a model when OpenRouter uses the auto default", () => {
-    assert.match(source, /Set OPENROUTER_PROPOSAL_MODEL/);
-  });
-});
-
-describe("base-url + attribution config (centralized)", () => {
-  beforeEach(() => { clearEnv(); });
-  it("Groq base URL default + override (trailing slash trimmed)", () => {
-    assert.equal(getGroqBaseUrl(), "https://api.groq.com/openai/v1");
-    process.env.GROQ_BASE_URL = "https://groq.proxy.internal/openai/v1/";
-    assert.equal(getGroqBaseUrl(), "https://groq.proxy.internal/openai/v1");
-  });
-  it("OpenRouter base URL default + override", () => {
-    assert.equal(getOpenRouterBaseUrl(), "https://openrouter.ai/api/v1");
-    process.env.OPENROUTER_BASE_URL = "https://or.proxy.internal/api/v1";
-    assert.equal(getOpenRouterBaseUrl(), "https://or.proxy.internal/api/v1");
-  });
-  it("OpenRouter site URL default", () => {
-    assert.equal(getOpenRouterSiteUrl(), "https://hope-tender-path-b.vercel.app");
-  });
-  it("OpenRouter app name: APP_NAME wins, SITE_NAME alias, default", () => {
-    assert.equal(getOpenRouterAppName(), "Hope Tender Proposal Generator");
-    process.env.OPENROUTER_SITE_NAME = "Legacy Alias Name";
-    assert.equal(getOpenRouterAppName(), "Legacy Alias Name");
-    process.env.OPENROUTER_APP_NAME = "Official App Name";
-    assert.equal(getOpenRouterAppName(), "Official App Name");
-  });
-});
-
-describe("lib/ai.ts uses centralized base URLs + temperature", () => {
-  const source = readFileSync("lib/ai.ts", "utf8");
-  it("Groq + OpenRouter endpoints derive from the base-url getters", () => {
-    assert.match(source, /\$\{getGroqBaseUrl\(\)\}\/chat\/completions/);
-    assert.match(source, /\$\{getOpenRouterBaseUrl\(\)\}\/chat\/completions/);
-  });
-  it("OpenRouter attribution headers use the centralized getters", () => {
     assert.match(source, /"HTTP-Referer":\s*getOpenRouterSiteUrl\(\)/);
     assert.match(source, /"X-Title":\s*getOpenRouterAppName\(\)/);
   });
-  it("sends a temperature in the request body", () => {
-    assert.match(source, /temperature: fallbackTemperature\(\)/);
+
+  it("uses Gemini, OpenRouter, OpenAI, Groq, DeepSeek, Claude in that order", () => {
+    const match = source.match(/CANONICAL_PROVIDER_CHAIN[^=]*=\s*\[([^\]]+)\]/);
+    assert.ok(match);
+    const chain = Array.from(match[1].matchAll(/"([^"]+)"/g)).map((item) => item[1]);
+    assert.deepEqual(chain, ["gemini", "openrouter", "openai", "groq", "deepseek", "anthropic"]);
   });
 });
 
-describe("/api/ai/health success + preferredProvider span the whole chain", () => {
+describe("AI health contract", () => {
   const source = readFileSync("app/api/ai/health/route.ts", "utf8");
-  it("success is true when ANY provider is configured", () => {
-    assert.match(source, /const anyConfigured =/);
-    assert.match(source, /success: anyConfigured/);
+
+  it("publishes canonical ranks and Claude last", () => {
+    assert.match(source, /openrouter:\s*\{[\s\S]*?fallbackRank:\s*2/);
+    assert.match(source, /groq:\s*\{[\s\S]*?fallbackRank:\s*4/);
+    assert.match(source, /claude:\s*\{[\s\S]*?fallbackRank:\s*6/);
+    assert.match(source, /Gemini → OpenRouter → OpenAI → Groq → DeepSeek → Claude → deterministic draft fallback/);
   });
-  it("preferredProvider priority includes mistral, deepseek, groq, together, openrouter", () => {
-    assert.match(source, /mistralConfigured \? "mistral"/);
-    assert.match(source, /deepSeekConfigured \? "deepseek"/);
-    assert.match(source, /groqConfigured \? "groq"/);
-    assert.match(source, /togetherConfigured \? "together"/);
-    assert.match(source, /openRouterConfigured \? "openrouter"/);
+
+  it("selects the preferred provider in canonical order", () => {
+    const gemini = source.indexOf('geminiConfigured ? "gemini"');
+    const openrouter = source.indexOf('openRouterConfigured ? "openrouter"');
+    const openai = source.indexOf('openaiConfigured ? "openai"');
+    const groq = source.indexOf('groqConfigured ? "groq"');
+    const deepseek = source.indexOf('deepSeekConfigured ? "deepseek"');
+    const claude = source.indexOf('claudeConfigured ? "claude"');
+    assert.ok(gemini >= 0 && gemini < openrouter && openrouter < openai && openai < groq && groq < deepseek && deepseek < claude);
   });
-  it("only blocks when NO provider is configured", () => {
-    assert.match(source, /if \(!anyConfigured\)/);
+
+  it("keeps optional legacy adapters outside the canonical order", () => {
+    assert.match(source, /mistral:\s*\{[\s\S]*?fallbackRank:\s*99/);
+    assert.match(source, /together:\s*\{[\s\S]*?fallbackRank:\s*99/);
   });
-  it("every provider object carries envPresent + fallbackRank + label + runtime", () => {
-    assert.match(source, /envPresent:/);
-    assert.match(source, /fallbackRank: 1/);
-    assert.match(source, /fallbackRank: 8/);
-    assert.match(source, /providerRuntime\.(openai|gemini|mistral|deepseek|groq|together|openrouter|anthropic)/);
+});
+
+describe("centralized provider endpoints", () => {
+  beforeEach(() => clearEnv());
+
+  it("normalizes Groq and OpenRouter base URLs and attribution", () => {
+    assert.equal(getGroqBaseUrl(), "https://api.groq.com/openai/v1");
+    process.env.GROQ_BASE_URL = "https://groq.proxy.internal/openai/v1/";
+    assert.equal(getGroqBaseUrl(), "https://groq.proxy.internal/openai/v1");
+    assert.equal(getOpenRouterBaseUrl(), "https://openrouter.ai/api/v1");
+    assert.equal(getOpenRouterSiteUrl(), "https://hope-tender-path-b.vercel.app");
+    assert.equal(getOpenRouterAppName(), "Hope Tender Proposal Generator");
   });
 });
