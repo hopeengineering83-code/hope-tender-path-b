@@ -26,10 +26,11 @@ import { RECOVERY_COMMAND_ACTIONS, getRecoveryCommandActionSpec, renderRecoveryA
 // must point to routes that exist inside the Next.js app.
 // We enumerate the known-safe target paths so any future addition is caught.
 const KNOWN_SAFE_NAVIGATE_TARGETS = new Set([
-  "/dashboard/analytics",        // CONFIGURE_AI_PROVIDER
-  "/dashboard/company/readiness", // OPEN_COMPANY_READINESS
-  "/dashboard/matching",          // REVIEW_MATCHES, REVIEW_MATCHING_INPUTS, OPEN_KNOWLEDGE_REVIEW
-  "/dashboard/settings",          // OPEN_SETTINGS
+  "/dashboard",                    // OPEN_DASHBOARD, OPEN_TENDER_LIST
+  "/dashboard/analytics",          // CONFIGURE_AI_PROVIDER
+  "/dashboard/company/readiness",  // OPEN_COMPANY_READINESS
+  "/dashboard/matching",           // REVIEW_MATCHES, REVIEW_MATCHING_INPUTS, OPEN_KNOWLEDGE_REVIEW
+  "/dashboard/settings",           // OPEN_SETTINGS
   // /dashboard/vault was the old LINK_VAULT_EVIDENCE target — it does NOT exist
   // and must never appear in the component.
 ]);
@@ -66,7 +67,21 @@ const KNOWN_NEXT_ACTIONS = [
   "REVIEW_MATCHING_INPUTS",
   "REVIEW_REQUIREMENTS_OR_ADD_MANUAL_PLAN",
   "RUN_ENGINE",
+  "RUN_ENGINE_OR_APPROVE_ANALYSIS",
+  "RUN_ENGINE_SAFE_MODE",
   "RUN_OCR_OR_UPLOAD_CLEARER_SCAN",
+  "FILL_CLIENT_METADATA",
+  "REVIEW_METADATA",
+  "RECHECK_EXPORT_READINESS",
+  "OPEN_DASHBOARD",
+  "OPEN_TENDER_LIST",
+  "SET_MANDATORY_REQUIREMENTS_OR_ADD_FILE_NAMES",
+  "WAIT_FOR_CURRENT_GENERATION",
+  "RETRY_AFTER_BACKOFF",
+  "RETRY_AFTER_DATABASE_CHECK",
+  "RETRY_AS_BACKGROUND_JOB",
+  "RETRY_OR_CONTACT_SUPPORT",
+  "RETRY_OR_REDUCE_INPUT",
   "UPLOAD_TENDER_DOCUMENT",
   "UPLOAD_TENDER_SOURCE",
 ];

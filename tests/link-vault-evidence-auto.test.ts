@@ -152,3 +152,33 @@ describe("link-vault-evidence-auto — response shape", () => {
     assert.ok(routeSource.includes("message"), "response must include a human-readable message");
   });
 });
+
+describe("link-vault-evidence-auto — company-not-found is 422 not 404", () => {
+  it("splits company-not-found from tender-not-found", () => {
+    assert.ok(
+      !routeSource.includes("Tender or company not found"),
+      "route must NOT use the old combined 'Tender or company not found' 404 message — company absence is 422",
+    );
+  });
+
+  it("returns 404 only when tender is missing", () => {
+    assert.ok(
+      routeSource.includes('"Tender not found"') && routeSource.includes("status: 404"),
+      "route must return 404 specifically when the tender is not found",
+    );
+  });
+
+  it("returns 422 with COMPANY_NOT_FOUND code when company is missing", () => {
+    assert.ok(
+      routeSource.includes("COMPANY_NOT_FOUND") && routeSource.includes("status: 422"),
+      "route must return 422 with COMPANY_NOT_FOUND code when the user has no company profile",
+    );
+  });
+
+  it("422 response includes nextAction to direct user to company setup", () => {
+    assert.ok(
+      routeSource.includes("OPEN_COMPANY_READINESS"),
+      "422 company-not-found response must include nextAction: OPEN_COMPANY_READINESS so the Recovery Command Center can surface the action",
+    );
+  });
+});

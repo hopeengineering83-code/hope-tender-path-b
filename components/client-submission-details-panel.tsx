@@ -19,6 +19,7 @@ const SPECS = [
   ["legalClientName", "legalClientName", "Legal client name", "Client", "", "legalClientName"],
   ["donorAgency", "donorAgency", "Donor / funding agency", "Client", "", "donorAgency"],
   ["implementingAgency", "implementingAgency", "Implementing agency", "Client", "", "implementingAgency"],
+  ["reference", "reference", "Procurement / reference number", "Client", "", "reference"],
   ["country", "country", "Country", "Client", "", "country"],
   ["clientCity", "clientCity", "City / location", "Client", "", "clientCity"],
   ["clientAddress", "clientAddress", "Client address", "Client", "", "clientAddress"],

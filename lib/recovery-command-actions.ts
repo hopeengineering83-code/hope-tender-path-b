@@ -330,6 +330,54 @@ export const RECOVERY_COMMAND_ACTIONS: Record<string, RecoveryCommandActionSpec>
     anchorId: "tender-edit-form",
     message: "Open the Tender Detail panel to review and complete tender information.",
   },
+  // Fill / review metadata (auto-finalize and generate route nextAction codes) ──
+  FILL_CLIENT_METADATA: {
+    label: "Fill Client Metadata",
+    kind: "scroll",
+    anchorId: "tender-edit-form",
+    message: "Open the Tender Metadata form and fill in the missing client name and procuring entity details.",
+    aliases: ["REVIEW_METADATA"],
+  },
+  // Re-check export readiness after auto-finalize completes ─────────────────
+  RECHECK_EXPORT_READINESS: {
+    label: "Re-check Export Readiness",
+    kind: "api",
+    method: "GET",
+    path: "/api/tenders/{tenderId}/export-readiness",
+  },
+  // Engine / analysis recovery ───────────────────────────────────────────────
+  RUN_ENGINE_OR_APPROVE_ANALYSIS: {
+    label: "Run Engine or Approve Analysis",
+    kind: "api",
+    method: "POST",
+    path: "/api/tenders/{tenderId}/engine",
+    aliases: ["RUN_ENGINE_SAFE_MODE"],
+  },
+  // Navigation shortcuts for engine/auth error nextActions ──────────────────
+  OPEN_DASHBOARD: {
+    label: "Open Dashboard",
+    kind: "navigate",
+    path: "/dashboard",
+  },
+  OPEN_TENDER_LIST: {
+    label: "Open Tender List",
+    kind: "navigate",
+    path: "/dashboard",
+    aliases: ["LOGIN_AGAIN", "LOGIN_AGAIN_OR_CHECK_ROLE"],
+  },
+  // Requirements / plan setup ───────────────────────────────────────────────
+  SET_MANDATORY_REQUIREMENTS_OR_ADD_FILE_NAMES: {
+    label: "Set Requirements or File Names",
+    kind: "scroll",
+    anchorId: "generated-documents",
+    message: "Open the Generated Documents panel to add mandatory requirements or exact file names to the submission plan.",
+  },
+  // Generation wait / retry ─────────────────────────────────────────────────
+  WAIT_FOR_CURRENT_GENERATION: {
+    label: "Wait — Generation In Progress",
+    kind: "refresh",
+    aliases: ["RETRY_AFTER_BACKOFF", "RETRY_AFTER_DATABASE_CHECK", "RETRY_AS_BACKGROUND_JOB", "RETRY_OR_CONTACT_SUPPORT", "RETRY_OR_REDUCE_INPUT"],
+  },
 };
 
 export function getRecoveryCommandActionSpec(action: string): RecoveryCommandActionSpec | null {
