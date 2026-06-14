@@ -161,7 +161,7 @@ export function TenderSourceFilesPanel({ tenderId, initialFiles }: { tenderId: s
           type="file"
           multiple
           className="sr-only"
-          accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.rtf,.png,.jpg,.jpeg"
+          accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.txt"
           onChange={(event) => {
             const selected = Array.from(event.target.files ?? []);
             event.target.value = "";
@@ -169,7 +169,7 @@ export function TenderSourceFilesPanel({ tenderId, initialFiles }: { tenderId: s
           }}
         />
         <p className="text-sm font-medium text-slate-700">Drop tender documents here</p>
-        <p className="mt-1 text-xs text-slate-500">PDF, Word, Excel, text, and common image formats</p>
+        <p className="mt-1 text-xs text-slate-500">PDF, Word, Excel, text, and CSV files only</p>
         <button
           type="button"
           onClick={() => inputRef.current?.click()}
