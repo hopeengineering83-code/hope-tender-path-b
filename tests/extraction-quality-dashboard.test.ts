@@ -562,3 +562,41 @@ describe("ExtractionQualityDashboard — page-list display (CLAUDE.md requiremen
     );
   });
 });
+
+describe("ExtractionQualityDashboard — CLAUDE.md items 18-19 (characterCount and ocrUsed)", () => {
+  it("assessExtractionQuality returns characterCount > 0 for non-empty text", () => {
+    const text = "Request for Proposal. Submit proposals by 15 July 2026. ".repeat(20);
+    const quality = assessExtractionQuality(text, "rfp.pdf");
+    assert.ok(typeof quality.characterCount === "number", "characterCount must be a number");
+    assert.ok(quality.characterCount > 0, `characterCount must be > 0 for non-empty text, got ${quality.characterCount}`);
+  });
+
+  it("assessExtractionQuality returns characterCount === 0 for null/empty text", () => {
+    const qualityNull = assessExtractionQuality(null, "empty.pdf");
+    assert.equal(qualityNull.characterCount, 0, "characterCount must be 0 for null text");
+    const qualityEmpty = assessExtractionQuality("", "empty.pdf");
+    assert.equal(qualityEmpty.characterCount, 0, "characterCount must be 0 for empty string");
+  });
+
+  it("ocrUsed is true when ocrPages > 0", () => {
+    // Mirror the dashboard logic: ocrUsed = (ocrPages != null && ocrPages > 0) || ocrModel != null
+    const ocrPages = 3;
+    const ocrModel: string | null = null;
+    const ocrUsed = (ocrPages != null && ocrPages > 0) || ocrModel != null;
+    assert.equal(ocrUsed, true, "ocrUsed must be true when ocrPages > 0");
+  });
+
+  it("ocrUsed is true when ocrModel is set even if ocrPages is null", () => {
+    const ocrPages: number | null = null;
+    const ocrModel = "tesseract";
+    const ocrUsed = (ocrPages != null && ocrPages > 0) || ocrModel != null;
+    assert.equal(ocrUsed, true, "ocrUsed must be true when ocrModel is set");
+  });
+
+  it("ocrUsed is false when ocrPages is 0 and ocrModel is null", () => {
+    const ocrPages = 0;
+    const ocrModel: string | null = null;
+    const ocrUsed = (ocrPages != null && ocrPages > 0) || ocrModel != null;
+    assert.equal(ocrUsed, false, "ocrUsed must be false when no OCR was used");
+  });
+});

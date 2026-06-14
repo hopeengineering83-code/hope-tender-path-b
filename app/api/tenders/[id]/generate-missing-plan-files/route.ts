@@ -189,6 +189,27 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   // ── Pre-flight gates (CLAUDE.md: Generate Docs gate — all 6 conditions) ────
 
+  // Gate 0: Block when AI Analyze was skipped or ran on unreliable extraction.
+  // These statuses mean the requirements/metadata were extracted from corrupted
+  // or weak text, so any generated documents would be built on bad foundations.
+  const analysisExtractionStatus = (tender as { analysisExtractionStatus?: string | null }).analysisExtractionStatus;
+  if (analysisExtractionStatus === "OCR_REQUIRED") {
+    return NextResponse.json({
+      success: false, ok: false,
+      code: "ANALYSIS_FROM_CORRUPTED_EXTRACTION",
+      error: "Document generation is blocked: AI Analyze was skipped because tender extraction was corrupted. Re-upload the document or run OCR, then re-run AI Analyze before generating documents.",
+      nextAction: "RUN_OCR_OR_UPLOAD_CLEARER_SCAN",
+    }, { status: 422 });
+  }
+  if (analysisExtractionStatus === "EXTRACTION_WEAK_REVIEW_REQUIRED" || analysisExtractionStatus === "REGEX_FALLBACK_FROM_WEAK_EXTRACTION") {
+    return NextResponse.json({
+      success: false, ok: false,
+      code: "ANALYSIS_FROM_WEAK_EXTRACTION",
+      error: "Document generation is blocked: AI Analyze ran on a weak extraction (low text density or quality). Re-extract the tender (run OCR if needed) and re-run AI Analyze before generating documents.",
+      nextAction: "RERUN_AI_ANALYZE",
+    }, { status: 422 });
+  }
+
   // Gate 1: Extraction quality must be acceptable
   if (tender.files.length > 0) {
     const effectiveFiles = tender.files.map((file) => {
