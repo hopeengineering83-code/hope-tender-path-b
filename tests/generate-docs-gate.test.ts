@@ -13,6 +13,8 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import {
   hasValidSubmissionPlan,
   type SubmissionPlanCheckResult,
@@ -327,8 +329,6 @@ describe("generate gate — AI_ANALYSIS_PARTIAL blocks generation", () => {
   });
 
   it("generate route source includes AI_ANALYSIS_PARTIAL check", async () => {
-    const { readFileSync } = require("node:fs");
-    const { resolve } = require("node:path");
     const src = readFileSync(
       resolve(process.cwd(), "app/api/tenders/[id]/generate/route.ts"),
       "utf8",
@@ -576,8 +576,6 @@ describe("generate-missing-plan-files: gate 5 — required documents pages or ma
 
 describe("generate route — evaluation criteria missing is a hard blocker", () => {
   it("generate route source includes evaluation criteria in the CRITICAL_CONTENT_PAGES_MISSING block", () => {
-    const { readFileSync } = require("node:fs");
-    const { resolve } = require("node:path");
     const src = readFileSync(
       resolve(process.cwd(), "app/api/tenders/[id]/generate/route.ts"),
       "utf8",
@@ -589,8 +587,6 @@ describe("generate route — evaluation criteria missing is a hard blocker", () 
   });
 
   it("evaluation criteria blocker message is in contentBlockers array (not just advisory)", () => {
-    const { readFileSync } = require("node:fs");
-    const { resolve } = require("node:path");
     const src = readFileSync(
       resolve(process.cwd(), "app/api/tenders/[id]/generate/route.ts"),
       "utf8",
@@ -661,8 +657,6 @@ describe("generate-missing-plan-files: gate 6 — submission plan must have been
 
 describe("generate/route.ts, export-readiness.ts, tender-generation-readiness.ts — as-any cast removal", () => {
   it("generate route accesses procuringEntityName directly (no as-Record cast)", () => {
-    const { readFileSync } = require("node:fs");
-    const { resolve } = require("node:path");
     const src = readFileSync(resolve(process.cwd(), "app/api/tenders/[id]/generate/route.ts"), "utf8");
     assert.ok(
       !src.includes('(tender as Record<string, unknown>).procuringEntityName'),
@@ -687,8 +681,6 @@ describe("generate/route.ts, export-readiness.ts, tender-generation-readiness.ts
   });
 
   it("export-readiness.ts accesses procuringEntityName directly (no as-Record cast)", () => {
-    const { readFileSync } = require("node:fs");
-    const { resolve } = require("node:path");
     const src = readFileSync(resolve(process.cwd(), "lib/engine/export-readiness.ts"), "utf8");
     assert.ok(
       !src.includes('(tender as Record<string, unknown>).procuringEntityName'),
@@ -697,8 +689,6 @@ describe("generate/route.ts, export-readiness.ts, tender-generation-readiness.ts
   });
 
   it("tender-generation-readiness.ts has no _t = tender as Record workaround", () => {
-    const { readFileSync } = require("node:fs");
-    const { resolve } = require("node:path");
     const src = readFileSync(resolve(process.cwd(), "lib/tender-generation-readiness.ts"), "utf8");
     assert.ok(
       !src.includes('tender as Record<string, unknown>'),
@@ -711,8 +701,6 @@ describe("generate/route.ts, export-readiness.ts, tender-generation-readiness.ts
   });
 
   it("tender-generation-readiness.ts assessTenderMetadataCompleteness call includes clientAddress, legalClientName, donorAgency, implementingAgency", () => {
-    const { readFileSync } = require("node:fs");
-    const { resolve } = require("node:path");
     const src = readFileSync(resolve(process.cwd(), "lib/tender-generation-readiness.ts"), "utf8");
     assert.ok(
       src.includes("clientAddress: tender.clientAddress"),

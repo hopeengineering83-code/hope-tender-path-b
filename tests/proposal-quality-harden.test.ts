@@ -4,6 +4,7 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { validateDocumentQuality } from "../lib/engine/document-quality-validator";
 import { GENERIC_BOILERPLATE_PATTERNS } from "../lib/engine/detection-patterns";
 
@@ -143,7 +144,7 @@ describe("GENERIC_BOILERPLATE_PATTERNS coverage", () => {
 
 describe("proposal-quality-scorer aiTraceFreedom multiplier hardened to 3", () => {
   it("aiTraceFreedom uses multiplier of 3 per trace hit (not 2)", () => {
-    const src = require("node:fs").readFileSync("lib/engine/proposal-quality-scorer.ts", "utf8");
+    const src = readFileSync("lib/engine/proposal-quality-scorer.ts", "utf8");
     assert.ok(
       src.includes("traces.length * 3"),
       "aiTraceFreedom must use multiplier 3 (was 2) to penalise AI traces more harshly",
@@ -159,13 +160,13 @@ describe("proposal-quality-scorer aiTraceFreedom multiplier hardened to 3", () =
 
 describe("authority-review upgraded to shared detection patterns", () => {
   it("imports AI_TRACE_PATTERNS and PLACEHOLDER_PATTERNS from detection-patterns", () => {
-    const src = require("node:fs").readFileSync("lib/engine/authority-review.ts", "utf8");
+    const src = readFileSync("lib/engine/authority-review.ts", "utf8");
     assert.ok(src.includes("AI_TRACE_PATTERNS"), "must import AI_TRACE_PATTERNS");
     assert.ok(src.includes("PLACEHOLDER_PATTERNS"), "must import PLACEHOLDER_PATTERNS");
   });
 
   it("uses AI_TRACE_PATTERNS.some() for detection (not local regex)", () => {
-    const src = require("node:fs").readFileSync("lib/engine/authority-review.ts", "utf8");
+    const src = readFileSync("lib/engine/authority-review.ts", "utf8");
     assert.ok(
       src.includes("AI_TRACE_PATTERNS.some"),
       "authority-review must use AI_TRACE_PATTERNS.some() for AI trace detection",
@@ -173,7 +174,7 @@ describe("authority-review upgraded to shared detection patterns", () => {
   });
 
   it("uses PLACEHOLDER_PATTERNS.some() for detection (not local regex)", () => {
-    const src = require("node:fs").readFileSync("lib/engine/authority-review.ts", "utf8");
+    const src = readFileSync("lib/engine/authority-review.ts", "utf8");
     assert.ok(
       src.includes("PLACEHOLDER_PATTERNS.some"),
       "authority-review must use PLACEHOLDER_PATTERNS.some() for placeholder detection",
@@ -181,7 +182,7 @@ describe("authority-review upgraded to shared detection patterns", () => {
   });
 
   it("does not use old narrow local AI_TRACE_RE regex", () => {
-    const src = require("node:fs").readFileSync("lib/engine/authority-review.ts", "utf8");
+    const src = readFileSync("lib/engine/authority-review.ts", "utf8");
     assert.ok(
       !src.includes("const AI_TRACE_RE"),
       "old local AI_TRACE_RE constant must be removed in favour of shared AI_TRACE_PATTERNS",
@@ -189,7 +190,7 @@ describe("authority-review upgraded to shared detection patterns", () => {
   });
 
   it("does not use old narrow local PLACEHOLDER_RE regex", () => {
-    const src = require("node:fs").readFileSync("lib/engine/authority-review.ts", "utf8");
+    const src = readFileSync("lib/engine/authority-review.ts", "utf8");
     assert.ok(
       !src.includes("const PLACEHOLDER_RE"),
       "old local PLACEHOLDER_RE constant must be removed in favour of shared PLACEHOLDER_PATTERNS",
