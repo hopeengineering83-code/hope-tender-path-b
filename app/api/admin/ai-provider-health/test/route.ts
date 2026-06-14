@@ -229,14 +229,15 @@ export async function POST(req: Request) {
 
   // Run tests sequentially to avoid simultaneous provider storms.
   // Order mirrors the fallback chain; Claude is last.
+  // Order mirrors the canonical fallback chain: mistral → groq → openrouter → gemini → openai → together → deepseek → claude
   const testers: Array<{ provider: string; run: () => Promise<ProviderTestResult> }> = [
-    { provider: "openai", run: testOpenAI },
-    { provider: "gemini", run: testGemini },
     { provider: "mistral", run: testMistral },
-    { provider: "deepseek", run: testDeepSeek },
     { provider: "groq", run: testGroq },
-    { provider: "together", run: testTogether },
     { provider: "openrouter", run: testOpenRouter },
+    { provider: "gemini", run: testGemini },
+    { provider: "openai", run: testOpenAI },
+    { provider: "together", run: testTogether },
+    { provider: "deepseek", run: testDeepSeek },
     { provider: "claude", run: testAnthropic },
   ];
 
