@@ -1,7 +1,7 @@
 {
   "framework": "nextjs",
-  "buildCommand": "node scripts/check-env.mjs && prisma generate && prisma db push --accept-data-loss=false && next build",
-  "installCommand": "npm install",
+  "buildCommand": "node scripts/check-env.mjs && prisma generate && prisma migrate deploy && next build",
+  "installCommand": "npm ci",
   "crons": [
     {
       "path": "/api/ai-jobs/run-next",
