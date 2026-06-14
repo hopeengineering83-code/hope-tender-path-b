@@ -1,12 +1,16 @@
 import { NextResponse } from "next/server";
-import { getSession } from "../../../../../lib/auth";
+import { getSession, requireRole } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { logAction } from "../../../../../lib/audit";
 import { extractTextFromBuffer, getFileTypeLabel, isMeaningfulExtraction } from "../../../../../lib/extract-text";
 import { importCompanyKnowledgeFromDocuments } from "../../../../../lib/company-knowledge-import-safe";
 import { runCompanyKnowledgeSafetyImport } from "../../../../../lib/company-knowledge-safety-import";
 import { getStorageAdapter } from "../../../../../lib/storage";
-import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../../lib/rate-limit";
+import { rateLimitPersistent, MUTATION_RATE_LIMIT } from "../../../../../lib/rate-limit";
+
+async function companyForUser(userId: string) {
+  return prisma.company.findUnique({ where: { userId } });
+}
 
 export async function GET(
   _req: Request,
@@ -17,54 +21,56 @@ export async function GET(
 
   await prismaReady;
   const { id } = await params;
-
-  const company = await prisma.company.findUnique({ where: { userId } });
+  const company = await companyForUser(userId);
   if (!company) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  const doc = await prisma.companyDocument.findFirst({
-    where: { id, companyId: company.id },
-  });
+  const doc = await prisma.companyDocument.findFirst({ where: { id, companyId: company.id } });
   if (!doc) return NextResponse.json({ error: "Not found" }, { status: 404 });
-
   if (!doc.fileContent && !doc.storagePath) {
     return NextResponse.json({ error: "File content not available" }, { status: 404 });
   }
 
-  let buffer: Buffer;
   try {
-    if (doc.fileContent) {
-      buffer = Buffer.from(doc.fileContent, "base64");
-    } else {
-      buffer = await getStorageAdapter().getFile({ storagePath: doc.storagePath, fileContent: null, fileName: doc.originalFileName });
-    }
+    const buffer = await getStorageAdapter().getFile({
+      storagePath: doc.storagePath,
+      fileContent: doc.fileContent,
+      fileName: doc.originalFileName,
+    });
+    const safeFileName = doc.originalFileName.replace(/[^a-zA-Z0-9._\- ()]/g, "_");
+    return new Response(new Uint8Array(buffer), {
+      headers: {
+        "Content-Type": doc.mimeType || "application/octet-stream",
+        "Content-Disposition": `attachment; filename="${safeFileName}"`,
+        "Content-Length": buffer.length.toString(),
+        "Cache-Control": "private, no-store",
+        "X-Content-Type-Options": "nosniff",
+      },
+    });
   } catch {
     return NextResponse.json({ error: "File content could not be retrieved from storage" }, { status: 502 });
   }
-  const safeFileName = doc.originalFileName.replace(/[^a-zA-Z0-9._\- ()]/g, "_");
-
-  return new Response(new Uint8Array(buffer), {
-    headers: {
-      "Content-Type": doc.mimeType || "application/octet-stream",
-      "Content-Disposition": `attachment; filename="${safeFileName}"`,
-      "Content-Length": buffer.length.toString(),
-    },
-  });
 }
 
 export async function POST(
   _req: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const userId = await getSession();
-  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  let actor;
+  try {
+    actor = await requireRole("ADMIN", "PROPOSAL_MANAGER");
+  } catch {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
 
-  const rl = rateLimit(`doc-reimport:${userId}`, MUTATION_RATE_LIMIT);
-  if (!rl.allowed) return NextResponse.json({ error: "Too many requests", retryAfter: Math.ceil((rl.resetAt - Date.now()) / 1000) }, { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } });
+  const limit = await rateLimitPersistent(`doc-reimport:${actor.id}`, MUTATION_RATE_LIMIT);
+  if (!limit.allowed) {
+    const retryAfter = Math.max(1, Math.ceil((limit.resetAt - Date.now()) / 1000));
+    return NextResponse.json({ error: "Too many requests" }, { status: 429, headers: { "Retry-After": String(retryAfter) } });
+  }
 
   await prismaReady;
   const { id } = await params;
-
-  const company = await prisma.company.findUnique({ where: { userId } });
+  const company = await companyForUser(actor.id);
   if (!company) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   const doc = await prisma.companyDocument.findFirst({ where: { id, companyId: company.id } });
@@ -73,14 +79,15 @@ export async function POST(
 
   let buffer: Buffer;
   try {
-    if (doc.fileContent) {
-      buffer = Buffer.from(doc.fileContent, "base64");
-    } else {
-      buffer = await getStorageAdapter().getFile({ storagePath: doc.storagePath, fileContent: null, fileName: doc.originalFileName });
-    }
+    buffer = await getStorageAdapter().getFile({
+      storagePath: doc.storagePath,
+      fileContent: doc.fileContent,
+      fileName: doc.originalFileName,
+    });
   } catch {
     return NextResponse.json({ error: "File content could not be retrieved from storage" }, { status: 502 });
   }
+
   const extractedText = await extractTextFromBuffer(buffer, doc.mimeType, doc.originalFileName);
   const fileType = getFileTypeLabel(doc.mimeType, doc.originalFileName);
   const meaningful = isMeaningfulExtraction(extractedText);
@@ -115,18 +122,18 @@ export async function POST(
       const emptyResult = { docsScanned: 0, expertsCreated: 0, projectsCreated: 0, expertNamesDetected: 0, projectNamesDetected: 0 };
       const safetyImport = aiSucceeded ? emptyResult : await runCompanyKnowledgeSafetyImport(prisma, company.id);
       knowledgeImport = { ...primary, safetyImport };
-    } catch (err) {
-      knowledgeImportError = err instanceof Error ? err.message : String(err);
-      console.error("[document reextract] knowledge import failed:", err);
+    } catch (error) {
+      knowledgeImportError = error instanceof Error ? error.constructor.name : "UnknownError";
+      console.error("[document reextract] knowledge import failed", { errorClass: knowledgeImportError });
     }
   }
 
   await logAction({
-    userId,
+    userId: actor.id,
     action: "COMPANY_DOCUMENT_REEXTRACT",
     entityType: "CompanyDocument",
     entityId: id,
-    description: `Re-extracted "${doc.originalFileName}" — ${meaningful ? `${extractedText.length.toLocaleString()} chars` : "no text extracted"}`,
+    description: `Re-extracted "${doc.originalFileName}"`,
     metadata: { companyId: company.id, fileName: doc.originalFileName, fileType, extracted: meaningful, knowledgeImport, knowledgeImportError },
   });
 
@@ -143,50 +150,64 @@ export async function DELETE(
   _req: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const userId = await getSession();
-  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  let actor;
+  try {
+    actor = await requireRole("ADMIN", "PROPOSAL_MANAGER");
+  } catch {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
 
-  const rl = rateLimit(`doc-delete:${userId}`, MUTATION_RATE_LIMIT);
-  if (!rl.allowed) return NextResponse.json({ error: "Too many requests", retryAfter: Math.ceil((rl.resetAt - Date.now()) / 1000) }, { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } });
+  const limit = await rateLimitPersistent(`doc-delete:${actor.id}`, MUTATION_RATE_LIMIT);
+  if (!limit.allowed) {
+    const retryAfter = Math.max(1, Math.ceil((limit.resetAt - Date.now()) / 1000));
+    return NextResponse.json({ error: "Too many requests" }, { status: 429, headers: { "Retry-After": String(retryAfter) } });
+  }
 
   await prismaReady;
   const { id } = await params;
-
-  const company = await prisma.company.findUnique({ where: { userId } });
+  const company = await companyForUser(actor.id);
   if (!company) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  const doc = await prisma.companyDocument.findFirst({
-    where: { id, companyId: company.id },
-  });
+  const doc = await prisma.companyDocument.findFirst({ where: { id, companyId: company.id } });
   if (!doc) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  const [draftExpertsRemoved, draftProjectsRemoved] = await Promise.all([
-    prisma.expert.deleteMany({
-      where: {
-        companyId: company.id,
-        sourceDocumentId: id,
-        trustLevel: { in: ["AI_DRAFT", "REGEX_DRAFT"] },
-      },
-    }),
-    prisma.project.deleteMany({
-      where: {
-        companyId: company.id,
-        sourceDocumentId: id,
-        trustLevel: { in: ["AI_DRAFT", "REGEX_DRAFT"] },
-      },
-    }),
-  ]);
+  try {
+    await getStorageAdapter().deleteFile({
+      storagePath: doc.storagePath,
+      fileContent: doc.fileContent,
+      fileName: doc.originalFileName,
+    });
+  } catch {
+    return NextResponse.json({ error: "Stored file could not be deleted safely" }, { status: 502 });
+  }
 
-  await prisma.companyDocument.delete({ where: { id } });
+  const result = await prisma.$transaction(async (tx) => {
+    const draftExpertsRemoved = await tx.expert.deleteMany({
+      where: { companyId: company.id, sourceDocumentId: id, trustLevel: { in: ["AI_DRAFT", "REGEX_DRAFT"] } },
+    });
+    const draftProjectsRemoved = await tx.project.deleteMany({
+      where: { companyId: company.id, sourceDocumentId: id, trustLevel: { in: ["AI_DRAFT", "REGEX_DRAFT"] } },
+    });
+    await tx.companyDocument.delete({ where: { id } });
+    return { draftExpertsRemoved, draftProjectsRemoved };
+  });
 
   await logAction({
-    userId,
+    userId: actor.id,
     action: "COMPANY_DOCUMENT_DELETE",
     entityType: "CompanyDocument",
     entityId: id,
-    description: `Deleted company document "${doc.originalFileName}" (${doc.category}) and removed ${draftExpertsRemoved.count} draft expert(s), ${draftProjectsRemoved.count} draft project(s) sourced from it`,
-    metadata: { companyId: company.id, draftExpertsRemoved: draftExpertsRemoved.count, draftProjectsRemoved: draftProjectsRemoved.count },
+    description: `Deleted company document "${doc.originalFileName}" and its unreviewed derived records`,
+    metadata: {
+      companyId: company.id,
+      draftExpertsRemoved: result.draftExpertsRemoved.count,
+      draftProjectsRemoved: result.draftProjectsRemoved.count,
+    },
   });
 
-  return NextResponse.json({ success: true, draftExpertsRemoved: draftExpertsRemoved.count, draftProjectsRemoved: draftProjectsRemoved.count });
+  return NextResponse.json({
+    success: true,
+    draftExpertsRemoved: result.draftExpertsRemoved.count,
+    draftProjectsRemoved: result.draftProjectsRemoved.count,
+  });
 }

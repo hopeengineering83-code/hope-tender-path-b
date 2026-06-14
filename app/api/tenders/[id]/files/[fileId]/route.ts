@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
-import { getSession } from "../../../../../../lib/auth";
+import { getSession, requireRole } from "../../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../../lib/prisma";
 import { logAction } from "../../../../../../lib/audit";
 import { getStorageAdapter } from "../../../../../../lib/storage";
-import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../../../lib/rate-limit";
+import { rateLimitPersistent, MUTATION_RATE_LIMIT } from "../../../../../../lib/rate-limit";
 
 export async function GET(
   _req: Request,
@@ -14,68 +14,78 @@ export async function GET(
 
   await prismaReady;
   const { id: tenderId, fileId } = await params;
-
-  const tender = await prisma.tender.findFirst({ where: { id: tenderId, userId } });
+  const tender = await prisma.tender.findFirst({ where: { id: tenderId, userId }, select: { id: true } });
   if (!tender) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  const file = await prisma.tenderFile.findFirst({
-    where: { id: fileId, tenderId },
-  });
+  const file = await prisma.tenderFile.findFirst({ where: { id: fileId, tenderId } });
   if (!file) return NextResponse.json({ error: "File not found" }, { status: 404 });
-
   if (!file.fileContent && !file.storagePath) {
     return NextResponse.json({ error: "File content not available" }, { status: 404 });
   }
 
-  let buffer: Buffer;
   try {
-    if (file.fileContent) {
-      buffer = Buffer.from(file.fileContent, "base64");
-    } else {
-      buffer = await getStorageAdapter().getFile({ storagePath: file.storagePath!, fileContent: null, fileName: file.originalFileName });
-    }
+    const buffer = await getStorageAdapter().getFile({
+      storagePath: file.storagePath,
+      fileContent: file.fileContent,
+      fileName: file.originalFileName,
+    });
+    const safeFileName = file.originalFileName.replace(/[^a-zA-Z0-9._\- ()]/g, "_");
+    return new Response(new Uint8Array(buffer), {
+      headers: {
+        "Content-Type": file.mimeType || "application/octet-stream",
+        "Content-Disposition": `attachment; filename="${safeFileName}"`,
+        "Content-Length": buffer.length.toString(),
+        "Cache-Control": "private, no-store",
+        "X-Content-Type-Options": "nosniff",
+      },
+    });
   } catch {
     return NextResponse.json({ error: "File content could not be retrieved from storage" }, { status: 502 });
   }
-  const safeFileName = file.originalFileName.replace(/[^a-zA-Z0-9._\- ()]/g, "_");
-
-  return new Response(new Uint8Array(buffer), {
-    headers: {
-      "Content-Type": file.mimeType || "application/octet-stream",
-      "Content-Disposition": `attachment; filename="${safeFileName}"`,
-      "Content-Length": buffer.length.toString(),
-    },
-  });
 }
 
 export async function DELETE(
   _req: Request,
   { params }: { params: Promise<{ id: string; fileId: string }> },
 ) {
-  const userId = await getSession();
-  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  let actor;
+  try {
+    actor = await requireRole("ADMIN", "PROPOSAL_MANAGER");
+  } catch {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
 
-  const rl = rateLimit(`file-delete:${userId}`, MUTATION_RATE_LIMIT);
-  if (!rl.allowed) return NextResponse.json({ error: "Too many requests", retryAfter: Math.ceil((rl.resetAt - Date.now()) / 1000) }, { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } });
+  const limit = await rateLimitPersistent(`file-delete:${actor.id}`, MUTATION_RATE_LIMIT);
+  if (!limit.allowed) {
+    const retryAfter = Math.max(1, Math.ceil((limit.resetAt - Date.now()) / 1000));
+    return NextResponse.json({ error: "Too many requests" }, { status: 429, headers: { "Retry-After": String(retryAfter) } });
+  }
 
   await prismaReady;
   const { id: tenderId, fileId } = await params;
-
-  const tender = await prisma.tender.findFirst({ where: { id: tenderId, userId } });
+  const tender = await prisma.tender.findFirst({ where: { id: tenderId, userId: actor.id }, select: { id: true, title: true } });
   if (!tender) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   const file = await prisma.tenderFile.findFirst({ where: { id: fileId, tenderId } });
   if (!file) return NextResponse.json({ error: "File not found" }, { status: 404 });
 
-  await prisma.tenderFile.delete({ where: { id: fileId } });
+  try {
+    await getStorageAdapter().deleteFile({
+      storagePath: file.storagePath,
+      fileContent: file.fileContent,
+      fileName: file.originalFileName,
+    });
+    await prisma.tenderFile.delete({ where: { id: fileId } });
+  } catch {
+    return NextResponse.json({ error: "File could not be deleted safely" }, { status: 502 });
+  }
 
   await logAction({
-    userId,
+    userId: actor.id,
     action: "DELETE",
     entityType: "TenderFile",
     entityId: fileId,
-    description: `Deleted tender file "${file.originalFileName}" from tender "${tender.title}"`,
+    description: `Deleted a tender file from tender "${tender.title}"`,
   });
-
   return NextResponse.json({ success: true });
 }

@@ -11,7 +11,7 @@ function badge(severity: string) {
 export default async function SystemReadinessPage() {
   const userId = await getSession();
   if (!userId) redirect("/login");
-  const readiness = getSystemReadiness();
+  const readiness = await getSystemReadiness();
 
   return (
     <div className="space-y-6">
