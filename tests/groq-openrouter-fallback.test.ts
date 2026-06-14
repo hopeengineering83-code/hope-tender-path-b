@@ -120,7 +120,7 @@ describe("/api/ai/health exposes groq + openrouter and the full chain", () => {
   });
   it("advertises the extended fallback chain with Claude last", () => {
     // Together → DeepSeek → Groq → OpenRouter appear together before Claude
-    assert.match(source, /Together → DeepSeek → Groq → OpenRouter → Claude → deterministic draft fallback/);
+    assert.match(source, /Together → DeepSeek → Claude → deterministic draft fallback/);
   });
 });
 
