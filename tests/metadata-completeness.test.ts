@@ -4,10 +4,13 @@
 
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import {
   assessTenderMetadataCompleteness,
   type MetadataCompletenessInput,
 } from "../lib/engine/tender-metadata-completeness";
+import { containsMetadataPlaceholder } from "../lib/engine/metadata-validators";
 
 // Minimal "passing" input — used as a base for mutation tests below.
 const PASSING_INPUT: MetadataCompletenessInput = {
@@ -227,8 +230,6 @@ describe("metadata completeness — NOT_APPLICABLE override skips placeholder sc
 
 describe("generate route — embedded placeholder in client name blocked", () => {
   it("generate route source imports containsMetadataPlaceholder", () => {
-    const { readFileSync } = require("node:fs");
-    const { resolve } = require("node:path");
     const src = readFileSync(
       resolve(process.cwd(), "app/api/tenders/[id]/generate/route.ts"),
       "utf8",
@@ -240,8 +241,6 @@ describe("generate route — embedded placeholder in client name blocked", () =>
   });
 
   it("generate route blocks with PLACEHOLDER_CLIENT_NAME code", () => {
-    const { readFileSync } = require("node:fs");
-    const { resolve } = require("node:path");
     const src = readFileSync(
       resolve(process.cwd(), "app/api/tenders/[id]/generate/route.ts"),
       "utf8",
@@ -253,7 +252,7 @@ describe("generate route — embedded placeholder in client name blocked", () =>
   });
 
   it("containsMetadataPlaceholder detects embedded placeholder in otherwise-valid name", () => {
-    const { containsMetadataPlaceholder: check } = require("../lib/engine/metadata-validators");
+    const check = containsMetadataPlaceholder;
     assert.equal(
       check("Ministry of Water / Bid-Team to confirm"),
       true,
@@ -269,8 +268,6 @@ describe("generate route — embedded placeholder in client name blocked", () =>
 
 describe("auto-finalize route — embedded placeholder in client name blocked", () => {
   it("auto-finalize route source imports containsMetadataPlaceholder", () => {
-    const { readFileSync } = require("node:fs");
-    const { resolve } = require("node:path");
     const src = readFileSync(
       resolve(process.cwd(), "app/api/tenders/[id]/auto-finalize/route.ts"),
       "utf8",
@@ -282,8 +279,6 @@ describe("auto-finalize route — embedded placeholder in client name blocked", 
   });
 
   it("auto-finalize route blocks with PLACEHOLDER_CLIENT_NAME code", () => {
-    const { readFileSync } = require("node:fs");
-    const { resolve } = require("node:path");
     const src = readFileSync(
       resolve(process.cwd(), "app/api/tenders/[id]/auto-finalize/route.ts"),
       "utf8",

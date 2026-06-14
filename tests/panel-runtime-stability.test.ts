@@ -12,6 +12,7 @@ import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { randomUUID } from "node:crypto";
 
 // ─── 1. $queryRaw fallback — safe on empty result ─────────────────────────────
 
@@ -303,7 +304,6 @@ describe("matching-quality assessor — stable with empty child rows", () => {
 
 describe("panel catch block — behavioral error shape contract", () => {
   it("simulated DB query failure produces structured panel error with matched diagnosticId, not unhandled exception", async () => {
-    const { randomUUID } = require("node:crypto");
 
     async function simulatedPanelHandler(simulateFailure: "none" | "query" | "prismaReady") {
       const tenderId = "tender-behavioral-test";
@@ -351,7 +351,6 @@ describe("panel catch block — behavioral error shape contract", () => {
   });
 
   it("randomUUID produces a valid v4 UUID for diagnosticId", () => {
-    const { randomUUID } = require("node:crypto");
     const id = randomUUID();
     assert.match(id, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i, "diagnosticId must be a valid v4 UUID");
   });
@@ -359,7 +358,6 @@ describe("panel catch block — behavioral error shape contract", () => {
 
 describe("extraction-quality route — DB failure returns structured error, not silent empty response", () => {
   it("simulated text-sample query failure produces structured 500, not a misleading 200 with empty data", async () => {
-    const { randomUUID } = require("node:crypto");
 
     async function simulatedExtractionHandler(queryThrows: boolean) {
       const tenderId = "tender-extraction-test";

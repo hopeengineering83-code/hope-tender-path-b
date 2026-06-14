@@ -7,6 +7,8 @@
  */
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { assessExtractionQuality, assessExtractionQualityPerPage, buildReportFromStoredPages, type PageQualityEntry } from "../lib/extraction-quality";
 import { isExtractionCorrupted } from "../lib/engine/extraction-quality-gate";
 
@@ -430,8 +432,6 @@ describe("ExtractionQualityDashboard — clientDetailPages shown in content grid
   });
 
   it("dashboard component source shows clientDetailPages in the content-page grid", async () => {
-    const { readFileSync } = require("node:fs");
-    const { resolve } = require("node:path");
     const src = readFileSync(
       resolve(process.cwd(), "components/extraction-quality-dashboard.tsx"),
       "utf8",
@@ -453,8 +453,6 @@ describe("ExtractionQualityDashboard — clientDetailPages shown in content grid
 
 describe("ExtractionQualityDashboard — page-list display (CLAUDE.md requirement)", () => {
   it("dashboard source exposes failedPageNums, blankPageNums, lowDensityPageNums in fileData", () => {
-    const { readFileSync } = require("node:fs");
-    const { resolve } = require("node:path");
     const src = readFileSync(
       resolve(process.cwd(), "components/extraction-quality-dashboard.tsx"),
       "utf8",
@@ -467,8 +465,6 @@ describe("ExtractionQualityDashboard — page-list display (CLAUDE.md requiremen
   });
 
   it("dashboard source renders specific page numbers for failed pages", () => {
-    const { readFileSync } = require("node:fs");
-    const { resolve } = require("node:path");
     const src = readFileSync(
       resolve(process.cwd(), "components/extraction-quality-dashboard.tsx"),
       "utf8",
@@ -484,8 +480,6 @@ describe("ExtractionQualityDashboard — page-list display (CLAUDE.md requiremen
   });
 
   it("dashboard source renders specific page numbers for low-confidence pages", () => {
-    const { readFileSync } = require("node:fs");
-    const { resolve } = require("node:path");
     const src = readFileSync(
       resolve(process.cwd(), "components/extraction-quality-dashboard.tsx"),
       "utf8",
@@ -501,8 +495,6 @@ describe("ExtractionQualityDashboard — page-list display (CLAUDE.md requiremen
   });
 
   it("dashboard source renders per-page confidence table for problem pages", () => {
-    const { readFileSync } = require("node:fs");
-    const { resolve } = require("node:path");
     const src = readFileSync(
       resolve(process.cwd(), "components/extraction-quality-dashboard.tsx"),
       "utf8",

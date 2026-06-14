@@ -64,10 +64,28 @@ dbDescribe("database-backed analysis and export safeguards", () => {
 
   after(async () => {
     if (!userId) return;
-    if (tenderId) {
-      await prisma.aiJob.create({
-        data: { tenderId, userId, jobType: "AI_ANALYZE", status: "RUNNING", startedAt: new Date() },
-      }).catch(() => undefined);
+    try {
+      // Find all tenders for this test user so we can clean up in the right order.
+      // Relying on cascade delete causes trigger ordering problems: the
+      // refresh_submission_plan_state trigger fires on TenderRequirement delete and
+      // tries to INSERT into SubmissionPlanState referencing the Tender — but the
+      // Tender may already be deleted by the time the trigger executes.
+      const tenders = await prisma.tender.findMany({ where: { userId } });
+      for (const t of tenders) {
+        // Create an aiJob so guard_canonical_requirement_set_delete allows the delete
+        await prisma.aiJob.create({
+          data: { tenderId: t.id, userId, jobType: "AI_ANALYZE", status: "RUNNING", startedAt: new Date() },
+        }).catch(() => undefined);
+        await prisma.tenderRequirement.deleteMany({ where: { tenderId: t.id } }).catch(() => undefined);
+        await prisma.generatedDocument.deleteMany({ where: { tenderId: t.id } }).catch(() => undefined);
+        await prisma.tenderFile.deleteMany({ where: { tenderId: t.id } }).catch(() => undefined);
+        await prisma.aiJob.deleteMany({ where: { tenderId: t.id } }).catch(() => undefined);
+        // SubmissionPlanState is updated by trigger; delete explicitly to avoid FK issues
+        await prisma.$executeRaw`DELETE FROM "SubmissionPlanState" WHERE "tenderId" = ${t.id}`.catch(() => undefined);
+      }
+      await prisma.tender.deleteMany({ where: { userId } }).catch(() => undefined);
+    } catch {
+      // non-fatal — best-effort cleanup
     }
     await prisma.user.delete({ where: { id: userId } }).catch(() => undefined);
   });

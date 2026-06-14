@@ -22,6 +22,7 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { computeCanonicalModuleStates } from "../lib/engine/canonical-readiness-state";
 import { computeTenderReadinessState } from "../lib/tender-readiness-state";
 
@@ -496,14 +497,12 @@ describe("CRITICAL requirements counted as mandatory-type in readiness state", (
 
 describe("canonical-status-badge component exists and exports correctly", () => {
   it("CanonicalStatusBadge is exported from components/canonical-status-badge.tsx", () => {
-    const { readFileSync } = require("node:fs");
     const source = readFileSync("components/canonical-status-badge.tsx", "utf8");
     assert.match(source, /export function CanonicalStatusBadge/, "CanonicalStatusBadge must be exported");
     assert.match(source, /export function CanonicalStatusIcon/, "CanonicalStatusIcon must be exported");
   });
 
   it("CANONICAL_STATUS_CONFIG covers all 8 canonical states", () => {
-    const { readFileSync } = require("node:fs");
     const source = readFileSync("lib/engine/canonical-readiness-state.ts", "utf8");
     for (const state of ["READY", "WARNING", "BLOCKED", "STALE", "PARTIAL", "NOT_RUN", "RUNNING", "NOT_APPLICABLE"]) {
       assert.match(source, new RegExp(`"${state}"`), `CANONICAL_STATUS_CONFIG must include state ${state}`);
@@ -511,7 +510,6 @@ describe("canonical-status-badge component exists and exports correctly", () => 
   });
 
   it("canonical resolver covers all 8 modules", () => {
-    const { readFileSync } = require("node:fs");
     const source = readFileSync("lib/engine/canonical-readiness-state.ts", "utf8");
     for (const moduleName of ["extraction", "analysis", "metadata", "requirements", "matching", "submissionPlan", "compliance", "documents", "generation", "export"]) {
       assert.match(source, new RegExp(moduleName), `canonical resolver must compute state for module ${moduleName}`);

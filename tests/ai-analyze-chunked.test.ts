@@ -4,6 +4,8 @@
 
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 
 // ─── Trailing-comma JSON repair ───────────────────────────────────────────────
 // Mirrors the repair step added inside analyzeOneChunk (the same regex).
@@ -488,8 +490,6 @@ describe("non-streaming resume: previousChunkResults normalization (regression)"
     // Without this fix, resume on the non-streaming path was silently re-processing
     // all previously-completed chunks instead of starting from startFromChunk with
     // their cached results injected.
-    const { readFileSync } = require("node:fs");
-    const { resolve } = require("node:path");
     const routeSrc = readFileSync(
       resolve(process.cwd(), "app/api/tenders/[id]/ai-analyze/route.ts"),
       "utf8",

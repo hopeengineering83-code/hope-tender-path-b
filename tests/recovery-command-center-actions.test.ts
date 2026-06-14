@@ -12,7 +12,6 @@
 
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
-
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
@@ -210,8 +209,6 @@ describe("Recovery Command Center — nextAction code coverage", () => {
   });
 
   it("every navigate action points at an existing Next.js page directory", () => {
-    const { existsSync } = require("node:fs");
-    const { resolve } = require("node:path");
     for (const [action, spec] of Object.entries(RECOVERY_COMMAND_ACTIONS)) {
       if (spec.kind !== "navigate") continue;
       assert.ok(spec.path, `${action} must define a navigation path`);
