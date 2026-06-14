@@ -1,11 +1,3 @@
-// Tests for the storage adapter (Gap 7).
-//
-// Coverage:
-//   - Legacy base64 records still read correctly (storagePath=""+fileContent)
-//   - Production without blob storage refuses large files (>5 MB)
-//   - Small files in production fall back to db-base64 cleanly
-//   - Local dev uses the filesystem adapter and returns a non-empty storagePath
-
 import { describe, it, before, after, beforeEach } from "node:test";
 import { strict as assert } from "node:assert";
 import { tmpdir } from "node:os";
@@ -16,178 +8,180 @@ import {
   DB_BASE64_MAX_BYTES,
   getStorageAdapter,
   getActiveStorageProvider,
+  isProductionStorageReady,
   resetStorageAdapter,
   resolveStorageProvider,
 } from "../lib/storage";
 
-const ENV_KEYS = ["NODE_ENV", "STORAGE_ROOT", "BLOB_READ_WRITE_TOKEN"] as const;
-function snap(): Record<(typeof ENV_KEYS)[number], string | undefined> {
-  return ENV_KEYS.reduce((acc, k) => {
-    acc[k] = process.env[k];
+const ENV_KEYS = [
+  "NODE_ENV",
+  "VERCEL_ENV",
+  "STORAGE_ROOT",
+  "BLOB_READ_WRITE_TOKEN",
+  "ALLOW_DB_FILE_STORAGE",
+] as const;
+
+type EnvSnapshot = Record<(typeof ENV_KEYS)[number], string | undefined>;
+
+function snapshotEnv(): EnvSnapshot {
+  return ENV_KEYS.reduce<EnvSnapshot>((acc, key) => {
+    acc[key] = process.env[key];
     return acc;
-  }, {} as Record<(typeof ENV_KEYS)[number], string | undefined>);
+  }, {} as EnvSnapshot);
 }
-function restore(snap: Record<(typeof ENV_KEYS)[number], string | undefined>) {
-  const mut = process.env as Record<string, string | undefined>;
-  for (const k of ENV_KEYS) {
-    if (snap[k] === undefined) delete mut[k];
-    else mut[k] = snap[k];
+
+function restoreEnv(snapshot: EnvSnapshot) {
+  const mutable = process.env as Record<string, string | undefined>;
+  for (const key of ENV_KEYS) {
+    if (snapshot[key] === undefined) delete mutable[key];
+    else mutable[key] = snapshot[key];
   }
 }
 
-let tmp: string;
+let temporaryRoot: string;
 
 before(() => {
-  tmp = mkdtempSync(path.join(tmpdir(), "storage-adapter-"));
+  temporaryRoot = mkdtempSync(path.join(tmpdir(), "storage-adapter-"));
 });
+
 after(() => {
-  if (tmp && existsSync(tmp)) rmSync(tmp, { recursive: true, force: true });
+  if (temporaryRoot && existsSync(temporaryRoot)) {
+    rmSync(temporaryRoot, { recursive: true, force: true });
+  }
 });
 
-beforeEach(() => {
-  resetStorageAdapter();
-});
+beforeEach(() => resetStorageAdapter());
 
-describe("storage adapter — legacy base64 read", () => {
-  it("reads a row with storagePath='' + fileContent populated", async () => {
-    const original = Buffer.from("hello-legacy");
+describe("legacy database content", () => {
+  it("reads legacy base64 rows", async () => {
     const adapter = getStorageAdapter();
-    const buf = await adapter.getFile({
-      storagePath: "",
-      fileContent: original.toString("base64"),
-      fileName: "legacy.txt",
-    });
-    assert.equal(buf.toString(), "hello-legacy");
-  });
-
-  it("reads a row with storagePath=null + fileContent populated", async () => {
-    const original = Buffer.from("hello-null");
-    const adapter = getStorageAdapter();
-    const buf = await adapter.getFile({
-      storagePath: null,
-      fileContent: original.toString("base64"),
-      fileName: "legacy.txt",
-    });
-    assert.equal(buf.toString(), "hello-null");
+    for (const storagePath of ["", null]) {
+      const expected = Buffer.from(`legacy-${storagePath === null ? "null" : "empty"}`);
+      const actual = await adapter.getFile({
+        storagePath,
+        fileContent: expected.toString("base64"),
+        fileName: "legacy.txt",
+      });
+      assert.equal(actual.equals(expected), true);
+    }
   });
 });
 
-describe("storage adapter — local provider write", () => {
-  it("writes a non-empty storagePath when STORAGE_ROOT is set", async () => {
-    const s = snap();
+describe("development local storage", () => {
+  it("writes, reads, and deletes within the configured root", async () => {
+    const snapshot = snapshotEnv();
     try {
-      const mut = process.env as Record<string, string | undefined>;
-      mut.NODE_ENV = "development";
-      mut.STORAGE_ROOT = tmp;
-      delete mut.BLOB_READ_WRITE_TOKEN;
+      const mutable = process.env as Record<string, string | undefined>;
+      mutable.NODE_ENV = "development";
+      delete mutable.VERCEL_ENV;
+      mutable.STORAGE_ROOT = temporaryRoot;
+      delete mutable.BLOB_READ_WRITE_TOKEN;
+      delete mutable.ALLOW_DB_FILE_STORAGE;
       resetStorageAdapter();
-      assert.equal(resolveStorageProvider(), "local");
 
+      assert.equal(resolveStorageProvider(), "local");
+      assert.equal(isProductionStorageReady(), true);
       const adapter = getStorageAdapter();
-      const written = await adapter.putFile(Buffer.from("hello"), {
-        fileName: "test.txt",
+      const expected = Buffer.from("round-trip-bytes");
+      const written = await adapter.putFile(expected, {
+        fileName: "round-trip.txt",
         mimeType: "text/plain",
-        tenderId: "t1",
+        companyId: "company-1",
+        tenderId: "tender-1",
       });
       assert.equal(written.provider, "local");
-      assert.notEqual(written.storagePath, "");
-      assert.ok(existsSync(written.storagePath), "expected the file to exist on disk");
-      assert.equal(readFileSync(written.storagePath, "utf8"), "hello");
+      assert.ok(written.storagePath);
+      assert.ok(existsSync(written.storagePath));
+      assert.equal(readFileSync(written.storagePath).equals(expected), true);
       assert.equal(getActiveStorageProvider(), "local");
-    } finally {
-      restore(s);
-      resetStorageAdapter();
-    }
-  });
 
-  it("read-back of a fresh local write returns identical bytes", async () => {
-    const s = snap();
-    try {
-      const mut = process.env as Record<string, string | undefined>;
-      mut.NODE_ENV = "development";
-      mut.STORAGE_ROOT = tmp;
-      delete mut.BLOB_READ_WRITE_TOKEN;
-      resetStorageAdapter();
-      const adapter = getStorageAdapter();
-      const data = Buffer.from("round-trip-bytes");
-      const written = await adapter.putFile(data, { fileName: "rt.bin", mimeType: "application/octet-stream" });
       const read = await adapter.getFile({
         storagePath: written.storagePath,
-        fileContent: written.fileContent ?? null,
-        fileName: "rt.bin",
+        fileContent: null,
+        fileName: "round-trip.txt",
       });
-      assert.equal(read.equals(data), true);
+      assert.equal(read.equals(expected), true);
+      await adapter.deleteFile({ storagePath: written.storagePath, fileContent: null, fileName: "round-trip.txt" });
+      assert.equal(existsSync(written.storagePath), false);
     } finally {
-      restore(s);
+      restoreEnv(snapshot);
       resetStorageAdapter();
     }
   });
 });
 
-describe("storage adapter — production without blob storage", () => {
-  it("refuses large (>5 MB) uploads when only db-base64 is available", async () => {
-    const s = snap();
+describe("production storage fails closed", () => {
+  it("rejects every database-backed write unless explicitly approved", async () => {
+    const snapshot = snapshotEnv();
     try {
-      const mut = process.env as Record<string, string | undefined>;
-      mut.NODE_ENV = "production";
-      delete mut.STORAGE_ROOT;
-      delete mut.BLOB_READ_WRITE_TOKEN;
+      const mutable = process.env as Record<string, string | undefined>;
+      mutable.NODE_ENV = "production";
+      delete mutable.VERCEL_ENV;
+      delete mutable.BLOB_READ_WRITE_TOKEN;
+      delete mutable.ALLOW_DB_FILE_STORAGE;
+      mutable.STORAGE_ROOT = temporaryRoot;
       resetStorageAdapter();
-      assert.equal(resolveStorageProvider(), "db-base64");
 
-      const adapter = getStorageAdapter();
-      const big = Buffer.alloc(DB_BASE64_MAX_BYTES + 1);
+      assert.equal(resolveStorageProvider(), "db-base64");
+      assert.equal(isProductionStorageReady(), false);
       await assert.rejects(
-        () => adapter.putFile(big, { fileName: "huge.bin", mimeType: "application/octet-stream" }),
-        /db-base64 storage cannot accept files larger than/,
+        () => getStorageAdapter().putFile(Buffer.from("small"), { fileName: "small.txt", mimeType: "text/plain" }),
+        /Durable production storage is not configured/,
       );
     } finally {
-      restore(s);
+      restoreEnv(snapshot);
       resetStorageAdapter();
     }
   });
 
-  it("accepts small files in production via db-base64", async () => {
-    const s = snap();
+  it("allows an explicitly approved small database file and enforces the size cap", async () => {
+    const snapshot = snapshotEnv();
     try {
-      const mut = process.env as Record<string, string | undefined>;
-      mut.NODE_ENV = "production";
-      delete mut.STORAGE_ROOT;
-      delete mut.BLOB_READ_WRITE_TOKEN;
+      const mutable = process.env as Record<string, string | undefined>;
+      mutable.NODE_ENV = "production";
+      delete mutable.VERCEL_ENV;
+      delete mutable.BLOB_READ_WRITE_TOKEN;
+      mutable.ALLOW_DB_FILE_STORAGE = "true";
       resetStorageAdapter();
+
+      assert.equal(isProductionStorageReady(), true);
       const adapter = getStorageAdapter();
-      const small = Buffer.from("small-prod-content");
-      const written = await adapter.putFile(small, { fileName: "s.txt", mimeType: "text/plain" });
+      const small = Buffer.from("approved-small-content");
+      const written = await adapter.putFile(small, { fileName: "small.txt", mimeType: "text/plain" });
       assert.equal(written.provider, "db-base64");
-      assert.equal(written.storagePath, "");
       assert.equal(written.fileContent, small.toString("base64"));
+
+      await assert.rejects(
+        () => adapter.putFile(Buffer.alloc(DB_BASE64_MAX_BYTES + 1), { fileName: "large.bin", mimeType: "application/octet-stream" }),
+        /Database file storage limit exceeded/,
+      );
     } finally {
-      restore(s);
+      restoreEnv(snapshot);
       resetStorageAdapter();
     }
   });
 });
 
-describe("storage adapter — resolveStorageProvider precedence", () => {
-  it("blob > local > db-base64", async () => {
-    const s = snap();
+describe("provider selection", () => {
+  it("uses Blob in production, never local disk, and local disk only in development", () => {
+    const snapshot = snapshotEnv();
     try {
-      const mut = process.env as Record<string, string | undefined>;
-      mut.NODE_ENV = "production";
-      delete mut.STORAGE_ROOT;
-      mut.BLOB_READ_WRITE_TOKEN = "fake-token";
+      const mutable = process.env as Record<string, string | undefined>;
+      mutable.NODE_ENV = "production";
+      mutable.STORAGE_ROOT = temporaryRoot;
+      mutable.BLOB_READ_WRITE_TOKEN = "test-token";
       resetStorageAdapter();
       assert.equal(resolveStorageProvider(), "blob");
 
-      delete mut.BLOB_READ_WRITE_TOKEN;
+      delete mutable.BLOB_READ_WRITE_TOKEN;
       resetStorageAdapter();
       assert.equal(resolveStorageProvider(), "db-base64");
 
-      mut.STORAGE_ROOT = tmp;
+      mutable.NODE_ENV = "development";
       resetStorageAdapter();
       assert.equal(resolveStorageProvider(), "local");
     } finally {
-      restore(s);
+      restoreEnv(snapshot);
       resetStorageAdapter();
     }
   });
