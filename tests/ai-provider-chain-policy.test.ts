@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 const source = readFileSync("lib/ai.ts", "utf8");
-const canonical = ["gemini", "openrouter", "openai", "groq", "deepseek", "anthropic"];
-const displayOrder = "Gemini → OpenRouter → OpenAI → Groq → DeepSeek → Claude";
+const canonical = ["mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"];
+const displayOrder = "Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Claude";
 
 function canonicalChain(): string[] {
   const match = source.match(/CANONICAL_PROVIDER_CHAIN[^=]*=\s*\[([^\]]+)\]/);
@@ -31,10 +31,11 @@ describe("AI provider chain policy", () => {
     }
   });
 
-  it("does not retain retired providers in the canonical chain", () => {
-    for (const retired of ["mistral", "together"]) {
-      assert.equal(canonicalChain().includes(retired), false, `${retired} must not be in the canonical chain`);
-    }
+  it("includes Mistral and Together in the canonical chain", () => {
+    assert.ok(canonicalChain().includes("mistral"), "mistral must be in canonical chain");
+    assert.ok(canonicalChain().includes("together"), "together must be in canonical chain");
+    assert.equal(canonicalChain()[0], "mistral", "mistral must be first");
+    assert.equal(canonicalChain()[canonicalChain().length - 1], "anthropic", "claude/anthropic must be last");
   });
 });
 
@@ -64,10 +65,12 @@ describe("AI provider status surfaces stay aligned with canonical chain", () => 
   });
 
   it("keeps configured-provider checks in the required relative order", () => {
-    assert.ok(envReadiness.indexOf('present("GEMINI_API_KEY")') < envReadiness.indexOf('present("OPENROUTER_API_KEY")'));
-    assert.ok(envReadiness.indexOf('present("OPENROUTER_API_KEY")') < envReadiness.indexOf('present("OPENAI_API_KEY")'));
-    assert.ok(envReadiness.indexOf('present("OPENAI_API_KEY")') < envReadiness.indexOf('present("GROQ_API_KEY")'));
-    assert.ok(envReadiness.indexOf('present("GROQ_API_KEY")') < envReadiness.indexOf('present("DEEPSEEK_API_KEY")'));
+    assert.ok(envReadiness.indexOf('present("MISTRAL_API_KEY")') < envReadiness.indexOf('present("GROQ_API_KEY")'));
+    assert.ok(envReadiness.indexOf('present("GROQ_API_KEY")') < envReadiness.indexOf('present("OPENROUTER_API_KEY")'));
+    assert.ok(envReadiness.indexOf('present("OPENROUTER_API_KEY")') < envReadiness.indexOf('present("GEMINI_API_KEY")'));
+    assert.ok(envReadiness.indexOf('present("GEMINI_API_KEY")') < envReadiness.indexOf('present("OPENAI_API_KEY")'));
+    assert.ok(envReadiness.indexOf('present("OPENAI_API_KEY")') < envReadiness.indexOf('present("TOGETHER_API_KEY")'));
+    assert.ok(envReadiness.indexOf('present("TOGETHER_API_KEY")') < envReadiness.indexOf('present("DEEPSEEK_API_KEY")'));
     assert.ok(envReadiness.indexOf('present("DEEPSEEK_API_KEY")') < envReadiness.indexOf('present("ANTHROPIC_API_KEY")'));
   });
 });

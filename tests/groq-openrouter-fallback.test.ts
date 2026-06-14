@@ -87,37 +87,38 @@ describe("canonical provider wiring", () => {
     assert.match(source, /"X-Title":\s*getOpenRouterAppName\(\)/);
   });
 
-  it("uses Gemini, OpenRouter, OpenAI, Groq, DeepSeek, Claude in that order", () => {
+  it("uses Mistral, Groq, OpenRouter, Gemini, OpenAI, Together, DeepSeek, Claude in that order", () => {
     const match = source.match(/CANONICAL_PROVIDER_CHAIN[^=]*=\s*\[([^\]]+)\]/);
     assert.ok(match);
     const chain = Array.from(match[1].matchAll(/"([^"]+)"/g)).map((item) => item[1]);
-    assert.deepEqual(chain, ["gemini", "openrouter", "openai", "groq", "deepseek", "anthropic"]);
+    assert.deepEqual(chain, ["mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"]);
   });
 });
 
 describe("AI health contract", () => {
   const source = readFileSync("app/api/ai/health/route.ts", "utf8");
 
-  it("publishes canonical ranks and Claude last", () => {
-    assert.match(source, /openrouter:\s*\{[\s\S]*?fallbackRank:\s*2/);
-    assert.match(source, /groq:\s*\{[\s\S]*?fallbackRank:\s*4/);
-    assert.match(source, /claude:\s*\{[\s\S]*?fallbackRank:\s*6/);
-    assert.match(source, /Gemini → OpenRouter → OpenAI → Groq → DeepSeek → Claude → deterministic draft fallback/);
+  it("publishes canonical ranks with Mistral first and Claude last", () => {
+    assert.match(source, /mistral:\s*\{[\s\S]*?fallbackRank:\s*1/);
+    assert.match(source, /groq:\s*\{[\s\S]*?fallbackRank:\s*2/);
+    assert.match(source, /openrouter:\s*\{[\s\S]*?fallbackRank:\s*3/);
+    assert.match(source, /claude:\s*\{[\s\S]*?fallbackRank:\s*8/);
+    assert.match(source, /Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Claude → deterministic draft fallback/);
   });
 
   it("selects the preferred provider in canonical order", () => {
-    const gemini = source.indexOf('geminiConfigured ? "gemini"');
-    const openrouter = source.indexOf('openRouterConfigured ? "openrouter"');
-    const openai = source.indexOf('openaiConfigured ? "openai"');
+    const mistral = source.indexOf('mistralConfigured ? "mistral"');
     const groq = source.indexOf('groqConfigured ? "groq"');
+    const openrouter = source.indexOf('openRouterConfigured ? "openrouter"');
+    const gemini = source.indexOf('geminiConfigured ? "gemini"');
     const deepseek = source.indexOf('deepSeekConfigured ? "deepseek"');
     const claude = source.indexOf('claudeConfigured ? "claude"');
-    assert.ok(gemini >= 0 && gemini < openrouter && openrouter < openai && openai < groq && groq < deepseek && deepseek < claude);
+    assert.ok(mistral >= 0 && mistral < groq && groq < openrouter && openrouter < gemini && gemini < deepseek && deepseek < claude);
   });
 
-  it("keeps optional legacy adapters outside the canonical order", () => {
-    assert.match(source, /mistral:\s*\{[\s\S]*?fallbackRank:\s*99/);
-    assert.match(source, /together:\s*\{[\s\S]*?fallbackRank:\s*99/);
+  it("includes Mistral and Together at canonical positions", () => {
+    assert.match(source, /mistral:\s*\{[\s\S]*?fallbackRank:\s*1/);
+    assert.match(source, /together:\s*\{[\s\S]*?fallbackRank:\s*6/);
   });
 });
 

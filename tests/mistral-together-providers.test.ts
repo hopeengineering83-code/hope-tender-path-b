@@ -54,13 +54,14 @@ describe("optional provider adapters", () => {
 describe("canonical provider chain", () => {
   const source = readFileSync("lib/ai.ts", "utf8");
 
-  it("uses the required six providers and excludes optional adapters", () => {
+  it("uses the required eight providers with Mistral first and Claude last", () => {
     const match = source.match(/CANONICAL_PROVIDER_CHAIN[^=]*=\s*\[([^\]]+)\]/);
     assert.ok(match);
     const chain = Array.from(match[1].matchAll(/"([^"]+)"/g)).map((item) => item[1]);
-    assert.deepEqual(chain, ["gemini", "openrouter", "openai", "groq", "deepseek", "anthropic"]);
-    assert.equal(chain.includes("mistral"), false);
-    assert.equal(chain.includes("together"), false);
+    assert.deepEqual(chain, ["mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"]);
+    assert.equal(chain[0], "mistral", "Mistral must be first in the canonical chain");
+    assert.equal(chain[chain.length - 1], "anthropic", "Claude/Anthropic must be last in the canonical chain");
+    assert.ok(chain.includes("together"), "Together must be in the canonical chain");
   });
 
   it("retains explicit adapter cases without automatic fallback placement", () => {
