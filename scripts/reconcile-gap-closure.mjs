@@ -91,6 +91,47 @@ function patchEnvironmentReadiness() {
   write(path, source);
 }
 
+function patchFinalZipRoute() {
+  const path = "app/api/tenders/[id]/download/route.ts";
+  let source = read(path);
+
+  if (!source.includes('from "../../../../../lib/engine/final-zip-assembly"')) {
+    source = source.replace(
+      'import { buildFinalZipEntries } from "../../../../../lib/engine/final-zip-scope";\n',
+      'import { buildFinalZipEntries } from "../../../../../lib/engine/final-zip-scope";\nimport { assembleFinalSubmissionZip } from "../../../../../lib/engine/final-zip-assembly";\n',
+    );
+  }
+
+  source = source.replace(
+    '  const JSZip = (await import("jszip")).default;\n  const zip = new JSZip();\n',
+    "",
+  );
+
+  if (!source.includes("const zipContents: Array<{ generatedDocId: string; bytes: Buffer | Uint8Array }> = [];")) {
+    source = replaceRequired(
+      source,
+      /  for \(const entry of entries\) \{\n    const doc = byId\.get\(entry\.generatedDocId!\);\n    if \(!doc\) continue;\n    const contentResult = await readContentOrError\(doc\);\n    if \(!contentResult\.ok\) return contentResult\.response;\n    const content = contentResult\.content;\n    const sig = validateFileSignature\(content\.filename, content\.base64\);\n    if \(!sig\.ok\) return err\(`File signature mismatch on \$\{content\.filename\}\.`, 422, \{ code: "FILE_SIGNATURE_MISMATCH", reason: sig\.reason \}\);\n    zip\.file\(entry\.name \|\| fileName\(doc\.name\), content\.buffer\);\n  \}\n/,
+      `  const zipContents: Array<{ generatedDocId: string; bytes: Buffer | Uint8Array }> = [];\n  for (const entry of entries) {\n    const doc = byId.get(entry.generatedDocId!);\n    if (!doc) continue;\n    const contentResult = await readContentOrError(doc);\n    if (!contentResult.ok) return contentResult.response;\n    const content = contentResult.content;\n    const sig = validateFileSignature(content.filename, content.base64);\n    if (!sig.ok) return err(\`File signature mismatch on \${content.filename}.\`, 422, { code: "FILE_SIGNATURE_MISMATCH", reason: sig.reason });\n    zipContents.push({ generatedDocId: doc.id, bytes: content.buffer });\n  }\n\n  let assembledZip;\n  try {\n    assembledZip = await assembleFinalSubmissionZip(entries, zipContents);\n  } catch (error) {\n    return err("Final ZIP verification failed. Regenerate the affected documents before export.", 422, {\n      code: "FINAL_ZIP_VERIFICATION_FAILED",\n      detail: error instanceof Error ? error.message : String(error),\n    });\n  }\n`,
+      "production ZIP assembly loop",
+    );
+  }
+
+  source = source.replace(
+    '  const zipBuffer = await zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" });',
+    "  const zipBuffer = assembledZip.buffer;",
+  );
+  source = source.replace(
+    "  const fileList = entries.map((entry) => entry.name);",
+    "  const fileList = assembledZip.fileList;",
+  );
+  source = source.replace(
+    '    "X-Envelope-Breakdown": envelopeBreakdown,\n',
+    '    "X-Envelope-Breakdown": envelopeBreakdown,\n    "Cache-Control": "private, no-store",\n    "X-Content-Type-Options": "nosniff",\n',
+  );
+
+  write(path, source);
+}
+
 function walk(dir, callback) {
   for (const name of readdirSync(dir)) {
     if (["node_modules", ".git", ".next"].includes(name)) continue;
@@ -131,5 +172,6 @@ function patchTextReferences() {
 patchAi();
 patchHealth();
 patchEnvironmentReadiness();
+patchFinalZipRoute();
 patchTextReferences();
 console.log(`Reconciled provider policy: ${REQUIRED_LABELS}`);
