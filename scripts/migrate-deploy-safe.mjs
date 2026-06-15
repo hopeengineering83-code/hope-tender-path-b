@@ -5,12 +5,10 @@ import { join } from "node:path";
 const MIGRATIONS_DIR = join(process.cwd(), "prisma", "migrations");
 const BASELINE_CUTOFF = process.env.PRISMA_BASELINE_CUTOFF || "20260613190000_comprehensive_gap_guards";
 const explicitBaseline = ["1", "true", "yes"].includes((process.env.PRISMA_BASELINE_EXISTING_DB || "").trim().toLowerCase());
-const knownVercelDatabase = Boolean(
-  process.env.VERCEL_ENV &&
-  process.env.DATABASE_URL?.includes("neon.tech") &&
-  BASELINE_CUTOFF === "20260613190000_comprehensive_gap_guards",
-);
-const ALLOW_BASELINE = explicitBaseline || knownVercelDatabase;
+
+// PR XX-G13 — remove automatic baselining based on VERCEL_ENV or neon.tech URL.
+// Explicit confirmation via PRISMA_BASELINE_EXISTING_DB=true is now required.
+const ALLOW_BASELINE = explicitBaseline;
 
 function emitCaptured(value, target) {
   if (!value) return;
@@ -61,9 +59,9 @@ function deploy() {
 
 if (!deploy()) {
   if (!ALLOW_BASELINE) {
-    throw new Error(
-      "Existing non-empty database has no Prisma migration history. Explicitly authorize the verified baseline through " + BASELINE_CUTOFF,
-    );
+    console.error("ERROR: Existing non-empty database has no Prisma migration history.");
+    console.error("Automatic baselining is disabled for security. Set PRISMA_BASELINE_EXISTING_DB=true to authorize.");
+    process.exit(1);
   }
 
   const historical = migrationNames().filter((name) => name <= BASELINE_CUTOFF);
