@@ -92,7 +92,7 @@ export type AuditAction =
   // demoted-count + inspected-count in description.
   | "QUALITY_REASSESSMENT"
   // AI provider chain failed over from one provider to the next
-  // (Gemini → OpenAI → Mistral → Together → DeepSeek → Groq → OpenRouter → Claude). Tracked so
+  // (Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Claude). Tracked so
   // an operator can confirm a fallback was attempted before regex was used.
   | "AI_PROVIDER_FAILOVER"
   // Knowledge vault — expert and project lifecycle events.

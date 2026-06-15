@@ -21,20 +21,24 @@ function has(value: string | undefined | null): boolean {
 }
 
 export const REQUIRED_PROVIDER_ORDER = [
-  "Gemini",
-  "OpenRouter",
-  "OpenAI",
+  "Mistral",
   "Groq",
+  "OpenRouter",
+  "Gemini",
+  "OpenAI",
+  "Together",
   "DeepSeek",
   "Claude/Anthropic",
 ] as const;
 
 function configuredAiProviders(): string[] {
   const providers: string[] = [];
-  if (has(process.env.GEMINI_API_KEY)) providers.push("Gemini");
-  if (has(process.env.OPENROUTER_API_KEY)) providers.push("OpenRouter");
-  if (has(process.env.OPENAI_API_KEY)) providers.push("OpenAI");
+  if (has(process.env.MISTRAL_API_KEY)) providers.push("Mistral");
   if (has(process.env.GROQ_API_KEY)) providers.push("Groq");
+  if (has(process.env.OPENROUTER_API_KEY)) providers.push("OpenRouter");
+  if (has(process.env.GEMINI_API_KEY)) providers.push("Gemini");
+  if (has(process.env.OPENAI_API_KEY)) providers.push("OpenAI");
+  if (has(process.env.TOGETHER_API_KEY)) providers.push("Together");
   if (has(process.env.DEEPSEEK_API_KEY)) providers.push("DeepSeek");
   if (has(process.env.ANTHROPIC_API_KEY)) providers.push("Claude/Anthropic");
   return providers;
