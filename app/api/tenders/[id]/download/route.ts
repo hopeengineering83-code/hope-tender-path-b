@@ -13,6 +13,8 @@ import { getTenderGenerationReadiness } from "../../../../../lib/tender-generati
 import { generatedDocumentHasContent, readGeneratedDocumentContent } from "../../../../../lib/generated-document-content";
 import { inferEnvelope, type SubmissionEnvelope } from "../../../../../lib/engine/submission-plan";
 import { getFinalSubmissionReadiness } from "../../../../../lib/engine/final-submission-readiness";
+import { finalizeTenderZip } from "../../../../../lib/engine/workflow/zip-finalizer";
+import { finalizeTenderPdf } from "../../../../../lib/engine/workflow/pdf-finalizer";
 import { runAuthorityReview } from "../../../../../lib/engine/authority-review";
 
 export const dynamic = "force-dynamic";
@@ -165,6 +167,16 @@ function parseEnvelopeQuery(value: string | null): EnvelopeFilter | "INVALID" {
 }
 
 async function zipPackage(userId: string, tender: any, envelopeFilter: EnvelopeFilter) {
+  const zipResult = await finalizeTenderZip(prisma, tender.id, userId);
+  if (!zipResult.ok) return err(zipResult.error || "ZIP failed", 422, { code: zipResult.code });
+  // Continue with existing headers and logging if needed, or return directly
+  return new NextResponse(zipResult.buffer, {
+    headers: {
+      "Content-Type": "application/zip",
+      "Content-Disposition": `attachment; filename="${safeFileBaseName(tender.title)}-submission-package.zip"`
+    }
+  });
+
   const gate = await finalPackageGate(userId, tender);
   if (!gate.ok) return gate.response;
 
@@ -441,6 +453,15 @@ async function zipPackage(userId: string, tender: any, envelopeFilter: EnvelopeF
   };
   if (envelopeFilter) responseHeaders["X-Envelope-Scope"] = envelopeFilter;
   if (hasFinancialDocs && !envelopeFilter) {
+  const pdfResult = await finalizeTenderPdf(prisma, tender.id, userId, docId ?? undefined);
+  if (!pdfResult.ok) return err(pdfResult.error || "PDF failed", 422, { code: pdfResult.code });
+  return new NextResponse(pdfResult.buffer, {
+    headers: {
+      "Content-Type": "application/pdf",
+      "Content-Disposition": `attachment; filename="${safeFileBaseName(tender.title)}-proposal.pdf"`
+    }
+  });
+
     responseHeaders["X-Envelope-Note"] =
       "FINANCIAL documents are included. If this tender requires separate technical and financial envelopes, submit the financial files in a separate sealed package per the tender instructions.";
   }

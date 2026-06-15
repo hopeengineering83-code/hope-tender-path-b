@@ -4,6 +4,7 @@ import { prisma, prismaReady } from "../../../../lib/prisma";
 import { requireRole, requireUser, unauthorizedResponse, forbiddenResponse } from "../../../../lib/auth";
 import { logAction } from "../../../../lib/audit";
 import { validatePassword } from "../../../../lib/password-policy";
+import { canPerform } from "../../../../lib/security/rbac";
 
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   let actor;
@@ -15,6 +16,11 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   }
 
   const { id } = await params;
+
+  if (!canPerform(actor.role, "USER_ADMIN") && actor.id !== id) {
+    return forbiddenResponse();
+  }
+
   await prismaReady;
 
   const user = await prisma.user.findUnique({

@@ -11,6 +11,7 @@ export type TenderReadinessInput = {
   exactFileNaming?: string | null;
   exactFileOrder?: string | null;
   generatedDocuments?: Array<{ contentSummary?: string | null; generationStatus?: string | null }>;
+  complianceGaps?: Array<{ severity: string; isResolved: boolean }>;
 };
 
 export type TenderReadinessState = {
@@ -34,7 +35,7 @@ export type TenderReadinessState = {
 };
 
 function mandatory(priority?: string | null) { return /mandatory|critical/i.test(priority ?? ""); }
-function traced(r: NonNullable<TenderReadinessInput["requirements"]>[0]) {
+export function traced(r: NonNullable<TenderReadinessInput["requirements"]>[0]) {
   return (r.sourcePageNumber != null && r.sourcePageNumber > 0) || Boolean((r.sourceExactQuote ?? "").trim()) || Boolean((r.sectionReference ?? "").trim()) || (r.sourceConfidence != null && r.sourceConfidence > 0);
 }
 
@@ -44,6 +45,7 @@ export function computeTenderReadinessState(input: TenderReadinessInput): Tender
   const extractionStatus = (input.analysisExtractionStatus ?? "").toUpperCase();
   const analysisSource = (input.analysisSource ?? "UNKNOWN").toUpperCase();
   const reqs = input.requirements ?? [];
+  const gaps = input.complianceGaps ?? [];
 
   const extractionBlocked = /EXTRACTION_CORRUPTED|EXTRACTION_WEAK_REVIEW_REQUIRED|OCR_REQUIRED|REGEX_FALLBACK_FROM_WEAK_EXTRACTION|PARTIAL_EXTRACTION_AI_ANALYZED|AI_ANALYSIS_PARTIAL/.test(extractionStatus);
   const extractionTrusted = !extractionBlocked;
@@ -77,9 +79,12 @@ export function computeTenderReadinessState(input: TenderReadinessInput): Tender
   const docsGeneratedFromCurrentAnalysis = activeDocs.length > 0 && activeDocs.every((d) => parseDocAnalysisHash(d.contentSummary) === currentAnalysisHash);
   if (activeDocs.length > 0 && !docsGeneratedFromCurrentAnalysis) warnings.push("Generated documents are stale or missing analysisHash.");
 
-  const complianceCurrent = requirementsTrusted && analysisTrusted && extractionTrusted && metadataTrusted;
+  const unresolvedCriticalGaps = gaps.filter(g => !g.isResolved && g.severity === "CRITICAL").length;
+  if (unresolvedCriticalGaps > 0) blockers.push(`${unresolvedCriticalGaps} unresolved CRITICAL compliance gap(s).`);
+
+  const complianceCurrent = requirementsTrusted && analysisTrusted && extractionTrusted && metadataTrusted && unresolvedCriticalGaps === 0;
   const documentsCurrent = activeDocs.length > 0 && submissionPlanBuilt && requirementsTrusted && analysisTrusted && docsGeneratedFromCurrentAnalysis;
-  const exportAllowed = extractionTrusted && analysisTrusted && requirementsTrusted && metadataTrusted && submissionPlanBuilt && documentsCurrent;
+  const exportAllowed = extractionTrusted && analysisTrusted && requirementsTrusted && metadataTrusted && submissionPlanBuilt && documentsCurrent && unresolvedCriticalGaps === 0;
 
   return { extractionTrusted, analysisTrusted, requirementsTrusted, metadataTrusted, submissionPlanBuilt, complianceCurrent, documentsCurrent, exportAllowed, rawRequirementsCount, trustedRequirementsCount, sourceTracedRequirementsCount, mandatoryRequirementsCount, mandatoryTracedCount, currentAnalysisHash, docsGeneratedFromCurrentAnalysis, blockers, warnings };
 }

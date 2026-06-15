@@ -3,6 +3,7 @@ import { getSession, requireRole } from "../../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../../lib/prisma";
 import { logAction } from "../../../../../../lib/audit";
 import { getStorageAdapter } from "../../../../../../lib/storage";
+import { durableDeleteTenderFile } from "../../../../../../lib/engine/workflow/durable-deletion";
 import { rateLimitPersistent, MUTATION_RATE_LIMIT } from "../../../../../../lib/rate-limit";
 
 export async function GET(
@@ -24,11 +25,10 @@ export async function GET(
   }
 
   try {
-    const buffer = await getStorageAdapter().getFile({
-      storagePath: file.storagePath,
-      fileContent: file.fileContent,
-      fileName: file.originalFileName,
-    });
+    await durableDeleteTenderFile(prisma, fileId, tenderId, actor.id);
+  } catch (err) {
+    return NextResponse.json({ error: "File could not be deleted safely: " + String(err) }, { status: 502 });
+  }
     const safeFileName = file.originalFileName.replace(/[^a-zA-Z0-9._\- ()]/g, "_");
     return new Response(new Uint8Array(buffer), {
       headers: {
@@ -50,8 +50,10 @@ export async function DELETE(
 ) {
   let actor;
   try {
-    actor = await requireRole("ADMIN", "PROPOSAL_MANAGER");
-  } catch {
+    await durableDeleteTenderFile(prisma, fileId, tenderId, actor.id);
+  } catch (err) {
+    return NextResponse.json({ error: "File could not be deleted safely: " + String(err) }, { status: 502 });
+  }
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
@@ -70,11 +72,10 @@ export async function DELETE(
   if (!file) return NextResponse.json({ error: "File not found" }, { status: 404 });
 
   try {
-    await getStorageAdapter().deleteFile({
-      storagePath: file.storagePath,
-      fileContent: file.fileContent,
-      fileName: file.originalFileName,
-    });
+    await durableDeleteTenderFile(prisma, fileId, tenderId, actor.id);
+  } catch (err) {
+    return NextResponse.json({ error: "File could not be deleted safely: " + String(err) }, { status: 502 });
+  }
     await prisma.tenderFile.delete({ where: { id: fileId } });
   } catch {
     return NextResponse.json({ error: "File could not be deleted safely" }, { status: 502 });
