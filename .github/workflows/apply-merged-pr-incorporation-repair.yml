@@ -20,16 +20,26 @@ jobs:
           fetch-depth: 0
           token: ${{ github.token }}
 
-      - name: Apply reviewed repair
-        run: node scripts/apply-merged-pr-incorporation-repair.mjs
-
-      - name: Remove one-time repair machinery
+      - name: Apply reviewed repair and capture diagnostics
         run: |
-          rm -f .repair-trigger
-          rm -f scripts/apply-merged-pr-incorporation-repair.mjs
-          rm -f .github/workflows/apply-merged-pr-incorporation-repair.yml
+          set +e
+          node scripts/apply-merged-pr-incorporation-repair.mjs > .repair-output.log 2>&1
+          status=$?
+          echo "$status" > .repair-exit-code
+          cat .repair-output.log
+          exit 0
 
-      - name: Commit repaired source
+      - name: Finalize repair workspace
+        run: |
+          status="$(cat .repair-exit-code)"
+          rm -f .repair-trigger
+          if [ "$status" = "0" ]; then
+            rm -f .repair-output.log .repair-exit-code
+            rm -f scripts/apply-merged-pr-incorporation-repair.mjs
+            rm -f .github/workflows/apply-merged-pr-incorporation-repair.yml
+          fi
+
+      - name: Commit repair result
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -37,6 +47,12 @@ jobs:
           if git diff --cached --quiet; then
             echo "No repair changes to commit"
           else
-            git commit -m "fix: incorporate merged PR security and policy updates"
+            status="$(cat .repair-exit-code 2>/dev/null || echo 0)"
+            if [ "$status" = "0" ]; then
+              message="fix: incorporate merged PR security and policy updates"
+            else
+              message="chore: capture merged PR repair diagnostics"
+            fi
+            git commit -m "$message"
             git push origin HEAD:codex/fix-merged-pr-incorporation
           fi
