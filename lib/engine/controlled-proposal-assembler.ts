@@ -1,3 +1,4 @@
+import { filterCleanLines } from "./pattern-filter";
 export type ControlledProposalInput = {
   tenderTitle: string;
   clientName: string;
@@ -30,7 +31,7 @@ function compact(lines: string[], limit: number, maxLen = 360): string[] {
   return lines
     .map(clean)
     .filter(Boolean)
-    .filter((line) => !/as an ai|chatgpt|openai|lorem ipsum|placeholder|sample text/i.test(line))
+    .filter((line) => filterCleanLines([line]).length > 0)
     .slice(0, limit)
     .map((line) => line.length > maxLen ? `${line.slice(0, maxLen - 1)}…` : line);
 }

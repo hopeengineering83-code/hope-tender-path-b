@@ -37,6 +37,7 @@ export type RequirementDraft = {
   // Prisma column has a non-null default of 0 and the create input
   // type does not accept null.
   sourceConfidence?: number;
+  sourceExtractionMethod?: "ocr" | "text" | "mixed" | null;
 };
 
 export type CompanyDocumentSnapshot = {

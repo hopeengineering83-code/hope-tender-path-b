@@ -36,6 +36,7 @@ export type AiProviderName = "anthropic" | "gemini" | "openai" | "mistral" | "de
 export type AiProviderFailureCategory =
   | "RATE_LIMIT"
   | "AUTH"
+  | "BILLING"
   | "TIMEOUT"
   | "MODEL_UNAVAILABLE"
   | "NETWORK"
@@ -46,6 +47,8 @@ export type AiProviderHealth = {
   provider: AiProviderName;
   configured: boolean;
   lastSuccessAt: string | null;
+  lastPingSucceededAt: string | null;
+  lastGenerationSucceededAt: string | null;
   lastFailureAt: string | null;
   lastFailureCategory: AiProviderFailureCategory | null;
   lastFailureMessage: string | null;
@@ -55,6 +58,8 @@ export type AiProviderHealth = {
 
 type InternalState = {
   lastSuccessAt: number | null;
+  lastPingSucceededAt: number | null;
+  lastGenerationSucceededAt: number | null;
   lastFailureAt: number | null;
   lastFailureCategory: AiProviderFailureCategory | null;
   lastFailureMessage: string | null;
@@ -219,6 +224,7 @@ function isProviderConfigured(provider: AiProviderName): boolean {
 const COOLDOWN_PER_CATEGORY_MS: Record<AiProviderFailureCategory, number> = {
   RATE_LIMIT: 60_000,        // 60s — typical for 429 from Anthropic / Gemini
   AUTH: 5 * 60_000,           // 5min — bad keys won't recover on their own
+  BILLING: 10 * 60_000,       // 10min — billing issues require manual fix (e.g. DeepSeek 402)
   TIMEOUT: 10_000,            // 10s — transient
   MODEL_UNAVAILABLE: 5 * 60_000, // 5min
   NETWORK: 15_000,            // 15s
@@ -233,6 +239,8 @@ function ensureState(provider: AiProviderName): InternalState {
   if (!s) {
     s = {
       lastSuccessAt: null,
+      lastPingSucceededAt: null,
+      lastGenerationSucceededAt: null,
       lastFailureAt: null,
       lastFailureCategory: null,
       lastFailureMessage: null,
@@ -258,6 +266,8 @@ export function classifyAiError(error: unknown): AiProviderFailureCategory {
   const lower = raw.toLowerCase();
   if (/429|rate.?limit|quota|too\s+many\s+requests|resource\s+exhausted|tokens?\s+per\s+minute/.test(lower)) return "RATE_LIMIT";
   if (/401|403|invalid\s+api\s+key|unauthor|forbidden|api\s+key/.test(lower)) return "AUTH";
+  // HTTP 402 — payment required / insufficient balance (e.g. DeepSeek billing error)
+  if (/402|insufficient.?balance|payment\s+required|billing|account\s+balance/.test(lower)) return "BILLING";
   if (/timed?\s*out|timeout|abort/.test(lower)) return "TIMEOUT";
   if (/404|model\s+not|not\s+found|not\s+supported|model\s+unavailable|invalid_request/.test(lower)) return "MODEL_UNAVAILABLE";
   if (/network|fetch\s+failed|econnreset|enotfound|getaddrinfo|socket\s+hang\s+up/.test(lower)) return "NETWORK";
@@ -267,11 +277,30 @@ export function classifyAiError(error: unknown): AiProviderFailureCategory {
 
 export function recordProviderSuccess(provider: AiProviderName): void {
   const s = ensureState(provider);
-  s.lastSuccessAt = Date.now();
+  const now = Date.now();
+  s.lastSuccessAt = now;
+  s.lastGenerationSucceededAt = now;
   s.consecutiveFailures = 0;
   s.cooldownUntil = null;
   s.lastFailureCategory = null;
   s.lastFailureMessage = null;
+}
+
+/** Records a successful manual PING test without inflating lastGenerationSucceededAt.
+ * Use this in the admin health-test route so connectivity checks are not mistaken
+ * for real generation successes when assessing "runtime verified" status. */
+export function recordProviderPingSuccess(provider: AiProviderName): void {
+  const s = ensureState(provider);
+  s.lastPingSucceededAt = Date.now();
+  // Clear the cooldown so the provider is considered available again after a
+  // successful ping (same as a generation success for scheduling purposes).
+  s.consecutiveFailures = 0;
+  s.cooldownUntil = null;
+  s.lastFailureCategory = null;
+  s.lastFailureMessage = null;
+  // Note: lastSuccessAt and lastGenerationSucceededAt are intentionally NOT
+  // updated here — "runtime verified" in the health panel should reflect
+  // a real generation call, not just a connectivity check.
 }
 
 export function recordProviderFailure(provider: AiProviderName, error: unknown): AiProviderFailureCategory {
@@ -360,6 +389,8 @@ export function isProviderCooledDown(provider: AiProviderName): boolean {
 export function getProviderHealth(provider: AiProviderName): AiProviderHealth {
   const s = state.get(provider) ?? {
     lastSuccessAt: null,
+    lastPingSucceededAt: null,
+    lastGenerationSucceededAt: null,
     lastFailureAt: null,
     lastFailureCategory: null,
     lastFailureMessage: null,
@@ -370,6 +401,8 @@ export function getProviderHealth(provider: AiProviderName): AiProviderHealth {
     provider,
     configured: isProviderConfigured(provider),
     lastSuccessAt: s.lastSuccessAt ? new Date(s.lastSuccessAt).toISOString() : null,
+    lastPingSucceededAt: s.lastPingSucceededAt ? new Date(s.lastPingSucceededAt).toISOString() : null,
+    lastGenerationSucceededAt: s.lastGenerationSucceededAt ? new Date(s.lastGenerationSucceededAt).toISOString() : null,
     lastFailureAt: s.lastFailureAt ? new Date(s.lastFailureAt).toISOString() : null,
     lastFailureCategory: s.lastFailureCategory,
     lastFailureMessage: s.lastFailureMessage,
@@ -398,7 +431,13 @@ export type ProviderRuntimeSnapshot = {
 
 /** Route/UI-friendly runtime view. Field names match the public API contract
  * (lastErrorCategory / lastSafeErrorMessage). The message is already redacted
- * by recordProviderFailure, so this never leaks keys or raw provider bodies. */
+ * by recordProviderFailure, so this never leaks keys or raw provider bodies.
+ * Note: runtimeVerified reflects lastGenerationSucceededAt (a real generation
+ * call), NOT lastPingSucceededAt (a connectivity-only admin check). The
+ * lastSuccessAt field in the snapshot is set only by recordProviderSuccess
+ * (real generation calls), so runtimeVerified accurately reflects this.
+ * Ping-only successes are tracked separately in lastPingSucceededAt on the
+ * AiProviderHealth type but intentionally omitted from this compact view. */
 export function getProviderRuntimeSnapshot(provider: AiProviderName): ProviderRuntimeSnapshot {
   const h = getProviderHealth(provider);
   const coolingDown = isProviderCooledDown(provider);
@@ -412,7 +451,10 @@ export function getProviderRuntimeSnapshot(provider: AiProviderName): ProviderRu
     consecutiveFailures: h.consecutiveFailures,
     coolingDown,
     rateLimited: coolingDown && h.lastFailureCategory === "RATE_LIMIT",
-    runtimeVerified: Boolean(h.lastSuccessAt),
+    // runtimeVerified: true only when lastGenerationSucceededAt is set —
+    // recordProviderSuccess (real generation) sets it; recordProviderPingSuccess
+    // (connectivity check only) does not.
+    runtimeVerified: Boolean(h.lastGenerationSucceededAt),
     available: h.configured && !coolingDown,
   };
 }

@@ -2431,11 +2431,9 @@ export function TenderDetail({ tender: initial, aiEnabled, canonicalReadiness }:
                       </button>
                       {contactDetailsOpen && <dl className="grid gap-x-6 gap-y-2 md:grid-cols-2">
                         {rowsToShow.map(({ label, key, value }) => {
-                          // submissionEmails has its own source-page field rather
-                          // than being in contactDetailsSourceJson.
                           const s: { page: number | null; quote: string | null } | undefined =
                             key === "submissionEmails" && tender.submissionEmailSourcePage
-                              ? { page: tender.submissionEmailSourcePage, quote: null }
+                              ? { page: tender.submissionEmailSourcePage, quote: src["submissionEmails"]?.quote ?? null }
                               : src[key];
                           const missing = !value;
                           return (

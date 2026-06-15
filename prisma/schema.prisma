@@ -435,6 +435,10 @@ model TenderFile {
   failedPages      Int?
   extractionScore  Float?   // 0-100
   extractionMethod String?  // "text" | "ocr" | "mixed" | "failed"
+  deletionStatus   String   @default("ACTIVE") // ACTIVE | PENDING_DELETE | DELETED
+  deletionAttempts Int      @default(0)
+  lastDeletionError String?
+  deletedAt        DateTime?
   // Per-page status snapshot as JSON array (populated by AI Analyze).
   // Shape: [{ page, charCount, status, hasSubmissionInstructions, ... }]
   pageStatusJson   String?

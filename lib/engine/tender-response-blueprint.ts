@@ -1,3 +1,4 @@
+import { filterCleanLines } from "./pattern-filter";
 import { classifyUniversalTender, universalProfileSummary } from "./universal-tender-taxonomy";
 
 export type BlueprintEvidenceInput = {
@@ -39,7 +40,7 @@ function take(lines: string[], count: number, maxLen = 260): string[] {
   return lines
     .map(clean)
     .filter(Boolean)
-    .filter((line) => !/as an ai|chatgpt|openai|lorem ipsum|placeholder|sample text|parsed text for page/i.test(line))
+    .filter((line) => filterCleanLines([line]).length > 0)
     .slice(0, count)
     .map((line) => line.length > maxLen ? `${line.slice(0, maxLen - 1)}…` : line);
 }

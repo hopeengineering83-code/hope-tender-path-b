@@ -7,6 +7,7 @@ import { safeFileBaseName } from "../../../../../lib/engine/proposal-labels";
 import { checkExportReadiness, exportReadinessError, type ExportReadyDocument } from "../../../../../lib/engine/export-readiness";
 import { filterFinalExportCandidateDocuments, isFinalExportCandidateDocument } from "../../../../../lib/engine/document-output-state";
 import { buildFinalZipEntries } from "../../../../../lib/engine/final-zip-scope";
+import { assembleFinalSubmissionZip } from "../../../../../lib/engine/final-zip-assembly";
 import { validateFileSignature } from "../../../../../lib/engine/export-format-policy";
 import { getCompanyIngestionReadiness } from "../../../../../lib/company-ingestion-readiness";
 import { getTenderGenerationReadiness } from "../../../../../lib/tender-generation-readiness";
@@ -350,8 +351,6 @@ async function zipPackage(userId: string, tender: any, envelopeFilter: EnvelopeF
     );
   }
 
-  const JSZip = (await import("jszip")).default;
-  const zip = new JSZip();
   const scope = buildFinalZipEntries({
     tender: { exactFileNaming: tender.exactFileNaming, exactFileOrder: tender.exactFileOrder, requirements: tender.requirements.map((r: any) => ({ exactFileName: r.exactFileName ?? null })) },
     generatedDocs: scopedDocs.map((d) => ({ id: d.id, name: d.name, exactFileName: d.exactFileName, exactOrder: d.exactOrder ?? null, documentType: d.documentType ?? null })),
@@ -386,6 +385,7 @@ async function zipPackage(userId: string, tender: any, envelopeFilter: EnvelopeF
   }
   if (dupes.length) return err(`Duplicate filenames in export package: ${dupes.join(", ")}. Ensure each document has a unique exactFileName.`, 409, { code: "DUPLICATE_FILENAMES_IN_ZIP", duplicates: dupes });
 
+  const zipContents: Array<{ generatedDocId: string; bytes: Buffer | Uint8Array }> = [];
   for (const entry of entries) {
     const doc = byId.get(entry.generatedDocId!);
     if (!doc) continue;
@@ -394,7 +394,17 @@ async function zipPackage(userId: string, tender: any, envelopeFilter: EnvelopeF
     const content = contentResult.content;
     const sig = validateFileSignature(content.filename, content.base64);
     if (!sig.ok) return err(`File signature mismatch on ${content.filename}.`, 422, { code: "FILE_SIGNATURE_MISMATCH", reason: sig.reason });
-    zip.file(entry.name || fileName(doc.name), content.buffer);
+    zipContents.push({ generatedDocId: doc.id, bytes: content.buffer });
+  }
+
+  let assembledZip;
+  try {
+    assembledZip = await assembleFinalSubmissionZip(entries, zipContents);
+  } catch (error) {
+    return err("Final ZIP verification failed. Regenerate the affected documents before export.", 422, {
+      code: "FINAL_ZIP_VERIFICATION_FAILED",
+      detail: error instanceof Error ? error.message : String(error),
+    });
   }
 
   // ── Envelope breakdown — annotate the response so clients know how many
@@ -412,7 +422,7 @@ async function zipPackage(userId: string, tender: any, envelopeFilter: EnvelopeF
   const envelopeBreakdown = `TECHNICAL=${envelopeCounts.TECHNICAL},FINANCIAL=${envelopeCounts.FINANCIAL},ADMIN=${envelopeCounts.ADMIN}`;
   const hasFinancialDocs = envelopeCounts.FINANCIAL > 0;
 
-  const zipBuffer = await zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" });
+  const zipBuffer = assembledZip.buffer;
   // Name the ZIP after the envelope when scoped, so the user has clarity:
   //   submission-package.zip                  — single combined
   //   submission-package-technical.zip        — technical envelope only
@@ -421,7 +431,7 @@ async function zipPackage(userId: string, tender: any, envelopeFilter: EnvelopeF
   const zipName = envelopeFilter
     ? `${baseLabel}-${envelopeFilter.toLowerCase()}.zip`
     : `${baseLabel}.zip`;
-  const fileList = entries.map((entry) => entry.name);
+  const fileList = assembledZip.fileList;
   // Fresh read before create/update to avoid stale-object race on concurrent requests.
   const freshPkg = await prisma.exportPackage.findFirst({ where: { tenderId: tender.id }, orderBy: { createdAt: "desc" } });
   if (freshPkg) await prisma.exportPackage.update({ where: { id: freshPkg.id }, data: { status: "READY", fileList: JSON.stringify(fileList), downloadCount: { increment: 1 } } });
@@ -438,6 +448,8 @@ async function zipPackage(userId: string, tender: any, envelopeFilter: EnvelopeF
     "Content-Type": "application/zip",
     "Content-Disposition": `attachment; filename="${zipName}"`,
     "X-Envelope-Breakdown": envelopeBreakdown,
+    "Cache-Control": "private, no-store",
+    "X-Content-Type-Options": "nosniff",
   };
   if (envelopeFilter) responseHeaders["X-Envelope-Scope"] = envelopeFilter;
   if (hasFinancialDocs && !envelopeFilter) {
