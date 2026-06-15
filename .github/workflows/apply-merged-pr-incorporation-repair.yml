@@ -1,17 +1,16 @@
 name: Apply merged PR incorporation repair
 
 on:
-  push:
-    branches:
-      - codex/fix-merged-pr-incorporation
-    paths:
-      - .repair-trigger
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches: [main]
 
 permissions:
   contents: write
 
 jobs:
   apply-repair:
+    if: github.event.pull_request.head.ref == 'codex/fix-merged-pr-incorporation'
     runs-on: ubuntu-latest
     steps:
       - name: Check out repair branch
@@ -19,6 +18,7 @@ jobs:
         with:
           ref: codex/fix-merged-pr-incorporation
           fetch-depth: 0
+          token: ${{ github.token }}
 
       - name: Apply reviewed repair
         run: node scripts/apply-merged-pr-incorporation-repair.mjs
