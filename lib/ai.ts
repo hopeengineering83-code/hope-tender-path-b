@@ -1519,7 +1519,8 @@ JSON structure required:
     "legalClientName": {"page": page_number_or_null, "quote": "verbatim snippet or null"},
     "donorAgency": {"page": page_number_or_null, "quote": "verbatim snippet or null"},
     "implementingAgency": {"page": page_number_or_null, "quote": "verbatim snippet or null"},
-    "procurementReferenceNumber": {"page": page_number_or_null, "quote": "verbatim snippet or null"}
+    "procurementReferenceNumber": {"page": page_number_or_null, "quote": "verbatim snippet or null"},
+    "submissionEmails": {"page": page_number_or_null, "quote": "verbatim snippet showing the submission email address(es), or null"}
   },
   "submissionMethodSourcePage": page_number_integer_or_null,
   "submissionMethodSourceQuote": "verbatim snippet showing the submission method, or null",
