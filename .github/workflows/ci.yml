@@ -90,6 +90,9 @@ jobs:
           mkdir -p build-results
           npm run build 2>&1 | tee build-results/npm-build.log
 
+      - name: Verify build did not mutate source
+        run: npm run verify:source-clean
+
       - name: Upload build diagnostics
         if: failure()
         uses: actions/upload-artifact@v4
