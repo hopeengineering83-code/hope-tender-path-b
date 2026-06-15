@@ -60,10 +60,13 @@ describe("Gap 4 — upload-first route source enforces production stack hiding",
     // requestId must be threaded through the response body.
     assert.match(src, /requestId/);
 
-    // The body must include error, detail, hint, requestId.
+    // The body must include error, detail, hint, requestId. Accept either
+    // explicit object fields (`detail: detail`) or equivalent shorthand
+    // (`detail,`) so the guard validates behaviour rather than formatting.
     assert.match(src, /error:/);
-    assert.match(src, /detail:/);
-    assert.match(src, /hint/);
+    assert.match(src, /\bdetail\s*(?::|,)/);
+    assert.match(src, /\bhint\s*(?::|,)/);
+    assert.match(src, /\brequestId\s*(?::|,)/);
 
     // Stack must only be attached when !isProduction.
     assert.match(src, /!isProduction/);
