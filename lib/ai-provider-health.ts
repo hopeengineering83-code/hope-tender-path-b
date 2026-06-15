@@ -36,6 +36,7 @@ export type AiProviderName = "anthropic" | "gemini" | "openai" | "mistral" | "de
 export type AiProviderFailureCategory =
   | "RATE_LIMIT"
   | "AUTH"
+  | "BILLING"
   | "TIMEOUT"
   | "MODEL_UNAVAILABLE"
   | "NETWORK"
@@ -219,6 +220,7 @@ function isProviderConfigured(provider: AiProviderName): boolean {
 const COOLDOWN_PER_CATEGORY_MS: Record<AiProviderFailureCategory, number> = {
   RATE_LIMIT: 60_000,        // 60s — typical for 429 from Anthropic / Gemini
   AUTH: 5 * 60_000,           // 5min — bad keys won't recover on their own
+  BILLING: 5 * 60_000,        // 5min — insufficient balance, operator must top up
   TIMEOUT: 10_000,            // 10s — transient
   MODEL_UNAVAILABLE: 5 * 60_000, // 5min
   NETWORK: 15_000,            // 15s
@@ -258,6 +260,9 @@ export function classifyAiError(error: unknown): AiProviderFailureCategory {
   const lower = raw.toLowerCase();
   if (/429|rate.?limit|quota|too\s+many\s+requests|resource\s+exhausted|tokens?\s+per\s+minute/.test(lower)) return "RATE_LIMIT";
   if (/401|403|invalid\s+api\s+key|unauthor|forbidden|api\s+key/.test(lower)) return "AUTH";
+  // HTTP 402 Payment Required — provider balance is exhausted (e.g. DeepSeek "Insufficient Balance").
+  // Distinct from AUTH (bad key) so operators know to top up the account, not rotate keys.
+  if (/402|insufficient\s+balance|payment\s+required|no\s+credits|out\s+of\s+credits/.test(lower)) return "BILLING";
   if (/timed?\s*out|timeout|abort/.test(lower)) return "TIMEOUT";
   if (/404|model\s+not|not\s+found|not\s+supported|model\s+unavailable|invalid_request/.test(lower)) return "MODEL_UNAVAILABLE";
   if (/network|fetch\s+failed|econnreset|enotfound|getaddrinfo|socket\s+hang\s+up/.test(lower)) return "NETWORK";
