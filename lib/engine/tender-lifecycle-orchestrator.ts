@@ -310,6 +310,7 @@ export async function computeTenderLifecycle(
           analysisSummary: true,
           intakeSummary: true,
           description: true,
+          metadataContaminated: true,
         },
       }),
       client.tenderFile.findMany({
