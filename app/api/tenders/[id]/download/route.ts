@@ -523,7 +523,7 @@ async function proposalPdf(userId: string, tender: any, docId: string | null) {
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     let actor;
-    try { actor = await requirePermission("ADMIN", "PROPOSAL_MANAGER", "REVIEWER"); }
+    try { actor = await requirePermission("FINAL_EXPORT"); }
     catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
 
     await prismaReady;

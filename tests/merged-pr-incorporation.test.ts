@@ -7,7 +7,7 @@ const read = (path: string) => readFileSync(path, "utf8");
 describe("merged PR incorporation repair", () => {
   it("uses one exact canonical provider policy", () => {
     const policy = read("lib/ai-provider-policy.ts");
-    assert.match(policy, /[s*"gemini",s*"openrouter",s*"openai",s*"groq",s*"deepseek",s*"anthropic",?s*]/s);
+    assert.match(policy, /"mistral"[\s\S]*"groq"[\s\S]*"openrouter"[\s\S]*"gemini"[\s\S]*"openai"[\s\S]*"together"[\s\S]*"deepseek"[\s\S]*"anthropic"/);
     for (const path of ["lib/ai.ts", "lib/system-readiness.ts", "lib/ai-environment-readiness.ts", "app/api/ai/health/route.ts", "components/ai-health-panel.tsx"]) {
       assert.match(read(path), /ai-provider-policy/, `${path} must consume the canonical policy`);
     }
@@ -16,7 +16,7 @@ describe("merged PR incorporation repair", () => {
   it("does not mutate tracked source during package lifecycle commands", () => {
     const pkg = JSON.parse(read("package.json"));
     for (const [name, command] of Object.entries(pkg.scripts)) {
-      assert.doesNotMatch(String(command), /reconcile-gap-closure|writeFileSync([^)]*(?:lib|app|components|tests)/, `${name} must not rewrite source`);
+      assert.doesNotMatch(String(command), /reconcile-gap-closure|writeFileSync\([^)]*(?:lib|app|components|tests)/, `${name} must not rewrite source`);
     }
     assert.equal(existsSync("scripts/reconcile-gap-closure.mjs"), false);
     assert.equal(pkg.scripts["verify:source-clean"], "node scripts/verify-source-clean.mjs");

@@ -152,7 +152,7 @@ export async function DELETE(
 ) {
   let actor;
   try {
-    actor = await requireRole("ADMIN", "PROPOSAL_MANAGER");
+    actor = await requirePermission("COMPANY_KNOWLEDGE_MGMT");
   } catch {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
