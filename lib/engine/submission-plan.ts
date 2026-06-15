@@ -690,3 +690,22 @@ export function findMissingGeneratedDocuments(plan: SubmissionPlan, generatedDoc
 
   return plan.files.filter((file) => file.required && !generated.has(fileKey(file.exactFileName)));
 }
+
+export type SubmissionPlanStatus =
+  | "NO_PLAN"
+  | "DERIVED_DRAFT"
+  | "USER_REVIEW_REQUIRED"
+  | "CANONICAL_APPROVED"
+  | "STALE"
+  | "INVALID";
+
+export function deriveSubmissionPlanStatus(tender: any, plan: SubmissionPlan): SubmissionPlanStatus {
+  if (!plan.files || plan.files.length === 0) return "NO_PLAN";
+
+  const isDerived = plan.files.some(f => f.notes?.includes("DERIVED_DRAFT_UNCONFIRMED"));
+  if (isDerived) return "DERIVED_DRAFT";
+
+  if (tender.status === "PLAN_APPROVED") return "CANONICAL_APPROVED";
+
+  return "USER_REVIEW_REQUIRED";
+}

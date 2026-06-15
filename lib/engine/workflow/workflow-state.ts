@@ -1,8 +1,12 @@
 import { PrismaClient } from "@prisma/client";
-import { computeTenderReadinessState, traced } from "../../tender-readiness-state";
+import { computeTenderReadinessState } from "../../tender-readiness-state";
 import { computeCanonicalModuleStates } from "../canonical-readiness-state";
 import { isExtractionAcceptableForGeneration, isExtractionAcceptableForExport } from "../extraction-quality-gate";
 import { buildSubmissionPlanWithDerivedFallback, deriveSubmissionPlanStatus } from "../submission-plan";
+
+function traced(r: { sourceTenderFileId?: string | null; sourcePageNumber?: number | null }): boolean {
+  return Boolean(r.sourceTenderFileId || r.sourcePageNumber != null);
+}
 
 export type WorkflowStage =
   | "UPLOAD_TENDER"
@@ -106,7 +110,7 @@ export async function getCanonicalTenderWorkflowState(
 
   const canonicalModules = computeCanonicalModuleStates({
     ...readiness,
-    hasAnalysis: Boolean(tender.analysisSource),
+    hasAnalysis: Boolean((tender as any).analysisSource),
     hasRequirements: tender.requirements.length > 0,
     hasDocuments: tender.generatedDocuments.length > 0,
     analysisIsApprovedFallback,
