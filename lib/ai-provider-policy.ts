@@ -9,18 +9,24 @@ export const CANONICAL_AI_PROVIDER_CHAIN: readonly AiProviderName[] = [
   "anthropic",
 ] as const;
 
-export const CANONICAL_AI_PROVIDER_LABELS = [
-  "Gemini",
-  "OpenRouter",
-  "OpenAI",
-  "Groq",
-  "DeepSeek",
-  "Claude/Anthropic",
-] as const;
+export type CanonicalAiProvider = (typeof CANONICAL_AI_PROVIDER_CHAIN)[number];
+
+export const CANONICAL_AI_PROVIDER_LABEL_BY_NAME: Readonly<Record<CanonicalAiProvider, string>> = {
+  gemini: "Gemini",
+  openrouter: "OpenRouter",
+  openai: "OpenAI",
+  groq: "Groq",
+  deepseek: "DeepSeek",
+  anthropic: "Claude/Anthropic",
+};
+
+export const CANONICAL_AI_PROVIDER_LABELS = CANONICAL_AI_PROVIDER_CHAIN.map(
+  (provider) => CANONICAL_AI_PROVIDER_LABEL_BY_NAME[provider],
+);
 
 export const CANONICAL_AI_PROVIDER_DISPLAY = CANONICAL_AI_PROVIDER_LABELS.join(" → ");
 
-export const CANONICAL_AI_PROVIDER_ENV: Readonly<Record<(typeof CANONICAL_AI_PROVIDER_CHAIN)[number], string>> = {
+export const CANONICAL_AI_PROVIDER_ENV: Readonly<Record<CanonicalAiProvider, string>> = {
   gemini: "GEMINI_API_KEY",
   openrouter: "OPENROUTER_API_KEY",
   openai: "OPENAI_API_KEY",
@@ -29,7 +35,7 @@ export const CANONICAL_AI_PROVIDER_ENV: Readonly<Record<(typeof CANONICAL_AI_PRO
   anthropic: "ANTHROPIC_API_KEY",
 };
 
-export const CANONICAL_AI_PROVIDER_RANK: Readonly<Record<(typeof CANONICAL_AI_PROVIDER_CHAIN)[number], number>> = {
+export const CANONICAL_AI_PROVIDER_RANK: Readonly<Record<CanonicalAiProvider, number>> = {
   gemini: 1,
   openrouter: 2,
   openai: 3,
@@ -38,10 +44,14 @@ export const CANONICAL_AI_PROVIDER_RANK: Readonly<Record<(typeof CANONICAL_AI_PR
   anthropic: 6,
 };
 
-export function configuredCanonicalProviders(env: NodeJS.ProcessEnv = process.env): AiProviderName[] {
+export function configuredCanonicalProviders(env: NodeJS.ProcessEnv = process.env): CanonicalAiProvider[] {
   return CANONICAL_AI_PROVIDER_CHAIN.filter((provider) => Boolean(env[CANONICAL_AI_PROVIDER_ENV[provider]]?.trim()));
 }
 
-export function preferredCanonicalProvider(env: NodeJS.ProcessEnv = process.env): AiProviderName | null {
+export function preferredCanonicalProvider(env: NodeJS.ProcessEnv = process.env): CanonicalAiProvider | null {
   return configuredCanonicalProviders(env)[0] ?? null;
+}
+
+export function canonicalProviderLabel(provider: CanonicalAiProvider): string {
+  return CANONICAL_AI_PROVIDER_LABEL_BY_NAME[provider];
 }
