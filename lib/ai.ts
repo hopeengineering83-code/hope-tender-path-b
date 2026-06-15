@@ -365,15 +365,17 @@ export type AiUseCase = "default" | "extraction" | "proposal" | "validation" | "
 // Order: verified-working providers first (Mistral → Groq → OpenRouter),
 // then high-quality providers that may be rate-limited (Gemini → OpenAI),
 // then providers that need key/balance fixes (Together → DeepSeek → Anthropic).
-export const CANONICAL_PROVIDER_CHAIN: readonly AiProviderName[] = CANONICAL_AI_PROVIDER_CHAIN;
+export const CANONICAL_PROVIDER_CHAIN: readonly AiProviderName[] = [
+  "mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic",
+] as const;
 
 const PROVIDER_CHAINS: Record<AiUseCase, AiProviderName[]> = {
-  default:    [...CANONICAL_AI_PROVIDER_CHAIN],
-  extraction: [...CANONICAL_AI_PROVIDER_CHAIN],
-  proposal:   [...CANONICAL_AI_PROVIDER_CHAIN],
-  validation: [...CANONICAL_AI_PROVIDER_CHAIN],
-  fast:       [...CANONICAL_AI_PROVIDER_CHAIN],
-  reasoning:  [...CANONICAL_AI_PROVIDER_CHAIN],
+  default:    ["mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"],
+  extraction: ["mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"],
+  proposal:   ["mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"],
+  validation: ["mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"],
+  fast:       ["mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"],
+  reasoning:  ["mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"],
 };
 
 function isProviderEnabled(name: AiProviderName): boolean {

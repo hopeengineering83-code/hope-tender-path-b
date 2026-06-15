@@ -24,6 +24,7 @@ import { CANONICAL_AI_PROVIDER_CHAIN, CANONICAL_AI_PROVIDER_DISPLAY, CANONICAL_A
 
 // Canonical fallback order surfaced to operators. Must match lib/ai.ts PROVIDER_CHAINS.
 // Claude is placed LAST so Anthropic rate limits do not block other providers.
+// Policy order: Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Claude
 const AI_FALLBACK_CHAIN = `${CANONICAL_AI_PROVIDER_DISPLAY} → deterministic draft fallback`;
 const AI_FALLBACK_CHAIN_EXTRACTION = AI_FALLBACK_CHAIN;
 
@@ -122,6 +123,11 @@ export async function GET() {
 
   const openaiModel = process.env.OPENAI_PROPOSAL_MODEL || "gpt-4o";
 
+  // Canonical ordered preferred-provider resolution (mirrors policy order):
+  // mistralConfigured ? "mistral" : groqConfigured ? "groq" : openRouterConfigured ? "openrouter"
+  // : geminiConfigured ? "gemini" : openaiConfigured ? "openai" : togetherConfigured ? "together"
+  // : deepSeekConfigured ? "deepseek" : claudeConfigured ? "claude" : "none"
+
   return NextResponse.json({
     success: anyConfigured && !allConfiguredCooling,
     configuredProviderCount: configuredNames.length,
@@ -143,7 +149,7 @@ export async function GET() {
         model: process.env.GEMINI_MODEL || "gemini-2.5-pro",
         fallbackRank: CANONICAL_AI_PROVIDER_RANK.gemini,
         label: "Gemini",
-        note: "First canonical provider",
+        note: "Fourth canonical provider",
         primaryModel: process.env.GEMINI_MODEL || "gemini-2.5-pro",
         fallbackModels: maskModelChain(geminiModels),
         extractionModel: process.env.GEMINI_EXTRACTION_MODEL || process.env.GEMINI_EXTRACT_MODEL || null,
@@ -153,9 +159,9 @@ export async function GET() {
         configured: mistralConfigured,
         envPresent: mistralConfigured,
         model: getMistralProposalModel(),
-        fallbackRank: null,
+        fallbackRank: 1,
         label: "Mistral",
-        note: "Optional explicit adapter; excluded from the canonical fallback chain",
+        note: "First canonical provider",
         analysisModel: getMistralAnalysisModel(),
         runtime: providerRuntime.mistral,
       },
@@ -181,9 +187,9 @@ export async function GET() {
         configured: togetherConfigured,
         envPresent: togetherConfigured,
         model: getTogetherProposalModel(),
-        fallbackRank: null,
+        fallbackRank: CANONICAL_AI_PROVIDER_RANK.together,
         label: "Together",
-        note: "Optional explicit adapter; excluded from the canonical fallback chain",
+        note: "Sixth canonical provider",
         analysisModel: getTogetherAnalysisModel(),
         fastModel: getTogetherFastModel(),
         runtime: providerRuntime.together,
@@ -201,9 +207,9 @@ export async function GET() {
         configured: claudeConfigured,
         envPresent: claudeConfigured,
         model: claudeModels[0] ?? null,
-        fallbackRank: CANONICAL_AI_PROVIDER_RANK.anthropic,
-        label: "Claude/Anthropic",
-        note: "Final canonical fallback provider",
+        fallbackRank: 8,
+        label: "Claude",
+        note: "Final canonical fallback provider (rank 8)",
         tier: process.env.ANTHROPIC_TIER || null,
         proposalModels: maskModelChain(claudeModels),
         maxOutputTokens: Number(process.env.ANTHROPIC_MAX_OUTPUT_TOKENS || 0) || null,

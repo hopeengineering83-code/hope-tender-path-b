@@ -105,6 +105,7 @@ export async function getSystemReadiness(): Promise<SystemReadiness> {
         : "Production requires Vercel Blob or an explicitly approved durable database storage mode.",
     },
     {
+      // Canonical AI provider chain: Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Claude
       key: "ai_providers",
       title: "AI provider chain",
       severity: configuredProviders.length > 0 ? "OK" : "CRITICAL",

@@ -25,7 +25,7 @@ describe("merged PR incorporation repair", () => {
   it("wires centralized permissions into high-risk boundaries", () => {
     const auth = read("lib/auth.ts");
     assert.match(auth, /export async function requirePermission/);
-    assert.match(auth, /canPerform(user.role, action)/);
+    assert.match(auth, /canPerform\(user\.role, action\)/);
     const expected: Record<string, string> = {
       "app/api/tenders/[id]/generate/route.ts": "GENERATION_TRIGGER",
       "app/api/tenders/[id]/export/route.ts": "FINAL_EXPORT",
@@ -37,7 +37,7 @@ describe("merged PR incorporation repair", () => {
     };
     for (const [path, action] of Object.entries(expected)) {
       const source = read(path);
-      assert.match(source, new RegExp(`requirePermission\(\"${action}\"\)`), `${path} must enforce ${action}`);
+      assert.match(source, new RegExp(`requirePermission\\("${action}"\\)`), `${path} must enforce ${action}`);
     }
   });
 });

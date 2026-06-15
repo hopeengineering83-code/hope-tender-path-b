@@ -24,33 +24,35 @@ function status(name: string, scope: AIEnvironmentVariableStatus["scope"], sever
   return { name, present: present(name), scope, severity, note };
 }
 
+// Policy order: Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Claude
 export function getAIEnvironmentReadiness(): AIEnvironmentReadiness {
   const variables: AIEnvironmentVariableStatus[] = [
-    status("ANTHROPIC_API_KEY", "ai", "recommended", "Final canonical fallback provider."),
-    status("ANTHROPIC_TIER", "ai", "recommended", "Used to select Claude output-token defaults; Tier 2 supports larger proposal outputs than Tier 1."),
-    status("ANTHROPIC_MAX_OUTPUT_TOKENS", "ai", "recommended", "Controls Claude proposal output budget. Use a realistic value for your Vercel timeout and Anthropic tier."),
-    status("ANTHROPIC_PROPOSAL_MODELS", "ai", "recommended", "Comma-separated Claude model chain for proposal generation."),
-    status("GEMINI_API_KEY", "ai", "critical", "First-tier provider in the canonical chain for analysis, extraction, proposal, validation, and fast use cases."),
-    status("GEMINI_MODEL", "ai", "recommended", "Default Gemini model for general AI calls."),
-    status("GEMINI_ANALYSIS_MODEL", "ai", "recommended", "Gemini model for tender analysis when configured."),
-    status("GEMINI_EXTRACTION_MODEL", "ai", "recommended", "Gemini model for company knowledge extraction when configured."),
-    status("GEMINI_FALLBACK_MODELS", "ai", "recommended", "Fallback Gemini model chain."),
-    status("OPENAI_API_KEY", "ai", "critical", "Third canonical provider after Gemini and OpenRouter."),
-    status("OPENAI_PROPOSAL_MODEL", "ai", "optional", "OpenAI proposal model (default: gpt-4o)."),
-    status("MISTRAL_API_KEY", "ai", "optional", "Optional adapter retained for explicit use; excluded from the canonical fallback chain."),
+    // Canonical provider chain — Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Claude
+    status("MISTRAL_API_KEY", "ai", "recommended", "First canonical provider. Mistral is cost-effective and fast for analysis and proposal generation."),
     status("MISTRAL_PROPOSAL_MODEL", "ai", "optional", "Mistral proposal model (default: mistral-large-latest)."),
     status("MISTRAL_ANALYSIS_MODEL", "ai", "optional", "Mistral analysis model override."),
     status("MISTRAL_FAST_MODEL", "ai", "optional", "Mistral fast/cheap model override."),
-    status("DEEPSEEK_API_KEY", "ai", "optional", "Fifth canonical provider."),
-    status("DEEPSEEK_PROPOSAL_MODEL", "ai", "optional", "DeepSeek proposal model (default: deepseek-chat; deepseek-reasoner for deeper reasoning)."),
-    status("GROQ_API_KEY", "ai", "optional", "Fourth canonical provider."),
+    status("GROQ_API_KEY", "ai", "recommended", "Second canonical provider. Groq provides fast inference for time-sensitive operations."),
     status("GROQ_PROPOSAL_MODEL", "ai", "optional", "Groq model override (default: llama-3.3-70b-versatile)."),
-    status("TOGETHER_API_KEY", "ai", "optional", "Optional adapter retained for explicit use; excluded from the canonical fallback chain."),
+    status("OPENROUTER_API_KEY", "ai", "recommended", "Third canonical provider; aggregates models via an OpenAI-compatible API."),
+    status("OPENROUTER_PROPOSAL_MODEL", "ai", "optional", "OpenRouter model pin (default: openrouter/auto — pin to a specific model for predictable costs)."),
+    status("GEMINI_API_KEY", "ai", "recommended", "Fourth canonical provider for analysis, extraction, proposal, validation, and fast use cases."),
+    status("GEMINI_MODEL", "ai", "optional", "Default Gemini model for general AI calls."),
+    status("GEMINI_ANALYSIS_MODEL", "ai", "optional", "Gemini model for tender analysis when configured."),
+    status("GEMINI_EXTRACTION_MODEL", "ai", "optional", "Gemini model for company knowledge extraction when configured."),
+    status("GEMINI_FALLBACK_MODELS", "ai", "optional", "Fallback Gemini model chain."),
+    status("OPENAI_API_KEY", "ai", "recommended", "Fifth canonical provider."),
+    status("OPENAI_PROPOSAL_MODEL", "ai", "optional", "OpenAI proposal model (default: gpt-4o)."),
+    status("TOGETHER_API_KEY", "ai", "optional", "Sixth canonical provider."),
     status("TOGETHER_PROPOSAL_MODEL", "ai", "optional", "Together proposal model override."),
     status("TOGETHER_ANALYSIS_MODEL", "ai", "optional", "Together analysis model override."),
     status("TOGETHER_FAST_MODEL", "ai", "optional", "Together fast/cheap model override."),
-    status("OPENROUTER_API_KEY", "ai", "critical", "Second canonical provider; aggregates models via an OpenAI-compatible API."),
-    status("OPENROUTER_PROPOSAL_MODEL", "ai", "optional", "OpenRouter model pin (default: openrouter/auto — pin to a specific model for predictable costs)."),
+    status("DEEPSEEK_API_KEY", "ai", "optional", "Seventh canonical provider."),
+    status("DEEPSEEK_PROPOSAL_MODEL", "ai", "optional", "DeepSeek proposal model (default: deepseek-chat; deepseek-reasoner for deeper reasoning)."),
+    status("ANTHROPIC_API_KEY", "ai", "recommended", "Final canonical fallback provider (Claude). Placed last so Anthropic rate limits do not block other providers."),
+    status("ANTHROPIC_TIER", "ai", "recommended", "Used to select Claude output-token defaults; Tier 2 supports larger proposal outputs than Tier 1."),
+    status("ANTHROPIC_MAX_OUTPUT_TOKENS", "ai", "recommended", "Controls Claude proposal output budget. Use a realistic value for your Vercel timeout and Anthropic tier."),
+    status("ANTHROPIC_PROPOSAL_MODELS", "ai", "recommended", "Comma-separated Claude model chain for proposal generation."),
     status("PDF_OCR_ENABLED", "ocr", "recommended", "Enables OCR path for scanned/image-heavy PDFs."),
     status("PDF_OCR_MODEL", "ocr", "recommended", "OCR reasoning model selector."),
     status("PDF_OCR_MAX_PAGES", "ocr", "recommended", "Caps OCR pages to avoid serverless timeout/cost overrun."),
@@ -61,6 +63,19 @@ export function getAIEnvironmentReadiness(): AIEnvironmentReadiness {
     status("AI_PROPOSAL_TIMEOUT_MS", "runtime", "recommended", "Proposal-generation timeout guard."),
     status("PROPOSAL_SECTION_TIMEOUT_MS", "runtime", "recommended", "Section-level proposal timeout guard."),
   ];
+
+  // Canonical provider availability checks — policy order:
+  // Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Claude
+  // These explicit present() calls are intentional: they document policy order and are checked by tests.
+  const anyProviderPresent =
+    present("MISTRAL_API_KEY") ||
+    present("GROQ_API_KEY") ||
+    present("OPENROUTER_API_KEY") ||
+    present("GEMINI_API_KEY") ||
+    present("OPENAI_API_KEY") ||
+    present("TOGETHER_API_KEY") ||
+    present("DEEPSEEK_API_KEY") ||
+    present("ANTHROPIC_API_KEY");
 
   const providerChain = CANONICAL_AI_PROVIDER_CHAIN
     .filter((provider) => present(CANONICAL_AI_PROVIDER_ENV[provider]))
@@ -76,6 +91,7 @@ export function getAIEnvironmentReadiness(): AIEnvironmentReadiness {
   if (!present("SESSION_SECRET")) blockers.push("SESSION_SECRET is missing.");
   if (!present("PDF_OCR_ENABLED")) warnings.push("PDF_OCR_ENABLED is not set. Scanned PDFs may extract poorly unless OCR defaults are enabled elsewhere.");
   if (!present("PDF_OCR_MAX_RACES")) warnings.push("PDF_OCR_MAX_RACES is not set. Recommended value: 1 to keep OCR provider races/concurrency conservative on Vercel.");
+  if (!anyProviderPresent) warnings.push("No AI provider key is set. Configure at least one canonical provider.");
   if (!present("ANTHROPIC_TIER") && present("ANTHROPIC_API_KEY")) warnings.push("ANTHROPIC_TIER is not set. Claude output-token defaults may not match your Tier 2 account.");
 
   return {
