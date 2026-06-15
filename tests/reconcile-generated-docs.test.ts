@@ -10,8 +10,8 @@
 
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
-import { reconcileGeneratedDocuments, applyReconcileDecisions } from "../lib/engine/reconcile-generated-docs";
-import type { SubmissionPlan, GeneratedDocumentLike } from "../lib/engine/submission-plan";
+import { reconcileGeneratedDocuments, applyReconcileDecisions } from "../lib/engine/documents/reconcile-generated-docs";
+import type { SubmissionPlan, GeneratedDocumentLike } from "../lib/engine/plans/submission-plan";
 
 const emptyPlan: SubmissionPlan = {
   tenderId: "t1",

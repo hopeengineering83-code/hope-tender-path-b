@@ -9,7 +9,7 @@
 
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
-import { formatRequirementLine } from "../lib/engine/proposal-labels";
+import { formatRequirementLine } from "../lib/engine/infrastructure/proposal-labels";
 
 describe("formatRequirementLine — sourceSectionHeading", () => {
   it("appends (§ Section Name) when sourceSectionHeading is provided", () => {

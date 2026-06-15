@@ -12,7 +12,7 @@ import {
   sanitizeStoredMetadataForEngine,
   computeStoredMetadataPatch,
   listInvalidStoredFields,
-} from "../lib/engine/sanitize-stored-metadata";
+} from "../lib/engine/metadata/sanitize-stored-metadata";
 
 describe("sanitize-stored-metadata — sanitizeStoredMetadataForEngine", () => {
   it("nullifies the four production-screenshot corruptions", () => {

@@ -14,8 +14,8 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { resolveSubmissionPlanCompleteness } from "../lib/engine/submission-plan-completeness";
-import type { GeneratedDocSnapshot } from "../lib/engine/submission-plan-completeness";
+import { resolveSubmissionPlanCompleteness } from "../lib/engine/plans/submission-plan-completeness";
+import type { GeneratedDocSnapshot } from "../lib/engine/plans/submission-plan-completeness";
 
 function makeTender(overrides: Partial<Parameters<typeof resolveSubmissionPlanCompleteness>[0]["tender"]> = {}): Parameters<typeof resolveSubmissionPlanCompleteness>[0]["tender"] {
   return {

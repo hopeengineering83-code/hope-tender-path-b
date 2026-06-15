@@ -16,8 +16,8 @@
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
-import { isFinalExportCandidateDocument } from "../lib/engine/document-output-state";
-import { containsPricingLeakage, isSensitiveFinancialOrLegalDoc } from "../lib/engine/pricing-hygiene";
+import { isFinalExportCandidateDocument } from "../lib/engine/export/document-output-state";
+import { containsPricingLeakage, isSensitiveFinancialOrLegalDoc } from "../lib/engine/pricing/pricing-hygiene";
 
 // ─── Helper: build a document-like object ─────────────────────────────────
 

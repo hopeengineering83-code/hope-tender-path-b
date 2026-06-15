@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
-import { deriveDocumentOutputState } from "../lib/engine/document-output-state";
+import { deriveDocumentOutputState } from "../lib/engine/export/document-output-state";
 
 describe("original-required export repair policy", () => {
   it("keeps replace-with-original rows as original-required blockers", () => {

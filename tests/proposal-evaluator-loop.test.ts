@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
-import { applyProposalEvaluatorLoop, evaluateProposalAgainstContract } from "../lib/engine/proposal-evaluator-loop";
+import { applyProposalEvaluatorLoop, evaluateProposalAgainstContract } from "../lib/engine/evaluation/proposal-evaluator-loop";
 
 const contractInput = {
   tenderTitle: "RFP for Hospital Design and Supervision Services",

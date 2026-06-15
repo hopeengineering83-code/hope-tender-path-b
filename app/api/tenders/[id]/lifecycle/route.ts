@@ -10,7 +10,7 @@
 import { NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
-import { computeTenderLifecycle } from "../../../../../lib/engine/tender-lifecycle-orchestrator";
+import { computeTenderLifecycle } from "../../../../../lib/engine/workflow/tender-lifecycle-orchestrator";
 import { rateLimit, API_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import { sanitizeError } from "../../../../../lib/sanitize-error";
 

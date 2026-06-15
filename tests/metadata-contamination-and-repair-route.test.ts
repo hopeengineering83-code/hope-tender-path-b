@@ -6,7 +6,7 @@ import { readFileSync } from "node:fs";
 import {
   detectMetadataContamination,
   looksLikeMetadataPlaceholder,
-} from "../lib/engine/tender-metadata-completeness";
+} from "../lib/engine/metadata/tender-metadata-completeness";
 
 describe("detectMetadataContamination", () => {
   it("flags 'Status CLOSED' scrape contamination", () => {

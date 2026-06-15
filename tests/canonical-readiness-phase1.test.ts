@@ -9,7 +9,7 @@ import {
   type ComputeCanonicalStatesInput,
   type CanonicalModuleStatePayload,
   type CanonicalModuleStatus,
-} from "../lib/engine/canonical-readiness-state";
+} from "../lib/engine/readiness/canonical-readiness-state";
 import { computeTenderReadinessState, deriveAnalysisHash } from "../lib/tender-readiness-state";
 import { CanonicalStatusBadge } from "../components/canonical-status-badge";
 import { GenerationActionButton, isGenerationActionEnabled } from "../components/generation-action-panel";

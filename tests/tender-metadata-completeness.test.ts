@@ -8,7 +8,7 @@ import {
   assessTenderMetadataCompleteness,
   looksLikeMetadataPlaceholder,
   stripMetadataPlaceholders,
-} from "../lib/engine/tender-metadata-completeness";
+} from "../lib/engine/metadata/tender-metadata-completeness";
 
 describe("looksLikeMetadataPlaceholder", () => {
   it("detects Bid-Team to confirm", () => {

@@ -22,7 +22,7 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { computeCanonicalModuleStates } from "../lib/engine/canonical-readiness-state";
+import { computeCanonicalModuleStates } from "../lib/engine/readiness/canonical-readiness-state";
 import { computeTenderReadinessState } from "../lib/tender-readiness-state";
 
 // ── Helper: build a fully-healthy TenderReadinessState ───────────────────────

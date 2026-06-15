@@ -6,7 +6,7 @@ import { strict as assert } from "node:assert";
 import {
   formatDeepReasoningRunAsMarkdown,
   type DeepReasoningSummaryMetadata,
-} from "../lib/engine/deep-reasoning-summary-formatter";
+} from "../lib/engine/deep-reasoning/deep-reasoning-summary-formatter";
 
 const SAMPLE_CREATED_AT = new Date("2026-05-18T09:30:00Z");
 const SAMPLE_DESCRIPTION = `Deep-reasoning generation for tender "Water Supply Detailed Design": 7 AI call(s) over 38.4s.`;

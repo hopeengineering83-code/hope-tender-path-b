@@ -29,27 +29,27 @@ import {
   parseComprehensionJson,
   formatComprehensionForPrompt,
   type DeepTenderComprehension,
-} from "../lib/engine/evaluation-criteria-extractor";
+} from "../lib/engine/analysis/evaluation-criteria-extractor";
 import {
   parseAlignmentReport,
   formatAlignmentForPrompt,
-} from "../lib/engine/semantic-match-aligner";
+} from "../lib/engine/matching/semantic-match-aligner";
 import {
   validateConstraints,
   formatConstraintsForCritique,
   formatViolationsForCritique,
   violationsAsWeakAxes,
-} from "../lib/engine/constraint-validator";
-import { scoreProposalQuality } from "../lib/engine/proposal-quality-scorer";
+} from "../lib/engine/compliance/constraint-validator";
+import { scoreProposalQuality } from "../lib/engine/quality/proposal-quality-scorer";
 import {
   computeCalibrationNotes,
   extractPersonaFocusedSlice,
   type PersonaAssessment,
-} from "../lib/engine/evaluator-simulator";
+} from "../lib/engine/evaluation/evaluator-simulator";
 import {
   executeProposalTool,
   type ToolEvidenceInventory,
-} from "../lib/engine/proposal-tools";
+} from "../lib/engine/generation/proposal-tools";
 
 // ─── Fixtures ────────────────────────────────────────────────────────
 
@@ -327,13 +327,13 @@ describe("E2E: proposal tools answer search/inspect queries coherently", () => {
 
 describe("E2E: graceful degradation when AI is unavailable", () => {
   it("comprehension extractor returns null for too-short input without calling AI", async () => {
-    const { extractDeepTenderComprehension } = await import("../lib/engine/evaluation-criteria-extractor");
+    const { extractDeepTenderComprehension } = await import("../lib/engine/analysis/evaluation-criteria-extractor");
     const result = await extractDeepTenderComprehension("");
     assert.equal(result, null);
   });
 
   it("alignment returns null when no comprehension is supplied", async () => {
-    const { alignMatchesToEvaluatorCriteria } = await import("../lib/engine/semantic-match-aligner");
+    const { alignMatchesToEvaluatorCriteria } = await import("../lib/engine/matching/semantic-match-aligner");
     const result = await alignMatchesToEvaluatorCriteria({
       tenderTitle: "T",
       clientName: "C",
@@ -345,7 +345,7 @@ describe("E2E: graceful degradation when AI is unavailable", () => {
   });
 
   it("deep refinement returns null when initial score already exceeds threshold", async () => {
-    const { runDeepRefinement } = await import("../lib/engine/deep-reasoning-refiner");
+    const { runDeepRefinement } = await import("../lib/engine/deep-reasoning/deep-reasoning-refiner");
     const result = await runDeepRefinement({
       initialMarkdown: SUBSTANTIVE_PROPOSAL,
       initialScore: {

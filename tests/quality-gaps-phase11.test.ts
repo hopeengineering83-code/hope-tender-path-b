@@ -13,7 +13,7 @@ import { strict as assert } from "node:assert";
 import {
   buildEvaluatorMirrorSection,
   hasEvaluatorMirrorHeading,
-} from "../lib/engine/evaluator-mirror-builder";
+} from "../lib/engine/evaluation/evaluator-mirror-builder";
 
 describe("buildEvaluatorMirrorSection — synthesised criteria from requirements", () => {
   it("returns non-null when evaluationCriteria is empty but requirements are present", () => {

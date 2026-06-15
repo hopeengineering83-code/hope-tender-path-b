@@ -10,10 +10,10 @@ import {
   controlDescription,
   controlSummary,
   normalizeTenderControlPayload,
-} from "../../../../../lib/engine/tender-control-ledger";
-import { computeTenderLifecycle } from "../../../../../lib/engine/tender-lifecycle-orchestrator";
-import { deriveControlSuggestions, type SuggestedControl } from "../../../../../lib/engine/tender-control-suggestions";
-import { classifyWeakMatches } from "../../../../../lib/engine/weak-match-classifier";
+} from "../../../../../lib/engine/workflow/tender-control-ledger";
+import { computeTenderLifecycle } from "../../../../../lib/engine/workflow/tender-lifecycle-orchestrator";
+import { deriveControlSuggestions, type SuggestedControl } from "../../../../../lib/engine/workflow/tender-control-suggestions";
+import { classifyWeakMatches } from "../../../../../lib/engine/matching/weak-match-classifier";
 
 export const dynamic = "force-dynamic";
 

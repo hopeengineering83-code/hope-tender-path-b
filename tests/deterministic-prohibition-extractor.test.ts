@@ -7,7 +7,7 @@ import { strict as assert } from "node:assert";
 import {
   extractProhibitionsDeterministic,
   buildDeterministicComprehension,
-} from "../lib/engine/deterministic-prohibition-extractor";
+} from "../lib/engine/analysis/deterministic-prohibition-extractor";
 
 describe("extractProhibitionsDeterministic — empty / null inputs", () => {
   it("returns empty result for empty string", () => {

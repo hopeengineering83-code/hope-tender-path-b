@@ -5,7 +5,7 @@ import { assessTenderAnalysisQuality } from "../../../../../lib/analysis-quality
 import { assessMatchingQuality } from "../../../../../lib/matching-quality";
 import { ensureCompanyForUser } from "../../../../../lib/company-workspace";
 import { getCompanyIngestionReadiness } from "../../../../../lib/company-ingestion-readiness";
-import { detectAnalysisSourceWithApproval, type AnalysisSource } from "../../../../../lib/engine/analysis-source";
+import { detectAnalysisSourceWithApproval, type AnalysisSource } from "../../../../../lib/engine/analysis/analysis-source";
 import { randomUUID } from "node:crypto";
 
 export const dynamic = "force-dynamic";

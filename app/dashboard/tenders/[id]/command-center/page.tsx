@@ -12,7 +12,7 @@ import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
 import { getSession } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
-import { getFinalSubmissionReadiness } from "../../../../../lib/engine/final-submission-readiness";
+import { getFinalSubmissionReadiness } from "../../../../../lib/engine/readiness/final-submission-readiness";
 import { VersionActionsTable } from "./version-actions";
 
 export const dynamic = "force-dynamic";

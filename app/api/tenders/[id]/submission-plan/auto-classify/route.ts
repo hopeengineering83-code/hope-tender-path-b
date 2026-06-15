@@ -17,7 +17,7 @@ import { prisma, prismaReady } from "../../../../../../lib/prisma";
 import { logAction } from "../../../../../../lib/audit";
 import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../../../lib/rate-limit";
 import { sanitizeError } from "../../../../../../lib/sanitize-error";
-import { normalizeDocumentType, requiresOfficialOriginal, isControlDocument } from "../../../../../../lib/engine/document-type-normalizer";
+import { normalizeDocumentType, requiresOfficialOriginal, isControlDocument } from "../../../../../../lib/engine/documents/document-type-normalizer";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;

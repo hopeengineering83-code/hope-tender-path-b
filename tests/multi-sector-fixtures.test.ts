@@ -14,11 +14,11 @@
 
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
-import { classifyUniversalTender } from "../lib/engine/universal-tender-taxonomy";
-import { detectDominantFamily } from "../lib/engine/matching";
-import { classifySubmissionPlanItem, shouldRowBecomePlannedFile } from "../lib/engine/submission-plan-classifier";
-import { checkExportReadiness } from "../lib/engine/export-readiness";
-import { deriveDocumentOutputState, EXPORT_BLOCKING_STATES } from "../lib/engine/document-output-state";
+import { classifyUniversalTender } from "../lib/engine/metadata/universal-tender-taxonomy";
+import { detectDominantFamily } from "../lib/engine/matching/matching";
+import { classifySubmissionPlanItem, shouldRowBecomePlannedFile } from "../lib/engine/plans/submission-plan-classifier";
+import { checkExportReadiness } from "../lib/engine/export/export-readiness";
+import { deriveDocumentOutputState, EXPORT_BLOCKING_STATES } from "../lib/engine/export/document-output-state";
 
 // ─── Sector fixture texts ──────────────────────────────────────────────────
 

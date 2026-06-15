@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
-import { applyAIWriterContractPrompt, buildAIWriterContractPromptBlock } from "../lib/engine/ai-writer-contract-prompt";
+import { applyAIWriterContractPrompt, buildAIWriterContractPromptBlock } from "../lib/engine/generation/ai-writer-contract-prompt";
 
 const contractInput = {
   tenderTitle: "RFP for Hospital Design and Supervision Services",

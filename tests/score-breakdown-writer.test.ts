@@ -3,7 +3,7 @@
 
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
-import { collapseToScalar, deterministicScoreBreakdown } from "../lib/engine/score-breakdown-writer";
+import { collapseToScalar, deterministicScoreBreakdown } from "../lib/engine/generation/score-breakdown-writer";
 
 describe("collapseToScalar", () => {
   it("returns 0 for an empty perspective map", () => {

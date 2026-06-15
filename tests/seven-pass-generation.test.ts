@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { evaluateSevenPassGenerationGate, sevenPassBlocksFinalApproval } from "../lib/engine/seven-pass-generation";
+import { evaluateSevenPassGenerationGate, sevenPassBlocksFinalApproval } from "../lib/engine/quality/seven-pass-generation";
 
 const strongInput = {
   analysisSource: "AI",

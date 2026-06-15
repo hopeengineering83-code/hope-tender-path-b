@@ -9,8 +9,8 @@ import {
   filterFinalExportCandidateDocuments,
   isFinalExportCandidateDocument,
   isInternalDraftDocument,
-} from "../lib/engine/document-output-state";
-import { checkExportReadiness } from "../lib/engine/export-readiness";
+} from "../lib/engine/export/document-output-state";
+import { checkExportReadiness } from "../lib/engine/export/export-readiness";
 
 describe("document-output-state — draft/non-exportable blocking", () => {
   it("QUICK_DRAFT documentType → CONTROL_RECORD_ONLY (blocked)", () => {

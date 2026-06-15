@@ -23,7 +23,7 @@ import {
   collectTenderRequiredFilenames,
   bareFileName,
   type FinalZipScopeInput,
-} from "../lib/engine/final-zip-scope";
+} from "../lib/engine/export/final-zip-scope";
 
 function tender(overrides: Partial<FinalZipScopeInput["tender"]> = {}): FinalZipScopeInput["tender"] {
   return {

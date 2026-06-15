@@ -24,8 +24,8 @@
 
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
-import { PLACEHOLDER_PATTERNS, AI_TRACE_PATTERNS } from "../lib/engine/detection-patterns";
-import { validateDocumentQuality } from "../lib/engine/document-quality-validator";
+import { PLACEHOLDER_PATTERNS, AI_TRACE_PATTERNS } from "../lib/engine/quality/detection-patterns";
+import { validateDocumentQuality } from "../lib/engine/quality/document-quality-validator";
 import { safeParse, safeParseJsonArray, safeParseJsonObject } from "../lib/safe-json";
 import { readFileSync } from "node:fs";
 

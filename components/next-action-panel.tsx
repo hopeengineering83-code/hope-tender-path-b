@@ -7,8 +7,8 @@
 import { getSession } from "../lib/auth";
 import { prisma, prismaReady } from "../lib/prisma";
 import { assessExtractionQuality } from "../lib/extraction-quality";
-import { isExtractionCorrupted } from "../lib/engine/extraction-quality-gate";
-import { assessTenderMetadataCompleteness } from "../lib/engine/tender-metadata-completeness";
+import { isExtractionCorrupted } from "../lib/engine/quality/extraction-quality-gate";
+import { assessTenderMetadataCompleteness } from "../lib/engine/metadata/tender-metadata-completeness";
 import { safeParseJsonArray } from "../lib/safe-json";
 import { resolveTenderNextAction, type TenderNextActionPrimary } from "../lib/tender-next-action";
 

@@ -3,20 +3,20 @@ import crypto from "crypto";
 import { getSession } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { analyzeWithAI, isAIEnabled, type AnalysisWithMeta, type AIAnalysisResult } from "../../../../../lib/ai";
-import { analyzeTender } from "../../../../../lib/engine/analysis";
+import { analyzeTender } from "../../../../../lib/engine/analysis/analysis";
 import { logAction } from "../../../../../lib/audit";
 import { rateLimit, AI_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import { extractRequestId } from "../../../../../lib/request-id";
 import { createNotification } from "../../../../../lib/notifications";
 import { assessExtractionQuality } from "../../../../../lib/extraction-quality";
-import { deriveExtractionStatus, isExtractionCorrupted, type ExtractionStatus, type TenderFileQuality } from "../../../../../lib/engine/extraction-quality-gate";
-import { detectMetadataContamination } from "../../../../../lib/engine/tender-metadata-completeness";
-import { isValidClientContact, containsMetadataPlaceholder, isValidCountry, isValidReferenceNumber } from "../../../../../lib/engine/metadata-validators";
-import { buildAnalysisFallbackDiagnostics, formatFallbackDiagnosticsLine, type AnalysisFallbackDiagnostics } from "../../../../../lib/engine/analysis-fallback-diagnostics";
+import { deriveExtractionStatus, isExtractionCorrupted, type ExtractionStatus, type TenderFileQuality } from "../../../../../lib/engine/quality/extraction-quality-gate";
+import { detectMetadataContamination } from "../../../../../lib/engine/metadata/tender-metadata-completeness";
+import { isValidClientContact, containsMetadataPlaceholder, isValidCountry, isValidReferenceNumber } from "../../../../../lib/engine/metadata/metadata-validators";
+import { buildAnalysisFallbackDiagnostics, formatFallbackDiagnosticsLine, type AnalysisFallbackDiagnostics } from "../../../../../lib/engine/analysis/analysis-fallback-diagnostics";
 import { buildProviderDiagnosticsSnapshot } from "../../../../../lib/ai-provider-health";
 import { restoreHealthFromDb, persistAllHealthToDb } from "../../../../../lib/ai-provider-health-db";
 import { safeParseJsonObject } from "../../../../../lib/safe-json";
-import { formatTenderFileAnalysisMarker } from "../../../../../lib/engine/requirement-source-linkage";
+import { formatTenderFileAnalysisMarker } from "../../../../../lib/engine/compliance/requirement-source-linkage";
 import {
   AiAnalyzeCheckpointPersistenceError,
   clearAnalyzeCheckpoints,

@@ -8,7 +8,7 @@
 // Never exposes API keys, raw provider bodies, or prompts.
 
 import { NextRequest, NextResponse } from "next/server";
-import { getProviderHealthSummary } from "@/lib/engine/provider-health-store";
+import { getProviderHealthSummary } from "@/lib/engine/infrastructure/provider-health-store";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 10;

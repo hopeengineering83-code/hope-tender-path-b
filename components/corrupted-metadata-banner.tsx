@@ -23,7 +23,7 @@ import {
   isValidReferenceNumber,
   isValidCountry,
   isValidClientContact,
-} from "../lib/engine/metadata-validators";
+} from "../lib/engine/metadata/metadata-validators";
 import { CleanCorruptedMetadataButton } from "./clean-corrupted-metadata-button";
 
 type TenderShape = {

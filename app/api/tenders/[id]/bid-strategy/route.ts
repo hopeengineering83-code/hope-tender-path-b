@@ -15,10 +15,10 @@
 import { NextResponse } from "next/server";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { requireUser, unauthorizedResponse, forbiddenResponse } from "../../../../../lib/auth";
-import { computeBidStrategy } from "../../../../../lib/engine/bid-strategy";
-import { computeWinProbability } from "../../../../../lib/engine/win-probability";
-import { detectAnalysisSourceWithApproval } from "../../../../../lib/engine/analysis-source";
-import { isExtractionAcceptableForGeneration } from "../../../../../lib/engine/extraction-quality-gate";
+import { computeBidStrategy } from "../../../../../lib/engine/workflow/bid-strategy";
+import { computeWinProbability } from "../../../../../lib/engine/evaluation/win-probability";
+import { detectAnalysisSourceWithApproval } from "../../../../../lib/engine/analysis/analysis-source";
+import { isExtractionAcceptableForGeneration } from "../../../../../lib/engine/quality/extraction-quality-gate";
 
 // Confidence ceiling applied to bid-strategy win probability when the tender
 // analysis came from regex/deterministic fallback. The strategy is computed

@@ -3,10 +3,10 @@ import { Document, HeadingLevel, Packer, Paragraph, TextRun } from "docx";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { logAction } from "../../../../../lib/audit";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
-import { buildSubmissionPlan, buildSubmissionPlanWithDerivedFallback, findMissingGeneratedDocuments } from "../../../../../lib/engine/submission-plan";
+import { buildSubmissionPlan, buildSubmissionPlanWithDerivedFallback, findMissingGeneratedDocuments } from "../../../../../lib/engine/plans/submission-plan";
 import { MUTATION_RATE_LIMIT, rateLimit } from "../../../../../lib/rate-limit";
 import { extractRequestId } from "../../../../../lib/request-id";
-import { isExtractionAcceptableForGeneration } from "../../../../../lib/engine/extraction-quality-gate";
+import { isExtractionAcceptableForGeneration } from "../../../../../lib/engine/quality/extraction-quality-gate";
 import { assessExtractionQuality, assessExtractionQualityPerPage } from "../../../../../lib/extraction-quality";
 
 export const dynamic = "force-dynamic";

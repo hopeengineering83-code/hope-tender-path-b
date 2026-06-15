@@ -6,7 +6,7 @@ import {
   buildRequirementEvidenceProfile,
   computeEvidenceCoverage,
   type RequirementLikeForEvidence,
-} from "../lib/engine/requirement-evidence-profile";
+} from "../lib/engine/compliance/requirement-evidence-profile";
 
 function req(overrides: Partial<RequirementLikeForEvidence>): RequirementLikeForEvidence {
   return {

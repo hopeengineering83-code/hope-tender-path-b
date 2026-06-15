@@ -16,7 +16,7 @@ import { strict as assert } from "node:assert";
 import {
   classifySubmissionPlanItem,
   shouldRowBecomePlannedFile,
-} from "../lib/engine/submission-plan-classifier";
+} from "../lib/engine/plans/submission-plan-classifier";
 
 describe("submission-plan-classifier — rules must not become files", () => {
   it("'Email Recipients: Both Contacts Mandatory' is a submission rule", () => {

@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
-import { enforceTechnicalPriceSeparation } from "../lib/engine/proposal-price-leakage-guard";
+import { enforceTechnicalPriceSeparation } from "../lib/engine/pricing/proposal-price-leakage-guard";
 
 const baseInput = {
   tenderTitle: "RFP for Hospital Design and Supervision Services",

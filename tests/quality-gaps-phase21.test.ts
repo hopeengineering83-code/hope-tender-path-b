@@ -18,7 +18,7 @@
 
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
-import { detectMetadataContamination } from "../lib/engine/tender-metadata-completeness";
+import { detectMetadataContamination } from "../lib/engine/metadata/tender-metadata-completeness";
 import { readFileSync } from "node:fs";
 
 // ── 1. Legal entity contamination detection ───────────────────────────────────

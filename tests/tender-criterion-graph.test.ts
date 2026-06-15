@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
-import { buildTenderCriterionGraph, renderTenderCriterionGraph } from "../lib/engine/tender-criterion-graph";
+import { buildTenderCriterionGraph, renderTenderCriterionGraph } from "../lib/engine/evaluation/tender-criterion-graph";
 
 const baseInput = {
   tenderTitle: "RFP for Hospital Design and Supervision Services",

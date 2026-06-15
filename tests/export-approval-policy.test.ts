@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { evaluateExportApproval } from "../lib/engine/export-approval-policy";
+import { evaluateExportApproval } from "../lib/engine/export/export-approval-policy";
 
 describe("final export approval policy", () => {
   it("allows final export only when review is authority ready", () => {

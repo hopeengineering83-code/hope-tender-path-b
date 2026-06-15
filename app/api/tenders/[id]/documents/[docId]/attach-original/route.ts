@@ -4,7 +4,7 @@ import { logAction } from "../../../../../../../lib/audit";
 import { prisma, prismaReady } from "../../../../../../../lib/prisma";
 import { getStorageAdapter } from "../../../../../../../lib/storage";
 import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../../../../lib/rate-limit";
-import { validateFileSignature } from "../../../../../../../lib/engine/export-format-policy";
+import { validateFileSignature } from "../../../../../../../lib/engine/export/export-format-policy";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;

@@ -24,14 +24,14 @@ import { extractRequestId } from "../../../../../lib/request-id";
 import {
   extractEvaluationMethodologyFromSource,
   formatExtractionForAudit,
-} from "../../../../../lib/engine/evaluation-methodology-source-extractor";
+} from "../../../../../lib/engine/analysis/evaluation-methodology-source-extractor";
 import {
   SUPPORTED_EXTRACTORS,
   runExtractorByField,
   type ExtractorFieldName,
   type ExtractedFieldOrMissing,
-} from "../../../../../lib/engine/tender-field-extractors";
-import { containsMetadataPlaceholder } from "../../../../../lib/engine/metadata-validators";
+} from "../../../../../lib/engine/analysis/tender-field-extractors";
+import { containsMetadataPlaceholder } from "../../../../../lib/engine/metadata/metadata-validators";
 
 export const dynamic = "force-dynamic";
 

@@ -8,10 +8,10 @@ import {
   isCvOrProfileDoc,
   isSensitiveFinancialOrLegalDoc,
   isMixedTechnicalFinancialSentence,
-} from "../lib/engine/pricing-hygiene";
+} from "../lib/engine/pricing/pricing-hygiene";
 import {
   isFinalExportCandidateDocument,
-} from "../lib/engine/document-output-state";
+} from "../lib/engine/export/document-output-state";
 
 // ---------------------------------------------------------------------------
 // Helpers

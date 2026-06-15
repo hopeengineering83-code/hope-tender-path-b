@@ -1,14 +1,14 @@
 import { NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
-import { validateTender } from "../../../../../lib/engine/validate";
-import { checkExportReadiness, checkFullExportReadiness, exportReadinessError } from "../../../../../lib/engine/export-readiness";
+import { validateTender } from "../../../../../lib/engine/quality/validate";
+import { checkExportReadiness, checkFullExportReadiness, exportReadinessError } from "../../../../../lib/engine/export/export-readiness";
 import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../../lib/rate-limit";
-import { filterFinalExportCandidateDocuments } from "../../../../../lib/engine/document-output-state";
+import { filterFinalExportCandidateDocuments } from "../../../../../lib/engine/export/document-output-state";
 import { logAction } from "../../../../../lib/audit";
 import { getCompanyIngestionReadiness } from "../../../../../lib/company-ingestion-readiness";
-import { isExtractionAcceptableForExport } from "../../../../../lib/engine/extraction-quality-gate";
-import { runAuthorityReview, type ManifestEntry, type DocumentInput } from "../../../../../lib/engine/authority-review";
+import { isExtractionAcceptableForExport } from "../../../../../lib/engine/quality/extraction-quality-gate";
+import { runAuthorityReview, type ManifestEntry, type DocumentInput } from "../../../../../lib/engine/quality/authority-review";
 import { reportError } from "../../../../../lib/observability";
 
 export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {

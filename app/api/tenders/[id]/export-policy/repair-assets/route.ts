@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../../lib/prisma";
-import { detectBrandingPolicy } from "../../../../../../lib/engine/export-format-policy";
+import { detectBrandingPolicy } from "../../../../../../lib/engine/export/export-format-policy";
 import { logAction } from "../../../../../../lib/audit";
 
 export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {

@@ -29,7 +29,7 @@ import {
   approveRegexFallbackAnalysis,
   detectAnalysisSourceWithApproval,
   revokeRegexFallbackApproval,
-} from "../../../../../lib/engine/analysis-source";
+} from "../../../../../lib/engine/analysis/analysis-source";
 import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import { sanitizeError } from "../../../../../lib/sanitize-error";
 

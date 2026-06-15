@@ -7,7 +7,7 @@ import {
   deriveControlSuggestions,
   isHighConfidenceSuggestion,
   type SuggestionDerivationInput,
-} from "../lib/engine/tender-control-suggestions";
+} from "../lib/engine/workflow/tender-control-suggestions";
 
 function baseInput(over: Partial<SuggestionDerivationInput> = {}): SuggestionDerivationInput {
   return {

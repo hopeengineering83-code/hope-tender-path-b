@@ -8,7 +8,7 @@ import {
   isExtractionAcceptableForGeneration,
   isExtractionAcceptableForExport,
   deriveExtractionStatus,
-} from "../lib/engine/extraction-quality-gate";
+} from "../lib/engine/quality/extraction-quality-gate";
 
 const BAD_TEXT = Array.from({ length: 80 }, (_, index) => `R F P ${index} X Q Z 1 2 3 @@@ ###`).join("\n");
 const GOOD_TEXT = "Request for Proposal. Submit technical and financial proposals by 30 June 2026. Evaluation criteria include methodology, team, experience, and price.";

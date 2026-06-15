@@ -1,7 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { isExtractionAcceptableForGeneration } from "../lib/engine/extraction-quality-gate";
-import { hasValidSubmissionPlan } from "../lib/engine/submission-plan-completeness";
+import { isExtractionAcceptableForGeneration } from "../lib/engine/quality/extraction-quality-gate";
+import { hasValidSubmissionPlan } from "../lib/engine/plans/submission-plan-completeness";
 
 const BAD_ANALYSIS_STATUS = "EXTRACTION_CORRUPTED_AI_SKIPPED";
 const FALLBACK_ANALYSIS_STATUS = "REGEX_FALLBACK_FROM_WEAK_EXTRACTION";

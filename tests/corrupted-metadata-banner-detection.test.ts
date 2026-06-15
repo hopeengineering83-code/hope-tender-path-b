@@ -9,7 +9,7 @@ import {
   isValidReferenceNumber,
   isValidCountry,
   isValidClientContact,
-} from "../lib/engine/metadata-validators";
+} from "../lib/engine/metadata/metadata-validators";
 
 // Mirror the badFieldsFor helper from the banner component so we can
 // test the rule without spinning up React.

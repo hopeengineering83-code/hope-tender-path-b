@@ -1,8 +1,8 @@
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
-import { applyMainEngineBestAvailableSelection } from "../lib/engine/main-engine-selection-policy";
-import { buildTenderResponseBlueprint } from "../lib/engine/tender-response-blueprint";
-import type { MatchingResult, RequirementDraft } from "../lib/engine/types";
+import { applyMainEngineBestAvailableSelection } from "../lib/engine/matching/main-engine-selection-policy";
+import { buildTenderResponseBlueprint } from "../lib/engine/generation/tender-response-blueprint";
+import type { MatchingResult, RequirementDraft } from "../lib/engine/infrastructure/types";
 
 function expertRequirement(quantity = 2): RequirementDraft {
   return {

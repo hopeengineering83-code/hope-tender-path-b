@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
-import { detectSubmissionPackageMode } from "../lib/engine/submission-package-mode";
+import { detectSubmissionPackageMode } from "../lib/engine/plans/submission-package-mode";
 
 describe("submission package mode detection", () => {
   it("blocks default ZIP when separate technical and financial submissions are required", () => {

@@ -6,7 +6,7 @@
 
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
-import { buildDerivedDraftPlan } from "../lib/engine/submission-plan";
+import { buildDerivedDraftPlan } from "../lib/engine/plans/submission-plan";
 
 // ── helper ───────────────────────────────────────────────────────────────────
 

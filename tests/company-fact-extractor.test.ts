@@ -2,7 +2,7 @@
 
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
-import { extractCompanyFacts, mergeFactsIntoCompany } from "../lib/engine/company-fact-extractor";
+import { extractCompanyFacts, mergeFactsIntoCompany } from "../lib/engine/analysis/company-fact-extractor";
 
 const SAMPLE_PROFILE = `
 Hope Urban Planning Architectural and Engineering Consultancy PLC

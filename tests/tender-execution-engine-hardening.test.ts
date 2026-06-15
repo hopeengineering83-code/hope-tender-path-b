@@ -3,8 +3,8 @@
 
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
-import { computeWinProbability } from "../lib/engine/win-probability";
-import { classifySubmissionPlanItem } from "../lib/engine/submission-plan-classifier";
+import { computeWinProbability } from "../lib/engine/evaluation/win-probability";
+import { classifySubmissionPlanItem } from "../lib/engine/plans/submission-plan-classifier";
 import { extractCriticalSections } from "../lib/ai";
 
 // ─── Task 2: Win probability source cap ──────────────────────────────────────

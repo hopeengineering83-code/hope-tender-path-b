@@ -6,7 +6,7 @@ import type {
   AuthorityBlocker,
   DocumentAuthorityScore,
   AuthorityReviewStatus,
-} from "../lib/engine/authority-review";
+} from "../lib/engine/quality/authority-review";
 
 interface AuthorityReviewPanelProps {
   tenderId: string;

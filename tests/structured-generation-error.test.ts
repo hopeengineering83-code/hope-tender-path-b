@@ -6,7 +6,7 @@
 
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
-import { mapGenerationError } from "../lib/engine/structured-generation-error";
+import { mapGenerationError } from "../lib/engine/infrastructure/structured-generation-error";
 
 describe("mapGenerationError — recognised error categories", () => {
   it("rate limit → 429 with RATE_LIMITED + retry next action", () => {

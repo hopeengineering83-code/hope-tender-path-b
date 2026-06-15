@@ -10,7 +10,7 @@ import {
   detectTenderFormatPolicy,
   resolveExportAssetStatus,
   validateFileSignature,
-} from "../lib/engine/export-format-policy";
+} from "../lib/engine/export/export-format-policy";
 
 // ─── Tiny binary fixtures (base64-encoded) ─────────────────────────────
 

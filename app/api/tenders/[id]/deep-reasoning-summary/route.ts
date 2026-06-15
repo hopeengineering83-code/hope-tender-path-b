@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { requireUser, unauthorizedResponse, forbiddenResponse } from "../../../../../lib/auth";
-import { formatDeepReasoningRunAsMarkdown, type DeepReasoningSummaryMetadata } from "../../../../../lib/engine/deep-reasoning-summary-formatter";
+import { formatDeepReasoningRunAsMarkdown, type DeepReasoningSummaryMetadata } from "../../../../../lib/engine/deep-reasoning/deep-reasoning-summary-formatter";
 import { safeParseJsonObject } from "../../../../../lib/safe-json";
 
 /**

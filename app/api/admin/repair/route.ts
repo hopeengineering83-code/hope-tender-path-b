@@ -3,7 +3,7 @@ import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../.
 import { prisma, prismaReady } from "../../../../lib/prisma";
 import { extractTextFromBuffer, getFileTypeLabel, isMeaningfulExtraction } from "../../../../lib/extract-text";
 import { importCompanyKnowledgeFromDocuments } from "../../../../lib/company-knowledge-import-safe";
-import { cleanTenderTitle, cleanClientName } from "../../../../lib/engine/proposal-labels";
+import { cleanTenderTitle, cleanClientName } from "../../../../lib/engine/infrastructure/proposal-labels";
 import { getStorageAdapter } from "../../../../lib/storage";
 
 export const maxDuration = 60;

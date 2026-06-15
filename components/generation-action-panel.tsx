@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { GenerationProgressPanel } from "./generation-progress-panel";
 import { CanonicalStatusBadge } from "./canonical-status-badge";
-import { CANONICAL_STATUS_CONFIG, type CanonicalModuleStatus } from "../lib/engine/canonical-readiness-state";
+import { CANONICAL_STATUS_CONFIG, type CanonicalModuleStatus } from "../lib/engine/readiness/canonical-readiness-state";
 import type { CanonicalTenderReadiness } from "../lib/canonical-tender-readiness";
 
 type GenerationReadiness = {

@@ -1,6 +1,6 @@
 import { prisma, prismaReady } from "../lib/prisma";
 import { assessExtractionQuality, assessExtractionQualityPerPage } from "../lib/extraction-quality";
-import { isExtractionCorrupted } from "../lib/engine/extraction-quality-gate";
+import { isExtractionCorrupted } from "../lib/engine/quality/extraction-quality-gate";
 import { scoreToSeverity, severityBadgeClasses, severityBgClass, severityTextClass, severityBorderClass } from "../lib/ui-tokens";
 
 type FileStatus = "GOOD" | "ACCEPTABLE" | "POOR";

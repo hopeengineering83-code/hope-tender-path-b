@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
-import { validateFileSignature } from "../lib/engine/export-format-policy";
+import { validateFileSignature } from "../lib/engine/export/export-format-policy";
 
 describe("official original attachment signature policy", () => {
   it("accepts DOCX/OOXML package signatures", () => {

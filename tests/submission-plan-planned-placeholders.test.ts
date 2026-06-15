@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { resolveSubmissionPlanCompleteness } from "../lib/engine/submission-plan-completeness";
+import { resolveSubmissionPlanCompleteness } from "../lib/engine/plans/submission-plan-completeness";
 
 describe("submission plan completeness — planned placeholders", () => {
   it("counts PLANNED GeneratedDocument rows with no content as missing planned documents", () => {

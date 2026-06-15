@@ -6,7 +6,7 @@
 
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
-import { documentHygieneIssues } from "../lib/engine/export-readiness";
+import { documentHygieneIssues } from "../lib/engine/export/export-readiness";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 

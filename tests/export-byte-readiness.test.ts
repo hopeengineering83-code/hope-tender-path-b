@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
-import { checkExportFileByteReadiness } from "../lib/engine/export-byte-readiness";
+import { checkExportFileByteReadiness } from "../lib/engine/export/export-byte-readiness";
 
 describe("deep export file-byte readiness", () => {
   it("blocks documents with no inline or storage-backed bytes", async () => {

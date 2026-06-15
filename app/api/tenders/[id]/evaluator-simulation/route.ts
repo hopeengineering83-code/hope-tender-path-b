@@ -2,11 +2,11 @@ import { NextResponse } from "next/server";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { requireUser, unauthorizedResponse, forbiddenResponse } from "../../../../../lib/auth";
 import { rateLimit, AI_RATE_LIMIT } from "../../../../../lib/rate-limit";
-import { simulateEvaluatorPanel } from "../../../../../lib/engine/evaluator-simulator";
-import { scoreProposalQuality } from "../../../../../lib/engine/proposal-quality-scorer";
+import { simulateEvaluatorPanel } from "../../../../../lib/engine/evaluation/evaluator-simulator";
+import { scoreProposalQuality } from "../../../../../lib/engine/quality/proposal-quality-scorer";
 import { logAction } from "../../../../../lib/audit";
-import { isDeepReasoningEnabled } from "../../../../../lib/engine/feature-flags";
-import { extractDeepTenderComprehension } from "../../../../../lib/engine/evaluation-criteria-extractor";
+import { isDeepReasoningEnabled } from "../../../../../lib/engine/infrastructure/feature-flags";
+import { extractDeepTenderComprehension } from "../../../../../lib/engine/analysis/evaluation-criteria-extractor";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";

@@ -103,7 +103,7 @@ export async function POST(req: Request) {
     // user-entered values.
     if (project.summary && project.summary.trim().length > 50) {
       try {
-        const { extractProjectFacts, mergeProjectFacts } = await import("../../../../lib/engine/project-fact-extractor");
+        const { extractProjectFacts, mergeProjectFacts } = await import("../../../../lib/engine/analysis/project-fact-extractor");
         const extracted = extractProjectFacts(project.summary, project.name);
         const update = mergeProjectFacts(project, extracted);
         if (Object.keys(update).length > 0) {

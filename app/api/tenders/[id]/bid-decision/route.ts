@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
-import { evaluateBidDecision } from "../../../../../lib/engine/bid-decision";
+import { evaluateBidDecision } from "../../../../../lib/engine/evaluation/bid-decision";
 import { logAction } from "../../../../../lib/audit";
 import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../../lib/rate-limit";
 

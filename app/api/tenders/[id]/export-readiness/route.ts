@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
-import { getFinalSubmissionReadiness } from "../../../../../lib/engine/final-submission-readiness";
-import { isStrongSupportLevel, normalizeSupportLevel } from "../../../../../lib/engine/requirement-evidence-profile";
+import { getFinalSubmissionReadiness } from "../../../../../lib/engine/readiness/final-submission-readiness";
+import { isStrongSupportLevel, normalizeSupportLevel } from "../../../../../lib/engine/compliance/requirement-evidence-profile";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 10;

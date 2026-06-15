@@ -8,8 +8,8 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { classifyBidStrategyGaps } from "../lib/engine/bid-strategy-gap-classifier";
-import { computeBidStrategy, type BidStrategyInput } from "../lib/engine/bid-strategy";
+import { classifyBidStrategyGaps } from "../lib/engine/workflow/bid-strategy-gap-classifier";
+import { computeBidStrategy, type BidStrategyInput } from "../lib/engine/workflow/bid-strategy";
 
 function baseInput(overrides: Partial<BidStrategyInput["tender"]> = {}, companyOverrides: Partial<BidStrategyInput["company"]> = {}): BidStrategyInput {
   return {

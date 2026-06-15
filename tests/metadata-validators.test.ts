@@ -20,7 +20,7 @@ import {
   canonicalizeCountry,
   isValidClientContact,
   containsMetadataPlaceholder,
-} from "../lib/engine/metadata-validators";
+} from "../lib/engine/metadata/metadata-validators";
 
 describe("metadata-validators — client name", () => {
   it("flags the corrupted TOC fragment as GARBAGE", () => {

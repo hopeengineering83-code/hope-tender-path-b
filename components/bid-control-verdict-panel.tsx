@@ -1,7 +1,7 @@
 import { getSession } from "../lib/auth";
 import { prisma, prismaReady } from "../lib/prisma";
 import { getTenderGenerationReadinessStrict } from "../lib/tender-generation-readiness-strict";
-import { getFinalSubmissionReadiness } from "../lib/engine/final-submission-readiness";
+import { getFinalSubmissionReadiness } from "../lib/engine/readiness/final-submission-readiness";
 import { BidDecisionForm } from "./bid-decision-form";
 
 type Verdict = "BID_READY" | "BID_READY_WITH_WARNINGS" | "NOT_READY" | "NO_BID";

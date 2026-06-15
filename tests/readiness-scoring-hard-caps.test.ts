@@ -9,7 +9,7 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { computeReadinessScore } from "../lib/engine/readiness-scoring";
+import { computeReadinessScore } from "../lib/engine/readiness/readiness-scoring";
 
 function fullyHealthyInput() {
   return {

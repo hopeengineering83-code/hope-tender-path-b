@@ -91,7 +91,7 @@ describe("MISSING_SOURCE marker blocked at export gates", () => {
   });
 
   it("document with MISSING_SOURCE marker is blocked by validateDocumentQuality", () => {
-    const { validateDocumentQuality } = require("../lib/engine/document-quality-validator");
+    const { validateDocumentQuality } = require("../lib/engine/quality/document-quality-validator");
     const doc = {
       name: "Technical Proposal",
       documentType: "TECHNICAL_PROPOSAL",
@@ -116,7 +116,7 @@ describe("Bid-Team stub detection end-to-end", () => {
   });
 
   it("document with Bid-Team to confirm is blocked by validateDocumentQuality", () => {
-    const { validateDocumentQuality } = require("../lib/engine/document-quality-validator");
+    const { validateDocumentQuality } = require("../lib/engine/quality/document-quality-validator");
     const doc = {
       name: "Company Profile",
       documentType: "COMPANY_PROFILE",
@@ -148,7 +148,7 @@ describe("Source-evidence action marker detection", () => {
   });
 
   it("document with Source-evidence action is blocked", () => {
-    const { validateDocumentQuality } = require("../lib/engine/document-quality-validator");
+    const { validateDocumentQuality } = require("../lib/engine/quality/document-quality-validator");
     const doc = {
       name: "Technical Proposal",
       documentType: "TECHNICAL_PROPOSAL",

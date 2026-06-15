@@ -30,12 +30,12 @@ import { NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { logAction } from "../../../../../lib/audit";
-import { assessGeneratedDocumentQuality } from "../../../../../lib/engine/document-quality-gate";
-import { extractDocxVisibleText } from "../../../../../lib/engine/export-readiness";
-import { isFinalExportCandidateDocument } from "../../../../../lib/engine/document-output-state";
-import { buildSevenPassGateInput, summarizeSevenPassForReviewNotes } from "../../../../../lib/engine/seven-pass-generation-wiring";
-import { evaluateSevenPassGenerationGate } from "../../../../../lib/engine/seven-pass-generation";
-import { detectAnalysisSourceWithApproval } from "../../../../../lib/engine/analysis-source";
+import { assessGeneratedDocumentQuality } from "../../../../../lib/engine/quality/document-quality-gate";
+import { extractDocxVisibleText } from "../../../../../lib/engine/export/export-readiness";
+import { isFinalExportCandidateDocument } from "../../../../../lib/engine/export/document-output-state";
+import { buildSevenPassGateInput, summarizeSevenPassForReviewNotes } from "../../../../../lib/engine/quality/seven-pass-generation-wiring";
+import { evaluateSevenPassGenerationGate } from "../../../../../lib/engine/quality/seven-pass-generation";
+import { detectAnalysisSourceWithApproval } from "../../../../../lib/engine/analysis/analysis-source";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -106,7 +106,7 @@ export async function POST(req: Request) {
     type TenderReq = { title?: string | null; description?: string | null; priority?: string | null };
     const tenderNotesCache = new Map<string, string | null>();
     const tenderRequirementsCache = new Map<string, TenderReq[]>();
-    const tenderAnalysisSourceCache = new Map<string, import("../../../../../lib/engine/analysis-source").AnalysisSource>();
+    const tenderAnalysisSourceCache = new Map<string, import("../../../../../lib/engine/analysis/analysis-source").AnalysisSource>();
     if (tenderIds.length > 0) {
       const tenders = await prisma.tender.findMany({
         where: { id: { in: tenderIds } },
@@ -129,7 +129,7 @@ export async function POST(req: Request) {
       tenderNotesCache.set(tid, notes);
       return notes;
     }
-    async function getResolvedAnalysisSource(tid: string): Promise<import("../../../../../lib/engine/analysis-source").AnalysisSource> {
+    async function getResolvedAnalysisSource(tid: string): Promise<import("../../../../../lib/engine/analysis/analysis-source").AnalysisSource> {
       if (tenderAnalysisSourceCache.has(tid)) return tenderAnalysisSourceCache.get(tid)!;
       const notes = await getTenderNotes(tid);
       const source = await detectAnalysisSourceWithApproval(prisma, tid, { notes });

@@ -109,7 +109,7 @@ describe("detection-patterns module completeness guards", () => {
   });
 
   it("GENERIC_BOILERPLATE_PATTERNS has at least 10 entries", () => {
-    const { GENERIC_BOILERPLATE_PATTERNS } = require("../lib/engine/detection-patterns");
+    const { GENERIC_BOILERPLATE_PATTERNS } = require("../lib/engine/quality/detection-patterns");
     assert.ok(
       Array.isArray(GENERIC_BOILERPLATE_PATTERNS) && GENERIC_BOILERPLATE_PATTERNS.length >= 10,
       `GENERIC_BOILERPLATE_PATTERNS should have at least 10 patterns, got ${GENERIC_BOILERPLATE_PATTERNS?.length ?? 0}`,

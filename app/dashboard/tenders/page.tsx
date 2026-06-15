@@ -5,7 +5,7 @@ import { getSession } from "../../../lib/auth";
 import { prisma, prismaReady } from "../../../lib/prisma";
 import { StatusBadge } from "../../../components/status-badge";
 import { formatDate, formatTenderStatus, parseTenderStatus } from "../../../lib/tender-workflow";
-import { cleanClientName, cleanTenderTitle } from "../../../lib/engine/proposal-labels";
+import { cleanClientName, cleanTenderTitle } from "../../../lib/engine/infrastructure/proposal-labels";
 import { DuplicateButton } from "../history/duplicate-button";
 import { SortSelect } from "./sort-select";
 import { TenderSearchBar } from "../../../components/tender-search-bar";

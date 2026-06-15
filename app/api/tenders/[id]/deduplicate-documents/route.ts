@@ -7,7 +7,7 @@ import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../.
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { logAction } from "../../../../../lib/audit";
 import { MUTATION_RATE_LIMIT, rateLimit } from "../../../../../lib/rate-limit";
-import { planDeduplication } from "../../../../../lib/engine/generated-document-dedup-planner";
+import { planDeduplication } from "../../../../../lib/engine/documents/generated-document-dedup-planner";
 
 export const dynamic = "force-dynamic";
 

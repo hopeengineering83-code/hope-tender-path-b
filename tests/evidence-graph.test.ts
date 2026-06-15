@@ -5,8 +5,8 @@
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
 import { verifyEvidenceIds, nodesByKind, type EvidenceGraph, type EvidenceNode } from "../lib/evidence-graph";
-import { buildEvidenceGraph as buildSelectionEvidenceGraph, renderEvidenceGraph as renderSelectionEvidenceGraph } from "../lib/engine/evidence-graph";
-import { buildProposalIntelligenceContract, renderProposalIntelligencePromptBlock } from "../lib/engine/proposal-intelligence-contract";
+import { buildEvidenceGraph as buildSelectionEvidenceGraph, renderEvidenceGraph as renderSelectionEvidenceGraph } from "../lib/engine/matching/evidence-graph";
+import { buildProposalIntelligenceContract, renderProposalIntelligencePromptBlock } from "../lib/engine/generation/proposal-intelligence-contract";
 
 const node = (id: string, kind: EvidenceNode["kind"], label: string): EvidenceNode => ({ id, kind, label });
 

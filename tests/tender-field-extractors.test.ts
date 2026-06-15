@@ -16,7 +16,7 @@ import {
   extractMandatorySiteVisit,
   SUPPORTED_EXTRACTORS,
   runExtractorByField,
-} from "../lib/engine/tender-field-extractors";
+} from "../lib/engine/analysis/tender-field-extractors";
 
 describe("extractReference", () => {
   it("HIGH on 'Tender Reference: PHARO-2026-001'", () => {

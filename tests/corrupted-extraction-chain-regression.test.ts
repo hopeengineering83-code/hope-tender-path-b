@@ -24,7 +24,7 @@ import {
   isExtractionAcceptableForGeneration,
   isExtractionAcceptableForExport,
   deriveExtractionStatus,
-} from "../lib/engine/extraction-quality-gate";
+} from "../lib/engine/quality/extraction-quality-gate";
 
 // ── Fixture: a realistic corrupted OCR scan ───────────────────────────────────
 // This text simulates the output of a poorly OCR-scanned PDF — replacement

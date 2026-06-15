@@ -13,7 +13,7 @@ import {
   isValidClientContact,
   isValidCountry,
   isValidReferenceNumber,
-} from "../lib/engine/metadata-validators";
+} from "../lib/engine/metadata/metadata-validators";
 
 const routeSrc = readFileSync(
   path.join(process.cwd(), "app/api/tenders/[id]/ai-analyze/route.ts"),

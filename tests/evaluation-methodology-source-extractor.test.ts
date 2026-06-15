@@ -8,7 +8,7 @@ import {
   extractEvaluationMethodologyFromSource,
   formatExtractionForAudit,
   type EvaluationCriteriaExtractionFound,
-} from "../lib/engine/evaluation-methodology-source-extractor";
+} from "../lib/engine/analysis/evaluation-methodology-source-extractor";
 
 describe("extractEvaluationMethodologyFromSource", () => {
   it("returns found:false with a reason when no plausible section exists", () => {

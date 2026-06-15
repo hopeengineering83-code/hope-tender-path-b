@@ -9,7 +9,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { isFinalExportCandidateDocument } from "../lib/engine/document-output-state";
+import { isFinalExportCandidateDocument } from "../lib/engine/export/document-output-state";
 
 describe("plan-action endpoint contract", () => {
   const source = readFileSync("app/api/tenders/[id]/documents/[docId]/plan-action/route.ts", "utf8");

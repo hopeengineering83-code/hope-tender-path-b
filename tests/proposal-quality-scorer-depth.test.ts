@@ -7,7 +7,7 @@
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
 
-import { scoreProposalQuality } from "../lib/engine/proposal-quality-scorer";
+import { scoreProposalQuality } from "../lib/engine/quality/proposal-quality-scorer";
 
 const PRIMARY_SECTOR = "Generic"; // sector-neutral so vocab axis doesn't dominate
 

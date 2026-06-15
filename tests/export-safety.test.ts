@@ -7,7 +7,7 @@ import {
   isFinalExportCandidateDocument,
   filterFinalExportCandidateDocuments,
   isInternalDraftDocument,
-} from "../lib/engine/document-output-state";
+} from "../lib/engine/export/document-output-state";
 
 // ─── isFinalExportCandidateDocument — exclusions ──────────────────────────
 

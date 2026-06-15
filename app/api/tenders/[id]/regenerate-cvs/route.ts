@@ -13,7 +13,7 @@ import { NextResponse } from "next/server";
 import { requireUser, unauthorizedResponse, forbiddenResponse } from "../../../../../lib/auth";
 import { rateLimit, AI_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
-import { generateExpertCvDocx, expertCvFileName } from "../../../../../lib/engine/expert-cv-docx";
+import { generateExpertCvDocx, expertCvFileName } from "../../../../../lib/engine/generation/expert-cv-docx";
 import { logAction } from "../../../../../lib/audit";
 
 export const maxDuration = 60;

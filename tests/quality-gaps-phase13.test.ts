@@ -15,7 +15,7 @@ import { strict as assert } from "node:assert";
 import {
   buildSelfScoreSection,
   hasSelfScoreHeading,
-} from "../lib/engine/self-score-builder";
+} from "../lib/engine/generation/self-score-builder";
 
 describe("buildSelfScoreSection — synthesised criteria from requirements", () => {
   it("returns non-null when evaluationCriteria is empty but requirements are present", () => {

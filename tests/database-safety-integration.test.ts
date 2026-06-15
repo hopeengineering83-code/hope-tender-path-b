@@ -1,7 +1,7 @@
 import { after, before, describe, it } from "node:test";
 import { strict as assert } from "node:assert";
 import { prisma, prismaReady } from "../lib/prisma";
-import { checkTenderLevelExportBlockers } from "../lib/engine/export-readiness";
+import { checkTenderLevelExportBlockers } from "../lib/engine/export/export-readiness";
 
 const dbDescribe = process.env.RUN_DB_INTEGRATION === "true" ? describe : describe.skip;
 

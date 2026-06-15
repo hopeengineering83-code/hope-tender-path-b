@@ -18,8 +18,8 @@
 
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
-import { isExtractionAcceptableForExport, isExtractionAcceptableForGeneration } from "../lib/engine/extraction-quality-gate";
-import { assessTenderMetadataCompleteness } from "../lib/engine/tender-metadata-completeness";
+import { isExtractionAcceptableForExport, isExtractionAcceptableForGeneration } from "../lib/engine/quality/extraction-quality-gate";
+import { assessTenderMetadataCompleteness } from "../lib/engine/metadata/tender-metadata-completeness";
 import { readFileSync } from "node:fs";
 
 // ── 1. Extraction threshold alignment ────────────────────────────────────────

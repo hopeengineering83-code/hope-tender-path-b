@@ -24,7 +24,7 @@ describe("proposal-quality-scorer — Submission Control Sheet in REQUIRED_SECTI
   it("quality scorer penalises proposals missing the Submission Control Sheet", () => {
     // Import and run the scorer with a proposal that lacks the section.
     // We test by importing the scorer directly (pure function, no DB).
-    const { scoreProposalQuality } = require("../lib/engine/proposal-quality-scorer");
+    const { scoreProposalQuality } = require("../lib/engine/quality/proposal-quality-scorer");
     const markdownWithoutSheet = `
 # Cover Letter
 Dear Evaluation Committee, we are pleased to submit our proposal.
@@ -64,7 +64,7 @@ We confirm eligibility.
   });
 
   it("quality scorer does not penalise structureCompleteness when Submission Control Sheet is present", () => {
-    const { scoreProposalQuality } = require("../lib/engine/proposal-quality-scorer");
+    const { scoreProposalQuality } = require("../lib/engine/quality/proposal-quality-scorer");
     const markdownWithSheet = `
 # Cover Letter
 Dear Evaluation Committee, we are pleased to submit our proposal.

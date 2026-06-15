@@ -4,7 +4,7 @@ import { getSession } from "../../../lib/auth";
 import { logAction } from "../../../lib/audit";
 import { API_RATE_LIMIT, MUTATION_RATE_LIMIT, rateLimit } from "../../../lib/rate-limit";
 import { parseTenderStatus } from "../../../lib/tender-workflow";
-import { cleanClientName, cleanTenderTitle } from "../../../lib/engine/proposal-labels";
+import { cleanClientName, cleanTenderTitle } from "../../../lib/engine/infrastructure/proposal-labels";
 
 export async function GET(req: Request) {
   const userId = await getSession();

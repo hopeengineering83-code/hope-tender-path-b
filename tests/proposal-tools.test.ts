@@ -9,7 +9,7 @@ import {
   searchCompanyKnowledge,
   PROPOSAL_TOOL_DEFS,
   type ToolEvidenceInventory,
-} from "../lib/engine/proposal-tools";
+} from "../lib/engine/generation/proposal-tools";
 
 function inventory(): ToolEvidenceInventory {
   return {

@@ -2,7 +2,7 @@
 
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
-import { deduplicatePageText } from "../lib/engine/run-tender-engine";
+import { deduplicatePageText } from "../lib/engine/workflow/run-tender-engine";
 
 describe("deduplicatePageText", () => {
   it("removes exact duplicate chunks", () => {

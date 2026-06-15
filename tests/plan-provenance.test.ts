@@ -6,7 +6,7 @@ import {
   requiresPlanConfirmation,
   resolvePlanProvenance,
   serializePlanSourceRequirementIds,
-} from "../lib/engine/plan-provenance";
+} from "../lib/engine/plans/plan-provenance";
 
 test("structured provenance overrides legacy marker text", () => {
   assert.equal(resolvePlanProvenance({ planProvenance: "TENDER_REQUIREMENT", contentSummary: "DERIVED_DRAFT_UNCONFIRMED" }), "TENDER_REQUIREMENT");

@@ -14,7 +14,7 @@ import { getStorageAdapter } from "../../../lib/storage";
 // extraction during knowledge import. 60 = Hobby max.
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
-import { runTenderEngine } from "../../../lib/engine/run-tender-engine";
+import { runTenderEngine } from "../../../lib/engine/workflow/run-tender-engine";
 import { runCompanyKnowledgeSafetyImport } from "../../../lib/company-knowledge-safety-import";
 
 const MAX_BYTES = 10 * 1024 * 1024;

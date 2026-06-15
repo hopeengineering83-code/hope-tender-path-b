@@ -15,7 +15,11 @@ export async function GET(
   await prismaReady;
   const { id: tenderId, fileId } = await params;
 
-  const tender = await prisma.tender.findFirst({ where: { id: tenderId, userId } });
+  const tender = await prisma.tender.findFirst({ where: { id: tenderId, userId }, select: {
+  id: true, title: true, description: true, reference: true, clientName: true,
+  category: true, budget: true, currency: true, deadline: true, status: true,
+  stage: true, userId: true, createdAt: true, updatedAt: true
+} });
   if (!tender) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   const file = await prisma.tenderFile.findFirst({
@@ -61,10 +65,18 @@ export async function DELETE(
   await prismaReady;
   const { id: tenderId, fileId } = await params;
 
-  const tender = await prisma.tender.findFirst({ where: { id: tenderId, userId } });
+  const tender = await prisma.tender.findFirst({ where: { id: tenderId, userId }, select: {
+  id: true, title: true, description: true, reference: true, clientName: true,
+  category: true, budget: true, currency: true, deadline: true, status: true,
+  stage: true, userId: true, createdAt: true, updatedAt: true
+} });
   if (!tender) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  const file = await prisma.tenderFile.findFirst({ where: { id: fileId, tenderId } });
+  const file = await prisma.tenderFile.findFirst({ where: { id: fileId, tenderId }, select: {
+  id: true, tenderId: true, fileName: true, originalFileName: true,
+  mimeType: true, size: true, storagePath: true, classification: true,
+  createdAt: true
+} });
   if (!file) return NextResponse.json({ error: "File not found" }, { status: 404 });
 
   await prisma.tenderFile.delete({ where: { id: fileId } });

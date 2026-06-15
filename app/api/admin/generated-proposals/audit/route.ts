@@ -63,16 +63,16 @@ import {
   isValidationPassed,
   isReviewReadyForExport,
   isGenerated,
-} from "../../../../../lib/engine/document-output-state";
+} from "../../../../../lib/engine/export/document-output-state";
 import {
   documentHygieneIssues,
   extractDocxVisibleText,
-} from "../../../../../lib/engine/export-readiness";
-import { validateFileSignature } from "../../../../../lib/engine/export-format-policy";
-import { containsPricingLeakage } from "../../../../../lib/engine/pricing-hygiene";
-import { inferEnvelope } from "../../../../../lib/engine/submission-plan";
-import { assessGeneratedDocumentQuality } from "../../../../../lib/engine/document-quality-gate";
-import { METADATA_PLACEHOLDER_PATTERNS } from "../../../../../lib/engine/tender-metadata-completeness";
+} from "../../../../../lib/engine/export/export-readiness";
+import { validateFileSignature } from "../../../../../lib/engine/export/export-format-policy";
+import { containsPricingLeakage } from "../../../../../lib/engine/pricing/pricing-hygiene";
+import { inferEnvelope } from "../../../../../lib/engine/plans/submission-plan";
+import { assessGeneratedDocumentQuality } from "../../../../../lib/engine/quality/document-quality-gate";
+import { METADATA_PLACEHOLDER_PATTERNS } from "../../../../../lib/engine/metadata/tender-metadata-completeness";
 import { sanitizeError } from "../../../../../lib/sanitize-error";
 
 export const dynamic = "force-dynamic";

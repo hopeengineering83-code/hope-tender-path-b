@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
-import { formatTenderFileAnalysisMarker, resolveRequirementSource } from "../lib/engine/requirement-source-linkage";
+import { formatTenderFileAnalysisMarker, resolveRequirementSource } from "../lib/engine/compliance/requirement-source-linkage";
 
 const files = [
   {

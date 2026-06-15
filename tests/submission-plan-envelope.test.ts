@@ -3,7 +3,7 @@
 
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
-import { buildSubmissionPlan } from "../lib/engine/submission-plan";
+import { buildSubmissionPlan } from "../lib/engine/plans/submission-plan";
 
 type Req = {
   id: string;

@@ -14,7 +14,7 @@ import {
   buildAdvisoryGapTitle,
   parseAdvisoryGapTitle,
   isAdvisoryCode,
-} from "../lib/engine/final-submission-readiness";
+} from "../lib/engine/readiness/final-submission-readiness";
 
 const { severityForReasons, nextActionForReason, derivePlanStatus, applyAdvisoryResolutions, buildMessage, detectMessageType, mandatoryEvidenceCoverageRatio } = __testing__;
 

@@ -9,8 +9,8 @@
  */
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
-import { buildMatches } from "../lib/engine/matching";
-import type { CompanyKnowledgeSnapshot, RequirementDraft } from "../lib/engine/types";
+import { buildMatches } from "../lib/engine/matching/matching";
+import type { CompanyKnowledgeSnapshot, RequirementDraft } from "../lib/engine/infrastructure/types";
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 

@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
-import { buildTenderFormStrategy, renderTenderFormStrategy } from "../lib/engine/tender-form-strategy";
+import { buildTenderFormStrategy, renderTenderFormStrategy } from "../lib/engine/workflow/tender-form-strategy";
 
 describe("tender form strategy", () => {
   it("treats EOI as shortlist and capability evidence, not full RFP methodology", () => {

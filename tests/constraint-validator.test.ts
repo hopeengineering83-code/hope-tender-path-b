@@ -10,8 +10,8 @@ import {
   formatConstraintsForCritique,
   formatViolationsForCritique,
   violationsAsWeakAxes,
-} from "../lib/engine/constraint-validator";
-import type { DeepTenderComprehension } from "../lib/engine/evaluation-criteria-extractor";
+} from "../lib/engine/compliance/constraint-validator";
+import type { DeepTenderComprehension } from "../lib/engine/analysis/evaluation-criteria-extractor";
 
 function comprehension(opts: Partial<DeepTenderComprehension> = {}): DeepTenderComprehension {
   return {

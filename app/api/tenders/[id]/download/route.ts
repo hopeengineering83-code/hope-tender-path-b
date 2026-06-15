@@ -3,17 +3,17 @@ import { Document, Packer, Paragraph, TextRun } from "docx";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { logAction } from "../../../../../lib/audit";
-import { safeFileBaseName } from "../../../../../lib/engine/proposal-labels";
-import { checkExportReadiness, exportReadinessError, type ExportReadyDocument } from "../../../../../lib/engine/export-readiness";
-import { filterFinalExportCandidateDocuments, isFinalExportCandidateDocument } from "../../../../../lib/engine/document-output-state";
-import { buildFinalZipEntries } from "../../../../../lib/engine/final-zip-scope";
-import { validateFileSignature } from "../../../../../lib/engine/export-format-policy";
+import { safeFileBaseName } from "../../../../../lib/engine/infrastructure/proposal-labels";
+import { checkExportReadiness, exportReadinessError, type ExportReadyDocument } from "../../../../../lib/engine/export/export-readiness";
+import { filterFinalExportCandidateDocuments, isFinalExportCandidateDocument } from "../../../../../lib/engine/export/document-output-state";
+import { buildFinalZipEntries } from "../../../../../lib/engine/export/final-zip-scope";
+import { validateFileSignature } from "../../../../../lib/engine/export/export-format-policy";
 import { getCompanyIngestionReadiness } from "../../../../../lib/company-ingestion-readiness";
 import { getTenderGenerationReadiness } from "../../../../../lib/tender-generation-readiness";
 import { generatedDocumentHasContent, readGeneratedDocumentContent } from "../../../../../lib/generated-document-content";
-import { inferEnvelope, type SubmissionEnvelope } from "../../../../../lib/engine/submission-plan";
-import { getFinalSubmissionReadiness } from "../../../../../lib/engine/final-submission-readiness";
-import { runAuthorityReview } from "../../../../../lib/engine/authority-review";
+import { inferEnvelope, type SubmissionEnvelope } from "../../../../../lib/engine/plans/submission-plan";
+import { getFinalSubmissionReadiness } from "../../../../../lib/engine/readiness/final-submission-readiness";
+import { runAuthorityReview } from "../../../../../lib/engine/quality/authority-review";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -192,7 +192,7 @@ async function zipPackage(userId: string, tender: any, envelopeFilter: EnvelopeF
   }
 
   // ── Phase 4: Server-enforced quality validation check for ALL docs ─────────
-  const { validateDocumentQuality } = await import("../../../../../lib/engine/document-quality-validator");
+  const { validateDocumentQuality } = await import("../../../../../lib/engine/quality/document-quality-validator");
   const blockedDocs = tender.generatedDocuments.filter((doc: any) => {
     if (!isFinalExportCandidateDocument(doc)) return false;
     const quality = validateDocumentQuality({
@@ -464,7 +464,7 @@ async function proposalPdf(userId: string, tender: any, docId: string | null) {
   if (!target) return err("Target document not found or not yet generated.", 404, { code: "PDF_DOC_NOT_FOUND" });
 
   // Quality gate on PDF target — block if document has placeholders, AI traces, or envelope mismatches.
-  const { validateDocumentQuality } = await import("../../../../../lib/engine/document-quality-validator");
+  const { validateDocumentQuality } = await import("../../../../../lib/engine/quality/document-quality-validator");
   const pdfQuality = validateDocumentQuality({
     name: target.name,
     documentType: target.documentType,
@@ -495,7 +495,7 @@ async function proposalPdf(userId: string, tender: any, docId: string | null) {
   }
   if (!markdown.trim()) markdown = target.contentSummary ?? target.name ?? tender.title ?? "Technical Proposal";
 
-  const { generateProposalPdf } = await import("../../../../../lib/engine/proposal-pdf");
+  const { generateProposalPdf } = await import("../../../../../lib/engine/generation/proposal-pdf");
   const pdfBytes = await generateProposalPdf({
     title: tender.title ?? "Technical Proposal",
     clientName: (tender as any).clientName ?? (tender as any).procuringEntityName ?? null,

@@ -10,7 +10,7 @@ import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { reorderToCanonicalSequence } from "../lib/engine/section-reorderer";
+import { reorderToCanonicalSequence } from "../lib/engine/generation/section-reorderer";
 
 // ─── 1. source-scan: regex is precise ────────────────────────────────────────
 

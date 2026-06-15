@@ -8,7 +8,7 @@
 
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
-import { buildBidComplianceMapping } from "../lib/engine/bid-compliance-mapping";
+import { buildBidComplianceMapping } from "../lib/engine/generation/bid-compliance-mapping";
 
 describe("buildBidComplianceMapping — source page citations", () => {
   it("includes a Source Page column header", () => {

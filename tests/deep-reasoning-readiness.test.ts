@@ -6,7 +6,7 @@ import { strict as assert } from "node:assert";
 import {
   assessDeepReasoningReadiness,
   type ReadinessInput,
-} from "../lib/engine/deep-reasoning-readiness";
+} from "../lib/engine/deep-reasoning/deep-reasoning-readiness";
 
 function fullyReady(): ReadinessInput {
   return {

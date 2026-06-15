@@ -10,8 +10,8 @@ import { strict as assert } from "node:assert";
 import {
   sanitizeClientFacingText,
   findClientFacingViolations,
-} from "../lib/engine/client-text-sanitizer";
-import { humanizeDeterministic } from "../lib/engine/humanize";
+} from "../lib/engine/metadata/client-text-sanitizer";
+import { humanizeDeterministic } from "../lib/engine/generation/humanize";
 
 describe("Gap 8 — forbidden tokens are removed from exportable text", () => {
   const banned = [

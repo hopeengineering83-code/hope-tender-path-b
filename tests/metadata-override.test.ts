@@ -6,11 +6,11 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { assessTenderMetadataCompleteness, type MetadataCompletenessInput } from "../lib/engine/tender-metadata-completeness";
+import { assessTenderMetadataCompleteness, type MetadataCompletenessInput } from "../lib/engine/metadata/tender-metadata-completeness";
 import {
   resolvedOverrideFields,
   isFieldBlockingWithOverride,
-} from "../lib/engine/metadata-override";
+} from "../lib/engine/metadata/metadata-override";
 
 function baseInput(overrides: Partial<MetadataCompletenessInput> = {}): MetadataCompletenessInput {
   return {

@@ -79,7 +79,15 @@ export async function GET(
     // Retry without the broken includes so callers still get the document fields.
     const msg = err instanceof Error ? err.message : String(err);
     if (msg.includes("documentId") || msg.includes("does not exist") || msg.includes("column")) {
-      doc = await prisma.generatedDocument.findFirst({ where: { id: docId, tenderId } });
+      doc = await prisma.generatedDocument.findFirst({ where: { id: docId, tenderId }, select: {
+  id: true, tenderId: true, name: true, documentType: true, format: true,
+  storagePath: true, exactFileName: true, exactOrder: true,
+  validationStatus: true, generationStatus: true, reviewStatus: true,
+  reviewedBy: true, reviewedAt: true, createdAt: true, updatedAt: true,
+  reviewNotes: true, contentSummary: true, fileContent: true,
+  reviewedExpertCount: true, draftExpertCount: true,
+  reviewedProjectCount: true, draftProjectCount: true
+} });
       // reviews and comments stay as empty arrays — run ?step=schema-drift to fix
     } else {
       throw err;

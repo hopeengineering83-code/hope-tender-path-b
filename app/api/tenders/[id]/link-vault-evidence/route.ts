@@ -4,7 +4,7 @@ import { forbiddenResponse, requireRole, unauthorizedResponse } from "../../../.
 import { logAction } from "../../../../../lib/audit";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../../lib/rate-limit";
-import { documentHygieneIssues } from "../../../../../lib/engine/export-readiness";
+import { documentHygieneIssues } from "../../../../../lib/engine/export/export-readiness";
 
 export const dynamic = "force-dynamic";
 

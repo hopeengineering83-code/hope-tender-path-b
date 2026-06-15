@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { validateDocumentQuality } from "../../lib/engine/document-quality-validator";
+import { validateDocumentQuality } from "../../lib/engine/quality/document-quality-validator";
 
 describe("Tender Regression Tests (Phase 7)", () => {
   describe("Document Quality Validator", () => {

@@ -141,7 +141,15 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
 
   await prismaReady;
   const { id } = await params;
-  const existing = await prisma.tender.findFirst({ where: { id, userId } });
+  const existing = await prisma.tender.findFirst({ where: { id, userId }, select: {
+  id: true, title: true, description: true, reference: true, clientName: true,
+  category: true, budget: true, currency: true, deadline: true, status: true,
+  stage: true, userId: true, createdAt: true, updatedAt: true,
+  submissionMethod: true, submissionAddress: true, intakeSummary: true,
+  analysisSummary: true, evaluationMethodology: true, notes: true,
+  procuringEntityName: true, legalClientName: true, donorAgency: true,
+  implementingAgency: true, clientRepresentative: true
+} });
   if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   try {
@@ -239,7 +247,15 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
 
   await prismaReady;
   const { id } = await params;
-  const existing = await prisma.tender.findFirst({ where: { id, userId: actor.id } });
+  const existing = await prisma.tender.findFirst({ where: { id, userId: actor.id }, select: {
+  id: true, title: true, description: true, reference: true, clientName: true,
+  category: true, budget: true, currency: true, deadline: true, status: true,
+  stage: true, userId: true, createdAt: true, updatedAt: true,
+  submissionMethod: true, submissionAddress: true, intakeSummary: true,
+  analysisSummary: true, evaluationMethodology: true, notes: true,
+  procuringEntityName: true, legalClientName: true, donorAgency: true,
+  implementingAgency: true, clientRepresentative: true
+} });
   if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   try {

@@ -6,7 +6,7 @@ import {
   EXTRACTION_SCORE_BLOCK_THRESHOLD,
   SOURCE_CONFIDENCE_HIGH,
   SOURCE_CONFIDENCE_ACCEPTABLE,
-} from "../lib/engine/extraction-quality-gate";
+} from "../lib/engine/quality/extraction-quality-gate";
 import { scoreToSeverity, confidenceToSeverity } from "../lib/ui-tokens";
 
 describe("confidence-thresholds: exported constants exist and are sensible", () => {

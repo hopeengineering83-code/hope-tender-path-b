@@ -2,8 +2,8 @@ import { NextResponse } from "next/server";
 import { forbiddenResponse, requireRole, unauthorizedResponse } from "../../../../../lib/auth";
 import { logAction } from "../../../../../lib/audit";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
-import { buildSubmissionPlan } from "../../../../../lib/engine/submission-plan";
-import { buildSubmissionPlanWithDerivedFallback } from "../../../../../lib/engine/submission-plan";
+import { buildSubmissionPlan } from "../../../../../lib/engine/plans/submission-plan";
+import { buildSubmissionPlanWithDerivedFallback } from "../../../../../lib/engine/plans/submission-plan";
 import { MUTATION_RATE_LIMIT, rateLimit } from "../../../../../lib/rate-limit";
 import { extractRequestId } from "../../../../../lib/request-id";
 

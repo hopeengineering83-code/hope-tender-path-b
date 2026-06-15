@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
-import { buildProposalIntelligenceContract, renderProposalIntelligenceContract, renderProposalIntelligencePromptBlock } from "../lib/engine/proposal-intelligence-contract";
+import { buildProposalIntelligenceContract, renderProposalIntelligenceContract, renderProposalIntelligencePromptBlock } from "../lib/engine/generation/proposal-intelligence-contract";
 
 const baseInput = {
   tenderTitle: "RFP for Hospital Design, Interior Design, Supervision and Contract Administration Services",

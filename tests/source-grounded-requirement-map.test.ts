@@ -1,7 +1,7 @@
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
-import { buildSourceGroundedRequirementMap, renderSourceGroundedRequirementMap } from "../lib/engine/source-grounded-requirement-map";
-import { buildProposalIntelligenceContract } from "../lib/engine/proposal-intelligence-contract";
+import { buildSourceGroundedRequirementMap, renderSourceGroundedRequirementMap } from "../lib/engine/compliance/source-grounded-requirement-map";
+import { buildProposalIntelligenceContract } from "../lib/engine/generation/proposal-intelligence-contract";
 
 const tenderText = `
 [page 4]

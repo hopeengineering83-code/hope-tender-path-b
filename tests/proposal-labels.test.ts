@@ -6,7 +6,7 @@
 
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
-import { cleanTenderTitle, cleanClientName, formatRequirementLine, safeFileBaseName, extractLikelyClientName } from "../lib/engine/proposal-labels";
+import { cleanTenderTitle, cleanClientName, formatRequirementLine, safeFileBaseName, extractLikelyClientName } from "../lib/engine/infrastructure/proposal-labels";
 
 describe("cleanClientName", () => {
   it("strips common garbage suffixes", () => {

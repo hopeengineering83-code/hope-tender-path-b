@@ -14,7 +14,7 @@ import {
   isStrongSupportLevel,
   computeEvidenceCoverage,
   type RequirementLikeForEvidence,
-} from "../lib/engine/requirement-evidence-profile";
+} from "../lib/engine/compliance/requirement-evidence-profile";
 
 describe("normalizeSupportLevel", () => {
   it("maps known spellings onto the formal enum", () => {

@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { requireUser, unauthorizedResponse, forbiddenResponse } from "../../../../../lib/auth";
-import { answerTenderCopilotQuestion } from "../../../../../lib/engine/tender-ai-copilot";
+import { answerTenderCopilotQuestion } from "../../../../../lib/engine/infrastructure/tender-ai-copilot";
 import { buildEvidenceGraph } from "../../../../../lib/evidence-graph";
 import { logAction } from "../../../../../lib/audit";
 import { rateLimit, AI_RATE_LIMIT } from "../../../../../lib/rate-limit";

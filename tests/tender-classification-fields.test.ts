@@ -20,7 +20,7 @@ import {
   sanitizeTenderCategory,
   type AIAnalysisResult,
 } from "../lib/ai";
-import { inferEnvelope, type SubmissionEnvelope } from "../lib/engine/submission-plan";
+import { inferEnvelope, type SubmissionEnvelope } from "../lib/engine/plans/submission-plan";
 
 describe("AIAnalysisResult classification fields", () => {
   it("type accepts the four classification fields with valid enum values", () => {

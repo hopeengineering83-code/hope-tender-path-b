@@ -1,7 +1,7 @@
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
-import { deriveRequirementConstraintProfile } from "../lib/engine/requirement-constraints";
-import type { RequirementDraft } from "../lib/engine/types";
+import { deriveRequirementConstraintProfile } from "../lib/engine/compliance/requirement-constraints";
+import type { RequirementDraft } from "../lib/engine/infrastructure/types";
 
 describe("deriveRequirementConstraintProfile", () => {
   it("extracts role-driven expert count and strict domain for healthcare tenders", () => {

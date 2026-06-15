@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
-import { actionableEngineError } from "../lib/engine/actionable-engine-error";
+import { actionableEngineError } from "../lib/engine/infrastructure/actionable-engine-error";
 
 describe("actionableEngineError", () => {
   it("maps timeout failures to ENGINE_TIMEOUT with background-job retry hint", () => {

@@ -7,7 +7,7 @@ import { strict as assert } from "node:assert";
 import {
   assessTenderMetadataCompleteness,
   type MetadataCompletenessInput,
-} from "../lib/engine/tender-metadata-completeness";
+} from "../lib/engine/metadata/tender-metadata-completeness";
 
 // Minimal "passing" input — used as a base for mutation tests below.
 const PASSING_INPUT: MetadataCompletenessInput = {
@@ -253,7 +253,7 @@ describe("generate route — embedded placeholder in client name blocked", () =>
   });
 
   it("containsMetadataPlaceholder detects embedded placeholder in otherwise-valid name", () => {
-    const { containsMetadataPlaceholder: check } = require("../lib/engine/metadata-validators");
+    const { containsMetadataPlaceholder: check } = require("../lib/engine/metadata/metadata-validators");
     assert.equal(
       check("Ministry of Water / Bid-Team to confirm"),
       true,

@@ -11,7 +11,7 @@ import {
   isExportBlockingConfidence,
   confidenceFromResolutionKind,
   scanTenderForExplicitDonorRequirement,
-} from "../lib/engine/donor-advisory-confidence";
+} from "../lib/engine/quality/donor-advisory-confidence";
 
 describe("DonorAdvisoryConfidence — export-blocking invariant", () => {
   it("only EXPLICIT_TOR_REQUIRED blocks export", () => {

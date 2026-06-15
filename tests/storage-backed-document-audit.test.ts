@@ -6,7 +6,7 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { auditStorageBackedDocument, auditStorageBackedDocumentBatch } from "../lib/engine/storage-backed-document-audit";
+import { auditStorageBackedDocument, auditStorageBackedDocumentBatch } from "../lib/engine/documents/storage-backed-document-audit";
 
 // ── Stub helpers ─────────────────────────────────────────────────────────────
 

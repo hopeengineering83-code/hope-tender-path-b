@@ -17,11 +17,11 @@ import { getSession } from "../../../../../lib/auth";
 import { rateLimit, AI_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { isAIEnabled, type AIBidWriterInput } from "../../../../../lib/ai";
-import { BENCHMARK_CONTEXT_LINES, buildProposalIntelligence, buildCriterionEvidenceMap, expertProofLine, projectProofLine, safeParseArr } from "../../../../../lib/engine/proposal-intelligence";
-import { buildRubricPromptDirective } from "../../../../../lib/engine/rubric-driven-sections";
-import { extractTenderLanguageEchoes, formatEchoesForPrompt } from "../../../../../lib/engine/tender-language-echoes";
-import { extractTenderFacts, formatFactsForPrompt } from "../../../../../lib/engine/tender-facts-extractor";
-import { buildProposalSectionSpecs, buildSectionFallback, type ProposalSectionId } from "../../../../../lib/engine/proposal-sections";
+import { BENCHMARK_CONTEXT_LINES, buildProposalIntelligence, buildCriterionEvidenceMap, expertProofLine, projectProofLine, safeParseArr } from "../../../../../lib/engine/generation/proposal-intelligence";
+import { buildRubricPromptDirective } from "../../../../../lib/engine/generation/rubric-driven-sections";
+import { extractTenderLanguageEchoes, formatEchoesForPrompt } from "../../../../../lib/engine/generation/tender-language-echoes";
+import { extractTenderFacts, formatFactsForPrompt } from "../../../../../lib/engine/analysis/tender-facts-extractor";
+import { buildProposalSectionSpecs, buildSectionFallback, type ProposalSectionId } from "../../../../../lib/engine/generation/proposal-sections";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";

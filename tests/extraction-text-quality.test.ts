@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
-import { scorePageTextQuality, isExtractionCorrupted } from "../lib/engine/extraction-quality-gate";
+import { scorePageTextQuality, isExtractionCorrupted } from "../lib/engine/quality/extraction-quality-gate";
 
 describe("scorePageTextQuality", () => {
   it("flags GGG/symbol garbage text as corrupted", () => {

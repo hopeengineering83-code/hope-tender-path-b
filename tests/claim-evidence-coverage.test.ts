@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
-import { checkHighValueClaimEvidence } from "../lib/engine/claim-evidence-coverage";
+import { checkHighValueClaimEvidence } from "../lib/engine/workflow/claim-evidence-coverage";
 
 describe("high-value claim evidence coverage", () => {
   it("blocks unsupported Grade 1 claims", () => {

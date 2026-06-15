@@ -15,7 +15,7 @@
 
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
-import { isEmailSubmissionMethod, isPhysicalSubmissionMethod } from "../lib/engine/tender-metadata-completeness";
+import { isEmailSubmissionMethod, isPhysicalSubmissionMethod } from "../lib/engine/metadata/tender-metadata-completeness";
 import { readFileSync } from "node:fs";
 
 // ── 1. Concurrent generation guard ───────────────────────────────────────────

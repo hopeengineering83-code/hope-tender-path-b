@@ -5,7 +5,7 @@ import {
   deriveDocumentOutputState,
   exportBlockReason,
   isExportReady,
-} from "../lib/engine/document-output-state";
+} from "../lib/engine/export/document-output-state";
 
 const READY_DOC = {
   name: "Technical Proposal.docx",

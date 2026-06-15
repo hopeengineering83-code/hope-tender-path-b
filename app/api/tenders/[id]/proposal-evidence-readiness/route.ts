@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { prismaReady } from "../../../../../lib/prisma";
-import { checkProposalEvidenceReadiness } from "../../../../../lib/engine/proposal-evidence-readiness";
+import { checkProposalEvidenceReadiness } from "../../../../../lib/engine/readiness/proposal-evidence-readiness";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 10;

@@ -5,8 +5,8 @@ import { assessTenderAnalysisQuality } from "../lib/analysis-quality";
 import { assessMatchingQuality } from "../lib/matching-quality";
 import { ensureCompanyForUser } from "../lib/company-workspace";
 import { getCompanyIngestionReadiness } from "../lib/company-ingestion-readiness";
-import { detectAnalysisSourceWithApproval } from "../lib/engine/analysis-source";
-import { inferSector } from "../lib/engine/proposal-intelligence";
+import { detectAnalysisSourceWithApproval } from "../lib/engine/analysis/analysis-source";
+import { inferSector } from "../lib/engine/generation/proposal-intelligence";
 import { statusToSeverity, severityBadgeClasses, severityBgClass, severityBorderClass, severityTextClass, scoreToSeverity } from "../lib/ui-tokens";
 
 function analysisSourceSummary(source: Awaited<ReturnType<typeof detectAnalysisSourceWithApproval>>) {

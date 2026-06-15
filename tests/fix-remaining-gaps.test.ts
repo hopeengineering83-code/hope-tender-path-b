@@ -6,7 +6,7 @@ import {
   detectDocumentPlaceholders,
   looksLikeMetadataPlaceholder,
   DOCUMENT_PLACEHOLDER_PATTERNS,
-} from "../lib/engine/tender-metadata-completeness";
+} from "../lib/engine/metadata/tender-metadata-completeness";
 import { suggestOutsidePlanResolution } from "../components/submission-plan-completeness-panel";
 
 // ── Placeholder detection ────────────────────────────────────────────────────

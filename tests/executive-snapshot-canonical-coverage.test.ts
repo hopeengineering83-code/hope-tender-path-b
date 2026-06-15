@@ -11,7 +11,7 @@
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
-import { computeEvidenceCoverage } from "../lib/engine/requirement-evidence-profile";
+import { computeEvidenceCoverage } from "../lib/engine/compliance/requirement-evidence-profile";
 
 // Mirror the shape ExecutiveSnapshot constructs from the Prisma tender
 // row when it groups complianceMatrix rows by requirementId.

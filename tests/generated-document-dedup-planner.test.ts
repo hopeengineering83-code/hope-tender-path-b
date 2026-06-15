@@ -15,7 +15,7 @@ import {
   canonicalKey,
   planDeduplication,
   type DedupRowInput,
-} from "../lib/engine/generated-document-dedup-planner";
+} from "../lib/engine/documents/generated-document-dedup-planner";
 
 function row(over: Partial<DedupRowInput> & { id: string; name: string; updatedAt?: Date }): DedupRowInput {
   return {

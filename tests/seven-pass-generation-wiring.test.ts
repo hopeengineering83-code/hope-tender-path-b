@@ -7,8 +7,8 @@ import {
   shouldBlockFinalApprovalBySevenPassGate,
   evaluateSevenPassForDocument,
   type SevenPassWiringContext,
-} from "../lib/engine/seven-pass-generation-wiring";
-import { evaluateSevenPassGenerationGate } from "../lib/engine/seven-pass-generation";
+} from "../lib/engine/quality/seven-pass-generation-wiring";
+import { evaluateSevenPassGenerationGate } from "../lib/engine/quality/seven-pass-generation";
 
 // ── Fixture helpers ─────────────────────────────────────────────────────────
 

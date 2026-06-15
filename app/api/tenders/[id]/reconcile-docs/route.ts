@@ -18,8 +18,8 @@
 import { NextResponse } from "next/server";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
-import { buildSubmissionPlan, buildSubmissionPlanWithDerivedFallback } from "../../../../../lib/engine/submission-plan";
-import { reconcileGeneratedDocuments, applyReconcileDecisions } from "../../../../../lib/engine/reconcile-generated-docs";
+import { buildSubmissionPlan, buildSubmissionPlanWithDerivedFallback } from "../../../../../lib/engine/plans/submission-plan";
+import { reconcileGeneratedDocuments, applyReconcileDecisions } from "../../../../../lib/engine/documents/reconcile-generated-docs";
 import { logAction } from "../../../../../lib/audit";
 import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../../lib/rate-limit";
 

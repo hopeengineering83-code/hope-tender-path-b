@@ -5,7 +5,7 @@ import {
   isExtractionAcceptableForGeneration,
   isExtractionAcceptableForExport,
   summarizeExtractionCoverage,
-} from "../lib/engine/extraction-quality-gate";
+} from "../lib/engine/quality/extraction-quality-gate";
 
 describe("deriveExtractionStatus", () => {
   it("returns FULL_EXTRACTION_AI_ANALYZED for high-score files with no OCR or failures", () => {

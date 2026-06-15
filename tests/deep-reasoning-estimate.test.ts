@@ -7,7 +7,7 @@ import {
   estimateDeepReasoningCost,
   defaultMaxRefinementAttempts,
   defaultRefinementThreshold,
-} from "../lib/engine/deep-reasoning-estimate";
+} from "../lib/engine/deep-reasoning/deep-reasoning-estimate";
 
 function withEnv<T>(overrides: Record<string, string | undefined>, fn: () => T): T {
   const saved: Record<string, string | undefined> = {};

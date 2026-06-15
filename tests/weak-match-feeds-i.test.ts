@@ -15,8 +15,8 @@ import {
   WEAK_MATCH_STRONG_THRESHOLD,
   WEAK_MATCH_LOW_THRESHOLD,
   type MatchRow,
-} from "../lib/engine/weak-match-classifier";
-import { deriveControlSuggestions } from "../lib/engine/tender-control-suggestions";
+} from "../lib/engine/matching/weak-match-classifier";
+import { deriveControlSuggestions } from "../lib/engine/workflow/tender-control-suggestions";
 
 function exp(over: Partial<MatchRow> & { score: number }): MatchRow {
   return { id: `e-${over.score}`, score: over.score, isSelected: over.isSelected ?? false, trustLevel: over.trustLevel ?? "REVIEWED", label: over.label ?? "Dr Example" };

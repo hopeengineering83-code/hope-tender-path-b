@@ -24,7 +24,7 @@ import { NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { logAction } from "../../../../../lib/audit";
-import { ADVISORY_GAP_PREFIX, buildAdvisoryGapTitle, parseAdvisoryGapTitle } from "../../../../../lib/engine/final-submission-readiness";
+import { ADVISORY_GAP_PREFIX, buildAdvisoryGapTitle, parseAdvisoryGapTitle } from "../../../../../lib/engine/readiness/final-submission-readiness";
 import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import { sanitizeError } from "../../../../../lib/sanitize-error";
 

@@ -7,8 +7,8 @@
 
 import { getSession } from "../lib/auth";
 import { prisma, prismaReady } from "../lib/prisma";
-import { inferSectionRequirementIds } from "../lib/engine/section-evidence-map";
-import { normalizeSupportLevel } from "../lib/engine/requirement-evidence-profile";
+import { inferSectionRequirementIds } from "../lib/engine/infrastructure/section-evidence-map";
+import { normalizeSupportLevel } from "../lib/engine/compliance/requirement-evidence-profile";
 
 function coverageBadge(state: "COVERED" | "PARTIAL" | "UNCOVERED") {
   if (state === "COVERED") return <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700">Covered</span>;

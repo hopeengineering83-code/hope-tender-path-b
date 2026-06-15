@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSession } from "../../../../lib/auth";
-import { estimateDeepReasoningCost } from "../../../../lib/engine/deep-reasoning-estimate";
+import { estimateDeepReasoningCost } from "../../../../lib/engine/deep-reasoning/deep-reasoning-estimate";
 
 /**
  * Pre-generation cost estimate. UI surfaces this BEFORE the user

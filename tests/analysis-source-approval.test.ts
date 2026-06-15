@@ -10,7 +10,7 @@ import {
   detectAnalysisSourceWithApproval,
   assertAnalysisReadyForFinalGeneration,
   ANALYSIS_APPROVAL_GAP_TITLE,
-} from "../lib/engine/analysis-source";
+} from "../lib/engine/analysis/analysis-source";
 import type { PrismaClient } from "@prisma/client";
 
 // Minimal fake Prisma client that drives findFirst by a pre-set approval row.

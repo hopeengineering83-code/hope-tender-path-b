@@ -2,7 +2,7 @@
 
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
-import { inferTenderMetadata } from "../lib/engine/tender-metadata";
+import { inferTenderMetadata } from "../lib/engine/metadata/tender-metadata";
 
 const FULL_TENDER = `
 REQUEST FOR PROPOSALS

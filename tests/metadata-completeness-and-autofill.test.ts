@@ -3,7 +3,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { assessTenderMetadataCompleteness } from "../lib/engine/tender-metadata-completeness";
+import { assessTenderMetadataCompleteness } from "../lib/engine/metadata/tender-metadata-completeness";
 
 describe("Coverage ratio no longer punishes missing budget / bidBondAmount", () => {
   it("a tender with everything except budget+bidBond hits 100% — not 86%", () => {

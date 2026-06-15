@@ -23,7 +23,7 @@
 
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
-import { capabilityScore, detectDominantFamily } from "../lib/engine/matching";
+import { capabilityScore, detectDominantFamily } from "../lib/engine/matching/matching";
 
 describe("detectDominantFamily", () => {
   it("detects HEALTHCARE_FACILITIES for a hospital tender", () => {

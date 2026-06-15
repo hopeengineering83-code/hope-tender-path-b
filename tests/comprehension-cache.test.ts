@@ -7,7 +7,7 @@ import {
   ComprehensionCache,
   getComprehensionCache,
   __resetComprehensionCacheForTests,
-} from "../lib/engine/comprehension-cache";
+} from "../lib/engine/infrastructure/comprehension-cache";
 
 describe("ComprehensionCache.keyFor — content hashing", () => {
   it("returns the same key for identical input", () => {

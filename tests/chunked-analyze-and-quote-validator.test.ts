@@ -6,8 +6,8 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { validateSourceQuote, validateFieldSourceQuotes } from "../lib/engine/source-quote-validator";
-import { makeFieldMeta, isFieldVerified, isFieldProvisional } from "../lib/engine/field-extraction-meta";
+import { validateSourceQuote, validateFieldSourceQuotes } from "../lib/engine/quality/source-quote-validator";
+import { makeFieldMeta, isFieldVerified, isFieldProvisional } from "../lib/engine/metadata/field-extraction-meta";
 import { isTransientChunkError } from "../lib/ai";
 
 describe("validateSourceQuote — deterministic substring matcher", () => {

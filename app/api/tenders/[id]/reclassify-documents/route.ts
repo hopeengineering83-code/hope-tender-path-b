@@ -6,7 +6,7 @@ import { NextResponse } from "next/server";
 import { requireRole, getSession } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { logAction } from "../../../../../lib/audit";
-import { normalizeDocumentType, requiresOfficialOriginal, isControlDocument } from "../../../../../lib/engine/document-type-normalizer";
+import { normalizeDocumentType, requiresOfficialOriginal, isControlDocument } from "../../../../../lib/engine/documents/document-type-normalizer";
 import { MUTATION_RATE_LIMIT, rateLimit } from "../../../../../lib/rate-limit";
 
 export const dynamic = "force-dynamic";

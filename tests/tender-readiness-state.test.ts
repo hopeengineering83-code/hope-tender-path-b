@@ -1,7 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { computeTenderReadinessState, deriveAnalysisHash } from "../lib/tender-readiness-state";
-import { computeReadinessScore } from "../lib/engine/readiness-scoring";
+import { computeReadinessScore } from "../lib/engine/readiness/readiness-scoring";
 
 const req = (priority = "MANDATORY", traced = true) => ({
   priority,

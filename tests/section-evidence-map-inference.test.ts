@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { inferSectionRequirementIds, type RequirementForEvidenceMap } from "../lib/engine/section-evidence-map";
+import { inferSectionRequirementIds, type RequirementForEvidenceMap } from "../lib/engine/infrastructure/section-evidence-map";
 
 const requirements: RequirementForEvidenceMap[] = [
   {

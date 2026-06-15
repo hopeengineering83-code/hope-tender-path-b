@@ -28,7 +28,7 @@
 
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
-import { inferSector } from "../lib/engine/proposal-intelligence";
+import { inferSector } from "../lib/engine/generation/proposal-intelligence";
 
 describe("inferSector — bare-token false-positives are rejected", () => {
   it("'district health services' classifies as Healthcare (not ICT via 'distrICT')", () => {

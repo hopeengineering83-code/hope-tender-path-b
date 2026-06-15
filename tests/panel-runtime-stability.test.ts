@@ -258,7 +258,7 @@ describe("analysis-quality assessor — stable with empty inputs", () => {
   });
 
   it("extraction quality summarizer handles zero files gracefully", () => {
-    const { summarizeExtractionCoverage } = require("../lib/engine/extraction-quality-gate");
+    const { summarizeExtractionCoverage } = require("../lib/engine/quality/extraction-quality-gate");
     const coverage = summarizeExtractionCoverage([]);
     assert.ok(typeof coverage === "object" && coverage !== null, "summarizeExtractionCoverage must return an object for empty input");
     assert.equal(coverage.totalFiles ?? 0, 0, "totalFiles must be 0 for empty input");
@@ -394,7 +394,7 @@ describe("extraction-quality route — DB failure returns structured error, not 
   });
 
   it("summarizeExtractionCoverage handles files with zero extracted characters without throwing", () => {
-    const { summarizeExtractionCoverage } = require("../lib/engine/extraction-quality-gate");
+    const { summarizeExtractionCoverage } = require("../lib/engine/quality/extraction-quality-gate");
     const files = [
       { id: "f1", fileName: "empty.pdf", totalPages: 10, extractedPages: 0, ocrPages: 0, failedPages: 10, extractionScore: 0, extractionMethod: null, characterCount: 0 },
     ];
@@ -405,7 +405,7 @@ describe("extraction-quality route — DB failure returns structured error, not 
   });
 
   it("isExtractionAcceptableForGeneration returns false for completely failed extraction", () => {
-    const { isExtractionAcceptableForGeneration } = require("../lib/engine/extraction-quality-gate");
+    const { isExtractionAcceptableForGeneration } = require("../lib/engine/quality/extraction-quality-gate");
     const files = [{ id: "f1", extractionScore: 0, totalPages: 5, extractedPages: 0, ocrPages: 0, failedPages: 5 }];
     assert.equal(isExtractionAcceptableForGeneration(files), false, "completely failed extraction must block generation");
   });

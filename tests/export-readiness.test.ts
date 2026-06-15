@@ -9,7 +9,7 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import JSZip from "jszip";
-import { checkDocxHygieneReadiness, checkExportReadiness, documentHygieneIssues, exportReadinessError, filePlanBlockersFromLists, isReadyForFinalExport } from "../lib/engine/export-readiness";
+import { checkDocxHygieneReadiness, checkExportReadiness, documentHygieneIssues, exportReadinessError, filePlanBlockersFromLists, isReadyForFinalExport } from "../lib/engine/export/export-readiness";
 
 // Minimal base64 with ZIP/PK magic bytes (0x50 0x4B) — passes looksLikeBase64Docx check.
 const MINIMAL_DOCX_B64 = "UEsDBA==";

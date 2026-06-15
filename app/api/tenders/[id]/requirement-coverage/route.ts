@@ -14,7 +14,7 @@ import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../.
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { rateLimit, API_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import { sanitizeError } from "../../../../../lib/sanitize-error";
-import { normalizeSupportLevel } from "../../../../../lib/engine/requirement-evidence-profile";
+import { normalizeSupportLevel } from "../../../../../lib/engine/compliance/requirement-evidence-profile";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 10;

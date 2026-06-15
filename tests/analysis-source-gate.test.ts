@@ -7,7 +7,7 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { detectAnalysisSource } from "../lib/engine/analysis-source";
+import { detectAnalysisSource } from "../lib/engine/analysis/analysis-source";
 
 describe("detectAnalysisSource — pure synchronous detection", () => {
   it("returns AI when notes record an AI analysis", () => {

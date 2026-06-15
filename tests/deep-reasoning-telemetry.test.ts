@@ -3,7 +3,7 @@
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
 
-import { DeepReasoningTelemetry, DeepReasoningBudgetExceededError, readMaxCallsFromEnv } from "../lib/engine/deep-reasoning-telemetry";
+import { DeepReasoningTelemetry, DeepReasoningBudgetExceededError, readMaxCallsFromEnv } from "../lib/engine/deep-reasoning/deep-reasoning-telemetry";
 
 describe("DeepReasoningTelemetry", () => {
   it("records nothing by default", () => {

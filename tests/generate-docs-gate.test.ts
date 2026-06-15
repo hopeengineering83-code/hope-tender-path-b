@@ -16,8 +16,8 @@ import assert from "node:assert/strict";
 import {
   hasValidSubmissionPlan,
   type SubmissionPlanCheckResult,
-} from "../lib/engine/submission-plan-completeness";
-import { isExtractionAcceptableForGeneration } from "../lib/engine/extraction-quality-gate";
+} from "../lib/engine/plans/submission-plan-completeness";
+import { isExtractionAcceptableForGeneration } from "../lib/engine/quality/extraction-quality-gate";
 
 // ── hasValidSubmissionPlan ────────────────────────────────────────────────────
 

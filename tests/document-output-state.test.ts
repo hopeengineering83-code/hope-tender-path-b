@@ -12,7 +12,7 @@ import {
   exportBlockReason,
   EXPORT_BLOCKING_STATES,
   type DocumentLike,
-} from "../lib/engine/document-output-state";
+} from "../lib/engine/export/document-output-state";
 
 // Real DOCX / PDF base64 headers — first 4 bytes is enough for the
 // magic-byte sniff. PK\x03\x04 = ZIP/DOCX, %PDF- = PDF.

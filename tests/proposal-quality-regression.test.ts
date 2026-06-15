@@ -5,16 +5,16 @@
 
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
-import { scoreProposalQuality } from "../lib/engine/proposal-quality-scorer";
-import { containsPricingLeakage, isCommercialOrFinancialDoc, isCvOrProfileDoc } from "../lib/engine/pricing-hygiene";
-import { validateDocumentQuality } from "../lib/engine/document-quality-validator";
-import { runAuthorityReview } from "../lib/engine/authority-review";
+import { scoreProposalQuality } from "../lib/engine/quality/proposal-quality-scorer";
+import { containsPricingLeakage, isCommercialOrFinancialDoc, isCvOrProfileDoc } from "../lib/engine/pricing/pricing-hygiene";
+import { validateDocumentQuality } from "../lib/engine/quality/document-quality-validator";
+import { runAuthorityReview } from "../lib/engine/quality/authority-review";
 import {
   filterFinalExportCandidateDocuments,
   deriveDocumentOutputState,
   EXPORT_BLOCKING_STATES,
-} from "../lib/engine/document-output-state";
-import type { ProjectRecord } from "../lib/engine/benchmark-tables";
+} from "../lib/engine/export/document-output-state";
+import type { ProjectRecord } from "../lib/engine/generation/benchmark-tables";
 
 // ─── Shared fixtures ──────────────────────────────────────────────────────────
 

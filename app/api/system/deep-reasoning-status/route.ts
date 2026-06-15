@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import { getSession } from "../../../../lib/auth";
-import { isDeepReasoningEnabled, isToolUseGenerationEnabled } from "../../../../lib/engine/feature-flags";
+import { isDeepReasoningEnabled, isToolUseGenerationEnabled } from "../../../../lib/engine/infrastructure/feature-flags";
 import { isAIEnabled, isClaudeEnabled, isOpenAIEnabled } from "../../../../lib/ai";
-import { getComprehensionCache } from "../../../../lib/engine/comprehension-cache";
+import { getComprehensionCache } from "../../../../lib/engine/infrastructure/comprehension-cache";
 import { findStuckJobs, AI_JOB_STUCK_AFTER_MS } from "../../../../lib/ai-jobs";
 
 /**

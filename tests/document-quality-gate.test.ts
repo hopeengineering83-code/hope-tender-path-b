@@ -4,7 +4,7 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { assessGeneratedDocumentQuality } from "../lib/engine/document-quality-gate";
+import { assessGeneratedDocumentQuality } from "../lib/engine/quality/document-quality-gate";
 
 function technicalDoc(overrides: Partial<Parameters<typeof assessGeneratedDocumentQuality>[0]>) {
   return assessGeneratedDocumentQuality({

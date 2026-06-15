@@ -4,8 +4,8 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { detectDocumentGatingCategory, assessGeneratedDocumentQuality } from "../lib/engine/document-quality-gate";
-import { normalizeDocumentType, requiresOfficialOriginal, isControlDocument } from "../lib/engine/document-type-normalizer";
+import { detectDocumentGatingCategory, assessGeneratedDocumentQuality } from "../lib/engine/quality/document-quality-gate";
+import { normalizeDocumentType, requiresOfficialOriginal, isControlDocument } from "../lib/engine/documents/document-type-normalizer";
 
 describe("detectDocumentGatingCategory", () => {
   it("classifies financial evidence docs as FINANCIAL_OFFICIAL", () => {

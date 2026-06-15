@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
-import { runAuthorityReview, type ManifestEntry, type DocumentInput } from "../../../../../lib/engine/authority-review";
+import { runAuthorityReview, type ManifestEntry, type DocumentInput } from "../../../../../lib/engine/quality/authority-review";
 import { safeParseJsonArray } from "../../../../../lib/safe-json";
 
 export const dynamic = "force-dynamic";

@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { logAction } from "../../../../../lib/audit";
-import { repairSourceGrounding } from "../../../../../lib/engine/repair-source-grounding";
+import { repairSourceGrounding } from "../../../../../lib/engine/quality/repair-source-grounding";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;

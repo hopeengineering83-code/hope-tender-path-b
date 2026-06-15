@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getSession } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { getTenderGenerationReadinessStrict } from "../../../../../lib/tender-generation-readiness-strict";
-import { detectAnalysisSourceWithApproval } from "../../../../../lib/engine/analysis-source";
+import { detectAnalysisSourceWithApproval } from "../../../../../lib/engine/analysis/analysis-source";
 import { safeParseJsonArray } from "../../../../../lib/safe-json";
 import { randomUUID } from "node:crypto";
 

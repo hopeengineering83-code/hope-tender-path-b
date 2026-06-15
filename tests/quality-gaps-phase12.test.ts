@@ -14,7 +14,7 @@ import { strict as assert } from "node:assert";
 import {
   buildWinThemesSection,
   hasWinThemesHeading,
-} from "../lib/engine/win-themes-builder";
+} from "../lib/engine/generation/win-themes-builder";
 
 describe("buildWinThemesSection — synthesised differentiators from requirements", () => {
   it("returns non-null when differentiators is empty but requirements are present", () => {

@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
-import { detectOfficialTemplateRequirement } from "../lib/engine/official-template-detector";
+import { detectOfficialTemplateRequirement } from "../lib/engine/analysis/official-template-detector";
 
 describe("official tender template detector", () => {
   it("detects explicit attached template instructions", () => {

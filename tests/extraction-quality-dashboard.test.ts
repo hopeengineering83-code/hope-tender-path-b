@@ -8,7 +8,7 @@
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
 import { assessExtractionQuality, assessExtractionQualityPerPage, buildReportFromStoredPages, type PageQualityEntry } from "../lib/extraction-quality";
-import { isExtractionCorrupted } from "../lib/engine/extraction-quality-gate";
+import { isExtractionCorrupted } from "../lib/engine/quality/extraction-quality-gate";
 
 // ── Helpers mirroring the component logic ────────────────────────────────────
 

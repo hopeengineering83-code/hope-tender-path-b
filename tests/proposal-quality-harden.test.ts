@@ -4,8 +4,8 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { validateDocumentQuality } from "../lib/engine/document-quality-validator";
-import { GENERIC_BOILERPLATE_PATTERNS } from "../lib/engine/detection-patterns";
+import { validateDocumentQuality } from "../lib/engine/quality/document-quality-validator";
+import { GENERIC_BOILERPLATE_PATTERNS } from "../lib/engine/quality/detection-patterns";
 
 // ── 1. validateDocumentQuality boilerplate detection ────────────────────────
 
@@ -197,7 +197,7 @@ describe("authority-review upgraded to shared detection patterns", () => {
   });
 
   it("new patterns (anthropic, gemini, lorem ipsum) are detected in documents", () => {
-    const { runAuthorityReview } = require("../lib/engine/authority-review");
+    const { runAuthorityReview } = require("../lib/engine/quality/authority-review");
     const docs = [{
       id: "d1",
       name: "Test Doc",

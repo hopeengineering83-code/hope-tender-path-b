@@ -1,6 +1,6 @@
 import Link from "next/link";
-import { buildSubmissionPlan, findExtraGeneratedDocuments, findMissingGeneratedDocuments, submissionPlanFileCount } from "@/lib/engine/submission-plan";
-import { computeEvidenceCoverage } from "@/lib/engine/requirement-evidence-profile";
+import { buildSubmissionPlan, findExtraGeneratedDocuments, findMissingGeneratedDocuments, submissionPlanFileCount } from "@/lib/engine/plans/submission-plan";
+import { computeEvidenceCoverage } from "@/lib/engine/compliance/requirement-evidence-profile";
 import { CanonicalStatusBadge } from "@/components/canonical-status-badge";
 import type { CanonicalTenderReadiness } from "@/lib/canonical-tender-readiness";
 

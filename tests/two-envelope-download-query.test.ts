@@ -5,8 +5,8 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { inferEnvelope } from "../lib/engine/submission-plan";
-import { detectSubmissionPackageMode } from "../lib/engine/submission-package-mode";
+import { inferEnvelope } from "../lib/engine/plans/submission-plan";
+import { detectSubmissionPackageMode } from "../lib/engine/plans/submission-package-mode";
 
 describe("envelope inference — TECHNICAL / FINANCIAL / ADMIN", () => {
   it("classifies FINANCIAL files by keyword", () => {

@@ -24,7 +24,7 @@ import {
   isValidReferenceNumber,
   isValidCountry,
   isValidClientContact,
-} from "../lib/engine/metadata-validators";
+} from "../lib/engine/metadata/metadata-validators";
 
 // Mirror the isValidStoredValue helper from the route so we can test
 // the rule without spinning up a Prisma client or HTTP layer.

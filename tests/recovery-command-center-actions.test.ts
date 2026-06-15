@@ -16,8 +16,8 @@ import { strict as assert } from "node:assert";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-import { documentHygieneIssues } from "../lib/engine/export-readiness";
-import { isFinalExportCandidateDocument } from "../lib/engine/document-output-state";
+import { documentHygieneIssues } from "../lib/engine/export/export-readiness";
+import { isFinalExportCandidateDocument } from "../lib/engine/export/document-output-state";
 import { RECOVERY_COMMAND_ACTIONS, getRecoveryCommandActionSpec, renderRecoveryActionPath } from "../lib/recovery-command-actions";
 
 // ─── 1. Action routing: no window.location navigation to missing routes ──────
@@ -344,7 +344,7 @@ describe("export gate: partial vault evidence does not unblock export", () => {
   });
 
   it("isReadyForFinalExport remains false when reviewStatus is PENDING", () => {
-    const { isReadyForFinalExport } = require("../lib/engine/export-readiness");
+    const { isReadyForFinalExport } = require("../lib/engine/export/export-readiness");
     const doc = {
       id: "doc-1",
       name: "Financial Capacity",

@@ -9,7 +9,7 @@ import {
   extractPersonaFocusedSlice,
   computeCalibrationNotes,
   type PersonaAssessment,
-} from "../lib/engine/evaluator-simulator";
+} from "../lib/engine/evaluation/evaluator-simulator";
 
 const SAMPLE_PROPOSAL = `# Cover Letter
 

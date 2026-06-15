@@ -5,7 +5,7 @@ import {
   runAuthorityReview,
   type DocumentInput,
   type ManifestEntry,
-} from "../lib/engine/authority-review";
+} from "../lib/engine/quality/authority-review";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 

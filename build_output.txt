@@ -1,0 +1,34 @@
+
+> hope-tender-path-b@1.1.0 build
+> node scripts/check-env.mjs && prisma generate && next build
+
+
+⚠  BUILD WARNINGS — environment configuration issues:
+
+  ⚠  ANTHROPIC_API_KEY: Not set. Anthropic Claude API key (sk-ant-..., 97+ chars). Last-resort provider in the current chain; keep Claude last to avoid Anthropic rate limits blocking the app when other providers are available. Get from https://console.anthropic.com/settings/keys.
+  ⚠  GEMINI_API_KEY: Not set. Google Gemini API key (AIza... legacy or AQ... new format). First-tier provider in the canonical chain for analysis, extraction, proposal, validation, and fast use cases. Without any AI provider key, imported records remain REGEX_DRAFT only.
+  ⚠  OPENAI_API_KEY: Not set. OpenAI API key (sk-...). Second-tier provider in the canonical chain after Gemini. At least one AI provider key is required in production.
+  ⚠  MISTRAL_API_KEY: Not set. Mistral API key. Third-tier proposal/validation provider and analysis fallback. Models override via MISTRAL_PROPOSAL_MODEL / MISTRAL_ANALYSIS_MODEL / MISTRAL_FAST_MODEL.
+  ⚠  DEEPSEEK_API_KEY: Not set. DeepSeek API key. Fifth-tier fallback for proposal generation via OpenAI-compatible endpoint (deepseek-chat / deepseek-reasoner).
+  ⚠  GROQ_API_KEY: Not set. Groq API key (gsk_...). Sixth-tier fallback provider. Model overridable via GROQ_PROPOSAL_MODEL (default llama-3.3-70b-versatile).
+  ⚠  TOGETHER_API_KEY: Not set. Together API key. Fourth-tier fallback provider. Models override via TOGETHER_PROPOSAL_MODEL / TOGETHER_ANALYSIS_MODEL / TOGETHER_FAST_MODEL.
+  ⚠  OPENROUTER_API_KEY: Not set. OpenRouter API key (sk-or-...). Seventh-tier fallback aggregator via OpenAI-compatible endpoint. Model overridable via OPENROUTER_PROPOSAL_MODEL (default openrouter/auto).
+  ⚠  AI_PROVIDER_KEYS: At least one AI provider key is required: OPENAI_API_KEY, GEMINI_API_KEY, MISTRAL_API_KEY, DEEPSEEK_API_KEY, GROQ_API_KEY, TOGETHER_API_KEY, OPENROUTER_API_KEY, or ANTHROPIC_API_KEY. Without any AI key, every imported expert/project is REGEX_DRAFT and BLOCKED from final proposal generation.
+  ⚠  AI_JOBS_WORKER_SECRET: Not set. Shared secret the AI job worker uses to authenticate to the cron drainer. Without it, the worker queue cannot be drained by Vercel Cron in production.
+  ⚠  CRON_SECRET: Not set. Vercel-managed Cron secret. Required when Vercel Cron is wired to /api/cron/* endpoints. Set in the Vercel dashboard, not here.
+  ⚠  PDF_OCR_MAX_RACES: Not set. Optional OCR concurrency/race guard. Recommended production value: 1, which keeps scanned-PDF OCR conservative on Vercel and avoids unnecessary provider/API races.
+
+
+═══════════════════════════════════════════════════════════════
+  FATAL: Required environment variables are missing or invalid.
+  This build cannot succeed. Fix these before deploying.
+═══════════════════════════════════════════════════════════════
+
+Missing / invalid variables:
+  ✗ DATABASE_URL: PostgreSQL connection string (postgresql:// or postgres://)
+  ✗ SESSION_SECRET: At least 32-character random string for HMAC session signing
+
+Set these in your .env.local (development) or in the Vercel
+dashboard under Settings → Environment Variables (production).
+See .env.example for the expected format.
+═══════════════════════════════════════════════════════════════

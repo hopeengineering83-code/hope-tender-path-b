@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { checkEnginePostconditions } from "../lib/engine/engine-postconditions";
+import { checkEnginePostconditions } from "../lib/engine/workflow/engine-postconditions";
 
 describe("checkEnginePostconditions export", () => {
   it("is exported as a callable function", () => {

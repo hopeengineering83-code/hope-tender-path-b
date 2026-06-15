@@ -12,12 +12,12 @@ import {
   exportBlockReason,
   isExportReady,
   type DocumentLike,
-} from "../lib/engine/document-output-state";
+} from "../lib/engine/export/document-output-state";
 import {
   buildSubmissionPlan,
   hasExplicitSubmissionScope,
   plannedSubmissionTargetFiles,
-} from "../lib/engine/submission-plan";
+} from "../lib/engine/plans/submission-plan";
 
 type DocRow = {
   id: string;

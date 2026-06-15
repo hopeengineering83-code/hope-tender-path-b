@@ -12,7 +12,7 @@
 import { NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
-import { resolveSubmissionPlanCompleteness } from "../../../../../lib/engine/submission-plan-completeness";
+import { resolveSubmissionPlanCompleteness } from "../../../../../lib/engine/plans/submission-plan-completeness";
 import { sanitizeError } from "../../../../../lib/sanitize-error";
 
 export const dynamic = "force-dynamic";

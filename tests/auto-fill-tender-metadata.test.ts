@@ -2,7 +2,7 @@
 
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
-import { autoFillTenderMetadata, type MetadataAutoFillResult } from "../lib/engine/auto-fill-tender-metadata";
+import { autoFillTenderMetadata, type MetadataAutoFillResult } from "../lib/engine/analysis/auto-fill-tender-metadata";
 
 // Minimal Prisma mock — captures the update call without a real DB
 function makePrismaMock() {

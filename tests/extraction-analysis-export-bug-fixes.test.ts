@@ -11,8 +11,8 @@
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
 import { assessExtractionQuality } from "../lib/extraction-quality";
-import { inferTenderMetadata } from "../lib/engine/tender-metadata";
-import { buildFinalZipEntries } from "../lib/engine/final-zip-scope";
+import { inferTenderMetadata } from "../lib/engine/metadata/tender-metadata";
+import { buildFinalZipEntries } from "../lib/engine/export/final-zip-scope";
 
 // ─── 1. Extraction quality — empty extraction ──────────────────────────────
 

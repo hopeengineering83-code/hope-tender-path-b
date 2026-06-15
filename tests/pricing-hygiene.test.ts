@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
-import { containsPricingLeakage } from "../lib/engine/pricing-hygiene";
+import { containsPricingLeakage } from "../lib/engine/pricing/pricing-hygiene";
 
 const technicalDoc = {
   id: "doc-1",

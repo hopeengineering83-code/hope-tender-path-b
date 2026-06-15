@@ -21,7 +21,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { buildAnalysisFallbackDiagnostics } from "../lib/engine/analysis-fallback-diagnostics";
+import { buildAnalysisFallbackDiagnostics } from "../lib/engine/analysis/analysis-fallback-diagnostics";
 
 describe("D — readiness helper mirrors the POST /generate metadata gate", () => {
   const source = readFileSync("lib/tender-generation-readiness.ts", "utf8");

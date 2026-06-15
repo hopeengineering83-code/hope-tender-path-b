@@ -2,7 +2,7 @@
 
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
-import { extractRequirementSources } from "../lib/engine/requirement-source-extractor";
+import { extractRequirementSources } from "../lib/engine/analysis/requirement-source-extractor";
 
 const FAKE_TENDER = `
 [page 1]

@@ -11,8 +11,8 @@ import {
   type MatchAssessmentBatch,
   type MatchPerspective,
   type ProjectCandidateInput,
-} from "../../../../../lib/engine/ai-multi-perspective-matcher";
-import { exactSelectionLimit } from "../../../../../lib/engine/scope-policy";
+} from "../../../../../lib/engine/matching/ai-multi-perspective-matcher";
+import { exactSelectionLimit } from "../../../../../lib/engine/workflow/scope-policy";
 import { logAction } from "../../../../../lib/audit";
 import { childLogger, time, reportError } from "../../../../../lib/observability";
 
@@ -376,7 +376,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // can consume identical 12-dimension scoring objects. The scalar
   // overallScore is still written to TenderExpertMatch.score for
   // backward-compatible UI ranking.
-  const { writeScoreBreakdown } = await import("../../../../../lib/engine/score-breakdown-writer");
+  const { writeScoreBreakdown } = await import("../../../../../lib/engine/generation/score-breakdown-writer");
 
   let expertsUpdated = 0;
   if (expertBatchForResponse) {

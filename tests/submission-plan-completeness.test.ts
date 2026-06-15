@@ -7,7 +7,7 @@ import {
   resolveSubmissionPlanCompleteness,
   __testing__,
   type GeneratedDocSnapshot,
-} from "../lib/engine/submission-plan-completeness";
+} from "../lib/engine/plans/submission-plan-completeness";
 
 function planTender(exactFileNaming: string[]): Parameters<typeof resolveSubmissionPlanCompleteness>[0]["tender"] {
   return {

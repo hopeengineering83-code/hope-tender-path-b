@@ -10,14 +10,14 @@
 import { NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../../lib/prisma";
-import { buildSubmissionPlan, buildSubmissionPlanWithDerivedFallback, plannedSubmissionTargetFiles, buildDerivedDraftPlan } from "../../../../../../lib/engine/submission-plan";
+import { buildSubmissionPlan, buildSubmissionPlanWithDerivedFallback, plannedSubmissionTargetFiles, buildDerivedDraftPlan } from "../../../../../../lib/engine/plans/submission-plan";
 import { logAction } from "../../../../../../lib/audit";
 import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../../../lib/rate-limit";
 import { sanitizeError } from "../../../../../../lib/sanitize-error";
-import { isExtractionAcceptableForGeneration } from "../../../../../../lib/engine/extraction-quality-gate";
+import { isExtractionAcceptableForGeneration } from "../../../../../../lib/engine/quality/extraction-quality-gate";
 import { assessExtractionQuality, assessExtractionQualityPerPage } from "../../../../../../lib/extraction-quality";
 import { assessTenderAnalysisQuality } from "../../../../../../lib/analysis-quality";
-import { detectAnalysisSourceWithApproval } from "../../../../../../lib/engine/analysis-source";
+import { detectAnalysisSourceWithApproval } from "../../../../../../lib/engine/analysis/analysis-source";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 15;

@@ -2,7 +2,7 @@
 
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
-import { extractProjectFacts, mergeProjectFacts } from "../lib/engine/project-fact-extractor";
+import { extractProjectFacts, mergeProjectFacts } from "../lib/engine/analysis/project-fact-extractor";
 
 const SUMMARY_WAREHOUSE = `
 47 Warehouse & Landscaping Project / Ato Jemmi Hussien / Haik, Kebele 05,

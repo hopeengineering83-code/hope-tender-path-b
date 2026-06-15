@@ -1,11 +1,11 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { isExtractionAcceptableForExport, isExtractionAcceptableForGeneration } from "../lib/engine/extraction-quality-gate";
-import { assessTenderMetadataCompleteness } from "../lib/engine/tender-metadata-completeness";
-import { runAuthorityReview } from "../lib/engine/authority-review";
-import { computeReadinessScore } from "../lib/engine/readiness-scoring";
-import { buildSubmissionPlanWithDerivedFallback, hasExplicitSubmissionScope, findMissingGeneratedDocuments, findExtraGeneratedDocuments } from "../lib/engine/submission-plan";
-import { validateDocumentQuality } from "../lib/engine/document-quality-validator";
+import { isExtractionAcceptableForExport, isExtractionAcceptableForGeneration } from "../lib/engine/quality/extraction-quality-gate";
+import { assessTenderMetadataCompleteness } from "../lib/engine/metadata/tender-metadata-completeness";
+import { runAuthorityReview } from "../lib/engine/quality/authority-review";
+import { computeReadinessScore } from "../lib/engine/readiness/readiness-scoring";
+import { buildSubmissionPlanWithDerivedFallback, hasExplicitSubmissionScope, findMissingGeneratedDocuments, findExtraGeneratedDocuments } from "../lib/engine/plans/submission-plan";
+import { validateDocumentQuality } from "../lib/engine/quality/document-quality-validator";
 
 describe("Tender Workflow E2E Gates Regression Pack", () => {
 

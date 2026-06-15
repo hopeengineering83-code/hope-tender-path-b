@@ -9,7 +9,7 @@ import {
   filterFinalExportCandidateDocuments,
   isFinalExportCandidateDocument,
   isValidationPassed,
-} from "../lib/engine/document-output-state";
+} from "../lib/engine/export/document-output-state";
 
 type Doc = Parameters<typeof isFinalExportCandidateDocument>[0];
 

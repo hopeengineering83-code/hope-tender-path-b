@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getSession } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { assessExtractionQuality } from "../../../../../lib/extraction-quality";
-import { summarizeExtractionCoverage, isExtractionAcceptableForGeneration } from "../../../../../lib/engine/extraction-quality-gate";
+import { summarizeExtractionCoverage, isExtractionAcceptableForGeneration } from "../../../../../lib/engine/quality/extraction-quality-gate";
 import { randomUUID } from "node:crypto";
 
 export const dynamic = "force-dynamic";

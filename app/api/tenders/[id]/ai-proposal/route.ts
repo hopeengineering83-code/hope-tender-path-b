@@ -3,14 +3,14 @@ import { getSession } from "../../../../../lib/auth";
 import { rateLimit, AI_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { generateBenchmarkProposalWithAI, generateProposalSectionsParallel, isAIEnabled } from "../../../../../lib/ai";
-import type { ProposalSectionId } from "../../../../../lib/engine/proposal-sections";
-import { BENCHMARK_CONTEXT_LINES, buildProposalIntelligence, buildCriterionEvidenceMap, expertProofLine, projectProofLine, safeParseArr } from "../../../../../lib/engine/proposal-intelligence";
-import { buildRubricPromptDirective } from "../../../../../lib/engine/rubric-driven-sections";
-import { extractTenderLanguageEchoes, formatEchoesForPrompt } from "../../../../../lib/engine/tender-language-echoes";
-import { extractTenderFacts, formatFactsForPrompt } from "../../../../../lib/engine/tender-facts-extractor";
+import type { ProposalSectionId } from "../../../../../lib/engine/generation/proposal-sections";
+import { BENCHMARK_CONTEXT_LINES, buildProposalIntelligence, buildCriterionEvidenceMap, expertProofLine, projectProofLine, safeParseArr } from "../../../../../lib/engine/generation/proposal-intelligence";
+import { buildRubricPromptDirective } from "../../../../../lib/engine/generation/rubric-driven-sections";
+import { extractTenderLanguageEchoes, formatEchoesForPrompt } from "../../../../../lib/engine/generation/tender-language-echoes";
+import { extractTenderFacts, formatFactsForPrompt } from "../../../../../lib/engine/analysis/tender-facts-extractor";
 import { buildProposalCacheKey, getCachedProposal, setCachedProposal } from "../../../../../lib/proposal-cache";
-import { fallbackProposal, selectReviewedEvidenceForAIDraft } from "../../../../../lib/engine/ai-proposal-fallback";
-import { assertAnalysisReadyForFinalGeneration } from "../../../../../lib/engine/analysis-source";
+import { fallbackProposal, selectReviewedEvidenceForAIDraft } from "../../../../../lib/engine/generation/ai-proposal-fallback";
+import { assertAnalysisReadyForFinalGeneration } from "../../../../../lib/engine/analysis/analysis-source";
 import { logAction } from "../../../../../lib/audit";
 
 // Vercel route timeout — Claude proposal generation needs >10s default.

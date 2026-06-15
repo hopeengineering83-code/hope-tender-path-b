@@ -11,8 +11,8 @@ import {
   parseAlignmentReport,
   __testing__ as alignerInternals,
   type AlignmentReport,
-} from "../lib/engine/semantic-match-aligner";
-import type { DeepTenderComprehension } from "../lib/engine/evaluation-criteria-extractor";
+} from "../lib/engine/matching/semantic-match-aligner";
+import type { DeepTenderComprehension } from "../lib/engine/analysis/evaluation-criteria-extractor";
 
 function comprehensionFixture(): DeepTenderComprehension {
   return {

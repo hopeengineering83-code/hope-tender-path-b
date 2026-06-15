@@ -11,9 +11,9 @@ import { NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { assessExtractionQuality } from "../../../../../lib/extraction-quality";
-import { isExtractionCorrupted } from "../../../../../lib/engine/extraction-quality-gate";
-import { assessTenderMetadataCompleteness } from "../../../../../lib/engine/tender-metadata-completeness";
-import { getFinalSubmissionReadiness } from "../../../../../lib/engine/final-submission-readiness";
+import { isExtractionCorrupted } from "../../../../../lib/engine/quality/extraction-quality-gate";
+import { assessTenderMetadataCompleteness } from "../../../../../lib/engine/metadata/tender-metadata-completeness";
+import { getFinalSubmissionReadiness } from "../../../../../lib/engine/readiness/final-submission-readiness";
 import { safeParseJsonArray } from "../../../../../lib/safe-json";
 
 export const dynamic = "force-dynamic";

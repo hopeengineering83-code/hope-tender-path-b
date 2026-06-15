@@ -12,15 +12,15 @@
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
 
-import { __testing__ as flagInternals, isDeepReasoningEnabled, isToolUseGenerationEnabled } from "../lib/engine/feature-flags";
+import { __testing__ as flagInternals, isDeepReasoningEnabled, isToolUseGenerationEnabled } from "../lib/engine/infrastructure/feature-flags";
 import {
   parseComprehensionJson,
   formatComprehensionForPrompt,
   extractDeepTenderComprehension,
-} from "../lib/engine/evaluation-criteria-extractor";
-import { __testing__ as refinerInternals, runDeepRefinement, type DeepRefinementAttempt } from "../lib/engine/deep-reasoning-refiner";
+} from "../lib/engine/analysis/evaluation-criteria-extractor";
+import { __testing__ as refinerInternals, runDeepRefinement, type DeepRefinementAttempt } from "../lib/engine/deep-reasoning/deep-reasoning-refiner";
 import { __deepReasoningInternals } from "../lib/ai";
-import type { QualityScore } from "../lib/engine/proposal-quality-scorer";
+import type { QualityScore } from "../lib/engine/quality/proposal-quality-scorer";
 
 describe("feature-flags — isDeepReasoningEnabled", () => {
   const previous = process.env.TENDER_DEEP_REASONING;

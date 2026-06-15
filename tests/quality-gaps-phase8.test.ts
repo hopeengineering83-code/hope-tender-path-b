@@ -8,7 +8,7 @@
 
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
-import { buildComplianceMatrixSection } from "../lib/engine/compliance-matrix-builder";
+import { buildComplianceMatrixSection } from "../lib/engine/compliance/compliance-matrix-builder";
 
 describe("buildComplianceMatrixSection — source page citations", () => {
   it("appends [p.N] to requirement text when sourcePageNumber is set", () => {

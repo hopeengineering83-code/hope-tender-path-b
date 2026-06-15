@@ -1,9 +1,9 @@
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
 import JSZip from "jszip";
-import { assembleFinalSubmissionZip } from "../lib/engine/final-zip-assembly";
-import { buildFinalZipEntries } from "../lib/engine/final-zip-scope";
-import { inferEnvelope } from "../lib/engine/submission-plan";
+import { assembleFinalSubmissionZip } from "../lib/engine/export/final-zip-assembly";
+import { buildFinalZipEntries } from "../lib/engine/export/final-zip-scope";
+import { inferEnvelope } from "../lib/engine/plans/submission-plan";
 
 const generatedDocs = [
   { id: "technical", name: "Technical Proposal", exactFileName: "01-Technical-Proposal.docx", exactOrder: 1, documentType: "TECHNICAL" },

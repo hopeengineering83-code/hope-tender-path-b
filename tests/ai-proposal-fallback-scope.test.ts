@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
-import { fallbackProposal, selectReviewedEvidenceForAIDraft } from "../lib/engine/ai-proposal-fallback";
+import { fallbackProposal, selectReviewedEvidenceForAIDraft } from "../lib/engine/generation/ai-proposal-fallback";
 
 function build(requirements: string[]) {
   return fallbackProposal({

@@ -230,7 +230,7 @@ export async function PUT(req: Request) {
     // fill the gaps WITHOUT overwriting any value the user already
     // entered manually. Idempotent: re-running produces the same fields.
     try {
-      const { extractCompanyFacts, mergeFactsIntoCompany } = await import("../../../lib/engine/company-fact-extractor");
+      const { extractCompanyFacts, mergeFactsIntoCompany } = await import("../../../lib/engine/analysis/company-fact-extractor");
       if (company.profileSummary && company.profileSummary.trim().length > 100) {
         const extracted = extractCompanyFacts(company.profileSummary);
         const update = mergeFactsIntoCompany(company, extracted);

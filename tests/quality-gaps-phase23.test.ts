@@ -13,7 +13,7 @@
 
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
-import { assessTenderMetadataCompleteness, isPhysicalSubmissionMethod } from "../lib/engine/tender-metadata-completeness";
+import { assessTenderMetadataCompleteness, isPhysicalSubmissionMethod } from "../lib/engine/metadata/tender-metadata-completeness";
 
 // ── isPhysicalSubmissionMethod helper ─────────────────────────────────────────
 

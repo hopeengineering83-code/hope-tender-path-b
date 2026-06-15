@@ -9,13 +9,13 @@ import {
   isValidClientName,
   isValidReferenceNumber,
   containsMetadataPlaceholder,
-} from "../lib/engine/metadata-validators";
+} from "../lib/engine/metadata/metadata-validators";
 import {
   sanitizeStoredMetadataForEngine,
   computeStoredMetadataPatch,
   listInvalidStoredFields,
-} from "../lib/engine/sanitize-stored-metadata";
-import { cleanClientName, cleanTenderTitle, formatRequirementLine } from "../lib/engine/proposal-labels";
+} from "../lib/engine/metadata/sanitize-stored-metadata";
+import { cleanClientName, cleanTenderTitle, formatRequirementLine } from "../lib/engine/infrastructure/proposal-labels";
 
 describe("containsMetadataPlaceholder", () => {
   it("flags Bid-Team to confirm in any position", () => {

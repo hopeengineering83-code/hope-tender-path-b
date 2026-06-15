@@ -13,7 +13,7 @@
 
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
-import { scoreProposalQuality } from "../lib/engine/proposal-quality-scorer";
+import { scoreProposalQuality } from "../lib/engine/quality/proposal-quality-scorer";
 
 // Fully-written proposal where every section has >= 600 chars of cleaned prose
 // except Declaration (~229 chars) and Submission Control Sheet (~246 chars).

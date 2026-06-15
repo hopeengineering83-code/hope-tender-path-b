@@ -17,14 +17,14 @@
 import { NextResponse } from "next/server";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { requireUser, unauthorizedResponse, forbiddenResponse } from "../../../../../lib/auth";
-import { inferTenderMetadata } from "../../../../../lib/engine/tender-metadata";
+import { inferTenderMetadata } from "../../../../../lib/engine/metadata/tender-metadata";
 import {
   isValidClientName,
   isValidReferenceNumber,
   isValidCountry,
   isValidClientContact,
   containsMetadataPlaceholder,
-} from "../../../../../lib/engine/metadata-validators";
+} from "../../../../../lib/engine/metadata/metadata-validators";
 import { logAction } from "../../../../../lib/audit";
 import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../../lib/rate-limit";
 
