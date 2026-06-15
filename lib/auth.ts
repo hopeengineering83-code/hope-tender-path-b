@@ -1,6 +1,7 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "crypto";
 import { cookies } from "next/headers";
 import { prisma, prismaReady } from "./prisma";
+import { canPerform, type Action } from "./security/rbac";
 
 const SESSION_COOKIE = "hope_session";
 const SESSION_TTL_DAYS = 14;
@@ -132,6 +133,14 @@ export type Role = (typeof ROLES)[number];
 export async function requireRole(...roles: Role[]) {
   const user = await requireUser();
   if (!roles.includes(user.role as Role)) {
+    throw new Error("Forbidden");
+  }
+  return user;
+}
+
+export async function requirePermission(action: Action) {
+  const user = await requireUser();
+  if (!canPerform(user.role, action)) {
     throw new Error("Forbidden");
   }
   return user;

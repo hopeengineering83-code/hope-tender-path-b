@@ -1,6 +1,8 @@
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { GoogleGenerativeAI } = require("@google/generative-ai") as typeof import("@google/generative-ai");
 import { recordProviderSuccess, recordProviderFailure, isProviderCooledDown, getDeepSeekApiKey, isDeepSeekConfigured, getDeepSeekModel, getMistralApiKey, isMistralConfigured, getMistralProposalModel, getMistralAnalysisModel, getMistralFastModel, getMistralBaseUrl, getGroqApiKey, isGroqConfigured, getGroqModel, getGroqBaseUrl, getTogetherApiKey, isTogetherConfigured, getTogetherProposalModel, getTogetherAnalysisModel, getTogetherFastModel, getTogetherBaseUrl, getOpenRouterApiKey, isOpenRouterConfigured, getOpenRouterModel, getOpenRouterBaseUrl, getOpenRouterSiteUrl, getOpenRouterAppName, type AiProviderName } from "./ai-provider-health";
+import { CANONICAL_AI_PROVIDER_CHAIN, CANONICAL_AI_PROVIDER_DISPLAY } from "./ai-provider-policy";
+import { protectPrompt } from "./ai-trust-boundary";
 
 const apiKey = process.env.GEMINI_API_KEY;
 const anthropicApiKey = process.env.ANTHROPIC_API_KEY;
@@ -84,7 +86,7 @@ function getModel(modelName = DEFAULT_GEMINI_MODEL) {
 }
 
 export function isAIEnabled() {
-  return Boolean(apiKey || anthropicApiKey || process.env.ANTHROPIC_API_KEY || process.env.OPENAI_API_KEY || isMistralConfigured() || isDeepSeekConfigured() || isGroqConfigured() || isTogetherConfigured() || isOpenRouterConfigured());
+  return CANONICAL_AI_PROVIDER_CHAIN.some(isProviderEnabled);
 }
 
 export function isClaudeEnabled() {
@@ -108,7 +110,7 @@ export function getLastProposalProvider(): AIProvider {
 // has set ANTHROPIC_API_KEY. Falls back gracefully (returns null) when the
 // SDK is not installed or the key is not configured.
 //
-// Claude is the preferred provider for proposal generation when configured —
+// Claude/Anthropic is the final fallback provider when configured —
 // the reference benchmark used to design the prompt and table structure is
 // itself Claude-generated, so Claude output is what the prompt is tuned for.
 // Default system prompt used for proposal generation. A strong system prompt
@@ -363,15 +365,15 @@ export type AiUseCase = "default" | "extraction" | "proposal" | "validation" | "
 // Order: verified-working providers first (Mistral → Groq → OpenRouter),
 // then high-quality providers that may be rate-limited (Gemini → OpenAI),
 // then providers that need key/balance fixes (Together → DeepSeek → Anthropic).
-export const CANONICAL_PROVIDER_CHAIN: readonly AiProviderName[] = ["mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"] as const;
+export const CANONICAL_PROVIDER_CHAIN: readonly AiProviderName[] = CANONICAL_AI_PROVIDER_CHAIN;
 
 const PROVIDER_CHAINS: Record<AiUseCase, AiProviderName[]> = {
-  default:    ["mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"],
-  extraction: ["mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"],
-  proposal:   ["mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"],
-  validation: ["mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"],
-  fast:       ["mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"],
-  reasoning:  ["openai", "deepseek", "gemini", "anthropic"],
+  default:    [...CANONICAL_AI_PROVIDER_CHAIN],
+  extraction: [...CANONICAL_AI_PROVIDER_CHAIN],
+  proposal:   [...CANONICAL_AI_PROVIDER_CHAIN],
+  validation: [...CANONICAL_AI_PROVIDER_CHAIN],
+  fast:       [...CANONICAL_AI_PROVIDER_CHAIN],
+  reasoning:  [...CANONICAL_AI_PROVIDER_CHAIN],
 };
 
 function isProviderEnabled(name: AiProviderName): boolean {
@@ -501,13 +503,17 @@ export async function generateWithFallback(
 ): Promise<string> {
   const useCase = opts?.useCase ?? "default";
   const chain = PROVIDER_CHAINS[useCase];
+  const trustBoundary = protectPrompt(prompt);
+  if (trustBoundary.suspicious) {
+    console.warn(`[ai] Untrusted prompt content matched ${trustBoundary.matchedRules.length} injection rule(s)`);
+  }
   const tried: string[] = [];
 
   for (const provider of chain) {
     if (!isProviderEnabled(provider)) continue;
     if (isProviderCooledDown(provider)) continue;
     tried.push(provider);
-    const result = await callProvider(provider, prompt, { ...opts, useCase });
+    const result = await callProvider(provider, trustBoundary.protectedPrompt, { ...opts, useCase });
     if (result) {
       opts?.onProviderUsed?.(provider);
       return result;
@@ -517,7 +523,7 @@ export async function generateWithFallback(
   const configured = chain.filter(isProviderEnabled);
   if (configured.length === 0) {
     throw new Error(
-      "No AI provider configured — set OPENAI_API_KEY, GEMINI_API_KEY, MISTRAL_API_KEY, DEEPSEEK_API_KEY, GROQ_API_KEY, TOGETHER_API_KEY, OPENROUTER_API_KEY, or ANTHROPIC_API_KEY.",
+      `No AI provider configured — set one canonical provider key. Policy order: ${CANONICAL_AI_PROVIDER_DISPLAY}.`,
     );
   }
   throw new Error(
@@ -622,7 +628,7 @@ export function isTogetherEnabled() {
 }
 
 // ─── DeepSeek provider ─────────────────────────────────────────────────────────
-// DeepSeek provider in the default chain (Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Claude).
+// DeepSeek provider in the default chain (Gemini → OpenRouter → OpenAI → Groq → DeepSeek → Claude/Anthropic).
 // Uses the OpenAI-compatible REST endpoint (no SDK needed).
 // Returns null when DEEPSEEK_API_KEY is not configured.
 // 20s per-provider cap — Vercel Hobby has a 60s function limit so each

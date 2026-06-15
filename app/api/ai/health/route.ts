@@ -20,10 +20,11 @@ import {
   type AiProviderName,
 } from "../../../../lib/ai-provider-health";
 import { restoreHealthFromDb } from "../../../../lib/ai-provider-health-db";
+import { CANONICAL_AI_PROVIDER_CHAIN, CANONICAL_AI_PROVIDER_DISPLAY, CANONICAL_AI_PROVIDER_RANK, configuredCanonicalProviders, preferredCanonicalProvider } from "../../../../lib/ai-provider-policy";
 
 // Canonical fallback order surfaced to operators. Must match lib/ai.ts PROVIDER_CHAINS.
 // Claude is placed LAST so Anthropic rate limits do not block other providers.
-const AI_FALLBACK_CHAIN = "Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Claude → deterministic draft fallback";
+const AI_FALLBACK_CHAIN = `${CANONICAL_AI_PROVIDER_DISPLAY} → deterministic draft fallback`;
 const AI_FALLBACK_CHAIN_EXTRACTION = AI_FALLBACK_CHAIN;
 
 export const dynamic = "force-dynamic";
@@ -79,19 +80,9 @@ export async function GET() {
   // provider is valid (Groq-only or OpenRouter-only deployments are valid).
   // The response success flag is downgraded later only when every configured
   // provider is actively cooling down.
-  const anyConfigured =
-    claudeConfigured || geminiConfigured || openaiConfigured || mistralConfigured || deepSeekConfigured || groqConfigured || togetherConfigured || openRouterConfigured;
-  // preferredProvider reflects the actual default chain order (Claude is last)
-  const preferredProvider =
-    mistralConfigured ? "mistral"
-    : groqConfigured ? "groq"
-    : openRouterConfigured ? "openrouter"
-    : geminiConfigured ? "gemini"
-    : openaiConfigured ? "openai"
-    : togetherConfigured ? "together"
-    : deepSeekConfigured ? "deepseek"
-    : claudeConfigured ? "claude"
-    : "none";
+  const configuredNames = configuredCanonicalProviders();
+  const anyConfigured = configuredNames.length > 0;
+  const preferredProvider = preferredCanonicalProvider() ?? "none";
 
   const claudeModels = splitModels(process.env.ANTHROPIC_PROPOSAL_MODELS, ["claude-sonnet-4-5", "claude-opus-4-1", "claude-3-5-sonnet-latest", "claude-3-5-haiku-latest"]);
   const geminiModels = splitModels(process.env.GEMINI_FALLBACK_MODELS, ["gemini-2.5-flash", "gemini-2.0-flash"]);
@@ -101,14 +92,14 @@ export async function GET() {
 
   // Only a TRUE blocker when NO provider at all is configured.
   if (!anyConfigured) {
-    blockers.push("No AI provider key is configured. Set OPENAI_API_KEY, GEMINI_API_KEY, MISTRAL_API_KEY, DEEPSEEK_API_KEY, GROQ_API_KEY, TOGETHER_API_KEY, OPENROUTER_API_KEY, or ANTHROPIC_API_KEY. AI analysis/generation will use the deterministic fallback, which cannot be exported as final.");
+    blockers.push(`No canonical AI provider key is configured. Policy order: ${CANONICAL_AI_PROVIDER_DISPLAY}. Deterministic fallback cannot be exported as final.`);
   }
   if (claudeConfigured && claudeModels.length === 0) warnings.push("Claude is configured but no Claude model chain was resolved.");
   if (geminiConfigured && !present(process.env.GEMINI_MODEL)) warnings.push("GEMINI_MODEL is not set; the app will use its built-in Gemini default.");
   if (deepSeekConfigured && !deepSeekOfficialEnvPresent()) warnings.push("DeepSeek is enabled via a fallback alias env var. Rename it to DEEPSEEK_API_KEY (the official variable) in Vercel.");
 
   // Cooldown notice — purely advisory; the chain skips cooled-down providers.
-  const allProviderNames: AiProviderName[] = ["gemini", "openai", "mistral", "together", "deepseek", "groq", "openrouter", "anthropic"];
+  const allProviderNames: AiProviderName[] = [...CANONICAL_AI_PROVIDER_CHAIN];
   const cooling = allProviderNames.filter(isProviderCooledDown);
   if (cooling.length > 0) {
     warnings.push(`Provider(s) in cooldown: ${cooling.join(", ")}. Requests skip cooled-down providers until the window expires.`);
@@ -122,7 +113,6 @@ export async function GET() {
     mistral: mistralConfigured, deepseek: deepSeekConfigured, groq: groqConfigured,
     together: togetherConfigured, openrouter: openRouterConfigured,
   };
-  const configuredNames = allProviderNames.filter((n) => configuredMap[n]);
   const providerRuntime = Object.fromEntries(allProviderNames.map((n) => [n, getProviderRuntimeSnapshot(n)])) as Record<AiProviderName, ReturnType<typeof getProviderRuntimeSnapshot>>;
   const anyHasRecentSuccess = configuredNames.some((n) => Boolean(providerRuntime[n].lastSuccessAt));
   const configuredProvidersAvailable = configuredNames.filter((n) => providerRuntime[n].available);
@@ -142,18 +132,18 @@ export async function GET() {
         configured: openaiConfigured,
         envPresent: openaiConfigured,
         model: openaiModel,
-        fallbackRank: 5,
+        fallbackRank: CANONICAL_AI_PROVIDER_RANK.openai,
         label: "OpenAI",
-        note: "Fifth-tier provider (canonical chain)",
+        note: "Third canonical provider",
         runtime: providerRuntime.openai,
       },
       gemini: {
         configured: geminiConfigured,
         envPresent: geminiConfigured,
         model: process.env.GEMINI_MODEL || "gemini-2.5-pro",
-        fallbackRank: 4,
+        fallbackRank: CANONICAL_AI_PROVIDER_RANK.gemini,
         label: "Gemini",
-        note: "Fourth-tier provider (canonical chain for analysis, extraction, proposal, validation, and fast use cases)",
+        note: "First canonical provider",
         primaryModel: process.env.GEMINI_MODEL || "gemini-2.5-pro",
         fallbackModels: maskModelChain(geminiModels),
         extractionModel: process.env.GEMINI_EXTRACTION_MODEL || process.env.GEMINI_EXTRACT_MODEL || null,
@@ -163,9 +153,9 @@ export async function GET() {
         configured: mistralConfigured,
         envPresent: mistralConfigured,
         model: getMistralProposalModel(),
-        fallbackRank: 1,
+        fallbackRank: null,
         label: "Mistral",
-        note: "First-tier provider; verified working — used for analysis, extraction, proposal, validation",
+        note: "Optional explicit adapter; excluded from the canonical fallback chain",
         analysisModel: getMistralAnalysisModel(),
         runtime: providerRuntime.mistral,
       },
@@ -173,27 +163,27 @@ export async function GET() {
         configured: deepSeekConfigured,
         envPresent: deepSeekOfficialEnvPresent(),
         model: getDeepSeekModel(),
-        fallbackRank: 7,
+        fallbackRank: CANONICAL_AI_PROVIDER_RANK.deepseek,
         label: "DeepSeek",
-        note: "Seventh-tier fallback provider",
+        note: "Fifth canonical provider",
         runtime: providerRuntime.deepseek,
       },
       groq: {
         configured: groqConfigured,
         envPresent: groqConfigured,
         model: getGroqModel(),
-        fallbackRank: 2,
+        fallbackRank: CANONICAL_AI_PROVIDER_RANK.groq,
         label: "Groq",
-        note: "Second-tier provider — fastest verified working provider (88ms)",
+        note: "Fourth canonical provider",
         runtime: providerRuntime.groq,
       },
       together: {
         configured: togetherConfigured,
         envPresent: togetherConfigured,
         model: getTogetherProposalModel(),
-        fallbackRank: 6,
+        fallbackRank: null,
         label: "Together",
-        note: "Sixth-tier fallback provider",
+        note: "Optional explicit adapter; excluded from the canonical fallback chain",
         analysisModel: getTogetherAnalysisModel(),
         fastModel: getTogetherFastModel(),
         runtime: providerRuntime.together,
@@ -202,18 +192,18 @@ export async function GET() {
         configured: openRouterConfigured,
         envPresent: openRouterConfigured,
         model: getOpenRouterModel(),
-        fallbackRank: 3,
+        fallbackRank: CANONICAL_AI_PROVIDER_RANK.openrouter,
         label: "OpenRouter",
-        note: "Third-tier aggregator provider — verified working, routes via high-quality models",
+        note: "Second canonical provider",
         runtime: providerRuntime.openrouter,
       },
       claude: {
         configured: claudeConfigured,
         envPresent: claudeConfigured,
         model: claudeModels[0] ?? null,
-        fallbackRank: 8,
-        label: "Claude",
-        note: "Last-resort provider (placed last to avoid Anthropic rate-limit blocking)",
+        fallbackRank: CANONICAL_AI_PROVIDER_RANK.anthropic,
+        label: "Claude/Anthropic",
+        note: "Final canonical fallback provider",
         tier: process.env.ANTHROPIC_TIER || null,
         proposalModels: maskModelChain(claudeModels),
         maxOutputTokens: Number(process.env.ANTHROPIC_MAX_OUTPUT_TOKENS || 0) || null,
