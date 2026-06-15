@@ -7,7 +7,7 @@ import { NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { logAction } from "../../../../../lib/audit";
 import {
-  recordProviderSuccess,
+  recordProviderPingSuccess,
   recordProviderFailure,
   isProviderCooledDown,
   isDeepSeekConfigured,
@@ -48,6 +48,12 @@ export type ProviderTestResult = {
 
 const TEST_PROMPT = "Reply with the single word: PING";
 const PER_PROVIDER_TIMEOUT_MS = 3_000;
+// Claude (Anthropic) cold-starts typically take 5–10s. Using the same 3s
+// timeout as fast providers always times out before a response arrives.
+// We give Claude a longer budget while keeping the overall route budget (30s)
+// safe: 7 × 3s + 1 × 10s = 31s at worst, which fits the maxDuration = 30s
+// limit when providers are run sequentially and most are not_configured.
+const ANTHROPIC_TIMEOUT_MS = 10_000;
 
 function safeError(err: unknown): string {
   const raw = err instanceof Error ? err.message : String(err ?? "");
@@ -89,7 +95,7 @@ async function testGemini(): Promise<ProviderTestResult> {
       m.generateContent({ contents: [{ role: "user", parts: [{ text: TEST_PROMPT }] }], generationConfig: { maxOutputTokens: 10 } }),
       PER_PROVIDER_TIMEOUT_MS,
     );
-    recordProviderSuccess("gemini");
+    recordProviderPingSuccess("gemini");
     return { provider: "gemini", status: "ok", model, durationMs: Date.now() - start };
   } catch (err) {
     const category = recordProviderFailure("gemini", err);
@@ -129,7 +135,7 @@ async function testOpenAICompat(
       const text = await res.text().catch(() => "");
       throw new Error(`HTTP ${res.status}: ${text.slice(0, 120)}`);
     }
-    recordProviderSuccess(providerKey);
+    recordProviderPingSuccess(providerKey);
     return { provider: providerKey, status: "ok", model, durationMs: Date.now() - start };
   } catch (err) {
     const category = recordProviderFailure(providerKey, err);
@@ -204,13 +210,13 @@ async function testAnthropic(): Promise<ProviderTestResult> {
           messages: [{ role: "user", content: TEST_PROMPT }],
         }),
       }),
-      PER_PROVIDER_TIMEOUT_MS,
+      ANTHROPIC_TIMEOUT_MS,
     );
     if (!res.ok) {
       const text = await res.text().catch(() => "");
       throw new Error(`HTTP ${res.status}: ${text.slice(0, 120)}`);
     }
-    recordProviderSuccess("anthropic");
+    recordProviderPingSuccess("anthropic");
     return { provider: "claude", status: "ok", model, durationMs: Date.now() - start };
   } catch (err) {
     const category = recordProviderFailure("anthropic", err);
