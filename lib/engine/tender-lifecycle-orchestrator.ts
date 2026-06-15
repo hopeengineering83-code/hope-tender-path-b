@@ -310,6 +310,7 @@ export async function computeTenderLifecycle(
           analysisSummary: true,
           intakeSummary: true,
           description: true,
+          metadataContaminated: true,
         },
       }),
       client.tenderFile.findMany({
@@ -465,6 +466,8 @@ export async function computeTenderLifecycle(
   const finalExportReady =
     (analysisSource === "AI" || analysisSource === "HUMAN_APPROVED_REGEX_FALLBACK") &&
     meta.missingCritical.length === 0 &&
+    meta.invalidFields.length === 0 &&
+    !tender.metadataContaminated &&
     ungroundedMandatory.length === 0 &&
     mandatoryEvidenceReady &&
     counts.finalExportCandidates > 0 &&
@@ -516,15 +519,31 @@ export async function computeTenderLifecycle(
       action: providers.hasAnyProvider ? "Retry AI Analyze — providers may be available again." : "Approve fallback analysis with a note explaining why it is sufficient.",
     });
   }
-  // 6. Metadata incomplete (critical fields missing)
-  else if (meta.missingCritical.length > 0) {
+  // 6. Metadata incomplete (critical fields missing or placeholders)
+  else if (meta.missingCritical.length > 0 || meta.invalidFields.length > 0 || tender.metadataContaminated) {
     lifecycleState = "METADATA_INCOMPLETE";
     primaryNextAction = "COMPLETE_METADATA";
-    blockers.push({
-      code: "METADATA_INCOMPLETE",
-      message: `${meta.missingCritical.length} critical metadata field(s) are missing: ${meta.missingCritical.slice(0, 4).map((f) => f.field).join(", ")}.`,
-      action: "Try 'Re-extract Metadata' or 'Repair Metadata' to auto-fill missing fields from the tender text. If those do not help, edit the Tender Detail form and fill the missing fields manually.",
-    });
+    if (meta.missingCritical.length > 0) {
+      blockers.push({
+        code: "METADATA_INCOMPLETE",
+        message: `${meta.missingCritical.length} critical metadata field(s) are missing: ${meta.missingCritical.slice(0, 4).map((f) => f.field).join(", ")}.`,
+        action: "Try 'Re-extract Metadata' or 'Repair Metadata' to auto-fill missing fields from the tender text. If those do not help, edit the Tender Detail form and fill the missing fields manually.",
+      });
+    }
+    if (meta.invalidFields.length > 0) {
+      blockers.push({
+        code: "METADATA_PLACEHOLDERS_PRESENT",
+        message: `${meta.invalidFields.length} field(s) contain internal placeholders (e.g. 'Bid-Team to confirm') and must be cleaned.`,
+        action: "Open the Tender Detail form and replace placeholder text with real values.",
+      });
+    }
+    if (tender.metadataContaminated) {
+      blockers.push({
+        code: "METADATA_CONTAMINATED",
+        message: "Client/procuring entity name appears to be contaminated with unrelated text or navigation noise.",
+        action: "Open the Tender Detail form and correct the Client Name field.",
+      });
+    }
   }
   // 7. Source references missing for mandatory requirements
   else if (ungroundedMandatory.length > 0 && mandatoryReqs.length > 0) {
@@ -686,6 +705,8 @@ export async function computeTenderLifecycle(
     if (counts.plannedMissingDocs > 0) reasons.push(`${counts.plannedMissingDocs} required document(s) not yet generated`);
     if (officialRequired > officialAttached) reasons.push(`${officialRequired - officialAttached} official original(s) not attached`);
     if (meta.missingCritical.length > 0) reasons.push(`${meta.missingCritical.length} critical metadata field(s) missing`);
+    if (meta.invalidFields.length > 0) reasons.push(`${meta.invalidFields.length} metadata field(s) contain internal placeholders`);
+    if (tender.metadataContaminated) reasons.push("client name is contaminated");
     if (ungroundedMandatory.length > 0) reasons.push(`${ungroundedMandatory.length} mandatory requirement(s) missing source traceability`);
     if (!mandatoryEvidenceReady) reasons.push("mandatory requirements are not covered by confirmed FULL/SUBSTANTIAL evidence");
     if (counts.qualityFailedCandidates > 0) reasons.push(`${counts.qualityFailedCandidates} document(s) failed quality gate`);

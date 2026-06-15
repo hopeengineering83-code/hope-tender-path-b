@@ -1,3 +1,4 @@
+import { filterCleanLines } from "./pattern-filter";
 import type { EvaluatorMatrixInput } from "./proposal-evaluator-matrix";
 import { buildTenderResponseBlueprint } from "./tender-response-blueprint";
 
@@ -12,7 +13,7 @@ function take(lines: string[], count: number, maxLen = 220): string[] {
   return lines
     .map(clean)
     .filter(Boolean)
-    .filter((line) => !/as an ai|chatgpt|openai|placeholder|lorem ipsum|sample text/i.test(line))
+    .filter((line) => filterCleanLines([line]).length > 0)
     .slice(0, count)
     .map((line) => line.length > maxLen ? `${line.slice(0, maxLen - 1)}…` : line);
 }

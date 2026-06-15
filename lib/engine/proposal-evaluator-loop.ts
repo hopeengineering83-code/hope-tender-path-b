@@ -1,3 +1,4 @@
+import { DOCUMENT_PLACEHOLDER_PATTERNS, AI_TRACE_PATTERNS } from "./detection-patterns";
 import { buildProposalIntelligenceContract, type ProposalExportGate, type ProposalIntelligenceContractInput } from "./proposal-intelligence-contract";
 
 export type ProposalEvaluatorLoopIssue = {
@@ -63,13 +64,13 @@ export function evaluateProposalAgainstContract(input: {
   const issues: ProposalEvaluatorLoopIssue[] = [];
   const minimumSafeScore = input.minimumSafeScore ?? 75;
 
-  const coveredRequirements = contract.requirements.filter((req) => hasRequirementCoverage(markdown, req.requirement));
-  const uncoveredMandatory = contract.requirements.filter((req) => req.mandatory && !hasRequirementCoverage(markdown, req.requirement));
-  const coverageRatio = contract.requirements.length === 0 ? 1 : coveredRequirements.length / contract.requirements.length;
+  const coveredRequirements = (contract.requirements ?? []).filter((req) => hasRequirementCoverage(markdown, req.requirement));
+  const uncoveredMandatory = (contract.requirements ?? []).filter((req) => req.mandatory && !hasRequirementCoverage(markdown, req.requirement));
+  const coverageRatio = !contract.requirements || contract.requirements.length === 0 ? 1 : coveredRequirements.length / contract.requirements.length;
   issues.push(issue(
     "Source-grounded requirement response coverage",
     uncoveredMandatory.length > 0 ? "BLOCK" : coverageRatio < 0.75 ? "WARN" : "PASS",
-    `${coveredRequirements.length}/${contract.requirements.length} contract requirement(s) are visibly addressed; ${uncoveredMandatory.length} mandatory item(s) are weak or missing.`,
+    `${coveredRequirements.length}/${contract.requirements?.length ?? 0} contract requirement(s) are visibly addressed; ${uncoveredMandatory.length} mandatory item(s) are weak or missing.`,
     uncoveredMandatory.length > 0
       ? "Repair before finalization: add explicit response paragraphs or compliance matrix rows for each missing mandatory source-grounded requirement."
       : coverageRatio < 0.75
@@ -77,7 +78,7 @@ export function evaluateProposalAgainstContract(input: {
         : "No requirement-coverage repair needed.",
   ));
 
-  const groundingGate = contract.exportGates.find((gate) => gate.gate === "Tender source grounding control");
+  const groundingGate = (contract.exportGates ?? []).find((gate) => gate.gate === "Tender source grounding control");
   if (groundingGate) {
     issues.push(issue(
       "Tender source grounding",
@@ -87,7 +88,7 @@ export function evaluateProposalAgainstContract(input: {
     ));
   }
 
-  const evidenceGate = contract.exportGates.find((gate) => gate.gate === "Evidence graph fit control");
+  const evidenceGate = (contract.exportGates ?? []).find((gate) => gate.gate === "Evidence graph fit control");
   if (evidenceGate) {
     issues.push(issue(
       "Evidence graph fit",
@@ -97,16 +98,17 @@ export function evaluateProposalAgainstContract(input: {
     ));
   }
 
-  const sectionHits = contract.sectionPlan.filter((section) => new RegExp(section.section.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i").test(markdown));
-  const sectionRatio = contract.sectionPlan.length === 0 ? 1 : sectionHits.length / contract.sectionPlan.length;
+  const sectionPlan = contract.sectionPlan ?? [];
+  const sectionHits = sectionPlan.filter((section) => new RegExp(section.section.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i").test(markdown));
+  const sectionRatio = sectionPlan.length === 0 ? 1 : sectionHits.length / sectionPlan.length;
   issues.push(issue(
     "Contract section plan coverage",
     sectionRatio < 0.6 ? "WARN" : "PASS",
-    `${sectionHits.length}/${contract.sectionPlan.length} planned contract section(s) are visible in the draft.`,
+    `${sectionHits.length}/${sectionPlan.length} planned contract section(s) are visible in the draft.`,
     sectionRatio < 0.6 ? "Repair by adding missing planned sections using the contract section plan writing instructions." : "No section-plan repair needed.",
   ));
 
-  const commercialGate = contract.exportGates.find((gate) => gate.gate === "Commercial / technical separation");
+  const commercialGate = (contract.exportGates ?? []).find((gate) => gate.gate === "Commercial / technical separation");
   if (commercialGate) {
     issues.push(issue(
       "Tender form and envelope control",
@@ -116,7 +118,11 @@ export function evaluateProposalAgainstContract(input: {
     ));
   }
 
-  const placeholders = /(\bTODO\b|\bTBD\b|\[INSERT[^\]]*\]|\[PLACEHOLDER[^\]]*\]|as an ai|language model|chatgpt)/i.test(markdown);
+  // 1. Check for placeholders and AI traces using centralized patterns
+  const hasPlaceholders = DOCUMENT_PLACEHOLDER_PATTERNS.some(rx => rx.test(markdown));
+  const hasAiTraces = AI_TRACE_PATTERNS.some(rx => rx.test(markdown));
+  const placeholders = hasPlaceholders || hasAiTraces;
+
   issues.push(issue(
     "Final prose safety",
     placeholders ? "BLOCK" : "PASS",
@@ -124,7 +130,7 @@ export function evaluateProposalAgainstContract(input: {
     placeholders ? "Remove placeholder/AI-trace language before final export." : "No prose-safety repair needed.",
   ));
 
-  let status: "PASS" | "WARN" | "BLOCK" = gateSeverity(contract.exportGates);
+  let status: "PASS" | "WARN" | "BLOCK" = gateSeverity(contract.exportGates ?? []);
   for (const item of issues) status = worse(status, item.severity);
 
   const blockPenalty = issues.filter((item) => item.severity === "BLOCK").length * 18;
