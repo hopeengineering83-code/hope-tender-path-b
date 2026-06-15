@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../lib/auth";
+import { requirePermission, forbiddenResponse, unauthorizedResponse } from "../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../lib/prisma";
 import { extractTextFromBuffer, getFileTypeLabel, isMeaningfulExtraction } from "../../../../lib/extract-text";
 import { importCompanyKnowledgeFromDocuments } from "../../../../lib/company-knowledge-import-safe";
@@ -33,7 +33,7 @@ export const dynamic = "force-dynamic";
 export async function POST(req: Request) {
   let actor;
   try {
-    actor = await requireRole("ADMIN");
+    actor = await requirePermission("DATA_REPAIR");
   } catch (e) {
     const msg = e instanceof Error ? e.message : "";
     return msg === "Forbidden" ? forbiddenResponse() : unauthorizedResponse();

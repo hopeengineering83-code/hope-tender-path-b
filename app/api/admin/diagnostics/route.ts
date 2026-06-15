@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../lib/auth";
+import { requirePermission, forbiddenResponse, unauthorizedResponse } from "../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../lib/prisma";
 import { isAIEnabled, isAIConfigured } from "../../../../lib/env-check";
 
@@ -18,7 +18,7 @@ function sanitizeDiagnosticMessage(value: string | null | undefined): string | n
 export async function GET() {
   let actor;
   try {
-    actor = await requireRole("ADMIN");
+    actor = await requirePermission("OPERATIONAL_DIAGNOSTICS");
   } catch (e) {
     const msg = e instanceof Error ? e.message : "";
     return msg === "Forbidden" ? forbiddenResponse() : unauthorizedResponse();

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { Document, Packer, Paragraph, TextRun } from "docx";
-import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
+import { requirePermission, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { logAction } from "../../../../../lib/audit";
 import { safeFileBaseName } from "../../../../../lib/engine/proposal-labels";
@@ -523,7 +523,7 @@ async function proposalPdf(userId: string, tender: any, docId: string | null) {
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     let actor;
-    try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER", "REVIEWER"); }
+    try { actor = await requirePermission("FINAL_EXPORT"); }
     catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
 
     await prismaReady;

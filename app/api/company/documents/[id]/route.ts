@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getSession, requireRole } from "../../../../../lib/auth";
+import { getSession, requirePermission } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { logAction } from "../../../../../lib/audit";
 import { extractTextFromBuffer, getFileTypeLabel, isMeaningfulExtraction } from "../../../../../lib/extract-text";
@@ -57,7 +57,7 @@ export async function POST(
 ) {
   let actor;
   try {
-    actor = await requireRole("ADMIN", "PROPOSAL_MANAGER");
+    actor = await requirePermission("COMPANY_KNOWLEDGE_MGMT");
   } catch {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
@@ -152,7 +152,7 @@ export async function DELETE(
 ) {
   let actor;
   try {
-    actor = await requireRole("ADMIN", "PROPOSAL_MANAGER");
+    actor = await requirePermission("COMPANY_KNOWLEDGE_MGMT");
   } catch {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }

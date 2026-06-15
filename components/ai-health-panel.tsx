@@ -18,8 +18,9 @@ import {
   type ProviderRuntimeSnapshot,
 } from "../lib/ai-provider-health";
 import { AIHealthTestButton } from "./ai-health-test-button";
+import { CANONICAL_AI_PROVIDER_DISPLAY, CANONICAL_AI_PROVIDER_RANK, CANONICAL_AI_PROVIDER_NOTE, CANONICAL_AI_PROVIDER_CHAIN, CANONICAL_AI_PROVIDER_ENV, CANONICAL_AI_PROVIDER_LABEL_BY_NAME, type CanonicalAiProvider } from "../lib/ai-provider-policy";
 
-const AI_FALLBACK_CHAIN = "Canonical: Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Claude. Claude remains last.";
+const AI_FALLBACK_CHAIN = `Canonical: ${CANONICAL_AI_PROVIDER_DISPLAY}. Claude/Anthropic remains last.`;
 
 type ProviderCardData = {
   key: string;
@@ -66,67 +67,67 @@ function getAIHealth(): AIHealthResponse {
   const geminiModels = splitModels(process.env.GEMINI_FALLBACK_MODELS, ["gemini-2.5-flash", "gemini-2.0-flash"]);
   const openRouterModel = getOpenRouterModel();
 
-  // Provider order IS the default fallback priority (rank 1..8). Claude is LAST so
+  // Provider order IS the default fallback priority (rank 1..6). Claude is LAST so
   // Anthropic rate limits do not block the app when other providers are available.
-  // Order: Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Claude
   const providers: ProviderCardData[] = [
     {
-      key: "mistral", label: "Mistral", rank: 1, configured: mistralConfigured, envVar: "MISTRAL_API_KEY",
-      model: getMistralProposalModel(), note: "First-tier provider (also analysis/fast capable)",
-      detail: `Analysis: ${getMistralAnalysisModel()} · fast: ${getMistralFastModel()}`, modelHint: null,
-      runtime: getProviderRuntimeSnapshot("mistral"),
+      key: "gemini", label: "Gemini", rank: CANONICAL_AI_PROVIDER_RANK.gemini, configured: geminiConfigured, envVar: "GEMINI_API_KEY",
+      model: process.env.GEMINI_MODEL || "gemini-2.5-pro", note: CANONICAL_AI_PROVIDER_NOTE.gemini,
+      detail: `Fallback: ${geminiModels.slice(0, 2).join(", ") || "none"}`,
+      modelHint: null, runtime: getProviderRuntimeSnapshot("gemini"),
     },
     {
-      key: "groq", label: "Groq", rank: 2, configured: groqConfigured, envVar: "GROQ_API_KEY",
-      model: getGroqModel(), note: "Second-tier provider", detail: null, modelHint: null,
-      runtime: getProviderRuntimeSnapshot("groq"),
-    },
-    {
-      key: "openrouter", label: "OpenRouter", rank: 3, configured: openRouterConfigured, envVar: "OPENROUTER_API_KEY",
-      model: openRouterModel, note: "Third-tier provider", detail: null,
+      key: "openrouter", label: "OpenRouter", rank: CANONICAL_AI_PROVIDER_RANK.openrouter, configured: openRouterConfigured, envVar: "OPENROUTER_API_KEY",
+      model: openRouterModel, note: CANONICAL_AI_PROVIDER_NOTE.openrouter, detail: null,
       modelHint: openRouterConfigured && openRouterModel === "openrouter/auto"
         ? "Using openrouter/auto. Set OPENROUTER_PROPOSAL_MODEL to a model available in your OpenRouter account to pin it."
         : null,
       runtime: getProviderRuntimeSnapshot("openrouter"),
     },
     {
-      key: "gemini", label: "Gemini", rank: 4, configured: geminiConfigured, envVar: "GEMINI_API_KEY",
-      model: process.env.GEMINI_MODEL || "gemini-2.5-pro", note: "Fourth-tier provider",
-      detail: `Fallback: ${geminiModels.slice(0, 2).join(", ") || "none"}`,
-      modelHint: null, runtime: getProviderRuntimeSnapshot("gemini"),
-    },
-    {
-      key: "openai", label: "OpenAI", rank: 5, configured: openaiConfigured, envVar: "OPENAI_API_KEY",
-      model: process.env.OPENAI_PROPOSAL_MODEL || "gpt-4o", note: "Fifth-tier provider",
+      key: "openai", label: "OpenAI", rank: CANONICAL_AI_PROVIDER_RANK.openai, configured: openaiConfigured, envVar: "OPENAI_API_KEY",
+      model: process.env.OPENAI_PROPOSAL_MODEL || "gpt-4o", note: CANONICAL_AI_PROVIDER_NOTE.openai,
       detail: null, modelHint: null, runtime: getProviderRuntimeSnapshot("openai"),
     },
     {
-      key: "together", label: "Together", rank: 6, configured: togetherConfigured, envVar: "TOGETHER_API_KEY",
-      model: getTogetherProposalModel(), note: "Sixth-tier provider",
-      detail: `Analysis: ${getTogetherAnalysisModel()} · fast: ${getTogetherFastModel()}`, modelHint: null,
-      runtime: getProviderRuntimeSnapshot("together"),
+      key: "groq", label: "Groq", rank: CANONICAL_AI_PROVIDER_RANK.groq, configured: groqConfigured, envVar: "GROQ_API_KEY",
+      model: getGroqModel(), note: CANONICAL_AI_PROVIDER_NOTE.groq, detail: null, modelHint: null,
+      runtime: getProviderRuntimeSnapshot("groq"),
     },
     {
-      key: "deepseek", label: "DeepSeek", rank: 7, configured: deepseekConfigured, envVar: "DEEPSEEK_API_KEY",
-      model: getDeepSeekModel(), note: "Seventh-tier provider",
+      key: "deepseek", label: "DeepSeek", rank: CANONICAL_AI_PROVIDER_RANK.deepseek, configured: deepseekConfigured, envVar: "DEEPSEEK_API_KEY",
+      model: getDeepSeekModel(), note: CANONICAL_AI_PROVIDER_NOTE.deepseek,
       detail: deepseekConfigured && !deepSeekOfficialEnvPresent() ? "Enabled via alias env var — rename to DEEPSEEK_API_KEY." : null,
       modelHint: null, runtime: getProviderRuntimeSnapshot("deepseek"),
     },
     {
-      key: "claude", label: "Claude", rank: 8, configured: claudeConfigured, envVar: "ANTHROPIC_API_KEY",
-      model: claudeModels[0] ?? null, note: "Last-resort provider (placed last to avoid Anthropic rate-limit blocking)",
+      key: "claude", label: "Claude/Anthropic", rank: CANONICAL_AI_PROVIDER_RANK.anthropic, configured: claudeConfigured, envVar: "ANTHROPIC_API_KEY",
+      model: claudeModels[0] ?? null, note: CANONICAL_AI_PROVIDER_NOTE.anthropic,
       detail: `Tier ${process.env.ANTHROPIC_TIER ?? "not set"} · models ${claudeModels.slice(0, 2).join(", ") || "none"}`,
       modelHint: null, runtime: getProviderRuntimeSnapshot("anthropic"),
     },
+    {
+      key: "mistral", label: "Mistral", rank: 0, configured: mistralConfigured, envVar: "MISTRAL_API_KEY",
+      model: getMistralProposalModel(), note: "Optional explicit adapter; excluded from canonical fallback",
+      detail: `Analysis: ${getMistralAnalysisModel()} · fast: ${getMistralFastModel()}`, modelHint: null,
+      runtime: getProviderRuntimeSnapshot("mistral"),
+    },
+    {
+      key: "together", label: "Together", rank: 0, configured: togetherConfigured, envVar: "TOGETHER_API_KEY",
+      model: getTogetherProposalModel(), note: "Optional explicit adapter; excluded from canonical fallback",
+      detail: `Analysis: ${getTogetherAnalysisModel()} · fast: ${getTogetherFastModel()}`, modelHint: null,
+      runtime: getProviderRuntimeSnapshot("together"),
+    },
   ];
 
-  const anyConfigured = providers.some((p) => p.configured);
-  const preferredProvider = providers.find((p) => p.configured)?.key ?? "none";
+  const canonicalProviders = providers.filter((p) => p.rank > 0).sort((a, b) => a.rank - b.rank);
+  const anyConfigured = canonicalProviders.some((p) => p.configured);
+  const preferredProvider = canonicalProviders.find((p) => p.configured)?.key ?? "none";
 
   const warnings: string[] = [];
   const blockers: string[] = [];
   if (!anyConfigured) {
-    blockers.push("No AI provider key is configured. Set OPENAI_API_KEY, GEMINI_API_KEY, MISTRAL_API_KEY, DEEPSEEK_API_KEY, GROQ_API_KEY, TOGETHER_API_KEY, OPENROUTER_API_KEY, or ANTHROPIC_API_KEY. Without one, only the deterministic fallback runs, which cannot be exported as final.");
+    blockers.push("No canonical AI provider key is configured. Configure Gemini, OpenRouter, OpenAI, Groq, DeepSeek, or Claude/Anthropic. Deterministic fallback cannot be exported as final.");
   }
   if (claudeConfigured && claudeModels.length === 0) warnings.push("Claude is configured but no Claude model chain was resolved.");
   if (geminiConfigured && !present(process.env.GEMINI_MODEL)) warnings.push("GEMINI_MODEL is not set; the app will use its built-in Gemini default.");
@@ -142,7 +143,7 @@ function getAIHealth(): AIHealthResponse {
   //    a successful response yet on this instance, so runtime is unknown.
   //  • READY — at least one configured provider has a recorded success
   //    and no warnings; only state worth a green pill.
-  const configuredProviders = providers.filter((p) => p.configured);
+  const configuredProviders = canonicalProviders.filter((p) => p.configured);
   const anyHasRecentSuccess = configuredProviders.some((p) => p.runtime.lastSuccessAt);
   const allConfiguredCooling = anyConfigured && configuredProviders.every((p) => p.runtime.coolingDown);
   if (allConfiguredCooling) warnings.push("All configured AI providers are currently in cooldown. AI Analyze will fall back to regex (UNAPPROVED) until a provider's cooldown expires.");
@@ -160,7 +161,7 @@ function getAIHealth(): AIHealthResponse {
 
   return {
     success: anyConfigured,
-    providers,
+    providers: canonicalProviders.concat(providers.filter(p => p.rank === 0)),
     preferredProvider,
     blockers,
     warnings,
@@ -185,7 +186,7 @@ function ProviderCard({ p }: { p: ProviderCardData }) {
         <p className="font-semibold text-slate-900">{p.label}</p>
         {pill}
       </div>
-      <p className="mt-1 text-[10px] uppercase tracking-wide text-slate-400">Fallback rank {p.rank}</p>
+      <p className="mt-1 text-[10px] uppercase tracking-wide text-slate-400">Fallback rank {p.rank || "None (Explicit only)"}</p>
       {!p.configured && <p className="mt-1 text-xs text-slate-600">Not configured — set {p.envVar} in Vercel Production environment.</p>}
       {p.configured && <p className="mt-1 text-xs text-slate-600">Model: {p.model ?? "provider default"}</p>}
       {p.configured && p.detail && <p className="mt-1 text-xs text-slate-500">{p.detail}</p>}
@@ -217,7 +218,7 @@ export async function AIHealthPanel() {
         <div>
           <p className={`text-xs font-semibold uppercase tracking-wide ${labelTone}`}>AI provider health</p>
           <h2 className="mt-1 text-lg font-bold text-slate-900">Preferred provider: {health.preferredProvider}</h2>
-          <p className="mt-1 max-w-3xl text-sm text-slate-600">Shows whether the OpenAI, Gemini, Mistral, DeepSeek, Groq, Together, OpenRouter, and Claude keys are configured AND whether at least one provider has produced a successful response on this instance. &ldquo;Configured&rdquo; alone does not guarantee runtime availability. Secret values are never displayed.</p>
+          <p className="mt-1 max-w-3xl text-sm text-slate-600">Shows whether the canonical Gemini, OpenRouter, OpenAI, Groq, DeepSeek, and Claude/Anthropic providers are configured and runtime-verified. &ldquo;Configured&rdquo; alone does not guarantee runtime availability. Secret values are never displayed.</p>
         </div>
         <span className={`rounded-full px-3 py-1 text-xs font-bold ${pillTone}`}>{health.nextAction.replace(/_/g, " ")}</span>
       </div>

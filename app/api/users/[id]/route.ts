@@ -1,14 +1,14 @@
 import { NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { prisma, prismaReady } from "../../../../lib/prisma";
-import { requireRole, requireUser, unauthorizedResponse, forbiddenResponse } from "../../../../lib/auth";
+import { requirePermission, requireUser, unauthorizedResponse, forbiddenResponse } from "../../../../lib/auth";
 import { logAction } from "../../../../lib/audit";
 import { validatePassword } from "../../../../lib/password-policy";
 
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   let actor;
   try {
-    actor = await requireRole("ADMIN", "PROPOSAL_MANAGER");
+    actor = await requirePermission("USER_ADMIN");
   } catch (e) {
     const msg = e instanceof Error ? e.message : "";
     return msg === "Forbidden" ? forbiddenResponse() : unauthorizedResponse();
@@ -94,7 +94,7 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
 export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   let actor;
   try {
-    actor = await requireRole("ADMIN");
+    actor = await requirePermission("USER_ADMIN");
   } catch (e) {
     const msg = e instanceof Error ? e.message : "";
     return msg === "Forbidden" ? forbiddenResponse() : unauthorizedResponse();

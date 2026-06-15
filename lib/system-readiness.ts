@@ -1,5 +1,6 @@
 import { prisma, prismaReady } from "./prisma";
 import { resolveStorageProvider } from "./storage";
+import { CANONICAL_AI_PROVIDER_DISPLAY, canonicalProviderLabel, configuredCanonicalProviders } from "./ai-provider-policy";
 
 export type ReadinessSeverity = "OK" | "WARNING" | "CRITICAL";
 
@@ -18,26 +19,6 @@ export type SystemReadiness = {
 
 function has(value: string | undefined | null): boolean {
   return Boolean(value && value.trim().length > 0);
-}
-
-export const REQUIRED_PROVIDER_ORDER = [
-  "Gemini",
-  "OpenRouter",
-  "OpenAI",
-  "Groq",
-  "DeepSeek",
-  "Claude/Anthropic",
-] as const;
-
-function configuredAiProviders(): string[] {
-  const providers: string[] = [];
-  if (has(process.env.GEMINI_API_KEY)) providers.push("Gemini");
-  if (has(process.env.OPENROUTER_API_KEY)) providers.push("OpenRouter");
-  if (has(process.env.OPENAI_API_KEY)) providers.push("OpenAI");
-  if (has(process.env.GROQ_API_KEY)) providers.push("Groq");
-  if (has(process.env.DEEPSEEK_API_KEY)) providers.push("DeepSeek");
-  if (has(process.env.ANTHROPIC_API_KEY)) providers.push("Claude/Anthropic");
-  return providers;
 }
 
 async function databaseChecks(): Promise<ReadinessCheck[]> {
@@ -99,7 +80,7 @@ async function databaseChecks(): Promise<ReadinessCheck[]> {
 
 export async function getSystemReadiness(): Promise<SystemReadiness> {
   const checks = await databaseChecks();
-  const configuredProviders = configuredAiProviders();
+  const configuredProviders = configuredCanonicalProviders().map(canonicalProviderLabel);
   const storageProvider = resolveStorageProvider();
   const production = process.env.NODE_ENV === "production" || Boolean(process.env.VERCEL_ENV);
   const strongSessionSecret = (process.env.SESSION_SECRET ?? process.env.AUTH_SECRET ?? "").length >= 32;
@@ -130,7 +111,7 @@ export async function getSystemReadiness(): Promise<SystemReadiness> {
       requiredForProduction: true,
       detail: configuredProviders.length > 0
         ? `Configured providers in policy order: ${configuredProviders.join(" → ")}.`
-        : `Configure at least one provider. Policy order: ${REQUIRED_PROVIDER_ORDER.join(" → ")}.`,
+        : `Configure at least one provider. Policy order: ${CANONICAL_AI_PROVIDER_DISPLAY}.`,
     },
     {
       key: "email",

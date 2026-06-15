@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { Document, HeadingLevel, Packer, Paragraph, TextRun } from "docx";
-import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
+import { requirePermission, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { Prisma } from "@prisma/client";
 import { generateTenderDocuments } from "../../../../../lib/engine/generate-elite";
@@ -238,7 +238,7 @@ async function fillPlannedSupportDocuments(tenderId: string, plannedFileKeys?: S
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const requestId = extractRequestId(req);
   let actor;
-  try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER"); } catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
+  try { actor = await requirePermission("GENERATION_TRIGGER"); } catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
   const userId = actor.id;
   const rl = rateLimit(`gen:${userId}`, AI_RATE_LIMIT);
   if (!rl.allowed) return NextResponse.json({ error: "Rate limit exceeded — too many generation requests. Please wait a minute and retry.", retryAfter: Math.ceil((rl.resetAt - Date.now()) / 1000) }, { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } });
