@@ -35,13 +35,19 @@ test.describe.serial("Golden tender workflow — authenticated release contract"
 
   test("upload-first → add source file → AI Analyze fallback → readiness gate", async ({ page }) => {
     await page.goto("/login");
-    // Wait for React hydration to complete so controlled-input onChange handlers are attached.
-    // Without this, page.fill() fires before React event delegation is set up and
-    // the email/password state stays empty, causing a 400 or native form POST.
     await page.waitForLoadState("networkidle");
     await page.fill("input[type=email], input[name=email]", email);
     await page.fill("input[type=password], input[name=password]", password);
-    await page.click("button[type=submit]");
+
+    // Capture login API response for CI diagnostics
+    const [loginResp] = await Promise.all([
+      page.waitForResponse((r) => r.url().includes("/api/auth/login"), { timeout: 15_000 }),
+      page.click("button[type=submit]"),
+    ]);
+    const loginStatus = loginResp.status();
+    const loginBody = await loginResp.text().catch(() => "(unreadable)");
+    console.log(`[E2E] login status=${loginStatus} body=${loginBody}`);
+
     await expect(page).toHaveURL(/dashboard/, { timeout: 15_000 });
 
     const intake = await page.request.post("/api/tenders/upload-first", {
