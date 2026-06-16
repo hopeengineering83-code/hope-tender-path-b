@@ -104,8 +104,9 @@ test.describe("Full pipeline — upload → analyze → generate → export", ()
 
   test("Step 2 — Analysis stage section is present and gate state shown", async ({ page }) => {
     await page.goto("/dashboard");
-    await page.locator("a[href*='/dashboard/tenders/']").first().click();
-    await expect(page).toHaveURL(/\/dashboard\/tenders\/[a-z0-9-]+/);
+    // Exclude /new and list-only URLs; tender IDs contain hyphens (UUID format)
+    await page.locator("a[href*='/dashboard/tenders/'][href*='-']").first().click();
+    await expect(page).toHaveURL(/\/dashboard\/tenders\/[a-z0-9]+-[a-z0-9-]+/, { timeout: 15_000 });
     // The "Analysis and engine" WorkflowStage summary is always visible (even when collapsed).
     // This confirms the AI/engine analysis section is present on the page.
     await expect(page.locator("text=Analysis and engine")).toBeVisible({ timeout: 5000 });
@@ -113,7 +114,7 @@ test.describe("Full pipeline — upload → analyze → generate → export", ()
 
   test("Step 3 — Generate Docs is gated before AI Analyze runs", async ({ page }) => {
     await page.goto("/dashboard");
-    await page.locator("a[href*='/dashboard/tenders/']").first().click();
+    await page.locator("a[href*='/dashboard/tenders/'][href*='-']").first().click();
     const generateBtn = page.locator("button:has-text('Generate'), button:has-text('Generate Docs')");
     if (await generateBtn.isVisible()) {
       const isDisabled = await generateBtn.isDisabled();
@@ -129,7 +130,7 @@ test.describe("Full pipeline — upload → analyze → generate → export", ()
 
   test("Step 4 — Export is gated before documents are generated", async ({ page }) => {
     await page.goto("/dashboard");
-    await page.locator("a[href*='/dashboard/tenders/']").first().click();
+    await page.locator("a[href*='/dashboard/tenders/'][href*='-']").first().click();
     const exportBtn = page.locator("button:has-text('Export'), button:has-text('Prepare Export'), button:has-text('ZIP')");
     if (await exportBtn.isVisible()) {
       const isDisabled = await exportBtn.isDisabled();
