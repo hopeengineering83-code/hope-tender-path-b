@@ -2,17 +2,27 @@ name: CI
 
 on:
   pull_request:
-    branches: [main]
+    branches:
+      - main
+      - integration/production-engine-2026-06
+      - release/production-engine-2026-06
   push:
-    branches: [main]
+    branches:
+      - main
+      - integration/production-engine-2026-06
+      - release/production-engine-2026-06
   workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
 
 jobs:
   verify:
-    name: Schema, typecheck, lint, test, build, and smoke
+    name: Schema, typecheck, lint, test, build, smoke, and clean-tree guard
     runs-on: ubuntu-latest
     timeout-minutes: 40
     services:
@@ -51,6 +61,12 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Reject install-time source mutation
+        run: git diff --exit-code
+
+      - name: Validate Prisma schema
+        run: npx prisma validate
 
       - name: Generate Prisma client
         run: npx prisma generate
@@ -104,6 +120,9 @@ jobs:
 
       - name: Browser smoke tests
         run: npm run test:e2e
+
+      - name: Reject test or build source mutation
+        run: git diff --exit-code
 
       - name: Upload Playwright report on failure
         if: failure()
