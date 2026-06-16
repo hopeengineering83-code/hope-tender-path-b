@@ -80,7 +80,7 @@ export async function MatchingQualityPanel({ tenderId }: { tenderId: string }) {
       : "text-red-700";
 
   return (
-    <section className={`mb-4 rounded-2xl border p-5 shadow-sm ${sectionCls}`}>
+    <section id="matching-quality" className={`mb-4 rounded-2xl border p-5 shadow-sm ${sectionCls}`}>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <p className={`text-xs font-semibold uppercase tracking-wide ${labelCls}`}>Matching quality</p>

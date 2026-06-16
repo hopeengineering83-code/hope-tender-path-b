@@ -352,3 +352,104 @@ describe("submission plan build route — CLAUDE.md 'cannot be trusted' message"
     );
   });
 });
+
+import { assessTenderAnalysisQuality } from "../lib/analysis-quality";
+
+describe("submission plan build route — BUILD_PLAN_BLOCKED_UNSAFE_ANALYSIS gate", () => {
+  const routeSrc = readFileSync(
+    "app/api/tenders/[id]/submission-plan/build/route.ts",
+    "utf-8",
+  );
+
+  it("route contains BUILD_PLAN_BLOCKED_UNSAFE_ANALYSIS error code", () => {
+    assert.ok(
+      routeSrc.includes("BUILD_PLAN_BLOCKED_UNSAFE_ANALYSIS"),
+      "Build Plan route must emit BUILD_PLAN_BLOCKED_UNSAFE_ANALYSIS when analysis quality is too poor",
+    );
+  });
+
+  it("route blocks on POOR and UNSAFE severity (both checked)", () => {
+    assert.ok(
+      routeSrc.includes('analysisQuality.severity === "POOR"') &&
+      routeSrc.includes('analysisQuality.severity === "UNSAFE"'),
+      "Build Plan route must block on both POOR and UNSAFE analysis severity",
+    );
+  });
+
+  it("assessTenderAnalysisQuality returns UNSAFE for multi-page tender with no requirements", () => {
+    const result = assessTenderAnalysisQuality({
+      requirements: [],
+      totalPageCount: 10,
+      extractedTextLength: 5000,
+      analysisSummary: null,
+      evaluationMethodology: null,
+      submissionNotes: null,
+      exactFileNaming: null,
+      exactFileOrder: null,
+      clientName: null,
+      referenceNumber: null,
+      country: null,
+      clientContactName: null,
+      deadline: null,
+      submissionMethod: null,
+      submissionAddress: null,
+      submissionEmails: null,
+      analysisExtractionStatus: null,
+      analysisSource: null,
+    });
+    assert.equal(result.severity, "UNSAFE", "Multi-page tender with 0 requirements should be UNSAFE");
+  });
+
+  it("assessTenderAnalysisQuality returns UNSAFE when extraction status is corrupted", () => {
+    const result = assessTenderAnalysisQuality({
+      requirements: [
+        { title: "Technical Scope", description: "methodology", requirementType: "TECHNICAL", priority: "MANDATORY", sourcePageNumber: 3, sourceExactQuote: "per section 2.1" },
+      ],
+      totalPageCount: 5,
+      extractedTextLength: 3000,
+      analysisSummary: "Some analysis",
+      evaluationMethodology: "70/30 split",
+      submissionNotes: "Submit by email",
+      exactFileNaming: null,
+      exactFileOrder: null,
+      clientName: "Ministry of Health",
+      referenceNumber: "RFP-2026-001",
+      country: "Ethiopia",
+      clientContactName: "John Doe",
+      deadline: new Date("2026-12-01"),
+      submissionMethod: "email",
+      submissionAddress: null,
+      submissionEmails: "submit@gov.et",
+      analysisExtractionStatus: "OCR_REQUIRED",
+      analysisSource: null,
+    });
+    assert.equal(result.severity, "UNSAFE", "OCR_REQUIRED extraction status should cause UNSAFE severity");
+  });
+
+  it("assessTenderAnalysisQuality returns POOR when score is below 50", () => {
+    const result = assessTenderAnalysisQuality({
+      requirements: [
+        { title: "T1", description: "desc", requirementType: "TECHNICAL", priority: "SHOULD", sourcePageNumber: null, sourceExactQuote: null },
+      ],
+      totalPageCount: 0,
+      extractedTextLength: 50,
+      analysisSummary: null,
+      evaluationMethodology: null,
+      submissionNotes: null,
+      exactFileNaming: null,
+      exactFileOrder: null,
+      clientName: null,
+      referenceNumber: null,
+      country: null,
+      clientContactName: null,
+      deadline: null,
+      submissionMethod: null,
+      submissionAddress: null,
+      submissionEmails: null,
+      analysisExtractionStatus: null,
+      analysisSource: null,
+    });
+    assert.ok(result.severity === "POOR" || result.severity === "UNSAFE" || result.score < 50,
+      `Expected POOR/UNSAFE or score<50, got severity=${result.severity} score=${result.score}`);
+  });
+});
