@@ -120,13 +120,12 @@ jobs:
       - name: Install Playwright browser
         run: npx playwright install --with-deps chromium
 
-      - name: Seed E2E test user
+      - name: Seed authenticated E2E user
         run: node scripts/seed-e2e-user.mjs
 
-      - name: Browser smoke and authenticated pipeline tests
+      - name: Browser smoke and authenticated intake/gate tests
         env:
           CSRF_MODE: "off"
-          RATE_LIMIT_DISABLED: "true"
           MISTRAL_API_KEY: ""
           GROQ_API_KEY: ""
           OPENROUTER_API_KEY: ""
