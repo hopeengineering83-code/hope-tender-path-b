@@ -32,6 +32,7 @@ import {
   type ExtractedFieldOrMissing,
 } from "../../../../../lib/engine/tender-field-extractors";
 import { containsMetadataPlaceholder } from "../../../../../lib/engine/metadata-validators";
+import { detectMetadataContamination } from "../../../../../lib/engine/tender-metadata-completeness";
 
 export const dynamic = "force-dynamic";
 
@@ -169,13 +170,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         continue;
       }
       (updates as Record<string, unknown>)[field] = rawValue;
-      // When we repair clientName, also sync procuringEntityName if it's empty —
-      // the two fields are conceptually the same; keeping them in sync avoids
-      // the need for || fallback patterns in every consumer.
+      // When we repair clientName, also sync procuringEntityName if it's empty
+      // and re-evaluate metadataContaminated with the new clean value.
       if (field === "clientName") {
         const current = (tender as unknown as Record<string, unknown>).procuringEntityName;
         if (!current) {
           (updates as Record<string, unknown>).procuringEntityName = rawValue;
+        }
+        // Clear the contamination flag when the repaired value passes the check.
+        if (!detectMetadataContamination(rawValue).contaminated) {
+          (updates as Record<string, unknown>).metadataContaminated = false;
         }
       }
     }

@@ -25,6 +25,7 @@ import {
   isValidClientContact,
   containsMetadataPlaceholder,
 } from "../../../../../lib/engine/metadata-validators";
+import { detectMetadataContamination } from "../../../../../lib/engine/tender-metadata-completeness";
 import { logAction } from "../../../../../lib/audit";
 import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../../lib/rate-limit";
 
@@ -160,6 +161,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // fields consistent without a separate extractor for procuringEntityName.
   if (update.clientName && !(tender as Record<string, unknown>).procuringEntityName) {
     (update as Record<string, unknown>).procuringEntityName = update.clientName;
+  }
+  // If a valid clientName was just (re-)extracted, re-evaluate contamination.
+  // The extractor already runs isValidClientName(), so a stored update.clientName
+  // has passed the validation gate. Clear metadataContaminated if it's clean.
+  if (update.clientName && !detectMetadataContamination(String(update.clientName)).contaminated) {
+    (update as Record<string, unknown>).metadataContaminated = false;
   }
   tryFill("country", metadata.country);
   // category — only update when stored is "General" (the default)
