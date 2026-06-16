@@ -179,6 +179,30 @@ describe("POST /api/tenders/[id]/repair-metadata — placeholder rejection (Gap 
   });
 });
 
+describe("POST /api/tenders/[id]/re-extract-metadata — clears metadataContaminated on clean re-extraction", () => {
+  const source = readFileSync("app/api/tenders/[id]/re-extract-metadata/route.ts", "utf8");
+
+  it("imports detectMetadataContamination", () => {
+    assert.match(source, /detectMetadataContamination/);
+  });
+
+  it("sets metadataContaminated:false when re-extracted clientName is clean", () => {
+    assert.match(
+      source,
+      /metadataContaminated.*false/,
+      "re-extract-metadata must clear metadataContaminated when re-extracted clientName passes contamination check",
+    );
+  });
+
+  it("guards the contamination clear behind a successful clientName re-extraction", () => {
+    assert.match(
+      source,
+      /update\.clientName[\s\S]{1,200}metadataContaminated/,
+      "contamination flag clear must be gated on update.clientName being populated",
+    );
+  });
+});
+
 describe("POST /api/tenders/[id]/engine — SELECT includes entity fields (Gap B fix)", () => {
   const source = readFileSync("app/api/tenders/[id]/engine/route.ts", "utf8");
 
