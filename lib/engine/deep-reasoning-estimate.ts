@@ -21,7 +21,6 @@
  */
 
 import { isDeepReasoningEnabled, isToolUseGenerationEnabled } from "./feature-flags";
-import { isAIEnabled, isClaudeEnabled } from "../ai";
 
 export type DeepReasoningEstimate = {
   /** Whether deep reasoning will actually run given the current config. */
@@ -79,10 +78,27 @@ export function defaultRefinementThreshold(): number {
   return Number.isFinite(override) && override > 0 ? override : tierDefault;
 }
 
+function isAnyProviderKeyPresent(): boolean {
+  return Boolean(
+    process.env.GEMINI_API_KEY ||
+    process.env.ANTHROPIC_API_KEY ||
+    process.env.OPENAI_API_KEY ||
+    process.env.OPENROUTER_API_KEY ||
+    process.env.GROQ_API_KEY ||
+    process.env.TOGETHER_API_KEY ||
+    process.env.DEEPSEEK_API_KEY ||
+    process.env.MISTRAL_API_KEY
+  );
+}
+
+function isClaudeKeyPresent(): boolean {
+  return Boolean(process.env.ANTHROPIC_API_KEY);
+}
+
 export function estimateDeepReasoningCost(input: EstimateInput): DeepReasoningEstimate {
   const flagOn = isDeepReasoningEnabled();
-  const aiOn = isAIEnabled();
-  const toolUseGen = isToolUseGenerationEnabled() && isClaudeEnabled();
+  const aiOn = isAnyProviderKeyPresent();
+  const toolUseGen = isToolUseGenerationEnabled() && isClaudeKeyPresent();
   const generationMode = (process.env.PROPOSAL_GENERATION_MODE || "parallel").toLowerCase();
   const maxCallsRaw = process.env.TENDER_DEEP_REASONING_MAX_CALLS;
   const maxCallsParsed = maxCallsRaw ? Number(maxCallsRaw) : null;
