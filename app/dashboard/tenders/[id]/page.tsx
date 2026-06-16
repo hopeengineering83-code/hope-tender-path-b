@@ -30,6 +30,7 @@ import { AuthorityReviewPanel } from "../../../../components/authority-review-pa
 import { DocumentValidatorPanel } from "../../../../components/document-validator-panel";
 import { AIAnalyzeRecoveryPanel } from "../../../../components/ai-analyze-recovery-panel";
 import { ClientSubmissionDetailsPanel } from "../../../../components/client-submission-details-panel";
+import { AIAnalyzePanel } from "../../../../components/ai-analyze-panel";
 import { EvidenceCoveragePanel } from "../../../../components/evidence-coverage-panel";
 import { ComplianceHeatmapPanel } from "../../../../components/compliance-heatmap-panel";
 import { TenderHealthScorePanel } from "../../../../components/tender-health-score-panel";
@@ -168,6 +169,7 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
         <ExtractionQualityPanel tenderId={tender.id} />
       </WorkflowStage>
 
+        <AIAnalyzePanel tenderId={tender.id} aiEnabled={ai} initialContinueJobId={tender.files.length > 0 ? (await prisma.aiJob.findFirst({ where: { tenderId: id, userId, jobType: "AI_ANALYZE", status: { in: ["PARTIAL_SUCCESS", "FAILED", "RUNNING"] } }, orderBy: [{ finishedAt: "desc" }, { startedAt: "desc" }], select: { id: true } }).catch(() => null))?.id : null} />
       <WorkflowStage number={2} title="Analysis and engine" description="Run the authoritative engine, inspect AI health, and repair incomplete analysis.">
         <AIHealthPanel />
         <EngineActionPanel
