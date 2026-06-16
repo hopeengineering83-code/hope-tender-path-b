@@ -33,6 +33,8 @@
 //     for METADATA_INCOMPLETE_FOR_FINAL_GENERATION)
 //   - generated-document quality gate (rejects "Bid-Team to confirm")
 
+import { DOCUMENT_PLACEHOLDER_PATTERNS as _DOCUMENT_PLACEHOLDER_PATTERNS } from "./detection-patterns";
+
 export const METADATA_PLACEHOLDER_PATTERNS: RegExp[] = [
   /\bbid[\s-]?team\s+to\s+confirm\b/i,
   /\bto\s+be\s+(?:confirmed|determined|provided|completed|inserted)\b/i,
@@ -190,12 +192,29 @@ export function looksLikeMetadataPlaceholder(value?: string | null): boolean {
 // Returns the first matching contamination signal, or null when the value
 // looks clean.
 export const METADATA_CONTAMINATION_PATTERNS: Array<{ rx: RegExp; signal: string }> = [
-  { rx: /\bStatus\s*:?\s*(?:CLOSED|OPEN|PENDING)\b/i, signal: "TENDER_PORTAL_STATUS_BANNER" },
+  { rx: /\bStatus\s*:?\s*(?:CLOSED|OPEN|PENDING|AWARDED|CANCELLED|SUSPENDED)\b/i, signal: "TENDER_PORTAL_STATUS_BANNER" },
   { rx: /\brelated\s+tender\s+alerts?\b/i, signal: "TENDER_PORTAL_RELATED_ALERTS" },
   { rx: /\btender\s+alerts?\s+(?:for|from)\b/i, signal: "TENDER_PORTAL_ALERTS_FEED" },
   { rx: /\bview\s+tender\b/i, signal: "TENDER_PORTAL_NAV_LINK" },
   { rx: /\bclick\s+here\s+to\s+(?:view|download)\b/i, signal: "PORTAL_CALL_TO_ACTION" },
   { rx: /\bSubscribe\s+to\s+Tender\s+Alerts\b/i, signal: "PORTAL_SUBSCRIBE_LINK" },
+  // Breadcrumb / navigation fragments scraped from portal pages
+  { rx: /\bHome\s*[>\/»]\s*Tender/i, signal: "PORTAL_BREADCRUMB" },
+  { rx: /\bTenders?\s*[>\/»]\s*/i, signal: "PORTAL_BREADCRUMB" },
+  // Pagination / search-result noise
+  { rx: /\bShowing\s+\d+\s+(?:of|to)\s+\d+\s+(?:results?|tenders?)\b/i, signal: "PORTAL_SEARCH_RESULTS_NOISE" },
+  { rx: /\b(?:Previous|Next)\s+Tender\b/i, signal: "PORTAL_PAGINATION_NOISE" },
+  // Bidder-registration / login prompts scraped from portal pages
+  { rx: /\bLogin\s*[\/|]\s*Register\b/i, signal: "PORTAL_AUTH_NAVIGATION" },
+  { rx: /\bBidder\s+Registration\b/i, signal: "PORTAL_BIDDER_REGISTRATION_NAV" },
+  // Closing / opening date labels that bleed into client name from structured scrapes
+  { rx: /\bClosing\s+Date\s*:/i, signal: "PORTAL_DATE_LABEL_BLEED" },
+  { rx: /\bOpening\s+Date\s*:/i, signal: "PORTAL_DATE_LABEL_BLEED" },
+  { rx: /\bDeadline\s*:\s*\d/i, signal: "PORTAL_DATE_LABEL_BLEED" },
+  // Reference-number labels that bleed into entity name field
+  { rx: /\bReference\s+(?:No|Number)\s*:/i, signal: "PORTAL_REFERENCE_LABEL_BLEED" },
+  // "Print" / "Share" standalone portal nav items (only flag as noise in short values)
+  { rx: /^\s*(?:Print|Share|Download|Save)\s*$/i, signal: "PORTAL_ACTION_BUTTON_TEXT" },
 ];
 
 export function detectMetadataContamination(value?: string | null): { contaminated: boolean; signal: string | null } {
@@ -214,29 +233,11 @@ export function detectMetadataContamination(value?: string | null): { contaminat
   return { contaminated: false, signal: null };
 }
 
-/** Document-level placeholder patterns — superset of metadata patterns plus
- *  bracket/template markers common in generated proposal text.
- *  Used by seven-pass-generation-wiring.ts (single canonical source). */
-export const DOCUMENT_PLACEHOLDER_PATTERNS: RegExp[] = [
-  ...METADATA_PLACEHOLDER_PATTERNS,
-  /\[INSERT\b/i,
-  /\[ADD\b/i,
-  /\bADD HERE\b/i,
-  /\bPLACEHOLDER\b/i,
-  /\[Company Name\]/i,
-  /\[Client Name\]/i,
-  /\[DATE\]/i,
-  /\[YEAR\]/i,
-  /\[AMOUNT\]/i,
-  /\[NUMBER\]/i,
-  // Seven-pass wiring patterns (merged from seven-pass-generation-wiring.ts)
-  /Bid-Team\s+Action/i,
-  /Source-evidence\s+action/i,
-  /\bTODO\b/,
-  /\[CLIENT\s+TO\s+BE\s+CONFIRMED[^\]]*\]/i,
-  /\[(insert|add here|fill|name of|date here|signature here|stamp here|tbd|tbc)[^\]]*\]/i,
-  /PLACEHOLDER FOR TENDER-ISSUED ORIGINAL/i,
-];
+/** Document-level placeholder patterns — canonical set from detection-patterns.ts.
+ *  Re-exported here so modules importing from this file automatically get the
+ *  comprehensive production-grade set (31+ patterns) rather than the old local
+ *  subset (18 patterns). Single source of truth is detection-patterns.ts. */
+export const DOCUMENT_PLACEHOLDER_PATTERNS: RegExp[] = _DOCUMENT_PLACEHOLDER_PATTERNS;
 
 /**
  * Counts placeholder occurrences in document content.

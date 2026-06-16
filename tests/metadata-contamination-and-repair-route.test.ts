@@ -42,6 +42,62 @@ describe("detectMetadataContamination", () => {
     assert.equal(detectMetadataContamination("").contaminated, false);
     assert.equal(detectMetadataContamination(undefined).contaminated, false);
   });
+
+  it("flags breadcrumb navigation text (Home > Tenders >)", () => {
+    const r = detectMetadataContamination("Home > Tenders > Ministry of Health");
+    assert.equal(r.contaminated, true);
+    assert.equal(r.signal, "PORTAL_BREADCRUMB");
+  });
+
+  it("flags Tenders > breadcrumb fragment", () => {
+    const r = detectMetadataContamination("Tenders > Open > Details");
+    assert.equal(r.contaminated, true);
+    assert.equal(r.signal, "PORTAL_BREADCRUMB");
+  });
+
+  it("flags pagination noise (Previous Tender / Next Tender)", () => {
+    const r1 = detectMetadataContamination("Previous Tender");
+    assert.equal(r1.contaminated, true);
+    assert.equal(r1.signal, "PORTAL_PAGINATION_NOISE");
+
+    const r2 = detectMetadataContamination("Next Tender");
+    assert.equal(r2.contaminated, true);
+    assert.equal(r2.signal, "PORTAL_PAGINATION_NOISE");
+  });
+
+  it("flags Login / Register portal navigation", () => {
+    const r = detectMetadataContamination("Login / Register");
+    assert.equal(r.contaminated, true);
+    assert.equal(r.signal, "PORTAL_AUTH_NAVIGATION");
+  });
+
+  it("flags Closing Date label bleed into client name", () => {
+    const r = detectMetadataContamination("Closing Date: 30 September 2026");
+    assert.equal(r.contaminated, true);
+    assert.equal(r.signal, "PORTAL_DATE_LABEL_BLEED");
+  });
+
+  it("flags Reference No: label bleed", () => {
+    const r = detectMetadataContamination("Reference No: RFP-2026-001");
+    assert.equal(r.contaminated, true);
+    assert.equal(r.signal, "PORTAL_REFERENCE_LABEL_BLEED");
+  });
+
+  it("flags AWARDED and CANCELLED tender status banners", () => {
+    assert.equal(detectMetadataContamination("Status: AWARDED").contaminated, true);
+    assert.equal(detectMetadataContamination("Status: CANCELLED").contaminated, true);
+  });
+
+  it("does NOT flag a legitimate entity name containing 'Tender' as part of its name", () => {
+    // A government body can legitimately have 'Tender' in its name
+    const r = detectMetadataContamination("Procurement and Tender Authority of Ethiopia");
+    assert.equal(r.contaminated, false);
+  });
+
+  it("does NOT flag a legitimate submission address mentioning a date", () => {
+    const r = detectMetadataContamination("Submission deadline extended to 15 October 2026 by official notice.");
+    assert.equal(r.contaminated, false);
+  });
 });
 
 describe("placeholder detection covers the task list", () => {

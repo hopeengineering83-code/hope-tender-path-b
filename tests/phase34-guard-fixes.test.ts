@@ -190,3 +190,30 @@ describe("lib/ai.ts — PLACEHOLDER PROHIBITION in CRITICAL RULES", () => {
     );
   });
 });
+
+describe("lib/ai.ts — contactDetailsSource extraction key coverage (Gap: procurementReferenceNumber)", () => {
+  it("contactDetailsSource extraction loop includes procurementReferenceNumber", () => {
+    assert.ok(
+      aiLibSource.includes('"procurementReferenceNumber"') &&
+        (aiLibSource.match(/"procurementReferenceNumber"/g) ?? []).length >= 2,
+      "lib/ai.ts must include procurementReferenceNumber in BOTH the AI prompt contactDetailsSource section AND the extraction key loop so reference-number source traceability is stored",
+    );
+  });
+
+  it("contactDetailsSource extraction loop includes all 19 required client fields", () => {
+    const requiredKeys = [
+      "country", "clientAddress", "clientCity", "clientWebsite",
+      "clientContactName", "clientContactTitle", "clientContactEmail", "clientContactPhone",
+      "submissionAddress", "submissionEmailSubject", "preBidChannel",
+      "preBidMeetingDate", "preBidMeetingLocation", "clientRepresentative",
+      "procuringEntityName", "legalClientName", "donorAgency", "implementingAgency",
+      "procurementReferenceNumber",
+    ];
+    // The extraction loop is a for..of over a literal array — all keys must appear
+    // in lib/ai.ts at least twice (prompt + extraction loop).
+    for (const key of requiredKeys) {
+      const count = (aiLibSource.match(new RegExp(`"${key}"`, "g")) ?? []).length;
+      assert.ok(count >= 2, `lib/ai.ts must contain "${key}" at least twice (prompt definition + extraction loop); found ${count}`);
+    }
+  });
+});
