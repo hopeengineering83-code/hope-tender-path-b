@@ -33,6 +33,8 @@
 //     for METADATA_INCOMPLETE_FOR_FINAL_GENERATION)
 //   - generated-document quality gate (rejects "Bid-Team to confirm")
 
+import { DOCUMENT_PLACEHOLDER_PATTERNS as _DOCUMENT_PLACEHOLDER_PATTERNS } from "./detection-patterns";
+
 export const METADATA_PLACEHOLDER_PATTERNS: RegExp[] = [
   /\bbid[\s-]?team\s+to\s+confirm\b/i,
   /\bto\s+be\s+(?:confirmed|determined|provided|completed|inserted)\b/i,
@@ -231,29 +233,11 @@ export function detectMetadataContamination(value?: string | null): { contaminat
   return { contaminated: false, signal: null };
 }
 
-/** Document-level placeholder patterns — superset of metadata patterns plus
- *  bracket/template markers common in generated proposal text.
- *  Used by seven-pass-generation-wiring.ts (single canonical source). */
-export const DOCUMENT_PLACEHOLDER_PATTERNS: RegExp[] = [
-  ...METADATA_PLACEHOLDER_PATTERNS,
-  /\[INSERT\b/i,
-  /\[ADD\b/i,
-  /\bADD HERE\b/i,
-  /\bPLACEHOLDER\b/i,
-  /\[Company Name\]/i,
-  /\[Client Name\]/i,
-  /\[DATE\]/i,
-  /\[YEAR\]/i,
-  /\[AMOUNT\]/i,
-  /\[NUMBER\]/i,
-  // Seven-pass wiring patterns (merged from seven-pass-generation-wiring.ts)
-  /Bid-Team\s+Action/i,
-  /Source-evidence\s+action/i,
-  /\bTODO\b/,
-  /\[CLIENT\s+TO\s+BE\s+CONFIRMED[^\]]*\]/i,
-  /\[(insert|add here|fill|name of|date here|signature here|stamp here|tbd|tbc)[^\]]*\]/i,
-  /PLACEHOLDER FOR TENDER-ISSUED ORIGINAL/i,
-];
+/** Document-level placeholder patterns — canonical set from detection-patterns.ts.
+ *  Re-exported here so modules importing from this file automatically get the
+ *  comprehensive production-grade set (31+ patterns) rather than the old local
+ *  subset (18 patterns). Single source of truth is detection-patterns.ts. */
+export const DOCUMENT_PLACEHOLDER_PATTERNS: RegExp[] = _DOCUMENT_PLACEHOLDER_PATTERNS;
 
 /**
  * Counts placeholder occurrences in document content.

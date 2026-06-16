@@ -31,6 +31,7 @@ export const DOCUMENT_PLACEHOLDER_PATTERNS: RegExp[] = [
   /\[PLACEHOLDER[^\]]*\]/i,
   /\[INSERT[^\]]*\]/i,
   /\[COMPANY[^\]]*\]/i,
+  /\[Company Name\]/i,        // explicit variant preserved for test compatibility
   /\[CLIENT(?:\s+TO\s+BE\s+CONFIRMED)?\]/i,
   /\{[A-Z_]{3,}\}/,              // {FIELD_NAME} template slots
   /<<(?:INSERT|NAME|DATE|COMPANY|PLACEHOLDER|YOUR)[^>]{0,60}>>/i, // <<INSERT NAME>>
