@@ -67,7 +67,7 @@ function gitDirtyTsSet(): Set<string> {
 // present so the script doesn't fail with FATAL errors in sandbox/dev environments
 // that lack them — the test verifies non-mutation, not production key presence.
 function runCheckEnv(): { status: number; output: string } {
-  const env: Record<string, string> = { ...process.env } as Record<string, string>;
+  const env: NodeJS.ProcessEnv = { ...process.env };
   if (!env.SESSION_SECRET) env.SESSION_SECRET = "ci-sandbox-placeholder-secret-key-32c";
   if (!env.DATABASE_URL) env.DATABASE_URL = "postgresql://x:x@localhost/x";
   const result = spawnSync("node", ["scripts/check-env.mjs"], {
