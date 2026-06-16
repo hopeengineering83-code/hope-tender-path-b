@@ -126,7 +126,7 @@ describe("production storage fails closed", () => {
       assert.equal(isProductionStorageReady(), false);
       await assert.rejects(
         () => getStorageAdapter().putFile(Buffer.from("small"), { fileName: "small.txt", mimeType: "text/plain" }),
-        /No production file storage is available/,
+        /Durable production storage is not configured/,
       );
     } finally {
       restoreEnv(snapshot);
