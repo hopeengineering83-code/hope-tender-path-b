@@ -73,7 +73,7 @@ export function TenderIntakeDetailPanel({ tender }: { tender: TenderDetailLike }
   const totalCount = fields.length;
 
   return (
-    <section className="rounded-2xl border bg-white p-6 shadow-sm">
+    <section id="tender-edit-form" className="rounded-2xl border bg-white p-6 shadow-sm">
       <div className="mb-4 flex items-start justify-between gap-4">
         <div className="flex-1">
           <h2 className="text-lg font-semibold text-slate-900">Tender Detail</h2>

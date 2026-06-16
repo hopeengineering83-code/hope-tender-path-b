@@ -126,7 +126,7 @@ export function TenderSourceFilesPanel({ tenderId, initialFiles }: { tenderId: s
   }
 
   return (
-    <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm" aria-labelledby="tender-source-files-title">
+    <section id="tender-files" className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm" aria-labelledby="tender-source-files-title">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h2 id="tender-source-files-title" className="text-lg font-semibold text-slate-900">Tender source files</h2>

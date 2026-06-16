@@ -218,7 +218,7 @@ export function GenerationActionPanel({ tenderId, readiness, canonicalReadiness 
 
   return (
     <>
-      <section className={`mb-4 rounded-2xl border p-5 shadow-sm ${panelClass}`}>
+      <section id="generated-documents" className={`mb-4 rounded-2xl border p-5 shadow-sm ${panelClass}`}>
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div>
             <p className={`text-xs font-semibold uppercase tracking-wide ${labelClass}`}>Generation action</p>

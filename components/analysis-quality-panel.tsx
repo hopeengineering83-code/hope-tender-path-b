@@ -107,7 +107,7 @@ export async function AnalysisQualityPanel({ tenderId }: { tenderId: string }) {
   const headerTone = severityTextClass(sectionSev);
 
   return (
-    <section className={`mb-4 rounded-2xl border p-5 shadow-sm ${sectionClass}`}>
+    <section id="analysis-quality" className={`mb-4 rounded-2xl border p-5 shadow-sm ${sectionClass}`}>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <p className={`text-xs font-semibold uppercase tracking-wide ${headerTone}`}>Analysis quality</p>

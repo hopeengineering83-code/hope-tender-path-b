@@ -160,7 +160,7 @@ export async function ExtractionQualityPanel({ tenderId }: { tenderId: string })
   const isContaminated = tender.metadataContaminated;
 
   return (
-    <section className={`mb-4 rounded-2xl border p-5 shadow-sm ${ready ? "border-green-200 bg-green-50" : "border-amber-200 bg-amber-50"}`}>
+    <section id="extraction-quality-detail" className={`mb-4 rounded-2xl border p-5 shadow-sm ${ready ? "border-green-200 bg-green-50" : "border-amber-200 bg-amber-50"}`}>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <p className={`text-xs font-semibold uppercase tracking-wide ${ready ? "text-green-700" : "text-amber-700"}`}>Extraction quality</p>
