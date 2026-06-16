@@ -55,7 +55,12 @@ export async function rateLimitPersistent(key: string, cfg: RateLimitConfig): Pr
     const resetAt = new Date(row.resetAt).getTime();
     return { allowed: count <= cfg.limit, remaining: Math.max(0, cfg.limit - count), resetAt };
   } catch (error) {
-    if (process.env.NODE_ENV === "production") throw error;
+    // Gracefully degrade when the RateLimitBucket table doesn't exist yet
+    // (migration not run on this environment). Fall back to in-memory limiting
+    // so uploads aren't blocked by a missing-table error.
+    const msg = error instanceof Error ? error.message : String(error);
+    const isMissingTable = msg.includes("42P01") || msg.includes("relation") && msg.includes("does not exist");
+    if (process.env.NODE_ENV === "production" && !isMissingTable) throw error;
     return rateLimit(key, cfg);
   }
 }
