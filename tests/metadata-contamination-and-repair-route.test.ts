@@ -201,6 +201,22 @@ describe("POST /api/tenders/[id]/re-extract-metadata — clears metadataContamin
       "contamination flag clear must be gated on update.clientName being populated",
     );
   });
+
+  it("syncs procuringEntityName from clientName when procuringEntityName is empty", () => {
+    assert.match(
+      source,
+      /update\.clientName[\s\S]{1,300}procuringEntityName/,
+      "re-extract-metadata must sync procuringEntityName from clientName when procuringEntityName is not already set",
+    );
+  });
+
+  it("only syncs procuringEntityName when it is not already populated", () => {
+    assert.match(
+      source,
+      /procuringEntityName[\s\S]{1,200}update\.clientName/,
+      "procuringEntityName sync must be guarded against overwriting an existing value",
+    );
+  });
 });
 
 describe("POST /api/tenders/[id]/engine — SELECT includes entity fields (Gap B fix)", () => {

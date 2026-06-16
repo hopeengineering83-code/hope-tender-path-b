@@ -82,7 +82,7 @@ export function ProposalEvidenceReadinessPanel({ tenderId }: { tenderId: string 
   const ok = readiness?.okForGeneration ?? false;
 
   return (
-    <div className="rounded-2xl border bg-white p-5 shadow-sm">
+    <div id="proposal-evidence-readiness" className="rounded-2xl border bg-white p-5 shadow-sm">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h3 className="text-sm font-semibold text-slate-900">Proposal Evidence Readiness</h3>
