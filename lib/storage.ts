@@ -18,6 +18,14 @@ export type StoredRecord = {
   fileName: string;
 };
 
+export type StorageReadiness = {
+  provider: StorageProvider;
+  ready: boolean;
+  durable: boolean;
+  boundedFallback: boolean;
+  detail: string;
+};
+
 export interface StorageAdapter {
   putFile(buffer: Buffer, metadata: StorageMetadata): Promise<{ storagePath: string; fileContent?: string; provider: StorageProvider }>;
   getFile(record: StoredRecord): Promise<Buffer>;
@@ -36,8 +44,28 @@ function hasBlobToken(): boolean {
   return Boolean(process.env.BLOB_READ_WRITE_TOKEN?.trim());
 }
 
-function allowDatabaseStorage(): boolean {
-  return !isProduction() || process.env.ALLOW_DB_FILE_STORAGE === "true";
+function parseBooleanSetting(value: string | undefined): boolean | null {
+  if (value === undefined || value.trim() === "") return null;
+  const normalized = value.trim().toLowerCase();
+  if (["true", "1", "yes", "on"].includes(normalized)) return true;
+  if (["false", "0", "no", "off"].includes(normalized)) return false;
+  return null;
+}
+
+/**
+ * Canonical production storage policy.
+ *
+ * Blob storage is preferred. When Blob is not configured, a bounded 5 MiB
+ * database fallback remains available unless an operator explicitly disables
+ * it with ALLOW_DB_FILE_STORAGE=false. This prevents one upload route from
+ * working while another silently fails because of per-route environment
+ * mutation or duplicated policy.
+ */
+export function isDatabaseStorageAllowed(): boolean {
+  if (!isProduction()) return true;
+  const explicit = parseBooleanSetting(process.env.ALLOW_DB_FILE_STORAGE);
+  if (explicit !== null) return explicit;
+  return !hasBlobToken();
 }
 
 function safeScope(metadata: StorageMetadata): string {
@@ -62,9 +90,42 @@ export function resolveStorageProvider(): StorageProvider {
   return "db-base64";
 }
 
+export function getStorageReadiness(): StorageReadiness {
+  const provider = resolveStorageProvider();
+  if (!isProduction()) {
+    return {
+      provider,
+      ready: true,
+      durable: provider !== "local",
+      boundedFallback: false,
+      detail: `Development storage provider: ${provider}.`,
+    };
+  }
+
+  if (provider === "blob") {
+    return {
+      provider,
+      ready: true,
+      durable: true,
+      boundedFallback: false,
+      detail: "Private Vercel Blob storage is configured.",
+    };
+  }
+
+  const allowed = isDatabaseStorageAllowed();
+  return {
+    provider,
+    ready: allowed,
+    durable: allowed,
+    boundedFallback: allowed,
+    detail: allowed
+      ? `Using bounded database file storage fallback (maximum ${DB_BASE64_MAX_BYTES} bytes per file). Configure BLOB_READ_WRITE_TOKEN before larger-scale use.`
+      : "No production file storage is available. Configure BLOB_READ_WRITE_TOKEN or allow the bounded database fallback.",
+  };
+}
+
 export function isProductionStorageReady(): boolean {
-  if (!isProduction()) return true;
-  return hasBlobToken() || allowDatabaseStorage();
+  return getStorageReadiness().ready;
 }
 
 class LocalStorage implements StorageAdapter {
@@ -97,13 +158,19 @@ class LocalStorage implements StorageAdapter {
   }
 }
 
+let warnedAboutDatabaseFallback = false;
+
 class DbBase64Storage implements StorageAdapter {
   async putFile(buffer: Buffer, _metadata: StorageMetadata) {
-    if (!allowDatabaseStorage()) {
+    if (!isDatabaseStorageAllowed()) {
       throw new Error("Durable production storage is not configured");
     }
     if (buffer.byteLength > DB_BASE64_MAX_BYTES) {
-      throw new Error(`Database file storage limit exceeded (${DB_BASE64_MAX_BYTES} bytes)`);
+      throw new Error(`Database file storage limit exceeded (${DB_BASE64_MAX_BYTES} bytes). Configure Vercel Blob for larger files.`);
+    }
+    if (isProduction() && !warnedAboutDatabaseFallback) {
+      warnedAboutDatabaseFallback = true;
+      console.warn("[storage] BLOB_READ_WRITE_TOKEN is not configured; using bounded database file storage fallback");
     }
     return { storagePath: "", fileContent: buffer.toString("base64"), provider: "db-base64" as const };
   }
@@ -174,6 +241,7 @@ export function getActiveStorageProvider(): StorageProvider {
 export function resetStorageAdapter(): void {
   cached = null;
   cachedProvider = null;
+  warnedAboutDatabaseFallback = false;
 }
 
 export async function saveUploadedFile(

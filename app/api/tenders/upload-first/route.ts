@@ -1,5 +1,6 @@
 import { extractRequestId } from "../../../../lib/request-id";
 import { sanitizeError } from "../../../../lib/sanitize-error";
+import { handleUploadFirstTender } from "../../../../lib/tender-upload-first";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -8,10 +9,6 @@ export async function POST(req: Request) {
   const requestId = extractRequestId(req);
   const isProduction = process.env.NODE_ENV === "production";
   try {
-    if (isProduction && !process.env.BLOB_READ_WRITE_TOKEN && process.env.ALLOW_DB_FILE_STORAGE === undefined) {
-      process.env.ALLOW_DB_FILE_STORAGE = "true";
-    }
-    const { handleUploadFirstTender } = await import("../../../../lib/tender-upload-first");
     return await handleUploadFirstTender(req);
   } catch (error) {
     const detail = sanitizeError(error);

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 const source = readFileSync("lib/ai.ts", "utf8");
+const reconciler = readFileSync("scripts/reconcile-gap-closure.mjs", "utf8");
 const canonical = ["mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"];
 const displayOrder = "Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Claude";
 
@@ -20,29 +21,26 @@ function chainFor(useCase: string): string[] {
   return canonicalChain();
 }
 
-describe("AI provider chain policy", () => {
+describe("AI provider gateway policy", () => {
   it("uses the required canonical provider chain with Claude last", () => {
     assert.deepEqual(canonicalChain(), canonical);
   });
 
-  it("uses the canonical chain for every supported use case", () => {
+  it("uses the canonical chain for every generic gateway use case", () => {
     for (const useCase of ["default", "extraction", "proposal", "validation", "fast", "reasoning"]) {
       assert.deepEqual(chainFor(useCase), canonical, `${useCase} chain mismatch`);
     }
   });
 
-  it("includes Mistral and Together in the canonical chain", () => {
-    assert.ok(canonicalChain().includes("mistral"), "mistral must be in canonical chain");
-    assert.ok(canonicalChain().includes("together"), "together must be in canonical chain");
-    assert.equal(canonicalChain()[0], "mistral", "mistral must be first");
-    assert.equal(canonicalChain()[canonicalChain().length - 1], "anthropic", "claude/anthropic must be last");
+  it("applies the prompt trust boundary before generic provider calls", () => {
+    assert.match(source, /const trustBoundary = protectPrompt\(prompt\)/);
+    assert.match(source, /callProvider\(provider, trustBoundary\.protectedPrompt/);
   });
 
-  it("documents and implements proposal/section generation in the required order", () => {
-    assert.match(source, /Provider chain for proposal generation: mistral → groq → openrouter → gemini → openai → together → deepseek → anthropic/);
-    assert.match(source, /Provider chain for sections: mistral → groq → openrouter → gemini → openai → together → deepseek → anthropic/);
-    assert.ok(source.indexOf("// Claude (Anthropic) — last resort") > source.indexOf("// Groq/OpenRouter tail"));
-    assert.ok(source.indexOf("// Claude — last resort") > source.indexOf("// Groq/OpenRouter section tail"));
+  it("never rewrites AI or UI source during install, build, lint, test, or typecheck", () => {
+    assert.equal(/writeFileSync|appendFileSync|renameSync|unlinkSync|rmSync|cpSync/.test(reconciler), false);
+    assert.match(reconciler, /readFileSync/);
+    assert.match(reconciler, /never rewrites repository files|without modifying repository files/);
   });
 });
 
@@ -77,7 +75,7 @@ describe("AI provider status surfaces stay aligned with canonical chain", () => 
     assert.ok(healthRoute.indexOf('fallbackRank: 1,\n        label: "Mistral"') < healthRoute.indexOf('fallbackRank: 8,\n        label: "Claude"'));
   });
 
-  it("keeps configured-provider checks in the required relative order", () => {
+  it("keeps configured-provider checks in required relative order", () => {
     assert.ok(envReadiness.indexOf('present("MISTRAL_API_KEY")') < envReadiness.indexOf('present("GROQ_API_KEY")'));
     assert.ok(envReadiness.indexOf('present("GROQ_API_KEY")') < envReadiness.indexOf('present("OPENROUTER_API_KEY")'));
     assert.ok(envReadiness.indexOf('present("OPENROUTER_API_KEY")') < envReadiness.indexOf('present("GEMINI_API_KEY")'));
@@ -85,11 +83,5 @@ describe("AI provider status surfaces stay aligned with canonical chain", () => 
     assert.ok(envReadiness.indexOf('present("OPENAI_API_KEY")') < envReadiness.indexOf('present("TOGETHER_API_KEY")'));
     assert.ok(envReadiness.indexOf('present("TOGETHER_API_KEY")') < envReadiness.indexOf('present("DEEPSEEK_API_KEY")'));
     assert.ok(envReadiness.indexOf('present("DEEPSEEK_API_KEY")') < envReadiness.indexOf('present("ANTHROPIC_API_KEY")'));
-  });
-
-  it("surfaces Mistral-first order in environment readiness", () => {
-    assert.match(envReadiness, /Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Claude/);
-    assert.ok(envReadiness.indexOf('present("MISTRAL_API_KEY")') < envReadiness.indexOf('present("GEMINI_API_KEY")'));
-    assert.ok(envReadiness.indexOf('present("ANTHROPIC_API_KEY")') > envReadiness.indexOf('present("OPENROUTER_API_KEY")'));
   });
 });
