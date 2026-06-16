@@ -64,10 +64,18 @@ test.describe("Full pipeline — upload → analyze → generate → export", ()
 
   test.beforeEach(async ({ page }) => {
     await page.goto("/login");
+    await page.waitForLoadState("networkidle");
     await page.fill("input[type=email], input[name=email]", email);
     await page.fill("input[type=password], input[name=password]", password);
-    await page.click("button[type=submit]");
-    await expect(page).toHaveURL(/dashboard/);
+    const [loginResp] = await Promise.all([
+      page.waitForResponse((r) => r.url().includes("/api/auth/login"), { timeout: 15_000 }),
+      page.click("button[type=submit]"),
+    ]);
+    if (loginResp.status() !== 200) {
+      const body = await loginResp.text().catch(() => "(unreadable)");
+      throw new Error(`Login failed: status=${loginResp.status()} body=${body}`);
+    }
+    await expect(page).toHaveURL(/dashboard/, { timeout: 15_000 });
   });
 
   test("Step 1 — Upload creates tender and shows Extraction Quality panel", async ({ page }) => {

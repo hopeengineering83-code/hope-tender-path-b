@@ -48,7 +48,9 @@ jobs:
       GEMINI_API_KEY: "AIzaFakeCiBuildKeyNotUsedAtRuntime12345678901"
       ANTHROPIC_API_KEY: ""
       RUN_DB_INTEGRATION: "true"
-      E2E_FULL_AUTH: "false"
+      E2E_FULL_AUTH: "true"
+      E2E_TEST_EMAIL: "e2e-release-integrity@example.test"
+      E2E_TEST_PASSWORD: "E2E-release-integrity-password-2026"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -71,8 +73,8 @@ jobs:
       - name: Generate Prisma client
         run: npx prisma generate
 
-      - name: Initialize CI database
-        run: npx prisma db push
+      - name: Deploy migrations to CI database
+        run: npx prisma migrate deploy
 
       - name: Apply custom database guards
         run: npx prisma db execute --file prisma/migrations/20260613190000_comprehensive_gap_guards/migration.sql --schema prisma/schema.prisma
@@ -118,7 +120,19 @@ jobs:
       - name: Install Playwright browser
         run: npx playwright install --with-deps chromium
 
-      - name: Browser smoke tests
+      - name: Seed E2E test user
+        run: node scripts/seed-e2e-user.mjs
+
+      - name: Browser smoke and authenticated pipeline tests
+        env:
+          CSRF_MODE: "off"
+          MISTRAL_API_KEY: ""
+          GROQ_API_KEY: ""
+          OPENROUTER_API_KEY: ""
+          GEMINI_API_KEY: "ci-provider-placeholder-not-used-at-runtime"
+          OPENAI_API_KEY: ""
+          TOGETHER_API_KEY: ""
+          DEEPSEEK_API_KEY: ""
         run: npm run test:e2e
 
       - name: Reject test or build source mutation
