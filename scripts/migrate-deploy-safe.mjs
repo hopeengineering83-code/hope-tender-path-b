@@ -6,6 +6,16 @@ const MIGRATIONS_DIR = join(process.cwd(), "prisma", "migrations");
 const BASELINE_CUTOFF = process.env.PRISMA_BASELINE_CUTOFF || "20260613190000_comprehensive_gap_guards";
 const explicitBaseline = ["1", "true", "yes"].includes((process.env.PRISMA_BASELINE_EXISTING_DB || "").trim().toLowerCase());
 
+// In Vercel PREVIEW builds where DATABASE_URL is not configured, skip migrations
+// gracefully. The app bootstrap (lib/prisma.ts) handles schema on first request.
+// In production and CI (DATABASE_URL always set), migrations always run.
+const isVercelPreview = process.env.VERCEL === "1" && process.env.VERCEL_ENV === "preview";
+if (isVercelPreview && !process.env.DATABASE_URL) {
+  console.warn("Skipping migrations: Vercel preview build with no DATABASE_URL configured.");
+  console.warn("Set DATABASE_URL in Vercel project settings (Settings → Environment Variables → Preview) to run migrations on preview deployments.");
+  process.exit(0);
+}
+
 // PR XX-G13 — remove automatic baselining based on VERCEL_ENV or neon.tech URL.
 // Explicit confirmation via PRISMA_BASELINE_EXISTING_DB=true is now required.
 const ALLOW_BASELINE = explicitBaseline;
