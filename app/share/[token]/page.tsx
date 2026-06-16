@@ -1,11 +1,15 @@
+import { unstable_noStore as noStore } from "next/cache";
 import { prisma, prismaReady } from "../../../lib/prisma";
+import { isValidTenderShareToken } from "../../../lib/tender-share-security";
 
-export default async function SharePage({ params }: { params: Promise<{ token: string }> }) {
-  const { token } = await params;
-  await prismaReady;
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
-  const share = await prisma.tenderShare.findUnique({
-    where: { token },
+type ShareWithTender = Awaited<ReturnType<typeof loadShare>>;
+
+async function loadShare(id: string) {
+  return prisma.tenderShare.findUnique({
+    where: { id },
     include: {
       tender: {
         select: {
@@ -25,50 +29,78 @@ export default async function SharePage({ params }: { params: Promise<{ token: s
       },
     },
   });
+}
 
-  if (!share) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-50">
-        <div className="max-w-md w-full text-center p-8 rounded-xl border border-slate-200 bg-white shadow-sm">
-          <div className="text-4xl mb-4">🔗</div>
-          <h1 className="text-xl font-semibold text-slate-800 mb-2">Link Not Found</h1>
-          <p className="text-slate-500">This link is invalid or has expired.</p>
-        </div>
+function MessagePage({ icon, title, message }: { icon: string; title: string; message: string }) {
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-slate-50">
+      <div className="max-w-md w-full text-center p-8 rounded-xl border border-slate-200 bg-white shadow-sm">
+        <div className="text-4xl mb-4">{icon}</div>
+        <h1 className="text-xl font-semibold text-slate-800 mb-2">{title}</h1>
+        <p className="text-slate-500">{message}</p>
       </div>
-    );
+    </div>
+  );
+}
+
+async function claimShareAccess(token: string): Promise<
+  | { ok: true; share: NonNullable<ShareWithTender> }
+  | { ok: false; reason: "not-found" | "revoked" | "expired" | "limit" }
+> {
+  const claimed = await prisma.$queryRaw<Array<{ id: string }>>`
+    UPDATE "TenderShare"
+    SET "downloadCount" = "downloadCount" + 1
+    WHERE "token" = ${token}
+      AND "revokedAt" IS NULL
+      AND ("expiresAt" IS NULL OR "expiresAt" > NOW())
+      AND ("maxDownloads" IS NULL OR "downloadCount" < "maxDownloads")
+    RETURNING "id"
+  `;
+
+  const claimedId = claimed[0]?.id;
+  if (claimedId) {
+    const share = await loadShare(claimedId);
+    if (share && !share.revokedAt && (!share.expiresAt || share.expiresAt > new Date())) {
+      return { ok: true, share };
+    }
   }
 
-  if ((share.expiresAt && share.expiresAt < new Date()) || share.revokedAt) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-50">
-        <div className="max-w-md w-full text-center p-8 rounded-xl border border-slate-200 bg-white shadow-sm">
-          <div className="text-4xl mb-4">{share.revokedAt ? "🚫" : "⏰"}</div>
-          <h1 className="text-xl font-semibold text-slate-800 mb-2">Link {share.revokedAt ? "Revoked" : "Expired"}</h1>
-          <p className="text-slate-500">This link is invalid or has {share.revokedAt ? "been revoked" : "expired"}.</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (share.maxDownloads && share.downloadCount >= share.maxDownloads) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-50">
-        <div className="max-w-md w-full text-center p-8 rounded-xl border border-slate-200 bg-white shadow-sm">
-          <div className="text-4xl mb-4">🛑</div>
-          <h1 className="text-xl font-semibold text-slate-800 mb-2">Download Limit Reached</h1>
-          <p className="text-slate-500">This link has reached its maximum download limit.</p>
-        </div>
-      </div>
-    );
-  }
-
-  // Record access/download count increment
-  await prisma.tenderShare.update({
-    where: { id: share.id },
-    data: { downloadCount: { increment: 1 } },
+  const status = await prisma.tenderShare.findUnique({
+    where: { token },
+    select: { revokedAt: true, expiresAt: true, maxDownloads: true, downloadCount: true },
   });
+  if (!status) return { ok: false, reason: "not-found" };
+  if (status.revokedAt) return { ok: false, reason: "revoked" };
+  if (status.expiresAt && status.expiresAt <= new Date()) return { ok: false, reason: "expired" };
+  if (status.maxDownloads !== null && status.downloadCount >= status.maxDownloads) {
+    return { ok: false, reason: "limit" };
+  }
+  return { ok: false, reason: "not-found" };
+}
 
-  const tender = share.tender;
+export default async function SharePage({ params }: { params: Promise<{ token: string }> }) {
+  noStore();
+  const { token } = await params;
+  if (!isValidTenderShareToken(token)) {
+    return <MessagePage icon="🔗" title="Link Not Found" message="This link is invalid or has expired." />;
+  }
+
+  await prismaReady;
+  const result = await claimShareAccess(token);
+  if (!result.ok) {
+    if (result.reason === "revoked") {
+      return <MessagePage icon="🚫" title="Link Revoked" message="This link has been revoked." />;
+    }
+    if (result.reason === "expired") {
+      return <MessagePage icon="⏰" title="Link Expired" message="This link has expired." />;
+    }
+    if (result.reason === "limit") {
+      return <MessagePage icon="🛑" title="Access Limit Reached" message="This link has reached its maximum access limit." />;
+    }
+    return <MessagePage icon="🔗" title="Link Not Found" message="This link is invalid or has expired." />;
+  }
+
+  const tender = result.share.tender;
   const summary = tender.analysisSummary
     ? tender.analysisSummary.length > 600
       ? tender.analysisSummary.slice(0, 600) + "…"
@@ -95,13 +127,11 @@ export default async function SharePage({ params }: { params: Promise<{ token: s
 
   return (
     <div className="min-h-screen bg-slate-50">
-      {/* Read-Only Banner */}
       <div className="bg-amber-50 border-b border-amber-200 px-4 py-2 text-center text-sm text-amber-700 font-medium">
         Shared Tender — Read Only
       </div>
 
       <div className="max-w-3xl mx-auto py-8 px-4 space-y-6">
-        {/* Tender Header */}
         <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
           <h1 className="text-2xl font-bold text-slate-800 mb-4">{tender.title}</h1>
           <div className="grid grid-cols-2 gap-3 text-sm">
@@ -132,7 +162,6 @@ export default async function SharePage({ params }: { params: Promise<{ token: s
           </div>
         </div>
 
-        {/* AI Analysis Summary */}
         {summary && (
           <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
             <h2 className="text-lg font-semibold text-slate-700 mb-3">AI Analysis Summary</h2>
@@ -140,28 +169,21 @@ export default async function SharePage({ params }: { params: Promise<{ token: s
           </div>
         )}
 
-        {/* Requirements */}
         {topRequirements.length > 0 && (
           <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
             <h2 className="text-lg font-semibold text-slate-700 mb-3">
               Requirements
-              <span className="ml-2 text-sm font-normal text-slate-400">
-                (top {topRequirements.length})
-              </span>
+              <span className="ml-2 text-sm font-normal text-slate-400">(top {topRequirements.length})</span>
             </h2>
             <div className="divide-y divide-slate-100">
-              {topRequirements.map((req, i) => (
-                <div key={i} className="py-2 flex items-start gap-3">
-                  <span
-                    className={`mt-0.5 shrink-0 text-xs font-medium px-2 py-0.5 rounded-full ${priorityColors[req.priority] ?? "bg-slate-100 text-slate-600"}`}
-                  >
+              {topRequirements.map((req, index) => (
+                <div key={`${req.title}-${index}`} className="py-2 flex items-start gap-3">
+                  <span className={`mt-0.5 shrink-0 text-xs font-medium px-2 py-0.5 rounded-full ${priorityColors[req.priority] ?? "bg-slate-100 text-slate-600"}`}>
                     {req.priority}
                   </span>
                   <div className="min-w-0">
                     <p className="text-sm text-slate-800">{req.title}</p>
-                    {req.requirementType && (
-                      <p className="text-xs text-slate-400 mt-0.5">{req.requirementType}</p>
-                    )}
+                    {req.requirementType && <p className="text-xs text-slate-400 mt-0.5">{req.requirementType}</p>}
                   </div>
                 </div>
               ))}
@@ -169,23 +191,18 @@ export default async function SharePage({ params }: { params: Promise<{ token: s
           </div>
         )}
 
-        {/* Generated Documents */}
         {tender.generatedDocuments.length > 0 && (
           <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
             <h2 className="text-lg font-semibold text-slate-700 mb-3">Generated Documents</h2>
             <div className="divide-y divide-slate-100">
-              {tender.generatedDocuments.map((doc, i) => (
-                <div key={i} className="py-2 flex items-center justify-between gap-3">
+              {tender.generatedDocuments.map((doc, index) => (
+                <div key={`${doc.documentType}-${index}`} className="py-2 flex items-center justify-between gap-3">
                   <span className="text-sm text-slate-700">{doc.documentType}</span>
                   <div className="flex gap-2">
-                    <span
-                      className={`text-xs font-medium px-2 py-0.5 rounded-full ${statusColors[doc.generationStatus] ?? "bg-slate-100 text-slate-600"}`}
-                    >
+                    <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${statusColors[doc.generationStatus] ?? "bg-slate-100 text-slate-600"}`}>
                       {doc.generationStatus}
                     </span>
-                    <span
-                      className={`text-xs font-medium px-2 py-0.5 rounded-full ${statusColors[doc.validationStatus] ?? "bg-slate-100 text-slate-600"}`}
-                    >
+                    <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${statusColors[doc.validationStatus] ?? "bg-slate-100 text-slate-600"}`}>
                       {doc.validationStatus}
                     </span>
                   </div>
@@ -195,10 +212,7 @@ export default async function SharePage({ params }: { params: Promise<{ token: s
           </div>
         )}
 
-        {/* Footer */}
-        <div className="text-center text-xs text-slate-400 pb-4">
-          Powered by Hope Tender
-        </div>
+        <div className="text-center text-xs text-slate-400 pb-4">Powered by Hope Tender</div>
       </div>
     </div>
   );
