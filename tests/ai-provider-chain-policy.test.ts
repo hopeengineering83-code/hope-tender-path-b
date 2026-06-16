@@ -20,29 +20,70 @@ function chainFor(useCase: string): string[] {
   return canonicalChain();
 }
 
+function executableProviderOrder(startMarker: string, endMarker: string): string[] {
+  const start = source.indexOf(startMarker);
+  const end = source.indexOf(endMarker, start + startMarker.length);
+  assert.ok(start >= 0 && end > start, `Unable to isolate executable provider block: ${startMarker}`);
+  const block = source.slice(start, end);
+  const result: string[] = [];
+  for (const match of block.matchAll(/isProviderCooledDown\("([^"]+)"\)/g)) {
+    const provider = match[1];
+    if (!result.includes(provider)) result.push(provider);
+  }
+  return result;
+}
+
 describe("AI provider chain policy", () => {
   it("uses the required canonical provider chain with Claude last", () => {
     assert.deepEqual(canonicalChain(), canonical);
   });
 
-  it("uses the canonical chain for every supported use case", () => {
+  it("uses the canonical chain for every supported generic use case", () => {
     for (const useCase of ["default", "extraction", "proposal", "validation", "fast", "reasoning"]) {
       assert.deepEqual(chainFor(useCase), canonical, `${useCase} chain mismatch`);
     }
   });
 
-  it("includes Mistral and Together in the canonical chain", () => {
-    assert.ok(canonicalChain().includes("mistral"), "mistral must be in canonical chain");
-    assert.ok(canonicalChain().includes("together"), "together must be in canonical chain");
-    assert.equal(canonicalChain()[0], "mistral", "mistral must be first");
-    assert.equal(canonicalChain()[canonicalChain().length - 1], "anthropic", "claude/anthropic must be last");
+  it("enables AI when any canonical provider is configured", () => {
+    const match = source.match(/export function isAIEnabled\(\) \{[\s\S]*?\n\}/);
+    assert.ok(match, "Missing isAIEnabled()");
+    for (const token of [
+      "isMistralConfigured()",
+      "isGroqConfigured()",
+      "isOpenRouterConfigured()",
+      "apiKey",
+      "process.env.OPENAI_API_KEY",
+      "isTogetherConfigured()",
+      "isDeepSeekConfigured()",
+      "anthropicApiKey",
+    ]) {
+      assert.ok(match[0].includes(token), `isAIEnabled() must include ${token}`);
+    }
   });
 
-  it("documents and implements proposal/section generation in the required order", () => {
-    assert.match(source, /Provider chain for proposal generation: mistral → groq → openrouter → gemini → openai → together → deepseek → anthropic/);
-    assert.match(source, /Provider chain for sections: mistral → groq → openrouter → gemini → openai → together → deepseek → anthropic/);
-    assert.ok(source.indexOf("// Claude (Anthropic) — last resort") > source.indexOf("// Groq/OpenRouter tail"));
-    assert.ok(source.indexOf("// Claude — last resort") > source.indexOf("// Groq/OpenRouter section tail"));
+  it("executes monolithic proposal providers in canonical order", () => {
+    assert.deepEqual(
+      executableProviderOrder(
+        "// Provider chain for proposal generation:",
+        "lastProposalProvider = null;",
+      ),
+      canonical,
+    );
+  });
+
+  it("executes parallel-section providers in canonical order", () => {
+    assert.deepEqual(
+      executableProviderOrder(
+        "// Provider chain for sections:",
+        "// All providers failed (or unavailable).",
+      ),
+      canonical,
+    );
+  });
+
+  it("applies the prompt trust boundary before generic provider calls", () => {
+    assert.match(source, /const trustBoundary = protectPrompt\(prompt\)/);
+    assert.match(source, /callProvider\(provider, trustBoundary\.protectedPrompt/);
   });
 });
 
@@ -85,11 +126,5 @@ describe("AI provider status surfaces stay aligned with canonical chain", () => 
     assert.ok(envReadiness.indexOf('present("OPENAI_API_KEY")') < envReadiness.indexOf('present("TOGETHER_API_KEY")'));
     assert.ok(envReadiness.indexOf('present("TOGETHER_API_KEY")') < envReadiness.indexOf('present("DEEPSEEK_API_KEY")'));
     assert.ok(envReadiness.indexOf('present("DEEPSEEK_API_KEY")') < envReadiness.indexOf('present("ANTHROPIC_API_KEY")'));
-  });
-
-  it("surfaces Mistral-first order in environment readiness", () => {
-    assert.match(envReadiness, /Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Claude/);
-    assert.ok(envReadiness.indexOf('present("MISTRAL_API_KEY")') < envReadiness.indexOf('present("GEMINI_API_KEY")'));
-    assert.ok(envReadiness.indexOf('present("ANTHROPIC_API_KEY")') > envReadiness.indexOf('present("OPENROUTER_API_KEY")'));
   });
 });
