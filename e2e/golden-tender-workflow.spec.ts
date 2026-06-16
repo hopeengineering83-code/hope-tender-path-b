@@ -1,6 +1,6 @@
 import { test, expect } from "@playwright/test";
 
-const FULL = process.env.E2E_FULL_AUTH === "true";
+const FULL = process.env.E2E_GOLDEN_AUTH === "true";
 const email = process.env.E2E_TEST_EMAIL ?? "e2e-release-integrity@example.test";
 const password = process.env.E2E_TEST_PASSWORD ?? "E2E-release-integrity-password-2026";
 
@@ -30,7 +30,7 @@ Only proposals achieving 70 technical points proceed to financial evaluation.
 `;
 
 test.describe.serial("Golden tender workflow — authenticated release contract", () => {
-  test.skip(!FULL, "Set E2E_FULL_AUTH=true and seed the isolated E2E account");
+  test.skip(!FULL, "Set E2E_GOLDEN_AUTH=true and seed the isolated E2E account");
   test.setTimeout(120_000);
 
   test("upload-first → add source file → AI Analyze fallback → readiness gate", async ({ page }) => {
