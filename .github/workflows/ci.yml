@@ -129,7 +129,7 @@ jobs:
           MISTRAL_API_KEY: ""
           GROQ_API_KEY: ""
           OPENROUTER_API_KEY: ""
-          GEMINI_API_KEY: ""
+          GEMINI_API_KEY: "ci-provider-placeholder-not-used-at-runtime"
           OPENAI_API_KEY: ""
           TOGETHER_API_KEY: ""
           DEEPSEEK_API_KEY: ""
