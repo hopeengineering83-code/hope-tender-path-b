@@ -6,6 +6,7 @@ import { parseTenderStatus } from "../../../../lib/tender-workflow";
 import { prepareDashboardGeneratedDocuments } from "../../../../lib/dashboard-generated-documents";
 import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../lib/rate-limit";
 import { getLatestAnalyzeCheckpointProgress } from "../../../../lib/ai-analyze-checkpoints";
+import { detectMetadataContamination } from "../../../../lib/engine/tender-metadata-completeness";
 
 function withDashboardGeneratedDocuments<T extends { generatedDocuments: any[] }>(tender: T): T {
   const prepared = prepareDashboardGeneratedDocuments(tender.generatedDocuments);
@@ -156,13 +157,23 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
     const status = parseTenderStatus(body.status);
 
     const prevStatus = existing.status;
+
+    // When the user manually provides a new clientName, re-evaluate the
+    // contamination flag so a valid correction clears the generation block.
+    const newClientName = body.clientName ?? existing.clientName;
+    const metadataContaminatedOverride =
+      body.clientName != null && body.clientName !== existing.clientName
+        ? detectMetadataContamination(newClientName).contaminated
+        : undefined;
+
     const tender = await prisma.tender.update({
       where: { id },
       data: {
         title: body.title ?? existing.title,
         description: body.description ?? existing.description,
         reference: body.reference ?? existing.reference,
-        clientName: body.clientName ?? existing.clientName,
+        clientName: newClientName,
+        ...(metadataContaminatedOverride !== undefined ? { metadataContaminated: metadataContaminatedOverride } : {}),
         category: body.category ?? existing.category,
         budget:
           body.budget !== undefined
