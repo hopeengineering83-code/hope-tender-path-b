@@ -48,6 +48,8 @@ const documentReview = read("app/api/tenders/[id]/documents/[docId]/route.ts");
 const jobClaim = read("lib/job-claim-policy.ts");
 const providerPolicy = read("lib/ai-provider-policy.ts");
 const ci = read(".github/workflows/ci.yml");
+const postDeployWorkflow = read(".github/workflows/post-deploy-health.yml");
+const postDeployVerifier = read("scripts/verify-production-health.mjs");
 const ledger = read("docs/release-integrity-ledger.md");
 const prTemplate = read(".github/pull_request_template.md");
 
@@ -79,6 +81,8 @@ assertRule("canonical AI provider order", providerOrderOk, `provider policy must
 assertRule("CI release audit", ci.includes("npm run audit:release-integrity"), "CI must execute the release-integrity audit");
 assertRule("CI migration path", ci.includes("Validate production migration path"), "CI must apply migrations to a clean production-like database");
 assertRule("CI critical schema", ci.includes("npm run db:check-critical-schema"), "CI must verify critical tables, columns, functions, and migration state");
+assertRule("post-deploy workflow", postDeployWorkflow.includes("Verify production health and deployed commit") && postDeployWorkflow.includes("workflow_run"), "successful main CI must trigger production verification");
+assertRule("post-deploy release match", postDeployVerifier.includes("health.release === expectedSha") && postDeployVerifier.includes("RateLimitBucket"), "post-deploy verification must check the deployed SHA and critical tables");
 
 assertRule("release integrity ledger", ledger.includes("RI-001") && ledger.includes("RI-014"), "canonical non-negotiable rules must remain documented");
 assertRule("PR change impact matrix", prTemplate.includes("Change-impact matrix") && prTemplate.includes("Representative workflow verification"), "PR template must require impact and workflow evidence");
