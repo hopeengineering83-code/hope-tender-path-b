@@ -74,8 +74,13 @@ async function main() {
   }
 
   const functionRows = await prisma.$queryRawUnsafe(
-    `SELECT proname FROM pg_proc WHERE proname = ANY($1::text[])`,
-    REQUIRED_FUNCTIONS,
+    `SELECT proname
+       FROM pg_proc
+      WHERE proname IN (
+        'resolve_tender_requirement_source_file',
+        'guard_canonical_requirement_set_delete',
+        'refresh_submission_plan_state'
+      )`,
   );
   const functions = new Set(functionRows.map((row) => row.proname));
   const missingFunctions = REQUIRED_FUNCTIONS.filter((name) => !functions.has(name));
