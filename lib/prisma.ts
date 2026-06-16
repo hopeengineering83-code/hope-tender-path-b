@@ -603,6 +603,15 @@ async function bootstrap(client: PrismaClient): Promise<void> {
   await ensureColumn(client, "Expert", "deletedBy", "TEXT");
   await ensureColumn(client, "Project", "deletedAt", "TIMESTAMPTZ");
   await ensureColumn(client, "Project", "deletedBy", "TEXT");
+  // Missing TenderFile extraction/deletion columns (gap analysis)
+  await ensureColumn(client, "TenderFile", "deletionStatus", "TEXT NOT NULL DEFAULT 'ACTIVE'");
+  await ensureColumn(client, "TenderFile", "deletionAttempts", "INTEGER NOT NULL DEFAULT 0");
+  await ensureColumn(client, "TenderFile", "totalPages", "INTEGER");
+  await ensureColumn(client, "TenderFile", "extractedPages", "INTEGER");
+  await ensureColumn(client, "TenderFile", "ocrPages", "INTEGER");
+  await ensureColumn(client, "TenderFile", "failedPages", "INTEGER");
+  await ensureColumn(client, "TenderFile", "extractionScore", "DOUBLE PRECISION");
+  await ensureColumn(client, "TenderFile", "extractionMethod", "TEXT");
 
   // ── Schema-drift repair: DocumentReview / DocumentComment ─────────────────
   // Earlier bootstrap created these tables with wrong column names
