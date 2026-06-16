@@ -40,6 +40,14 @@ export const RECOVERY_COMMAND_ACTIONS: Record<string, RecoveryCommandActionSpec>
     method: "POST",
     path: "/api/tenders/{tenderId}/ai-analyze",
   },
+  RESUME_AI_ANALYZE: {
+    label: "Resume AI Analyze",
+    kind: "api",
+    method: "POST",
+    // The ai-analyze endpoint auto-detects the latest resumable PARTIAL_SUCCESS
+    // or FAILED job with saved chunkResults — no ?continue= param needed.
+    path: "/api/tenders/{tenderId}/ai-analyze",
+  },
   REVIEW_ANALYSIS: {
     label: "Review Analysis",
     kind: "api",

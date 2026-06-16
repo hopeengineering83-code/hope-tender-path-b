@@ -335,9 +335,17 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
         if (pp.requiredDocumentPages.length > 0) anyRequiredDocs = true;
       }
       if (totalDetected > 0) {
-        if (!anySubmission) contentPageWarnings.push("No submission instruction pages were detected in the extracted text. Submission deadlines, addresses, and methods may be missing.");
-        if (!anyEvaluation) contentPageWarnings.push("No evaluation criteria pages were detected. The plan may not reflect the correct scoring weights and technical requirements.");
-        if (!anyRequiredDocs) contentPageWarnings.push("No required documents/forms pages were detected. The submission plan may be missing mandatory annexures or official forms.");
+        const missingSections: string[] = [];
+        if (!anySubmission) missingSections.push("submission instructions");
+        if (!anyEvaluation) missingSections.push("evaluation criteria");
+        if (!anyRequiredDocs) missingSections.push("required documents/forms");
+        if (missingSections.length > 0) {
+          // CLAUDE.md mandate: Build Plan gate must show this exact message when
+          // critical section pages are missing from the extracted text.
+          contentPageWarnings.push(
+            `Submission plan cannot be trusted because required tender pages were not fully extracted — no ${missingSections.join(" or ")} pages detected. Re-extract or run OCR, then re-run AI Analyze before finalizing the plan.`
+          );
+        }
       }
     }
 

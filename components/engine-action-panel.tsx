@@ -286,7 +286,7 @@ export function EngineActionPanel({
   const extractionBlocked = result?.code === "EXTRACTION_NOT_READY";
 
   return (
-    <section className="mb-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+    <section id="run-engine-action" className="mb-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
         <div>
           <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Run Engine control</p>

@@ -55,7 +55,16 @@ export async function rateLimitPersistent(key: string, cfg: RateLimitConfig): Pr
     const resetAt = new Date(row.resetAt).getTime();
     return { allowed: count <= cfg.limit, remaining: Math.max(0, cfg.limit - count), resetAt };
   } catch (error) {
-    if (process.env.NODE_ENV === "production") throw error;
+    // Gracefully degrade on any DB error so uploads aren't blocked by transient
+    // connectivity issues, cold-start timeouts, or missing-table errors (42P01).
+    // Only rethrow permission errors (42501) which indicate a config problem
+    // that needs operator attention, not a transient degradation.
+    const msg = error instanceof Error ? error.message : String(error);
+    const isPermissionError = msg.includes("42501") || msg.includes("permission denied");
+    if (isPermissionError) throw error;
+    if (process.env.NODE_ENV === "production") {
+      console.warn("[rate-limit] DB error, falling back to in-memory:", msg.slice(0, 120));
+    }
     return rateLimit(key, cfg);
   }
 }

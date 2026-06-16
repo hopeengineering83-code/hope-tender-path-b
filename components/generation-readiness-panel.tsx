@@ -5,11 +5,11 @@ import { getTenderGenerationReadinessStrict } from "../lib/tender-generation-rea
 import type { TenderGenerationReadiness } from "../lib/tender-generation-readiness";
 
 function actionHref(tenderId: string, action?: string): string {
-  if (action === "EDIT_TENDER") return `/dashboard/tenders/${tenderId}#legacy-tender-detail-actions`;
-  if (action === "EDIT_TENDER_METADATA") return `/dashboard/tenders/${tenderId}#legacy-tender-detail-actions`;
+  if (action === "EDIT_TENDER") return `/dashboard/tenders/${tenderId}#tender-edit-form`;
+  if (action === "EDIT_TENDER_METADATA") return `/dashboard/tenders/${tenderId}#tender-edit-form`;
   if (action === "OPEN_COMPANY_READINESS") return "/dashboard/company/readiness";
   if (action === "OPEN_EXTRACTION_QUALITY") return `/dashboard/tenders/${tenderId}#extraction-quality`;
-  if (action === "BUILD_SUBMISSION_PLAN") return `/dashboard/tenders/${tenderId}#submission-plan`;
+  if (action === "BUILD_SUBMISSION_PLAN") return `/dashboard/tenders/${tenderId}#submission-plan-reconciliation`;
   if (action === "OPEN_ANALYSIS_QUALITY") return `/dashboard/tenders/${tenderId}#analysis-quality`;
   if (action === "OPEN_MATCHING_QUALITY") return `/dashboard/tenders/${tenderId}#matching-quality`;
   if (action === "RUN_ENGINE") return `/dashboard/tenders/${tenderId}#run-engine-action`;
@@ -20,7 +20,7 @@ function actionHref(tenderId: string, action?: string): string {
   if (action === "RUN_ENGINE_OR_APPROVE_ANALYSIS") return `/dashboard/tenders/${tenderId}#run-engine-action`;
   if (action === "RETRY_AI_ANALYZE") return `/dashboard/tenders/${tenderId}#run-engine-action`;
   if (action === "REVIEW_ANALYSIS") return `/dashboard/tenders/${tenderId}#analysis-quality`;
-  if (action === "REPAIR_OR_EDIT_TENDER") return `/dashboard/tenders/${tenderId}#legacy-tender-detail-actions`;
+  if (action === "REPAIR_OR_EDIT_TENDER") return `/dashboard/tenders/${tenderId}#tender-edit-form`;
   if (action === "OPEN_SETTINGS") return "/dashboard/settings";
   if (action === "OPEN_TENDER_DETAIL") return `/dashboard/tenders/${tenderId}`;
   return `/dashboard/tenders/${tenderId}`;

@@ -143,7 +143,7 @@ export default function TenderRecoveryCommandCenter({ tenderId }: { tenderId: st
   }
 
   function messageForApiAction(action: string, json: Record<string, unknown>) {
-    if (action === "RUN_AI_ANALYZE" || action === "RETRY_AI_ANALYZE" || action === "REVIEW_ANALYSIS") {
+    if (action === "RUN_AI_ANALYZE" || action === "RETRY_AI_ANALYZE" || action === "REVIEW_ANALYSIS" || action === "RESUME_AI_ANALYZE") {
       return json.fallback ? "Regex fallback used — approve below or retry when providers recover." : "Analysis complete.";
     }
     if (action === "BUILD_SUBMISSION_PLAN") return `Plan built — ${json.created ?? 0} file(s) created, ${json.skipped ?? 0} already existed.`;

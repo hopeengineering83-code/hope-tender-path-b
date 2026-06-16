@@ -6,6 +6,7 @@
 
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
+import { readFileSync } from "node:fs";
 import { buildDerivedDraftPlan } from "../lib/engine/submission-plan";
 
 // ── helper ───────────────────────────────────────────────────────────────────
@@ -317,5 +318,138 @@ describe("submission plan build route — contentPageWarnings logic", () => {
   it("produces no warnings when text is null", () => {
     const warnings = computeContentWarnings([null]);
     assert.equal(warnings.length, 0);
+  });
+});
+
+// ── CLAUDE.md mandate: "cannot be trusted" message in route source ────────────
+
+describe("submission plan build route — CLAUDE.md 'cannot be trusted' message", () => {
+  const routeSrc = readFileSync(
+    "app/api/tenders/[id]/submission-plan/build/route.ts",
+    "utf-8",
+  );
+
+  it("route contains the CLAUDE.md mandated 'cannot be trusted' message", () => {
+    assert.ok(
+      routeSrc.includes("Submission plan cannot be trusted because required tender pages were not fully extracted"),
+      "Build Plan route must emit the CLAUDE.md mandated message when section pages are missing",
+    );
+  });
+
+  it("'cannot be trusted' message fires when submission/evaluation/required-doc pages are missing", () => {
+    assert.ok(
+      routeSrc.includes("missingSections") && routeSrc.includes("missingSections.length > 0"),
+      "route must check missingSections.length > 0 before emitting the cannot-be-trusted warning",
+    );
+  });
+
+  it("section page detection checks all three required section types", () => {
+    assert.ok(
+      routeSrc.includes("submissionInstructionPages.length > 0") &&
+      routeSrc.includes("evaluationCriteriaPages.length > 0") &&
+      routeSrc.includes("requiredDocumentPages.length > 0"),
+      "route must check all three section page types: submission, evaluation, required-docs",
+    );
+  });
+});
+
+import { assessTenderAnalysisQuality } from "../lib/analysis-quality";
+
+describe("submission plan build route — BUILD_PLAN_BLOCKED_UNSAFE_ANALYSIS gate", () => {
+  const routeSrc = readFileSync(
+    "app/api/tenders/[id]/submission-plan/build/route.ts",
+    "utf-8",
+  );
+
+  it("route contains BUILD_PLAN_BLOCKED_UNSAFE_ANALYSIS error code", () => {
+    assert.ok(
+      routeSrc.includes("BUILD_PLAN_BLOCKED_UNSAFE_ANALYSIS"),
+      "Build Plan route must emit BUILD_PLAN_BLOCKED_UNSAFE_ANALYSIS when analysis quality is too poor",
+    );
+  });
+
+  it("route blocks on POOR and UNSAFE severity (both checked)", () => {
+    assert.ok(
+      routeSrc.includes('analysisQuality.severity === "POOR"') &&
+      routeSrc.includes('analysisQuality.severity === "UNSAFE"'),
+      "Build Plan route must block on both POOR and UNSAFE analysis severity",
+    );
+  });
+
+  it("assessTenderAnalysisQuality returns UNSAFE for multi-page tender with no requirements", () => {
+    const result = assessTenderAnalysisQuality({
+      requirements: [],
+      totalPageCount: 10,
+      extractedTextLength: 5000,
+      analysisSummary: null,
+      evaluationMethodology: null,
+      submissionNotes: null,
+      exactFileNaming: null,
+      exactFileOrder: null,
+      clientName: null,
+      referenceNumber: null,
+      country: null,
+      clientContactName: null,
+      deadline: null,
+      submissionMethod: null,
+      submissionAddress: null,
+      submissionEmails: null,
+      analysisExtractionStatus: null,
+      analysisSource: null,
+    });
+    assert.equal(result.severity, "UNSAFE", "Multi-page tender with 0 requirements should be UNSAFE");
+  });
+
+  it("assessTenderAnalysisQuality returns UNSAFE when extraction status is corrupted", () => {
+    const result = assessTenderAnalysisQuality({
+      requirements: [
+        { title: "Technical Scope", description: "methodology", requirementType: "TECHNICAL", priority: "MANDATORY", sourcePageNumber: 3, sourceExactQuote: "per section 2.1" },
+      ],
+      totalPageCount: 5,
+      extractedTextLength: 3000,
+      analysisSummary: "Some analysis",
+      evaluationMethodology: "70/30 split",
+      submissionNotes: "Submit by email",
+      exactFileNaming: null,
+      exactFileOrder: null,
+      clientName: "Ministry of Health",
+      referenceNumber: "RFP-2026-001",
+      country: "Ethiopia",
+      clientContactName: "John Doe",
+      deadline: new Date("2026-12-01"),
+      submissionMethod: "email",
+      submissionAddress: null,
+      submissionEmails: "submit@gov.et",
+      analysisExtractionStatus: "OCR_REQUIRED",
+      analysisSource: null,
+    });
+    assert.equal(result.severity, "UNSAFE", "OCR_REQUIRED extraction status should cause UNSAFE severity");
+  });
+
+  it("assessTenderAnalysisQuality returns POOR when score is below 50", () => {
+    const result = assessTenderAnalysisQuality({
+      requirements: [
+        { title: "T1", description: "desc", requirementType: "TECHNICAL", priority: "SHOULD", sourcePageNumber: null, sourceExactQuote: null },
+      ],
+      totalPageCount: 0,
+      extractedTextLength: 50,
+      analysisSummary: null,
+      evaluationMethodology: null,
+      submissionNotes: null,
+      exactFileNaming: null,
+      exactFileOrder: null,
+      clientName: null,
+      referenceNumber: null,
+      country: null,
+      clientContactName: null,
+      deadline: null,
+      submissionMethod: null,
+      submissionAddress: null,
+      submissionEmails: null,
+      analysisExtractionStatus: null,
+      analysisSource: null,
+    });
+    assert.ok(result.severity === "POOR" || result.severity === "UNSAFE" || result.score < 50,
+      `Expected POOR/UNSAFE or score<50, got severity=${result.severity} score=${result.score}`);
   });
 });

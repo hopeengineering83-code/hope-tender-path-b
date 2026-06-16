@@ -174,7 +174,7 @@ export async function ExtractionQualityPanel({ tenderId }: { tenderId: string })
               {EXTRACTION_STATUS_LABELS[analysisStatus] ?? analysisStatus}
             </span>
           )}
-          {!ready && <a href="#legacy-tender-detail-actions" className="rounded-lg border border-amber-300 bg-white px-3 py-2 text-xs font-medium text-amber-800 hover:bg-amber-100">Re-extract / review ↓</a>}
+          {!ready && <a href="#tender-edit-form" className="rounded-lg border border-amber-300 bg-white px-3 py-2 text-xs font-medium text-amber-800 hover:bg-amber-100">Re-extract / review ↓</a>}
           <Link href={`/api/tenders/${tenderId}/extraction-quality`} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50">Open JSON</Link>
         </div>
       </div>

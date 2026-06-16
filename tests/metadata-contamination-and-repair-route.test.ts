@@ -179,6 +179,46 @@ describe("POST /api/tenders/[id]/repair-metadata — placeholder rejection (Gap 
   });
 });
 
+describe("POST /api/tenders/[id]/re-extract-metadata — clears metadataContaminated on clean re-extraction", () => {
+  const source = readFileSync("app/api/tenders/[id]/re-extract-metadata/route.ts", "utf8");
+
+  it("imports detectMetadataContamination", () => {
+    assert.match(source, /detectMetadataContamination/);
+  });
+
+  it("sets metadataContaminated:false when re-extracted clientName is clean", () => {
+    assert.match(
+      source,
+      /metadataContaminated.*false/,
+      "re-extract-metadata must clear metadataContaminated when re-extracted clientName passes contamination check",
+    );
+  });
+
+  it("guards the contamination clear behind a successful clientName re-extraction", () => {
+    assert.match(
+      source,
+      /update\.clientName[\s\S]{1,200}metadataContaminated/,
+      "contamination flag clear must be gated on update.clientName being populated",
+    );
+  });
+
+  it("syncs procuringEntityName from clientName when procuringEntityName is empty", () => {
+    assert.match(
+      source,
+      /update\.clientName[\s\S]{1,300}procuringEntityName/,
+      "re-extract-metadata must sync procuringEntityName from clientName when procuringEntityName is not already set",
+    );
+  });
+
+  it("only syncs procuringEntityName when it is not already populated", () => {
+    assert.match(
+      source,
+      /procuringEntityName[\s\S]{1,200}update\.clientName/,
+      "procuringEntityName sync must be guarded against overwriting an existing value",
+    );
+  });
+});
+
 describe("POST /api/tenders/[id]/engine — SELECT includes entity fields (Gap B fix)", () => {
   const source = readFileSync("app/api/tenders/[id]/engine/route.ts", "utf8");
 
@@ -201,6 +241,54 @@ describe("POST /api/tenders/[id]/engine — SELECT includes entity fields (Gap B
   it("calls computeStoredMetadataPatch after selecting entity fields so sanitizer can nullify them", () => {
     assert.match(source, /computeStoredMetadataPatch/);
     assert.match(source, /listInvalidStoredFields/);
+  });
+});
+
+describe("repair-metadata clears metadataContaminated when clientName is repaired cleanly", () => {
+  const source = readFileSync("app/api/tenders/[id]/repair-metadata/route.ts", "utf8");
+
+  it("imports detectMetadataContamination", () => {
+    assert.match(source, /detectMetadataContamination/);
+  });
+
+  it("sets metadataContaminated:false in updates when repaired clientName is clean", () => {
+    assert.match(
+      source,
+      /metadataContaminated.*false/,
+      "repair-metadata must clear metadataContaminated when repaired clientName passes contamination check",
+    );
+  });
+
+  it("only clears the flag for clientName repairs (not other fields)", () => {
+    assert.match(
+      source,
+      /field === "clientName"[\s\S]{1,500}metadataContaminated/,
+      "contamination flag clear must be gated on field === 'clientName'",
+    );
+  });
+});
+
+describe("PATCH /api/tenders/[id] re-evaluates metadataContaminated on clientName change", () => {
+  const source = readFileSync("app/api/tenders/[id]/route.ts", "utf8");
+
+  it("imports detectMetadataContamination", () => {
+    assert.match(source, /detectMetadataContamination/);
+  });
+
+  it("re-evaluates contamination only when body.clientName is a new value", () => {
+    assert.match(
+      source,
+      /body\.clientName.*!==.*existing\.clientName/,
+      "contamination re-evaluation must be gated on an actual change in clientName",
+    );
+  });
+
+  it("writes metadataContaminated into the update data when clientName changes", () => {
+    assert.match(
+      source,
+      /metadataContaminatedOverride/,
+      "PATCH update must include the re-evaluated contamination flag",
+    );
   });
 });
 
