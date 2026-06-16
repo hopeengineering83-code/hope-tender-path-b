@@ -883,7 +883,8 @@ async function bootstrap(client: PrismaClient): Promise<void> {
     "priorStatus" TEXT NOT NULL DEFAULT '',
     "newStatus" TEXT NOT NULL DEFAULT '',
     "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    FOREIGN KEY ("documentId") REFERENCES "GeneratedDocument"("id") ON DELETE CASCADE
+    FOREIGN KEY ("documentId") REFERENCES "GeneratedDocument"("id") ON DELETE CASCADE,
+    FOREIGN KEY ("reviewerId") REFERENCES "User"("id") ON DELETE CASCADE
   )`);
   await client.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "DocumentComment" (
     "id" TEXT NOT NULL PRIMARY KEY,
@@ -897,7 +898,9 @@ async function bootstrap(client: PrismaClient): Promise<void> {
     "resolved" BOOLEAN NOT NULL DEFAULT FALSE,
     "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    FOREIGN KEY ("documentId") REFERENCES "GeneratedDocument"("id") ON DELETE CASCADE
+    FOREIGN KEY ("documentId") REFERENCES "GeneratedDocument"("id") ON DELETE CASCADE,
+    FOREIGN KEY ("authorId") REFERENCES "User"("id") ON DELETE CASCADE,
+    FOREIGN KEY ("parentId") REFERENCES "DocumentComment"("id") ON DELETE CASCADE
   )`);
 
   // ── tables added by feature migrations (missing from original bootstrap) ──
