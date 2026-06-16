@@ -576,6 +576,28 @@ async function bootstrap(client: PrismaClient): Promise<void> {
   await ensureColumn(client, "Tender", "numberOfCopiesRequired", "INTEGER");
   await ensureColumn(client, "Tender", "technicalWeight", "INTEGER");
   await ensureColumn(client, "Tender", "financialWeight", "INTEGER");
+  // Extended client/procuring-entity extraction (migration 20260604*)
+  await ensureColumn(client, "Tender", "procuringEntityName", "TEXT");
+  await ensureColumn(client, "Tender", "legalClientName", "TEXT");
+  await ensureColumn(client, "Tender", "donorAgency", "TEXT");
+  await ensureColumn(client, "Tender", "implementingAgency", "TEXT");
+  await ensureColumn(client, "Tender", "metadataContaminated", "BOOLEAN NOT NULL DEFAULT FALSE");
+  await ensureColumn(client, "Tender", "clientNameSourcePage", "INTEGER");
+  await ensureColumn(client, "Tender", "clientNameSourceQuote", "TEXT");
+  await ensureColumn(client, "Tender", "submissionEmailSourcePage", "INTEGER");
+  await ensureColumn(client, "Tender", "contactDetailsSourceJson", "TEXT");
+  await ensureColumn(client, "Tender", "submissionMethodSourcePage", "INTEGER");
+  await ensureColumn(client, "Tender", "submissionMethodSourceQuote", "TEXT");
+  await ensureColumn(client, "Tender", "submissionAddressSourcePage", "INTEGER");
+  await ensureColumn(client, "Tender", "submissionAddressSourceQuote", "TEXT");
+  await ensureColumn(client, "Tender", "evaluationCriteriaSourceJson", "TEXT");
+  await ensureColumn(client, "Tender", "analysisExtractionStatus", "TEXT");
+  // Extended client fields — Gap A (CLAUDE.md items 8-20)
+  await ensureColumn(client, "Tender", "clientCity", "TEXT");
+  await ensureColumn(client, "Tender", "clientWebsite", "TEXT");
+  await ensureColumn(client, "Tender", "submissionEmailSubject", "TEXT");
+  await ensureColumn(client, "Tender", "preBidChannel", "TEXT");
+  await ensureColumn(client, "Tender", "clientRepresentative", "TEXT");
   // Soft-delete for Expert + Project
   await ensureColumn(client, "Expert", "deletedAt", "TIMESTAMPTZ");
   await ensureColumn(client, "Expert", "deletedBy", "TEXT");
@@ -714,6 +736,13 @@ async function bootstrap(client: PrismaClient): Promise<void> {
     "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW()
   )`);
 
+  // SectionEvidenceMap columns added after initial bootstrap
+  await ensureColumn(client, "SectionEvidenceMap", "status", "TEXT");
+  await ensureColumn(client, "SectionEvidenceMap", "content", "TEXT");
+  await ensureColumn(client, "SectionEvidenceMap", "aiProvider", "TEXT");
+  await ensureColumn(client, "SectionEvidenceMap", "lastGeneratedAt", "TIMESTAMPTZ");
+  await ensureColumn(client, "SectionEvidenceMap", "generationAttemptId", "TEXT");
+
   // ─── AI job queue (G6) ─────────────────────────────────────────────────
   // Long-running AI workflows (proposal generation, large rematch,
   // evaluator simulation, deep Copilot analysis) are enqueued and
@@ -828,6 +857,7 @@ async function bootstrap(client: PrismaClient): Promise<void> {
   await ensureColumn(client, "TenderRequirement", "sourceSectionHeading", "TEXT");
   await ensureColumn(client, "TenderRequirement", "sourceExactQuote", "TEXT");
   await ensureColumn(client, "TenderRequirement", "sourceConfidence", "DOUBLE PRECISION NOT NULL DEFAULT 0");
+  await ensureColumn(client, "TenderRequirement", "sourceExtractionMethod", "TEXT");
 
 
   // ── DocumentReview / DocumentComment — per-document approval workflow ────
@@ -908,6 +938,18 @@ async function bootstrap(client: PrismaClient): Promise<void> {
     "confirmedAt" TIMESTAMPTZ,
     "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     FOREIGN KEY ("tenderId") REFERENCES "Tender"("id") ON DELETE CASCADE
+  )`);
+
+  // ── ProviderHealthSnapshot (in schema.prisma, no dedicated migration) ────
+  await client.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "ProviderHealthSnapshot" (
+    "provider" TEXT NOT NULL PRIMARY KEY,
+    "lastSuccessAt" TIMESTAMPTZ,
+    "lastFailureAt" TIMESTAMPTZ,
+    "lastFailureCategory" TEXT,
+    "lastSafeErrorMessage" TEXT,
+    "consecutiveFailures" INTEGER NOT NULL DEFAULT 0,
+    "cooldownUntil" TIMESTAMPTZ,
+    "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW()
   )`);
 
   // ── security / auth tables (added by migration 20260614*) ────────────────

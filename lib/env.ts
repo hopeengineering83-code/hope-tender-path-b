@@ -2,7 +2,7 @@ import { z } from "zod";
 
 const envSchema = z.object({
   DATABASE_URL: z.string().min(1),
-  SESSION_SECRET: z.string().min(16),
+  SESSION_SECRET: z.string().min(32),
   // GEMINI_API_KEY is validated by env-check.ts at startup (required in prod)
   GEMINI_API_KEY: z.string().optional(),
   BLOB_READ_WRITE_TOKEN: z.string().optional(),
