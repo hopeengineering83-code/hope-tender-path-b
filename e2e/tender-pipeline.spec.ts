@@ -1,17 +1,15 @@
 import { test, expect } from "@playwright/test";
 
-// Pipeline E2E tests — cover the tender workflow from upload through export.
+// Tender workflow contract tests.
 //
-// Two modes:
-//   SMOKE (default): anonymous contract and basic UI availability. This mode is
-//                    deterministic in CI and does not require a seeded account.
-//   FULL (E2E_FULL_AUTH=true): authenticated workflow checks for seeded test DBs.
+// SMOKE mode checks anonymous protection and basic UI availability.
+// AUTHENTICATED mode checks sign-in, one PDF intake, extraction-panel visibility,
+// and precondition gates. It does NOT yet prove actual AI execution, document
+// generation, DOCX/PDF validity, final ZIP contents, or interruption/resume.
 
 const FULL = process.env.E2E_FULL_AUTH === "true";
 
-// ─── Smoke tests (always run) ────────────────────────────────────────────────
-
-test.describe("Pipeline API — anonymous protection contract", () => {
+test.describe("Tender API anonymous protection", () => {
   test("protected tender APIs do not succeed without a session", async ({ request }) => {
     const endpoints: Array<["get" | "post", string]> = [
       ["post", "/api/tenders/upload-first"],
@@ -22,13 +20,13 @@ test.describe("Pipeline API — anonymous protection contract", () => {
     ];
 
     for (const [method, endpoint] of endpoints) {
-      const res = method === "get" ? await request.get(endpoint) : await request.post(endpoint);
-      expect(res.status(), `${method.toUpperCase()} ${endpoint} should not return anonymous success`).not.toBeLessThan(300);
+      const response = method === "get" ? await request.get(endpoint) : await request.post(endpoint);
+      expect(response.status(), `${method.toUpperCase()} ${endpoint} should not return anonymous success`).not.toBeLessThan(300);
     }
   });
 });
 
-test.describe("Pipeline UI — structural smoke tests", () => {
+test.describe("Tender UI structural smoke checks", () => {
   test("home page responds", async ({ page }) => {
     const response = await page.goto("/", { waitUntil: "domcontentloaded" });
     expect(response?.status() ?? 0).toBeLessThan(500);
@@ -54,10 +52,8 @@ test.describe("Pipeline UI — structural smoke tests", () => {
   });
 });
 
-// ─── Full authenticated pipeline (requires E2E_FULL_AUTH=true + test DB) ─────
-
-test.describe("Full pipeline — upload → analyze → generate → export", () => {
-  test.skip(!FULL, "Set E2E_FULL_AUTH=true to run full pipeline tests");
+test.describe("Authenticated intake and precondition gates", () => {
+  test.skip(!FULL, "Set E2E_FULL_AUTH=true to run authenticated intake tests");
 
   const email = process.env.E2E_TEST_EMAIL ?? "test@example.com";
   const password = process.env.E2E_TEST_PASSWORD ?? "testpassword";
@@ -67,18 +63,18 @@ test.describe("Full pipeline — upload → analyze → generate → export", ()
     await page.waitForLoadState("networkidle");
     await page.fill("input[type=email], input[name=email]", email);
     await page.fill("input[type=password], input[name=password]", password);
-    const [loginResp] = await Promise.all([
-      page.waitForResponse((r) => r.url().includes("/api/auth/login"), { timeout: 15_000 }),
+    const [loginResponse] = await Promise.all([
+      page.waitForResponse((response) => response.url().includes("/api/auth/login"), { timeout: 15_000 }),
       page.click("button[type=submit]"),
     ]);
-    if (loginResp.status() !== 200) {
-      const body = await loginResp.text().catch(() => "(unreadable)");
-      throw new Error(`Login failed: status=${loginResp.status()} body=${body}`);
+    if (loginResponse.status() !== 200) {
+      const body = await loginResponse.text().catch(() => "(unreadable)");
+      throw new Error(`Login failed: status=${loginResponse.status()} body=${body}`);
     }
     await expect(page).toHaveURL(/dashboard/, { timeout: 15_000 });
   });
 
-  test("Step 1 — Upload creates tender and shows Extraction Quality panel", async ({ page }) => {
+  test("PDF intake creates a tender and shows extraction quality", async ({ page }) => {
     await page.goto("/dashboard/tenders/new");
     const fileInput = page.locator("input[type=file]");
     await fileInput.setInputFiles({
@@ -97,47 +93,42 @@ test.describe("Full pipeline — upload → analyze → generate → export", ()
     await page.fill("input[name=title], input[placeholder*=title i]", "E2E Test Tender");
     await page.click("button[type=submit], button:has-text('Upload'), button:has-text('Create')");
     await expect(page).toHaveURL(/\/dashboard\/tenders\/[a-z0-9-]+/);
-    // "Extraction quality" appears in multiple places (panel heading, label, body text).
-    // Use .first() to avoid Playwright strict-mode violation.
     await expect(page.locator("text=Extraction quality").first()).toBeVisible({ timeout: 15000 });
   });
 
-  test("Step 2 — Analysis stage section is present and gate state shown", async ({ page }) => {
+  test("analysis stage is present", async ({ page }) => {
     await page.goto("/dashboard");
-    // Exclude /new and list-only URLs; tender IDs contain hyphens (UUID format)
     await page.locator("a[href*='/dashboard/tenders/'][href*='-']").first().click();
     await expect(page).toHaveURL(/\/dashboard\/tenders\/[a-z0-9]+-[a-z0-9-]+/, { timeout: 15_000 });
-    // The "Analysis and engine" WorkflowStage summary is always visible (even when collapsed).
-    // This confirms the AI/engine analysis section is present on the page.
     await expect(page.locator("text=Analysis and engine")).toBeVisible({ timeout: 5000 });
   });
 
-  test("Step 3 — Generate Docs is gated before AI Analyze runs", async ({ page }) => {
+  test("generation remains gated before analysis", async ({ page }) => {
     await page.goto("/dashboard");
     await page.locator("a[href*='/dashboard/tenders/'][href*='-']").first().click();
-    const generateBtn = page.locator("button:has-text('Generate'), button:has-text('Generate Docs')");
-    if (await generateBtn.isVisible()) {
-      const isDisabled = await generateBtn.isDisabled();
-      if (!isDisabled) {
+    const generateButton = page.locator("button:has-text('Generate'), button:has-text('Generate Docs')");
+    if (await generateButton.isVisible()) {
+      const disabled = await generateButton.isDisabled();
+      if (!disabled) {
         const [response] = await Promise.all([
-          page.waitForResponse((r) => r.url().includes("/generate")),
-          generateBtn.click(),
+          page.waitForResponse((candidate) => candidate.url().includes("/generate")),
+          generateButton.click(),
         ]);
         expect([400, 422]).toContain(response.status());
       }
     }
   });
 
-  test("Step 4 — Export is gated before documents are generated", async ({ page }) => {
+  test("export remains gated before document generation", async ({ page }) => {
     await page.goto("/dashboard");
     await page.locator("a[href*='/dashboard/tenders/'][href*='-']").first().click();
-    const exportBtn = page.locator("button:has-text('Export'), button:has-text('Prepare Export'), button:has-text('ZIP')");
-    if (await exportBtn.isVisible()) {
-      const isDisabled = await exportBtn.isDisabled();
-      if (!isDisabled) {
+    const exportButton = page.locator("button:has-text('Export'), button:has-text('Prepare Export'), button:has-text('ZIP')");
+    if (await exportButton.isVisible()) {
+      const disabled = await exportButton.isDisabled();
+      if (!disabled) {
         const [response] = await Promise.all([
-          page.waitForResponse((r) => r.url().includes("/export")),
-          exportBtn.click(),
+          page.waitForResponse((candidate) => candidate.url().includes("/export")),
+          exportButton.click(),
         ]);
         expect([400, 409, 422]).toContain(response.status());
       }
