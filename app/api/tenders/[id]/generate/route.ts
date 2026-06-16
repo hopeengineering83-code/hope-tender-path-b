@@ -290,12 +290,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // fallbacks for clientName — AI Analyze may set procuringEntityName without
   // back-filling clientName on older tenders, and some tenders only have a donor/
   // implementing agency as the contracting entity.
-  const t = tender as Record<string, unknown>;
-  const effectiveClientName = (tender.clientName
-    || t.procuringEntityName
-    || t.legalClientName
-    || t.donorAgency
-    || t.implementingAgency) as string | null | undefined;
+  const effectiveClientName = tender.clientName
+    || tender.procuringEntityName
+    || tender.legalClientName
+    || tender.donorAgency
+    || tender.implementingAgency;
   if (!hasRealClientName(effectiveClientName)) return NextResponse.json({
     errorCode: "CLIENT_NAME_REQUIRED",
     error: "Generation blocked: client name is not set. Edit the tender and fill the Client Name field before generating proposal documents.",
@@ -376,7 +375,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // bypass option when extraction was only partial (softer case).
   // Note: "EXTRACTION_CORRUPTED_AI_SKIPPED" is stored in tender.status;
   // the analysisExtractionStatus field is set to "OCR_REQUIRED" in that case.
-  const analysisExtractionStatusForGen = (tender as { analysisExtractionStatus?: string | null }).analysisExtractionStatus;
+  const analysisExtractionStatusForGen = tender.analysisExtractionStatus;
   if (analysisExtractionStatusForGen === "OCR_REQUIRED") {
     return NextResponse.json({
       errorCode: "ANALYSIS_FROM_CORRUPTED_EXTRACTION",
@@ -683,7 +682,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const parts: string[] = [];
     if (missingNames.length > 0) parts.push(`${missingNames.length} critical field(s) missing (${missingNames.join(", ")})`);
     if (placeholderNames.length > 0) parts.push(`${placeholderNames.length} field(s) contain placeholder language (${placeholderNames.join(", ")})`);
-    const contaminatedExtra = (tender as { metadataContaminated?: boolean }).metadataContaminated ? " Client/procuring entity metadata is flagged as contaminated — correct it before generating." : "";
+    const contaminatedExtra = tender.metadataContaminated ? " Client/procuring entity metadata is flagged as contaminated — correct it before generating." : "";
     return NextResponse.json({
       errorCode: "METADATA_INCOMPLETE",
       error: `Generation blocked: ${parts.join("; ")}.${contaminatedExtra} First try the "Repair all empty fields from source" button — the deterministic extractor pulls verifiable values from the uploaded tender files when present. If a field is genuinely absent from the tender source, edit the tender and confirm it manually.`,
@@ -702,7 +701,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         ...metadataReport.invalidFields.map((f) => f.field),
       ],
       overallRatio: metadataReport.overallRatio,
-      metadataContaminated: Boolean((tender as { metadataContaminated?: boolean }).metadataContaminated),
+      metadataContaminated: Boolean(tender.metadataContaminated),
       deadlinePassed: metadataReport.deadlinePassed,
     }, { status: 422 });
   }
@@ -713,7 +712,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // check (the field is non-empty and not a placeholder) yet still be wrong.
   // Block unconditionally when contamination is flagged, regardless of whether
   // other metadata is present.
-  if ((tender as { metadataContaminated?: boolean }).metadataContaminated) {
+  if (tender.metadataContaminated) {
     return NextResponse.json({
       errorCode: "METADATA_CONTAMINATED",
       error: "Generation blocked: client/procuring entity metadata is flagged as contaminated. The extracted client name may be polluted by unrelated tender portal text or navigation content. Correct the client name before generating documents.",
