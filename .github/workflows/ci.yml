@@ -134,6 +134,7 @@ jobs:
           TOGETHER_API_KEY: ""
           DEEPSEEK_API_KEY: ""
           ANTHROPIC_API_KEY: ""
+          CSRF_MODE: "off"
         run: npm run test:e2e
 
       - name: Upload Playwright report on failure
