@@ -7,6 +7,8 @@
 //   2. traceability/route: files query now selects extractionMethod from DB.
 //   3. ai-analyze/route: sourceFileToken validated against actual TenderFile IDs before
 //      being stored as sourceTenderFileId — garbled AI output cannot pollute source tracing.
+//   4. ai-analyze/route: company document content digest included in companyContext so
+//      contentHash changes when vault documents are updated, not just when names change.
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
@@ -92,6 +94,39 @@ describe("ai-analyze/route — sourceTenderFileId validation (CLAUDE.md source t
     assert.ok(
       occurrences >= 2,
       `Both streaming and non-streaming requirement-write loops must validate sourceFileToken — found ${occurrences} occurrence(s), expected ≥2`,
+    );
+  });
+});
+
+// ── ai-analyze route: vault content digest in contentHash ────────────────────
+
+describe("ai-analyze/route — company vault content digest in contentHash (CLAUDE.md)", () => {
+  it("includes a content digest for each company document (not just file name)", () => {
+    assert.ok(
+      aiAnalyzeSrc.includes("[digest:${textDigest}]"),
+      "companyContext must include a per-document content digest so the contentHash changes when vault documents are updated, not just when file names change",
+    );
+  });
+
+  it("derives textDigest from extractedText via sha256", () => {
+    assert.ok(
+      aiAnalyzeSrc.includes('crypto.createHash("sha256").update(d.extractedText.slice(0, 10_000)).digest("hex").slice(0, 8)'),
+      "vault content digest must be a truncated sha256 of the first 10,000 chars of extractedText",
+    );
+  });
+
+  it("falls back to 'no-text' digest when company document has no extractedText", () => {
+    assert.ok(
+      aiAnalyzeSrc.includes('"no-text"'),
+      "companyContext must use 'no-text' sentinel when a company document has no extracted text",
+    );
+  });
+
+  it("applies the digest pattern in both streaming and non-streaming companyContext blocks", () => {
+    const occurrences = (aiAnalyzeSrc.match(/\[digest:\$\{textDigest\}\]/g) ?? []).length;
+    assert.ok(
+      occurrences >= 2,
+      `Both streaming and non-streaming companyContext must include [digest:\${textDigest}] — found ${occurrences} occurrence(s), expected ≥2`,
     );
   });
 });

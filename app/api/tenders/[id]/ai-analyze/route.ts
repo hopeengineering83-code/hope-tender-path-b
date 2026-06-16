@@ -443,8 +443,17 @@ async function handleStreamingAnalyze(
             : `${formatTenderFileAnalysisMarker(f)} ${f.classification ?? ""}`)
           .join("\n\n");
 
+        // Include a short digest of each company document's extracted text so
+        // that the contentHash changes when vault content is updated (not just
+        // when document names change). The digest is compact (8 hex chars) so
+        // it doesn't inflate the AI input budget.
         const companyContext = company?.documents?.length
-          ? `\n\nCOMPANY DOCUMENTS AVAILABLE:\n${company.documents.map((d) => `- ${d.originalFileName} (${d.category})`).join("\n")}`
+          ? `\n\nCOMPANY DOCUMENTS AVAILABLE:\n${company.documents.map((d) => {
+              const textDigest = d.extractedText
+                ? crypto.createHash("sha256").update(d.extractedText.slice(0, 10_000)).digest("hex").slice(0, 8)
+                : "no-text";
+              return `- ${d.originalFileName} (${d.category}) [digest:${textDigest}]`;
+            }).join("\n")}`
           : "";
 
         const tenderContent = [
@@ -969,6 +978,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   ]);
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
   const tenderRecord = tender;
+  const validTenderFileIds = new Set(tenderRecord.files.map((f) => f.id));
 
   const extractionReports = tenderRecord.files.map((file) => ({
     fileName: file.originalFileName || file.fileName,
@@ -1077,8 +1087,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
             : `${formatTenderFileAnalysisMarker(f)} ${f.classification ?? ""}`)
           .join("\n\n");
 
+        // Include a short digest of each company document's extracted text so
+        // that the contentHash changes when vault content is updated (not just
+        // when document names change). Mirrors the streaming path companyContext.
         const companyContext = company?.documents?.length
-          ? `\n\nCOMPANY DOCUMENTS AVAILABLE:\n${company.documents.map((d) => `- ${d.originalFileName} (${d.category})`).join("\n")}`
+          ? `\n\nCOMPANY DOCUMENTS AVAILABLE:\n${company.documents.map((d) => {
+              const textDigest = d.extractedText
+                ? crypto.createHash("sha256").update(d.extractedText.slice(0, 10_000)).digest("hex").slice(0, 8)
+                : "no-text";
+              return `- ${d.originalFileName} (${d.category}) [digest:${textDigest}]`;
+            }).join("\n")}`
           : "";
 
         const tenderContent = [
