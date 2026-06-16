@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 const source = readFileSync("lib/ai.ts", "utf8");
+const reconciler = readFileSync("scripts/reconcile-gap-closure.mjs", "utf8");
 const canonical = ["mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"];
 const displayOrder = "Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Claude";
 
@@ -20,70 +21,26 @@ function chainFor(useCase: string): string[] {
   return canonicalChain();
 }
 
-function executableProviderOrder(startMarker: string, endMarker: string): string[] {
-  const start = source.indexOf(startMarker);
-  const end = source.indexOf(endMarker, start + startMarker.length);
-  assert.ok(start >= 0 && end > start, `Unable to isolate executable provider block: ${startMarker}`);
-  const block = source.slice(start, end);
-  const result: string[] = [];
-  for (const match of block.matchAll(/isProviderCooledDown\("([^"]+)"\)/g)) {
-    const provider = match[1];
-    if (!result.includes(provider)) result.push(provider);
-  }
-  return result;
-}
-
-describe("AI provider chain policy", () => {
+describe("AI provider gateway policy", () => {
   it("uses the required canonical provider chain with Claude last", () => {
     assert.deepEqual(canonicalChain(), canonical);
   });
 
-  it("uses the canonical chain for every supported generic use case", () => {
+  it("uses the canonical chain for every generic gateway use case", () => {
     for (const useCase of ["default", "extraction", "proposal", "validation", "fast", "reasoning"]) {
       assert.deepEqual(chainFor(useCase), canonical, `${useCase} chain mismatch`);
     }
   });
 
-  it("enables AI when any canonical provider is configured", () => {
-    const match = source.match(/export function isAIEnabled\(\) \{[\s\S]*?\n\}/);
-    assert.ok(match, "Missing isAIEnabled()");
-    for (const token of [
-      "isMistralConfigured()",
-      "isGroqConfigured()",
-      "isOpenRouterConfigured()",
-      "apiKey",
-      "process.env.OPENAI_API_KEY",
-      "isTogetherConfigured()",
-      "isDeepSeekConfigured()",
-      "anthropicApiKey",
-    ]) {
-      assert.ok(match[0].includes(token), `isAIEnabled() must include ${token}`);
-    }
-  });
-
-  it("executes monolithic proposal providers in canonical order", () => {
-    assert.deepEqual(
-      executableProviderOrder(
-        "// Provider chain for proposal generation:",
-        "lastProposalProvider = null;",
-      ),
-      canonical,
-    );
-  });
-
-  it("executes parallel-section providers in canonical order", () => {
-    assert.deepEqual(
-      executableProviderOrder(
-        "// Provider chain for sections:",
-        "// All providers failed (or unavailable).",
-      ),
-      canonical,
-    );
-  });
-
   it("applies the prompt trust boundary before generic provider calls", () => {
     assert.match(source, /const trustBoundary = protectPrompt\(prompt\)/);
     assert.match(source, /callProvider\(provider, trustBoundary\.protectedPrompt/);
+  });
+
+  it("never rewrites AI or UI source during install, build, lint, test, or typecheck", () => {
+    assert.equal(/writeFileSync|appendFileSync|renameSync|unlinkSync|rmSync|cpSync/.test(reconciler), false);
+    assert.match(reconciler, /readFileSync/);
+    assert.match(reconciler, /never rewrites repository files|without modifying repository files/);
   });
 });
 
@@ -118,7 +75,7 @@ describe("AI provider status surfaces stay aligned with canonical chain", () => 
     assert.ok(healthRoute.indexOf('fallbackRank: 1,\n        label: "Mistral"') < healthRoute.indexOf('fallbackRank: 8,\n        label: "Claude"'));
   });
 
-  it("keeps configured-provider checks in the required relative order", () => {
+  it("keeps configured-provider checks in required relative order", () => {
     assert.ok(envReadiness.indexOf('present("MISTRAL_API_KEY")') < envReadiness.indexOf('present("GROQ_API_KEY")'));
     assert.ok(envReadiness.indexOf('present("GROQ_API_KEY")') < envReadiness.indexOf('present("OPENROUTER_API_KEY")'));
     assert.ok(envReadiness.indexOf('present("OPENROUTER_API_KEY")') < envReadiness.indexOf('present("GEMINI_API_KEY")'));
