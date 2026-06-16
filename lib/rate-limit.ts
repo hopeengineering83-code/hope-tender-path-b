@@ -16,6 +16,9 @@ export interface RateLimitResult {
 }
 
 export function rateLimit(key: string, cfg: RateLimitConfig): RateLimitResult {
+  if (process.env.RATE_LIMIT_DISABLED === "true") {
+    return { allowed: true, remaining: cfg.limit, resetAt: Date.now() + cfg.windowMs };
+  }
   const now = Date.now();
   let bucket = buckets.get(key);
   if (!bucket || now >= bucket.resetAt) {
@@ -34,6 +37,9 @@ function hashKey(key: string): string {
 }
 
 export async function rateLimitPersistent(key: string, cfg: RateLimitConfig): Promise<RateLimitResult> {
+  if (process.env.RATE_LIMIT_DISABLED === "true") {
+    return { allowed: true, remaining: cfg.limit, resetAt: Date.now() + cfg.windowMs };
+  }
   const now = new Date();
   const nextReset = new Date(now.getTime() + cfg.windowMs);
   try {
