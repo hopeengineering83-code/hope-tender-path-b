@@ -59,10 +59,10 @@ const COMMON_TENDER_WORDS = new Set([
   "work", "plan", "qualification", "form", "envelope", "address", "email", "date", "reference", "scope",
 ]);
 
-const SUBMISSION_SECTION_PATTERN = /submission\s+instructions?|submission\s+method|submission\s+emails?|submission\s+deadline|required\s+email\s+subject|submit(?:ted)?\s+(?:by|via)\s+email|email\s+submission|deadline|delivery\s+rules?|portal|sealed\s+envelope|deliver(?:y)?|hand\s+deliver|drop\s+box|technical\s+proposal\s+for\s+pharo\s+ventures/i;
-const EVALUATION_SECTION_PATTERN = /evaluation\s+criteria|evaluation\s+methodology|scoring\s+criteria|technical\s+score|financial\s+score|weight(?:ed|s)?|points?|relevant\s+healthcare\s+project\s+experience|quality\s+and\s+relevance\s+of\s+portfolio|technical\s+understanding|strength\s+of\s+professional\s+team|compliance\s+with\s+submission\s+requirements/i;
-const REQUIRED_DOCUMENT_SECTION_PATTERN = /required\s+documents?|mandatory\s+documents?|documents?\s+required|required\s+deliverables?|required\s+technical\s+proposal\s+sections?|technical\s+proposal\.pdf|company\s+profile|relevant\s+experience|technical\s+approach|additional\s+information|annex(?:es)?|supporting\s+documents?|checklist|annexure|annex\s+\d|form\s+\d|appendix/i;
-const CLIENT_DETAIL_SECTION_PATTERN = /client\s+details?|tender\s+metadata|client\s*\/\s*procuring\s+entity|issuing\s+entity\s*\/\s*client|procuring\s+entity|client\s+name|pharo\s+ventures|country\s*:?|city\s*\/\s*location|addis\s+ababa|ethiopia|contact\s+email|submission\s+email|telephone|email\s*[:\w\s.-]*@|address\s*:?|po\s+box/i;
+const SUBMISSION_SECTION_PATTERN = /submission\s+instructions?|submission\s+method|submission\s+emails?|submission\s+deadline|required\s+email\s+subject|submit(?:ted)?\s+(?:by|via)\s+email|email\s+submission|deadline|delivery\s+rules?|portal|sealed\s+envelope|deliver(?:y)?|hand\s+deliver|drop\s+box/i;
+const EVALUATION_SECTION_PATTERN = /evaluation\s+criteria|evaluation\s+methodology|scoring\s+criteria|technical\s+score|financial\s+score|weight(?:ed|s)?|points?|compliance\s+with\s+submission\s+requirements/i;
+const REQUIRED_DOCUMENT_SECTION_PATTERN = /required\s+documents?|mandatory\s+documents?|documents?\s+required|required\s+deliverables?|required\s+technical\s+proposal\s+sections?|company\s+profile|relevant\s+experience|technical\s+approach|annex(?:es)?|supporting\s+documents?|checklist|annexure|annex\s+\d|form\s+\d|appendix/i;
+const CLIENT_DETAIL_SECTION_PATTERN = /client\s+details?|tender\s+metadata|client\s*\/\s*procuring\s+entity|issuing\s+entity\s*\/\s*client|procuring\s+entity|client\s+name|country\s*:|city\s*\/\s*location|contact\s+email|submission\s+email|telephone|email\s*[:\w\s.-]*@|address\s*:|po\s+box/i;
 
 export type ExtractionCorruptionReport = {
   corrupted: boolean;
