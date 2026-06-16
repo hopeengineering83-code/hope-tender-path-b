@@ -861,6 +861,77 @@ async function bootstrap(client: PrismaClient): Promise<void> {
     FOREIGN KEY ("documentId") REFERENCES "GeneratedDocument"("id") ON DELETE CASCADE
   )`);
 
+  // ── tables added by feature migrations (missing from original bootstrap) ──
+  await client.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "TenderShare" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "tenderId" TEXT NOT NULL,
+    "token" TEXT NOT NULL,
+    "label" TEXT,
+    "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    "expiresAt" TIMESTAMPTZ,
+    "createdById" TEXT NOT NULL,
+    FOREIGN KEY ("tenderId") REFERENCES "Tender"("id") ON DELETE CASCADE,
+    FOREIGN KEY ("createdById") REFERENCES "User"("id") ON DELETE RESTRICT
+  )`);
+
+  await client.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "TenderCopilotMessage" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "tenderId" TEXT NOT NULL,
+    "userId" TEXT NOT NULL,
+    "role" TEXT NOT NULL,
+    "content" TEXT NOT NULL,
+    "citations" JSONB,
+    "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    FOREIGN KEY ("tenderId") REFERENCES "Tender"("id") ON DELETE CASCADE
+  )`);
+
+  await client.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "TenderMetadataOverride" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "tenderId" TEXT NOT NULL,
+    "field" TEXT NOT NULL,
+    "fieldState" TEXT NOT NULL,
+    "overrideValue" TEXT,
+    "reason" TEXT,
+    "previousValue" TEXT,
+    "overriddenBy" TEXT NOT NULL,
+    "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    FOREIGN KEY ("tenderId") REFERENCES "Tender"("id") ON DELETE CASCADE
+  )`);
+
+  await client.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "SubmissionPlanState" (
+    "tenderId" TEXT PRIMARY KEY,
+    "provenance" TEXT NOT NULL DEFAULT 'NONE',
+    "confirmationStatus" TEXT NOT NULL DEFAULT 'NOT_REQUIRED',
+    "derivedDocumentCount" INTEGER NOT NULL DEFAULT 0,
+    "activeDocumentCount" INTEGER NOT NULL DEFAULT 0,
+    "confirmedAt" TIMESTAMPTZ,
+    "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    FOREIGN KEY ("tenderId") REFERENCES "Tender"("id") ON DELETE CASCADE
+  )`);
+
+  // ── security / auth tables (added by migration 20260614*) ────────────────
+  // These were not in the original bootstrap. Without them, upload-first fails
+  // with 42P01 "relation RateLimitBucket does not exist" on fresh databases
+  // where prisma migrate deploy hasn't run yet.
+  await client.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "PasswordResetToken" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "userId" TEXT NOT NULL,
+    "tokenHash" TEXT NOT NULL,
+    "expiresAt" TIMESTAMPTZ NOT NULL,
+    "consumedAt" TIMESTAMPTZ,
+    "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE
+  )`);
+
+  await client.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "RateLimitBucket" (
+    "keyHash" TEXT NOT NULL PRIMARY KEY,
+    "count" INTEGER NOT NULL DEFAULT 1,
+    "resetAt" TIMESTAMPTZ NOT NULL,
+    "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`);
+
   // ── indexes (each wrapped so one failure never blocks the rest) ──────────
   const idxStatements = [
     `CREATE INDEX IF NOT EXISTS "CompanyDocument_companyId_idx" ON "CompanyDocument"("companyId")`,
@@ -906,6 +977,20 @@ async function bootstrap(client: PrismaClient): Promise<void> {
     `CREATE INDEX IF NOT EXISTS "DocumentComment_documentId_idx" ON "DocumentComment"("documentId")`,
     `CREATE INDEX IF NOT EXISTS "DocumentComment_documentId_parentId_idx" ON "DocumentComment"("documentId", "parentId")`,
     `CREATE INDEX IF NOT EXISTS "DocumentComment_authorId_idx" ON "DocumentComment"("authorId")`,
+    // PasswordResetToken indexes (migration 20260614*)
+    `CREATE UNIQUE INDEX IF NOT EXISTS "PasswordResetToken_tokenHash_key" ON "PasswordResetToken"("tokenHash")`,
+    `CREATE INDEX IF NOT EXISTS "PasswordResetToken_userId_idx" ON "PasswordResetToken"("userId")`,
+    `CREATE INDEX IF NOT EXISTS "PasswordResetToken_expiresAt_idx" ON "PasswordResetToken"("expiresAt")`,
+    // TenderShare indexes (migration 20260605*)
+    `CREATE UNIQUE INDEX IF NOT EXISTS "TenderShare_token_key" ON "TenderShare"("token")`,
+    `CREATE INDEX IF NOT EXISTS "TenderShare_tenderId_idx" ON "TenderShare"("tenderId")`,
+    `CREATE INDEX IF NOT EXISTS "TenderShare_token_idx" ON "TenderShare"("token")`,
+    // TenderCopilotMessage indexes (migration 20260605*)
+    `CREATE INDEX IF NOT EXISTS "TenderCopilotMessage_tenderId_userId_createdAt_idx" ON "TenderCopilotMessage"("tenderId", "userId", "createdAt")`,
+    `CREATE INDEX IF NOT EXISTS "TenderCopilotMessage_tenderId_userId_idx" ON "TenderCopilotMessage"("tenderId", "userId")`,
+    // TenderMetadataOverride indexes (migration 20260608*)
+    `CREATE UNIQUE INDEX IF NOT EXISTS "TenderMetadataOverride_tenderId_field_key" ON "TenderMetadataOverride"("tenderId", "field")`,
+    `CREATE INDEX IF NOT EXISTS "TenderMetadataOverride_tenderId_idx" ON "TenderMetadataOverride"("tenderId")`,
   ];
   for (const sql of idxStatements) {
     try { await client.$executeRawUnsafe(sql); } catch (e) {
