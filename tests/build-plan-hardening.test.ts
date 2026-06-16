@@ -6,6 +6,7 @@
 
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
+import { readFileSync } from "node:fs";
 import { buildDerivedDraftPlan } from "../lib/engine/submission-plan";
 
 // ── helper ───────────────────────────────────────────────────────────────────
@@ -317,5 +318,37 @@ describe("submission plan build route — contentPageWarnings logic", () => {
   it("produces no warnings when text is null", () => {
     const warnings = computeContentWarnings([null]);
     assert.equal(warnings.length, 0);
+  });
+});
+
+// ── CLAUDE.md mandate: "cannot be trusted" message in route source ────────────
+
+describe("submission plan build route — CLAUDE.md 'cannot be trusted' message", () => {
+  const routeSrc = readFileSync(
+    "app/api/tenders/[id]/submission-plan/build/route.ts",
+    "utf-8",
+  );
+
+  it("route contains the CLAUDE.md mandated 'cannot be trusted' message", () => {
+    assert.ok(
+      routeSrc.includes("Submission plan cannot be trusted because required tender pages were not fully extracted"),
+      "Build Plan route must emit the CLAUDE.md mandated message when section pages are missing",
+    );
+  });
+
+  it("'cannot be trusted' message fires when submission/evaluation/required-doc pages are missing", () => {
+    assert.ok(
+      routeSrc.includes("missingSections") && routeSrc.includes("missingSections.length > 0"),
+      "route must check missingSections.length > 0 before emitting the cannot-be-trusted warning",
+    );
+  });
+
+  it("section page detection checks all three required section types", () => {
+    assert.ok(
+      routeSrc.includes("submissionInstructionPages.length > 0") &&
+      routeSrc.includes("evaluationCriteriaPages.length > 0") &&
+      routeSrc.includes("requiredDocumentPages.length > 0"),
+      "route must check all three section page types: submission, evaluation, required-docs",
+    );
   });
 });
