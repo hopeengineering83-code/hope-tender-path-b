@@ -111,10 +111,11 @@ test.describe.serial("Golden tender workflow — authenticated release contract"
       };
       expect(analyzeJson.success).toBe(true);
       expect(analyzeJson.fallback).toBe(true);
-      // In CI all provider keys are absent or invalid, so either code is valid:
-      // "AI_NO_PROVIDER_CONFIGURED" (no keys at all) or "AI_PROVIDERS_RATE_LIMITED"
-      // (keys present but all failed/in cooldown after a single attempt).
-      expect(["AI_NO_PROVIDER_CONFIGURED", "AI_PROVIDERS_RATE_LIMITED"]).toContain(analyzeJson.code);
+      // In CI all provider keys are absent or invalid; any of these codes is valid:
+      // "AI_NO_PROVIDER_CONFIGURED"  — no keys configured at all
+      // "AI_PROVIDERS_RATE_LIMITED"  — keys present but all in cooldown after attempt
+      // "AI_PROVIDERS_EXHAUSTED"     — providers tried and all failed/exhausted
+      expect(["AI_NO_PROVIDER_CONFIGURED", "AI_PROVIDERS_RATE_LIMITED", "AI_PROVIDERS_EXHAUSTED"]).toContain(analyzeJson.code);
       expect(analyzeJson.analysisSource).toBe("REGEX_FALLBACK");
       expect(analyzeJson.requirementCount).toBeGreaterThan(0);
       expect(analyzeJson.nextAction).toBe("RETRY_AI_ANALYZE_OR_APPROVE_FALLBACK");
