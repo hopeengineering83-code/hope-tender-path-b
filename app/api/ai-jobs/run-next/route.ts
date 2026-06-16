@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 import { requireRole, unauthorizedResponse } from "../../../../lib/auth";
-import { completeJob, failJob, type JobType } from "../../../../lib/ai-jobs";
+import { completeJob, failJob } from "../../../../lib/ai-jobs";
 import { claimJobForCaller } from "../../../../lib/job-claim-policy";
 import { getHandler } from "../../../../lib/ai-job-handlers";
+import { parseJobTypeFilter, SUPPORTED_JOB_TYPES } from "../../../../lib/job-type-policy";
 import { prismaReady } from "../../../../lib/prisma";
 
 export const maxDuration = 60;
@@ -34,14 +35,22 @@ export async function POST(req: Request) {
 
   await prismaReady;
   const { searchParams } = new URL(req.url);
-  const jobTypeFilter = searchParams.get("jobType") as JobType | null;
+  const parsedJobType = parseJobTypeFilter(searchParams.get("jobType"));
+  if (!parsedJobType.ok) {
+    return NextResponse.json({
+      error: "Invalid jobType filter",
+      code: parsedJobType.code,
+      supportedJobTypes: SUPPORTED_JOB_TYPES,
+    }, { status: 400 });
+  }
+
   const startTime = Date.now();
   const maxRunMs = 40_000;
   const processedJobs: Array<{ jobId: string; jobType: string; status: string; error?: string }> = [];
 
   while (Date.now() - startTime < maxRunMs) {
     const claimed = await claimJobForCaller({
-      jobType: jobTypeFilter ?? undefined,
+      jobType: parsedJobType.value,
       userId: userId ?? undefined,
       global: isAutomatedCaller,
     });

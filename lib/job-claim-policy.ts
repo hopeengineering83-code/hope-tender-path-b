@@ -1,3 +1,4 @@
+import { Prisma } from "@prisma/client";
 import { prisma, prismaReady } from "./prisma";
 import type { JobType } from "./ai-jobs";
 
@@ -17,33 +18,34 @@ export async function claimJobForCaller(options: {
   await prismaReady;
   if (!options.global && !options.userId) return null;
 
-  // PR XX-G6-Concurrency — atomic job claim using PostgreSQL "FOR UPDATE SKIP LOCKED".
-  // This prevents two workers from claiming the same job and eliminates transaction
-  // retries/deadlocks under high load.
-  const ownerFilter = options.global ? "" : `AND "userId" = '${options.userId}'`;
-  const typeFilter = options.jobType ? `AND "jobType" = '${options.jobType}'` : "";
+  const conditions: Prisma.Sql[] = [Prisma.sql`"status" = 'QUEUED'`];
+  if (!options.global && options.userId) conditions.push(Prisma.sql`"userId" = ${options.userId}`);
+  if (options.jobType) conditions.push(Prisma.sql`"jobType" = ${options.jobType}`);
+  const whereClause = Prisma.join(conditions, " AND ");
 
   try {
-    const result = await prisma.$queryRawUnsafe<Array<{ id: string; jobType: string; input: unknown; tenderId: string | null; userId: string }>>(
-      `UPDATE "AiJob"
-       SET "status" = 'RUNNING', "startedAt" = NOW(), "updatedAt" = NOW()
-       WHERE "id" = (
-         SELECT "id"
-         FROM "AiJob"
-         WHERE "status" = 'QUEUED' ${ownerFilter} ${typeFilter}
-         ORDER BY "createdAt" ASC
-         FOR UPDATE SKIP LOCKED
-         LIMIT 1
-       )
-       RETURNING "id", "jobType", "input", "tenderId", "userId"`
-    );
+    const result = await prisma.$queryRaw<Array<{ id: string; jobType: string; input: unknown; tenderId: string | null; userId: string }>>(Prisma.sql`
+      UPDATE "AiJob"
+      SET "status" = 'RUNNING', "startedAt" = NOW(), "updatedAt" = NOW()
+      WHERE "id" = (
+        SELECT "id"
+        FROM "AiJob"
+        WHERE ${whereClause}
+        ORDER BY "createdAt" ASC
+        FOR UPDATE SKIP LOCKED
+        LIMIT 1
+      )
+      RETURNING "id", "jobType", "input", "tenderId", "userId"
+    `);
 
     if (!result || result.length === 0) return null;
     const candidate = result[0];
 
     let input: Record<string, unknown> = {};
     try {
-      input = typeof candidate.input === 'string' ? JSON.parse(candidate.input) : (candidate.input as Record<string, unknown> || {});
+      input = typeof candidate.input === "string"
+        ? JSON.parse(candidate.input)
+        : (candidate.input as Record<string, unknown> || {});
     } catch {
       input = {};
     }
