@@ -195,6 +195,9 @@ export function assessExtractionQuality(text: string | null | undefined, fileNam
 }
 
 const LOW_DENSITY_THRESHOLD = 150; // chars per page below which we flag as low-density
+// A table-heavy page that still contains enough text is considered perfectly
+// extracted — only low-density table pages are flagged as TABLE_HEAVY.
+const TABLE_GOOD_THRESHOLD = 300; // chars above which a TABLE_HEAVY page counts as GOOD
 
 function classifyPageText(pageText: string): Omit<PageQualityEntry, "page"> {
   const charCount = pageText.replace(/\s+/g, " ").length;
@@ -215,7 +218,7 @@ function classifyPageText(pageText: string): Omit<PageQualityEntry, "page"> {
   else if (isOcr) status = "OCR";
   else if (isBlank) status = "BLANK";
   else if (isImageHeavy) status = "IMAGE_HEAVY";
-  else if (isTableHeavy) status = "TABLE_HEAVY";
+  else if (isTableHeavy && charCount < TABLE_GOOD_THRESHOLD) status = "TABLE_HEAVY";
   else if (isLowDensity) status = "LOW_DENSITY";
   else status = "GOOD";
 

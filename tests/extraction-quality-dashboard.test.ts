@@ -592,3 +592,60 @@ describe("ExtractionQualityDashboard — CLAUDE.md items 18-19 (characterCount a
     assert.equal(ocrUsed, false, "ocrUsed must be false when no OCR was used");
   });
 });
+
+// ── TABLE_HEAVY promotion: high-char tables count as GOOD ────────────────────
+//
+// CLAUDE.md: "if the page contains tables/forms, table/form text is captured
+// well enough for requirement extraction" → counts as perfectly extracted.
+// Pages with TABLE_HEAVY markers AND ≥300 chars are promoted to GOOD so that
+// BOQ/evaluation-matrix pages don't artificially deflate coverage percentage.
+
+describe("assessExtractionQualityPerPage — TABLE_HEAVY promotion to GOOD", () => {
+  const boqText =
+    "BOQ BILL OF QUANTITIES\n" +
+    "Item | Description | Unit | Qty | Rate | Amount\n" +
+    "1    | Excavation   | m³   | 100 | 25   | 2500\n" +
+    "2    | Concrete     | m³   | 50  | 120  | 6000\n" +
+    "3    | Reinforcement| ton  | 5   | 800  | 4000\n" +
+    "Total                                     12500\n" +
+    "Contractor to price each item.  Any item left blank will be disqualified.\n" +
+    "Refer to specifications volume for dimensions and material standards.\n";
+
+  // Enough chars to avoid BLANK classification (>30) but under TABLE_GOOD_THRESHOLD (300).
+  const lowTableText =
+    "BOQ BILL OF QUANTITIES\n" +
+    "Item | Description | Qty\n" +
+    "1    | Excavation   | 100\n";
+
+  it("table-heavy page with ≥300 chars is classified GOOD (not TABLE_HEAVY)", () => {
+    const report = assessExtractionQualityPerPage(boqText);
+    // The whole text is a single block — treated as one page.
+    const page = report.pages[0];
+    assert.equal(page?.status, "GOOD", "BOQ page with sufficient text should be GOOD, not TABLE_HEAVY");
+  });
+
+  it("table-heavy page with <300 chars stays TABLE_HEAVY", () => {
+    const report = assessExtractionQualityPerPage(lowTableText);
+    const page = report.pages[0];
+    assert.equal(page?.status, "TABLE_HEAVY", "sparse BOQ page (<300 chars) should stay TABLE_HEAVY");
+  });
+
+  it("well-extracted BOQ page counts toward perfectPages", () => {
+    const report = assessExtractionQualityPerPage(boqText);
+    assert.ok(report.perfectPages.length > 0, "BOQ page with sufficient text must count toward perfectPages");
+  });
+
+  it("sparse BOQ page does NOT count toward perfectPages", () => {
+    const report = assessExtractionQualityPerPage(lowTableText);
+    assert.equal(report.perfectPages.length, 0, "sparse BOQ page must not count toward perfectPages");
+  });
+
+  it("coverage percent reflects promoted table pages", () => {
+    const manyPageText =
+      "Page 1: Normal text about the project scope and objectives.\n".repeat(5) +
+      "\f" +
+      boqText; // page 2 is a well-extracted BOQ
+    const report = assessExtractionQualityPerPage(manyPageText);
+    assert.ok(report.coveragePercent > 0, "coverage must include promoted table page");
+  });
+});
