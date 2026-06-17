@@ -61,15 +61,14 @@ function migrationNames() {
 }
 
 function schemaMatchesCurrentPrismaModel() {
-  const databaseUrl = process.env.DATABASE_URL;
-  if (!databaseUrl) throw new Error("DATABASE_URL is required for schema verification");
+  if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is required for schema verification");
 
   try {
     prisma([
       "migrate",
       "diff",
-      "--from-url",
-      databaseUrl,
+      "--from-schema-datasource",
+      "prisma/schema.prisma",
       "--to-schema-datamodel",
       "prisma/schema.prisma",
       "--exit-code",
@@ -80,10 +79,10 @@ function schemaMatchesCurrentPrismaModel() {
     const status = Number(error?.status ?? error?.code ?? 1);
     if (status === 2) {
       console.error("Database schema differs from prisma/schema.prisma. Refusing automatic migration-history repair.");
-      console.error(text.slice(0, 4000));
       return false;
     }
-    throw error;
+    console.error("Database schema verification could not complete.");
+    throw new Error("Database schema verification failed without changing migration history", { cause: undefined });
   }
 }
 
@@ -117,7 +116,8 @@ function resolveFailedInitMigration() {
     throw new Error(`Cannot repair ${INIT_MIGRATION}: migration directory is missing`);
   }
 
-  if (!schemaMatchesCurrentPrismaModel()) {
+  const schemaVerified = schemaMatchesCurrentPrismaModel();
+  if (!schemaVerified) {
     throw new Error(`Refusing to resolve ${INIT_MIGRATION}: production schema does not match prisma/schema.prisma`);
   }
 
@@ -145,7 +145,8 @@ function baselineExistingDatabase() {
     process.exit(1);
   }
 
-  if (!schemaMatchesCurrentPrismaModel()) {
+  const schemaVerified = schemaMatchesCurrentPrismaModel();
+  if (!schemaVerified) {
     throw new Error("Refusing controlled baseline: database schema does not match prisma/schema.prisma");
   }
 
