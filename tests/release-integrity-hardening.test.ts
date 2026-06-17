@@ -69,55 +69,53 @@ describe("release integrity hardening", () => {
     assert.match(route, /rateLimitPersistent/);
   });
 
-  it("runs critical schema verification after migrations in production builds", () => {
+  it("runs critical schema verification inside the safe migration command used by production builds", () => {
     const pkg = JSON.parse(readFileSync("package.json", "utf8")) as { scripts: Record<string, string> };
     const build = pkg.scripts["vercel-build"];
-    assert.ok(build.indexOf("migrate-deploy-safe.mjs") >= 0);
-    assert.ok(build.indexOf("check-critical-schema.mjs") > build.indexOf("migrate-deploy-safe.mjs"));
+    assert.match(build, /migrate-deploy-safe\.mjs/);
+
+    const migrationScript = readFileSync("scripts/migrate-deploy-safe.mjs", "utf8");
+    assert.match(migrationScript, /scripts\/check-critical-schema\.mjs/);
+    assert.match(migrationScript, /REQUIRE_MIGRATION_HISTORY:\s*"true"/);
   });
 
-  it("requires clean migration-path and integrity checks in CI", () => {
+  it("requires migration-path, schema and integrity checks in CI", () => {
     const ci = readFileSync(".github/workflows/ci.yml", "utf8");
-    assert.match(ci, /Validate production migration path/);
+    assert.match(ci, /Deploy the complete migration history/);
+    assert.match(ci, /Verify critical migrated schema/);
+    assert.match(ci, /Verify migration idempotency/);
     assert.match(ci, /npm run db:check-critical-schema/);
     assert.match(ci, /npm run audit:release-integrity/);
+    assert.doesNotMatch(ci, /prisma db push/);
   });
 
-  it("migrate-deploy-safe exits gracefully for any migration failure on Vercel preview", () => {
+  it("keeps preview migrations disabled unless an isolated preview database is explicitly authorized", () => {
     const script = readFileSync("scripts/migrate-deploy-safe.mjs", "utf8");
-    // deploy() must return "preview-error" for any uncategorised error when isVercelPreview=true
-    assert.match(script, /isVercelPreview/);
-    assert.match(script, /preview-error/);
-    // preview-error must be caught in deploy() (before the no-history block)
-    const previewErrorReturnIdx = script.indexOf('"preview-error"');
-    const noHistoryBlockIdx = script.indexOf('if (deployResult === "no-history")');
-    assert.ok(previewErrorReturnIdx > 0, 'must return "preview-error" in deploy()');
-    assert.ok(noHistoryBlockIdx > previewErrorReturnIdx, '"preview-error" return must appear before no-history block');
-    // preview-error handler block must call process.exit(0)
-    const previewErrorHandlerIdx = script.indexOf('if (deployResult === "preview-error")');
-    assert.ok(previewErrorHandlerIdx > 0, "must have a preview-error handler block");
-    const exitZeroAfterHandlerIdx = script.indexOf("process.exit(0)", previewErrorHandlerIdx);
-    assert.ok(exitZeroAfterHandlerIdx > previewErrorHandlerIdx, "preview-error block must call process.exit(0)");
-    // The no-history block must still have its own preview guard for P3005
-    const noHistoryPreviewIdx = script.indexOf("Skipping migration baseline for Vercel preview");
-    assert.ok(noHistoryPreviewIdx > 0, "must have no-history preview graceful exit");
-    // The !ALLOW_BASELINE hard-fail must still exist for non-preview production
-    assert.match(script, /if \(!ALLOW_BASELINE\)/);
+    assert.match(script, /ALLOW_PREVIEW_DB_MIGRATIONS/);
+    assert.match(script, /isVercelPreview\s*&&\s*!allowPreviewMigrations/);
+    assert.match(script, /build-only and is not database-verified/);
+    assert.doesNotMatch(script, /return\s+["']preview-error["']/);
+    assert.doesNotMatch(script, /deployResult\s*===\s*["']preview-error["']/);
   });
 
-  it("migrate-deploy-safe handles retroactive init migration schema conflict without blocking", () => {
+  it("repairs the known retroactive init failure only after full schema verification", () => {
     const script = readFileSync("scripts/migrate-deploy-safe.mjs", "utf8");
-    // Must define the init migration name
     assert.match(script, /INIT_MIGRATION\s*=\s*["']20260601000000_init["']/);
-    // Must detect "already exists" and return schema-conflict (not throw)
-    assert.match(script, /already exists/);
-    assert.match(script, /schema-conflict/);
-    // Must use migrate resolve --applied to mark the init migration
-    assert.match(script, /migrate.*resolve.*--applied.*INIT_MIGRATION/s);
-    // Must retry deploy after resolving
-    const schemaConflictIdx = script.indexOf("schema-conflict");
-    const resolveIdx = script.indexOf("resolve", schemaConflictIdx);
-    const retryIdx = script.indexOf("deploy()", resolveIdx);
-    assert.ok(retryIdx > resolveIdx, "deploy() must be retried after resolving the init migration");
+    assert.match(script, /message\.includes\(["']P3009["']\)\s*&&\s*message\.includes\(INIT_MIGRATION\)/);
+    assert.match(script, /migrate["'],\s*["']diff/);
+    assert.match(script, /--from-url/);
+    assert.match(script, /--to-schema-datamodel/);
+    assert.match(script, /--exit-code/);
+    assert.match(script, /"--rolled-back", INIT_MIGRATION/);
+    assert.match(script, /"--applied", INIT_MIGRATION/);
+
+    const verifyIdx = script.indexOf("schemaMatchesCurrentPrismaModel()");
+    const rolledBackIdx = script.indexOf('"--rolled-back", INIT_MIGRATION');
+    const appliedIdx = script.indexOf('"--applied", INIT_MIGRATION');
+    const retryIdx = script.indexOf("deploy();", appliedIdx);
+    assert.ok(verifyIdx >= 0, "schema verification helper must exist");
+    assert.ok(rolledBackIdx > verifyIdx, "schema verification must precede migration-history repair");
+    assert.ok(appliedIdx > rolledBackIdx, "failed state must be resolved before marking migration applied");
+    assert.ok(retryIdx > appliedIdx, "migrate deploy must be retried after safe repair");
   });
 });
