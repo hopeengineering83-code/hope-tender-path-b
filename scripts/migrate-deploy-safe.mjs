@@ -5,12 +5,18 @@ import { join } from "node:path";
 const MIGRATIONS_DIR = join(process.cwd(), "prisma", "migrations");
 const BASELINE_CUTOFF = process.env.PRISMA_BASELINE_CUTOFF || "20260613190000_comprehensive_gap_guards";
 const explicitBaseline = ["1", "true", "yes"].includes((process.env.PRISMA_BASELINE_EXISTING_DB || "").trim().toLowerCase());
+const allowPreviewMigrations = ["1", "true", "yes"].includes((process.env.ALLOW_PREVIEW_DB_MIGRATIONS || "").trim().toLowerCase());
 const INIT_MIGRATION = "20260601000000_init";
 
 const isVercelPreview = process.env.VERCEL === "1" && process.env.VERCEL_ENV === "preview";
-if (isVercelPreview && !process.env.DATABASE_URL) {
-  console.warn("Skipping migrations: Vercel preview has no DATABASE_URL. This preview is build-only and must not be treated as database-verified.");
+if (isVercelPreview && !allowPreviewMigrations) {
+  console.warn("Skipping database migrations by preview safety policy.");
+  console.warn("This preview is build-only and is not database-verified. Configure an isolated preview database and set ALLOW_PREVIEW_DB_MIGRATIONS=true to enable preview migrations.");
   process.exit(0);
+}
+
+if (!process.env.DATABASE_URL) {
+  throw new Error("DATABASE_URL is required for database migration deployment");
 }
 
 const ALLOW_BASELINE = explicitBaseline;
