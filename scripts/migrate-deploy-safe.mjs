@@ -21,9 +21,18 @@ if (!process.env.DATABASE_URL) {
 
 const ALLOW_BASELINE = explicitBaseline;
 
+function redactSensitive(value) {
+  let text = String(value ?? "");
+  const configuredDatabaseUrl = process.env.DATABASE_URL;
+  if (configuredDatabaseUrl) {
+    text = text.split(configuredDatabaseUrl).join("[REDACTED_DATABASE_URL]");
+  }
+  return text.replace(/DATABASE_URL\s*[:=]\s*\S+/gi, "DATABASE_URL=[REDACTED]");
+}
+
 function emitCaptured(value, target) {
   if (!value) return;
-  target.write(String(value));
+  target.write(redactSensitive(value));
 }
 
 function command(commandName, args, { capture = false, env = process.env } = {}) {
@@ -50,7 +59,7 @@ function prisma(args, options = {}) {
 }
 
 function capturedErrorText(error) {
-  return `${String(error?.stdout || "")}\n${String(error?.stderr || "")}\n${String(error?.message || "")}`;
+  return redactSensitive(`${String(error?.stdout || "")}\n${String(error?.stderr || "")}\n${String(error?.message || "")}`);
 }
 
 function migrationNames() {
@@ -165,20 +174,22 @@ function baselineExistingDatabase() {
   }
 }
 
-let deployResult = deploy();
+const initialResult = deploy();
 
-if (deployResult === "failed-init") {
+if (initialResult === "failed-init") {
   resolveFailedInitMigration();
-  deployResult = deploy();
-}
-
-if (deployResult === "no-history") {
+  const retryResult = deploy();
+  if (retryResult !== "ok") {
+    throw new Error(`Prisma migration deployment still failed after resolving ${INIT_MIGRATION} (result: ${retryResult})`);
+  }
+} else if (initialResult === "no-history") {
   baselineExistingDatabase();
-  deployResult = deploy();
-}
-
-if (deployResult !== "ok") {
-  throw new Error(`Prisma migration deployment did not complete safely (result: ${deployResult})`);
+  const retryResult = deploy();
+  if (retryResult !== "ok") {
+    throw new Error(`Prisma migration deployment still failed after controlled baseline (result: ${retryResult})`);
+  }
+} else if (initialResult !== "ok") {
+  throw new Error(`Prisma migration deployment did not complete safely (result: ${initialResult})`);
 }
 
 command(process.execPath, ["scripts/check-critical-schema.mjs"], {
