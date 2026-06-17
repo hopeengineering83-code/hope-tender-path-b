@@ -75,14 +75,13 @@ function schemaMatchesCurrentPrismaModel() {
     ], { capture: true });
     return true;
   } catch (error) {
-    const text = capturedErrorText(error);
     const status = Number(error?.status ?? error?.code ?? 1);
     if (status === 2) {
       console.error("Database schema differs from prisma/schema.prisma. Refusing automatic migration-history repair.");
       return false;
     }
     console.error("Database schema verification could not complete.");
-    throw new Error("Database schema verification failed without changing migration history", { cause: undefined });
+    throw new Error("Database schema verification failed without changing migration history");
   }
 }
 
