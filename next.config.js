@@ -4,6 +4,10 @@ const withNextIntl = createNextIntlPlugin("./i18n/request.ts");
 
 function assertProductionEnv() {
   if (process.env.NODE_ENV !== "production") return;
+  // next build always sets NODE_ENV=production, so we must distinguish Vercel
+  // preview/development from real production deployments. Only enforce strict
+  // env requirements when VERCEL_ENV=production or when running outside Vercel.
+  if (process.env.VERCEL === "1" && process.env.VERCEL_ENV !== "production") return;
 
   const required = [
     ["DATABASE_URL", "PostgreSQL connection string"],
