@@ -1,5 +1,5 @@
 -- CreateTable
-CREATE TABLE "PasswordResetToken" (
+CREATE TABLE IF NOT EXISTS "PasswordResetToken" (
     "id" TEXT NOT NULL,
     "userId" TEXT NOT NULL,
     "tokenHash" TEXT NOT NULL,
@@ -11,7 +11,7 @@ CREATE TABLE "PasswordResetToken" (
 );
 
 -- CreateTable
-CREATE TABLE "RateLimitBucket" (
+CREATE TABLE IF NOT EXISTS "RateLimitBucket" (
     "keyHash" TEXT NOT NULL,
     "count" INTEGER NOT NULL DEFAULT 1,
     "resetAt" TIMESTAMP(3) NOT NULL,
@@ -22,13 +22,17 @@ CREATE TABLE "RateLimitBucket" (
 );
 
 -- CreateIndex
-CREATE UNIQUE INDEX "PasswordResetToken_tokenHash_key" ON "PasswordResetToken"("tokenHash");
+CREATE UNIQUE INDEX IF NOT EXISTS "PasswordResetToken_tokenHash_key" ON "PasswordResetToken"("tokenHash");
 
 -- CreateIndex
-CREATE INDEX "PasswordResetToken_userId_idx" ON "PasswordResetToken"("userId");
+CREATE INDEX IF NOT EXISTS "PasswordResetToken_userId_idx" ON "PasswordResetToken"("userId");
 
 -- CreateIndex
-CREATE INDEX "PasswordResetToken_expiresAt_idx" ON "PasswordResetToken"("expiresAt");
+CREATE INDEX IF NOT EXISTS "PasswordResetToken_expiresAt_idx" ON "PasswordResetToken"("expiresAt");
 
 -- AddForeignKey
-ALTER TABLE "PasswordResetToken" ADD CONSTRAINT "PasswordResetToken_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'PasswordResetToken_userId_fkey') THEN
+    ALTER TABLE "PasswordResetToken" ADD CONSTRAINT "PasswordResetToken_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+  END IF;
+END $$;
