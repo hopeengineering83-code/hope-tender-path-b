@@ -93,8 +93,11 @@ describe("release integrity hardening", () => {
     const noHistoryBlockIdx = script.indexOf('if (deployResult === "no-history")');
     assert.ok(previewErrorReturnIdx > 0, 'must return "preview-error" in deploy()');
     assert.ok(noHistoryBlockIdx > previewErrorReturnIdx, '"preview-error" return must appear before no-history block');
-    // preview-error must also exit gracefully (process.exit(0))
-    assert.match(script, /preview-error[\s\S]{0,200}process\.exit\(0\)/);
+    // preview-error handler block must call process.exit(0)
+    const previewErrorHandlerIdx = script.indexOf('if (deployResult === "preview-error")');
+    assert.ok(previewErrorHandlerIdx > 0, "must have a preview-error handler block");
+    const exitZeroAfterHandlerIdx = script.indexOf("process.exit(0)", previewErrorHandlerIdx);
+    assert.ok(exitZeroAfterHandlerIdx > previewErrorHandlerIdx, "preview-error block must call process.exit(0)");
     // The no-history block must still have its own preview guard for P3005
     const noHistoryPreviewIdx = script.indexOf("Skipping migration baseline for Vercel preview");
     assert.ok(noHistoryPreviewIdx > 0, "must have no-history preview graceful exit");
