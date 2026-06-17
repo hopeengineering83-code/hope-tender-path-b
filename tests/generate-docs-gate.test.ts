@@ -719,4 +719,48 @@ describe("generate/route.ts, export-readiness.ts, tender-generation-readiness.ts
       "readiness fn must pass implementingAgency to assessTenderMetadataCompleteness to mirror the generate gate",
     );
   });
+
+  it("generate route has no remaining effectiveClientName via as-Record cast", () => {
+    const src = readFileSync(resolve(process.cwd(), "app/api/tenders/[id]/generate/route.ts"), "utf8");
+    assert.ok(
+      !src.includes("const t = tender as Record<string, unknown>"),
+      "generate route must not create a 't' cast variable — access procuringEntityName etc. directly on tender",
+    );
+    assert.ok(
+      !src.includes("t.procuringEntityName"),
+      "generate route must access tender.procuringEntityName directly, not via cast variable",
+    );
+    assert.ok(
+      !src.includes("t.legalClientName"),
+      "generate route must access tender.legalClientName directly, not via cast variable",
+    );
+    assert.ok(
+      !src.includes("t.donorAgency"),
+      "generate route must access tender.donorAgency directly, not via cast variable",
+    );
+    assert.ok(
+      !src.includes("t.implementingAgency"),
+      "generate route must access tender.implementingAgency directly, not via cast variable",
+    );
+  });
+
+  it("generate route has no analysisExtractionStatus or metadataContaminated inline casts", () => {
+    const src = readFileSync(resolve(process.cwd(), "app/api/tenders/[id]/generate/route.ts"), "utf8");
+    assert.ok(
+      !src.includes("(tender as { analysisExtractionStatus"),
+      "generate route must access tender.analysisExtractionStatus directly — field is in Prisma schema",
+    );
+    assert.ok(
+      !src.includes("(tender as { metadataContaminated"),
+      "generate route must access tender.metadataContaminated directly — field is in Prisma schema (Boolean @default(false))",
+    );
+    assert.ok(
+      src.includes("tender.analysisExtractionStatus"),
+      "generate route must use tender.analysisExtractionStatus (direct access)",
+    );
+    assert.ok(
+      src.includes("tender.metadataContaminated"),
+      "generate route must use tender.metadataContaminated (direct access)",
+    );
+  });
 });
