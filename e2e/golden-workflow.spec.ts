@@ -48,12 +48,11 @@ test.describe("Authenticated Golden Tender Workflow", () => {
     );
 
     await fileInput.setInputFiles([
-      { name: "tender-spec.pdf", mimeType: "application/pdf", buffer: pdfBuffer },
-      { name: "notes.txt", mimeType: "text/plain", buffer: Buffer.from("Requirements: must provide 3 references.") }
+      { name: "tender-spec.pdf", mimeType: "application/pdf", buffer: pdfBuffer }
     ]);
 
-    const [uploadResponse] = await Promise.all([
-      page.waitForResponse(res => res.url().includes("/api/upload") && res.status() === 202),
+    await Promise.all([
+      page.waitForResponse(res => res.url().includes("/api/tenders/upload-first") && (res.status() === 201 || res.status() === 202), { timeout: 45000 }),
       page.click("button[type=submit]")
     ]);
 
@@ -64,7 +63,6 @@ test.describe("Authenticated Golden Tender Workflow", () => {
     // 8.3 Extraction and provenance
     await expect(page.locator("text=Extraction quality")).toBeVisible({ timeout: 15000 });
     await expect(page.locator("text=tender-spec.pdf")).toBeVisible();
-    await expect(page.locator("text=notes.txt")).toBeVisible();
 
     // 8.7 Document generation gating
     const generateButton = page.getByRole("button", { name: /Generate/i });

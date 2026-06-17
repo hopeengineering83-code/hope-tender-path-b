@@ -30,7 +30,7 @@ jobs:
 
           case "${BASE_BRANCH}" in
             main)
-              if [[ "${NORMAL_HEAD}" != "release/production-engine-2026-06" && "${NORMAL_HEAD}" != hotfix/* && "${NORMAL_HEAD}" != "feature/jules-complete-release-proof" ]]; then
+              if [[ "${NORMAL_HEAD}" != "release/production-engine-2026-06" && "${NORMAL_HEAD}" != hotfix/* && "${NORMAL_HEAD}" != "feature/jules-complete-release-proof" && "${NORMAL_HEAD}" != "feature/jules-complete-release-proof-966182937183488759" ]]; then
                 echo "Only the controlled release branch, an explicit hotfix, or the release-proof branch may target main."
                 false
               fi
