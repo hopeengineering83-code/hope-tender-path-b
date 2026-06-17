@@ -22,16 +22,16 @@ permissions:
 
 jobs:
   verify:
-    name: Schema, typecheck, lint, test, build, smoke, and clean-tree guard
+    name: Migrations, integrity, typecheck, lint, tests, build, and authenticated isolation
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 55
     services:
       postgres:
         image: postgres:16
         env:
           POSTGRES_USER: hope_ci
-          POSTGRES_PASSWORD: hope_ci
           POSTGRES_DB: hope_tender_ci
+          POSTGRES_HOST_AUTH_METHOD: trust
         ports:
           - 5432:5432
         options: >-
@@ -42,13 +42,20 @@ jobs:
     env:
       CI: "true"
       NEXT_TELEMETRY_DISABLED: "1"
-      DATABASE_URL: "postgresql://hope_ci:hope_ci@127.0.0.1:5432/hope_tender_ci?schema=public"
-      SESSION_SECRET: "ci-only-session-secret-0123456789abcdef0123456789abcdef"
-      NEXTAUTH_SECRET: "ci-only-nextauth-secret-0123456789abcdef0123456789abcdef"
-      GEMINI_API_KEY: "AIzaFakeCiBuildKeyNotUsedAtRuntime12345678901"
+      DATABASE_URL: "postgresql://hope_ci@127.0.0.1:5432/hope_tender_ci?schema=public"
+      SESSION_SECRET: "ci-session-${{ github.run_id }}-${{ github.sha }}"
+      NEXTAUTH_SECRET: "ci-nextauth-${{ github.run_id }}-${{ github.sha }}"
+      GEMINI_API_KEY: "ci-provider-placeholder-not-used-at-runtime"
       ANTHROPIC_API_KEY: ""
       RUN_DB_INTEGRATION: "true"
-      E2E_FULL_AUTH: "false"
+      REQUIRE_MIGRATION_HISTORY: "true"
+      E2E_FULL_AUTH: "true"
+      E2E_SEED_ALLOWED: "true"
+      E2E_TEST_EMAIL: "e2e-primary@example.test"
+      E2E_TEST_PASSWORD: "CiPrimary-${{ github.run_id }}-A9!secure"
+      E2E_SECOND_EMAIL: "e2e-secondary@example.test"
+      E2E_SECOND_PASSWORD: "CiSecondary-${{ github.run_id }}-B8!secure"
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -71,11 +78,20 @@ jobs:
       - name: Generate Prisma client
         run: npx prisma generate
 
-      - name: Initialize CI database
-        run: npx prisma db push
+      - name: Deploy complete migration history
+        run: npx prisma migrate deploy
 
-      - name: Apply custom database guards
-        run: npx prisma db execute --file prisma/migrations/20260613190000_comprehensive_gap_guards/migration.sql --schema prisma/schema.prisma
+      - name: Verify critical migrated schema
+        run: npm run db:check-critical-schema
+
+      - name: Verify retroactive initialization structure and history
+        run: npm run db:verify-retroactive-init
+
+      - name: Verify migration idempotency
+        run: npx prisma migrate deploy
+
+      - name: Audit release integrity
+        run: npm run audit:release-integrity
 
       - name: Typecheck
         run: npm run typecheck
@@ -90,15 +106,6 @@ jobs:
           mkdir -p test-results
           npm test 2>&1 | tee test-results/npm-test.log
 
-      - name: Upload test diagnostics
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: test-output
-          path: test-results/
-          if-no-files-found: ignore
-          retention-days: 7
-
       - name: Build
         shell: bash
         run: |
@@ -106,29 +113,40 @@ jobs:
           mkdir -p build-results
           npm run build 2>&1 | tee build-results/npm-build.log
 
-      - name: Upload build diagnostics
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-output
-          path: build-results/
-          if-no-files-found: ignore
-          retention-days: 7
+      - name: Reject build-time source mutation
+        run: git diff --exit-code
 
       - name: Install Playwright browser
         run: npx playwright install --with-deps chromium
 
-      - name: Browser smoke tests
+      - name: Seed isolated two-user browser fixtures
+        run: node scripts/seed-e2e-user.mjs
+
+      - name: Browser smoke, authenticated intake, and cross-user isolation
+        env:
+          CSRF_MODE: "off"
+          MISTRAL_API_KEY: ""
+          GROQ_API_KEY: ""
+          OPENROUTER_API_KEY: ""
+          OPENAI_API_KEY: ""
+          TOGETHER_API_KEY: ""
+          DEEPSEEK_API_KEY: ""
+          ANTHROPIC_API_KEY: ""
         run: npm run test:e2e
 
-      - name: Reject test or build source mutation
+      - name: Reject test-time source mutation
+        if: always()
         run: git diff --exit-code
 
-      - name: Upload Playwright report on failure
+      - name: Upload diagnostics on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-report
-          path: playwright-report/
+          name: ci-diagnostics
+          path: |
+            test-results/
+            build-results/
+            playwright-report/
+            test-results-e2e/
           if-no-files-found: ignore
           retention-days: 7
