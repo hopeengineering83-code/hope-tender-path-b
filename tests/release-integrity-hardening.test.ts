@@ -83,6 +83,28 @@ describe("release integrity hardening", () => {
     assert.match(ci, /npm run audit:release-integrity/);
   });
 
+  it("migrate-deploy-safe exits gracefully for any migration failure on Vercel preview", () => {
+    const script = readFileSync("scripts/migrate-deploy-safe.mjs", "utf8");
+    // deploy() must return "preview-error" for any uncategorised error when isVercelPreview=true
+    assert.match(script, /isVercelPreview/);
+    assert.match(script, /preview-error/);
+    // preview-error must be caught in deploy() (before the no-history block)
+    const previewErrorReturnIdx = script.indexOf('"preview-error"');
+    const noHistoryBlockIdx = script.indexOf('if (deployResult === "no-history")');
+    assert.ok(previewErrorReturnIdx > 0, 'must return "preview-error" in deploy()');
+    assert.ok(noHistoryBlockIdx > previewErrorReturnIdx, '"preview-error" return must appear before no-history block');
+    // preview-error handler block must call process.exit(0)
+    const previewErrorHandlerIdx = script.indexOf('if (deployResult === "preview-error")');
+    assert.ok(previewErrorHandlerIdx > 0, "must have a preview-error handler block");
+    const exitZeroAfterHandlerIdx = script.indexOf("process.exit(0)", previewErrorHandlerIdx);
+    assert.ok(exitZeroAfterHandlerIdx > previewErrorHandlerIdx, "preview-error block must call process.exit(0)");
+    // The no-history block must still have its own preview guard for P3005
+    const noHistoryPreviewIdx = script.indexOf("Skipping migration baseline for Vercel preview");
+    assert.ok(noHistoryPreviewIdx > 0, "must have no-history preview graceful exit");
+    // The !ALLOW_BASELINE hard-fail must still exist for non-preview production
+    assert.match(script, /if \(!ALLOW_BASELINE\)/);
+  });
+
   it("migrate-deploy-safe handles retroactive init migration schema conflict without blocking", () => {
     const script = readFileSync("scripts/migrate-deploy-safe.mjs", "utf8");
     // Must define the init migration name

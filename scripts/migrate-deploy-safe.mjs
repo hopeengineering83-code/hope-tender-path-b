@@ -78,13 +78,37 @@ function deploy() {
       console.warn("Detected existing schema conflict during migration apply; evaluating init migration resolution.");
       return "schema-conflict";
     }
+    // For Vercel preview, any other migration failure (connection errors P1001/P1002,
+    // schema sync issues P3009, etc.) should not block the preview build.
+    // Production must still throw so real failures are surfaced immediately.
+    if (isVercelPreview) {
+      console.warn("Migration failed in Vercel preview environment; skipping to allow preview build.");
+      console.warn("Error snippet:", message.slice(0, 300));
+      return "preview-error";
+    }
     throw error;
   }
 }
 
 let deployResult = deploy();
 
+if (deployResult === "preview-error") {
+  // Any migration error on Vercel preview is non-fatal — the preview DB state
+  // may not match production migrations. Exit gracefully; the app bootstrap
+  // (lib/prisma.ts) will handle schema on first request if DATABASE_URL is set.
+  process.exit(0);
+}
+
 if (deployResult === "no-history") {
+  // Vercel preview deployments with a bootstrapped DB (no migration history)
+  // should not block the build. Preview DBs are often created via db push or
+  // without migration tracking; failing here prevents all preview deployments.
+  if (isVercelPreview) {
+    console.warn("Skipping migration baseline for Vercel preview: DB has no Prisma migration history.");
+    console.warn("Set PRISMA_BASELINE_EXISTING_DB=true to run a controlled baseline on preview.");
+    process.exit(0);
+  }
+
   if (!ALLOW_BASELINE) {
     console.error("ERROR: Existing non-empty database has no Prisma migration history.");
     console.error("Automatic baselining is disabled for security. Set PRISMA_BASELINE_EXISTING_DB=true to authorize.");
