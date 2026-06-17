@@ -1,9 +1,9 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type APIResponse, type Page } from "@playwright/test";
 
 const FULL = process.env.E2E_FULL_AUTH === "true";
 const baseURL = process.env.PLAYWRIGHT_BASE_URL || "http://127.0.0.1:3000";
 
-async function preserveLoopbackSession(page: Page, response: Awaited<ReturnType<Page["request"]["post"]>>) {
+async function preserveLoopbackSession(page: Page, response: APIResponse) {
   const origin = new URL(baseURL);
   if (origin.protocol !== "http:") return;
 
