@@ -96,6 +96,7 @@ assertRule("canonical AI provider order", providerOrderOk, `provider policy must
 
 assertRule("CI release audit", ci.includes("npm run audit:release-integrity"), "CI must execute the release-integrity audit");
 assertRule("CI migration path", ci.includes("Deploy the complete migration history") && ci.includes("npx prisma migrate deploy"), "CI must apply migrations to the same clean database used by application tests");
+assertRule("CI credential-safe schema diff", ci.includes("Verify credential-safe zero-drift schema comparison") && ci.includes("--from-schema-datasource") && !ci.includes("--from-url"), "CI must execute the same credential-safe schema comparison used by recovery logic");
 assertRule("CI migration idempotency", ci.includes("Verify migration idempotency"), "CI must prove a second migration deployment is clean");
 assertRule("CI avoids schema shortcuts", !ci.includes("prisma db push") && !ci.includes("prisma db execute"), "CI must not replace migration proof with db push or manual SQL reapplication");
 assertRule("CI critical schema", ci.includes("npm run db:check-critical-schema"), "CI must verify critical tables, columns, functions, and migration state");
