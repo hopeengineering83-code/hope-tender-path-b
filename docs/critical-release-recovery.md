@@ -12,7 +12,7 @@ The sequence is:
 
 1. Run `prisma migrate deploy`.
 2. Detect P3009 only when it names `20260601000000_init`.
-3. Run `prisma migrate diff --from-url ... --to-schema-datamodel prisma/schema.prisma --exit-code`.
+3. Run `prisma migrate diff --from-schema-datasource prisma/schema.prisma --to-schema-datamodel prisma/schema.prisma --exit-code`. The database URL remains in the environment and is not passed as a command-line argument.
 4. Stop without changing migration history when drift exists.
 5. Resolve the failed migration as rolled back.
 6. Mark the same verified retroactive migration as applied.
