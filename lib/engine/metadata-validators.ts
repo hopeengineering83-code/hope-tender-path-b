@@ -46,7 +46,7 @@ const PROPOSAL_SECTION_NOISE_PATTERN = /\b(references?\b|photos?\b|drawings?\b|t
  * "bid[-_\s]?team\s+to\s+confirm" was the most common production
  * regression (the screenshots showed it in 11/16 metadata fields and
  * leaking straight into generated proposals). */
-const PLACEHOLDER_CLIENT_PATTERN = /^(the\s+client|client|unknown|n\/a|na|none|-+|tbd|tba|tbc|to\s+be\s+(determined|confirmed|advised|set)|bid[-_\s]?team\s+to\s+confirm|bid\s+team\s+to\s+confirm|not\s+specified|not\s+provided|pending|blank|placeholder|fill[-_\s]?in)$/i;
+const PLACEHOLDER_CLIENT_PATTERN = /^(the\s+client|client|unknown|n\/a|na|none|-+|tbd|tba|tbc|to\s+be\s+(determined|confirmed|advised|set)|bid[-_\s]?team\s+to\s+confirm|bid\s+team\s+to\s+confirm|not\s+specified|not\s+provided|not\s+available|not\s+found|not\s+applicable|pending|blank|placeholder|fill[-_\s]?in)$/i;
 
 /** Generic-anywhere placeholder pattern. Returns true if the value
  * contains a "Bid-Team to confirm" / "TBC" / "TBD" / "placeholder" string
