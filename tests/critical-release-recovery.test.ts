@@ -40,6 +40,25 @@ describe("critical release recovery controls", () => {
     assert.match(script, /Database schema verification failed without changing migration history/);
   });
 
+  it("redacts the configured database URL from captured Prisma output", () => {
+    const script = read("scripts/migrate-deploy-safe.mjs");
+    assert.match(script, /function redactSensitive/);
+    assert.match(script, /configuredDatabaseUrl/);
+    assert.match(script, /\[REDACTED_DATABASE_URL\]/);
+    assert.match(script, /target\.write\(redactSensitive\(value\)\)/);
+    assert.match(script, /return redactSensitive\(`/);
+  });
+
+  it("keeps failed-init repair and no-history baseline mutually exclusive", () => {
+    const script = read("scripts/migrate-deploy-safe.mjs");
+    assert.match(script, /const initialResult = deploy\(\)/);
+    assert.match(script, /if \(initialResult === "failed-init"\)/);
+    assert.match(script, /else if \(initialResult === "no-history"\)/);
+    assert.doesNotMatch(script, /deployResult\s*=\s*deploy\(\)/);
+    assert.match(script, /still failed after resolving/);
+    assert.match(script, /still failed after controlled baseline/);
+  });
+
   it("does not reapply migration SQL outside Prisma migration history", () => {
     const script = read("scripts/migrate-deploy-safe.mjs");
     assert.doesNotMatch(script, /prisma\(\["db",\s*"execute"/);
@@ -68,6 +87,9 @@ describe("critical release recovery controls", () => {
     assert.doesNotMatch(ci, /prisma db push/);
     assert.doesNotMatch(ci, /prisma db execute/);
     assert.match(ci, /npx prisma migrate deploy/);
+    assert.match(ci, /Verify credential-safe zero-drift schema comparison/);
+    assert.match(ci, /--from-schema-datasource/);
+    assert.doesNotMatch(ci, /--from-url/);
     assert.match(ci, /Verify migration idempotency/);
     assert.match(ci, /git diff --exit-code/);
     assert.match(ci, /integration\/production-engine-2026-06/);
