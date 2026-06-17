@@ -8,9 +8,6 @@ export async function POST(req: Request) {
   const requestId = extractRequestId(req);
   const isProduction = process.env.NODE_ENV === "production";
   try {
-    if (isProduction && !process.env.BLOB_READ_WRITE_TOKEN && process.env.ALLOW_DB_FILE_STORAGE === undefined) {
-      process.env.ALLOW_DB_FILE_STORAGE = "true";
-    }
     const { handleUploadFirstTender } = await import("../../../../lib/tender-upload-first");
     return await handleUploadFirstTender(req);
   } catch (error) {

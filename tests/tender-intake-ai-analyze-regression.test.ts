@@ -23,7 +23,11 @@ describe("tender intake and AI analysis regression guards", () => {
   it("routes upload-first through secure validation and atomic persistence", () => {
     const route = readFileSync("app/api/tenders/upload-first/route.ts", "utf8");
     const handler = readFileSync("lib/tender-upload-first.ts", "utf8");
-    assert.match(route, /ALLOW_DB_FILE_STORAGE/);
+    // RI-002: no upload route may mutate storage env vars per-request. The
+    // storage policy is owned centrally by lib/storage.ts so both upload
+    // routes behave identically. A per-request `process.env.ALLOW_DB_FILE_STORAGE`
+    // assignment here previously caused one route to work while another failed.
+    assert.doesNotMatch(route, /process\.env\.ALLOW_DB_FILE_STORAGE\s*=/);
     assert.match(route, /handleUploadFirstTender/);
     assert.match(handler, /validateUploadBatch/);
     assert.match(handler, /validateUploadFile/);
