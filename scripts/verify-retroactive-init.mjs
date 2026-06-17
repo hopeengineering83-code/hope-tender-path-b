@@ -1,9 +1,9 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { PrismaClient } from "@prisma/client";
 
 const INIT_MIGRATION = "20260601000000_init";
-const INIT_PATH = `prisma/migrations/${INIT_MIGRATION}/migration.sql`;
 const expectFailedInit = process.argv.includes("--expect-failed-init");
 const prisma = new PrismaClient();
 
@@ -39,7 +39,8 @@ function parseInitMigration(sql) {
 async function main() {
   if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is required");
 
-  const migrationBytes = readFileSync(INIT_PATH);
+  const migrationPath = join(process.cwd(), "prisma", "migrations", INIT_MIGRATION, "migration.sql");
+  const migrationBytes = readFileSync(migrationPath);
   const migrationSql = migrationBytes.toString("utf8");
   const checksum = createHash("sha256").update(migrationBytes).digest("hex");
   const expected = parseInitMigration(migrationSql);
