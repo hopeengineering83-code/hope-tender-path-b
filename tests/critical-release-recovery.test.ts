@@ -19,9 +19,10 @@ describe("critical release recovery controls", () => {
     assert.match(script, /const INIT_MIGRATION = ["']20260601000000_init["']/);
     assert.match(script, /message\.includes\(["']P3009["']\)\s*&&\s*message\.includes\(INIT_MIGRATION\)/);
     assert.match(script, /migrate["'],\s*["']diff/);
-    assert.match(script, /--from-url/);
+    assert.match(script, /--from-schema-datasource/);
     assert.match(script, /--to-schema-datamodel/);
     assert.match(script, /--exit-code/);
+    assert.doesNotMatch(script, /--from-url/);
 
     const verifyIndex = script.indexOf("schemaMatchesCurrentPrismaModel()");
     const rolledBackIndex = script.indexOf('"--rolled-back", INIT_MIGRATION');
@@ -29,6 +30,14 @@ describe("critical release recovery controls", () => {
     assert.ok(verifyIndex >= 0, "schema verification helper must exist");
     assert.ok(rolledBackIndex > verifyIndex, "schema verification must precede rollback resolution");
     assert.ok(appliedIndex > rolledBackIndex, "migration is marked applied only after failed state is resolved");
+  });
+
+  it("does not expose DATABASE_URL as a command-line argument", () => {
+    const script = read("scripts/migrate-deploy-safe.mjs");
+    assert.doesNotMatch(script, /const databaseUrl\s*=\s*process\.env\.DATABASE_URL/);
+    assert.doesNotMatch(script, /--from-url/);
+    assert.match(script, /--from-schema-datasource/);
+    assert.match(script, /Database schema verification failed without changing migration history/);
   });
 
   it("does not reapply migration SQL outside Prisma migration history", () => {
