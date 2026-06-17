@@ -6,6 +6,12 @@ const MIGRATIONS_DIR = join(process.cwd(), "prisma", "migrations");
 const BASELINE_CUTOFF = process.env.PRISMA_BASELINE_CUTOFF || "20260613190000_comprehensive_gap_guards";
 const explicitBaseline = ["1", "true", "yes"].includes((process.env.PRISMA_BASELINE_EXISTING_DB || "").trim().toLowerCase());
 
+// The retroactively-added init migration. When a production DB already has all
+// tables (set up before migration tracking was introduced), Prisma will try to
+// apply this migration first and fail with "already exists". In that case we
+// mark it as applied so _prisma_migrations accurately reflects reality.
+const INIT_MIGRATION = "20260601000000_init";
+
 // In Vercel PREVIEW builds where DATABASE_URL is not configured, skip migrations
 // gracefully. The app bootstrap (lib/prisma.ts) handles schema on first request.
 // In production and CI (DATABASE_URL always set), migrations always run.
@@ -58,16 +64,27 @@ function migrationNames() {
 function deploy() {
   try {
     prisma(["migrate", "deploy"], { capture: true });
-    return true;
+    return "ok";
   } catch (error) {
     const message = capturedErrorText(error);
-    if (!message.includes("P3005") && !message.includes("database schema is not empty")) throw error;
-    console.warn("Detected an existing database without Prisma migration history; evaluating controlled baseline policy.");
-    return false;
+    if (message.includes("P3005") || message.includes("database schema is not empty")) {
+      console.warn("Detected an existing database without Prisma migration history; evaluating controlled baseline policy.");
+      return "no-history";
+    }
+    // "already exists" means a retroactively-added init migration is being applied
+    // to a database that already has the tables. The schema is already correct;
+    // only _prisma_migrations needs to be updated to record this migration.
+    if (message.includes("already exists")) {
+      console.warn("Detected existing schema conflict during migration apply; evaluating init migration resolution.");
+      return "schema-conflict";
+    }
+    throw error;
   }
 }
 
-if (!deploy()) {
+let deployResult = deploy();
+
+if (deployResult === "no-history") {
   if (!ALLOW_BASELINE) {
     console.error("ERROR: Existing non-empty database has no Prisma migration history.");
     console.error("Automatic baselining is disabled for security. Set PRISMA_BASELINE_EXISTING_DB=true to authorize.");
@@ -89,7 +106,27 @@ if (!deploy()) {
     }
   }
 
-  if (!deploy()) throw new Error("Prisma migration deployment still failed after controlled baseline");
+  deployResult = deploy();
+  if (deployResult !== "ok") throw new Error(`Prisma migration deployment still failed after controlled baseline (result: ${deployResult})`);
+}
+
+if (deployResult === "schema-conflict") {
+  // The init migration was retroactively added to a database whose schema was
+  // already set up before migration tracking was introduced (via prisma db push
+  // or a prior deploy). All the tables already exist; we just need to record
+  // the init migration as applied so _prisma_migrations reflects reality.
+  if (!existsSync(join(MIGRATIONS_DIR, INIT_MIGRATION))) {
+    throw new Error(`Schema conflict during deploy but init migration ${INIT_MIGRATION} not found in prisma/migrations`);
+  }
+  console.log(`Marking retroactive init migration ${INIT_MIGRATION} as applied to sync migration history.`);
+  try {
+    prisma(["migrate", "resolve", "--applied", INIT_MIGRATION], { capture: true });
+  } catch (error) {
+    const text = capturedErrorText(error);
+    if (!/already recorded|already applied/i.test(text)) throw error;
+  }
+  deployResult = deploy();
+  if (deployResult !== "ok") throw new Error(`Prisma migration deployment still failed after resolving init migration schema conflict (result: ${deployResult})`);
 }
 
 const guardFile = join(MIGRATIONS_DIR, "20260613190000_comprehensive_gap_guards", "migration.sql");

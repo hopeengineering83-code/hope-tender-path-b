@@ -82,4 +82,20 @@ describe("release integrity hardening", () => {
     assert.match(ci, /npm run db:check-critical-schema/);
     assert.match(ci, /npm run audit:release-integrity/);
   });
+
+  it("migrate-deploy-safe handles retroactive init migration schema conflict without blocking", () => {
+    const script = readFileSync("scripts/migrate-deploy-safe.mjs", "utf8");
+    // Must define the init migration name
+    assert.match(script, /INIT_MIGRATION\s*=\s*["']20260601000000_init["']/);
+    // Must detect "already exists" and return schema-conflict (not throw)
+    assert.match(script, /already exists/);
+    assert.match(script, /schema-conflict/);
+    // Must use migrate resolve --applied to mark the init migration
+    assert.match(script, /migrate.*resolve.*--applied.*INIT_MIGRATION/s);
+    // Must retry deploy after resolving
+    const schemaConflictIdx = script.indexOf("schema-conflict");
+    const resolveIdx = script.indexOf("resolve", schemaConflictIdx);
+    const retryIdx = script.indexOf("deploy()", resolveIdx);
+    assert.ok(retryIdx > resolveIdx, "deploy() must be retried after resolving the init migration");
+  });
 });
