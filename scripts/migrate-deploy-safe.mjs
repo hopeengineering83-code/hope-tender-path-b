@@ -78,11 +78,26 @@ function deploy() {
       console.warn("Detected existing schema conflict during migration apply; evaluating init migration resolution.");
       return "schema-conflict";
     }
+    // For Vercel preview, any other migration failure (connection errors P1001/P1002,
+    // schema sync issues P3009, etc.) should not block the preview build.
+    // Production must still throw so real failures are surfaced immediately.
+    if (isVercelPreview) {
+      console.warn("Migration failed in Vercel preview environment; skipping to allow preview build.");
+      console.warn("Error snippet:", message.slice(0, 300));
+      return "preview-error";
+    }
     throw error;
   }
 }
 
 let deployResult = deploy();
+
+if (deployResult === "preview-error") {
+  // Any migration error on Vercel preview is non-fatal — the preview DB state
+  // may not match production migrations. Exit gracefully; the app bootstrap
+  // (lib/prisma.ts) will handle schema on first request if DATABASE_URL is set.
+  process.exit(0);
+}
 
 if (deployResult === "no-history") {
   // Vercel preview deployments with a bootstrapped DB (no migration history)
