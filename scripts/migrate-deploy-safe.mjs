@@ -85,6 +85,15 @@ function deploy() {
 let deployResult = deploy();
 
 if (deployResult === "no-history") {
+  // Vercel preview deployments with a bootstrapped DB (no migration history)
+  // should not block the build. Preview DBs are often created via db push or
+  // without migration tracking; failing here prevents all preview deployments.
+  if (isVercelPreview) {
+    console.warn("Skipping migration baseline for Vercel preview: DB has no Prisma migration history.");
+    console.warn("Set PRISMA_BASELINE_EXISTING_DB=true to run a controlled baseline on preview.");
+    process.exit(0);
+  }
+
   if (!ALLOW_BASELINE) {
     console.error("ERROR: Existing non-empty database has no Prisma migration history.");
     console.error("Automatic baselining is disabled for security. Set PRISMA_BASELINE_EXISTING_DB=true to authorize.");

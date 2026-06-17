@@ -83,6 +83,18 @@ describe("release integrity hardening", () => {
     assert.match(ci, /npm run audit:release-integrity/);
   });
 
+  it("migrate-deploy-safe exits gracefully for Vercel preview with no migration history", () => {
+    const script = readFileSync("scripts/migrate-deploy-safe.mjs", "utf8");
+    // When isVercelPreview=true and the DB has no migration history (P3005),
+    // the script must warn and exit(0) instead of failing the preview build.
+    assert.match(script, /isVercelPreview.*no-history|no-history.*isVercelPreview/s);
+    // The graceful exit must appear before the ALLOW_BASELINE block
+    const previewExitIdx = script.indexOf("Skipping migration baseline for Vercel preview");
+    const allowBaselineIdx = script.indexOf("ALLOW_BASELINE");
+    assert.ok(previewExitIdx > 0, "must have graceful preview exit message");
+    assert.ok(previewExitIdx < allowBaselineIdx, "preview graceful exit must come before ALLOW_BASELINE check");
+  });
+
   it("migrate-deploy-safe handles retroactive init migration schema conflict without blocking", () => {
     const script = readFileSync("scripts/migrate-deploy-safe.mjs", "utf8");
     // Must define the init migration name
