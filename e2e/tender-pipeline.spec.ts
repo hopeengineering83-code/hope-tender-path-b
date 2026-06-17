@@ -1,6 +1,36 @@
 import { test, expect, type Page } from "@playwright/test";
 
 const FULL = process.env.E2E_FULL_AUTH === "true";
+const baseURL = process.env.PLAYWRIGHT_BASE_URL || "http://127.0.0.1:3000";
+
+async function preserveLoopbackSession(page: Page, response: Awaited<ReturnType<Page["request"]["post"]>>) {
+  const origin = new URL(baseURL);
+  if (origin.protocol !== "http:") return;
+
+  const sessionHeader = response.headersArray().find(
+    ({ name, value }) => name.toLowerCase() === "set-cookie" && value.startsWith("hope_session="),
+  );
+  expect(sessionHeader, "login response must set the session cookie").toBeTruthy();
+  expect(sessionHeader?.value, "production-like login must retain the Secure cookie attribute").toMatch(/;\s*Secure(?:;|$)/i);
+
+  const cookiePair = sessionHeader!.value.split(";", 1)[0];
+  const separator = cookiePair.indexOf("=");
+  expect(separator).toBeGreaterThan(0);
+  const value = cookiePair.slice(separator + 1);
+  expect(value).not.toBe("");
+
+  // `next start` correctly emits a Secure production cookie, but CI serves the
+  // isolated app over loopback HTTP. Clone only that cookie into the browser
+  // context for the test; production cookie policy remains unchanged.
+  await page.context().addCookies([{
+    name: "hope_session",
+    value,
+    url: origin.origin,
+    httpOnly: true,
+    sameSite: "Lax",
+    secure: false,
+  }]);
+}
 
 async function login(page: Page) {
   const email = process.env.E2E_TEST_EMAIL ?? "";
@@ -8,6 +38,7 @@ async function login(page: Page) {
   const response = await page.request.post("/api/auth/login", { data: { email, password } });
   const body = await response.text().catch(() => "(unreadable)");
   expect(response.status(), `login failed: ${body}`).toBe(200);
+  await preserveLoopbackSession(page, response);
 }
 
 test.describe("tender API anonymous protection", () => {
