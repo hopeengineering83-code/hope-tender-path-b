@@ -36,10 +36,26 @@ const packageJson = JSON.parse(read("package.json") || "{}");
 const vercelBuild = packageJson.scripts?.["vercel-build"] ?? "";
 const releaseAudit = packageJson.scripts?.["audit:release-integrity"] ?? "";
 const schemaCheck = packageJson.scripts?.["db:check-critical-schema"] ?? "";
+const safeMigration = read("scripts/migrate-deploy-safe.mjs");
 
 assertRule("package release audit script", releaseAudit.includes("audit-release-integrity.mjs"), "package.json must expose npm run audit:release-integrity");
 assertRule("package critical schema script", schemaCheck.includes("check-critical-schema.mjs"), "package.json must expose npm run db:check-critical-schema");
-assertRule("vercel migration order", vercelBuild.indexOf("migrate-deploy-safe.mjs") >= 0 && vercelBuild.indexOf("check-critical-schema.mjs") > vercelBuild.indexOf("migrate-deploy-safe.mjs"), "vercel-build must migrate, then verify the critical schema, then build");
+assertRule("vercel safe migration command", vercelBuild.includes("migrate-deploy-safe.mjs"), "vercel-build must invoke the safe migration command before next build");
+assertRule(
+  "safe migration schema verification",
+  safeMigration.includes("scripts/check-critical-schema.mjs") && safeMigration.includes('REQUIRE_MIGRATION_HISTORY: "true"'),
+  "the safe migration command must verify critical schema and migration history before completing",
+);
+assertRule(
+  "preview database mutation guard",
+  safeMigration.includes("ALLOW_PREVIEW_DB_MIGRATIONS") && safeMigration.includes("build-only and is not database-verified"),
+  "preview builds must not mutate a database unless an isolated preview database is explicitly authorized",
+);
+assertRule(
+  "no arbitrary preview migration success",
+  !safeMigration.includes('return "preview-error"') && !safeMigration.includes('deployResult === "preview-error"'),
+  "arbitrary preview migration failures must not be converted to successful database verification",
+);
 
 const standardUpload = read("app/api/upload/route.ts");
 const uploadFirst = read("app/api/tenders/upload-first/route.ts");
@@ -79,7 +95,9 @@ for (const provider of expectedProviderOrder) {
 assertRule("canonical AI provider order", providerOrderOk, `provider policy must preserve ${expectedProviderOrder.join(" → ")}`);
 
 assertRule("CI release audit", ci.includes("npm run audit:release-integrity"), "CI must execute the release-integrity audit");
-assertRule("CI migration path", ci.includes("Validate production migration path"), "CI must apply migrations to a clean production-like database");
+assertRule("CI migration path", ci.includes("Deploy the complete migration history") && ci.includes("npx prisma migrate deploy"), "CI must apply migrations to the same clean database used by application tests");
+assertRule("CI migration idempotency", ci.includes("Verify migration idempotency"), "CI must prove a second migration deployment is clean");
+assertRule("CI avoids schema shortcuts", !ci.includes("prisma db push") && !ci.includes("prisma db execute"), "CI must not replace migration proof with db push or manual SQL reapplication");
 assertRule("CI critical schema", ci.includes("npm run db:check-critical-schema"), "CI must verify critical tables, columns, functions, and migration state");
 assertRule("post-deploy workflow", postDeployWorkflow.includes("Verify production health and deployed commit") && postDeployWorkflow.includes("workflow_run"), "successful main CI must trigger production verification");
 assertRule("post-deploy release match", postDeployVerifier.includes("health.release === expectedSha") && postDeployVerifier.includes("RateLimitBucket"), "post-deploy verification must check the deployed SHA and critical tables");
