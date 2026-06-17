@@ -1,6 +1,7 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "crypto";
 import { cookies } from "next/headers";
 import { prisma, prismaReady } from "./prisma";
+import { shouldUseSecureSessionCookie } from "./session-cookie-policy";
 
 const SESSION_COOKIE = "hope_session";
 const SESSION_TTL_DAYS = 14;
@@ -72,7 +73,7 @@ export async function createSession(userId: string) {
   store.set(SESSION_COOKIE, token, {
     httpOnly: true,
     sameSite: "lax",
-    secure: process.env.NODE_ENV === "production" || Boolean(process.env.VERCEL_ENV),
+    secure: shouldUseSecureSessionCookie(),
     path: "/",
     expires: expiresAt,
   });
