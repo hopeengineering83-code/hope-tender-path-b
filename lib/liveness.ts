@@ -1,6 +1,14 @@
 import { NextResponse } from "next/server";
 import { prisma, prismaReady } from "./prisma";
 
+const CRITICAL_TABLES = [
+  "RateLimitBucket",
+  "PasswordResetToken",
+  "SubmissionPlanState",
+  "AiAnalyzeChunk",
+  "AiJob",
+] as const;
+
 async function tableStatus(): Promise<Record<string, boolean>> {
   try {
     await prismaReady;
@@ -14,19 +22,19 @@ async function tableStatus(): Promise<Record<string, boolean>> {
         ('AiJob')
       ) AS t(name)
     `;
-    return Object.fromEntries(rows.map((r) => [r.name, r.exists]));
+    return Object.fromEntries(rows.map((row) => [row.name, row.exists]));
   } catch {
-    return { error: true } as unknown as Record<string, boolean>;
+    return Object.fromEntries(CRITICAL_TABLES.map((name) => [name, false]));
   }
 }
 
 export async function livenessResponse() {
   const tables = await tableStatus();
-  const allCriticalTablesExist = tables["RateLimitBucket"] && tables["PasswordResetToken"] && tables["AiJob"];
+  const allCriticalTablesExist = CRITICAL_TABLES.every((name) => tables[name] === true);
 
   return NextResponse.json(
     {
-      ok: true,
+      ok: allCriticalTablesExist,
       status: allCriticalTablesExist ? "healthy" : "degraded",
       environment: process.env.VERCEL_ENV || process.env.NODE_ENV || "unknown",
       release: process.env.VERCEL_GIT_COMMIT_SHA || "unknown",
