@@ -78,6 +78,13 @@ jobs:
           REQUIRE_MIGRATION_HISTORY: "true"
         run: npm run db:check-critical-schema
 
+      - name: Verify credential-safe zero-drift schema comparison
+        run: >-
+          npx prisma migrate diff
+          --from-schema-datasource prisma/schema.prisma
+          --to-schema-datamodel prisma/schema.prisma
+          --exit-code
+
       - name: Verify migration idempotency
         run: npx prisma migrate deploy
 
