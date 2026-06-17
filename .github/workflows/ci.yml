@@ -79,7 +79,11 @@ jobs:
         run: npx prisma generate
 
       - name: Deploy complete migration history
-        run: npx prisma migrate deploy
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p test-results
+          npx prisma migrate deploy 2>&1 | tee test-results/migrate-deploy.log
 
       - name: Verify critical migrated schema
         run: npm run db:check-critical-schema
@@ -88,7 +92,10 @@ jobs:
         run: npm run db:verify-retroactive-init
 
       - name: Verify migration idempotency
-        run: npx prisma migrate deploy
+        shell: bash
+        run: |
+          set -o pipefail
+          npx prisma migrate deploy 2>&1 | tee test-results/migrate-idempotency.log
 
       - name: Audit release integrity
         run: npm run audit:release-integrity
@@ -103,7 +110,6 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          mkdir -p test-results
           npm test 2>&1 | tee test-results/npm-test.log
 
       - name: Build
