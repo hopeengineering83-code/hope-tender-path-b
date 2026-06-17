@@ -1,0 +1,72 @@
+import assert from "node:assert/strict";
+import { describe, it } from "node:test";
+import { readFileSync } from "node:fs";
+
+function read(path: string): string {
+  return readFileSync(path, "utf8");
+}
+
+describe("critical release recovery controls", () => {
+  it("never treats an arbitrary preview migration failure as success", () => {
+    const script = read("scripts/migrate-deploy-safe.mjs");
+    assert.doesNotMatch(script, /return\s+["']preview-error["']/);
+    assert.doesNotMatch(script, /deployResult\s*===\s*["']preview-error["']/);
+    assert.doesNotMatch(script, /any migration error on Vercel preview is non-fatal/i);
+  });
+
+  it("repairs only the known failed init migration after a schema diff passes", () => {
+    const script = read("scripts/migrate-deploy-safe.mjs");
+    assert.match(script, /const INIT_MIGRATION = ["']20260601000000_init["']/);
+    assert.match(script, /message\.includes\(["']P3009["']\)\s*&&\s*message\.includes\(INIT_MIGRATION\)/);
+    assert.match(script, /migrate["'],\s*["']diff/);
+    assert.match(script, /--from-url/);
+    assert.match(script, /--to-schema-datamodel/);
+    assert.match(script, /--exit-code/);
+
+    const verifyIndex = script.indexOf("schemaMatchesCurrentPrismaModel()");
+    const rolledBackIndex = script.indexOf('"--rolled-back", INIT_MIGRATION');
+    const appliedIndex = script.indexOf('"--applied", INIT_MIGRATION');
+    assert.ok(verifyIndex >= 0, "schema verification helper must exist");
+    assert.ok(rolledBackIndex > verifyIndex, "schema verification must precede rollback resolution");
+    assert.ok(appliedIndex > rolledBackIndex, "migration is marked applied only after failed state is resolved");
+  });
+
+  it("does not reapply migration SQL outside Prisma migration history", () => {
+    const script = read("scripts/migrate-deploy-safe.mjs");
+    assert.doesNotMatch(script, /prisma\(\["db",\s*"execute"/);
+    assert.doesNotMatch(script, /Reapplying idempotent database guard definitions/);
+  });
+
+  it("requires schema verification before an explicitly authorized baseline", () => {
+    const script = read("scripts/migrate-deploy-safe.mjs");
+    const baselineFunction = script.slice(script.indexOf("function baselineExistingDatabase"));
+    assert.match(baselineFunction, /if \(!ALLOW_BASELINE\)/);
+    assert.match(baselineFunction, /schemaMatchesCurrentPrismaModel\(\)/);
+    assert.match(baselineFunction, /Refusing controlled baseline/);
+  });
+
+  it("keeps the reconciler manual and out of lifecycle commands", () => {
+    const pkg = JSON.parse(read("package.json")) as { scripts: Record<string, string> };
+    for (const name of ["postinstall", "build", "vercel-build", "typecheck", "lint", "test", "test:integration"]) {
+      assert.ok(pkg.scripts[name], `${name} script must exist`);
+      assert.doesNotMatch(pkg.scripts[name], /reconcile-gap-closure/);
+    }
+    assert.match(pkg.scripts["reconcile:ai"], /reconcile-gap-closure/);
+  });
+
+  it("runs CI on migration-built schema and checks for source mutation", () => {
+    const ci = read(".github/workflows/ci.yml");
+    assert.doesNotMatch(ci, /prisma db push/);
+    assert.doesNotMatch(ci, /prisma db execute/);
+    assert.match(ci, /npx prisma migrate deploy/);
+    assert.match(ci, /Verify migration idempotency/);
+    assert.match(ci, /git diff --exit-code/);
+    assert.match(ci, /integration\/production-engine-2026-06/);
+    assert.match(ci, /release\/production-engine-2026-06/);
+  });
+
+  it("uses one package-owned Vercel build pipeline", () => {
+    const vercel = JSON.parse(read("vercel.json")) as { buildCommand?: string };
+    assert.equal(vercel.buildCommand, "npm run vercel-build");
+  });
+});
