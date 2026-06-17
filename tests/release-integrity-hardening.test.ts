@@ -103,7 +103,8 @@ describe("release integrity hardening", () => {
     assert.match(script, /INIT_MIGRATION\s*=\s*["']20260601000000_init["']/);
     assert.match(script, /message\.includes\(["']P3009["']\)\s*&&\s*message\.includes\(INIT_MIGRATION\)/);
     assert.match(script, /migrate["'],\s*["']diff/);
-    assert.match(script, /--from-url/);
+    assert.match(script, /--from-schema-datasource/);
+    assert.doesNotMatch(script, /--from-url/);
     assert.match(script, /--to-schema-datamodel/);
     assert.match(script, /--exit-code/);
     assert.match(script, /"--rolled-back", INIT_MIGRATION/);
