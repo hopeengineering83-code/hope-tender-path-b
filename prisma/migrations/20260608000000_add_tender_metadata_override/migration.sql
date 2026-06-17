@@ -21,7 +21,21 @@ CREATE UNIQUE INDEX IF NOT EXISTS "TenderMetadataOverride_tenderId_field_key" ON
 CREATE INDEX IF NOT EXISTS "TenderMetadataOverride_tenderId_idx" ON "TenderMetadataOverride"("tenderId");
 
 -- AddForeignKey
-ALTER TABLE "TenderMetadataOverride" ADD CONSTRAINT "TenderMetadataOverride_tenderId_fkey" FOREIGN KEY ("tenderId") REFERENCES "Tender"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'TenderMetadataOverride_tenderId_fkey'
+  ) THEN
+    ALTER TABLE "TenderMetadataOverride" ADD CONSTRAINT "TenderMetadataOverride_tenderId_fkey"
+      FOREIGN KEY ("tenderId") REFERENCES "Tender"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+  END IF;
+END $$;
 
 -- AddForeignKey
-ALTER TABLE "TenderMetadataOverride" ADD CONSTRAINT "TenderMetadataOverride_overriddenBy_fkey" FOREIGN KEY ("overriddenBy") REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'TenderMetadataOverride_overriddenBy_fkey'
+  ) THEN
+    ALTER TABLE "TenderMetadataOverride" ADD CONSTRAINT "TenderMetadataOverride_overriddenBy_fkey"
+      FOREIGN KEY ("overriddenBy") REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+  END IF;
+END $$;
