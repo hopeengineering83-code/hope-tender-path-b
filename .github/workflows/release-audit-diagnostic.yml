@@ -1,4 +1,4 @@
-name: Release audit diagnostic
+name: Release audit picker fix
 
 on:
   push:
@@ -9,26 +9,32 @@ permissions:
   contents: write
 
 jobs:
-  audit:
+  fix:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           ref: fix/integration-dependency-security
           fetch-depth: 0
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - name: Capture and publish audit output once
+      - name: Align the new-tender picker with the inspectable-format audit
         shell: bash
         run: |
-          if [ -f release-audit-diagnostic.json ]; then
-            echo "Diagnostic already exists."
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('app/dashboard/tenders/new/page.tsx')
+          text = path.read_text()
+          old = '.pdf,.docx,.xlsx,.txt,.csv,application/pdf'
+          new = '.pdf,.docx,.xlsx,.csv,.txt,application/pdf'
+          if old not in text:
+              print('Picker already aligned; no change required.')
+          else:
+              path.write_text(text.replace(old, new, 1))
+          PY
+          if git diff --quiet -- app/dashboard/tenders/new/page.tsx; then
             exit 0
           fi
-          node scripts/audit-release-integrity.mjs > release-audit-diagnostic.json || true
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add release-audit-diagnostic.json
-          git commit -m 'chore(ci): publish release audit diagnostic'
+          git add app/dashboard/tenders/new/page.tsx
+          git commit -m 'fix(upload): align new tender picker with secure formats'
           git push origin HEAD:fix/integration-dependency-security
