@@ -181,7 +181,7 @@ export async function ExtractionQualityPanel({ tenderId }: { tenderId: string })
 
       <div className="mt-4 grid gap-3 md:grid-cols-5">
         <div className="rounded-xl border bg-white p-3 text-sm"><p className="text-xs uppercase text-slate-500">Detected pages</p><p className="mt-1 text-xl font-bold text-slate-900">{pageCoverage.total || "Unknown"}</p></div>
-        <div className="rounded-xl border bg-white p-3 text-sm"><p className="text-xs uppercase text-slate-500">Perfectly extracted</p><p className="mt-1 text-xl font-bold text-slate-900">{pageCoverage.good}</p><p className="text-[10px] text-slate-500">{pageCoverage.good}/{pageCoverage.total || "?"} · {pageCoverage.coveragePercent}%</p></div>
+        <div className="rounded-xl border bg-white p-3 text-sm"><p className="text-xs uppercase text-slate-500">Good pages</p><p className="mt-1 text-xl font-bold text-slate-900">{pageCoverage.good}</p></div>
         <div className="rounded-xl border bg-white p-3 text-sm"><p className="text-xs uppercase text-slate-500">OCR pages</p><p className="mt-1 text-xl font-bold text-slate-900">{pageCoverage.ocr}</p></div>
         <div className="rounded-xl border bg-white p-3 text-sm"><p className="text-xs uppercase text-slate-500">Weak pages</p><p className="mt-1 text-xl font-bold text-slate-900">{pageCoverage.weak}</p></div>
         <div className="rounded-xl border bg-white p-3 text-sm"><p className="text-xs uppercase text-slate-500">Blank/failed pages</p><p className="mt-1 text-xl font-bold text-slate-900">{pageCoverage.failed}</p></div>

@@ -365,14 +365,12 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
   // this check; enforce the same constraint at export time.
   if (tender.files && tender.files.length > 0) {
     let anySubmissionInstructions = false;
-    let anyEvaluationCriteriaPages = false;
     let anyRequiredDocPages = false;
     let totalDetectedPages = 0;
     for (const file of tender.files) {
       const pp = assessExtractionQualityPerPage((file as { extractedText?: string | null }).extractedText);
       totalDetectedPages += pp.totalDetectedPages;
       if (pp.submissionInstructionPages.length > 0) anySubmissionInstructions = true;
-      if (pp.evaluationCriteriaPages.length > 0) anyEvaluationCriteriaPages = true;
       if (pp.requiredDocumentPages.length > 0) anyRequiredDocPages = true;
     }
     if (totalDetectedPages > 0 && !anySubmissionInstructions) {
@@ -382,14 +380,6 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
         "Re-extract the tender (run OCR if needed), then re-run AI Analyze to recover submission instructions before exporting.",
         "HIGH",
       ));
-    }
-    if (totalDetectedPages > 0 && !anyEvaluationCriteriaPages) {
-      advisoryWarnings.push({
-        category: "EVALUATION_CRITERIA_NOT_EXTRACTED",
-        severity: "HIGH" as const,
-        title: "No evaluation criteria pages were detected in the extracted tender text. The submission package may not be optimally structured to score maximum points.",
-        recommendedAction: "Re-extract the tender to ensure evaluation criteria sections are readable, then re-run AI Analyze before exporting.",
-      });
     }
     if (totalDetectedPages > 0 && !anyRequiredDocPages) {
       advisoryWarnings.push({

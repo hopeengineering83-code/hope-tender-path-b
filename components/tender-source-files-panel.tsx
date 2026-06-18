@@ -34,6 +34,8 @@ const CLASSIFICATIONS = [
   ["OTHER", "Other"],
 ] as const;
 
+const ALLOWED_EXTENSIONS = new Set(["pdf", "docx", "xlsx", "csv", "txt"]);
+
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -45,6 +47,11 @@ function extractionLabel(file: TenderSourceFile): string {
   if (file.extractionScore != null) return `${Math.round(file.extractionScore)}% extraction`;
   if (file.totalPages != null && file.extractedPages != null) return `${file.extractedPages}/${file.totalPages} pages`;
   return "Extraction pending";
+}
+
+function extensionOf(fileName: string): string {
+  const dot = fileName.lastIndexOf(".");
+  return dot >= 0 ? fileName.slice(dot + 1).toLowerCase() : "";
 }
 
 export function TenderSourceFilesPanel({ tenderId, initialFiles }: { tenderId: string; initialFiles: TenderSourceFile[] }) {
@@ -59,6 +66,15 @@ export function TenderSourceFilesPanel({ tenderId, initialFiles }: { tenderId: s
 
   const uploadFiles = useCallback(async (incoming: File[]) => {
     if (incoming.length === 0 || uploading) return;
+    const invalid = incoming.filter((file) => !ALLOWED_EXTENSIONS.has(extensionOf(file.name)));
+    if (invalid.length > 0) {
+      setMessage({
+        kind: "error",
+        text: `${invalid.map((file) => file.name).join(", ")}: unsupported format. Use PDF, DOCX, XLSX, CSV, or TXT. Legacy DOC/XLS files must be converted first.`,
+      });
+      return;
+    }
+
     setUploading(true);
     setMessage(null);
     let uploaded = 0;
@@ -161,7 +177,7 @@ export function TenderSourceFilesPanel({ tenderId, initialFiles }: { tenderId: s
           type="file"
           multiple
           className="sr-only"
-          accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.txt"
+          accept=".pdf,.docx,.xlsx,.csv,.txt"
           onChange={(event) => {
             const selected = Array.from(event.target.files ?? []);
             event.target.value = "";
@@ -169,7 +185,7 @@ export function TenderSourceFilesPanel({ tenderId, initialFiles }: { tenderId: s
           }}
         />
         <p className="text-sm font-medium text-slate-700">Drop tender documents here</p>
-        <p className="mt-1 text-xs text-slate-500">PDF, Word, Excel, text, and CSV files only</p>
+        <p className="mt-1 text-xs text-slate-500">PDF, DOCX, XLSX, TXT, and CSV only. Convert legacy DOC/XLS files before upload.</p>
         <button
           type="button"
           onClick={() => inputRef.current?.click()}

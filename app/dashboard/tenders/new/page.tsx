@@ -4,6 +4,12 @@ import { useRouter } from "next/navigation";
 
 const CATEGORIES = ["General","IT","Construction","Services","Consulting","Supply","Healthcare","Education","Infrastructure","Urban Planning","Environmental","Feasibility Study","NGO/Donor-Funded","Other"];
 const CURRENCIES = ["USD","EUR","GBP","ZAR","AUD","CAD","AED","SAR","KWD","EGP","ETB","NGN"];
+const ALLOWED_TENDER_EXTENSIONS = new Set(["pdf", "docx", "xlsx", "txt", "csv"]);
+
+function fileExtension(name: string): string {
+  const dot = name.lastIndexOf(".");
+  return dot >= 0 ? name.slice(dot + 1).toLowerCase() : "";
+}
 
 export default function NewTenderPage() {
   const router = useRouter();
@@ -12,6 +18,17 @@ export default function NewTenderPage() {
   const [error, setError] = useState("");
   const [uploadError, setUploadError] = useState("");
   const [files, setFiles] = useState<File[]>([]);
+
+  function selectTenderFiles(selected: File[]) {
+    const invalid = selected.filter((file) => !ALLOWED_TENDER_EXTENSIONS.has(fileExtension(file.name)));
+    if (invalid.length > 0) {
+      setFiles([]);
+      setUploadError(`${invalid.map((file) => file.name).join(", ")}: unsupported format. Use PDF, DOCX, XLSX, TXT, or CSV. Convert legacy DOC/XLS files first.`);
+      return;
+    }
+    setUploadError("");
+    setFiles(selected);
+  }
 
   async function handleUploadFirst() {
     setUploading(true);
@@ -72,10 +89,11 @@ export default function NewTenderPage() {
           <input
             type="file"
             multiple
-            accept=".pdf,.doc,.docx,.xls,.xlsx,.txt,.csv,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-            onChange={(e) => setFiles(Array.from(e.target.files ?? []))}
+            accept=".pdf,.docx,.xlsx,.csv,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            onChange={(e) => selectTenderFiles(Array.from(e.target.files ?? []))}
             className="block w-full rounded-xl border bg-white px-3 py-3 text-sm"
           />
+          <p className="mt-2 text-xs text-slate-500">PDF, DOCX, XLSX, TXT, and CSV only. Convert legacy DOC/XLS files before upload.</p>
           {files.length > 0 && (
             <div className="mt-3 space-y-1 text-xs text-slate-600">
               {files.map((file) => <div key={`${file.name}-${file.size}`} className="rounded-lg bg-slate-50 px-3 py-2">{file.name} · {(file.size / 1024 / 1024).toFixed(2)} MB</div>)}

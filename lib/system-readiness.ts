@@ -1,5 +1,5 @@
 import { prisma, prismaReady } from "./prisma";
-import { getStorageReadiness } from "./storage";
+import { resolveStorageProvider } from "./storage";
 
 export type ReadinessSeverity = "OK" | "WARNING" | "CRITICAL";
 
@@ -59,30 +59,17 @@ async function databaseChecks(): Promise<ReadinessCheck[]> {
       "refresh_submission_plan_state",
     ].filter((name) => !functions.has(name));
 
-    const tableRows = await prisma.$queryRawUnsafe<Array<{
-      submissionPlanState: string | null;
-      resetToken: string | null;
-      rateLimit: string | null;
-      aiJob: string | null;
-      tenderFile: string | null;
-      documentReview: string | null;
-    }>>(
+    const tableRows = await prisma.$queryRawUnsafe<Array<{ submissionPlanState: string | null; resetToken: string | null; rateLimit: string | null }>>(
       `SELECT
         to_regclass('"SubmissionPlanState"')::text AS "submissionPlanState",
         to_regclass('"PasswordResetToken"')::text AS "resetToken",
-        to_regclass('"RateLimitBucket"')::text AS "rateLimit",
-        to_regclass('"AiJob"')::text AS "aiJob",
-        to_regclass('"TenderFile"')::text AS "tenderFile",
-        to_regclass('"DocumentReview"')::text AS "documentReview"`,
+        to_regclass('"RateLimitBucket"')::text AS "rateLimit"`,
     );
     const tables = tableRows[0];
     const missingTables = [
       !tables?.submissionPlanState ? "SubmissionPlanState" : null,
       !tables?.resetToken ? "PasswordResetToken" : null,
       !tables?.rateLimit ? "RateLimitBucket" : null,
-      !tables?.aiJob ? "AiJob" : null,
-      !tables?.tenderFile ? "TenderFile" : null,
-      !tables?.documentReview ? "DocumentReview" : null,
     ].filter(Boolean) as string[];
 
     return [
@@ -95,12 +82,12 @@ async function databaseChecks(): Promise<ReadinessCheck[]> {
       },
       {
         key: "database_guards",
-        title: "Required database schema and guards",
+        title: "Required database guards",
         severity: missingFunctions.length === 0 && missingTables.length === 0 ? "OK" : "CRITICAL",
         requiredForProduction: true,
         detail: missingFunctions.length === 0 && missingTables.length === 0
-          ? "Required workflow tables, security tables and database functions are installed."
-          : `Missing migration objects: ${[...missingFunctions, ...missingTables].join(", ")}. Run prisma migrate deploy and the critical schema check.`,
+          ? "Required functions and security tables are installed."
+          : `Missing migration objects: ${[...missingFunctions, ...missingTables].join(", ")}. Run prisma migrate deploy.`,
       },
     ];
   } catch (error) {
@@ -117,10 +104,11 @@ async function databaseChecks(): Promise<ReadinessCheck[]> {
 export async function getSystemReadiness(): Promise<SystemReadiness> {
   const checks = await databaseChecks();
   const configuredProviders = configuredAiProviders();
-  const storage = getStorageReadiness();
+  const storageProvider = resolveStorageProvider();
   const production = process.env.NODE_ENV === "production" || Boolean(process.env.VERCEL_ENV);
   const strongSessionSecret = (process.env.SESSION_SECRET ?? process.env.AUTH_SECRET ?? "").length >= 32;
   const smtpConfigured = has(process.env.SMTP_HOST) && has(process.env.SMTP_USER) && has(process.env.SMTP_PASS) && has(process.env.EMAIL_FROM);
+  const durableStorage = storageProvider === "blob" || (storageProvider === "db-base64" && process.env.ALLOW_DB_FILE_STORAGE === "true");
 
   checks.push(
     {
@@ -133,9 +121,11 @@ export async function getSystemReadiness(): Promise<SystemReadiness> {
     {
       key: "file_storage",
       title: "Durable private file storage",
-      severity: !production || storage.ready ? "OK" : "CRITICAL",
+      severity: !production || durableStorage ? "OK" : "CRITICAL",
       requiredForProduction: true,
-      detail: storage.detail,
+      detail: !production || durableStorage
+        ? `Storage provider: ${storageProvider}.`
+        : "Production requires Vercel Blob or an explicitly approved durable database storage mode.",
     },
     {
       key: "ai_providers",
