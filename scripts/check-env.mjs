@@ -127,11 +127,23 @@ const OPERATIONAL_WARNINGS = [
 
 const PRODUCTION_REQUIRED = [];
 
-// VERCEL=1 is set on ALL Vercel builds (preview + production) — do NOT use it alone.
-// Only VERCEL_ENV==="production" means an actual production deployment.
-const isVercel = process.env.VERCEL === "1";
-const isVercelProd = process.env.VERCEL_ENV === "production";
-const isVercelPreview = isVercel && process.env.VERCEL_ENV === "preview";
+// VERCEL=1 is set on Vercel builds, but preview logs can have incomplete
+// metadata. Keep this in sync with scripts/migrate-deploy-safe.mjs so missing
+// VERCEL_ENV previews do not fail before the preview migration skip can run.
+const vercelFlag = (process.env.VERCEL || "").trim().toLowerCase();
+const vercelUrl = (process.env.VERCEL_URL || "").trim().toLowerCase();
+const vercelProjectId = (process.env.VERCEL_PROJECT_ID || "").trim();
+const isVercel = ["1", "true", "yes"].includes(vercelFlag) || Boolean(vercelUrl || vercelProjectId);
+const vercelEnv = (process.env.VERCEL_ENV || "").trim().toLowerCase();
+const vercelTargetEnv = (process.env.VERCEL_TARGET_ENV || "").trim().toLowerCase();
+const vercelGitRef = (process.env.VERCEL_GIT_COMMIT_REF || "").trim().toLowerCase();
+const hasPullRequestContext = Boolean((process.env.VERCEL_GIT_PULL_REQUEST_ID || "").trim());
+const isVercelProd = isVercel && (vercelEnv === "production" || vercelTargetEnv === "production");
+const isKnownProductionRef = ["main", "master", "production"].includes(vercelGitRef) || vercelGitRef.startsWith("production/");
+const isVercelPreview =
+  isVercel &&
+  !isVercelProd &&
+  (vercelEnv === "preview" || vercelTargetEnv === "preview" || hasPullRequestContext || (vercelEnv === "" && !isKnownProductionRef));
 const strictPreviewEnvCheck = ["1", "true", "yes"].includes((process.env.STRICT_PREVIEW_ENV_CHECK || "").trim().toLowerCase());
 const isProd = process.env.NODE_ENV === "production" && (!isVercel || isVercelProd);
 const errors = [];

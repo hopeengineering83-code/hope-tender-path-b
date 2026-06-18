@@ -1,5 +1,25 @@
 import { PrismaClient } from "@prisma/client";
 
+const vercelFlag = (process.env.VERCEL || "").trim().toLowerCase();
+const vercelUrl = (process.env.VERCEL_URL || "").trim().toLowerCase();
+const vercelProjectId = (process.env.VERCEL_PROJECT_ID || "").trim();
+const isVercel = ["1", "true", "yes"].includes(vercelFlag) || Boolean(vercelUrl || vercelProjectId);
+const vercelEnv = (process.env.VERCEL_ENV || "").trim().toLowerCase();
+const vercelTargetEnv = (process.env.VERCEL_TARGET_ENV || "").trim().toLowerCase();
+const vercelGitRef = (process.env.VERCEL_GIT_COMMIT_REF || "").trim().toLowerCase();
+const hasPullRequestContext = Boolean((process.env.VERCEL_GIT_PULL_REQUEST_ID || "").trim());
+const isExplicitProduction = vercelEnv === "production" || vercelTargetEnv === "production";
+const isKnownProductionRef = ["main", "master", "production"].includes(vercelGitRef) || vercelGitRef.startsWith("production/");
+const isVercelPreview =
+  isVercel &&
+  !isExplicitProduction &&
+  (vercelEnv === "preview" || vercelTargetEnv === "preview" || hasPullRequestContext || (vercelEnv === "" && !isKnownProductionRef));
+
+if (isVercelPreview) {
+  console.warn("Skipping critical schema check: Vercel preview build.");
+  process.exit(0);
+}
+
 const prisma = new PrismaClient();
 
 const REQUIRED_TABLES = [

@@ -79,10 +79,10 @@ describe("release integrity hardening", () => {
     assert.ok(build.indexOf("check-critical-schema.mjs") > build.indexOf("migrate-deploy-safe.mjs"));
   });
 
-  it("keeps Vercel preview builds aligned with preview-safe migration behavior", () => {
+  it("runs critical schema verification from the actual Vercel command", () => {
     const vercel = JSON.parse(readFileSync("vercel.json", "utf8")) as { buildCommand: string };
     assert.ok(vercel.buildCommand.indexOf("migrate-deploy-safe.mjs") >= 0);
-    assert.equal(vercel.buildCommand.includes("check-critical-schema.mjs"), false);
+    assert.ok(vercel.buildCommand.indexOf("check-critical-schema.mjs") > vercel.buildCommand.indexOf("migrate-deploy-safe.mjs"));
   });
 
   it("requires clean migration-path and integrity checks in CI", () => {
@@ -90,6 +90,33 @@ describe("release integrity hardening", () => {
     assert.match(ci, /Validate production migration path/);
     assert.match(ci, /npm run db:check-critical-schema/);
     assert.match(ci, /npm run audit:release-integrity/);
+  });
+
+  it("shares Vercel preview detection across env, migration, and schema scripts", () => {
+    const envCheck = readFileSync("scripts/check-env.mjs", "utf8");
+    const migrate = readFileSync("scripts/migrate-deploy-safe.mjs", "utf8");
+    const schema = readFileSync("scripts/check-critical-schema.mjs", "utf8");
+    for (const script of [envCheck, migrate, schema]) {
+      assert.match(script, /vercelUrl/);
+      assert.match(script, /vercelProjectId/);
+      assert.match(script, /hasPullRequestContext/);
+      assert.match(script, /isKnownProductionRef/);
+    }
+  });
+
+  it("check-critical-schema exits before DB access for Vercel previews", () => {
+    const result = spawnSync(process.execPath, ["scripts/check-critical-schema.mjs"], {
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        VERCEL: "1",
+        VERCEL_ENV: "preview",
+        DATABASE_URL: "postgresql://test:test@localhost:5432/test",
+      },
+      encoding: "utf8",
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stderr, /Skipping critical schema check: Vercel preview build/);
   });
 
   it("migrate-deploy-safe exits gracefully for any migration failure on Vercel preview", () => {
