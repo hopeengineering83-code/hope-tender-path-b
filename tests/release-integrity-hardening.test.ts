@@ -96,6 +96,8 @@ describe("release integrity hardening", () => {
     const script = readFileSync("scripts/migrate-deploy-safe.mjs", "utf8");
     // deploy() must return "preview-error" for any uncategorised error when isVercelPreview=true
     assert.match(script, /isVercelPreview/);
+    assert.match(script, /vercelUrl/);
+    assert.match(script, /vercelProjectId/);
     assert.match(script, /isExplicitProduction/);
     assert.match(script, /isKnownProductionRef/);
     assert.match(script, /hasPullRequestContext/);
@@ -145,6 +147,18 @@ describe("release integrity hardening", () => {
     const missingEnvFeatureBranch = runMigration({ VERCEL_ENV: undefined, VERCEL_GIT_COMMIT_REF: "codex/verify-pr-768" });
     assert.equal(missingEnvFeatureBranch.status, 0, missingEnvFeatureBranch.stderr);
     assert.match(missingEnvFeatureBranch.stderr, /P3009/);
+
+    const urlOnlyPreview = runMigration({ VERCEL: undefined, VERCEL_ENV: undefined, VERCEL_URL: "hope-tender-path-b-git-fix-preview.vercel.app" });
+    assert.equal(urlOnlyPreview.status, 0, urlOnlyPreview.stderr);
+
+    const projectOnlyPreview = runMigration({ VERCEL: undefined, VERCEL_ENV: undefined, VERCEL_PROJECT_ID: "prj_test" });
+    assert.equal(projectOnlyPreview.status, 0, projectOnlyPreview.stderr);
+
+    const truthyFlagPreview = runMigration({ VERCEL: "true", VERCEL_ENV: undefined });
+    assert.equal(truthyFlagPreview.status, 0, truthyFlagPreview.stderr);
+
+    const nonVercel = runMigration({ VERCEL: undefined, VERCEL_ENV: undefined, VERCEL_URL: undefined, VERCEL_PROJECT_ID: undefined });
+    assert.notEqual(nonVercel.status, 0, "non-Vercel migration failures must remain fatal");
 
     const pullRequestPreview = runMigration({ VERCEL_ENV: undefined, VERCEL_GIT_PULL_REQUEST_ID: "768" });
     assert.equal(pullRequestPreview.status, 0, pullRequestPreview.stderr);

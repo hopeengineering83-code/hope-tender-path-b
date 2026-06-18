@@ -15,7 +15,10 @@ const INIT_MIGRATION = "20260601000000_init";
 // In Vercel PREVIEW builds where DATABASE_URL is not configured, skip migrations
 // gracefully. The app bootstrap (lib/prisma.ts) handles schema on first request.
 // In production and CI (DATABASE_URL always set), migrations always run.
-const isVercel = process.env.VERCEL === "1";
+const vercelFlag = (process.env.VERCEL || "").trim().toLowerCase();
+const vercelUrl = (process.env.VERCEL_URL || "").trim().toLowerCase();
+const vercelProjectId = (process.env.VERCEL_PROJECT_ID || "").trim();
+const isVercel = ["1", "true", "yes"].includes(vercelFlag) || Boolean(vercelUrl || vercelProjectId);
 const vercelEnv = (process.env.VERCEL_ENV || "").trim().toLowerCase();
 const vercelTargetEnv = (process.env.VERCEL_TARGET_ENV || "").trim().toLowerCase();
 const vercelGitRef = (process.env.VERCEL_GIT_COMMIT_REF || "").trim().toLowerCase();
@@ -23,10 +26,11 @@ const hasPullRequestContext = Boolean((process.env.VERCEL_GIT_PULL_REQUEST_ID ||
 const isExplicitProduction = vercelEnv === "production" || vercelTargetEnv === "production";
 const isKnownProductionRef = ["main", "master", "production"].includes(vercelGitRef) || vercelGitRef.startsWith("production/");
 // Vercel should set VERCEL_ENV=preview for preview builds and
-// VERCEL_ENV=production for production builds. If VERCEL_ENV is missing, only
-// treat the deployment as preview-safe when other metadata indicates a
-// non-production build; production-like refs and explicit production targets
-// must keep migration failures fatal.
+// VERCEL_ENV=production for production builds, but preview build logs have
+// shown incomplete metadata. Recognise Vercel by multiple stable deployment
+// signals, then only treat missing VERCEL_ENV as preview-safe when no explicit
+// production signal is present; production-like refs and explicit production
+// targets must keep migration failures fatal.
 const isVercelPreview =
   isVercel &&
   !isExplicitProduction &&
