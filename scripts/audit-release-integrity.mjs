@@ -31,6 +31,7 @@ for (const name of lifecycle) {
   );
 }
 check("manual reconciler remains explicit", scripts["reconcile:ai"]?.includes("reconcile-gap-closure"), "reconciler must remain manual");
+check("PostCSS patched resolution pinned", pkg.overrides?.postcss === "8.5.10", "package.json must pin the patched PostCSS resolution");
 
 const migration = read("scripts/migrate-deploy-safe.mjs");
 check("preview migration guard", migration.includes("ALLOW_PREVIEW_DB_MIGRATIONS") && migration.includes("build-only and is not database-verified"), "previews must not mutate a shared database by default");
@@ -66,9 +67,41 @@ check("upload signatures have explicit bounds", uploadSecurity.includes("buffer.
 check("OpenXML active content rejected", uploadSecurity.includes("vbaProject") && uploadSecurity.includes("activeX") && uploadSecurity.includes("embeddings") && uploadSecurity.includes("externalLinks"), "Office uploads must reject active and embedded content");
 check("legacy Office rejected", uploadSecurity.includes("Legacy DOC/XLS files cannot be safely inspected"), "uninspectable legacy Office binaries must not enter the document pipeline");
 
+const sourcePanel = read("components/tender-source-files-panel.tsx");
+const newTender = read("app/dashboard/tenders/new/page.tsx");
+const setupWizard = read("app/dashboard/setup/page.tsx");
+const companyLayout = read("app/dashboard/company/layout.tsx");
+const uploadEnforcer = read("components/secure-upload-policy-enforcer.tsx");
+for (const [name, value] of [["source panel", sourcePanel], ["new tender", newTender], ["setup wizard", setupWizard]]) {
+  check(`${name} excludes legacy Office pickers`, !value.includes('.pdf,.doc,.docx') && !value.includes('.xls,.xlsx') && value.includes(".pdf,.docx,.xlsx,.csv,.txt"), `${name} must advertise only inspectable document formats`);
+}
+check("company vault mounts secure upload policy", companyLayout.includes("SecureUploadPolicyEnforcer"), "company vault must mount the document picker policy");
+check("company vault policy blocks unsafe change and drop events", uploadEnforcer.includes("stopImmediatePropagation") && uploadEnforcer.includes('document.addEventListener("change"') && uploadEnforcer.includes('document.addEventListener("drop"'), "company vault must reject unsafe selections before page handlers run");
+
 const limiter = read("lib/rate-limit.ts");
 check("persistent limiter avoids unsafe raw SQL", !limiter.includes("$queryRawUnsafe"), "rate-limit SQL must remain parameterized");
 check("persistent limiter fails closed in production", limiter.includes("RATE_LIMIT_ALLOW_DEGRADED") && limiter.includes("production && !emergencyFailOpen") && limiter.includes("allowed: false"), "production must not silently downgrade to per-instance enforcement");
+
+const directPersistentAiRoutes = [
+  "app/api/tenders/[id]/engine/route.ts",
+  "app/api/tenders/[id]/ai-proposal/route.ts",
+  "app/api/tenders/[id]/ai-rematch/route.ts",
+  "app/api/tenders/[id]/regenerate-cvs/route.ts",
+  "app/api/tenders/[id]/regenerate-section/route.ts",
+  "app/api/tenders/[id]/copilot/route.ts",
+  "app/api/tenders/[id]/evaluator-simulation/route.ts",
+];
+for (const path of directPersistentAiRoutes) {
+  const source = read(path);
+  check(`${path} uses persistent AI throttling`, source.includes("rateLimitPersistent") && !source.includes("const rl = rateLimit("), `${path} must not rely on a process-local mutation limiter`);
+}
+
+const middleware = read("middleware.ts");
+const rateGuard = read("app/api/internal/rate-guard/route.ts");
+check("large AI routes pass through signed guard", middleware.includes("ai-analyze|generate") && middleware.includes("/api/internal/rate-guard") && middleware.includes("suppliedToken === token") && middleware.includes("requestHeaders.delete(INTERNAL_GUARD_HEADER)"), "large AI handlers must not be callable without the signed persistent guard");
+check("AI guard authenticates and persists rate state", rateGuard.includes("await getSession()") && rateGuard.includes("await rateLimitPersistent") && rateGuard.includes('headers: { "Retry-After"'), "guard must authenticate and persistently limit before forwarding");
+check("AI guard cannot become an open proxy", rateGuard.includes("targetUrl.origin !== currentUrl.origin") && rateGuard.includes("GUARDED_ROUTE.test(targetUrl.pathname)"), "guard target must remain same-origin and allowlisted");
+check("AI guard forwards a strict header allowlist", rateGuard.includes("FORWARDED_REQUEST_HEADERS") && !rateGuard.includes("new Headers(req.headers)"), "guard must not forward arbitrary infrastructure headers");
 
 const documentRoute = read("app/api/tenders/[id]/documents/[docId]/route.ts");
 const commentsRoute = read("app/api/tenders/[id]/documents/[docId]/comments/route.ts");
