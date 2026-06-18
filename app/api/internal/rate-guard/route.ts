@@ -9,6 +9,16 @@ export const dynamic = "force-dynamic";
 
 const INTERNAL_GUARD_HEADER = "x-hope-internal-rate-guard";
 const GUARDED_ROUTE = /^\/api\/tenders\/[^/?]+\/(ai-analyze|generate)$/;
+const FORWARDED_REQUEST_HEADERS = [
+  "accept",
+  "content-type",
+  "cookie",
+  "origin",
+  "referer",
+  "user-agent",
+  "x-csrf-token",
+  "x-request-id",
+] as const;
 
 function deriveInternalGuardToken(): string | null {
   const secret = process.env.SESSION_SECRET?.trim();
@@ -23,11 +33,11 @@ function routePrefix(pathname: string): "analyze" | "generate" | null {
 }
 
 function forwardedHeaders(req: Request, token: string): Headers {
-  const headers = new Headers(req.headers);
-  headers.delete("host");
-  headers.delete("content-length");
-  headers.delete("connection");
-  headers.delete("transfer-encoding");
+  const headers = new Headers();
+  for (const name of FORWARDED_REQUEST_HEADERS) {
+    const value = req.headers.get(name);
+    if (value) headers.set(name, value);
+  }
   headers.set(INTERNAL_GUARD_HEADER, token);
   return headers;
 }
@@ -35,9 +45,11 @@ function forwardedHeaders(req: Request, token: string): Headers {
 function responseHeaders(upstream: Response): Headers {
   const headers = new Headers(upstream.headers);
   headers.delete("content-length");
+  headers.delete("content-encoding");
   headers.delete("connection");
   headers.delete("keep-alive");
   headers.delete("transfer-encoding");
+  if (!headers.has("cache-control")) headers.set("Cache-Control", "no-store");
   return headers;
 }
 
