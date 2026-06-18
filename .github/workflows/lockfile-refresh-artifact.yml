@@ -4,13 +4,16 @@ on:
   push:
     branches:
       - integration/production-engine-2026-06
+  pull_request:
+    branches:
+      - release/production-engine-2026-06
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: lockfile-refresh-${{ github.ref }}
+  group: lockfile-refresh-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
