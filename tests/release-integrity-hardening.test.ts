@@ -94,7 +94,7 @@ describe("release integrity hardening", () => {
 
   it("migrate-deploy-safe exits gracefully for any migration failure on Vercel preview", () => {
     const script = readFileSync("scripts/migrate-deploy-safe.mjs", "utf8");
-    // deploy() must return "preview-error" for any uncategorised error when isVercelPreview=true
+    // Preview deployments must exit before invoking Prisma; preview-error remains as a defensive fallback.
     assert.match(script, /isVercelPreview/);
     assert.match(script, /vercelUrl/);
     assert.match(script, /vercelProjectId/);
@@ -102,7 +102,7 @@ describe("release integrity hardening", () => {
     assert.match(script, /isKnownProductionRef/);
     assert.match(script, /hasPullRequestContext/);
     assert.match(script, /preview-error/);
-    // preview-error must be caught in deploy() (before the no-history block)
+    // preview-error must still be caught defensively in deploy() (before the no-history block)
     const previewErrorReturnIdx = script.indexOf('"preview-error"');
     const noHistoryBlockIdx = script.indexOf('if (deployResult === "no-history")');
     assert.ok(previewErrorReturnIdx > 0, 'must return "preview-error" in deploy()');
@@ -146,25 +146,31 @@ describe("release integrity hardening", () => {
 
     const missingEnvFeatureBranch = runMigration({ VERCEL_ENV: undefined, VERCEL_GIT_COMMIT_REF: "codex/verify-pr-768" });
     assert.equal(missingEnvFeatureBranch.status, 0, missingEnvFeatureBranch.stderr);
-    assert.match(missingEnvFeatureBranch.stderr, /P3009/);
+    assert.doesNotMatch(missingEnvFeatureBranch.stderr, /P3009/);
+    assert.match(missingEnvFeatureBranch.stderr, /Skipping migrations: Vercel preview build/);
 
     const urlOnlyPreview = runMigration({ VERCEL: undefined, VERCEL_ENV: undefined, VERCEL_URL: "hope-tender-path-b-git-fix-preview.vercel.app" });
     assert.equal(urlOnlyPreview.status, 0, urlOnlyPreview.stderr);
+    assert.doesNotMatch(urlOnlyPreview.stderr, /P3009/);
 
     const projectOnlyPreview = runMigration({ VERCEL: undefined, VERCEL_ENV: undefined, VERCEL_PROJECT_ID: "prj_test" });
     assert.equal(projectOnlyPreview.status, 0, projectOnlyPreview.stderr);
+    assert.doesNotMatch(projectOnlyPreview.stderr, /P3009/);
 
     const truthyFlagPreview = runMigration({ VERCEL: "true", VERCEL_ENV: undefined });
     assert.equal(truthyFlagPreview.status, 0, truthyFlagPreview.stderr);
+    assert.doesNotMatch(truthyFlagPreview.stderr, /P3009/);
 
     const nonVercel = runMigration({ VERCEL: undefined, VERCEL_ENV: undefined, VERCEL_URL: undefined, VERCEL_PROJECT_ID: undefined });
     assert.notEqual(nonVercel.status, 0, "non-Vercel migration failures must remain fatal");
 
     const pullRequestPreview = runMigration({ VERCEL_ENV: undefined, VERCEL_GIT_PULL_REQUEST_ID: "768" });
     assert.equal(pullRequestPreview.status, 0, pullRequestPreview.stderr);
+    assert.doesNotMatch(pullRequestPreview.stderr, /P3009/);
 
     const targetPreview = runMigration({ VERCEL_ENV: undefined, VERCEL_TARGET_ENV: "preview" });
     assert.equal(targetPreview.status, 0, targetPreview.stderr);
+    assert.doesNotMatch(targetPreview.stderr, /P3009/);
 
     const production = runMigration({ VERCEL_ENV: "production" });
     assert.notEqual(production.status, 0, "production migration failures must remain fatal");

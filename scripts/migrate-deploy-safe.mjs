@@ -35,9 +35,9 @@ const isVercelPreview =
   isVercel &&
   !isExplicitProduction &&
   (vercelEnv === "preview" || vercelTargetEnv === "preview" || hasPullRequestContext || (vercelEnv === "" && !isKnownProductionRef));
-if (isVercelPreview && !process.env.DATABASE_URL) {
-  console.warn("Skipping migrations: Vercel preview build with no DATABASE_URL configured.");
-  console.warn("Set DATABASE_URL in Vercel project settings (Settings → Environment Variables → Preview) to run migrations on preview deployments.");
+if (isVercelPreview) {
+  console.warn("Skipping migrations: Vercel preview build. Preview deployments must not run build-time Prisma migrations against shared or stale preview databases.");
+  console.warn("Run prisma migrate deploy in CI/production; preview runtime bootstrap handles schema availability where permitted.");
   process.exit(0);
 }
 
