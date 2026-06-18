@@ -1,1 +1,0 @@
-One-time task: synchronize package-lock.json with package.json using Node.js 22 and npm install --package-lock-only --ignore-scripts. The lockfile must resolve PostCSS 8.5.10. Commit only package-lock.json. Remove this task file before release.
