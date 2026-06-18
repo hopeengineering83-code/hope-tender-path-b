@@ -89,7 +89,7 @@ export default function NewTenderPage() {
           <input
             type="file"
             multiple
-            accept=".pdf,.docx,.xlsx,.txt,.csv,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            accept=".pdf,.docx,.xlsx,.csv,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             onChange={(e) => selectTenderFiles(Array.from(e.target.files ?? []))}
             className="block w-full rounded-xl border bg-white px-3 py-3 text-sm"
           />
