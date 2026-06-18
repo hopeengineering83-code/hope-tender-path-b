@@ -52,6 +52,22 @@ describe("company image asset validation", () => {
     assert.match(result.error ?? "", /PNG signature/i);
   });
 
+  it("rejects truncated PNG and JPEG signatures", async () => {
+    const png = await validateCompanyAsset(
+      fileInput("LOGO", "logo.png", "image/png"),
+      Buffer.from([0x89, 0x50]),
+    );
+    assert.equal(png.ok, false);
+    assert.match(png.error ?? "", /PNG signature/i);
+
+    const jpeg = await validateCompanyAsset(
+      fileInput("STAMP", "stamp.jpg", "image/jpeg"),
+      Buffer.from([0xff, 0xd8]),
+    );
+    assert.equal(jpeg.ok, false);
+    assert.match(jpeg.error ?? "", /JPEG signature/i);
+  });
+
   it("accepts a valid JPEG signature", async () => {
     const buffer = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00]);
     const result = await validateCompanyAsset(fileInput("STAMP", "stamp.jpeg", "image/jpeg"), buffer);
