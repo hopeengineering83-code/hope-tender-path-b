@@ -4,7 +4,9 @@ import JSZip from "jszip";
 import { validateUploadFile } from "../lib/upload-security";
 
 function upload(name: string, type: string, bytes: Buffer): File {
-  return new File([bytes], name, { type });
+  // Use a detached Uint8Array view so the DOM File constructor receives an
+  // ArrayBuffer-backed BlobPart rather than Node's wider Buffer generic.
+  return new File([Uint8Array.from(bytes)], name, { type });
 }
 
 async function openXml(kind: "docx" | "xlsx", extra: Record<string, string | Buffer> = {}): Promise<Buffer> {
@@ -17,7 +19,8 @@ async function openXml(kind: "docx" | "xlsx", extra: Record<string, string | Buf
 
 describe("shared upload security", () => {
   it("rejects truncated magic signatures", async () => {
-    const result = await validateUploadFile(upload("scan.pdf", "application/pdf", Buffer.from([0x25, 0x50])), Buffer.from([0x25, 0x50]));
+    const bytes = Buffer.from([0x25, 0x50]);
+    const result = await validateUploadFile(upload("scan.pdf", "application/pdf", bytes), bytes);
     assert.equal(result.ok, false);
     assert.match(result.error ?? "", /signature/i);
   });
