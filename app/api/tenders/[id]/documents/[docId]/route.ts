@@ -2,21 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma, prismaReady } from "../../../../../../lib/prisma";
 import { requireUser, unauthorizedResponse, forbiddenResponse } from "../../../../../../lib/auth";
 import { logAction } from "../../../../../../lib/audit";
-import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../../../lib/rate-limit";
-
-// Per-document review action endpoint (PR #247).
-//
-// Up to PR #246 this endpoint did a destructive update of the
-// reviewStatus + reviewedBy + reviewedAt fields on GeneratedDocument
-// — every action overwrote the previous one and no history was kept.
-//
-// New behaviour: every action also creates a DocumentReview row
-// preserving the prior status, the new status, the reviewer ID,
-// optional notes, and a timestamp. The aggregate fields on
-// GeneratedDocument are still updated (so simple "what's the current
-// status" queries still work the same way), but the audit trail is
-// now queryable via GET on the same endpoint and through
-// DocumentReview.findMany() in the UI.
+import { rateLimitPersistent, MUTATION_RATE_LIMIT } from "../../../../../../lib/rate-limit";
 
 export async function GET(
   _req: Request,
@@ -34,13 +20,8 @@ export async function GET(
 
   const { id: tenderId, docId } = await params;
   await prismaReady;
+  const ownedDocumentWhere = { id: docId, tenderId, tender: { userId: actor.id } } as const;
 
-  // Attempt to fetch with full reviews + comments include. If the DB was
-  // created from the old bootstrap (which used generatedDocumentId instead of
-  // documentId), Prisma will throw a "column does not exist" error. In that
-  // case we fall back to a bare findFirst and return empty arrays so the rest
-  // of the UI still works while the admin runs ?step=schema-drift to repair
-  // the production DB.
   let doc: Awaited<ReturnType<typeof prisma.generatedDocument.findFirst>> & {
     reviews?: unknown[];
     comments?: unknown[];
@@ -50,20 +31,20 @@ export async function GET(
 
   try {
     const result = await prisma.generatedDocument.findFirst({
-      where: { id: docId, tenderId },
+      where: ownedDocumentWhere,
       include: {
         reviews: {
           orderBy: { createdAt: "desc" },
-          include: { reviewer: { select: { id: true, name: true, email: true, role: true } } },
+          include: { reviewer: { select: { id: true, name: true, role: true } } },
         },
         comments: {
           where: { parentId: null },
           orderBy: { createdAt: "asc" },
           include: {
-            author: { select: { id: true, name: true, email: true, role: true } },
+            author: { select: { id: true, name: true, role: true } },
             replies: {
               orderBy: { createdAt: "asc" },
-              include: { author: { select: { id: true, name: true, email: true, role: true } } },
+              include: { author: { select: { id: true, name: true, role: true } } },
             },
           },
         },
@@ -75,12 +56,9 @@ export async function GET(
       comments = (result as { comments?: unknown[] }).comments ?? [];
     }
   } catch (err) {
-    // Schema drift: old DB has generatedDocumentId column instead of documentId.
-    // Retry without the broken includes so callers still get the document fields.
     const msg = err instanceof Error ? err.message : String(err);
     if (msg.includes("documentId") || msg.includes("does not exist") || msg.includes("column")) {
-      doc = await prisma.generatedDocument.findFirst({ where: { id: docId, tenderId } });
-      // reviews and comments stay as empty arrays — run ?step=schema-drift to fix
+      doc = await prisma.generatedDocument.findFirst({ where: ownedDocumentWhere });
     } else {
       throw err;
     }
@@ -113,12 +91,17 @@ export async function PUT(
     return unauthorizedResponse();
   }
 
-  // Reviewers and above can review; viewers cannot
   const canReview = ["ADMIN", "PROPOSAL_MANAGER", "REVIEWER"].includes(actor.role);
   if (!canReview) return forbiddenResponse();
 
-  const rl = rateLimit(`doc-review:${actor.id}`, MUTATION_RATE_LIMIT);
-  if (!rl.allowed) return NextResponse.json({ error: "Too many requests", retryAfter: Math.ceil((rl.resetAt - Date.now()) / 1000) }, { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } });
+  const rl = await rateLimitPersistent(`doc-review:${actor.id}`, MUTATION_RATE_LIMIT);
+  if (!rl.allowed) {
+    const retryAfter = Math.max(1, Math.ceil((rl.resetAt - Date.now()) / 1000));
+    return NextResponse.json(
+      { error: "Too many requests", retryAfter },
+      { status: 429, headers: { "Retry-After": String(retryAfter) } },
+    );
+  }
 
   const { id: tenderId, docId } = await params;
   const rawBody = await req.json().catch(() => null);
@@ -126,9 +109,6 @@ export async function PUT(
   const { reviewStatus, reviewNotes, reviewAction } = rawBody as {
     reviewStatus?: string;
     reviewNotes?: string;
-    // Optional explicit action label (APPROVED / REJECTED / CHANGES_REQUESTED
-    // / READY_FOR_EXPORT). When omitted, defaults to the new reviewStatus
-    // value so backwards-compatible callers continue to work.
     reviewAction?: string;
   };
 
@@ -140,7 +120,7 @@ export async function PUT(
   await prismaReady;
 
   const doc = await prisma.generatedDocument.findFirst({
-    where: { id: docId, tenderId },
+    where: { id: docId, tenderId, tender: { userId: actor.id } },
   });
 
   if (!doc) return NextResponse.json({ error: "Document not found" }, { status: 404 });
@@ -149,8 +129,6 @@ export async function PUT(
   const newStatus = reviewStatus ?? doc.reviewStatus;
   const action = reviewAction ?? reviewStatus ?? "NOTE_UPDATE";
 
-  // Atomic transaction: update aggregate fields AND insert review-action
-  // row in a single tx so the audit trail can never miss an action.
   const updated = await prisma.$transaction(async (tx) => {
     const u = await tx.generatedDocument.update({
       where: { id: docId },
@@ -162,9 +140,6 @@ export async function PUT(
       },
     });
 
-    // Only create a DocumentReview row when there's an actual action
-    // (status change OR explicit reviewAction). Updating notes alone
-    // doesn't pollute the trail with empty rows.
     if (reviewStatus || reviewAction) {
       await tx.documentReview.create({
         data: {
