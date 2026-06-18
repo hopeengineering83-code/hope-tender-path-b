@@ -33,13 +33,23 @@ function walk(directory, predicate, results = []) {
 }
 
 const packageJson = JSON.parse(read("package.json") || "{}");
+const vercelJson = JSON.parse(read("vercel.json") || "{}");
 const vercelBuild = packageJson.scripts?.["vercel-build"] ?? "";
+const vercelCommand = vercelJson.buildCommand ?? "";
 const releaseAudit = packageJson.scripts?.["audit:release-integrity"] ?? "";
 const schemaCheck = packageJson.scripts?.["db:check-critical-schema"] ?? "";
 
 assertRule("package release audit script", releaseAudit.includes("audit-release-integrity.mjs"), "package.json must expose npm run audit:release-integrity");
 assertRule("package critical schema script", schemaCheck.includes("check-critical-schema.mjs"), "package.json must expose npm run db:check-critical-schema");
 assertRule("vercel migration order", vercelBuild.indexOf("migrate-deploy-safe.mjs") >= 0 && vercelBuild.indexOf("check-critical-schema.mjs") > vercelBuild.indexOf("migrate-deploy-safe.mjs"), "vercel-build must migrate, then verify the critical schema, then build");
+assertRule(
+  "vercel.json build command",
+  vercelCommand === "npm run vercel-build" || (
+    vercelCommand.includes("migrate-deploy-safe.mjs") &&
+    vercelCommand.indexOf("check-critical-schema.mjs") > vercelCommand.indexOf("migrate-deploy-safe.mjs")
+  ),
+  "vercel.json must delegate to npm run vercel-build or include critical-schema verification after migrations",
+);
 
 const standardUpload = read("app/api/upload/route.ts");
 const uploadFirst = read("app/api/tenders/upload-first/route.ts");

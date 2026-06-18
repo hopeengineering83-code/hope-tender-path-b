@@ -4,7 +4,12 @@ import { join } from "node:path";
 
 const MIGRATIONS_DIR = join(process.cwd(), "prisma", "migrations");
 const BASELINE_CUTOFF = process.env.PRISMA_BASELINE_CUTOFF || "20260613190000_comprehensive_gap_guards";
-const explicitBaseline = ["1", "true", "yes"].includes((process.env.PRISMA_BASELINE_EXISTING_DB || "").trim().toLowerCase());
+
+function envFlag(name) {
+  return ["1", "true", "yes", "on"].includes((process.env[name] || "").trim().toLowerCase());
+}
+
+const explicitBaseline = envFlag("PRISMA_BASELINE_EXISTING_DB");
 
 // The retroactively-added init migration. When a production DB already has all
 // tables (set up before migration tracking was introduced), Prisma will try to
@@ -12,13 +17,16 @@ const explicitBaseline = ["1", "true", "yes"].includes((process.env.PRISMA_BASEL
 // mark it as applied so _prisma_migrations accurately reflects reality.
 const INIT_MIGRATION = "20260601000000_init";
 
-// In Vercel PREVIEW builds where DATABASE_URL is not configured, skip migrations
-// gracefully. The app bootstrap (lib/prisma.ts) handles schema on first request.
-// In production and CI (DATABASE_URL always set), migrations always run.
+// In Vercel PREVIEW builds, never mutate a database unless the operator has
+// explicitly proven the preview database is isolated from production and opted
+// in with ALLOW_PREVIEW_DB_MIGRATIONS=true. A preview deployment reaching READY
+// must not be allowed to hide Prisma P3009 or other migration-history failures.
+// In production and CI, migrations always run.
 const isVercelPreview = process.env.VERCEL === "1" && process.env.VERCEL_ENV === "preview";
-if (isVercelPreview && !process.env.DATABASE_URL) {
-  console.warn("Skipping migrations: Vercel preview build with no DATABASE_URL configured.");
-  console.warn("Set DATABASE_URL in Vercel project settings (Settings → Environment Variables → Preview) to run migrations on preview deployments.");
+const allowPreviewDbMigrations = envFlag("ALLOW_PREVIEW_DB_MIGRATIONS");
+if (isVercelPreview && !allowPreviewDbMigrations) {
+  console.warn("Skipping migrations: Vercel preview build without ALLOW_PREVIEW_DB_MIGRATIONS=true.");
+  console.warn("Only enable preview migrations after proving the preview DATABASE_URL points to an isolated database or Neon branch.");
   process.exit(0);
 }
 
@@ -78,34 +86,19 @@ function deploy() {
       console.warn("Detected existing schema conflict during migration apply; evaluating init migration resolution.");
       return "schema-conflict";
     }
-    // For Vercel preview, any other migration failure (connection errors P1001/P1002,
-    // schema sync issues P3009, etc.) should not block the preview build.
-    // Production must still throw so real failures are surfaced immediately.
-    if (isVercelPreview) {
-      console.warn("Migration failed in Vercel preview environment; skipping to allow preview build.");
-      console.warn("Error snippet:", message.slice(0, 300));
-      return "preview-error";
-    }
     throw error;
   }
 }
 
 let deployResult = deploy();
 
-if (deployResult === "preview-error") {
-  // Any migration error on Vercel preview is non-fatal — the preview DB state
-  // may not match production migrations. Exit gracefully; the app bootstrap
-  // (lib/prisma.ts) will handle schema on first request if DATABASE_URL is set.
-  process.exit(0);
-}
-
 if (deployResult === "no-history") {
   // Vercel preview deployments with a bootstrapped DB (no migration history)
   // should not block the build. Preview DBs are often created via db push or
   // without migration tracking; failing here prevents all preview deployments.
-  if (isVercelPreview) {
+  if (isVercelPreview && !allowPreviewDbMigrations) {
     console.warn("Skipping migration baseline for Vercel preview: DB has no Prisma migration history.");
-    console.warn("Set PRISMA_BASELINE_EXISTING_DB=true to run a controlled baseline on preview.");
+    console.warn("Set ALLOW_PREVIEW_DB_MIGRATIONS=true and PRISMA_BASELINE_EXISTING_DB=true only for an isolated preview database.");
     process.exit(0);
   }
 
