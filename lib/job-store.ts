@@ -1,3 +1,6 @@
+import { randomUUID } from "crypto";
+import { prisma, prismaReady } from "./prisma";
+
 export type JobStatus = "PENDING" | "RUNNING" | "DONE" | "FAILED";
 
 export interface JobStep {
@@ -20,10 +23,29 @@ export interface Job {
   updatedAt: number;
 }
 
-const JOB_TTL_MS = 2 * 60 * 60 * 1_000; // 2 hours
+const JOB_TTL_MS = 2 * 60 * 60 * 1_000;
 const MAX_JOBS = 1_000;
-
 const jobs = new Map<string, Job>();
+const durableWrites = new Map<string, Promise<void>>();
+
+function durableJobType(type: Job["type"]): "PROPOSAL_GENERATION" | "AI_ANALYZE" | "ENGINE_RUN" {
+  if (type === "ANALYZE") return "AI_ANALYZE";
+  if (type === "ENGINE") return "ENGINE_RUN";
+  return "PROPOSAL_GENERATION";
+}
+
+function queueDurableWrite(jobId: string, operation: () => Promise<void>): void {
+  const prior = durableWrites.get(jobId) ?? Promise.resolve();
+  const next = prior
+    .then(operation)
+    .catch((error) => {
+      console.error(`[job-store] Durable job write failed for ${jobId}:`, error instanceof Error ? error.message : String(error));
+    })
+    .finally(() => {
+      if (durableWrites.get(jobId) === next) durableWrites.delete(jobId);
+    });
+  durableWrites.set(jobId, next);
+}
 
 function evict() {
   const now = Date.now();
@@ -47,7 +69,7 @@ export function createJob(params: Pick<Job, "userId" | "tenderId" | "type"> & { 
     VALIDATE: "Validating output",
     DONE: "Complete",
   };
-  const id = crypto.randomUUID();
+  const id = randomUUID();
   const now = Date.now();
   const job: Job = {
     id,
@@ -55,7 +77,7 @@ export function createJob(params: Pick<Job, "userId" | "tenderId" | "type"> & { 
     tenderId: params.tenderId,
     type: params.type,
     status: "PENDING",
-    steps: params.steps.map((s) => ({ step: s, label: stepLabels[s] ?? s, completedAt: null })),
+    steps: params.steps.map((step) => ({ step, label: stepLabels[step] ?? step, completedAt: null })),
     currentStep: null,
     result: null,
     error: null,
@@ -63,6 +85,21 @@ export function createJob(params: Pick<Job, "userId" | "tenderId" | "type"> & { 
     updatedAt: now,
   };
   jobs.set(id, job);
+
+  queueDurableWrite(id, async () => {
+    await prismaReady;
+    await prisma.aiJob.create({
+      data: {
+        id,
+        userId: params.userId,
+        tenderId: params.tenderId,
+        jobType: durableJobType(params.type),
+        status: "QUEUED",
+        input: JSON.stringify({ compatibilityRoute: true, plannedSteps: params.steps }),
+      },
+    });
+  });
+
   return job;
 }
 
@@ -73,11 +110,34 @@ export function getJob(id: string): Job | undefined {
 export function advanceJob(id: string, step: string): void {
   const job = jobs.get(id);
   if (!job) return;
-  const stepEntry = job.steps.find((s) => s.step === step);
+  const stepEntry = job.steps.find((candidate) => candidate.step === step);
   if (stepEntry) stepEntry.completedAt = Date.now();
   job.currentStep = step;
   job.status = "RUNNING";
   job.updatedAt = Date.now();
+  const stepIndex = Math.max(0, job.steps.findIndex((candidate) => candidate.step === step));
+  const label = stepEntry?.label ?? step;
+
+  queueDurableWrite(id, async () => {
+    await prisma.aiJob.update({
+      where: { id },
+      data: { status: "RUNNING", startedAt: new Date(job.createdAt) },
+    });
+    await prisma.aiJobStep.updateMany({
+      where: { jobId: id, status: "RUNNING" },
+      data: { status: "SUCCEEDED", finishedAt: new Date() },
+    });
+    await prisma.aiJobStep.create({
+      data: {
+        jobId: id,
+        stepIndex,
+        stepName: step.slice(0, 120),
+        status: "RUNNING",
+        message: label.slice(0, 1_000),
+        startedAt: new Date(),
+      },
+    });
+  });
 }
 
 export function completeJob(id: string, result: unknown): void {
@@ -87,7 +147,22 @@ export function completeJob(id: string, result: unknown): void {
   job.result = result;
   job.currentStep = null;
   job.updatedAt = Date.now();
-  for (const s of job.steps) if (!s.completedAt) s.completedAt = Date.now();
+  for (const step of job.steps) if (!step.completedAt) step.completedAt = Date.now();
+
+  queueDurableWrite(id, async () => {
+    await prisma.aiJobStep.updateMany({
+      where: { jobId: id, status: "RUNNING" },
+      data: { status: "SUCCEEDED", finishedAt: new Date() },
+    });
+    await prisma.aiJob.update({
+      where: { id },
+      data: {
+        status: "SUCCEEDED",
+        output: JSON.stringify(result ?? {}),
+        finishedAt: new Date(),
+      },
+    });
+  });
 }
 
 export function failJob(id: string, error: string): void {
@@ -96,4 +171,19 @@ export function failJob(id: string, error: string): void {
   job.status = "FAILED";
   job.error = error;
   job.updatedAt = Date.now();
+
+  queueDurableWrite(id, async () => {
+    await prisma.aiJobStep.updateMany({
+      where: { jobId: id, status: "RUNNING" },
+      data: { status: "FAILED", finishedAt: new Date() },
+    });
+    await prisma.aiJob.update({
+      where: { id },
+      data: {
+        status: "FAILED",
+        errorMessage: error.slice(0, 2_000),
+        finishedAt: new Date(),
+      },
+    });
+  });
 }
