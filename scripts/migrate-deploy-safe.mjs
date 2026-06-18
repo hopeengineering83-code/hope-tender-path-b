@@ -15,7 +15,14 @@ const INIT_MIGRATION = "20260601000000_init";
 // In Vercel PREVIEW builds where DATABASE_URL is not configured, skip migrations
 // gracefully. The app bootstrap (lib/prisma.ts) handles schema on first request.
 // In production and CI (DATABASE_URL always set), migrations always run.
-const isVercelPreview = process.env.VERCEL === "1" && process.env.VERCEL_ENV === "preview";
+const isVercel = process.env.VERCEL === "1";
+const vercelEnv = (process.env.VERCEL_ENV || "").trim().toLowerCase();
+const hasPullRequestContext = Boolean((process.env.VERCEL_GIT_PULL_REQUEST_ID || "").trim());
+// Vercel should set VERCEL_ENV=preview for PR previews, but some preview
+// build contexts can omit it while still providing pull-request metadata. Treat
+// every non-production Vercel PR build as preview so transient migration-state
+// errors such as P3009 do not block preview readiness.
+const isVercelPreview = isVercel && (vercelEnv === "preview" || (vercelEnv !== "production" && hasPullRequestContext));
 if (isVercelPreview && !process.env.DATABASE_URL) {
   console.warn("Skipping migrations: Vercel preview build with no DATABASE_URL configured.");
   console.warn("Set DATABASE_URL in Vercel project settings (Settings → Environment Variables → Preview) to run migrations on preview deployments.");

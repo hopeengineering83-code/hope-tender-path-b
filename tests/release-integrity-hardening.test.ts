@@ -71,9 +71,12 @@ describe("release integrity hardening", () => {
 
   it("runs critical schema verification after migrations in production builds", () => {
     const pkg = JSON.parse(readFileSync("package.json", "utf8")) as { scripts: Record<string, string> };
+    const vercel = JSON.parse(readFileSync("vercel.json", "utf8")) as { buildCommand: string };
     const build = pkg.scripts["vercel-build"];
     assert.ok(build.indexOf("migrate-deploy-safe.mjs") >= 0);
     assert.ok(build.indexOf("check-critical-schema.mjs") > build.indexOf("migrate-deploy-safe.mjs"));
+    assert.ok(vercel.buildCommand.indexOf("migrate-deploy-safe.mjs") >= 0);
+    assert.ok(vercel.buildCommand.indexOf("check-critical-schema.mjs") > vercel.buildCommand.indexOf("migrate-deploy-safe.mjs"));
   });
 
   it("requires clean migration-path and integrity checks in CI", () => {
@@ -87,6 +90,8 @@ describe("release integrity hardening", () => {
     const script = readFileSync("scripts/migrate-deploy-safe.mjs", "utf8");
     // deploy() must return "preview-error" for any uncategorised error when isVercelPreview=true
     assert.match(script, /isVercelPreview/);
+    assert.match(script, /VERCEL_GIT_PULL_REQUEST_ID/);
+    assert.match(script, /vercelEnv !== "production"/);
     assert.match(script, /preview-error/);
     // preview-error must be caught in deploy() (before the no-history block)
     const previewErrorReturnIdx = script.indexOf('"preview-error"');
