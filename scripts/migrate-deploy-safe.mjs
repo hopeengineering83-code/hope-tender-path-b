@@ -17,12 +17,11 @@ const INIT_MIGRATION = "20260601000000_init";
 // In production and CI (DATABASE_URL always set), migrations always run.
 const isVercel = process.env.VERCEL === "1";
 const vercelEnv = (process.env.VERCEL_ENV || "").trim().toLowerCase();
-const hasPullRequestContext = Boolean((process.env.VERCEL_GIT_PULL_REQUEST_ID || "").trim());
-// Vercel should set VERCEL_ENV=preview for PR previews, but some preview
-// build contexts can omit it while still providing pull-request metadata. Treat
-// every non-production Vercel PR build as preview so transient migration-state
-// errors such as P3009 do not block preview readiness.
-const isVercelPreview = isVercel && (vercelEnv === "preview" || (vercelEnv !== "production" && hasPullRequestContext));
+// Vercel should set VERCEL_ENV=preview for preview builds and
+// VERCEL_ENV=production for production builds. If VERCEL_ENV is missing, fail
+// open only for Vercel non-production deployment builds: production must set
+// VERCEL_ENV=production to keep migration failures fatal.
+const isVercelPreview = isVercel && vercelEnv !== "production";
 if (isVercelPreview && !process.env.DATABASE_URL) {
   console.warn("Skipping migrations: Vercel preview build with no DATABASE_URL configured.");
   console.warn("Set DATABASE_URL in Vercel project settings (Settings → Environment Variables → Preview) to run migrations on preview deployments.");

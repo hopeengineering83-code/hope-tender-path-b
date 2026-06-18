@@ -1,6 +1,9 @@
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
-import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import {
   getStorageReadiness,
   isDatabaseStorageAllowed,
@@ -93,8 +96,7 @@ describe("release integrity hardening", () => {
     const script = readFileSync("scripts/migrate-deploy-safe.mjs", "utf8");
     // deploy() must return "preview-error" for any uncategorised error when isVercelPreview=true
     assert.match(script, /isVercelPreview/);
-    assert.match(script, /VERCEL_GIT_PULL_REQUEST_ID/);
-    assert.match(script, /vercelEnv !== "production"/);
+    assert.match(script, /isVercel && vercelEnv !== "production"/);
     assert.match(script, /preview-error/);
     // preview-error must be caught in deploy() (before the no-history block)
     const previewErrorReturnIdx = script.indexOf('"preview-error"');
@@ -111,6 +113,42 @@ describe("release integrity hardening", () => {
     assert.ok(noHistoryPreviewIdx > 0, "must have no-history preview graceful exit");
     // The !ALLOW_BASELINE hard-fail must still exist for non-preview production
     assert.match(script, /if \(!ALLOW_BASELINE\)/);
+  });
+
+
+  it("migrate-deploy-safe treats missing VERCEL_ENV Vercel builds as preview-safe", () => {
+    const binDir = mkdtempSync(join(tmpdir(), "fake-prisma-"));
+    const fakeNpx = join(binDir, process.platform === "win32" ? "npx.cmd" : "npx");
+    writeFileSync(
+      fakeNpx,
+      process.platform === "win32"
+        ? "@echo off\r\necho Prisma schema loaded from prisma/schema.prisma 1>&2\r\necho Error: P3009 1>&2\r\nexit /b 1\r\n"
+        : "#!/usr/bin/env bash\necho 'Prisma schema loaded from prisma/schema.prisma' >&2\necho 'Error: P3009' >&2\nexit 1\n",
+    );
+    chmodSync(fakeNpx, 0o755);
+
+    const baseEnv = {
+      ...process.env,
+      PATH: `${binDir}${process.platform === "win32" ? ";" : ":"}${process.env.PATH ?? ""}`,
+      VERCEL: "1",
+      DATABASE_URL: "postgresql://test:test@localhost:5432/test",
+      PRISMA_BASELINE_EXISTING_DB: undefined,
+    };
+
+    const preview = spawnSync(process.execPath, ["scripts/migrate-deploy-safe.mjs"], {
+      cwd: process.cwd(),
+      env: { ...baseEnv, VERCEL_ENV: undefined },
+      encoding: "utf8",
+    });
+    assert.equal(preview.status, 0, preview.stderr);
+    assert.match(preview.stderr, /P3009/);
+
+    const production = spawnSync(process.execPath, ["scripts/migrate-deploy-safe.mjs"], {
+      cwd: process.cwd(),
+      env: { ...baseEnv, VERCEL_ENV: "production" },
+      encoding: "utf8",
+    });
+    assert.notEqual(production.status, 0, "production migration failures must remain fatal");
   });
 
   it("migrate-deploy-safe handles retroactive init migration schema conflict without blocking", () => {
