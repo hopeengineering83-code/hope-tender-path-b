@@ -2,7 +2,31 @@ import { NextResponse, type NextRequest } from "next/server";
 import { evaluateCsrf } from "./lib/security/csrf";
 import { getProductionCSP } from "./lib/security/csp";
 
-export function middleware(req: NextRequest) {
+const INTERNAL_GUARD_HEADER = "x-hope-internal-rate-guard";
+const GUARDED_AI_ROUTE = /^\/api\/tenders\/[^/?]+\/(ai-analyze|generate)$/;
+
+async function deriveInternalGuardToken(): Promise<string | null> {
+  const secret = process.env.SESSION_SECRET?.trim();
+  if (!secret) return null;
+  const bytes = new TextEncoder().encode(`hope-rate-guard:v1:${secret}`);
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function withSecurityHeaders(response: NextResponse): NextResponse {
+  if (process.env.NODE_ENV === "production") {
+    response.headers.set("Content-Security-Policy", getProductionCSP());
+    response.headers.set("Strict-Transport-Security", "max-age=31536000; includeSubDomains; preload");
+    response.headers.set("X-Content-Type-Options", "nosniff");
+    response.headers.set("X-Frame-Options", "DENY");
+    response.headers.set("X-XSS-Protection", "1; mode=block");
+    response.headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
+    response.headers.set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), interest-cohort=()");
+  }
+  return response;
+}
+
+export async function middleware(req: NextRequest) {
   // 1. CSRF Protection
   const decision = evaluateCsrf({
     method: req.method,
@@ -16,23 +40,37 @@ export function middleware(req: NextRequest) {
   });
 
   if (!decision.allowed) {
-    return NextResponse.json({ error: decision.reason }, { status: 403 });
+    return withSecurityHeaders(NextResponse.json({ error: decision.reason }, { status: 403 }));
   }
 
-  const response = NextResponse.next();
+  // 2. Persistently guard the two large AI handlers without duplicating their
+  // generation logic. The internal proxy signs its forwarded request with a
+  // token derived from SESSION_SECRET; user-supplied bypass headers are removed.
+  if (req.method === "POST" && GUARDED_AI_ROUTE.test(req.nextUrl.pathname)) {
+    const token = await deriveInternalGuardToken();
+    if (!token) {
+      return withSecurityHeaders(NextResponse.json({ error: "AI request guard is unavailable" }, { status: 503 }));
+    }
 
-  // 2. Security Headers (Production only)
-  if (process.env.NODE_ENV === "production") {
-    response.headers.set("Content-Security-Policy", getProductionCSP());
-    response.headers.set("Strict-Transport-Security", "max-age=31536000; includeSubDomains; preload");
-    response.headers.set("X-Content-Type-Options", "nosniff");
-    response.headers.set("X-Frame-Options", "DENY");
-    response.headers.set("X-XSS-Protection", "1; mode=block");
-    response.headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
-    response.headers.set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), interest-cohort=()");
+    const requestHeaders = new Headers(req.headers);
+    const suppliedToken = requestHeaders.get(INTERNAL_GUARD_HEADER);
+    requestHeaders.delete(INTERNAL_GUARD_HEADER);
+
+    if (suppliedToken === token) {
+      return withSecurityHeaders(NextResponse.next({ request: { headers: requestHeaders } }));
+    }
+
+    const originalTarget = `${req.nextUrl.pathname}${req.nextUrl.search}`;
+    const guardUrl = req.nextUrl.clone();
+    guardUrl.pathname = "/api/internal/rate-guard";
+    guardUrl.search = "";
+    guardUrl.searchParams.set("target", originalTarget);
+
+    return withSecurityHeaders(NextResponse.rewrite(guardUrl, { request: { headers: requestHeaders } }));
   }
 
-  return response;
+  // 3. Standard response with security headers.
+  return withSecurityHeaders(NextResponse.next());
 }
 
 export const config = {
