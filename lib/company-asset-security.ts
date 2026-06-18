@@ -24,6 +24,7 @@ export type CompanyAssetValidation = {
 };
 
 function startsWith(buffer: Buffer, signature: number[]): boolean {
+  if (buffer.length < signature.length) return false;
   return signature.every((value, index) => buffer[index] === value);
 }
 
