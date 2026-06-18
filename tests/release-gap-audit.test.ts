@@ -23,4 +23,17 @@ describe("release gap audit regressions", () => {
     const security = source("lib/company-asset-security.ts");
     assert.match(security, /buffer\.length\s*<\s*signature\.length/);
   });
+
+  it("validates AI-returned source file tokens before persisting source linkage", () => {
+    const route = source("app/api/tenders/[id]/ai-analyze/route.ts");
+    assert.match(route, /validTenderFileIds\s*=\s*new Set\(tenderRecord\.files\.map\(\(f\)\s*=>\s*f\.id\)\)/);
+    assert.match(route, /validTenderFileIds\.has\(req\.sourceFileToken\)/);
+    assert.ok(!route.includes("sourceTenderFileId: req.sourceFileToken ?? null"));
+  });
+
+  it("changes AI analysis content hashes when vault text changes", () => {
+    const route = source("app/api/tenders/[id]/ai-analyze/route.ts");
+    assert.match(route, /createHash\("sha256"\)\.update\(d\.extractedText\.slice\(0, 10_000\)\)/);
+    assert.match(route, /\[digest:\$\{textDigest\}\]/);
+  });
 });
