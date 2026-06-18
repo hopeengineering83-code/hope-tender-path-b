@@ -99,6 +99,7 @@ export type MetadataCompletenessInput = {
   submissionMethod?: string | null;
   submissionAddress?: string | null;
   submissionEmails?: string | null;
+  metadataContaminated?: boolean | null;
   deadline?: Date | null;
   clientContactName?: string | null;
   clientContactEmail?: string | null;

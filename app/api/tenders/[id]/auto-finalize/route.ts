@@ -9,7 +9,7 @@ import { generateWithFallback } from "../../../../../lib/ai";
 import { applyActiveUploadedLetterheadToTenderDocuments } from "../../../../../lib/engine/apply-active-letterhead";
 import { buildSubmissionPlan, buildSubmissionPlanWithDerivedFallback } from "../../../../../lib/engine/submission-plan";
 import { assessExtractionQuality } from "../../../../../lib/extraction-quality";
-import { isExtractionAcceptableForGeneration } from "../../../../../lib/engine/extraction-quality-gate";
+import { isExtractionAcceptableForGeneration, isExtractionAcceptableForExport } from "../../../../../lib/engine/extraction-quality-gate";
 import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import { extractRequestId } from "../../../../../lib/request-id";
 import { logAction } from "../../../../../lib/audit";

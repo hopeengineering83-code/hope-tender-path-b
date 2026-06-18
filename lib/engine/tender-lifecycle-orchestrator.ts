@@ -21,6 +21,8 @@
 //   → EXPORT_READINESS_BLOCKED → EXPORT_READY → ZIP_READY
 
 import type { PrismaClient } from "@prisma/client";
+import { assessExtractionQuality } from "../../lib/extraction-quality";
+import { isExtractionAcceptableForGeneration, isExtractionAcceptableForExport } from "./extraction-quality-gate";
 import {
   detectAnalysisSourceWithApproval,
   type AnalysisSource,
@@ -315,7 +317,7 @@ export async function computeTenderLifecycle(
       }),
       client.tenderFile.findMany({
         where: { tenderId },
-        select: { id: true, extractedText: true },
+        select: { id: true, fileName: true, originalFileName: true, extractedText: true, totalPages: true, extractedPages: true, ocrPages: true, failedPages: true, extractionScore: true },
       }),
       client.tenderRequirement.findMany({
         where: { tenderId },
@@ -354,6 +356,10 @@ export async function computeTenderLifecycle(
     ]);
 
   if (!tender) return null;
+  const effectiveFiles = files.map((file) => {
+    const quality = assessExtractionQuality(file.extractedText, file.originalFileName || file.fileName);
+    return { ...file, extractionScore: Math.min(file.extractionScore ?? quality.score, quality.score), quality };
+  });
 
   // ── Analysis source ────────────────────────────────────────────────────────
   const analysisSource = await detectAnalysisSourceWithApproval(
@@ -389,8 +395,13 @@ export async function computeTenderLifecycle(
       tender.submissionMethod || tender.submissionAddress || tender.submissionEmails,
     ),
   };
+
   const meta: MetadataCompletenessReport =
     assessTenderMetadataCompleteness(metaInput);
+  const extractionOk = isExtractionAcceptableForGeneration(effectiveFiles);
+  const extractionExportOk = isExtractionAcceptableForExport(effectiveFiles);
+  const metadataOk = !meta.blockingForExport;
+  const metadataGenOk = !meta.blockingForGeneration;
 
   // ── Source references ──────────────────────────────────────────────────────
   const mandatoryReqs = requirements.filter((r) => r.priority === "MANDATORY");
@@ -619,7 +630,6 @@ export async function computeTenderLifecycle(
   const blocked: BlockedAction[] = [];
 
   const analysisOk = analysisSource === "AI" || analysisSource === "HUMAN_APPROVED_REGEX_FALLBACK";
-  const metadataGenOk = !meta.blockingForGeneration;
   const fallbackUnapproved = analysisSource === "REGEX_FALLBACK_AI_ERROR";
   const noFinalDocs = counts.finalExportCandidates === 0;
 

@@ -18,6 +18,7 @@ import { NextResponse } from "next/server";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { requireUser, unauthorizedResponse, forbiddenResponse } from "../../../../../lib/auth";
 import { inferTenderMetadata } from "../../../../../lib/engine/tender-metadata";
+import { assessExtractionQuality, assessExtractionQualityPerPage } from "../../../../../lib/extraction-quality";
 import {
   isValidClientName,
   isValidReferenceNumber,
