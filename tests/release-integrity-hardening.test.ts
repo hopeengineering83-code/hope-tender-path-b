@@ -72,6 +72,12 @@ describe("release integrity hardening", () => {
     assert.match(route, /rateLimitPersistent/);
   });
 
+  it("keeps lifecycle orchestrator free of unresolved export-gate variables", () => {
+    const orchestrator = readFileSync("lib/engine/tender-lifecycle-orchestrator.ts", "utf8");
+    assert.equal(orchestrator.includes("extractionExportOk"), false);
+    assert.equal(orchestrator.includes("metadataOk"), false);
+  });
+
   it("runs critical schema verification after migrations in the production build script", () => {
     const pkg = JSON.parse(readFileSync("package.json", "utf8")) as { scripts: Record<string, string> };
     const build = pkg.scripts["vercel-build"];
