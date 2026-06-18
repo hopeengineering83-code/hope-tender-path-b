@@ -2,50 +2,12 @@ import { NextResponse } from "next/server";
 import { prisma, prismaReady } from "../../../../../../lib/prisma";
 import { requireUser, unauthorizedResponse, forbiddenResponse } from "../../../../../../lib/auth";
 import { logAction } from "../../../../../../lib/audit";
-import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../../../lib/rate-limit";
-
-/**
- * Bulk Review action endpoint (PR TT).
- *
- * THE PROBLEM
- * Real production: the user generated a 12-document submission package,
- * then hit "Download" and saw:
- *
- *   "Final export blocked: 8 documents are not ready for export.
- *    • Company profile and capability statement.docx — reviewStatus is
- *      PENDING, expected READY_FOR_EXPORT
- *    • Technical-Proposal.docx — reviewStatus is PENDING, expected
- *      READY_FOR_EXPORT
- *    • [...] and 6 more"
- *
- * The fix is to walk into each of the 8 documents individually and
- * mark each as READY_FOR_EXPORT — 8 round trips, each with confirm
- * dialog and reload. That's a usability cliff.
- *
- * THIS ENDPOINT
- * Single POST that updates EVERY generated document on the tender to
- * the requested reviewStatus in one atomic transaction. Each update
- * still emits a DocumentReview audit row preserving the priorStatus
- * and newStatus, so the audit trail is identical to clicking each
- * document individually.
- *
- * Body shape:
- *   {
- *     reviewStatus: "READY_FOR_EXPORT" | "APPROVED" | "REJECTED" |
- *                   "PENDING" | "NEEDS_REVISION" | "CHANGES_REQUESTED",
- *     reviewNotes?: string,             // optional, applied to all
- *     reviewAction?: string,             // optional, defaults to reviewStatus
- *     onlyDocumentIds?: string[],        // optional, scope to subset
- *     skipAlreadyAtTarget?: boolean      // skip docs already at target
- *   }
- *
- * RBAC: same as per-doc review — REVIEWER+ only. VIEWERs cannot
- * approve. ADMIN can approve.
- *
- * Returns: { updated: number, skipped: number, results: [...] }
- */
+import { rateLimitPersistent, MUTATION_RATE_LIMIT } from "../../../../../../lib/rate-limit";
 
 const VALID_STATUSES = ["APPROVED", "REJECTED", "PENDING", "NEEDS_REVISION", "READY_FOR_EXPORT", "CHANGES_REQUESTED"];
+const MAX_BULK_DOCUMENTS = 200;
+const MAX_REVIEW_NOTES = 5_000;
+const MAX_REVIEW_ACTION = 80;
 
 export async function POST(
   req: Request,
@@ -58,14 +20,22 @@ export async function POST(
     return unauthorizedResponse();
   }
 
-  const canReview = ["ADMIN", "PROPOSAL_MANAGER", "REVIEWER"].includes(actor.role);
-  if (!canReview) return forbiddenResponse();
+  if (!["ADMIN", "PROPOSAL_MANAGER", "REVIEWER"].includes(actor.role)) {
+    return forbiddenResponse();
+  }
 
-  const rl = rateLimit(`bulk-review:${actor.id}`, MUTATION_RATE_LIMIT);
-  if (!rl.allowed) return NextResponse.json({ error: "Too many requests", retryAfter: Math.ceil((rl.resetAt - Date.now()) / 1000) }, { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } });
+  const rl = await rateLimitPersistent(`bulk-review:${actor.id}`, MUTATION_RATE_LIMIT);
+  if (!rl.allowed) {
+    const retryAfter = Math.max(1, Math.ceil((rl.resetAt - Date.now()) / 1000));
+    return NextResponse.json(
+      { error: "Too many requests", retryAfter },
+      { status: 429, headers: { "Retry-After": String(retryAfter) } },
+    );
+  }
 
   const { id: tenderId } = await params;
-  const body = await req.json().catch(() => ({} as Record<string, unknown>));
+  const body = await req.json().catch(() => null) as Record<string, unknown> | null;
+  if (!body) return NextResponse.json({ error: "Request body must be valid JSON" }, { status: 400 });
 
   const reviewStatus = typeof body.reviewStatus === "string" ? body.reviewStatus : "";
   if (!VALID_STATUSES.includes(reviewStatus)) {
@@ -75,31 +45,40 @@ export async function POST(
     );
   }
 
-  const reviewNotes = typeof body.reviewNotes === "string" ? body.reviewNotes : null;
-  const reviewAction = typeof body.reviewAction === "string" ? body.reviewAction : reviewStatus;
-  const onlyDocumentIds = Array.isArray(body.onlyDocumentIds)
-    ? (body.onlyDocumentIds as unknown[]).filter((v): v is string => typeof v === "string")
+  const reviewNotes = typeof body.reviewNotes === "string" ? body.reviewNotes.trim() : null;
+  if (reviewNotes && reviewNotes.length > MAX_REVIEW_NOTES) {
+    return NextResponse.json({ error: `reviewNotes must not exceed ${MAX_REVIEW_NOTES} characters` }, { status: 400 });
+  }
+
+  const reviewAction = typeof body.reviewAction === "string" ? body.reviewAction.trim() : reviewStatus;
+  if (!reviewAction || reviewAction.length > MAX_REVIEW_ACTION || !/^[A-Z0-9_ -]+$/i.test(reviewAction)) {
+    return NextResponse.json({ error: "reviewAction is invalid" }, { status: 400 });
+  }
+
+  const requestedIds = Array.isArray(body.onlyDocumentIds)
+    ? body.onlyDocumentIds.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
     : null;
-  const skipAlreadyAtTarget = body.skipAlreadyAtTarget !== false; // default true
+  const onlyDocumentIds = requestedIds ? Array.from(new Set(requestedIds.map((value) => value.trim()))) : null;
+  if (onlyDocumentIds && onlyDocumentIds.length > MAX_BULK_DOCUMENTS) {
+    return NextResponse.json({ error: `onlyDocumentIds must not contain more than ${MAX_BULK_DOCUMENTS} entries` }, { status: 400 });
+  }
+  const skipAlreadyAtTarget = body.skipAlreadyAtTarget !== false;
 
   await prismaReady;
 
-  // Verify tender ownership / membership.
   const tender = await prisma.tender.findFirst({
     where: { id: tenderId, userId: actor.id },
     select: { id: true, title: true },
   });
-  if (!tender) {
-    return NextResponse.json({ error: "Tender not found or not accessible." }, { status: 404 });
-  }
+  if (!tender) return NextResponse.json({ error: "Tender not found or not accessible." }, { status: 404 });
 
-  // Pull active (non-superseded) generated documents.
   const docs = await prisma.generatedDocument.findMany({
     where: {
       tenderId,
       generationStatus: { not: "SUPERSEDED" },
       ...(onlyDocumentIds ? { id: { in: onlyDocumentIds } } : {}),
     },
+    take: MAX_BULK_DOCUMENTS,
     select: {
       id: true,
       name: true,
@@ -115,7 +94,6 @@ export async function POST(
 
   const results: Array<{ id: string; name: string; priorStatus: string; newStatus: string; action: "UPDATED" | "SKIPPED" }> = [];
 
-  // Atomic — either every doc gets updated + audit row, or none.
   await prisma.$transaction(async (tx) => {
     for (const doc of docs) {
       if (skipAlreadyAtTarget && doc.reviewStatus === reviewStatus) {
@@ -149,8 +127,8 @@ export async function POST(
     }
   });
 
-  const updated = results.filter((r) => r.action === "UPDATED").length;
-  const skipped = results.filter((r) => r.action === "SKIPPED").length;
+  const updated = results.filter((result) => result.action === "UPDATED").length;
+  const skipped = results.filter((result) => result.action === "SKIPPED").length;
 
   await logAction({
     userId: actor.id,
