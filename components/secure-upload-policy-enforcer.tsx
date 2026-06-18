@@ -15,6 +15,7 @@ function acceptTokens(input: HTMLInputElement): string[] {
 
 function isKnowledgeDocumentPicker(input: HTMLInputElement): boolean {
   if (input.type !== "file") return false;
+  if (input.dataset.secureDocumentPicker === "true") return true;
   const tokens = acceptTokens(input);
   const containsOfficeOrPdf = tokens.some((token) => [".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ods", ".ppt", ".pptx", ".rtf"].includes(token));
   const containsLegacy = tokens.some((token) => LEGACY_OR_UNINSPECTABLE.has(token));
@@ -42,13 +43,15 @@ function findDocumentPicker(target: EventTarget | null): HTMLInputElement | null
   return null;
 }
 
+function securePicker(input: HTMLInputElement) {
+  if (!isKnowledgeDocumentPicker(input)) return;
+  input.setAttribute("accept", SAFE_ACCEPT);
+  input.dataset.secureDocumentPicker = "true";
+}
+
 function normalizeDocumentPickers(root: ParentNode = document) {
-  root.querySelectorAll<HTMLInputElement>('input[type="file"]').forEach((input) => {
-    if (isKnowledgeDocumentPicker(input)) {
-      input.setAttribute("accept", SAFE_ACCEPT);
-      input.dataset.secureDocumentPicker = "true";
-    }
-  });
+  if (root instanceof HTMLInputElement) securePicker(root);
+  root.querySelectorAll<HTMLInputElement>('input[type="file"]').forEach(securePicker);
 }
 
 export function SecureUploadPolicyEnforcer() {
