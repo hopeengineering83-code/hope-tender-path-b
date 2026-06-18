@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma, prismaReady } from "./prisma";
 import { requireRole } from "./auth";
 import { extractTextFromBuffer, detectCategoryFromFile, getFileTypeLabel, isMeaningfulExtraction } from "./extract-text";
+import { assessExtractionQuality, assessExtractionQualityPerPage } from "./extraction-quality";
 import { logAction } from "./audit";
 import { ensureCompanyForUser } from "./company-workspace";
 import { importCompanyKnowledgeFromDocuments } from "./company-knowledge-import-safe";
@@ -85,6 +86,9 @@ export async function handleSecureUpload(req: Request) {
         tenderId: tenderId ?? undefined,
       });
 
+      const quality = assessExtractionQuality(extracted.text, fileName);
+      const perPage = assessExtractionQualityPerPage(extracted.text);
+
       if (tenderId) {
         const record = await prisma.tenderFile.create({
           data: {
@@ -97,8 +101,18 @@ export async function handleSecureUpload(req: Request) {
             fileContent: stored.fileContent ?? null,
             classification,
             extractedText: extracted.text || null,
+            totalPages: perPage.totalDetectedPages,
+            extractedPages: perPage.totalDetectedPages - perPage.failedPages.length,
+            ocrPages: perPage.ocrPages.length,
+            failedPages: perPage.failedPages.length,
+            extractionScore: quality.score,
+            pageStatusJson: JSON.stringify(perPage.pages),
           },
-          select: { id: true, tenderId: true, fileName: true, originalFileName: true, mimeType: true, size: true, classification: true, createdAt: true },
+          select: {
+            id: true, tenderId: true, fileName: true, originalFileName: true,
+            mimeType: true, size: true, classification: true, createdAt: true,
+            totalPages: true, extractedPages: true, ocrPages: true, failedPages: true, extractionScore: true
+          },
         });
         tenderFilesCreated += 1;
         results.push({ success: true, scope: "tender", fileRecord: record, extraction, storageProvider: stored.provider });
@@ -128,6 +142,12 @@ export async function handleSecureUpload(req: Request) {
             fileContent: stored.fileContent ?? null,
             category,
             extractedText: extracted.text || null,
+            totalPages: perPage.totalDetectedPages,
+            extractedPages: perPage.totalDetectedPages - perPage.failedPages.length,
+            ocrPages: perPage.ocrPages.length,
+            failedPages: perPage.failedPages.length,
+            extractionScore: quality.score,
+            pageStatusJson: JSON.stringify(perPage.pages),
             metadata: JSON.stringify({ category, autoDetected: !providedCategory || providedCategory === "AUTO", storageProvider: stored.provider, ...extraction }),
           },
           select: { id: true, companyId: true, fileName: true, originalFileName: true, mimeType: true, size: true, category: true, createdAt: true },

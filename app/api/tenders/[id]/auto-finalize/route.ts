@@ -179,13 +179,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
 
   // ── Pre-flight gates (same contract as generate-missing-plan-files) ──────
-  // Gate 1: extraction quality — auto-finalize must not mark docs READY_FOR_EXPORT
-  // when the underlying tender was never reliably extracted.
   const effectiveFiles = tender.files.map((file) => {
     const quality = assessExtractionQuality(file.extractedText, file.originalFileName || file.fileName);
     return { ...file, extractionScore: Math.min(file.extractionScore ?? quality.score, quality.score), quality };
   });
-  if (effectiveFiles.length > 0 && !isExtractionAcceptableForGeneration(effectiveFiles)) {
+  // Gate 1: extraction quality — auto-finalize must not mark docs READY_FOR_EXPORT
+  // when the underlying tender was never reliably extracted.
+  // PR-NEXT: both generation and export checks must pass.
+  if (effectiveFiles.length > 0 && (!isExtractionAcceptableForGeneration(effectiveFiles) || !isExtractionAcceptableForExport(effectiveFiles))) {
     return NextResponse.json({
       error: "Auto-finalize blocked: tender extraction is not reliable enough. Re-extract or run OCR first.",
       code: "EXTRACTION_QUALITY_INSUFFICIENT",
@@ -198,7 +199,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     return NextResponse.json({
       error: "Auto-finalize blocked: tender metadata is flagged as contaminated. Review and correct client details first.",
       code: "METADATA_CONTAMINATED",
-      nextAction: "REVIEW_METADATA",
+      nextAction: "FILL_CLIENT_METADATA",
     }, { status: 422 });
   }
 

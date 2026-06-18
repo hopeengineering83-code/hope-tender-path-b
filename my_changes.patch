@@ -1,0 +1,500 @@
+diff --git a/app/api/tenders/[id]/ai-analyze/route.ts b/app/api/tenders/[id]/ai-analyze/route.ts
+index d8a0368..0de4165 100644
+--- a/app/api/tenders/[id]/ai-analyze/route.ts
++++ b/app/api/tenders/[id]/ai-analyze/route.ts
+@@ -652,7 +652,7 @@ async function handleStreamingAnalyze(
+               const legalNameContamination = detectMetadataContamination(aiResult.legalClientName);
+               const donorAgencyContamination = detectMetadataContamination(aiResult.donorAgency);
+               const implementingAgencyContamination = detectMetadataContamination(aiResult.implementingAgency);
+-              const anyEntityContaminated = contamination.contaminated || legalNameContamination.contaminated || donorAgencyContamination.contaminated || implementingAgencyContamination.contaminated;
++              const anyEntityContaminated = contamination.contaminated || legalNameContamination.contaminated || donorAgencyContamination.contaminated || implementingAgencyContamination.contaminated || detectMetadataContamination(aiResult.clientAddress).contaminated || detectMetadataContamination(aiResult.submissionAddress).contaminated || detectMetadataContamination(aiResult.clientContactName).contaminated;
+
+               const existingNotes = (tenderRecord.notes ?? "").split("\n");
+               const updatedNotes = existingNotes
+@@ -1279,7 +1279,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
+           const legalNameContamination = detectMetadataContamination(aiResult.legalClientName);
+           const donorAgencyContamination = detectMetadataContamination(aiResult.donorAgency);
+           const implementingAgencyContamination = detectMetadataContamination(aiResult.implementingAgency);
+-          const anyEntityContaminated = contamination.contaminated || legalNameContamination.contaminated || donorAgencyContamination.contaminated || implementingAgencyContamination.contaminated;
++          const anyEntityContaminated = contamination.contaminated || legalNameContamination.contaminated || donorAgencyContamination.contaminated || implementingAgencyContamination.contaminated || detectMetadataContamination(aiResult.clientAddress).contaminated || detectMetadataContamination(aiResult.submissionAddress).contaminated || detectMetadataContamination(aiResult.clientContactName).contaminated;
+
+           const existingNotes = (tenderRecord.notes ?? "").split("\n");
+           const updatedNotes = existingNotes
+diff --git a/app/api/tenders/[id]/auto-finalize/route.ts b/app/api/tenders/[id]/auto-finalize/route.ts
+index 7fcb0b2..4045ec2 100644
+--- a/app/api/tenders/[id]/auto-finalize/route.ts
++++ b/app/api/tenders/[id]/auto-finalize/route.ts
+@@ -179,13 +179,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
+   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
+
+   // ── Pre-flight gates (same contract as generate-missing-plan-files) ──────
+-  // Gate 1: extraction quality — auto-finalize must not mark docs READY_FOR_EXPORT
+-  // when the underlying tender was never reliably extracted.
+   const effectiveFiles = tender.files.map((file) => {
+     const quality = assessExtractionQuality(file.extractedText, file.originalFileName || file.fileName);
+     return { ...file, extractionScore: Math.min(file.extractionScore ?? quality.score, quality.score), quality };
+   });
+-  if (effectiveFiles.length > 0 && !isExtractionAcceptableForGeneration(effectiveFiles)) {
++  // Gate 1: extraction quality — auto-finalize must not mark docs READY_FOR_EXPORT
++  // when the underlying tender was never reliably extracted.
++  // PR-NEXT: both generation and export checks must pass.
++  if (effectiveFiles.length > 0 && (!isExtractionAcceptableForGeneration(effectiveFiles) || !isExtractionAcceptableForExport(effectiveFiles))) {
+     return NextResponse.json({
+       error: "Auto-finalize blocked: tender extraction is not reliable enough. Re-extract or run OCR first.",
+       code: "EXTRACTION_QUALITY_INSUFFICIENT",
+@@ -198,7 +199,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
+     return NextResponse.json({
+       error: "Auto-finalize blocked: tender metadata is flagged as contaminated. Review and correct client details first.",
+       code: "METADATA_CONTAMINATED",
+-      nextAction: "REVIEW_METADATA",
++      nextAction: "FILL_CLIENT_METADATA",
+     }, { status: 422 });
+   }
+
+diff --git a/app/api/tenders/[id]/re-extract-metadata/route.ts b/app/api/tenders/[id]/re-extract-metadata/route.ts
+index 6b1a747..2480ef5 100644
+--- a/app/api/tenders/[id]/re-extract-metadata/route.ts
++++ b/app/api/tenders/[id]/re-extract-metadata/route.ts
+@@ -222,6 +222,22 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
+     });
+   }
+
++  for (const file of tender.files) {
++    const quality = assessExtractionQuality(file.extractedText, file.originalFileName);
++    const perPage = assessExtractionQualityPerPage(file.extractedText);
++    await prisma.tenderFile.update({
++      where: { id: file.id },
++      data: {
++        totalPages: perPage.totalDetectedPages,
++        extractedPages: perPage.totalDetectedPages - perPage.failedPages.length,
++        ocrPages: perPage.ocrPages.length,
++        failedPages: perPage.failedPages.length,
++        extractionScore: quality.score,
++        pageStatusJson: JSON.stringify(perPage.pages),
++      },
++    });
++  }
++
+   await prisma.tender.update({ where: { id }, data: update });
+   await logAction({
+     userId: actor.id,
+diff --git a/components/client-submission-details-panel.tsx b/components/client-submission-details-panel.tsx
+index 92dd7f2..df2454d 100644
+--- a/components/client-submission-details-panel.tsx
++++ b/components/client-submission-details-panel.tsx
+@@ -16,6 +16,7 @@ const SPECS = [
+   ["evaluationCriteria", "evaluationCriteria", "Evaluation criteria / scoring", "Tender", "", "evaluationMethodology"],
+   ["requiredDocuments", "requiredDocuments", "Required documents / forms", "Tender", "1", "exactFileNaming,exactFileOrder"],
+   ["procuringEntityName", "clientName", "Procuring entity / client name", "Client", "1", "procuringEntityName,clientName"],
++  ["metadataContaminated", "metadataContaminated", "Metadata contamination", "Client", "1", "metadataContaminated"],
+   ["legalClientName", "legalClientName", "Legal client name", "Client", "", "legalClientName"],
+   ["donorAgency", "donorAgency", "Donor / funding agency", "Client", "", "donorAgency"],
+   ["implementingAgency", "implementingAgency", "Implementing agency", "Client", "", "implementingAgency"],
+@@ -54,6 +55,7 @@ function pick(tender: Record<string, unknown>, keys: string) {
+     const value = tender[key];
+     if (typeof value === "string" && value.trim()) return value.trim();
+     if (value != null && typeof value !== "object") return String(value);
++    if (typeof value === "boolean") return String(value);
+   }
+   return null;
+ }
+@@ -99,33 +101,29 @@ function str(value: unknown): string | null {
+ function normalizeQuote(value: unknown): string | null {
+   const quote = str(value);
+   if (!quote) return null;
+-  return quote.replace(/\s+/g, " ").trim();
++  return quote.replace(/[\n\r\t]+/g, " ").replace(/\s{2,}/g, " ").trim();
+ }
+
+-function fileNameFor(tender: TenderPayload, fileId: unknown): string | null {
+-  const id = str(fileId);
+-  if (!id) return null;
+-  const file = tender.files?.find((f) => f.id === id);
+-  return file?.originalFileName || file?.fileName || null;
++function fileNameFor(tender: TenderPayload, id: unknown) {
++  if (!id || typeof id !== "string") return null;
++  return tender.files?.find((f) => f.id === id)?.originalFileName ?? null;
+ }
+
+-function sourceFromObject(tender: TenderPayload, raw: unknown): SourceInfo | null {
+-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+-  const item = raw as Record<string, unknown>;
+-  const page = num(item.page) ?? num(item.sourcePage) ?? num(item.sourcePageNumber);
+-  const quote = normalizeQuote(item.quote ?? item.sourceQuote ?? item.sourceExactQuote ?? item.snippet);
++function sourceFromObject(tender: TenderPayload, item: any): SourceInfo | null {
++  if (!item || typeof item !== "object") return null;
++  const page = num(item.page ?? item.sourcePage);
++  const quote = normalizeQuote(item.quote ?? item.sourceQuote ?? item.snippet);
+   const fileName = fileNameFor(tender, item.sourceTenderFileId ?? item.tenderFileId ?? item.fileId) ?? str(item.fileName);
+   if (page == null && !quote && !fileName) return null;
+   return { page, quote, fileName, label: str(item.sectionHeading ?? item.sourceSectionHeading ?? item.section) };
+ }
+
+ function sourceForField(tender: TenderPayload, field: string): SourceInfo | null {
+-  const contactSources = parseJsonObject(tender.contactDetailsSourceJson);
++  const contactSources = parseJsonObject(tender.contactDetailsSourceJson as string);
+   const contactSource = sourceFromObject(tender, contactSources[field]);
+   if (contactSource) return contactSource;
+
+   if (field === "clientName") {
+-    // Try procuringEntityName key in contactDetailsSource first (AI stores it there)
+     const fromContactSource = sourceFromObject(tender, contactSources["procuringEntityName"]);
+     if (fromContactSource) return fromContactSource;
+     const page = num(tender.clientNameSourcePage);
+@@ -133,7 +131,6 @@ function sourceForField(tender: TenderPayload, field: string): SourceInfo | null
+     return page != null || quote ? { page, quote, fileName: null } : null;
+   }
+   if (field === "reference") {
+-    // AI stores the procurement reference source under "procurementReferenceNumber" key
+     return sourceFromObject(tender, contactSources["procurementReferenceNumber"]);
+   }
+   if (field === "submissionEmails") {
+@@ -200,7 +197,7 @@ function SourceTrace({ source }: { source: SourceInfo | null }) {
+     <div className="mt-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-[11px] text-slate-600">
+       <div className="flex flex-wrap gap-2 font-medium text-slate-700">
+         <span>Source:</span>
+-        <span>{source.page != null ? `Page ${source.page}` : "Page not recorded"}</span>
++        <span>{source.page != null ? \"Page \" + source.page : \"Page not recorded\"}</span>
+         {source.fileName && <span>• {source.fileName}</span>}
+         {source.label && <span>• {source.label}</span>}
+       </div>
+@@ -228,41 +225,57 @@ export function ClientSubmissionDetailsPanel({ tenderId }: { tenderId: string })
+   async function load() {
+     setLoading(true); setError("");
+     try {
+-      const [tenderRes, overrideRes] = await Promise.all([fetch(`/api/tenders/${tenderId}`, { cache: "no-store" }), fetch(`/api/tenders/${tenderId}/metadata-override`, { cache: "no-store" })]);
++      const [tenderRes, overrideRes] = await Promise.all([fetch(\`/api/tenders/\${tenderId}\`, { cache: \"no-store\" }), fetch(\`/api/tenders/\${tenderId}/metadata-override\`, { cache: \"no-store\" })]);
+       const tender = await tenderRes.json();
+-      if (!tenderRes.ok) throw new Error(tender.error || "Failed to load tender");
++      if (!tenderRes.ok) throw new Error(tender.error || \"Failed to load tender\");
+       const overrideJson = await overrideRes.json().catch(() => ({}));
+       setRows(buildRows(tender, overrideRes.ok && Array.isArray(overrideJson.overrides) ? overrideJson.overrides : []));
+-      setMessage(overrideRes.ok ? "" : "Manual resolution storage is not ready; extracted values are still visible.");
+-    } catch (err) { setError(err instanceof Error ? err.message : "Failed to load client details"); }
++      setMessage(overrideRes.ok ? \"\" : \"Manual resolution storage is not ready; extracted values are still visible.\");
++    } catch (err) { setError(err instanceof Error ? err.message : \"Failed to load client details\"); }
+     finally { setLoading(false); }
+   }
+   useEffect(() => { void load(); }, [tenderId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+   async function save(row: Row, action: string) {
+-    let fieldState = "USER_CONFIRMED";
++    let fieldState = \"USER_CONFIRMED\";
+     let overrideValue: string | null = null;
+-    let reason = "Confirmed from Client & Submission Details panel.";
+-    if (action === "EDIT_MANUALLY") { const value = window.prompt(`Enter ${row.label}`, row.value || "")?.trim(); if (!value) return; fieldState = "USER_EDITED"; overrideValue = value; reason = "Manual value entered by user."; }
+-    if (action === "IGNORE_FOR_THIS_TENDER") { fieldState = "IGNORED_WITH_REASON"; reason = "Ignored for this tender by user."; }
+-    if (action === "MARK_NOT_APPLICABLE") { fieldState = "NOT_APPLICABLE"; reason = "Marked not applicable by user."; }
+-    if (action === "RETRY_ON_NEXT_ANALYZE") { fieldState = "MISSING"; reason = "Retry requested for next AI Analyze."; }
+-    if (action === "MARK_NOT_FOUND") { fieldState = "IGNORED_WITH_REASON"; reason = "User confirmed this detail was not found in the tender and should not block this tender."; }
+-    setSaving(row.key); setError("");
++    let reason = \"Confirmed from Client & Submission Details panel.\";
++    if (action === \"EDIT_MANUALLY\") { const value = window.prompt(\`Enter \${row.label}\`, row.value || \"\")?.trim(); if (!value) return; fieldState = \"USER_EDITED\"; overrideValue = value; reason = \"Manual value entered by user.\"; }
++    if (action === \"IGNORE_FOR_THIS_TENDER\") { fieldState = \"IGNORED_WITH_REASON\"; reason = \"Ignored for this tender by user.\"; }
++    if (action === \"MARK_NOT_APPLICABLE\") { fieldState = \"NOT_APPLICABLE\"; reason = \"Marked not applicable by user.\"; }
++    if (action === \"RETRY_ON_NEXT_ANALYZE\") { fieldState = \"MISSING\"; reason = \"Retry requested for next AI Analyze.\"; }
++    if (action === \"MARK_NOT_FOUND\") { fieldState = \"IGNORED_WITH_REASON\"; reason = \"User confirmed this detail was not found in the tender and should not block this tender.\"; }
++    setSaving(row.key); setError(\"\");
+     try {
+-      const res = await fetch(`/api/tenders/${tenderId}/metadata-override`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ field: row.field, fieldState, overrideValue, previousValue: row.value, reason }) });
++      const res = await fetch(\`/api/tenders/\${tenderId}/metadata-override\`, { method: \"POST\", headers: { \"Content-Type\": \"application/json\" }, body: JSON.stringify({ field: row.field, fieldState, overrideValue, previousValue: row.value, reason }) });
+       const data = await res.json().catch(() => ({}));
+-      if (!res.ok || data.ok === false) throw new Error(data.error || "Failed to save client detail");
+-      setMessage(`${row.label} saved.`); await load();
+-    } catch (err) { setError(err instanceof Error ? err.message : "Failed to save client detail"); }
++      if (!res.ok || data.ok === false) throw new Error(data.error || \"Failed to save client detail\");
++      setMessage(\`\${row.label} saved.\`); await load();
++    } catch (err) { setError(err instanceof Error ? err.message : \"Failed to save client detail\"); }
+     finally { setSaving(null); }
+   }
+
+-  const criticalOpen = rows.filter((r) => r.critical && ["MISSING_SOURCE", "MANUAL_REQUIRED"].includes(r.status)).length;
+-  return <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+-    <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between"><div><h2 className="text-base font-semibold text-slate-900">Client &amp; Submission Details</h2><p className="mt-1 text-xs leading-5 text-slate-600">Some tender details may not be in every EOI, RFP, RFI, RFQ, or short invitation. Edit manually, mark not found, ignore, or mark not applicable. Missing optional details will not stop document generation.</p></div><button type="button" onClick={load} disabled={loading} className="min-h-[40px] rounded-lg border border-slate-300 px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50">{loading ? "Refreshing…" : "Refresh"}</button></div>
+-    {criticalOpen > 0 && <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800"><span className="font-semibold">Final submission warning:</span> {criticalOpen} critical detail{criticalOpen === 1 ? "" : "s"} need a manual value, not-found confirmation, or not-applicable decision before final packaging.</div>}
+-    {message && !error && <p className="mt-3 rounded-lg border border-green-100 bg-green-50 px-3 py-2 text-xs text-green-700">{message}</p>}{error && <p className="mt-3 rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-xs text-red-700">{error}</p>}
+-    {loading ? <p className="mt-4 text-sm text-slate-500">Loading client details…</p> : <div className="mt-4 space-y-2">{rows.map((row) => <div key={row.key} className="rounded-xl border border-slate-100 bg-slate-50/60 p-3"><div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between"><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><p className="text-sm font-medium text-slate-900">{row.label}</p><span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-600">{row.group}</span>{row.critical && <span className="rounded-full bg-red-50 px-2 py-0.5 text-[10px] font-semibold text-red-700">Critical</span>}<span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${badge[row.status]}`}>{row.status.replace(/_/g, " ").toLowerCase()}</span></div><p className={`mt-1 break-words text-sm ${row.value ? "text-slate-800" : "italic text-amber-700"}`}>{row.value || "MISSING_SOURCE - not found in tender document"}</p>{row.status === "EXTRACTED" && <SourceTrace source={row.source} />}</div><select value="" disabled={saving === row.key} onChange={(event) => { const action = event.target.value; event.target.value = ""; if (action) void save(row, action); }} className="min-h-[42px] rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 disabled:opacity-50" aria-label={`Action for ${row.label}`}><option value="">Action…</option><option value="EDIT_MANUALLY">Edit manually</option><option value="MARK_NOT_FOUND">Mark as not found in tender</option><option value="IGNORE_FOR_THIS_TENDER">Ignore for this tender</option><option value="MARK_NOT_APPLICABLE">Mark not applicable</option><option value="RETRY_ON_NEXT_ANALYZE">Retry on next AI Analyze</option></select></div></div>)}</div>}
++  const criticalOpen = rows.filter((r) => r.critical && [\"MISSING_SOURCE\", \"MANUAL_REQUIRED\"].includes(r.status)).length;
++  return <section className=\"rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5\">
++    <div className=\"flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between\"><div><h2 className=\"text-base font-semibold text-slate-900\">Client &amp; Submission Details</h2><p className=\"mt-1 text-xs leading-5 text-slate-600\">Some tender details may not be in every EOI, RFP, RFI, RFQ, or short invitation. Edit manually, mark not found, ignore, or mark not applicable. Missing optional details will not stop document generation.</p></div><button type=\"button\" onClick={load} disabled={loading} className=\"min-h-[40px] rounded-lg border border-slate-300 px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50\">{loading ? \"Refreshing…\" : \"Refresh\"}</button></div>
++    {criticalOpen > 0 && <div className=\"mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800\"><span className=\"font-semibold\">Final submission warning:</span> {criticalOpen} critical detail{criticalOpen === 1 ? \"\" : \"s\"} need a manual value, not-found confirmation, or not-applicable decision before final packaging.</div>}
++    {message && !error && <p className=\"mt-3 rounded-lg border border-green-100 bg-green-50 px-3 py-2 text-xs text-green-700\">{message}</p>}{error && <p className=\"mt-3 rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-xs text-red-700\">{error}</p>}
++    {loading ? <p className=\"mt-4 text-sm text-slate-500\">Loading client details…</p> : <div className=\"mt-4 space-y-2\">{rows.map((row) => <div key={row.key} className=\"rounded-xl border border-slate-100 bg-slate-50/60 p-3\">
++      <div className=\"flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between\">
++        <div className=\"min-w-0 flex-1\">
++          <div className=\"flex flex-wrap items-center gap-2\">
++            <p className={`text-sm font-medium ${row.field === \"metadataContaminated\" && row.value === \"true\" ? \"text-red-600\" : \"text-slate-900\"}`}>{row.label}</p>
++            <span className=\"rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-600\">{row.group}</span>
++            {row.critical && <span className=\"rounded-full bg-red-50 px-2 py-0.5 text-[10px] font-semibold text-red-700\">Critical</span>}
++            <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold \${badge[row.status]}\`}>{row.status.replace(/_/g, \" \").toLowerCase()}</span>
++          </div>
++          <p className={`mt-1 break-words text-sm \${row.field === \"metadataContaminated\" && row.value === \"true\" ? \"font-bold text-red-700\" : row.value ? \"text-slate-800\" : \"italic text-amber-700\"}\`}>
++            {row.field === \"metadataContaminated\" ? (row.value === \"true\" ? \"🚨 CONTAMINATED - client name contains portal noise\" : \"Clean\") : (row.value || \"MISSING_SOURCE - not found in tender document\")}
++          </p>
++          {row.status === \"EXTRACTED\" && <SourceTrace source={row.source} />}
++        </div>
++        <select value=\"\" disabled={saving === row.key} onChange={(event) => { const action = event.target.value; event.target.value = \"\"; if (action) void save(row, action); }} className=\"min-h-[42px] rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 disabled:opacity-50\" aria-label={\`Action for \${row.label}\`}><option value=\"\">Action…</option><option value=\"EDIT_MANUALLY\">Edit manually</option><option value=\"MARK_NOT_FOUND\">Mark as not found in tender</option><option value=\"IGNORE_FOR_THIS_TENDER\">Ignore for this tender</option><option value=\"MARK_NOT_APPLICABLE\">Mark not applicable</option><option value=\"RETRY_ON_NEXT_ANALYZE\">Retry on next AI Analyze</option></select>
++      </div>
++    </div>)}</div>}
+   </section>;
+ }
+diff --git a/components/extraction-quality-dashboard.tsx b/components/extraction-quality-dashboard.tsx
+index c980bb6..a3c1d79 100644
+--- a/components/extraction-quality-dashboard.tsx
++++ b/components/extraction-quality-dashboard.tsx
+@@ -167,6 +167,11 @@ export async function ExtractionQualityDashboard({ tenderId }: { tenderId: strin
+     const anyPoor = fileData.some((f) => f.status === "POOR" || f.corrupted);
+     const allGood = fileData.every((f) => f.status === "GOOD" && !f.corrupted);
+
++    const totalPages = fileData.reduce((sum, f) => sum + (f.totalPages || 0), 0);
++    const totalPerfect = fileData.reduce((sum, f) => sum + f.perPageEntries.filter(p => p.status === "GOOD").length, 0);
++    const totalOcr = fileData.reduce((sum, f) => sum + (f.ocrPages || 0), 0);
++    const totalFailed = fileData.reduce((sum, f) => sum + (f.failedPages || 0), 0);
++
+     const headerBadge = anyPoor ? (
+       <span className="rounded-full bg-red-100 px-2.5 py-1 text-xs font-semibold text-red-700">
+         Action Required
+@@ -206,7 +211,15 @@ export async function ExtractionQualityDashboard({ tenderId }: { tenderId: strin
+               </p>
+             </div>
+           </div>
+-          {headerBadge}
++          <div className="flex items-center gap-4">
++            <div className="hidden text-right sm:block">
++              <p className="text-[10px] font-semibold uppercase text-slate-400">Overall Coverage</p>
++              <p className="text-sm font-bold text-slate-700">
++                {totalPerfect}/{totalPages} perfect · {totalOcr} OCR · {totalFailed} failed
++              </p>
++            </div>
++            {headerBadge}
++          </div>
+         </div>
+
+         {(analysisStatus === "PARTIAL_EXTRACTION_AI_ANALYZED" || analysisStatus === "EXTRACTION_WEAK_REVIEW_REQUIRED" || analysisStatus === "REGEX_FALLBACK_FROM_WEAK_EXTRACTION") && (
+@@ -243,19 +256,20 @@ export async function ExtractionQualityDashboard({ tenderId }: { tenderId: strin
+                 <p className="mt-3 text-xs italic text-slate-500">Not yet extracted</p>
+               ) : (
+                 <>
+-                  <div className="mt-3 grid grid-cols-5 gap-2 text-center">
++                  <div className="mt-3 grid grid-cols-6 gap-2 text-center">
+                     {(
+                       [
+                         ["Total", file.totalPages, "slate"],
++                        ["Perfect", file.perPageEntries.filter(p => p.status === "GOOD").length, "green"],
+                         ["Extracted", file.extractedPages, "slate"],
+                         ["OCR", file.ocrPages, "slate"],
+                         ["Blank", file.blankPages, file.blankPages ? "amber" : "slate"],
+                         ["Failed", file.failedPages, file.failedPages ? "red" : "slate"],
+                       ] as [string, number | null, string][]
+                     ).map(([label, value, tone]) => (
+-                      <div key={label} className="rounded-lg border bg-white px-2 py-2">
++                      <div key={label} className={`rounded-lg border bg-white px-2 py-2 ${label === "Perfect" ? "border-green-100 bg-green-50/30" : ""}`}>
+                         <p className="text-[10px] uppercase text-slate-400">{label}</p>
+-                        <p className={`mt-0.5 text-base font-bold ${tone === "red" ? "text-red-700" : tone === "amber" ? "text-amber-700" : "text-slate-800"}`}>
++                        <p className={`mt-0.5 text-base font-bold ${tone === "red" ? "text-red-700" : tone === "amber" ? "text-amber-700" : tone === "green" ? "text-green-700" : "text-slate-800"}`}>
+                           {value !== null ? (
+                             value
+                           ) : (
+@@ -330,14 +344,14 @@ export async function ExtractionQualityDashboard({ tenderId }: { tenderId: strin
+                         <div className="flex items-center justify-between text-xs text-slate-500">
+                           <span>Coverage</span>
+                           <span
+-                            className={`font-semibold ${severityTextClass(scoreToSeverity(file.coverage ?? 0, { good: 80, warn: 50 }))}`}
++                            className={`font-semibold ${severityTextClass(scoreToSeverity(file.coverage ?? 0, { good: 95, warn: 80 }))}`}
+                           >
+                             {file.extractedPages}/{file.totalPages} = {file.coverage}%
+                           </span>
+                         </div>
+                         <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-slate-200">
+                           <div
+-                            className={`h-full rounded-full transition-all ${(file.coverage ?? 0) >= 80 ? "bg-emerald-500" : (file.coverage ?? 0) >= 50 ? "bg-amber-500" : "bg-red-500"}`}
++                            className={`h-full rounded-full transition-all ${(file.coverage ?? 0) >= 95 ? "bg-emerald-500" : (file.coverage ?? 0) >= 80 ? "bg-amber-500" : "bg-red-500"}`}
+                             style={{ width: `${Math.min(100, file.coverage)}%` }}
+                           />
+                         </div>
+@@ -432,7 +446,7 @@ export async function ExtractionQualityDashboard({ tenderId }: { tenderId: strin
+         <div
+           className={`mt-4 rounded-xl border px-4 py-3 text-sm ${
+             anyPoor
+-              ? "border-red-200 bg-red-50 text-red-800"
++              ? "border-red-200 bg-red-50 text-red-800 shadow-sm shadow-red-100/50"
+               : allGood
+                 ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                 : "border-amber-200 bg-amber-50 text-amber-800"
+diff --git a/lib/engine/final-submission-readiness.ts b/lib/engine/final-submission-readiness.ts
+index 943a1de..f3d3520 100644
+--- a/lib/engine/final-submission-readiness.ts
++++ b/lib/engine/final-submission-readiness.ts
+@@ -785,6 +785,15 @@ export async function getFinalSubmissionReadiness(
+
+   // Extraction quality gate — mirrors the POST /export enforcement so the panel
+   // shows the blocker before the user tries to export, not just after.
++  if (tender.metadataContaminated === true) {
++    tenderLevelBlockers.push({
++      category: "METADATA_CONTAMINATED",
++      severity: "HIGH",
++      title: "Client name is contaminated with portal noise or navigation text.",
++      recommendedAction: "Open the Tender Metadata form and correct the client/procuring entity name.",
++    });
++  }
++
+   if (!isExtractionAcceptableForExport(tender.files ?? [])) {
+     tenderLevelBlockers.push({
+       category: "EXTRACTION_QUALITY_INSUFFICIENT",
+@@ -906,7 +915,7 @@ export async function getFinalSubmissionReadiness(
+     qualityFailedDocuments: qualityFailed,
+     finalExportCandidatesCount: finalCandidates.length,
+     readyForExportCount: finalCandidates.filter((d) => /READY_FOR_EXPORT|APPROVED/i.test(d.reviewStatus ?? "")).length,
+-    finalExportGateOk: readiness.ok && documentBlockers.length === 0 && tenderLevelBlockers.length === 0,
++    finalExportGateOk: readiness.ok && documentBlockers.length === 0 && tenderLevelBlockers.length === 0 && isExtractionAcceptableForExport(tender.files ?? []) && !metadata.blockingForExport,
+   });
+
+   const summary: FinalReadinessSummary = {
+diff --git a/lib/engine/tender-lifecycle-orchestrator.ts b/lib/engine/tender-lifecycle-orchestrator.ts
+index 11492d3..dd926cd 100644
+--- a/lib/engine/tender-lifecycle-orchestrator.ts
++++ b/lib/engine/tender-lifecycle-orchestrator.ts
+@@ -619,6 +619,7 @@ export async function computeTenderLifecycle(
+   const blocked: BlockedAction[] = [];
+
+   const analysisOk = analysisSource === "AI" || analysisSource === "HUMAN_APPROVED_REGEX_FALLBACK";
++  const metadataGenOk = !meta.blockingForGeneration;
+   const fallbackUnapproved = analysisSource === "REGEX_FALLBACK_AI_ERROR";
+   const noFinalDocs = counts.finalExportCandidates === 0;
+
+@@ -661,7 +662,7 @@ export async function computeTenderLifecycle(
+     allowed.push("LINK_VAULT_EVIDENCE");
+   }
+
+-  // Generate Docs — blocked when fallback unapproved
++  // Generate Docs — blocked when extraction poor, metadata contaminated, or fallback unapproved
+   if (fallbackUnapproved) {
+     blocked.push({ action: "GENERATE_DOCS", reason: "Analysis source is unapproved regex fallback. Retry AI Analyze or approve the fallback with a note first." });
+   } else if (!analysisOk) {
+@@ -681,7 +682,11 @@ export async function computeTenderLifecycle(
+   }
+
+   // Auto-finalize — blocked when no final docs or fallback unapproved
+-  if (noFinalDocs) {
++  if (!extractionExportOk) {
++    blocked.push({ action: "AUTO_FINALIZE", reason: "Tender extraction quality is too low for final export." });
++  } else if (!metadataOk) {
++    blocked.push({ action: "AUTO_FINALIZE", reason: "Tender metadata is incomplete or contaminated." });
++  } else if (noFinalDocs) {
+     blocked.push({ action: "AUTO_FINALIZE", reason: "No active final export candidates exist. Generate and approve required documents first." });
+   } else if (fallbackUnapproved) {
+     blocked.push({ action: "AUTO_FINALIZE", reason: "Analysis source is unapproved regex fallback." });
+@@ -698,7 +703,7 @@ export async function computeTenderLifecycle(
+   }
+
+   // Download ZIP — blocked when canonical readiness not passed
+-  if (!finalExportReady) {
++  if (!finalExportReady || !extractionExportOk || !metadataOk) {
+     const reasons: string[] = [];
+     if (fallbackUnapproved) reasons.push("analysis source is unapproved regex fallback");
+     if (noFinalDocs) reasons.push("no active final export candidates");
+@@ -706,10 +711,11 @@ export async function computeTenderLifecycle(
+     if (officialRequired > officialAttached) reasons.push(`${officialRequired - officialAttached} official original(s) not attached`);
+     if (meta.missingCritical.length > 0) reasons.push(`${meta.missingCritical.length} critical metadata field(s) missing`);
+     if (meta.invalidFields.length > 0) reasons.push(`${meta.invalidFields.length} metadata field(s) contain internal placeholders`);
+-    if (tender.metadataContaminated) reasons.push("client name is contaminated");
++    if (tender.metadataContaminated) reasons.push("client name is contaminated with portal noise");
+     if (ungroundedMandatory.length > 0) reasons.push(`${ungroundedMandatory.length} mandatory requirement(s) missing source traceability`);
+     if (!mandatoryEvidenceReady) reasons.push("mandatory requirements are not covered by confirmed FULL/SUBSTANTIAL evidence");
+     if (counts.qualityFailedCandidates > 0) reasons.push(`${counts.qualityFailedCandidates} document(s) failed quality gate`);
++    if (!extractionExportOk) reasons.push("tender extraction quality is too low for export");
+     blocked.push({
+       action: "DOWNLOAD_ZIP",
+       reason: reasons.length > 0 ? reasons.join("; ") : "Canonical readiness has not passed.",
+diff --git a/lib/engine/tender-metadata-completeness.ts b/lib/engine/tender-metadata-completeness.ts
+index 59dcdea..5ee3474 100644
+--- a/lib/engine/tender-metadata-completeness.ts
++++ b/lib/engine/tender-metadata-completeness.ts
+@@ -495,6 +495,9 @@ export function assessTenderMetadataCompleteness(
+   const present = tracked.filter((v) => isValidPresent(v)).length;
+   const overallRatio = present / tracked.length;
+
++  if (input.metadataContaminated === true) {
++    notes.push("Client name is contaminated with portal noise or navigation text. This blocks final generation and export until corrected.");
++  }
+   if (missingCritical.length > 0) {
+     notes.push(`${missingCritical.length} critical metadata field(s) missing or placeholder-filled — final generation is blocked until completed.`);
+   }
+@@ -520,8 +523,8 @@ export function assessTenderMetadataCompleteness(
+     missingNonCritical,
+     notApplicableFields,
+     invalidFields,
+-    blockingForGeneration: missingCritical.length > 0 || invalidFields.length > 0,
+-    blockingForExport: missingCritical.length > 0 || invalidFields.length > 0,
++    blockingForGeneration: missingCritical.length > 0 || invalidFields.length > 0 || input.metadataContaminated === true,
++    blockingForExport: missingCritical.length > 0 || invalidFields.length > 0 || input.metadataContaminated === true,
+     placeholderCount,
+     deadlinePassed,
+     notes,
+diff --git a/lib/secure-upload-handler.ts b/lib/secure-upload-handler.ts
+index 400bc6e..1408544 100644
+--- a/lib/secure-upload-handler.ts
++++ b/lib/secure-upload-handler.ts
+@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
+ import { prisma, prismaReady } from "./prisma";
+ import { requireRole } from "./auth";
+ import { extractTextFromBuffer, detectCategoryFromFile, getFileTypeLabel, isMeaningfulExtraction } from "./extract-text";
++import { assessExtractionQuality, assessExtractionQualityPerPage } from "./extraction-quality";
+ import { logAction } from "./audit";
+ import { ensureCompanyForUser } from "./company-workspace";
+ import { importCompanyKnowledgeFromDocuments } from "./company-knowledge-import-safe";
+@@ -85,6 +86,9 @@ export async function handleSecureUpload(req: Request) {
+         tenderId: tenderId ?? undefined,
+       });
+
++      const quality = assessExtractionQuality(extracted.text, fileName);
++      const perPage = assessExtractionQualityPerPage(extracted.text);
++
+       if (tenderId) {
+         const record = await prisma.tenderFile.create({
+           data: {
+@@ -97,8 +101,18 @@ export async function handleSecureUpload(req: Request) {
+             fileContent: stored.fileContent ?? null,
+             classification,
+             extractedText: extracted.text || null,
++            totalPages: perPage.totalDetectedPages,
++            extractedPages: perPage.totalDetectedPages - perPage.failedPages.length,
++            ocrPages: perPage.ocrPages.length,
++            failedPages: perPage.failedPages.length,
++            extractionScore: quality.score,
++            pageStatusJson: JSON.stringify(perPage.pages),
++          },
++          select: {
++            id: true, tenderId: true, fileName: true, originalFileName: true,
++            mimeType: true, size: true, classification: true, createdAt: true,
++            totalPages: true, extractedPages: true, ocrPages: true, failedPages: true, extractionScore: true
+           },
+-          select: { id: true, tenderId: true, fileName: true, originalFileName: true, mimeType: true, size: true, classification: true, createdAt: true },
+         });
+         tenderFilesCreated += 1;
+         results.push({ success: true, scope: "tender", fileRecord: record, extraction, storageProvider: stored.provider });
+@@ -128,6 +142,12 @@ export async function handleSecureUpload(req: Request) {
+             fileContent: stored.fileContent ?? null,
+             category,
+             extractedText: extracted.text || null,
++            totalPages: perPage.totalDetectedPages,
++            extractedPages: perPage.totalDetectedPages - perPage.failedPages.length,
++            ocrPages: perPage.ocrPages.length,
++            failedPages: perPage.failedPages.length,
++            extractionScore: quality.score,
++            pageStatusJson: JSON.stringify(perPage.pages),
+             metadata: JSON.stringify({ category, autoDetected: !providedCategory || providedCategory === "AUTO", storageProvider: stored.provider, ...extraction }),
+           },
+           select: { id: true, companyId: true, fileName: true, originalFileName: true, mimeType: true, size: true, category: true, createdAt: true },
+diff --git a/package-lock.json b/package-lock.json
+index 2600c14..34a8b0e 100644
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -7251,7 +7251,6 @@
+       "version": "2.3.2",
+       "resolved": "https://registry.npmjs.org/fsevents/-/fsevents-2.3.2.tgz",
+       "integrity": "sha512-xiqMQR4xAeHTuB9uWm+fFRcIOgKBMiOBP+eXiyT7jsgVCq1bkVygt00oASowB7EdtpOHaaPgKt812P9ab+DDKA==",
+-      "dev": true,
+       "hasInstallScript": true,
+       "license": "MIT",
+       "optional": true,

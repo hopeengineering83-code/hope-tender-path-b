@@ -495,6 +495,9 @@ export function assessTenderMetadataCompleteness(
   const present = tracked.filter((v) => isValidPresent(v)).length;
   const overallRatio = present / tracked.length;
 
+  if (input.metadataContaminated === true) {
+    notes.push("Client name is contaminated with portal noise or navigation text. This blocks final generation and export until corrected.");
+  }
   if (missingCritical.length > 0) {
     notes.push(`${missingCritical.length} critical metadata field(s) missing or placeholder-filled — final generation is blocked until completed.`);
   }
@@ -520,8 +523,8 @@ export function assessTenderMetadataCompleteness(
     missingNonCritical,
     notApplicableFields,
     invalidFields,
-    blockingForGeneration: missingCritical.length > 0 || invalidFields.length > 0,
-    blockingForExport: missingCritical.length > 0 || invalidFields.length > 0,
+    blockingForGeneration: missingCritical.length > 0 || invalidFields.length > 0 || input.metadataContaminated === true,
+    blockingForExport: missingCritical.length > 0 || invalidFields.length > 0 || input.metadataContaminated === true,
     placeholderCount,
     deadlinePassed,
     notes,

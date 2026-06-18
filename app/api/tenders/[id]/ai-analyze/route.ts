@@ -652,7 +652,7 @@ async function handleStreamingAnalyze(
               const legalNameContamination = detectMetadataContamination(aiResult.legalClientName);
               const donorAgencyContamination = detectMetadataContamination(aiResult.donorAgency);
               const implementingAgencyContamination = detectMetadataContamination(aiResult.implementingAgency);
-              const anyEntityContaminated = contamination.contaminated || legalNameContamination.contaminated || donorAgencyContamination.contaminated || implementingAgencyContamination.contaminated;
+              const anyEntityContaminated = contamination.contaminated || legalNameContamination.contaminated || donorAgencyContamination.contaminated || implementingAgencyContamination.contaminated || detectMetadataContamination(aiResult.clientAddress).contaminated || detectMetadataContamination(aiResult.submissionAddress).contaminated || detectMetadataContamination(aiResult.clientContactName).contaminated;
 
               const existingNotes = (tenderRecord.notes ?? "").split("\n");
               const updatedNotes = existingNotes
@@ -1279,7 +1279,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           const legalNameContamination = detectMetadataContamination(aiResult.legalClientName);
           const donorAgencyContamination = detectMetadataContamination(aiResult.donorAgency);
           const implementingAgencyContamination = detectMetadataContamination(aiResult.implementingAgency);
-          const anyEntityContaminated = contamination.contaminated || legalNameContamination.contaminated || donorAgencyContamination.contaminated || implementingAgencyContamination.contaminated;
+          const anyEntityContaminated = contamination.contaminated || legalNameContamination.contaminated || donorAgencyContamination.contaminated || implementingAgencyContamination.contaminated || detectMetadataContamination(aiResult.clientAddress).contaminated || detectMetadataContamination(aiResult.submissionAddress).contaminated || detectMetadataContamination(aiResult.clientContactName).contaminated;
 
           const existingNotes = (tenderRecord.notes ?? "").split("\n");
           const updatedNotes = existingNotes

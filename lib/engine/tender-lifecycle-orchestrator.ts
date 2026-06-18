@@ -619,6 +619,7 @@ export async function computeTenderLifecycle(
   const blocked: BlockedAction[] = [];
 
   const analysisOk = analysisSource === "AI" || analysisSource === "HUMAN_APPROVED_REGEX_FALLBACK";
+  const metadataGenOk = !meta.blockingForGeneration;
   const fallbackUnapproved = analysisSource === "REGEX_FALLBACK_AI_ERROR";
   const noFinalDocs = counts.finalExportCandidates === 0;
 
@@ -661,7 +662,7 @@ export async function computeTenderLifecycle(
     allowed.push("LINK_VAULT_EVIDENCE");
   }
 
-  // Generate Docs — blocked when fallback unapproved
+  // Generate Docs — blocked when extraction poor, metadata contaminated, or fallback unapproved
   if (fallbackUnapproved) {
     blocked.push({ action: "GENERATE_DOCS", reason: "Analysis source is unapproved regex fallback. Retry AI Analyze or approve the fallback with a note first." });
   } else if (!analysisOk) {
@@ -681,7 +682,11 @@ export async function computeTenderLifecycle(
   }
 
   // Auto-finalize — blocked when no final docs or fallback unapproved
-  if (noFinalDocs) {
+  if (!extractionExportOk) {
+    blocked.push({ action: "AUTO_FINALIZE", reason: "Tender extraction quality is too low for final export." });
+  } else if (!metadataOk) {
+    blocked.push({ action: "AUTO_FINALIZE", reason: "Tender metadata is incomplete or contaminated." });
+  } else if (noFinalDocs) {
     blocked.push({ action: "AUTO_FINALIZE", reason: "No active final export candidates exist. Generate and approve required documents first." });
   } else if (fallbackUnapproved) {
     blocked.push({ action: "AUTO_FINALIZE", reason: "Analysis source is unapproved regex fallback." });
@@ -698,7 +703,7 @@ export async function computeTenderLifecycle(
   }
 
   // Download ZIP — blocked when canonical readiness not passed
-  if (!finalExportReady) {
+  if (!finalExportReady || !extractionExportOk || !metadataOk) {
     const reasons: string[] = [];
     if (fallbackUnapproved) reasons.push("analysis source is unapproved regex fallback");
     if (noFinalDocs) reasons.push("no active final export candidates");
@@ -706,10 +711,11 @@ export async function computeTenderLifecycle(
     if (officialRequired > officialAttached) reasons.push(`${officialRequired - officialAttached} official original(s) not attached`);
     if (meta.missingCritical.length > 0) reasons.push(`${meta.missingCritical.length} critical metadata field(s) missing`);
     if (meta.invalidFields.length > 0) reasons.push(`${meta.invalidFields.length} metadata field(s) contain internal placeholders`);
-    if (tender.metadataContaminated) reasons.push("client name is contaminated");
+    if (tender.metadataContaminated) reasons.push("client name is contaminated with portal noise");
     if (ungroundedMandatory.length > 0) reasons.push(`${ungroundedMandatory.length} mandatory requirement(s) missing source traceability`);
     if (!mandatoryEvidenceReady) reasons.push("mandatory requirements are not covered by confirmed FULL/SUBSTANTIAL evidence");
     if (counts.qualityFailedCandidates > 0) reasons.push(`${counts.qualityFailedCandidates} document(s) failed quality gate`);
+    if (!extractionExportOk) reasons.push("tender extraction quality is too low for export");
     blocked.push({
       action: "DOWNLOAD_ZIP",
       reason: reasons.length > 0 ? reasons.join("; ") : "Canonical readiness has not passed.",

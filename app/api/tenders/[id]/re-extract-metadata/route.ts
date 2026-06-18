@@ -222,6 +222,22 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     });
   }
 
+  for (const file of tender.files) {
+    const quality = assessExtractionQuality(file.extractedText, file.originalFileName);
+    const perPage = assessExtractionQualityPerPage(file.extractedText);
+    await prisma.tenderFile.update({
+      where: { id: file.id },
+      data: {
+        totalPages: perPage.totalDetectedPages,
+        extractedPages: perPage.totalDetectedPages - perPage.failedPages.length,
+        ocrPages: perPage.ocrPages.length,
+        failedPages: perPage.failedPages.length,
+        extractionScore: quality.score,
+        pageStatusJson: JSON.stringify(perPage.pages),
+      },
+    });
+  }
+
   await prisma.tender.update({ where: { id }, data: update });
   await logAction({
     userId: actor.id,

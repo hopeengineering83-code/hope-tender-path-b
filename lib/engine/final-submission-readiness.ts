@@ -785,6 +785,15 @@ export async function getFinalSubmissionReadiness(
 
   // Extraction quality gate — mirrors the POST /export enforcement so the panel
   // shows the blocker before the user tries to export, not just after.
+  if (tender.metadataContaminated === true) {
+    tenderLevelBlockers.push({
+      category: "METADATA_CONTAMINATED",
+      severity: "HIGH",
+      title: "Client name is contaminated with portal noise or navigation text.",
+      recommendedAction: "Open the Tender Metadata form and correct the client/procuring entity name.",
+    });
+  }
+
   if (!isExtractionAcceptableForExport(tender.files ?? [])) {
     tenderLevelBlockers.push({
       category: "EXTRACTION_QUALITY_INSUFFICIENT",
@@ -906,7 +915,7 @@ export async function getFinalSubmissionReadiness(
     qualityFailedDocuments: qualityFailed,
     finalExportCandidatesCount: finalCandidates.length,
     readyForExportCount: finalCandidates.filter((d) => /READY_FOR_EXPORT|APPROVED/i.test(d.reviewStatus ?? "")).length,
-    finalExportGateOk: readiness.ok && documentBlockers.length === 0 && tenderLevelBlockers.length === 0,
+    finalExportGateOk: readiness.ok && documentBlockers.length === 0 && tenderLevelBlockers.length === 0 && isExtractionAcceptableForExport(tender.files ?? []) && !metadata.blockingForExport,
   });
 
   const summary: FinalReadinessSummary = {
