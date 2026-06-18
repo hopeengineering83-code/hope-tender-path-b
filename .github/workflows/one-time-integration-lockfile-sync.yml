@@ -1,0 +1,65 @@
+name: One-time integration lockfile sync
+
+on:
+  push:
+    branches:
+      - fix/integration-lockfile-sync-agent
+
+permissions:
+  contents: write
+
+concurrency:
+  group: one-time-integration-lockfile-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+        with:
+          ref: fix/integration-lockfile-sync-agent
+          fetch-depth: 0
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Regenerate lockfile without lifecycle scripts
+        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+
+      - name: Verify synchronized dependency policy
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          const lock = JSON.parse(fs.readFileSync('package-lock.json', 'utf8'));
+          const root = lock.packages?.[''];
+          const postcss = lock.packages?.['node_modules/postcss'];
+          const expectedXlsx = 'https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz';
+          if (pkg.engines?.node !== '>=22 <23') throw new Error('Node engine policy changed');
+          if (pkg.overrides?.postcss !== '8.5.10') throw new Error('PostCSS override policy changed');
+          if (root?.dependencies?.xlsx !== expectedXlsx) throw new Error('SheetJS tarball dependency changed');
+          if (root?.engines?.node !== '>=22 <23') throw new Error('Lockfile Node engine is not synchronized');
+          if (postcss?.version !== '8.5.10') throw new Error(`Expected PostCSS 8.5.10, found ${postcss?.version}`);
+          if (JSON.stringify(lock).includes('postcss-8.4.31.tgz')) throw new Error('Stale PostCSS 8.4.31 resolution remains');
+          console.log('Lockfile policy verified.');
+          NODE
+
+      - name: Commit synchronized lockfile when changed
+        shell: bash
+        run: |
+          if git diff --quiet -- package-lock.json; then
+            echo 'package-lock.json is already synchronized.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add package-lock.json
+          git commit -m 'fix(deps): synchronize integration PostCSS lockfile'
+          git push origin HEAD:fix/integration-lockfile-sync-agent
