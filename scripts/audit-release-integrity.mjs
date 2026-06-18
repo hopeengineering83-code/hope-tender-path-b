@@ -58,5 +58,38 @@ const shareRoute = read("app/api/tenders/[id]/share/route.ts");
 check("company asset hardening preserved", assetRoute.includes("validateCompanyAsset") && assetRoute.includes("rateLimitPersistent"), "company asset security integration must remain present");
 check("share hardening preserved", shareRoute.includes("createTenderShareToken") && shareRoute.includes("revokedAt: new Date()"), "share token and revocation security must remain present");
 
+const uploadFirst = read("app/api/tenders/upload-first/route.ts");
+check("upload route does not mutate process environment", !uploadFirst.includes("process.env.ALLOW_DB_FILE_STORAGE ="), "request handlers must not change process-wide storage policy");
+
+const uploadSecurity = read("lib/upload-security.ts");
+check("upload signatures have explicit bounds", uploadSecurity.includes("buffer.length < signature.length"), "signature checks must reject truncated buffers explicitly");
+check("OpenXML active content rejected", uploadSecurity.includes("vbaProject") && uploadSecurity.includes("activeX") && uploadSecurity.includes("embeddings") && uploadSecurity.includes("externalLinks"), "Office uploads must reject active and embedded content");
+check("legacy Office rejected", uploadSecurity.includes("Legacy DOC/XLS files cannot be safely inspected"), "uninspectable legacy Office binaries must not enter the document pipeline");
+
+const limiter = read("lib/rate-limit.ts");
+check("persistent limiter avoids unsafe raw SQL", !limiter.includes("$queryRawUnsafe"), "rate-limit SQL must remain parameterized");
+check("persistent limiter fails closed in production", limiter.includes("RATE_LIMIT_ALLOW_DEGRADED") && limiter.includes("production && !emergencyFailOpen") && limiter.includes("allowed: false"), "production must not silently downgrade to per-instance enforcement");
+
+const documentRoute = read("app/api/tenders/[id]/documents/[docId]/route.ts");
+const commentsRoute = read("app/api/tenders/[id]/documents/[docId]/comments/route.ts");
+const planActionRoute = read("app/api/tenders/[id]/documents/[docId]/plan-action/route.ts");
+check("document review tenant isolation", documentRoute.includes("tender: { userId: actor.id }") && documentRoute.includes("rateLimitPersistent"), "document reviews must remain owner-scoped and persistently limited");
+check("document comments tenant isolation", commentsRoute.includes("tender: { userId: actor.id }") && commentsRoute.includes("rateLimitPersistent") && !commentsRoute.includes("email: true"), "comments must remain owner-scoped, persistently limited, and exclude author email PII");
+check("plan action tenant isolation", planActionRoute.includes("tender: { userId: actor.id }") && !planActionRoute.includes("?? await prisma.tender.findFirst"), "plan actions must not fall back to cross-tenant access");
+
+const aiJobRoute = read("app/api/ai-jobs/[id]/route.ts");
+check("AI job authorized before recovery", aiJobRoute.indexOf("const accessRow") >= 0 && aiJobRoute.indexOf("await recoverIfStuck") > aiJobRoute.indexOf("const accessRow"), "AI job recovery must happen only after access is established");
+
+const pricingHeader = read("app/api/tenders/[id]/pricing/route.ts");
+const pricingCreate = read("app/api/tenders/[id]/pricing/lines/route.ts");
+const pricingLine = read("app/api/tenders/[id]/pricing/lines/[lineId]/route.ts");
+check("pricing mutations use persistent limits", [pricingHeader, pricingCreate, pricingLine].every((value) => value.includes("rateLimitPersistent")), "pricing writes must use persistent rate limits");
+check("pricing expert references are tenant-owned", pricingCreate.includes("company: { userId: actor.id }") && pricingLine.includes("company: { userId: actor.id }"), "pricing lines must not reference another tenant's experts");
+check("pricing totals are bounded", pricingCreate.includes("MAX_TOTAL") && pricingLine.includes("MAX_TOTAL"), "pricing inputs must not create non-finite or unbounded totals");
+
+const aiAnalyze = read("app/api/tenders/[id]/ai-analyze/route.ts");
+check("AI source references validated", aiAnalyze.includes("validTenderFileIds.has(req.sourceFileToken)") && !aiAnalyze.includes("sourceTenderFileId: req.sourceFileToken ?? null"), "AI-returned source IDs must match uploaded tender files");
+check("AI vault hash includes content digest", aiAnalyze.includes('[digest:${textDigest}]'), "analysis checkpoints must invalidate when reviewed vault text changes");
+
 console.log(JSON.stringify({ ok: failures.length === 0, checks, failures }, null, 2));
 if (failures.length > 0) process.exitCode = 1;
