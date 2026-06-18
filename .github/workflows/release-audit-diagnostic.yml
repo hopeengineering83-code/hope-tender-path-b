@@ -1,0 +1,25 @@
+name: Release audit diagnostic
+
+on:
+  push:
+    branches:
+      - fix/integration-dependency-security
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Capture audit output
+        run: node scripts/audit-release-integrity.mjs > release-audit.json || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-audit-diagnostic
+          path: release-audit.json
+          if-no-files-found: error
