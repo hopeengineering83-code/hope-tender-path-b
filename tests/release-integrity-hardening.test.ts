@@ -96,7 +96,9 @@ describe("release integrity hardening", () => {
     const script = readFileSync("scripts/migrate-deploy-safe.mjs", "utf8");
     // deploy() must return "preview-error" for any uncategorised error when isVercelPreview=true
     assert.match(script, /isVercelPreview/);
-    assert.match(script, /isVercel && vercelEnv !== "production"/);
+    assert.match(script, /isExplicitProduction/);
+    assert.match(script, /isKnownProductionRef/);
+    assert.match(script, /hasPullRequestContext/);
     assert.match(script, /preview-error/);
     // preview-error must be caught in deploy() (before the no-history block)
     const previewErrorReturnIdx = script.indexOf('"preview-error"');
@@ -115,8 +117,7 @@ describe("release integrity hardening", () => {
     assert.match(script, /if \(!ALLOW_BASELINE\)/);
   });
 
-
-  it("migrate-deploy-safe treats missing VERCEL_ENV Vercel builds as preview-safe", () => {
+  it("migrate-deploy-safe treats missing VERCEL_ENV Vercel previews as non-production only", () => {
     const binDir = mkdtempSync(join(tmpdir(), "fake-prisma-"));
     const fakeNpx = join(binDir, process.platform === "win32" ? "npx.cmd" : "npx");
     writeFileSync(
@@ -134,21 +135,31 @@ describe("release integrity hardening", () => {
       DATABASE_URL: "postgresql://test:test@localhost:5432/test",
       PRISMA_BASELINE_EXISTING_DB: undefined,
     };
+    const runMigration = (env: NodeJS.ProcessEnv) =>
+      spawnSync(process.execPath, ["scripts/migrate-deploy-safe.mjs"], {
+        cwd: process.cwd(),
+        env: { ...baseEnv, ...env },
+        encoding: "utf8",
+      });
 
-    const preview = spawnSync(process.execPath, ["scripts/migrate-deploy-safe.mjs"], {
-      cwd: process.cwd(),
-      env: { ...baseEnv, VERCEL_ENV: undefined },
-      encoding: "utf8",
-    });
-    assert.equal(preview.status, 0, preview.stderr);
-    assert.match(preview.stderr, /P3009/);
+    const missingEnvFeatureBranch = runMigration({ VERCEL_ENV: undefined, VERCEL_GIT_COMMIT_REF: "codex/verify-pr-768" });
+    assert.equal(missingEnvFeatureBranch.status, 0, missingEnvFeatureBranch.stderr);
+    assert.match(missingEnvFeatureBranch.stderr, /P3009/);
 
-    const production = spawnSync(process.execPath, ["scripts/migrate-deploy-safe.mjs"], {
-      cwd: process.cwd(),
-      env: { ...baseEnv, VERCEL_ENV: "production" },
-      encoding: "utf8",
-    });
+    const pullRequestPreview = runMigration({ VERCEL_ENV: undefined, VERCEL_GIT_PULL_REQUEST_ID: "768" });
+    assert.equal(pullRequestPreview.status, 0, pullRequestPreview.stderr);
+
+    const targetPreview = runMigration({ VERCEL_ENV: undefined, VERCEL_TARGET_ENV: "preview" });
+    assert.equal(targetPreview.status, 0, targetPreview.stderr);
+
+    const production = runMigration({ VERCEL_ENV: "production" });
     assert.notEqual(production.status, 0, "production migration failures must remain fatal");
+
+    const targetProduction = runMigration({ VERCEL_ENV: undefined, VERCEL_TARGET_ENV: "production" });
+    assert.notEqual(targetProduction.status, 0, "target production migration failures must remain fatal");
+
+    const productionRef = runMigration({ VERCEL_ENV: undefined, VERCEL_GIT_COMMIT_REF: "main" });
+    assert.notEqual(productionRef.status, 0, "missing-env main-branch deployments must remain fatal");
   });
 
   it("migrate-deploy-safe handles retroactive init migration schema conflict without blocking", () => {

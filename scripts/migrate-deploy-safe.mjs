@@ -17,11 +17,20 @@ const INIT_MIGRATION = "20260601000000_init";
 // In production and CI (DATABASE_URL always set), migrations always run.
 const isVercel = process.env.VERCEL === "1";
 const vercelEnv = (process.env.VERCEL_ENV || "").trim().toLowerCase();
+const vercelTargetEnv = (process.env.VERCEL_TARGET_ENV || "").trim().toLowerCase();
+const vercelGitRef = (process.env.VERCEL_GIT_COMMIT_REF || "").trim().toLowerCase();
+const hasPullRequestContext = Boolean((process.env.VERCEL_GIT_PULL_REQUEST_ID || "").trim());
+const isExplicitProduction = vercelEnv === "production" || vercelTargetEnv === "production";
+const isKnownProductionRef = ["main", "master", "production"].includes(vercelGitRef) || vercelGitRef.startsWith("production/");
 // Vercel should set VERCEL_ENV=preview for preview builds and
-// VERCEL_ENV=production for production builds. If VERCEL_ENV is missing, fail
-// open only for Vercel non-production deployment builds: production must set
-// VERCEL_ENV=production to keep migration failures fatal.
-const isVercelPreview = isVercel && vercelEnv !== "production";
+// VERCEL_ENV=production for production builds. If VERCEL_ENV is missing, only
+// treat the deployment as preview-safe when other metadata indicates a
+// non-production build; production-like refs and explicit production targets
+// must keep migration failures fatal.
+const isVercelPreview =
+  isVercel &&
+  !isExplicitProduction &&
+  (vercelEnv === "preview" || vercelTargetEnv === "preview" || hasPullRequestContext || (vercelEnv === "" && !isKnownProductionRef));
 if (isVercelPreview && !process.env.DATABASE_URL) {
   console.warn("Skipping migrations: Vercel preview build with no DATABASE_URL configured.");
   console.warn("Set DATABASE_URL in Vercel project settings (Settings → Environment Variables → Preview) to run migrations on preview deployments.");
