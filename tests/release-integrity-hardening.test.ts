@@ -69,14 +69,17 @@ describe("release integrity hardening", () => {
     assert.match(route, /rateLimitPersistent/);
   });
 
-  it("runs critical schema verification after migrations in production builds", () => {
+  it("runs critical schema verification after migrations in the production build script", () => {
     const pkg = JSON.parse(readFileSync("package.json", "utf8")) as { scripts: Record<string, string> };
-    const vercel = JSON.parse(readFileSync("vercel.json", "utf8")) as { buildCommand: string };
     const build = pkg.scripts["vercel-build"];
     assert.ok(build.indexOf("migrate-deploy-safe.mjs") >= 0);
     assert.ok(build.indexOf("check-critical-schema.mjs") > build.indexOf("migrate-deploy-safe.mjs"));
+  });
+
+  it("keeps Vercel preview builds aligned with preview-safe migration behavior", () => {
+    const vercel = JSON.parse(readFileSync("vercel.json", "utf8")) as { buildCommand: string };
     assert.ok(vercel.buildCommand.indexOf("migrate-deploy-safe.mjs") >= 0);
-    assert.ok(vercel.buildCommand.indexOf("check-critical-schema.mjs") > vercel.buildCommand.indexOf("migrate-deploy-safe.mjs"));
+    assert.equal(vercel.buildCommand.includes("check-critical-schema.mjs"), false);
   });
 
   it("requires clean migration-path and integrity checks in CI", () => {
