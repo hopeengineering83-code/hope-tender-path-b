@@ -65,7 +65,6 @@ try {
       id: "secondary-owner-private-tender-fixture",
       userId: secondaryUser.id,
       title: "Secondary Owner Private Tender",
-      uploadedAt: new Date(),
     },
   });
 
