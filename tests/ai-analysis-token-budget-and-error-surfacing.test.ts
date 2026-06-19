@@ -66,9 +66,21 @@ describe("AI provider error surfacing", () => {
     const match = source.match(/export async function generateWithFallback[\s\S]*?\n}\n/);
     assert.ok(match, "generateWithFallback not found");
     const body = match[0];
+    // generateWithFallback must still capture the real per-provider failure
+    // reason via getProviderStateSnapshot (PR #775/#778 regression guard).
     assert.match(body, /getProviderStateSnapshot\(provider\)/);
-    assert.match(body, /Provider errors: \$\{failureDetails\.join/);
-    // Distinguishes an all-cooldown state for actionable diagnostics.
-    assert.match(body, /AI_PROVIDERS_RATE_LIMITED/);
+    // generateWithFallback must build a human-readable failureDetails array
+    // (PR #775/#778 regression guard) and pass it to the structured error.
+    assert.match(body, /failureDetails\.push\(`\$\{provider\}: \$\{safeReason\}`\)/);
+    assert.match(body, /throw new NoAiProviderReadyError\(\{[\s\S]*?failureDetails,/);
+    // The structured NoAiProviderReadyError class (defined elsewhere in lib/ai.ts)
+    // must preserve the AI_PROVIDERS_RATE_LIMITED message prefix when every
+    // configured provider is in cooldown, so legacy diagnostics
+    // (lib/engine/analysis-fallback-diagnostics.ts) that string-match on this
+    // prefix continue to classify the error correctly.
+    assert.match(source, /AI_PROVIDERS_RATE_LIMITED:/);
+    // The structured error must include failureDetails.join in its
+    // human-readable message so per-provider reasons are surfaced.
+    assert.match(source, /Provider errors: \$\{failureDetails\.join\(" \| "\) \|\| "none captured"\}/);
   });
 });

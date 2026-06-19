@@ -108,7 +108,9 @@ export async function GET() {
   if (deepSeekConfigured && !deepSeekOfficialEnvPresent()) warnings.push("DeepSeek is enabled via a fallback alias env var. Rename it to DEEPSEEK_API_KEY (the official variable) in Vercel.");
 
   // Cooldown notice — purely advisory; the chain skips cooled-down providers.
-  const allProviderNames: AiProviderName[] = ["gemini", "openai", "mistral", "together", "deepseek", "groq", "openrouter", "anthropic"];
+  // Iterate providers in the canonical runtime chain order so warnings and
+  // diagnostics surface in the same order as lib/ai.ts CANONICAL_PROVIDER_CHAIN.
+  const allProviderNames: AiProviderName[] = ["mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"];
   const cooling = allProviderNames.filter(isProviderCooledDown);
   if (cooling.length > 0) {
     warnings.push(`Provider(s) in cooldown: ${cooling.join(", ")}. Requests skip cooled-down providers until the window expires.`);
@@ -118,34 +120,77 @@ export async function GET() {
   // from keys-present-AND-recently-succeeded. Production screenshots showed
   // a "READY" pill while AI Analyze had actually fallen through to regex.
   const configuredMap: Record<AiProviderName, boolean> = {
-    anthropic: claudeConfigured, gemini: geminiConfigured, openai: openaiConfigured,
-    mistral: mistralConfigured, deepseek: deepSeekConfigured, groq: groqConfigured,
-    together: togetherConfigured, openrouter: openRouterConfigured,
+    mistral: mistralConfigured, groq: groqConfigured, openrouter: openRouterConfigured,
+    gemini: geminiConfigured, openai: openaiConfigured, together: togetherConfigured,
+    deepseek: deepSeekConfigured, anthropic: claudeConfigured,
   };
   const configuredNames = allProviderNames.filter((n) => configuredMap[n]);
   const providerRuntime = Object.fromEntries(allProviderNames.map((n) => [n, getProviderRuntimeSnapshot(n)])) as Record<AiProviderName, ReturnType<typeof getProviderRuntimeSnapshot>>;
   const anyHasRecentSuccess = configuredNames.some((n) => Boolean(providerRuntime[n].lastSuccessAt));
+  // `configuredProvidersAvailable` reflects the chain scheduler's view
+  // (configured + not currently cooling). It is NOT a health statement — a
+  // provider can be "available" here while still being in the `configured`
+  // (not yet runtime_verified) state. UI and health checks must use the
+  // per-provider `status` field surfaced via `runtime.status`.
   const configuredProvidersAvailable = configuredNames.filter((n) => providerRuntime[n].available);
   const allConfiguredCooling = anyConfigured && configuredNames.every((n) => providerRuntime[n].coolingDown);
   if (allConfiguredCooling) warnings.push("All configured AI providers are currently in cooldown. AI Analyze will fall back to regex (UNAPPROVED) until a provider's cooldown expires. Next action: wait for the earliest cooldown window to expire or reset provider health after fixing the upstream limit.");
   if (anyConfigured && !anyHasRecentSuccess) warnings.push("AI providers are configured but no successful response has been recorded on this serverless instance yet — runtime availability is not verified.");
+  // Surface a structured "no AI provider ready" signal so callers can branch
+  // without re-deriving the condition. ok=false here does NOT change the HTTP
+  // status — /api/ai/health is a metadata endpoint and must remain 200 so the
+  // dashboard can render the panel even when AI is unusable. The actual
+  // hard-error path lives in lib/ai.ts (NoAiProviderReadyError) for AI calls.
+  const noAiProviderReady = !anyConfigured || allConfiguredCooling || !anyHasRecentSuccess;
 
   const openaiModel = process.env.OPENAI_PROPOSAL_MODEL || "gpt-4o";
 
   return NextResponse.json({
     success: anyConfigured && !allConfiguredCooling,
+    ok: !noAiProviderReady,
     configuredProviderCount: configuredNames.length,
     availableProviderCount: configuredProvidersAvailable.length,
     allProvidersCooling: allConfiguredCooling,
+    runtimeVerified: anyHasRecentSuccess,
+    // `providers` is ordered by the canonical runtime chain
+    // (Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Claude),
+    // followed by the deterministic draft fallback as a final non-AI entry.
+    // Each provider entry surfaces `runtime.status` (the unified operator-facing
+    // enum) so the dashboard can render pills without re-deriving state.
     providers: {
-      openai: {
-        configured: openaiConfigured,
-        envPresent: openaiConfigured,
-        model: openaiModel,
-        fallbackRank: 5,
-        label: "OpenAI",
-        note: "Fifth-tier provider (canonical chain)",
-        runtime: providerRuntime.openai,
+      mistral: {
+        configured: mistralConfigured,
+        envPresent: mistralConfigured,
+        model: getMistralProposalModel(),
+        fallbackRank: 1,
+        label: "Mistral",
+        note: "First-tier provider (canonical chain) — used for analysis, extraction, proposal, validation",
+        analysisModel: getMistralAnalysisModel(),
+        runtime: providerRuntime.mistral,
+        status: providerRuntime.mistral.status,
+        isAi: true,
+      },
+      groq: {
+        configured: groqConfigured,
+        envPresent: groqConfigured,
+        model: getGroqModel(),
+        fallbackRank: 2,
+        label: "Groq",
+        note: "Second-tier provider (canonical chain)",
+        runtime: providerRuntime.groq,
+        status: providerRuntime.groq.status,
+        isAi: true,
+      },
+      openrouter: {
+        configured: openRouterConfigured,
+        envPresent: openRouterConfigured,
+        model: getOpenRouterModel(),
+        fallbackRank: 3,
+        label: "OpenRouter",
+        note: "Third-tier aggregator provider (canonical chain)",
+        runtime: providerRuntime.openrouter,
+        status: providerRuntime.openrouter.status,
+        isAi: true,
       },
       gemini: {
         configured: geminiConfigured,
@@ -158,34 +203,19 @@ export async function GET() {
         fallbackModels: maskModelChain(geminiModels),
         extractionModel: process.env.GEMINI_EXTRACTION_MODEL || process.env.GEMINI_EXTRACT_MODEL || null,
         runtime: providerRuntime.gemini,
+        status: providerRuntime.gemini.status,
+        isAi: true,
       },
-      mistral: {
-        configured: mistralConfigured,
-        envPresent: mistralConfigured,
-        model: getMistralProposalModel(),
-        fallbackRank: 1,
-        label: "Mistral",
-        note: "First-tier provider; verified working — used for analysis, extraction, proposal, validation",
-        analysisModel: getMistralAnalysisModel(),
-        runtime: providerRuntime.mistral,
-      },
-      deepseek: {
-        configured: deepSeekConfigured,
-        envPresent: deepSeekOfficialEnvPresent(),
-        model: getDeepSeekModel(),
-        fallbackRank: 7,
-        label: "DeepSeek",
-        note: "Seventh-tier fallback provider",
-        runtime: providerRuntime.deepseek,
-      },
-      groq: {
-        configured: groqConfigured,
-        envPresent: groqConfigured,
-        model: getGroqModel(),
-        fallbackRank: 2,
-        label: "Groq",
-        note: "Second-tier provider — fastest verified working provider (88ms)",
-        runtime: providerRuntime.groq,
+      openai: {
+        configured: openaiConfigured,
+        envPresent: openaiConfigured,
+        model: openaiModel,
+        fallbackRank: 5,
+        label: "OpenAI",
+        note: "Fifth-tier provider (canonical chain)",
+        runtime: providerRuntime.openai,
+        status: providerRuntime.openai.status,
+        isAi: true,
       },
       together: {
         configured: togetherConfigured,
@@ -193,19 +223,23 @@ export async function GET() {
         model: getTogetherProposalModel(),
         fallbackRank: 6,
         label: "Together",
-        note: "Sixth-tier fallback provider",
+        note: "Sixth-tier provider (canonical chain)",
         analysisModel: getTogetherAnalysisModel(),
         fastModel: getTogetherFastModel(),
         runtime: providerRuntime.together,
+        status: providerRuntime.together.status,
+        isAi: true,
       },
-      openrouter: {
-        configured: openRouterConfigured,
-        envPresent: openRouterConfigured,
-        model: getOpenRouterModel(),
-        fallbackRank: 3,
-        label: "OpenRouter",
-        note: "Third-tier aggregator provider — verified working, routes via high-quality models",
-        runtime: providerRuntime.openrouter,
+      deepseek: {
+        configured: deepSeekConfigured,
+        envPresent: deepSeekOfficialEnvPresent(),
+        model: getDeepSeekModel(),
+        fallbackRank: 7,
+        label: "DeepSeek",
+        note: "Seventh-tier provider (canonical chain)",
+        runtime: providerRuntime.deepseek,
+        status: providerRuntime.deepseek.status,
+        isAi: true,
       },
       claude: {
         configured: claudeConfigured,
@@ -213,11 +247,41 @@ export async function GET() {
         model: claudeModels[0] ?? null,
         fallbackRank: 8,
         label: "Claude",
-        note: "Last-resort provider (placed last to avoid Anthropic rate-limit blocking)",
+        note: "Eighth-tier (last) AI provider — placed last to avoid Anthropic rate-limit blocking",
         tier: process.env.ANTHROPIC_TIER || null,
         proposalModels: maskModelChain(claudeModels),
         maxOutputTokens: Number(process.env.ANTHROPIC_MAX_OUTPUT_TOKENS || 0) || null,
         runtime: providerRuntime.anthropic,
+        status: providerRuntime.anthropic.status,
+        isAi: true,
+      },
+      deterministic: {
+        // Final non-AI fallback — NOT an AI provider. Surfaced so operators
+        // can see in the same panel that the deterministic draft fallback is
+        // what runs after every configured AI provider has failed. Its output
+        // is never exportable as a final proposal.
+        configured: true,
+        envPresent: true,
+        model: null,
+        fallbackRank: 9,
+        label: "Deterministic draft fallback",
+        note: "Final non-AI fallback. Runs only after every configured AI provider has failed, returned no usable result, or is in cooldown. Output is never exportable as a final proposal.",
+        runtime: {
+          lastSuccessAt: null,
+          lastFailureAt: null,
+          lastErrorCategory: null,
+          lastSafeErrorMessage: null,
+          lastFailureReason: null,
+          cooldownUntil: null,
+          consecutiveFailures: 0,
+          coolingDown: false,
+          rateLimited: false,
+          runtimeVerified: false,
+          available: true,
+          status: "unknown" as const,
+        },
+        status: "unknown" as const,
+        isAi: false,
       },
     },
     fallbackChain: AI_FALLBACK_CHAIN,
@@ -225,6 +289,11 @@ export async function GET() {
     preferredProvider,
     blockers,
     warnings,
+    // Structured "no AI provider ready" signal for callers. Mirrors the
+    // NoAiProviderReadyError contract in lib/ai.ts so client and server share
+    // a single error vocabulary.
+    noAiProviderReady,
+    noAiProviderReadyCode: noAiProviderReady ? "NO_AI_PROVIDER_READY" : null,
     nextAction: blockers.length > 0
       ? "CONFIGURE_AI_KEYS"
       : allConfiguredCooling
