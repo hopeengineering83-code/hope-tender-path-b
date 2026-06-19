@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { prisma } from "../../../../../lib/prisma";
 import { computeTenderLifecycle } from "../../../../../lib/engine/tender-lifecycle-orchestrator";
 
@@ -9,6 +10,9 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
+    try { await requireRole("ADMIN", "PROPOSAL_MANAGER", "REVIEWER"); }
+    catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
+
     const { id: tenderId } = await params;
 
     const result = await computeTenderLifecycle(prisma, tenderId);
