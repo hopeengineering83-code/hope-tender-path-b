@@ -46,6 +46,17 @@ describe("release integrity upgrade", () => {
     assert.match(verifier, /No completed, checksum-matching/);
   });
 
+  it("skips schema validation when expecting failed init migration", () => {
+    const verifier = read("scripts/verify-retroactive-init.mjs");
+    // The verifier should have logic to skip database schema checks when --expect-failed-init is true
+    // because a failed migration means those database objects don't exist yet
+    assert.match(verifier, /if \(!expectFailedInit\)/);
+    assert.match(verifier, /Only validate actual database schema when NOT expecting a failed init/);
+    // Ensure it still checks migration history in failed state
+    assert.match(verifier, /unfinished\.length !== 1/);
+    assert.match(verifier, /Checksum mismatch for unfinished/);
+  });
+
   it("constructs the CI database only through migrations", () => {
     const ci = read(".github/workflows/ci.yml");
     assert.doesNotMatch(ci, /prisma db push/);

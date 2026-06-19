@@ -87,21 +87,25 @@ async function main() {
   `;
   const actualConstraints = new Set(constraintRows.map((row) => row.constraintName));
 
-  for (const [tableName, expectedColumns] of expected.tables) {
-    if (!actualTables.has(tableName)) {
-      failures.push(`Missing initialization table: ${tableName}`);
-      continue;
+  // Only validate actual database schema when NOT expecting a failed init.
+  // If init migration failed, the schema from that migration won't exist yet.
+  if (!expectFailedInit) {
+    for (const [tableName, expectedColumns] of expected.tables) {
+      if (!actualTables.has(tableName)) {
+        failures.push(`Missing initialization table: ${tableName}`);
+        continue;
+      }
+      const actualColumns = columnsByTable.get(tableName) ?? new Set();
+      for (const columnName of expectedColumns) {
+        if (!actualColumns.has(columnName)) failures.push(`Missing initialization column: ${tableName}.${columnName}`);
+      }
     }
-    const actualColumns = columnsByTable.get(tableName) ?? new Set();
-    for (const columnName of expectedColumns) {
-      if (!actualColumns.has(columnName)) failures.push(`Missing initialization column: ${tableName}.${columnName}`);
+    for (const name of expected.indexes) {
+      if (!actualIndexes.has(name)) failures.push(`Missing initialization index: ${name}`);
     }
-  }
-  for (const name of expected.indexes) {
-    if (!actualIndexes.has(name)) failures.push(`Missing initialization index: ${name}`);
-  }
-  for (const name of expected.constraints) {
-    if (!actualConstraints.has(name)) failures.push(`Missing initialization constraint: ${name}`);
+    for (const name of expected.constraints) {
+      if (!actualConstraints.has(name)) failures.push(`Missing initialization constraint: ${name}`);
+    }
   }
 
   if (!actualTables.has("_prisma_migrations")) {
