@@ -58,7 +58,20 @@ function errorText(error) {
   return redact(`${String(error?.stdout ?? "")}\n${String(error?.stderr ?? "")}\n${String(error?.message ?? "")}`);
 }
 
-function deploy() {
+// Serverless Postgres (e.g. Neon) auto-suspends its compute after inactivity.
+// At deploy time the first connection has to wake it, which can exceed Prisma's
+// connect timeout and surface as `P1001: Can't reach database server`. A single
+// failed attempt then kills the entire Vercel build. Retry a few times with
+// exponential backoff so the database has time to wake before we give up.
+const MAX_DB_REACH_ATTEMPTS = 5;
+
+function sleepSync(ms) {
+  // Synchronous, dependency-free sleep. Atomics.wait is permitted on the main
+  // thread in Node.js (unlike browsers) and avoids a busy-wait spin.
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function deploy(attempt = 1) {
   try {
     prisma(["migrate", "deploy"], { capture: true });
     return "ok";
@@ -67,6 +80,17 @@ function deploy() {
     if (message.includes("P3005") || /database schema is not empty/i.test(message)) return "no-history";
     if (message.includes("P3009") && message.includes(INIT_MIGRATION)) return "failed-init";
     if (message.includes(INIT_MIGRATION) && /already exists/i.test(message)) return "failed-init";
+    // P1001 = database unreachable. Most often a suspended serverless compute
+    // that simply needs a few seconds to wake — retry before failing the build.
+    if (message.includes("P1001") && attempt < MAX_DB_REACH_ATTEMPTS) {
+      const delayMs = Math.min(2000 * 2 ** (attempt - 1), 16000);
+      console.warn(
+        `Database unreachable (P1001) on attempt ${attempt}/${MAX_DB_REACH_ATTEMPTS}. ` +
+          `Waiting ${delayMs}ms for the database to wake, then retrying migrate deploy...`,
+      );
+      sleepSync(delayMs);
+      return deploy(attempt + 1);
+    }
     throw error;
   }
 }
